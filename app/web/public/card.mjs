@@ -3,8 +3,10 @@
 // low picture; at the right the options, "or" Whatever, and the field whose Send hands the card back with the words.
 // Everything else stands in the comments below the card: the whole text when it is longer than the card holds, the
 // options in detail, links of options, why it is urgent, versions and what happened to the card, the talk.
-// Above the card one row: the way back, where it stands ("3 of 9", before and next), and one "More" (Wake up, Copy,
-// Shred). Later is a pull-tag tied under the card's bottom-right corner (the Desk's Later: ui.mjs sideWays, the same
+// Nothing stands above the card: round drawn buttons at its outer edges (the way back, a cross, beside the top-left
+// corner; More, three dots, beside the top-right: Wake up, Copy, Shred; the question before and the next at mid-height,
+// left and right); where it stands ("3 of 9") is in the card's own line. A narrow window: back and More sit on the
+// card's top edge, before and next are a swipe and the keys. Later is a pull-tag tied under the card's bottom-right corner (the Desk's Later: ui.mjs sideWays, the same
 // route): pulled, the card is put off and the next one follows.
 //
 // One form (#card-form-<id>) holds the field and the notes on single options; every way to answer is a button of that
@@ -16,8 +18,12 @@ import { BASE, SAID, stream } from './app.mjs'
 import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
-// The way back, drawn with the pen: an arrow to the left.
-const BACK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M19.4 12.3 Q12.2 11.5 5 12.1"/><path d="M10.9 6 Q7.7 9.3 4.7 12.1 Q8 14.8 11.2 18.2"/></svg>')
+// Drawn with the pen, for the round buttons at a card's edges: an arrow to the left and one to the right, a cross, three dots.
+const pen = paths => raw(`<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true">${paths}</svg>`)
+const BACK = pen('<path d="M19.4 12.3 Q12.2 11.5 5 12.1"/><path d="M10.9 6 Q7.7 9.3 4.7 12.1 Q8 14.8 11.2 18.2"/>')
+const FORTH = pen('<path d="M4.6 12.3 Q11.8 11.5 19 12.1"/><path d="M13.1 6 Q16.3 9.3 19.3 12.1 Q16 14.8 12.8 18.2"/>')
+const CROSS = pen('<path d="M6.3 6.6 Q12.2 12.1 17.8 17.7"/><path d="M17.6 6.2 Q12 12.2 6.2 17.9"/>')
+const DOTS = pen('<path d="M5.4 12 Q5.9 11.5 6.4 12 Q5.9 12.6 5.4 12 M11.5 12 Q12 11.5 12.5 12 Q12 12.6 11.5 12 M17.6 12 Q18.1 11.5 18.6 12 Q18.1 12.6 17.6 12" stroke-width="2.6"/>')
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
 const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
@@ -119,6 +125,7 @@ ${cardMedia(shown, base, pic, query)}
 function cardLead(card, model, base, { version = null } = {}) {
   const from = model.byAgent.get(card.agent)
   const old = versionOf(card, version)
+  const place = old ? null : placeOf(card, model)
   const shown = old ? { ...card, title: old.title ?? card.title, body: old.body ?? '', sections: old.sections } : card
   const { shown: text, more } = fitText(textOf(shown))
   const said = talkOf(model, card).filter(m => m.from !== 'event' && (m.text || m.attachments?.length)).length
@@ -126,7 +133,7 @@ function cardLead(card, model, base, { version = null } = {}) {
   return html`<div class="tc-lead focus-lead" id="card-lead-${card.id}">
 ${isKnock(card) && card.status === 'open' ? html`<span class="inbox-tab tc-knock">${sk('knock')}${knockWord(card)}</span>` : ''}
 <h1 class="tc-title" id="card-title-${card.id}">${shown.title}</h1>
-<p class="tc-meta">${from ? html`<a class="tc-from" data-nav href="${base}/s/${encodeURIComponent(from.id)}" style="--hue:${from.hue}">${raw(doodleSvg(from.mark))}${from.name}</a><span aria-hidden="true">·</span>` : ''}${agoSpan(card.revised ?? card.created, 'tc-ago')}<span aria-hidden="true">·</span><span>${cardNr(card)}</span>${notes.length ? html`<span aria-hidden="true">·</span><a href="#card-thread-${card.id}">${notes.join(' · ')}</a>` : ''}</p>
+<p class="tc-meta">${from ? html`<a class="tc-from" data-nav href="${base}/s/${encodeURIComponent(from.id)}" style="--hue:${from.hue}">${raw(doodleSvg(from.mark))}${from.name}</a><span aria-hidden="true">·</span>` : ''}${agoSpan(card.revised ?? card.created, 'tc-ago')}<span aria-hidden="true">·</span><span>${cardNr(card)}</span>${place ? html`<span aria-hidden="true">·</span><span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>` : ''}${notes.length ? html`<span aria-hidden="true">·</span><a href="#card-thread-${card.id}">${notes.join(' · ')}</a>` : ''}</p>
 ${text ? html`<div class="tc-text">${rich(text, { assets: model.state.assets })}</div>` : ''}${more ? html`<a class="tc-more-text" href="#card-whole-${card.id}">More in the comments ↓</a>` : ''}
 </div>`
 }
@@ -290,15 +297,16 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   const images = imagesOf(old ? { attachments: old.attachments ?? card.attachments } : card)
   const media = images.length + videosOf(old ? { attachments: old.attachments ?? card.attachments } : card).length
   const shownPic = Math.min(Math.max(1, pic), Math.max(1, media))
-  const step = (to, cls, label, d) => (to ? html`<a class="tc-step-card ${cls}" data-nav href="${cardPath(to, self)}${walk ? '?walk=1' : ''}" aria-label="${label}: ${to.title}" title="${label}: ${to.title}">${icon(d)}</a>` : html`<span class="tc-step-card ${cls}" aria-hidden="true">${icon(d)}</span>`)
+  const step = (to, cls, label, art) => (to ? html`<a class="tc-rail ${cls}" data-nav href="${cardPath(to, self)}${walk ? '?walk=1' : ''}" aria-label="${label}: ${to.title}" title="${label}: ${to.title}">${art}</a>` : '')
   const form = `card-form-${card.id}`
   const asker = model.byAgent.get(card.agent)?.name ?? ''
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
   return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
-<nav class="tc-head" aria-label="Around this question">
-<a class="tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${BACK}</a>
-${place ? html`<span class="tc-place">${step(place.prev, 'is-prev', 'The question before', ARROW_L)}<span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>${step(place.next, 'is-next', 'The next question', ARROW_R)}</span>` : ''}
-<details class="tc-more" data-controller="pops"><summary class="tc-more-open" aria-label="More for this question">More ${sk('unfold')}</summary><div class="tc-more-list" role="menu">
+<div class="tc-frame">
+<nav class="tc-rails" aria-label="Around this question">
+<a class="tc-rail tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${CROSS}</a>
+${place ? html`${step(place.prev, 'is-prev', 'The question before', BACK)}${step(place.next, 'is-next', 'The next question', FORTH)}` : ''}
+<details class="tc-more" data-controller="pops"><summary class="tc-rail tc-more-open" title="More" aria-label="More for this question">${DOTS}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' && card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : ''}
 ${copyButton(card)}
 ${open && card.kind !== 'permission' ? more('is-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw it away unanswered`, act(card, base, 'shred')) : ''}
@@ -311,6 +319,7 @@ ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 </div>
 </article>
 ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
+</div>
 ${cardThread(card, model, self, { more: older })}
 <form class="tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
@@ -342,7 +351,7 @@ function picturePage(card, model, base, at, { from = null } = {}) {
 <header class="t-picture-bar"><a class="t-picture-back" data-nav href="${here}?pic=${i}" data-card-target="gallery" data-back title="Back to the question · Esc" aria-label="Back to the question: ${card.title}">${BACK}<h1>${card.title}</h1></a><div class="t-picture-sub">${where(a, i, images.length, 't-picture-where')}${pageChip(a.page, true)}</div>${card.status === 'open' && !card.with_agent && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}</header>
 <input type="checkbox" class="t-picture-zoom" id="${zoom}" hidden>
 <div class="t-picture-view" tabindex="0" role="region" aria-label="The picture: scroll to see all of it"><label class="t-picture-fit" for="${zoom}" title="Click: its own size, or fit to the width" data-card-target="figure" data-at="${i}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img${srcOf(a)} alt="${a.name}" decoding="async"${a.width > 0 && a.height > 0 ? html` width="${a.width}" height="${a.height}"` : ''}></label></div>
-${images.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : images.length}" data-turbo-action="replace" aria-label="The picture before">${icon(ARROW_L)}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < images.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next picture">${icon(ARROW_R)}</a><nav class="t-picture-strip" aria-label="The pictures of this question">${strip(images, i, n => `${here}/p/${n}`)}</nav>` : ''}
+${images.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : images.length}" data-turbo-action="replace" aria-label="The picture before">${BACK}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < images.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next picture">${FORTH}</a><nav class="t-picture-strip" aria-label="The pictures of this question">${strip(images, i, n => `${here}/p/${n}`)}</nav>` : ''}
 <aside class="t-picture-answer tc-right" aria-label="Your answer" data-kind="${card.kind}">${cardAnswer(card, model, base, { pic: i })}</aside>
 <form id="${form}" method="post" action="${act(card, base, 'message')}" hidden data-card-target="form">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}"><input type="hidden" name="note" value="${card.draft?.note ?? ''}">` : ''}</form>
 </div>`
@@ -683,6 +692,13 @@ controller('card', class extends Controller {
     if (this.hasMarksTarget) this.mountMarks()
     this.link = this.link.bind(this)
     addEventListener('resize', this.link)
+    // (a finger's swipe across the card: the question before, the next; the round arrows are not there on a phone)
+    this.element.addEventListener('touchstart', e => { const t = e.touches[0]; this.swipe = e.touches.length === 1 && e.target.closest?.('.tc-card') ? { x: t.clientX, y: t.clientY } : null }, { passive: true })
+    this.element.addEventListener('touchend', e => {
+      const from = this.swipe, t = e.changedTouches[0]; this.swipe = null
+      if (!from || Math.abs(t.clientX - from.x) < 80 || Math.abs(t.clientY - from.y) > Math.abs(t.clientX - from.x) * .5) return
+      this.element.querySelector(`.tc-rails a.${t.clientX < from.x ? 'is-next' : 'is-prev'}`)?.click()
+    }, { passive: true })
     this.element.addEventListener('scroll', this.link, { capture: true, passive: true })
     this.link()
   }

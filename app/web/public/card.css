@@ -74,17 +74,29 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 .tc-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .tc-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-/* ---- the row above the card: the way back, where it stands, More ---- */
-.tc-head { display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-3); }
-/* The way back is plain words with its key beside it ("Back to Desk  Esc"), no frame; on touch screens the key goes. */
+/* ---- round the card: nothing above it; round drawn buttons at its outer edges (card.mjs .tc-rails). The frame is the
+   card with room at both sides for them; a narrow window: back and More sit on the card's top edge. ---- */
 .tc-back { color: var(--fg); text-decoration: none; }
-/* The way back is a symbol: a drawn arrow in a quiet round button (its name and key in the tooltip). */
-.tc-head .tc-back { flex: none; display: grid; place-items: center; width: 40px; height: 40px; margin-left: -8px; border-radius: 50%; color: var(--muted); transition: background 120ms, color 120ms, translate 120ms; }
-.tc-head .tc-back .sketch { width: 24px; height: 24px; stroke-width: 2; }
-.tc-head .tc-back:hover, .tc-head .tc-back:focus-visible { background: var(--sunken); color: var(--fg); translate: -2px 0; }
-.tc-head .tc-back:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
-.tc-back span { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@container cardpage (max-width: 760px) { .tc-head { gap: 2px; } .tc-head .tc-back { margin-left: -4px; } .tc-head .tc-more-open { padding: 0 4px 0 8px; } }
+.tc-page > .tc-frame { position: relative; max-width: min(1040px, 100% - 132px); }
+.tc-rail, .t-picture .tc-step { box-sizing: border-box; display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 1.3px solid var(--line-strong); border-radius: 48% 52% 50% 50% / 52% 48% 53% 47%; background: var(--surface); color: var(--fg); text-decoration: none; list-style: none; cursor: pointer; box-shadow: none; transition: translate 100ms, border-color 120ms, background 120ms; }
+.tc-rail::-webkit-details-marker { display: none; }
+:is(.tc-rail, .t-picture .tc-step) .sketch { width: 22px; height: 22px; stroke-width: 2; }
+:is(.tc-rail, .t-picture .tc-step):is(:hover, :focus-visible), .tc-more[open] > .tc-rail { border-color: var(--fg); background: var(--sunken); }
+:is(.tc-rail, .t-picture .tc-step):focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.tc-rails > .tc-rail, .tc-rails > .tc-more { position: absolute; z-index: 3; }
+.tc-rails > .tc-back { left: -60px; top: 0; }
+.tc-rails > .tc-more { right: -60px; top: 0; }
+.tc-rails > .is-prev { left: -60px; top: calc(var(--card-h) / 2 - 23px); }
+.tc-rails > .is-next { right: -60px; top: calc(var(--card-h) / 2 - 23px); }
+.tc-rails > .is-prev:hover { translate: -2px 0; } .tc-rails > .is-next:hover { translate: 2px 0; }
+@container cardpage (max-width: 760px) {
+  .tc-page > .tc-frame { max-width: 100%; margin-top: 14px; }
+  .tc-frame .tc-left { padding-top: var(--s-8); }
+  .tc-rails > .tc-rail, .tc-rails > .tc-more > .tc-rail { width: 40px; height: 40px; }
+  .tc-rails > .tc-back { left: 14px; top: -20px; }
+  .tc-rails > .tc-more { right: 14px; top: -20px; }
+  .tc-rails > :is(.is-prev, .is-next) { display: none; }
+}
 /* Later: the pull-tag (ui.mjs LATER_TAG, the Desk's Later) tied under the card's bottom-right corner, beside the
    column of the talk: its string comes out from under the card's edge; under the pointer it swings and is pulled a
    little. Where the talk needs the whole width (a phone, a narrow window) it hangs in a short row of its own. */
@@ -108,18 +120,7 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
   .tc-later .sel-later svg { width: 40px; height: 76px; }
   .tc-later + .tc-feed { margin-top: 0; }
 }
-.tc-place { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; color: var(--muted); font: 500 var(--t-sm)/1 var(--font); }
-.tc-count { padding: 0 6px; white-space: nowrap; }
-.tc-step-card { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); text-decoration: none; }
-a.tc-step-card:hover { background: var(--sunken); color: var(--fg); }
-span.tc-step-card { opacity: .3; }
 .tc-more { position: relative; }
-.tc-place + .tc-more { margin-left: 0; }
-.tc-head > .tc-more:only-of-type:not(.tc-place ~ *) { margin-left: auto; }
-.tc-more-open { list-style: none; display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 10px 0 12px; border-radius: var(--r-pill, 999px); cursor: pointer; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); }
-.tc-more-open::-webkit-details-marker { display: none; }
-.tc-more-open:hover, .tc-more[open] > .tc-more-open { background: var(--sunken); color: var(--fg); }
-.tc-more-open .sketch { width: 16px; height: 16px; }
 .tc-more-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 220px; display: grid; padding: 6px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
 .tc-more-item, .tc-more-list > .cardclip-copy { display: flex; align-items: center; gap: 10px; width: 100%; height: auto; min-height: 38px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--fg); font: 500 var(--t-sm)/1.2 var(--font); text-align: left; text-decoration: none; cursor: pointer; }
 .tc-more-list > .cardclip-copy::after { content: "Copy"; }
@@ -153,7 +154,7 @@ turbo-frame.tc-media { flex: none; display: flex; flex-direction: column; gap: 8
 .tc-stage.is-video { overflow: visible; box-shadow: none; background: none; height: min(46vh, 360px); max-height: none; }
 .tc-figure { position: relative; display: block; max-width: 100%; cursor: zoom-in; }
 .tc-figure img { display: block; width: 100%; max-width: 100%; height: auto; }
-.tc-step { position: absolute; top: 50%; translate: 0 -50%; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-md); text-decoration: none; }
+.tc-step { position: absolute; top: 50%; margin-top: -17px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-md); text-decoration: none; }
 .tc-stage .tc-step { top: min(50%, 130px); }
 .tc-stage .tc-step.is-prev { left: 6px; }
 .tc-stage .tc-step.is-next { right: 6px; }
@@ -308,7 +309,6 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
   .tc-card::after { content: none; }
   .tc-left { padding: var(--s-5) var(--s-5) var(--s-3); }
   .tc-right { position: static; min-height: 0; background: var(--surface); box-shadow: 0 -1px 0 var(--line); padding: var(--s-4); }
-  .tc-count { display: none; }
 }
 @media (min-width: 861px) { #cardpage { grid-row: 1; }
 }
@@ -323,7 +323,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .t-picture-view { display: grid; place-items: center; min-height: 0; padding: 0 14px 14px; cursor: zoom-out; }
 .t-picture-fit { position: relative; display: inline-block; max-width: 100%; max-height: 100%; }
 .t-picture-fit img { display: block; max-width: 100%; max-height: calc(100dvh - 90px); object-fit: contain; border-radius: var(--r-md); box-shadow: var(--shadow-md); background: var(--surface); }
-.t-picture .tc-step { position: fixed; }
+.t-picture .tc-step { position: fixed; margin-top: -23px; }
 .t-picture .tc-step.is-prev { left: 14px; }
 .t-picture .tc-step.is-next { right: 14px; }
 
@@ -424,7 +424,8 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-opt.tc-whatever { display: flex; flex-direction: row; align-items: center; min-width: 0; justify-items: start; justify-content: flex-start; gap: 12px; min-height: 56px; padding-right: 14px; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line); }
 .tc-opt.tc-whatever .sketch-duck { flex: none; width: 38px; height: 32px; stroke-width: 2; }
 /* the chat under the comments: a plain message to the agent, the card stays with him */
-.tc-chat { position: sticky; bottom: 0; z-index: 5; display: grid; grid-template-columns: var(--who) minmax(0, 1fr); column-gap: var(--who-gap); align-items: start; margin-top: var(--s-2); padding: 10px 0 12px; background: var(--surface); }
+/* (it stands under the card and the talk, where they end: never over the card's foot) */
+.tc-chat { display: grid; grid-template-columns: var(--who) minmax(0, 1fr); column-gap: var(--who-gap); align-items: start; margin-top: var(--s-2); padding: 10px 0 12px; background: var(--surface); }
 .tc-chat > .tc-c-who { margin-top: 5px; }
 .tc-chat > .tc-ask { grid-column: 2; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 4px 6px; padding: 6px 6px 6px 12px; border-radius: 14px; }
 .tc-chat .tc-chips { grid-column: 1 / -1; }
