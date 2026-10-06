@@ -196,6 +196,108 @@ await test('cards round trip: create, revise, answer, decide again, hand back, c
   assert(evs.includes('card_created') && evs.includes('decide_again'), 'timeline events')
 })
 
+await test('final options: an answer whose every choice is final settles the card itself; take back reopens it; a note, a mixed choice or a trusted answer leave it with the agent', async () => {
+  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
+  const commands = [], alerts = []
+  agent.on('command', c => commands.push(c))
+  agent.on('alert', a => alerts.push(a))
+  const options = [{ key: 'done', label: 'Both done', final: true }, { key: 'later', label: 'Later' }, { key: 'leave', label: 'Leave it', final: true }]
+  const id = await agent.sendCard({ title: 'Two things for you to do', options, recommended: 'done' })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id) && laptop.model.cards.get(id), 'card everywhere')
+  eq(laptop.model.cards.get(id).options.map(o => o.final === true), [true, false, true], 'final travels with the options')
+  const everywhere = (state, how, what) => until(() => [phone, laptop, agent].every(c => c.model.cards.get(id).object_state === state && c.model.cards.get(id).closed_how === how), what)
+  const last = name => commands.findLast(c => c.command === name)
+
+  // a final choice: closed in the same step, on every client, and the agent hears that nothing is left to close
+  await phone.answer({ object_id: id, choices: ['done'] })
+  eq([phone.model.cards.get(id).object_state, phone.model.cards.get(id).closed_how, phone.model.cards.get(id).answer?.pending], ['closed', 'settled', true], 'optimistic echo: settled at once')
+  await settleAll(phone)
+  await everywhere('closed', 'settled', 'settled everywhere')
+  await until(() => last('answer'), 'agent answer command')
+  eq([last('answer').choices, last('answer').settled], [['done'], true], 'the command says the card is settled')
+  eq(laptop.model.stack, [], 'off the stack')
+
+  // take back: open again as after any answer, the agent hears it
+  await laptop.decideAgain({ object_id: id })
+  await settleAll(laptop)
+  await everywhere('open', null, 'reopened everywhere')
+  await until(() => last('decide_again'), 'decide again command')
+  eq(last('decide_again').previous_choices, ['done'], 'previous choices')
+
+  // an option that is not final: answered, with the agent
+  await phone.answer({ object_id: id, choices: ['later'] })
+  await settleAll(phone)
+  await everywhere('answered', 'answered', 'a plain option stays with the agent')
+  await until(() => last('answer').choices[0] === 'later', 'second answer')
+  eq(last('answer').settled, false, 'not settled')
+  await phone.decideAgain({ object_id: id })
+  await settleAll(phone)
+  await everywhere('open', null, 'open again')
+
+  // a final choice with a note: the note is for the agent, the card stays with it
+  await phone.answer({ object_id: id, choices: ['done'], note: 'the second one took a while' })
+  await settleAll(phone)
+  await everywhere('answered', 'answered', 'a note keeps it with the agent')
+  await until(() => last('answer').content.note, 'third answer')
+  eq(last('answer').settled, false, 'not settled with a note')
+  await phone.decideAgain({ object_id: id })
+  await settleAll(phone)
+  await everywhere('open', null, 'open once more')
+
+  // trusted: the agent's advice is a final option, yet the agent still has to choose and say so
+  await phone.trust({ object_id: id })
+  await settleAll(phone)
+  await everywhere('answered', 'answered', 'a trusted answer stays with the agent')
+  await until(() => last('trust'), 'trust command')
+  await phone.decideAgain({ object_id: id })
+  await settleAll(phone)
+  await everywhere('open', null, 'open before the forgery')
+
+  // a closed header on a choice that is not final counts nowhere: the card stays open (and its agent says so again, F15)
+  const card = phone.model.cards.get(id)
+  const bind = z.encodeAnswerBind({ objectId: z.unhex(id), versionHash: z.unhex(card.version_hash), choices: ['later'], cardId: z.unhex(id), cardHash: z.unhex(card.version_hash), choice: 'later' })
+  const before = commands.length, versions = card.object_version
+  await phone._send({ kind: codec.KIND.answer, content: { answer_action: 'answer', choices: ['later'] }, bind, recipient: agent.my_device_id, session_id: agent.session_id, object: { object_id: id, object_state: 'closed', urgency: 'normal', answered_at: Date.now() } })
+  await settleAll(phone, agent)
+  await until(() => alerts.some(a => a.code === 'bad-answer'), 'refused by the agent')
+  await settleAll(agent, phone, laptop)
+  await everywhere('open', null, 'still open everywhere')
+  eq(commands.length, before, 'no command from the refused answer')
+
+  // settled, then closed by the agent after all (a summary): that is the agent's close, and it stays closed
+  await until(() => [phone, laptop, agent].every(c => c.model.cards.get(id).object_version === versions + 1), 'the agent said the card again (F15)')
+  await laptop.answer({ object_id: id, choices: ['leave'] })
+  await settleAll(laptop)
+  await everywhere('closed', 'settled', 'settled again')
+  await agent.close(id, 'noted')
+  await settleAll(agent)
+  await everywhere('closed', 'closed', 'closed by the agent')
+  await phone.decideAgain({ object_id: id })
+  await settleAll(phone, agent, laptop)
+  await until(() => alerts.some(a => a.code === 'card-closed'), 'the take back is refused')
+  eq([phone, laptop, agent].map(c => c.model.cards.get(id).object_state), ['closed', 'closed', 'closed'], 'what the agent closed stays closed')
+})
+
+await test('final options with several answers: settled only if every chosen option is final', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const commands = []
+  agent.on('command', c => commands.push(c))
+  const options = [{ key: 'a', label: 'A done', final: true }, { key: 'b', label: 'B done', final: true }, { key: 'c', label: 'Build C' }]
+  const mixed = await agent.sendCard({ title: 'Tick what holds', options, allows_multiple: true })
+  const all = await agent.sendCard({ title: 'Tick what holds, again', options, allows_multiple: true })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(mixed) && phone.model.cards.get(all), 'cards')
+  await phone.answer({ object_id: mixed, choices: ['a', 'c'] })
+  await phone.answer({ object_id: all, choices: ['a', 'b'] })
+  await settleAll(phone)
+  await until(() => commands.filter(c => c.command === 'answer').length === 2, 'both answers')
+  eq([agent.model.cards.get(mixed).object_state, agent.model.cards.get(mixed).closed_how], ['answered', 'answered'], 'one choice is not final: with the agent')
+  eq([agent.model.cards.get(all).object_state, agent.model.cards.get(all).closed_how], ['closed', 'settled'], 'every choice final: settled')
+  eq(commands.filter(c => c.command === 'answer').map(c => [c.object_id === all, c.settled]).sort(), [[false, false], [true, true]], 'the commands say which')
+  eq([M.choicesFinal({ options }, []), M.choicesFinal({ options }, ['a']), M.choicesFinal({ options }, ['a', 'x']), M.choicesFinal({ options: [{ key: 'a', label: 'A', final: 'yes' }] }, ['a'])], [false, true, false, false], 'choicesFinal')
+})
+
 await test('stale answer (to an old version) is refused by the agent and ignored by every client', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   const alerts = []

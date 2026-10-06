@@ -80,7 +80,11 @@ export function noteRefValid(m) {
   return m.written_at == null || (Number.isSafeInteger(m.written_at) && m.written_at >= 0)
 }
 
+/** A card's options as they are sent: `final` only where it is true (README "card"). */
+const plainOptions = options => options.map(o => { if (!o || typeof o !== 'object' || !('final' in o) || o.final === true) return o; const { final, ...rest } = o; return rest })
+
 export function encodePayload(kind, content) {
+  if (kind === KIND.object_version && content?.object_type === 'card' && Array.isArray(content.options) && content.options.some(o => o && typeof o === 'object' && 'final' in o && o.final !== true)) content = { ...content, options: plainOptions(content.options) }
   if (kind === KIND.timeline_item && content?.content_type === 'message' && content.note !== undefined && !noteRefValid(content.note)) throw new z.ZError('bad-argument', 'note must be { object_id: 32 hex, written_at?: ms }')
   if (kind === KIND.object_version && content?.object_type === 'card' && content.teaser != null && !teaserValid(content.teaser)) throw new z.ZError('bad-argument', `teaser must be plain one-paragraph text, trimmed, at most ${TEASER_MAX} characters`)
   return te.encode(JSON.stringify(pick(content, fieldsFor(kind, content))))
@@ -95,6 +99,8 @@ export function decodePayload(bytes) {
   if (content.schema_version > SCHEMA_VERSION) return { content, content_state: 'newer_schema' }
   if (content.content_type === 'message' && content.note !== undefined && !noteRefValid(content.note)) delete content.note   // a bad note mark: the message stays, plain
   if (content.object_type === 'card' && content.teaser != null && !teaserValid(content.teaser)) delete content.teaser   // a bad teaser: the Desk falls back to the body
+  // An option's `final` is true or absent: anything else is dropped, so every client reads the same.
+  if (content.object_type === 'card' && Array.isArray(content.options)) for (const o of content.options) if (o && typeof o === 'object' && 'final' in o && o.final !== true) delete o.final
   return { content, content_state: 'ok' }
 }
 

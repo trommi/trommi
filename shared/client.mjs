@@ -1446,6 +1446,7 @@ export class Client {
       const echoedVersion = card.version_hash
       card.answer = { ...answer, pending: true, local_id }
       card.object_state = state
+      if (state === 'closed' && answer.answer_action === 'answer') card.closed_how = 'settled'
       const ch = M.emptyChange(); ch.cards.add(object_id); ch.sessions.add(card.agent_device_id)
       M.project(this.model, ch)
       this._emitChange(ch)
@@ -1615,7 +1616,12 @@ export class Client {
     if (card.content_state && card.content_state !== 'ok') throw new ZError('card-pruned', 'this device holds only the header of this card (retention); answer it on a device that shows it')
     const content = { answer_action, choices, note, option_notes, attachments, marks, trusted }
     const bind = z.encodeAnswerBind({ objectId: unhex(object_id), versionHash: unhex(card.version_hash), choices, cardId: unhex(object_id), cardHash: unhex(card.version_hash), choice: choices[0] ?? '' })
-    const state = answer_action === 'answer' ? 'answered' : 'closed'
+    // An answer whose every choice is an option the agent marked final settles the card in the same step (as read
+    // and shred close it). Anything said beside the choice (a note, a note on an option, a file, a pinned mark) is
+    // for the agent to read, so the card stays with it; so does a trusted answer, where the agent still chooses.
+    const plain = !String(note ?? '').trim() && !Object.values(option_notes ?? {}).some(v => String(v ?? '').trim()) && !attachments?.length && !marks?.length
+    const settles = answer_action === 'answer' && !trusted && plain && M.choicesFinal(card, choices)
+    const state = answer_action === 'answer' && !settles ? 'answered' : 'closed'
     const answered_at = Date.now()
     return this._send({ kind: codec.KIND.answer, content, bind, recipient: card.agent_device_id, session_id: card.session_id, object: { object_id, object_state: state, urgency: card.urgency, answered_at },
       echo: this._echoAnswer(object_id, { answer_action, choices, note: note ?? null, option_notes: option_notes ?? {}, attachments: attachments ?? [], marks: marks ?? [], trusted: !!trusted,

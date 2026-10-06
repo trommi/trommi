@@ -127,7 +127,7 @@ Card = {
   urgency,                                  // 'low' | 'normal' | 'high' | 'critical'
   // content of the current version (body fields, README names):
   card_type,                                // 'decision' | 'info'
-  title, teaser, body, options,             // teaser: the Desk row's two lines or null; options: [{ key, label, detail, short? }]
+  title, teaser, body, options,             // teaser: the Desk row's two lines or null; options: [{ key, label, detail, short?, final? }] (final: true = choosing it settles the card)
   sections, html, allows_multiple, recommended, urgency_reason, attachments,
   change_note, close_summary, withdraw_reason, merged_into_object_id, merged_from_object_ids,
   object_version,                           // 1, 2, ...
@@ -138,7 +138,7 @@ Card = {
   versions: [CardVersion],                  // every version, oldest first (current = last), linked by previous_version_hash
   answer: Answer | null,                    // the answer in force
   answers: [Answer],                        // every valid answer, also those taken back (taken_back_at set)
-  closed_how: null | 'answered' | 'read' | 'shredded' | 'withdrawn' | 'merged' | 'closed',
+  closed_how: null | 'answered' | 'settled' | 'read' | 'shredded' | 'withdrawn' | 'merged' | 'closed',
   in_revision: null | { by: 'hand_back' | 'explain', envelope_number },   // projection, README rule
   timeline_key,                             // 'chat:card/<object_id>'
   content_state: 'ok' | 'pruned' | 'newer_schema' | 'undecryptable',
@@ -159,9 +159,10 @@ Answer = {
 - R2: registers and note versions are settled by one total order from signed data, (`lamport`, `sender_device_id`, `sender_sequence`), never by hub order; inflated lamports are refused (`lamport-inflated`). A deleted register stays in `human.raw` as `value: null` (tombstone). The stack is ordered by `created_at` (`sent_at` of version 1), not by `envelope_number`.
 - A card version counts only from the card's creator (the sender of version 1), with `object_version` = previous + 1 and `previous_version_hash` = the current `version_hash`. Anything else becomes an `Alert` and is ignored.
 - An answer counts only from an active human device, addressed to the owning agent, while the card is open, bound to the **current** `version_hash`, and (for `answer_action: 'answer'` without `trusted`) with every choice an option key. An answer to an older version is ignored (alert `answer-stale`): the agent refuses it too, the card stays open.
-- `decide_again` counts only if it names the answer in force; it reopens the card (`answer` → null, `taken_back_at` set). On the human side the taken-back choices become the draft (the app writes `draft/<object_id>`, the core does not).
+- An answer whose header says closed settles the card (`closed_how: settled`): it counts only if every choice is an option with `final: true` and it is not `trusted` (else `bad-answer`). `client.answer` sends it that way by itself when every choice is final and nothing is said beside the choice (no note, option note, attachment or mark); `choicesFinal(card, choices)` is the test.
+- `decide_again` counts only if it names the answer in force and the card is not closed by its agent (`closed`, `withdrawn`, `merged`): what the human closed with an answer (answered, settled, read, shredded) they may take back. It reopens the card (`answer` → null, `taken_back_at` set). On the human side the taken-back choices become the draft (the app writes `draft/<object_id>`, the core does not).
 - `object_state` and `urgency` come from the newest counted head of that object.
-- `closed_how`: `answered` (answer), `read`/`shredded` (answer actions), `withdrawn` (`withdraw_reason`), `merged` (`merged_into_object_id`), `closed` (`close_summary` or a closed state otherwise).
+- `closed_how`: `answered` (answer), `settled` (an answer that closed the card: final options), `read`/`shredded` (answer actions), `withdrawn` (`withdraw_reason`), `merged` (`merged_into_object_id`), `closed` (`close_summary` or a closed state otherwise).
 
 ### Permission request, note, published
 
@@ -354,6 +355,7 @@ command = {
   envelope_number, sender_device_id, object_id, timeline_key,
   content,                 // the decoded body
   choices, previous_choices, allow,   // as fitting
+  settled,                 // answer: true when the answer closed the card itself (final options); nothing is left to close
   late,                    // the human had not seen the agent's newest envelope
   history,                 // R4: sent before the history boundary (first start without sync state, persisted): context, not a prompt
   envelope_hash, sender_sequence, sent_at,

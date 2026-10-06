@@ -468,9 +468,18 @@ export function answerRefusal(model, rec) {
       if (choices.some(k => !keys.has(k) || !rec.includes(k))) return 'bad-choice'
     } else if (!choices.length || choices.some(k => !keys.has(k))) return 'bad-choice'
     if (choices.length > 1 && !card.allows_multiple) return 'bad-choice'
+    // A closed header on an answer settles the card: only where every choice is an option its agent marked final,
+    // and never for a trusted answer (the agent still has to choose and say what it chose).
+    if (stateOf(rec).object_state === 'closed' && (c.trusted || !choicesFinal(card, choices))) return 'bad-answer'
   }
   if (c.answer_action === 'read' && card.card_type !== 'info') return 'bad-answer'
   return null
+}
+
+/** Every choice is an option the agent marked final (and there is at least one): the answer alone ends the matter. */
+export function choicesFinal(card, choices) {
+  const final = new Set((card?.options ?? []).filter(o => o?.final === true).map(o => o.key))
+  return Array.isArray(choices) && choices.length > 0 && choices.every(k => final.has(k))
 }
 
 function applyAnswer(model, rec, change) {
@@ -494,7 +503,8 @@ function applyAnswer(model, rec, change) {
   card.answers.push(answer)
   const st = stateOf(rec)
   card.object_state = st.object_state === 'open' ? 'answered' : st.object_state
-  card.closed_how = answer.answer_action === 'read' ? 'read' : answer.answer_action === 'shred' ? 'shredded' : 'answered'
+  // settled: an answer that closed the card itself (every choice a final option); the agent never has to close it.
+  card.closed_how = answer.answer_action === 'read' ? 'read' : answer.answer_action === 'shred' ? 'shredded' : card.object_state === 'closed' && rec.content ? 'settled' : 'answered'
   card.in_revision = null
   card.updated_at = rec.sent_at
   change.cards.add(card.object_id)
@@ -525,7 +535,9 @@ export function decideAgainRefusal(model, rec) {
   if (!rec.bind || rec.bind.cardId !== card.object_id) return 'card-mismatch'
   if (!card.answer || card.answer.envelope_hash !== rec.bind.previousHash) return 'decision-mismatch'
   if (rec.bind.versionHash && rec.bind.versionHash !== card.version_hash) return 'card-changed'
-  if (card.object_state === 'closed' && card.closed_how !== 'read' && card.closed_how !== 'shredded') return 'card-closed'
+  // What the human closed with an answer (read, shredded, settled by a final option) they may take back; what the
+  // agent closed (done, withdrawn, merged) stays closed.
+  if (card.object_state === 'closed' && ['closed', 'withdrawn', 'merged'].includes(card.closed_how)) return 'card-closed'
   return null
 }
 function applyDecideAgain(model, rec, change) {

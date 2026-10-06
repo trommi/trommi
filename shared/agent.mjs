@@ -332,7 +332,9 @@ function commandOf(model, c) {
     }
     case codec.KIND.answer: {
       const a = content.answer_action
-      return { ...out, command: a === 'read' ? 'read' : a === 'shred' ? 'shred' : content.trusted ? 'trust' : 'answer', choices: content.choices ?? [] }
+      // settled: the answer closed the card itself (every choice a final option); nothing is left for the agent to close.
+      const settled = (a ?? 'answer') === 'answer' && codec.OBJECT_STATE_NAME[rec.object?.object_state] === 'closed'
+      return { ...out, command: a === 'read' ? 'read' : a === 'shred' ? 'shred' : content.trusted ? 'trust' : 'answer', choices: content.choices ?? [], settled }
     }
     case codec.KIND.decide_again: return { ...out, command: 'decide_again', previous_choices: c.previous_choices ?? [] }
     case codec.KIND.verdict: return { ...out, command: 'verdict', allow: !!rec.bind?.allow, permission: model.permissions.get(c.object_id ?? rec.bind?.requestId) ?? null }

@@ -7,7 +7,7 @@ export { Client, shareLink, parseShareLink, openShared, membersOf, isHumanRegist
 export { agentMethods } from './agent.mjs'
 export { Hub, normaliseHubUrl } from './transport.mjs'
 export * as codec from './codec.mjs'
-export { emptyModel, emptyChange, timelineKey, parseTimelineKey, timelineItems, timelineEvents, stackOf, isExpired, answerRefusal } from './model.mjs'
+export { emptyModel, emptyChange, timelineKey, parseTimelineKey, timelineItems, timelineEvents, stackOf, isExpired, answerRefusal, choicesFinal } from './model.mjs'
 export { memoryStorage } from './storage-memory.mjs'
 export { openRoomInTabs, adoptInTabs, overlayStorage } from './tabs.mjs'
 export { idbStorage } from './storage-idb.mjs'
