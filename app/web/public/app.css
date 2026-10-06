@@ -673,7 +673,7 @@ body[data-t-view="whiteboard"] #says-host { --says-bottom: 112px; }
 .mark-picker.t-pop { width: max-content; max-width: calc(100vw - 16px); }
 .t-menu { display: grid; gap: 2px; min-width: 168px; max-width: min(280px, calc(100vw - 16px)); max-height: min(60vh, 420px); overflow-y: auto; padding: 6px; border-radius: 12px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
 .t-menu button { min-height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-sm)/1.2 var(--font); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.t-menu button[aria-current="true"] { font-weight: 700; box-shadow: inset 3px 0 0 var(--fg); }
+.t-menu button[aria-current="true"] { font-weight: 700; background: var(--sunken); }   /* (the marked row, as in the Trommi menu: a ground, no stripe down its edge) */
 @media (max-width: 860px) {
   .t-sheet { position: fixed; z-index: 90; left: 0; right: 0; bottom: 0; display: grid; gap: 2px; box-sizing: border-box; width: auto; max-width: none; max-height: 82dvh; overflow-y: auto; user-select: text; -webkit-user-select: text; }
   .t-sheet form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-2); margin: 0; }
