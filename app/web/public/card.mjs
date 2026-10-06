@@ -783,9 +783,12 @@ controller('card', class extends Controller {
     addEventListener('resize', this.placed)
     this.element.addEventListener('scroll', this.placed, { passive: true })
     this.placed()
+    // (the card grows after it was placed: a picture loads, a note's field opens, the talk arrives)
+    this.sized = new ResizeObserver(this.placed)
+    for (const el of this.element.querySelectorAll('.tc-card, .tc-pad')) this.sized.observe(el)
     addEventListener('resize', this.link)
     // (a finger's swipe across the card: the question before, the next; the round arrows are not there on a phone)
-    this.element.addEventListener('touchstart', e => { const t = e.touches[0]; this.swipe = e.touches.length === 1 && e.target.closest?.('.tc-card') ? { x: t.clientX, y: t.clientY } : null }, { passive: true })
+    this.element.addEventListener('touchstart', e => { const t = e.touches[0]; this.swipe = e.touches.length === 1 && t.clientX > 24 && e.target.closest?.('.tc-card') ? { x: t.clientX, y: t.clientY } : null }, { passive: true })   // (from the left edge a finger pulls the drawer: sidebar.mjs)
     this.element.addEventListener('touchend', e => {
       const from = this.swipe, t = e.changedTouches[0]; this.swipe = null
       if (!from || Math.abs(t.clientX - from.x) < 80 || Math.abs(t.clientY - from.y) > Math.abs(t.clientX - from.x) * .5) return
@@ -795,6 +798,7 @@ controller('card', class extends Controller {
     this.link()
   }
   disconnect() {
+    this.sized?.disconnect()
     removeEventListener('resize', this.link)
     removeEventListener('resize', this.placed)
     this.element.removeEventListener('scroll', this.link, { capture: true })
