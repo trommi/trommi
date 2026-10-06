@@ -47,6 +47,7 @@ export function hubUrl() {
 //
 // A session is blocked when
 //   - it is disconnected while a status line of its says "working" (for longer than a blip: OFFLINE_GRACE_MS),
+//   - it is cut off (linkOf below): its Claude Code runs and its Trommi tools are gone, working line or not,
 //   - it reported an error (agent.error, set through /agent/profile; a later call of the session clears it),
 //   - it waits for him: an open approval request, or an open card it marked as blocking (urgency critical),
 // Being quiet is NOT a stop (decided "ruhig"): a connected session with a working line that said nothing for
@@ -74,6 +75,8 @@ const clock = (t, now) => {
  *  the plain words for a tooltip ("Connection lost since 14:05", "Error: …", "Waiting for permission"). */
 export function blockedOf(agent, state, now = Date.now()) {
   if (!agent || agent.archived) return null
+  const link = linkOf(agent, now)
+  if (link?.state === 'cut') return { why: 'cut', text: link.short, since: link.since }
   const working = (state.tasks ?? []).filter(t => t.agent === agent.id && t.state === 'working')
   if (!agent.online) {
     // offline_since: when the hub saw its last stream close (hub /devices); older hubs only give the last activity.
@@ -98,6 +101,48 @@ export function quietOf(agent, state, now = Date.now()) {
   if (now - last < QUIET_MS) return null
   const n = minutes(now - last)
   return { text: `quiet for ${n} min`, minutes: n }
+}
+
+// ---- link ----
+// Whether a session can HEAR the human and SPEAK to him, which is more than "its connector has a stream" (agent.online).
+// The session's connector reports it to the hub (agent.link, README "The link"), and writes a receipt when it really
+// handed the human's words to the agent (card.heard). The five states are the core's (shared/model.mjs linkState, the
+// same rules here: the views are rendered without the core at hand); here they get their words.
+//   agent.link: { hears: 'live' | 'oncall', attached, last_call_at, since, cut_since, exit: { reason, claude } } or null
+//   card.heard: true (the agent has his answer or hand-back), false (it waits in the connector), null (not known:
+//               nothing to hear, or a connector that writes no receipts)
+/** No tool call for this long, in a session that hears only on its next one: it is not listening. */
+export const ASLEEP_MS = 10 * 60000
+/** An answer the session has not picked up for this long is worth a word. */
+export const UNHEARD_MS = 2 * 60000
+const RECONNECT = '/mcp → trommi → Reconnect', LIVE_FLAG = 'claude --resume --dangerously-load-development-channels server:trommi'
+/** The session's link: { state: 'live' | 'oncall' | 'asleep' | 'cut' | 'gone', sign, word, short, line, since, fix: { say, code } | null }; null for none. */
+export function linkOf(agent, now = Date.now()) {
+  if (!agent || agent.archived || agent.removed) return null
+  const n = agent.name, l = agent.link ?? null
+  if (!agent.online) {
+    const since = agent.offline_since ?? null, at = since ? clock(since, now) : ''
+    if (l?.exit?.claude === 'alive') return { state: 'cut', sign: 'ear-off', since, word: `cut off${at ? ` · ${at}` : ''}`, short: at ? `Cut off since ${at}` : 'Cut off', line: `${n} is cut off${at ? ` since ${at}` : ''}: its Claude Code runs, its Trommi tools are gone. It cannot hear you and cannot write to you.`, fix: { say: 'In its terminal:', code: RECONNECT } }
+    const how = l?.exit ? 'its Claude Code session ended.' : 'it stopped without a word: its session ended, was killed, or its machine is off the network.'
+    return { state: 'gone', sign: 'plug', since, word: `gone${at ? ` · ${at}` : ''}`, short: at ? `Gone since ${at}` : 'Gone', line: `${n} is gone${at ? ` since ${at}` : ''}: ${how}`, fix: { say: 'Start it again in its folder:', code: 'claude --continue' } }
+  }
+  if (l?.cut_since || (l && l.attached === false)) {
+    const since = l.cut_since ?? l.since ?? null, at = since ? clock(since, now) : ''
+    return { state: 'cut', sign: 'ear-off', since, word: `cut off${at ? ` · ${at}` : ''}`, short: at ? `Cut off since ${at}` : 'Cut off', line: `A Claude Code session in ${n}'s folder is cut off${at ? ` since ${at}` : ''}: it runs, its Trommi tools are gone. It cannot hear you and cannot write to you.`, fix: { say: 'In its terminal:', code: RECONNECT } }
+  }
+  if (!l || l.hears !== 'oncall') return { state: 'live', sign: 'ear', since: null, word: '', short: '', line: `${n} hears you at once.`, fix: null }
+  const last = l.last_call_at ?? l.since ?? null, idle = last ? Math.max(0, now - last) : null, min = idle == null ? null : minutes(idle)
+  const ago = min == null ? '' : `; its last one was ${min} min ago`
+  if (idle != null && idle >= ASLEEP_MS) return { state: 'asleep', sign: 'ear-later', since: last, word: `not listening · ${min} min`, short: `Not listening for ${min} min`, line: `${n} is not listening: it hears you only on its next step, and its last one was ${min} min ago.`, fix: { say: 'Wake it: type anything in its terminal. To be heard at once, start it with', code: LIVE_FLAG } }
+  return { state: 'oncall', sign: 'ear-later', since: last, word: 'on its next step', short: 'Hears you on its next step', line: `${n} hears you on its next step${ago}.`, fix: { say: 'To be heard at once, start it with', code: LIVE_FLAG } }
+}
+/** Whether the card's session has the human's last word on it (his answer, or the hand-back): null when there is
+ *  nothing to hear; else { heard: true | false | null (no receipts), waiting: ms, late }. */
+export function heardOf(card, now = Date.now()) {
+  const at = card.status === 'open' ? card.with_agent : card.status === 'decided' && !card.settled ? card.decided : null
+  if (!at || card.pending) return null
+  const heard = card.heard ?? null
+  return { heard, waiting: heard ? 0 : Math.max(0, now - at), late: heard === false && now - at >= UNHEARD_MS }
 }
 
 // ---- model ----
@@ -160,9 +205,23 @@ function boardModel(state, agents = state.agents, desk = null) {
     if (main && main !== u && !main.agent.parent) { u.parent = main; (main.subs ??= []).push(u) }
   }
   for (const u of units) if (u.subs) u.whole = summary(new Set([u.id, ...u.subs.map(s => s.id)]))
+  // Each row's link, and how many of his answers its session has not picked up. A folded main shows its own, unless
+  // one of its subs is cut off: that one must not hide in the fold.
+  for (const u of units) {
+    u.link = linkOf(u.agent, now)
+    u.unheard = state.cards.filter(c => c.agent === u.id && heardOf(c, now)?.late).length
+  }
+  for (const u of units) if (u.subs) {
+    const all = [u, ...u.subs]
+    u.whole.link = all.map(x => x.link).find(l => l?.state === 'cut') ?? u.link
+    u.whole.unheard = all.reduce((n, x) => n + x.unheard, 0)
+  }
+  // The sessions that are cut off, once per connector (a helper's session is cut off with its main: one line says it).
+  const cut = units.filter(u => u.link?.state === 'cut' && !(u.parent?.link?.state === 'cut' && u.parent.agent.agent_device_id === u.agent.agent_device_id)).map(u => ({ agent: u.agent, link: u.link }))
 
   return {
     state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, onDesk, desk: deskId, desks: desks ?? [], revising, snoozed, done, units,
+    cut, unheard: units.reduce((n, u) => n + u.unheard, 0),
     knocking: fresh.filter(isKnock).length,
     blocked: units.filter(u => u.blocked).length,
     working: units.filter(u => u.online && u.running).length,
@@ -362,6 +421,7 @@ export class BoardState {
         online: Boolean(s.is_online), offline_since: s.offline_since ?? null, model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === key || crown === s.agent_device_id, parent, main: Boolean(p.is_main),
         desk: set.desk ?? null, archived: 'archived' in set ? Boolean(set.archived) : closedChild(s), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0, device_active: lastOfDevice.get(s.agent_device_id) ?? 0,
         removed: s.is_active === false,
+        link: s.link ?? null, heard_up_to: s.heard_up_to ?? null,
       }
     })
     // A sub-session stands on its main's desk, always (it has no desk of its own: a main that moves takes its subs and
@@ -425,6 +485,10 @@ export class BoardState {
       if (a.answer_action === 'shred') card.shredded = a.answered_at
       if (a.pending) card.pending = true
     }
+    // The receipt: whether the session's agent was handed his answer, or the message that handed the card back.
+    const said = a && !a.pending && status === 'decided' ? a.envelope_number : status === 'open' ? c.in_revision?.envelope_number : null
+    const mark = m.sessions.get(keyOf(c))?.heard_up_to
+    if (Number.isInteger(said) && mark != null) card.heard = said <= mark
     if (c.in_revision && status === 'open') card.with_agent = this.timeOf(c.timeline_key, c.in_revision.envelope_number) ?? c.updated_at ?? Date.now()
     if (draft && status === 'open') card.draft = { keys: draft.keys ?? [], note: draft.note ?? '', notes: draft.notes ?? {}, ...(draft.marks?.length ? { marks: draft.marks } : {}), ts: draft.ts ?? 0 }
     if (snooze?.until > Date.now() && status === 'open') { card.snoozed_until = snooze.until; card.snoozed_at = snooze.at ?? 0 }

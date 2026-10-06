@@ -14,8 +14,8 @@
 // "card" (controller "card") adds the pencil for a note on one option, the draft kept while typing,
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
-import { BASE, SAID, stream } from './app.mjs'
-import { Controller, EXPLAIN_TEXT, FINAL_TIP, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
+import { BASE, SAID, heardOf, linkOf, stream } from './app.mjs'
+import { Controller, EXPLAIN_TEXT, FINAL_TIP, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
 // Drawn with the pen, for the round buttons above a card: an arrow to the left and one to the right, a cross, three
@@ -161,6 +161,27 @@ const reviseTile = (card, model, base) => { const to = model.byAgent.get(card.ag
 const still = (label, detail = '', cls = '') => html`<div class="tc-opt is-still ${cls}"><span class="tc-opt-words"><span class="tc-opt-label">${label}</span>${detail ? html`<span class="tc-opt-detail">${detail}</span>` : ''}</span></div>`
 const back = (card, base, way, word = WORDS.takeBack) => html`<button class="tc-way" type="submit" form="card-form-${card.id}" formaction="${act(card, base, way)}">${word}</button>`
 
+/** Under the answers: whether the card's session can hear him, whether it has his answer (the receipt), and the step in its terminal. */
+function cardLink(card, model) {
+  const agent = model.byAgent.get(card.agent), link = linkOf(agent)
+  if (!link || card.status === 'shredded' || card.status === 'done' || card.settled) return ''
+  const n = agent.name, h = heardOf(card), mins = ms => `${Math.max(1, Math.round(ms / 60000))} min`
+  const state = link.state !== 'live' ? link : null
+  // Not answered yet: only what he should know before he answers (a session that hears on its next step is nothing to warn of).
+  if (!h) return state && state.state !== 'oncall' ? linkNote(state) : ''
+  if (h.heard == null) return state ? linkNote(state, { receipt: `Your answer waits for ${n}.` }) : ''   // a connector without receipts
+  const receipt = h.heard ? `${n} has your answer.` : h.late ? `${n} has not picked up your answer, sent ${mins(h.waiting)} ago.` : `Your answer is on its way to ${n}.`
+  if (state) return linkNote(state, { receipt })
+  return linkNote(h.late ? { state: 'unheard', fix: { say: 'Look at its terminal: type anything to wake it, or reconnect it with', code: '/mcp → trommi → Reconnect' } } : null, { receipt, sign: h.heard ? 'tick' : 'letter', tone: h.heard ? 'heard' : h.late ? 'unheard' : 'sent' })
+}
+/** What the field to write in says: who reads it, and when, if the session does not hear at once. */
+function askWords(card, model, asker) {
+  const link = linkOf(model.byAgent.get(card.agent))
+  if (link?.state === 'cut') return `${asker || 'The agent'} cannot hear you right now. What you write waits for it…`
+  if (link?.state === 'gone') return `${asker || 'The agent'} is gone. What you write waits for it…`
+  if (link?.state === 'asleep' || link?.state === 'oncall') return `Reaches ${asker || 'the agent'} on its next step…`
+  return asker ? `Ask ${asker} something, or say what is missing…` : 'Ask something, or say what is missing…'
+}
 /** The right column's answers (#card-answer-<id>): every option a button of the card's form, with its line for a note;
  *  then "or" Whatever. Or, once answered or handed back, what was said and the way back. */
 function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } = {}) {
@@ -169,7 +190,7 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
   const old = versionOf(card, version)
   // (The revised stamp stands with the options: a rewrite that brings new options brings its stamp along.)
   const stamp = card.revised ? html`<input type="hidden" name="revised" value="${card.revised}" form="${form}">` : ''
-  const box = inner => html`<div class="tc-answer" id="card-answer-${card.id}">${err}${stamp}${inner}</div>`
+  const box = inner => html`<div class="tc-answer" id="card-answer-${card.id}">${err}${stamp}${inner}${old ? '' : cardLink(card, model)}</div>`
   if (old) return box(html`<div class="tc-opts">${(old.options ?? []).map(o => still(o.label, plain(o.detail)))}</div><p class="tc-quiet">Version ${old.n} cannot be answered. <a data-nav href="${cardPath(card, base)}">The question as it stands now</a></p>`)
   if (card.status !== 'open') {
     const picked = card.choices?.length ? card.choices : [card.choice]
@@ -360,7 +381,7 @@ ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? htm
 ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}
 <span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>
 <div class="tc-ask"><div class="tc-chips" data-card-target="chips" hidden></div>
-<textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${asker ? `Ask ${asker} something, or say what is missing…` : 'Ask something, or say what is missing…'}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
+<textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${askWords(card, model, asker)}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
 <div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you" aria-label="Send to the agent">${sk('send')}</button></div></div>
 </form>
 </div>

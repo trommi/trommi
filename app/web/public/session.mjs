@@ -18,8 +18,8 @@
 //
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
-import { BASE, blockedOf, quietOf } from './app.mjs'
-import { Controller, WORDS, advisedLabels, agoSpan, assetGlyph, controller, copyText, deskRow, handSvg, html, kindOf, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
+import { BASE, UNHEARD_MS, blockedOf, linkOf, quietOf } from './app.mjs'
+import { Controller, WORDS, advisedLabels, agoSpan, assetGlyph, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
 const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const GROUP_GAP = 5 * 60000          // messages of one side closer than this stand as one run
@@ -261,9 +261,11 @@ function sessionWho(s, base) {
 /** The quiet line under the name: what the session is at, its model and machine, and "N files" (the drawer). */
 function sessionNow(s, base = '') {
   const a = s.agent
-  const words = a.online ? a.task || 'connected' : 'disconnected'
+  // (A session that does not hear at once says so here; one that does says what it is at.)
+  const link = linkOf(a)
+  const words = link && link.state !== 'live' ? link.word : a.online ? a.task || 'connected' : 'disconnected'
   const facts = [a.model, a.host].filter(Boolean).join(' · ')
-  return html`<p class="pane-now" id="session-now-${a.id}"><span>${words}</span>${facts ? html`<span class="caps">${facts}</span>` : ''}${filesChip(s, base)}</p>`
+  return html`<p class="pane-now" id="session-now-${a.id}"${link && link.state !== 'live' ? html` data-link="${link.state}" title="${link.line}"` : ''}><span>${words}</span>${facts ? html`<span class="caps">${facts}</span>` : ''}${filesChip(s, base)}</p>`
 }
 /** The filter beside the composer: one quiet icon that opens a small menu, All / Questions only (with the number that
  *  waits) / Files, the one in view ticked; a dot on the icon while a filter is on. A <details> (controller "pops" closes
@@ -323,12 +325,31 @@ const STARTERS = ['Where do we stand?', 'What do you need from me?', 'Sum up wha
 const empty = (s, base) => html`<div class="empty-chat"><span class="agent-mark agent-mark-lg">${ico('spark')}</span><h2>What should the agent start with?</h2><p>Tell it what to work on. When it needs something from you, it puts a question in front of you.</p><div class="empty-picks">${STARTERS.map(text => html`<a class="empty-pick" data-nav href="${sessionPath(s.id, base)}?say=${encodeURIComponent(text)}">${text}</a>`)}</div></div>`
 
 /** The composer: a plain form. The island "composer" adds Enter to send, the field that grows, the list of chosen files. */
+/** What the field says: when the session will read it, if not at once. */
+function composeWords(s) {
+  const link = linkOf(s.agent)
+  if (link?.state === 'cut') return 'It cannot hear you right now. What you write waits for it'
+  if (link?.state === 'gone') return 'It is gone. What you write waits for it'
+  if (link?.state === 'asleep' || link?.state === 'oncall') return 'Reaches the agent on its next step'
+  return 'Message to the agent'
+}
+/** Above the field: why the session does not hear (cut off, gone, not listening) and the step in its terminal, or that
+ *  his last message was not picked up. Nothing for a session that hears, also on its next step. Its id stays for the stream. */
+function sessionLink(s) {
+  const a = s.agent, link = linkOf(a), id = `session-link-${s.id}`
+  const mine = s.messages?.findLast?.(m => m.from === 'user' && Number.isSafeInteger(m.seq) && m.seq < Number.MAX_SAFE_INTEGER) ?? null
+  const waits = mine && a.heard_up_to != null && mine.seq > a.heard_up_to && Date.now() - (mine.ts ?? 0) >= UNHEARD_MS
+  const receipt = waits ? `${a.name} has not picked up your last message.` : ''
+  if (link && ['cut', 'gone', 'asleep'].includes(link.state)) return linkNote(link, { receipt, id })
+  if (waits) return linkNote({ state: 'unheard', fix: { say: 'Look at its terminal: type anything to wake it, or reconnect it with', code: '/mcp → trommi → Reconnect' } }, { receipt, sign: 'letter', tone: 'unheard', id })
+  return html`<aside class="link-note" id="${id}" hidden></aside>`
+}
 function composer(s, base, { text = '', focus = false } = {}) {
   return html`<form class="composer" id="composer-${s.id}" method="post" action="${sessionPath(s.id, base)}/message" enctype="multipart/form-data" data-controller="composer" data-composer-agent-value="${s.id}"${focus ? raw(' data-composer-focus-value="true"') : ''} data-action="turbo:submit-start->composer#start turbo:submit-end->composer#sent click->composer#aim dragover@window->composer#over dragleave@window->composer#left drop@window->composer#drop">
 <input type="hidden" name="stay" value="1">
 <div class="composer-files" data-composer-target="chips"></div>
 <label class="mic composer-clip" title="Attach a picture or a file">${sk('clip')}<input class="offscreen" type="file" name="files" multiple data-composer-target="picker" data-action="change->composer#paint" aria-label="Attach pictures or files (at most ${MAX_FILES})"></label>
-<textarea name="text" id="composer-field-${s.id}" rows="1" data-composer-target="field" data-action="input->composer#typed keydown->composer#keys paste->composer#paste focus->composer#paint" autocomplete="off" enterkeyhint="enter" placeholder="Message to the agent" aria-label="Message to ${s.agent.name}">${text}</textarea>
+<textarea name="text" id="composer-field-${s.id}" rows="1" data-composer-target="field" data-action="input->composer#typed keydown->composer#keys paste->composer#paste focus->composer#paint" autocomplete="off" enterkeyhint="enter" placeholder="${composeWords(s)}" aria-label="Message to ${s.agent.name}">${text}</textarea>
 <button class="send" type="submit" aria-label="Send" data-composer-target="send">${ico('send')}</button>
 </form>`
 }
@@ -437,7 +458,7 @@ function sessionMain(s, base, { mode = '', before = null, error = '', text = '',
 <header class="pane-title">${sessionWho(s, base)}${sessionNow(s, base)}</header>
 <section id="chat" aria-label="Conversation"><div class="chat-pane" data-agent="${s.id}" data-controller="log">
 <div class="chat-body">${body}</div>
-<div class="dock">${mode === 'questions' ? '' : html`<button type="button" class="jump" hidden data-log-target="jump" data-action="log#toEnd">${ico('down')}<span data-log-target="jumpText">To the end</span></button>`}${open}<div class="column session-compose">${sendError(s, error)}${composer(s, base, { text, focus })}${sessionFilters(s, base, mode)}</div></div>
+<div class="dock">${mode === 'questions' ? '' : html`<button type="button" class="jump" hidden data-log-target="jump" data-action="log#toEnd">${ico('down')}<span data-log-target="jumpText">To the end</span></button>`}${open}<div class="column session-compose">${sendError(s, error)}${sessionLink(s)}${composer(s, base, { text, focus })}${sessionFilters(s, base, mode)}</div></div>
 </div></section>
 ${filesDrawer(s, base, mode === 'files')}
 </main>`
@@ -583,7 +604,7 @@ export function register(t) {
         if (!p) {
           const s = current(id, m)
           if (!s) { out.set(id, null); continue }
-          p = { s, who: sessionWho(s, BASE), now: sessionNow(s, BASE), count: `${s.fresh.length} ${fileCount(s)}`, modes: {} }
+          p = { s, who: sessionWho(s, BASE), now: sessionNow(s, BASE), link: sessionLink(s), count: `${s.fresh.length} ${fileCount(s)}`, modes: {} }
           out.set(id, p)
         }
         if (p && !(mode in p.modes)) {
@@ -603,6 +624,7 @@ export function register(t) {
       const out = []
       if (t.differs(a.who, b.who)) out.push(t.stream('replace', `session-who-${id}`, b.who))
       if (t.differs(a.now, b.now)) out.push(t.stream('replace', `session-now-${id}`, b.now))
+      if (t.differs(a.link, b.link)) out.push(t.stream('replace', `session-link-${id}`, b.link))
       if (a.count !== b.count) out.push(t.stream('replace', `session-filters-${id}`, sessionFilters(b.s, BASE, mode)))
       if (mode === 'questions') { if (a.questions != null && t.differs(a.questions, b.questions)) out.push(t.stream('replace', `session-questions-${id}`, b.questions)) }
       else if (a.items && b.items) {

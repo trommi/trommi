@@ -199,6 +199,9 @@ const THUMB = [
   [[15.2, 13.2], [18.6, 13.3]],
   [[14.8, 16.4], [17.9, 16.6]],
 ]
+// The ear's rim and its inner fold (the link's signs below).
+const EAR_RIM = [[8.4, 13.8], [7.2, 10.2], [8, 6.4], [10.8, 4.2], [14.2, 4.2], [16.8, 6.4], [17.2, 9.8], [15.8, 12.8], [14.2, 15], [13.6, 18], [11.8, 20], [9.6, 19.6], [8.6, 17.8]]
+const EAR_FOLD = [[10.6, 11], [10.9, 8.4], [12.6, 7.2], [14.2, 8.4], [13.9, 10.6], [12.4, 12.2]]
 const SKETCH = {
   yes: THUMB,
   no: flip(THUMB),
@@ -323,6 +326,13 @@ const SKETCH = {
   wake: [[[6.2, 16.2], [7.6, 11.6], [12, 9.4], [16.4, 11.4], [17.8, 16.2]], [[3, 16.6], [12, 16.2], [21, 16.5]], [[12, 3.6], [12.1, 6.2]], [[5.4, 7.2], [7.2, 9]], [[18.6, 7], [16.9, 8.8]]],
   // a tick, made in one move: read, fine
   tick: [[[4.6, 12.8], [7.4, 15.2], [9.8, 18], [13, 12.4], [19.6, 5.6]]],
+  // a session's link: an ear (it hears), the ear and three dots (it hears on its next step), the ear struck through
+  // (it cannot hear), a plug pulled from its socket (it is gone), a letter (an answer on its way)
+  ear: [EAR_RIM, EAR_FOLD],
+  'ear-later': [EAR_RIM.map(([x, y]) => [x - 2.4, y - .6]), EAR_FOLD.map(([x, y]) => [x - 2.4, y - .6]), [[15.4, 19.2], [15.9, 19.3]], [[18.2, 19.2], [18.7, 19.3]], [[21, 19.2], [21.5, 19.3]]],
+  'ear-off': [EAR_RIM, EAR_FOLD, [[4.4, 20], [12.2, 12.2], [19.8, 4.2]]],
+  plug: [[[1.8, 12.2], [5.8, 12]], [[6, 8.4], [10.6, 8.2], [10.8, 15.8], [6, 15.6], [6.1, 8.6]], [[10.9, 10.2], [13.4, 10.1]], [[10.9, 14], [13.4, 13.9]], [[21.8, 8.2], [17.6, 8.4], [17.4, 15.8], [21.8, 15.6]]],
+  letter: [[[4.2, 7.2], [19.8, 7], [20, 17.6], [4.2, 17.8], [4.3, 7.4]], [[4.6, 7.8], [12, 13.4], [19.6, 7.6]]],
   // a small stack of cards: there are questions here
   stack: [[[4.6, 11], [12, 10.6], [19.4, 11], [19.7, 15.4], [19.4, 19.8], [12, 20.1], [4.6, 19.8], [4.3, 15.4], [4.7, 10.7]], [[5.8, 10.4], [6.6, 7.4], [12, 7], [17.4, 7.4], [18.2, 10.4]], [[7.6, 6.8], [8.6, 4.2], [12, 3.9], [15.4, 4.2], [16.4, 6.8]], [[8.6, 15.4], [12, 15.2], [15.4, 15.5]]],
   // a speech bubble with its tail: write to someone
@@ -2667,6 +2677,20 @@ export function badge(u, shown, base, tally = false) {
   const data = html` data-state="${blocked ? 'blocked' : 'open'}"${blocked ? html` data-why="${blocked.why}"` : ''}${!online ? raw(' data-offline') : ''}${busy ? raw(' data-working') : ''}`
   return html`<a class="agent-badge" data-nav href="${base}/s/${encodeURIComponent(u.id)}"${data} title="${u.agent.name}: ${state}" aria-label="${u.agent.name}: ${state}">${inner}</a>`
 }
+
+// ---- a session's link: whether it hears him (app.mjs linkOf, heardOf) ----
+// Nothing is drawn for a session that hears at once: the plain row IS "connected and listening". The sign is drawn with
+// the pen; urgency is the sign and its ink, never a stripe (app.css .link-cap, .link-note, .link-slip).
+/** The small line under a session's name in the sidebar: the sign and two or three words. unheard: answers it has not picked up. */
+export const linkCap = (link, unheard = 0) => {
+  if (link && link.state !== 'live') return html`<small class="link-cap" data-link="${link.state}" title="${link.line}">${sk(link.sign)}<span>${link.word}</span></small>`
+  if (!unheard) return ''
+  return html`<small class="link-cap" data-link="unheard" title="${unheard === 1 ? 'An answer of yours has' : `${unheard} answers of yours have`} not reached this session yet">${sk('letter')}<span>${unheard === 1 ? '1 answer waits' : `${unheard} answers wait`}</span></small>`
+}
+/** The note on a card's page and in a session: the receipt, the sentence about the session, and the way out as a line to type. */
+export const linkNote = (link, { receipt = '', sign = null, tone = null, id = '' } = {}) => html`<aside class="link-note"${id ? html` id="${id}"` : ''} data-link="${tone ?? link?.state ?? 'live'}" role="status">${sk(sign ?? link?.sign ?? 'ear')}<div>${receipt ? html`<p class="link-receipt">${receipt}</p>` : ''}${link?.line && link.state !== 'live' ? html`<p>${link.line}</p>` : ''}${link?.fix ? html`<p class="link-fix">${link.fix.say} <code>${link.fix.code}</code></p>` : ''}</div></aside>`
+/** The slip above the Desk's questions: one line per session that is cut off, with the step in its terminal. cut: [{ agent, link }]. */
+export const linkSlip = (cut, base) => html`<section class="link-slip" id="link-slip" role="alert" aria-label="Sessions that are cut off"${cut.length ? '' : raw(' hidden')}>${cut.map(({ agent, link }) => html`<p><a data-nav href="${base}/s/${encodeURIComponent(agent.id)}">${sk('ear-off')}<span><b>${agent.name}</b> is cut off${link.since ? ` since ${link.word.split(' · ')[1]}` : ''}: it cannot hear you and cannot write to you.</span></a><span class="link-fix">${link.fix.say} <code>${link.fix.code}</code></span></p>`)}</section>`
 
 // A quiet row "+ New agent" under the connected sessions (green while there is none): invite an agent. The same form the Devices page sends (POST /pair,
 // role agent, room.mjs), so it leads to the same invite page with the link for the Claude Code session.

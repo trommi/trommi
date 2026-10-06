@@ -321,6 +321,12 @@ button.agent-badge:active { scale: .95; }
   .agent-invite-go .sketch { width: 30px; height: 20px; }
   .agent-entry[aria-current="page"] { box-shadow: 0 0 0 1px var(--line-strong); }
   .agent-text small { display: none; }
+  /* (a session's link in the strip: the sign alone, beside the name; its words are the pill's title and the session's page) */
+  .agent-text:has(.link-cap) { display: flex; align-items: center; gap: 6px; }
+  .agent-text small.link-cap { display: flex; margin: 0; }
+  .agent-text small.link-cap span { display: none; }
+  .agent-text small.link-cap .sketch { width: 20px; height: 20px; }
+  .agent-row:has(.link-cap) .agent-entry { min-height: 44px; }
   .agent-avatar { width: 30px; height: 30px; border-radius: 50%; }
   .agent-text:has(strong + strong) { display: flex; gap: .35em; line-height: inherit; }
   .agent-text strong + strong { rotate: none; translate: none; }
