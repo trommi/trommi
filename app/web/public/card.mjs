@@ -38,7 +38,10 @@ const versionOf = (card, n) => (n != null && n < liveVersion(card) ? card.versio
 /** -> { shown: the text for the card (markdown), more: whether the comments hold more } */
 function fitText(text) {
   const source = String(text ?? '')
-  const prose = source.replace(/```[\s\S]*?```/g, '\n\n').split(/\n{2,}/).map(p => p.trim()).filter(p => p && !/^\s*\|.*\|\s*$/m.test(p))
+  // (where a code block or a table stood, one quiet line says so: a sentence that ends in a colon is not left hanging)
+  const MOVED = { code: '*↓ code, in the whole text below*', table: '*↓ table, in the whole text below*' }
+  const parts = source.replace(/```[\s\S]*?```/g, `\n\n${MOVED.code}\n\n`).split(/\n{2,}/).map(p => p.trim()).filter(Boolean).map(p => (/^\s*\|.*\|\s*$/m.test(p) ? MOVED.table : p))
+  const prose = parts.filter((p, i) => !(Object.values(MOVED).includes(p) && Object.values(MOVED).includes(parts[i - 1])))
   return { shown: prose.join('\n\n'), more: /```|^\s*\|/m.test(source) }
 }
 /** What was said about one card (its events and its comments), in order: the board state's per-card list where it
@@ -300,9 +303,23 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   const step = (to, cls, label, art) => (to ? html`<a class="tc-rail ${cls}" data-nav href="${cardPath(to, self)}${walk ? '?walk=1' : ''}" aria-label="${label}: ${to.title}" title="${label}: ${to.title}">${art}</a>` : '')
   const form = `card-form-${card.id}`
   const asker = model.byAgent.get(card.agent)?.name ?? ''
+  // The tray: card and talk lie on one drawn desk pad in the session's pale tone (four hatched corners). When the card
+  // has scrolled out of view a slim strip of its paper stays under the top edge: the title, the answers as chips (the
+  // card's own buttons again: the same form, the same addresses), the duck, What??, the reverse card, Later's tag.
+  const corner = cls => raw(`<svg class="tc-corner ${cls}" viewBox="0 0 64 64" aria-hidden="true"><path d="M1.5 1.5 Q30 2.4 61 1.8 Q32 31 2.2 61 Q1 30 1.5 1.5 Z"/><path d="M8 40 L40 8 M8 26 L26 8 M8 13 L13 8" class="hatch"/></svg>`)
+  const mini = (cls, way, tip, art) => html`<button class="tc-mini ${cls}" type="submit" form="${form}" formaction="${act(card, base, way)}" title="${tip}" aria-label="${tip}">${art}</button>`
+  const jump = html`<button class="tc-chip is-jump" type="button" data-action="card#toAnswers">To the answers ↑</button>`
+  const few = open && card.kind === 'decision' && !card.multiple && card.options.length <= 4
+  const strip = html`<div class="tc-bar" aria-label="This question, in short"><div class="tc-bar-in"><b class="tc-bar-title">${card.title}</b>
+${few ? html`<span class="tc-bar-chips">${card.options.map(o => html`<button class="tc-chip" type="submit" form="${form}" formaction="${act(card, base, 'decide')}" name="key" value="${o.key}" title="${o.label}">${o.label}</button>`)}</span>` : ''}${jump}
+${open && card.kind === 'decision' ? html`<i class="tc-bar-sep"></i>${mini('is-duck', 'trust', 'I don’t give a duck', sk('duck'))}${mini('is-what', 'what', 'What?? Explain this to me', sk('what'))}${mini('is-reverse', 'revise', `Reverse: back to ${asker || 'the agent'} for rework, with the comments`, sk('reverse'))}` : open && card.kind === 'info' ? html`<i class="tc-bar-sep"></i>${mini('is-what', 'what', 'What?? Explain this to me', sk('what'))}${mini('is-ack', 'close', `${WORDS.ack}: read, close it`, sk('tick'))}` : ''}
+${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-bar-later" method="post" action="${base}/cards/batch"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
+</div></div>`
+  const tone = model.byAgent.get(card.agent)?.hue
+  const pad = html`<div class="tc-pad"${tone != null ? html` style="--hue:${tone}"` : ''}>${corner('tl')}${corner('tr')}${corner('bl')}${corner('br')}${strip}`
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
   return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
-<div class="tc-frame">
+${pad}<div class="tc-frame">
 <nav class="tc-rails" aria-label="Around this question">
 <a class="tc-rail tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${CROSS}</a>
 ${place ? html`${step(place.prev, 'is-prev', 'The question before', BACK)}${step(place.next, 'is-next', 'The next question', FORTH)}` : ''}
@@ -312,7 +329,7 @@ ${copyButton(card)}
 ${open && card.kind !== 'permission' ? more('is-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw it away unanswered`, act(card, base, 'shred')) : ''}
 </div></details>
 </nav>
-<article class="tc-card" id="card-${card.id}" data-id="${card.id}" data-kind="${card.kind}" data-urgency="${card.urgency}" aria-labelledby="card-title-${card.id}"${media ? raw(' data-pictures') : ''}>
+<article class="tc-card" id="card-${card.id}" style="--hue:162" data-id="${card.id}" data-kind="${card.kind}" data-urgency="${card.urgency}" aria-labelledby="card-title-${card.id}"${media ? raw(' data-pictures') : ''}>
 ${cardLeft(card, model, self, { version, pic: shownPic, query })}
 <div class="tc-right">
 ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
@@ -329,6 +346,7 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${asker ? `Ask ${asker} something, or say what is missing…` : 'Ask something, or say what is missing…'}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
 <div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you" aria-label="Send to the agent">${sk('send')}</button></div></div>
 </form>
+</div>
 </main>`
 }
 
@@ -691,6 +709,10 @@ controller('card', class extends Controller {
     this.grow()
     if (this.hasMarksTarget) this.mountMarks()
     this.link = this.link.bind(this)
+    this.placed = this.placed.bind(this)
+    addEventListener('resize', this.placed)
+    this.element.addEventListener('scroll', this.placed, { passive: true })
+    this.placed()
     addEventListener('resize', this.link)
     // (a finger's swipe across the card: the question before, the next; the round arrows are not there on a phone)
     this.element.addEventListener('touchstart', e => { const t = e.touches[0]; this.swipe = e.touches.length === 1 && e.target.closest?.('.tc-card') ? { x: t.clientX, y: t.clientY } : null }, { passive: true })
@@ -704,6 +726,7 @@ controller('card', class extends Controller {
   }
   disconnect() {
     removeEventListener('resize', this.link)
+    removeEventListener('resize', this.placed)
     this.element.removeEventListener('scroll', this.link, { capture: true })
     clearTimeout(this.timer)
   }
@@ -813,6 +836,16 @@ controller('card', class extends Controller {
     tag.animate([{ translate: `0 ${tag.style.getPropertyValue('--pull') || '0px'}` }, { translate: `0 ${far + 120}px` }], how)
     card.animate([{ translate: `0 ${from}px` }, { translate: `0 ${far}px`, rotate: '1.2deg' }], how).finished.then(go, go)
   }
+  // Where the card stands against the window: gone (out of view above: the strip comes), and its foot passed (the
+  // field to write in may stick to the window's foot without lying on the card).
+  placed() {
+    const card = this.element.querySelector('.tc-card')
+    if (!card) return
+    const box = this.element.getBoundingClientRect(), r = card.getBoundingClientRect()
+    this.element.classList.toggle('card-gone', r.bottom < box.top + 90)
+    this.element.classList.toggle('foot-passed', r.bottom < box.bottom - 96)
+  }
+  toAnswers() { this.element.querySelector('.tc-card')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }
   // (another picture came into the frame: it is the one that stands now)
   framed() { this.stood = null; this.link() }
 
