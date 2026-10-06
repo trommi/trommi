@@ -196,7 +196,8 @@ turbo-frame.tc-media { flex: none; display: flex; flex-direction: column; gap: 8
 .tc-opts { display: grid; gap: 8px; }
 .tc-opt { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 10px 34px 10px 14px; border: 0; border-radius: var(--r-md); background: var(--tone-wash, var(--sunken)); box-shadow: inset 0 0 0 1px var(--tone-edge, var(--line)); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
 .tc-opt:hover { box-shadow: inset 0 0 0 2px var(--tone-mid, var(--accent)); }
-.tc-opt:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+/* the answer the keyboard stands on (↑ ↓, ui.mjs walkAnswers): the ring of the option under the pointer, in ink, and a lift */
+:is(.tc-opt, .tc-tile):focus-visible, label.tc-opt:has(input:focus-visible) { outline: 2px solid var(--fg); outline-offset: 2px; box-shadow: inset 0 0 0 2px var(--fg); translate: -1px -2px; }
 .tc-opt.is-still { cursor: default; box-shadow: inset 0 0 0 1px var(--line); background: var(--sunken); }
 .tc-opt.is-picked { box-shadow: inset 0 0 0 2px var(--accent); }
 .tc-opt.is-picked .tc-opt-label { color: var(--accent); }

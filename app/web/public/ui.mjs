@@ -2090,7 +2090,11 @@ const LAYOUT = [
     { id: 'list.leave', keys: ['Escape'], does: 'drop the mark' },
   ] },
   { scope: 'card', title: 'An opened question', keys: [
-    { id: 'card.send', keys: ['Enter'], does: 'send, where several answers are allowed' },
+    { id: 'ans.down', keys: ['ArrowDown'], does: 'through the answers: the options, the duck, What??, Reverse (first press: the first, or the advised one)', repeat: true },
+    { id: 'ans.up', keys: ['ArrowUp'], does: 'back through the answers (first press: the last)', repeat: true },
+    { id: 'ans.right', keys: ['ArrowRight'], does: 'on What??: over to Reverse' },
+    { id: 'ans.left', keys: ['ArrowLeft'], does: 'on Reverse: over to What??' },
+    { id: 'card.send', keys: ['Enter'], does: 'take the marked answer; tick it where several are allowed, or send when none is marked' },
     { id: 'card.later', keys: ['l', 's'], does: 'Later' },
     { id: 'card.trust', keys: ['r'], does: 'Duck it: the agent decides' },
     { id: 'card.revise', keys: ['b'], does: 'Reverse: back to the agent for rework, with the comments' },
@@ -2105,6 +2109,9 @@ const LAYOUT = [
     { id: 'card.leave', keys: ['Escape'], does: 'leave a field, then back to the Desk', typing: true },
   ] },
   { scope: 'picture', title: 'A picture', keys: [
+    { id: 'ans.down', keys: ['ArrowDown'], does: 'through the answers beside the picture', repeat: true },
+    { id: 'ans.up', keys: ['ArrowUp'], does: 'back through the answers', repeat: true },
+    { id: 'card.send', keys: ['Enter'], does: 'take the marked answer' },
     { id: 'pic.next', keys: ['ArrowRight', 'j'], does: 'next picture', repeat: true },
     { id: 'pic.prev', keys: ['ArrowLeft', 'k'], does: 'previous picture', repeat: true },
     { id: 'pic.leave', keys: ['Escape'], does: 'back to the question' },
@@ -2237,6 +2244,15 @@ function start(signal) {
   }
   /** Press what the hub rendered: a button of a form, or a link. false: there is none here. */
   const press = node => { if (!node || node.disabled) return false; node.click() }
+  const ANSWERS = '.tc-answer .tc-opts > button.tc-opt, .tc-answer .tc-opts > label.tc-opt > input, .tc-answer .tc-whatever, .tc-answer .tc-info-ways .tc-tile, .tc-answer .tc-wtf, .tc-answer .tc-reverse'
+  const markAnswer = node => { if (!node) return false; node.focus({ preventScroll: true, focusVisible: true }); (node.closest('.tc-opt') ?? node).scrollIntoView({ block: 'nearest' }) }
+  function walkAnswers(step) {
+    const list = [...document.querySelectorAll(ANSWERS)].filter(n => !n.disabled && n.getClientRects().length)
+    if (!list.length) return false
+    const at = list.indexOf(document.activeElement)
+    if (at >= 0) return markAnswer(list[(at + step + list.length) % list.length])
+    return markAnswer(step > 0 ? list.find(n => n.closest('.is-advised')) ?? list[0] : list.at(-1))
+  }
 
   // ---- the mark on the Desk: which row the keyboard is on ----
   // Kept by the card's id (and its place, for when that card leaves), so it holds across stream updates and page changes.
@@ -2338,8 +2354,20 @@ function start(signal) {
     'list.takeback': () => (current()?.matches('.inbox-done') ? inRow('.inbox-takeback') : backNote()),
     'list.leave': () => { if (!current()) return false; setMark(null); document.activeElement?.blur?.() },
 
-    'card.send': () => press($('.tc-answer .tc-send-many')),
-    'card.later': () => press($('.tc-more-item[formaction$="/snooze"]')),
+    // The arrows walk the answers of a card (its page, and beside a large picture): the options in order, the duck,
+    // What??, the reverse card. Nothing is marked when a card opens. Enter on a marked button is the button's own;
+    // on a marked tick-box it ticks; with nothing marked it sends where several answers are allowed.
+    'ans.down': () => walkAnswers(1),
+    'ans.up': () => walkAnswers(-1),
+    'ans.right': () => (document.activeElement?.matches?.('.tc-answer .tc-wtf') ? markAnswer($('.tc-answer .tc-reverse')) : false),
+    'ans.left': () => (document.activeElement?.matches?.('.tc-answer .tc-reverse') ? markAnswer($('.tc-answer .tc-wtf')) : false),
+    'card.send': () => {
+      const at = document.activeElement
+      if (at?.matches?.('.tc-answer .tc-opt input[type="checkbox"]')) return at.click()
+      if (at?.closest?.('.tc-answer') && at.matches('button')) return false
+      return press($('.tc-answer .tc-send-many'))
+    },
+    'card.later': () => press($('.tc-later .sel-later, .t-picture-later .sel-later')),
     'card.trust': () => press($('.tc-answer .tc-whatever')),
     'card.revise': () => press($('.tc-answer .tc-reverse')),   // the reverse card: handed back at once
     'card.what': () => press($('.tc-answer .tc-wtf, .tc-answer .tc-tile.is-what, .tc-more-item.is-what')),
