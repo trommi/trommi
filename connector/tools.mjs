@@ -840,7 +840,9 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     await client.setStatus({ profile: rest }, { session_id: sid })
   }
   const into = sid => (sid ? { session_id: sid } : {})
-  const myCards = () => [...model().cards.values()].filter(c => c.agent_device_id === me()).sort((a, b) => a.first_envelope_number - b.first_envelope_number)
+  // An object is this agent's when it holds it: it created it, or it continues the session it belongs to (shared/model.mjs holderOf).
+  const mine = o => !!o && (client.holds ? client.holds(o) : o.agent_device_id === me())
+  const myCards = () => [...model().cards.values()].filter(c => mine(c)).sort((a, b) => a.first_envelope_number - b.first_envelope_number)
 
   function findCard(ref) {
     const id = String(ref ?? '').trim().toLowerCase()
@@ -990,7 +992,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
 
   const SHARE_MAX_HOURS = 30 * 24
   function ownAsset(id) {
-    const asset = [...model().published.values()].find(p => p.agent_device_id === me() && p.object_id === String(id ?? ''))
+    const asset = [...model().published.values()].find(p => mine(p) && p.object_id === String(id ?? ''))
     if (!asset) throw new Error(`no asset ${id}; list_assets shows yours`)
     return asset
   }
@@ -1167,7 +1169,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         return `published as ${id}: "${title}" is shown in your conversation on the board, end-to-end encrypted; members open it in the Trommi app. For someone outside the board: share_asset.`
       }
       case 'list_assets':
-        return JSON.stringify([...model().published.values()].filter(p => p.agent_device_id === me() && p.object_state !== 'closed').map(p => ({
+        return JSON.stringify([...model().published.values()].filter(p => mine(p) && p.object_state !== 'closed').map(p => ({
           id: p.object_id, title: p.title, note: p.note ?? '', state: p.object_state,
           type: p.attachments?.[0]?.asset_type ?? assetTypeOf(p.attachments?.[0]?.media_type ?? ''), size: p.attachments?.[0]?.total_size ?? null,
           released_until: Math.max(0, ...(state.shares[p.object_id] ?? []).map(x => x.expires_at)) || null,
@@ -1249,9 +1251,9 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         // Only a message counts as chat; strokes and other timeline items are never commands (README R1/R4).
         if (c.content_type && c.content_type !== 'message') return log(`timeline item ${c.content_type} not relayed`)
         // A human's present_card on a card it had handed back is "take back": the agent need not rework it (as today's board).
-        if (c.present_card && card?.agent_device_id === me()) return send(`The human took "${title}" back; there is no need to rework or explain it.`, { kind: 'handback_withdrawn', card_id: card.object_id })
+        if (c.present_card && mine(card)) return send(`The human took "${title}" back; there is no need to rework or explain it.`, { kind: 'handback_withdrawn', card_id: card.object_id })
         const got = await download(c.attachments)
-        const about = card && card.agent_device_id === me() && card.object_state === 'open' ? { card_id: card.object_id } : {}
+        const about = card && mine(card) && card.object_state === 'open' ? { card_id: card.object_id } : {}
         const copied = listArg(c.copied_cards, 'copied_cards')
         const marks = listArg(c.marks, 'marks')
         const text = String(c.text ?? '').trim()
