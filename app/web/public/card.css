@@ -130,36 +130,31 @@ span.tc-step-card { opacity: .3; }
 .tc-more-item.is-shred { color: var(--urg-high); }
 
 /* ---- the card: fixed height, two columns ---- */
-.tc-card { position: relative; isolation: isolate; height: var(--card-h); display: grid; grid-template-columns: minmax(0, 1fr) var(--right); border-radius: var(--r-xl); background: var(--sunken); box-shadow: 0 0 0 1px var(--line); overflow: hidden; }
-.tc-left { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-6) var(--s-6) var(--s-4) var(--s-8); overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+.tc-card { position: relative; isolation: isolate; min-height: var(--card-h); display: grid; grid-template-columns: minmax(0, 1fr) var(--right); border-radius: var(--r-xl); background: var(--sunken); box-shadow: 0 0 0 1px var(--line); overflow: clip; }
+/* (the card is as long as its content and the page scrolls; the answers' ground runs down the whole card, the answers
+   themselves stay in view: .tc-right below) */
+.tc-card::after { content: ""; position: absolute; z-index: -1; top: 0; bottom: 0; right: 0; width: var(--right); background: var(--surface); box-shadow: -1px 0 0 var(--line); }
+.tc-left { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-6) var(--s-6) var(--s-4) var(--s-8); }
 .tc-lead { flex: none; display: grid; gap: var(--s-2); min-width: 0; }
 .tc-knock { justify-self: start; }
-.tc-title { margin: 0; font: 800 var(--t-2xl)/1.12 var(--display); letter-spacing: -.01em; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tc-title { margin: 0; font: 800 var(--t-2xl)/1.12 var(--display); letter-spacing: -.01em; overflow-wrap: anywhere; }
 .tc-meta { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; color: var(--muted); font: 500 var(--t-xs)/1.4 var(--font); }
 .tc-meta a { color: inherit; text-decoration: none; }
 .tc-meta a:hover { color: var(--fg); text-decoration: underline; }
 .tc-from { display: inline-flex; align-items: center; gap: 5px; }
 .tc-from .doodle { width: 18px; height: 18px; fill: none; stroke: var(--tone-pen); stroke-width: 2.2; stroke-linecap: round; }
-.tc-text { font: 400 var(--t-md)/1.55 var(--font); color: var(--fg); max-height: calc(1.55em * 5); overflow: hidden; }
+.tc-text { font: 400 var(--t-md)/1.55 var(--font); color: var(--fg); max-width: 78ch; }
 .tc-text .rich > :first-child { margin-top: 0; }
 .tc-text .rich > :last-child { margin-bottom: 0; }
 .tc-more-text { justify-self: start; color: var(--accent); font: 600 var(--t-xs)/1 var(--font); text-decoration: none; }
 .tc-more-text:hover { text-decoration: underline; }
 
-/* the picture: at the column's width, its top in a window that takes what the words leave of the card's height; "+"
-   shows it whole right here (the left column scrolls); the gallery is another, named way */
-turbo-frame.tc-media { flex: 1 1 0; min-height: 190px; display: flex; flex-direction: column; gap: 8px; }
-turbo-frame.tc-media:has(.is-large) { flex: none; }
-.tc-stage { position: relative; flex: 0 1 auto; min-height: 0; align-self: flex-start; max-width: 100%; min-width: 96px; overflow: hidden; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line); background: var(--surface); }
-.tc-stage.is-large { flex: none; }
-.tc-stage.is-video { overflow: visible; box-shadow: none; background: none; flex: 1 1 0; }
+/* the picture: whole, at the column's width; a very tall one shows its top (the gallery has all of it) */
+turbo-frame.tc-media { flex: none; display: flex; flex-direction: column; gap: 8px; }
+.tc-stage { position: relative; flex: none; max-height: 70vh; align-self: flex-start; max-width: 100%; min-width: 96px; overflow: hidden; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line); background: var(--surface); }
+.tc-stage.is-video { overflow: visible; box-shadow: none; background: none; height: min(46vh, 360px); max-height: none; }
 .tc-figure { position: relative; display: block; max-width: 100%; cursor: zoom-in; }
-.tc-stage.is-large .tc-figure { cursor: zoom-out; }
 .tc-figure img { display: block; width: 100%; max-width: 100%; height: auto; }
-.tc-zoom { position: absolute; right: 8px; top: 8px; z-index: 2; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1.4px solid var(--fg); border-radius: 46% 54% 50% 50% / 52% 48% 54% 46%; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-sm); cursor: pointer; }
-.tc-zoom:hover { background: var(--sunken); }
-.tc-zoom > .tc-icon + .tc-icon, .tc-zoom[aria-pressed="true"] > .tc-icon:first-child { display: none; }
-.tc-zoom[aria-pressed="true"] > .tc-icon + .tc-icon { display: block; }
 .tc-step { position: absolute; top: 50%; translate: 0 -50%; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-md); text-decoration: none; }
 .tc-stage .tc-step { top: min(50%, 130px); }
 .tc-stage .tc-step.is-prev { left: 6px; }
@@ -195,8 +190,9 @@ turbo-frame.tc-media:has(.is-large) { flex: none; }
 .focus-arrow { position: absolute; left: 0; top: 0; width: 1px; height: 1px; z-index: 3; overflow: visible; pointer-events: none; fill: none; stroke: var(--fg); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* the right column: the options (they scroll inside the card when many), "or" the duck, the field */
-.tc-right { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-5) var(--s-5) var(--s-4); background: var(--surface); box-shadow: -1px 0 0 var(--line); }
-.tc-answer { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--s-3); overflow-y: auto; scrollbar-width: thin; margin: -4px; padding: 4px; }
+/* (the column is as tall as the short card and stays in view while a long card scrolls by; the pair at its foot) */
+.tc-right { position: sticky; top: 0; align-self: start; box-sizing: border-box; min-width: 0; min-height: var(--card-h); display: flex; flex-direction: column; gap: var(--s-3); padding: var(--s-5) var(--s-5) var(--s-4); }
+.tc-answer { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--s-3); }
 .tc-opts { display: grid; gap: 8px; }
 .tc-opt { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 10px 34px 10px 14px; border: 0; border-radius: var(--r-md); background: var(--tone-wash, var(--sunken)); box-shadow: inset 0 0 0 1px var(--tone-edge, var(--line)); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
 .tc-opt:hover { box-shadow: inset 0 0 0 2px var(--tone-mid, var(--accent)); }
@@ -309,15 +305,10 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 
 /* ---- a phone, or a narrow window: one column ---- */
 @container cardpage (max-width: 760px) {
-  .tc-card { height: auto; grid-template-columns: minmax(0, 1fr); }
-  .tc-left { padding: var(--s-5) var(--s-5) var(--s-3); overflow: visible; }
-  turbo-frame.tc-media { flex: none; }
-  .tc-stage { max-height: 260px; flex: none; }
-  .tc-stage.is-large { max-height: none; }
-  .tc-card[data-kind="info"] .tc-stage:not(.is-large) { max-height: 180px; }
-  .tc-right { box-shadow: 0 -1px 0 var(--line); padding: var(--s-4); }
-  .tc-answer { overflow: visible; }
-  .tc-text { max-height: none; }
+  .tc-card { min-height: 0; grid-template-columns: minmax(0, 1fr); }
+  .tc-card::after { content: none; }
+  .tc-left { padding: var(--s-5) var(--s-5) var(--s-3); }
+  .tc-right { position: static; min-height: 0; background: var(--surface); box-shadow: 0 -1px 0 var(--line); padding: var(--s-4); }
   .tc-count { display: none; }
 }
 @media (min-width: 861px) { #cardpage { grid-row: 1; }
@@ -445,7 +436,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-chat .tc-chips { grid-column: 1 / -1; }
 .tc-chat .tc-field { min-height: 32px; padding: 6px 0; font-size: var(--t-md); }
 .tc-chat .tc-ask-row { gap: 2px; }
-.tc-right { overflow: hidden; }/* The viewer of something a session published (session.mjs assetPage, /s/<id>/a/<object>): the bar of the
+/* The viewer of something a session published (session.mjs assetPage, /s/<id>/a/<object>): the bar of the
    picture page (turbo.css .t-picture), the note under it, the thing as large as the page lets it be. Sober: what an
    agent made is shown as it is, nothing drawn around it. */
 .t-picture.as-view { grid-template-rows: auto auto minmax(0, 1fr); }
