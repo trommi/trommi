@@ -806,6 +806,87 @@ test('loss watch: an agent with running work whose stream stays gone gets ONE pu
   fake.close()
 })
 
+test('link report: served with the device list and announced at once; one push for cut off, for a loss while working and for a cut-off folder session; none for a session that ended', async () => {
+  const received = []
+  const fake = http.createServer((req, res) => { req.on('data', () => {}); req.on('end', () => { received.push(req.url); res.writeHead(201).end() }) })
+  await new Promise(ok2 => fake.listen(0, '127.0.0.1', ok2))
+  const pushHost = `127.0.0.1:${fake.address().port}`
+  const w = await world({ pushHosts: [pushHost], lossMs: 300 })
+  const sub = () => { const e = crypto.createECDH('prime256v1'); return { p256dh: e.generateKeys().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') } }
+  await ok(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.phone.token, body: { subscription: { endpoint: `http://${pushHost}/push/phone`, keys: sub() } } })
+  const lease = await leaseHeader(w, w.agent)
+  const base = { hears: 'oncall', attached: true, last_call_at: Date.now() - 1000, working: false, since: Date.now() - 5000 }
+  const report = (more = {}) => ok(w, 'POST', `${R(w)}/agent_link`, { token: w.agent.token, body: { ...base, ...more }, headers: lease })
+  const agentRow = async () => (await ok(w, 'GET', `${R(w)}/devices`, { token: w.phone.token })).devices.find(d => d.device_role === 'agent')
+  const agentId = hex(w.agent.device.id)
+  // Who may report, and what.
+  await refused(w, 'POST', `${R(w)}/agent_link`, { token: w.phone.token, body: base }, 403, 'forbidden')
+  await refused(w, 'POST', `${R(w)}/agent_link`, { token: w.agent.token, body: base, headers: { 'x-lease-generation': '999' } }, 409, 'lease-lost')
+  for (const bad of [{ hears: 'maybe' }, { last_call_at: 'now' }, { working: 'yes' }, { exit: { reason: 'Stdin Closed', claude: 'alive' } }, { exit: { reason: 'stdin', claude: 'perhaps' } }, { cut_since: -1 }]) {
+    await refused(w, 'POST', `${R(w)}/agent_link`, { token: w.agent.token, body: { ...base, ...bad }, headers: lease }, 400, 'bad-argument')
+  }
+  assert.equal((await agentRow()).link, undefined, 'no report yet: no link')
+  // A change reaches every stream of the room at once, and only a change.
+  const phone = await openStream(w, w.phone)
+  let s = await openStream(w, w.agent)
+  await phone.until(e => e.event === 'presence' && e.data.device_id === agentId && e.data.is_online === true, 'the agent came online')
+  await report()
+  const said = await phone.until(e => e.event === 'presence' && e.data.link?.hears === 'oncall', 'the link report')
+  assert.deepEqual(said.data, { device_id: agentId, is_online: true, link: { ...base, cut_since: null } })
+  assert.deepEqual((await agentRow()).link, { ...base, cut_since: null })
+  const n = phone.events.filter(e => e.event === 'presence').length
+  await report(); await sleep(50)
+  assert.equal(phone.events.filter(e => e.event === 'presence').length, n, 'the same report is not announced again')
+  // Unknown fields are dropped.
+  await report({ secret: 'x', hears: 'live' })
+  assert.equal('secret' in (await agentRow()).link, false)
+  // A session that says goodbye, ends with its Claude Code and had nothing running: no push.
+  await report({ exit: { reason: 'stdin', claude: 'gone' } })
+  s.close()
+  const off = await phone.until(e => e.event === 'presence' && e.data.is_online === false, 'the agent went offline')
+  assert.ok(off.data.offline_since > Date.now() - 5000); assert.equal(off.data.link.exit.claude, 'gone')
+  await sleep(600)
+  assert.equal(received.length, 0, 'ended by the human: quiet')
+  // The connector is gone and its Claude Code lives on: cut off, one push, also when the word comes after the stream closed.
+  s = await openStream(w, w.agent)
+  assert.equal((await agentRow()).link.exit, undefined, 'a new stream forgets the earlier last word')
+  await report({ exit: { reason: 'stdin', claude: 'checking' } })
+  s.close(); await sleep(100)
+  await report({ exit: { reason: 'stdin', claude: 'alive' } })
+  for (let i = 0; i < 50 && !received.length; i++) await sleep(20)
+  assert.deepEqual(received, ['/push/phone'])
+  await sleep(500)
+  assert.equal(received.length, 1, 'once')
+  assert.equal((await agentRow()).link.exit.claude, 'alive')
+  // Gone without a word while it had running work: one push; back in time: none.
+  s = await openStream(w, w.agent)
+  await report({ working: true })
+  s.close(); await sleep(100)
+  s = await openStream(w, w.agent); await sleep(500)
+  assert.equal(received.length, 1, 'back in time')
+  s.close()
+  for (let i = 0; i < 50 && received.length < 2; i++) await sleep(20)
+  assert.equal(received.length, 2)
+  // Gone without a word and without work: nothing.
+  s = await openStream(w, w.agent)
+  await report({ working: false })
+  s.close(); await sleep(600)
+  assert.equal(received.length, 2)
+  // A session of its folder is cut off (the folder watch): one push per value, while it is connected.
+  s = await openStream(w, w.agent)
+  const cut_since = Date.now() - 30000
+  await report({ cut_since }); await report({ cut_since, last_call_at: Date.now() })
+  for (let i = 0; i < 50 && received.length < 3; i++) await sleep(20)
+  await sleep(100)
+  assert.equal(received.length, 3, 'once per cut')
+  await report({ cut_since: null }); await report({ cut_since: cut_since + 1 })
+  for (let i = 0; i < 50 && received.length < 4; i++) await sleep(20)
+  assert.equal(received.length, 4, 'a new cut pushes again')
+  s.close(); phone.close()
+  await w.hub.close()
+  fake.close()
+})
+
 test('retention: an answered card and its chat lose their bodies 30 days after the hub received the answer, its attachments go; open ones stay; derived tables rebuild', async () => {
   let clock = Date.now()
   const w = await world({ now: () => clock })
