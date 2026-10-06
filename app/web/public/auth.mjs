@@ -112,7 +112,7 @@ ${raw(L.gone)}
     // into the model's prompt), 2 start claude, 3 waiting: the line ticks itself when the agent is in, and shows who came.
     const CLAMP = raw('<svg class="clip-clamp" viewBox="0 0 120 44" aria-hidden="true"><path class="clamp-plate" d="M22 40 Q21 25 26 22 L43 21 Q46 9 60 8 Q74 9 77 21 L94 22 Q99 25 98 40 Z"/><path d="M52 21 Q53 15 60 14.6 Q67 15 68 21"/><path d="M30 31 Q60 29.4 90 31"/></svg>')
     const TICKBOX = raw('<svg class="clip-box" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 5.2 Q12 4.4 19.3 4.9 Q20 12 19.5 19.2 Q12 20 4.9 19.4 Q4.2 12 4.6 5.2 Z"/><path class="clip-tick" d="M7.4 12.6 Q9.6 14.6 10.9 16.6 Q14.6 10.2 20.6 5.2"/></svg>')
-    const copyLine = (text, word, small = false) => html`<button type="button" class="clip-copy${small ? ' is-small' : ''}" data-action="clip#copy" data-clip-text-param="${text}" title="Copy"><code>${text}</code><span class="clip-copy-word" data-word="${word}">${word}</span></button>`
+    const copyLine = (text, word, small = false) => html`<button type="button" class="clip-copy${small ? ' is-small' : ''}" data-action="invite-clip#copy" data-invite-clip-text-param="${text}" title="Copy"><code>${text}</code><span class="clip-copy-word" data-word="${word}">${word}</span></button>`
     const step = (state, inner) => html`<li class="clip-step${state ? ` is-${state}` : ''}">${TICKBOX}<div class="clip-step-body">${inner}</div></li>`
     const clipboard = (inv, error = '') => {
       const state = inv.invite_state === 'open' && inv.expires_at <= Date.now() ? 'expired' : inv.invite_state, open = state === 'open', joined = state === 'joined', coming = state === 'adding' || state === 'confirm_code'
@@ -127,9 +127,9 @@ ${raw(L.gone)}
         : html`<b>Waiting for the agent…</b>`
       const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
         : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent"><button type="submit">New link</button></form>`
-        : html`<p class="clip-note">The link works once · <span data-clip-target="left">${Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))} more min.</span></p>`
+        : html`<p class="clip-note">The link works once · <span data-invite-clip-target="left">${Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))} more min.</span></p>`
       return html`<main id="room" class="room room-clip" aria-label="Invite an agent"><div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">
-<section class="clip" data-controller="clip" data-clip-until-value="${open ? inv.expires_at : 0}">${CLAMP}
+<section class="clip" data-controller="invite-clip" data-invite-clip-until-value="${open ? inv.expires_at : 0}">${CLAMP}
 <h2>Invite an agent</h2><p class="clip-sub">On a computer with Claude Code and Node 22+.</p>
 <ol class="clip-list">
 ${step(done, html`<b>Copy this into a terminal in your project</b>${open ? copyLine(`curl -fsSL ${location.origin}/connect | sh -s '${inv.link}'`, 'Copy') : ''}`)}
@@ -181,7 +181,7 @@ ${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
       t.redirect(res, `/pair/${match[1]}`)
     })
     t.live('invite', {
-      take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); handOver(inv); return [id, String(inviteMain(inv)).replace(/\d+ more min\./g, '').replace(/data-clip-until-value="\d+"/, '')] })),
+      take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); handOver(inv); return [id, String(inviteMain(inv)).replace(/\d+ more min\./g, '').replace(/data-invite-clip-until-value="\d+"/, '')] })),
       diff: (was, now, c) => { const id = c.params.get('invite'); return was.get(id) !== now.get(id) ? String(t.stream('refresh')) : '' },
     })
 
@@ -764,7 +764,7 @@ const size = n => (n == null ? '–' : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e
 
 // The agent invite's clipboard (clipboard() above): a press on a command copies it and ticks its line; the minutes
 // left count down by themselves, and when they are gone the page is rendered again (it then offers a new link).
-controller('clip', class extends Controller {
+controller('invite-clip', class extends Controller {
   static targets = ['left']
   static values = { until: Number }
   connect() { if (this.untilValue) { this.count(); this.timer = setInterval(() => this.count(), 5000) } }
