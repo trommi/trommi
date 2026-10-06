@@ -111,7 +111,7 @@ export async function startHub({
     if (!p) {
       if (!roomExists(id)) fail('no-room', 'no such room on this hub')
       const t = performance.now()
-      p = makeHub(id).then(hub => { stats.roomLoads.push({ room_id: id, ms: performance.now() - t }); return { id, hub, streams: new Set(), offlineSince: new Map(), watch: new Map() } })
+      p = makeHub(id).then(hub => { stats.roomLoads.push({ room_id: id, ms: performance.now() - t }); return { id, hub, streams: new Set(), offlineSince: new Map(), link: new Map() } })
       p.catch(err => { rooms.delete(id); log(`room ${id.slice(0, 8)} failed to load: ${err.message}`) })
       rooms.set(id, p)
     }
@@ -226,7 +226,7 @@ export async function startHub({
     const p = (async () => {
       const hub = await makeHub(id)
       const r = await hub.found({ entry, wraps })
-      return { r, room: { id, hub, streams: new Set(), offlineSince: new Map(), watch: new Map() } }
+      return { r, room: { id, hub, streams: new Set(), offlineSince: new Map(), link: new Map() } }
     })()
     const roomPromise = p.then(x => x.room)
     roomPromise.catch(() => {})
@@ -283,25 +283,71 @@ export async function startHub({
   }
 
   /**
-   * Loss detection: an agent that said it has running work (POST agent_watch { working: true }) and whose last stream
-   * stays closed for lossMs gets one push to the room's human devices. A clean stop says working: false first; the
-   * next push needs a new working: true. (The hub learns one bit, "this agent has running work", and nothing else.)
+   * The link (README "The link"): what an agent's connector says about itself (POST agent_link), kept in memory per
+   * device, served with GET devices and announced to every stream of the room when it changes (event `presence`, also
+   * when a device's first stream opens or its last one closes). The hub reads none of it but three things, for the push:
+   * `working`, `exit.claude` and `cut_since`.
+   *
+   * One push to the room's human devices, never repeated, when
+   *   - the device's last stream stays closed for lossMs and it had running work, or its Claude Code process lives on
+   *     without it (exit.claude 'alive': cut off). Not for a session that said goodbye, ended with its Claude Code and
+   *     had nothing running: the human ended it himself. A stream that returns in time pushes nothing, and the next
+   *     push needs a new stream first;
+   *   - a connected agent reports a session of its folder cut off (cut_since), once per value.
+   * A connector before the link report says only `working` (POST agent_watch) and is pushed for as before.
    */
-  function lostWhileWorking(r, deviceId) {
-    const w = r.watch.get(deviceId)
-    if (!w?.working) return
-    clearTimeout(w.timer)
-    w.timer = setTimeout(() => {
-      if (deviceStreams(r, deviceId).length || !r.watch.get(deviceId)?.working) return
-      r.watch.delete(deviceId)
-      sendLossPush(r, deviceId).catch(err => log(`push: ${err.message}`))
-    }, lossMs)
-    w.timer.unref?.()
+  const LINK_HEARS = ['live', 'oncall'], LINK_CLAUDE = ['alive', 'gone', 'checking']
+  const linkOf = (r, deviceId) => { let e = r.link.get(deviceId); if (!e) r.link.set(deviceId, e = { report: null, working: false, timer: null, lost_pushed: false, cut_pushed: null, said: '' }); return e }
+  function linkReport(body) {
+    const time = (v, what) => { if (v == null) return null; if (!Number.isSafeInteger(v) || v <= 0) fail('bad-argument', `${what} is a time in milliseconds, or null`); return v }
+    if (!LINK_HEARS.includes(body.hears)) fail('bad-argument', 'hears: live or oncall')
+    if (body.attached != null && typeof body.attached !== 'boolean') fail('bad-argument', 'attached')
+    if (body.working != null && typeof body.working !== 'boolean') fail('bad-argument', 'working')
+    let exit = null
+    if (body.exit != null) {
+      if (typeof body.exit !== 'object' || typeof body.exit.reason !== 'string' || !/^[a-z0-9-]{1,40}$/.test(body.exit.reason) || !LINK_CLAUDE.includes(body.exit.claude)) fail('bad-argument', 'exit: { reason, claude: alive | gone | checking }')
+      exit = { reason: body.exit.reason, claude: body.exit.claude }
+    }
+    return { hears: body.hears, attached: body.attached !== false, last_call_at: time(body.last_call_at, 'last_call_at'), working: body.working === true, since: time(body.since, 'since'), cut_since: time(body.cut_since, 'cut_since'), ...(exit ? { exit } : {}) }
   }
-  async function sendLossPush(r, deviceId) {
+  /** A device's row of GET devices, without what the member list says: presence and the link. */
+  function presenceOf(r, deviceId) {
+    const online = deviceStreams(r, deviceId).length > 0, report = r.link.get(deviceId)?.report
+    return { device_id: deviceId, is_online: online, ...(!online && r.offlineSince.has(deviceId) ? { offline_since: r.offlineSince.get(deviceId) } : {}), ...(report ? { link: report } : {}) }
+  }
+  /** Tell every stream of the room what a device's row is now, unless it was said already. */
+  function announce(r, deviceId) {
+    const row = presenceOf(r, deviceId), text = JSON.stringify(row), e = linkOf(r, deviceId)
+    if (e.said === text) return
+    e.said = text
+    deliver(r, { text: sse('presence', row) })
+  }
+  function streamOpened(r, deviceId) {
+    const e = linkOf(r, deviceId)
+    clearTimeout(e.timer); e.timer = null
+    e.lost_pushed = false
+    if (e.report?.exit) { const { exit, ...rest } = e.report; e.report = rest }   // the last word of an earlier process
+    announce(r, deviceId)
+  }
+  function streamsGone(r, deviceId) {
+    const e = linkOf(r, deviceId)
+    announce(r, deviceId)
+    clearTimeout(e.timer)
+    e.timer = setTimeout(() => {
+      e.timer = null
+      if (deviceStreams(r, deviceId).length || e.lost_pushed) return
+      const cut = e.report?.exit?.claude === 'alive'
+      if (!cut && !e.working) return
+      e.lost_pushed = true
+      e.working = false
+      sendLinkPush(r, deviceId, cut ? 'cut' : 'gone', r.offlineSince.get(deviceId) ?? null).catch(err => log(`push: ${err.message}`))
+    }, lossMs)
+    e.timer.unref?.()
+  }
+  async function sendLinkPush(r, deviceId, state, since) {
     const subs = db.q(`SELECT p.device_id, p.endpoint, p.subscription FROM push_subscriptions p JOIN devices d ON d.room_id = p.room_id AND d.device_id = p.device_id
       WHERE p.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL`).all(r.id)
-    const message = { room_id: r.id, kind: 'agent-lost', device_id: deviceId, since: r.offlineSince.get(deviceId) ?? null }
+    const message = { room_id: r.id, kind: 'agent-lost', state, device_id: deviceId, since }
     await Promise.all(subs.map(async s => {
       const status = await push.send(JSON.parse(s.subscription), message, { urgency: 'high' })
       if (status === 404 || status === 410) db.q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?').run(r.id, s.device_id, s.endpoint)
@@ -351,14 +397,14 @@ export async function startHub({
     const lease = me.role === 'agent' ? setInterval(() => r.hub.touchLease(me.id), 20000) : null
     if (lease) r.hub.touchLease(me.id)
     r.offlineSince.delete(me.id)
-    clearTimeout(r.watch.get(me.id)?.timer)
+    if (deviceStreams(r, me.id).length === 1) streamOpened(r, me.id)
     const done = () => {
       clearInterval(ping); if (lease) clearInterval(lease)
       if (!r.streams.delete(s)) return
       if (me.role === 'agent') r.hub.touchLease(me.id)
       if (deviceStreams(r, me.id).length) return
       r.offlineSince.set(me.id, now())
-      lostWhileWorking(r, me.id)
+      streamsGone(r, me.id)
     }
     res.on('close', done)
     res.write(': trommi hub\n\n')
@@ -514,7 +560,7 @@ export async function startHub({
       hub.authorise(bearer(req), { member: true })
       const online = new Set([...r.streams].map(s => s.deviceId))
       const devices = db.q('SELECT device_id, device_role, removed_entry_number FROM devices WHERE room_id = ? ORDER BY added_entry_number, device_id').all(r.id)
-        .map(d => ({ device_id: d.device_id, device_role: d.device_role, is_active: d.removed_entry_number == null, is_online: online.has(d.device_id), ...(!online.has(d.device_id) && r.offlineSince.has(d.device_id) ? { offline_since: r.offlineSince.get(d.device_id) } : {}) }))
+        .map(d => ({ device_id: d.device_id, device_role: d.device_role, is_active: d.removed_entry_number == null, is_online: online.has(d.device_id), ...(!online.has(d.device_id) && r.offlineSince.has(d.device_id) ? { offline_since: r.offlineSince.get(d.device_id) } : {}), ...(r.link.get(d.device_id)?.report ? { link: r.link.get(d.device_id).report } : {}) }))
       return send(res, 200, { last_entry_number: hub.state.head.seq, devices })
     }
     if (m === 'GET' && a === 'sealed_room_keys' && !b) {
@@ -617,16 +663,31 @@ export async function startHub({
       if (out.previousInstance) closeStreams(r, [me.id], s => s.leaseGeneration !== out.generation)
       return send(res, 200, { lease_generation: out.generation, expires_at: out.expiresAt })
     }
+    if (m === 'POST' && a === 'agent_link' && !b) {
+      // The link report (above): an agent's connector about itself, under its lease.
+      const me = hub.authorise(bearer(req), { member: true })
+      if (me.role !== 'agent') fail('forbidden', 'only an agent reports its link')
+      fenced(r, req, me)
+      const report = linkReport(await readJson(req))
+      const e = linkOf(r, me.id)
+      e.report = report
+      e.working = report.working
+      announce(r, me.id)
+      if (!report.cut_since) e.cut_pushed = null
+      else if (e.cut_pushed !== report.cut_since && deviceStreams(r, me.id).length) {
+        e.cut_pushed = report.cut_since
+        sendLinkPush(r, me.id, 'cut', report.cut_since).catch(err => log(`push: ${err.message}`))
+      }
+      return send(res, 200, { ok: true })
+    }
     if (m === 'POST' && a === 'agent_watch' && !b) {
-      // Loss detection (lostWhileWorking): the agent says whether it has running work, under its lease.
+      // A connector before the link report: only whether it has running work.
       const me = hub.authorise(bearer(req), { member: true })
       if (me.role !== 'agent') fail('forbidden', 'only an agent arms the loss watch')
       fenced(r, req, me)
       const body = await readJson(req)
       if (typeof body.working !== 'boolean') fail('bad-argument', 'working')
-      const w = r.watch.get(me.id)
-      if (body.working) { if (!w) r.watch.set(me.id, { working: true, timer: null }) }
-      else if (w) { clearTimeout(w.timer); r.watch.delete(me.id) }
+      linkOf(r, me.id).working = body.working
       return send(res, 200, { ok: true })
     }
     if (m === 'POST' && a === 'ephemeral' && !b) {
