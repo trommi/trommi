@@ -1149,7 +1149,7 @@ controller('fit', class extends Controller {
 // Desk as it is rendered now (app.mjs peek). So a turn swaps two things that are both there, and nothing flashes.
 // Markup: curlHTML(side, to), a part of the frame on both pages (app.mjs bodyParts). Reduced motion: no peel, a fade.
 export const curlHTML = (side, to) => raw(`<div class="curl" data-controller="curl" data-curl-side-value="${side}" data-curl-to-value="${to}"><div class="curl-back" hidden inert></div><svg class="curl-svg" aria-hidden="true"><defs><clipPath id="curl-flap-clip"><path class="curl-flap-clip"/></clipPath></defs><path class="curl-under"/><path class="curl-cast"/><path class="curl-flap"/><path class="curl-hatch" clip-path="url(#curl-flap-clip)"/><path class="curl-fold"/></svg><button type="button" class="curl-grab" title="${side === 'desk' ? 'Turn to the Scribble Board (P)' : 'Turn back to the Desk (Esc)'}" aria-label="${side === 'desk' ? 'Turn to the Scribble Board' : 'Turn back to the Desk'}"></button></div>`)
-const CURL_REST = [-31, 23], CURL_NEAR = 130   // the dog-ear's tip from the corner at rest; how near the pointer wakes it
+const CURL_REST = [-38, 28], CURL_NEAR = 130   // the dog-ear's tip from the corner at rest; how near the pointer wakes it
 /** A convex polygon cut by the line through m with normal n: the part on n's side. */
 function cutPoly(poly, m, n) {
   const f = p => (p[0] - m[0]) * n[0] + (p[1] - m[1]) * n[1], out = []
@@ -1177,7 +1177,7 @@ controller('curl', class extends Controller {
       const b = this.box, dx = b.right - e.clientX, dy = e.clientY - b.top, d = Math.hypot(dx, dy)
       if (d > CURL_NEAR || dx < 0 || dy < 0) { if (this.goal) { this.goal = null; this.spring() } return }
       this.wake()
-      const k = 1 - d / CURL_NEAR, len = 26 + 46 * k, a = Math.atan2(Math.max(dy, 6), Math.max(dx, 6)), lean = Math.min(1.15, Math.max(.35, a))
+      const k = 1 - d / CURL_NEAR, len = 32 + 40 * k, a = Math.atan2(Math.max(dy, 6), Math.max(dx, 6)), lean = Math.min(1.15, Math.max(.35, a))
       this.goal = [-Math.cos(lean) * len, Math.sin(lean) * len]
       this.spring()
     }, { passive: true })
@@ -1267,7 +1267,7 @@ controller('curl', class extends Controller {
     const d = Math.hypot(P[0] - C[0], P[1] - C[1]), set = (c, v) => this.svg.querySelector(c).setAttribute('d', v)
     const path = pts => (pts.length ? `M${pts.map(p => `${f(p[0])},${f(p[1])}`).join(' L')} Z` : '')
     if (d < 3) { for (const c of ['.curl-under', '.curl-cast', '.curl-flap', '.curl-flap-clip', '.curl-hatch', '.curl-fold']) set(c, ''); return this.under([]) }
-    for (const c of ['.curl-flap', '.curl-fold', '.curl-hatch']) this.svg.querySelector(c).style.strokeOpacity = Math.min(1, .5 + (d - 24) / 50).toFixed(2)   // (at rest the ink is light)
+    for (const c of ['.curl-flap', '.curl-fold', '.curl-hatch']) this.svg.querySelector(c).style.strokeOpacity = Math.min(1, .5 + (d - 33) / 50).toFixed(2)   // (at rest the ink is light)
     const n = [(C[0] - P[0]) / d, (C[1] - P[1]) / d], M = [(C[0] + P[0]) / 2, (C[1] + P[1]) / 2]
     const lifted = cutPoly([[0, 0], [W, 0], [W, H], [0, H]], M, n)
     const mirror = p => { const k = 2 * ((p[0] - M[0]) * n[0] + (p[1] - M[1]) * n[1]); return [p[0] - k * n[0], p[1] - k * n[1]] }

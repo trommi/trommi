@@ -690,10 +690,10 @@ a.agent-badge { text-decoration: none; }
    it when it holds words ---- */
 .corner-note-box { position: fixed; z-index: 30; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
 :root.is-choosing .corner-note-box { opacity: 0; pointer-events: none; }
-.corner-note-head { display: flex; flex-direction: row-reverse; align-items: center; gap: 8px; min-height: 56px; padding: 0; border: 0; background: none; color: #3b300d; cursor: pointer; }
-.corner-note-ico { flex: none; width: 54px; height: 54px; overflow: visible; rotate: -4deg; transition: rotate 140ms, translate 140ms; }
+.corner-note-head { display: flex; flex-direction: row-reverse; align-items: center; gap: 8px; min-height: 64px; padding: 0; border: 0; background: none; color: #3b300d; cursor: pointer; }
+.corner-note-ico { flex: none; width: 63px; height: 63px; overflow: visible; rotate: -4deg; transition: rotate 140ms, translate 140ms; }
 .corner-note-head:hover .corner-note-ico { rotate: -1deg; translate: 0 -2px; }
-.corner-note-ico .note-fill { fill: #f5d64a; } .corner-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; opacity: .8; }
+.corner-note-ico .note-fill { fill: #f5d64a; } .corner-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; opacity: .8; }
 .corner-note-box:not(.has-words) .note-lines { display: none; }   /* (an empty note: a blank sticky) */
 /* On the Scribble Board the sticky can be dragged out of its corner onto the board (sidebar.mjs park): while it is
    carried, a small sticky with its words follows the pointer and the corner's one fades. */
