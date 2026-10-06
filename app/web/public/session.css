@@ -375,16 +375,16 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 .topbar #brand-doors kbd:not(.jump-box kbd) { min-width: 0; padding: 3px 6px; background: none; box-shadow: 0 0 0 1px var(--line-strong); border-radius: 6px; font-family: var(--mono); }
 @media (max-width: 860px) {
 
-  /* A finger needs 40px. These keep their look; an unseen area around them takes the tap. */
+  /* A finger needs 44px. These keep their look; an unseen area around them takes the tap. */
   :is(.agent-badge, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .desk-walk, .inbox-when > .cardclip-copy, .inbox-takeback) { position: relative; }
-  :is(.agent-badge, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .desk-walk, .inbox-when > .cardclip-copy, .inbox-takeback, .open-jump, .jump, .rh-open)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); translate: -50% -50%; }
+  :is(.agent-badge, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .desk-walk, .inbox-when > .cardclip-copy, .inbox-takeback, .open-jump, .jump, .rh-open)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
   .msg-details summary { min-height: 40px; }
   .composer-file { height: 34px; }
   /* the Snooze corner of a question inside a conversation */
   /* It is the 28px square beside the title now (.inbox-when): made 40px high it was 28x40 and lay 10px over the
      title below. It keeps its look; an unseen 40px area takes the tap. */
   .log .inbox-when .inbox-tab-act { overflow: visible; }
-  .log .inbox-when .inbox-tab-act::before { content: ""; position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; translate: -50% -50%; }
+  .log .inbox-when .inbox-tab-act::before { content: ""; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; translate: -50% -50%; }
 }
 /* A question in the conversation: its title ends before the small Later button at the card's top right (a title that
    filled its line ran under it). */
@@ -637,7 +637,7 @@ a.open-jump { text-decoration: none; }
 .session-filter-menu b:empty { display: none; }
 @media (max-width: 860px) {
   .session-filter { margin-bottom: 6px; }
-  .session-filter-btn { width: 40px; height: 40px; }
+  .session-filter-btn { width: 44px; height: 44px; }
   #session .session-compose { column-gap: 6px; }
 }
 
