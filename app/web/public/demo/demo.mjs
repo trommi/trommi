@@ -626,16 +626,16 @@ function quietDesk(f) {
     f.cards.push({ object_id: id, agent_device_id: agent, first_envelope_number: n, created_at: at - (open ? 0 : 25 * MIN), answers: answer ? [answer] : [], answer, closed_how: open ? null : by ? 'closed' : how, in_revision: null, timeline_key: `chat:card/${id}`, content_state: 'ok', object_version: 1, version_hash, envelope_number: n, updated_at: at, urgency: 'normal', object_state: open ? 'open' : how === 'answered' ? 'answered' : 'closed', ...content,
       versions: [{ object_version: 1, version_hash, previous_version_hash: null, envelope_number: n, sent_at: at - (open ? 0 : 25 * MIN), object_state: 'open', urgency: 'normal', content }] })
   }
-  mk('Welche Schrift für die Überschriften?', design, 2 * 1440, [['bri', 'Bricolage'], ['int', 'Inter']], { how: 'Bricolage ist überall drin, auch in der Hilfe.' })
-  mk('Backup jede Nacht um 3 Uhr?', claude, 1440, [['ja', 'Ja'], ['nein', 'Nein']], { how: 'Der Timer läuft, das erste Backup liegt auf der Storage Box.' })
-  mk('Die alten Testdaten löschen?', claude, 420, [['ja', 'Ja'], ['nein', 'Nein', true]], { how: '312 Räume gelöscht, 1,4 GB frei.' })
-  mk('Runde Ecken an den Knöpfen?', design, 300, [['nein', 'Eckig lassen', true], ['ja', 'Rund']], { how: 'settled', body: 'Eckig passt zum Stift; rund wäre ein Nachmittag Arbeit.' })
-  mk('Schatten unter der Karte: so lassen?', design, 95, [['ja', 'So lassen', true], ['nein', 'Weicher machen']], { how: 'settled', body: 'Er ist jetzt 2 px tief und leicht nach rechts versetzt, wie beim Notizzettel.' })
-  mk('Eselsohr: 20 % größer oder so lassen?', design, 12, [['gross', '20 % größer'], ['so', 'So lassen', true]], { how: 'answered', body: 'Die Spitze stünde dann 38 statt 31 px von der Ecke.' })
-  mk('Den neuen Hub heute Nacht ausrollen?', claude, 25, [['nacht', 'Heute Nacht'], ['morgen', 'Erst morgen']], { how: 'answered', body: 'Der Wechsel dauert etwa zwei Minuten; in der Zeit kommt keine Karte an.' })
-  mk('Zwei Handgriffe für dich (Cloudflare, Auto-Modus)', claude, 34, [['done', 'Beides erledigt', true], ['hilfe', 'Zeig mir wie']], { body: '1. Im Cloudflare-Dashboard den DNS-Eintrag „hub“ auf „Proxied“ stellen.\n2. Im Terminal den Auto-Modus einschalten (Shift+Tab), sonst fragt jede Datei einzeln.' })
-  mk('Später-Marke grau lassen?', design, 21, [['ja', 'Ja', true], ['nein', 'Nein']], { body: 'Grau hält sich zurück wie alles andere, was vom Tisch ist. Bei Nein baue ich die blaue Variante.' })
-  mk('Review vom Desk: drei Kleinigkeiten behoben. Passt das so?', design, 8, [['ok', 'Passt so', true], ['nochmal', 'Noch mal ran'], ['bilder', 'Erst Bilder zeigen']], { body: 'Die Überschrift springt nicht mehr, der Stapel schließt mit Escape, die Zeiten stehen rechtsbündig.' })
+  mk('Which typeface for the headings?', design, 2 * 1440, [['bri', 'Bricolage'], ['int', 'Inter']], { how: 'Bricolage is in everywhere, the help page too.' })
+  mk('A backup every night at 3?', claude, 1440, [['ja', 'Yes'], ['nein', 'No']], { how: 'The timer runs, the first backup lies on the Storage Box.' })
+  mk('Delete the old test data?', claude, 420, [['ja', 'Yes'], ['nein', 'No', true]], { how: '312 rooms deleted, 1.4 GB free.' })
+  mk('Round corners on the buttons?', design, 300, [['nein', 'Keep them square', true], ['ja', 'Round']], { how: 'settled', body: 'Square suits the pen; round would be an afternoon of work.' })
+  mk('The shadow under the card: leave it?', design, 95, [['ja', 'Leave it', true], ['nein', 'Make it softer']], { how: 'settled', body: 'It is 2 px deep now and set a little to the right, as under the note.' })
+  mk('Dog-ear: 20 % bigger, or leave it?', design, 12, [['gross', '20 % bigger'], ['so', 'Leave it', true]], { how: 'answered', body: 'Its tip would then stand 38 instead of 31 px from the corner.' })
+  mk('Roll out the new hub tonight?', claude, 25, [['nacht', 'Tonight'], ['morgen', 'Tomorrow']], { how: 'answered', body: 'The switch takes about two minutes; no card arrives in that time.' })
+  mk('Two small things for you (Cloudflare, auto mode)', claude, 34, [['done', 'Both done', true], ['hilfe', 'Show me how']], { body: '1. In the Cloudflare dashboard set the DNS entry “hub” to “Proxied”.\n2. In the terminal switch auto mode on (Shift+Tab), or every file asks by itself.' })
+  mk('Leave the Later tag grey?', design, 21, [['ja', 'Yes', true], ['nein', 'No']], { body: 'Grey holds back like everything else that is off the desk. On No I build the blue one.' })
+  mk('Review of the Desk: three small things fixed. Fine like this?', design, 8, [['ok', 'Fine like this', true], ['nochmal', 'Once more'], ['bilder', 'Show pictures first']], { body: 'The heading no longer jumps, the pile closes with Escape, the times stand right-aligned.' })
   for (const d of Object.values(f.human?.desks ?? {})) if (d.name === 'Desk') d.name = 'Trommi'
   if (f.notes?.length) f.notes = [f.notes[0]]
   return f

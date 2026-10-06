@@ -38,7 +38,7 @@ ${whiteboardSessions(model)}
 <div class="pad" id="pad" data-tool="pen" data-place data-owns-keys>
   <canvas class="pad-canvas" id="canvas" role="img" aria-label="Scribble Board: an endless surface for notes, drawings and pictures"></canvas>
 
-  <p class="pad-hint" id="hint"><b>Click anywhere</b> and type. <b>Drag</b> to draw.</p>
+  <p class="pad-hint" id="hint"><b><span class="if-mouse">Click</span><span class="if-touch">Tap</span> anywhere</b> and type. <b>Drag</b> to draw.</p>
 
   <!-- the text being typed; it sits on the canvas and follows pan and zoom -->
   <div class="pad-editor" id="editor" role="textbox" aria-multiline="true" aria-label="Note" spellcheck="false" hidden></div>
