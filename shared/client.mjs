@@ -126,6 +126,7 @@ export class Client {
     this._echoItems = new Map()         // local_id -> pending TimelineItem (gets sender_sequence once sealed)
     this.sentContent = new Map()        // own envelope hash -> content (until it comes back), for own pruned copies
     this.localHeads = new Map()         // own objects: object_id -> { object_version, version_hash, content } as last SENT
+    this.rekey_wait_ms = 60_000         // A1: how long an agent's send waits for a human device to re-key its session after a removal
     this.stats = { verified: 0, decrypted: 0, verify_ms: 0, batches: 0 }
     this._queue = Promise.resolve()
     this._dirty = { records: new Map(), chains: new Set(), timer: null }
@@ -188,7 +189,7 @@ export class Client {
     const stale = () => { const k = this.sessionKeys.get(session_id); return !!(k?.state && G.grantIsStale?.(k.state, this.state)) }
     if (!stale()) return
     if (this.is_human) { await this._healStaleSessions(); if (!stale()) return }
-    for (let t = 0; t < 60_000 && stale(); t += 1000) { await sleep(1000); await this._refreshMembers().catch(() => {}); await this._refreshSessions().catch(() => {}) }
+    for (let t = 0; t < this.rekey_wait_ms && stale(); t += 1000) { await sleep(1000); await this._refreshMembers().catch(() => {}); await this._refreshSessions().catch(() => {}) }
     if (stale()) throw new ZError('stale-session-key', 'this session waits for a human device to re-key it after a removal')
   }
   /** The opening side of keyFor: (epoch, header) -> secret, room or session scope. */
@@ -870,6 +871,12 @@ export class Client {
         if (this.model.room.last_envelope_number >= r.last_envelope_number) break
         if (this.model.room.last_envelope_number === at) break        // stopped at a record to read again later (F12, H1)
       }
+    } catch (e) {
+      // The read broke off (the network, the hub restarting): the model was started anew and holds only what was read so
+      // far, and nothing else would make this device read on while the room is quiet (the stream is open, no later envelope
+      // shows a gap). So it reads the room again after the backoff, as for a gap that is still there.
+      this._gapInResync = true
+      throw e
     } finally {
       this._resyncing = false
       if (!this._gapInResync) this._gapBackoff = 2000
@@ -992,6 +999,10 @@ export class Client {
       const own = this.chains.get(key)
       const known = own?.hashes.get(h.seq)
       if (!known) throw new ZError('equivocation', `an envelope in this device's name that it did not send (#${h.seq})`)
+      // A replay: the hub hands out an own envelope a second time (twice in one page, or again later). For every other
+      // sender the chain below says so; the own chain is the sealing chain and runs ahead, so here the frontier says what
+      // was applied. Without this an own version kept header-only (retention) counted once more each time.
+      if ((this.frontiers.get(sender)?.get(sender) ?? 0) >= h.seq) return null
       const localId = this.byHash.get(hex(known))
       if (pre.void) {                                // the hub refused it and kept it as a void record: never applied
         if (!this._voidedOwn?.has(hex(known)) && localId) this._localAlert('hub-voided', new ZError('hub-voided', `the hub voided envelope #${h.seq} after accepting it`))
@@ -1293,6 +1304,10 @@ export class Client {
             await sleep(backoff); backoff = Math.min(backoff * 2, 10_000)
             continue
           }
+          // stale-session-key: the hub knows a removal or recovery after which this session was not re-keyed. This device
+          // may have missed that member entry (its request failed, or a hub showed it an older list) and would post the
+          // same bytes for ever: it reads the member list and the grants now, and a human device re-keys (A1).
+          if (e.code === 'stale-session-key') await this.serial(async () => { await this._refreshMembers(); await this._refreshSessions(); await this._healStaleSessions() }).catch(() => {})
           if (e.status === 0 || e.status >= 500 || e.status === 429 || e.code === 'unauthorised' || e.code === 'stale-session-key') {
             await sleep(e.retry_after ? e.retry_after * 1000 : backoff); backoff = Math.min(backoff * 2, 2_000)   // a restarting hub: retry soon
             if (!this._started && e.status === 0) break

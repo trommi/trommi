@@ -1332,6 +1332,62 @@ await test('fuzz H1 / F2 (trace smuv697gt-w1-0): a device that reads the room ag
   eq(phone.model.cards.get(id).in_revision?.by, 'hand_back', 'as on the device that was live')
 })
 
+await test('fuzz H1 (trace hv1-w9-13): a resync cut off by a network failure is done again after the gap backoff; the room is not left half read', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ card_type: 'info', title: 'for your information' })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id), 'card on the phone')
+  const end = agent.model.room.last_envelope_number
+  // the read of the room fails once (the network is down for a moment) right when the device reads the room again
+  const real = agent.hub.envelopes.bind(agent.hub)
+  let fail = 1
+  agent.hub.envelopes = async (...a) => { if (fail-- > 0) throw new z.ZError('offline', 'simulated', { status: 0 }); return real(...a) }
+  let said = null
+  await agent.serial(() => agent._resync()).catch(e => { said = e.code })
+  eq(said, 'offline', 'the resync says why it stopped')
+  // nothing else happens in the room (no new envelope shows a gap, the stream stays open): the device itself reads again
+  await until(() => agent.model.room.last_envelope_number === end && agent.model.cards.get(id)?.title === 'for your information', 'the agent read the room again by itself', 8000)
+  await agent.settle({ timeout_ms: 10_000 })
+})
+
+if (!useTestHub) await test('fuzz hostile-safety (trace hw2-w1-6): an own pruned card version the hub hands out twice counts once', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ card_type: 'info', title: 'for your information' })
+  await settleAll(agent)
+  await agent.close(id, 'done')
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id)?.object_state === 'closed', 'closed on the phone')
+  eq(agent.model.cards.get(id).object_version, 2, 'two versions were sent')
+  hub.prune({ days: -1 })                                   // the closed card is kept header-only
+  // A hostile hub: it answers the agent's reading of the room with an empty page (the model is started anew and stays
+  // empty), then hands out every record twice in the catch-up after it.
+  const real = agent.hub.envelopes.bind(agent.hub)
+  let calls = 0
+  agent.hub.envelopes = async (...a) => { const r = await real(...a); return calls++ === 0 ? { ...r, envelopes: [] } : { ...r, envelopes: r.envelopes.flatMap(e => [e, { ...e }]) } }
+  await agent.serial(() => agent._resync())
+  await agent.catchUp()
+  agent.hub.envelopes = real
+  eq(agent.model.cards.get(id)?.object_version, 2, 'still two versions on the agent that sent them')
+  eq(agent.model.cards.get(id).versions.length, 2, 'and two in its history')
+  eq(phone.model.cards.get(id).object_version, 2, 'as on the phone')
+})
+
+await test('fuzz H1 (trace hw2-w5-5): a human device whose post is refused with stale-session-key reads the member list and re-keys; the post goes out', async () => {
+  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
+  const tablet = await addHuman(phone, 'Tablet')
+  await settleAll(phone, laptop, tablet, agent)
+  const got = []
+  agent.on('command', c => got.push(c.content?.text))
+  phone._stream.close(); phone._stream = null              // the phone misses the member entry of the removal
+  laptop._healStaleSessions = async () => {}               // the removing device does not get to re-key the sessions
+  await laptop.removeDevices([tablet.my_device_id])
+  eq(phone.state.head.seq < laptop.state.head.seq, true, 'the phone does not know the removal')
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'still there?' })
+  await phone.settle({ timeout_ms: 15_000 })
+  await until(() => got.includes('still there?'), 'the agent got the message')
+  eq(G.grantIsStale(phone.sessionKeys.get(agent.session_id).state, phone.state), false, 'the session is re-keyed')
+})
+
 await test('fuzz F2 (trace smuv7jdxv-w2-8): a hand-back the stream replays as a header after a reconnect puts the card in revision on that device too', async () => {
   const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
   const id = await agent.sendCard({ title: 'Export?', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
