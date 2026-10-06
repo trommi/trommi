@@ -183,6 +183,34 @@ export async function integration({ test, tmp }) {
       await connector.call('close_card', { card_id: card, summary: 'ran' })
     })
 
+    await test('e2e: a final option: the answer closes the card, the event says so, close_card has nothing to do, take back reopens it', async () => {
+      const id = (await connector.call('create_decision', { title: 'Two things for you to do', body: '1. DNS. 2. Auto mode.', options: [{ key: 'done', label: 'Both done', final: true }, { key: 'later', label: 'Later' }] })).match(/card ([0-9a-f]{32})/)[1]
+      await until('the card at the human', () => human.model.cards.get(id)?.options?.[0]?.final === true)
+      assert.equal(human.model.cards.get(id).options[1].final, undefined)
+      await human.answer({ object_id: id, choices: ['done'] })
+      const ev = await connector.next(chEvent('decision', id))
+      assert.equal(ev.params.meta.choice, 'done'); assert.equal(ev.params.meta.closed, '1')
+      assert.match(ev.params.content, /This answer settled the card: .*Nothing is expected of you/)
+      await until('settled at the human', () => human.model.cards.get(id).object_state === 'closed' && human.model.cards.get(id).closed_how === 'settled' && !human.model.cards.get(id).answer?.pending)
+      assert.equal(JSON.parse(await connector.call('list_cards')).find(c => c.id === id).status, 'done')
+      // The app's view of it (board state from the same model): done and settled, never "decided" (with the agent).
+      const { BoardState } = await import('../app/web/public/app.mjs')
+      const shown = new BoardState(human).update().cards.find(c => c.id === id)
+      assert.deepEqual([shown.status, shown.settled, shown.choice, shown.options[0].final], ['done', true, 'done', true])
+      const version = human.model.cards.get(id).object_version
+      assert.match(await connector.call('close_card', { card_id: id }), /^already closed/)
+      await human.decideAgain({ object_id: id })
+      assert.equal((await connector.next(chEvent('decision_reopened', id))).params.meta.previous_choice, 'done')
+      await until('open again at the connector', async () => JSON.parse(await connector.call('list_cards')).find(c => c.id === id)?.status === 'open')
+      assert.equal(human.model.cards.get(id).object_version, version, 'close_card sent no version')
+      // the option that is not final: decided, with the agent, until it closes the card
+      await human.answer({ object_id: id, choices: ['later'] })
+      assert.equal((await connector.next(chEvent('decision', id))).params.meta.closed, undefined)
+      assert.equal(JSON.parse(await connector.call('list_cards')).find(c => c.id === id).status, 'decided')
+      assert.equal(await connector.call('close_card', { card_id: id, summary: 'noted' }), 'closed')
+      await until('closed by the agent', () => human.model.cards.get(id).closed_how === 'closed')
+    })
+
     await test('e2e: shred and info read', async () => {
       const q = (await connector.call('create_decision', { title: 'Which font?', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })).match(/card ([0-9a-f]{32})/)[1]
       await until('q', () => human.model.cards.get(q))
@@ -485,8 +513,14 @@ export async function integration({ test, tmp }) {
       // An open question keeps a closed helper in the active list.
       const q = (await connector.call('create_decision', { title: 'Still open?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }], session: 'Design' })).match(/card ([0-9a-f]{32})/)[1]
       await until('the open card', () => human.model.cards.get(q)?.object_state === 'open')
-      assert.match(await connector.call('close_session', { name: 'design', summary: 'Pictures done: out/landing/' }), /closed: archived.*1 open question/)
+      // A card the human answered and the helper never closed is closed with the session.
+      const left = (await connector.call('create_decision', { title: 'Blue or grey?', options: [{ key: 'b', label: 'Blue' }, { key: 'g', label: 'Grey' }], session: 'Design' })).match(/card ([0-9a-f]{32})/)[1]
+      await until('the second card', () => human.model.cards.get(left)?.object_state === 'open')
+      await human.answer({ object_id: left, choices: ['g'] })
+      await connector.next(chEvent('decision', left))
+      assert.match(await connector.call('close_session', { name: 'design', summary: 'Pictures done: out/landing/' }), /closed: archived.*\d answered cards? of it (was|were) closed with it; 1 open question/)
       await until('closed', () => human.model.sessions.get(child).profile?.closed_at)
+      await until('the answered card closed with its session', () => human.model.cards.get(left).object_state === 'closed' && human.model.cards.get(left).close_summary === 'Closed with its session.')
       assert.deepEqual(human.model.sessions.get(child).status_lines ?? [], [], 'its lines are cleared')
       assert.equal(design().archived, false, 'open question: still active')
       await connector.call('withdraw_card', { card_id: q, reason: 'test' })
@@ -912,7 +946,7 @@ export async function monitor({ test, tmp: root }) {
       const tools = listed.map(t => t.name)
       assert.ok(tools.includes('inbox'), 'inbox is offered without channel events')
       // _meta on a tool definition reaches the client through tools/list (MCP SDK), so Claude Code sees alwaysLoad.
-      for (const name of ['inbox', 'reply', 'create_decision', 'set_status', 'open_session', 'close_session']) assert.equal(listed.find(t => t.name === name)?._meta?.['anthropic/alwaysLoad'], true, name)
+      for (const name of ['inbox', 'reply', 'create_decision', 'close_card', 'set_status', 'open_session', 'close_session']) assert.equal(listed.find(t => t.name === name)?._meta?.['anthropic/alwaysLoad'], true, name)
       assert.ok(fs.existsSync(socketPath(process.pid, env)))
       agentId = [...human.model.members.values()].find(m => m.device_role === 'agent').device_id
       await sleep(1500) // the monitor connects (it retries every second)
