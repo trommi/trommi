@@ -107,7 +107,7 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 .tc-later .sel-later.is-pulling { transition: none; cursor: grabbing; }
 /* (pulled, the string grows out of the card's edge above the tag) */
 .tc-later .sel-later::before { content: ""; position: absolute; left: calc(50% - 1.3px); bottom: calc(100% - 3px); width: 2.6px; height: calc(var(--pull) + 3px); border-radius: 2px; background: var(--stamp-ink-later); }
-.tc-later .sel-later svg { width: 46px; height: 88px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; animation: tag-sway 3.6s ease-in-out infinite alternate; }
+.tc-later .sel-later svg { width: 46px; height: 96px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; animation: tag-sway 3.6s ease-in-out infinite alternate; }
 .tc-later .sel-later .tag-paper { fill: var(--surface); }
 .tc-later .sel-later .tag-z { stroke: var(--fg); }
 .tc-later .sel-later:hover, .tc-later .sel-later:focus-visible { color: var(--fg); outline: none; }
@@ -116,9 +116,9 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 @keyframes tag-sway { from { rotate: -1.6deg; } to { rotate: 1.6deg; } }
 @media (prefers-reduced-motion: reduce) { .tc-later .sel-later svg { animation: none; } .tc-later .sel-later { transition: none; } }
 @container cardpage (max-width: 900px) {
-  .tc-later { height: 88px; }
+  .tc-later { height: 96px; }
   .tc-later .sel-later { right: 18px; padding: 0 12px; }
-  .tc-later .sel-later svg { width: 40px; height: 76px; }
+  .tc-later .sel-later svg { width: 40px; height: 84px; }
   .tc-later + .tc-feed { margin-top: 0; }
 }
 .tc-more { position: relative; }
@@ -594,7 +594,7 @@ div.focus-opt { cursor: default; }
 .tc-bar-sep { flex: none; width: 1px; height: 26px; margin: 0 2px; background: var(--line-strong); }
 .tc-bar-later { position: absolute; right: 30px; top: 53px; margin: 0; }
 .tc-bar-later .sel-later { display: block; padding: 0 8px 6px; border: 0; background: none; cursor: pointer; }
-.tc-bar-later .sel-later svg { width: 30px; height: 57px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; transition: rotate 200ms, translate 200ms; }
+.tc-bar-later .sel-later svg { width: 30px; height: 63px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; transition: rotate 200ms, translate 200ms; }
 .tc-bar-later .tag-paper { fill: var(--surface); } .tc-bar-later .tag-z { stroke: var(--fg); }
 .tc-bar-later .sel-later:is(:hover, :focus-visible) svg { rotate: 5deg; translate: 0 3px; }
 @container cardpage (max-width: 1000px) { .tc-bar-chips { display: none; } .tc-bar-chips + .tc-chip.is-jump { display: block; } }
@@ -619,7 +619,7 @@ div.focus-opt { cursor: default; }
   .t-picture.is-deciding .tc-later { position: static; flex: none; width: auto; height: auto; z-index: auto; }
   .t-picture.is-deciding .tc-later .sel-later { position: static; padding: 0 4px; translate: none; }
   .t-picture.is-deciding .tc-later .sel-later::before { content: none; }
-  .t-picture.is-deciding .tc-later .sel-later svg { width: 22px; height: 42px; animation: none; }
+  .t-picture.is-deciding .tc-later .sel-later svg { width: 22px; height: 46px; animation: none; }
   .t-picture.is-deciding > .t-picture-bar { align-items: flex-start; }
   .t-picture-back { flex: 1 1 0; }
   .t-picture.is-deciding .tc-later { order: 1; }
