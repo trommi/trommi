@@ -382,8 +382,8 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 @media (max-width: 860px) {
 
   /* A finger needs 40px. These keep their look; an unseen area around them takes the tap. */
-  :is(.agent-badge, .inbox-revising-take, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .scribble-back, .inbox-walk, .inbox-when > .cardclip-copy, .inbox-done-sub > .cardclip-copy, .inbox-takeback) { position: relative; }
-  :is(.agent-badge, .inbox-revising-take, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .scribble-back, .inbox-walk, .inbox-when > .cardclip-copy, .inbox-done-sub > .cardclip-copy, .inbox-takeback, .topbar .padlink-open, .open-jump, .jump, .rh-open)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); translate: -50% -50%; }
+  :is(.agent-badge, .inbox-revising-take, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .scribble-back, .desk-walk, .inbox-when > .cardclip-copy, .inbox-done-sub > .cardclip-copy, .inbox-takeback) { position: relative; }
+  :is(.agent-badge, .inbox-revising-take, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .scribble-back, .desk-walk, .inbox-when > .cardclip-copy, .inbox-done-sub > .cardclip-copy, .inbox-takeback, .topbar .padlink-open, .open-jump, .jump, .rh-open)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); translate: -50% -50%; }
   .msg-details summary { min-height: 40px; }
   .composer-file { height: 34px; }
   /* the Snooze corner of a question inside a conversation */
