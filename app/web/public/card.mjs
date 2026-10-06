@@ -3,10 +3,10 @@
 // low picture; at the right the options, "or" Whatever, and the field whose Send hands the card back with the words.
 // Everything else stands in the comments below the card: the whole text when it is longer than the card holds, the
 // options in detail, links of options, why it is urgent, versions and what happened to the card, the talk.
-// Nothing stands above the card: round drawn buttons at its outer edges (the way back, a cross, beside the top-left
-// corner; More, three dots, beside the top-right: Wake up, Copy, Shred; the question before and the next at mid-height,
-// left and right); where it stands ("3 of 9") is in the card's own line. A narrow window: back and More sit on the
-// card's top edge, before and next are a swipe and the keys. Later is a pull-tag tied under the card's bottom-right corner (the Desk's Later: ui.mjs sideWays, the same
+// Above the card stands one row of round drawn buttons, at the card's edges: the way back, a cross, at the left; at
+// the right the question before and the next, Full screen (the card's pictures and videos large; only when it has
+// any) and More, three dots: Wake up, Copy, Shred. Where it stands ("3 of 9") is in the card's own line. A narrow
+// window: back, Full screen and More, before and next are a swipe and the keys. Later is a pull-tag tied under the card's bottom-right corner (the Desk's Later: ui.mjs sideWays, the same
 // route): pulled, the card is put off and the next one follows.
 //
 // One form (#card-form-<id>) holds the field and the notes on single options; every way to answer is a button of that
@@ -18,15 +18,22 @@ import { BASE, SAID, stream } from './app.mjs'
 import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
-// Drawn with the pen, for the round buttons at a card's edges: an arrow to the left and one to the right, a cross, three dots.
+// Drawn with the pen, for the round buttons above a card: an arrow to the left and one to the right, a cross, three
+// dots, four corners pulled apart (full screen).
 const pen = paths => raw(`<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true">${paths}</svg>`)
 const BACK = pen('<path d="M19.4 12.3 Q12.2 11.5 5 12.1"/><path d="M10.9 6 Q7.7 9.3 4.7 12.1 Q8 14.8 11.2 18.2"/>')
 const FORTH = pen('<path d="M4.6 12.3 Q11.8 11.5 19 12.1"/><path d="M13.1 6 Q16.3 9.3 19.3 12.1 Q16 14.8 12.8 18.2"/>')
 const CROSS = pen('<path d="M6.3 6.6 Q12.2 12.1 17.8 17.7"/><path d="M17.6 6.2 Q12 12.2 6.2 17.9"/>')
 const DOTS = pen('<path d="M5.4 12 Q5.9 11.5 6.4 12 Q5.9 12.6 5.4 12 M11.5 12 Q12 11.5 12.5 12 Q12 12.6 11.5 12 M17.6 12 Q18.1 11.5 18.6 12 Q18.1 12.6 17.6 12" stroke-width="2.6"/>')
+const FULL = pen('<path d="M4.4 9.3 Q4.1 6.6 4.5 4.4 Q6.9 4.1 9.4 4.4"/><path d="M14.7 4.2 Q17.3 4.5 19.6 4.3 Q19.9 6.7 19.6 9.2"/><path d="M19.8 14.8 Q19.5 17.4 19.7 19.7 Q17.2 19.9 14.8 19.6"/><path d="M9.3 19.8 Q6.7 19.5 4.3 19.7 Q4.1 17.2 4.4 14.9"/>')
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
 const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
+/** What is attached and is neither picture nor video (a table, a log, a sound): shown as files. */
+const filesOf = card => (card.attachments ?? []).filter(a => !['image', 'video'].includes(kindOf(a)))
+const sizeWord = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} kB` : `${n} B`)
+/** One attached file, to open: the clip, its name, its size. The same on the card and in the talk. */
+const fileChip = a => html`<a class="tc-file" href="${a.url}" target="_blank" rel="noopener" title="Open ${a.name}">${sk('clip')}<b>${a.name}</b>${a.size > 0 ? html`<i>${sizeWord(a.size)}</i>` : ''}</a>`
 /** The version that stands now, as a number. */
 const liveVersion = card => card.version ?? (card.versions?.at(-1)?.n ?? 0) + 1
 /** The card as it was in version n (title, text, options, pictures), or null. */
@@ -88,18 +95,23 @@ function picturesOf(card, base) {
 }
 /** Where one stands among the pictures: "2 / 6", the file's name, its caption. */
 const where = (a, i, n, cls) => html`<span class="${cls}" data-card-target="where">${n > 1 ? html`<b>${i} / ${n}</b> ` : ''}<span>${a.name}${a.title && a.title !== a.name ? ` · ${a.title}` : ''}</span></span>`
-/** The small pictures to pick from: the one that stands is marked; the pointer on one shows it (controller "card"). */
-const strip = (images, i, to, cls = '') => html`<span class="tc-strip ${cls}" data-action="pointerover->card#peek focusin->card#peek pointerleave->card#unpreview focusout->card#unpreview">${images.map((p, n) => html`<a class="tc-thumb" data-nav href="${to(n + 1)}" data-turbo-action="replace" data-at="${n + 1}" title="${p.name}" aria-label="Show picture ${n + 1}: ${p.name}" aria-pressed="${String(n + 1 === i)}"><img${srcOf(p)} alt="" loading="lazy" decoding="async" draggable="false" width="48" height="34"></a>`)}</span>`
+/** The small pictures to pick from: the one that stands is marked; the pointer on one shows it (controller "card").
+ *  Each lies on a ground with a drawn picture, so one that has not come yet is not a hole. */
+const strip = (images, i, to, cls = '') => html`<span class="tc-strip ${cls}" data-action="pointerover->card#peek focusin->card#peek pointerleave->card#unpreview focusout->card#unpreview">${images.map((p, n) => html`<a class="tc-thumb" data-nav href="${to(n + 1)}" data-turbo-action="replace" data-at="${n + 1}" title="${p.name}" aria-label="Show picture ${n + 1}: ${p.name}" aria-pressed="${String(n + 1 === i)}">${sk('picture')}<img${srcOf(p)} alt="" loading="lazy" decoding="async" draggable="false" width="48" height="34"></a>`)}</span>`
+/** The videos' small tiles, after the pictures: the same tile with a play mark. */
+const clips = (videos, i, to, from) => videos.map((p, n) => html`<a class="tc-thumb tc-thumb-video" data-nav href="${to(from + n + 1)}" data-turbo-action="replace" title="${p.name}" aria-label="Show video ${n + 1}: ${p.name}" aria-pressed="${String(from + n + 1 === i)}">${icon(PLAY)}</a>`)
 /** The picture's shown width: its own, never wider than its place (a phone's screenshot is not blown up). */
 const ownWidth = a => (a.width > 0 ? raw(` style="width:${Number(a.width)}px"`) : '')
 
 /** The picture of the card: one at a time, whole, at the column's width (a very tall one shows its top); a click on
- *  it, or "Gallery", opens it large on its own page. The others as small ones to pick. A frame of its own, so picking
- *  another loads only this. Videos come after the pictures (?pic= counts on): one stands on the stage as a player
- *  (decrypted to a blob by att.mjs / sw.js; never autoplays), its tile a play mark. */
+ *  it, or Full screen above the card, opens it large on its own page. Under it one bar with the others as small ones
+ *  to pick, then one line: which one stands, and the page behind it; then the files that are neither picture nor
+ *  video. A frame of its own, so picking another loads only this. Videos come after the pictures (?pic= counts on):
+ *  one stands on the stage as a player (decrypted to a blob by att.mjs / sw.js; never autoplays). */
 function cardMedia(card, base, at = 1, query = '') {
-  const images = imagesOf(card), videos = videosOf(card), all = [...images, ...videos]
-  if (!all.length) return ''
+  const images = imagesOf(card), videos = videosOf(card), all = [...images, ...videos], files = filesOf(card)
+  const attached = files.length ? html`<div class="tc-attached" aria-label="Attached files">${files.map(fileChip)}</div>` : ''
+  if (!all.length) return files.length ? html`<div class="tc-media">${attached}</div>` : ''
   const i = Math.min(Math.max(1, at), all.length), a = all[i - 1], video = i > images.length
   const here = cardPath(card, base)
   const to = n => `${here}?pic=${n}${query}`
@@ -107,11 +119,12 @@ function cardMedia(card, base, at = 1, query = '') {
   const step = (n, cls, label, d) => (all.length > 1 ? html`<a class="tc-step ${cls}" data-nav href="${to(n)}" data-turbo-action="replace" aria-label="${label}">${icon(d)}</a>` : '')
   const shown = video
     ? html`<figure class="tc-video"><video src="${a.url}#t=0.001" controls playsinline preload="metadata" aria-label="Video ${i} of ${all.length}: ${a.name}"></video></figure>`
-    : html`<a class="tc-figure" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="figure" data-at="${i}" title="Open the gallery" aria-label="Picture ${i} of ${images.length}: ${a.name}. Open the gallery"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt=""${srcOf(a)}${ownWidth(a)} decoding="async" draggable="false"></a>`
+    : html`<a class="tc-figure" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="figure" data-at="${i}" title="Open it large" aria-label="Picture ${i} of ${images.length}: ${a.name}. Open it large"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt=""${srcOf(a)}${ownWidth(a)} decoding="async" draggable="false"></a>`
   return html`<turbo-frame id="card-media-${card.id}" class="tc-media">
-<div class="tc-stage${video ? ' is-video' : ''}">${shown}${step(i > 1 ? i - 1 : all.length, 'is-prev', 'The one before', ARROW_L)}${step(i < all.length ? i + 1 : 1, 'is-next', 'The next one', ARROW_R)}</div>
-<div class="tc-thumbs">${all.length > 1 ? html`${strip(images, i, to)}${videos.map((p, n) => html`<a class="tc-thumb tc-thumb-video" data-nav href="${to(images.length + n + 1)}" data-turbo-action="replace" aria-label="Show video ${n + 1}: ${p.name}" aria-pressed="${String(images.length + n + 1 === i)}">${icon(PLAY)}</a>`)}` : ''}${video ? '' : html`<a class="tc-gallery" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="gallery" title="Open the gallery: the pictures large, on their own page">${sk('picture')}<span>Gallery</span></a>`}</div>
+<div class="tc-stage${video ? ' is-video' : ''}" data-at="${i}">${shown}${step(i > 1 ? i - 1 : all.length, 'is-prev', 'The one before', ARROW_L)}${step(i < all.length ? i + 1 : 1, 'is-next', 'The next one', ARROW_R)}</div>
+${all.length > 1 ? html`<div class="tc-thumbs">${strip(images, i, to)}${clips(videos, i, to, images.length)}</div>` : ''}
 <div class="tc-cap">${where(a, i, all.length, 'tc-where')}${video ? '' : pageChip(a.page, true)}</div>
+${attached}
 </turbo-frame>`
 }
 
@@ -204,7 +217,7 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const all = talkOf(model, card)
   const assets = model.state.assets
   const who = model.byAgent.get(card.agent)
-  const files = list => { const rest = (list ?? []).filter(a => kindOf(a) !== 'image'); return rest.length ? html`<p class="tc-files">${rest.map(a => html`<a href="${a.url}" target="_blank" rel="noopener">${a.name}</a> `)}</p>` : '' }
+  const files = list => { const rest = (list ?? []).filter(a => kindOf(a) !== 'image'); return rest.length ? html`<p class="tc-files">${rest.map(fileChip)}</p>` : '' }
   const shots = list => { const pics = (list ?? []).filter(a => kindOf(a) === 'image'); return pics.length ? html`<div class="shots">${pics.map(a => html`<a href="${a.url}" target="_blank" rel="noopener"><img${srcOf(a, 320)} alt="${a.name}" loading="lazy" decoding="async"></a>`)}</div>` : '' }
   // One column, every piece in the same two places: at the left who (the session's small drawing, the pen for you),
   // beside it the name, when, and the words. What happened (asked, why urgent, a version, taken back) is one quiet
@@ -298,12 +311,15 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   const place = old ? null : placeOf(card, model)
   const query = `${walk ? '&walk=1' : ''}${old ? `&v=${old.n}` : ''}`
   const images = imagesOf(old ? { attachments: old.attachments ?? card.attachments } : card)
-  const media = images.length + videosOf(old ? { attachments: old.attachments ?? card.attachments } : card).length
+  const videos = videosOf(old ? { attachments: old.attachments ?? card.attachments } : card).length
+  const media = images.length + videos
+  const fullWord = media === 1 ? (videos ? 'the video' : 'the picture') : !videos ? 'the pictures' : images.length ? 'the pictures and videos' : 'the videos'
   const shownPic = Math.min(Math.max(1, pic), Math.max(1, media))
   const step = (to, cls, label, art) => (to ? html`<a class="tc-rail ${cls}" data-nav href="${cardPath(to, self)}${walk ? '?walk=1' : ''}" aria-label="${label}: ${to.title}" title="${label}: ${to.title}">${art}</a>` : '')
   const form = `card-form-${card.id}`
   const asker = model.byAgent.get(card.agent)?.name ?? ''
-  // The tray: card and talk lie on one drawn desk pad in the session's pale tone (four hatched corners). When the card
+  // The tray: card and talk lie on one drawn desk pad in the session's pale tone (four hatched corners; the round
+  // buttons stand in a row above the card, clear of them). When the card
   // has scrolled out of view a slim strip of its paper stays under the top edge: the title, the answers as chips (the
   // card's own buttons again: the same form, the same addresses), the duck, What??, the reverse card, Later's tag.
   const corner = cls => raw(`<svg class="tc-corner ${cls}" viewBox="0 0 64 64" aria-hidden="true"><path d="M1.5 1.5 Q30 2.4 61 1.8 Q32 31 2.2 61 Q1 30 1.5 1.5 Z"/><path d="M8 40 L40 8 M8 26 L26 8 M8 13 L13 8" class="hatch"/></svg>`)
@@ -323,6 +339,7 @@ ${pad}<div class="tc-frame">
 <nav class="tc-rails" aria-label="Around this question">
 <a class="tc-rail tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${CROSS}</a>
 ${place ? html`${step(place.prev, 'is-prev', 'The question before', BACK)}${step(place.next, 'is-next', 'The next question', FORTH)}` : ''}
+${media ? html`<a class="tc-rail tc-full" data-nav href="${cardPath(card, self)}/p/${shownPic}" data-card-target="gallery" title="Full screen: ${fullWord}, large" aria-label="Full screen: open ${fullWord} large">${FULL}</a>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-rail tc-more-open" title="More" aria-label="More for this question">${DOTS}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' && card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : ''}
 ${copyButton(card)}
@@ -350,27 +367,30 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 </main>`
 }
 
-/** The gallery of a card: one picture large, at its own address (the browser's Back closes it). from: the session it
- *  was opened from. The head is the card's question, in the display face, and the way back to the card; beside it
+/** The gallery of a card, what Full screen opens: one picture or video large, at its own address (the browser's Back
+ *  closes it; videos come after the pictures, as on the card). from: the session it was opened from. The head is the card's question, in the display face, and the way back to the card; beside it
  *  which picture this is and the page behind it. The picture fits the width and scrolls (a tall screenshot is read top
  *  to bottom); a click shows it at its own size and back. Beside it stands the card's right column itself (cardAnswer
  *  in .tc-right, the same markup and styles as on the card's page; a phone: a bar at the foot), with Later's tag
  *  hanging under it. */
 function picturePage(card, model, base, at, { from = null } = {}) {
-  const images = imagesOf(card)
-  const i = Math.min(Math.max(1, at), images.length), a = images[i - 1]
+  const images = imagesOf(card), videos = videosOf(card), all = [...images, ...videos]
+  const i = Math.min(Math.max(1, at), all.length), a = all[i - 1], video = i > images.length
   const session = from ? model.byAgent.get(from) : null
   const self = from ? `${base}/s/${encodeURIComponent(from)}` : base
   const here = cardPath(card, self)
   const form = `card-form-${card.id}`, zoom = `t-picture-zoom-${card.id}`
   const drafting = card.status === 'open' && card.kind === 'decision'
-  const key = pictureKeys(card).get(i - 1)
+  const key = video ? undefined : pictureKeys(card).get(i - 1)
+  const shown = video
+    ? html`<div class="t-picture-view is-video"><figure class="tc-video"><video src="${a.url}#t=0.001" controls playsinline preload="metadata" aria-label="Video ${i} of ${all.length}: ${a.name}"></video></figure></div>`
+    : html`<input type="checkbox" class="t-picture-zoom" id="${zoom}" hidden>
+<div class="t-picture-view" tabindex="0" role="region" aria-label="The picture: scroll to see all of it"><label class="t-picture-fit" for="${zoom}" title="Click: its own size, or fit to the width" data-card-target="figure" data-at="${i}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img${srcOf(a)} alt="${a.name}" decoding="async"${a.width > 0 && a.height > 0 ? html` width="${a.width}" height="${a.height}"` : ''}></label></div>`
   return html`<div class="t-picture is-deciding" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(card, self))}">
-<header class="t-picture-bar"><a class="t-picture-back" data-nav href="${here}?pic=${i}" data-card-target="gallery" data-back title="Back to the question · Esc" aria-label="Back to the question: ${card.title}">${BACK}<h1>${card.title}</h1></a><div class="t-picture-sub">${where(a, i, images.length, 't-picture-where')}${pageChip(a.page, true)}</div>${card.status === 'open' && !card.with_agent && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}</header>
-<input type="checkbox" class="t-picture-zoom" id="${zoom}" hidden>
-<div class="t-picture-view" tabindex="0" role="region" aria-label="The picture: scroll to see all of it"><label class="t-picture-fit" for="${zoom}" title="Click: its own size, or fit to the width" data-card-target="figure" data-at="${i}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img${srcOf(a)} alt="${a.name}" decoding="async"${a.width > 0 && a.height > 0 ? html` width="${a.width}" height="${a.height}"` : ''}></label></div>
-${images.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : images.length}" data-turbo-action="replace" aria-label="The picture before">${BACK}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < images.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next picture">${FORTH}</a><nav class="t-picture-strip" aria-label="The pictures of this question">${strip(images, i, n => `${here}/p/${n}`)}</nav>` : ''}
-<aside class="t-picture-answer tc-right" aria-label="Your answer" data-kind="${card.kind}">${cardAnswer(card, model, base, { pic: i })}</aside>
+<header class="t-picture-bar"><a class="t-picture-back" data-nav href="${here}?pic=${i}" data-card-target="gallery" data-back title="Back to the question · Esc" aria-label="Back to the question: ${card.title}">${BACK}<h1>${card.title}</h1></a><div class="t-picture-sub">${where(a, i, all.length, 't-picture-where')}${video ? '' : pageChip(a.page, true)}</div>${card.status === 'open' && !card.with_agent && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}</header>
+${shown}
+${all.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : all.length}" data-turbo-action="replace" aria-label="The one before">${BACK}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < all.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next one">${FORTH}</a><nav class="t-picture-strip" aria-label="The pictures${videos.length ? ' and videos' : ''} of this question">${strip(images, i, n => `${here}/p/${n}`)}${clips(videos, i, n => `${here}/p/${n}`, images.length)}</nav>` : ''}
+<aside class="t-picture-answer tc-right" aria-label="Your answer" data-kind="${card.kind}">${cardAnswer(card, model, base, { pic: video ? 0 : i })}</aside>
 <form id="${form}" method="post" action="${act(card, base, 'message')}" hidden data-card-target="form">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}"><input type="hidden" name="note" value="${card.draft?.note ?? ''}">` : ''}</form>
 </div>`
 }
@@ -846,8 +866,13 @@ controller('card', class extends Controller {
     this.element.classList.toggle('foot-passed', r.bottom < box.bottom - 96)
   }
   toAnswers() { this.element.querySelector('.tc-card')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }
-  // (another picture came into the frame: it is the one that stands now)
-  framed() { this.stood = null; this.link() }
+  // (another picture or a video came into the frame: it is the one that stands now, and the one Full screen opens)
+  framed() {
+    this.stood = null
+    const at = this.element.querySelector('.tc-stage[data-at]')?.dataset.at
+    if (at && this.hasGalleryTarget) this.galleryTarget.href = this.galleryTarget.getAttribute('href').replace(/\/p\/\d+$/, `/p/${at}`)
+    this.link()
+  }
 
   // ---- the note on one option: the pencil opens its line ----
   note(event) {
@@ -1113,7 +1138,7 @@ export function register(t) {
     t.get(/^\/(?:s\/([^/]+)\/)?[qc]\/([\w-]+)\/p\/(\d+)$/, ({ req, res, match: [, from, ref, at] }) => {
       const m = model(), card = m.cardByRef(ref)
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
-      if (!imagesOf(card).length) return redirect(res, cardPath(card, BASE))
+      if (!imagesOf(card).length && !videosOf(card).length) return redirect(res, cardPath(card, BASE))
       t.page(req, res, { model: m, title: `${card.title} · picture ${at}`, view: 'picture', sidebar: false, css: 'picture', stream: null, main: picturePage(card, m, BASE, Number(at), { from: from ? decodeURIComponent(from) : null }), bodyAttrs: ' data-focus-page="card"' })
     })
     t.post(/^\/cards\/([0-9a-f]+)\/draft$/, ({ res, match, form }) => {

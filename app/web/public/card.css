@@ -75,27 +75,36 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 .tc-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .tc-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-/* ---- round the card: nothing above it; round drawn buttons at its outer edges (card.mjs .tc-rails). The frame is the
-   card with room at both sides for them; a narrow window: back and More sit on the card's top edge. ---- */
+/* ---- round the card: one row of round drawn buttons above it, at the card's edges (card.mjs .tc-rails): the way back
+   at the left; at the right the question before and the next, a gap, Full screen and More. The frame is the card,
+   set in from the pad's hatched corners so the row stands clear of them. A narrow window: back at the left, Full
+   screen and More at the right, just inside the smaller corners. ---- */
 .tc-back { color: var(--fg); text-decoration: none; }
-.tc-pad > .tc-frame { position: relative; max-width: min(1040px, 100% - 132px); }
+.tc-pad > .tc-frame { position: relative; max-width: calc(100% - 112px); }
 .tc-rail, .t-picture .tc-step { box-sizing: border-box; display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 1.3px solid var(--line-strong); border-radius: 48% 52% 50% 50% / 52% 48% 53% 47%; background: var(--surface); color: var(--fg); text-decoration: none; list-style: none; cursor: pointer; box-shadow: none; transition: translate 100ms, border-color 120ms, background 120ms; }
 .tc-rail::-webkit-details-marker { display: none; }
 :is(.tc-rail, .t-picture .tc-step) .sketch { width: 22px; height: 22px; stroke-width: 2; }
 :is(.tc-rail, .t-picture .tc-step):is(:hover, :focus-visible), .tc-more[open] > .tc-rail { border-color: var(--fg); background: var(--sunken); }
 :is(.tc-rail, .t-picture .tc-step):focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .tc-rails > .tc-rail, .tc-rails > .tc-more { position: absolute; z-index: 3; }
-.tc-rails > .tc-back { left: -60px; top: 0; }
-.tc-rails > .tc-more { right: -60px; top: 0; }
-.tc-rails > .is-prev { left: -60px; top: calc(var(--card-h) / 2 - 23px); }
-.tc-rails > .is-next { right: -60px; top: calc(var(--card-h) / 2 - 23px); }
+.tc-rails { --step: 54px; }
+.tc-rails > .tc-rail, .tc-rails > .tc-more { top: -57px; }
+.tc-rails > .tc-back { left: 0; }
+.tc-rails > .tc-more { right: 0; }
+.tc-rails > .tc-full { right: var(--step); }
+.tc-rails > .is-next { right: calc(var(--step) + 12px); }
+.tc-rails > .is-prev { right: calc(2 * var(--step) + 12px); }
+.tc-rails:has(> .tc-full) > .is-next { right: calc(2 * var(--step) + 12px); }
+.tc-rails:has(> .tc-full) > .is-prev { right: calc(3 * var(--step) + 12px); }
 .tc-rails > .is-prev:hover { translate: -2px 0; } .tc-rails > .is-next:hover { translate: 2px 0; }
 @container cardpage (max-width: 760px) {
-  .tc-pad > .tc-frame { max-width: 100%; margin-top: 14px; }
-  .tc-frame .tc-left { padding-top: var(--s-8); }
+  .tc-pad > .tc-frame { max-width: 100%; }
+  .tc-rails { --step: 48px; }
   .tc-rails > .tc-rail, .tc-rails > .tc-more > .tc-rail { width: 40px; height: 40px; }
-  .tc-rails > .tc-back { left: 14px; top: -20px; }
-  .tc-rails > .tc-more { right: 14px; top: -20px; }
+  .tc-rails > .tc-rail, .tc-rails > .tc-more { top: -48px; }
+  .tc-rails > .tc-back { left: 30px; }
+  .tc-rails > .tc-more { right: 30px; }
+  .tc-rails > .tc-full { right: calc(30px + var(--step)); }
   .tc-rails > :is(.is-prev, .is-next) { display: none; }
 }
 /* Later: the pull-tag (ui.mjs LATER_TAG, the Desk's Later) tied under the card's bottom-right corner, beside the
@@ -160,30 +169,33 @@ turbo-frame.tc-media { flex: none; display: flex; flex-direction: column; gap: 8
 .tc-stage .tc-step { top: min(50%, 130px); }
 .tc-stage .tc-step.is-prev { left: 6px; }
 .tc-stage .tc-step.is-next { right: 6px; }
+/* under the picture: one bar with the small ones to pick (pictures, then videos), then one line (which one stands,
+   the page behind it), then the files. A small picture is a tile with a ground and a drawn picture under it (one
+   that has not come yet is not a hole), a video the same tile with a play mark. */
 .tc-thumbs, .tc-cap { flex: none; display: flex; align-items: center; gap: 6px 10px; min-width: 0; }
-.tc-thumbs { flex-wrap: wrap; }
+.tc-thumbs { flex-wrap: wrap; gap: 6px; padding: 6px; border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
 .tc-cap { min-height: 34px; }
-.tc-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px; }
-.tc-thumb { flex: none; width: 48px; height: 34px; border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--line); }
+.tc-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tc-thumb { position: relative; flex: none; display: grid; place-items: center; width: 48px; height: 34px; border-radius: 6px; overflow: hidden; background: var(--sunken); color: var(--line-strong); box-shadow: 0 0 0 1px var(--line); }
 .tc-thumb[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
 .tc-thumb[data-peek] { box-shadow: 0 0 0 2px var(--fg); translate: 0 -2px; }
-.tc-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
-.tc-gallery { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px 0 8px; border-radius: var(--r-pill, 999px); color: var(--muted); font: 600 var(--t-xs)/1 var(--font); text-decoration: none; }
-.tc-gallery:hover { background: var(--line); color: var(--fg); }
-.tc-gallery .sketch { width: 18px; height: 18px; }
-/* the page behind a picture: a small sheet drawn with the pen, the file's name on it; one thing to press */
-.page-chip { flex: none; display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 32px; padding: 3px 11px 3px 8px; border: 1.4px solid var(--fg); border-radius: 5px 9px 6px 8px / 8px 5px 9px 6px; background: var(--surface); color: var(--fg); font: 600 var(--t-xs)/1.2 var(--font); text-decoration: none; box-shadow: 2px 2px 0 var(--line-strong); rotate: -.6deg; }
+.tc-thumb > .sketch { width: 18px; height: 18px; }
+.tc-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+.tc-thumb-video { color: var(--fg); }
+.tc-thumb-video .tc-icon { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+/* the page behind a picture and an attached file (on the card and in the talk): one kind of button, a small drawing,
+   the file's name in the mono face, a quiet word after it */
+.page-chip, .tc-file { box-sizing: border-box; flex: none; display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 34px; padding: 0 12px 0 9px; border-radius: 9px; background: var(--chip-bg, var(--sunken)); color: var(--fg); font: 600 var(--t-xs)/1.2 var(--font); text-decoration: none; transition: background 120ms; }
 .page-chip[hidden] { display: none; }
-.page-chip .sketch { flex: none; width: 18px; height: 18px; }
-.page-chip b { min-width: 0; font: 600 var(--t-xs)/1.2 var(--mono); overflow-wrap: anywhere; }
-.page-chip i { flex: none; font-style: normal; color: var(--muted); }
-.page-chip i::before { content: "· "; }
-.page-chip:hover { background: var(--tone-wash, var(--sunken)); rotate: 0deg; }
-.page-chip:hover i { color: var(--fg); text-decoration: underline; }
+:is(.page-chip, .tc-file) .sketch { flex: none; width: 18px; height: 18px; }
+:is(.page-chip, .tc-file) b { min-width: 0; font: 600 var(--t-xs)/1.2 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.page-chip, .tc-file) i { flex: none; font-style: normal; font-weight: 400; color: var(--muted); }
+:is(.page-chip, .tc-file):is(:hover, :focus-visible) { background: var(--line); box-shadow: inset 0 0 0 1.5px var(--fg); outline: none; }
+.tc-cap > .page-chip { flex: 0 1 auto; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.tc-cap > .page-chip:is(:hover, :focus-visible) { background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--fg); }
+.tc-attached { flex: none; display: flex; flex-wrap: wrap; gap: 6px 8px; min-width: 0; padding: 6px; border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
 .tc-video { margin: 0; height: 100%; max-width: 100%; }
 .tc-video video { display: block; height: 100%; max-width: 100%; width: auto; border-radius: var(--r-md); background: #000; box-shadow: 0 0 0 1px var(--line); }
-.tc-thumb-video { display: grid; place-items: center; background: #1d1d1f; color: #fff; }
-.tc-thumb-video .tc-icon { width: 16px; height: 16px; fill: currentColor; stroke: none; }
 .tc-where { flex: 1 1 8ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 400 var(--t-xs)/1.3 var(--font); }
 .tc-where b { color: var(--fg); font-weight: 600; }
 .focus-circles { position: absolute; overflow: visible; pointer-events: none; fill: none; stroke: var(--urg-high); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
@@ -303,13 +315,16 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-turn-head .sketch { width: 18px; height: 18px; }
 .tc-turn-note { margin: 2px 0 0; max-width: 74ch; font-size: var(--t-sm); }
 .tc-turn-before { display: inline-block; margin-top: 6px; color: var(--accent); font: 600 var(--t-xs)/1 var(--font); }
-.tc-files a { margin-right: 8px; }
+.tc-files { --chip-bg: var(--surface); display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 4px 0 0; }
+.tc-feed .tc-files a { color: var(--fg); }
 
 /* ---- a phone, or a narrow window: one column ---- */
 @container cardpage (max-width: 760px) {
   .tc-card { min-height: 0; grid-template-columns: minmax(0, 1fr); }
   .tc-card::after { content: none; }
   .tc-left { padding: var(--s-5) var(--s-5) var(--s-3); }
+  .tc-cap { flex-wrap: wrap; }
+  .tc-where { flex-basis: 100%; }
   .tc-right { position: static; min-height: 0; background: var(--surface); box-shadow: 0 -1px 0 var(--line); padding: var(--s-4); }
 }
 @media (min-width: 861px) { #cardpage { grid-row: 1; }
@@ -495,7 +510,12 @@ div.focus-opt { cursor: default; }
 .t-picture.is-deciding { grid-template-rows: auto minmax(0, 1fr) auto; }
 .t-picture.is-deciding > .t-picture-view { padding-top: 2px; }
 .t-picture-strip { grid-column: 1; grid-row: 3; display: flex; justify-content: center; min-width: 0; padding: 6px 14px calc(8px + env(safe-area-inset-bottom)); overflow-x: auto; scrollbar-width: none; }
+.t-picture-strip { gap: 8px; }
 .t-picture-strip .tc-strip { flex-wrap: nowrap; gap: 8px; }
+/* (a video in the gallery: the player as large as the place lets it be) */
+.t-picture.is-deciding > .t-picture-view.is-video { align-items: center; justify-content: center; }
+.t-picture-view.is-video .tc-video { width: min(100%, 960px); height: auto; }
+.t-picture-view.is-video video { width: 100%; height: auto; max-height: calc(100dvh - 170px); }
 .t-picture-strip .tc-thumb { width: 72px; height: 48px; }
 @media (max-width: 860px) {
   .t-picture.is-deciding { grid-template-rows: auto minmax(0, 1fr) auto auto; }
@@ -556,8 +576,9 @@ div.focus-opt { cursor: default; }
 
 /* ---- The tray (card.mjs .tc-pad): card and talk on one drawn desk pad in the session's pale tone: a pen outline, a
    second line inside it, four hatched corners. The card lies on it with a soft shadow; the talk is written straight
-   on the pad (no boxes), what happened and the times in the session's ink. ---- */
-.tc-pad { position: relative; padding: 30px 0 14px; border-radius: 12px; background: var(--tone-wash); box-shadow: inset 0 0 0 1.6px var(--tone-pen), inset 0 0 0 5px var(--tone-wash), inset 0 0 0 6px var(--tone-edge); }
+   on the pad (no boxes), what happened and the times in the session's ink. Its top is the room for the row of round
+   buttons above the card (.tc-rails). ---- */
+.tc-pad { position: relative; max-width: 1084px; padding: 76px 0 14px; border-radius: 12px; background: var(--tone-wash); box-shadow: inset 0 0 0 1.6px var(--tone-pen), inset 0 0 0 5px var(--tone-wash), inset 0 0 0 6px var(--tone-edge); }
 .tc-corner { position: absolute; z-index: 1; width: 54px; height: 54px; fill: var(--tone-edge); stroke: var(--tone-pen); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; }
 .tc-corner .hatch { fill: none; stroke-width: 1.2; opacity: .55; }
 .tc-corner.tl { left: -3px; top: -3px; } .tc-corner.tr { right: -3px; top: -3px; rotate: 90deg; } .tc-corner.bl { left: -3px; bottom: -3px; rotate: 270deg; } .tc-corner.br { right: -3px; bottom: -3px; rotate: 180deg; }
@@ -600,8 +621,8 @@ div.focus-opt { cursor: default; }
 @container cardpage (max-width: 1000px) { .tc-bar-chips { display: none; } .tc-bar-chips + .tc-chip.is-jump { display: block; } }
 @container cardpage (max-width: 760px) {
   /* a phone: the pad goes from edge to edge */
-  .tc-pad { margin-inline: calc(-1 * var(--s-3)); padding: 22px var(--s-3) 12px; border-radius: 0; box-shadow: inset 0 1.6px 0 var(--tone-pen), inset 0 -1.6px 0 var(--tone-pen); }
-  .tc-corner { width: 34px; height: 34px; } .tc-corner.tl, .tc-corner.bl { left: 0; } .tc-corner.tr, .tc-corner.br { right: 0; }
+  .tc-pad { margin-inline: calc(-1 * var(--s-3)); padding: 62px var(--s-3) 12px; border-radius: 0; box-shadow: inset 0 1.6px 0 var(--tone-pen), inset 0 -1.6px 0 var(--tone-pen); }
+  .tc-corner { width: 36px; height: 36px; } .tc-corner.tl, .tc-corner.bl { left: 0; } .tc-corner.tr, .tc-corner.br { right: 0; }
   .tc-bar { top: -10px; }
   .tc-bar-in { height: 50px; gap: 4px; padding: 0 6px 0 12px; border-radius: 14px; }
   .tc-bar-title { flex-basis: 60px; font-size: var(--t-sm); }
@@ -611,7 +632,7 @@ div.focus-opt { cursor: default; }
   .tc-mini .sketch-what { width: 38px; height: 14px; }
   .tc-bar-later { right: 14px; top: 47px; }
 }
-@media (min-width: 861px) { #cardpage { padding-top: var(--s-6); padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } .tc-pad .tc-rails > :is(.tc-back, .tc-more) { top: 18px; } }
+@media (min-width: 861px) { #cardpage { padding-top: var(--s-6); padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } }
 @media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } }
 @media (prefers-reduced-motion: reduce) { .tc-bar-in { transition: none; } }
 /* (a phone's gallery: Later's tag stands small in the head, beside the question, not over the picture) */

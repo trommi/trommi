@@ -495,6 +495,28 @@ My advice is the canary: it costs one day and tells us what the load of real roo
     isay('me', 10, 'Fine. I will acknowledge this once support has confirmed they read it.'),
   ]
   put(docs, i0, 'critical', [{ env: ++env, at: ia(0), content: info }], italk, () => ({}))
+
+  // ---- 3. an everyday decision with one of everything attached: pictures (one with its page), a video, files ----
+  const ui = zu, u0 = first - 4 * MIN, ua = n => u0 + n * 30e3
+  const usay = (from, n, text, more = {}) => item(from, ua(n), { text, ...more })
+  const tail = { ...base, card_type: 'decision', title: 'The working tail under the stack: with a heading or without?', teaser: 'Cards that are out with an agent lie flat under the stack. Without a heading the Desk is calmer; with one it says what they are.', body: 'The cards that are out with an agent now lie pressed flat under the last card of the stack. I built it both ways: **without a heading** (the flat cards speak for themselves) and **with a small heading** "With the agents".\n\nThe pictures show both at desktop and phone width, the first one comes with its page. The clip is the tail filling up; the measurements and the notes are attached as files.',
+    options: [{ key: 'plain', label: 'Without a heading', detail: 'Calmer; the flat cards say who is on them.' }, { key: 'head', label: 'With a small heading', detail: 'Clearer for a first visit, one more line on the Desk.' }], recommended: 'plain', urgency_reason: '',
+    sections: [{ text: '' }, { key: 'plain', label: 'Without a heading', text: 'The tail starts right under the last card, a shade paler. Nothing to read before the first flat card.', recommended: true, picture: 0 }, { key: 'head', label: 'With a small heading', text: 'One quiet line "With the agents" above the tail, in the Desk\'s small type.', recommended: false, picture: 1 }],
+    attachments: [
+      png('board-desktop.png', 'working-tail.png', 1360, 860, 'Without a heading', { page: '/demo/files/page-plan.html' }),
+      png('thema-hell.png', 'working-tail-heading.png', 1440, 900, 'With a small heading'),
+      png('phone-entscheidungen.png', 'working-tail-phone.png', 400, 860, 'The tail on a phone'),
+      png('thema-dunkel.png', 'working-tail-dark.png', 1440, 900, 'The same at night'),
+      att('clip.webm', 'tail-fills-up.webm', 'video/webm'),
+      att('40c1a1e0.csv', 'row-heights.csv', 'text/csv', { total_size: 120 }),
+      att('6e7ec91e.log', 'design-notes.log', 'text/plain', { total_size: 294 }),
+    ] }
+  tail.sections[0].text = tail.body
+  put(ui, u0, 'high', [{ env: ++env, at: ua(0), content: tail }], [
+    usay(ui, 1, 'Both ways are on the preview. The row heights I measured are in the table.', { attachments: [att('40c1a1e0.csv', 'row-heights.csv', 'text/csv', { total_size: 120 })] }),
+    usay('me', 2, 'Here is how it looks on my screen, with the build log from this morning.', { attachments: [png('c573b0a8.png', 'my-screen.png', 1440, 900, 'My screen'), att('6e7ec91e.log', 'build.log', 'text/plain', { total_size: 294 })] }),
+    usay(ui, 3, 'Thank you. On your screen the stack is three cards high, so the tail starts above the fold in both ways.'),
+  ], () => ({}))
   return f
 }
 
