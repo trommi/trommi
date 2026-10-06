@@ -660,13 +660,12 @@ a.agent-badge { text-decoration: none; }
 .corner-note-nocrown { font-size: var(--t-xs); color: #6a5d24; }
 /* ---- One calm sidebar (his word, 4 October: "so noch komisch"): one inset for every row, the pills inside with equal
    margins; "New note" a quiet row like "+ New agent", right under it, the unsent notes as small stickies under that;
-   the bracket of an unfolded main thinner and lighter ---- */
+   the bracket of an unfolded main at the pen's own weight again (his word, 6 October: it used to be stronger) ---- */
 @media (min-width: 861px) {
   #agents { padding-inline: 10px; }
   #agents .agent-row { margin-inline: 0; }
   #agents .agent-row.is-main[data-fold] .agent-entry, #agents .agent-entry { width: auto; }
   .agent-row.is-main[data-fold] { margin-inline: 0; }
-  .crown-bracket { stroke-width: 1.3; opacity: .45; }
 }
 .corner-note-field:focus, .corner-note-field:focus-visible { outline: none; box-shadow: none; }
 /* the note's attachments: thumbnails and file names under the words, the paperclip beside the bin */
@@ -712,12 +711,14 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 }
 
 /* ---- The bracket stands clear of the rows (his word, 6 October: "zu nah dran … überdeckt den Strich"): the subs
-   stand indented right of it, so their hover and the open row's ground never reach the line; in the rail the
-   subs' drawings move a little to the right for it. ---- */
+   stand indented right of it, so their hover and the open row's ground never reach the line. And air (same day):
+   between the Desk's name and the first group, between the groups, and to the sidebar's left edge. ---- */
 @media (min-width: 861px) {
-  :root:not([data-rail="folded"]) #agents .agent-row.is-sub { margin-left: 22px; }
-  html[data-rail="folded"] #agents .agent-row.is-sub { margin-left: 12px; margin-right: -4px; }
-  html[data-rail="folded"] #agents .agent-row.is-sub .agent-entry { border-radius: 10px; }
+  :root:not([data-rail="folded"]) #agents { padding-left: 16px; }
+  :root:not([data-rail="folded"]) #agents::before { margin-bottom: 18px; margin-left: -16px; }
+  :root:not([data-rail="folded"]) #agents .agent-row.is-sub { margin-left: 28px; }
+  :root:not([data-rail="folded"]) #agents .agent-row.is-sub.is-last { margin-bottom: 20px; }
+  :root:not([data-rail="folded"]) #agents .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 4px + 28px); }
 }
 
 /* ---- The Desk row is the heading of the whole sidebar (his word, 6 October: "zu klein … man sieht nicht, dass das das
