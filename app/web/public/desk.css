@@ -1128,6 +1128,29 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .desk-walk { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
 .desk-walk .walk-burst { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .desk-walk-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
+/* the duck for all (desk.mjs duckAll): a small quiet round button left of Rapid fire; pressed, a small sheet asks */
+.desk-duck { position: relative; }
+.desk-duck-open { list-style: none; display: grid; place-items: center; width: 38px; height: 38px; border: 1.3px solid var(--line-strong); border-radius: 48% 52% 50% 50% / 52% 48% 53% 47%; background: var(--surface); color: var(--muted); cursor: pointer; transition: color 120ms, border-color 120ms, rotate 120ms; }
+.desk-duck-open::-webkit-details-marker { display: none; }
+.desk-duck-open .sketch-duck { width: 27px; height: 23px; stroke-width: 1.5; }
+.desk-duck-open:hover, .desk-duck[open] > .desk-duck-open { color: var(--fg); border-color: var(--fg); rotate: -4deg; }
+.desk-duck-open:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+.desk-duck-ask { position: absolute; z-index: 20; right: -6px; top: calc(100% + 10px); width: min(320px, calc(100vw - 32px)); box-sizing: border-box; display: grid; gap: 8px; padding: 14px 16px 14px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); color: var(--fg); box-shadow: 3px 4px 0 color-mix(in srgb, var(--fg) 85%, transparent); text-align: left; }
+.desk-duck-ask p { margin: 0; font: 700 var(--t-md)/1.35 var(--display); }
+.desk-duck-ask small { color: var(--muted); font: 400 var(--t-xs)/1.4 var(--font); }
+.desk-duck-ways { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.desk-duck-yes { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px 0 10px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--fg); color: var(--bg); font: 700 var(--t-sm)/1 var(--font); cursor: pointer; }
+.desk-duck-yes .sketch-duck { width: 28px; height: 24px; stroke-width: 1.5; color: var(--fg); }
+.desk-duck-yes:active { translate: 1px 2px; }
+.desk-duck-no { min-height: 40px; padding: 0 12px; border: 0; border-radius: 9px; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.desk-duck-no:hover { background: var(--sunken); color: var(--fg); }
+:is(.desk-duck-yes, .desk-duck-no):focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+@media (max-width: 860px) {
+  #inbox .desk-top { position: relative; }
+  .desk-duck { position: static; }
+  .desk-duck-open { width: 44px; height: 44px; }
+  .desk-duck-ask { left: 0; right: 12px; width: auto; top: calc(100% + 6px); }
+}
 @media (any-hover: hover) { .desk-walk:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
 .desk-walk:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
 .desk-walk:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
@@ -1135,7 +1158,8 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   /* (the band is the Desk's own here: a strip that stays at the top of the scrolling page, the list goes under it) */
   html body[data-scope="all"]:not([data-page]) #inbox:has(> .desk-top) { --desk-band: var(--band); margin-top: 0; padding-top: 0; }
   #inbox .desk-top { display: contents; }
-  #inbox .desk-tools { position: sticky; top: 0; z-index: 6; box-sizing: border-box; height: var(--band); max-width: 800px; margin-inline: auto; justify-content: flex-end; align-items: flex-start; padding: 8px 4px 0 0; background: var(--surface); box-shadow: 0 0 0 100vmax var(--surface); clip-path: inset(0 -100vmax); }
+  #inbox .desk-tools { position: sticky; top: 0; z-index: 6; box-sizing: border-box; height: var(--band); max-width: 800px; margin-inline: auto; justify-content: flex-end; align-items: flex-start; padding: 8px 4px 0 0; }
+  #inbox .desk-tools::before { content: ""; position: absolute; z-index: -1; inset: 0 -100vmax; background: var(--surface); }
   #inbox .desk-walk { min-height: 38px; }
   #inbox .desk-line { box-sizing: border-box; max-width: 800px; margin: var(--s-6) auto var(--s-4); padding-left: 46px; }
 }
