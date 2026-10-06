@@ -2,7 +2,7 @@
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, stream, flipOut } from './app.mjs'
-import { Controller, PLUS, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
+import { Controller, PLUS, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -198,10 +198,11 @@ function withAgents(model, base) {
     const line = working.find(t => t.card_id === card.id) ?? working.filter(t => t.agent === card.agent && !t.card_id).sort((a, b) => b.updated - a.updated)[0] ?? null
     return { card, sender, line, at: (card.status === 'open' ? card.with_agent : card.decided) ?? 0 }
   }).filter(i => i.sender).sort((a, b) => (b.line?.updated ?? b.at) - (a.line?.updated ?? a.at))
-  if (!items.length) return html`<section id="desk-ip" class="ipb" hidden></section>`
-  return html`<section id="desk-ip" class="ipb" aria-label="With the agents: ${items.length}">
-<h2 class="ipb-head"><span class="ipb-rule"></span><span class="ipb-word"><span class="ip-gear" aria-hidden="true"></span>With the agents · ${items.length}</span><span class="ipb-rule"></span></h2>
-${items.map(i => html`<a class="ipb-card" data-id="${i.card.id}" data-nav href="${cardPath(i.card, base)}" title="${cardNr(i.card)}: ${i.card.title}" style="--hue:${i.sender.hue}">${avatar(i.sender, { crown: false, working: true })}<span class="ipb-line"><b>${i.sender.name}</b> ${i.card.status === 'open' ? 'is reworking' : 'is working on'}: <span class="ipb-title">${i.card.title}</span></span>${i.at ? agoSpan(i.at) : ''}</a>`)}
+  if (!items.length) return html`<section id="desk-ip" class="tail" hidden></section>`
+  // The stack's tail: each card that is out with an agent is a stack card pressed flat (the same outline, drawing and
+  // title face, one line high, a shade paler), tucked under the last card; where the answers would be: who is on it.
+  return html`<section id="desk-ip" class="tail" aria-label="With the agents: ${items.length}">
+${items.map(i => html`<a class="tail-card" data-id="${i.card.id}" data-nav href="${cardPath(i.card, base)}" title="${cardNr(i.card)}: ${i.card.title}" style="--hue:${i.sender.hue}"><span class="tail-mark">${markArt({ ...i.sender, starred: false })}</span><strong class="tail-title">${i.card.title}</strong><span class="tail-who">${raw(ringSvg())}<span><b>${i.sender.name}</b> ${i.card.status === 'open' ? 'is reworking it' : 'is on it'}</span></span>${i.at ? agoSpan(i.at) : html`<span class="ago"></span>`}</a>`)}
 </section>`
 }
 
