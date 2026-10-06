@@ -2093,7 +2093,7 @@ const LAYOUT = [
     { id: 'card.send', keys: ['Enter'], does: 'send, where several answers are allowed' },
     { id: 'card.later', keys: ['l', 's'], does: 'Later' },
     { id: 'card.trust', keys: ['r'], does: 'Duck it: the agent decides' },
-    { id: 'card.revise', keys: ['b'], does: 'Revise: say what should change; Enter hands it back' },
+    { id: 'card.revise', keys: ['b'], does: 'Reverse: back to the agent for rework, with the comments' },
     { id: 'card.what', keys: ['e'], does: 'What??: ask the agent to explain' },
     { id: 'card.shred', keys: ['x'], does: 'Shred: throw it away unanswered' },
     { id: 'card.write', keys: ['a'], does: 'write to the agent about the question' },
@@ -2341,12 +2341,7 @@ function start(signal) {
     'card.send': () => press($('.tc-answer .tc-send-many')),
     'card.later': () => press($('.tc-more-item[formaction$="/snooze"]')),
     'card.trust': () => press($('.tc-answer .tc-whatever')),
-    // Revise: the small field under the reverse card opens; Enter there hands the card back with its words.
-    'card.revise': () => {
-      const card = document.querySelector('[data-controller~="card"]')
-      const ctl = card && stimulus.getControllerForElementAndIdentifier(card, 'card')
-      return ctl ? ctl.openRevise() : false
-    },
+    'card.revise': () => press($('.tc-answer .tc-reverse')),   // the reverse card: handed back at once
     'card.what': () => press($('.tc-answer .tc-wtf, .tc-answer .tc-tile.is-what, .tc-more-item.is-what')),
     'card.shred': () => press($('.tc-more-item.is-shred')),
     'card.write': () => { const field = $('.tc-field'); if (!field) return false; field.focus() },
