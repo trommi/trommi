@@ -98,6 +98,25 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-tools { position: relative; padding: 4px; box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); }
 .pad-tool[aria-pressed="true"] { background: var(--accent) !important; color: var(--accent-fg); }
 .pad-tools .pad-sep { margin: 0 3px; }
+/* Cut out and send (whiteboard.mjs .pad-cut): beside the tools, not one of them. Drawn with the pen: scissors on a
+   dashed line round a letter (the note's envelope). In hand: the line and the scissors in the accent, the letter lifts. */
+.pad-bar { align-items: center; gap: 18px; }
+.pad-cut { position: relative; flex: none; width: 80px; height: 60px; padding: 0; border: 0; background: none !important; color: var(--fg); rotate: -3deg; cursor: pointer; transition: rotate 140ms, translate 140ms; }
+.pad-cut svg { display: block; width: 100%; height: 100%; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.pad-cut .cut-line { stroke-dasharray: 3.4 4.2; opacity: .7; }
+.pad-cut .cut-paper { fill: #fdf2c4; stroke: none; }
+.pad-cut .cut-letter { stroke: #1d1a12; transition: translate 160ms, rotate 160ms; transform-box: fill-box; transform-origin: 50% 50%; }
+.pad-cut .cut-scissors { transition: translate 200ms; }
+:root[data-theme="dark"] .pad-cut .cut-paper { fill: #d9c35f; }
+.pad-cut:hover, .pad-cut:focus-visible { rotate: 0deg; translate: 0 -2px; outline: none; }
+.pad-cut:hover .cut-scissors, .pad-cut:focus-visible .cut-scissors { translate: 5px 0; }
+.pad-cut:focus-visible .cut-line { opacity: 1; }
+.pad-cut.pad-tool[aria-pressed="true"] { background: none !important; color: var(--accent); rotate: 0deg; }
+.pad-cut[aria-pressed="true"] .cut-line { opacity: 1; stroke-width: 2; animation: cut-march 900ms linear infinite; }
+.pad-cut[aria-pressed="true"] .cut-scissors { translate: 9px 0; }
+.pad-cut[aria-pressed="true"] .cut-letter { translate: 2px -3px; rotate: -5deg; }
+@keyframes cut-march { to { stroke-dashoffset: -7.6; } }
+@media (prefers-reduced-motion: reduce) { .pad-cut[aria-pressed="true"] .cut-line { animation: none; } }
 .pad-dot { display: block; width: var(--d, 10px); height: var(--d, 10px); border-radius: 50%; background: var(--c, var(--fg)); }
 .pad-style { position: absolute; left: 50%; bottom: calc(100% + 10px); z-index: 3; width: max-content; max-width: calc(100vw - 2 * var(--s-2)); display: grid; gap: 2px; padding: var(--s-2) var(--s-3); border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); transform: translateX(-50%); }
 .pad-style-row { display: flex; align-items: center; gap: var(--s-2); }
@@ -171,6 +190,8 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
   @media (max-width: 400px) { .pad-zoom { display: none; } }
   .pad-tools .pad-icon-btn { width: 42px; }
   .pad-tools .pad-sep { margin: 0 1px; }
+  .pad-bar { gap: 10px; }
+  .pad-cut { width: 64px; height: 48px; }
   .pad-payload, .pad-keys { grid-template-columns: minmax(0, 1fr); }
   .pad-payload img { max-height: 30vh; }
   .pad-caret-tip span { display: none; }
