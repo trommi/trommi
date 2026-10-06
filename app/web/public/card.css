@@ -529,3 +529,14 @@ div.focus-opt { cursor: default; }
   .t-picture-strip .tc-thumb { width: 56px; height: 40px; }
   .t-picture.is-deciding > .t-picture-answer { grid-row: 4; }
 }
+
+/* ---- The three side answers take colour under the pointer, the keyboard or the finger (at rest calm grey): the duck
+   the Desk duck's yellow, What?? a violet, the reverse card the four colours of the wild card, laid as four flat
+   fields round a point a little off the middle (no gradient), the card on an ink ground in white. The colours, in one place: ---- */
+.tc-page, .t-picture { --duck-yellow: #f5d64a; --duck-ink: #1f1a05; --what-violet: #7a5bc7; --uno-red: #d9483b; --uno-yellow: #f3c52f; --uno-green: #3f9f58; --uno-blue: #2f70c4; }
+:is(.tc-opt.tc-whatever, .tc-wtf, .tc-reverse) { transition: translate 90ms, background-color 120ms, color 120ms; }
+:is(.tc-opt.tc-whatever, .tc-wtf, .tc-reverse):is(:hover, :focus-visible, :active) { filter: none; translate: -1px -2px; }
+:is(.tc-opt.tc-whatever, .tc-wtf, .tc-reverse):active { translate: 0 1px; }
+.tc-opt.tc-whatever:is(:hover, :focus-visible, :active) { --surface: #fff6c9; background: var(--duck-yellow); color: var(--duck-ink); box-shadow: inset 0 0 0 1.5px var(--duck-ink); }
+.tc-wtf:is(:hover, :focus-visible, :active) { background: var(--what-violet); color: #fff; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--what-violet) 70%, #000); }
+.tc-reverse:is(:hover, :focus-visible, :active) { background: radial-gradient(ellipse 25px 27px at 50% 50%, #14161a 0 96%, transparent 100%), conic-gradient(from 7deg at 53% 47%, var(--uno-red) 0 25%, var(--uno-yellow) 0 50%, var(--uno-green) 0 75%, var(--uno-blue) 0); color: #fff; box-shadow: inset 0 0 0 1.5px #14161a; }
