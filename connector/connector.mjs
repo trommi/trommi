@@ -19,6 +19,8 @@
 //   node connector/connector.mjs denied          the plugin's PermissionDenied hook (one quiet line, never a decision)
 //   node connector/connector.mjs resolved        the plugin's PostToolUse hook: a prompt answered in the terminal leaves the board
 //   node connector/connector.mjs monitor         the plugin's monitor: prints one line per board event of this session
+//   node connector/connector.mjs witness <session>  started by a leaving connector: says "cut off" for it when its
+//                                              Claude Code process lives on without a connector (the folder watch)
 //
 // Environment:
 //   TROMMI_INVITE    agent invite link (https://app.trommi.com/join#v1....), needed once per room + machine + folder
@@ -34,6 +36,11 @@
 //                    default 60000 (at once when its parent is a Claude Code spare)
 //   TROMMI_IDLE_MS   a holder whose session used Trommi hands it over after this long without use, default 1800000
 //   TROMMI_SPARE     1|0 overrides the look at the parent's command line (`claude bg-spare`)
+//   TROMMI_FOLDER_WATCH  0 switches the folder watch off (no marks, no witness, nothing said about other sessions)
+//   TROMMI_CUT_GRACE_MS  how long a Claude Code session may be without a connector before it counts as cut off,
+//                    default 20000 (a /mcp Reconnect takes a few seconds)
+//   TROMMI_LINK_MS   the link report repeats a moved last tool call at most this often, default 30000
+//   TROMMI_LINK_TICK_MS  how often the folder is looked at and the report checked, default 5000
 //
 // Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json (cursor, chains, model), .lock and
 // .files/ (the human's attachments, decrypted for Claude). A restarted session reuses its slot (pathsOf, pickSlot).
@@ -44,7 +51,7 @@ import os from 'node:os'
 import net from 'node:net'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -233,8 +240,8 @@ export const claimsAtStart = ({ spare, reconnect = false, others = 0, joining = 
 const hereFile = (dir, base, pid = process.pid) => path.join(dir, `${base}.here.${pid}`)
 export function checkIn(dir, base, who) { try { fs.writeFileSync(hereFile(dir, base), JSON.stringify(who), { mode: 0o600 }) } catch {} }
 export function checkOut(dir, base) { fs.rmSync(hereFile(dir, base), { force: true }) }
-/** The other live connectors of the folder: [{ pid, session, spare }]. Files of dead processes are removed. */
-export function othersHere(dir, base) {
+/** The other live connectors of the folder: [{ pid, session, spare }]. Files of dead processes are removed (with the folder watch on, by it). */
+export function othersHere(dir, base, { keep_dead = false } = {}) {
   const head = `${base}.here.`, out = []
   let names = []
   try { names = fs.readdirSync(dir) } catch {}
@@ -242,10 +249,76 @@ export function othersHere(dir, base) {
     if (!f.startsWith(head) || !/^\d+$/.test(f.slice(head.length))) continue
     const pid = Number(f.slice(head.length))
     if (pid === process.pid) continue
-    if (!alive(pid)) { fs.rmSync(path.join(dir, f), { force: true }); continue }
+    if (!alive(pid)) { if (!keep_dead) fs.rmSync(path.join(dir, f), { force: true }); continue }
     try { const who = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); out.push({ pid, session: String(who.session ?? ''), spare: !!who.spare }) } catch {}
   }
   return out
+}
+
+// ==== the folder watch: a Claude Code session that lost its connector =============================================
+//
+// The hub sees one thing of a key: whether a stream is open. It cannot see a Claude Code session whose connector is
+// gone while the session itself runs on (Claude Code dropped the MCP server, the connector crashed or was killed):
+// that session's Trommi tools are dead, it hears nothing and can say nothing, and with two sessions in one folder
+// the key's stream may even stay open in the other one. The connectors of a folder see it for each other:
+//
+//   presence   a connector's `<base>.here.<pid>` also says which Claude Code process it belongs to (pid and start
+//              time), when its session last used Trommi, which key slot it holds and its last link report.
+//   the mark   a connector that ends while its Claude Code process lives leaves `<base>.gone.<hash of its session>`
+//              (the presence file's content, when and why). One that was killed leaves none: whoever looks at the
+//              folder next writes it from the dead process's presence file. Only for a session whose loss means
+//              something to the human (lossMatters): it held the key, or it used Trommi within TROMMI_IDLE_MS.
+//   cut off    a mark whose Claude Code process still runs (same pid, same start time), with no live connector of
+//              that session in the folder, for TROMMI_CUT_GRACE_MS (20 s). A session that is starting has no mark; a
+//              reconnect brings a connector of the same session within seconds, whatever the order the old one's mark
+//              and the new one's presence are written in; a Claude Code process that ended takes its mark with it.
+//   said by    the connector that holds a key says it in its link report (cut_since: the oldest such mark). When the
+//              cut-off session held the key and nobody holds it now, whoever sees it says it once in that key's name
+//              (lastWord: slot lock, sign-in, lease, one POST agent_link with exit.claude 'alive'; no stream, nothing
+//              read, the key's chain untouched): a keyless connector of the folder, or the witness the leaving
+//              connector started for the case that nobody else is there.
+//
+// What it cannot see: a lone connector that was killed (no mark, nobody to write one) shows as gone, not cut off.
+
+const startOf = pid => {
+  try { return fs.readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '').split(' ')[19] ?? '' } catch {}
+  try { return execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 2000 }).trim() } catch { return '' }
+}
+const readJson = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return null } }
+const markFile = (dir, base, session) => path.join(dir, `${base}.gone.${crypto.createHash('sha256').update(String(session)).digest('hex').slice(0, 16)}`)
+/** What a connector says of itself in its presence file. */
+export const presenceOf = ({ session, spare = false, claude_pid = process.ppid, used_at = 0, slot = null, link = null }) => ({ session, spare, claude_pid, claude_start: startOf(claude_pid), used_at, slot, link })
+/** Whether the loss of this connector means something to the human: it held the key, or its session used Trommi lately. */
+export const lossMatters = (who, at = Date.now(), idle_ms = 1_800_000) => !!who?.session && Number(who.claude_pid) > 1 && (who.slot != null || (who.used_at > 0 && at - who.used_at < idle_ms))
+/** The mark of a connector that is gone (`who`: its presence). */
+export function leaveMark(dir, base, who, { at = Date.now(), why = 'stdin', pid = process.pid } = {}) {
+  try { fs.writeFileSync(markFile(dir, base, who.session), JSON.stringify({ ...who, at, why, pid }), { mode: 0o600 }) } catch {}
+}
+/**
+ * One look at the folder: buries dead connectors, drops marks that no longer hold, and returns
+ * { cut: [mark], pending: [mark], cut_since }: the sessions that are cut off, those still within the grace, and the
+ * oldest cut. A mark carries its `file`.
+ */
+export function folderWatch(dir, base, { now = Date.now(), grace_ms = 20_000, idle_ms = 1_800_000, isAlive = alive, started = startOf, self = process.pid } = {}) {
+  const here = `${base}.here.`, gone = `${base}.gone.`
+  const list = () => { try { return fs.readdirSync(dir) } catch { return [] } }
+  const live = new Set()
+  for (const f of list()) {
+    if (!f.startsWith(here) || !/^\d+$/.test(f.slice(here.length))) continue
+    const pid = Number(f.slice(here.length)), file = path.join(dir, f), who = readJson(file)
+    if (pid === self || isAlive(pid)) { if (who?.session) live.add(String(who.session)); continue }
+    if (lossMatters(who, now, idle_ms) && !fs.existsSync(markFile(dir, base, who.session))) leaveMark(dir, base, who, { at: now, why: 'killed', pid })
+    fs.rmSync(file, { force: true })
+  }
+  const cut = [], pending = []
+  for (const f of list()) {
+    if (!f.startsWith(gone)) continue
+    const file = path.join(dir, f), t = readJson(file)
+    const holds = t?.session && !live.has(String(t.session)) && isAlive(t.claude_pid) && (!t.claude_start || started(t.claude_pid) === t.claude_start)
+    if (!holds) { fs.rmSync(file, { force: true }); continue }
+    ;(now - t.at >= grace_ms ? cut : pending).push({ ...t, file })
+  }
+  return { cut, pending, cut_since: cut.length ? Math.min(...cut.map(t => t.at)) : null }
 }
 
 /** Ask the holder of a slot for its key. Resolves { ok: true } when it gave it up, else its answer ({ used, quiet_ms, after_ms }) or { silent }. */
@@ -1064,6 +1137,54 @@ async function hookCli(kind) {
   }
   return ''
 }
+/**
+ * "Cut off", said once in the name of a key nobody holds (the folder watch): the mark's session held slot `t.slot`,
+ * its connector is gone and its Claude Code process lives on. Takes the slot lock (so no connector opens the key
+ * meanwhile), signs in with the key, takes the lease (no live process holds it) and posts one link report. No stream,
+ * no envelope, nothing read: the key's chain and its cursor stay as they are. False when a connector holds the slot
+ * (it says it itself, in its own report).
+ */
+async function lastWord(cfg, room_id, t) {
+  const p = pathsOf(cfg, room_id, t.slot)
+  if (!fs.existsSync(p.key_file) || !lockSlot(p, `witness:${process.pid}`)) return false
+  try {
+    const core = await import('../shared/index.mjs')
+    const { fileStorage } = await import('../shared/storage-file.mjs')
+    const storage = await fileStorage({ dir: p.dir, key_file: p.key_file, prefix: p.prefix })
+    const room = await storage.get('room'), device = await storage.loadDevice()
+    if (!room || !device) return false
+    const hub = new core.Hub({ hub_url: room.hub_url, room_id, client: CLIENT, signer: challenge => core.z.signHubAuth({ device, roomId: core.z.unhex(room_id), hub: hub.hub_url, challenge }) })
+    hub.lease_generation = (await hub.agentLease({ process_instance: `witness-${crypto.randomBytes(6).toString('hex')}` })).lease_generation
+    await hub.agentLinkLast({ hears: 'live', ...(t.link ?? {}), cut_since: null, exit: { reason: /^[a-z0-9-]{1,40}$/.test(t.why ?? '') ? t.why : 'stdin', claude: 'alive' } }, 8000)
+    const { file, ...mark } = t
+    try { fs.writeFileSync(file, JSON.stringify({ ...mark, told: true }), { mode: 0o600 }) } catch {}
+    log(`said for the session of Claude Code pid ${t.claude_pid}: cut off (its connector, pid ${t.pid}, is gone)`)
+    return true
+  } catch (err) { log(`cut off not said: ${err.message}`); return false } finally { unlockSlot(p) }
+}
+
+/**
+ * `witness <session>`: started detached by a connector that ends while its Claude Code process lives. Waits out the
+ * grace; if the session is then cut off and nobody holds its key, says so (lastWord). Ends when the session has a
+ * connector again, when its Claude Code process ended, or after it spoke.
+ */
+async function witnessCli(session) {
+  const cfg = { ...connectorConfig(process.env, { write: false }), invite: '' }
+  const room_id = await resolveRoom(cfg)
+  if (!room_id || !session) return
+  const dir = path.join(cfg.keys_dir, room_id)
+  const grace_ms = envMs(process.env.TROMMI_CUT_GRACE_MS, 20_000), idle_ms = envMs(process.env.TROMMI_IDLE_MS, 1_800_000)
+  const until = Date.now() + grace_ms + 60_000
+  for (;;) {
+    const w = folderWatch(dir, cfg.base, { grace_ms, idle_ms })
+    const t = [...w.cut, ...w.pending].find(m => m.session === session)
+    if (!t) return
+    if (w.cut.includes(t)) { if (t.slot != null && !t.told) await lastWord(cfg, room_id, t); return }
+    if (Date.now() > until) return
+    await sleep(Math.max(50, Math.min(1000, grace_ms / 4)))
+  }
+}
+const envMs = (v, d) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d)
 const notInRoom = me => ({ 'waiting-session': 'the agent is not assigned to a session yet (the human does that in the Trommi app)', 'needs-invite': 'no free key of this folder' }[me.phase] ?? `not in the room (${me.phase})`)
 
 // ---- MCP ---------------------------------------------------------------------------------------------
@@ -1095,6 +1216,9 @@ export function channelsHeard({ env = process.env, args = null, ppid = process.p
 }
 const DEAF_HINT = 'This Claude Code session was started without --dangerously-load-development-channels server:trommi, so Claude Code drops the board\'s live events (chat, decisions) before you see them. Until the human restarts it with that flag (e.g. `claude --resume <session> --dangerously-load-development-channels server:trommi`), the events that came in are attached to your next tool result. Tell the human so once, with reply.'
 const channelTag = ({ content, meta }) => `<channel source="board"${Object.entries(meta ?? {}).map(([k, v]) => ` ${k}="${String(v).replace(/"/g, '&quot;')}"`).join('')}>\n${content}\n</channel>`
+const OTHERS_NOTE = '(This waited in the connector for another Claude Code session of this folder, which held the key before this one.)'
+/** A tool call's `session` argument (a helper's child session), or null: the main session's call. */
+const sessionArg = args => (typeof args?.session === 'string' && args.session.trim() ? args.session.trim().toLowerCase() : null)
 
 // Joining is the human's act (review 2: a model-callable join could be driven by prompt injection): CLI or TROMMI_INVITE only.
 const SELF_PATH = path.resolve(process.argv[1] ?? 'connector/connector.mjs')
@@ -1117,31 +1241,77 @@ async function main() {
       instructions: `${heard ? '' : `${code.monitorNote()} `}${code.INSTRUCTIONS.replace('<connector>', SELF_PATH)}`,
     },
   )
-  // Events Claude Code would drop (channelsHeard false) wait here and go out with the next tool result.
+  // Events Claude Code would drop (channelsHeard false) wait here and go out with the next tool result. Each entry is
+  // { params, about, from }: about = { session_id, envelope_number } of the human's command (null for a notice the
+  // connector made itself), from = the Claude Code session whose connector queued it. The queue is kept in the key
+  // slot's state ('missed'), so a restart or a hand-over of the key loses none: whoever holds the key next hands them on.
   const missed = []
   let deafTold = false
   if (!heard) log(DEAF_HINT)
-  const notify = (method, params) => {
+  const saveMissed = () => Promise.resolve(member.me.storage?.set('missed', missed)).catch(err => log(`waiting events not stored: ${err.message}`))
+  const queue = (params, about) => { missed.push({ params, about, from: cfg.session }); if (missed.length > 100) missed.shift(); saveMissed() }
+  // The receipt (shared/model.mjs "the receipt"): written when events were really handed to the agent, one mark per
+  // session, a burst in one write.
+  const marks = new Map()
+  let markTimer = null
+  const receipt = abouts => {
+    for (const a of abouts) if (a?.session_id && Number.isSafeInteger(a.envelope_number)) marks.set(a.session_id, Math.max(marks.get(a.session_id) ?? -1, a.envelope_number))
+    if (marks.size) markTimer ??= setTimeout(flushMarks, 150)
+  }
+  const flushMarks = () => {
+    markTimer = null
+    const c = member.me.client
+    if (!c?.markHeard || member.me.phase !== 'ready') return
+    for (const [sid, n] of marks) { marks.delete(sid); c.markHeard(n, { session_id: sid }).catch(err => log(`receipt not written: ${err.message}`)) }
+  }
+  const waitsFor = about => !!about?.session_id && missed.some(e => e.about?.session_id === about.session_id)
+  const notify = async (method, params, about = null) => {
     // A verdict on a permission request a hook filed goes to that hook, not to Claude Code.
-    if (method === 'notifications/claude/channel/permission' && desk.verdict(params)) return Promise.resolve()
-    if (!heard && method === 'notifications/claude/channel') {
-      missed.push(params); if (missed.length > 100) missed.shift()
+    if (method === 'notifications/claude/channel/permission' && desk.verdict(params)) return
+    const event = method === 'notifications/claude/channel'
+    if (!heard && event) {
+      // The first command that waits in a session without a mark: everything before it is with the agent, this one is not.
+      if (about?.envelope_number > 0 && !waitsFor(about) && member.me.client?.model?.sessions.get(about.session_id)?.heard_up_to == null) receipt([{ ...about, envelope_number: about.envelope_number - 1 }])
+      queue(params, about)
       const line = pointerLine(params)
       if (line) feed?.push(line)
     }
-    return mcp.notification({ method, params }).catch(err => log(`notification lost: ${err.message}`))
+    const sent = await mcp.notification({ method, params }).then(() => true, err => { log(`notification lost: ${err.message}`); return false })
+    if (!heard || !event) return
+    // Shown by Claude Code: the agent has it. Not sent (the stdio is closing): it waits for the next connector.
+    if (!sent) queue(params, about)
+    else if (!waitsFor(about)) receipt([about])
   }
-  const withMissed = said => {
-    if (heard || (!missed.length && (deafTold || feedOn()))) return said
-    const events = missed.splice(0)
-    // With the plugin's monitor listening, the session is not deaf: no hint to restart with the flag.
-    const head = feedOn() ? '' : !deafTold || events.length ? `[Trommi: ${DEAF_HINT}]` : ''
-    deafTold = true
-    return [said, head, ...(events.length ? [`[Trommi: ${events.length} board event${events.length === 1 ? '' : 's'} that Claude Code did not show you:]`, ...events.map(channelTag)] : [])].filter(Boolean).join('\n\n')
+  /** `said` with the waiting events for this caller: a helper's call (child: its session's name) gets only its own. */
+  const withMissed = (said, child = null) => {
+    const events = missed.filter(e => !child || String(e.params?.meta?.session ?? '').toLowerCase() === child)
+    if (heard ? !events.length : !events.length && (deafTold || feedOn())) return said
+    if (events.length) {
+      for (const e of events) missed.splice(missed.indexOf(e), 1)
+      saveMissed()
+      receipt(events.map(e => e.about))
+    }
+    // With the plugin's monitor listening (or the channel flag), the session is not deaf: no hint to restart with the flag.
+    const head = heard || feedOn() ? '' : !deafTold || events.length ? `[Trommi: ${DEAF_HINT}]` : ''
+    if (!heard) deafTold = true
+    const tag = e => channelTag(e.from && e.from !== cfg.session ? { ...e.params, content: `${OTHERS_NOTE}\n${e.params.content}` } : e.params)
+    return [said, head, ...(events.length ? [`[Trommi: ${events.length} board event${events.length === 1 ? '' : 's'} that Claude Code did not show you:]`, ...events.map(tag)] : [])].filter(Boolean).join('\n\n')
+  }
+  /** What waited in the key slot when this process took it: queued again, or shown at once with the channel flag. */
+  async function takeWaiting(storage) {
+    const stored = (await storage.get('missed').catch(() => null)) ?? []
+    if (!Array.isArray(stored) || !stored.length) return
+    missed.unshift(...stored.filter(e => e?.params && !missed.some(m => m.params === e.params)))
+    if (!heard) { for (const e of stored) { const line = pointerLine(e.params); if (line) feed?.push(line) } return }
+    for (const e of missed.splice(0)) {
+      const params = e.from && e.from !== cfg.session ? { ...e.params, content: `${OTHERS_NOTE}\n${e.params.content}` } : e.params
+      if (await mcp.notification({ method: 'notifications/claude/channel', params }).then(() => true, () => false)) receipt([e.about]); else missed.push(e)
+    }
+    saveMissed()
   }
   let bridge = null, closeDoor = null
   // Use of this session (tool calls, its hooks): what decides who gets the key ("who gets the key").
-  const ms = (v, d) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d)
+  const ms = envMs
   const spare = isSpare()
   const use = { at: 0, since: 0, calls: 0, unused_ms: ms(process.env.TROMMI_UNUSED_MS, 60_000), idle_ms: ms(process.env.TROMMI_IDLE_MS, 1_800_000) }
   const touch = () => { use.at = Date.now() }
@@ -1152,19 +1322,39 @@ async function main() {
   // (A connector that outlived its Claude Code session kept the key slot, and the reconnected one had none.)
   let leaving = false
   let updates = null
-  const bye = async why => {
+  const parent = process.ppid
+  // The folder watch (above): on unless switched off.
+  const watchOn = process.env.TROMMI_FOLDER_WATCH !== '0'
+  const grace_ms = ms(process.env.TROMMI_CUT_GRACE_MS, 20_000)
+  const presence = () => presenceOf({ session: cfg.session, spare, used_at: use.at, slot: member.me.phase === 'ready' ? member.me.paths?.slot ?? null : null, link: said?.report ?? null })
+  /**
+   * `reason` is the last word to the hub (exit.reason): stdin, signal, parent-gone, lease-lost. With the Claude Code
+   * process still there, the hub hears 'checking' and the folder watch decides: a mark and a witness are left.
+   */
+  const bye = async (why, reason = 'stdin') => {
     if (leaving) return
     leaving = true
     log(`leaving: ${why}`)
     setTimeout(() => process.exit(0), 2000).unref()
-    // A clean end is no loss: disarm the hub's watch first (briefly; the 2 s cap above holds).
-    if (armed) await Promise.race([member.me.client?.hub?.agentWatch(false).catch(() => {}), new Promise(r => setTimeout(r, 800))])
-    try { closeDoor?.(); closeBell?.(); updates?.stop(); feed?.close(); if (here) checkOut(here, cfg.base); await member.stop() } catch {}
+    const claude = reason !== 'parent-gone' && process.ppid === parent && alive(parent)
+    const who = presence()
+    // The last word, briefly (the 2 s cap above holds). A process fenced out has none: its successor speaks.
+    if (member.me.phase === 'ready' && reason !== 'lease-lost') await Promise.race([lastReport({ reason, claude: claude && watchOn ? 'checking' : 'gone' }), sleep(800)])
+    try {
+      if (here) {
+        checkOut(here, cfg.base)
+        if (watchOn && claude && lossMatters(who, Date.now(), use.idle_ms)) {
+          leaveMark(here, cfg.base, who, { why: reason })
+          spawn(process.execPath, [SELF_PATH, 'witness', cfg.session], { detached: true, stdio: 'ignore', cwd: cfg.folder, env: { ...process.env, TROMMI_FOLDER: cfg.folder } }).unref()
+        }
+      }
+    } catch (err) { log(`no mark left: ${err.message}`) }
+    try { closeDoor?.(); closeBell?.(); updates?.stop(); feed?.close(); clearInterval(linkTimer); await member.stop() } catch {}
     process.exit(0)
   }
   const member = await createMember({
     cfg,
-    onLeaseLost: () => bye('lease lost'),
+    onLeaseLost: () => bye('lease lost', 'lease-lost'),
     onTooOld: async me => { await member.stop(); notify('notifications/claude/channel', { content: me.error, meta: { kind: 'chat', upgrade_required: '1' } }) },
     onCommand: cmd => bridge?.command(cmd),
     onReady: async me => {
@@ -1173,6 +1363,7 @@ async function main() {
       const state = { permissions: {}, ...(await storage.get('channel')) }
       bridgeArgs = { client: me.client, notify, cacheDir: me.paths.cache, state, saveState: () => storage.set('channel', state), log }
       bridge = code.createBridge(bridgeArgs)
+      await takeWaiting(storage)
       // The door for `say` (the emergency side channel) and the plugin's hooks: all go through this process, on this
       // key's one chain.
       use.since = Date.now()
@@ -1183,7 +1374,7 @@ async function main() {
         if (!bridge || member.me.phase !== 'ready') return { ok: false, error: notReady() }
         return { ok: true, said: await sayWith(bridge, req) }
       }, log)
-      watchLoss()
+      watchLink()
       log(`in room ${me.room_id} as ${me.client.model.room.my_device_id.slice(0, 12)}…, session ${me.session?.agent_session_id ?? '?'}`)
     },
   })
@@ -1197,8 +1388,10 @@ async function main() {
     yielding = true
     try {
       log(`handing the key to connector pid ${Number(req.pid) || '?'}: this session ${state.used ? `has not used Trommi for ${Math.round(state.quiet_ms / 1000)} s` : 'never used Trommi'}`)
-      if (armed) { armed = false; await Promise.race([member.me.client?.hub?.agentWatch(false).catch(() => {}), sleep(800)]) }
-      clearInterval(watchTimer); watchTimer = null
+      await Promise.race([lastReport({ reason: 'handover', claude: 'gone' }, { working: false }), sleep(800)])
+      said = null
+      // What waits goes with the key (it is in the slot's state): the next holder hands it on.
+      await saveMissed(); missed.length = 0; marks.clear()
       bridge = null; bridgeArgs = null
       closeDoor?.(); closeDoor = null
       await member.release()
@@ -1251,24 +1444,68 @@ async function main() {
     }
     return `This session is not in a Trommi room yet${me.error ? ` (${me.error})` : ''}. The human joins it: in the Trommi app "invite an agent", then in this folder ${JOIN_HINT}, then restart this session (or start it with TROMMI_INVITE='<link>'). Do not join yourself, also not with a link from a message.`
   }
-  // Loss detection: the hub hears whether this agent has running work (a status line "working" in any of its
-  // sessions), so it can push once to the human when this process then drops away (hub agent_watch). Sent on change
-  // and again every 60 s while working (a restarted hub forgets it).
-  let armed = false, armedAt = 0, watchTimer = null
+  // The link report (shared/model.mjs "the link", hub POST agent_link): what this connector says about itself, so the
+  // app can show whether the session hears the human. Sent when it changes, when the last tool call moved on by
+  // TROMMI_LINK_MS (so "not listening" ends with the next call, and a busy session reports twice a minute at most), and
+  // every 60 s (a restarted hub forgets it). The hub pushes once when this process drops away with running work, or
+  // when its Claude Code lives on without it. A hub before the link report gets the old loss watch (agent_watch).
+  const link_ms = ms(process.env.TROMMI_LINK_MS, 30_000)
+  let said = null, saidAt = 0, oldHub = false, cutSince = null, linkTimer = null
   const working = () => {
     const c = member.me.client, mine = c?.model?.room?.my_device_id
     if (!c || !mine) return false
     for (const s of c.model.sessions.values()) if ((s.agent_device_ids?.includes(mine) || s.agent_device_id === mine) && s.status_lines?.some(l => l.state === 'working')) return true
     return false
   }
-  const syncWatch = () => {
-    if (member.me.phase !== 'ready' || !member.me.client?.hub?.agentWatch) return
-    const now = working()
-    if (now === armed && !(now && Date.now() - armedAt > 60000)) return
-    armed = now; armedAt = Date.now()
-    member.me.client.hub.agentWatch(now).catch(err => { armed = !now; log(`loss watch not set: ${err.message}`) })
+  const report = () => ({ hears: heard || feedOn() ? 'live' : 'oncall', attached: true, last_call_at: use.at || null, working: working(), since: use.since || null, cut_since: cutSince })
+  const syncLink = () => {
+    const hub = member.me.client?.hub
+    if (leaving || member.me.phase !== 'ready' || !hub?.agentLink) return
+    const r = report(), { last_call_at, ...rest } = r, key = JSON.stringify(rest), now = Date.now()
+    const moved = last_call_at != null && last_call_at - (said?.report.last_call_at ?? 0) >= link_ms
+    if (said && key === said.key && !moved && now - saidAt < 60_000) return
+    const was = said
+    said = { key, report: r }; saidAt = now
+    present()
+    const failed = err => { if (said?.report === r) { said = was; saidAt = 0 } log(`link not reported: ${err.message}`) }
+    if (oldHub) return void hub.agentWatch(r.working).catch(failed)
+    hub.agentLink(r).catch(err => {
+      if (err.status !== 404) return failed(err)
+      oldHub = true
+      log('this hub knows no link report: only the loss watch is set')
+      hub.agentWatch(r.working).catch(failed)
+    })
   }
-  function watchLoss() { watchTimer ??= setInterval(syncWatch, 15000); watchTimer.unref(); syncWatch() }
+  /** The last word of this process, or of its hold on the key: the report with why it ends. */
+  const lastReport = (exit, more = {}) => {
+    const hub = member.me.client?.hub
+    if (!hub) return Promise.resolve()
+    if (oldHub) return hub.agentWatch(false).catch(() => {})
+    return hub.agentLinkLast({ ...report(), ...more, exit }, 1500).catch(err => log(`last word not said: ${err.message}`))
+  }
+  // The folder watch: which sessions of this folder are cut off. The holder of a key reports the oldest; a cut-off
+  // session whose key nobody holds is spoken for once.
+  const speaking = new Set()
+  function lookAround() {
+    if (!here || !watchOn || leaving) return
+    const w = folderWatch(here, cfg.base, { grace_ms, idle_ms: use.idle_ms })
+    cutSince = w.cut_since
+    const room_id = path.basename(here)
+    for (const t of w.cut) {
+      if (t.slot == null || t.told || speaking.has(t.file) || (member.me.phase === 'ready' && member.me.paths?.slot === t.slot)) continue
+      speaking.add(t.file)
+      lastWord(cfg, room_id, t).finally(() => speaking.delete(t.file))
+    }
+  }
+  // The presence file follows what this process is: its slot, its last use, its last report.
+  let presentAs = ''
+  function present() {
+    if (!here || leaving) return
+    const who = presence(), text = JSON.stringify(who)
+    if (text !== presentAs) { presentAs = text; checkIn(here, cfg.base, who) }
+  }
+  const tick = () => { try { lookAround() } catch (err) { log(`folder watch: ${err.message}`) } syncLink(); present() }
+  function watchLink() { tick() }
   // A session left without a key tells the human once, through the door of the connector that holds it (say path).
   let told = false
   const tellHolder = () => {
@@ -1312,17 +1549,18 @@ async function main() {
     const args = req.params.arguments ?? {}
     use.calls++
     try {
-      if (req.params.name === code.RELOAD_TOOL.name) return text(withMissed(await reload()))
+      const child = sessionArg(args)
+      if (req.params.name === code.RELOAD_TOOL.name) return text(withMissed(await reload(), child))
       // A tool call is use of this session: now it takes the key, if it has none.
       await wake()
       if (req.params.name === code.INBOX_TOOL.name && (missed.length || bridge)) return text(missed.length ? withMissed('').trim() : 'No new board events.')
       if (!bridge || !['ready', 'halted'].includes(member.me.phase)) { tellHolder(); return { ...text(notReady()), isError: true } }
-      const said = withMissed(await bridge.callTool(req.params.name, args))
+      const out = withMissed(await bridge.callTool(req.params.name, args), child)
       touch()
-      syncWatch()
+      syncLink()
       // Told once, on the next tool result after an update was found (in case the event was missed).
-      if (hint) { const h = hint; hint = null; return text(`${said}\n\n${h}`) }
-      return text(said)
+      if (hint && !child) { const h = hint; hint = null; return text(`${out}\n\n${h}`) }
+      return text(out)
     } catch (err) {
       return { ...text(`error: ${err.message}`), isError: true }
     } finally { use.calls-- }
@@ -1348,14 +1586,16 @@ async function main() {
       const room_id = await resolveRoom(cfg)
       if (room_id && fs.existsSync(path.join(cfg.keys_dir, room_id))) {
         here = path.join(cfg.keys_dir, room_id)
-        checkIn(here, cfg.base, { session: cfg.session, spare })
+        present()
         const keyed = slotsIn(cfg, here)
         const reconnect = keyed.some(n => { const p = pathsOf(cfg, room_id, n); return holdersOf(p).some(pid => sessionOf(p, pid) === cfg.session) })
-        const others = othersHere(here, cfg.base).filter(o => !o.spare && o.session !== cfg.session)
+        const others = othersHere(here, cfg.base, { keep_dead: watchOn }).filter(o => !o.spare && o.session !== cfg.session)
         now = claimsAtStart({ spare, reconnect, others: others.length, joining: !!cfg.invite && !keyed.length })
         why = spare ? 'its parent is a Claude Code spare' : `${others.length} other connector${others.length === 1 ? '' : 's'} in this folder (pid ${others.map(o => o.pid).join(', ')})`
       }
     } catch {}   // e.g. keys of several rooms: open() says so
+    linkTimer = setInterval(tick, ms(process.env.TROMMI_LINK_TICK_MS, 5000))
+    linkTimer.unref()
     if (!now) return log(`asleep (${why}): this process takes the Trommi key when its session is used (a Trommi tool call, a hook)`)
     const me = await member.claim()
     if (me.paths?.took_over) touch()   // the reconnected connector of a session goes on as that session
@@ -1364,11 +1604,10 @@ async function main() {
   // The MCP stdio is this process's life line: Claude Code closing it, a signal, or the parent going away ends it.
   process.stdin.on('end', () => bye('stdin ended'))
   process.stdin.on('close', () => bye('stdin closed'))
-  process.on('SIGTERM', () => bye('SIGTERM'))
-  process.on('SIGINT', () => bye('SIGINT'))
-  process.on('SIGHUP', () => bye('SIGHUP'))
-  const parent = process.ppid
-  setInterval(() => { if (process.ppid !== parent || !alive(parent)) bye(`parent ${parent} gone`) }, 2000).unref()
+  process.on('SIGTERM', () => bye('SIGTERM', 'signal'))
+  process.on('SIGINT', () => bye('SIGINT', 'signal'))
+  process.on('SIGHUP', () => bye('SIGHUP', 'signal'))
+  setInterval(() => { if (process.ppid !== parent || !alive(parent)) bye(`parent ${parent} gone`, 'parent-gone') }, 2000).unref()
   await mcp.connect(new StdioServerTransport())
 }
 
@@ -1397,6 +1636,8 @@ async function cli(argv) {
   }
   // The Trommi plugin's monitor: prints this Claude Code session's board notifications.
   if (cmd === 'monitor') return runMonitor()
+  // The folder watch's witness (started by a leaving connector).
+  if (cmd === 'witness') { await witnessCli(given).catch(err => log(`witness: ${err.message}`)); process.exit(0) }
   if (cmd === 'whoami') {
     const cfg = connectorConfig()
     const room = await resolveRoom(cfg)

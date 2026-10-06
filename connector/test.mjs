@@ -16,7 +16,7 @@ import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createBridge, TOOLS, RELOAD_TOOL, INBOX_TOOL, TOOL_EXAMPLES, INSTRUCTIONS, DESCRIPTIONS, TEASER_MAX, monitorNote, inboxToolName, parsePrompt } from './tools.mjs'
-import { isSpare, yieldState, claimsAtStart, checkIn, checkOut, othersHere, askYield, doorOf, bellPath, ring, openDoorAt, lockSlot, unlockSlot, claimSlot, alive, openDoor, knock, createHookDesk, hookRequest, redact, deniedText, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES, pointerLine } from './connector.mjs'
+import { isSpare, yieldState, claimsAtStart, checkIn, checkOut, othersHere, folderWatch, leaveMark, lossMatters, presenceOf, askYield, doorOf, bellPath, ring, openDoorAt, lockSlot, unlockSlot, claimSlot, alive, openDoor, knock, createHookDesk, hookRequest, redact, deniedText, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES, pointerLine } from './connector.mjs'
 import { zip, marketplaceFiles, pluginManifest, pluginFiles } from './build.mjs'
 import * as codec from '../shared/codec.mjs'
 import { encryptAsset, decryptAsset } from '../shared/crypto/zcrypto.mjs'
@@ -538,6 +538,77 @@ await test('key: presence: the other live connectors of a folder; files of dead 
   assert.ok(!fs.existsSync(path.join(dir, 'box-proj.here.999999')))
   checkOut(dir, 'box-proj')
   assert.deepEqual(fs.readdirSync(dir).sort(), [`box-proj.here.${process.ppid}`, `other-proj.here.${process.ppid}`].sort())
+})
+
+await test('folder watch: whose loss matters: a session that held the key, or used Trommi lately', () => {
+  const now = Date.now()
+  assert.equal(lossMatters({ session: 'a', claude_pid: 4242, slot: 1, used_at: 0 }, now), true, 'held the key, never called a tool: the board spoke to it')
+  assert.equal(lossMatters({ session: 'a', claude_pid: 4242, slot: null, used_at: now - 60_000 }, now), true, 'keyless but used a minute ago')
+  assert.equal(lossMatters({ session: 'a', claude_pid: 4242, slot: null, used_at: now - 3_600_000 }, now), false, 'keyless and quiet for an hour')
+  assert.equal(lossMatters({ session: 'a', claude_pid: 4242, slot: null, used_at: 0 }, now), false, 'a spare, a background session: never used')
+  assert.equal(lossMatters({ session: 'a', claude_pid: 1, slot: 1 }, now), false, 'no Claude Code process to look at')
+  assert.equal(lossMatters(null, now), false)
+  const who = presenceOf({ session: 'ppid:1', used_at: 5, slot: 2, link: { hears: 'live' } })
+  assert.deepEqual(Object.keys(who), ['session', 'spare', 'claude_pid', 'claude_start', 'used_at', 'slot', 'link'])
+  assert.equal(who.claude_pid, process.ppid)
+  assert.ok(who.claude_start, 'the start time of the Claude Code process')
+})
+
+await test('folder watch: a Claude Code session without a connector is cut off after the grace; never while it starts, reconnects, or after it ended', () => {
+  const dir = path.join(tmp, 'watch'), base = 'box-proj'
+  fs.mkdirSync(dir, { recursive: true })
+  const now = 1_800_000_000_000, DEAD = 999999, CLAUDE = 4242
+  const files = () => fs.readdirSync(dir).sort()
+  const lives = new Set([CLAUDE])
+  const look = (more = {}) => folderWatch(dir, base, { now, grace_ms: 20_000, isAlive: pid => lives.has(pid), started: () => 's1', self: 1, ...more })
+  const presence = (pid, who) => fs.writeFileSync(path.join(dir, `${base}.here.${pid}`), JSON.stringify(who))
+  const B = { session: 'ppid:4242', spare: false, claude_pid: CLAUDE, claude_start: 's1', used_at: now - 60_000, slot: null, link: null }
+  // A session that is starting: nothing in the folder, nothing to say.
+  assert.deepEqual(look(), { cut: [], pending: [], cut_since: null })
+  // Its connector was killed: whoever looks next leaves the mark for it; within the grace it is only pending.
+  presence(DEAD, B)
+  let w = look()
+  assert.deepEqual([w.cut.length, w.pending.length, w.cut_since], [0, 1, null])
+  assert.equal(w.pending[0].why, 'killed'); assert.equal(w.pending[0].at, now); assert.equal(w.pending[0].pid, DEAD)
+  assert.equal(files().length, 1, 'the dead presence file became the mark')
+  assert.match(files()[0], /^box-proj\.gone\.[0-9a-f]{16}$/)
+  // After the grace: cut off, since the mark.
+  w = look({ now: now + 20_000 })
+  assert.deepEqual([w.cut.length, w.pending.length, w.cut_since], [1, 0, now])
+  assert.equal(w.cut[0].claude_pid, CLAUDE)
+  assert.equal(look({ now: now + 3_600_000 }).cut_since, now, 'for as long as its Claude Code runs without a connector')
+  // A reconnect: a live connector of the same session, whichever was written first: the mark goes.
+  lives.add(555)
+  presence(555, B)
+  assert.deepEqual(look({ now: now + 30_000 }), { cut: [], pending: [], cut_since: null })
+  assert.deepEqual(files(), [`${base}.here.555`])
+  // The old connector of a reconnect leaves its mark AFTER the new one checked in: still nothing.
+  leaveMark(dir, base, B, { at: now, why: 'signal', pid: DEAD })
+  assert.equal(look({ now: now + 60_000 }).cut_since, null)
+  assert.deepEqual(files(), [`${base}.here.555`])
+  // An orderly end while its Claude Code lives (Claude Code dropped the MCP server): the mark it left counts.
+  fs.rmSync(path.join(dir, `${base}.here.555`)); lives.delete(555)
+  leaveMark(dir, base, B, { at: now, why: 'stdin', pid: 555 })
+  assert.equal(look({ now: now + 25_000 }).cut[0].why, 'stdin')
+  // Its Claude Code ended: the mark goes with it.
+  lives.delete(CLAUDE)
+  assert.deepEqual(look({ now: now + 25_000 }), { cut: [], pending: [], cut_since: null })
+  assert.deepEqual(files(), [])
+  // The pid was given out again (another start time): not that Claude Code.
+  lives.add(CLAUDE)
+  leaveMark(dir, base, B, { at: now, why: 'stdin', pid: 555 })
+  assert.equal(look({ now: now + 25_000, started: () => 's2' }).cut_since, null)
+  // A connector nobody spoke to (a spare, a session that never used Trommi) leaves nothing behind.
+  presence(DEAD, { ...B, session: 'ppid:7', used_at: 0 })
+  assert.deepEqual(look(), { cut: [], pending: [], cut_since: null })
+  assert.deepEqual(files(), [])
+  // Two cut-off sessions: the oldest counts; another folder's files are not touched.
+  leaveMark(dir, base, B, { at: now - 5000, why: 'stdin', pid: 555 })
+  leaveMark(dir, base, { ...B, session: 'ppid:8' }, { at: now - 90_000, why: 'killed', pid: 556 })
+  fs.writeFileSync(path.join(dir, 'other-proj.gone.0000000000000000'), '{}')
+  w = look({ now: now + 20_000 })
+  assert.equal(w.cut.length, 2); assert.equal(w.cut_since, now - 90_000)
+  assert.ok(fs.existsSync(path.join(dir, 'other-proj.gone.0000000000000000')))
 })
 
 await test('key: asking a holder: yes, no with the reason, and a holder that does not answer or does not know the request', async () => {

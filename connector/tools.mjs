@@ -1241,7 +1241,9 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     // A command in a child session (a helper's) names it, so the main agent hands it to that helper.
     const child = childName(cmd.session_id ?? card?.session_id ?? null)
     const flags = { ...(cmd.late ? { late: '1' } : {}), ...(cmd.history ? { history: '1' } : {}), ...(child ? { session: child } : {}) }
-    const send = (content, meta) => notify('notifications/claude/channel', { content: cmd.history ? `(Earlier message, for context only; not a new request.)\n${content}` : content, meta: { ...meta, ...flags } })
+    // (The third argument is for the connector's receipt: which session's command this is, and its number.)
+    const send = (content, meta) => notify('notifications/claude/channel', { content: cmd.history ? `(Earlier message, for context only; not a new request.)\n${content}` : content, meta: { ...meta, ...flags } },
+      { session_id: cmd.session_id ?? card?.session_id ?? client.session_id ?? null, envelope_number: cmd.envelope_number ?? null })
     switch (cmd.command) {
       case 'message': {
         // Only a message counts as chat; strokes and other timeline items are never commands (README R1/R4).
