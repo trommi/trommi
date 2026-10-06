@@ -853,7 +853,7 @@ async function pickSlot(cfg, room_id, { ask = false } = {}) {
  * This process as a member of the room: opens or joins the room and keeps it running.
  * Returns { me, open(), join(link), stop() }; `onCommand(cmd)` gets every authorised command.
  */
-async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {} } = {}) {
+async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {}, onRetired = () => {} } = {}) {
   const core = await import('../shared/index.mjs')
   const { fileStorage } = await import('../shared/storage-file.mjs')
   // Phases: asleep (the key not asked for yet, or given back), starting, then as before.
@@ -885,6 +885,17 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
         await onCommand(cmd)
         if (cmd.envelope_hash) await client.ledger?.mark(cmd.envelope_hash)
       }).catch(err => log(`command not relayed: ${err.message}`))
+    })
+    // Removed from the member list (checked against the signed list): this key is retired. Said plainly, once, instead
+    // of tool calls that fail one by one.
+    client.on('removed', ({ replaced } = {}) => {
+      if (me.client !== client) return
+      me.phase = 'retired'
+      me.error = replaced
+        ? `This connector is retired: the human let another connector continue this Trommi session (a new invite link for the same session), and this key (${me.paths.key_file}) no longer belongs to the room. Nothing sent from here reaches the board. If this Claude Code session should use Trommi again, the human invites it in the Trommi app.`
+        : `This connector is retired: the human removed its key (${me.paths.key_file}) from the Trommi room. Nothing sent from here reaches the board. To use Trommi again here, the human invites this session in the Trommi app.`
+      log(me.error)
+      onRetired(me)
     })
     client.on('error', err => {
       if (me.client !== client) return
@@ -962,7 +973,7 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
       if (me.paths.has_key) throw new Error(`this session already has a key for room ${room_id} (${me.paths.key_file}); restart the session to use it`)
       me.phase = 'joining'
       const j = core.joinRoom({ link: String(link).trim(), device_name: '', device_info, storage, client: CLIENT })
-      j.check_code.then(code => log(`invite answered (check code ${code}); waiting for the app to add this session`)).catch(() => {})
+      j.check_code.then(code => log(`invite answered: check code ${code.slice(0, 3)} ${code.slice(3)} (if the Trommi app asks which number this session shows, it is this one); waiting for the app to add this session`)).catch(() => {})
       const client = await j.client
       me.paths.has_key = true
       await run(client)
@@ -1355,6 +1366,7 @@ async function main() {
   const member = await createMember({
     cfg,
     onLeaseLost: () => bye('lease lost', 'lease-lost'),
+    onRetired: async me => { await member.stop().catch(() => {}); notify('notifications/claude/channel', { content: me.error, meta: { kind: 'chat', retired: '1' } }) },
     onTooOld: async me => { await member.stop(); notify('notifications/claude/channel', { content: me.error, meta: { kind: 'chat', upgrade_required: '1' } }) },
     onCommand: cmd => bridge?.command(cmd),
     onReady: async me => {
@@ -1425,7 +1437,7 @@ async function main() {
   const secs = n => (n < 90_000 ? `${Math.max(1, Math.round(n / 1000))} s` : `${Math.round(n / 60_000)} min`)
   const notReady = () => {
     const me = member.me
-    if (['conflict', 'halted', 'lease-lost', 'too-old'].includes(me.phase)) return me.error
+    if (['conflict', 'halted', 'lease-lost', 'too-old', 'retired'].includes(me.phase)) return me.error
     if (me.phase === 'joining') return 'Joining the Trommi room: waiting for the human to confirm this session in the Trommi app. Try again in a moment.'
     if (me.phase === 'waiting-session') return 'This agent is in the Trommi room but not yet assigned to a session: the human assigns it in the Trommi app. Try again in a moment.'
     if (me.phase === 'starting') return 'Connecting to the Trommi hub; try again in a moment.'
@@ -1620,7 +1632,7 @@ async function cli(argv) {
     const member = await createMember({ onCommand: () => {} })
     log('joining; confirm this session in the Trommi app')
     const me = await member.join(arg)
-    console.log(`joined room ${me.room_id} as device ${me.client.model.room.my_device_id}, session ${me.session?.agent_session_id}; key file ${me.paths.key_file}`)
+    console.log(`joined room ${me.room_id} as device ${me.client.model.room.my_device_id}, session ${me.client.session_id ?? me.session?.agent_session_id}; key file ${me.paths.key_file}`)
     await member.stop()
     process.exit(0)
   }
