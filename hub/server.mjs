@@ -88,7 +88,7 @@ export async function startHub({
   origins = `${process.env.HUB_ORIGINS || ''},${process.env.HUB_PREVIEW_ORIGINS || ''}`.split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
   trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
-  pingMs = 25000, retentionEveryMs = DAY, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT, lossMs = Number(process.env.HUB_LOSS_MS || 60000),
+  pingMs = 25000, retentionEveryMs = DAY, streamCapEveryMs = 1000, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT, lossMs = Number(process.env.HUB_LOSS_MS || 60000),
 } = {}) {
   const t0 = performance.now()
   const db = openDb(dataDir, { log })
@@ -879,7 +879,7 @@ export async function startHub({
     return due.length
   }
   // A global bound on what all streams together hold in send buffers: over it, the fattest are dropped and
-  // resume by cursor (HUB_STREAM_BUFFER_TOTAL_BYTES, default 256 MiB).
+  // resume by cursor (HUB_STREAM_BUFFER_TOTAL_BYTES, default 256 MiB). Checked every streamCapEveryMs.
   const streamTotalCap = Number(process.env.HUB_STREAM_BUFFER_TOTAL_BYTES || 256 << 20)
   function capStreams() {
     const all = [...ops.flow.streams].map(x => ({ x, b: x.res.writableLength + (x.catchingUp ? (x.pendingBytes ?? 0) : 0) }))
@@ -894,7 +894,7 @@ export async function startHub({
     return dropped
   }
   const timers = [
-    setInterval(() => { try { capStreams() } catch (err) { log(`stream cap: ${err.message}`) } }, 1000),
+    setInterval(() => { try { capStreams() } catch (err) { log(`stream cap: ${err.message}`) } }, streamCapEveryMs),
     setInterval(() => { try { vacuumStep(db) } catch (err) { log(`vacuum: ${err.message}`) } }, 30000),
     setInterval(() => { try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, retentionEveryMs),
     setInterval(() => { try { sweepPending() } catch (err) { log(`pending uploads: ${err.message}`) } }, 600000),
