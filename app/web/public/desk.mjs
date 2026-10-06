@@ -24,18 +24,23 @@ function deskCards(model) {
   }
   return byUrgency(out)
 }
-/** The Desk is clear (sessions there, no question and no info waiting): "Clear". */
-const isClear = model => !model.fresh.length && !(model.reads ?? []).length && model.units.length > 0
-/** The Desk's top is where one arrives: a greeting in the display face (by the hour of this device; the app knows no
- *  name of the human, so none is said), under it the desk's name and one quiet sentence on what waits (a calm word at
- *  none); at the right, on the list's right edge, the tools for what waits (the duck for all, Rapid fire). */
-const hello = () => { const h = new Date().getHours(); return h < 5 ? ['Still', 'up?'] : h < 12 ? ['Good', 'morning.'] : h < 18 ? ['Welcome', 'back.'] : ['Good', 'evening.'] }
+/** The Desk's top is where one arrives: one big line in the display face, its last word underlined with the pen, and
+ *  at the right, on the list's right edge, the tools for what waits (the duck for all, Rapid fire: the count stands
+ *  there). The line is one of the greetings below, picked once per page load (it does not change while the page stays
+ *  open); when nothing waits, one of the calm ones. The app knows no name of the human, so none is said. */
+const GREETINGS = [
+  'Welcome back.', 'There you are.', 'The agents missed you.', 'Desk’s all yours.', 'Ring the bell.', 'Decisions, decisions.',
+  'Your call.', 'Back at it.', 'Somebody knocked.', 'Look who’s here.', 'They’ve been waiting.', 'The floor is yours.',
+  'Pick a card.', 'Over to you.', 'Right on time.', 'Pull up a chair.', 'Yes or no?', 'The boss is in.', 'What’ll it be?', 'Ready when you are.',
+]
+const CALM = ['All quiet.', 'Nothing needs you.', 'Clear desk.', 'Carry on.', 'As you were.', 'Go outside.']
+const dice = Math.random()
+const greeting = calm => { const set = calm ? CALM : GREETINGS; return set[Math.floor(dice * set.length)] }
 function deskHead(model, base) {
   const n = model.fresh.length
   if (!model.units.length) return deskInvite()
-  const [first, last] = hello()
-  const said = n ? html`<span><b>${n === 1 ? '1 decision' : `${n} decisions`}</b> ${n === 1 ? 'is' : 'are'} waiting for you</span>` : html`<span class="is-calm">${sk('tick')}${isClear(model) ? 'All clear. Nothing waits for you.' : 'No decision waits for you.'}</span>`
-  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><h2 class="desk-hello">${first} <em>${last}</em></h2><p class="desk-line"><b class="desk-line-name">${model.deskName}</b><i aria-hidden="true">·</i>${said}</p>${n ? html`<div class="desk-tools">${duckAll(model, base)}${nextPlease(model, base)}</div>` : ''}</header>`
+  const words = greeting(!n).split(' '), last = words.pop()
+  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><h2 class="desk-hello">${words.join(' ')} <em>${last}</em></h2>${n ? html`<div class="desk-tools">${duckAll(model, base)}${nextPlease(model, base)}</div>` : ''}</header>`
 }
 
 /** The Desk of a new account (no session yet): a calm note with one way on, inviting the first agent. The button sends

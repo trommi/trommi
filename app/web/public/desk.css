@@ -1114,19 +1114,12 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 @container rows (max-width: 600px) { #inbox .inbox-groups > .inbox-stacks.stack-tabs { column-gap: 22px; } }
 
 /* ---- The Desk's top (desk.mjs deskHead): where one arrives. A greeting in the display face, its last word underlined
-   with the pen; under it the desk's name and one quiet sentence on what waits; the tools for what waits at the right,
-   on the list's right edge, on the sentence's line. Air above and below: the list starts clearly under it.
-   A phone: the greeting on a line of its own, the sentence under it, the tools under that. ---- */
+   with the pen; the tools for what waits at the right, on the list's right edge. Air above and below: the list starts clearly under it.
+   A phone: the greeting on a line of its own, the tools under it. ---- */
 #inbox .desk-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px var(--s-5); flex-wrap: nowrap; margin-top: var(--s-6); margin-bottom: var(--s-8); padding: 0 4px; box-sizing: border-box; }
 .desk-hello { grid-column: 1; margin: 0; font: 800 clamp(2.1rem, 3.6vw, 2.9rem)/1.08 var(--display); letter-spacing: -.028em; color: var(--fg); }
 .desk-hello em { font-style: normal; padding-bottom: 5px; background: var(--under-ink) left bottom / 100% 9px no-repeat; }
-.desk-line { grid-column: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px .5em; min-width: 0; margin: 0; font: 500 var(--t-lg)/1.4 var(--font); color: var(--muted); }
-.desk-line-name { font: 700 var(--t-lg)/1.4 var(--display); color: var(--fg); }
-.desk-line span b { color: var(--fg); font-weight: 600; }
-.desk-line i { font-style: normal; color: var(--faint); }
-.desk-line .is-calm { display: inline-flex; align-items: center; gap: 6px; }
-.desk-line .is-calm .sketch { width: 18px; height: 18px; color: var(--accent); align-self: center; }
-.desk-tools { grid-column: 2; grid-row: 1 / 3; flex: none; display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
+.desk-tools { grid-column: 2; flex: none; display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
 .desk-walk { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
 .desk-walk .walk-burst { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .desk-walk-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
@@ -1148,9 +1141,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 :is(.desk-duck-yes, .desk-duck-no):focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 @media (max-width: 860px) {
   #inbox .desk-top { position: relative; grid-template-columns: minmax(0, 1fr); margin-top: var(--s-2); margin-bottom: var(--s-5); padding: 0 2px; }
-  .desk-hello { font-size: 2rem; }
-  .desk-line { font-size: var(--t-md); }
-  .desk-line-name { font-size: var(--t-md); }
+  .desk-hello { font-size: clamp(1.4rem, 7.2vw, 2rem); white-space: nowrap; }
   .desk-tools { grid-column: 1; grid-row: auto; justify-content: flex-end; margin-top: var(--s-3); padding-right: 6px; }
   .desk-walk { min-height: 44px; }
   .desk-duck { position: static; }
