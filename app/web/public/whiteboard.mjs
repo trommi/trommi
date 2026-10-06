@@ -9,7 +9,7 @@
 // ever reached the hub or a second device: there is nothing to carry over, and the Whiteboard is where drawing is kept
 // from now on. The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's canvas.mjs).
-import { Controller, controller, curlHTML, html, markArt, raw } from './ui.mjs'
+import { Controller, controller, html, markArt, raw } from './ui.mjs'
 import { canvasWire } from './app.mjs'
 /** The canvas timeline of a desk: desk/ and 32 hex. A desk id that is not 32 hex already ('main', a menu desk's 8 hex)
  *  is folded into 16 bytes (its UTF-8, XOR by position, the length last): the same desk is the same timeline on every
@@ -31,7 +31,9 @@ function whiteboardSessions(model) {
   return html`<div id="whiteboard-sessions" hidden data-sessions="${JSON.stringify(sessions)}"></div>`
 }
 
-const whiteboardMain = model => raw(`<main id="whiteboard" aria-label="Scribble Board" data-controller="whiteboard" data-whiteboard-canvas-value="${canvasOf(model)}">
+/** The Scribble Board's page. It is a part of its own in the frame (app.mjs bodyParts, key "pad"): the Desk keeps the
+ *  same markup under its sheet once the corner was touched, so a turn of the page mounts nothing anew. */
+export const whiteboardMain = model => raw(`<main id="whiteboard" aria-label="Scribble Board" data-controller="whiteboard" data-whiteboard-canvas-value="${canvasOf(model)}">
 ${whiteboardSessions(model)}
 <div class="pad" id="pad" data-tool="pen" data-place data-owns-keys>
   <canvas class="pad-canvas" id="canvas" role="img" aria-label="Scribble Board: an endless surface for notes, drawings and pictures"></canvas>
@@ -185,7 +187,6 @@ ${whiteboardSessions(model)}
     </section>
   </div>
 </dialog>
-${curlHTML('pad', '/')}
 </main>`)
 
 export function register(t) {
@@ -924,7 +925,9 @@ async function flySheet(layer, { png, rect, target }) {
 // Returns { setSessions(list), unmount() }.
 function mountPad(main, { canvasId: PAD, client }) {
   const listening = new AbortController()
-  const on = (target, type, fn, opts = {}) => target.addEventListener(type, fn, { ...(typeof opts === 'boolean' ? { capture: opts } : opts), signal: listening.signal })
+  // (Under the Desk's sheet the pad is mounted but not the page: what the window and the document hear is not its.)
+  const here = () => document.body.dataset.tView === 'whiteboard'
+  const on = (target, type, fn, opts = {}) => target.addEventListener(type, target === window || target === document ? e => { if (here()) fn(e) } : fn, { ...(typeof opts === 'boolean' ? { capture: opts } : opts), signal: listening.signal })
   const board = { board: true, sessions: [] }
   const AUTHOR = 'human'   // a record made here; on the wire the author is the signed sender (canvas.js)
   const MIN_Z = 0.05, MAX_Z = 8

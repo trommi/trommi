@@ -751,24 +751,24 @@ button.t-chip-drop { background: none; color: var(--muted); text-decoration: und
 #gallery { display: none; }
 
 
-/* ---- The page curl (ui.mjs curlHTML, controller "curl"): over the page's main area, only the corner takes the
-   pointer; the sketch paper (dots) under the Desk's corner, the Desk's paper under the Sketchpad's ---- */
-.curl { position: fixed; z-index: 7; pointer-events: none; }
-.curl-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.curl-under { fill: url(#curl-dots); }
-:root[data-curl="pad"] .curl-under { fill: var(--surface); }
-.curl-paper { fill: #fbfbf7; }
-.curl-dot { fill: #cbd0c6; }
-.curl-ink { fill: none; stroke: #33507e; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .75; }
-:root[data-curl="pad"] .curl-sketch { display: none; }
-/* drawn: ink outline, pen hatching for the shadow and at the fold */
-.curl-hatch-line { stroke: var(--fg); stroke-width: .9; opacity: .55; }
-.curl-cast { fill: url(#curl-hatch); opacity: .55; }
-.curl-flap { fill: var(--surface); stroke: var(--fg); stroke-width: 1.5; stroke-linejoin: round; }
-.curl-flap-tone { fill: url(#curl-hatch); opacity: .45; }
-.curl-fold { fill: none; stroke: var(--fg); stroke-width: 1.7; stroke-linecap: round; }
-:root[data-theme="dark"] .curl-paper { fill: #1d2320; } :root[data-theme="dark"] .curl-dot { fill: #3a443f; }
-.curl-grab { position: absolute; right: 0; top: 0; width: 96px; height: 96px; padding: 0; border: 0; background: none; cursor: grab; pointer-events: auto; touch-action: none; clip-path: polygon(0 0, 100% 0, 100% 100%); }
+/* ---- The page curl (ui.mjs curlHTML, controller "curl"): the sheet's box over the page's main area; only the corner
+   takes the pointer. Under the lifted piece the other page itself shows (the Scribble Board laid there by the
+   controller, or .curl-back: the Desk as rendered); the flap is paper with an ink outline, pen strokes along its
+   fold and a second, lighter line as its shadow. Nothing leaves the box. ---- */
+.curl { position: fixed; z-index: 7; pointer-events: none; overflow: hidden; }
+.curl-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; }
+.curl-back { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.curl-back[hidden] { display: none; }
+html body .curl .curl-back > main { display: block !important; }
+/* (until the other page lies under it: its paper) */
+.curl-under { fill: var(--surface); }
+.curl-svg.has-under .curl-under, :root[data-curl="pad"] .curl-under { fill: none; }
+:root[data-curl="pad"] .curl-back[hidden] + .curl-svg .curl-under { fill: var(--surface); }
+.curl-cast { fill: none; stroke: var(--fg); stroke-width: 1; stroke-linejoin: round; opacity: .28; }
+.curl-flap { fill: var(--surface); stroke: var(--fg); stroke-width: 1.4; stroke-linejoin: round; }
+.curl-hatch { fill: none; stroke: var(--fg); stroke-width: .9; stroke-linecap: round; opacity: .42; }
+.curl-fold { fill: none; stroke: var(--fg); stroke-width: 1.6; stroke-linecap: round; }
+.curl-grab { position: absolute; right: 0; top: 0; width: 56px; height: 56px; padding: 0; border: 0; background: none; cursor: grab; pointer-events: auto; touch-action: none; }
 .curl-grab:active { cursor: grabbing; }
 .curl-grab:focus-visible { outline: 2px solid var(--fg); outline-offset: -6px; }
-@media (max-width: 860px) { .curl-grab { width: 72px; height: 72px; } }
+:root.is-choosing #whiteboard[style*="clip-path"] { visibility: hidden; }

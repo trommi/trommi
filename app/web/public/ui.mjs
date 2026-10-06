@@ -1134,38 +1134,70 @@ controller('fit', class extends Controller {
   disconnect() { fitting().unobserve(this.element) }
 })
 
-// ---- the page curl (his pick, 4 October: "the back of the Desk") ----
-// The Desk's top-right corner (his word, 5 October: "nach oben rechts") is lifted a little, the sketch paper showing under it; the Sketchpad is the back of
-// that sheet. Hover lifts it more, a drag peels it along a diagonal fold (the flap shaded, a shadow under it), a tap
-// or a pull past ~28 % turns the page: to /scribble-board from the Desk, to the Desk from the Scribble Board (the same corner
-// there). Esc turns back from the Sketchpad; P turns either way (ui.mjs keys). Markup: curlHTML(side) on both pages;
-// controller "curl" draws over the page's main area (fixed, in px of that area). Reduced motion: no peel, a fade.
-export const curlHTML = (side, to) => raw(`<div class="curl" data-controller="curl" data-curl-side-value="${side}" data-curl-to-value="${to}"><svg class="curl-svg" aria-hidden="true"><defs><pattern id="curl-dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect width="22" height="22" class="curl-paper"/><circle cx="11" cy="11" r="1.1" class="curl-dot"/></pattern><pattern id="curl-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(38)"><path d="M0,0 V5" class="curl-hatch-line"/></pattern><clipPath id="curl-clip"><path class="curl-clip-p"/></clipPath></defs><path class="curl-under"/><g class="curl-sketch" clip-path="url(#curl-clip)"><path class="curl-ink"/></g><path class="curl-cast"/><path class="curl-flap"/><path class="curl-flap-tone"/><path class="curl-fold"/></svg><button type="button" class="curl-grab" title="${side === 'desk' ? 'Turn to the Scribble Board (P)' : 'Turn back to the Desk (Esc)'}" aria-label="${side === 'desk' ? 'Turn to the Scribble Board' : 'Turn back to the Desk'}"></button></div>`)
-const CURL_REST_WIDE = 50, CURL_REST_PHONE = 44
-const restOf = () => (innerWidth < 861 ? CURL_REST_PHONE : CURL_REST_WIDE)
+// ---- the page curl (his pick, 4 October: "the back of the Desk"; free in the hand, 6 October: "wie Apple Books") ----
+// The Desk and the Scribble Board are two sides of one sheet. Its top-right corner is a small dog-ear; as the pointer
+// comes near it lifts and leans towards it, and held it follows the pointer freely: the flap's tip is under the
+// finger, the fold is the line halfway between the tip and the sheet's corner, whatever its angle. Let go, it springs
+// back, or past a third of the way (or flung) the page turns; a tap turns it too. Esc turns back from the Scribble
+// Board; P turns either way (ui.mjs keys).
+// What shows under the lifted sheet is the other page itself, not a drawing of it: on the Desk the Scribble Board
+// (mounted once when the corner is first approached, kept from then on: app.mjs keepPad), on the Scribble Board the
+// Desk as it is rendered now (app.mjs peek). So a turn swaps two things that are both there, and nothing flashes.
+// Markup: curlHTML(side, to), a part of the frame on both pages (app.mjs bodyParts). Reduced motion: no peel, a fade.
+export const curlHTML = (side, to) => raw(`<div class="curl" data-controller="curl" data-curl-side-value="${side}" data-curl-to-value="${to}"><div class="curl-back" hidden inert></div><svg class="curl-svg" aria-hidden="true"><defs><clipPath id="curl-flap-clip"><path class="curl-flap-clip"/></clipPath></defs><path class="curl-under"/><path class="curl-cast"/><path class="curl-flap"/><path class="curl-hatch" clip-path="url(#curl-flap-clip)"/><path class="curl-fold"/></svg><button type="button" class="curl-grab" title="${side === 'desk' ? 'Turn to the Scribble Board (P)' : 'Turn back to the Desk (Esc)'}" aria-label="${side === 'desk' ? 'Turn to the Scribble Board' : 'Turn back to the Desk'}"></button></div>`)
+const CURL_REST = [-19, 14], CURL_NEAR = 130   // the dog-ear's tip from the corner at rest; how near the pointer wakes it
+/** A convex polygon cut by the line through m with normal n: the part on n's side. */
+function cutPoly(poly, m, n) {
+  const f = p => (p[0] - m[0]) * n[0] + (p[1] - m[1]) * n[1], out = []
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], fa = f(a), fb = f(b)
+    if (fa >= 0) out.push(a)
+    if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]) }
+  }
+  return out
+}
 controller('curl', class extends Controller {
   static values = { side: String, to: String }
   connect() {
-    this.svg = this.element.querySelector('.curl-svg'); this.grab = this.element.querySelector('.curl-grab')
-    this.under = this.svg.querySelector('.curl-under'); this.ink = this.svg.querySelector('.curl-ink'); this.shade = this.svg.querySelector('.curl-shade'); this.flap = this.svg.querySelector('.curl-flap')
-    this.p = 0; this.drag = null; this.calm = matchMedia('(prefers-reduced-motion: reduce)').matches
+    const q = c => this.element.querySelector(c)
+    this.svg = q('.curl-svg'); this.grab = q('.curl-grab'); this.back = q('.curl-back')
+    this.calm = matchMedia('(prefers-reduced-motion: reduce)').matches
+    this.tip = [0, 0]; this.vel = [0, 0]; this.goal = null; this.drag = null
     document.documentElement.dataset.curl = this.sideValue
     const on = (t, n, f, o) => { t.addEventListener(n, f, o); (this.offs ??= []).push(() => t.removeEventListener(n, f, o)) }
     on(window, 'resize', () => this.place())
     on(window, 'scroll', () => { this.tick ??= requestAnimationFrame(() => { this.tick = null; if (this.top !== this.barTop()) this.place() }) }, { passive: true })
-    on(this.grab, 'pointerenter', () => { if (!this.drag && !this.turning) this.tween(64, 220) })
-    on(this.grab, 'pointerleave', () => { if (!this.drag && !this.turning) this.tween(restOf(), 260) })
-    on(this.grab, 'pointerdown', e => { if (this.turning) return; this.grab.setPointerCapture(e.pointerId); cancelAnimationFrame(this.anim); this.drag = { x: e.clientX, y: e.clientY, moved: false } })
+    // near the corner it wakes: the other side is brought under it, the dog-ear leans towards the pointer
+    on(document, 'pointermove', e => {
+      if (this.drag || this.turning || e.pointerType === 'touch' || this.calm) return
+      const b = this.box, dx = b.right - e.clientX, dy = e.clientY - b.top, d = Math.hypot(dx, dy)
+      if (d > CURL_NEAR || dx < 0 || dy < 0) { if (this.goal) { this.goal = null; this.spring() } return }
+      this.wake()
+      const k = 1 - d / CURL_NEAR, len = 26 + 46 * k, a = Math.atan2(Math.max(dy, 6), Math.max(dx, 6)), lean = Math.min(1.15, Math.max(.35, a))
+      this.goal = [-Math.cos(lean) * len, Math.sin(lean) * len]
+      this.spring()
+    }, { passive: true })
+    on(this.grab, 'pointerdown', e => {
+      if (this.turning || e.button > 0) return
+      this.grab.setPointerCapture(e.pointerId); this.wake(); cancelAnimationFrame(this.anim); this.anim = null
+      this.drag = { x: e.clientX, y: e.clientY, t: e.timeStamp, moved: false }
+    })
     on(this.grab, 'pointermove', e => {
-      if (!this.drag) return
-      if (Math.hypot(e.clientX - this.drag.x, e.clientY - this.drag.y) > 6) this.drag.moved = true
-      if (!this.drag.moved || this.calm) return
-      const r = this.box; this.p = Math.max(restOf(), ((r.right - e.clientX) + (e.clientY - r.top)) / 2); this.render()
+      const d = this.drag; if (!d) return
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 6) d.moved = true
+      if (!d.moved || this.calm) return
+      const b = this.box, was = this.tip, dt = Math.max(1, e.timeStamp - d.t)
+      this.tip = this.held([e.clientX - b.right, e.clientY - b.top])
+      this.vel = [(this.tip[0] - was[0]) / dt * 1000, (this.tip[1] - was[1]) / dt * 1000]; d.t = e.timeStamp
+      this.render()
     })
-    on(this.grab, 'pointerup', () => {
-      const was = this.drag; this.drag = null; if (!was) return
-      if (!was.moved || this.p > Math.min(this.box.width, this.box.height) * 0.28) this.turn(); else this.tween(restOf(), 300)
-    })
+    const drop = e => {
+      const d = this.drag; this.drag = null; if (!d) return
+      if (e.type === 'pointercancel') return this.spring()
+      const far = Math.hypot(...this.tip) > Math.min(this.box.width, this.box.height) * 0.36, flung = this.vel[0] < -700 || this.vel[1] > 700
+      if (!d.moved || far || flung) this.turn(); else this.spring()
+    }
+    on(this.grab, 'pointerup', drop); on(this.grab, 'pointercancel', drop)
     on(this.grab, 'keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.turn() } })
     on(document, 'trommi:curl', () => this.turn())
     on(document, 'keydown', e => {
@@ -1173,79 +1205,123 @@ controller('curl', class extends Controller {
       const t = e.target; if (t?.closest?.('input, textarea, select, [contenteditable], dialog[open]')) return
       this.turn()
     })
+    if (this.sideValue === 'pad') document.getElementById('whiteboard')?.removeAttribute('style')   // (it is the page now, not what lies under the Desk)
     this.place()
-    // arriving from the other side: the sheet settles; else the corner lifts a little
+    // arriving from the other side, the sheet settles into its corner
     let arrived = false; try { arrived = sessionStorage.getItem('trommi-curl') === '1'; sessionStorage.removeItem('trommi-curl') } catch {}
-    if (this.calm) { this.p = restOf(); this.render(); if (arrived) { this.element.parentElement?.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 200 }) } return }
-    this.tween(restOf(), arrived ? 380 : 500)
+    this.tip = arrived && !this.calm ? [-150, 110] : [...CURL_REST]
+    if (this.sideValue === 'desk' && document.getElementById('whiteboard')) this.wake()
+    this.render()
+    if (arrived && !this.calm) this.spring()
   }
-  disconnect() { cancelAnimationFrame(this.anim); cancelAnimationFrame(this.tick); for (const off of this.offs ?? []) off(); if (document.documentElement.dataset.curl === this.sideValue) delete document.documentElement.dataset.curl }
+  disconnect() {
+    cancelAnimationFrame(this.anim); cancelAnimationFrame(this.tick)
+    for (const off of this.offs ?? []) off()
+    if (document.documentElement.dataset.curl === this.sideValue) delete document.documentElement.dataset.curl
+  }
   /** Where the sheet's top edge is: the window's, or the lower edge of a bar that stands over the corner (a phone's top bar and its sessions). */
   barTop() {
     const vw = document.documentElement.clientWidth
     return Math.round(Math.max(0, ...[...document.querySelectorAll('.topbar, #agents')].map(e => e.getBoundingClientRect()).filter(b => b.right >= vw - 24 && b.bottom > 0).map(b => b.bottom)))
   }
-  /** The overlay stands over the page's main area (the Desk's <main id="inbox"> or the Scribble Board's). */
+  /** The sheet is the page's main area: right of the sidebar, under a phone's bars, never beyond the window. */
   place() {
-    const main = this.element.closest('main') ?? document.querySelector('main')
-    // (inside what is visible: the main area without its scroll bar, never beyond the window's right or bottom edge,
-    //  and under whatever bar stands over the page's top on a phone)
-    const r = main.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight
-    const right = Math.min(r.left + (main.clientWidth || r.width), vw)
-    const top = this.top = this.barTop()
-    const h = Math.min(r.bottom, vh) - top, w = right - r.left
-    this.box = { left: r.left, top, width: w, height: h, right, bottom: top + h }
-    Object.assign(this.element.style, { left: `${r.left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px` })
-    this.svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+    const main = document.querySelector('main'), r = main.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight
+    const left = Math.max(0, Math.round(r.left)), right = Math.min(Math.round(r.left + (main.clientWidth || r.width)), vw), top = this.top = this.barTop()
+    this.box = { left, top, right, bottom: vh, width: right - left, height: vh - top }
+    Object.assign(this.element.style, { left: `${left}px`, top: `${top}px`, width: `${this.box.width}px`, height: `${this.box.height}px` })
+    this.svg.setAttribute('viewBox', `0 0 ${this.box.width} ${this.box.height}`)
     this.render()
   }
-  render() {
-    // Drawn, not flat (his word, 4 October): the fold runs at a skew (about 30°, slightly curved), the flap is outlined
-    // in ink with pen hatching at its fold, its shadow on the page is hatching too; under it the other side's paper.
-    // p: how far the corner is lifted. The fold meets the top edge at a = 1.4 p from the corner, the right edge at
-    // b = 0.8 p; the flap's tip is the corner mirrored over the fold.
-    const W = this.box.width, H = this.box.height, p = this.p, sel = c => this.svg.querySelector(c), f = n => n.toFixed(1)
-    this.svg.style.display = p > 0 ? '' : 'none'
-    if (p <= 0) return
-    const a = p * 1.4, b = p * 0.8
-    const F1 = [W - a, 0], F2 = [W, b], C = [W, 0]
-    const dx = F2[0] - F1[0], dy = F2[1] - F1[1], len2 = dx * dx + dy * dy
-    const t = ((C[0] - F1[0]) * dx + (C[1] - F1[1]) * dy) / len2, foot = [F1[0] + t * dx, F1[1] + t * dy]
-    const T = [2 * foot[0] - C[0], 2 * foot[1] - C[1]]
-    const mid = [(F1[0] + F2[0]) / 2, (F1[1] + F2[1]) / 2], nx = -dy / Math.sqrt(len2), ny = dx / Math.sqrt(len2), bow = Math.min(14, p * 0.08)
-    const Q = [mid[0] + nx * bow, mid[1] + ny * bow]
-    const fold = `M${f(F1[0])},${f(F1[1])} Q${f(Q[0])},${f(Q[1])} ${f(F2[0])},${f(F2[1])}`
-    const whole = a >= W || b >= H
-    const under = whole ? `M0,0 H${W} V${H} H0 Z` : `${fold} L${W},0 Z`
-    sel('.curl-under').setAttribute('d', under); sel('.curl-clip-p').setAttribute('d', under)
-    // the flap: from the fold out to its tip, edges with a little wobble of the pen
-    const e1 = [(F2[0] + T[0]) / 2 + bow * 0.5, (F2[1] + T[1]) / 2 + bow * 0.3], e2 = [(F1[0] + T[0]) / 2 - bow * 0.3, (F1[1] + T[1]) / 2 - bow * 0.5]
-    const flap = `${fold} Q${f(e1[0])},${f(e1[1])} ${f(T[0])},${f(T[1])} Q${f(e2[0])},${f(e2[1])} ${f(F1[0])},${f(F1[1])} Z`
-    sel('.curl-flap').setAttribute('d', flap)
-    sel('.curl-cast').setAttribute('d', flap); sel('.curl-cast').setAttribute('transform', `translate(${f(-Math.min(9, p * 0.06))},${f(Math.min(7, p * 0.05))})`)
-    const k = 0.24, B1 = [F1[0] + (T[0] - F1[0]) * k, F1[1] + (T[1] - F1[1]) * k], B2 = [F2[0] + (T[0] - F2[0]) * k, F2[1] + (T[1] - F2[1]) * k], QB = [Q[0] + (T[0] - mid[0]) * k, Q[1] + (T[1] - mid[1]) * k]
-    sel('.curl-flap-tone').setAttribute('d', `${fold} L${f(B2[0])},${f(B2[1])} Q${f(QB[0])},${f(QB[1])} ${f(B1[0])},${f(B1[1])} Z`)
-    sel('.curl-fold').setAttribute('d', fold)
-    if (this.sideValue === 'desk' && !this.sketched) {
-      this.sketched = true
-      const x = W - 92, y = 4
-      sel('.curl-ink').setAttribute('d', `M${x},${y + 30} q10,-18 22,-6 t24,-4 t22,8 M${x + 18},${y + 46} q16,-3 34,1 M${x + 52},${y + 18} q7,-9 13,0 q-6,8 -13,0`)
-    }
+  /** The other side comes under the sheet (once): the mounted Scribble Board under the Desk, the Desk as rendered now under the board. */
+  wake() {
+    if (this.awake) return
+    this.awake = true
+    const router = window.trommi?.router
+    if (this.sideValue === 'desk') { router?.keepPad(); this.render() }
+    else router?.peek(this.toValue).then(html => {
+      if (!html || !this.element.isConnected) return
+      this.back.innerHTML = html.replace(/ data-(?:controller|action)="[^"]*"/g, '')
+      this.back.style.background = getComputedStyle(document.body).backgroundColor   // (the Desk's own ground)
+      this.back.hidden = false
+      this.render()
+    })
   }
-  tween(to, ms, done) {
-    cancelAnimationFrame(this.anim)
-    const from = this.p, t0 = performance.now()
-    const step = t => { const k = Math.min(1, (t - t0) / ms), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; this.p = from + (to - from) * e; this.render(); if (k < 1) this.anim = requestAnimationFrame(step); else done?.() }
+  /** While held the paper does not tear: the tip stays within the sheet's reach of its far corners, and inside the window. */
+  held([x, y]) {
+    const W = this.box.width, H = this.box.height
+    let p = [Math.min(-2, x), Math.max(2, y)]
+    for (const [c, r] of [[[-W, 0], W], [[0, H], H], [[-W, 0], W]]) { const d = Math.hypot(p[0] - c[0], p[1] - c[1]); if (d > r) p = [c[0] + (p[0] - c[0]) * r / d, c[1] + (p[1] - c[1]) * r / d] }
+    return p
+  }
+  render() {
+    // tip: where the sheet's corner is now, from the corner itself (x to the left is negative, y down). The fold is the
+    // line halfway between the two; what lies on the corner's side of it is lifted (there the other page shows), and
+    // the flap is that piece mirrored over the fold. All of it is cut to the sheet's box, so nothing reaches the sidebar.
+    if (!this.box) return
+    const W = this.box.width, H = this.box.height, C = [W, 0], P = [W + this.tip[0], this.tip[1]], f = n => n.toFixed(1)
+    const d = Math.hypot(P[0] - C[0], P[1] - C[1]), set = (c, v) => this.svg.querySelector(c).setAttribute('d', v)
+    const path = pts => (pts.length ? `M${pts.map(p => `${f(p[0])},${f(p[1])}`).join(' L')} Z` : '')
+    if (d < 3) { for (const c of ['.curl-under', '.curl-cast', '.curl-flap', '.curl-flap-clip', '.curl-hatch', '.curl-fold']) set(c, ''); return this.under([]) }
+    for (const c of ['.curl-flap', '.curl-fold', '.curl-hatch']) this.svg.querySelector(c).style.strokeOpacity = Math.min(1, .5 + (d - 24) / 50).toFixed(2)   // (at rest the ink is light)
+    const n = [(C[0] - P[0]) / d, (C[1] - P[1]) / d], M = [(C[0] + P[0]) / 2, (C[1] + P[1]) / 2]
+    const lifted = cutPoly([[0, 0], [W, 0], [W, H], [0, H]], M, n)
+    const mirror = p => { const k = 2 * ((p[0] - M[0]) * n[0] + (p[1] - M[1]) * n[1]); return [p[0] - k * n[0], p[1] - k * n[1]] }
+    const flap = lifted.map(mirror), on = lifted.filter(p => Math.abs((p[0] - M[0]) * n[0] + (p[1] - M[1]) * n[1]) < 0.01)
+    set('.curl-under', path(lifted)); set('.curl-flap', path(flap)); set('.curl-flap-clip', path(flap))
+    this.svg.querySelector('.curl-cast').setAttribute('d', path(flap)); this.svg.querySelector('.curl-cast').setAttribute('transform', `translate(${f(-Math.min(5, d * .05))},${f(Math.min(5, d * .05))})`)
+    if (on.length < 2) { set('.curl-fold', ''); set('.curl-hatch', ''); return this.under(lifted) }
+    const [A, B] = on, len = Math.hypot(B[0] - A[0], B[1] - A[1]), u = [(B[0] - A[0]) / len, (B[1] - A[1]) / len]
+    set('.curl-fold', `M${f(A[0])},${f(A[1])} L${f(B[0])},${f(B[1])}`)
+    // pen hatching along the fold, on the flap: short strokes that lean, every 5 px of the fold, anchored to its upper end
+    // (so they do not swim while the fold moves); their length follows the lift, up to 20 px
+    const depth = Math.min(20, d * .22), lean = [-n[0] * .92 + u[0] * .4, -n[1] * .92 + u[1] * .4]
+    let hatch = ''
+    for (let s = 3, i = 0; s < len; s += 5, i++) { const x = A[0] + u[0] * s, y = A[1] + u[1] * s, l = depth * (i % 3 === 1 ? .62 : 1); hatch += `M${f(x)},${f(y)} l${f(lean[0] * l)},${f(lean[1] * l)}` }
+    set('.curl-hatch', hatch)
+    this.under(lifted)
+  }
+  /** The other page shows exactly where the sheet is lifted (lifted: that piece, in the box's own px). */
+  under(lifted) {
+    const clip = lifted.length ? `polygon(${lifted.map(p => `${p[0].toFixed(1)}px ${p[1].toFixed(1)}px`).join(', ')})` : 'polygon(0 0)'
+    if (this.sideValue === 'pad') { this.back.style.clipPath = clip; return }
+    const pad = document.getElementById('whiteboard'); if (!pad) return
+    const b = this.box
+    Object.assign(pad.style, { display: 'block', position: 'fixed', left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px`, margin: '0', zIndex: '6', pointerEvents: 'none', clipPath: clip })
+    this.svg.classList.add('has-under')
+  }
+  /** Free again, the tip swings to where it belongs (the rest, or the lean towards a near pointer), with what speed it had. */
+  spring() {
+    if (this.anim || this.turning || this.drag) return
+    let last = performance.now()
+    const step = now => {
+      const dt = Math.min(.032, (now - last) / 1000); last = now
+      const to = this.goal ?? CURL_REST
+      for (const i of [0, 1]) { this.vel[i] += (260 * (to[i] - this.tip[i]) - 21 * this.vel[i]) * dt; this.tip[i] += this.vel[i] * dt }
+      this.tip[0] = Math.min(-2, this.tip[0]); this.tip[1] = Math.max(2, this.tip[1])
+      this.render()
+      const still = Math.hypot(to[0] - this.tip[0], to[1] - this.tip[1]) < .4 && Math.hypot(...this.vel) < 6
+      if (still || this.drag || this.turning) { this.anim = null; if (still) { this.tip = [...to]; this.vel = [0, 0]; this.render() } return }
+      this.anim = requestAnimationFrame(step)
+    }
     this.anim = requestAnimationFrame(step)
   }
-  /** Turn the sheet: it peels over the whole area, then the other side is the page. */
+  /** Turn the sheet: it is carried off over the far corner, then the other side is the page (it is there already). */
   turn() {
     if (this.turning) return
     this.turning = true
+    cancelAnimationFrame(this.anim); this.anim = null
     const go = () => { try { sessionStorage.setItem('trommi-curl', '1') } catch {} ; window.Turbo?.visit ? window.Turbo.visit(this.toValue) : location.assign(this.toValue) }
-    if (this.calm) { const main = this.element.closest('main'); main?.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: 'forwards' }); return setTimeout(go, 160) }
-    this.place()
-    this.tween(this.box.width + this.box.height + 40, 620, go)
+    if (this.calm) { const main = document.querySelector('main'); main?.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: 'forwards' }); return setTimeout(go, 160) }
+    this.wake(); this.place()
+    const from = [...this.tip], to = [-this.box.width * 2.1, this.box.height * 2.1], t0 = performance.now(), ms = 520
+    const step = now => {
+      const k = Math.min(1, (now - t0) / ms), e = k < .5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2
+      this.tip = [from[0] + (to[0] - from[0]) * e, from[1] + (to[1] - from[1]) * e]
+      this.render()
+      if (k < 1) this.anim = requestAnimationFrame(step); else go()
+    }
+    this.anim = requestAnimationFrame(step)
   }
 })
 
