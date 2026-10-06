@@ -11,7 +11,7 @@ import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
 import * as media from './media.mjs'
 import * as whiteboard from './whiteboard.mjs'
-import { RAIL_FOLD, cornerNote, sidebarRows, topbar } from './sidebar.mjs'
+import { SIDE_FOOT, cornerNote, sidebarRows, topbar } from './sidebar.mjs'
 import { WORDS, calm, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { roomScreen } from './auth.mjs'
@@ -936,7 +936,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
   if (sidebar) {
     parts.push({ key: 'topbar', html: String(topbar(model, base, view === 'desk', view)) })
     parts.push({ key: 'agents', html: String(html`<nav id="agents" aria-label="Sessions" data-controller="folds">${sidebarRows(model, base, current)}</nav>`) })
-    parts.push({ key: 'rail', html: String(RAIL_FOLD) })
+    parts.push({ key: 'foot', html: String(SIDE_FOOT) })
     if (model) parts.push({ key: 'note', html: String(cornerNote(model, base)) })
   }
   // The Desk and the Scribble Board are two sides of one sheet (ui.mjs, controller "curl"): the board is a part of

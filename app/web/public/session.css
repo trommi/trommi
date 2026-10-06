@@ -461,36 +461,34 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
 .cardclip-chip.is-link:hover { background: var(--sunken); }
 .cardclip-chip.is-link:hover .cardclip-title { text-decoration: underline; text-underline-offset: 3px; }
 .quick .cardclip-chip, .quick .cardclip-offer { background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
-.pane-list .inbox-row.is-current::before { display: none; }/* A session's page on a wide window (861px and up): band, heading, conversation, one under the other.
-   The band at the top (app.css, --band: 64px, as high as the Desk box reaches) holds only what floats: the Desk
-   box, the menu's pill in its middle, the corner buttons. The heading (drawing, name, the quiet line, the crown
-   switch) has its own line under the band, on the conversation's column, as the Desk's and the Agents' headings
-   do (3 Oct: in the band it competed with the pill). The conversation begins under the heading, without a rule,
-   and fades out at its top edge. The filter stands beside the composer.
+.pane-list .inbox-row.is-current::before { display: none; }/* A session's page on a wide window (861px and up): heading, conversation, one under the other.
+   The heading (drawing, name, the quiet line, the crown switch) has its own line at the page's top, on the
+   conversation's column, as the Desk's and the Agents' headings do. The conversation begins under the heading,
+   without a rule, and fades out at its top edge. The filter stands beside the composer.
    Linked last, so it outweighs the head rules in app.css and beside.css.
    A phone: see the foot of this file. */
 
 @media (min-width: 861px) {
   body:not([data-scope="all"]):not([data-page]) #session { position: relative; }
-  /* One session, its conversation: it begins below the band (app.css, --band), so no line of it can lie under the
-     pill or the heading, wherever it is scrolled to; its first line stands 16px under the band, on the line of the
-     sidebar's first row, and what scrolls away fades out over the band's last 12px instead of being cut. */
+  /* One session, its conversation: it begins below the heading, so no line of it can lie under the heading,
+     wherever it is scrolled to; what scrolls away fades out over its first 12px instead of being cut. */
   body[data-view="chat"]:not([data-pair]) #session .log-inner,
   body[data-view="chat"]:not([data-pair]) #session .pane-list { padding-top: var(--s-4); }
   body[data-view="chat"]:not([data-pair]) #session :is(.log, .pane-list) { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
-  /* The same fade wherever else something scrolls away under the band: the conversation beside the canvas, and
+  /* The same fade wherever else something scrolls away at the top: the conversation beside the canvas, and
      with sessions laid together the column of their questions. (Their conversations each begin under a name
-     with a rule, and the canvas under its strip of pictures: those are not at the band.) */
+     with a rule, and the canvas under its strip of pictures: those are not at the top.) */
   body[data-view="scribble"]:not([data-pair]) #session #chat :is(.log, .pane-list) { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
 
-  /* ---- the heading's own line: under the band, never in it (the band holds only the Desk box, the pill and the
-     corner buttons, so the place one is in does not compete with the menu). It stands on the 80px line (band 64 +
-     16), on the conversation's column (app.css .column: 47.5rem, the gutter inside), and the conversation begins
-     under it. It is in the flow, not laid over: what the stream replaces in it keeps its height (one line each). */
+  /* ---- the heading's own line: at the page's top, 16px under the window's edge, on the conversation's column
+     (app.css .column: 47.5rem, the gutter inside), and the conversation begins under it. It is in the flow, not
+     laid over: what the stream replaces in it keeps its height (one line each). On a narrow window the column
+     reaches the page's right edge: there the heading ends before the page's dog-ear (app.css .curl-grab, 64px). */
   #session .pane-title {
     position: relative; z-index: 4; flex: none; grid-area: auto;
     display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; gap: 0;
     box-sizing: border-box; width: 100%; max-width: 47.5rem; min-height: 0; margin: 0 auto; padding: var(--s-4) var(--gutter) var(--s-3); border: 0;
+    padding-right: clamp(var(--gutter), calc(64px - (100vw - var(--side) - 47.5rem) / 2), 64px);
     --head-w: 100%;
   }
 
@@ -506,7 +504,7 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
   /* (The crown sits on the drawing's corner, its tip on the heading's top line.) */
   #session .pane-who .crown-toggle { left: 7px; top: -4px; }
   /* The crown a main session's drawing wears (app.css .agent-avatar .crown-mark stands a quarter above the drawing):
-     here it sits on its corner, as it did in the band. */
+     here it sits on its corner. */
   #session .pane-who .agent-avatar .crown-mark { top: 2%; left: 22%; width: 52%; }
   #session .pane-who .crown-toggle .crown-mark { width: 22px; }
   /* Under the name: what the session is at, its model and machine, on one line. */
@@ -528,7 +526,7 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
   #session .filters :is(a, button) { min-height: 26px; padding: 0 9px; border-radius: 7px; font-size: var(--t-xs); }
   #session .filters b { margin-left: 6px; padding: 1px 6px; }
   body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: 38px; }
-  /* Sessions laid together have a composer each: "Files" stands beside their names in the band. */
+  /* Sessions laid together have a composer each: "Files" stands beside their names in the heading. */
   body[data-pair] #session .filters { grid-column: 2; grid-row: 1 / 3; align-self: center; margin: 0 0 0 18px; }
 }
 
@@ -625,7 +623,7 @@ turbo-frame.log-earlier[busy] > .log-earlier-link { opacity: .5; pointer-events:
 .composer .composer-file { cursor: default; }
 .composer-file-off { flex: none; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; font: 400 15px/1 var(--font); color: var(--muted); cursor: pointer; }
 .composer-file-off:hover { background: var(--fg); color: var(--bg); }
-/* The heading's controls (ui.mjs), on the heading's line under the band: the name in the heading's letters. */
+/* The heading's controls (ui.mjs), on the heading's line: the name in the heading's letters. */
 #session .pane-who .t-head-name strong { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 1.5rem/1.15 var(--display); letter-spacing: -.02em; }
 #session .pane-who .t-session-edit { min-height: 44px; align-items: flex-start; }
 /* Messages that arrive while one reads further up do not move what is in view: the controller "log" keeps the place. */

@@ -1,4 +1,4 @@
-// A session's page: its heading in the band, the conversation, the composer, the filter ("Questions only"), the
+// A session's page: its heading, the conversation, the composer, the filter ("Questions only"), the
 // files drawer and a picture as a page of its own. The markup is the one app.css and session.css style (the old
 // client built it in js/chat.js, js/beside.js, js/history.js and app.js paintTitle); what is new stands in
 // app.css under "the session page".
@@ -240,7 +240,7 @@ function logItems(s, base, from = 0, to = s.messages.length) {
 }
 
 // ---- the pieces of the page that change by themselves (each has an id; the live stream replaces it) ----
-/** The session's drawing and name: the page's heading, on its own line under the band (session.css). */
+/** The session's drawing and name: the page's heading, on its own line at the page's top (session.css). */
 /** A main session's small way to another desk (his word, 5 October): beside its name, the desk drawing with a caret; it
  *  lists the other desks, a click moves the session there (the human register session/<id>, as on the Agents page;
  *  its subs go with it). Not for a sub, and not while there is only one desk. */

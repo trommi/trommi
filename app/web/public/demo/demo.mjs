@@ -1,5 +1,5 @@
 // The mock room: the client core's API and model shape (core/README.md in trommi-hub), without a hub and
-// without crypto, fed from public/demo/fixture.json (dev/make-fixture.mjs) or generated big (?mock=crazy). Used with
+// without crypto, fed from public/demo/fixture.json (dev/make-fixture.mjs) or generated big (?mock=crazy); ?mock=side is the fixture with a full sidebar. Used with
 // ?mock=1 for UI work and the screen-by-screen comparison with today's board; the real core is the default.
 // Agents are simulated: they reply to messages, rework a card that was handed back, explain on "What??".
 
@@ -502,7 +502,37 @@ let fixtureCache
 async function loadFixture(kind) {
   if (kind === 'crazy') return crazyFixture()
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
-  return overloaded(filler(putAway(structuredClone(fixtureCache))))
+  const f = overloaded(filler(putAway(structuredClone(fixtureCache))))
+  return kind === 'side' ? crowded(f) : f
+}
+
+// A full sidebar (?mock=side): eight more sessions beside the demo's two trees, with long names and none, one, two,
+// five, six and twelve open questions, two of them disconnected.
+function crowded(f) {
+  const now = Date.now(), MIN = 60e3, like = f.cards.find(c => c.object_state === 'open' && c.card_type === 'decision' && c.urgency === 'normal' && !c.in_revision)
+  const session = (id, name, icon, online, line, asks) => {
+    const dev = hex(64)
+    f.sessions.push({ agent_device_id: dev, agent_session_id: id, device_name: name, is_active: true, is_online: online,
+      profile: { model: 'claude-opus-5-5', task: name, icon, agent_name: name, parent_session: null, is_main: false },
+      status_lines: line ? [{ id: `${id}-1`, label: line, state: 'working', detail: '', object_id: null, updated_at: now - MIN }] : [],
+      settings: { name: '', desk: 'main', archived: false, group: null, icon: null } })
+    asks.forEach((title, i) => {
+      const id = hex(32), at = now - (20 + i * 7) * MIN, version_hash = hex(64), c = structuredClone(like)
+      Object.assign(c, { object_id: id, agent_device_id: dev, title, teaser: null, body: '', attachments: [], created_at: at, updated_at: at, timeline_key: `chat:card/${id}`, object_version: 1, version_hash, answers: [], answer: null })
+      c.versions = [{ ...c.versions[0], object_version: 1, version_hash, previous_version_hash: null, sent_at: at, content: { ...c.versions[0].content, title, teaser: null, body: '', attachments: [] } }]
+      f.cards.push(c)
+    })
+  }
+  const ask = (n, what) => Array.from({ length: n }, (_, i) => `${what} ${i + 1}?`)
+  session('release-notes', 'Release notes and changelog', 'draw:book', true, 'Changelog', ask(12, 'Mention change'))
+  session('billing', 'Billing', 'draw:database', true, 'Invoices', [])
+  session('translations', 'Translations (German, French)', 'draw:leaf', true, null, ask(2, 'Keep the English word'))
+  session('research', 'Research', 'draw:eye', true, null, ask(1, 'Read the paper'))
+  session('support', 'Support inbox', 'draw:heads', true, null, ask(5, 'Answer the mail'))
+  session('design', 'Design', 'draw:pen', true, null, ask(6, 'Keep the variant'))
+  session('importer', 'Old importer', 'draw:terminal', false, null, ask(4, 'Drop the column'))
+  session('night-build', 'Night build', 'draw:rocket', false, null, [])
+  return f
 }
 export async function openRoom({ mock = '1' } = {}) { return new MockClient(await loadFixture(mock)) }
 

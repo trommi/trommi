@@ -2639,18 +2639,22 @@ export const markArt = agent => raw(doodleSvg(agent.mark) + (agent.starred ? cro
 /** The small mark on a line that names who asked. */
 export const smallMark = agent => html`<span class="inbox-from-mark" style="--hue:${agent.hue}">${markArt(agent)}</span>`
 
-// The badge at the end of a row: the ring with the number of open questions; the raised red hand when the session is
+// The badge at the end of a row: the open questions, as a number in a ring; the raised red hand when the session is
 // really stopped (blocked: disconnected while working, an error, waiting for permission; being quiet is no stop, blocked.mjs quietOf).
 // The hand can stand without any question. That one of its questions knocks (is urgent) is told on the Desk, not here.
 // A link into that session. That the session works is told by its drawing (avatar working), not here:
 // a session that works and has no open question has no badge.
-export function badge(u, shown, base) {
+// In the sidebar (tally) the count is a tally in the pen's line: a stroke for each question up to four, the fifth
+// drawn across them, and a figure above five. The number is said by the link's label either way.
+const TALLY = ['M3.9 2.2Q2.6 7.6 2.5 13.9', 'M8.6 1.6Q8.4 8.4 7.3 13.2', 'M13.7 2.6Q12.5 7.2 12.6 14.2', 'M18.6 1.9Q18.3 8.6 17.2 13.5']
+const tallySvg = n => { const w = n > 4 ? 22 : n * 5 + 1; return `<svg class="agent-tally" viewBox="0 0 ${w} 16" width="${w}" height="16" aria-hidden="true">${TALLY.slice(0, Math.min(n, 4)).map(d => `<path d="${d}"/>`).join('')}${n > 4 ? '<path d="M.9 11.8Q10.5 7.6 21.1 3.5"/>' : ''}</svg>` }
+export function badge(u, shown, base, tally = false) {
   const { open, online, running, blocked } = shown
   if (!open && !blocked) return ''
   const busy = Boolean(online && running)
   const state = blocked ? `Stopped: ${blocked.text}${open ? `, ${questions(open)} open` : ''}`
     : online ? (running ? `Working, ${questions(open)} open` : `${questions(open)} open`) : `Disconnected, ${questions(open)} open`
-  const inner = blocked ? raw(handSvg()) : html`${raw(ringSvg())}<b>${open}</b>`
+  const inner = blocked ? raw(handSvg()) : !tally ? html`${raw(ringSvg())}<b>${open}</b>` : open > 5 ? html`<b>${open}</b>` : raw(tallySvg(open))
   const data = html` data-state="${blocked ? 'blocked' : 'open'}"${blocked ? html` data-why="${blocked.why}"` : ''}${!online ? raw(' data-offline') : ''}${busy ? raw(' data-working') : ''}`
   return html`<a class="agent-badge" data-nav href="${base}/s/${encodeURIComponent(u.id)}"${data} title="${u.agent.name}: ${state}" aria-label="${u.agent.name}: ${state}">${inner}</a>`
 }

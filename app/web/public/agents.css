@@ -2,8 +2,7 @@
 body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: none; }
 @media (min-width: 861px) {
   #session, #inbox, #ledger { grid-row: 1; }
-  #session, #inbox, #ledger { margin-top: var(--band); }
-  /* Desk and Agents: the heading begins 16px under the band, the same line on both pages (ledger.css said 32px, the Desk 8px) */
+  /* Desk and Agents: the heading begins on the same line on both pages */
   html body[data-scope="all"] #inbox, html body[data-page="roster"] #ledger { padding-top: var(--s-4); }
 }
 @media (max-width: 860px) { .ledger-desk { display: none; }

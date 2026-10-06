@@ -53,10 +53,10 @@
 .agent-mark-lg { width: 48px; height: 48px; border-radius: var(--r-md); box-shadow: var(--shadow-md); }
 .agent-mark-lg .ico { width: 26px; height: 26px; }
 
-/* (the menu pill's mark and word too: a phone's opener is the caret alone) */
-.brand-open > .pill-mark, .brand-open > .pill-word { display: none; }
-/* (the rail's button and note exist on wide screens only: see the min-width block below) */
-.rail-fold, .rail-tip { display: none; }
+/* (the mark and the word of the menu's button too: a phone's opener is the caret alone) */
+.brand-open > .open-mark, .brand-open > .open-word { display: none; }
+/* (the sidebar's foot and the rail's note exist on wide screens only: see the min-width block below) */
+.side-foot, .rail-tip { display: none; }
 /* ---- sidebar: the inbox, then the sessions ---- */
 #agents { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; padding: var(--s-4) var(--s-2); background: var(--bg); border-right: 1px solid var(--line); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .agent-heading { margin-top: var(--s-4); padding: 0 var(--s-3) var(--s-2); color: var(--faint); }
@@ -75,7 +75,7 @@
 .agent-row { display: flex; align-items: center; min-width: 0; border-radius: var(--r-md); }
 .agent-entry { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); min-height: 46px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; text-align: left; transition: background var(--d-fast); }
 .agent-entry:hover { background: var(--sunken); }
-.agent-entry[aria-current="true"] { background: var(--surface); box-shadow: var(--shadow-sm); }
+.agent-entry[aria-current="page"] { background: var(--surface); box-shadow: var(--shadow-sm); }
 /* The inbox is the place, not one row of the list: a block of its own at the top of the sidebar, on
    paper, a little taller, its name in the display face; the sessions follow below it after some air. */
 .agent-text { flex: 1; min-width: 0; display: grid; }
@@ -154,21 +154,13 @@
 .is-drawing .mark-live path:not(.pair-crown *) { stroke-dasharray: 34 66; stroke-width: 2.5; animation: mark-travel 2800ms linear infinite; }
 @media (prefers-reduced-motion: reduce) { .is-drawing .mark-live path:not(.pair-crown *) { animation: none; stroke-dasharray: none; stroke-width: inherit; }
 }
-/* The ring at the end of a session row, circled by hand. Its number is the open questions; while the
-   session works a drop travels round it; a knock turns it into the raised hand in a red loop. */
+/* The badge at the end of a session row (ui.mjs badge): the open questions, as a number in a ring circled by hand
+   (the Agents page) or as a tally (the sidebar, see "The sidebar's type and its counts" below); a stopped session
+   has the raised hand in a red loop in its place. */
 .agent-badge { flex: none; position: relative; width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
 .agent-badge b { position: relative; }
 .agent-ring, .hand-mark { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .agent-ring { color: color-mix(in srgb, var(--fg) 50%, var(--bg)); }
-/* Working: the ring itself steps back, and a short tapered stroke in the accent goes round it. The whole
-   stroke turns as one (the tip leads), eased, so each turn reads as one sweep of the pen. */
-.agent-badge[data-state="running"] .agent-ring { color: var(--accent); }
-.agent-badge[data-state="running"] .ring-loop { opacity: .38; }
-@media (prefers-reduced-motion: reduce) {
-  .agent-badge[data-state="running"] .ring-loop { opacity: 1; stroke-dasharray: 91 9; }
-}
-.agent-badge[data-state="waiting"] { --hand-soft: var(--urg-critical-soft); color: var(--urg-critical); }
-.agent-badge[data-state="waiting"] .agent-ring { color: var(--urg-critical); }
 .agent-badge[data-offline] { color: var(--faint); }
 .agent-badge[data-offline] .agent-ring { color: var(--line-strong, var(--faint)); }
 /* The badge stands beside the row's entry, over its right end, pulled in from the edge, so that it can
@@ -220,24 +212,19 @@ button.agent-badge:active { scale: .95; }
 }
 @media (min-width: 861px) {
   #agents { grid-column: 1; grid-row: 1; padding-top: 0; }
-  /* The Desk stands at the top of the sidebar, a block of its own that stays while the sessions scroll:
-     the desk drawing, "Desk", who works, the knocks and everything open; one click goes to the Desk from
-     anywhere. The caret at its right opens the menu under it. (Not moved by a transform: the floating
-     buttons at the foot are children of .topbar and must stay the page's.) */
-  /* The block: one line. The desk drawing stands over the sessions' drawings, the big word "Desk" over
-     their names; beside it the small turning ring while sessions work; the knocks and everything open
-     as small marks before the caret, whose column stands over the rows' rings. Even margins all round;
-     below it clear room, kept by a spacer that stays while the sessions scroll under it. */
-  /* The rail (card Nr. 150, bar.js toggleRail): the sidebar folded to the sessions' drawings with their state at
-     the corner (ring, count, the red hand of a knock); the Desk block is its drawing and the knocks. Names
-     come as a note beside the row under the pointer (.rail-tip). The small button at the foot folds and opens. */
-  .rail-tip { display: block; }
-  .rail-fold { position: fixed; z-index: 7; left: 8px; bottom: 14px; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--faint); }
+  /* The Desk stands at the top of the sidebar, a block of its own that stays while the sessions scroll: the desk
+     drawing and the desk's name; one click goes to the Desk from anywhere. Below it clear room, kept by a spacer
+     that stays while the sessions scroll under it. (Not moved by a transform: the menu's button and the menu are
+     fixed children of .topbar and must stay the page's.) */
+  /* The rail (card Nr. 150, bar.js toggleRail): the sidebar folded to the sessions' drawings with the red hand of
+     a stopped session at the corner; the Desk block is its drawing. Names
+     come as a note beside the row under the pointer (.rail-tip). The small button at the foot's right end folds and opens. */
+  .rail-tip, .side-foot { display: block; }
+  .rail-fold { position: absolute; right: 10px; bottom: 12px; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--faint); }
   .rail-fold svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: rotate var(--d-fast); }
   /* (The old client's full-screen focus view hid the rail button; the app has no such view: no :has() over the whole page.) */
-  #agents { padding-bottom: 60px; }
   [data-rail="folded"] body { grid-template-columns: 76px minmax(0, 1fr); }
-  [data-rail="folded"] .rail-fold { left: 20px; }
+  [data-rail="folded"] .rail-fold { right: 20px; }
   [data-rail="folded"] .rail-fold svg { rotate: 180deg; }
   [data-rail="folded"] .topbar { width: 60px; height: 64px; }
   [data-rail="folded"] .topbar .desk-go { flex-direction: column; justify-content: center; gap: 5px; padding: 0; border-radius: 14px; }
@@ -261,7 +248,7 @@ button.agent-badge:active { scale: .95; }
   #agents { padding-top: 0; }
   /* the Desk box: 8px from the top and the sides (one inset all round), the first row 16px under it, on the line of the page's first content */
   #agents::before { content: ""; flex: none; position: sticky; top: 0; z-index: 3; height: 72px; margin: 0 calc(-1 * var(--s-2)) 6px; background: var(--bg); }
-  .topbar { position: fixed; z-index: 7; top: 8px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 56px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
+  .topbar { position: fixed; z-index: 7; top: 8px; left: 8px; right: auto; width: 256px; margin: 0; min-height: 0; height: 56px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
   .topbar .brand { margin-right: 0; flex: 1; min-width: 0; height: 100%; }
   .topbar .brand h1 { width: 100%; height: 100%; font: 800 1.75rem/1 var(--display); letter-spacing: -.03em; }
   .topbar .deskpill { gap: 0; }
@@ -269,20 +256,12 @@ button.agent-badge:active { scale: .95; }
   .topbar .desk-go:hover { background: none; }
   .topbar .desk-go .brand-mark { display: none; }
   .topbar .desk-go > .sketch { flex: none; width: 28px; height: 28px; margin: 0 15px 0 9px; stroke-width: 1.6; }
-  .topbar .brand-open { align-self: stretch; width: 32px; min-width: 32px; margin-left: 0; padding: 0; justify-content: center; border-radius: 0 14px 14px 0; box-shadow: -1px 0 0 var(--line); cursor: pointer; }
-  .topbar .brand-open .brand-fold { margin-left: 0; } /* the band ends where the Desk box ends (8 + 56) */
   :root[data-rail="folded"] { --side: 76px; }
   .topbar .desk-go { border-radius: 14px; }
-  /* (logo.css, linked later, put the bell into the Desk button for the time the Desk was the pill: the Desk box
-     shows its desk drawing again, the bell stands in the menu's pill) */
+  /* (logo.css, linked later, put the bell into the Desk button for a time: the Desk box shows its desk drawing
+     again, the bell stands in the menu's button) */
   html body .topbar .desk-go .brand-mark { display: none; }
   html body .topbar .desk-go > .sketch { display: block; }
-  html .topbar .brand-open { position: fixed; z-index: 8; top: 8px; left: var(--side); right: 0; width: max-content; min-width: 0; height: 38px; min-height: 0; margin: 0 auto; padding: 0 10px 0 8px; gap: 8px; align-self: auto; border-radius: 999px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); white-space: nowrap; }
-  html .topbar .brand-open:hover, html .topbar .brand-open[aria-expanded="true"] { background: var(--surface); box-shadow: 0 0 0 1px var(--fg), var(--shadow-md); }
-  .brand-open > .pill-mark { display: block; flex: none; width: 22px; height: 22px; }
-  .brand-open > .pill-word { display: block; font: 700 1.02rem/1 var(--display); letter-spacing: 0; }
-  .topbar .brand-open[data-other-knock]::before { right: 2px; top: 0; }
-  html .topbar #brand-doors { position: fixed; z-index: 40; top: 54px; bottom: auto; left: var(--side); right: 0; margin-inline: auto; translate: none; width: 320px; max-height: calc(100dvh - 66px); overflow-y: auto; padding: 10px; border-radius: 18px; }
   .agent-entry { border-radius: 14px; }
   .agent-row > .agent-badge { margin-right: 8px; }
 }
@@ -321,10 +300,6 @@ button.agent-badge:active { scale: .95; }
 .topbar .sidedoors .menu-foot button { flex: none; width: 30px; min-height: 30px; padding: 0; justify-content: center; border-radius: 8px; }
 .topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: var(--sunken); }
 .topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) .sketch { color: var(--fg); }
-@media (min-width: 861px) {
-  /* one edge on the pill: the logo button has no ground of its own in it */
-  .brand-open:hover, .brand-open[aria-expanded="true"] { background: var(--sunken); }
-}
 @media (max-width: 860px) {
   #agents { grid-row: 2; flex-direction: row; gap: var(--s-1); overflow-x: auto; overflow-y: hidden; padding: var(--s-2) var(--s-3); border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
   #agents::-webkit-scrollbar { display: none; }
@@ -344,7 +319,7 @@ button.agent-badge:active { scale: .95; }
   .agent-invite { flex: none; margin: 0; }
   .agent-invite-go { flex: none; min-height: 44px; padding: 4px 14px 4px 6px; gap: var(--s-2); border-radius: var(--r-pill); }
   .agent-invite-go .sketch { width: 30px; height: 20px; }
-  .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1px var(--line-strong); }
+  .agent-entry[aria-current="page"] { box-shadow: 0 0 0 1px var(--line-strong); }
   .agent-text small { display: none; }
   .agent-avatar { width: 30px; height: 30px; border-radius: 50%; }
   .agent-text:has(strong + strong) { display: flex; gap: .35em; line-height: inherit; }
@@ -411,13 +386,11 @@ button.agent-badge:active { scale: .95; }
   .agent-row.has-badge .agent-entry { padding-right: 48px; }
   .agent-row > .agent-badge { margin-left: -42px; }
   .agent-entry .agent-text { max-width: min(56vw, 15rem); }
-
-  /* The Desk's menu: a long desk name is cut with an ellipsis inside the menu (it made the field and every
-     line 37px wider than the menu, past its right edge). */
-  .topbar #brand-doors, .menu-desks { grid-template-columns: minmax(0, 1fr); }
-  .topbar #brand-doors > *,
-.topbar .sidedoors .menu-desk { min-width: 0; max-width: 100%; }
 }
+/* The Desk's menu, on every screen: a long desk name is cut with an ellipsis inside the menu (it made the field and
+   every line wider than the menu, past its right edge). */
+.topbar #brand-doors, .menu-desks { grid-template-columns: minmax(0, 1fr); }
+.topbar #brand-doors > *, .topbar .sidedoors .menu-desk { min-width: 0; max-width: 100%; }
 
 /* ---- The Desk box (his word: "klassisch ganz rechts Dropdown"; sidebar.mjs topbar): the desk drawing, its lamp lit while
    something waits on this desk (deskLamp, kept current by the live stream), the desk's own name in the big type (the way
@@ -457,7 +430,7 @@ html body .topbar .deskpill .desk-go > .sketch { display: none; }
 .agent-row.is-main[data-fold] { --ghue: 162; margin-top: 6px; }
 .agent-row.is-main[data-fold] .agent-entry { position: relative; z-index: 1; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
 .agent-row.is-main[data-fold] .agent-entry:hover { background: color-mix(in srgb, var(--surface) 60%, var(--sunken)); }
-.agent-row.is-main[data-fold] .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--fg) 60%, var(--line-strong)), var(--shadow-sm); }
+.agent-row.is-main[data-fold] .agent-entry[aria-current="page"] { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--fg) 60%, var(--line-strong)), var(--shadow-sm); }
 .agent-row.is-main[data-fold] > .agent-badge { z-index: 2; }
 .agent-row.is-main .agent-text strong { font-weight: 700; }
 
@@ -573,7 +546,7 @@ a.agent-badge { text-decoration: none; }
 .t-crown-form { display: contents; }
 .topbar .roster-open { color: var(--muted); }
 .topbar .roster-open .sketch { width: 22px; height: 22px; }   /* the walk is an <a> too: the first tab stays */
-/* The opened Trommi menu: a plain sheet of paper under the pill (no clipboard: sidebar.css is kept for a
+/* The opened Trommi menu: a plain sheet of paper (no clipboard: sidebar.css is kept for a
    settings page). Paper surface, a thin pen line, a quiet shadow; the entries are simple rows. */
 .topbar #brand-doors:not([hidden]) {
   background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 12px;
@@ -591,12 +564,11 @@ a.agent-badge { text-decoration: none; }
 .topbar #brand-doors .menu-desk-form { display: flex; gap: 6px; padding: 3px 4px 5px; }
 .topbar #brand-doors .menu-desk-form .menu-desk-field { flex: 1; min-width: 0; width: auto; }
 .topbar #brand-doors .menu-desk-form button { flex: none; width: auto; min-height: 36px; padding: 0 14px; justify-content: center; border-radius: 8px; background: var(--fg); color: var(--bg); }
-/* The pill names the desk in view; a lost connection is a small warning dot on it, nothing else. */
-.brand-open .pill-word { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brand-open .pill-conn { display: none; }
-.brand-open .pill-conn[data-state="offline"] { display: inline-block; width: 8px; height: 8px; margin: 0 2px 0 4px; padding: 0; border: 0; border-radius: 50%; background: var(--urg-critical); }
-.brand-open .pill-conn i, .brand-open .pill-conn::after, .brand-open .pill-conn i::after { display: none; }
-.brand-open .pill-conn #conn-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* The menu's button: a lost connection is a small warning dot on it, nothing else. */
+.brand-open .open-conn { display: none; }
+.brand-open .open-conn[data-state="offline"] { display: inline-block; width: 8px; height: 8px; margin: 0 2px 0 4px; padding: 0; border: 0; border-radius: 50%; background: var(--urg-critical); }
+.brand-open .open-conn i, .brand-open .open-conn::after, .brand-open .open-conn i::after { display: none; }
+.brand-open .open-conn #conn-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* "Push on this device" in the menu behind the logo: the switch, what it may say, and one line of help. */
 .push-row::after { content: "Off"; margin-left: auto; font: 500 var(--t-xs, 12px)/1 var(--font, inherit); color: var(--muted, #777); }
 .push-row[aria-checked="true"]::after { content: "On"; color: var(--accent, #1b6a57); }
@@ -629,7 +601,7 @@ a.agent-badge { text-decoration: none; }
 @media (max-width: 860px) { .topbar #brand-doors .menu-leave button.menu-theme { width: 44px; min-height: 44px; } .topbar #brand-doors button.menu-desk-add { min-height: 40px; }
 }
 @media (min-width: 861px) {
-  .topbar { height: 48px; top: 8px; left: 8px; width: 240px; border-radius: 0; background: var(--bg); box-shadow: 0 1px 0 var(--line); }
+  .topbar { height: 48px; top: 8px; left: 8px; width: 256px; border-radius: 0; background: var(--bg); box-shadow: 0 1px 0 var(--line); }
   #agents::before { height: 64px; }
   .topbar .deskpill { height: 100%; gap: 2px; padding-right: 4px; }
   .topbar .deskpill > .desk-go { padding: 0 6px 0 0; border-radius: 8px; }
@@ -740,9 +712,6 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   html:not([data-rail="folded"]) .topbar .deskpill .desk-name, html:not([data-rail="folded"]) .topbar .desk-name[data-size="m"] { font: 800 1.5rem/1.1 var(--display); letter-spacing: -.02em; }
   html:not([data-rail="folded"]) .topbar .desk-name[data-size="l"] { font: 800 1.12rem/1.08 var(--display); letter-spacing: -.02em; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   html[data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { width: 34px; height: 34px; }
-  /* the Trommi menu's button a little lower (his word: "fünf Pixel mehr Abstand nach oben") */
-  html .topbar .brand-open { top: 13px; }
-  html .topbar #brand-doors { top: 59px; max-height: calc(100dvh - 71px); }
 }
 
 /* ---- A desk's row in the menu: the link, and at its right end the pencil that renames it (shown when the row is
@@ -753,9 +722,69 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 .topbar #brand-doors button.menu-desk-pen .sketch { width: 16px; height: 16px; }
 .topbar #brand-doors .menu-desk-row:is(:hover, :focus-within) button.menu-desk-pen { opacity: 1; }
 .topbar #brand-doors button.menu-desk-pen:hover { background: color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); }
-@media (hover: none) { .topbar #brand-doors button.menu-desk-pen { opacity: 1; right: 4px; width: 40px; height: 40px; } .topbar #brand-doors .menu-desk kbd { display: none; } .topbar #brand-doors .menu-desk-rename { right: 46px; } }
+@media (hover: none) { .topbar #brand-doors button.menu-desk-pen { opacity: 1; right: 4px; width: 40px; height: 40px; } .topbar #brand-doors .menu-desk kbd { display: none; } .topbar #brand-doors .menu-desk-rename { right: 46px; } .topbar #brand-doors .menu-desk-row .menu-desk { padding-right: 46px; } }
 .topbar #brand-doors .menu-desk-row.is-renaming > :is(.menu-desk b, .menu-desk-pen) { visibility: hidden; }
 .topbar #brand-doors .menu-desk-row.is-renaming .menu-desk b { visibility: hidden; }
 .topbar #brand-doors .menu-desk-rename { position: absolute; left: 42px; right: 40px; top: 50%; translate: 0 -50%; margin: 0; display: flex; }
 .topbar #brand-doors .menu-desk-rename .menu-desk-field { flex: 1; min-width: 0; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--fg); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); }
 
+/* ---- The sidebar's type and its counts (his word, 6 October: "diese Nummern in der Sidebar irgendwie grauenvoll … die
+   Schrift einen Tick größer"). The type two px up: names 17, "New agent" 16, the heading 13; a row 50 high (a sub 44),
+   its drawing 38 (31), the crown 25; the sidebar 272 wide (app.css --side). A phone's strip: names 16, its chips as
+   high as they were. The rail keeps its sizes.
+   The count of open questions is a tally in the pen's line (ui.mjs badge): up to five as strokes, the fifth across the
+   four, a figure above five. Marks and figures end on one line at the row's right; a disconnected session's are
+   faint. The red hand of a stopped session stands in their place, as before. ---- */
+#agents .agent-text strong { font-size: 17px; line-height: 1.3; }
+#agents .agent-invite-label { font-size: 16px; }
+#agents .agent-heading { font-size: 13px; }
+.agent-tally { flex: none; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+#agents .agent-badge[data-state="open"] { justify-content: flex-end; padding-right: 5px; border-radius: 8px; font-size: 15px; font-weight: 600; }
+#agents .agent-badge[data-state="open"] b { font-weight: inherit; }
+#agents .agent-badge[data-state="open"][data-offline] { color: var(--faint); font-weight: 500; }
+@media (min-width: 861px) {
+  :root:not([data-rail="folded"]) #agents :is(.agent-entry, .agent-invite-go) { min-height: 50px; }
+  :root:not([data-rail="folded"]) #agents .agent-row.is-sub .agent-entry { min-height: 44px; }
+  :root:not([data-rail="folded"]) #agents .agent-avatar { width: 38px; height: 38px; }
+  :root:not([data-rail="folded"]) #agents .agent-row.is-sub .agent-avatar { width: 31px; height: 31px; }
+  :root:not([data-rail="folded"]) #agents .agent-avatar .crown-mark { left: 6px; width: 25px; }
+  :root:not([data-rail="folded"]) #agents .crown-fold { left: 15px; }
+  :root:not([data-rail="folded"]) #agents .crown-fold .crown-mark { width: 25px; }
+  :root:not([data-rail="folded"]) #agents .agent-invite-go .sketch { width: 38px; }
+  /* (a tally needs less room than the hand: the name gets it) */
+  #agents .agent-row:has(> .agent-badge[data-state="open"]) .agent-entry { padding-right: 42px; }
+}
+@media (max-width: 860px) {
+  #agents .agent-text strong { font-size: 16px; }
+  #agents .agent-invite-label { font-size: 15px; }
+}
+
+/* ---- The Trommi menu at the sidebar's foot (his choice, 6 October: "Zeile unten links"). Wide screens: a quiet row
+   under the sessions, on their lines (the bell under the drawings, "Trommi" under the names, a caret at its end); the
+   menu opens upward from it, over the sidebar. The foot is a ground of its own (.side-foot, sidebar.mjs): the sessions
+   scroll above it, and the button that folds the sidebar stands at its right end. Folded to the rail, the bell alone
+   stands over that button and the menu opens beside the rail. The button is a fixed child of .topbar (placed without
+   a transform); a phone keeps it as the caret beside the desk's name. ---- */
+@media (min-width: 861px) {
+  :root { --foot: 60px; }
+  :root[data-rail="folded"] { --foot: 104px; }
+  #agents { margin-bottom: var(--foot); padding-bottom: var(--s-4); }
+  .side-foot { position: fixed; z-index: 6; left: 0; bottom: 0; box-sizing: border-box; width: var(--side); height: var(--foot); background: var(--bg); border-right: 1px solid var(--line); box-shadow: inset 0 1px 0 var(--line); }
+  .topbar .brand-open { position: fixed; z-index: 8; left: 16px; bottom: 8px; width: calc(var(--side) - 66px); height: 44px; min-height: 0; margin: 0; padding: 0 10px 0 var(--s-3); gap: var(--s-3); justify-content: flex-start; border-radius: 14px; cursor: pointer; }
+  .brand-open > .open-mark { display: block; flex: none; width: 38px; height: 24px; }
+  .brand-open > .open-word { display: block; font: 700 17px/1.3 var(--display); letter-spacing: 0; }
+  .topbar .brand-open .brand-fold { order: 1; margin-left: auto; rotate: 180deg; }
+  .topbar .brand-open[aria-expanded="true"] .brand-fold { rotate: 0deg; }
+  /* the dots: a knock on another desk at the bell's corner; the connection (grey while connecting, red when lost)
+     after the word, its words for a screen reader only */
+  .topbar .brand-open[data-other-knock]::before { left: 46px; right: auto; top: 6px; box-shadow: 0 0 0 2px var(--bg); }
+  .topbar .brand-open .open-conn[data-state="offline"] { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); background: none; }
+  .topbar #brand-doors { position: fixed; z-index: 40; left: 8px; right: auto; top: auto; bottom: calc(var(--foot) + 2px); width: calc(var(--side) - 16px); max-height: calc(100dvh - var(--foot) - 10px); overflow-y: auto; }
+  /* the rail: the bell alone, on the drawings' middle line; the menu beside the rail, its foot on the window's */
+  [data-rail="folded"] .topbar .brand-open { left: 14px; bottom: 52px; width: 48px; height: 48px; padding: 0; gap: 0; justify-content: center; border-radius: 12px; }
+  [data-rail="folded"] .brand-open > .open-mark { width: 26px; height: 26px; }
+  [data-rail="folded"] .brand-open > :is(.open-word, .brand-fold) { display: none; }
+  [data-rail="folded"] .topbar .brand-open::after { position: absolute; right: 6px; bottom: 8px; margin: 0; }
+  [data-rail="folded"] .topbar .brand-open[data-other-knock]::before { left: 34px; top: 6px; }
+  [data-rail="folded"] .topbar #brand-doors { left: calc(var(--side) + 4px); bottom: 8px; width: 256px; max-height: calc(100dvh - 16px); }
+}

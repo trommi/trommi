@@ -8,6 +8,7 @@ The Trommi app at **https://app.trommi.com**: a static, local-first single-page 
 node dev/serve.mjs 8900                 # the app as deployed, built in memory on every request (never stale, no service worker)
 open http://127.0.0.1:8900/             # not logged in on this device: Create account or Log in
 open http://127.0.0.1:8900/?mock=1      # the demo room: fixture cards of every kind, simulated agents, no hub
+open http://127.0.0.1:8900/?mock=side   # the same room with a full sidebar: long names, every kind of count
 ```
 
 A design change: edit the view's `.mjs` and `.css`, reload, push. Nothing to build or release; nothing generated is

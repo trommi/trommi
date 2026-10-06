@@ -611,7 +611,7 @@ div.focus-opt { cursor: default; }
   .tc-mini .sketch-what { width: 38px; height: 14px; }
   .tc-bar-later { right: 14px; top: 47px; }
 }
-@media (min-width: 861px) { #cardpage { padding-top: 64px; padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } .tc-pad .tc-rails > :is(.tc-back, .tc-more) { top: 18px; } }
+@media (min-width: 861px) { #cardpage { padding-top: var(--s-6); padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } .tc-pad .tc-rails > :is(.tc-back, .tc-more) { top: 18px; } }
 @media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } }
 @media (prefers-reduced-motion: reduce) { .tc-bar-in { transition: none; } }
 /* (a phone's gallery: Later's tag stands small in the head, beside the question, not over the picture) */
