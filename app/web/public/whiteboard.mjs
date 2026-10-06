@@ -2359,6 +2359,34 @@ function mountPad(main, { canvasId: PAD, client }) {
     refresh()
   }
 
+  // ---- a note parked here (sidebar.mjs, the corner note dragged onto the board): a yellow sticky with its words ----
+  // No element kind of its own (the canvas knows pen, highlighter, text, voice, picture): the paper is one stroke of
+  // the yellow highlighter going to and fro, the words a text on it, the two grouped, so they move and go as one.
+  const STICKY = { w: 220, min: 130, pad: 16, nib: 24, size: 17 }
+  function addSticky(text, wx, wy) {
+    const data = { text, size: STICKY.size, color: INK, wrap: STICKY.w - 2 * STICKY.pad }
+    const h = Math.max(STICKY.min, layoutText(data, 'text').h + 2 * STICKY.pad), x = r2(wx - STICKY.w / 2), y = r2(wy - h / 2)
+    const rows = Math.max(2, Math.ceil((h - STICKY.nib) / (STICKY.nib * .3)) + 1), pts = []
+    for (let i = 0; i < rows; i++) {
+      const yy = y + STICKY.nib / 2 + (h - STICKY.nib) * i / (rows - 1), ends = [x + STICKY.nib / 2, x + STICKY.w - STICKY.nib / 2]
+      pts.push(...(i % 2 ? [ends[1], yy, ends[0], yy] : [ends[0], yy, ends[1], yy]))
+    }
+    const k = strokeFromWorld(pts.map(r2), null, { tool: 'hl', color: HL_COLORS[0][0], size: STICKY.nib })
+    const z = topZ() + 1, group = newId()
+    const paper = { ...make('stroke', k, k.data, z), group }
+    const words = { ...makeText('text', x + STICKY.pad, y + STICKY.pad, data), z: z + 1, group }
+    add([paper, words])
+    sel.clear()
+    refresh()
+  }
+  on(document, 'trommi:park-note', e => {
+    const box = pad.getBoundingClientRect(), { text, x, y } = e.detail ?? {}
+    if (!String(text ?? '').trim() || x < box.left || x > box.right || y < box.top || y > box.bottom) return
+    commitEditor()
+    addSticky(String(text).trim(), ...toWorld(x - box.left, y - box.top))
+    e.detail.taken = true
+  })
+
   // For scripts that drive the page (dev/e2e.mjs) and for the curious in the console.
   window.pad = {
     elements: () => ordered(),
