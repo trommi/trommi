@@ -770,7 +770,7 @@ export const srcOf = file => attrs({ src: thumb(file).src })
 export const pageChip = (page, always = false) => (page || always ? html`<a class="page-chip" data-card-target="page" target="_blank" rel="noopener noreferrer" href="${page?.url ?? '#'}" title="This picture has a page behind it: open the page"${page ? '' : raw(' hidden')}>${sk('page')}<b>${page?.name ?? ''}</b><i>open</i></a>` : '')
 
 // ---- toast ----
-// The toast: one quiet line at the top right that says what just happened ("Answered: <title>", "Note sent to
+// The toast: one quiet pill at the bottom centre of the main area that says what just happened ("Answered: <title>", "Note sent to
 // <name>") and, when it can be taken back, an Undo button. The same on every page and on the phone. It goes by
 // itself (about five seconds, a held note's own hold), stays while the pointer rests on it, and stacks: three at
 // most, the newest on top. U presses the newest Undo (controller "keys").
@@ -1102,7 +1102,7 @@ function keyMatches(event, filter) {
 const stimulus = new Application()
 export const controller = (name, Klass) => stimulus.register(name, Klass)
 
-// The toast at the top right (ui.mjs): it goes by itself; while the pointer rests on it, it stays.
+// The toast (ui.mjs): it goes by itself; while the pointer rests on it, it stays.
 // Several stack, the newest on top, three at most. Once its Undo is pressed it is gone (kept, hidden, until the form's
 // answer is in: a form taken out of the page would lose its stream answer).
 controller('says', class extends Controller {

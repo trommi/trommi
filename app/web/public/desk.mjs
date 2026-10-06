@@ -1,7 +1,7 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
-import { BASE, stream } from './app.mjs'
+import { BASE, stream, flipOut } from './app.mjs'
 import { Controller, PLUS, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
