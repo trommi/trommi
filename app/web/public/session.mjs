@@ -103,7 +103,7 @@ function attachments(list, s, base, from) {
 }
 
 // ---- one line for something that happened to a question ----
-const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised', trusted: WORDS.trust, snoozed: 'Snoozed', handed: 'With the agent', shredded: 'Shredded' }
+const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised', trusted: WORDS.trust, snoozed: WORDS.later, handed: 'With the agent', shredded: 'Shredded' }
 function eventLine({ id, kind, text, ts }, card, base, { cont = false, echo = false, wrap = false } = {}) {
   const cls = `event event-${/^[a-z_]+$/.test(kind ?? '') ? kind : 'board'}${cont ? ' cont' : ''}${echo ? ' event-echo' : ''}`
   const inner = html`<span class="event-ico">${ico(ICONS[kind] ? kind : 'asked')}</span><span class="event-body"><span class="event-kind">${EVENT_LABEL[kind] ?? 'Board'}</span>${card && (card.title !== text || !text) ? html`<span class="event-about">${card.title}</span>` : ''}${text ? html`<span class="event-text">${text}</span>` : ''}</span>${timeNode(ts, 'event-time')}`

@@ -229,7 +229,7 @@ ${items.map(i => html`<a class="tail-card" data-id="${i.card.id}" data-nav href=
 // ---- a line of the pile: one card that left the open rows ----
 /** A line's mark on the shopping list: a pen tick (done), the three z (snoozed), the bin (shredded, struck too). */
 const shopMark = g => html`<span class="shop-mark" data-g="${g}" aria-hidden="true">${g === 'done' ? sk('tick') : g === 'later' ? sk('snooze') : g === 'trash' ? sk('bin') : ''}</span>`
-const PLACE = { later: 'Snoozed', works: 'Working', done: 'Done', trash: 'Trash' }
+const PLACE = { later: WORDS.later, works: 'Working', done: 'Done', trash: 'Trash' }
 function line(sheet, model, base, rest = false) {
   // (one line of a shopping list, his word 4 October: the place's mark at its start and the title; a click opens the
   //  card, where Wake up and Take back are)
@@ -743,7 +743,7 @@ export function register(t) {
     const BATCH = { later: id => t.hub.snooze(id, {}), wake: id => t.hub.snooze(id, { clear: true }), duck: id => t.hub.trust(id, ''), shred: id => t.hub.shred(id, ''), read: id => t.hub.closeInfo(id), reopen: id => t.hub.reopen(id) }
     const BACK = { later: 'wake', duck: 'reopen', shred: 'reopen', read: 'reopen' }
     const WHAT = { later: 'snooze', duck: 'trust', shred: 'shred' }   // (a single card's toast: app.mjs SAID)
-    const SAID = { later: 'Snoozed', duck: 'Left to the agents', shred: 'Shredded', read: 'Read', wake: 'Back on the Desk', reopen: 'Back on the Desk' }
+    const SAID = { later: WORDS.later, duck: 'Left to the agents', shred: 'Shredded', read: 'Read', wake: 'Back on the Desk', reopen: 'Back on the Desk' }
     t.post(/^\/cards\/batch$/, async ({ req, res, form }) => {
       const way = String(form.get('way') ?? ''), m0 = model()
       if (!Object.hasOwn(BATCH, way)) { res.code = 400; return }
