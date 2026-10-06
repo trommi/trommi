@@ -81,19 +81,30 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 .tc-head .tc-back { display: inline-flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; font: 700 var(--t-sm)/1 var(--font); }
 .tc-head .tc-back:hover span { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
 .tc-back span { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tc-back kbd { flex: none; padding: 3px 6px; border-radius: 5px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 1px 0 var(--line-strong); color: var(--muted); font: 500 .68rem/1 var(--mono); }
+.tc-back kbd { opacity: 0; transition: opacity 120ms; flex: none; padding: 3px 6px; border-radius: 5px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 1px 0 var(--line-strong); color: var(--muted); font: 500 .68rem/1 var(--mono); }
+/* (the key shows only while the pointer or the keyboard is on the way back; it is in the keys sheet too) */
+.tc-back:hover kbd, .tc-back:focus-visible kbd { opacity: 1; }
 @media (hover: none) and (pointer: coarse) { .tc-back kbd { display: none; }
 }
-/* the ways to put this card aside (ui.mjs sideWays: the Desk's selection bar, for this one card): a quiet row */
-.tc-ways { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 0 auto; }
-.tc-ways button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 0; border-radius: 9px; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
-.tc-ways button:hover, .tc-ways button:focus-visible { background: var(--sunken); color: var(--fg); }
-.tc-ways .sketch { width: 20px; height: 20px; }
-.tc-ways .sketch-duck { width: 24px; height: 20px; }
-.tc-ways .sel-later svg { width: 13px; height: 26px; margin: -4px 0 -2px; }
-.tc-ways .sel-shred:hover { color: color-mix(in srgb, var(--urg-critical) 75%, var(--fg)); }
-.tc-ways ~ .tc-place { margin-left: var(--s-2); }
-@container cardpage (max-width: 760px) { .tc-ways button { padding: 0 6px; min-width: 38px; justify-content: center; } .tc-ways button span { display: none; } .tc-head { gap: 2px; } .tc-head .tc-back { flex: none; } .tc-head .tc-back kbd { display: none; } .tc-head .tc-more-open { padding: 0 4px 0 8px; } }
+@container cardpage (max-width: 760px) { .tc-head { gap: 2px; } .tc-head .tc-back { flex: none; } .tc-head .tc-more-open { padding: 0 4px 0 8px; } }
+/* Later: the pull-tag (ui.mjs LATER_TAG, the Desk's Later) tied under the card's bottom-right corner, beside the
+   column of the talk: its string comes out from under the card's edge; under the pointer it swings and is pulled a
+   little. Where the talk needs the whole width (a phone, a narrow window) it hangs in a short row of its own. */
+.tc-later { position: relative; height: 0; margin-top: 0; z-index: 2; }
+.tc-later .sel-later { position: absolute; right: 34px; top: -3px; display: grid; justify-items: center; gap: 2px; padding: 0 10px 6px; border: 0; background: none; color: var(--muted); font: 700 var(--t-xs)/1 var(--display); cursor: pointer; }
+.tc-later .sel-later svg { width: 24px; height: 46px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; transition: transform 300ms cubic-bezier(.3, 1.6, .5, 1); }
+.tc-later .sel-later .tag-paper { fill: var(--surface); }
+.tc-later .sel-later .tag-lines { opacity: .55; }
+.tc-later .sel-later:hover, .tc-later .sel-later:focus-visible { color: var(--fg); outline: none; }
+.tc-later .sel-later:hover svg, .tc-later .sel-later:focus-visible svg { transform: rotate(6deg) translateY(5px); }
+.tc-later .sel-later:active svg { transform: translateY(12px); transition-duration: 80ms; }
+@container cardpage (max-width: 900px) {
+  .tc-later { height: 58px; }
+  .tc-later .sel-later { right: 22px; grid-auto-flow: column; align-items: end; gap: 6px; padding: 0 4px 0 10px; min-height: 48px; }
+  .tc-later .sel-later svg { width: 20px; height: 40px; }
+  .tc-later .sel-later span { padding-bottom: 6px; }
+  .tc-later + .tc-feed { margin-top: 0; }
+}
 .tc-place { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; color: var(--muted); font: 500 var(--t-sm)/1 var(--font); }
 .tc-count { padding: 0 6px; white-space: nowrap; }
 .tc-step-card { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); text-decoration: none; }
