@@ -3,8 +3,6 @@
 #whiteboard { display: none; }
 body[data-page="whiteboard"] #inbox, body[data-page="whiteboard"] #session { display: none; }
 body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; position: relative; background: var(--surface); }
-/* (the board's paper reaches the window's top, as the Desk's sheet does: its top tools stand under the band) */
-@media (min-width: 861px) { .pad-top { top: calc(var(--band) + 4px) !important; } }
 
 @media (max-width: 860px) {
   body[data-page="whiteboard"] #whiteboard { grid-column: 1; grid-row: 3; }
@@ -16,7 +14,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
    ink colours are content and are painted by elements.js. */
 
 
-.pad { position: absolute; inset: 0; overflow: hidden; background: var(--surface); color: var(--fg); font: 400 var(--t-md)/1.4 var(--font); -webkit-font-smoothing: auto; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.pad { container: pad / inline-size; position: absolute; inset: 0; overflow: hidden; background: var(--surface); color: var(--fg); font: 400 var(--t-md)/1.4 var(--font); -webkit-font-smoothing: auto; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .pad *, .pad *::before, .pad *::after, .pad-dialog, .pad-dialog * { box-sizing: border-box; }
 .pad [hidden] { display: none !important; }
 :where(.pad, .pad-dialog) button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; margin: 0; }
@@ -48,19 +46,18 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 @media (hover: hover) and (pointer: fine) {
   .pad [data-tip]::after { content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 8px); z-index: 9; width: max-content; padding: 5px 9px; border-radius: var(--r-sm); background: var(--fg); color: var(--surface); font: 500 var(--t-xs)/1.2 var(--font); transform: translateX(-50%); opacity: 0; pointer-events: none; transition: opacity var(--d-fast) .35s; }
   .pad .pad-bar [data-tip]::after, .pad .pad-selbar [data-tip]::after { top: auto; bottom: calc(100% + 8px); }
-  .pad .pad-top .pad-pill:last-child [data-tip]::after { left: auto; right: 0; transform: none; }
+  .pad .pad-top [data-tip]::after { top: auto; bottom: calc(100% + 8px); }
+  .pad .pad-top .pad-pill:first-child [data-tip]::after { left: 0; transform: none; }
   .pad [data-tip]:hover::after, .pad [data-tip]:focus-visible::after { opacity: 1; }
 }
 
 /* ── top bar ────────────────────────────────────────────────────────────── */
-.pad-top { position: absolute; top: max(var(--s-2), env(safe-area-inset-top)); left: var(--s-2); right: 84px; z-index: 3; display: flex; align-items: center; gap: 6px; pointer-events: none; }
+/* Everything of the board stands at its foot: undo, zoom and the theme at the left (.pad-top, named for where it once
+   stood), the tools in the middle with the cut-out drawing, the corner note at the right; the top is the paper's, and
+   the turned corner's. Where the paper is too narrow for both in one line, the left group stands one line higher. */
+.pad-top { --foot: max(34px, calc(env(safe-area-inset-bottom) + 30px)); position: absolute; left: max(12px, env(safe-area-inset-left)); bottom: var(--foot); z-index: 3; display: flex; align-items: center; gap: 6px; pointer-events: none; }
+@container pad (max-width: 1260px) { .pad-top { bottom: calc(var(--foot) + 66px); } }
 .pad-top > * { pointer-events: auto; }
-.pad-gap { flex: 1; pointer-events: none; }
-.pad-title { padding-right: var(--s-4); gap: 2px; }
-.pad-title strong { font: 600 var(--t-lg)/1 var(--display); letter-spacing: -.01em; }
-.pad-title span { margin-left: var(--s-2); padding: 3px 8px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent); font: 600 var(--t-xs)/1.2 var(--font); letter-spacing: .06em; text-transform: uppercase; }
-/* The Whiteboard (?place): the sidebar names the place and leads away, so no title pill (no close, no canvas name). */
-[data-place] .pad-title { visibility: hidden; }
 .pad-zoom { height: 44px; min-width: 58px; padding: 0 8px !important; border-radius: var(--r-pill); font: 600 var(--t-xs)/1 var(--font) !important; letter-spacing: .04em; font-variant-numeric: tabular-nums; color: var(--muted) !important; white-space: nowrap; position: relative; }
 .pad-zoom:hover { background: var(--sunken); color: var(--fg) !important; }
 
@@ -181,9 +178,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-wide { display: none; }
 @media (min-width: 620px) { .pad-wide { display: grid; } }
 @media (max-width: 619px) {
-  .pad-top { gap: 4px; right: 60px; }   /* (the sheet's turned corner has the top-right: ui.mjs curl) */
-  .pad-title { padding-right: 10px; }
-  .pad-title span { display: none; }
+  .pad-top { gap: 4px; bottom: calc(var(--foot) + 60px); }
   .pad-top .pad-icon-btn { width: 40px; height: 40px; }
   .pad-zoom { min-width: 48px; height: 40px; padding: 0 4px !important; }
   /* the narrowest phones: the bar must end inside the screen, so the "100 %" button goes (a pinch zooms, Fit stays) */
@@ -199,7 +194,10 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-status[data-kind="warn"] { color: var(--urg-high, var(--muted)); }
 
 /* Send an area: the chooser at the frame, the marks of the sessions, and the layer the cut-out flies in. */
-.pad-area-menu { min-width: 232px; max-height: min(60vh, 420px); overflow-y: auto; }
+.pad-area-menu { min-width: 232px; max-height: min(60vh, 420px); display: flex; flex-direction: column; overflow: hidden; }
+.pad-area-menu[hidden] { display: none; }
+.pad-area-menu > :not(.pad-menu-list) { flex: none; }
+.pad-menu-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .pad-area-menu .pad-menu-item { gap: 10px; }
 .pad-menu-find { display: block; width: calc(100% - 8px); margin: 2px 4px 6px; height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: var(--sunken); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); outline: none; }
 .pad-menu-find:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
