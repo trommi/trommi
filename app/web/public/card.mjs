@@ -16,7 +16,7 @@ import { BASE, SAID, stream } from './app.mjs'
 import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6', ZOOM_OUT = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M8 11h6', PLAY = 'M9 6.5v11l9-5.5z'
-const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'
+const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
 const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
 /** The version that stands now, as a number. */
@@ -138,9 +138,10 @@ ${text ? html`<div class="tc-text">${rich(text, { assets: model.state.assets })}
 </div>`
 }
 
-// Revise (the reverse card): a press opens a small field right here, "What should change?", with its own Send; sending
-// hands the card back with those words. Without scripts it is a plain <details>. Marks drawn on the card go along.
-const reviseTile = (card, base) => html`<details class="tc-revise" data-card-target="revise" data-action="toggle->card#reviseToggle"><summary class="tc-tile tc-reverse" title="Revise (B): say what should change, and it goes back to the session" aria-label="Revise: say what should change, and it goes back to the session">${sk('reverse')}</summary><form class="tc-revise-form" method="post" action="${act(card, base, 'revise')}" data-action="submit->card#reviseSend"><input type="hidden" name="marks" value="" data-card-target="reviseMarks"><input type="text" name="note" maxlength="2000" placeholder="What should change?" aria-label="What should change?" autocomplete="off" enterkeyhint="send" data-card-target="reviseField" data-action="keydown->card#reviseKeys input->card#reviseKeep"><button class="tc-revise-send" type="submit" title="Hand back (Enter)">${sk('send')}<span>Hand back</span></button></form></details>`
+// The reverse card: one press hands the card back at once, "put this before me again". Nothing opens and nothing is
+// asked: the session reworks the card with the comments under it in mind (what should change is written there first).
+// A button of the card's form: what stands unsent in the field and what is drawn on the card go along.
+const reviseTile = (card, model, base) => { const to = model.byAgent.get(card.agent)?.name ?? 'the agent', tip = `Reverse: back to ${to} for rework, with the comments`; return html`<button class="tc-tile tc-reverse" type="submit" form="card-form-${card.id}" formaction="${act(card, base, 'revise')}" name="next" value="1" title="${tip} (B)" aria-label="${tip}">${sk('reverse')}</button>` }
 const still = (label, detail = '', cls = '') => html`<div class="tc-opt is-still ${cls}"><span class="tc-opt-words"><span class="tc-opt-label">${label}</span>${detail ? html`<span class="tc-opt-detail">${detail}</span>` : ''}</span></div>`
 const back = (card, base, way, word = WORDS.takeBack) => html`<button class="tc-way" type="submit" form="card-form-${card.id}" formaction="${act(card, base, way)}">${word}</button>`
 
@@ -179,7 +180,7 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
   }
   const trustTip = `I don’t give a duck: your call (R)${advisedLabels(card) ? ` · agent takes ${advisedLabels(card)}` : ''}`
   return box(html`<div class="tc-opts" data-action="pointerover->card#preview focusin->card#preview pointerleave->card#unpreview focusout->card#unpreview" role="group" aria-label="${card.multiple ? 'Your answer. Tick what applies, then send.' : 'Your answer. One tap answers.'}">${card.options.map(option)}${card.multiple ? html`<button class="tc-opt tc-send-many" type="submit" form="${form}" formaction="${act(card, base, 'decide')}"><span class="tc-opt-words"><span class="tc-opt-label">Send the answer</span></span></button>` : ''}</div>
-${card.kind === 'decision' ? html`<div class="tc-or"><i>or</i><button class="tc-opt tc-whatever" type="submit" form="${form}" formaction="${act(card, base, 'trust')}" title="${trustTip}" aria-label="${trustTip}">${sk('duck')}<span class="tc-opt-words"><span class="tc-opt-label">I don’t give a duck</span></span></button><div class="tc-or-pair"><button class="tc-tile tc-wtf" type="submit" form="${form}" formaction="${act(card, base, 'what')}" title="What?? — explain this to me (E)" aria-label="What?? Explain this to me: the session explains it, and it comes back explained">${sk('what')}</button>${reviseTile(card, base)}</div></div>` : ''}`)
+${card.kind === 'decision' ? html`<div class="tc-or"><i>or</i><button class="tc-opt tc-whatever" type="submit" form="${form}" formaction="${act(card, base, 'trust')}" title="${trustTip}" aria-label="${trustTip}">${sk('duck')}<span class="tc-opt-words"><span class="tc-opt-label">I don’t give a duck</span></span></button><div class="tc-or-pair"><button class="tc-tile tc-wtf" type="submit" form="${form}" formaction="${act(card, base, 'what')}" title="What?? — explain this to me (E)" aria-label="What?? Explain this to me: the session explains it, and it comes back explained">${sk('what')}</button>${reviseTile(card, model, base)}</div></div>` : ''}`)
 }
 
 // Links an agent wrote into an option (its label or its line of detail): they stand here, under the card, named by their option.
@@ -679,7 +680,7 @@ let turn = 0
 const GROWS = globalThis.CSS?.supports?.('field-sizing', 'content') ?? false
 
 controller('card', class extends Controller {
-  static targets = ['form', 'field', 'files', 'chips', 'saved', 'figure', 'marks', 'revise', 'reviseField', 'reviseMarks', 'where', 'page', 'gallery', 'zoom']
+  static targets = ['form', 'field', 'files', 'chips', 'saved', 'figure', 'marks', 'where', 'page', 'gallery', 'zoom']
   static values = { draft: String, pictures: Array }
 
   connect() {
@@ -712,29 +713,6 @@ controller('card', class extends Controller {
     try { this.marksUi.set(JSON.parse(this.marksTarget.value || '[]')) } catch {}
     this.element.querySelector('.tc-ask-row .tc-clip')?.after(this.marksUi.controls)
   }
-
-  // ---- Revise: the small field under the reverse card ----
-  // Its words are kept in this browser while it is open (the hub's draft holds the field below the card).
-  get reviseKey() { return `trommi-revise-${this.element.dataset.id}` }
-  reviseToggle() {
-    if (this.reviseTarget.open) {
-      try { this.reviseFieldTarget.value = sessionStorage.getItem(this.reviseKey) ?? '' } catch {}
-      requestAnimationFrame(() => this.reviseFieldTarget.focus())
-    }
-  }
-  reviseKeep() { try { sessionStorage.setItem(this.reviseKey, this.reviseFieldTarget.value) } catch {} }
-  reviseKeys(event) {
-    if (event.key === 'Escape') { event.preventDefault(); this.reviseTarget.open = false; this.reviseTarget.querySelector('summary').focus(); return }
-    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); event.currentTarget.form.requestSubmit() }
-  }
-  // Nothing written: nothing happens. Marks drawn on the card go along.
-  reviseSend(event) {
-    if (!this.reviseFieldTarget.value.trim()) { event.preventDefault(); this.reviseFieldTarget.focus(); return }
-    if (this.hasMarksTarget) this.reviseMarksTarget.value = this.marksTarget.value
-    clearTimeout(this.timer)
-    try { sessionStorage.removeItem(this.reviseKey) } catch {}
-  }
-  openRevise() { if (!this.hasReviseTarget) return false; this.reviseTarget.open = true; this.reviseToggle(); return true }
 
   // ---- the pictures and the options are one thing ----
   // While the pointer or the keyboard is on an option, its picture stands on the stage and its small picture is
@@ -1032,9 +1010,10 @@ export function register(t) {
     const fromSession = home.startsWith(`${BASE}/s/`) && /^[\w\-/%+.]+$/.test(home)
     if (['message', 'reopen', 'takeback', 'wake'].includes(what) && !form.has('stay')) return redirect(res, `${cardPath(card, fromSession ? home : BASE)}${what === 'message' ? `?said=${id}:message` : ''}`)
     if (fromSession) return redirect(res, `${home}${said ? `?${said}` : ''}`)
-    if (form.has('walk')) {
+    // (in the walk, and after the reverse card on a card's own page: on to the next open card)
+    if (form.has('walk') || (form.has('next') && what === 'revise')) {
       const m = model(), next = after.map(x => m.byCard.get(x)).find(c => c && m.fresh.includes(c)) ?? m.fresh.find(c => c.id !== id)
-      return redirect(res, next ? `${cardPath(next, BASE)}?walk=1${said ? `&${said}` : ''}` : `${BASE}/${said ? `?${said}` : ''}`)
+      return redirect(res, next ? `${cardPath(next, BASE)}?${form.has('walk') ? 'walk=1' : ''}${said ? `${form.has('walk') ? '&' : ''}${said}` : ''}` : `${BASE}/${said ? `?${said}` : ''}`)
     }
     return redirect(res, `${BASE}/${said ? `?${said}` : ''}`)
   }
