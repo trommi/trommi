@@ -351,9 +351,9 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 .session-buttons button { min-height: 42px; padding: 0 1.2em; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; font-weight: 600; }
 .session-buttons .is-lead { background: var(--fg); border-color: var(--fg); color: var(--bg); }
 @media (max-width: 860px) {
-  #session { grid-column: 1; grid-row: 3; }
+  #session { grid-column: 1; grid-row: 2; }
   #chat, #scribble { animation: fade var(--d-med) var(--ease-out); }
-  /* The strip of sessions above already says which one this is; the title keeps only the filters,
+  /* The top line above already says which session this is; the title keeps only the filters,
      and for sessions laid together the names, to pick the one column there is room for. */
   .pane-title { min-height: 0; padding: 6px var(--gutter); gap: var(--s-2) var(--s-3); flex-wrap: wrap; }
   .pane-title .modes { display: none; }
@@ -531,7 +531,7 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
 }
 
 /* ---- a phone (860px and below): the same idea. One session: no strip and no rule above the conversation; it
-   flows from under the top bars to the composer. The session's name stands in the strip of sessions already,
+   flows from under the top bars to the composer. The session's name stands in the top line already,
    so there is no heading. The two filters are a quiet row under the composer; while the keyboard is up
    (app.js sets data-typing; or the viewport is short) the row is gone and its room goes to the conversation.
    Sessions laid together keep their line of names (it picks the one column) with "Files", without the rule. ---- */

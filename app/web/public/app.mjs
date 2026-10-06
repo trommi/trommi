@@ -11,7 +11,7 @@ import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
 import * as media from './media.mjs'
 import * as whiteboard from './whiteboard.mjs'
-import { SIDE_FOOT, cornerNote, sidebarRows, topbar } from './sidebar.mjs'
+import { DRAWER_VEIL, SIDE_FOOT, cornerNote, phoneBar, sidebarRows, topbar } from './sidebar.mjs'
 import { WORDS, calm, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { roomScreen } from './auth.mjs'
@@ -1005,12 +1005,14 @@ let padFrom = '/'
 let padKept = false   // the Scribble Board stays mounted under the Desk (set when the corner is first touched, or coming from the board)
 const padCanvas = html => /data-whiteboard-canvas-value="([^"]*)"/.exec(html)?.[1] ?? null
 /** The body's parts for a page: [{ key, html }] in order (the router keeps a part whose markup did not change). */
-function bodyParts({ view, model, base = '', main, sidebar = true, current = null, says = '', stream = '' }) {
+function bodyParts({ view, model, base = '', main, sidebar = true, current = null, says = '', stream = '', title = '' }) {
   const parts = []
   if (sidebar) {
-    parts.push({ key: 'topbar', html: String(topbar(model, base, view === 'desk', view)) })
+    if (model) parts.push({ key: 'phonebar', html: String(phoneBar(model, base, { view, current, title })) })
+    parts.push({ key: 'topbar', html: String(topbar(model, base, view === 'desk')) })
     parts.push({ key: 'agents', html: String(html`<nav id="agents" aria-label="Sessions" data-controller="folds">${sidebarRows(model, base, current)}</nav>`) })
     parts.push({ key: 'foot', html: String(SIDE_FOOT) })
+    parts.push({ key: 'veil', html: String(DRAWER_VEIL) })
     if (model) parts.push({ key: 'note', html: String(cornerNote(model, base)) })
   }
   // The Desk and the Scribble Board are two sides of one sheet (ui.mjs, controller "curl"): the board is a part of

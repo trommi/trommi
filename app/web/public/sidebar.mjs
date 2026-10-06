@@ -253,17 +253,15 @@ controller('folds', class extends Controller {
   brackets() {
     // Nothing unfolded: no bracket to draw, and no layout to force.
     if (!this.element.querySelector('.agent-row[data-fold="open"]') || document.documentElement.dataset.rail === 'folded') { for (const svg of this.bracketTargets) svg.style.display = 'none'; return }
-    const flat = getComputedStyle(this.element).flexDirection === 'row'   // a phone's strip runs sideways: the bracket runs under the subs
     this.bracketTargets.forEach((svg, gi) => {
       const main = svg.closest('.agent-row')
       const subs = this.rowTargets.filter(r => r.dataset.parent === main?.dataset.unit && !r.hidden)
       if (!main || main.dataset.fold !== 'open' || !subs.length) { svg.style.display = 'none'; return }
       svg.style.display = ''
-      const G = main.getBoundingClientRect(), first = subs[0].getBoundingClientRect(), last = subs.at(-1).getBoundingClientRect()
+      const G = main.getBoundingClientRect(), last = subs.at(-1).getBoundingClientRect()
       const w = i => wob(gi * 17 + i, 1.1)
-      let pts
-      if (flat) { const y = G.height + 3, x0 = first.left - G.left + 3, x1 = last.right - G.left - 3; pts = [[x0, y - 7], [x0 + w(1), y], [(x0 + x1) / 2, y - 1 + w(2)], [x1 + w(3), y], [x1, y - 7]] }
-      else { const x = G.left < 12 ? 3 : 4, h = 7, y0 = G.height - 4, y1 = last.bottom - G.top - 8; pts = [[x + h, y0 - 4], [x, y0 + 5 + w(1)], [x + w(2), (y0 + y1) / 2], [x, y1 + w(3)], [x + h, y1]] }
+      const x = 4, h = 7, y0 = G.height - 4, y1 = last.bottom - G.top - 8
+      const pts = [[x + h, y0 - 4], [x, y0 + 5 + w(1)], [x + w(2), (y0 + y1) / 2], [x, y1 + w(3)], [x + h, y1]]
       for (const p of svg.querySelectorAll('path')) p.setAttribute('d', penLine(pts))
     })
   }
@@ -287,7 +285,7 @@ controller('folds', class extends Controller {
 })
 
 // ---- menu ----
-// The Trommi menu (what opens from the row at the sidebar's foot, on a phone from the caret beside the desk's name),
+// The Trommi menu (what opens from the row at the sidebar's foot; on a phone the sidebar is a drawer),
 // the jump page's results (/jump; the menu
 // itself has no search field for now), and the sheet a long press on a Desk row brings up on a phone. The menu's markup is the old client's (index.html,
 // js/bar.js), so app.css and sidebar.css style it; the controller controller "menu" adds the
@@ -342,19 +340,97 @@ function menuDoors(model, base) {
 
 // ---- the sidebar's frame: the Desk box at its top with the Trommi menu's button, and its foot ----
 // The foot (wide screens; sidebar.css): the ground under the sessions, which scroll above it. The menu's button stands
-// on its left (a child of the Desk box's header, where a phone shows it as the caret beside the desk's name), the
+// on its left (a child of the Desk box's header), the
 // button that folds the sidebar to a rail at its right end.
 export const SIDE_FOOT = raw(`<div class="side-foot"><button type="button" class="rail-fold" data-controller="rail" data-action="click->rail#toggle pointerover@document->rail#tip focusin@document->rail#tip focusout@document->rail#untip turbo:before-cache@document->rail#untip" title="Fold the sidebar to a rail ( [ )" aria-label="Fold the sidebar to a rail ( [ )" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.3 4.4Q4.8 11.6 5.4 19.7"/><path d="M15.1 6.1Q12.2 9.2 9.1 12.1Q12.1 14.7 14.8 18"/></svg></button></div>`)
 
 /** How big the desk's name may stand in the Desk box: s (as "Desk"), m (a little smaller), l (two smaller lines). */
 const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? 's' : n <= 11 ? 'm' : 'l' }
-export function topbar(model, base, current, view = '') {
+export function topbar(model, base, current) {
     return html`<header class="topbar"><div class="brand">
 <h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a>
 <button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings" title="Menu">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b><span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
 ${menuDoors(model, base)}
-</div>
-<a href="${base}/agents" data-nav draggable="false" class="icon-btn roster-open" id="roster-open" aria-label="Agents" title="Agents"${view === 'agents' ? raw(' aria-current="page"') : ''}>${sk('heads')}</a></header>`
+</div></header>`
+}
+
+// ---- a phone's top line and the drawer (sidebar.css "A phone") ----
+// A phone has no room for the sidebar beside the page: the same sidebar (the Desk box, the sessions, the foot with the
+// Trommi menu) is a drawer that slides in from the left over the page. The slim line at the top holds its handle (three
+// pen lines; a red dot while a session is stopped or a card knocks) and the name of the place in view: the desk, or
+// the session with its drawing. Wide screens show neither.
+const HANDLE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M4.2 6.9Q12 6.1 19.9 6.8"/><path d="M4.1 12.3Q11 11.6 19.6 12.2"/><path d="M4.4 17.3Q12.4 18 19.8 17.1"/></svg>')
+const PLACES = { agents: 'Agents', gallery: 'Media', whiteboard: 'Scribble Board' }
+export function phoneBar(model, base, { view = '', current = null, title = '' } = {}) {
+  const session = current ? model.byAgent.get(current) : null
+  const waits = (model.blocked ?? 0) + (model.knocking ?? 0) > 0
+  const place = session ? html`<a class="phone-place" data-nav draggable="false" href="${base}/s/${encodeURIComponent(session.id)}">${avatar(session, { crown: false })}<b>${session.name}</b></a>`
+    : view === 'desk' || view === 'card' ? html`<a class="phone-place" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}><span class="desk-lamp" id="phone-lamp">${deskLamp(model)}</span><b>${model.deskName}</b></a>`
+      : html`<span class="phone-place"><b>${PLACES[view] ?? String(title).replace(/^\(\d+\) /, '').replace(/ · Trommi$/, '')}</b></span>`
+  return html`<div class="phone-bar" id="phone-bar"><button type="button" class="drawer-open" id="drawer-open" aria-controls="agents" aria-expanded="false" aria-label="Sessions and menu" title="Sessions and menu"${waits ? raw(' data-waits') : ''}>${HANDLE}</button>${place}</div>`
+}
+export const DRAWER_VEIL = raw('<div class="drawer-veil" id="drawer-veil" aria-hidden="true"></div>')
+
+/** The drawer's switch: <html data-drawer="open">. The handle and the veil open and close it, Escape and a choice made
+ *  in it close it; a finger opens it from the left edge and pushes it back (the drawer follows the finger: --dx). */
+function drawer() {
+  const root = document.documentElement, phone = matchMedia('(max-width: 860px)')
+  const isOpen = () => root.dataset.drawer === 'open'
+  const width = () => $('#agents')?.offsetWidth || 300
+  const set = (open, { focus = true } = {}) => {
+    if (open === isOpen()) return
+    if (open) root.dataset.drawer = 'open'; else delete root.dataset.drawer
+    $('#drawer-open')?.setAttribute('aria-expanded', String(open))
+    // (what lies under the veil is out of the keyboard's and a screen reader's way while the drawer is open)
+    for (const el of document.querySelectorAll('body > main, #phone-bar, #corner-note-box, .curl')) el.inert = open
+    if (!focus) return
+    if (open) ($('#agents .agent-entry[aria-current="page"]') ?? $('#desk-go'))?.focus({ preventScroll: true })
+    else if (document.activeElement?.closest?.('#agents, .topbar')) $('#drawer-open')?.focus({ preventScroll: true })
+  }
+  document.addEventListener('click', e => {
+    const t = e.target instanceof Element ? e.target : null
+    if (!t) return
+    if (t.closest('#drawer-open')) return set(!isOpen())
+    if (!isOpen()) return
+    if (t.closest('#drawer-veil')) return set(false)
+    // a place chosen in the drawer: a session, the Desk, a desk or a page of the menu (not the fold switches, not the menu's own button)
+    if (t.closest('#agents a[href], #desk-go, #brand-doors a[href], #sidebar-invite')) set(false, { focus: false })
+  })
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && isOpen() && $('#brand-doors')?.hidden !== false) { e.stopPropagation(); set(false) } }, true)
+  document.addEventListener('turbo:load', () => { if (isOpen()) set(false, { focus: false }) })
+  phone.addEventListener('change', () => set(false, { focus: false }))
+  // The finger: from the left edge the drawer comes along; on the open drawer (or the veil) a push to the left takes it back.
+  let drag = null
+  const end = () => { root.classList.remove('is-drawer-drag'); root.style.removeProperty('--dx'); root.style.removeProperty('--veil'); drag = null }
+  addEventListener('touchstart', e => {
+    if (!phone.matches || e.touches.length !== 1) return
+    const p = e.touches[0], open = isOpen()
+    if (open ? p.clientX > width() + 80 : p.clientX > 22 || e.target.closest?.('#whiteboard, input, textarea')) return
+    drag = { x: p.clientX, y: p.clientY, open, w: width(), on: false, at: p.clientX, t: e.timeStamp, v: 0 }
+  }, { passive: true })
+  addEventListener('touchmove', e => {
+    if (!drag) return
+    const p = e.touches[0], dx = p.clientX - drag.x, dy = p.clientY - drag.y
+    if (!drag.on) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+      if (Math.abs(dy) > Math.abs(dx) || (drag.open ? dx > 0 : dx < 0)) return end()
+      drag.on = true
+      root.classList.add('is-drawer-drag')
+    }
+    const x = Math.max(-drag.w, Math.min(0, (drag.open ? 0 : -drag.w) + dx))
+    drag.v = (p.clientX - drag.at) / Math.max(1, e.timeStamp - drag.t); drag.at = p.clientX; drag.t = e.timeStamp
+    drag.now = x
+    root.style.setProperty('--dx', `${x}px`)
+    root.style.setProperty('--veil', (1 + x / drag.w).toFixed(3))
+  }, { passive: true })
+  const up = () => {
+    if (!drag) return
+    const d = drag
+    end()
+    if (d.on) set(Math.abs(d.v) > .35 ? d.v > 0 : d.now > -d.w / 2)
+  }
+  addEventListener('touchend', up, { passive: true })
+  addEventListener('touchcancel', up, { passive: true })
 }
 
 // ---- controller "menu" ----
@@ -601,9 +677,15 @@ export function register(t) {
     }
   })
   document.addEventListener('keydown', e => { if (e.key === 'Escape') shut() })
+  drawer()
+  // The rail is a wide screen's: a narrow window has the drawer, whole (the head's data-rail is taken off there).
+  const narrow = matchMedia('(max-width: 860px)')
+  const rail = () => { if (narrow.matches) delete document.documentElement.dataset.rail; else { try { if (localStorage.getItem(KEY) === 'folded') document.documentElement.dataset.rail = 'folded' } catch {} } dispatchEvent(new Event('resize')) }
+  narrow.addEventListener('change', rail)
+  if (narrow.matches) rail()
   t.live('', {
-    take: m => ({ sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
-    diff: (was, now) => `${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
+    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
+    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
       : was.rows.shape !== now.rows.shape ? stream('update', 'agents', now.sidebar)
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })

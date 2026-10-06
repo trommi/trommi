@@ -175,7 +175,7 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 }
 /* ---- phone: mark, name, state and count; a tap opens ---- */
 @media (max-width: 860px) {
-  body[data-page="roster"] #ledger { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
+  body[data-page="roster"] #ledger { grid-column: 1; grid-row: 2; padding: var(--s-5) var(--gutter) var(--s-8); }
   .ledger-line.is-head, .ledger-grip, .ledger-does, .ledger-acts .ledger-ib:not(.ledger-menu), .ledger-find kbd, .ledger-tools .ledger-link { display: none; }
   .ledger-acts .ledger-menu { display: grid; width: 44px; height: 44px; }
   .ledger-with button { width: 36px; height: 36px; }

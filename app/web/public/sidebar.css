@@ -170,9 +170,6 @@
 .agent-row > .agent-badge { position: relative; z-index: 1; margin: 0 12px 0 -42px; }
 button.agent-badge { border: 0; border-radius: 50%; background: none; font-family: inherit; cursor: pointer; transition: scale 140ms ease-out; }
 button.agent-badge:active { scale: .95; }
-/* Wide screens reach the overview of all sessions from the bar's words; phones from one icon in the top bar. */
-.roster-open { display: none; }
-.roster-open[aria-current] { background: var(--accent-soft); color: var(--accent); }
 .agent-row.is-knocking .agent-avatar { animation: knock 640ms cubic-bezier(.3, .7, .4, 1) 120ms; }
 .brand h1 { display: flex; }
 .brand-open { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; margin-left: -8px; padding: 0 8px; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; transition: background var(--d-fast); }
@@ -210,7 +207,6 @@ button.agent-badge:active { scale: .95; }
 /* The sheet of keys: only where there is a keyboard. */
 @media (pointer: coarse) { .topbar #keys-open { display: none; }
 }
-@media (min-width: 861px) {
   #agents { grid-column: 1; grid-row: 1; padding-top: 0; }
   /* The Desk stands at the top of the sidebar, a block of its own that stays while the sessions scroll: the desk
      drawing and the desk's name; one click goes to the Desk from anywhere. Below it clear room, kept by a spacer
@@ -264,7 +260,6 @@ button.agent-badge:active { scale: .95; }
   html body .topbar .desk-go > .sketch { display: block; }
   .agent-entry { border-radius: 14px; }
   .agent-row > .agent-badge { margin-right: 8px; }
-}
 /* The menu, compact: the jump field, a quiet line for the project, four places two by two, and a foot
    with the connection and two small switches. One thin rule between the parts. */
 .topbar .sidedoors { width: 244px; min-width: 0; gap: 0; padding: 6px; border-radius: 14px; }
@@ -282,9 +277,8 @@ button.agent-badge:active { scale: .95; }
 .brand-open[data-other-knock] { position: relative; }
 .brand-open[data-other-knock]::before { content: ""; position: absolute; right: 5px; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--urg-high); box-shadow: 0 0 0 2px var(--surface); }
 [data-desks] .desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (min-width: 861px) { [data-desks] .topbar .brand h1 { font-size: 1.32rem; letter-spacing: -.01em; }
-}
-@media (max-width: 860px) { .topbar .sidedoors .menu-desk kbd { display: none; } [data-desks] .desk-name { max-width: 7.5rem; }
+[data-desks] .topbar .brand h1 { font-size: 1.32rem; letter-spacing: -.01em; }
+@media (max-width: 860px) { .topbar .sidedoors .menu-desk kbd { display: none; }
 }
 
 /* ---- the floating Desk: the way to the Desk and what waits there; the caret beside it opens the menu ---- */
@@ -300,46 +294,6 @@ button.agent-badge:active { scale: .95; }
 .topbar .sidedoors .menu-foot button { flex: none; width: 30px; min-height: 30px; padding: 0; justify-content: center; border-radius: 8px; }
 .topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: var(--sunken); }
 .topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) .sketch { color: var(--fg); }
-@media (max-width: 860px) {
-  #agents { grid-row: 2; flex-direction: row; gap: var(--s-1); overflow-x: auto; overflow-y: hidden; padding: var(--s-2) var(--s-3); border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
-  #agents::-webkit-scrollbar { display: none; }
-  .agent-heading,
-.agent-row .crown-toggle[aria-pressed="false"] { display: none; }
-  .agent-row .crown-toggle { left: 4px; top: -9px; pointer-events: none; }
-  .agent-row.is-group .agent-entry { min-height: 44px; }
-  .agent-row { flex: none; }
-  .agent-row.is-insert-before::after, .agent-row.is-insert-after::after { left: auto; right: auto; top: 4px; bottom: 4px; width: 3px; height: auto; }
-  .agent-row.is-insert-before::after { left: -4px; }
-  .agent-row.is-insert-after::after { right: -4px; }
-  .sidedoors { bottom: auto; top: calc(100% + 6px); }
-  .brand-open { margin-left: -6px; padding: 0 6px; gap: 8px; }
-  .topbar .icon-btn { width: 44px; height: 40px; }
-  .roster-open { display: grid; }
-  .agent-entry { width: auto; flex: none; min-height: 44px; padding: 4px 10px 4px 6px; border-radius: var(--r-pill); gap: var(--s-2); }
-  .agent-invite { flex: none; margin: 0; }
-  .agent-invite-go { flex: none; min-height: 44px; padding: 4px 14px 4px 6px; gap: var(--s-2); border-radius: var(--r-pill); }
-  .agent-invite-go .sketch { width: 30px; height: 20px; }
-  .agent-entry[aria-current="page"] { box-shadow: 0 0 0 1px var(--line-strong); }
-  .agent-text small { display: none; }
-  /* (a session's link in the strip: the sign alone, beside the name; its words are the pill's title and the session's page) */
-  .agent-text:has(.link-cap) { display: flex; align-items: center; gap: 6px; }
-  .agent-text small.link-cap { display: flex; margin: 0; }
-  .agent-text small.link-cap span { display: none; }
-  .agent-text small.link-cap .sketch { width: 20px; height: 20px; }
-  .agent-row:has(.link-cap) .agent-entry { min-height: 44px; }
-  .agent-avatar { width: 30px; height: 30px; border-radius: 50%; }
-  .agent-text:has(strong + strong) { display: flex; gap: .35em; line-height: inherit; }
-  .agent-text strong + strong { rotate: none; translate: none; }
-  .agent-text strong + strong::before { content: "+ "; color: var(--faint); font-weight: 500; }
-  .agent-badge { width: 30px; height: 30px; }
-  .agent-row.has-badge .agent-entry { padding-right: 52px; }
-  .agent-row > .agent-badge { margin: 0 8px 0 -46px; }
-  .topbar { gap: 0 2px; padding-left: max(var(--s-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--s-1), env(safe-area-inset-right, 0px)); }
-  .brand-open { margin-left: 0; min-width: 40px; min-height: 40px; justify-content: center; }
-  .desk-go { min-height: 40px; padding-left: 0; }
-  .desk-go > .sketch { display: none; }
-  .desk-go:hover { background: none; }
-}
 @media (pointer: coarse), (max-width: 860px) {
   .topbar .sidedoors .menu-grid :is(a, button, #keys-open),
 .topbar .sidedoors .menu-desk { min-height: 44px; }
@@ -371,28 +325,6 @@ button.agent-badge:active { scale: .95; }
 }
 
 /* ══ Phone polish: found by measuring every state at 360, 390 and 430px. ══ */
-@media (max-width: 860px) {
-  /* The bar: the pad and the memo are placed from the right edge, outside the flow, so the Desk box could
-     run under them (its menu arrow lay 12px under the pad). The box now ends before them. When the counts
-     get long the Agents button leaves first (see "Tight" below); only if that is not enough do the last counts
-     (who works, then the total) leave whole instead of being cut or covered. */
-  .topbar .brand { flex: 0 1 auto; min-width: 0; max-width: calc(100% - 134px); }
-  .topbar .deskpill { min-width: 0; gap: 0; }
-  .topbar .desk-go { flex: 0 1 auto; min-width: 0; gap: 5px; padding-right: 2px; }
-  .topbar .desk-go .brand-mark, .topbar .desk-name { flex: none; }
-  .topbar .brand-open { flex: none; }
-  /* Tight (a 360px phone, or a two-digit knock count at 390px; js/bar.js sets data-tight, card Nr. 158): the
-     Agents button leaves the bar first and the counts keep their room. Agents stays an entry of the Desk menu. */
-  .topbar[data-tight] .roster-open { display: none; }
-  .topbar[data-tight] .brand { max-width: calc(100% - 94px); }
-
-  /* The strip of sessions: a row with a badge reached 8px past its own box, so the rows lay 4px over each
-     other. It now reaches 4px, which is the gap; the badge and the rows stay where they were. And one long
-     name does not take the whole strip. */
-  .agent-row.has-badge .agent-entry { padding-right: 48px; }
-  .agent-row > .agent-badge { margin-left: -42px; }
-  .agent-entry .agent-text { max-width: min(56vw, 15rem); }
-}
 /* The Desk's menu, on every screen: a long desk name is cut with an ellipsis inside the menu (it made the field and
    every line wider than the menu, past its right edge). */
 .topbar #brand-doors, .menu-desks { grid-template-columns: minmax(0, 1fr); }
@@ -406,30 +338,17 @@ button.agent-badge:active { scale: .95; }
 .desk-lamp > .sketch { display: block; overflow: visible; }
 html body .topbar .deskpill .desk-go > .sketch { display: none; }
 .topbar .deskpill .desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (min-width: 861px) {
   .topbar .deskpill > .desk-go { flex: 1; min-width: 0; padding: 0 8px 0 0; }
   .topbar .desk-go .desk-lamp > .sketch { width: 28px; height: 28px; margin: 0 13px 0 15px; stroke-width: 1.6; }
   .topbar .desk-name[data-size="m"] { font-size: 1.45rem; }
   .topbar .desk-name[data-size="l"] { font-size: .98rem; line-height: 1.05; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
   /* the rail: the drawing alone, the way to the Desk */
   [data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { margin: 0; width: 26px; height: 26px; }
-}
-@media (max-width: 860px) {
-  /* the drawing in place of the bell; the menu's own caret (#brand-menu, 44px, the same menu with the desks first)
-     stands at the right of the name, so the box has one caret, not two */
-  html body .topbar .deskpill .desk-go .brand-mark { display: none; }
-  .topbar .desk-go .desk-lamp > .sketch { width: 26px; height: 26px; margin-right: 8px; stroke-width: 1.6; }
-  .topbar .deskpill > .brand-open { min-width: 44px; min-height: 44px; }
-  .topbar .brand { max-width: calc(100% - 90px); }
-  .topbar .deskpill > .desk-go { flex: 0 1 auto; min-width: 0; }
-  .topbar .deskpill .desk-name { flex: 0 1 auto; text-align: left; }
-  .topbar .desk-name[data-size="l"] { max-width: 9rem; font-size: .9rem; line-height: 1.04; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
-}
 /* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
    One crown per desk (card Nr. 172): only the session the human gave it to wears it; a main without it keeps its
    stack and bracket. Folded, its subs lie as coloured card edges behind its row; unfolded, they stand
    indented under it, held by a bracket drawn in the main's colour. The rows stay flat children of #agents
-   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, the phone's strip and the keys treat them as rows.
+   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, a phone's drawer and the keys treat them as rows.
    Built by agents.js; nothing here applies while the hub sends neither `main` nor `parent`. */
 
 /* ---- the main's row: a card, the top of its stack ---- */
@@ -471,7 +390,6 @@ body.is-pairing .crown-fold { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) { .agent-row.is-sub.is-unfolding, .crown-bracket.is-unfolding { animation: none; } .crown-edges i { transition: none; }
 }
 
-@media (min-width: 861px) {
   .agent-row.is-sub .agent-avatar { width: 28px; height: 28px; }
   .agent-row.is-sub .agent-entry { min-height: 40px; }
   .agent-row.is-main[data-fold="open"] { margin-bottom: 3px; }
@@ -487,26 +405,7 @@ body.is-pairing .crown-fold { visibility: hidden; }
   [data-rail="folded"] .crown-edges { --fx: .5px; --fy: .8px; --fr: 1.5deg; --tk: 2.4; }
   [data-rail="folded"] .crown-edges .e-w { display: none; }
   [data-rail="folded"] .crown-edges .e-n { display: inline; }
-}
 
-/* a phone's strip: the stack lies under the main's pill, an unfolded main's subs stand beside it over the bracket */
-@media (max-width: 860px) {
-  #agents:has(.agent-row.is-main[data-fold]) { align-items: flex-start; }
-  .agent-row.is-main[data-fold] { margin-top: 0; margin-inline: 3px; }
-  .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 2px + 3px); }
-  .agent-row.is-main[data-fold="open"], .agent-row.is-sub { margin-bottom: 6px; }
-  .crown-fold { left: 5px; top: -8px; }
-  .crown-fold .crown-mark { width: 21px; }
-  #agents .agent-avatar .crown-mark { left: 5px; top: -7px; width: 21px; }
-  .crown-fold::after { content: ""; position: absolute; inset: -4px -6px -8px -4px; }
-  .crown-edges { top: calc(100% - 10px); height: calc(var(--n) * 2px + 10px); }
-  .crown-edges { --fx: .6px; --fy: .5px; --fr: .7deg; --tk: 1.6; }
-  .crown-edges i { top: calc(var(--i) * 2px - 3px); left: calc(12px + var(--i) * 2.5px); right: calc(12px + var(--i) * 2.5px); }
-  .crown-edges i.is-knock { height: 17px; }
-  .crown-edges .e-w { display: none; }
-  .crown-edges .e-n { display: inline; }
-  .crown-edges path { stroke-width: .9; }
-}
 
 /* ---- a session at work (the sidebar, server-rendered: sidebar.mjs avatar working) ----
    Its drawing fills itself in, scribble-like: a faint trace of it stays, and its strokes draw themselves over it,
@@ -526,10 +425,8 @@ body.is-pairing .crown-fold { visibility: hidden; }
 /* Offline: the ring strokes turn red, as the square did. */
 .brand:has(.conn[data-state="offline"]) .brand-mark-ring { stroke: var(--urg-high); }
 /* A wide screen: the bell stands in the Desk pill in place of the small desk drawing. */
-@media (min-width: 861px) {
   html .topbar .desk-go .brand-mark { display: block; width: 22px; height: 22px; margin: 0; stroke-width: 1.9; }
   html .topbar .desk-go > .sketch { display: none; }
-}
 /* A session in the sidebar is carried by a held finger: no link preview comes up under it. */
 a.agent-entry { -webkit-touch-callout: none; }
 
@@ -550,8 +447,6 @@ a.agent-badge { text-decoration: none; }
 
 /* The crown switch in a session's heading (ui.mjs crownControl; placed by beside.css). */
 .t-crown-form { display: contents; }
-.topbar .roster-open { color: var(--muted); }
-.topbar .roster-open .sketch { width: 22px; height: 22px; }   /* the walk is an <a> too: the first tab stays */
 /* The opened Trommi menu: a plain sheet of paper (no clipboard: sidebar.css is kept for a
    settings page). Paper surface, a thin pen line, a quiet shadow; the entries are simple rows. */
 .topbar #brand-doors:not([hidden]) {
@@ -606,7 +501,6 @@ a.agent-badge { text-decoration: none; }
 .topbar #brand-doors .menu-leave button.menu-theme { flex: none; width: 36px; min-height: 36px; padding: 0; justify-content: center; border-radius: 9px; }
 @media (max-width: 860px) { .topbar #brand-doors .menu-leave button.menu-theme { width: 44px; min-height: 44px; } .topbar #brand-doors button.menu-desk-add { min-height: 40px; }
 }
-@media (min-width: 861px) {
   .topbar { height: 48px; top: 8px; left: 8px; width: 256px; border-radius: 0; background: var(--bg); box-shadow: 0 1px 0 var(--line); }
   #agents::before { height: 64px; }
   .topbar .deskpill { height: 100%; gap: 2px; padding-right: 4px; }
@@ -614,18 +508,14 @@ a.agent-badge { text-decoration: none; }
   .topbar .desk-go .desk-lamp > .sketch { width: 26px; height: 26px; margin: 0 12px 0 10px; }
   .topbar .deskpill .desk-name, .topbar .desk-name[data-size="m"], .topbar .desk-name[data-size="l"] { font: 700 var(--t-md)/1.2 var(--font); letter-spacing: 0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: none; -webkit-line-clamp: unset; }
   [data-rail="folded"] .topbar { width: 60px; height: 48px; }
-}
-@media (max-width: 860px) { .topbar .deskpill > .brand-open { order: 1; }}
 /* the Desk row says the desk's own name; switching desks is in the Trommi menu (his word, 4 October) */
-@media (min-width: 861px) { .topbar .deskpill > .desk-go { padding-right: 12px; } }
+.topbar .deskpill > .desk-go { padding-right: 12px; }
 /* the folded rail: the desk's drawing alone, centred like the sessions' drawings; its name in the tooltip */
-@media (min-width: 861px) {
   html[data-rail="folded"] .topbar .deskpill .desk-name { display: none !important; }
   html[data-rail="folded"] .topbar { width: 60px; box-shadow: none !important; }
   html[data-rail="folded"] .topbar .deskpill { justify-content: center; padding: 0; }
   html[data-rail="folded"] .topbar .deskpill > .desk-go { flex: none; width: 60px; padding: 0; justify-content: center; align-items: center; }
   html[data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { margin: 0; width: 28px; height: 28px; }
-}
 
 .corner-note-box.is-open .corner-note-head { display: none; }
 .corner-note-body[hidden] { display: none; }
@@ -641,12 +531,10 @@ a.agent-badge { text-decoration: none; }
 /* ---- One calm sidebar (his word, 4 October: "so noch komisch"): one inset for every row, the pills inside with equal
    margins; "New note" a quiet row like "+ New agent", right under it, the unsent notes as small stickies under that;
    the bracket of an unfolded main at the pen's own weight again (his word, 6 October: it used to be stronger) ---- */
-@media (min-width: 861px) {
   #agents { padding-inline: 10px; }
   #agents .agent-row { margin-inline: 0; }
   #agents .agent-row.is-main[data-fold] .agent-entry, #agents .agent-entry { width: auto; }
   .agent-row.is-main[data-fold] { margin-inline: 0; }
-}
 .corner-note-field:focus, .corner-note-field:focus-visible { outline: none; box-shadow: none; }
 /* the note's attachments: thumbnails and file names under the words, the paperclip beside the bin */
 .corner-note-files { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -695,7 +583,6 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 /* ---- The bracket stands clear of the rows (his word, 6 October: "zu nah dran … überdeckt den Strich"): the subs
    stand indented right of it, so their hover and the open row's ground never reach the line. And air (same day):
    between the Desk's name and the first group, between the groups, and to the sidebar's left edge. ---- */
-@media (min-width: 861px) {
   :root:not([data-rail="folded"]) #agents { padding-left: 16px; }
   :root:not([data-rail="folded"]) #agents::before { margin-bottom: 18px; margin-left: -16px; }
   :root:not([data-rail="folded"]) #agents .agent-row.is-sub { margin-left: 28px; }
@@ -707,18 +594,15 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   html[data-rail="folded"] #agents .agent-row .agent-entry, html[data-rail="folded"] #agents .agent-row.is-main[data-fold] .agent-entry { width: 48px; min-height: 48px; padding: 0 !important; border-radius: 12px; }
   html[data-rail="folded"] #agents .agent-row .agent-avatar { width: 30px; height: 30px; }
   html[data-rail="folded"] #agents .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 2px + 12px); }
-}
 
 /* ---- The Desk row is the heading of the whole sidebar (his word, 6 October: "zu klein … man sieht nicht, dass das das
    Heading von allem ist. Und den Trennstrich mag ich nicht"): the desk's drawing large, its name in the display face;
    no line under it, room instead. Not a raised card. ---- */
-@media (min-width: 861px) {
   html body .topbar { height: 56px; box-shadow: none !important; }
   html:not([data-rail="folded"]) .topbar .desk-go .desk-lamp > .sketch { width: 38px; height: 38px; margin: 0 12px 0 8px; stroke-width: 1.5; }
   html:not([data-rail="folded"]) .topbar .deskpill .desk-name, html:not([data-rail="folded"]) .topbar .desk-name[data-size="m"] { font: 800 1.5rem/1.1 var(--display); letter-spacing: -.02em; }
   html:not([data-rail="folded"]) .topbar .desk-name[data-size="l"] { font: 800 1.12rem/1.08 var(--display); letter-spacing: -.02em; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   html[data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { width: 34px; height: 34px; }
-}
 
 /* ---- A desk's row in the menu: the link, and at its right end the pencil that renames it (shown when the row is
    under the pointer or holds the keyboard, always where there is no hover); renaming, a field stands in the row. ---- */
@@ -736,8 +620,7 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 
 /* ---- The sidebar's type and its counts (his word, 6 October: "diese Nummern in der Sidebar irgendwie grauenvoll … die
    Schrift einen Tick größer"). The type two px up: names 17, "New agent" 16, the heading 13; a row 50 high (a sub 44),
-   its drawing 38 (31), the crown 25; the sidebar 272 wide (app.css --side). A phone's strip: names 16, its chips as
-   high as they were. The rail keeps its sizes.
+   its drawing 38 (31), the crown 25; the sidebar 272 wide (app.css --side). A phone's drawer is the same sidebar. The rail keeps its sizes.
    The count of open questions is a tally in the pen's line (ui.mjs badge): up to five as strokes, the fifth across the
    four, a figure above five. Marks and figures end on one line at the row's right; a disconnected session's are
    faint. The red hand of a stopped session stands in their place, as before. ---- */
@@ -748,7 +631,6 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 #agents .agent-badge[data-state="open"] { justify-content: flex-end; padding-right: 5px; border-radius: 8px; font-size: 15px; font-weight: 600; }
 #agents .agent-badge[data-state="open"] b { font-weight: inherit; }
 #agents .agent-badge[data-state="open"][data-offline] { color: var(--faint); font-weight: 500; }
-@media (min-width: 861px) {
   :root:not([data-rail="folded"]) #agents :is(.agent-entry, .agent-invite-go) { min-height: 50px; }
   :root:not([data-rail="folded"]) #agents .agent-row.is-sub .agent-entry { min-height: 44px; }
   :root:not([data-rail="folded"]) #agents .agent-avatar { width: 38px; height: 38px; }
@@ -759,19 +641,13 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   :root:not([data-rail="folded"]) #agents .agent-invite-go .sketch { width: 38px; }
   /* (a tally needs less room than the hand: the name gets it) */
   #agents .agent-row:has(> .agent-badge[data-state="open"]) .agent-entry { padding-right: 42px; }
-}
-@media (max-width: 860px) {
-  #agents .agent-text strong { font-size: 16px; }
-  #agents .agent-invite-label { font-size: 15px; }
-}
 
 /* ---- The Trommi menu at the sidebar's foot (his choice, 6 October: "Zeile unten links"). Wide screens: a quiet row
    under the sessions, on their lines (the bell under the drawings, "Trommi" under the names, a caret at its end); the
    menu opens upward from it, over the sidebar. The foot is a ground of its own (.side-foot, sidebar.mjs): the sessions
    scroll above it, and the button that folds the sidebar stands at its right end. Folded to the rail, the bell alone
    stands over that button and the menu opens beside the rail. The button is a fixed child of .topbar (placed without
-   a transform); a phone keeps it as the caret beside the desk's name. ---- */
-@media (min-width: 861px) {
+   a transform); a phone has the same foot in its drawer. ---- */
   :root { --foot: 60px; }
   :root[data-rail="folded"] { --foot: 104px; }
   #agents { margin-bottom: var(--foot); padding-bottom: var(--s-4); }
@@ -793,4 +669,44 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   [data-rail="folded"] .topbar .brand-open::after { position: absolute; right: 6px; bottom: 8px; margin: 0; }
   [data-rail="folded"] .topbar .brand-open[data-other-knock]::before { left: 34px; top: 6px; }
   [data-rail="folded"] .topbar #brand-doors { left: calc(var(--side) + 4px); bottom: 8px; width: 256px; max-height: calc(100dvh - 16px); }
+
+/* ---- A phone (his word, 7 October: "eine Sidebar auf mobile; die horizontale Leiste ist furchtbar"): one sidebar, two
+   presentations. Up to 860px the sidebar above (the Desk box, the sessions with their brackets and counts, "New agent",
+   the foot with the Trommi menu) is a drawer: it lies left of the window and slides in over the page (--dx, moved by
+   `left`, never by a transform: the menu and its button are fixed children of .topbar), the page dimmed behind it
+   (.drawer-veil). The slim line at the top (.phone-bar, sidebar.mjs phoneBar) holds the handle and the name of the
+   place in view. Wide screens show neither the line nor the veil; the button that folds to a rail is theirs alone. ---- */
+.phone-bar, .drawer-veil { display: none; }
+@media (max-width: 860px) {
+  :root { --drawer-w: min(312px, 100vw - 56px); --dx: calc(-1 * var(--drawer-w) - 24px); --foot: 60px; --drawer-in: 240ms cubic-bezier(.2, .8, .3, 1); }
+  :root[data-drawer="open"] { --dx: 0px; }
+  /* the line: 48px under the notch; the handle a 44px target, the place beside it */
+  .phone-bar { grid-column: 1; grid-row: 1; position: relative; z-index: 5; display: flex; align-items: center; gap: 2px; min-width: 0; height: calc(48px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(72px, env(safe-area-inset-right, 0px)) 0 max(4px, env(safe-area-inset-left, 0px)); background: var(--bg); border-bottom: 1px solid var(--line); user-select: none; -webkit-user-select: none; }
+  .drawer-open { flex: none; position: relative; width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 12px; background: none; color: var(--fg); }
+  .drawer-open .sketch { width: 24px; height: 24px; stroke-width: 2; }
+  .drawer-open:active { background: var(--sunken); }
+  .drawer-open[data-waits]::after { content: ""; position: absolute; right: 7px; top: 8px; width: 9px; height: 9px; border-radius: 50%; background: var(--urg-critical); box-shadow: 0 0 0 2px var(--bg); }
+  .phone-place { min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 4px; border-radius: 12px; color: var(--fg); font: 700 17px/1.2 var(--display); letter-spacing: -.01em; text-decoration: none; }
+  .phone-place b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: inherit; }
+  .phone-place .desk-lamp > .sketch { width: 26px; height: 26px; stroke-width: 1.6; }
+  .phone-place .agent-avatar { width: 28px; height: 28px; }
+  /* the page dimmed behind the open drawer; a tap on it closes */
+  .drawer-veil { display: block; position: fixed; z-index: 94; inset: 0; background: rgb(20 30 25 / .42); opacity: var(--veil, 0); visibility: hidden; transition: opacity var(--drawer-in), visibility 0s 240ms; }
+  :root[data-drawer="open"] .drawer-veil, :root.is-drawer-drag .drawer-veil { visibility: visible; transition: opacity var(--drawer-in); }
+  :root[data-drawer="open"]:not(.is-drawer-drag) .drawer-veil { opacity: 1; }
+  /* the sidebar's parts, each on the drawer's left edge */
+  #agents, .topbar, .side-foot { --side: var(--drawer-w); }
+  #agents, html body .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors { visibility: hidden; transition: left var(--drawer-in), visibility 0s 240ms; }
+  :root:is([data-drawer="open"], .is-drawer-drag) :is(#agents, .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors) { visibility: visible; transition: left var(--drawer-in); }
+  :root.is-drawer-drag :is(#agents, .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors) { transition: none; }
+  #agents { position: fixed; z-index: 95; left: var(--dx); top: 0; bottom: 0; width: var(--drawer-w); margin: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(var(--foot) + var(--s-4) + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); border-right: 0; box-shadow: 1px 0 0 var(--line-strong), 14px 0 36px -18px rgb(20 30 25 / .5); overscroll-behavior: contain; }
+  html body .topbar { z-index: 96; left: calc(var(--dx) + max(8px, env(safe-area-inset-left, 0px))); top: calc(8px + env(safe-area-inset-top, 0px)); width: calc(var(--drawer-w) - 16px); }
+  #agents::before { top: 0; }
+  .side-foot { z-index: 95; left: var(--dx); height: calc(var(--foot) + env(safe-area-inset-bottom, 0px)); border-right: 0; }
+  .rail-fold { display: none; }
+  .topbar .brand-open { z-index: 97; left: calc(var(--dx) + max(16px, env(safe-area-inset-left, 0px))); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); width: calc(var(--drawer-w) - 32px); }
+  .topbar #brand-doors { z-index: 98; left: calc(var(--dx) + max(8px, env(safe-area-inset-left, 0px))); bottom: calc(var(--foot) + 2px + env(safe-area-inset-bottom, 0px)); width: calc(var(--drawer-w) - 16px); max-height: calc(100dvh - var(--foot) - 10px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+  /* a finger's rows: 48px and more, the names never under the count */
+  #agents .agent-row.is-sub .agent-entry { min-height: 48px; }
 }
+@media (max-width: 860px) and (prefers-reduced-motion: reduce) { :root { --drawer-in: 1ms linear; } }
