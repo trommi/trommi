@@ -373,13 +373,13 @@ body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
   :root { --side: 272px; }
 }
 
-/* ---- phone: sessions as a strip, a session's two modes behind a tab bar ---- */
+/* ---- phone: one column; the slim top line (sidebar.css "A phone"), under it the page ---- */
 @media (max-width: 860px) {
-  :where([data-ui]) body { --bar-h: 48px; --gutter: var(--s-4); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  :where([data-ui]) body { --bar-h: 48px; --gutter: var(--s-4); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .filters { margin-left: auto; }
   .filters button { min-height: 36px; }
   /* (room at the foot, so the last row can be scrolled clear of the two floating buttons) */
-  body[data-scope="all"] #inbox { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) 96px; }
+  body[data-scope="all"] #inbox { grid-column: 1; grid-row: 2; padding: var(--s-5) var(--gutter) 96px; }
   .mic { width: 44px; height: 44px; }
   .icon-btn { width: 44px; height: 44px; }   /* below 16px iOS zooms the page on focus */
   .send { width: 44px; height: 44px; }

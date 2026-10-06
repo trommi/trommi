@@ -20,7 +20,7 @@ body[data-page="gallery"] #gallery {
 .gal-who { overflow: hidden; text-overflow: ellipsis; }
 
 @media (max-width: 860px) {
-  body[data-page="gallery"] #gallery { grid-column: 1; grid-row: 3; padding: var(--s-4) var(--gutter) var(--s-8); }
+  body[data-page="gallery"] #gallery { grid-column: 1; grid-row: 2; padding: var(--s-4) var(--gutter) var(--s-8); }
   .gal-head h2 { font-size: 2rem; }
   .gal-head p { font-size: var(--t-sm); }
   .gal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4) var(--s-3); }
