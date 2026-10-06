@@ -17,7 +17,7 @@ function row(u, base, current) {
 ${u.subs ? html`<button class="crown-fold${a.starred ? '' : ' is-plain'}" type="button" aria-expanded="false" title="${tip}" aria-label="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${a.starred ? raw(crownSvg()) : ''}</button>
 <svg class="crown-bracket" aria-hidden="true" data-folds-target="bracket"><path/><path class="crown-bracket-hit" data-action="click->folds#toggle" data-folds-id-param="${a.id}"><title>Fold ${a.name}'s subs</title></path></svg>
 <span class="crown-edges" title="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${lie.map((s, i) => { const q = edgeQuirk(s.id); return html`<i${s.blocked ? raw(' class="is-knock"') : ''} style="--i:${i};--hue:${s.agent.hue};--tilt:${q.tilt}deg;--dx:${q.dx}px">${raw(q.svg)}</i>` })}</span>` : ''}
-${badge(u, shown, base)}
+${badge(u, shown, base, true)}
 </div>`
 }
 
@@ -287,7 +287,8 @@ controller('folds', class extends Controller {
 })
 
 // ---- menu ----
-// The Trommi menu (what opens from the floating pill at the top centre), the jump page's results (/jump; the menu
+// The Trommi menu (what opens from the row at the sidebar's foot, on a phone from the caret beside the desk's name),
+// the jump page's results (/jump; the menu
 // itself has no search field for now), and the sheet a long press on a Desk row brings up on a phone. The menu's markup is the old client's (index.html,
 // js/bar.js), so app.css and sidebar.css style it; the controller controller "menu" adds the
 // arrows and a new desk, sheet_controller.js the long press. Opening and closing the
@@ -320,13 +321,14 @@ function menuDeskRows(model, base) {
   return html`<span class="menu-desk-rows" id="menu-desk-rows">${desks.map((d, i) => html`<span class="menu-desk-row" data-desk="${d.id}"><a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a><button type="button" class="menu-desk-pen" data-action="click->menu#rename" data-menu-id-param="${d.id}" title="Rename ${d.name}" aria-label="Rename the desk ${d.name}">${sk('pen')}</button></span>`)}</span>`
 }
 
-/** The menu: <nav id="brand-doors">, hidden until the pill or the Desk box's caret is pressed (or Ctrl K).
+/** The menu: <nav id="brand-doors">, hidden until its button (#brand-menu) is pressed (or Ctrl K).
  *  Three calm groups: the desks, each a row with the desk drawing (lamp lit while something waits there; the desk in
  *  view is the marked row), the Demo as one more desk, and a quiet "New desk" (a line to name it, Enter makes it);
  *  places (Agents & devices, Help, Keys; Media is the pile on the Desk); this device (Push, Log out, and the theme as a small sun/moon beside Log out).
- *  The connection is not said here: a lost one is a dot on the pill (app.mjs). */
+ *  The connection is not said here: a lost one is a dot on the menu's button (app.mjs). While it is open the keys are
+ *  its own (data-owns-keys: the page's keys in ui.mjs stand back, so the arrows walk the menu and not the Desk's rows). */
 function menuDoors(model, base) {
-  return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" hidden>
+  return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" data-owns-keys hidden>
 <div class="menu-desks" id="menu-desks">${menuDeskRows(model, base)}
 <a role="menuitem" class="menu-desk is-demo" href="${base}/?mock=1" data-turbo="false" draggable="false" id="dev-mock" title="The demo: a made-up room, nothing is kept">${deskMark(false)}<b>Demo</b></a>
 <button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${NEW_DESK}<span>New desk</span></button>
@@ -338,15 +340,18 @@ function menuDoors(model, base) {
 </nav>`
 }
 
-// ---- the frame's top: the floating Desk with the desk switcher and the Trommi menu; the rail's fold ----
-export const RAIL_FOLD = raw(`<button type="button" class="rail-fold" data-controller="rail" data-action="click->rail#toggle pointerover@document->rail#tip focusin@document->rail#tip focusout@document->rail#untip turbo:before-cache@document->rail#untip" title="Fold the sidebar to a rail ( [ )" aria-label="Fold the sidebar to a rail ( [ )" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.3 4.4Q4.8 11.6 5.4 19.7"/><path d="M15.1 6.1Q12.2 9.2 9.1 12.1Q12.1 14.7 14.8 18"/></svg></button>`)
+// ---- the sidebar's frame: the Desk box at its top with the Trommi menu's button, and its foot ----
+// The foot (wide screens; sidebar.css): the ground under the sessions, which scroll above it. The menu's button stands
+// on its left (a child of the Desk box's header, where a phone shows it as the caret beside the desk's name), the
+// button that folds the sidebar to a rail at its right end.
+export const SIDE_FOOT = raw(`<div class="side-foot"><button type="button" class="rail-fold" data-controller="rail" data-action="click->rail#toggle pointerover@document->rail#tip focusin@document->rail#tip focusout@document->rail#untip turbo:before-cache@document->rail#untip" title="Fold the sidebar to a rail ( [ )" aria-label="Fold the sidebar to a rail ( [ )" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.3 4.4Q4.8 11.6 5.4 19.7"/><path d="M15.1 6.1Q12.2 9.2 9.1 12.1Q12.1 14.7 14.8 18"/></svg></button></div>`)
 
 /** How big the desk's name may stand in the Desk box: s (as "Desk"), m (a little smaller), l (two smaller lines). */
 const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? 's' : n <= 11 ? 'm' : 'l' }
 export function topbar(model, base, current, view = '') {
     return html`<header class="topbar"><div class="brand">
 <h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a>
-<button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark pill-mark"'))}<b class="pill-word">Trommi</b><span class="conn pill-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
+<button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings" title="Menu">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b><span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
 ${menuDoors(model, base)}
 </div>
 <a href="${base}/agents" data-nav draggable="false" class="icon-btn roster-open" id="roster-open" aria-label="Agents" title="Agents"${view === 'agents' ? raw(' aria-current="page"') : ''}>${sk('heads')}</a></header>`
@@ -372,9 +377,14 @@ controller('menu', class extends Controller {
   static values = { desk: String }
 
   connect() {
-    // Opened (the pill, Ctrl+K, G then J): the menu takes the keyboard; the first arrow goes to the desk in view.
+    // Opened (its button, Ctrl+K, G then J): the menu takes the keyboard; the first arrow goes to the desk in view.
+    // Closed, the keyboard is back on the button, unless it has gone to something else on the page.
     this.element.tabIndex = -1
-    this.watch = new MutationObserver(() => { if (!this.element.hidden && !this.element.contains(document.activeElement)) this.element.focus({ preventScroll: true }) })
+    this.watch = new MutationObserver(() => {
+      const at = document.activeElement
+      if (!this.element.hidden) { if (!this.element.contains(at)) this.element.focus({ preventScroll: true }) }
+      else if (!at || at === document.body || this.element.contains(at)) this.opener?.focus({ preventScroll: true })
+    })
     this.watch.observe(this.element, { attributes: true, attributeFilter: ['hidden'] })
     // A refresh of the page (the live stream's "refresh" morphs it) must not shut the menu, the desk line or Dev under the hand.
     this.keep = e => {
@@ -487,7 +497,7 @@ controller('menu', class extends Controller {
 // ---- controller "rail" ----
 // The rail (card Nr. 150): the sidebar folded to the sessions' drawings with their marks (crown, bracket, the drawing
 // that fills itself in while a session works, the count). Wide screens only (app.css, [data-rail="folded"]).
-// The small "|<" at the sidebar's foot folds and opens it, and so does the key [ (ui.mjs (keys) presses this button).
+// The small "|<" at the right end of the sidebar's foot folds and opens it, and so does the key [ (ui.mjs (keys) presses this button).
 // Remembered per browser: the layout's head sets data-rail on <html> before first paint; this controller only flips it.
 // The rail shows no names, so a row says its name in a note beside it while the pointer or the keyboard is on it.
 
@@ -576,7 +586,7 @@ controller('lean', class extends Controller {
 // ---- the sidebar's live piece, on every page that has it ----
 export function register(t) {
   const { BASE, stream } = t
-  // The Trommi menu opens and closes (the pill, the desk drawing, a click beside it, Escape); the theme switch.
+  // The Trommi menu opens and closes (its button, a click beside it, Escape); the theme switch.
   const shut = () => { const doors = $('#brand-doors'); if (doors && !doors.hidden) { doors.hidden = true; $('#brand-menu')?.setAttribute('aria-expanded', 'false'); delete doors.dataset.from } }
   document.addEventListener('click', e => {
     const t = e.target instanceof Element ? e.target : null

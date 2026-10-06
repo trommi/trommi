@@ -3,8 +3,6 @@ body[data-page="gallery"] #gallery {
   display: block; grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface);
   padding: var(--s-4) var(--gutter) var(--s-10); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
 }
-@media (min-width: 861px) { body[data-page="gallery"] #gallery { margin-top: var(--band); }
-}
 .gal-column { max-width: 1160px; margin-inline: auto; display: grid; gap: var(--s-5); }
 .gal-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
 .gal-head h2 { margin: 0; font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }

@@ -185,7 +185,7 @@ html:where([data-ui]), :where([data-ui]) body { margin: 0; overflow: hidden; ove
   height: 100vh;
   height: var(--app-h, 100dvh);
   display: grid;
-  grid-template-columns: 256px minmax(0, 1fr);
+  grid-template-columns: 272px minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--surface);
   color: var(--fg);
@@ -337,8 +337,8 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 @media (min-width: 861px) {
   body[data-scope="all"]:not([data-page]) #inbox { padding-right: calc(var(--gutter) + 60px); }
 }
-/* From 1224px (sidebar 256 + column 800 + twice 84) the column's own margin is that lane: it stands centred, under the pill. */
-@media (min-width: 1224px) {
+/* From 1240px (sidebar 272 + column 800 + twice 84) the column's own margin is that lane: it stands centred. */
+@media (min-width: 1240px) {
   body[data-scope="all"]:not([data-page]) #inbox { padding-right: var(--gutter); }
 }
 /* "It knocks": a row that has just arrived urgent or blocking gives two quick small nudges;
@@ -365,19 +365,12 @@ body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
 @media (any-hover: hover) { .mark-tile:hover { scale: 1.12; }
 }
 .mark-tile[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ink); }
-/* ---- wide screens: no bar. The logo with its menu floats at the top centre of the page, a small
-   pill; the menu drops down centred under it. In the sidebar the Inbox entry stays at the top while
-   the sessions scroll. ---- */
+/* ---- wide screens: no bar. The Desk box stands at the top of the sidebar and stays while the sessions scroll; the
+   Trommi menu opens from a row at the sidebar's foot (sidebar.css). Nothing floats over the main area's top: every
+   view begins at the window's top edge. ---- */
 @media (min-width: 861px) {
   :where([data-ui]) body { grid-template-rows: minmax(0, 1fr); }
-  /* ---- the menu's pill (card Nr. 161 "pille"; then "Desk wieder links, oben das Menü heißt Trommi"): the menu's
-     opener floats at the top centre of the page: the bell mark, the word "Trommi", a caret; a click anywhere on it
-     (or Ctrl+K) opens the menu under it. It is the product's menu, not the Desk: the Desk box stands at the top of
-     the sidebar again, without a caret, and carries the ring, the knocks and the count. The pill stands in a band of
-     its own above every view (Desk, session, Scribble, Agents), so it is always there and lies over nothing; the
-     pad's button stands in the same band at the right. Only the opened card and the walk cover it. (The opener is a
-     fixed child of .topbar, which is placed without a transform.) */
-  :root { --side: 256px; --band: 64px; }
+  :root { --side: 272px; }
 }
 
 /* ---- phone: sessions as a strip, a session's two modes behind a tab bar ---- */
