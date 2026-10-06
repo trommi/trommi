@@ -597,13 +597,22 @@ export class BoardState {
       else out.push(ev(v.envelope_number, 'revised', v.content?.change_note || v.content?.title || card.title, v.sent_at, { version: v.object_version }))
     }
     const label = keys => keys.map(k => card.options.find(o => o.key === k)?.label ?? k).join(', ')
-    for (const a of c.answers ?? []) {
-      if (a.answer_action === 'read') out.push(ev(a.envelope_number, 'read', card.title, a.answered_at))
-      else if (a.answer_action === 'shred') out.push(ev(a.envelope_number, 'shredded', [card.title, a.note].filter(Boolean).join(' · '), a.answered_at))
-      else out.push(ev(a.envelope_number, 'decided', a.trusted ? `Duck: your call${a.choices?.length ? ` · ${label(a.choices)}` : ''}` : label(a.choices ?? []), a.answered_at, a.trusted ? { trusted: true } : {}))
-      if (a.taken_back_at) out.push(ev(a.taken_back_at, 'reopened', card.title, a.answered_at + 1))
+    // What the card's talk shows of an answer (card.mjs cardThread): each choice by the name it had in the version
+    // answered, what was written along, and whether it was a final option's (the card is settled by it).
+    const said = a => {
+      const then = (c.versions ?? []).find(v => v.object_version === a.bound_object_version)?.content?.options ?? []
+      const name = k => then.find(o => o.key === k)?.label ?? label([k])
+      return { labels: (a.choices ?? []).map(name), note: a.note ?? '', notes: Object.entries(a.option_notes ?? {}).filter(([, note]) => note).map(([k, note]) => [name(k), note]), files: this.atts(a.attachments), version: a.bound_object_version ?? null, ...(a.trusted ? { trusted: true } : {}), ...(a === c.answer && c.closed_how === 'settled' ? { settled: true } : {}) }
     }
-    if (c.object_state === 'closed' && (c.close_summary || c.withdraw_reason)) out.push(ev((c.envelope_number ?? 0) + 0.5, 'done', c.withdraw_reason ? `Withdrawn: ${c.withdraw_reason}` : c.close_summary, c.updated_at))
+    for (const a of c.answers ?? []) {
+      const what = a.answer_action === 'read' ? 'read' : a.answer_action === 'shred' ? 'shredded' : 'decided'
+      if (what === 'read') out.push(ev(a.envelope_number, 'read', card.title, a.answered_at))
+      else if (what === 'shredded') out.push(ev(a.envelope_number, 'shredded', [card.title, a.note].filter(Boolean).join(' · '), a.answered_at, { note: a.note ?? '', files: this.atts(a.attachments) }))
+      else out.push(ev(a.envelope_number, 'decided', a.trusted ? `Duck: your call${a.choices?.length ? ` · ${label(a.choices)}` : ''}` : label(a.choices ?? []), a.answered_at, said(a)))
+      // (taken back: the same thing again, with the time of the taking back; an answer from before that time was kept has its own)
+      if (a.taken_back_at) out.push(ev(a.taken_back_at, 'reopened', card.title, a.taken_back_sent_at ?? a.answered_at + 1, { was: what, ...(what === 'decided' ? said(a) : {}) }))
+    }
+    if (c.object_state === 'closed' && (c.close_summary || c.withdraw_reason)) out.push(ev((c.envelope_number ?? 0) + 0.5, 'done', c.withdraw_reason ? `Withdrawn: ${c.withdraw_reason}` : c.close_summary, c.updated_at, c.withdraw_reason ? { withdrawn: c.withdraw_reason } : {}))
     return out
   }
 }

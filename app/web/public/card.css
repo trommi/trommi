@@ -298,8 +298,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-feed .msg-head .msg-time, .tc-feed .msg-user .msg-time { margin: 0; padding: 0; }
 .tc-feed .bubble { width: auto; margin: 0; padding: 0; border-radius: 0; background: none; font: 400 var(--t-md)/1.6 var(--font); }
 .tc-said { font: 700 var(--t-sm)/1 var(--display); }
-.tc-did, .tc-turn { margin: 0; padding: 5px 0 5px calc(var(--who) + var(--who-gap)); color: var(--muted); font: 500 var(--t-xs)/1.5 var(--font); }
-.tc-did { display: flex; align-items: baseline; gap: 10px; }
+.tc-did { display: flex; align-items: baseline; gap: 10px; margin: 0; padding: 5px 0 5px calc(var(--who) + var(--who-gap)); color: var(--muted); font: 500 var(--t-xs)/1.5 var(--font); }
 .tc-explained { display: grid; }
 .tc-sec { padding-top: var(--s-3); border-top: 1px solid var(--line); margin-top: var(--s-3); }
 .tc-sec:first-of-type { border-top: 0; margin-top: 0; }
@@ -310,11 +309,53 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-feed a { color: var(--accent); text-underline-offset: 3px; }
 .tc-feed a.tc-older { justify-self: center; display: inline-flex; align-items: center; min-height: 32px; padding: 0 14px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font: 500 var(--t-sm)/1 var(--font); text-decoration: none; }
 .tc-feed a.tc-older:hover { color: var(--fg); }
-.tc-turn-head { display: flex; align-items: baseline; gap: 10px; margin: 0; }
-.tc-turn-head b { color: var(--fg); }
-.tc-turn-head .sketch { width: 18px; height: 18px; }
-.tc-turn-note { margin: 2px 0 0; max-width: 74ch; font-size: var(--t-sm); }
-.tc-turn-before { display: inline-block; margin-top: 6px; color: var(--accent); font: 600 var(--t-xs)/1 var(--font); }
+.tc-turn-before { color: var(--accent); font: 600 var(--t-xs)/1 var(--font); }
+/* ---- what was done with the card (card.mjs cardThread, deed): each act lies in the talk as the small thing the app
+   draws for it, at its moment: the thing where a message has its who, beside it one quiet line (what, when), under it
+   what was written along. Markers between the messages, never cards. Taken back: the same thing again, faded. ---- */
+.tc-deed { display: grid; grid-template-columns: var(--who) minmax(0, 1fr); column-gap: var(--who-gap); align-items: start; margin: 0; padding: 8px 0; color: var(--muted); font: 500 var(--t-xs)/1.5 var(--font); }
+.tc-deed-thing { justify-self: center; display: grid; place-items: center; min-height: 34px; color: var(--fg); }
+.tc-deed-thing > .sketch { width: 22px; height: 22px; stroke-width: 1.9; }
+.tc-deed-in { min-width: 0; min-height: 34px; display: flex; flex-wrap: wrap; align-items: center; align-content: center; gap: 4px 14px; }
+.tc-deed-cap { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 10px; min-width: 0; margin: 0; }
+.tc-deed-cap b { color: var(--fg); font-weight: 650; }
+.tc-deed-said { flex-basis: 100%; max-width: 74ch; margin: 0; color: var(--fg); font: 400 var(--t-md)/1.6 var(--font); white-space: pre-wrap; overflow-wrap: anywhere; }
+.tc-deed-in > :is(.shots, .tc-files, .tc-turn-before) { flex-basis: 100%; }
+.tc-deed-in > .tc-turn-before { text-align: left; }
+.tc-deed.is-undone .tc-deed-thing { opacity: .5; }
+/* handed back: the reverse card, the wild card's four fields round the turn on its ink ground */
+.tc-uno { box-sizing: border-box; display: grid; place-items: center; width: 30px; height: 42px; border: 1.5px solid #14161a; border-radius: 6px 7px 6px 8px / 7px 6px 8px 6px; background: radial-gradient(ellipse 10px 14px at 50% 50%, #14161a 0 94%, transparent 100%), conic-gradient(from 7deg at 53% 47%, var(--uno-red) 0 25%, var(--uno-yellow) 0 50%, var(--uno-green) 0 75%, var(--uno-blue) 0); color: #fff; rotate: -7deg; box-shadow: 1px 2px 0 rgb(20 22 26 / .22); }
+.tc-uno .sketch { width: 17px; height: 17px; stroke-width: 2; }
+.tc-deed.is-undone .tc-uno { filter: grayscale(1); rotate: 5deg; box-shadow: none; }
+/* answered: the option's tile, small, in the pen's circle; a final option's says that it settled the card */
+.tc-picked-row { display: inline-flex; flex-wrap: wrap; gap: 8px 14px; min-width: 0; }
+.tc-picked { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-height: 32px; padding: 0 12px; border-radius: 9px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--tone-edge, var(--line)); color: var(--fg); }
+.tc-picked b { min-width: 0; font: 700 var(--t-sm)/1.2 var(--display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-deed-ring { position: absolute; left: calc(-5% - 7px); top: calc(-10% - 4px); width: calc(110% + 14px); height: calc(120% + 8px); overflow: visible; pointer-events: none; fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.tc-deed.is-chosen .tc-deed-thing { color: var(--accent); }
+.tc-deed.is-undone .tc-picked { background: none; color: var(--muted); }
+.tc-deed.is-undone .tc-picked b { text-decoration: line-through; }
+.tc-settled { display: inline-flex; align-items: center; gap: 5px; color: var(--stamp-ink-done); font: 650 var(--t-xs)/1 var(--font); white-space: nowrap; }
+.tc-settled .sketch { width: 15px; height: 15px; stroke-width: 2.2; }
+/* the duck: the yellow one of the card's button */
+.tc-deed.is-duck .sketch-duck { --surface: var(--duck-yellow); --duck-glint: #fff; --duck-water: var(--fg); width: 34px; height: 28px; stroke-width: 1.5; color: var(--duck-ink); }
+.tc-deed.is-undone .sketch-duck { filter: grayscale(1); }
+/* a sheet: the session's own (asked), a version (its number, the sheet before it under it), closed (a tick) */
+.tc-sheet { position: relative; box-sizing: border-box; display: grid; place-items: center; width: 28px; height: 36px; border: 1.4px solid var(--tone-pen, var(--fg)); border-radius: 3px 5px 4px 5px / 5px 3px 5px 4px; background: var(--surface); color: var(--tone-pen, var(--fg)); rotate: 3deg; }
+.tc-sheet.is-again { box-shadow: 3px 3px 0 -1.4px var(--surface), 3px 3px 0 0 var(--tone-pen, var(--fg)); }
+.tc-sheet b { font: 800 var(--t-md)/1 var(--display); color: var(--fg); }
+.tc-sheet .doodle { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.tc-sheet .sketch { width: 18px; height: 18px; stroke-width: 2.2; }
+.tc-sheet.is-done { color: var(--stamp-ink-done); border-color: var(--stamp-ink-done); rotate: -3deg; }
+/* read: the tick on the accent, as on Acknowledge; shredded: the shredder; What??: the written word; put off: Later's tag */
+.tc-read { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--accent-fg, #fff); }
+.tc-read .sketch { width: 18px; height: 18px; stroke-width: 2.2; }
+.tc-deed.is-shred .tc-deed-thing { color: var(--urg-high); }
+.tc-deed.is-shred .tc-deed-thing > .sketch { width: 26px; height: 26px; }
+.tc-deed.is-what .tc-deed-thing { color: var(--what-violet); }
+.tc-deed.is-what .tc-deed-thing > .sketch-what { width: 38px; height: 14px; stroke-width: 2; }
+.tc-deed.is-later .tc-deed-thing > svg { width: 17px; height: 36px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.tc-deed.is-later .tag-paper { fill: var(--surface); } .tc-deed.is-later .tag-z { stroke: var(--fg); }
 .tc-files { --chip-bg: var(--surface); display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 4px 0 0; }
 .tc-feed .tc-files a { color: var(--fg); }
 
@@ -590,7 +631,7 @@ div.focus-opt { cursor: default; }
 .tc-corner.tl { left: -3px; top: -3px; } .tc-corner.tr { right: -3px; top: -3px; rotate: 90deg; } .tc-corner.bl { left: -3px; bottom: -3px; rotate: 270deg; } .tc-corner.br { right: -3px; bottom: -3px; rotate: 180deg; }
 .tc-pad .tc-card { box-shadow: 0 0 0 1px var(--line), 0 14px 24px -18px rgb(20 40 35 / .5); }
 .tc-pad .tc-rail { background: var(--surface); }
-.tc-pad :is(.tc-did, .tc-turn) { color: var(--tone-pen); }
+.tc-pad :is(.tc-did, .tc-deed) { color: var(--tone-pen); }
 .tc-pad .tc-feed .msg-time { color: color-mix(in srgb, var(--tone-pen) 70%, var(--tone-wash)); }
 .tc-pad .tc-c-who, .tc-pad .tc-c-who.is-you { background: var(--surface); }
 .tc-pad .tc-fold { background: color-mix(in srgb, var(--surface) 55%, transparent); box-shadow: inset 0 0 0 1px var(--tone-edge); }

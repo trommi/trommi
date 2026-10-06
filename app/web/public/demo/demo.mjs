@@ -140,7 +140,7 @@ class MockClient {
   async decideAgain({ object_id }) {
     const card = this.model.cards.get(object_id)
     if (!card?.answer) throw Object.assign(new Error('nothing to take back'), { code: 'bad-argument' })
-    this.changed(c => { card.answer.taken_back_at = this.next(); card.answer = null; card.object_state = 'open'; card.closed_how = null; c.cards.add(object_id); c.stack = true })
+    this.changed(c => { card.answer.taken_back_at = this.next(); card.answer.taken_back_sent_at = Date.now(); card.answer = null; card.object_state = 'open'; card.closed_how = null; c.cards.add(object_id); c.stack = true })
   }
   async verdict({ object_id, allow }) {
     const p = this.model.permissions.get(object_id)
@@ -472,7 +472,7 @@ My advice is the canary: it costs one day and tells us what the load of real roo
     say('me', 22, 'I picked "all tonight" by mistake a minute ago and took it back. Still thinking; leaning towards the canary.'),
     say(zu, 23, 'No harm done: nothing was switched, the answer was taken back before I acted on it. I am ready for whichever way you pick; for the canary I need your answer by 18:00 to fix the rota.'),
   )
-  put(zu, t0, 'critical', [v1, v2, v3], talk, vs => { const n = ++env; return { answers: [{ answer_action: 'answer', choices: ['night'], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: vs[2].version_hash, bound_object_version: 3, envelope_number: n - 4.5, envelope_hash: hex(64), by_device_id: me, answered_at: at(21.5), taken_back_at: n - 4.4 }] } })
+  put(zu, t0, 'critical', [v1, v2, v3], talk, vs => { const n = ++env; return { answers: [{ answer_action: 'answer', choices: ['night'], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: vs[2].version_hash, bound_object_version: 3, envelope_number: n - 4.5, envelope_hash: hex(64), by_device_id: me, answered_at: at(21.5), taken_back_at: n - 4.4, taken_back_sent_at: at(21.7) }] } })
 
   // ---- 2. the info ----
   const i0 = first - 2 * MIN, ia = n => i0 + n * 35e3
@@ -520,6 +520,78 @@ My advice is the canary: it costs one day and tells us what the load of real roo
     usay('me', 2, 'Here is how it looks on my screen, with the build log from this morning.', { attachments: [png('c573b0a8.png', 'my-screen.png', 1440, 900, 'My screen'), att('6e7ec91e.log', 'build.log', 'text/plain', { total_size: 294 })] }),
     usay(ui, 3, 'Thank you. On your screen the stack is three cards high, so the tail starts above the fold in both ways.'),
   ], () => ({}))
+
+  // ---- 4. to 7. cards with a life behind them, so that every act lies in a card's talk once (card.mjs cardThread) ----
+  // Envelope numbers are the order of the talk: every piece below is made in the order it happened.
+  const life = (ago, step = 3) => { const l0 = now - ago * MIN, la = n => l0 + n * step * MIN; return { l0, la, say: (from, n, text, more = {}) => item(from, la(n), { text, ...more }) } }
+  const act = (at, version, fields = {}) => ({ answer_action: 'answer', choices: [], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_object_version: version, envelope_number: ++env, envelope_hash: hex(64), by_device_id: me, answered_at: at, taken_back_at: null, taken_back_sent_at: null, ...fields })
+  const undo = (a, at) => { a.taken_back_at = ++env; a.taken_back_sent_at = at }
+  const bind = (vs, answers) => { for (const a of answers) a.bound_version_hash = vs[a.bound_object_version - 1].version_hash; return answers }
+
+  // 4. a decision, closed by its session: handed back, a second version, answered, the answer taken back, answered
+  //    again with notes and a file, closed.
+  {
+    const { l0, la, say } = life(46)
+    const frames = (v, note = '') => ({ ...base, card_type: 'decision', title: 'The opened card’s frame: which way?', teaser: 'The sheet under an opened card, quieter. All ways are on the preview.', body: v === 1 ? 'The desk pad under an opened card is loud: a dark outline, a second line and four corners, and the round buttons stand on the corners. Three quieter ways are on the preview; what I measured is attached.' : 'Two ways that keep the row of round buttons above the card, as you asked: with the drawn paper, and with the hatched corners you like. What I measured is attached.',
+      options: v === 1 ? [{ key: 'hairline', label: 'A hairline', detail: 'The tone and one thin line.' }, { key: 'paper', label: 'Paper', detail: 'One drawn outline.' }, { key: 'head', label: 'A row for the buttons', detail: 'Nothing stands beside the card.' }] : [{ key: 'paper', label: 'Row and paper', detail: 'The drawn outline, a second sheet.' }, { key: 'corners', label: 'Row and corners', detail: 'The hatched corners, clear of the buttons.' }], recommended: v === 1 ? 'head' : 'paper', urgency_reason: '', attachments: [att('40c1a1e0.csv', 'frame-measurements.csv', 'text/csv', { total_size: 120 })], change_note: note })
+    const v1 = { env: ++env, at: la(0), content: frames(1) }
+    const talk = [
+      say(zu, 1, 'All three are on the preview. The row costs 40 px of height and frees both sides of the card.'),
+      say('me', 2, 'Row and paper?'),
+      say(zu, 3, 'That goes together: the row stays, the hairline becomes the drawn outline.'),
+      say('me', 4, 'Then show me that. And one with the hatched corners after all, I like them.', { hand_back: true }),
+    ]
+    const v2 = { env: ++env, at: la(7), content: frames(2, 'Two ways with the row: with the paper, and with the hatched corners') }
+    talk.push(say(zu, 8, 'Both are on the card now. On a phone the corners are smaller and the two buttons stand just inside them.'))
+    const first = act(la(9), 2, { choices: ['paper'] })
+    undo(first, la(9.5))
+    talk.push(say('me', 10, 'Hm. On second thought the paper is one frame too many around the card.'), say(zu, 11, 'With the corners the card keeps the pad it has; only the buttons move up into their row.'))
+    const second = act(la(12), 2, { choices: ['corners'], note: 'And leave Later’s tag where it hangs.', option_notes: { corners: 'Keep them small on the phone.' }, attachments: [att('6e7ec91e.log', 'corner-sizes.log', 'text/plain', { total_size: 294 })] })
+    const closed = ++env
+    put(zu, l0, 'normal', [v1, v2], talk, vs => ({ answers: bind(vs, [first, second]), answer: second, object_state: 'closed', closed_how: 'closed', close_summary: 'Built with the row and the hatched corners; Later’s tag hangs where it hung.', envelope_number: closed, updated_at: la(14) }))
+  }
+  // 5. a decision that is with its session: handed back and taken back, then left to the agent (the duck), the duck
+  //    taken back, and the duck after all.
+  {
+    const { l0, la, say } = life(38)
+    const v1 = { env: ++env, at: la(0), content: { ...base, card_type: 'decision', title: 'Name of the new pile: “Off the desk” or “Put away”?', teaser: 'Both fit the label. I lean to “Off the desk”.', body: 'The pile under the stack needs one name for everything that left the Desk. Both fit the label at every width.', options: [{ key: 'off', label: 'Off the desk', detail: 'Says where the cards are.' }, { key: 'away', label: 'Put away', detail: 'Says what you did.' }], recommended: 'off', urgency_reason: '', attachments: [] } }
+    const talk = [say('me', 1, HAND_BACK, { hand_back: true }), say('me', 2, 'The human took the card back; no need to rework or explain it.', { present_card: true })]
+    const first = act(la(3), 1, { trusted: true, choices: ['off'] })
+    undo(first, la(4))
+    talk.push(say('me', 5, 'Wait, is “Off the desk” short enough for the phone?'), say(ui, 6, 'Yes: 12 characters, it fits the label at 320 px with room to spare.'))
+    const second = act(la(7), 1, { trusted: true, choices: ['off'], note: 'Whatever reads better in the sidebar.' })
+    put(ui, l0, 'normal', [v1], talk, vs => ({ answers: bind(vs, [first, second]), answer: second, object_state: 'answered', closed_how: 'answered', updated_at: la(7) }))
+  }
+  // 6. an info: explained on request, read, taken back (unread again), read.
+  {
+    const { l0, la, say } = life(30)
+    const v1 = { env: ++env, at: la(0), content: { ...base, card_type: 'info', title: 'The nightly backup moved from 03:00 to 04:30', teaser: 'It collided with the log rotation. Nothing to do.', body: 'The backup and the log rotation both started at 03:00 and fought over the disk. The backup now starts at 04:30 and finishes before the first builds.', options: [], recommended: null, urgency_reason: '', attachments: [] } }
+    const talk = [say('me', 1, EXPLAIN, { explain: true }), say(docs, 2, 'In plain words: two jobs wanted the disk at the same minute, so one of them was slow. I moved the backup by ninety minutes. Your data is backed up as before, only later in the night.')]
+    const first = act(la(3), 1, { answer_action: 'read' })
+    undo(first, la(4))
+    talk.push(say('me', 5, 'Does the restore test still run on Sundays?'), say(docs, 6, 'Yes, at 06:00, after the backup of that night.'))
+    const second = act(la(7), 1, { answer_action: 'read' })
+    put(docs, l0, 'normal', [v1], talk, vs => ({ answers: bind(vs, [first, second]), answer: second, object_state: 'closed', closed_how: 'read', updated_at: la(7) }))
+  }
+  // 7. a chore with a final option: shredded with a word, taken out of the shredder, then answered with the final
+  //    option, which settles it.
+  {
+    const { l0, la, say } = life(22)
+    const v1 = { env: ++env, at: la(0), content: { ...base, card_type: 'decision', title: 'Two things for you: renew the domain, confirm the invoice address', teaser: 'Both need your login. Tell me when they are done.', body: 'I cannot do these two for you: the registrar and the billing page both want your login.', options: [{ key: 'done', label: 'Both done', detail: '', final: true }, { key: 'later', label: 'Remind me tomorrow', detail: '' }], recommended: null, urgency_reason: '', attachments: [] } }
+    const first = act(la(1), 1, { answer_action: 'shred', note: 'Not today.' })
+    undo(first, la(2))
+    const talk = [say('me', 3, 'Sorry, that was too quick. The domain is renewed; the address comes in a minute.')]
+    const second = act(la(4), 1, { choices: ['done'] })
+    put(zu, l0, 'normal', [v1], talk, vs => ({ answers: bind(vs, [first, second]), answer: second, object_state: 'closed', closed_how: 'settled', updated_at: la(4) }))
+  }
+  // 8. a question its session withdrew.
+  {
+    const { l0, la, say } = life(15)
+    const v1 = { env: ++env, at: la(0), content: { ...base, card_type: 'decision', title: 'Raise the upload limit to 200 MB?', teaser: 'Two rooms hit the 64 MB limit this week.', body: 'Two rooms hit the 64 MB limit this week with screen recordings.', options: [{ key: 'yes', label: 'Yes', detail: '' }, { key: 'no', label: 'No', detail: '' }], recommended: 'yes', urgency_reason: '', attachments: [], withdraw_reason: 'Both recordings fit after all: the app now compresses a video before it is sent.' } }
+    const talk = [say(zu, 1, 'I am measuring what the hub’s disk can take before you decide.')]
+    const gone = ++env
+    put(zu, l0, 'normal', [v1], talk, () => ({ object_state: 'closed', closed_how: 'withdrawn', envelope_number: gone, updated_at: la(3) }))
+  }
   return f
 }
 

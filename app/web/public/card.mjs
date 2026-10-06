@@ -15,7 +15,7 @@
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
 import { BASE, SAID, heardOf, linkOf, stream } from './app.mjs'
-import { Controller, EXPLAIN_TEXT, FINAL_TIP, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
+import { Controller, EXPLAIN_TEXT, FINAL_TIP, LATER_TAG, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
 // Drawn with the pen, for the round buttons above a card: an arrow to the left and one to the right, a cross, three
@@ -34,6 +34,8 @@ const filesOf = card => (card.attachments ?? []).filter(a => !['image', 'video']
 const sizeWord = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} kB` : `${n} B`)
 /** One attached file, to open: the clip, its name, its size. The same on the card and in the talk. */
 const fileChip = a => html`<a class="tc-file" href="${a.url}" target="_blank" rel="noopener" title="Open ${a.name}">${sk('clip')}<b>${a.name}</b>${a.size > 0 ? html`<i>${sizeWord(a.size)}</i>` : ''}</a>`
+// The pen's circle round an answer in the talk, as wide as its tile.
+const RING = raw('<svg class="tc-deed-ring" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true"><path d="M9 23 C5 9 28 3.4 54 4 C80 4.6 96.4 10 94.6 21 C92.6 33 68 37 45 36.2 C21 35.4 4.6 31 8.4 17 C10 11.6 16 8 25 6.2" vector-effect="non-scaling-stroke"/></svg>')
 /** The version that stands now, as a number. */
 const liveVersion = card => card.version ?? (card.versions?.at(-1)?.n ?? 0) + 1
 /** The card as it was in version n (title, text, options, pictures), or null. */
@@ -233,6 +235,9 @@ function optionLinks(card) {
  *    links of options, why it is urgent.
  *  - The talk. "What??" and the answer that follows it stand together as one "Explained" block; a hand-back and the
  *    revision it brought stand together ("Version n, as you asked").
+ *  - What was done with the card, each act as the thing itself at its moment: the session's sheet (asked), a version's
+ *    sheet with its number, the reverse card (handed back), the answer's tile in the pen's circle, the duck, the tick
+ *    (read), the shredder, Later's tag, the sheet with a tick (closed). A thing taken back lies there again, faded.
  *  - Everything before the version that stands now folds away behind "Earlier versions (n)". */
 function cardThread(card, model, base = '', { more = false } = {}) {
   const all = talkOf(model, card)
@@ -241,10 +246,27 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const files = list => { const rest = (list ?? []).filter(a => kindOf(a) !== 'image'); return rest.length ? html`<p class="tc-files">${rest.map(fileChip)}</p>` : '' }
   const shots = list => { const pics = (list ?? []).filter(a => kindOf(a) === 'image'); return pics.length ? html`<div class="shots">${pics.map(a => html`<a href="${a.url}" target="_blank" rel="noopener"><img${srcOf(a, 320)} alt="${a.name}" loading="lazy" decoding="async"></a>`)}</div>` : '' }
   // One column, every piece in the same two places: at the left who (the session's small drawing, the pen for you),
-  // beside it the name, when, and the words. What happened (asked, why urgent, a version, taken back) is one quiet
-  // line on the words' line, without a who.
+  // beside it the name, when, and the words. A line that only says where things stand (waiting for the explanation)
+  // is one quiet line on the words' line, without a who.
   const did = (text, ts) => html`<p class="tc-did"><span>${text}</span>${ts ? agoSpan(ts, 'msg-time') : ''}</p>`
   const name = who?.name ?? card.agent
+  // An act: where a message has its who lies the thing the app draws for it, beside it one quiet line (what, when),
+  // under it what was written along. tiles: an answer's options, before the line.
+  const deed = (thing, cap, ts, { tiles = '', said = [], more = '', cls = '' } = {}) => html`<div class="tc-deed ${cls}"><span class="tc-deed-thing" aria-hidden="true">${thing}</span><div class="tc-deed-in">${tiles}<p class="tc-deed-cap"><span>${cap}</span>${ts ? agoSpan(ts, 'msg-time') : ''}</p>${said.filter(Boolean).map(t => html`<p class="tc-deed-said">${t}</p>`)}${more}</div></div>`
+  const uno = html`<span class="tc-uno">${sk('reverse')}</span>`
+  const sheet = (inner, cls = '') => html`<span class="tc-sheet ${cls}">${inner}</span>`
+  const read = html`<span class="tc-read">${sk('tick')}</span>`
+  const tiles = (labels, back = false) => html`<span class="tc-picked-row">${labels.map(l => html`<span class="tc-picked"><b>${l}</b>${back ? '' : RING}</span>`)}</span>`
+  const along = m => html`${shots(m.files)}${files(m.files)}`
+  // An answer (m: the event, app.mjs eventsOf), or the same answer taken back.
+  const answered = (m, back = false) => {
+    const said = back ? [] : [m.note ? `“${m.note}”` : '', ...(m.notes ?? []).map(([label, note]) => `On ${label}: “${note}”`)]
+    const more = back ? '' : along(m), cls = back ? 'is-undone' : ''
+    if (m.trusted) return deed(sk('duck'), back ? 'You took the duck back' : html`${WORDS.trust}: ${name} decides${m.labels?.length ? html` and takes <b>${m.labels.join(', ')}</b>` : ''}`, m.ts, { said, more, cls: `is-duck ${cls}` })
+    const old = m.version && m.version < liveVersion(card) ? ` in version ${m.version}` : ''
+    const settled = m.settled && !back ? html`<span class="tc-settled">${sk('tick')}${SETTLED}</span>` : ''
+    return deed(sk(back ? 'back' : 'tick'), back ? 'You took your answer back' : `You chose${old}`, m.ts, { tiles: html`${tiles(m.labels?.length ? m.labels : [m.text], back)}${settled}`, said, more, cls: `is-chosen ${cls}` })
+  }
   const mark = who ? html`<span class="tc-c-who" style="--hue:${who.hue}" aria-hidden="true">${raw(doodleSvg(who.mark))}</span>` : html`<span class="tc-c-who" aria-hidden="true"></span>`
   const you = html`<span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>`
   const head = (title, ts, by = name) => html`<header class="msg-head"><span class="msg-name">${by}</span>${title ? html`<b class="tc-said">${title}</b>` : ''}${ts ? agoSpan(ts, 'msg-time') : ''}</header>`
@@ -262,7 +284,7 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   if (secs.length) lead.push(html`<details class="tc-fold tc-options-said"><summary>Options in detail</summary>${secs.map(s => html`<section class="tc-sec"><h3>${s.label}${s.recommended ? html` <span class="tc-advised-word">recommended</span>` : ''}</h3>${s.text ? rich(s.text, { assets, extra: s.html ?? '', hand: false }) : ''}</section>`)}</details>`)
   const links = optionLinks(card)
   if (String(links)) lead.push(links)
-  if (card.status === 'open' && card.snoozed_until) lead.push(did(`You put it off: it waits on “${WORDS.later}”`, card.snoozed_at))
+  if (card.status === 'open' && card.snoozed_until) lead.push(deed(LATER_TAG, `You put it off: it waits on “${WORDS.later}”`, card.snoozed_at, { cls: 'is-later' }))
 
   // ---- the talk, in pieces ----
   const items = []   // { html, turn?: version, handback?, brought?: the version a hand-back brought }
@@ -277,21 +299,28 @@ function cardThread(card, model, base = '', { more = false } = {}) {
         if (asked) items[askedAt].brought = m.version
         askedAt = -1
         const before = m.version > 1 && versionOf(card, m.version - 1)
-        items.push({ turn: m.version, html: html`<div class="tc-turn" id="turn-${m.id}" data-version="${m.version}"><p class="tc-turn-head"><b>${m.again || m.version > 1 ? `Version ${m.version}` : 'Presented'}${asked ? ', as you asked' : ''}</b>${agoSpan(m.ts, 'msg-time')}</p>${note ? html`<p class="tc-turn-note">${note}</p>` : ''}${before ? html`<a class="tc-turn-before" data-nav href="${cardPath(card, base)}?v=${m.version - 1}">See version ${m.version - 1}</a>` : ''}</div>` })
-      } else if (m.kind === 'handback_withdrawn') items.push({ html: did('You took it back', m.ts) })
-      else if (m.kind === 'reopened') items.push({ html: did('Your answer was taken back: open again', m.ts) })
+        const more = before ? html`<a class="tc-turn-before" data-nav href="${cardPath(card, base)}?v=${m.version - 1}">See version ${m.version - 1}</a>` : ''
+        items.push({ turn: m.version, html: html`<div class="tc-turn" id="turn-${m.id}" data-version="${m.version}">${deed(sheet(html`<b>${m.version}</b>`, 'is-again'), html`<b>Version ${m.version}${asked ? ', as you asked' : ''}</b>`, m.ts, { said: [note], more })}</div>` })
+      } else if (m.kind === 'handback_withdrawn') items.push({ html: deed(uno, 'You took it back', m.ts, { cls: 'is-undone' }) })
+      else if (m.kind === 'decided') items.push({ html: answered(m) })
+      else if (m.kind === 'read') items.push({ html: deed(read, 'You read it', m.ts) })
+      else if (m.kind === 'shredded') items.push({ html: deed(sk('shred'), 'You shredded it', m.ts, { said: [m.note ? `“${m.note}”` : ''], more: along(m), cls: 'is-shred' }) })
+      else if (m.kind === 'reopened') items.push({ html: m.was === 'read' ? deed(read, 'You took it back: unread again', m.ts, { cls: 'is-undone' }) : m.was === 'shredded' ? deed(sk('shred'), 'You took it out of the shredder', m.ts, { cls: 'is-shred is-undone' }) : answered(m, true) })
+      else if (m.kind === 'done') items.push({ html: deed(sheet(sk(m.withdrawn ? 'bin' : 'tick'), 'is-done'), html`<b>${name} ${m.withdrawn ? 'withdrew' : 'closed'} it</b>`, m.ts, { said: [m.withdrawn ?? m.text] }) })
       continue
     }
-    if (m.from === 'user' && m.present) { items.push({ html: did('You took it back', m.ts) }); askedAt = -1; continue }
+    if (m.from === 'user' && m.present) { items.push({ html: deed(uno, 'You took it back', m.ts, { cls: 'is-undone' }) }); askedAt = -1; continue }
     if (!m.text && !m.attachments?.length) continue
     if (m.from === 'user' && m.explain && isBare(m)) {
       // What?? and what the session answered to it, as one block.
       const answers = []
       while (all[i + 1] && all[i + 1].from === 'agent') answers.push(all[++i])
-      items.push({ html: html`<section class="tc-explained">${did('You asked: What??', m.ts)}${answers.length ? answers.map((a, n) => agentMsg(a, n > 0)) : did('Waiting for the explanation.')}</section>` })
+      items.push({ html: html`<section class="tc-explained">${deed(sk('what'), 'You asked for an explanation', m.ts, { cls: 'is-what' })}${answers.length ? answers.map((a, n) => agentMsg(a, n > 0)) : did('Waiting for the explanation.')}</section>` })
       continue
     }
-    if (m.from === 'user') { if (m.handback) askedAt = items.length; items.push({ handback: Boolean(m.handback), html: userMsg(m, isBare(m) ? WORDS.revise : m.text === EXPLAIN_TEXT ? WORDS.what : m.text) }); continue }
+    // (a hand-back is the reverse card itself; what was written with it stands under it)
+    if (m.from === 'user' && m.handback) { askedAt = items.length; items.push({ handback: true, html: html`<div id="msg-${m.id}">${deed(uno, 'You handed it back', m.ts, { said: [isBare(m) ? '' : m.text], more: html`${shots(m.attachments)}${files(m.attachments)}` })}</div>` }); continue }
+    if (m.from === 'user') { items.push({ html: userMsg(m, m.text === EXPLAIN_TEXT ? WORDS.what : m.text) }); continue }
     items.push({ html: agentMsg(m, items.at(-1)?.agent === true), agent: true })
     items.at(-1).agent = true
   }
@@ -309,7 +338,7 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   // "<session> asked" opens a talk; alone it would say what the card's own line says already, so it is left out then.
   const why = card.urgency_reason ? html`<p class="tc-why">${sk('knock')}<span>${card.urgency_reason}</span></p>` : ''
   const any = lead.length || items.length || more
-  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments"${why || any ? '' : raw(' hidden')}>${why}${any ? did(`${name} asked`, card.created) : ''}${lead}${older}${folded}${now.map(x => x.html)}</section>`
+  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments"${why || any ? '' : raw(' hidden')}>${why}${any ? deed(sheet(who ? raw(doodleSvg(who.mark)) : ''), `${name} ${card.kind === 'info' ? 'sent this to read' : 'asked'}`, card.created, { cls: 'is-asked' }) : ''}${lead}${older}${folded}${now.map(x => x.html)}</section>`
 }
 
 /** Where the card stands in the stack, for the walk: { at, of, prev, next } (cards), or null when it is not waiting. */
