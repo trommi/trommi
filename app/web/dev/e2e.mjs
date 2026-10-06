@@ -188,7 +188,7 @@ try {
     check(commands.some(c => c.command === 'decide_again'), 'agent received decide_again')
   } else check(false, 'toast with Undo after answering')
 
-  // ---- the card page: hand back (Revise) and What?? ----
+  // ---- the card page: What?? ----
   const nr = await A.js(`return trommi.model().byCard.get('${cardId}').number`)
   await A.js(`trommi.router.visit('/q/${nr}')`)
   await A.until("document.querySelector('#cardpage')", 'card page')
@@ -257,9 +257,9 @@ try {
   // snoozed from its row; the toast's Undo fetches it back; snoozed again
   await A.js(`const f = document.querySelector('#row-${pile.snooze} form[action$="/snooze"]'); f.requestSubmit()`)
   await A.until(`!document.getElementById('row-${pile.snooze}')`, 'snoozed row leaves')
-  await A.until("document.querySelector('#says-host .says-back')", 'toast with Undo after Snooze')
+  await A.until("document.querySelector('#says-host .says-back')", 'toast with Undo after Later')
   await A.js("document.querySelector('#says-host .says-back').click()")
-  await A.until(`document.getElementById('row-${pile.snooze}')`, 'row back after Undo of Snooze').then(() => check(true, 'Undo of Snooze puts the card back'), e => check(false, e.message))
+  await A.until(`document.getElementById('row-${pile.snooze}')`, 'row back after Undo of Later').then(() => check(true, 'Undo of Later puts the card back'), e => check(false, e.message))
   await A.js(`const f = document.querySelector('#row-${pile.snooze} form[action$="/snooze"]'); f.requestSubmit()`)
   await A.until(`!document.getElementById('row-${pile.snooze}')`, 'snoozed row leaves again')
   // answered, then closed by its session: Done
@@ -280,7 +280,7 @@ try {
   }
   await A.until(`document.querySelector('#desk-stacks [data-pile=off]') && ['${pile.snooze}', '${pile.shred}'].every(id => document.querySelector('#desk-stacks .off-line[data-id="' + id + '"]')) && document.querySelector('#desk-stacks .off-line[data-id="${pile.done}"][data-g=done]') && document.querySelector('#desk-ip .ipb-card[data-id="${pile.revise}"]')`, 'three in the pile, the asked one with the agents', 20000)
     .then(() => check(true, 'snoozed, shredded and done cards lie in the one pile; the asked one (What??) stays on the Desk with the agents'), e => check(false, e.message))
-  check(await A.js("return !document.querySelector('#desk-stacks [data-stack=later], #desk-stacks [data-stack=works], #desk-stacks [data-stack=done], #desk-stacks [data-stack=trash]')"), 'no separate Snooze / Working / Done / Trash stacks any more')
+  check(await A.js("return !document.querySelector('#desk-stacks [data-stack=later], #desk-stacks [data-stack=works], #desk-stacks [data-stack=done], #desk-stacks [data-stack=trash]')"), 'no separate Later / Working / Done / Trash stacks any more')
   check(await A.js("const s = [...document.querySelectorAll('[data-stack=off] .shop-slip .shop-line')]; return s.length >= 3 && s.length <= 5 && s.every(x => x.dataset.g)"), 'the folded list shows the newest lines, each marked by its place')
   const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.done}'].map(id => [id, document.querySelector('.off-line[data-id="' + id + '"]')?.dataset.g]))`)
   check(g[pile.snooze] === 'later' && g[pile.shred] === 'trash' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
