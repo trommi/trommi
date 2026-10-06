@@ -7,6 +7,7 @@
 //   updates       hot reload of tools.mjs + prompt.md, the hub's recommended version, a changed shell file
 //   hooks         the plugin's permission hook: the human's verdict on the board is the hook's decision
 //   monitor       a session without channel events: the monitor's pointer line, the inbox tool
+//   keyclaim      several connectors in one folder (a Claude Code spare, two sessions): the key follows use
 //   second machine  the connect script (app/web/public/connect.sh) run as a person runs it,
 //                     curl -fsSL <app>/connect | sh -s '<invite link>'
 //                 in a fresh HOME and project folder against the files connector/build.mjs makes; then the installed
@@ -32,6 +33,7 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 import { spawn, execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fileStorage } from '../shared/storage-file.mjs'
@@ -71,7 +73,7 @@ export async function startHub(tmp, extraEnv = {}) {
   let err = ''
   child.stderr.on('data', d => { err += d })
   await until('the hub', async () => { try { return (await fetch(`${hub_url}/healthz`)).ok } catch { return false } }).catch(e => { throw new Error(`${e.message}: ${err.slice(-500)}`) })
-  return { hub_url, stop: () => child.kill(), stderr: () => err }
+  return { hub_url, data, stop: () => child.kill(), stderr: () => err }
 }
 
 /** connector.mjs as Claude Code starts it; collects every notification. */
@@ -1056,12 +1058,147 @@ export async function connect({ test, tmp: root, argv = [] }) {
   }
 }
 
+// ---- who gets the key: several connectors in one folder ----------------------------------------------------------
+// Claude Code starts a connector for every process that loads the project (its daemon's spares too). Three of them
+// here, one key: a session started alone (it takes the key at start and never uses it), a second session, and a
+// spare. The key goes to the one whose session is used, by a clean hand-over; a holder in use keeps it; no timer
+// takes it. One writer at any time: read from the hub's lease (a new generation and process per change of holder, none else, and no
+// process ever fenced with lease-lost) and from the human's side (every holder's message arrives on the one chain).
+
+export async function keyclaim({ test, tmp: root }) {
+  const tmp = fs.mkdtempSync(path.join(root, 'keyclaim-'))
+  const core = await import('../shared/index.mjs')
+  const hub = await startHub(tmp)
+  const run = path.join(tmp, 'run'), project = path.join(tmp, 'project'), keys = path.join(tmp, 'keys')
+  for (const d of [run, project]) fs.mkdirSync(d, { recursive: true })
+  fs.chmodSync(run, 0o700)
+  const UNUSED = 1500, IDLE = 4000
+  const env = { TROMMI_KEYS_DIR: keys, TROMMI_FOLDER: project, TROMMI_HUB: hub.hub_url, XDG_RUNTIME_DIR: run, CLAUDE_PROJECT_DIR: project, TROMMI_ROOM: '', TROMMI_INVITE: '', TROMMI_SPARE: '0', TROMMI_UNUSED_MS: String(UNUSED), TROMMI_IDLE_MS: String(IDLE) }
+  let human, agentId, room, a, b, spare
+  const all = () => [a, b, spare].filter(Boolean)
+  // The live processes that claim slot 1, and the hub's lease of the one agent.
+  const holders = () => fs.readdirSync(room).map(f => /-1\.lock\.(\d+)$/.exec(f)).filter(Boolean).map(m => Number(m[1])).filter(pid => { try { process.kill(pid, 0); return true } catch { return false } })
+  const lease = () => {
+    const db = new DatabaseSync(path.join(hub.data, 'hub.db'), { readOnly: true })
+    try { const rows = db.prepare('SELECT process_instance, lease_generation FROM agent_leases').all(); assert.equal(rows.length, 1, 'one agent, one lease'); return rows[0] } finally { db.close() }
+  }
+  const atHuman = async text => {
+    const sid = human.sessionOfAgent(agentId)
+    await until(`"${text}" at the human`, async () => {
+      await human.loadTimeline(`chat:session/${sid}`).catch(() => {})
+      return [...(human.model.timelines.get(`chat:session/${sid}`)?.items.values() ?? [])].some(i => i.content?.text === text)
+    })
+  }
+  const neverFenced = () => { for (const c of all()) assert.doesNotMatch(c.stderr(), /another process took over this key|lease-lost/, `pid ${c.pid} was fenced: two writers met`) }
+  try {
+    await test('keyclaim: the room, and one agent key for the folder', async () => {
+      ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
+      await human.start()
+      const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
+      const first = await startConnector({ env: { ...env, TROMMI_INVITE: invite.link }, cwd: project })
+      await first.ready()
+      agentId = [...human.model.members.values()].find(m => m.device_role === 'agent')?.device_id
+      room = path.join(keys, human.model.room.room_id)
+      await first.close()
+      await until('the first connector gone', () => first.exited && !holders().length)
+    })
+
+    await test('keyclaim: at start a lone session takes the key; a second session and a spare take nothing, also not later by a timer', async () => {
+      a = await startConnector({ env, cwd: project })
+      await until('the lone session holds the key', () => holders().includes(a.pid) && /in room/.test(a.stderr()))
+      b = await startConnector({ env, cwd: project })
+      spare = await startConnector({ env: { ...env, TROMMI_SPARE: '1' }, cwd: project })   // started last: the bell of this "Claude Code process" is its
+      await until('both asleep', () => /asleep \(1 other connector in this folder/.test(b.stderr()) && /asleep \(its parent is a Claude Code spare\)/.test(spare.stderr()))
+      await sleep(UNUSED + 1000)   // the holder is past its unused time: still nobody takes the key on its own
+      assert.deepEqual(holders(), [a.pid])
+      assert.equal(fs.readdirSync(room).filter(f => /\.here\.\d+$/.test(f)).length, 3, 'three connectors checked in')
+    })
+
+    let gen
+    await test('keyclaim: a tool call in the second session: the idle holder hands the key over, the call succeeds; one new lease, nobody fenced', async () => {
+      const before = lease()
+      assert.match(await b.call('reply', { text: 'from the second session' }), /sent|ok|message/i)
+      await atHuman('from the second session')
+      assert.deepEqual(holders(), [b.pid])
+      const now = lease()
+      assert.ok(now.lease_generation > before.lease_generation, 'a take-over at the hub')
+      assert.notEqual(now.process_instance, before.process_instance)
+      gen = now
+      assert.match(a.stderr(), /handing the key to connector pid/)
+      assert.match(b.stderr(), /slot 1 handed over by its idle holder/)
+      assert.ok(!a.exited, 'the old holder stays up, keyless')
+      neverFenced()
+    })
+
+    await test('keyclaim: a holder in use is not robbed: the other sessions\' calls fail with its pid, the lease stays', async () => {
+      const err = await a.call('reply', { text: 'must not arrive' }).catch(e => e.message)
+      assert.match(err, new RegExp(`is held by connector process pid ${b.pid}, whose Claude Code session is using it`))
+      assert.match(err, /invite of its own/)
+      assert.match(await spare.call('list_cards').catch(e => e.message), /is using it/)
+      assert.deepEqual(holders(), [b.pid])
+      await b.call('reply', { text: 'still the second session' })
+      await atHuman('still the second session')
+      assert.deepEqual(lease(), gen, 'the same process holds the same lease')
+      neverFenced()
+    })
+
+    await test('keyclaim: a hook of the spare\'s Claude Code process rings its bell: once the holder is quiet, the spare\'s connector has the key and serves the hook', async () => {
+      await sleep(IDLE + 300)
+      const r = await hook('denied', { hook_event_name: 'PermissionDenied', tool_name: 'Bash', tool_input: { command: 'rm -rf /' }, reason: 'too dangerous' }, env, project)
+      assert.equal(r.code, 0, r.err)
+      await atHuman('Auto mode blocked: Bash — too dangerous')
+      assert.deepEqual(holders(), [spare.pid])
+      const now = lease()
+      assert.ok(now.lease_generation > gen.lease_generation && now.process_instance !== gen.process_instance)
+      gen = now
+      await spare.call('reply', { text: 'from the spare, now a used session' })
+      await atHuman('from the spare, now a used session')
+      neverFenced()
+    })
+
+    await test('keyclaim: the holder crashes: nobody takes the key on its own; the next session that is used takes it', async () => {
+      process.kill(spare.pid, 'SIGKILL')   // this test's own child
+      await until('the holder gone', () => !holders().length)
+      await sleep(2500)
+      assert.deepEqual(holders(), [], 'a sleeping connector took the key by itself')
+      await a.call('reply', { text: 'after the crash' })
+      await atHuman('after the crash')
+      assert.deepEqual(holders(), [a.pid])
+      const now = lease()
+      assert.ok(now.lease_generation > gen.lease_generation && now.process_instance !== gen.process_instance)
+      gen = now
+      spare = null
+      neverFenced()
+    })
+
+    await test('keyclaim: two sessions ask a quiet holder at the same moment: exactly one gets the key, the other is told who has it', async () => {
+      spare = await startConnector({ env, cwd: project })   // a third session (asleep: others are here)
+      await sleep(IDLE + 300)
+      const got = await Promise.all([b, spare].map(c => c.call('reply', { text: `raced by ${c.pid}` }).then(() => c, e => e.message)))
+      const won = got.filter(g => typeof g !== 'string'), lost = got.filter(g => typeof g === 'string')
+      assert.equal(won.length, 1, `not exactly one winner: ${lost.join(' | ')}`)
+      assert.match(lost[0], new RegExp(`is held by connector process pid (${won[0].pid}|${a.pid})`))
+      await atHuman(`raced by ${won[0].pid}`)
+      assert.deepEqual(holders(), [won[0].pid])
+      const now = lease()
+      assert.ok(now.lease_generation > gen.lease_generation && now.process_instance !== gen.process_instance)
+      await sleep(500)
+      assert.deepEqual(lease(), now, 'the lease changed hands once')
+      neverFenced()
+    })
+  } finally {
+    for (const c of all()) await c.close().catch(() => {})
+    await human?.stop().catch(() => {})
+    hub.stop()
+  }
+}
+
 // ---- run ----------------------------------------------------------------------------------------------------------
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const argv = process.argv.slice(2)
   const only = argv.includes('--only') ? argv[argv.indexOf('--only') + 1] : null
-  const parts = { integration, updates, hooks, monitor, connect }
+  const parts = { integration, updates, hooks, monitor, keyclaim, connect }
   if (only && !parts[only]) { console.error(`--only ${Object.keys(parts).join('|')}`); process.exit(2) }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-e2e-'))
   const results = []

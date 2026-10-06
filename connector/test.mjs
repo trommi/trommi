@@ -16,7 +16,7 @@ import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createBridge, TOOLS, RELOAD_TOOL, INBOX_TOOL, TOOL_EXAMPLES, INSTRUCTIONS, DESCRIPTIONS, TEASER_MAX, monitorNote, inboxToolName, parsePrompt } from './tools.mjs'
-import { lockSlot, unlockSlot, claimSlot, alive, openDoor, knock, createHookDesk, hookRequest, redact, deniedText, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES, pointerLine } from './connector.mjs'
+import { isSpare, yieldState, claimsAtStart, checkIn, checkOut, othersHere, askYield, doorOf, bellPath, ring, openDoorAt, lockSlot, unlockSlot, claimSlot, alive, openDoor, knock, createHookDesk, hookRequest, redact, deniedText, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES, pointerLine } from './connector.mjs'
 import { zip, marketplaceFiles, pluginManifest, pluginFiles } from './build.mjs'
 import * as codec from '../shared/codec.mjs'
 import { encryptAsset, decryptAsset } from '../shared/crypto/zcrypto.mjs'
@@ -447,6 +447,87 @@ await test('slot lock: claimSlot takes over a live claim of the same session onl
   assert.equal(r.ok, true)
   assert.deepEqual(fs.readdirSync(dir), [`s.lock.${process.pid}`])
   unlockSlot(p)
+})
+
+// ---- who gets the key ------------------------------------------------------------------------------------
+
+await test('key: a Claude Code spare is known by its command line (as seen with 2.1.286); TROMMI_SPARE overrides', () => {
+  const env = {}
+  assert.equal(isSpare({ env, args: ['claude', 'bg-spare', '--bg-spare', '/tmp/cc-daemon-1000/439514c7/spare/8c5a42eb.claim.sock'] }), true)
+  assert.equal(isSpare({ env, args: ['/home/u/.local/share/mise/installs/claude/2.1.286/claude', '--bg-spare', '/tmp/x.claim.sock'] }), true)
+  assert.equal(isSpare({ env, args: ['claude', '--resume', 'c56893b6-5f64-4577-b571-c16d3f7faa2e'] }), false)
+  assert.equal(isSpare({ env, args: ['/home/u/claude', '--session-id', 'x', '--fork-session', '--resume', '/home/u/s.jsonl'] }), false)
+  assert.equal(isSpare({ env, args: ['claude', '--permission-mode', 'auto'] }), false)
+  assert.equal(isSpare({ env: { TROMMI_SPARE: '1' }, args: ['claude'] }), true)
+  assert.equal(isSpare({ env: { TROMMI_SPARE: '0' }, args: ['claude', 'bg-spare'] }), false)
+  assert.equal(isSpare({ env }), false, 'this test\'s parent is no spare')
+})
+
+await test('key: at start a connector takes the key only when nobody else could want it, never under a spare', () => {
+  assert.equal(claimsAtStart({ spare: false, others: 0 }), true, 'a lone session hears the board at once')
+  assert.equal(claimsAtStart({ spare: false, others: 2 }), false)
+  assert.equal(claimsAtStart({ spare: false, others: 2, reconnect: true }), true, 'the reconnected connector of the holding session')
+  assert.equal(claimsAtStart({ spare: false, others: 1, joining: true }), true)
+  for (const o of [{ others: 0 }, { others: 0, reconnect: true }, { others: 0, joining: true }]) assert.equal(claimsAtStart({ spare: true, ...o }), false)
+})
+
+await test('key: a holder gives the key up only when its session does not use it', () => {
+  const now = 1_000_000, y = o => yieldState({ now, ...o })
+  assert.deepEqual(y({ since: now - 10_000 }), { free: false, used: false, quiet_ms: 10_000, after_ms: 50_000 }, 'never used, held for 10 s')
+  assert.equal(y({ since: now - 60_000 }).free, true, 'never used, held for a minute')
+  assert.equal(y({ since: now, spare: true }).free, true, 'a spare that never used it: at once')
+  assert.deepEqual(y({ since: now - 3_600_000, used_at: now - 5000 }), { free: false, used: true, quiet_ms: 5000, after_ms: 1_795_000 }, 'in use')
+  assert.equal(y({ since: now - 3_600_000, used_at: now - 5000, spare: true }).free, false, 'a spare that became a used session keeps it')
+  assert.equal(y({ since: now - 7_200_000, used_at: now - 1_800_000 }).free, true, 'used, then quiet for half an hour')
+  assert.equal(y({ since: now - 7_200_000, used_at: now - 3_600_000, calls: 1 }).free, false, 'a call is running')
+  assert.equal(y({ since: now - 100, unused_ms: 0 }).free, true)
+})
+
+await test('key: presence: the other live connectors of a folder; files of dead processes are removed', () => {
+  const dir = path.join(tmp, 'here')
+  fs.mkdirSync(dir, { recursive: true })
+  checkIn(dir, 'box-proj', { session: 'ppid:1', spare: false })
+  fs.writeFileSync(path.join(dir, `box-proj.here.${process.ppid}`), JSON.stringify({ session: 'ppid:7', spare: true }))
+  fs.writeFileSync(path.join(dir, 'box-proj.here.999999'), '{}')                       // a dead process
+  fs.writeFileSync(path.join(dir, `other-proj.here.${process.ppid}`), '{}')            // another folder
+  assert.deepEqual(othersHere(dir, 'box-proj'), [{ pid: process.ppid, session: 'ppid:7', spare: true }])
+  assert.ok(!fs.existsSync(path.join(dir, 'box-proj.here.999999')))
+  checkOut(dir, 'box-proj')
+  assert.deepEqual(fs.readdirSync(dir).sort(), [`box-proj.here.${process.ppid}`, `other-proj.here.${process.ppid}`].sort())
+})
+
+await test('key: asking a holder: yes, no with the reason, and a holder that does not answer or does not know the request', async () => {
+  const p = { key_file: path.join(tmp, 'ask', 's-1.key') }
+  assert.equal((await askYield(p, { timeout_ms: 500 })).silent, true, 'no door')
+  let answer = { ok: true, yielded: true }, asked = null
+  const close = openDoor(p, async req => { asked = req; return answer })
+  try {
+    await new Promise(r => setTimeout(r, 50))
+    assert.deepEqual(await askYield(p, { session: 's' }), { ok: true })
+    assert.deepEqual(asked, { op: 'yield', pid: process.pid, session: 's' })
+    answer = { ok: false, busy: true, used: true, quiet_ms: 1200, after_ms: 58_800 }
+    assert.deepEqual(await askYield(p), { ok: false, used: true, quiet_ms: 1200, after_ms: 58_800 })
+    answer = { ok: false, error: 'unknown request' }   // a connector from before the hand-over
+    assert.deepEqual(await askYield(p), { ok: false, silent: true, error: 'unknown request' })
+  } finally { close() }
+  assert.ok(!fs.existsSync(doorOf(p)))
+})
+
+await test('key: the bell: a hook rings the connector of its own Claude Code process; a newer bell is not removed by the older one closing', async () => {
+  const run = path.join(tmp, 'bell-run'), env = { XDG_RUNTIME_DIR: run }
+  fs.mkdirSync(path.join(run, `trommi-${process.getuid()}`), { recursive: true, mode: 0o700 })
+  assert.equal(await ring([4242, 4241], { env }), null, 'no connector: nothing to ring')
+  const got = []
+  const older = openDoorAt(bellPath(4241, env), async req => { got.push(['older', req]); return { ok: true } })
+  await new Promise(r => setTimeout(r, 50))
+  const newer = openDoorAt(bellPath(4241, env), async req => { got.push(['newer', req]); return { ok: true, phase: 'ready' } })
+  await new Promise(r => setTimeout(r, 50))
+  older()
+  try {
+    assert.deepEqual(await ring([4242, 4241], { env }), { ok: true, phase: 'ready' })
+    assert.deepEqual(got, [['newer', { op: 'awake', ancestors: [4242, 4241] }]])
+  } finally { newer() }
+  assert.ok(!fs.existsSync(bellPath(4241, env)))
 })
 
 // ---- prompt.md: everything the agent reads ----------------------------------------------------------------
