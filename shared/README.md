@@ -154,6 +154,7 @@ Answer = {
   bound_version_hash, bound_object_version, // the version it answered
   envelope_number, envelope_hash, by_device_id, answered_at,
   taken_back_at: null | envelope_number,    // the decide_again that took it back
+  taken_back_sent_at: null | sent_at,       // and when it was sent (display only)
 }
 ```
 

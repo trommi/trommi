@@ -565,7 +565,7 @@ function applyAnswer(model, rec, change) {
     answer_action: c.answer_action ?? 'answer', choices: c.choices ?? [], note: c.note ?? null, option_notes: c.option_notes ?? {}, attachments: c.attachments ?? [],
     marks: c.marks ?? [], trusted: !!c.trusted, bound_version_hash: rec.bind?.cardHash ?? null, bound_object_version: card.object_version,
     envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, by_device_id: rec.sender_device_id, answered_at: rec.object.answered_at || rec.sent_at,
-    taken_back_at: null, pending: false,
+    taken_back_at: null, taken_back_sent_at: null, pending: false,
   }
   card.answer = answer
   card.answers.push(answer)
@@ -613,6 +613,7 @@ function applyDecideAgain(model, rec, change) {
   if (why) return refuse(model, change, rec, why, 'decide again not counted')
   const card = model.cards.get(rec.object.object_id)
   card.answer.taken_back_at = rec.envelope_number
+  card.answer.taken_back_sent_at = rec.sent_at
   card.answer = null
   card.object_state = 'open'
   card.closed_how = null

@@ -192,6 +192,11 @@ await test('cards round trip: create, revise, answer, decide again, hand back, c
   await settleAll(agent)
   await until(() => phone.model.cards.get(id).object_state === 'closed' && laptop.model.cards.get(id).close_summary === 'done: A', 'closed everywhere')
   eq(phone.model.cards.get(id).answers.length, 2, 'two answers, one taken back')
+  for (const c of [phone, laptop, agent]) {
+    const [was, now] = c.model.cards.get(id).answers
+    assert(Number.isInteger(was.taken_back_at) && was.taken_back_sent_at >= was.answered_at && was.taken_back_sent_at <= now.answered_at, 'the answer taken back says when: after it was given, before the next one')
+    eq([now.taken_back_at, now.taken_back_sent_at], [null, null], 'the answer in force was not taken back')
+  }
   const evs = timelineEvents(phone.model, phone.model.cards.get(id).timeline_key).map(e => e.event)
   assert(evs.includes('card_created') && evs.includes('decide_again'), 'timeline events')
 })
