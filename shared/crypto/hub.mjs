@@ -349,6 +349,10 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     const sess = await authoriseScope(h, senderRole)
     const scopeOf = info => `${info.keyScope}:${info.sessionId ?? ''}`
     const myScope = `${h.keyScope}:${h.sessionId ? id(h.sessionId) : ''}`
+    // Who holds an object: its creator; and once the grants no longer assign the creator to the object's session (a
+    // human handed the session on), the agents they assign now. Only asked after the scope matched, so `sess` is the
+    // object's own session.
+    const holds = (info, device) => !!device && (device === info.owner || (!!sess && !sess.agents.includes(info.owner) && sess.agents.includes(device)))
     let pushAllowed = false
     switch (h.kind) {
       case KIND.OBJECT_VERSION:
@@ -362,7 +366,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
           if (scopeOf(info) !== myScope) fail('forbidden', 'an object stays under the key it was created with')
           if (info.firstKind !== h.kind) fail('forbidden', 'an object keeps its kind')
           const note = room().members.get(b64u(unhex(info.owner)))?.role === ROLE.HUMAN   // notes: any human device
-          if (info.owner !== sender && !(note && human)) fail('forbidden', 'only its creator writes new versions of an object')
+          if (!holds(info, sender) && !(note && human)) fail('forbidden', 'only its creator (or the agent its session was handed to) writes new versions of an object')
         }
         pushAllowed = h.push
         break
@@ -373,8 +377,8 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
         if (!human) fail('forbidden', 'answers and verdicts come from human devices')
         const info = storage.objectInfo(id(h.card.id))
         if (!info) fail('forbidden', 'no such object')
-        if (recipient !== info.owner) fail('forbidden', "addressed to the object's creator")
         if (scopeOf(info) !== myScope) fail('forbidden', 'answered under the key of the object')
+        if (!holds(info, recipient)) fail('forbidden', "addressed to the object's creator (or the agent its session was handed to)")
         if (h.kind === KIND.VERDICT && info.firstKind !== KIND.PERMISSION_REQUEST) fail('forbidden', 'a verdict answers a permission request')
         if (h.kind !== KIND.VERDICT && info.firstKind !== KIND.OBJECT_VERSION) fail('forbidden', 'an answer answers an object')
         break
@@ -391,7 +395,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
           const info = storage.objectInfo(ref)
           if (!info) fail('forbidden', 'no such card')
           if (scopeOf(info) !== myScope) fail('forbidden', "a card's chat is under the card's key")
-          if (sender !== info.owner && !(human && recipient === info.owner)) fail('forbidden', "a card's chat: its creator, or a human writing to the creator")
+          if (!holds(info, sender) && !(human && holds(info, recipient))) fail('forbidden', "a card's chat: its creator, or a human writing to the creator")
         } else if (!human) fail('forbidden', 'desks are for human devices')
         break
       }
@@ -437,7 +441,13 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     },
     /** Trade a signed challenge for a token that lasts ten minutes, bound to this device. Serialised with entries (C16). */
     signIn: signed => serial(async () => {
-      const a = await z.verifyHubAuth(signed, { state: room(), hub: hubUrl })
+      let a
+      try { a = await z.verifyHubAuth(signed, { state: room(), hub: hubUrl }) }
+      catch (e) {
+        // A removed device that signed the challenge gets the signed entries up to its own removal with the refusal.
+        if (e.code === 'not-member' && Number.isInteger(e.removedSeq)) e.signedEntries = storage.entries().slice(0, e.removedSeq + 1)
+        throw e
+      }
       const k = b64u(a.challenge)
       const exp = challenges.get(k)
       challenges.delete(k)

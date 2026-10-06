@@ -836,7 +836,7 @@ export async function startHub({
         code = 'internal'; message = 'internal error'
       }
       if (err.retryAfter) res.setHeader('retry-after', String(err.retryAfter))
-      send(res, STATUS[code], { error: code, message, ...(err.voided ? { voided: true, envelope_number: err.envelopeNumber } : {}) })
+      send(res, STATUS[code], { error: code, message, ...(err.voided ? { voided: true, envelope_number: err.envelopeNumber } : {}), ...(err.signedEntries ? { signed_entries: err.signedEntries.map(z.b64u) } : {}) })
     })
   })
   server.requestTimeout = 0          // streams and big uploads: their own idle timeout and deadline (above); headers time out
