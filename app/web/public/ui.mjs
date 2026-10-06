@@ -2573,15 +2573,16 @@ ${[...card.options].sort((a, b) => isYes(a) - isYes(b)).map(o => {
 
 const knockAttr = card => (isKnock(card) ? raw(' data-knock') : '')
 /** One open question as a row. from: the session that asked. error: what went wrong with the last answer. */
-// The pull-tag of Later (a paper tag on its string): the drawing of Later in sideWays below.
-export const LATER_TAG = raw('<svg viewBox="0 0 44 84" aria-hidden="true"><path d="M22 0 C23 8 21 14 22 22" class="tag-string"/><path d="M8 28 L36 27 L38 76 C38 80 35 82 32 82 L12 82.5 C9 82.5 6.6 80 6.8 77 Z" class="tag-paper"/><circle cx="22" cy="35" r="3.2"/><path d="M15 48 L29 47.6 M15 58 L29 57.6 M15 68 L25 67.7" class="tag-lines"/></svg>')
+// The pull-tag of Later: a paper tag on its string, the three Zs of sleep drawn on it. The drawing of Later in sideWays
+// below (the Desk's selection bar, with the word; under a card and beside a large picture, the tag alone).
+export const LATER_TAG = raw(`<svg viewBox="0 0 44 84" aria-hidden="true"><path d="M22 0 C23 8 21 14 22 22" class="tag-string"/><path d="M5 28 L39 27 L41 76 C41 80 38 82 35 82 L9 82.5 C6 82.5 3.6 80 3.8 77 Z" class="tag-paper"/><circle cx="22" cy="35" r="3.2"/><g class="tag-z" transform="translate(3.2 39) scale(1.55)">${SNOOZE_Z.map(([d, width]) => `<path d="${d}" stroke-width="${width}"/>`).join('')}</g></svg>`)
 /** The ways to put cards aside without answering them: Later, Duck it, Shred, in this order, with these drawings and
  *  names. One set for the Desk's selection bar (many cards) and a card's own page (this one): buttons of a form that
  *  posts to <base>/cards/batch with the ids (desk.mjs). later, duck, shred: which of them apply; between: what stands
  *  before Shred (the bar's Read). */
-export const sideWays = ({ later = true, duck = true, shred = true, many = false, between = '' } = {}) => {
+export const sideWays = ({ later = true, duck = true, shred = true, many = false, between = '', word = true } = {}) => {
   const it = many ? 'them' : 'it'
-  return html`${later ? html`<button type="submit" name="way" value="later" class="sel-later" title="${WORDS.later}: put ${it} off, ${many ? 'they wait' : 'it waits'} in Off the desk" aria-label="${WORDS.later}">${LATER_TAG}<span>${WORDS.later}</span></button>` : ''}${duck ? html`<button type="submit" name="way" value="duck" class="sel-duck" title="${WORDS.duck}: ${many ? 'the agents take their' : 'the agent takes its'} own advice" aria-label="${WORDS.duck}">${sk('duck')}<span>${WORDS.duck}</span></button>` : ''}${between}${shred ? html`<button type="submit" name="way" value="shred" class="sel-shred" title="${WORDS.shred}: throw ${it} away" aria-label="${WORDS.shred}">${sk('bin')}<span>${WORDS.shred}</span></button>` : ''}`
+  return html`${later ? html`<button type="submit" name="way" value="later" class="sel-later" title="${WORDS.later}: put ${it} off, ${many ? 'they wait' : 'it waits'} in Off the desk" aria-label="${WORDS.later}">${LATER_TAG}${word ? html`<span>${WORDS.later}</span>` : ''}</button>` : ''}${duck ? html`<button type="submit" name="way" value="duck" class="sel-duck" title="${WORDS.duck}: ${many ? 'the agents take their' : 'the agent takes its'} own advice" aria-label="${WORDS.duck}">${sk('duck')}<span>${WORDS.duck}</span></button>` : ''}${between}${shred ? html`<button type="submit" name="way" value="shred" class="sel-shred" title="${WORDS.shred}: throw ${it} away" aria-label="${WORDS.shred}">${sk('bin')}<span>${WORDS.shred}</span></button>` : ''}`
 }
 export function deskRow(card, model, base, { error = '' } = {}) {
   const from = model.byAgent.get(card.agent)

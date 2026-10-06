@@ -310,7 +310,7 @@ ${cardLeft(card, model, self, { version, pic: shownPic, query })}
 ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 </div>
 </article>
-${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false })}</form>` : ''}
+${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
 ${cardThread(card, model, self, { more: older })}
 <form class="tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
@@ -323,10 +323,12 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 </main>`
 }
 
-/** One picture of a card, large, at its own address: the browser's Back closes it. from: the session it was opened from.
- *  The picture fits the width and scrolls (a tall screenshot is read top to bottom); a click on it shows it at its own
- *  size (scrolls both ways) and back. The card's answer stands beside it (a phone: a bar at the foot), the same buttons
- *  of the same form as on the card's page, so it can be decided while looking: an answer goes back to the Desk. */
+/** The gallery of a card: one picture large, at its own address (the browser's Back closes it). from: the session it
+ *  was opened from. The head is the card's question, in the display face, and the way back to the card; beside it
+ *  which picture this is and the page behind it. The picture fits the width and scrolls (a tall screenshot is read top
+ *  to bottom); a click shows it at its own size and back. Beside it stands the card's right column itself (cardAnswer
+ *  in .tc-right, the same markup and styles as on the card's page; a phone: a bar at the foot), with Later's tag
+ *  hanging under it. */
 function picturePage(card, model, base, at, { from = null } = {}) {
   const images = imagesOf(card)
   const i = Math.min(Math.max(1, at), images.length), a = images[i - 1]
@@ -337,11 +339,11 @@ function picturePage(card, model, base, at, { from = null } = {}) {
   const drafting = card.status === 'open' && card.kind === 'decision'
   const key = pictureKeys(card).get(i - 1)
   return html`<div class="t-picture is-deciding" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(card, self))}">
-<header class="t-picture-bar"><a class="tc-back t-picture-back" data-nav href="${here}?pic=${i}" data-card-target="gallery" data-back aria-label="Back to the question">${icon(ARROW_L)}<span>${card.title}</span></a>${where(a, i, images.length, 't-picture-where')}${pageChip(a.page, true)}</header>
+<header class="t-picture-bar"><a class="t-picture-back" data-nav href="${here}?pic=${i}" data-card-target="gallery" data-back title="Back to the question · Esc" aria-label="Back to the question: ${card.title}">${BACK}<h1>${card.title}</h1></a><div class="t-picture-sub">${where(a, i, images.length, 't-picture-where')}${pageChip(a.page, true)}</div>${card.status === 'open' && !card.with_agent && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}</header>
 <input type="checkbox" class="t-picture-zoom" id="${zoom}" hidden>
 <div class="t-picture-view" tabindex="0" role="region" aria-label="The picture: scroll to see all of it"><label class="t-picture-fit" for="${zoom}" title="Click: its own size, or fit to the width" data-card-target="figure" data-at="${i}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img${srcOf(a)} alt="${a.name}" decoding="async"${a.width > 0 && a.height > 0 ? html` width="${a.width}" height="${a.height}"` : ''}></label></div>
 ${images.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : images.length}" data-turbo-action="replace" aria-label="The picture before">${icon(ARROW_L)}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < images.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next picture">${icon(ARROW_R)}</a><nav class="t-picture-strip" aria-label="The pictures of this question">${strip(images, i, n => `${here}/p/${n}`)}</nav>` : ''}
-<aside class="t-picture-answer" aria-label="Your answer" data-kind="${card.kind}">${cardAnswer(card, model, base, { pic: i })}</aside>${card.status === 'open' && !card.with_agent && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="t-picture-later" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${sideWays({ duck: false, shred: false })}</form>` : ''}
+<aside class="t-picture-answer tc-right" aria-label="Your answer" data-kind="${card.kind}">${cardAnswer(card, model, base, { pic: i })}</aside>
 <form id="${form}" method="post" action="${act(card, base, 'message')}" hidden data-card-target="form">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}"><input type="hidden" name="note" value="${card.draft?.note ?? ''}">` : ''}</form>
 </div>`
 }
@@ -762,7 +764,7 @@ controller('card', class extends Controller {
   pullStart(event) {
     const tag = event.target.closest?.('.sel-later')
     if (!tag || event.button > 0 || this.pulling) return
-    const card = this.element.querySelector('.tc-card'), y0 = event.clientY, calm = matchMedia('(prefers-reduced-motion: reduce)').matches
+    const card = this.element.querySelector('.tc-card, .t-picture-answer'), y0 = event.clientY, calm = matchMedia('(prefers-reduced-motion: reduce)').matches
     let dy = 0
     const set = v => { dy = v; tag.style.setProperty('--pull', `${v}px`); if (card && !calm) card.style.translate = `0 ${(v * .4).toFixed(1)}px` }
     tag.setPointerCapture(event.pointerId)
@@ -788,7 +790,7 @@ controller('card', class extends Controller {
   pullAway(tag) {
     this.pulling = true
     const go = () => { this.going = true; tag.form.requestSubmit(tag) }
-    const card = this.element.querySelector('.tc-card')
+    const card = this.element.querySelector('.tc-card, .t-picture-answer')
     if (!card || matchMedia('(prefers-reduced-motion: reduce)').matches) return go()
     const from = parseFloat(card.style.translate.split(' ')[1]) || 0, far = innerHeight
     const how = { duration: 300, easing: 'cubic-bezier(.55, 0, .9, .45)', fill: 'forwards' }
