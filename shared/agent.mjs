@@ -145,6 +145,21 @@ const agentMethods = {
   setStatus(values, { session_id = null } = {}) { this._needAgent(); return this.setRegisters(values, { session_id }) },
 
   /**
+   * The receipt (model.mjs "the receipt"): every command of the session up to envelope number up_to was handed to the
+   * agent. Written only when the mark rises above what this process last wrote or the room shows.
+   */
+  async markHeard(up_to, { session_id = null } = {}) {
+    this._needAgent()
+    const sid = session_id ?? this.session_id
+    if (!sid || !Number.isSafeInteger(up_to) || up_to < 0) return false
+    const sent = this._heardSent ??= new Map()
+    if (up_to <= Math.max(sent.get(sid) ?? -1, this.model.sessions.get(sid)?.heard_up_to ?? -1)) return false
+    sent.set(sid, up_to)
+    try { await this.setStatus({ heard: { up_to, at: Date.now() } }, { session_id: sid }) } catch (e) { if (sent.get(sid) === up_to) sent.delete(sid); throw e }
+    return true
+  },
+
+  /**
    * A child session (4 October 2026): the agent opens a session of its own under its main session, without a human's
    * approval, for a helper ("Design", "Server"). It draws the session key, seals it to itself, every active human device
    * and the recovery key (never to another agent), signs the first grant (shared/crypto/session-grants.mjs: itself alone, no

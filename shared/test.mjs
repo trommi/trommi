@@ -2176,6 +2176,116 @@ if (BENCH || !ONLY) await test('throughput: verify headers and decrypt heads', a
   assert(st.verified >= N, 'all verified')
 })
 
+await test('link: the five states from is_online, offline_since and the connector\'s report; thresholds; what an unknown report is worth', async () => {
+  const now = 1_800_000_000_000, MIN = 60_000
+  const on = link => ({ is_online: true, offline_since: null, link: M.cleanLink(link) })
+  const off = (link, since = now - 5 * MIN) => ({ is_online: false, offline_since: since, link: M.cleanLink(link) })
+  const st = (s, opts) => M.linkState(s, now, opts)
+  // online
+  eq(st(on(null)).state, 'live', 'a connector that reports nothing hears at once, as far as anyone knows')
+  eq(st(on({ hears: 'live', last_call_at: now - 3 * 60 * MIN })).state, 'live', 'live however long ago its last call was')
+  eq(st(on({ hears: 'oncall', last_call_at: now - MIN })), { state: 'oncall', since: now - MIN, idle_ms: MIN, reason: '' }, 'on its next step')
+  eq(st(on({ hears: 'oncall', last_call_at: now - 10 * MIN })).state, 'asleep', 'ten minutes without a step')
+  eq(st(on({ hears: 'oncall', last_call_at: now - 10 * MIN + 1 })).state, 'oncall', 'one millisecond short of it')
+  eq(st(on({ hears: 'oncall', last_call_at: now - 46 * MIN })), { state: 'asleep', since: now - 46 * MIN, idle_ms: 46 * MIN, reason: '' }, 'asleep carries how long')
+  eq(st(on({ hears: 'oncall', last_call_at: now - 3000 }), { asleep_ms: 2000 }).state, 'asleep', 'the threshold is a parameter')
+  eq(st(on({ hears: 'oncall', last_call_at: null, since: now - 11 * MIN })).state, 'asleep', 'never called: counted from when it took the key')
+  eq(st(on({ hears: 'oncall', last_call_at: null, since: null })).state, 'oncall', 'nothing to count from')
+  eq(st(on({ hears: 'live', cut_since: now - 38 * MIN })), { state: 'cut', since: now - 38 * MIN, idle_ms: null, reason: 'folder' }, 'a session of its folder lost its connector')
+  eq(st(on({ hears: 'live', attached: false, since: now - MIN })).reason, 'detached', 'a key without an agent behind it')
+  // offline
+  eq(st(off(null)), { state: 'gone', since: now - 5 * MIN, idle_ms: null, reason: '' }, 'no word: gone')
+  eq(st(off({ hears: 'live', exit: { reason: 'stdin', claude: 'gone' } })).state, 'gone', 'ended with its Claude Code')
+  eq(st(off({ hears: 'live', exit: { reason: 'stdin', claude: 'checking' } })).state, 'gone', 'not known yet: never a false alarm')
+  eq(st(off({ hears: 'oncall', exit: { reason: 'stdin', claude: 'alive' } })), { state: 'cut', since: now - 5 * MIN, idle_ms: null, reason: 'stdin' }, 'its Claude Code lives on without it')
+  eq(st(off({ hears: 'live', cut_since: now - MIN })).state, 'gone', 'offline wins over what it said of its folder')
+  eq(st({ is_online: false, offline_since: null, link: null }).since, null, 'a hub that restarted knows no time')
+  // cleaning: types, unknown fields, nonsense
+  eq(M.cleanLink({ hears: 'sometimes' }), null, 'unknown hears')
+  eq(M.cleanLink(null), null, 'none')
+  eq(M.cleanLink({ hears: 'oncall', last_call_at: 'x', working: 1, more: 1, exit: { reason: 'r', claude: 'x' } }), { hears: 'oncall', attached: true, last_call_at: null, working: false, since: null, cut_since: null, exit: { reason: 'r', claude: 'gone' } }, 'cleaned')
+  // the receipt
+  eq(M.heardBy({ heard_up_to: null }, 7), null, 'no receipts: not known')
+  eq([M.heardBy({ heard_up_to: 7 }, 7), M.heardBy({ heard_up_to: 7 }, 8)], [true, false], 'up to the mark')
+  eq(M.cardWaitsOn({ answer: { envelope_number: 9 }, in_revision: null }), 9, 'the answer')
+  eq(M.cardWaitsOn({ answer: null, in_revision: { envelope_number: 4 } }), 4, 'the hand-back')
+  eq(M.cardWaitsOn({ answer: { envelope_number: 9, pending: true } }), null, 'an answer not sent yet')
+  eq(M.cardWaitsOn({ answer: null, in_revision: null }), null, 'nothing to hear')
+})
+
+await test('link over the hub: a report reaches the humans at once (presence), is kept across a warm start, and the stream\'s end shows as gone or cut off', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  const row = () => phone.model.members.get(agent.my_device_id)
+  const session = () => phone.model.sessions.get(agent.session_id)
+  await until(() => row().is_online && phone.model.room.connection === 'live', 'the agent is online for the phone')
+  eq(M.linkState(row()).state, 'live', 'no report: live')
+  const t = Date.now()
+  await agent.hub.agentLink({ hears: 'oncall', attached: true, last_call_at: t, working: false, since: t })
+  await until(() => row().link?.hears === 'oncall', 'the report reached the phone without a poll', 2000)
+  eq(session().link.last_call_at, t, 'the session carries its agent\'s link')
+  eq(M.linkState(session(), t + 1000).state, 'oncall', 'on its next step')
+  eq(M.linkState(session(), t + 3000, { asleep_ms: 2000 }).state, 'asleep', 'not listening after the threshold')
+  // a human may not report
+  let err = null
+  try { await phone.hub.agentLink({ hears: 'live' }) } catch (e) { err = e }
+  eq(err?.code, 'forbidden', 'only an agent reports')
+  // its last word, then the stream ends: cut off while its Claude Code lives on
+  await agent.hub.agentLinkLast({ hears: 'oncall', attached: true, last_call_at: t, working: false, since: t, exit: { reason: 'stdin', claude: 'alive' } })
+  await agent.stop()
+  await until(() => !row().is_online, 'offline at once, by the presence event', 2000)
+  eq(M.linkState(row()).state, 'cut', 'cut off')
+  eq(M.linkState(row()).reason, 'stdin', 'why')
+  assert(row().offline_since > t - 1000, 'since when')
+  // what the phone knew is there before the hub answers again
+  eq((await phone.storage.get('devices')).find(d => d.device_id === agent.my_device_id).link.exit.claude, 'alive', 'stored with the device list')
+})
+
+await test('receipt: the agent\'s mark says which of the human\'s words it has; it only rises; a human cannot write it', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const commands = []
+  agent.on('command', c => commands.push(c))
+  const id = await agent.sendCard({ title: 'Ship?', options: [{ key: 'yes', label: 'Yes' }, { key: 'no', label: 'No' }] })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id), 'card on the phone')
+  const session = () => phone.model.sessions.get(agent.session_id)
+  await phone.answer({ object_id: id, choices: ['yes'] })
+  await settleAll(phone)
+  await until(() => commands.some(c => c.command === 'answer'), 'the answer reached the connector')
+  const n = commands.find(c => c.command === 'answer').envelope_number
+  eq(phone.model.cards.get(id).answer.envelope_number, n, 'the answer\'s number is the command\'s')
+  eq(M.cardHeard(phone.model, phone.model.cards.get(id)), null, 'no receipts yet: not known')
+  // the connector holds it back (the agent has not acted): everything before it is with the agent
+  eq(await agent.markHeard(n - 1), true, 'written')
+  await settleAll(agent)
+  await until(() => session().heard_up_to === n - 1, 'the mark on the phone')
+  eq(M.cardHeard(phone.model, phone.model.cards.get(id)), false, 'not picked up')
+  // handed over
+  await agent.markHeard(n)
+  await settleAll(agent)
+  await until(() => session().heard_up_to === n, 'the mark rose')
+  eq(M.cardHeard(phone.model, phone.model.cards.get(id)), true, 'heard')
+  assert(session().heard_at > 0, 'when')
+  eq(agent.model.sessions.get(agent.session_id).heard_up_to, n, 'the agent sees its own mark')
+  // never lower, never twice
+  eq(await agent.markHeard(n), false, 'the same mark is not written again')
+  eq(await agent.markHeard(n - 1), false, 'a lower one neither')
+  await agent.setStatus({ heard: { up_to: 1, at: Date.now() } })
+  await settleAll(agent); await phone.catchUp()
+  eq(session().heard_up_to, n, 'a lower mark from the wire changes nothing')
+  // a chat message later: not heard until the mark passes it
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'and the docs?' })
+  await settleAll(phone)
+  await until(() => commands.some(c => c.command === 'message'), 'the message reached the connector')
+  const m = commands.find(c => c.command === 'message').envelope_number
+  eq(M.heardBy(session(), m), false, 'the message waits')
+  // a human cannot forge a receipt
+  let err = null
+  try { await phone.setRegisters({ heard: { up_to: 1e6 } }, { session_id: agent.session_id }) } catch (e) { err = e }
+  eq(err?.code, 'forbidden', 'heard is an agent key')
+  eq(session().heard_up_to, n, 'unchanged')
+})
+
 for (const c of clients) await c.stop().catch(() => {})
 await hub.close()
 fs.rmSync(scratch, { recursive: true, force: true })

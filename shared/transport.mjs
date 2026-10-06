@@ -222,7 +222,11 @@ export class Hub {
   }
   sealedSessionKeys(session_id, after_session_key_epoch = 0) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/sealed_session_keys`), { query: { after_session_key_epoch } }) }
   sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/key_back_links`)) }
-  /** Loss detection: an agent says whether it has running work (one push to the humans if it then drops away). */
+  /** The link report of an agent's connector (model.mjs "the link"): { hears, attached, last_call_at, working, cut_since?, exit? }. */
+  agentLink(report) { return this.request('POST', this.roomPath('/agent_link'), { body: report, lease: true }) }
+  /** The same as a process's last word: under the generation it holds, never renewed or taken back (it is leaving). */
+  agentLinkLast(report, timeout_ms = 1500) { return this.request('POST', this.roomPath('/agent_link'), { body: report, headers: this.leaseHeaders(), timeout_ms }) }
+  /** A hub before the link report: whether the agent has running work (one push to the humans if it then drops away). */
   agentWatch(working) { return this.request('POST', this.roomPath('/agent_watch'), { body: { working: Boolean(working) }, lease: true }) }
   postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope }, lease: true }) }
   putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { raw: bytes, lease: true }) }

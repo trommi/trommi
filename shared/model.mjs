@@ -87,7 +87,7 @@ export function applyMembers(model, members, change) {
     const reg = model._device_registers?.get(m.device_id) ?? null
     const next = { device_id: m.device_id, device_role: m.device_role, fingerprint: m.device_id.slice(0, 16).match(/.{4}/g).join(' '), device_name: reg?.device_name ?? old?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null,
       is_active: m.is_active, added_entry_number: m.added_entry_number, removed_entry_number: m.removed_entry_number, is_me: m.device_id === model.room.my_device_id,
-      is_online: old?.is_online ?? false, offline_since: old?.offline_since ?? null, agent_session_id: old?.agent_session_id ?? null }
+      is_online: old?.is_online ?? false, offline_since: old?.offline_since ?? null, link: old?.link ?? null, agent_session_id: old?.agent_session_id ?? null }
     model.members.set(m.device_id, next)
     if (m.device_role === 'agent') touchAgent(model, m.device_id, change)
   }
@@ -99,17 +99,85 @@ export function applyDevices(model, devices, change) {
     if (!m) continue
     m.is_online = !!d.is_online
     m.offline_since = m.is_online ? null : d.offline_since ?? null
+    m.link = cleanLink(d.link)
     if (d.agent_session_id) m.agent_session_id = d.agent_session_id
     if (m.device_role === 'agent') touchAgent(model, d.device_id, change)
   }
   change.members = true
 }
 
+// ---- the link: whether an agent's session can hear the human and speak to him ----------------------------
+//
+// More than is_online ("its connector has a stream"). The connector reports it to the hub (POST agent_link, README
+// "The link"), the hub serves it with the device list and pushes every change (stream event `presence`):
+//   link = { hears: 'live' | 'oncall', attached, last_call_at, working, cut_since?, exit?: { reason, claude } }
+//     hears        'live': Claude Code shows board events at once (the channel flag, or the plugin's monitor wakes it);
+//                  'oncall': events wait in the connector and go out with the agent's next tool call
+//     attached     an agent's MCP session stands behind the key (false: the process holds the key and nobody listens)
+//     last_call_at the agent's last tool call through the connector: the one sign that the AGENT is alive
+//     cut_since    a Claude Code session of the folder lives while its connector is gone (seen by this connector)
+//     exit         the connector's last word before its stream closed: why, and whether its Claude Code process lived
+//                  on ('alive'), ended ('gone') or was still being looked at ('checking')
+// The five states, from the hub's two facts (is_online, offline_since) and the report:
+//   gone     no stream, and no word that Claude Code lives on: the process ended, was killed, or is off the network
+//   cut      no stream but its Claude Code lives (exit.claude 'alive'); or a stream, and a session of its folder lost
+//            its connector (cut_since); or a stream with nobody attached. Its tools are dead: it cannot hear or speak
+//   live     hears at once (also: an agent that reports nothing, an older connector)
+//   oncall   hears on its next tool call
+//   asleep   oncall, and no tool call for ASLEEP_MS
+/** No tool call for this long, in a session that hears only on its next one: it is not listening. */
+export const ASLEEP_MS = 10 * 60_000
+const HEARS = ['live', 'oncall'], CLAUDE = ['alive', 'gone', 'checking']
+const stamp = v => (Number.isSafeInteger(v) && v > 0 ? v : null)
+/** A link report as the model keeps it: known fields of the right type only, null when there is none. */
+export function cleanLink(l) {
+  if (!l || typeof l !== 'object' || !HEARS.includes(l.hears)) return null
+  const exit = l.exit && typeof l.exit === 'object' ? { reason: String(l.exit.reason ?? '').slice(0, 40), claude: CLAUDE.includes(l.exit.claude) ? l.exit.claude : 'gone' } : null
+  return { hears: l.hears, attached: l.attached !== false, last_call_at: stamp(l.last_call_at), working: l.working === true, since: stamp(l.since), cut_since: stamp(l.cut_since), exit }
+}
+/**
+ * The state of a member's or a session's link (both carry is_online, offline_since, link):
+ * { state: 'live' | 'oncall' | 'asleep' | 'cut' | 'gone', since, idle_ms, reason }.
+ *   since    when it was cut off or went (null: not known, e.g. after a hub restart); for asleep, its last tool call
+ *   idle_ms  oncall and asleep: how long ago its last tool call was
+ *   reason   gone and cut: the connector's exit reason ('' when it left without a word), or 'folder' / 'detached'
+ */
+export function linkState(subject, now = Date.now(), { asleep_ms = ASLEEP_MS } = {}) {
+  const l = subject?.link ?? null
+  if (!subject?.is_online) {
+    const since = subject?.offline_since ?? null
+    return { state: l?.exit?.claude === 'alive' ? 'cut' : 'gone', since, idle_ms: null, reason: l?.exit?.reason ?? '' }
+  }
+  if (l?.cut_since) return { state: 'cut', since: l.cut_since, idle_ms: null, reason: 'folder' }
+  if (l && !l.attached) return { state: 'cut', since: l.since, idle_ms: null, reason: 'detached' }
+  if (!l || l.hears !== 'oncall') return { state: 'live', since: null, idle_ms: null, reason: '' }
+  const last = l.last_call_at ?? l.since
+  const idle_ms = last ? Math.max(0, now - last) : null
+  return { state: idle_ms != null && idle_ms >= asleep_ms ? 'asleep' : 'oncall', since: last, idle_ms, reason: '' }
+}
+
+// ---- the receipt: what the agent has been handed ------------------------------------------------------------
+//
+// The connector writes the agent register `heard` = { up_to, at } into a session when it really hands the human's
+// commands to the agent (a channel event Claude Code shows, or the text of a tool result): every command of this
+// session up to envelope number up_to is with the agent. One mark per session, not one receipt per command: commands of
+// a session are handed over in order. End to end like every register. heard_up_to null: this session's connector
+// writes no receipts (an older one), nothing is known.
+/** Whether the session's agent was handed the envelope: true, false, or null when its connector writes no receipts. */
+export const heardBy = (session, envelope_number) => (session?.heard_up_to == null || !Number.isInteger(envelope_number) ? null : envelope_number <= session.heard_up_to)
+/** What the agent has to hear of a card: the human's answer in force, else the message that handed it back. Null: nothing. */
+export const cardWaitsOn = card => (card?.answer && !card.answer.pending ? card.answer.envelope_number : card?.in_revision?.envelope_number) ?? null
+/** Whether the card's agent has the human's last word on it (answer or hand-back): true, false, null (nothing to hear, or not known). */
+export function cardHeard(model, card) {
+  const n = cardWaitsOn(card)
+  return n == null ? null : heardBy(model.sessions.get(card.session_id), n)
+}
+
 /** A session (R6): its own key, its agents (assigned by grants), its cards and chat. Keyed by session_id. */
 export function sessionOf(model, session_id) {
   let s = model.sessions.get(session_id)
   if (!s) {
-    s = { session_id, agent_device_ids: [], ever_agent_ids: [], epoch_agent_ids: {}, agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false, offline_since: null,
+    s = { session_id, agent_device_ids: [], ever_agent_ids: [], epoch_agent_ids: {}, agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false, offline_since: null, link: null, heard_up_to: null, heard_at: null,
       session_key_epoch: 0, with_history: false, profile: null, status_lines: [], agent_alerts: [], registers: new Map(),
       settings: null, read_up_to: 0, card_ids: [], open_card_ids: [], timeline_key: timelineKey('chat', `session/${session_id}`), unread_count: 0, unread_numbers: [], last_activity_at: 0 }
     model.sessions.set(session_id, s)
@@ -119,7 +187,7 @@ export function sessionOf(model, session_id) {
 /** Copy the current agent's member facts onto its session. */
 function syncSessionAgent(model, s) {
   const m = s.agent_device_id ? model.members.get(s.agent_device_id) : null
-  if (m) { s.agent_session_id = m.agent_session_id ?? m.device_id.slice(0, 16); s.device_name = m.device_name; s.is_active = m.is_active; s.is_online = m.is_online; s.offline_since = m.offline_since ?? null }
+  if (m) { s.agent_session_id = m.agent_session_id ?? m.device_id.slice(0, 16); s.device_name = m.device_name; s.is_active = m.is_active; s.is_online = m.is_online; s.offline_since = m.offline_since ?? null; s.link = m.link ?? null }
 }
 function touchAgent(model, agent_device_id, change) {
   for (const s of model.sessions.values()) if (s.agent_device_ids.includes(agent_device_id) || s.agent_device_id === agent_device_id) { syncSessionAgent(model, s); change.sessions.add(s.session_id) }
@@ -610,7 +678,7 @@ export const isExpired = (p, now = Date.now()) => p.permission_state === 'pendin
 
 const HUMAN_PREFIXES = ['draft/', 'snooze/', 'duck/', 'desk/', 'session/', 'session_history/', 'read_up_to/', 'canvas_snapshot/']
 const isHumanKey = k => k === 'crown' || k === 'room_snapshot' || HUMAN_PREFIXES.some(p => k.startsWith(p))
-const isAgentKey = k => k === 'profile' || k.startsWith('status_line/') || k.startsWith('alert/')
+const isAgentKey = k => k === 'profile' || k === 'heard' || k.startsWith('status_line/') || k.startsWith('alert/')
 
 function applyStatus(model, rec, change) {
   const values = rec.content?.values
@@ -686,6 +754,11 @@ function setAgentRegister(model, session_id, key, value, rec, change) {
   if (old && rec.causal && old.causal ? !causallyAfter(rec.causal, old.causal) : old?.sender_sequence && rec.sender_sequence && rec.sender_sequence <= old.sender_sequence) return
   s.registers.set(key, { value: value ?? null, envelope_number: rec.envelope_number, sender_sequence: rec.sender_sequence, causal: rec.causal ?? null })
   if (key === 'profile') s.profile = value ?? null
+  else if (key === 'heard') {
+    // The mark only rises: a receipt is never taken back.
+    const up_to = Number.isSafeInteger(value?.up_to) && value.up_to >= 0 ? value.up_to : null
+    if (up_to != null && up_to >= (s.heard_up_to ?? -1)) { s.heard_up_to = up_to; s.heard_at = stamp(value.at) ?? rec.sent_at ?? null }
+  }
   else if (key.startsWith('status_line/')) {
     const id = key.slice('status_line/'.length)
     const at = s.status_lines.findIndex(l => l.id === id)

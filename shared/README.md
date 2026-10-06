@@ -73,7 +73,9 @@ model = {
     device_name,                      // name from the member list (readable by the hub)
     is_active, added_entry_number, removed_entry_number,   // removed_entry_number null while active
     is_me, fingerprint,               // fingerprint: 'ab12 cd34 ef56 7890' (first 8 bytes of device_id), shown next to every name (R8)
-    is_online, agent_session_id,      // from GET devices (refreshed on start and on member_entry); may be stale
+    is_online, offline_since,         // from GET devices (on start, on member_entry, every minute) and from the stream's `presence` events, at once
+    link,                             // agents: the connector's link report, or null: { hears: 'live' | 'oncall', attached, last_call_at, working, since, cut_since, exit: { reason, claude } | null }
+    agent_session_id,
   }>,
 
   sessions: Map<session_id, Session>,            // R6: one per session (32 hex, random, made by a human device's first grant)
@@ -103,6 +105,8 @@ Session = {
   agent_device_id, agent_session_id,     // agent_session_id = agent_device_id.slice(0, 16) (v1.1)
   session_key_epoch, with_history,       // the session key epoch; whether the current agents may read the earlier history
   device_name, is_active, is_online,     // of the current agent: device_name from its encrypted device/<id> register (names are not in the member list, R8)
+  offline_since, link,                   // of the current agent, as on its member (a child session carries its agent's)
+  heard_up_to, heard_at,                 // agent register 'heard' = { up_to, at }: every command of this session up to envelope number heard_up_to was handed to the agent; null: its connector writes no receipts
   profile: { model, task, icon, agent_name, parent_session, is_main } | null,   // agent register 'profile'
   status_lines: [{ id, label, state, detail, object_id, envelope_number, updated_at }],    // 'status_line/<id>', in order of first appearance; updated_at = sent_at
   agent_alerts: [{ key, value, envelope_number }],    // agent registers 'alert/<n>' (refused commands)
@@ -237,6 +241,20 @@ OutboxItem = { local_id, envelope_kind, object_id, timeline_key, recipient_devic
 
 ### The stack (projection)
 
+**The link.** `linkState(member_or_session, now?, { asleep_ms? })` gives `{ state, since, idle_ms, reason }` from `is_online`, `offline_since` and `link`:
+
+| state | when |
+|---|---|
+| `gone` | no stream, and no word that its Claude Code lives on (it ended, was killed, or is off the network) |
+| `cut` | no stream but `link.exit.claude` is `alive`; or a stream and `link.cut_since` (a Claude Code session of its folder lost its connector, `reason: 'folder'`); or a stream and `attached: false` |
+| `live` | a stream and `hears: 'live'`, or no report at all (an older connector) |
+| `oncall` | a stream and `hears: 'oncall'`: it hears on its next tool call |
+| `asleep` | `oncall`, and `last_call_at` (else `since`) is `asleep_ms` or more ago (`ASLEEP_MS`, 10 minutes) |
+
+`since` is when it was cut off or went (null after a hub restart), for `oncall` and `asleep` its last tool call; `idle_ms` how long ago that was; `reason` the connector's exit reason. `cleanLink(report)` is what the model keeps of a report.
+
+**The receipt.** `heardBy(session, envelope_number)` is true, false, or null when the session has no mark. `cardWaitsOn(card)` is the envelope number the agent has to hear of a card (the answer in force, else the message that handed it back), `cardHeard(model, card)` whether it has. The mark only rises; a human device cannot write it (`foreign-key`).
+
 `model.stack`: cards with `object_state: 'open'`, not snoozed (`snoozes` value with `until` in the future), whose session is not archived (`session_settings.archived`), ordered by urgency (critical, high, normal, low), then `created_at` (oldest first, R2). Permission requests are not in it; they are `open_permission_ids` and the app shows them first. `stackOf(model, { desk_id })` filters to the sessions on a desk.
 
 ## Change notifications
@@ -345,6 +363,8 @@ const new_id = await client.merge([object_id, ...], { title, options, ... })   /
 await client.close(object_id, close_summary)                          // after an answer
 await client.sendMessage({ text, details?, html?, attachments?, object_id?, present_card? })   // agent -> everyone
 await client.setStatus({ 'status_line/tests': { label, state, detail, object_id } | null, profile: { model, task, icon, agent_name } })
+await client.markHeard(up_to, { session_id? })                        // the receipt: writes register 'heard' when the mark rises; false when it does not
+await client.hub.agentLink({ hears, attached, last_call_at, working, since, cut_since?, exit? })   // the link report (README "The link"); agentLinkLast for a leaving process
 const object_id = await client.requestPermission({ tool_name, description, input_preview, expires_in_ms })
 await client.withdrawPermission(object_id, withdraw_reason)            // a pending own request; false when it is not pending any more
 await client.publish({ attachments, title, note?, released_until? })   // a published object
