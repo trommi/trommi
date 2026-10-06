@@ -2,7 +2,7 @@
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, stream } from './app.mjs'
-import { Controller, LATER_TAG, PLUS, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sk, sketchSvg } from './ui.mjs'
+import { Controller, PLUS, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -78,7 +78,7 @@ const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="D
 ${deskHead(model, base)}
 <div class="inbox-news-at"><button class="inbox-news" type="button" data-desk-target="news" data-action="desk#toNew" hidden></button></div>
 <div class="inbox-groups" id="desk-list" data-desk-target="list">${deskList(model, base, opts)}</div>
-<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span><button type="submit" name="way" value="later" class="sel-later" title="Later: pull them down, they wait in Off the desk">${LATER_TAG}<span>Later</span></button><button type="submit" name="way" value="duck" class="sel-duck" title="Duck it: the agents take their own advice">${sk('duck')}<span>Duck it</span></button><button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button><button type="submit" name="way" value="shred" class="sel-shred" title="Shred: throw them away">${sk('bin')}<span>Shred</span></button><button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
+<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span>${sideWays({ many: true, between: html`<button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button>` })}<button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
 <div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" data-desk-target="up" data-action="desk#toKnock" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>
 <div class="inbox-edge is-down"><button class="inbox-edge-knock" type="button" data-desk-target="down" data-action="desk#toKnock" data-dir="down" hidden>↓ ${sk('knock')}<span></span></button></div>
 </main>`
@@ -720,6 +720,7 @@ export function register(t) {
     // Undo takes all of them back (later -> wake, the others -> reopen).
     const BATCH = { later: id => t.hub.snooze(id, {}), wake: id => t.hub.snooze(id, { clear: true }), duck: id => t.hub.trust(id, ''), shred: id => t.hub.shred(id, ''), read: id => t.hub.closeInfo(id), reopen: id => t.hub.reopen(id) }
     const BACK = { later: 'wake', duck: 'reopen', shred: 'reopen', read: 'reopen' }
+    const WHAT = { later: 'snooze', duck: 'trust', shred: 'shred' }   // (a single card's toast: app.mjs SAID)
     const SAID = { later: 'Snoozed', duck: 'Left to the agents', shred: 'Shredded', read: 'Read', wake: 'Back on the Desk', reopen: 'Back on the Desk' }
     t.post(/^\/cards\/batch$/, async ({ req, res, form }) => {
       const way = String(form.get('way') ?? ''), m0 = model()
@@ -732,6 +733,16 @@ export function register(t) {
         if (way === 'read' && c.kind !== 'info') continue
         if ((way === 'later' || way === 'shred') && c.kind === 'permission') continue
         try { await BATCH[way](id); done.push(id) } catch (err) { console.warn(way, id, err.message) }
+      }
+      // From a card's own page (from: that card): on to the next open card, or back to where it was opened from
+      // (the Desk when none is left); the toast with its Undo comes along as on any card's action.
+      if (form.has('from')) {
+        const m = model(), from = m0.byCard.get(String(form.get('from'))), home = String(form.get('back') ?? '')
+        const said = done.length && WHAT[way] ? `said=${done[0]}:${WHAT[way]}` : ''
+        if (home.startsWith(`${BASE}/s/`) && /^[\w\-/%+.]+$/.test(home)) return redirect(res, `${home}${said ? `?${said}` : ''}`)
+        const after = from ? m0.fresh.slice(m0.fresh.indexOf(from) + 1) : []
+        const next = done.length ? after.map(c => m.byCard.get(c.id)).find(c => c && m.fresh.includes(c)) ?? m.fresh.find(c => c.id !== from?.id) : from
+        return redirect(res, next ? `${cardPath(next, BASE)}${said ? `?${said}` : ''}` : `${BASE}/${said ? `?${said}` : ''}`)
       }
       if (!t.wantsStream(req)) return redirect(res, BASE || '/')
       const n = done.length, back = BACK[way]

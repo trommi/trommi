@@ -3,7 +3,8 @@
 // low picture; at the right the options, "or" Whatever, and the field whose Send hands the card back with the words.
 // Everything else stands in the comments below the card: the whole text when it is longer than the card holds, the
 // options in detail, links of options, why it is urgent, versions and what happened to the card, the talk.
-// Above the card one row: the way back, where it stands ("3 of 9", before and next), and one "More".
+// Above the card one row: the way back, the ways to put it aside (Later, Duck it, Shred: the Desk's selection bar,
+// for this one card), where it stands ("3 of 9", before and next), and one "More".
 //
 // One form (#card-form-<id>) holds the field and the notes on single options; every way to answer is a button of that
 // form with its own address (formaction), so what was written goes along, with or without scripts. The controller
@@ -11,7 +12,7 @@
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
 import { BASE, SAID, stream } from './app.mjs'
-import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sk, sketch, srcOf, thumb } from './ui.mjs'
+import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6', ZOOM_OUT = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M8 11h6', PLAY = 'M9 6.5v11l9-5.5z'
 const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'
@@ -301,9 +302,10 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
 <nav class="tc-head" aria-label="Around this question">
 <a class="tc-back" data-nav href="${home}" aria-keyshortcuts="Escape"><span>Back to ${session ? session.name : WORDS.desk}</span><kbd>Esc</kbd></a>
+${open && card.kind !== 'permission' ? html`<form class="tc-ways" method="post" action="${base}/cards/batch" aria-label="Put this question aside"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ later: !card.snoozed_until, duck: card.kind === 'decision' })}</form>` : ''}
 ${place ? html`<span class="tc-place">${step(place.prev, 'is-prev', 'The question before', ARROW_L)}<span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>${step(place.next, 'is-next', 'The next question', ARROW_R)}</span>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-more-open" aria-label="More for this question">More ${sk('unfold')}</summary><div class="tc-more-list" role="menu">
-${open && card.kind !== 'permission' ? html`${card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : more('', 'snooze', WORDS.later, `${WORDS.later}: it waits for you on "Later"`, act(card, base, 'snooze'))}${more('is-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw it away unanswered`, act(card, base, 'shred'))}` : ''}
+${open && card.kind !== 'permission' && card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : ''}
 ${copyButton(card)}
 </div></details>
 </nav>

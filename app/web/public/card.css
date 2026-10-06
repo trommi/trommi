@@ -84,6 +84,16 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 .tc-back kbd { flex: none; padding: 3px 6px; border-radius: 5px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 1px 0 var(--line-strong); color: var(--muted); font: 500 .68rem/1 var(--mono); }
 @media (hover: none) and (pointer: coarse) { .tc-back kbd { display: none; }
 }
+/* the ways to put this card aside (ui.mjs sideWays: the Desk's selection bar, for this one card): a quiet row */
+.tc-ways { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 0 auto; }
+.tc-ways button { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 0; border-radius: 9px; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.tc-ways button:hover, .tc-ways button:focus-visible { background: var(--sunken); color: var(--fg); }
+.tc-ways .sketch { width: 20px; height: 20px; }
+.tc-ways .sketch-duck { width: 24px; height: 20px; }
+.tc-ways .sel-later svg { width: 13px; height: 26px; margin: -4px 0 -2px; }
+.tc-ways .sel-shred:hover { color: color-mix(in srgb, var(--urg-critical) 75%, var(--fg)); }
+.tc-ways ~ .tc-place { margin-left: var(--s-2); }
+@container cardpage (max-width: 760px) { .tc-ways button { padding: 0 6px; min-width: 38px; justify-content: center; } .tc-ways button span { display: none; } .tc-head { gap: 2px; } .tc-head .tc-back { flex: none; } .tc-head .tc-back kbd { display: none; } .tc-head .tc-more-open { padding: 0 4px 0 8px; } }
 .tc-place { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; color: var(--muted); font: 500 var(--t-sm)/1 var(--font); }
 .tc-count { padding: 0 6px; white-space: nowrap; }
 .tc-step-card { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); text-decoration: none; }
