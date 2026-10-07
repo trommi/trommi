@@ -358,6 +358,13 @@ function menuDoors(model, base) {
 export const SIDE_FOOT = raw(`<div class="side-foot"><button type="button" class="rail-fold" data-controller="rail" data-action="click->rail#toggle pointerover@document->rail#tip focusin@document->rail#tip focusout@document->rail#untip turbo:before-cache@document->rail#untip" title="Fold the sidebar to a rail ( [ )" aria-label="Fold the sidebar to a rail ( [ )" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.3 4.4Q4.8 11.6 5.4 19.7"/><path d="M15.1 6.1Q12.2 9.2 9.1 12.1Q12.1 14.7 14.8 18"/></svg></button></div>`)
 
 /** How big the desk's name may stand in the Desk box: s (as "Desk"), m (a little smaller), l (two smaller lines). */
+/** The desk switcher (his word, 7 October: "up here there must be a dropdown"): opened by the chevron beside the desk's
+ *  name at the top of the sidebar, and by the folded rail's tag; All desks first, the desks set in under it, the one in
+ *  view marked. One component for both. Kept current by the live stream (#desk-switch-list). */
+function deskSwitchList(model, base) {
+  return html`<span class="desk-switch-list" id="desk-switch-list"><a role="menuitemradio" class="desk-switch-item is-all" data-nav draggable="false" href="${base}/?desk=all" aria-checked="${String(Boolean(model.all))}">${deskMark(model.allFresh?.length > 0)}<b>All desks</b></a>${desksOf(model).map(d => html`<a role="menuitemradio" class="desk-switch-item" data-nav draggable="false" href="${base}/?desk=${d.id}" aria-checked="${String(!model.all && d.id === model.desk)}">${deskMark(d.open > 0)}<b>${d.name}</b>${d.open ? html`<i>${d.open}</i>` : ''}</a>`)}</span>`
+}
+const deskSwitch = (model, base) => html`<nav class="desk-switch" id="desk-switch" role="menu" aria-label="Switch desks" hidden>${deskSwitchList(model, base)}</nav>`
 /** The desk's name on the rail's tag: two short lines at most, whole words (a word too long is cut by its line). */
 function tagLines(name) {
   const words = String(name).trim().split(/\s+/), lines = []
@@ -368,9 +375,10 @@ function tagLines(name) {
 const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? 's' : n <= 11 ? 'm' : 'l' }
 export function topbar(model, base, current) {
     return html`<header class="topbar"><div class="brand">
-<h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a>
+<h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a>${model.desks.length > 1 ? html`<button type="button" class="desk-switch-open" aria-haspopup="menu" aria-expanded="false" aria-controls="desk-switch" title="Switch desks" aria-label="Switch desks">${sk('unfold')}</button>` : ''}
 <button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings" title="Menu">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b><span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
 ${menuDoors(model, base)}
+${model.desks.length > 1 ? deskSwitch(model, base) : ''}
 <button type="button" class="rail-tag" aria-haspopup="menu" aria-controls="brand-doors" title="Desk ${model.deskName}: switch desks" aria-label="Desk ${model.deskName}: switch desks"><span class="rail-tag-string" aria-hidden="true"></span><span class="rail-tag-paper"><b>${tagLines(model.deskName).map(l => html`<span>${l}</span>`)}</b></span></button>
 </div></header>`
 }
@@ -744,7 +752,11 @@ export function register(t) {
   document.addEventListener('click', e => {
     const t = e.target instanceof Element ? e.target : null
     if (!t) return
-    const menu = t.closest('#brand-menu, .rail-tag') && $('#brand-menu'), doors = $('#brand-doors')   // (the rail's desk tag opens the same menu, at its desks)
+    // the desk switcher: the chevron beside the desk's name and the rail's tag (with one desk the tag opens the menu)
+    const sw = $('#desk-switch'), opener = t.closest('.desk-switch-open, .rail-tag')
+    if (sw && opener) { const open = sw.hidden; sw.hidden = !open; for (const b of document.querySelectorAll('.desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', String(open)); shut(); return }
+    if (sw && !sw.hidden && (!t.closest('#desk-switch') || t.closest('a[href]'))) { sw.hidden = true; for (const b of document.querySelectorAll('.desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', 'false') }
+    const menu = t.closest('#brand-menu, .rail-tag') && $('#brand-menu'), doors = $('#brand-doors')   // (with one desk the rail's tag opens the menu, at its desks)
     if (menu && doors) { delete doors.dataset.from; doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); return }
     if (doors && !doors.hidden && !t.closest('#brand-doors')) shut()
     if (t.closest('#theme-toggle')) {
@@ -753,7 +765,7 @@ export function register(t) {
       try { localStorage.setItem('agent-board-theme', dark ? 'dark' : 'light') } catch {}
     }
   })
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') shut() })
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { shut(); const sw = $('#desk-switch'); if (sw && !sw.hidden) { sw.hidden = true; $('.desk-switch-open')?.focus() } } })
   drawer()
   // The rail is a wide screen's: a narrow window has the drawer, whole (the head's data-rail is taken off there).
   const narrow = matchMedia('(max-width: 860px)')
@@ -761,8 +773,8 @@ export function register(t) {
   narrow.addEventListener('change', rail)
   if (narrow.matches) rail()
   t.live('', {
-    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
-    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
+    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), sw: m.desks.length > 1 ? deskSwitchList(m, BASE) : '', desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
+    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
       : was.rows.shape !== now.rows.shape ? stream('update', 'agents', now.sidebar)
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })
