@@ -322,7 +322,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-was > * { margin: 0; }
 .tc-was-title { font: 650 var(--t-md)/1.35 var(--font); }
 .tc-was .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 220px)); gap: var(--s-2); }
-.tc-was .shots img { display: block; width: 100%; height: auto; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line); }
+.tc-was .shots img { display: block; width: 100%; height: auto; max-height: 220px; object-fit: cover; object-position: top; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line); }
 .tc-feed .tc-was-open { justify-self: start; font: 600 var(--t-xs)/1 var(--font); }
 /* ---- what was done with the card (card.mjs cardThread, deed): each act lies in the talk as the small thing the app
    draws for it, at its moment: the thing where a message has its who, beside it one quiet line (what, when), under it
