@@ -388,11 +388,11 @@ ${open && card.kind === 'decision' ? html`<i class="tc-bar-sep"></i>${mini('is-d
 ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-bar-later" method="post" action="${base}/cards/batch"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
 </div></div>`
   const tone = model.byAgent.get(card.agent)?.hue
-  // The card stands free on the page; the session's pale sheet with its pen outline and hatched corners lies only behind
-  // the field to write in and the talk, a little gap under the card (decided 6 October, "Blatt"); the field is the first
-  // thing on it, a note right under the card ("Zettel drunter").
-  const pad = html`<div class="tc-pad"${tone != null ? html` style="--hue:${tone}"` : ''}>${strip}`
-  const notesOpen = raw(`<div class="tc-notes">${corner('tl')}${corner('tr')}${corner('bl')}${corner('br')}`)
+  // The tray (his pick "ink", 7 October): card, field and talk lie on one pad in the session's tone, one step deeper,
+  // with a pen outline and hatched corners; the card is white with an ink outline and a drop shadow, an object on it;
+  // the field is a white note right under the card ("Zettel drunter"), the talk below it.
+  const pad = html`<div class="tc-pad"${tone != null ? html` style="--hue:${tone}"` : ''}>${corner('tl')}${corner('tr')}${corner('bl')}${corner('br')}${strip}`
+  const notesOpen = raw('<div class="tc-notes">')
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
   return html`<main id="cardpage" class="tc-page${full && media ? ' is-full' : ''}" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
 ${pad}<div class="tc-frame">
