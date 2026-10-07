@@ -601,7 +601,12 @@ div.focus-opt { cursor: default; }
 :root[data-theme="dark"] .tc-pad :is(.tc-card, .tc-bar) { --tone-wash-l: .28; --tone-wash-c: .03; }
 .tc-notes { position: relative; box-sizing: border-box; max-width: min(100% - 112px, 760px); margin: 30px auto 0; }
 .tc-notes > :is(.tc-feed, .tc-chat) { margin-inline: auto; }
-.tc-notes > .tc-feed { margin-top: var(--s-4); }
+.tc-notes > .tc-feed { margin-top: 0; margin-bottom: var(--s-4); }
+.tc-notes > .tc-feed[hidden] + .tc-chat { margin-top: 0; }
+/* the field at the talk's foot: it sticks to the window's foot while the card's foot has passed and the talk goes on */
+.tc-page.foot-passed .tc-notes > .tc-chat { position: sticky; bottom: 10px; z-index: 4; }
+.tc-load-earlier { display: block; margin: 0 auto var(--s-4); min-height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: color-mix(in srgb, var(--surface) 60%, transparent); color: var(--muted); font: 600 var(--t-xs)/1 var(--font); cursor: pointer; }
+.tc-load-earlier:hover, .tc-load-earlier:focus-visible { background: var(--surface); color: var(--fg); }
 /* (the card and Later's tag lie over the talk) */
 .tc-pad > .tc-frame { z-index: 2; }
 .tc-notes { z-index: 1; }
