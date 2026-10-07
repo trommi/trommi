@@ -735,3 +735,33 @@ a.files-where:hover span { text-decoration: underline; }
 .desk-move button:hover, .desk-move button:focus-visible { background: var(--sunken); }
 .desk-move button .sketch { flex: none; width: 22px; height: 22px; color: var(--muted); }
 @media (max-width: 860px) { .desk-move.t-pop { left: auto; right: 0; } }
+
+/* ---- A phone's session page (his wish, 7 October): the heading that a wide window has above the conversation stands
+   in the top line, beside the drawer's handle, so the name is not said twice: the drawing (a tap: the drawings), the
+   name (a tap: rename), the red hand when it is stopped, and at its right the three dots with the same menu (Move to
+   other desk, Copy invite link again). The words of a stop stand in a slim line under the top line. The rename and the
+   drawings open under the line, across the window. ---- */
+@media (max-width: 860px) {
+  body[data-t-view="session"]:not([data-pair]) #session .pane-title { z-index: 6; }   /* (over the top line's ground; it lets the pointer through) */
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who {
+    display: flex; position: fixed; z-index: 6; top: env(safe-area-inset-top, 0px); left: calc(50px + env(safe-area-inset-left, 0px)); right: 66px;
+    height: 48px; min-height: 0; max-width: none; margin: 0; align-items: center; gap: 2px; pointer-events: auto;
+  }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-session-edit { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-head-mark { display: grid; place-items: center; width: 40px; height: 44px; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .agent-avatar { width: 28px; height: 28px; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-crown-form { display: none; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-pick-name { min-width: 0; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-head-name { display: flex; align-items: center; min-height: 44px; min-width: 0; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-head-name strong { font: 700 17px/1.2 var(--display); letter-spacing: -.01em; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-pick-desk { flex: none; margin-left: auto; order: 3; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-head-desk { width: 44px; height: 44px; justify-content: center; padding: 0; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-quiet { display: none; }
+  /* the hand beside the name; its words in a slim line under the top line */
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-blocked { order: 2; flex: none; display: inline-flex; align-items: center; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-blocked > span { display: block; position: fixed; z-index: 5; top: calc(48px + env(safe-area-inset-top, 0px)); left: 0; right: 0; padding: 5px var(--gutter) 6px calc(var(--gutter) + 2px); background: var(--bg); border-bottom: 1px solid var(--line); font: 600 var(--t-xs)/1.3 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body[data-t-view="session"]:not([data-pair]):has(#session .t-blocked) #session .log-inner { padding-top: calc(var(--s-5) + 28px); }
+  /* what opens from the line: under it, across the window */
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who :is(.session-editor, .mark-picker).t-pop { position: fixed; top: calc(52px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; width: auto; max-width: none; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .desk-move.t-pop { top: calc(100% + 4px); }
+}

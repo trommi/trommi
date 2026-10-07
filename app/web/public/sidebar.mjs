@@ -369,7 +369,8 @@ const PLACES = { agents: 'Agents', gallery: 'Media', whiteboard: 'Scribble Board
 export function phoneBar(model, base, { view = '', current = null, title = '' } = {}) {
   const session = current ? model.byAgent.get(current) : null
   const waits = (model.blocked ?? 0) + (model.knocking ?? 0) > 0
-  const place = session ? html`<a class="phone-place" data-nav draggable="false" href="${base}/s/${encodeURIComponent(session.id)}">${avatar(session, { crown: false })}<b>${session.name}</b></a>`
+  // (a session's own page: its heading stands in this line itself, with the rename, the drawings and More: session.css)
+  const place = view === 'session' ? '' : session ? html`<a class="phone-place" data-nav draggable="false" href="${base}/s/${encodeURIComponent(session.id)}">${avatar(session, { crown: false })}<b>${session.name}</b></a>`
     : view === 'desk' || view === 'card' ? html`<a class="phone-place" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}><span class="desk-lamp" id="phone-lamp">${deskLamp(model)}</span><b>${model.deskName}</b></a>`
       : html`<span class="phone-place"><b>${PLACES[view] ?? String(title).replace(/^\(\d+\) /, '').replace(/ · Trommi$/, '')}</b></span>`
   return html`<div class="phone-bar" id="phone-bar"><button type="button" class="drawer-open" id="drawer-open" aria-controls="agents" aria-expanded="false" aria-label="Sessions and menu" title="Sessions and menu"${waits ? raw(' data-waits') : ''}>${HANDLE}</button>${place}</div>`
