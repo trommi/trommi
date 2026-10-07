@@ -796,3 +796,7 @@ html[data-rail="folded"] .desk-switch-open { display: none; }
   .desk-switch-item { min-height: 44px; }
   :root:not([data-drawer="open"]) .desk-switch { display: none; }
 }
+
+/* ---- The crown sits centred over its drawing (his word, 7 October: it sat over the drawing's right part): every crown
+   that rests on a session's drawing moves a few px to the left (it leans, so its box centre is right of its look). ---- */
+:is(#agents, #ledger, .pane-who, .inbox-row) .crown-mark { translate: -2.5px 0; }
