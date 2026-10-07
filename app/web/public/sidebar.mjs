@@ -220,7 +220,12 @@ function sidebarParts(model, base, current = null) {
   const top = model.units.filter(u => !u.parent)
   const rows = u => [[u.id, row(u, base, current)], ...(u.subs ?? []).map(s => [s.id, row(s, base, current)])]
   const live = u => u.online || Boolean(u.subs?.some(s => s.online))
-  const here = top.filter(live).flatMap(rows), away = top.filter(u => !live(u)).flatMap(rows)
+  // All desks: every desk is a heading (its drawing and name) with its mains under it
+  const grouped = list => {
+    if (!model.all) return list.flatMap(rows)
+    return model.desks.flatMap(d => { const mine = list.filter(u => model.deskOf(u.agent) === d.id); return mine.length ? [[`deskhead-${d.id}`, (html`<h2 class="agent-deskhead" id="agent-deskhead-${d.id}">${deskMark(model.fresh.some(c => model.deskOf(model.byAgent.get(c.agent)) === d.id))}<span>${d.name || 'Desk'}</span></h2>`)], ...mine.flatMap(rows)] : [] })
+  }
+  const here = grouped(top.filter(live)), away = grouped(top.filter(u => !live(u)))
   return { here, away, shape: `${here.map(r => r[0]).join(' ')}|${away.map(r => r[0]).join(' ')}` }
 }
 
@@ -321,9 +326,10 @@ const deskMark = lit => raw(lit ? sketchSvg('desk', 'menu-lamp is-lit').replace(
  *  row); a desk's lamp is lit while something waits on it. */
 function menuDeskRows(model, base) {
   const desks = desksOf(model)
-  const here = d => (model.desk ? d.id === model.desk : d === desks[0])
+  const here = d => (model.all ? false : model.desk ? d.id === model.desk : d === desks[0])
   // (a row: the link to the desk, and beside it the pencil that renames it: menu#rename puts a field in the name's place)
-  return html`<span class="menu-desk-rows" id="menu-desk-rows">${desks.map((d, i) => html`<span class="menu-desk-row" data-desk="${d.id}"><a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a><button type="button" class="menu-desk-pen" data-action="click->menu#rename" data-menu-id-param="${d.id}" title="Rename ${d.name}" aria-label="Rename the desk ${d.name}">${sk('pen')}</button></span>`)}</span>`
+  const allRow = desks.length > 1 ? html`<span class="menu-desk-row is-all" data-desk="all"><a role="menuitemradio" class="menu-desk is-all" data-nav draggable="false" href="${base}/?desk=all" data-desk="all" aria-checked="${String(Boolean(model.all))}">${deskMark(model.allFresh?.length > 0)}<b>All desks</b></a></span>` : ''
+  return html`<span class="menu-desk-rows${desks.length > 1 ? ' has-all' : ''}" id="menu-desk-rows">${allRow}${desks.map((d, i) => html`<span class="menu-desk-row" data-desk="${d.id}"><a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a><button type="button" class="menu-desk-pen" data-action="click->menu#rename" data-menu-id-param="${d.id}" title="Rename ${d.name}" aria-label="Rename the desk ${d.name}">${sk('pen')}</button></span>`)}</span>`
 }
 
 /** The menu: <nav id="brand-doors">, hidden until its button (#brand-menu) is pressed (or Ctrl K).
