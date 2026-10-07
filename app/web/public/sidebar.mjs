@@ -257,8 +257,9 @@ function deskCard(model, base, d) {
   const open = model.fresh.filter(c => model.deskOf(model.byAgent.get(c.agent)) === d.id).length
   const others = mine.length - (lead ? 1 : 0)
   const who = lead ? `${lead.name}${others ? ` · ${others} ${others === 1 ? 'helper' : 'helpers'}` : ''}` : 'no session yet'
-  const stack = mine.slice(0, 6)
-  return html`<div class="agent-row desk-card-row" id="agent-desk-${d.id}"><a class="desk-card" data-nav draggable="false" href="${base}/?desk=${d.id}" title="Open the desk ${d.name}" style="--n:${stack.length}">${deskMark(open > 0)}<span class="desk-card-text"><strong>${d.name || 'Desk'}</strong><small>${who}</small></span><b class="desk-card-n${open ? '' : ' is-zero'}" aria-label="${open} open">${open}</b><span class="desk-card-stack" aria-hidden="true">${stack.map((a, i) => html`<i style="--i:${i};--hue:${a.hue}"></i>`)}</span></a></div>`
+  // (the stack: the very edges of a folded main, crown-edges, the same drawing, offsets and colours; his word 8 October)
+  const stack = mine.slice(0, EDGES)
+  return html`<div class="agent-row desk-card-row" id="agent-desk-${d.id}" style="--n:${stack.length}"><a class="desk-card" data-nav draggable="false" href="${base}/?desk=${d.id}" title="Open the desk ${d.name}" >${deskMark(open > 0)}<span class="desk-card-text"><strong>${d.name || 'Desk'}</strong><small>${who}</small></span>${open ? html`<b class="desk-card-n" aria-label="${open} open">${open}</b>` : ''}</a>${stack.length ? html`<span class="crown-edges desk-card-edges" aria-hidden="true">${stack.map((a, i) => { const q = edgeQuirk(a.id); return html`<i style="--i:${i};--hue:${a.hue};--tilt:${q.tilt}deg;--dx:${q.dx}px">${raw(q.svg)}</i>` })}</span>` : ''}</div>`
 }
 function sidebarParts(model, base, current = null) {
   const top = model.units.filter(u => !u.parent)
