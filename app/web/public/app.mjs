@@ -381,7 +381,11 @@ export class BoardState {
     const queue = cards.filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until).sort((a, b) => a.created - b.created || a.number - b.number).map(c => c.id)
     const tasks = []
     for (const s of sessionsOf(m)) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
-    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0 })).sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
+    // (the order he dragged them into in the menu: each desk's register holds its place, order; a desk made since then
+    // comes last. Never dragged: the first desk, then by age)
+    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0, order: Number.isFinite(v.order) ? v.order : null }))
+    const ordered = desks.some(d => d.order != null)
+    desks.sort((a, b) => (ordered ? (a.order ?? Infinity) - (b.order ?? Infinity) || a.created - b.created : a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
     const notes = boardNotes(m)
     // Published objects (an agent's publish): the first attachment is the thing itself; type by its media type.
     const assetType = t => (t === 'text/html' ? 'html' : t.startsWith('image/') ? 'image' : t.startsWith('video/') ? 'video' : t.startsWith('audio/') ? 'audio' : 'file')
@@ -744,8 +748,15 @@ function hubFacade(client, board) {
       await client.setCrown(starred ? { session_id: a.session_id ?? undefined, agent_device_id: a.agent_device_id } : null)
     },
     // Desks: the human register desk/<id>.
-    async desk({ id, name, remove }) {
+    async desk({ id, name, remove, order }) {
       if (remove) { await client.setDesk(id, null); return { ok: true } }
+      // A new order (the menu's rows dragged): every desk's place, in one write, so his devices all see the same list.
+      if (Array.isArray(order)) {
+        const have = m().human.desks, ids = order.map(String).filter(x => have.get(x))
+        if (!ids.length) throw fail(400, 'no such desks')
+        await client.setRegisters(Object.fromEntries(ids.map((x, i) => [`desk/${x}`, { ...have.get(x), order: i }])))
+        return { ok: true, order: ids }
+      }
       if (id) { await client.setDesk(id, { ...(m().human.desks.get(id) ?? {}), name }); return { ok: true, desk: { id, name } } }
       const made = [...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, '0')).join('')
       if (!m().human.desks.size) await client.setDesk('main', { name: 'Desk', created_at: Date.now() - 1 })

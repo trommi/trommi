@@ -526,6 +526,8 @@ a.agent-badge { text-decoration: none; }
 .corner-note-bin .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .corner-note-bin:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
 .corner-note-box .corner-note-send { position: relative; width: 58px; height: 40px; }
+.corner-note-sending { display: grid; justify-items: center; gap: 1px; }
+.corner-note-keys { padding: 0; border: 0; background: none; box-shadow: none; color: #6a5d24; font: 600 .66rem/1 var(--font); letter-spacing: .02em; white-space: nowrap; }
 .corner-note-nocrown { font-size: var(--t-xs); color: #6a5d24; }
 /* ---- One calm sidebar (his word, 4 October: "so noch komisch"): one inset for every row, the pills inside with equal
    margins; "New note" a quiet row like "+ New agent", right under it, the unsent notes as small stickies under that;
@@ -716,3 +718,11 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   #agents .agent-row.is-sub .agent-entry { min-height: 48px; }
 }
 @media (max-width: 860px) and (prefers-reduced-motion: reduce) { :root { --drawer-in: 1ms linear; } }
+
+/* ---- the desks' order, dragged (menu#grab): the row picked up lies a little turned on a sheet of paper with a
+   shadow, the pen's outline round it; where it will land the others have made room ---- */
+.topbar #brand-doors .menu-desk-row { touch-action: pan-y; -webkit-user-select: none; user-select: none; }
+.topbar #brand-doors .menu-desk-rows.is-sorting .menu-desk-row { cursor: grabbing; }
+.topbar #brand-doors .menu-desk-rows.is-sorting .menu-desk-row:not(.is-dragging) { transition: none; }
+.topbar #brand-doors .menu-desk-row.is-dragging { z-index: 5; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--fg), 0 12px 22px -10px rgb(20 30 25 / .45); rotate: -1.2deg; touch-action: none; }
+.topbar #brand-doors .menu-desk-row.is-dragging button.menu-desk-pen { opacity: 0; }

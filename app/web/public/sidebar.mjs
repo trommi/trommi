@@ -37,13 +37,18 @@ const isPic = a => /^image\//.test(a?.type ?? '') || /\.(png|jpe?g|gif|webp|svg)
 const noteFiles = atts => (atts ?? []).map(a => `<button type="button" class="corner-note-file${isPic(a) ? ' is-pic' : ''}" data-url="${String(a.url).replace(/"/g, '&quot;')}" data-action="corner-note#unclip" title="${String(a.name).replace(/"/g, '&quot;')}: click to take it off">${isPic(a) ? `<img src="${String(a.url).replace(/"/g, '&quot;')}" alt="" loading="lazy">` : `<span>${String(a.name).replace(/[<&]/g, c => (c === '<' ? '&lt;' : '&amp;'))}</span>`}<i>×</i></button>`).join('')
 const CLIP = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M15.6 7.2 Q11 12 8.4 14.8 Q7 16.6 8.6 17.8 Q10.2 18.8 11.6 17.2 Q15.6 12.8 18.2 9.8 Q20.4 7 18.2 5 Q16 3.4 13.8 5.6 Q9.4 10.4 6.4 13.8 Q3.8 17 6.4 19.6 Q9 21.8 12 19"/></svg>')
 const deskNotesOf = model => (model.state.notes ?? []).filter(m => !m.held).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
+// Ctrl+Enter sends the note (Cmd+Enter on a Mac), anywhere on it; the keys stand small under the envelope. (The
+// envelope's hover says to whom, the app's own label (notes.css data-name), not the browser's tooltip, which stood
+// half outside the note.)
+const MAC = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '')
+const SEND_KEYS = MAC ? 'Meta+Enter' : 'Control+Enter', SEND_WORD = MAC ? '⌘ Enter' : 'Ctrl+Enter'
 export function cornerNote(model, base) {
   const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
   const text = note?.text ?? '', files = note?.attachments ?? []
   return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
 <button type="button" class="corner-note-head" data-action="corner-note#open" title="${text || files.length ? 'Your note: open it (N)' : 'New note (N)'}" aria-label="${text || files.length ? 'Your note: open it' : 'New note'}" aria-expanded="false">${NOTE_ICON}</button>
-<div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop"><textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" data-action="input->corner-note#typed keydown->corner-note#key">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
-<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="note-send corner-note-send" data-action="corner-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="corner-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
+<div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop keydown->corner-note#key"><textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" aria-keyshortcuts="${SEND_KEYS}" data-action="input->corner-note#typed">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
+<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<span class="corner-note-sending"><button type="button" class="note-send corner-note-send" data-action="corner-note#send" data-name="${crown.name}" aria-label="Send to ${crown.name}" aria-keyshortcuts="${SEND_KEYS}">${raw(crownSvg())}</button><kbd class="corner-note-keys" aria-hidden="true">${SEND_WORD}</kbd></span>` : html`<a class="corner-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
 </section>`
 }
 controller('corner-note', class extends Controller {
@@ -468,6 +473,11 @@ controller('menu', class extends Controller {
       if ((t === this.element && name === 'hidden') || (t.id === 'brand-menu' && name === 'aria-expanded') || (t.id === 'desk-new' && name === 'hidden')) e.preventDefault()
     }
     document.addEventListener('turbo:before-morph-attribute', this.keep)
+    this.grab = this.grab.bind(this)
+    this.element.addEventListener('pointerdown', this.grab)
+    // (a row that was dragged is not also a click: the menu stays open and the desk is not switched)
+    this.noClick = e => { if (this.dragged) { e.preventDefault(); e.stopImmediatePropagation(); this.dragged = false } }
+    this.element.addEventListener('click', this.noClick, true)
     this.away = e => { if (!this.element.hidden && e.target instanceof Element && !e.target.closest('.brand')) this.close() }
     document.addEventListener('focusin', this.away)
     if (location.hash === '#jump') {
@@ -481,6 +491,56 @@ controller('menu', class extends Controller {
     document.removeEventListener('focusin', this.away)
     document.removeEventListener('turbo:before-morph-attribute', this.keep)
     clearTimeout(this.timer)
+  }
+  // ---- the desks' order: a row is picked up and dragged up or down (a mouse: as soon as it moves; a finger: held a
+  // moment first, so a swipe still scrolls). The others make room; let go, the order is written (POST /desk { order }:
+  // each desk's register holds its place, on all his devices) and the number keys 1…9 follow it. ----
+  grab(event) {
+    const row = event.target.closest?.('.menu-desk-row')
+    if (!row || event.button > 0 || row.classList.contains('is-renaming') || event.target.closest('.menu-desk-pen, input')) return
+    const list = row.parentElement, rows = () => [...list.querySelectorAll(':scope > .menu-desk-row')]
+    if (rows().length < 2) return
+    const y0 = event.clientY, x0 = event.clientX, touch = event.pointerType !== 'mouse', id = event.pointerId
+    let live = false, timer = 0, grabAt = null
+    const start = rows().map(r => r.dataset.desk).join()
+    const lift = () => {
+      live = true
+      try { row.setPointerCapture(id) } catch {}
+      row.classList.add('is-dragging'); list.classList.add('is-sorting')
+      if (touch) navigator.vibrate?.(8)
+    }
+    if (touch) timer = setTimeout(lift, 280)
+    const renumber = () => rows().forEach((r, i) => { const k = r.querySelector('kbd'); if (k) k.textContent = i < 9 ? String(i + 1) : '' })
+    const move = e => {
+      if (e.pointerId !== id) return
+      const dy = e.clientY - y0
+      if (!live) {
+        if (touch) { if (Math.hypot(e.clientX - x0, dy) > 8) end(e, true); return }
+        if (Math.abs(dy) < 5) return
+        lift()
+      }
+      e.preventDefault()
+      // the row follows the pointer; past the middle of a neighbour it takes that one's place
+      row.style.translate = ''
+      grabAt ??= y0 - row.getBoundingClientRect().top
+      const before = rows().filter(r => r !== row).find(r => { const b = r.getBoundingClientRect(); return e.clientY < b.top + b.height / 2 }) ?? null
+      if (before !== row.nextElementSibling) { list.insertBefore(row, before); renumber() }
+      row.style.translate = `0 ${(e.clientY - grabAt - row.getBoundingClientRect().top).toFixed(1)}px`
+    }
+    const end = (e, cancel = false) => {
+      if (e.pointerId !== id) return
+      clearTimeout(timer)
+      removeEventListener('pointermove', move); removeEventListener('pointerup', end); removeEventListener('pointercancel', end)
+      if (!live) return
+      this.dragged = true; setTimeout(() => { this.dragged = false }, 0)
+      row.classList.remove('is-dragging'); list.classList.remove('is-sorting')
+      row.animate?.([{ translate: row.style.translate || '0 0' }, { translate: '0 0' }], { duration: 160, easing: 'cubic-bezier(.3, 1.4, .5, 1)' })
+      row.style.translate = ''
+      const order = rows().map(r => r.dataset.desk)
+      if (cancel || e.type === 'pointercancel' || order.join() === start) return
+      fetch('/desk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) }).catch(err => console.warn('desk order', err))
+    }
+    addEventListener('pointermove', move, { passive: false }); addEventListener('pointerup', end); addEventListener('pointercancel', end)
   }
   get opener() { return document.getElementById('brand-menu') }
   get items() { return [...this.element.querySelectorAll('[role^="menuitem"], [role="option"]')].filter(n => n.checkVisibility()) }

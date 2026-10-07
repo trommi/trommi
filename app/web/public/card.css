@@ -716,3 +716,52 @@ div.focus-opt { cursor: default; }
 .tc-chip > .final-sign { margin-left: 6px; vertical-align: -1px; }
 .tc-opt.is-settled .tc-opt-label { display: inline-flex; align-items: center; gap: 7px; }
 .tc-opt.is-settled .tc-opt-label .sketch { flex: none; width: 16px; height: 16px; stroke-width: 2; color: var(--stamp-ink-done, currentColor); }
+
+/* ---- pad proposals, local only (card controller tryPad, ?pad=<key>): how card, pad and field hang together ---- */
+/* sheet: the field is the card's own foot, one sheet: the card's paper goes on under a line */
+.tc-page[data-pad="sheet"] .tc-card { border-bottom-left-radius: 0; border-bottom-right-radius: 0; box-shadow: 0 0 0 1px var(--line); }
+.tc-page[data-pad="sheet"] .tc-frame > .tc-chat { display: block; max-width: none; margin: 0; padding: 12px 16px 14px; border-radius: 0 0 var(--r-xl) var(--r-xl); background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 14px 24px -18px rgb(20 40 35 / .5); position: relative; z-index: 1; }
+.tc-page[data-pad="sheet"] .tc-chat > .tc-c-who { display: none; }
+.tc-page[data-pad="sheet"] .tc-chat > .tc-ask { display: grid; box-shadow: none; background: var(--sunken); }
+.tc-page[data-pad="sheet"] .tc-chat > .tc-ask:focus-within { box-shadow: inset 0 0 0 2px var(--tone-pen); }
+/* inside: the field stands in the answer column, in its empty middle */
+.tc-page[data-pad="inside"] .tc-chat:not(:has(.tc-c-who + .tc-ask)) { display: none; }
+.tc-page[data-pad="inside"] .tc-answer .tc-ask { margin-top: auto; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 6px 6px 6px 12px; border-radius: 14px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.tc-page[data-pad="inside"] .tc-answer .tc-ask .tc-field { min-height: 64px; padding: 6px 0; font-size: var(--t-sm); }
+.tc-page[data-pad="inside"] .tc-answer .tc-ask .tc-ask-row { gap: 2px; }
+.tc-page[data-pad="inside"] .tc-answer .tc-ask:focus-within { box-shadow: inset 0 0 0 2px var(--tone-pen); }
+.tc-page[data-pad="inside"] .tc-answer .tc-ask + .tc-or-pair { margin-top: 0; padding-top: 10px; }
+/* tray: the pad's foot is a ledge, a band in the pad's edge tone across its whole width; the field lies in it */
+.tc-page[data-pad="tray"] .tc-pad { padding-bottom: 0; }
+.tc-page[data-pad="tray"] .tc-pad > .tc-frame { z-index: 5; }
+.tc-page[data-pad="tray"] .tc-pad > .tc-chat { max-width: none; margin: 34px 0 0; padding: 18px 112px 20px; display: block; border-radius: 0 0 12px 12px; background: var(--tone-edge); box-shadow: inset 0 1.6px 0 var(--tone-pen), inset 0 5px 0 color-mix(in srgb, var(--tone-pen) 18%, transparent), inset 1.6px 0 0 var(--tone-pen), inset -1.6px 0 0 var(--tone-pen), inset 0 -1.6px 0 var(--tone-pen); }
+.tc-page[data-pad="tray"] .tc-chat > .tc-c-who { display: none; }
+.tc-page[data-pad="tray"] .tc-chat > .tc-ask { display: grid; max-width: 640px; margin-inline: auto; box-shadow: inset 0 0 0 1px var(--tone-pen); }
+.tc-page[data-pad="tray"] .tc-corner:is(.bl, .br) { display: none; }
+/* clip: a clamp at the top holds the card; the field is a second sheet tucked under the card, its top under the card */
+.tc-page[data-pad="clip"] .tc-pad { padding-top: 92px; }
+.tc-clamp { position: absolute; z-index: 4; left: calc(50% - 90px); top: -14px; width: 180px; height: 64px; fill: none; stroke: var(--tone-pen); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; }
+.tc-clamp .clamp-back { fill: color-mix(in srgb, var(--tone-edge) 70%, var(--surface)); }
+.tc-clamp .clamp-hole { fill: var(--tone-wash); }
+.tc-clamp .clamp-line { opacity: .5; }
+.tc-page[data-pad="clip"] .tc-rails > .tc-rail, .tc-page[data-pad="clip"] .tc-rails > .tc-more { top: -64px; }
+.tc-page[data-pad="clip"] .tc-frame > .tc-chat { position: relative; z-index: 0; display: block; max-width: none; margin: -18px 22px 0; padding: 30px 16px 14px; border-radius: 0 0 14px 14px; background: color-mix(in srgb, var(--surface) 86%, var(--tone-wash)); box-shadow: 0 0 0 1px var(--tone-edge), 0 10px 18px -16px rgb(20 40 35 / .5); }
+.tc-page[data-pad="clip"] .tc-chat > .tc-c-who { display: none; }
+.tc-page[data-pad="clip"] .tc-chat > .tc-ask { display: grid; }
+/* tight: the pad hugs card and field: less blue round them, the field as wide as the card, close under it */
+.tc-page[data-pad="tight"] .tc-pad { padding: 68px 0 22px; }
+.tc-page[data-pad="tight"] .tc-pad > .tc-frame { max-width: calc(100% - 72px); }
+.tc-page[data-pad="tight"] .tc-frame > .tc-chat { display: block; max-width: none; margin: 12px 0 0; padding: 0; }
+.tc-page[data-pad="tight"] .tc-chat > .tc-c-who { display: none; }
+.tc-page[data-pad="tight"] .tc-chat > .tc-ask { display: grid; padding: 8px 8px 8px 18px; border-radius: var(--r-xl); box-shadow: 0 0 0 1px var(--line), 0 14px 24px -18px rgb(20 40 35 / .5); }
+.tc-page[data-pad="tight"] .tc-chat > .tc-ask:focus-within { box-shadow: 0 0 0 2px var(--tone-pen), 0 14px 24px -18px rgb(20 40 35 / .5); }
+.tc-page[data-pad="tight"] .tc-corner { width: 40px; height: 40px; }
+/* (sheet, clip, tight: Later's tag hangs under the field now, inside the pad) */
+.tc-page:is([data-pad="sheet"], [data-pad="clip"], [data-pad="tight"]) .tc-pad { padding-bottom: 104px; }
+
+/* ---- Send held with Ctrl (Cmd): the reverse card, in its colours; Ctrl+Enter or a click sends and reverses ---- */
+.tc-send-uno { display: none; }
+.tc-send.is-reverse { background: radial-gradient(ellipse 13px 15px at 50% 50%, #14161a 0 94%, transparent 100%), conic-gradient(from 7deg at 53% 47%, var(--uno-red) 0 25%, var(--uno-yellow) 0 50%, var(--uno-green) 0 75%, var(--uno-blue) 0); color: #fff; box-shadow: inset 0 0 0 1.5px #14161a; rotate: -6deg; transition: rotate 120ms; }
+.tc-send.is-reverse > .sketch { display: none; }
+.tc-send.is-reverse > .tc-send-uno { display: grid; place-items: center; }
+.tc-send.is-reverse .tc-send-uno .sketch { width: 22px; height: 22px; stroke-width: 2.2; }
