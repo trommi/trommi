@@ -40,7 +40,8 @@ const client = await openRoom({ storage })           // null if this storage hol
 
 // 3. Join from an invite link (human or agent; the role is in the signed offer).
 const join = await joinRoom({ link, device_name: 'Phone', storage })
-join.check_code        // Promise<'123456'>: resolves when the inviter revealed; a human shows it, an agent may log it
+join.check_code        // Promise<'07-33-12-05-60-01'>: six numbers 0–63, resolves when the inviter revealed. Show it as emoji:
+                       // checkEmoji(code) -> [{ emoji, word }] (check-emoji.mjs); a human device shows them, an agent logs checkEmojiLine(code)
 const client = await join.client                      // resolves when the inviter added this device
 
 // 4. Recover with the code: removes every human device, keeps the agents. A NEW code comes back once.
@@ -232,7 +233,8 @@ Agent keys sent by humans, and human keys sent by agents, are ignored (alert).
 
 ```js
 Invite = { invite_id, device_role, link, label, expires_at,
-  code_choices,                                  // from 'confirm_code' on: four six-digit codes, shuffled, one true: the human taps the one the new device shows
+  check_code,                                    // from 'confirm_code' on: the same code the new device shows (show it with checkEmoji);
+                                                 // the human compares the two and calls confirmInvite(invite_id, true | false)
   invite_state: 'open' | 'confirm_code' | 'adding' | 'joined' | 'expired' | 'failed',
   newcomer: null | { device_id, device_name },   // after the request arrived
   error: null | code }
@@ -332,6 +334,8 @@ await client.assignSession({ session_id, agent_device_id, with_history })       
         // history key and read back through the back links; agents already there never get it this way (per agent, review 2)
 const invite = await client.createInvite({ device_role: 'agent', label, session_id?, with_history? })
         // once the agent joined, the core posts the grant itself: a new session, or the handover of session_id
+await client.confirmInvite(invite_id, matches)        // the human compared the six emoji: true adds the newcomer, false burns the
+        // invite (code-mismatch, nobody added). Only on the device that made the link; anything but a boolean is refused
 client.sessionOfAgent(agent_device_id)                // the session an agent is assigned to now
 // removeDevices() also rotates every session key (without the removed agents); a new human device gets every
 // session key re-sealed by its inviter; recovery and passphrase login re-key the sessions too.

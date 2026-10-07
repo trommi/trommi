@@ -8,7 +8,7 @@ import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../hub/server.mjs'
 import { startTestHub } from './test-hub.mjs'
-import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, joinWithRecoveryCode, roomLink, passphraseProblem, generatePassphrase, sealEscrowV2, memoryStorage, timelineEvents, z } from './index.mjs'
+import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, joinWithRecoveryCode, roomLink, passphraseProblem, generatePassphrase, sealEscrowV2, memoryStorage, timelineEvents, checkEmoji, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
@@ -70,14 +70,16 @@ async function room({ laptop = false, agents = 0 } = {}) {
   for (let i = 0; i < agents; i++) out.agents.push(await addAgent(phone, `Agent ${i}`))
   return out
 }
+/** The human compares the emoji the inviting device shows with the ones the newcomer shows, and taps accordingly. */
+const compareCodes = (inviter, invite_id, shown) => inviter.confirmInvite(invite_id, inviter.model.invites.get(invite_id).check_code === shown)
 async function addHuman(inviter, name, storage = memoryStorage({ extractable_keys: false })) {
   const inv = await inviter.createInvite({ device_role: 'human' })
   const j = joinRoom({ link: inv.link, storage, device_name: name, poll_ms: 50 })
   const code = await j.check_code
   await until(() => inviter.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'inviter waits for code')
-  const choices = inviter.model.invites.get(inv.invite_id).code_choices
-  assert(choices.length === 4 && choices.includes(code) && new Set(choices).size === 4, 'four code choices, one true')
-  await inviter.confirmInvite(inv.invite_id, code)
+  const shown = inviter.model.invites.get(inv.invite_id).check_code
+  assert(shown === code && checkEmoji(code).length === 6, 'both devices show the same six emoji')
+  await compareCodes(inviter, inv.invite_id, code)
   const c = track(await j.client)
   await c.start()
   return c
@@ -116,15 +118,18 @@ await test('two humans + agent: invite with check code, agent without, roles and
   await until(() => laptop.model.sessions.get(labelled.session_id)?.settings?.name === 'Krypto', 'inviter label in session/<id> (R8)')
 })
 
-await test('wrong check code burns the invite and adds nobody', async () => {
+await test('"they don\'t match" burns the invite and adds nobody', async () => {
   const { phone } = await room()
   const inv = await phone.createInvite({ device_role: 'human' })
   const j = joinRoom({ link: inv.link, storage: memoryStorage(), poll_ms: 50 })
   const code = await j.check_code
   await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'confirm state')
-  const wrong = String((Number(code) + 1) % 1000000).padStart(6, '0')
+  eq(phone.model.invites.get(inv.invite_id).check_code, code, 'the inviting device shows the same code')
   let err = null
-  try { await phone.confirmInvite(inv.invite_id, wrong) } catch (e) { err = e }
+  try { await phone.confirmInvite(inv.invite_id, '1') } catch (e) { err = e }
+  eq(err?.code, 'bad-argument', 'only true or false confirms')
+  eq(phone.model.invites.get(inv.invite_id).invite_state, 'confirm_code', 'a bad argument changes nothing')
+  try { await phone.confirmInvite(inv.invite_id, false) } catch (e) { err = e }
   eq(err?.code, 'code-mismatch', 'refused')
   eq(phone.model.invites.get(inv.invite_id).invite_state, 'failed', 'burnt')
   j.cancel()
@@ -1074,13 +1079,15 @@ await test('review 3 agent invites: a link two devices answer adds nobody; with 
   first.client.catch(() => {})
   await until(() => phone.model.invites.get(bound.invite_id).invite_state === 'confirm_code', 'waits for the code')
   let err = null
-  try { await phone.confirmInvite(bound.invite_id, '000000' === await first.check_code ? '111111' : '000000') } catch (e) { err = e }
+  // The intended agent never answered: its terminal shows nothing like the intruder's code, so they do not match.
+  assert(phone.model.invites.get(bound.invite_id).check_code === await first.check_code, 'the app shows the intruder\'s code')
+  try { await phone.confirmInvite(bound.invite_id, false) } catch (e) { err = e }
   eq(err?.code, 'code-mismatch', 'the intended agent\'s code does not match the intruder\'s request')
   first.cancel()
   const ok3 = await phone.createInvite({ device_role: 'agent', confirm_code: true })
   const real = joinRoom({ link: ok3.link, storage: memoryStorage(), device_name: 'Real', poll_ms: 50 })
   await until(() => phone.model.invites.get(ok3.invite_id).invite_state === 'confirm_code', 'waits for the code')
-  await phone.confirmInvite(ok3.invite_id, await real.check_code)
+  await compareCodes(phone, ok3.invite_id, await real.check_code)
   const c = track(await real.client)
   await until(() => phone.model.members.get(c.my_device_id)?.device_role === 'agent', 'the intended agent is added')
 })
@@ -1097,7 +1104,7 @@ async function answerTakeover(phone, inv, name = 'Heir') {
 async function takeOver(phone, session_id, name) {
   const inv = await phone.createInvite({ device_role: 'agent', session_id, takeover: true })
   const { j, code } = await answerTakeover(phone, inv, name)
-  await phone.confirmInvite(inv.invite_id, code)
+  await compareCodes(phone, inv.invite_id, code)
   const c = track(await j.client)
   await c.start()
   await c.whenSession()
@@ -1132,7 +1139,7 @@ if (z.KEY_SCOPE) await test('continue a session: the new connector is the same s
   eq(JSON.stringify(phone.model.sessions.get(S).agent_device_ids), JSON.stringify([a1.my_device_id]), 'the session is still the old device\'s')
   const epochBefore = phone.sessionKeys.get(S).state.epoch
   const stateBefore = a1.state, tokenBefore = a1.hub.token
-  await phone.confirmInvite(inv.invite_id, code)
+  await compareCodes(phone, inv.invite_id, code)
   const heir = track(await j.client)
   await heir.start()
   await heir.whenSession()
@@ -1230,8 +1237,8 @@ if (z.KEY_SCOPE) await test('continue a session: a link for session A cannot con
   const wrongInv = await phone.createInvite({ device_role: 'agent', session_id: A, takeover: true })
   const w = await answerTakeover(phone, wrongInv, 'Wrong')
   let err = null
-  try { await phone.confirmInvite(wrongInv.invite_id, String((Number(w.code) + 1) % 1000000).padStart(6, '0')) } catch (e) { err = e }
-  eq(err?.code, 'code-mismatch', 'a wrong code is refused')
+  try { await phone.confirmInvite(wrongInv.invite_id, false) } catch (e) { err = e }
+  eq(err?.code, 'code-mismatch', '"they don\'t match" is refused')
   w.j.cancel()
   // an expired link: the newcomer's request comes too late
   const old = await phone.createInvite({ device_role: 'agent', session_id: A, takeover: true, ttl_ms: 500 })
@@ -2118,7 +2125,7 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   const j = joinRoom({ link: inv.link, storage: freshStorage, poll_ms: 50 })
   const code = await j.check_code
   await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'confirm')
-  await phone.confirmInvite(inv.invite_id, code)
+  await compareCodes(phone, inv.invite_id, code)
   const fresh = track(await j.client)
   const pages = []
   const env = fresh.hub.envelopes.bind(fresh.hub)
@@ -2155,7 +2162,7 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   const j2 = joinRoom({ link: inv2.link, storage: memoryStorage(), poll_ms: 50 })
   const code2 = await j2.check_code
   await until(() => phone.model.invites.get(inv2.invite_id).invite_state === 'confirm_code', 'confirm 2')
-  await phone.confirmInvite(inv2.invite_id, code2)
+  await compareCodes(phone, inv2.invite_id, code2)
   const full = track(await j2.client)
   full.options.snapshot = false
   const t1 = performance.now()
@@ -2170,7 +2177,7 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   const j3 = joinRoom({ link: inv3.link, storage: memoryStorage(), poll_ms: 50 })
   const code3 = await j3.check_code
   await until(() => phone.model.invites.get(inv3.invite_id).invite_state === 'confirm_code', 'confirm 3')
-  await phone.confirmInvite(inv3.invite_id, code3)
+  await compareCodes(phone, inv3.invite_id, code3)
   const third = track(await j3.client)
   await third.start()
   assert(!third.stats.snapshot, 'no boot from a snapshot older than the newest removal')

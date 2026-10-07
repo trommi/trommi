@@ -246,8 +246,10 @@ reveal  = body ‖ Sign(inviter, "trommi/v1/invite-reveal-sig", body)
   body  = 0x01 0x07 ‖ inviteId(16) ‖ nonce(32) ‖ requestHash(32)
   requestHash = H("trommi/v1/invite-request", request body ‖ mac)             without the signature
 
-checkCode = decimal, six digits, zero-padded:
-            (first 8 bytes of H("trommi/v1/invite-code", offer body ‖ request body ‖ mac ‖ nonce) as u64) mod 1 000 000
+checkCode = six numbers 0–63 (36 bits), written as two decimal digits each, joined by "-" ("07-33-12-05-60-01"):
+            the first 36 bits of H("trommi/v1/invite-code", offer body ‖ request body ‖ mac ‖ nonce), most significant
+            bit first, cut into six groups of 6 bits. Each number is the index into the 64 emoji of shared/check-emoji.mjs
+            (the Matrix SAS emoji, each with an English word); both devices show the six emoji, the human compares them.
 ```
 
 The request carries no name (v1.1, R8). The hashes and the check code cover the signed bodies, never an Ed25519 signature (R9), so they are the same on every platform.

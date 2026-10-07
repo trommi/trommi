@@ -24,7 +24,7 @@ export async function createLoadRoom({ hub_url, humans = 1, agents = 4, found_to
     const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: `Human ${i}`, poll_ms: 50, ...opts })
     const code = await j.check_code
     for (let k = 0; k < 200 && observer.model.invites.get(inv.invite_id).invite_state !== 'confirm_code'; k++) await sleep(25)
-    await observer.confirmInvite(inv.invite_id, code)
+    await observer.confirmInvite(inv.invite_id, observer.model.invites.get(inv.invite_id).check_code === code)   // the human compares the emoji
     const c = await j.client
     await c.start()
     hs.push(c)

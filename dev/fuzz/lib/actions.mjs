@@ -242,7 +242,7 @@ export class Runner {
       try {
         code = await inviteStep(this, a, inviter, j.check_code, 'check code')
         await inviteStep(this, a, inviter, untilTrue(() => inviter.client.model.invites.get(inv.invite_id)?.invite_state === 'confirm_code', 'inviter never saw the request', 20000), 'inviter request')
-        await inviter.client.confirmInvite(inv.invite_id, code)
+        await inviter.client.confirmInvite(inv.invite_id, inviter.client.model.invites.get(inv.invite_id)?.check_code === code)   // the human compares the emoji
         d.joinClient = await inviteStep(this, a, inviter, j.client, 'join')
       } catch (e) { j.cancel(); j.client.catch(() => {}); w_forget(this.w, d); if (e.known || e.code === 'offline' || e.code === 'invite-expired') return e.known ? 'refused:invite-stuck' : `refused:${e.code}`; throw e }
       await this.finishJoin(d)
@@ -255,30 +255,32 @@ export class Runner {
         code = await inviteStep(this, a, inviter, j.check_code, 'check code')
         await inviteStep(this, a, inviter, untilTrue(() => inviter.client.model.invites.get(inv.invite_id)?.invite_state === 'confirm_code', 'inviter never saw the request', 20000), 'inviter request')
       } catch (e) { j.cancel(); j.client.catch(() => {}); w_forget(this.w, d); if (e.known) return 'refused:invite-stuck'; throw e }
-      const wrong = String((Number(code) + 1 + 6 * 7) % 1000000).padStart(6, '0')
+      // The human taps "They don't match" (whatever the two screens show): the invite burns, nobody joins.
+      void code
       let err = null
-      try { await inviter.client.confirmInvite(inv.invite_id, wrong) } catch (e) { err = e }
-      if (err?.code !== 'code-mismatch') throw new Finding('invariant', `a wrong check code was not refused (got ${err?.code ?? 'success'})`, { action: a })
+      try { await inviter.client.confirmInvite(inv.invite_id, false) } catch (e) { err = e }
+      if (err?.code !== 'code-mismatch') throw new Finding('invariant', `"they don't match" was not refused (got ${err?.code ?? 'success'})`, { action: a })
       j.cancel(); await j.client.catch(() => {})
       w_forget(this.w, d)
       return 'ok'
     }
-    // stolen: an attacker posts its request first with the same link; the human types the code shown on the victim's screen
+    // stolen: an attacker posts its request first with the same link; the human compares the inviter's emoji with the victim's screen
     const attacker = this.w.t.core.joinRoom({ link: inv.link, storage: this.w.newStorage('human'), device_name: 'attacker', fetch: this.w.makeFetch(d), poll_ms: 40 })
     attacker.client.catch(() => {})
     await untilTrue(() => inviter.client.model.invites.get(inv.invite_id)?.invite_state === 'confirm_code', 'inviter never saw a request', 8000).catch(() => {})
     const victimCode = await Promise.race([j.check_code.catch(() => null), attacker.check_code.then(() => null, () => null), sleep(2500).then(() => null)])
-    const typed = victimCode ?? '000000'
+    const shown = inviter.client.model.invites.get(inv.invite_id)?.check_code ?? null
+    const matches = !!victimCode && shown === victimCode
     let err = null
-    try { await inviter.client.confirmInvite(inv.invite_id, typed) } catch (e) { err = e }
+    try { await inviter.client.confirmInvite(inv.invite_id, matches) } catch (e) { err = e }
     attacker.cancel()
     const joinedNow = inviter.client.model.invites.get(inv.invite_id)?.invite_state === 'joined'
     if (!joinedNow) j.cancel()
     await Promise.allSettled([attacker.client, j.client])
-    // Whoever was answered first got the code. If the typed code was the victim's and the victim was answered, it joins; otherwise nobody may join.
+    // Whoever was answered first got the code. If the inviter's code matched the victim's screen and the victim was answered, it joins; otherwise nobody may join.
     const joined = inviter.client.model.invites.get(inv.invite_id)?.invite_state === 'joined'
     if (joined) {
-      if (victimCode && typed === victimCode) { /* the victim was first: legitimate */ d.joinClient = await j.client.catch(() => null); if (d.joinClient) { await this.finishJoin(d); O.addMember(d.name, 'human') } else throw new Finding('invariant', 'invite joined but the intended device never got in', { action: a }) }
+      if (matches) { /* the victim was first: legitimate */ d.joinClient = await j.client.catch(() => null); if (d.joinClient) { await this.finishJoin(d); O.addMember(d.name, 'human') } else throw new Finding('invariant', 'invite joined but the intended device never got in', { action: a }) }
       else throw new Finding('invariant', 'stolen invite link: a device joined without the right check code', { action: a })
     } else w_forget(this.w, d)
     await sleep(0)

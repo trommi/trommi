@@ -1,7 +1,7 @@
 // End to end, with real crypto against a real hub: browser A creates an account (email + generated password,
 // Emergency Kit), invites an agent (a Node process on the
 // same client core), the agent files cards and status lines, A answers in the page, hands back, asks What??; a
-// second browser B joins with the invite link and the check code typed on A, and sees the same Desk; a third browser C
+// second browser B joins with the invite link and the check code (six emoji) compared on A, and sees the same Desk; a third browser C
 // logs in with email + password, a fourth D with the Emergency Kit (forgot password); C logs out (removed from the
 // member list, IndexedDB and caches empty) and logs in again.
 //   node dev/e2e.mjs [--app http://127.0.0.1:8900] [--hub http://127.0.0.1:8890] [--shots dir] [--resolve 'MAP …']
@@ -357,13 +357,15 @@ try {
   await B.shot('e2e-6-join.png')
   await B.js("document.querySelector('#join-form input[name=device_name]').value = 'Phone'; document.querySelector('#join-form button').click()")
   await B.until("document.getElementById('check-code')", 'check code on B')
-  const checkCode = (await B.js("return document.getElementById('check-code').textContent")).replace(/\D/g, '')
-  check(/^\d{6}$/.test(checkCode), 'B shows a six-digit check code')
+  const checkCode = await B.js("return document.getElementById('check-code').dataset.code")
+  const shownB = await B.js("return [...document.querySelectorAll('#check-code .check-emoji-glyph')].map(e => e.textContent).join(' ')")
+  check(/^\d\d(-\d\d){5}$/.test(checkCode) && shownB.split(' ').length === 6, 'B shows a check code of six emoji')
   await B.shot('e2e-7-check-code.png')
-  await A.until("document.querySelector('[data-state=confirm_code] .room-choice')", 'A asks which code B shows')
-  await A.shot('e2e-8-type-code.png')
-  check(await A.js(`return document.querySelectorAll('[data-state=confirm_code] .room-choice').length === 4 && [...document.querySelectorAll('[data-state=confirm_code] input[name=code]')].filter(i => i.value === '${checkCode}').length === 1`), 'A offers four codes, one of them B\'s')
-  await A.js(`[...document.querySelectorAll('[data-state=confirm_code] input[name=code]')].find(i => i.value === '${checkCode}').form.querySelector('button').click()`)
+  await A.until("document.querySelector('[data-state=confirm_code] .check-emoji')", 'A shows the emoji to compare')
+  await A.shot('e2e-8-compare-code.png')
+  const shownA = await A.js("return [...document.querySelectorAll('[data-state=confirm_code] .check-emoji-glyph')].map(e => e.textContent).join(' ')")
+  check(shownA === shownB && await A.js("return document.querySelectorAll('[data-state=confirm_code] .check-yes, [data-state=confirm_code] .check-no').length === 2"), 'A shows the same six emoji as B, with "They match" and "They don\'t match"')
+  await A.js("document.querySelector('[data-state=confirm_code] .check-yes').click()")
   await B.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'B in the room', 20000)
   check(true, 'B joined with the check code')
   await B.until(`document.getElementById('row-${cardId}')`, 'B sees the card', 15000).then(() => check(true, 'B sees the same open card'), e => check(false, e.message))

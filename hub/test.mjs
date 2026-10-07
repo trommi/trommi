@@ -96,7 +96,7 @@ async function foundRoom(w) {
   await signIn(w, phone); await sync(w, phone)
   return phone
 }
-/** The whole join over HTTP; a human compares the six digits, an agent joins by the link alone. */
+/** The whole join over HTTP; a human compares the check code (six emoji), an agent joins by the link alone. */
 async function join(w, inviter, device, role) {
   const made = await z.createInvite({ state: inviter.state, inviter: inviter.device, hub: w.hubUrl, role })
   const posted = await ok(w, 'POST', `${R(w)}/invites`, { token: inviter.token, body: { signed_offer: b64u(made.offer) } })
@@ -118,7 +118,7 @@ async function join(w, inviter, device, role) {
   const st = await ok(w, 'GET', `${R(w)}/invites/${inviteId}/status?request_hash=${request_hash}`)
   assert.equal(st.join_status, 'revealed')
   const shown = await z.checkReveal({ join: joining, reveal: unb64u(st.signed_reveal), log })
-  assert.equal(shown, code, 'both devices show the same six digits')
+  assert.equal(shown, code, 'both devices show the same check code')
   const human = role === ROLE.HUMAN
   const done = await z.finalizeInvite({ invite: made.invite, state: inviter.state, inviter: inviter.device, secret: inviter.secrets.get(inviter.state.epoch), codeConfirmed: human, skipCheckCode: !human })
   const added = await ok(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(done.entry), sealed_room_keys: done.wrap ? [{ device_id: hex(device.id), key_sealed: b64u(done.wrap) }] : [] } })
@@ -342,12 +342,12 @@ test('found, sign in, members; the same room twice, names, a token for another h
   await w.hub.close()
 })
 
-test('invite and join: a human with the six-digit code, an agent by the link; devices; no names; join_request event', async () => {
+test('invite and join: a human with the check code (six 6-bit numbers), an agent by the link; devices; no names; join_request event', async () => {
   const w = await newHub(); w.ip = freshIp()
   w.phone = await foundRoom(w)
   const inviterStream = await openStream(w, w.phone)
   const { c: laptop, code, inviteId } = await join(w, w.phone, await z.generateDevice(), ROLE.HUMAN)
-  assert.match(code, /^\d{6}$/)
+  assert.match(code, /^\d\d(-\d\d){5}$/)
   await inviterStream.until(e => e.event === 'join_request' && e.data.invite_id === inviteId, 'join_request to the inviter')
   await inviterStream.until(e => e.event === 'member_entry' && e.data.entry_number === 1, 'member_entry')
   const { c: agent } = await join(w, w.phone, await z.generateDevice({ extractable: true }), ROLE.AGENT)

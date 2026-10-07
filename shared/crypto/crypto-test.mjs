@@ -372,11 +372,16 @@ test('link form and parsing', async () => {
   assert.equal(invite.inviteId.length, 16)
   assert.ok(!link.includes(b64u(invite.inviteId)), 'the id the hub knows is derived from the secret, not in the link')
 })
-test('full flow: both sides show the same six digits; the new member opens the room key', async () => {
+test('full flow: both sides show the same check code (six 6-bit numbers); the new member opens the room key', async () => {
   const { w, link, offer, invite, device } = await inviteSetup(ROLE.HUMAN)
   const { request, join } = await z.createJoinRequest({ link, offer, log: w.hub.log, device, now: T0 })
   const { reveal, code, member } = await z.acceptJoinRequest({ invite, request, inviter: w.phone.device, now: T0 + MIN })
-  assert.match(code, /^\d{6}$/)
+  assert.match(code, /^\d\d(-\d\d){5}$/)
+  // Recomputed by hand: the top 36 bits of H(invite-code, offer body ‖ request body ‖ MAC ‖ nonce), six bits each.
+  const h = await z.hash(z.LABEL.inviteCode, offer.slice(0, -64), request.slice(0, -64), invite.nonce)
+  const bits = [...h.slice(0, 5)].map(b => b.toString(2).padStart(8, '0')).join('').slice(0, 36)
+  assert.equal(code, bits.match(/.{6}/g).map(b => String(parseInt(b, 2)).padStart(2, '0')).join('-'))
+  assert.equal(z.CHECK_CODE_SYMBOLS * 6, 36, '36 bits, more than the 19.9 of six decimal digits')
   assert.equal(await z.checkReveal({ join, reveal, log: w.hub.log }), code)
   assert.deepEqual(member.id, device.id)
   const done = await z.finalizeInvite({ invite, state: w.phone.state, inviter: w.phone.device, secret: w.phone.secrets.get(1), codeConfirmed: true, now: T0 + 2 * MIN })

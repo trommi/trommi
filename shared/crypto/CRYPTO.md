@@ -58,7 +58,7 @@ const agent = await z.generateDevice({ extractable: true })
 const { link, offer, invite } = await z.createInvite({ state, inviter: phone, hub: 'https://hub.example', role: z.ROLE.AGENT })
 const { request, join } = await z.createJoinRequest({ link, offer, log, device: agent, name: 'Builder' })
 const { reveal, code: shown } = await z.acceptJoinRequest({ invite, request, inviter: phone })
-await z.checkReveal({ join, reveal, log }) === shown      // both devices show the same six digits
+await z.checkReveal({ join, reveal, log }) === shown      // both devices show the same check code (six emoji, ../check-emoji.mjs)
 const added = await z.finalizeInvite({ invite, state, inviter: phone, secret, codeConfirmed: true })
 log.push(added.entry); state = added.state
 const joined = await z.completeJoin({ join, device: agent, log, wrap: added.wrap })

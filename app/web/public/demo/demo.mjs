@@ -186,22 +186,23 @@ class MockClient {
   // ---- membership (mock: an invite that is joined by a pretend phone after a moment) ----
   async createInvite({ device_role = 'human', app_url = `${location.origin}/join`, session_id = null, takeover = false } = {}) {
     const invite_id = hex(32)
-    const invite = { invite_id, device_role, link: `${app_url}#v1.mock.${this.model.room.room_id.slice(0, 16)}.${hex(32)}`, expires_at: Date.now() + 600000, invite_state: 'open', newcomer: null, error: null, check_code: String(100000 + Math.floor(Math.random() * 900000)), session_id, takeover: !!takeover }
+    const invite = { invite_id, device_role, link: `${app_url}#v1.mock.${this.model.room.room_id.slice(0, 16)}.${hex(32)}`, expires_at: Date.now() + 600000, invite_state: 'open', newcomer: null, error: null, check_code: null, session_id, takeover: !!takeover }
     this.changed(c => { this.model.invites.set(invite_id, invite); c.invites.add(invite_id) })
     setTimeout(() => this.changed(c => {
       invite.newcomer = { device_id: hex(64), device_name: device_role === 'agent' ? 'claude-session' : 'Phone (new)' }
-      // (a link that continues a session always asks for the number, as the core does)
+      // (a link that continues a session always asks to compare the check code, as the core does)
       const ask = device_role !== 'agent' || takeover
       invite.invite_state = ask ? 'confirm_code' : 'adding'
-      if (ask) { const six = () => String(100000 + Math.floor(Math.random() * 900000)); invite.code_choices = [invite.check_code, six(), six(), six()].sort(() => Math.random() - 0.5) }
+      // the core's format: six numbers 0–63, shown as emoji (shared/check-emoji.mjs)
+      if (ask) invite.check_code = Array.from({ length: 6 }, () => String(Math.floor(Math.random() * 64)).padStart(2, '0')).join('-')
       c.invites.add(invite_id)
       if (!ask) setTimeout(() => this.addMember(invite), 400)
     }), 2500)
     return invite
   }
-  async confirmInvite(invite_id, code) {
+  async confirmInvite(invite_id, matches) {
     const invite = this.model.invites.get(invite_id)
-    if (code !== invite.check_code) { this.changed(c => { invite.invite_state = 'failed'; invite.error = 'bad-code'; c.invites.add(invite_id) }); throw Object.assign(new Error('the check code does not match; the invite is burnt'), { code: 'bad-code' }) }
+    if (matches !== true) { this.changed(c => { invite.invite_state = 'failed'; invite.error = 'code-mismatch'; c.invites.add(invite_id) }); throw Object.assign(new Error('the check codes do not match: nobody was added, the invite is spent'), { code: 'code-mismatch' }) }
     this.addMember(invite)
   }
   addMember(invite) {

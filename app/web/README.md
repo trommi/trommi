@@ -120,8 +120,8 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 - **Emergency Kit:** offered once right after: twelve words to Download (a text file) or Print (only the kit prints).
   "Later" stores nothing; Settings → Account says calmly that no kit is made yet and makes one from the password
   whenever the person likes (a new kit replaces the old).
-- **Log in** on a new device: email + password, or **Scan from a signed-in device** (the QR pairing with the six-digit
-  check code, unchanged). The recovery words are never needed to log in. A wrong password and an unknown email give the
+- **Log in** on a new device: email + password, or **Scan from a signed-in device** (the QR pairing; both devices show
+  the same six emoji, the signed-in one asks "They match" / "They don't match"). The recovery words are never needed to log in. A wrong password and an unknown email give the
   same "Email or password is wrong."
 - **Forgot password:** email + the kit's twelve words + a new password; the device logs in and the old password stops
   working. Without a kit: change the password on a device that is still logged in (Settings → Password).

@@ -1013,10 +1013,18 @@ const offerBodyOf = offer => decodeOffer(offer).body
 const requestSignedOf = request => request.slice(0, request.length - 64)
 export const inviteOfferHash = offer => hash(LABEL.inviteOffer, offerBodyOf(offer))
 export const inviteRequestHash = request => hash(LABEL.inviteRequest, requestSignedOf(request))
+/** Length of the check code: six symbols of 6 bits each (36 bits), shown as emoji (shared/check-emoji.mjs). */
+export const CHECK_CODE_SYMBOLS = 6
+/**
+ * The check code: the first 36 bits of H("trommi/v1/invite-code", ...) as six numbers 0–63, most significant bits
+ * first, written as two decimal digits each, joined by '-' ("07-33-12-05-60-01"). Each number picks an emoji.
+ */
 async function inviteCode(offer, request, nonce) {
   const h = await hash(LABEL.inviteCode, offerBodyOf(offer), requestSignedOf(request), nonce)
-  const n = new DataView(h.buffer).getBigUint64(0) % 1000000n
-  return n.toString().padStart(6, '0')
+  let n = new DataView(h.buffer, h.byteOffset).getBigUint64(0) >> 28n          // the top 36 bits
+  const out = []
+  for (let i = 0; i < CHECK_CODE_SYMBOLS; i++, n >>= 6n) out.unshift(String(Number(n & 63n)).padStart(2, '0'))
+  return out.join('-')
 }
 
 /**
@@ -1073,7 +1081,7 @@ export async function acceptJoinRequest({ invite, request, inviter, now = Date.n
   }
 }
 
-/** On the joining device: check the reveal and return the six-digit code to show. */
+/** On the joining device: check the reveal and return the check code to show (six numbers 0–63, shown as emoji). */
 export async function checkReveal({ join, reveal, log }) {
   const state = await verifyLog(log, join.roomId)
   const { inviteId, nonce, requestHash } = await verifyInviteReveal(state, reveal, join.inviterId)

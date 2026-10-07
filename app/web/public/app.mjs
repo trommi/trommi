@@ -28,6 +28,11 @@ export const CLIENT = `app/${APP_VERSION}`
 // The client core (gen/vendor, copied from the repository's core/ by dev/build.mjs): every view gets crypto, keys and
 // the account through these, never on its own.
 export const core = () => import('./gen/vendor/index.mjs')
+// The check code as emoji (shared/check-emoji.mjs, the same function the connector prints with): loaded at once, beside
+// the core (which imports it too, so a room's client never exists before it); a live binding, [] until it is there.
+// Not a static import: app.mjs is also imported in Node (tests), where gen/ is not built.
+export let checkEmoji = () => []
+import('./gen/vendor/check-emoji.mjs').then(m => { checkEmoji = m.checkEmoji }, () => {})
 export const account = () => import('./gen/vendor/account.mjs')
 export const canvasWire = () => import('./gen/vendor/canvas.mjs')
 
@@ -1501,7 +1506,7 @@ async function start(client, { fresh = false } = {}) {
     conn()
   }
   // A device answered one of this device's invite links and waits for its check code (a new device, or a connector
-  // that continues a session): said on whatever page he is on, with the way to the numbers. The confirm itself is on
+  // that continues a session): said on whatever page he is on, with the way to the six emoji to compare. The confirm itself is on
   // the invite's page (auth.mjs); without this it showed only while that page stayed open.
   const codeAsked = new Set()
   const askCodes = ids => {
@@ -1515,7 +1520,7 @@ async function start(client, { fresh = false } = {}) {
       if (!host) { codeAsked.delete(id); continue }
       const who = inv.takeover ? model().everyone?.find(a => a.device_id === inv.session_id) : null
       const head = inv.takeover ? `A connector wants to continue ${who?.label || who?.given || who?.name || 'a session'}` : inv.device_role === 'agent' ? 'An agent wants to join' : 'A device wants to join'
-      host.insertAdjacentHTML('afterbegin', String(toast({ head, line: 'Check the number it shows.', link: { href: `/pair/${id}`, label: 'Confirm' }, role: 'alert', ms: 5 * 60_000 })))
+      host.insertAdjacentHTML('afterbegin', String(toast({ head, line: 'Compare the six emoji.', link: { href: `/pair/${id}`, label: 'Confirm' }, role: 'alert', ms: 5 * 60_000 })))
       host.firstElementChild.id = `code-ask-${id}`
     }
   }
