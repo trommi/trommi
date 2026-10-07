@@ -622,16 +622,12 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
   .say[data-say="loading"] { animation: none; }
 }
 
-/* ---- toast: one quiet pill at the bottom, in the middle of the page's main area (right of the sidebar), the same
-   on every page (ui.mjs). "<what happened>: <of what>  ↶ Undo", the newest lowest, three at most; a scribbled line
-   under it is the time left. It lies on nothing one needs: --says-bottom lifts it over what a view keeps at its foot
-   (a card's field, a session's composer, the Scribble Board's tools, the selection bar; on a phone the corner note). ---- */
-#says-host { --says-bottom: 20px; top: auto; bottom: calc(var(--says-bottom) + env(safe-area-inset-bottom, 0px)); left: var(--side, 0px); right: 0; z-index: 80; display: flex; flex-direction: column-reverse; align-items: center; gap: 8px; padding-inline: 12px; }
-body[data-t-view="card"] #says-host { --says-bottom: 84px; }
-body[data-t-view="session"] #says-host { --says-bottom: 100px; }
-body[data-t-view="whiteboard"] #says-host { --says-bottom: 112px; }
-@media (max-width: 1520px) { body[data-t-view="whiteboard"] #says-host { --says-bottom: 172px; } }
-:root.is-choosing #says-host { --says-bottom: 92px; }
+/* ---- toast: one quiet pill at the top, in the middle of the page's main area (right of the sidebar), the same on every
+   page (ui.mjs); his word, 7 October: at the foot it lay on a card's field. "<what happened>: <of what>  ↶ Undo", the
+   newest on top, three at most; a scribbled line under it is the time left. It stands over everything, clear of the
+   page's dog-ear (the main area's top-right corner) and of a card's round buttons (they stand at its outer edges). ---- */
+#says-host { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); bottom: auto; left: var(--side, 0px); right: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-inline: 76px; pointer-events: none; }
+#says-host > * { pointer-events: auto; }
 #says-host:empty { display: none; }
 .says form { margin: 0; flex: none; }
 #says-host .says {
@@ -640,7 +636,7 @@ body[data-t-view="whiteboard"] #says-host { --says-bottom: 112px; }
   box-shadow: 0 0 0 1px var(--line), var(--shadow-md); animation: toast-in 200ms var(--ease-out);
 }
 #says-host .says[hidden] { display: none; }
-@keyframes toast-in { from { opacity: 0; translate: 0 8px; } }
+@keyframes toast-in { from { opacity: 0; translate: 0 -8px; } }
 #says-host .says-words { display: flex; align-items: baseline; gap: .35em; min-width: 0; padding-block: 6px; white-space: nowrap; }
 #says-host .says-words b { flex: none; font: 600 var(--t-sm)/1.3 var(--font); letter-spacing: 0; }
 #says-host .says-words b:not(:last-child)::after { content: ':'; }
@@ -652,13 +648,8 @@ body[data-t-view="whiteboard"] #says-host { --says-bottom: 112px; }
 #says-host .says-back kbd { color: var(--muted); }
 #says-host .says:not(:has(form)) { padding-right: 16px; }
 #says-host .back-line { left: 20px; bottom: 2px; width: calc(100% - 40px); color: var(--accent); opacity: .35; }
-@media (max-width: 860px) {
-  #says-host { --says-bottom: 84px; left: 0; padding-inline: 8px; }
-  body[data-t-view="card"] #says-host { --says-bottom: 88px; }
-  body[data-t-view="session"] #says-host { --says-bottom: 92px; }
-  body[data-t-view="whiteboard"] #says-host { --says-bottom: 158px; }
-  :root.is-choosing #says-host { --says-bottom: 72px; }
-}
+/* a phone: under the top line, inside the safe area, the whole width but the dog-ear's corner */
+@media (max-width: 860px) { #says-host { top: calc(56px + env(safe-area-inset-top, 0px)); left: 0; padding-inline: max(8px, env(safe-area-inset-left, 0px)) max(8px, env(safe-area-inset-right, 0px)); } }
 .keys-sheet header form { margin: 0; }
 .keys-foot a { color: inherit; }
 

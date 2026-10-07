@@ -1199,6 +1199,13 @@ export function register(t) {
     const quiet = form.has('quiet') || !SAID[what]
     if (stay) {
       const m = model()
+      // Undone from a toast: back to that card (its page, at its top, the answers in view), unless that is the page already;
+      // from a session's page, its card under the session.
+      if (form.has('undo')) {
+        const at = new URL(String(req.headers.referer ?? '/'), location.origin).pathname, s = /^\/s\/[^/]+/.exec(at.slice(BASE.length))?.[0]
+        const to = cardPath(card, s ? `${BASE}${s}` : BASE)
+        if (at !== to) return t.sendStream(req, res, stream('visit', to))
+      }
       return t.sendStream(req, res, html`${m.fresh.some(c => c.id === id) ? '' : stream('remove', `row-${id}`)}${quiet ? '' : stream('prepend', 'says-host', says(m.byCard.get(id), what))}`)
     }
     const said = quiet ? '' : `said=${id}:${what}`
