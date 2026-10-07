@@ -216,16 +216,28 @@ export function sidebarRows(model, base, current = null) {
 }
 /** The same rows one by one, for the live stream: [id, row] of those connected (here) and those that are not (away);
  *  shape says their order, so that a change within one row replaces that row only (turbo.mjs). */
+/** One desk as a card in the sidebar on All desks: its drawing (lit while something waits), name, its crowned or first
+ *  main with how many helpers, the number of open questions, the stack of its sessions' colours under it. */
+function deskCard(model, base, d) {
+  const mine = model.agents.filter(a => model.deskOf(a) === d.id)
+  const lead = mine.find(a => a.starred) ?? mine.find(a => !a.parent) ?? mine[0]
+  const open = model.fresh.filter(c => model.deskOf(model.byAgent.get(c.agent)) === d.id).length
+  const others = mine.length - (lead ? 1 : 0)
+  const who = lead ? `${lead.name}${others ? ` · ${others} ${others === 1 ? 'helper' : 'helpers'}` : ''}` : 'no session yet'
+  const stack = mine.slice(0, 6)
+  return html`<div class="agent-row desk-card-row" id="agent-desk-${d.id}"><a class="desk-card" data-nav draggable="false" href="${base}/?desk=${d.id}" title="Open the desk ${d.name}" style="--n:${stack.length}">${deskMark(open > 0)}<span class="desk-card-text"><strong>${d.name || 'Desk'}</strong><small>${who}</small></span><b class="desk-card-n${open ? '' : ' is-zero'}" aria-label="${open} open">${open}</b><span class="desk-card-stack" aria-hidden="true">${stack.map((a, i) => html`<i style="--i:${i};--hue:${a.hue}"></i>`)}</span></a></div>`
+}
 function sidebarParts(model, base, current = null) {
   const top = model.units.filter(u => !u.parent)
   const rows = u => [[u.id, row(u, base, current)], ...(u.subs ?? []).map(s => [s.id, row(s, base, current)])]
   const live = u => u.online || Boolean(u.subs?.some(s => s.online))
-  // All desks: every desk is a heading (its drawing and name) with its mains under it
-  const grouped = list => {
-    if (!model.all) return list.flatMap(rows)
-    return model.desks.flatMap(d => { const mine = list.filter(u => model.deskOf(u.agent) === d.id); return mine.length ? [[`deskhead-${d.id}`, (html`<h2 class="agent-deskhead" id="agent-deskhead-${d.id}">${deskMark(model.fresh.some(c => model.deskOf(model.byAgent.get(c.agent)) === d.id))}<span>${d.name || 'Desk'}</span></h2>`)], ...mine.flatMap(rows)] : [] })
+  // All desks (his pick "cards", 7 October): the desks themselves, each one card like a main's (the desk drawing, its
+  // name, who works there, what waits, the stack of its sessions' colours); a press opens that desk. No sessions listed.
+  if (model.all) {
+    const cards = model.desks.map(d => [`desk-${d.id}`, deskCard(model, base, d)])
+    return { here: cards, away: [], shape: cards.map(r => r[0]).join(' ') }
   }
-  const here = grouped(top.filter(live)), away = grouped(top.filter(u => !live(u)))
+  const here = top.filter(live).flatMap(rows), away = top.filter(u => !live(u)).flatMap(rows)
   return { here, away, shape: `${here.map(r => r[0]).join(' ')}|${away.map(r => r[0]).join(' ')}` }
 }
 
