@@ -103,7 +103,7 @@
 .crown-toggle[aria-pressed="false"] .crown-pen { stroke: var(--muted); stroke-width: 1.6; }
 .crown-toggle[aria-pressed="false"] .crown-jewel { fill: var(--bg); stroke: var(--muted); }
 .crown-toggle[aria-pressed="false"]:hover :is(.crown-pen, .crown-jewel) { stroke: var(--gold-pen); }
-/* Give the crown (agents.js crownToggle): a button of its own on the corner of the mark, 28 px
+/* Give the crown (agents.mjs): a button of its own on the corner of the mark, 28 px
    to hit, beside the mark and not in it. The gold crown on the crowned session. Otherwise a faint outline
    that shows when the pointer or the keyboard is on the row or the mark (always, faintly, where
    nothing hovers), and one click gives the crown. */
@@ -344,12 +344,13 @@ html body .topbar .deskpill .desk-go > .sketch { display: none; }
   .topbar .desk-name[data-size="l"] { font-size: .98rem; line-height: 1.05; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
   /* the rail: the drawing alone, the way to the Desk */
   [data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { margin: 0; width: 26px; height: 26px; }
+
 /* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
    One crown per desk (card Nr. 172): only the session the human gave it to wears it; a main without it keeps its
    stack and bracket. Folded, its subs lie as coloured card edges behind its row; unfolded, they stand
    indented under it, held by a bracket drawn in the main's colour. The rows stay flat children of #agents
-   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, a phone's drawer and the keys treat them as rows.
-   Built by agents.js; nothing here applies while the hub sends neither `main` nor `parent`. */
+   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, a phone's drawer and the keys treat them as rows
+   (sidebar.mjs row()). */
 
 /* ---- the main's row: a card, the top of its stack ---- */
 .agent-row.is-main[data-fold] { --ghue: 162; margin-top: 6px; }
@@ -372,7 +373,7 @@ body.is-pairing .crown-fold { visibility: hidden; }
 .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 4px + 18px); }
 .crown-edges { position: absolute; z-index: 0; left: 0; right: 0; top: calc(100% - 3px); height: calc(var(--n) * 4px + 3px); cursor: pointer; }
 .crown-edges::after { content: ""; position: absolute; inset: 0 0 -5px; }
-/* an edge: its drawing (agents.js, edgeQuirk) stretched to the row, the pen as wide as everywhere; it lies a little crooked (--tilt, --dx: its own) */
+/* an edge: its drawing (ui.mjs edgeQuirk) stretched to the row, the pen as wide as everywhere; it lies a little crooked (--tilt, --dx: its own) */
 .crown-edges { --fx: 1.6px; --fy: .7px; --fr: .5deg; --tk: 1; }
 /* the fan spreads the same in total for any count: --p is the sheet's share (1 for the last), the full spread is six steps (one sheet moves all of it) */
 .crown-edges i { --p: calc((var(--i) + 1) / var(--n, 6)); position: absolute; top: calc(var(--i) * 4px - 7px); left: calc(5px + var(--i) * 2.5px); right: calc(5px + var(--i) * 2.5px); height: 15px; z-index: calc(20 - var(--i)); transform-origin: 16% 0; translate: var(--dx, 0px) 0; rotate: calc(var(--tilt, 0deg) * var(--tk)); transition: translate 190ms cubic-bezier(.3, 1.8, .5, 1), rotate 190ms cubic-bezier(.3, 1.8, .5, 1), transform-origin 190ms ease-out; transition-delay: calc(var(--i) * 9ms); }

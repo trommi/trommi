@@ -163,8 +163,6 @@ a.asset-link:hover { box-shadow: 0 0 0 1px var(--fg); }
 }
 :root[data-theme="dark"] {
 }
-/* Shell: page layout, a session's conversation with its filters, lists, sidebar, phone views.
-   Every colour, shadow, radius, and easing comes from tokens.css. */
 
 /* ---- base ---------------------------------------------------------------- */
 
@@ -205,10 +203,6 @@ html:where([data-ui]), :where([data-ui]) body { margin: 0; overflow: hidden; ove
 .ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .caps { font-size: var(--t-xs); font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
 @keyframes blink { 50% { opacity: .3; } }
-
-/* Filters lay a list over the conversation: two quiet words at the head's right end, filled while one holds. */
-
-/* The switch between the session's two modes is part of its title: words, the current one underlined. */
 
 /* Something new was said while you were looking at a list or the canvas. */
 
@@ -331,8 +325,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
    The switch "Conversation · Scribble" is gone: the canvas opens from the composer. Nothing floats over the head:
    the note button is left out inside a session ("/" still opens it), the Scratchpad is one quiet icon at its right end. */
 
-/* The canvas in the pane's place: it carries the way back to the conversation. */
-
 /* The choice of drawing opens right under the picture that was clicked: forty tiles in the session's colour. */
 .mark-picker { position: fixed; margin: 0; padding: var(--s-3); border: 0; border-radius: 14px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
 .mark-picker::backdrop { background: transparent; }
@@ -422,15 +414,12 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 
 @media (min-width: 1200px) {
   :where([data-ui]) body { --beside-col: 50.5rem; }
-  /* (The name's box reaches under them and is positioned: they stand above it, so they can be pressed.) */
 
 }
 @media (min-width: 1200px) {
   body[data-talk-drag] { cursor: col-resize; user-select: none; -webkit-user-select: none; }
-  /* Folded: the column is a strip; the list of questions takes the rest. */
 
 }
-/* Copying a decision into another session's conversation. Clean, quiet controls. */
 
 /* the copy button */
 .cardclip-copy { flex: none; width: 28px; height: 28px; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; transition: background var(--d-fast), color var(--d-fast); }
@@ -445,7 +434,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .cardclip-paste { height: 28px; padding: 0 var(--s-1) 0 10px; border: 0; background: none; color: inherit; font: 500 var(--t-xs)/1 var(--font); white-space: nowrap; cursor: pointer; }
 
 @keyframes rowmenu-up { from { translate: 0 100%; } }
-/* ---- a new version of the app took over (js/app/pwa.mjs): one quiet line above the round buttons at the foot ---- */
+/* ---- a new version of the app took over (app.mjs): one quiet line above the round buttons at the foot ---- */
 .app-update {
   position: fixed; z-index: var(--z-update); left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); translate: -50% 0;
   display: flex; align-items: center; gap: var(--s-3); width: max-content; max-width: calc(100vw - 32px); padding: 6px 6px 6px var(--s-4);
@@ -468,7 +457,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 
 :root { --keys-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 46' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 25c9-3.500 19-1 33-3.200'/%3E%3Cpath d='M27.500 11.500c3.800 4.200 6.800 7.300 11.500 10-4.600 2.600-8.300 6.700-10.800 12.500'/%3E%3C/svg%3E"); }
 @keyframes keys-point { from { translate: -14px 0; opacity: 0; } }
-/* The option the arrows are on, among the choices of the marked row. */
 
 /* ---- a sequence under way: "g", then where to ---- */
 .keys-pending {
@@ -510,9 +498,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .keys-foot { margin-top: var(--s-2); padding-top: var(--s-4); border-top: 1px dashed var(--line-strong); font-size: var(--t-sm); color: var(--muted); }
 @media (max-width: 700px) { .keys-sheet { padding: var(--s-5); }
 }
-
-/* Rich content in a text (ui.mjs): the columns of a markdown table, and the frame an agent's
-   HTML stands in. Loaded by the module itself. The table's own rules are in tokens.css (.rich-table). */
 
 /* A column of numbers: right-aligned, figures of one width. */
 .rich-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -559,9 +544,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
   .rh.is-capped, .rh.is-wide { padding-bottom: 44px; }
 }
 
-/* ---- the filters are real links (js/link.js; hrefs kept by app.js paintLinks): what app.css says for
-   `.filters button`, for the anchor. (#mode-*, #tab-* are links too; .modes and .tabbar are shown nowhere.) ---- */
-
 ::view-transition-old(tc-card) { animation: tc-fly 260ms cubic-bezier(.5, 0, .75, 0) both; }
 ::view-transition-new(tc-card) { animation: tc-land 220ms 80ms ease-out both; }
 @keyframes tc-fly { to { translate: 46% -6%; rotate: 5deg; opacity: 0; } }
@@ -569,16 +551,9 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 @media (prefers-reduced-motion: reduce) { ::view-transition-old(tc-card), ::view-transition-new(tc-card) { animation: none; }
 }
 
-/* Read aloud. The logic is in js/speech.js (old client) and controller "say".
-   Colours come from tokens.css. (Live dictation was removed: out of scope for launch.) */
-
 /* ---- Read aloud: the small speaker beside every message ----
    Quiet at rest: it shows when the message is under the pointer or it has the focus, and stays
    while it reads. Where nothing hovers (touch) it is always there, small and pale. */
-
-/* Under a finger the small speaker takes a tap from 38px around it; what is seen stays 26px. */
-
-/* Reading: the speaker becomes a stop, a ring closes round it as the message is read. */
 
 /* ---- toast: ONE slot, never a stack (his word, 7 October: "it is always placed oddly"). It stands where content never
    is: the bottom-left corner of the main area, in the page's margin beside the sidebar, small: "<what happened> ·

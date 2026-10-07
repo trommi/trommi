@@ -59,7 +59,7 @@ export function hubUrl() {
 // QUIET_MS only gets a grey hint, quietOf() ("quiet for 24 min"): no red hand, no push, not in the Desk's badge.
 // For a child session (agent.parent) "it" is the agent process behind it: a helper whose main agent is online and
 // still talking (agent.device_active) is not quiet.
-// Shared by the views (model.mjs), the push (push.mjs) and the hub's tick that notices time passing (server.mjs).
+// Shared by the views and the board model below.
 
 /** Nothing from a working, connected session for this long: a quiet grey hint on the session, nothing more. */
 export const QUIET_MS = 15 * 60000
@@ -155,11 +155,9 @@ export function heardOf(card, now = Date.now()) {
 const DONE_SINCE = Date.UTC(2026, 9, 7, 0, 0)
 
 // ---- model ----
-// What the views show, worked out once per render from the hub's state. The rules are those the old
-// client had in js/store.js, js/inbox.js and js/agents.js; here they run on the hub, so every browser
-// gets the same answer and none has to compute it.
+// What the views show, worked out once per render from the board's state (boardState below).
 
-/** state: the hub's state. agents: the sessions as the page may see them (pageAgents() in server.mjs). */
+/** state: the board's state. agents: the sessions as the page may see them. */
 /** desk: the desk in view (its id). A desk is a world of its own: the sessions that stand on it now, and every card of
  *  theirs (a card has no desk of its own: it is where its session is, so a session that moves takes all of them
  *  along: open, with the agents, put away, its pictures). Nothing of another desk shows here; the Trommi menu's desk
@@ -320,9 +318,8 @@ document.addEventListener('click', async e => {
 }
 
 // ---- board state ----
-// The seam between the client core's model (core/README.md) and the views of today's board (public/js/views,
-// synced from trommi-hub server/views): boardState(client.model) returns the board's state in the shape the views were
-// written for ({ cards, queue, agents, tasks, messages, desks, notes, assets }), so the app renders the same markup.
+// The seam between the client core's model (shared/README) and the views: boardState(client.model) returns the board's
+// state in the shape the views are written for ({ cards, queue, agents, tasks, messages, desks, notes, assets }), so the app renders the same markup.
 //
 // Incremental: a card's board form is kept per object_id and made again only when a change names it (or a register
 // that it shows: its draft, its snooze). The messages are built on first read (only a session's page and a card's
@@ -615,7 +612,7 @@ export class BoardState {
         text: i.item_state === 'loaded' || !i.item_state ? (c.text ?? '') : i.item_state === 'pruned' ? '(removed after 30 days)' : i.item_state === 'newer_schema' ? '(needs a newer app)' : '',
         attachments: this.atts(c.attachments), ts: i.sent_at ?? 0,
       }
-      // A selection of the Scratchpad sent to the session: shown as the board's Scribble card.
+      // A selection of the Scribble Board sent to the session: shown as a scribble card.
       if (kind === 'selection_sent') msg.attachments = msg.attachments.map(x => ({ ...x, kind: 'scribble' }))
       if (cardId) msg.card_id = cardId
       if (c.details) msg.details = c.details
@@ -662,8 +659,8 @@ export class BoardState {
 }
 
 // ---- hub facade ----
-// What the views' form handlers call "the hub" (hub.decide, hub.message, hub.editSession, … in trommi-hub
-// server/turbo.mjs and server/views/*), done with the client core's human actions (core/README.md).
+// What the views' form handlers call "the hub" (hub.decide, hub.message, hub.editSession, …), done with the client
+// core's human actions (shared/README).
 // Every action shows at once (the core's optimistic echo) and is sealed, signed and sent by the core.
 
 
@@ -968,8 +965,8 @@ export function renderStreamMessage(text) {
 
 
 // ---- board ----
-// The board's pages, forms and live pieces, in the page: a port of trommi-hub server/turbo.mjs to the browser.
-// The view modules register themselves exactly as on the hub (register(t) with t.get, t.post, t.live), so the
+// The board's pages, forms and live pieces, in the page.
+// The view modules register themselves (register(t) with t.get, t.post, t.live), so the
 // markup is the same; a "request" here is a navigation or a form of this page, answered from the local model.
 //
 //   const board = createBoard({ hub, model })   hub: hub-facade.mjs; model(): app.mjs boardModel of now

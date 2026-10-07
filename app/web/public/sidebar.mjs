@@ -1,5 +1,5 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
-// The markup is the one app.css and sidebar.css style (the old client built it in js/agents.js).
+// The markup is the one app.css and sidebar.css style.
 import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
 import { BELL, Controller, PLUS, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
@@ -248,7 +248,7 @@ export function sidebarRows(model, base, current = null) {
   return html`${here.map(r => r[1])}${inviteAgentButton()}${away.length ? html`<h2 class="caps agent-heading agent-heading-away">Disconnected</h2>${away.map(r => r[1])}` : ''}`
 }
 /** The same rows one by one, for the live stream: [id, row] of those connected (here) and those that are not (away);
- *  shape says their order, so that a change within one row replaces that row only (turbo.mjs). */
+ *  shape says their order, so that a change within one row replaces that row only (app.mjs, the board's live streams). */
 /** One desk as a row in the sidebar on All desks (his pick "rows", 8 October: calm rows like folders in a list; no pill,
  *  no stack: those stay an agent's with its helpers): the desk drawing (lit while something waits), its name, who
  *  works there; at the right the main session's small drawing (with its crown) and "+N" helpers, and the open count,
@@ -345,9 +345,8 @@ controller('folds', class extends Controller {
 // ---- menu ----
 // The Trommi menu (what opens from the row at the sidebar's foot; on a phone the sidebar is a drawer),
 // the jump page's results (/jump; the menu
-// itself has no search field for now), and the sheet a long press on a Desk row brings up on a phone. The menu's markup is the old client's (index.html,
-// js/bar.js), so app.css and sidebar.css style it; the controller controller "menu" adds the
-// arrows and a new desk, sheet_controller.js the long press. Opening and closing the
+// itself has no search field for now), and the sheet a long press on a Desk row brings up on a phone. app.css and sidebar.css style the
+// menu; the controller "menu" adds the arrows and a new desk, the Desk's row menu (desk.mjs) the long press. Opening and closing the
 // menu and the theme: ui.mjs.
 
 const DEFAULT_DESK = 'main'

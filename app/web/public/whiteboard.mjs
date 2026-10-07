@@ -273,7 +273,7 @@ const resolveInk = (color, dark) => (color === INK ? (dark ? '#e9eeea' : '#1b1f2
 // Constant-width strokes are one stroked path through the midpoints (quadratic
 // smoothing). Pressure strokes become one filled path: discs along the curve
 // joined by quads, all wound the same way so nonzero fill unions them.
-// (Taken from js/scribble.js; the points are local to the element here.)
+// (The points are local to the element.)
 const geomCache = new WeakMap()
 function buildGeom(s) {
   const p = s.pts, n = p.length >> 1, half = s.size / 2
@@ -2153,7 +2153,7 @@ function mountPad(main, { canvasId: PAD, client }) {
   // What was sent leaves the paper: it is the agent's now. One step, so one undo brings all of it back.
   // Without a frame (a selection was sent) exactly those elements go. With a frame, notes and pictures that
   // lie in it go whole, and a stroke that crosses its edge is cut there: the part outside stays, as a stroke
-  // of its own (the same cut as the session's canvas makes, js/scribble.js).
+  // of its own.
   function takeAway(ids, r = null) {
     const changes = []
     let z = topZ()

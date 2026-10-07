@@ -299,7 +299,6 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 @media (min-width: 1200px) {
   html body:not([data-pair]):not([data-scope="all"]) .pane-title { padding-right: 0; }
 }
-/* A wide window, a session on its own: the conversation moves together to half the width, the canvas stands beside it. */
 
 /* Both markers stand at the column's right edge, one above the other, clear of the middle of the lines; and the
    stream ends with room for them, so its last line is never under one. */
@@ -335,7 +334,7 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 .hist-heading b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 
 /* ---- rename a session, pick its scribble ---- */
-/* Rename is a small form at the name that was pressed (agents.js openEditor): no veil over the page. */
+/* Rename is a small form at the name that was pressed (session.mjs): no veil over the page. */
 .session-editor { border: 0; padding: 0; border-radius: 12px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); width: min(340px, calc(100vw - 16px)); animation: pop var(--d-fast) var(--ease-out) both; }
 .session-editor[data-anchored] { position: fixed; margin: 0; }
 .session-editor::backdrop { background: transparent; }
@@ -388,9 +387,6 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
   .log .inbox-when .inbox-tab-act { overflow: visible; }
   .log .inbox-when .inbox-tab-act::before { content: ""; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; translate: -50% -50%; }
 }
-/* A question in the conversation: its title ends before the small Later button at the card's top right (a title that
-   filled its line ran under it). */
-/* (only the first line gives way to the small Later button; the title then uses the whole text column, as on the Desk) */
 
 /* A session's title on a wide window, and the view of sessions laid together.
    One session is one stream: its questions stand in its conversation. Here is only the
@@ -461,9 +457,6 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
   body[data-view="chat"]:not([data-pair]) #session .log-inner,
   body[data-view="chat"]:not([data-pair]) #session .pane-list { padding-top: var(--s-4); }
   body[data-view="chat"]:not([data-pair]) #session :is(.log, .pane-list) { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
-  /* The same fade wherever else something scrolls away at the top: the conversation beside the canvas, and
-     with sessions laid together the column of their questions. (Their conversations each begin under a name
-     with a rule, and the canvas under its strip of pictures: those are not at the top.) */
 
   /* ---- the heading's own line: at the page's top, 16px under the window's edge, on the conversation's column
      (app.css .column: 47.5rem, the gutter inside), and the conversation begins under it. It is in the flow, not
@@ -484,7 +477,7 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
     max-width: var(--head-w); min-height: 44px; margin: 0; pointer-events: auto; z-index: 1;
   }
   #session .pane-who .agent-avatar { width: 44px; height: 44px; border-radius: 12px; }
-  #session .pane-title h2 { font-size: 1.5rem; line-height: 1.15; letter-spacing: -.02em; } /* the name of the place: a heading */
+  #session .pane-title h2 { font-size: 1.5rem; line-height: 1.15; letter-spacing: -.02em; }   /* the name of the place: a heading */
 
   /* (The crown sits on the drawing's corner, its tip on the heading's top line.) */
   #session .pane-who .crown-toggle { left: 7px; top: -4px; }
@@ -506,7 +499,6 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
   /* ---- the filters: a quiet row under the composer, at the column's left edge ---- */
 
   body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: 38px; }
-  /* Sessions laid together have a composer each: "Files" stands beside their names in the heading. */
 
 }
 
@@ -533,7 +525,6 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 
 /* Windowed paint: what of the conversation is out of sight is neither laid out nor painted (messages: trommi.css). */
 #session .log .event, #session .log .day { content-visibility: auto; contain-intrinsic-size: auto 36px; }
-/* (A question's Desk row in the conversation is not skipped: its box and shadow reach past it and would be clipped.) */
 
 /* The heading with a long name: the drawing keeps its size, the stop sign keeps its words, the name gives way. */
 #session .pane-who .t-session-edit { flex: 0 1 auto; }
@@ -561,10 +552,6 @@ video.as-media { background: #000; }
   .as-stage[data-type="html"] { padding-inline: 0; padding-bottom: 0; }
   .as-frame-box { border-radius: 0; box-shadow: none; }
 }
-
-/* Where it stands. An agent's message: beside the time. */
-
-/* The human's own: to the left of the bubble. */
 
 /* A session's heading: its mark and its name, each the control that changes it. */
 .t-session-edit { display: inline-flex; align-items: center; gap: var(--s-3); min-width: 0; }
