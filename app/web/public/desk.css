@@ -863,6 +863,12 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .inbox-groups .inbox-row .row-mark > .crown-mark { left: 2px; top: -8px; width: 15px; }
 .row-urg { display: inline-grid; place-items: center; vertical-align: -.18em; width: 18px; height: 18px; margin-right: 6px; border-radius: 50%; }
 .row-urg > svg { width: 18px; height: 18px; }
+/* Whenever (nothing waits on it): the hourglass before the title, where a knock's mark stands; in a conversation's
+   cards (it stood alone on a line of its own under the session's drawing). The Desk's rows show none. */
+.row-urg.is-whenever { display: none; color: var(--tone-mid); }
+.row-urg.is-whenever > svg { width: 17px; height: 17px; stroke-width: 2; }
+.log .row-urg.is-whenever { display: inline-grid; }
+.log .inbox-byline .inbox-whenever { display: none; }
 .row-urg.is-block { color: var(--urg-critical); }
 .row-urg.is-block .hand-loop { fill: currentColor; stroke: currentColor; }
 .row-urg.is-block .hand-pen { stroke: var(--surface); stroke-width: 1.7; }
