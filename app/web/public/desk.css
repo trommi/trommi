@@ -134,7 +134,7 @@
 /* Shift held (bar.js sets body[data-shift]): the row's one tab is Shred instead of Snooze, slid out and red */
 /* On the card, beside the title (inbox.js puts .inbox-tabs into .inbox-when): one small square button with the
    drawing alone, the word is its tooltip; nothing lies outside the row. Shift held: the same place is Shred. */
-.inbox-when .inbox-tabs { position: static; display: flex; gap: 4px; margin: -6px 0 -6px 2px; }
+.inbox-when .inbox-tabs { position: static; display: flex; gap: var(--s-1); margin: -6px 0 -6px 2px; }
 .inbox-when .inbox-tab-act, .inbox-when .inbox-tab-act:first-child { --nub: 28px; width: 28px; max-width: 28px; height: 28px; border-radius: 8px; filter: none; transition: none; color: var(--card-ink); }
 .inbox-when .inbox-later-flap .sketch { width: 16px; height: 16px; opacity: 1; }
 .inbox-when .inbox-later-flap b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -148,15 +148,15 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .inbox-answer.is-hinted { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--tone-pen); }
 /* One tile or two, 124 square, from the right: the right-hand one is at the same place in every row.
    (Set in from the right where the Snooze label sits inside the row's edge.) */
-.inbox-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 12px 12px 0; }
-.inbox-answer { flex: none; width: 124px; height: 124px; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: var(--tone-wash); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
+.inbox-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--s-2); padding: var(--s-3) var(--s-3) var(--s-3) 0; }
+.inbox-answer { flex: none; width: 124px; height: 124px; min-width: 0; padding: var(--s-2) 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: var(--tone-wash); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 .inbox-answer .sketch { width: 32px; height: 32px; }
 /* Thumbs are the answer; the word under one says what the thumb means here. It stands whole, in one
    or two lines at a size that reads: inbox.js lets only labels onto a tile that fit that way. */
 .inbox-answer.is-thumb .sketch { width: 44px; height: 44px; stroke-width: 1.5; }
 .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { max-width: 100%; font-size: var(--t-sm); font-weight: 600; line-height: 1.2; text-wrap: balance; overflow-wrap: normal; }
 /* A longer pair of labels: smaller, up to three lines; a word is never broken inside (inbox.js labelSize). */
-.inbox-answer.is-thumb.is-small { gap: 4px; }
+.inbox-answer.is-thumb.is-small { gap: var(--s-1); }
 .inbox-answer.is-thumb.is-small .sketch { width: 34px; height: 34px; }
 .inbox-answer.is-thumb.is-small > span:last-child:not(.inbox-disc) { font-size: .72rem; line-height: 1.15; }
 /* More than two ways: one tile, "Choose", in the place of the right-hand thumb. */
@@ -211,7 +211,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .desk-invite .desk-invite-art { width: 72px; height: 72px; stroke-width: 1.2; color: var(--accent); }
 .desk-invite h2 { font: 800 var(--t-2xl)/1.15 var(--display); letter-spacing: -.02em; }
 .desk-invite p { max-width: 30rem; color: var(--muted); font-size: var(--t-md); line-height: 1.5; }
-.desk-invite code { font: .86em var(--mono); padding: 1px 4px; border-radius: 5px; background: var(--sunken); color: var(--fg); white-space: nowrap; }
+.desk-invite code { font: .86em var(--mono); padding: 1px var(--s-1); border-radius: 5px; background: var(--sunken); color: var(--fg); white-space: nowrap; }
 .desk-invite form { margin: var(--s-2) 0 0; }
 .desk-invite-go { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 44px; padding: 0 var(--s-5); border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font: 650 var(--t-md) var(--font); cursor: pointer; box-shadow: var(--shadow-sm); transition: background var(--d-fast), transform var(--d-fast) var(--ease-out); }
 .desk-invite-go:hover { background: var(--accent-hover); transform: translateY(-1px); }
@@ -262,13 +262,13 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 }
 /* Narrower still (three sessions side by side): the word goes under its thumb again, so it keeps its width. */
 @container rows (max-width: 330px) {
-  .inbox-answer.is-thumb { grid-auto-flow: row; grid-template-columns: minmax(0, auto); gap: 4px; padding-block: 8px; }
+  .inbox-answer.is-thumb { grid-auto-flow: row; grid-template-columns: minmax(0, auto); gap: var(--s-1); padding-block: var(--s-2); }
   .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { text-align: center; }
 }
 /* Two long answers (card Nr. 157): the tile shows the agent's short word (options[i].short), the thumb small
    with it: above it in a square tile, beside it where tiles are flat. The word stands whole; inbox.js
    (fitShorts) picks the step for the pair: one line, a size smaller, two lines, last the thumb above. */
-.inbox-answer.is-thumb.is-short { padding-inline: 4px; }
+.inbox-answer.is-thumb.is-short { padding-inline: var(--s-1); }
 .inbox-answer.is-thumb.is-short .sketch { width: 26px; height: 26px; stroke-width: 1.7; }
 .inbox-answer.is-thumb.is-short > span.inbox-short { min-width: 0; max-width: 100%; font: 700 var(--t-md)/1.15 var(--display); white-space: nowrap; text-wrap: balance; overflow-wrap: normal; text-align: center; }
 .inbox-answer.is-thumb.is-short.is-two > span.inbox-short { white-space: normal; }
@@ -300,7 +300,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .inbox-edge-knock[hidden] { display: none; }
 .inbox-news { pointer-events: auto; align-self: start; padding: 7px 13px; border: 0; border-radius: 999px; background: var(--fg); color: var(--surface); font: 700 var(--t-sm)/1 var(--font); box-shadow: var(--shadow-lg); white-space: nowrap; }
 @container rows (max-width: 560px) {
-  .inbox-answer.is-thumb.is-short { grid-auto-flow: column; grid-template-columns: auto minmax(0, auto); gap: 8px; padding-inline: 8px; }
+  .inbox-answer.is-thumb.is-short { grid-auto-flow: column; grid-template-columns: auto minmax(0, auto); gap: var(--s-2); padding-inline: var(--s-2); }
   .inbox-answer.is-thumb.is-short .sketch { width: 22px; height: 22px; }
   .inbox-answer.is-thumb.is-short:not(.is-stacked) > span.inbox-short { text-align: left; }
   .inbox-answer.is-thumb.is-short.is-stacked { grid-auto-flow: row; grid-template-columns: minmax(0, auto); gap: 3px; padding-block: 7px; }
@@ -331,7 +331,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 @media (prefers-reduced-motion: reduce) {
   .inbox-row.is-leaving.is-leaving { animation: row-fade 160ms linear forwards !important; }
 }
-.inbox-done { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: var(--s-3); min-height: 60px; padding: 8px 12px 8px 14px; border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); scroll-margin: 72px 0 28px; }
+.inbox-done { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: var(--s-3); min-height: 60px; padding: var(--s-2) var(--s-3) var(--s-2) 14px; border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); scroll-margin: 72px 0 28px; }
 .inbox-done:focus { outline: none; }
 
 @container rows (max-width: 520px) {
@@ -370,7 +370,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-groups .inbox-group[data-sender] > .inbox-row.is-held { box-shadow: 0 0 0 2px var(--tone-pen); }
 
   /* one line: who (drawing and name), then the knock; under it the title */
-  .inbox-groups .inbox-content { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; overflow: visible; }
+  .inbox-groups .inbox-content { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); padding: 0; overflow: visible; }
   .inbox-groups .inbox-content:has(> .inbox-row-head:empty) { padding-top: 0; }
   .inbox-groups .inbox-byline, .inbox-groups .inbox-row[data-from] .inbox-byline { position: static; order: -2; flex: 0 1 auto; min-width: 0; min-height: 20px; margin: 0; padding: 0; flex-wrap: nowrap; font-size: var(--t-sm); }
   .inbox-groups .inbox-row[data-from] .inbox-row-head:not(:empty) ~ .inbox-byline { min-height: 20px; margin: 0; }
@@ -379,27 +379,27 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-groups .inbox-byline .inbox-whenever { order: 1; }
   .inbox-groups .inbox-byline .inbox-from-mark { width: 20px; height: 20px; }
   .inbox-groups .inbox-row-head { order: -1; flex: none; height: auto; min-height: 0; margin: 0; padding: 0; align-items: center; }
-  .inbox-groups .inbox-tab { padding: 4px 7px 3px; border-radius: 6px; font: 700 .66rem/1 var(--font); letter-spacing: .07em; }
+  .inbox-groups .inbox-tab { padding: var(--s-1) 7px 3px; border-radius: 6px; font: 700 .66rem/1 var(--font); letter-spacing: .07em; }
   .inbox-groups .inbox-tab .sketch { width: 13px; height: 13px; margin: -2px 0; }
   .inbox-groups .inbox-text, .inbox-groups .inbox-text.has-sender { flex: 0 0 100%; align-content: center; min-height: 40px; margin: -2px 0; padding: 0; }
   .inbox-groups .inbox-row-head:not(:empty) + .inbox-text { margin-top: -2px; }
   .inbox-groups .inbox-question { font: 700 1.3rem/1.18 var(--display); letter-spacing: -.015em; -webkit-line-clamp: 3; overflow-wrap: break-word; }
 
   /* the answers: tiles in the session's colour, at finger size */
-  .inbox-groups .inbox-actions { grid-column: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; padding: 0; }
+  .inbox-groups .inbox-actions { grid-column: 1; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); margin-top: 10px; padding: 0; }
   .inbox-groups .inbox-answer { min-height: 58px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--tone-edge); }
   .inbox-groups .inbox-answer.is-lead, .inbox-groups .inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--tone-pen); box-shadow: none; }
-  .inbox-groups .inbox-row-error { margin: 8px 0 0; }
+  .inbox-groups .inbox-row-error { margin: var(--s-2) 0 0; }
 
   /* how to get at the rest, said once under the Desk's open questions */
-  :is(#inbox, #session) .inbox-groups > .inbox-group[data-sender]:not(:has(~ .inbox-group[data-sender]))::after { content: "Hold a card: Later, Reverse, Duck it, What??, Shred, Copy. Tap its title: text and pictures."; margin: 4px 12px 0; color: var(--faint); font: 500 var(--t-sm)/1.4 var(--font); text-align: center; text-wrap: balance; }
+  :is(#inbox, #session) .inbox-groups > .inbox-group[data-sender]:not(:has(~ .inbox-group[data-sender]))::after { content: "Hold a card: Later, Reverse, Duck it, What??, Shred, Copy. Tap its title: text and pictures."; margin: var(--s-1) var(--s-3) 0; color: var(--faint); font: 500 var(--t-sm)/1.4 var(--font); text-align: center; text-wrap: balance; }
 }
 
 /* ---- the sheet a long press brings up ---- */
 dialog.rowmenu {
   --ink: var(--tone-pen);
   /* opened with show(), not in the top layer (sheet_controller.js): above the round buttons and the memo */
-  position: fixed; z-index: 2800; inset: auto 0 0 0; width: 100%; max-width: 480px; max-height: 82dvh; margin: 0 auto; padding: 0; border: 0;
+  position: fixed; z-index: var(--z-rowmenu); inset: auto 0 0 0; width: 100%; max-width: 480px; max-height: 82dvh; margin: 0 auto; padding: 0; border: 0;
   border-radius: 20px 20px 0 0; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto; overscroll-behavior: contain;
   animation: rowmenu-up 240ms var(--ease-out, ease-out) both;
 }
@@ -410,12 +410,12 @@ dialog.rowmenu::backdrop { background: transparent; }
 }
 .rowmenu-in { display: grid; padding: 8px 8px calc(12px + env(safe-area-inset-bottom, 0px)); }
 .rowmenu-in::before { content: ""; justify-self: center; width: 38px; height: 4px; margin-bottom: 10px; border-radius: 2px; background: var(--line-strong); }
-.rowmenu-in h3 { overflow-wrap: anywhere; margin: 0 8px 8px; font: 700 1.15rem/1.2 var(--display); letter-spacing: -.01em; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-.rowmenu-in button { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 8px; border: 0; border-radius: 10px; background: none; color: var(--fg); font: 500 1rem/1.2 var(--font); text-align: left; touch-action: manipulation; }
+.rowmenu-in h3 { overflow-wrap: anywhere; margin: 0 var(--s-2) var(--s-2); font: 700 1.15rem/1.2 var(--display); letter-spacing: -.01em; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.rowmenu-in button { display: flex; align-items: center; gap: var(--s-3); min-height: 48px; padding: 0 var(--s-2); border: 0; border-radius: 10px; background: none; color: var(--fg); font: 500 1rem/1.2 var(--font); text-align: left; touch-action: manipulation; }
 .rowmenu-in button:active { background: var(--sunken); }
 .rowmenu-in button svg { flex: none; width: 22px; height: 22px; color: var(--ink); }
 .rowmenu-in button.is-shred, .rowmenu-in button.is-shred svg { color: var(--deny); }
-.rowmenu-in hr { width: auto; margin: 6px 8px; border: 0; border-top: 1px solid var(--line); }/* The piles at the foot of a list of questions, one per state: Later (snoozed), In the works (in
+.rowmenu-in hr { width: auto; margin: 6px var(--s-2); border: 0; border-top: 1px solid var(--line); }/* The piles at the foot of a list of questions, one per state: Later (snoozed), In the works (in
    revision, or answered and being acted on) and Done (closed) as three small stacks of paper drawn with the pen, and
    at the end of the row a small waste-paper basket (shredded, withdrawn). A click fans a stack (or the basket) out below,
    as full-width sheets. The sections keep the names the keys and the tests know (.inbox-pile,
@@ -432,7 +432,7 @@ dialog.rowmenu::backdrop { background: transparent; }
 .inbox-stack-title { align-self: end; display: grid; margin: 0; font: inherit; }
 
 /* a stack: the paper, on its top sheet the count (strokes, or a number), the turning ring, and its name as a stamp */
-.inbox-stacks .inbox-stack .inbox-stack-head { position: relative; flex: none; display: grid; grid-template-columns: auto auto; justify-content: center; column-gap: 6px; row-gap: 5px; width: 100%; min-height: 0; padding: 0 0 4px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: inherit; text-align: center; cursor: pointer; }
+.inbox-stacks .inbox-stack .inbox-stack-head { position: relative; flex: none; display: grid; grid-template-columns: auto auto; justify-content: center; column-gap: 6px; row-gap: 5px; width: 100%; min-height: 0; padding: 0 0 var(--s-1); border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: inherit; text-align: center; cursor: pointer; }
 .inbox-stacks .inbox-stack .inbox-stack-head::after { content: none; }
 .inbox-stacks .inbox-stack .inbox-stack-head:disabled { cursor: default; }
 /* The name of a stack: a rubber stamp on its top sheet, below the count. Capitals in a double frame drawn a little out of
@@ -442,12 +442,12 @@ dialog.rowmenu::backdrop { background: transparent; }
    on a ruled line; the sheets below it stand in a frame (.stack-list) that the search fills. */
 .inbox-stacks .stack-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; min-width: 0; }
 .inbox-stacks .stack-search { margin: 0 0 3px; }
-.inbox-stacks .stack-search label { display: flex; align-items: center; gap: 8px; max-width: 360px; padding: 0 2px 0 4px; border-bottom: 1.3px solid color-mix(in srgb, var(--fg) 40%, var(--surface)); color: var(--muted); }
+.inbox-stacks .stack-search label { display: flex; align-items: center; gap: var(--s-2); max-width: 360px; padding: 0 2px 0 var(--s-1); border-bottom: 1.3px solid color-mix(in srgb, var(--fg) 40%, var(--surface)); color: var(--muted); }
 .inbox-stacks .stack-search .sketch { flex: none; width: 17px; height: 17px; }
 .inbox-stacks .stack-search input { flex: 1; min-width: 0; height: 34px; padding: 0; border: 0; background: none; color: var(--fg); font: 400 var(--t-sm)/1 var(--font); outline: 0; }
 .inbox-stacks .stack-search input::placeholder { color: var(--faint); opacity: 1; }
 .inbox-stacks .stack-search input::-webkit-search-cancel-button { cursor: pointer; }
-.inbox-stacks .stack-search-none { margin: 4px 0 2px 6px; color: var(--muted); font: 400 var(--t-sm)/1.4 var(--font); }
+.inbox-stacks .stack-search-none { margin: var(--s-1) 0 2px 6px; color: var(--muted); font: 400 var(--t-sm)/1.4 var(--font); }
 @container rows (max-width: 600px) { .inbox-stacks .stack-search label { max-width: none; } .inbox-stacks .stack-search input { height: 40px; font-size: 16px; }
 }
 /* the count as a number, for whoever reads the page aloud */
@@ -480,7 +480,7 @@ dialog.rowmenu::backdrop { background: transparent; }
 .inbox-groups > .inbox-stacks.stack-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: var(--s-6); }
 .inbox-stacks.stack-tabs > .inbox-stack { display: contents; }
 .inbox-stacks.stack-tabs .inbox-stack-title { display: block; margin: 0; }
-.inbox-stacks.stack-tabs .inbox-stack .inbox-stack-head { display: inline-flex; align-items: center; width: auto; min-height: 36px; padding: 0 12px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: -.6deg; transition: translate 140ms ease-out; }
+.inbox-stacks.stack-tabs .inbox-stack .inbox-stack-head { display: inline-flex; align-items: center; width: auto; min-height: 36px; padding: 0 var(--s-3); border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: -.6deg; transition: translate 140ms ease-out; }
 .inbox-stacks.stack-tabs .inbox-stack:nth-child(even) .inbox-stack-head { rotate: .5deg; }
 @media (any-hover: hover) { .inbox-stacks.stack-tabs .inbox-stack-head:not(:disabled):hover { translate: 0 -2px; }
 }
@@ -491,7 +491,7 @@ dialog.rowmenu::backdrop { background: transparent; }
 .inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { display: grid; order: 1; flex: 0 0 100%; grid-template-columns: minmax(0, 1fr); gap: 5px; box-sizing: border-box; width: 100%; margin: 6px 0 0; padding-right: 6px; }
 :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs { padding-left: var(--inset, 0px); }
 #inbox .inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { padding-right: 0; }
-@container rows (max-width: 430px) { .inbox-groups > .inbox-stacks.stack-tabs { gap: 8px; }
+@container rows (max-width: 430px) { .inbox-groups > .inbox-stacks.stack-tabs { gap: var(--s-2); }
 }
 /* The tabs straight (his proposal "Mach das Schiefe da weg"): no turn, square corners of one radius, the stamp's sign
    and word upright. Switched on by the class .is-straight on .stack-tabs (desk.mjs: STRAIGHT). */
@@ -502,32 +502,32 @@ dialog.rowmenu::backdrop { background: transparent; }
    (desk.css), its title and when. Unfolded (.is-open, the controller "piles"): the label as a tab with "Fold up",
    and below the row a box with the filter chips (radio buttons: CSS shows the lines of the checked one), the search,
    the newest ten lines and "N more". ---- */
-.inbox-groups > .inbox-stacks.stack-tabs { align-items: flex-start; column-gap: 24px; row-gap: 12px; margin-bottom: 56px; }
+.inbox-groups > .inbox-stacks.stack-tabs { align-items: flex-start; column-gap: var(--s-6); row-gap: var(--s-3); margin-bottom: 56px; }
 .inbox-stacks.stack-tabs .inbox-stack-title { align-self: flex-start; }
 .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex: 1 1 240px; max-width: 380px; min-width: 0; }
 .inbox-stacks.stack-tabs .inbox-stack.off-pile .inbox-stack-head.off-head { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: 10px; width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; rotate: 0deg; translate: none; color: var(--fg); text-align: left; cursor: pointer; }
 .inbox-stacks.stack-tabs .inbox-stack.off-pile .inbox-stack-head.off-head:disabled { cursor: default; }
-.off-label { display: flex; align-items: center; gap: 8px; min-height: 18px; white-space: nowrap; font: 700 .72rem/1 var(--font); letter-spacing: .16em; text-transform: uppercase; }
+.off-label { display: flex; align-items: center; gap: var(--s-2); min-height: 18px; white-space: nowrap; font: 700 .72rem/1 var(--font); letter-spacing: .16em; text-transform: uppercase; }
 .off-label > .off-count { font: 700 .86rem/1 var(--mono); letter-spacing: 0; }
-.off-fold { display: none; margin-left: auto; align-items: center; gap: 4px; color: var(--accent); letter-spacing: .06em; }
+.off-fold { display: none; margin-left: auto; align-items: center; gap: var(--s-1); color: var(--accent); letter-spacing: .06em; }
 .off-fold .sketch { width: 14px; height: 14px; transform: rotate(180deg); }
 
 .off-pile.is-empty .off-label { opacity: .5; }
-.inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open .inbox-stack-head.off-head { padding: 9px 12px; border: 2px solid var(--fg); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open .inbox-stack-head.off-head { padding: 9px var(--s-3); border: 2px solid var(--fg); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); }
 
 .off-pile.is-open .off-fold { display: inline-flex; }
 
 /* the unfolded pile: one box under the row */
-.inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open > .off-body { display: block; margin-top: 4px; padding: 10px 6px 6px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); }
-.inbox-stacks .off-search { margin: 0 4px 2px; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open > .off-body { display: block; margin-top: var(--s-1); padding: 10px 6px 6px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); }
+.inbox-stacks .off-search { margin: 0 var(--s-1) 2px; }
 .inbox-stacks .off-search label { max-width: none; }
 
 /* a line: sign, title and its grey line, sender and time, the way back */
-.inbox-stacks .off-list .inbox-done.off-line { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 0; padding: 6px 8px; border-radius: 0; background: none; box-shadow: none; border-top: 1px solid var(--line); }
-.off-open { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--fg); text-decoration: none; }
+.inbox-stacks .off-list .inbox-done.off-line { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 0; padding: 6px var(--s-2); border-radius: 0; background: none; box-shadow: none; border-top: 1px solid var(--line); }
+.off-open { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; color: var(--fg); text-decoration: none; }
 .off-open strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-md)/1.3 var(--font); }
 
-.off-more { display: block; padding: 8px 8px 4px; border-top: 1px solid var(--line); color: var(--accent); font: 600 var(--t-sm)/1 var(--font); text-align: center; cursor: pointer; }
+.off-more { display: block; padding: var(--s-2) var(--s-2) var(--s-1); border-top: 1px solid var(--line); color: var(--accent); font: 600 var(--t-sm)/1 var(--font); text-align: center; cursor: pointer; }
 .off-more input { position: absolute; opacity: 0; pointer-events: none; }
 .off-more:not(:has(input:checked)) .off-more-shut, .off-more:has(input:checked) .off-more-open { display: none; }
 /* the list shows the newest ten and "N more" */
@@ -536,7 +536,7 @@ dialog.rowmenu::backdrop { background: transparent; }
 /* a narrow list (the phone): the pile under the Notes tab, across the width; a line in two rows */
 @container rows (max-width: 600px) {
   .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex-basis: 100%; }
-  .inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "s o w" ". t w"; gap: 2px 10px; padding: 7px 4px; }.off-line > .off-open { grid-area: o; }
+  .inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "s o w" ". t w"; gap: 2px 10px; padding: 7px var(--s-1); }.off-line > .off-open { grid-area: o; }
 }/* The keyboard: the mark on the row it is on, the caps that say which key answers,
    the small notice while a sequence is under way, and the sheet behind "?".
    What the keys do is declared in js/keys.js. */
@@ -567,7 +567,7 @@ dialog.rowmenu::backdrop { background: transparent; }
 /* On the marked row every control wears its key, so the next move needs no legend. */
 .inbox-row.is-current .inbox-answer { position: relative; }
 .inbox-row.is-current [data-cap]::after { content: attr(data-cap); position: absolute; top: 7px; right: 7px; rotate: 3deg; }
-.inbox-done.is-current [data-cap]::after { content: attr(data-cap); margin-left: 8px; min-width: 20px; padding: 3px 5px; box-shadow: 0 0 0 1px var(--line-strong); }
+.inbox-done.is-current [data-cap]::after { content: attr(data-cap); margin-left: var(--s-2); min-width: 20px; padding: 3px 5px; box-shadow: 0 0 0 1px var(--line-strong); }
 .inbox-row.is-current .inbox-later[data-cap]::after { position: static; margin-left: 7px; rotate: 0deg; min-width: 20px; padding: 3px 5px; box-shadow: 0 0 0 1px var(--line-strong); }
 /* A finger has no keys. */
 @media (pointer: coarse) { .inbox-row.is-current [data-cap]::after, .inbox-done.is-current [data-cap]::after { content: none; }
@@ -586,7 +586,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .inbox-group:empty { display: none; }
 .rowmenu-in > form { display: contents; }
 .rowmenu-in button[hidden] { display: none; }
-.rowmenu-in a.rowmenu-open { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 8px; border-radius: 10px; color: var(--fg); font: 500 1rem/1.2 var(--font); text-decoration: none; }
+.rowmenu-in a.rowmenu-open { display: flex; align-items: center; gap: var(--s-3); min-height: 48px; padding: 0 var(--s-2); border-radius: 10px; color: var(--fg); font: 500 1rem/1.2 var(--font); text-decoration: none; }
 .rowmenu-in a.rowmenu-open:active { background: var(--sunken); }
 .rowmenu-in a.rowmenu-open svg { flex: none; width: 22px; height: 22px; color: var(--ink); }
 
@@ -646,7 +646,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .inbox-stacks.stack-tabs > .inbox-stack > .inbox-stack-title, .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex: none; max-width: none; width: 100%; min-width: 0; }
 .inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { grid-column: 1 / -1; order: 1; }
 .inbox-stacks.stack-tabs > .media-pile { order: 0; display: grid; gap: 10px; width: 100%; min-width: 0; color: var(--fg); text-decoration: none; }
-.inbox-stacks.stack-tabs .off-head, .inbox-stacks.stack-tabs > .media-pile { gap: 12px; }
+.inbox-stacks.stack-tabs .off-head, .inbox-stacks.stack-tabs > .media-pile { gap: var(--s-3); }
 .off-label { min-height: 18px; }
 /* one slip */
 
@@ -662,7 +662,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* ---- TEST (his word, 4 October: "weniger hoch"): a lower decision row, the pictures as a small fan beside the title ---- */
 @media (min-width: 861px) {
   .inbox-row { min-height: 0; grid-template-rows: auto auto; }
-  .inbox-row > .inbox-content { padding: 12px 16px 12px 20px; }
+  .inbox-row > .inbox-content { padding: var(--s-3) var(--s-4) var(--s-3) var(--s-5); }
   .inbox-content:has(> .inbox-fan) { grid-template-columns: auto minmax(0, 1fr); column-gap: 14px; }
   .inbox-content > * { grid-column: 1 / -1; }
   .inbox-content > .inbox-fan { grid-column: 1; grid-row: 2; align-self: center; }
@@ -717,8 +717,8 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   .inbox-groups .inbox-row:hover .inbox-when .inbox-tab-act, .inbox-groups .inbox-row .inbox-when .inbox-tab-act:focus-within { opacity: 1; }
   .inbox-groups .inbox-row .inbox-when .inbox-later-flap { box-shadow: none; }
   .inbox-groups .inbox-row:hover .inbox-when .inbox-later-flap { box-shadow: inset 0 0 0 1px var(--line-strong); }
-  .inbox-groups .inbox-row .inbox-actions { padding: 8px 8px 8px 0; gap: 6px; }
-  .inbox-groups .inbox-row .inbox-actions .inbox-answer { width: 116px; height: 48px; grid-auto-flow: column; grid-template-columns: auto minmax(0, auto); align-items: center; gap: 8px; padding: 0 10px; border-radius: 10px; }
+  .inbox-groups .inbox-row .inbox-actions { padding: var(--s-2) var(--s-2) var(--s-2) 0; gap: 6px; }
+  .inbox-groups .inbox-row .inbox-actions .inbox-answer { width: 116px; height: 48px; grid-auto-flow: column; grid-template-columns: auto minmax(0, auto); align-items: center; gap: var(--s-2); padding: 0 10px; border-radius: 10px; }
   .inbox-groups .inbox-row .inbox-actions .inbox-answer .sketch { width: 22px !important; height: 22px !important; }
   .inbox-groups .inbox-row .inbox-actions .inbox-answer > span:last-child:not(.inbox-disc) { font-size: var(--t-sm); line-height: 1.1; text-align: left; }
   .inbox-groups .inbox-row .inbox-actions .inbox-answer.is-what .sketch-what { width: 52px !important; height: 18px !important; }
@@ -731,7 +731,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   .inbox-groups .inbox-content > .inbox-fan > :is(img, video) { width: 40px; height: 30px; }
   .inbox-groups .inbox-content > .inbox-fan > :nth-child(n+2) { margin-left: -28px; }
   .inbox-groups .inbox-row .inbox-question, .inbox-groups .inbox-content:has(> .inbox-fan) .inbox-question { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-wrap: nowrap; -webkit-line-clamp: unset; font-size: 1.12rem; }
-  .inbox-groups .inbox-actions { margin-top: 8px; }
+  .inbox-groups .inbox-actions { margin-top: var(--s-2); }
   .inbox-groups .inbox-answer { min-height: 44px; }
 }
 .inbox-groups .inbox-row .inbox-byline .inbox-toread { display: none; }
@@ -751,7 +751,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* a little higher, so the answers are bigger (his word, 4 October): rows ~76px, tiles 60px, icon and word */
 @media (min-width: 861px) {
   .inbox-groups .inbox-row > .inbox-content, .inbox-groups .inbox-row > .inbox-content:has(> .inbox-fan) { min-height: 76px; }
-  .inbox-groups .inbox-row .inbox-actions { padding: 8px 8px 8px 0; gap: 8px; }
+  .inbox-groups .inbox-row .inbox-actions { padding: var(--s-2) var(--s-2) var(--s-2) 0; gap: var(--s-2); }
   .inbox-groups .inbox-row .inbox-actions .inbox-answer { width: 132px; height: 60px; }
   .inbox-groups .inbox-row .inbox-actions .inbox-answer .sketch { width: 26px !important; height: 26px !important; }
   .inbox-groups .inbox-row .inbox-actions .inbox-answer.is-ack { width: 64px; }
@@ -804,13 +804,13 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   .inbox-groups .inbox-row > :not(.inbox-more) { grid-column: 1; grid-row: 1; }
   .inbox-groups .inbox-row > .inbox-actions { grid-column: 2 !important; grid-row: 1 !important; display: flex !important; gap: 6px; margin: 0 !important; }
   .inbox-groups .inbox-row > .inbox-row-error { grid-column: 1 / -1; grid-row: 2; }
-  .inbox-groups .inbox-row .inbox-answer, .inbox-groups .inbox-row .inbox-answer.is-wide { flex: none; width: 76px; min-width: 0; height: 76px; min-height: 0; grid-auto-flow: row; grid-template-columns: minmax(0, auto); justify-items: center; align-content: center; gap: 4px; padding: 4px; }
+  .inbox-groups .inbox-row .inbox-answer, .inbox-groups .inbox-row .inbox-answer.is-wide { flex: none; width: 76px; min-width: 0; height: 76px; min-height: 0; grid-auto-flow: row; grid-template-columns: minmax(0, auto); justify-items: center; align-content: center; gap: var(--s-1); padding: var(--s-1); }
   .inbox-groups .inbox-row .inbox-answer .sketch { width: 26px !important; height: 26px !important; }
   .inbox-groups .inbox-row .inbox-answer > span:last-child:not(.inbox-disc) { position: static !important; width: auto !important; height: auto !important; clip-path: none !important; overflow: hidden !important; max-width: 100%; text-align: center !important; font-size: .7rem; line-height: 1.1; white-space: nowrap; text-overflow: ellipsis; }
   /* (What?? written large enough to read: the 26px of the other tiles' drawings shrank it to a speck) */
   .inbox-groups .inbox-row .inbox-answer.is-what .sketch-what { width: 56px !important; height: 20px !important; }
   .inbox-groups .inbox-row .inbox-answer.is-ack { padding-inline: 2px; }
-  .inbox-groups .inbox-row .inbox-content { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
+  .inbox-groups .inbox-row .inbox-content { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--s-2); }
   .inbox-groups .inbox-row .inbox-content > .inbox-byline { display: none !important; }
   .inbox-groups .inbox-row .inbox-content > .inbox-fan { order: 2; }
   .inbox-groups .inbox-row .inbox-question { font-size: 1rem !important; }
@@ -860,7 +860,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
    readable (Notes), an out-tray with a slip per place peeking, its sign only (Off the desk), a loose pile of real
    photos (Media). The word and count under each; a click opens the same list or the gallery. ---- */
 :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; justify-items: center; gap: var(--s-4) 28px; margin-top: var(--s-8); }
-.inbox-stacks.stack-tabs .inbox-stack.off-pile .inbox-stack-head.off-head, .inbox-stacks.stack-tabs > .media-pile { display: grid; justify-items: center; gap: 12px; width: auto; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile .inbox-stack-head.off-head, .inbox-stacks.stack-tabs > .media-pile { display: grid; justify-items: center; gap: var(--s-3); width: auto; }
 .inbox-stacks.stack-tabs .off-head > .off-label, .media-pile > .off-label { order: 2; justify-content: center; color: var(--muted); }
 .inbox-stacks.stack-tabs .off-head > .off-label .off-count, .media-pile > .off-label .off-count { color: var(--fg); }
 .desk-obj { position: relative; display: block; width: 200px; height: 132px; }
@@ -902,10 +902,10 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 @media (min-width: 861px) { .inbox-groups .inbox-row > .inbox-content { padding-left: 14px !important; } }
 /* the bar */
 .sel-bar[hidden] { display: none; }
-.sel-bar { position: fixed; z-index: 20; left: 50%; bottom: 20px; translate: -50% 0; display: flex; align-items: center; gap: 4px; margin: 0; padding: 6px 6px 6px 16px; border-radius: 14px; background: var(--fg); color: var(--surface); box-shadow: var(--shadow-lg); }
+.sel-bar { position: fixed; z-index: var(--z-pop); left: 50%; bottom: 20px; translate: -50% 0; display: flex; align-items: center; gap: var(--s-1); margin: 0; padding: 6px 6px 6px var(--s-4); border-radius: 14px; background: var(--fg); color: var(--surface); box-shadow: var(--shadow-lg); }
 @media (min-width: 861px) { .sel-bar { left: calc(50% + 128px); } }
-.sel-n { margin-right: 8px; font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; }
-.sel-bar button { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; border: 0; border-radius: 10px; background: none; color: inherit; font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.sel-n { margin-right: var(--s-2); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; }
+.sel-bar button { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 var(--s-3); border: 0; border-radius: 10px; background: none; color: inherit; font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
 .sel-bar button:hover, .sel-bar button:focus-visible { background: color-mix(in srgb, var(--surface) 16%, transparent); }
 .sel-bar button[hidden] { display: none; }
 .sel-bar .sketch { width: 18px; height: 18px; }
@@ -913,20 +913,19 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .sel-bar .sel-clear { width: 40px; justify-content: center; padding: 0; font-size: 1rem; opacity: .7; }
 @media (max-width: 860px) {
   .inbox-groups .inbox-row button.row-mark { width: 40px; height: 40px; margin: 0 -6px 0 -6px; }
-  .sel-bar { left: 10px; right: 10px; translate: none; bottom: 14px; justify-content: space-between; padding-left: 12px; }
-  .sel-bar button { padding: 0 8px; } .sel-bar button span { font-size: var(--t-xs); }
+  .sel-bar { left: 10px; right: 10px; translate: none; bottom: 14px; justify-content: space-between; padding-left: var(--s-3); }
+  .sel-bar button { padding: 0 var(--s-2); } .sel-bar button span { font-size: var(--t-xs); }
 }
 #inbox.is-choosing .inbox-groups .inbox-row button.row-mark > .crown-mark, .inbox-groups .inbox-row button.row-mark:focus-visible > .crown-mark { display: none; }
 @media (any-hover: hover) { .inbox-groups .inbox-row button.row-mark:hover > .crown-mark { display: none; } }
 @media (max-width: 860px) { .sel-bar { right: 72px; } }
 @media (min-width: 861px) { .sel-bar { bottom: 24px; } }
-@media (max-width: 860px) { .sel-bar { gap: 0; padding: 4px 4px 4px 10px; } .sel-n { margin-right: 2px; font-size: var(--t-xs); } .sel-bar button { gap: 4px; padding: 0 6px; } .sel-bar .sketch { width: 16px; height: 16px; } .sel-bar .sel-clear { width: 30px; } }
+@media (max-width: 860px) { .sel-bar { gap: 0; padding: var(--s-1) var(--s-1) var(--s-1) 10px; } .sel-n { margin-right: 2px; font-size: var(--t-xs); } .sel-bar button { gap: var(--s-1); padding: 0 6px; } .sel-bar .sketch { width: 16px; height: 16px; } .sel-bar .sel-clear { width: 30px; } }
 
 /* ---- Off the desk as a shopping list on a slip (his word, 4 October): one line per card, newest first; done ticked
    and struck through, shredded struck and faded, snoozed greyed with its zz. The heading folds and unfolds it (no
    boxed button); the way back of a line comes quietly under the pointer. ---- */
-.shop-slip { width: 210px; height: auto; min-height: 118px; padding: 12px 14px 10px 12px; display: grid; align-content: start; gap: 2px; background: #fffdf6; border: 1px solid color-mix(in srgb, var(--fg) 18%, var(--surface)); box-shadow: 0 2px 3px var(--shade); rotate: 1deg; background-image: repeating-linear-gradient(transparent 0 19px, color-mix(in srgb, #6a8fb5 22%, transparent) 19px 20px); background-position: 0 9px; }
-:root[data-theme="dark"] .shop-slip { background-color: #232a26; }
+.shop-slip { width: 210px; height: auto; min-height: 118px; padding: var(--s-3) 14px 10px var(--s-3); display: grid; align-content: start; gap: 2px; background: var(--slip-paper); border: 1px solid color-mix(in srgb, var(--fg) 18%, var(--surface)); box-shadow: 0 2px 3px var(--shade); rotate: 1deg; background-image: repeating-linear-gradient(transparent 0 19px, color-mix(in srgb, var(--slip-rule) 22%, transparent) 19px 20px); background-position: 0 9px; }
 .shop-line { display: flex; align-items: center; gap: 6px; min-width: 0; height: 20px; font: 600 .82rem/20px var(--display); color: var(--fg); text-align: left; }
 .shop-line.is-blank { color: var(--faint); font-weight: 500; }
 .shop-t { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -941,20 +940,19 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* the unfolded list: the same slip, wider; no boxed head, no chips' weight */
 .inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open:not(.notes-pile) .inbox-stack-head.off-head { padding: 0; border: 0; background: none; box-shadow: none; }
 .off-pile:not(.notes-pile) .off-fold { display: none !important; }
-.inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { margin-top: 10px; padding: 12px 16px 10px; border-radius: 2px; background: #fffdf6; background-image: repeating-linear-gradient(transparent 0 33px, color-mix(in srgb, #6a8fb5 18%, transparent) 33px 34px); box-shadow: 0 2px 3px var(--shade); border: 1px solid color-mix(in srgb, var(--fg) 15%, var(--surface)); }
-:root[data-theme="dark"] .inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { background-color: #232a26; }
-.inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 16px minmax(0, 1fr) auto auto; min-height: 34px; padding: 0 4px; border-top: 0; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { margin-top: 10px; padding: var(--s-3) var(--s-4) 10px; border-radius: 2px; background: var(--slip-paper); background-image: repeating-linear-gradient(transparent 0 33px, color-mix(in srgb, var(--slip-rule) 18%, transparent) 33px 34px); box-shadow: 0 2px 3px var(--shade); border: 1px solid color-mix(in srgb, var(--fg) 15%, var(--surface)); }
+.inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 16px minmax(0, 1fr) auto auto; min-height: 34px; padding: 0 var(--s-1); border-top: 0; }
 .off-line .off-open strong { font: 600 var(--t-md)/1.3 var(--display); }
-.off-more { border-top: 0; text-align: left; padding-left: 24px; }
-@container rows (max-width: 600px) { .shop-slip { width: 108px; min-height: 76px; padding: 6px 6px 4px; background-size: auto; } .shop-line { height: 14px; font-size: .58rem; line-height: 14px; gap: 3px; } .shop-mark, .shop-mark .sketch { width: 10px; height: 10px; } .shop-slip .shop-line:nth-child(n+5) { display: none; } }
+.off-more { border-top: 0; text-align: left; padding-left: var(--s-6); }
+@container rows (max-width: 600px) { .shop-slip { width: 108px; min-height: 76px; padding: 6px 6px var(--s-1); background-size: auto; } .shop-line { height: 14px; font-size: .58rem; line-height: 14px; gap: 3px; } .shop-mark, .shop-mark .sketch { width: 10px; height: 10px; } .shop-slip .shop-line:nth-child(n+5) { display: none; } }
 .inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { background-image: none; }
-.off-pile[data-stack="off"] .off-list .inbox-done.off-line { border-bottom: 1px solid color-mix(in srgb, #6a8fb5 20%, transparent); border-radius: 0; }
+.off-pile[data-stack="off"] .off-list .inbox-done.off-line { border-bottom: 1px solid color-mix(in srgb, var(--slip-rule) 20%, transparent); border-radius: 0; }
 .off-pile[data-stack="off"] .off-search label { border: 0; border-bottom: 1px solid var(--line-strong); border-radius: 0; background: none; }
 
 /* ---- The list, radically simple (his word, 4 October: "optisch zu überladen"): the mark and the title on ruled paper,
    no dividers; the filters plain small words; the search a magnifier that opens; the way back a small word at the end
    of a line under the pointer. ---- */
-.inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { position: relative; padding: 10px 16px 12px; background-image: repeating-linear-gradient(transparent 0 31px, color-mix(in srgb, #6a8fb5 20%, transparent) 31px 32px); background-position: 0 40px; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { position: relative; padding: 10px var(--s-4) var(--s-3); background-image: repeating-linear-gradient(transparent 0 31px, color-mix(in srgb, var(--slip-rule) 20%, transparent) 31px 32px); background-position: 0 40px; }
 .off-pile[data-stack="off"] .off-list .inbox-done.off-line { grid-template-columns: 16px minmax(0, 1fr) auto; min-height: 32px; border: 0 !important; background: none; }
 .off-find { position: absolute; top: 8px; right: 12px; z-index: 1; }
 .off-find > summary { list-style: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: var(--muted); cursor: pointer; }
@@ -963,7 +961,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .off-find > summary:hover { color: var(--fg); background: var(--sunken); }
 .off-find[open] { position: static; }
 .off-find[open] > summary { position: absolute; top: 8px; right: 12px; }
-.off-find[open] .off-search { margin: 0 0 4px; }
+.off-find[open] .off-search { margin: 0 0 var(--s-1); }
 .off-find .off-search label { border: 0 !important; border-bottom: 1px solid var(--line-strong) !important; border-radius: 0; background: none; }
 .off-find .off-search label > .sketch { display: none; }
 
@@ -973,7 +971,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .gal-sheet { padding: 0; border: 0; border-radius: 6px; background: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 60%, transparent), 0 2px 8px rgb(20 30 25 / .16); overflow: hidden; }
 /* the ruling is the lines' own (so it always sits under the words) */
 .inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { background-image: none; }
-.off-pile[data-stack="off"] .off-list .inbox-done.off-line { height: 32px; min-height: 0; align-items: end; padding: 0 4px 3px; border-bottom: 1px solid color-mix(in srgb, #6a8fb5 22%, transparent) !important; }
+.off-pile[data-stack="off"] .off-list .inbox-done.off-line { height: 32px; min-height: 0; align-items: end; padding: 0 var(--s-1) 3px; border-bottom: 1px solid color-mix(in srgb, var(--slip-rule) 22%, transparent) !important; }
 .off-pile[data-stack="off"] .off-line .off-open strong { font-size: .95rem; line-height: 1.2; }
 .off-pile[data-stack="off"] .off-line > .shop-mark { align-self: end; margin-bottom: 3px; }
 .off-pile[data-stack="off"] .off-line > .off-open { align-self: end; padding-bottom: 1px; }
@@ -986,14 +984,14 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .off-pile[data-stack="notes"].is-open .desk-obj { display: block !important; }
 .inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="notes"].is-open .inbox-stack-head.off-head { padding: 0; border: 0; background: none; box-shadow: none; }
 .off-pile[data-stack="notes"] .off-fold { display: none !important; }
-#inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { position: absolute; z-index: 30; left: calc(100% - 24px); bottom: 24px; width: 300px; max-height: 360px; overflow-y: auto; margin: 0; padding: 6px; gap: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+#inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { position: absolute; z-index: var(--z-corner); left: calc(100% - 24px); bottom: 24px; width: 300px; max-height: 360px; overflow-y: auto; margin: 0; padding: 6px; gap: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
 [data-stack="notes"] .inbox-pile-sheets .stack-search, [data-stack="notes"] .inbox-pile-sheets :is(.note-send, .note-bin) { display: none !important; }
 @media (max-width: 860px) {
   #inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { position: fixed; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 60vh; padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px)); border-radius: 16px; }
 }
-@media (max-width: 860px) { #inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { z-index: 80; bottom: 70px; } }
+@media (max-width: 860px) { #inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { z-index: var(--z-toast); bottom: 70px; } }
 /* the mark at the line's start, centred with the title in a narrow column (his word: on the same line) */
-.off-pile[data-stack="off"] .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr); align-items: center; column-gap: 10px; padding: 0 4px; }
+.off-pile[data-stack="off"] .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr); align-items: center; column-gap: 10px; padding: 0 var(--s-1); }
 .off-pile[data-stack="off"] .off-line > .shop-mark, .off-pile[data-stack="off"] .off-line > .off-open { align-self: center; margin: 0; padding: 0; }
 .off-pile[data-stack="off"] .off-line > .shop-mark { width: 18px; height: 18px; }
 .off-pile[data-stack="off"] .off-line > .shop-mark .sketch { width: 16px; height: 16px; }
@@ -1001,7 +999,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .off-pile[data-stack="off"] .off-line .off-open strong { line-height: 1.2; }
 .off-pile[data-stack="off"] .off-line:hover .off-open strong { text-decoration-line: underline; text-underline-offset: 3px; }
 .off-pile[data-stack="off"] .off-line[data-g="done"]:hover .off-open strong, .off-pile[data-stack="off"] .off-line[data-g="trash"]:hover .off-open strong { text-decoration-line: line-through underline; }
-.off-pile[data-stack="off"] .off-body { padding-top: 40px !important; }
+.off-pile[data-stack="off"] .off-body { padding-top: var(--s-10) !important; }
 .shop-mark[data-g="trash"] { color: var(--muted); }
 .off-pile[data-stack="off"] .off-body { padding-top: 34px !important; }
 
@@ -1015,7 +1013,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 @media (max-width: 860px) {
   /* a phone keeps the title room: the pictures wait on the card's page; two smaller tiles */
   :is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .inbox-fan { display: none; }
-  :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-actions { width: 140px; gap: 4px; }
+  :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-actions { width: 140px; gap: var(--s-1); }
   :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer, :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-wide { width: 68px; height: 72px; }
   :is(#inbox, #session) .inbox-groups .inbox-row button.row-mark { width: 32px; margin: 0 -2px 0 -6px; }
 }
@@ -1023,9 +1021,9 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* ---- The selection bar, drawn (his word, 4 October): paper, an ink outline in the pen's line, a slight turn; "N
    selected", then the ways as drawn signs with words: the pull-tag (Later: the rows go down into Off the desk), the
    duck (Duck it), the tick (Read, with infos), the bin (Shred, muted red), the cross ---- */
-.sel-bar { background: var(--surface); color: var(--fg); padding: 6px 8px 6px 18px; border-radius: 6px 10px 7px 9px / 9px 6px 10px 7px; box-shadow: 0 0 0 1.6px var(--fg), 4px 5px 0 -1px color-mix(in srgb, var(--fg) 12%, transparent), 0 10px 24px -12px rgb(20 30 25 / .35); rotate: -.6deg; }
+.sel-bar { background: var(--surface); color: var(--fg); padding: 6px var(--s-2) 6px 18px; border-radius: 6px 10px 7px 9px / 9px 6px 10px 7px; box-shadow: 0 0 0 1.6px var(--fg), 4px 5px 0 -1px color-mix(in srgb, var(--fg) 12%, transparent), 0 10px 24px -12px rgb(20 30 25 / .35); rotate: -.6deg; }
 .sel-n { font: 700 var(--t-sm)/1 var(--display); margin-right: 10px; }
-.sel-bar button { min-height: 48px; padding: 0 12px; border-radius: 8px; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
+.sel-bar button { min-height: 48px; padding: 0 var(--s-3); border-radius: 8px; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
 .sel-bar button:hover, .sel-bar button:focus-visible { background: var(--sunken); }
 .sel-bar .sketch { width: 20px; height: 20px; }
 .sel-bar .sel-later svg { width: 21px; height: 44px; margin: -10px 0 -6px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; transition: transform 300ms cubic-bezier(.34, 1.56, .64, 1); }
@@ -1037,8 +1035,8 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .sel-bar .sel-clear .sketch { width: 16px; height: 16px; }
 .sel-bar .sel-clear:hover { opacity: 1; }
 @media (max-width: 860px) {
-  .sel-bar { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); rotate: none; padding: 4px 4px 4px 12px; justify-content: space-between; }
-  .sel-bar button { min-height: 48px; padding: 0 8px; gap: 5px; }
+  .sel-bar { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); rotate: none; padding: var(--s-1) var(--s-1) var(--s-1) var(--s-3); justify-content: space-between; }
+  .sel-bar button { min-height: 48px; padding: 0 var(--s-2); gap: 5px; }
   .sel-n { font-size: var(--t-xs); margin-right: 2px; }
 }
 .sel-bar .sel-clear .sketch { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
@@ -1053,7 +1051,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 #inbox .inbox-stacks.stack-tabs .desk-obj { box-sizing: border-box; height: 132px !important; min-height: 0; }
 #inbox .inbox-stacks.stack-tabs .shop-slip { rotate: 0deg; overflow: hidden; }
 @container rows (max-width: 600px) { #inbox .inbox-stacks.stack-tabs .desk-obj { height: 76px !important; } }
-#inbox .inbox-stacks.stack-tabs > .media-pile { gap: 12px !important; }
+#inbox .inbox-stacks.stack-tabs > .media-pile { gap: var(--s-3) !important; }
 :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
 
 /* ---- The Desk's foot is a pair (his word, 6 October: "nur noch zwei Sachen … besser nebeneinander leben"): the list
@@ -1070,12 +1068,12 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* ---- The Desk's top (desk.mjs deskHead): where one arrives. A greeting in the display face, its last word underlined
    with the pen; the tools for what waits at the right, on the list's right edge. Air above and below: the list starts clearly under it.
    A phone: the greeting on a line of its own, the tools under it. ---- */
-#inbox .desk-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px var(--s-5); flex-wrap: nowrap; margin-top: var(--s-6); margin-bottom: var(--s-8); padding: 0 4px; box-sizing: border-box; }
+#inbox .desk-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px var(--s-5); flex-wrap: nowrap; margin-top: var(--s-6); margin-bottom: var(--s-8); padding: 0 var(--s-1); box-sizing: border-box; }
 .desk-hello { grid-column: 1; margin: 0; font: 800 clamp(2.1rem, 3.6vw, 2.9rem)/1.08 var(--display); letter-spacing: -.028em; color: var(--fg); }
 .desk-hello em { font-style: normal; padding-bottom: 5px; background: var(--under-ink) left bottom / 100% 9px no-repeat; }
 .desk-tools { grid-column: 2; flex: none; display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
-.desk-blitz { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
-.desk-blitz .blitz-bolt { flex: none; width: 22px; height: 22px; fill: #f5d64a; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.desk-blitz { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 40px; padding: 0 var(--s-2) 0 var(--s-3); border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
+.desk-blitz .blitz-bolt { flex: none; width: 22px; height: 22px; fill: var(--yellow); stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .desk-blitz-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
 /* the duck for all (desk.mjs duckAll): Blitz's small sibling, in the same drawn box (ink outline, the crooked
    corners, the shadow, the height), the duck in full ink; under the pointer or the keyboard it lifts as Blitz
@@ -1084,17 +1082,17 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .desk-duck-open { list-style: none; box-sizing: border-box; display: grid; place-items: center; width: 44px; height: 40px; border: 1.6px solid var(--fg); border-radius: 12px 9px 13px 8px / 8px 13px 9px 12px; background: var(--surface); color: var(--fg); cursor: pointer; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: .8deg; transition: translate 90ms, box-shadow 90ms, background 120ms; }
 .desk-duck-open::-webkit-details-marker { display: none; }
 .desk-duck-open .sketch-duck { width: 30px; height: 25px; stroke-width: 1.6; }
-.desk-duck-open:focus-visible, .desk-duck[open] > .desk-duck-open { --surface: #fff6c9; background: #f5d64a; color: #1f1a05; }
-@media (any-hover: hover) { .desk-duck-open:hover { --surface: #fff6c9; background: #f5d64a; color: #1f1a05; translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
+.desk-duck-open:focus-visible, .desk-duck[open] > .desk-duck-open { --surface: #fff6c9; background: var(--yellow); color: #1f1a05; }
+@media (any-hover: hover) { .desk-duck-open:hover { --surface: #fff6c9; background: var(--yellow); color: #1f1a05; translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
 .desk-duck-open:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
 .desk-duck-open:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
-.desk-duck-ask { position: absolute; z-index: 20; right: -6px; top: calc(100% + 10px); width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; display: grid; gap: 10px; padding: 12px 14px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); color: var(--fg); box-shadow: 3px 4px 0 color-mix(in srgb, var(--fg) 85%, transparent); text-align: left; }
+.desk-duck-ask { position: absolute; z-index: var(--z-pop); right: -6px; top: calc(100% + 10px); width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; display: grid; gap: 10px; padding: var(--s-3) 14px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); color: var(--fg); box-shadow: 3px 4px 0 color-mix(in srgb, var(--fg) 85%, transparent); text-align: left; }
 .desk-duck-ask p { margin: 0; font: 700 var(--t-md)/1.3 var(--display); }
-.desk-duck-ways { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.desk-duck-yes { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px 0 10px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--fg); color: var(--bg); font: 700 var(--t-sm)/1 var(--font); cursor: pointer; }
+.desk-duck-ways { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.desk-duck-yes { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 40px; padding: 0 14px 0 10px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--fg); color: var(--bg); font: 700 var(--t-sm)/1 var(--font); cursor: pointer; }
 .desk-duck-yes .sketch-duck { width: 28px; height: 24px; stroke-width: 1.5; color: var(--fg); }
 .desk-duck-yes:active { translate: 1px 2px; }
-.desk-duck-no { min-height: 40px; padding: 0 12px; border: 0; border-radius: 9px; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.desk-duck-no { min-height: 40px; padding: 0 var(--s-3); border: 0; border-radius: 9px; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
 .desk-duck-no:hover { background: var(--sunken); color: var(--fg); }
 :is(.desk-duck-yes, .desk-duck-no):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (max-width: 860px) {
@@ -1113,7 +1111,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* ---- The pictures of a row have a column of their own (ui.mjs deskRow .inbox-fan): as wide as the fan is, a gap to
    the answers, never under them; the words beside it give way (they are cut with an ellipsis); where the rows are
    narrow the fan goes rather than be squeezed. Two named options are plain tiles, their words alone. ---- */
-:is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .inbox-fan { flex: none; width: max-content; min-width: max-content; margin: 0 16px 0 6px; }
+:is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .inbox-fan { flex: none; width: max-content; min-width: max-content; margin: 0 var(--s-4) 0 6px; }
 :is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .inbox-text { flex: 1 1 0; min-width: 0; }
 @container rows (max-width: 640px) { :is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .inbox-fan { display: none; } }
 .inbox-answer.is-thumb.is-named > .inbox-disc { display: none; }
@@ -1122,14 +1120,14 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* ---- The stack's tail (desk.mjs withAgents): the cards that are out with an agent, pressed flat under the last card
    of the stack: its outline and title face, one line high, a shade paler; no heading, no divider. What follows below
    stands clearly further away. ---- */
-:is(#inbox, #session) .inbox-groups > .tail { grid-column: 1 / -1; display: grid; gap: 8px; min-width: 0; margin: -6px 0 var(--s-8); padding: 0; }
+:is(#inbox, #session) .inbox-groups > .tail { grid-column: 1 / -1; display: grid; gap: var(--s-2); min-width: 0; margin: -6px 0 var(--s-8); padding: 0; }
 .tail[hidden] { display: none !important; }
-.tail-card { display: grid; grid-template-columns: 30px minmax(0, 1fr) fit-content(40%) 62px; align-items: center; column-gap: 14px; min-height: 46px; padding: 0 14px 0 16px; border-radius: 6px; background: color-mix(in srgb, var(--surface) 55%, var(--bg)); box-shadow: 0 0 0 1px var(--line-strong); color: var(--muted); text-decoration: none; text-align: left; transition: background 120ms, box-shadow 120ms; }
+.tail-card { display: grid; grid-template-columns: 30px minmax(0, 1fr) fit-content(40%) 62px; align-items: center; column-gap: 14px; min-height: 46px; padding: 0 14px 0 var(--s-4); border-radius: 6px; background: color-mix(in srgb, var(--surface) 55%, var(--bg)); box-shadow: 0 0 0 1px var(--line-strong); color: var(--muted); text-decoration: none; text-align: left; transition: background 120ms, box-shadow 120ms; }
 .tail-card:hover, .tail-card:focus-visible { background: var(--surface); box-shadow: 0 0 0 1px var(--fg); outline: none; }
 .tail-mark { display: grid; width: 26px; height: 26px; color: var(--tone-pen); }
 .tail-mark .doodle { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .tail-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 1.02rem/1.3 var(--display); letter-spacing: -.01em; color: color-mix(in srgb, var(--fg) 72%, var(--surface)); }
-.tail-who { display: inline-flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; font: 400 var(--t-sm)/1.3 var(--font); }
+.tail-who { display: inline-flex; align-items: center; gap: var(--s-2); min-width: 0; white-space: nowrap; font: 400 var(--t-sm)/1.3 var(--font); }
 /* (a long name is cut, not the card's title and not "is on it"; on a phone it ran under the time) */
 .tail-who > span { display: flex; gap: .3em; min-width: 0; }
 .tail-who b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 700; color: var(--tone-pen, var(--fg)); }
@@ -1137,7 +1135,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .tail-card .ago { justify-self: end; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
 @media (max-width: 860px) {
   :is(#inbox, #session) .inbox-groups > .tail { margin-top: -2px; gap: 6px; }
-  .tail-card { grid-template-columns: 24px minmax(0, 1fr) auto; grid-template-rows: auto auto; row-gap: 0; column-gap: 10px; min-height: 52px; padding: 6px 12px; border-radius: 14px; }
+  .tail-card { grid-template-columns: 24px minmax(0, 1fr) auto; grid-template-rows: auto auto; row-gap: 0; column-gap: 10px; min-height: 52px; padding: 6px var(--s-3); border-radius: 14px; }
   .tail-mark { grid-row: 1 / 3; width: 22px; height: 22px; }
   .tail-title { grid-column: 2 / 4; font-size: .95rem; }
   .tail-who { grid-column: 2; font-size: var(--t-xs); }
@@ -1157,15 +1155,15 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
    two lines under it, then the answers as one row of wide tiles a thumb's size (50px), the drawing and the words side
    by side. The pictures' fan stays on the card. ---- */
 @media (max-width: 860px) {
-  html body :is(#inbox, #session) .inbox-groups .inbox-row { display: grid; grid-template-columns: minmax(0, 1fr) !important; row-gap: 12px; align-items: start; padding: 14px 12px 12px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row { display: grid; grid-template-columns: minmax(0, 1fr) !important; row-gap: var(--s-3); align-items: start; padding: 14px var(--s-3) var(--s-3); }
   html body :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-content { grid-column: 1 !important; grid-row: 1 !important; display: flex; align-items: flex-start; gap: 10px; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .inbox-fan { display: none; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .row-mark { flex: none; margin-top: 1px; }
-  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { flex: 1 1 0; min-width: 0; display: grid; gap: 4px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { flex: 1 1 0; min-width: 0; display: grid; gap: var(--s-1); }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-question { display: -webkit-box !important; -webkit-box-orient: vertical; -webkit-line-clamp: 2 !important; overflow: hidden; white-space: normal; text-wrap: pretty; font: 700 1.08rem/1.22 var(--display) !important; letter-spacing: -.012em; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-body { display: -webkit-box !important; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; font-size: var(--t-sm); line-height: 1.4; color: var(--muted); }
-  html body :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-actions { grid-column: 1 !important; grid-row: 2 !important; display: flex !important; width: auto; gap: 8px; margin: 0 !important; }
-  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer, html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-wide { flex: 1 1 0; width: auto; min-width: 0; height: 50px; min-height: 0; display: flex; grid-auto-flow: column; flex-direction: row; align-items: center; justify-content: center; gap: 10px; padding: 0 12px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-actions { grid-column: 1 !important; grid-row: 2 !important; display: flex !important; width: auto; gap: var(--s-2); margin: 0 !important; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer, html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-wide { flex: 1 1 0; width: auto; min-width: 0; height: 50px; min-height: 0; display: flex; grid-auto-flow: column; flex-direction: row; align-items: center; justify-content: center; gap: 10px; padding: 0 var(--s-3); }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer .sketch { width: 22px !important; height: 22px !important; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer > span:last-child:not(.inbox-disc) { font-size: var(--t-sm); white-space: nowrap; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-what .sketch-what { width: 62px !important; height: 22px !important; }
@@ -1174,7 +1172,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 
 /* ---- Several options, one advised (his pick "advised", 7 October): the advised option is the lead tile with its words
    (two lines at most) and "advised" under them; "+N other ways" beside it opens the card. ---- */
-.inbox-actions.is-advised-pair .inbox-answer.is-take { display: grid; grid-auto-flow: row; justify-items: center; align-content: center; gap: 3px; padding: 6px 8px; text-align: center; }
+.inbox-actions.is-advised-pair .inbox-answer.is-take { display: grid; grid-auto-flow: row; justify-items: center; align-content: center; gap: 3px; padding: 6px var(--s-2); text-align: center; }
 .inbox-actions.is-advised-pair .inbox-answer.is-take > strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; font: 700 var(--t-sm)/1.15 var(--font); overflow-wrap: anywhere; }
 .inbox-actions.is-advised-pair .inbox-answer.is-take > small { font: 500 .68rem/1 var(--font); opacity: .85; }
 .inbox-actions.is-advised-pair .inbox-answer.is-take > .sketch { width: 22px; height: 22px; }
@@ -1220,7 +1218,7 @@ html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-when .inbox-late
 .inbox-later.is-tag svg { width: 15px; height: 32px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; rotate: -4deg; transition: rotate 160ms; }
 .inbox-later.is-tag .tag-paper { fill: var(--surface); } .inbox-later.is-tag .tag-z { stroke: var(--fg); }
 .inbox-later.is-tag:is(:hover, :focus-visible) svg { rotate: 6deg; }
-html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { padding-right: 24px; }
+html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { padding-right: var(--s-6); }
 @media (max-width: 860px) { html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-when { top: 0; right: 0; } }
 
 /* (a phone: the advised pair a little taller, the stroke clear under the words) */

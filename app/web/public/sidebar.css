@@ -142,7 +142,7 @@
 .agent-row.is-group { position: relative; }
 .agent-row.is-group .agent-entry { position: relative; min-height: 52px; }
 .agent-row.is-group .agent-entry { padding-block: 9px; }
-.agent-row.is-group + .agent-row, .agent-row + .agent-row.is-group { margin-top: 4px; }
+.agent-row.is-group + .agent-row, .agent-row + .agent-row.is-group { margin-top: var(--s-1); }
 
 /* ---- a session's state: no ground anywhere, colour and stroke carry it ----
    At work, the session's own mark redraws itself: the whole drawing stays as a trace at half strength
@@ -167,12 +167,12 @@
    be a button of its own: a click goes through that session's questions. Under the pointer or the
    keyboard the count is underlined and the hand gives a small wave. */
 .agent-row.has-badge .agent-entry { padding-right: 48px; }
-.agent-row > .agent-badge { position: relative; z-index: 1; margin: 0 12px 0 -42px; }
+.agent-row > .agent-badge { position: relative; z-index: 1; margin: 0 var(--s-3) 0 -42px; }
 button.agent-badge { border: 0; border-radius: 50%; background: none; font-family: inherit; cursor: pointer; transition: scale 140ms ease-out; }
 button.agent-badge:active { scale: .95; }
 .agent-row.is-knocking .agent-avatar { animation: knock 640ms cubic-bezier(.3, .7, .4, 1) 120ms; }
 .brand h1 { display: flex; }
-.brand-open { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; margin-left: -8px; padding: 0 8px; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; transition: background var(--d-fast); }
+.brand-open { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; margin-left: -8px; padding: 0 var(--s-2); border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; transition: background var(--d-fast); }
 .brand-open:hover, .brand-open[aria-expanded="true"] { background: var(--sunken); }
 .brand-fold { display: inline-flex; margin-left: -4px; color: var(--faint); rotate: 0deg; transition: rotate var(--d-med) var(--ease-out), color var(--d-fast); }
 .brand-fold .sketch { width: 16px; height: 16px; stroke-width: 2.2; }
@@ -180,21 +180,21 @@ button.agent-badge:active { scale: .95; }
 .brand-open[aria-expanded="true"] .brand-fold { rotate: 180deg; color: var(--fg); }
 /* The menu: a small sheet above the logo (below it on a phone, where the bar is at the top). */
 .sidedoors { position: absolute; z-index: 6; left: max(var(--s-3), env(safe-area-inset-left, 0px)); bottom: calc(100% + 6px); min-width: 208px; display: grid; gap: 2px; padding: 6px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
-.topbar .sidedoors a, .topbar .sidedoors button, .topbar .sidedoors #keys-open { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-align: left; text-decoration: none; }
+.topbar .sidedoors a, .topbar .sidedoors button, .topbar .sidedoors #keys-open { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 var(--s-3) 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-align: left; text-decoration: none; }
 .sidedoors .sketch { width: 20px; height: 20px; stroke-width: 1.8; color: var(--muted); }
 /* a switch in the menu says how it stands */
 .sidedoors button { width: 100%; cursor: pointer; }
 .sidedoors button i { margin-left: auto; padding-left: var(--s-4); font: 600 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
 .sidedoors button[aria-checked="true"] i { color: var(--accent); }
-.sidedoors kbd { margin-left: auto; min-width: 22px; padding: 4px 6px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 2px 0 var(--line-strong); font: 500 .72rem/1 var(--mono); color: var(--muted); text-align: center; }
+.sidedoors kbd { margin-left: auto; min-width: 22px; padding: var(--s-1) 6px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 2px 0 var(--line-strong); font: 500 .72rem/1 var(--mono); color: var(--muted); text-align: center; }
 /* the theme: a switch that says how it stands, with the moon while it is light and the sun while it is dark */
 #theme-toggle i::after { content: "off"; }
 #theme-toggle[aria-pressed="true"] i::after { content: "on"; }
 #theme-toggle[aria-pressed="true"] i { color: var(--accent); }
 /* the connection, last in the menu: a line, not a control */
-.sidedoors .conn { margin: 4px 0 0; padding: 10px 12px 6px 14px; height: auto; border-top: 1px solid var(--line); border-radius: 0; font-size: var(--t-sm); }
+.sidedoors .conn { margin: var(--s-1) 0 0; padding: 10px var(--s-3) 6px 14px; height: auto; border-top: 1px solid var(--line); border-radius: 0; font-size: var(--t-sm); }
 .sidedoors .conn[data-state="online"] span { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
-.sidedoors .conn[data-state="offline"] { margin: 4px -6px -6px; padding: 10px 18px 12px 20px; border-radius: 0 0 var(--r-md) var(--r-md); }
+.sidedoors .conn[data-state="offline"] { margin: var(--s-1) -6px -6px; padding: 10px 18px var(--s-3) var(--s-5); border-radius: 0 0 var(--r-md) var(--r-md); }
 /* When the connection is not there it must be seen without opening anything: the logo carries a mark,
    and the word stands beside it in the bar. */
 /* Not connected: a small dot on the caret (the words stand in the menu's foot; a sentence here broke the bar). */
@@ -228,7 +228,7 @@ button.agent-badge:active { scale: .95; }
   [data-rail="folded"] #agents { padding-inline: 6px; }
   [data-rail="folded"] #agents::before { height: 80px !important; margin-inline: -6px; }
   [data-rail="folded"] .agent-row { justify-content: center; }
-  [data-rail="folded"] .agent-entry { flex: none; justify-content: center; width: 60px; padding: 8px 0 !important; }
+  [data-rail="folded"] .agent-entry { flex: none; justify-content: center; width: 60px; padding: var(--s-2) 0 !important; }
   [data-rail="folded"] .agent-text { display: none; }
   /* (the rail shows no counts: only the red hand of a stopped session stands at its drawing's corner) */
   [data-rail="folded"] .agent-row > .agent-badge { position: absolute; right: 2px; top: -4px; margin: 0; width: 24px; height: 24px; scale: .85; }
@@ -237,7 +237,7 @@ button.agent-badge:active { scale: .95; }
   [data-rail="folded"] .agent-row > :is(.agent-cut, .agent-archive) { display: none; }
   [data-rail="folded"] #agents > :not(.agent-row) { display: none; }
   [data-rail="folded"] #agents > .agent-invite { display: flex; justify-content: center; padding: 0; }
-  [data-rail="folded"] .agent-invite-go { flex: none; width: 60px; justify-content: center; padding: 8px 0; }
+  [data-rail="folded"] .agent-invite-go { flex: none; width: 60px; justify-content: center; padding: var(--s-2) 0; }
   [data-rail="folded"] .agent-invite-label { display: none; }
   .rail-tip { position: fixed; z-index: 9; padding: 6px 10px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); pointer-events: none; white-space: nowrap; }
   #agents { padding-top: 0; }
@@ -258,20 +258,20 @@ button.agent-badge:active { scale: .95; }
   html body .topbar .desk-go .brand-mark { display: none; }
   html body .topbar .desk-go > .sketch { display: block; }
   .agent-entry { border-radius: 14px; }
-  .agent-row > .agent-badge { margin-right: 8px; }
+  .agent-row > .agent-badge { margin-right: var(--s-2); }
 /* The menu, compact: the jump field, a quiet line for the project, four places two by two, and a foot
    with the connection and two small switches. One thin rule between the parts. */
 .topbar .sidedoors { width: 244px; min-width: 0; gap: 0; padding: 6px; border-radius: 14px; }
-.menu-desks { display: grid; gap: 1px; padding-bottom: 4px; }
-.topbar .sidedoors .menu-desk { min-height: 32px; padding: 0 8px; font-size: var(--t-sm); }
+.menu-desks { display: grid; gap: 1px; padding-bottom: var(--s-1); }
+.topbar .sidedoors .menu-desk { min-height: 32px; padding: 0 var(--s-2); font-size: var(--t-sm); }
 .menu-desk b { font-weight: 600; }
-.menu-desk[aria-checked="true"]::after { content: "✓"; margin-left: 8px; color: var(--accent); font-weight: 700; }
+.menu-desk[aria-checked="true"]::after { content: "✓"; margin-left: var(--s-2); color: var(--accent); font-weight: 700; }
 .menu-desk b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar .sidedoors .menu-desk kbd { margin-left: 10px; white-space: nowrap; }
-.menu-desk-form { display: flex; gap: 6px; padding: 3px 4px 5px; }
+.menu-desk-form { display: flex; gap: 6px; padding: 3px var(--s-1) 5px; }
 .menu-desk-field { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
-.topbar .sidedoors .menu-desk-form button { flex: none; width: auto; min-height: 36px; padding: 0 12px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); }
-.menu-desk-error { margin: 0; padding: 2px 10px 4px; color: var(--urg-critical); font: 500 var(--t-xs)/1.3 var(--font); }
+.topbar .sidedoors .menu-desk-form button { flex: none; width: auto; min-height: 36px; padding: 0 var(--s-3); border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); }
+.menu-desk-error { margin: 0; padding: 2px 10px var(--s-1); color: var(--urg-critical); font: 500 var(--t-xs)/1.3 var(--font); }
 .menu-desk-error:empty { display: none; }
 .brand-open[data-other-knock] { position: relative; }
 .brand-open[data-other-knock]::before { content: ""; position: absolute; right: 5px; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--urg-high); box-shadow: 0 0 0 2px var(--surface); }
@@ -282,14 +282,14 @@ button.agent-badge:active { scale: .95; }
 
 /* ---- the floating Desk: the way to the Desk and what waits there; the caret beside it opens the menu ---- */
 .deskpill { display: flex; align-items: center; gap: 2px; }
-.desk-go { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 8px 0 4px; border: 0; border-radius: var(--r-pill); background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; cursor: pointer; }
+.desk-go { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 28px; padding: 0 var(--s-2) 0 var(--s-1); border: 0; border-radius: var(--r-pill); background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; cursor: pointer; }
 .desk-go:hover { background: var(--sunken); }
-.menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; padding-block: 4px; border-top: 1px solid var(--line); }
-.topbar .sidedoors .menu-grid :is(a, button, #keys-open) { min-height: 36px; gap: 10px; padding: 0 12px; font-size: var(--t-sm); }
+.menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; padding-block: var(--s-1); border-top: 1px solid var(--line); }
+.topbar .sidedoors .menu-grid :is(a, button, #keys-open) { min-height: 36px; gap: 10px; padding: 0 var(--s-3); font-size: var(--t-sm); }
 .topbar .sidedoors .sketch { width: 17px; height: 17px; }
-.menu-foot { display: flex; align-items: center; gap: 2px; padding-top: 4px; border-top: 1px solid var(--line); }
-.topbar .sidedoors .menu-foot .conn { flex: 1; margin: 0; padding: 0 8px; height: 30px; border: 0; font-size: var(--t-xs); }
-.topbar .sidedoors .menu-foot .conn[data-state="offline"] { margin: 0; padding: 0 8px; border-radius: 8px; }
+.menu-foot { display: flex; align-items: center; gap: 2px; padding-top: var(--s-1); border-top: 1px solid var(--line); }
+.topbar .sidedoors .menu-foot .conn { flex: 1; margin: 0; padding: 0 var(--s-2); height: 30px; border: 0; font-size: var(--t-xs); }
+.topbar .sidedoors .menu-foot .conn[data-state="offline"] { margin: 0; padding: 0 var(--s-2); border-radius: 8px; }
 .topbar .sidedoors .menu-foot button { flex: none; width: 30px; min-height: 30px; padding: 0; justify-content: center; border-radius: 8px; }
 .topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: var(--sunken); }
 .topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) .sketch { color: var(--fg); }
@@ -302,9 +302,9 @@ button.agent-badge:active { scale: .95; }
 /* ---- the Desk's menu: one column, one type size for entries and one small for what they say ----
    The jump field first (its key at the right), the desk(s), the four places as a list with one icon
    column, then the two switches as labelled rows, and the connection as the last quiet line. */
-.topbar #brand-doors { gap: 0; padding: 8px; border-radius: 14px; box-shadow: 0 0 0 1px var(--line-strong), 0 12px 28px -10px rgb(20 30 25 / .28); }
-.topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { width: 100%; min-height: 36px; gap: 10px; padding: 0 12px; border-radius: 9px; font: 500 var(--t-sm)/1 var(--font); justify-content: flex-start; }
-.topbar #brand-doors .menu-grid :is(a, button) { min-height: 36px; gap: 10px; padding: 0 12px; font-size: var(--t-sm); }
+.topbar #brand-doors { gap: 0; padding: var(--s-2); border-radius: 14px; box-shadow: 0 0 0 1px var(--line-strong), 0 12px 28px -10px rgb(20 30 25 / .28); }
+.topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { width: 100%; min-height: 36px; gap: 10px; padding: 0 var(--s-3); border-radius: 9px; font: 500 var(--t-sm)/1 var(--font); justify-content: flex-start; }
+.topbar #brand-doors .menu-grid :is(a, button) { min-height: 36px; gap: 10px; padding: 0 var(--s-3); font-size: var(--t-sm); }
 .topbar #brand-doors .sketch { flex: none; width: 18px; height: 18px; stroke-width: 1.8; color: var(--muted); }
 .menu-desks { padding: 6px 0 0; }
 .menu-desks, .menu-grid, .menu-foot { margin-top: 6px; padding: 6px 0 0; border-top: 1px solid var(--line); }
@@ -312,7 +312,7 @@ button.agent-badge:active { scale: .95; }
 .menu-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
 .menu-desk:only-child::after { content: none; }
 .menu-foot { display: grid; gap: 0; align-items: stretch; }
-.topbar #brand-doors .menu-foot .conn { order: 9; justify-content: flex-start; justify-self: start; height: 30px; margin: 4px 0 0; padding: 0 12px; border: 0; font-size: var(--t-xs); color: var(--muted); }
+.topbar #brand-doors .menu-foot .conn { order: 9; justify-content: flex-start; justify-self: start; height: 30px; margin: var(--s-1) 0 0; padding: 0 var(--s-3); border: 0; font-size: var(--t-xs); color: var(--muted); }
 .topbar #brand-doors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: none; }
 #theme-toggle::after { content: "Light"; }
 :root[data-theme-mode="dark"] #theme-toggle::after { content: "Dark"; }
@@ -338,7 +338,7 @@ button.agent-badge:active { scale: .95; }
 .desk-lamp > .sketch { display: block; overflow: visible; }
 html body .topbar .deskpill .desk-go > .sketch { display: none; }
 .topbar .deskpill .desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .topbar .deskpill > .desk-go { flex: 1; min-width: 0; padding: 0 8px 0 0; }
+  .topbar .deskpill > .desk-go { flex: 1; min-width: 0; padding: 0 var(--s-2) 0 0; }
   .topbar .desk-go .desk-lamp > .sketch { width: 28px; height: 28px; margin: 0 13px 0 15px; stroke-width: 1.6; }
   .topbar .desk-name[data-size="m"] { font-size: 1.45rem; }
   .topbar .desk-name[data-size="l"] { font-size: .98rem; line-height: 1.05; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
@@ -395,7 +395,7 @@ body.is-pairing .crown-fold { visibility: hidden; }
   .agent-row.is-main[data-fold="open"] { margin-bottom: 3px; }
   /* the first row stands on the 80px line, crowned or not (the crown itself may reach above it) */
   #agents > .agent-row.is-main[data-fold]:first-child { margin-top: 0; }
-  .agent-row.is-sub.is-last { margin-bottom: 8px; }
+  .agent-row.is-sub.is-last { margin-bottom: var(--s-2); }
   :root:not([data-rail="folded"]) .agent-row.is-sub { margin-left: 22px; }
   /* the rail: the same, 60px wide; the names are gone, the bracket runs down the rail's left edge */
   [data-rail="folded"] .agent-row.is-sub .agent-entry { padding-block: 5px !important; }
@@ -436,7 +436,7 @@ a.agent-badge:active { scale: .95; }
 body[data-keys="g"] #agents { counter-reset: place; }
 body[data-keys="g"] .agent-row[data-unit] { counter-increment: place; position: relative; }
 body[data-keys="g"] .agent-row[data-unit]:nth-of-type(-n+10)::before {
-  content: counter(place); position: absolute; z-index: 2; left: 2px; top: 2px; min-width: 20px; padding: 4px 5px; border-radius: 6px;
+  content: counter(place); position: absolute; z-index: 2; left: 2px; top: 2px; min-width: 20px; padding: var(--s-1) 5px; border-radius: 6px;
   background: var(--fg); color: var(--bg); font: 500 .72rem/1 var(--mono); text-align: center; pointer-events: none;
 }
 .agent-row[hidden] { display: none !important; }
@@ -461,24 +461,22 @@ a.agent-badge { text-decoration: none; }
 .topbar #brand-doors button.menu-desk-add { width: 30px; min-height: 30px; padding: 0; justify-content: center; border-radius: 8px; color: var(--muted); }
 .topbar #brand-doors button.menu-desk-add svg { width: 18px; height: 18px; }
 .topbar #brand-doors .menu-desk-form[hidden] { display: none; }
-.topbar #brand-doors .menu-desk-form { display: flex; gap: 6px; padding: 3px 4px 5px; }
+.topbar #brand-doors .menu-desk-form { display: flex; gap: 6px; padding: 3px var(--s-1) 5px; }
 .topbar #brand-doors .menu-desk-form .menu-desk-field { flex: 1; min-width: 0; width: auto; }
 .topbar #brand-doors .menu-desk-form button { flex: none; width: auto; min-height: 36px; padding: 0 14px; justify-content: center; border-radius: 8px; background: var(--fg); color: var(--bg); }
 /* The menu's button: a lost connection is a small warning dot on it, nothing else. */
 .brand-open .open-conn { display: none; }
-.brand-open .open-conn[data-state="offline"] { display: inline-block; width: 8px; height: 8px; margin: 0 2px 0 4px; padding: 0; border: 0; border-radius: 50%; background: var(--urg-critical); }
+.brand-open .open-conn[data-state="offline"] { display: inline-block; width: 8px; height: 8px; margin: 0 2px 0 var(--s-1); padding: 0; border: 0; border-radius: 50%; background: var(--urg-critical); }
 .brand-open .open-conn i, .brand-open .open-conn::after, .brand-open .open-conn i::after { display: none; }
 .brand-open .open-conn #conn-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 /* "Push on this device" in the menu behind the logo: the switch, what it may say, and one line of help. */
 .push-row::after { content: "Off"; margin-left: auto; font: 500 var(--t-xs, 12px)/1 var(--font, inherit); color: var(--muted, #777); }
 .push-row[aria-checked="true"]::after { content: "On"; color: var(--accent, #1b6a57); }
 .push-row[aria-busy="true"]::after { content: "…"; }
-.push-note { margin: 2px 12px 6px; font: 400 var(--t-xs, 12px)/1.4 var(--font, inherit); color: var(--muted, #777); max-width: 34ch; }
+.push-note { margin: 2px var(--s-3) 6px; font: 400 var(--t-xs, 12px)/1.4 var(--font, inherit); color: var(--muted, #777); max-width: 34ch; }
 .push-note:empty { display: none; }/* The app's own few rules outside the areas (the room screens are in auth.css). */
 /* The Trommi menu (sidebar.mjs): the desks without a heading, each with the desk drawing, its lamp on (a warm cone and
    three rays) while something waits on that desk; the desk in view is the marked row. "New desk" is a quiet line under them; the theme sits beside Log out. */
-.topbar { --lamp: #e2a21b; }   /* the menu's rows and the Desk box's drawing */
-:root[data-theme="dark"] .topbar { --lamp: #f2bd4a; }
 .topbar #brand-doors .menu-desks { margin-top: 0; padding-top: 0; }
 .topbar #brand-doors .menu-desk[aria-checked]::after { content: none; }
 .topbar #brand-doors .menu-desk { gap: 10px; }
@@ -487,11 +485,13 @@ a.agent-badge { text-decoration: none; }
 .topbar #brand-doors .menu-desk[aria-checked="true"] { background: var(--sunken); }
 .topbar #brand-doors .menu-desk[aria-checked="true"] b { font-weight: 700; }
 .topbar #brand-doors .menu-desk-rows { display: contents; }
+/* the lamp's light: the menu's rows and the Desk box's drawing, a desk row on All desks */
+:is(.topbar, .desk-card) { --lamp: #e2a21b; } :root[data-theme="dark"] :is(.topbar, .desk-card) { --lamp: #f2bd4a; }
 .menu-lamp .lamp-light { stroke: var(--lamp); stroke-width: 2; stroke-linecap: round; fill: none; }
 .menu-lamp .lamp-light :is(.lamp-glow, .lamp-cone) { fill: var(--lamp); stroke: none; }
 .menu-lamp .lamp-glow { fill-opacity: .85; }
 .menu-lamp .lamp-cone { fill-opacity: .42; }
-.topbar #brand-doors button.menu-desk-add { width: 100%; min-height: 30px; padding: 0 12px 0 15px; gap: 13px; justify-content: flex-start; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); }
+.topbar #brand-doors button.menu-desk-add { width: 100%; min-height: 30px; padding: 0 var(--s-3) 0 15px; gap: 13px; justify-content: flex-start; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); }
 .topbar #brand-doors button.menu-desk-add svg { width: 15px; height: 15px; }
 .topbar #brand-doors .menu-leave { display: flex; align-items: center; gap: 2px; }
 .topbar #brand-doors .menu-leave .menu-logout { flex: 1; min-width: 0; }
@@ -502,13 +502,13 @@ a.agent-badge { text-decoration: none; }
 }
   .topbar { height: 48px; top: 8px; left: 8px; width: 256px; border-radius: 0; background: var(--bg); box-shadow: 0 1px 0 var(--line); }
   #agents::before { height: 64px; }
-  .topbar .deskpill { height: 100%; gap: 2px; padding-right: 4px; }
+  .topbar .deskpill { height: 100%; gap: 2px; padding-right: var(--s-1); }
   .topbar .deskpill > .desk-go { padding: 0 6px 0 0; border-radius: 8px; }
-  .topbar .desk-go .desk-lamp > .sketch { width: 26px; height: 26px; margin: 0 12px 0 10px; }
+  .topbar .desk-go .desk-lamp > .sketch { width: 26px; height: 26px; margin: 0 var(--s-3) 0 10px; }
   .topbar .deskpill .desk-name, .topbar .desk-name[data-size="m"], .topbar .desk-name[data-size="l"] { font: 700 var(--t-md)/1.2 var(--font); letter-spacing: 0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: none; -webkit-line-clamp: unset; }
   [data-rail="folded"] .topbar { width: 60px; height: 48px; }
 /* the Desk row says the desk's own name; switching desks is in the Trommi menu (his word, 4 October) */
-.topbar .deskpill > .desk-go { padding-right: 12px; }
+.topbar .deskpill > .desk-go { padding-right: var(--s-3); }
 /* the folded rail: the desk's drawing alone, centred like the sessions' drawings; its name in the tooltip */
   html[data-rail="folded"] .topbar .deskpill .desk-name { display: none !important; }
   html[data-rail="folded"] .topbar { width: 60px; box-shadow: none !important; }
@@ -518,17 +518,17 @@ a.agent-badge { text-decoration: none; }
 
 .corner-note-box.is-open .corner-note-head { display: none; }
 .corner-note-body[hidden] { display: none; }
-.corner-note-body { display: grid; gap: 4px; padding: 10px 10px 6px; border-radius: 2px; background: var(--note-yellow); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3), 0 2px 6px rgb(20 30 25 / .18); rotate: -.4deg; }
+.corner-note-body { display: grid; gap: var(--s-1); padding: 10px 10px 6px; border-radius: 2px; background: var(--note-yellow); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3), 0 2px 6px rgb(20 30 25 / .18); rotate: -.4deg; }
 .corner-note-field { width: 100%; min-height: 64px; resize: none; padding: 2px; border: 0; background: none; color: #2d2406; font: 500 var(--t-sm)/1.45 var(--font); outline: none; }
-.corner-note-foot { display: flex; align-items: center; gap: 4px; }
+.corner-note-foot { display: flex; align-items: center; gap: var(--s-1); }
 .corner-note-foot > i { flex: 1; }
-.corner-note-bin { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: #6a5d24; cursor: pointer; }
-.corner-note-bin .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-.corner-note-bin:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
+:is(.corner-note-bin, .corner-note-clip) { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--note-ink-soft); cursor: pointer; }
+:is(.corner-note-bin, .corner-note-clip) .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+:is(.corner-note-bin, .corner-note-clip):hover { background: rgb(0 0 0 / .06); color: var(--note-ink); }
 .corner-note-box .corner-note-send { position: relative; width: 58px; height: 40px; }
 .corner-note-sending { display: grid; justify-items: center; gap: 1px; }
-.corner-note-keys { padding: 0; border: 0; background: none; box-shadow: none; color: #6a5d24; font: 600 .66rem/1 var(--font); letter-spacing: .02em; white-space: nowrap; }
-.corner-note-nocrown { font-size: var(--t-xs); color: #6a5d24; }
+.corner-note-keys { padding: 0; border: 0; background: none; box-shadow: none; color: var(--note-ink-soft); font: 600 .66rem/1 var(--font); letter-spacing: .02em; white-space: nowrap; }
+.corner-note-nocrown { font-size: var(--t-xs); color: var(--note-ink-soft); }
 /* ---- One calm sidebar (his word, 4 October: "so noch komisch"): one inset for every row, the pills inside with equal
    margins; "New note" a quiet row like "+ New agent", right under it, the unsent notes as small stickies under that;
    the bracket of an unfolded main at the pen's own weight again (his word, 6 October: it used to be stronger) ---- */
@@ -540,23 +540,20 @@ a.agent-badge { text-decoration: none; }
 /* the note's attachments: thumbnails and file names under the words, the paperclip beside the bin */
 .corner-note-files { display: flex; flex-wrap: wrap; gap: 6px; }
 .corner-note-files:empty { display: none; }
-.corner-note-file { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-height: 28px; padding: 2px 22px 2px 8px; border: 0; border-radius: 4px; background: rgb(255 255 255 / .55); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3); color: #3b300d; font: 500 var(--t-xs)/1.2 var(--font); cursor: pointer; }
+.corner-note-file { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-height: 28px; padding: 2px 22px 2px var(--s-2); border: 0; border-radius: 4px; background: rgb(255 255 255 / .55); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3); color: var(--note-ink); font: 500 var(--t-xs)/1.2 var(--font); cursor: pointer; }
 .corner-note-file > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .corner-note-file.is-pic { padding: 3px; }
 .corner-note-file.is-pic img { display: block; width: 56px; height: 42px; object-fit: cover; border-radius: 2px; }
 .corner-note-file > i { position: absolute; top: 1px; right: 4px; font-style: normal; opacity: .55; }
 .corner-note-file:hover > i { opacity: 1; }
-.corner-note-clip { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: #6a5d24; cursor: pointer; }
-.corner-note-clip .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-.corner-note-clip:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
 .corner-note-box.is-drop .corner-note-body { box-shadow: inset 0 0 0 2px #8a6d14, 0 2px 6px rgb(20 30 25 / .18); }
 
 /* ---- The note (sidebar.mjs cornerNote): the one drawn yellow sticky at the window's bottom-right; a click unfolds it
    there, growing upward, with the field, the attachments, the bin and the crown; folded, its first line stands beside
    it when it holds words ---- */
-.corner-note-box { position: fixed; z-index: 30; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+.corner-note-box { position: fixed; z-index: var(--z-corner); right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
 :root.is-choosing .corner-note-box { opacity: 0; pointer-events: none; }
-.corner-note-head { display: flex; flex-direction: row-reverse; align-items: center; gap: 8px; min-height: 64px; padding: 0; border: 0; background: none; color: #3b300d; cursor: pointer; }
+.corner-note-head { display: flex; flex-direction: row-reverse; align-items: center; gap: var(--s-2); min-height: 64px; padding: 0; border: 0; background: none; color: var(--note-ink); cursor: pointer; }
 .corner-note-ico { flex: none; width: 63px; height: 63px; overflow: visible; rotate: -4deg; transition: rotate 140ms, translate 140ms; }
 .corner-note-head:hover .corner-note-ico { rotate: -1deg; translate: 0 -2px; }
 .corner-note-ico .note-fill { fill: var(--note-yellow); } .corner-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; opacity: .8; }
@@ -565,9 +562,9 @@ a.agent-badge { text-decoration: none; }
    carried, a small sticky with its words follows the pointer and the corner's one fades. */
 body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cursor: grab; touch-action: none; }
 .corner-note-box.is-parking .corner-note-ico { opacity: .3; }
-.corner-note-ghost.msg-note { position: fixed; z-index: 60; width: 240px; max-height: 200px; translate: -50% -50%; rotate: -2deg; box-shadow: 0 10px 22px rgb(20 30 25 / .28); pointer-events: none; }
+.corner-note-ghost.msg-note { position: fixed; z-index: var(--z-panel); width: 240px; max-height: 200px; translate: -50% -50%; rotate: -2deg; box-shadow: 0 10px 22px rgb(20 30 25 / .28); pointer-events: none; }
 .corner-note-ghost p { max-height: 170px; overflow: hidden; overflow-wrap: anywhere; }
-.corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: 12px 12px 8px; }
+.corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: var(--s-3) var(--s-3) var(--s-2); }
 .corner-note-field { max-height: 50vh; }
 /* In a conversation the note never lies on the composer or its buttons: it stands above the composer's line, only
    the sticky (a dot says it holds words), so the least of the conversation is under it. */
@@ -589,10 +586,10 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 /* ---- The bracket stands clear of the rows (his word, 6 October: "zu nah dran … überdeckt den Strich"): the subs
    stand indented right of it, so their hover and the open row's ground never reach the line. And air (same day):
    between the Desk's name and the first group, between the groups, and to the sidebar's left edge. ---- */
-  :root:not([data-rail="folded"]) #agents { padding-left: 16px; }
+  :root:not([data-rail="folded"]) #agents { padding-left: var(--s-4); }
   :root:not([data-rail="folded"]) #agents::before { margin-bottom: 18px; margin-left: -16px; }
   :root:not([data-rail="folded"]) #agents .agent-row.is-sub { margin-left: 28px; }
-  :root:not([data-rail="folded"]) #agents .agent-row.is-sub.is-last { margin-bottom: 20px; }
+  :root:not([data-rail="folded"]) #agents .agent-row.is-sub.is-last { margin-bottom: var(--s-5); }
   :root:not([data-rail="folded"]) #agents .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 4px + 28px); }
   /* the rail: no bracket; every drawing on the rail's middle line, one step from row to row */
   html[data-rail="folded"] #agents .crown-bracket { display: none !important; }
@@ -605,7 +602,7 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
    Heading von allem ist. Und den Trennstrich mag ich nicht"): the desk's drawing large, its name in the display face;
    no line under it, room instead. Not a raised card. ---- */
   html body .topbar { height: 56px; box-shadow: none !important; }
-  html:not([data-rail="folded"]) .topbar .desk-go .desk-lamp > .sketch { width: 38px; height: 38px; margin: 0 12px 0 8px; stroke-width: 1.5; }
+  html:not([data-rail="folded"]) .topbar .desk-go .desk-lamp > .sketch { width: 38px; height: 38px; margin: 0 var(--s-3) 0 var(--s-2); stroke-width: 1.5; }
   html:not([data-rail="folded"]) .topbar .deskpill .desk-name, html:not([data-rail="folded"]) .topbar .desk-name[data-size="m"] { font: 800 1.5rem/1.1 var(--display); letter-spacing: -.02em; }
   html:not([data-rail="folded"]) .topbar .desk-name[data-size="l"] { font: 800 1.12rem/1.08 var(--display); letter-spacing: -.02em; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   html[data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { width: 34px; height: 34px; }
@@ -622,7 +619,7 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 .topbar #brand-doors .menu-desk-row.is-renaming > :is(.menu-desk b, .menu-desk-pen) { visibility: hidden; }
 .topbar #brand-doors .menu-desk-row.is-renaming .menu-desk b { visibility: hidden; }
 .topbar #brand-doors .menu-desk-rename { position: absolute; left: 42px; right: 40px; top: 50%; translate: 0 -50%; margin: 0; display: flex; }
-.topbar #brand-doors .menu-desk-rename .menu-desk-field { flex: 1; min-width: 0; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--fg); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); }
+.topbar #brand-doors .menu-desk-rename .menu-desk-field { flex: 1; min-width: 0; height: 30px; padding: 0 var(--s-2); border: 0; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--fg); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); }
 
 /* ---- The sidebar's type and its counts (his word, 6 October: "diese Nummern in der Sidebar irgendwie grauenvoll … die
    Schrift einen Tick größer"). The type two px up: names 17, "New agent" 16, the heading 13; a row 50 high (a sub 44),
@@ -667,7 +664,7 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
      after the word, its words for a screen reader only */
   .topbar .brand-open[data-other-knock]::before { left: 46px; right: auto; top: 6px; box-shadow: 0 0 0 2px var(--bg); }
   .topbar .brand-open .open-conn[data-state="offline"] { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip-path: inset(50%); background: none; }
-  .topbar #brand-doors { position: fixed; z-index: 40; left: 8px; right: auto; top: auto; bottom: calc(var(--foot) + 2px); width: calc(var(--side) - 16px); max-height: calc(100dvh - var(--foot) - 10px); overflow-y: auto; }
+  .topbar #brand-doors { position: fixed; z-index: var(--z-menu); left: 8px; right: auto; top: auto; bottom: calc(var(--foot) + 2px); width: calc(var(--side) - 16px); max-height: calc(100dvh - var(--foot) - 10px); overflow-y: auto; }
   /* the rail: the bell alone, on the drawings' middle line; the menu beside the rail, its foot on the window's */
   [data-rail="folded"] .topbar .brand-open { left: 14px; bottom: 52px; width: 48px; height: 48px; padding: 0; gap: 0; justify-content: center; border-radius: 12px; }
   [data-rail="folded"] .brand-open > .open-mark { width: 26px; height: 26px; }
@@ -692,12 +689,12 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   .drawer-open .sketch { width: 24px; height: 24px; stroke-width: 2; }
   .drawer-open:active { background: var(--sunken); }
   .drawer-open[data-waits]::after { content: ""; position: absolute; right: 7px; top: 8px; width: 9px; height: 9px; border-radius: 50%; background: var(--urg-critical); box-shadow: 0 0 0 2px var(--bg); }
-  .phone-place { min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 4px; border-radius: 12px; color: var(--fg); font: 700 17px/1.2 var(--display); letter-spacing: -.01em; text-decoration: none; }
+  .phone-place { min-width: 0; min-height: 44px; display: flex; align-items: center; gap: var(--s-2); padding: 0 var(--s-2) 0 var(--s-1); border-radius: 12px; color: var(--fg); font: 700 17px/1.2 var(--display); letter-spacing: -.01em; text-decoration: none; }
   .phone-place b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: inherit; }
   .phone-place .desk-lamp > .sketch { width: 26px; height: 26px; stroke-width: 1.6; }
   .phone-place .agent-avatar { width: 28px; height: 28px; }
   /* the page dimmed behind the open drawer; a tap on it closes */
-  .drawer-veil { display: block; position: fixed; z-index: 94; inset: 0; background: rgb(20 30 25 / .42); opacity: var(--veil, 0); visibility: hidden; transition: opacity var(--drawer-in), visibility 0s 240ms; }
+  .drawer-veil { display: block; position: fixed; z-index: var(--z-veil); inset: 0; background: rgb(20 30 25 / .42); opacity: var(--veil, 0); visibility: hidden; transition: opacity var(--drawer-in), visibility 0s 240ms; }
   :root[data-drawer="open"] .drawer-veil, :root.is-drawer-drag .drawer-veil { visibility: visible; transition: opacity var(--drawer-in); }
   :root[data-drawer="open"]:not(.is-drawer-drag) .drawer-veil { opacity: 1; }
   /* the sidebar's parts, each on the drawer's left edge */
@@ -705,13 +702,13 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   #agents, html body .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors { visibility: hidden; transition: left var(--drawer-in), visibility 0s 240ms; }
   :root:is([data-drawer="open"], .is-drawer-drag) :is(#agents, .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors) { visibility: visible; transition: left var(--drawer-in); }
   :root.is-drawer-drag :is(#agents, .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors) { transition: none; }
-  #agents { position: fixed; z-index: 95; left: var(--dx); top: 0; bottom: 0; width: var(--drawer-w); margin: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(var(--foot) + var(--s-4) + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); border-right: 0; box-shadow: 1px 0 0 var(--line-strong), 14px 0 36px -18px rgb(20 30 25 / .5); overscroll-behavior: contain; }
-  html body .topbar { z-index: 96; left: calc(var(--dx) + max(8px, env(safe-area-inset-left, 0px))); top: calc(8px + env(safe-area-inset-top, 0px)); width: calc(var(--drawer-w) - 16px); }
+  #agents { position: fixed; z-index: var(--z-drawer); left: var(--dx); top: 0; bottom: 0; width: var(--drawer-w); margin: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(var(--foot) + var(--s-4) + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); border-right: 0; box-shadow: 1px 0 0 var(--line-strong), 14px 0 36px -18px rgb(20 30 25 / .5); overscroll-behavior: contain; }
+  html body .topbar { z-index: var(--z-full); left: calc(var(--dx) + max(8px, env(safe-area-inset-left, 0px))); top: calc(8px + env(safe-area-inset-top, 0px)); width: calc(var(--drawer-w) - 16px); }
   #agents::before { top: 0; }
-  .side-foot { z-index: 95; left: var(--dx); height: calc(var(--foot) + env(safe-area-inset-bottom, 0px)); border-right: 0; }
+  .side-foot { z-index: var(--z-drawer); left: var(--dx); height: calc(var(--foot) + env(safe-area-inset-bottom, 0px)); border-right: 0; }
   .rail-fold { display: none; }
-  .topbar .brand-open { z-index: 97; left: calc(var(--dx) + max(16px, env(safe-area-inset-left, 0px))); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); width: calc(var(--drawer-w) - 32px); }
-  .topbar #brand-doors { z-index: 98; left: calc(var(--dx) + max(8px, env(safe-area-inset-left, 0px))); bottom: calc(var(--foot) + 2px + env(safe-area-inset-bottom, 0px)); width: calc(var(--drawer-w) - 16px); max-height: calc(100dvh - var(--foot) - 10px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+  .topbar .brand-open { z-index: var(--z-full-ui); left: calc(var(--dx) + max(16px, env(safe-area-inset-left, 0px))); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); width: calc(var(--drawer-w) - 32px); }
+  .topbar #brand-doors { z-index: var(--z-tools); left: calc(var(--dx) + max(8px, env(safe-area-inset-left, 0px))); bottom: calc(var(--foot) + 2px + env(safe-area-inset-bottom, 0px)); width: calc(var(--drawer-w) - 16px); max-height: calc(100dvh - var(--foot) - 10px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
   /* a finger's rows: 48px and more, the names never under the count */
   #agents .agent-row.is-sub .agent-entry { min-height: 48px; }
 }
@@ -762,18 +759,18 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
    children; in the sidebar every desk is a quiet heading (its drawing and name) over its mains. ---- */
 .topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all) .menu-desk { padding-left: 30px; }
 .topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all) .menu-desk .sketch.menu-lamp { width: 20px; height: 20px; }
-.agent-deskhead { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; padding: 0 var(--s-3); font: 700 13px/1.2 var(--font); letter-spacing: .02em; color: var(--muted); }
+.agent-deskhead { display: flex; align-items: center; gap: 10px; margin: 14px 0 var(--s-1); padding: 0 var(--s-3); font: 700 13px/1.2 var(--font); letter-spacing: .02em; color: var(--muted); }
 .agent-deskhead .sketch { width: 22px; height: 22px; stroke-width: 1.6; color: var(--fg); overflow: visible; }
 #agents > .agent-deskhead:first-child { margin-top: 0; }
 
 /* ---- The desk switcher (sidebar.mjs deskSwitch): a small chevron beside the desk's name at the sidebar's top opens a
    dropdown under the Desk box, All desks first, the desks set in under it, the one in view marked; the folded rail's
    tag opens the same one beside the rail; a phone's drawer, under its Desk box. ---- */
-.desk-switch-open { flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin-right: 4px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
+.desk-switch-open { flex: none; display: grid; place-items: center; width: 30px; height: 30px; margin-right: var(--s-1); padding: 0; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
 .desk-switch-open .sketch { width: 16px; height: 16px; stroke-width: 2.2; transition: rotate var(--d-fast); }
 .desk-switch-open:hover, .desk-switch-open[aria-expanded="true"] { background: var(--sunken); color: var(--fg); }
 .desk-switch-open[aria-expanded="true"] .sketch { rotate: 180deg; }
-.desk-switch { position: fixed; z-index: 99; left: 8px; top: 66px; width: calc(var(--side, 272px) - 16px); box-sizing: border-box; padding: 6px; border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 12px; background: var(--surface); box-shadow: 0 10px 28px -16px rgb(20 30 25 / .45); animation: pop var(--d-fast) var(--ease-out) both; }
+.desk-switch { position: fixed; z-index: var(--z-switch); left: 8px; top: 66px; width: calc(var(--side, 272px) - 16px); box-sizing: border-box; padding: 6px; border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 12px; background: var(--surface); box-shadow: 0 10px 28px -16px rgb(20 30 25 / .45); animation: pop var(--d-fast) var(--ease-out) both; }
 .desk-switch-list { display: grid; gap: 1px; text-align: left; }
 html body .desk-switch .desk-switch-item, html body .desk-switch .desk-switch-item b { justify-content: flex-start; text-align: left; letter-spacing: 0; }
 .desk-switch-item { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 9px; color: var(--fg); font: 500 var(--t-sm)/1.2 var(--font); text-decoration: none; }
@@ -806,9 +803,9 @@ html[data-rail="folded"] .desk-switch-open { display: none; }
 .topbar #brand-doors button.demo-toggle { display: flex; align-items: center; gap: 10px; }
 .demo-switch { position: relative; flex: none; margin-left: auto; width: 34px; height: 20px; border: 1.6px solid var(--fg); border-radius: 11px 10px 11px 10px; background: var(--surface); transition: background var(--d-fast); }
 .demo-switch b { position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--fg); transition: translate var(--d-fast); }
-.demo-toggle[aria-checked="true"] .demo-switch { background: #f5d64a; }
+.demo-toggle[aria-checked="true"] .demo-switch { background: var(--yellow); }
 .demo-toggle[aria-checked="true"] .demo-switch b { translate: 14px 0; }
-.demo-band { position: fixed; z-index: 85; left: 16px; bottom: 70px; padding: 4px 12px 5px; border: 1.6px solid var(--fg); border-radius: 10px 12px 9px 13px / 12px 9px 13px 10px; background: #f5d64a; color: #2d2406; font: 700 var(--t-xs)/1.2 var(--font); text-decoration: none; white-space: nowrap; rotate: -1deg; }
+.demo-band { position: fixed; z-index: var(--z-band); left: 16px; bottom: 70px; padding: var(--s-1) var(--s-3) 5px; border: 1.6px solid var(--fg); border-radius: 10px 12px 9px 13px / 12px 9px 13px 10px; background: var(--yellow); color: #2d2406; font: 700 var(--t-xs)/1.2 var(--font); text-decoration: none; white-space: nowrap; rotate: -1deg; }
 .demo-band a { color: inherit; text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
 .demo-band a:hover { text-decoration-thickness: 2.5px; }
 /* (in the sidebar, above the Trommi row: clear of every page's head; folded, in the page's bottom-left corner; a phone: a slim strip over the top line) */
@@ -832,7 +829,7 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
    (a dash when none). A pen rule between desks. No pill, no stack (those stay an agent's). A press opens the desk; the
    row under the pointer lies on a white ground. Folded: the desk drawings with the number beside. ---- */
 .desk-card-row { position: relative; display: block; margin: 0; }
-.desk-card { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto minmax(14px, auto); align-items: center; column-gap: 8px; min-height: 56px; padding: 8px 8px 8px 6px; border-radius: var(--r-md); color: var(--fg); text-decoration: none; transition: background var(--d-fast), box-shadow var(--d-fast); }
+.desk-card { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto minmax(14px, auto); align-items: center; column-gap: var(--s-2); min-height: 56px; padding: var(--s-2) var(--s-2) var(--s-2) 6px; border-radius: var(--r-md); color: var(--fg); text-decoration: none; transition: background var(--d-fast), box-shadow var(--d-fast); }
 .desk-card:hover, .desk-card:focus-visible { background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
 .desk-card > .sketch.menu-lamp { width: 28px; height: 28px; stroke-width: 1.6; color: var(--fg); overflow: visible; }
 .desk-card-text { display: grid; min-width: 0; text-align: left; }
@@ -844,7 +841,7 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
 .desk-card-who small { font: 600 11px/1 var(--font); color: var(--muted); }
 .desk-card-n { justify-self: end; font: 700 var(--t-sm)/1 var(--font); color: var(--urg-high); }
 .desk-card-n.is-none { color: var(--muted); font-weight: 500; }
-.desk-rule { display: none; width: calc(100% - 28px); height: 6px; margin: 8px 14px; overflow: visible; fill: none; stroke: var(--line-strong); stroke-width: 1.6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.desk-rule { display: none; width: calc(100% - 28px); height: 6px; margin: var(--s-2) 14px; overflow: visible; fill: none; stroke: var(--line-strong); stroke-width: 1.6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .desk-rule path { vector-effect: non-scaling-stroke; }
 .desk-card-row:has(+ .desk-card-row) .desk-rule { display: block; }
 @media (min-width: 861px) {
@@ -854,22 +851,21 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
   html[data-rail="folded"] :is(.desk-card-text, .desk-card-who, .desk-rule, .desk-card-n.is-none) { display: none !important; }
   html[data-rail="folded"] .desk-card-n { position: absolute; top: 0; right: 4px; font-size: 11px; }
 }
-.desk-card { --lamp: #e2a21b; } :root[data-theme="dark"] .desk-card { --lamp: #f2bd4a; }
 
 /* (a helper whose main does not listen: calm and a little dimmed; the main's row says why) */
 #agents .agent-row.is-sub.is-hushed .agent-entry { opacity: .62; }
 
 /* ---- A file on its way into the note: its picture (from this device) at once, a pen ring turning and "uploading…";
    refused: "upload failed" and retry ---- */
-.corner-note-file.is-uploading, .corner-note-file.is-failed { position: relative; gap: 6px; padding-right: 8px; cursor: default; }
+.corner-note-file.is-uploading, .corner-note-file.is-failed { position: relative; gap: 6px; padding-right: var(--s-2); cursor: default; }
 .corner-note-file.is-uploading img, .corner-note-file.is-failed img { opacity: .55; }
 .note-up { position: absolute; left: 4px; top: 4px; width: 22px; height: 22px; display: grid; place-items: center; }
-.note-up svg { width: 22px; height: 22px; fill: none; stroke: #3b300d; stroke-width: 2.4; stroke-linecap: round; animation: note-up 900ms linear infinite; }
+.note-up svg { width: 22px; height: 22px; fill: none; stroke: var(--note-ink); stroke-width: 2.4; stroke-linecap: round; animation: note-up 900ms linear infinite; }
 @keyframes note-up { to { rotate: 360deg; } }
-.note-up-word { font: 600 var(--t-xs)/1.2 var(--font); color: #3b300d; white-space: nowrap; }
+.note-up-word { font: 600 var(--t-xs)/1.2 var(--font); color: var(--note-ink); white-space: nowrap; }
 .corner-note-file.is-pic .note-up-word { position: absolute; left: 4px; right: 4px; bottom: 3px; text-align: center; font-size: 10px; background: rgb(255 255 255 / .75); border-radius: 3px; }
 .corner-note-file.is-failed .note-up { display: none; }
 .corner-note-file.is-failed .note-up-word { color: var(--urg-critical); }
-.note-up-again { margin-left: 4px; padding: 2px 8px; border: 0; border-radius: 8px; background: rgb(255 255 255 / .8); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .4); color: #3b300d; font: 600 var(--t-xs)/1.2 var(--font); cursor: pointer; }
+.note-up-again { margin-left: var(--s-1); padding: 2px var(--s-2); border: 0; border-radius: 8px; background: rgb(255 255 255 / .8); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .4); color: var(--note-ink); font: 600 var(--t-xs)/1.2 var(--font); cursor: pointer; }
 .corner-note-file.is-pic.is-failed { padding: 3px 3px 22px; }
 @media (prefers-reduced-motion: reduce) { .note-up svg { animation-duration: 3s; } }

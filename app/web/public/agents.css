@@ -7,7 +7,7 @@ body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: no
 }
 @media (max-width: 860px) { .ledger-desk { display: none; }
 }
-.ledger-desk { height: 32px; max-width: 8.5rem; margin-right: 4px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); }
+.ledger-desk { height: 32px; max-width: 8.5rem; margin-right: var(--s-1); padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); }
 
 /* A button centres its words by itself; a link of a set height does it this way. */
 a.ledger-more { display: inline-flex; align-items: center; justify-content: center; }
@@ -80,7 +80,7 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 @media (any-hover: hover) { .ledger-rename:hover strong { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: var(--line-strong); }
 }
 .ledger-name small { font-size: var(--t-xs); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ledger-with { display: inline-flex; align-items: center; gap: 2px; padding-left: 8px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font-size: var(--t-xs); font-weight: 600; white-space: nowrap; max-width: 100%; }
+.ledger-with { display: inline-flex; align-items: center; gap: 2px; padding-left: var(--s-2); border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font-size: var(--t-xs); font-weight: 600; white-space: nowrap; max-width: 100%; }
 .ledger-with { min-width: 0; }
 .ledger-with-names { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ledger-with button { flex: none; width: 26px; height: 24px; padding: 3px; border: 0; border-radius: 50%; background: none; color: inherit; }
@@ -182,7 +182,7 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
   .ledger-with button { width: 36px; height: 36px; }
   .ledger-line { grid-template-columns: 44px minmax(0, 1fr) auto auto; gap: 0 var(--s-3); min-height: 60px; padding: 0; }
   /* A line of a pair holds the name and "with …" under it: room above and below, so the name does not touch the rule. */
-  .ledger-line:has(.ledger-with) { padding-block: 8px; }
+  .ledger-line:has(.ledger-with) { padding-block: var(--s-2); }
   .ledger-line.is-archived { grid-template-columns: 44px minmax(0, 1fr) auto auto; }
   .ledger-line.is-archived .ledger-state { display: none; }
   .ledger-find { max-width: none; }
@@ -208,14 +208,14 @@ a.ledger-sheet-item { display: flex; align-items: center; }
 .ledger-rename { display: block; }
 /* A main's subs stand under it, a step in. */
 .ledger-line.is-sub .ledger-face { margin-left: 10px; }
-.ledger-line.is-sub .ledger-face .agent-avatar { width: 31px; height: 31px; margin-top: 4px; }
+.ledger-line.is-sub .ledger-face .agent-avatar { width: 31px; height: 31px; margin-top: var(--s-1); }
 /* (No transform on a line's parts: it would hold the open control under the lines that follow.) */
 .ledger-line:has(details.t-pick[open]) { z-index: 5; }
 /* (a phone's sheet lies over everything of the page, the corner note too: it lay on the sheet's Close) */
-@media (max-width: 860px) { .ledger-line:has(details.t-pick[open] > .t-sheet) { z-index: 91; } }
-.ledger-line.is-sub .ledger-name { padding-left: 12px; }
+@media (max-width: 860px) { .ledger-line:has(details.t-pick[open] > .t-sheet) { z-index: var(--z-sheet-up); } }
+.ledger-line.is-sub .ledger-name { padding-left: var(--s-3); }
 /* The main agent's choice: "belongs under", drawn; beside the name where there is room, alone where there is none. */
-.ledger-main > .sketch { flex: none; width: 18px; height: 18px; margin-right: 4px; }
+.ledger-main > .sketch { flex: none; width: 18px; height: 18px; margin-right: var(--s-1); }
 /* In his own order a line moves one place up or down: two small forms in the grip's place. */
 .ledger-grip > form { display: grid; gap: 0; }
 .ledger-grip { padding: 0; gap: 0; }
@@ -226,7 +226,7 @@ a.ledger-sheet-item { display: flex; align-items: center; }
 .ledger-grip button:hover { background: var(--sunken); color: var(--fg); }
 .ledger[data-sorted] .ledger-grip > form { visibility: hidden; }
 /* What the hub refused: a quiet line under the session's line. */
-.ledger-err { grid-column: 3 / -1; margin: -4px 0 8px; color: var(--deny); font-size: var(--t-sm); }
+.ledger-err { grid-column: 3 / -1; margin: -4px 0 var(--s-2); color: var(--deny); font-size: var(--t-sm); }
 .ledger-open, .ledger-dots { display: none; }
 .t-marks-page { position: static; margin: var(--s-6) auto; width: max-content; max-width: calc(100vw - 16px); }
 @media (min-width: 861px) {
@@ -234,7 +234,7 @@ a.ledger-sheet-item { display: flex; align-items: center; }
   .ledger[data-desks] { --pick-desk: 100px; }
   .ledger[data-mains] { --pick-main: 120px; }
   .ledger-acts { align-items: center; }
-  .ledger-acts summary.ledger-desk { display: flex; align-items: center; box-sizing: border-box; height: 34px; margin-right: 4px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background-color: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
+  .ledger-acts summary.ledger-desk { display: flex; align-items: center; box-sizing: border-box; height: 34px; margin-right: var(--s-1); padding: 0 var(--s-2); border: 1px solid var(--line-strong); border-radius: var(--r-sm); background-color: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
   .ledger-acts summary.ledger-desk > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 @media (min-width: 1241px) and (max-width: 1500px) {
