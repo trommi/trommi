@@ -198,7 +198,7 @@ function agentsMain(m, base, { find = '', sort = 'order', down = false, errors =
   const trees = deskList.map(d => { const mine = tops.filter(u => deskOf(u) === d.id); const kids = loose.filter(u => deskOf(u) === d.id); return mine.length || kids.length ? html`<h3 class="ledger-deskhead">${sk('desk')}<span>${d.name || 'Desk'}</span></h3>${mine.map(treeOf)}${kids.map(line)}` : '' })
   return html`<main id="ledger" aria-label="Agents"><div class="ledger-page">
 ${roomTabs('agents', 'ledger-tabs')}
-<header class="ledger-head"><h2>Agents</h2><p id="ledger-lead">${leadWords(m)}</p></header>
+<header class="ledger-head page-head"><h2>Agents</h2><p id="ledger-lead">${leadWords(m)}</p></header>
 <div class="ledger-tools"><form method="get" action="${base}/agents" role="search">${sort !== 'order' ? html`<input type="hidden" name="sort" value="${sort}">${down ? raw('<input type="hidden" name="down" value="1">') : ''}` : ''}<label class="ledger-find"><input type="search" name="find" value="${find}" autocomplete="off" placeholder="Find a session, a machine, a model" aria-label="Find a session"><kbd>/</kbd></label></form>${sort !== 'order' || words ? html`<a class="ledger-link" data-nav href="${base}/agents">${words ? 'Show all, in your order' : 'Back to your order'}</a>` : ''}</div>
 <div class="ledger${tree ? ' is-tree' : ''}" role="table" id="ledger-list" data-controller="pops"${sort !== 'order' || words ? raw(' data-sorted') : ''}${ctx.desks.length > 1 ? raw(' data-desks') : ''}${anyMain ? raw(' data-mains') : ''}>
 <div class="ledger-line is-head" role="row"><span></span><span></span>${th(COLS[0])}${th(COLS[1])}<span class="ledger-th">Asks or does</span>${COLS.slice(2).map(th)}<span></span></div>

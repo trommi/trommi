@@ -2835,6 +2835,7 @@ export const BELL = raw(`<svg class="brand-mark" viewBox="0 0 24 24" aria-hidden
 export const roomShell = (title, inner, cls = '') => html`<main id="room" class="room${cls ? ` ${cls}` : ''}" aria-label="${title}"><header class="room-head"><span class="room-bell">${BELL}</span><h2>${title}</h2></header>${inner}</main>`
 /** One of the three tabbed pages (Agents is agents.mjs; Devices and Settings here): the tabs first, at the same place on
  *  all three, then the heading in the display face, then the page in one reading column (auth.css .room-paged). */
-export const roomPage = (title, on, inner) => html`<main id="room" class="room room-paged" aria-label="${title}"><div class="room-page">${roomTabs(on)}<header class="room-head"><h2>${title}</h2></header><div class="room-col">${inner}</div></div></main>`
+const ROOM_LINES = { devices: 'The people and agents with keys to this room.', settings: 'Your account, and what this device keeps.' }
+export const roomPage = (title, on, inner, line = ROOM_LINES[on] ?? '') => html`<main id="room" class="room room-paged" aria-label="${title}"><div class="room-page">${roomTabs(on)}<header class="room-head page-head"><h2>${title}</h2>${line ? html`<p>${line}</p>` : ''}</header><div class="room-col">${inner}</div></div></main>`
 export const roomTabs = (on, cls = '') => html`<nav class="room-tabs${cls ? ` ${cls}` : ''}" aria-label="Agents, devices and settings">${[['agents', 'Agents'], ['devices', 'Devices'], ['settings', 'Settings']].map(([p, word]) => html`<a href="/${p}" data-nav${on === p ? raw(' aria-current="page"') : ''}>${word}</a>`)}</nav>`
 export const errorLine = e => (e ? html`<p class="room-error" role="alert">${e}</p>` : '')
