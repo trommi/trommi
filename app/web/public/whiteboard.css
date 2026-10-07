@@ -38,7 +38,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-icon-btn:disabled { color: var(--line-strong); cursor: default; }
 .pad-icon-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .pad-icon-btn.pad-danger:hover { color: var(--deny); }
-.pad-sep { flex: none; width: 1px; height: 22px; margin: 0 4px; background: var(--line); }
+.pad-sep { flex: none; width: 1px; height: 22px; margin: 0 var(--s-1); background: var(--line); }
 
 /* tooltips with the shortcut, for a mouse only */
 @media (hover: hover) and (pointer: fine) {
@@ -56,11 +56,11 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-top { --foot: max(34px, calc(env(safe-area-inset-bottom) + 30px)); position: absolute; left: max(12px, env(safe-area-inset-left)); bottom: var(--foot); z-index: 3; display: flex; align-items: center; gap: 6px; pointer-events: none; }
 @container pad (max-width: 1260px) { .pad-top { bottom: calc(var(--foot) + 66px); } }
 .pad-top > * { pointer-events: auto; }
-.pad-zoom { height: 44px; min-width: 58px; padding: 0 8px !important; border-radius: var(--r-pill); font: 600 var(--t-xs)/1 var(--font) !important; letter-spacing: .04em; font-variant-numeric: tabular-nums; color: var(--muted) !important; white-space: nowrap; position: relative; }
+.pad-zoom { height: 44px; min-width: 58px; padding: 0 var(--s-2) !important; border-radius: var(--r-pill); font: 600 var(--t-xs)/1 var(--font) !important; letter-spacing: .04em; font-variant-numeric: tabular-nums; color: var(--muted) !important; white-space: nowrap; position: relative; }
 .pad-zoom:hover { background: var(--sunken); color: var(--fg) !important; }
 
 /* ── empty pad ──────────────────────────────────────────────────────────── */
-.pad-hint { position: absolute; left: 50%; top: 42%; margin: 0; width: max-content; max-width: calc(100% - 48px); padding: 12px 20px; border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg); background: color-mix(in srgb, var(--surface) 86%, transparent); color: var(--muted); font-size: var(--t-md); text-align: center; transform: translate(-50%, -50%) rotate(-1deg); pointer-events: none; opacity: 0; transition: opacity var(--d-med); }
+.pad-hint { position: absolute; left: 50%; top: 42%; margin: 0; width: max-content; max-width: calc(100% - 48px); padding: var(--s-3) var(--s-5); border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg); background: color-mix(in srgb, var(--surface) 86%, transparent); color: var(--muted); font-size: var(--t-md); text-align: center; transform: translate(-50%, -50%) rotate(-1deg); pointer-events: none; opacity: 0; transition: opacity var(--d-med); }
 .pad-hint[data-show="true"] { opacity: 1; }
 .pad-hint b { color: var(--fg); font-weight: 600; }
 .pad-hint .if-touch { display: none; }
@@ -76,7 +76,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 /* ── actions for the selection ──────────────────────────────────────────── */
 .pad-selbar { position: absolute; top: 0; left: 0; z-index: 2; padding: 3px; box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); will-change: transform; }
 .pad-selbar .pad-icon-btn { width: 40px; height: 40px; }
-.pad-send { height: 40px; display: inline-flex; align-items: center; gap: 6px; padding: 0 16px 0 12px !important; border-radius: var(--r-pill); background: var(--accent) !important; color: var(--accent-fg) !important; font: 600 var(--t-sm)/1 var(--font) !important; white-space: nowrap; transition: background var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.pad-send { height: 40px; display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--s-4) 0 var(--s-3) !important; border-radius: var(--r-pill); background: var(--accent) !important; color: var(--accent-fg) !important; font: 600 var(--t-sm)/1 var(--font) !important; white-space: nowrap; transition: background var(--d-fast), transform var(--d-fast) var(--ease-out); }
 .pad-send:hover { background: var(--accent-hover) !important; }
 .pad-send:active { transform: scale(.96); }
 .pad-send .pad-icon { width: 18px; height: 18px; rotate: 45deg; }
@@ -92,7 +92,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 /* ── toolbar ────────────────────────────────────────────────────────────── */
 .pad-bar { position: absolute; left: var(--s-2); right: var(--s-2); bottom: max(34px, calc(env(safe-area-inset-bottom) + 30px)); z-index: 3; display: flex; justify-content: center; pointer-events: none; }
 .pad-bar > * { pointer-events: auto; }
-.pad-tools { position: relative; padding: 4px; box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); }
+.pad-tools { position: relative; padding: var(--s-1); box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); }
 .pad-tool[aria-pressed="true"] { background: var(--accent) !important; color: var(--accent-fg); }
 .pad-tools .pad-sep { margin: 0 3px; }
 /* Cut out and send (whiteboard.mjs .pad-cut): beside the tools, not one of them. Drawn with the pen: scissors on a
@@ -133,7 +133,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-status[data-kind="error"] { color: var(--urg-critical); }
 .pad-drop { position: absolute; inset: 6px; z-index: 6; display: grid; place-items: center; border-radius: var(--r-lg); border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent-soft) 72%, transparent); pointer-events: none; }
 .pad-drop span { padding: 10px 18px; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font-weight: 600; font-size: var(--t-sm); }
-.pad-toast { position: absolute; top: 68px; left: 50%; z-index: 6; width: max-content; max-width: calc(100% - 32px); padding: 9px 16px; border-radius: var(--r-lg); background: var(--fg); color: var(--surface); font: 500 var(--t-sm)/1.3 var(--font); text-align: center; box-shadow: var(--shadow-md); transform: translateX(-50%); pointer-events: none; }
+.pad-toast { position: absolute; top: 68px; left: 50%; z-index: 6; width: max-content; max-width: calc(100% - 32px); padding: 9px var(--s-4); border-radius: var(--r-lg); background: var(--fg); color: var(--surface); font: 500 var(--t-sm)/1.3 var(--font); text-align: center; box-shadow: var(--shadow-md); transform: translateX(-50%); pointer-events: none; }
 .pad-toast[data-kind="error"] { background: var(--urg-critical); }
 
 /* ── dialogs: what would be sent, and the shortcuts ─────────────────────── */
@@ -157,11 +157,11 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-payload figure { margin: 0; min-width: 0; }
 .pad-payload figcaption { margin-bottom: 6px; font: 600 var(--t-xs)/1.2 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
 .pad-payload img { display: block; max-width: 100%; max-height: 46vh; border-radius: var(--r-sm); background: #fff; box-shadow: 0 0 0 1px var(--line-strong); }
-.pad-payload pre { margin: 0 0 var(--s-4); padding: 10px 12px; max-height: 22vh; overflow: auto; border-radius: var(--r-sm); background: var(--sunken); font: 400 var(--t-sm)/1.45 var(--font); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.pad-payload pre { margin: 0 0 var(--s-4); padding: 10px var(--s-3); max-height: 22vh; overflow: auto; border-radius: var(--r-sm); background: var(--sunken); font: 400 var(--t-sm)/1.45 var(--font); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
 .pad-payload pre#send-ids { font: 400 var(--t-xs)/1.5 var(--mono); margin-bottom: 0; }
-.pad-dialog-note { margin: 0 var(--s-5) var(--s-4); padding: 10px 12px; border-radius: var(--r-sm); background: var(--urg-critical-soft); color: var(--fg); font-size: var(--t-sm); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--urg-critical) 40%, transparent); }
+.pad-dialog-note { margin: 0 var(--s-5) var(--s-4); padding: 10px var(--s-3); border-radius: var(--r-sm); background: var(--urg-critical-soft); color: var(--fg); font-size: var(--t-sm); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--urg-critical) 40%, transparent); }
 .pad-dialog footer { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: var(--s-2); padding: var(--s-3) var(--s-5); background: var(--surface); border-top: 1px solid var(--line); }
-.pad-btn { height: 44px; padding: 0 20px !important; border-radius: var(--r-pill); background: var(--sunken) !important; font: 600 var(--t-sm)/1 var(--font) !important; }
+.pad-btn { height: 44px; padding: 0 var(--s-5) !important; border-radius: var(--r-pill); background: var(--sunken) !important; font: 600 var(--t-sm)/1 var(--font) !important; }
 .pad-btn:hover { background: var(--line) !important; }
 .pad-btn-primary { background: var(--accent) !important; color: var(--accent-fg) !important; }
 .pad-btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; }
@@ -178,9 +178,9 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-wide { display: none; }
 @media (min-width: 620px) { .pad-wide { display: grid; } }
 @media (max-width: 619px) {
-  .pad-top { gap: 4px; bottom: calc(var(--foot) + 60px); }
+  .pad-top { gap: var(--s-1); bottom: calc(var(--foot) + 60px); }
   .pad-top .pad-icon-btn { width: 40px; height: 40px; }
-  .pad-zoom { min-width: 48px; height: 40px; padding: 0 4px !important; }
+  .pad-zoom { min-width: 48px; height: 40px; padding: 0 var(--s-1) !important; }
   /* the narrowest phones: the bar must end inside the screen, so the "100 %" button goes (a pinch zooms, Fit stays) */
   @media (max-width: 400px) { .pad-zoom { display: none; } }
   .pad-tools .pad-icon-btn { width: 42px; }
@@ -199,7 +199,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-area-menu > :not(.pad-menu-list) { flex: none; }
 .pad-menu-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .pad-area-menu .pad-menu-item { gap: 10px; }
-.pad-menu-find { display: block; width: calc(100% - 8px); margin: 2px 4px 6px; height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: var(--sunken); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); outline: none; }
+.pad-menu-find { display: block; width: calc(100% - 8px); margin: 2px var(--s-1) 6px; height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: var(--sunken); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); outline: none; }
 .pad-menu-find:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 .pad-menu-item kbd { margin-left: auto; padding: 2px 6px; border-radius: 5px; box-shadow: 0 0 0 1px var(--line-strong); font: 500 11px/1.3 var(--mono); color: var(--muted); }
 .pad-mark { --hue: 162; flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 10px; background: hsl(var(--hue) 55% 91%); color: hsl(var(--hue) 62% 28%); font: 700 13px/1 var(--display); }

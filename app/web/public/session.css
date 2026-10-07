@@ -53,7 +53,7 @@ body[data-filter] .jump { display: none; }
 .msg.cont { margin-top: var(--s-3); }
 .day + .msg, .day + .event { margin-top: var(--s-5); }
 /* A message that asks back about a question says which one. */
-.msg-about { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; margin-bottom: 4px; padding: 0; border: 0; background: none; font-size: var(--t-xs); color: var(--muted); }
+.msg-about { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; margin-bottom: var(--s-1); padding: 0; border: 0; background: none; font-size: var(--t-xs); color: var(--muted); }
 .msg-about span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 /* (a finger needs 36px: the line is taller than it looks) */
 .msg-about { padding-block: 9px; margin-block: -9px -5px; }
@@ -65,11 +65,11 @@ body[data-filter] .jump { display: none; }
 .msg-user { align-self: flex-end; max-width: min(82%, 34rem); display: flex; flex-direction: column; align-items: flex-end; }
 .msg-user.cont { margin-top: var(--s-1); }
 .bubble {
-  padding: 10px 16px; background: var(--sunken); border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg);
+  padding: 10px var(--s-4); background: var(--sunken); border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg);
   font-size: 1rem; line-height: 1.5; overflow-wrap: anywhere;
 }
 .bubble p { white-space: pre-wrap; }
-.msg-user .msg-time { margin-top: 5px; padding-right: 4px; }
+.msg-user .msg-time { margin-top: 5px; padding-right: var(--s-1); }
 /* One timestamp per run of user messages, under the last one. */
 .msg-user:has(+ .msg-user.cont) .msg-time { display: none; }
 .msg-user:has(+ .msg-user.cont) .bubble { border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg); }
@@ -91,7 +91,7 @@ body[data-filter] .jump { display: none; }
 :is(#chat, #inbox) .rich .code { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); overflow: hidden; }
 :is(#chat, #inbox) .rich .code-head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
-  padding: 4px 4px 4px 14px; background: var(--sunken); border-bottom: 1px solid var(--line);
+  padding: var(--s-1) var(--s-1) var(--s-1) 14px; background: var(--sunken); border-bottom: 1px solid var(--line);
 }
 :is(#chat, #inbox) .rich .code-lang { font: 500 var(--t-xs)/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
 :is(#chat, #inbox) .rich .code-copy {
@@ -103,7 +103,7 @@ body[data-filter] .jump { display: none; }
 :is(#chat, #inbox) .rich .code-copy:hover { background: var(--surface); color: var(--fg); }
 :is(#chat, #inbox) .rich .code-copy.is-done { color: var(--accent); }
 :is(#chat, #inbox) .rich .code-copy .ico { width: 15px; height: 15px; }
-:is(#chat, #inbox) .rich pre { margin: 0; padding: 14px 16px; overflow-x: auto; tab-size: 2; }
+:is(#chat, #inbox) .rich pre { margin: 0; padding: 14px var(--s-4); overflow-x: auto; tab-size: 2; }
 :is(#chat, #inbox) .rich pre code { font: .84rem/1.65 var(--mono); }
 
 /* attachments */
@@ -118,7 +118,7 @@ body[data-filter] .jump { display: none; }
 .shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
 .shot:hover { border-color: var(--line-strong); box-shadow: var(--shadow-md); transform: translateY(-1px); }
 .file-chip {
-  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 36px; padding: 0 12px 0 9px;
+  display: inline-flex; align-items: center; gap: var(--s-2); max-width: 100%; min-height: 36px; padding: 0 var(--s-3) 0 9px;
   border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2);
   color: var(--fg); font-size: var(--t-sm); font-weight: 500; text-decoration: none;
   transition: border-color var(--d-fast) var(--ease-out);
@@ -141,14 +141,14 @@ body[data-filter] .jump { display: none; }
 .asset-card.has-preview.is-gone .asset-preview { opacity: .6; }
 .asset-card { --asset-open-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14 4h6v6 M20 4l-9 9 M18 14v5.5H4.5V6H10' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); --asset-link-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2 M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 @media (max-width: 600px) {
-  .asset-card.has-preview { grid-template-columns: 104px minmax(0, 1fr); grid-template-areas: "preview text" "actions actions"; gap: 10px 12px; }
+  .asset-card.has-preview { grid-template-columns: 104px minmax(0, 1fr); grid-template-areas: "preview text" "actions actions"; gap: 10px var(--s-3); }
 }
 
 /* board events: a quiet timeline between the messages */
 .event {
   --tone: var(--accent); --tone-soft: var(--accent-soft);
   align-self: flex-start; max-width: 100%; margin: var(--s-6) 0 0 -6px;
-  display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 4px 12px 4px 6px;
+  display: flex; align-items: center; gap: 10px; min-height: 36px; padding: var(--s-1) var(--s-3) var(--s-1) 6px;
   border: 0; border-radius: var(--r-pill); background: none; text-align: left; position: relative;
   transition: background var(--d-fast) var(--ease-out);
 }
@@ -161,14 +161,14 @@ body[data-filter] .jump { display: none; }
 .event-ico .ico { width: 14px; height: 14px; stroke-width: 2.2; }
 /* consecutive events are joined into one thread */
 .event.cont .event-ico::before { content: ""; position: absolute; left: 50%; bottom: 100%; width: 1px; height: 12px; background: var(--line-strong); }
-.event-body { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--t-sm); }
+.event-body { display: flex; align-items: baseline; gap: var(--s-2); min-width: 0; font-size: var(--t-sm); }
 .event-kind { font-size: var(--t-xs); font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--tone); white-space: nowrap; }
 .event-text, .event-about { color: var(--muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .event:hover .event-text, .event:hover .event-about { color: var(--fg); }
 /* The question, named briefly, then what happened to it. The question gives way first when the line is short. */
 .event-about { flex: 0 20 auto; min-width: 5ch; }
 .event-about + .event-text { flex: 0 1 auto; color: var(--fg); font-weight: 600; }
-.event-about + .event-text::before { content: "→"; margin-right: 8px; color: var(--faint); font-weight: 400; }
+.event-about + .event-text::before { content: "→"; margin-right: var(--s-2); color: var(--faint); font-weight: 400; }
 .event-time { font-size: var(--t-xs); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* (Quiet: what happened to a question is a note between the messages, not a headline: one small line.) */
@@ -202,7 +202,7 @@ body[data-filter] .jump { display: none; }
 .empty-chat > p { color: var(--muted); font-size: 1rem; margin-top: var(--s-3); text-wrap: pretty; }
 .empty-picks { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s-2); margin-top: var(--s-6); }
 .empty-pick {
-  min-height: 40px; padding: 0 16px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  min-height: 40px; padding: 0 var(--s-4); border: 1px solid var(--line); border-radius: var(--r-pill);
   background: var(--surface); font-size: var(--t-sm); font-weight: 500; color: var(--fg);
   transition: border-color var(--d-fast) var(--ease-out), background var(--d-fast) var(--ease-out);
 }
@@ -217,7 +217,7 @@ body[data-filter] .jump { display: none; }
 }
 .jump {
   position: absolute; left: 50%; bottom: calc(100% + var(--s-3)); translate: -50% 0; z-index: 2;
-  display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 16px 0 11px;
+  display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 var(--s-4) 0 11px;
   border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--surface); color: var(--fg);
   box-shadow: var(--shadow-md); font-size: var(--t-sm); font-weight: 500; white-space: nowrap;
   animation: pop var(--d-med) var(--ease-spring) both;
@@ -237,19 +237,19 @@ body[data-filter] .jump { display: none; }
 .composer { flex-wrap: wrap; }
 .composer.is-drop { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
 /* what is attached: a line of small chips above the words; a click takes one off */
-.composer-files { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 6px 4px; }
+.composer-files { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: var(--s-1) 6px var(--s-1); }
 .composer-files:empty { display: none; }
-.composer-file { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; height: 32px; padding: 0 4px 0 7px; border: 0; border-radius: 9px; background: var(--sunken); color: var(--fg); font-size: var(--t-xs); font-weight: 500; }
+.composer-file { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; height: 32px; padding: 0 var(--s-1) 0 7px; border: 0; border-radius: 9px; background: var(--sunken); color: var(--fg); font-size: var(--t-xs); font-weight: 500; }
 .composer-file .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
 .composer-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* a picture shows itself; the x says that a click takes the chip off */
-.composer-file.has-thumb { padding-left: 4px; }
+.composer-file.has-thumb { padding-left: var(--s-1); }
 .composer-file img { flex: none; width: 24px; height: 24px; border-radius: 6px; object-fit: cover; background: var(--surface); }
 .composer-file em { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; font: 400 15px/1 var(--font); font-style: normal; color: var(--muted); }
 .composer-file:hover em { background: var(--fg); color: var(--bg); }
 .composer-clip .sketch { width: 21px; height: 21px; stroke-width: 1.8; }
 .composer textarea {
-  flex: 1; min-width: 0; height: 40px; padding: 8px 4px; resize: none; border: 0; background: none;
+  flex: 1; min-width: 0; height: 40px; padding: var(--s-2) var(--s-1); resize: none; border: 0; background: none;
   font-size: 1rem; line-height: 24px; overflow-y: hidden; scrollbar-width: thin;
 }
 .composer textarea::placeholder { color: var(--faint); opacity: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -316,7 +316,7 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 }
 
 .msg-details { margin-top: var(--s-2); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
-.msg-details summary { cursor: pointer; padding: 8px var(--s-3); font-size: var(--t-sm); font-weight: 600; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px; }
+.msg-details summary { cursor: pointer; padding: var(--s-2) var(--s-3); font-size: var(--t-sm); font-weight: 600; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px; }
 .msg-details summary::before { content: "›"; display: inline-block; transition: transform var(--d-fast) var(--ease-out); }
 .msg-details[open] summary::before { transform: rotate(90deg); }
 .msg-details summary::-webkit-details-marker { display: none; }
@@ -341,7 +341,7 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 .session-editor::backdrop { background: transparent; }
 .session-editor form { display: grid; gap: var(--s-2); padding: var(--s-4); }
 .session-editor h2 { font: 800 1.5rem/1.15 var(--display); }
-.session-editor input { width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: transparent; font-size: max(16px, 1em); }
+.session-editor input { width: 100%; padding: 10px var(--s-3); border: 1px solid var(--line-strong); border-radius: 8px; background: transparent; font-size: max(16px, 1em); }
 .session-editor .caps { color: var(--muted); }
 .session-buttons { display: flex; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-2); }
 .session-buttons button { min-height: 42px; padding: 0 1.2em; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; font-weight: 600; }
@@ -373,7 +373,7 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
   .composer textarea { height: 44px; padding-block: 10px; font-size: 16px; }
   #chat .rich pre code { font-size: .8rem; }
 }
-.topbar #brand-doors :is(i, kbd):not(.jump-box kbd) { margin-left: auto; padding-left: 12px; font: 500 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.topbar #brand-doors :is(i, kbd):not(.jump-box kbd) { margin-left: auto; padding-left: var(--s-3); font: 500 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: 0; text-transform: none; color: var(--muted); }
 .topbar #brand-doors kbd:not(.jump-box kbd) { min-width: 0; padding: 3px 6px; background: none; box-shadow: 0 0 0 1px var(--line-strong); border-radius: 6px; font-family: var(--mono); }
 @media (max-width: 860px) {
 
@@ -437,11 +437,11 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 @media (min-width: 1200px) {
   body[data-talk-drag] #session :is(iframe, .rh-frame) { pointer-events: none; }
 }
-.cardclip-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 28px; padding: 0 4px 0 9px; border-radius: 8px; background: var(--sunken); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); text-decoration: none; }
+.cardclip-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 28px; padding: 0 var(--s-1) 0 9px; border-radius: 8px; background: var(--sunken); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); text-decoration: none; }
 .cardclip-chip b { flex: none; font-weight: 600; color: var(--muted); }
 
 /* in a message: a quiet line of linked chips */
-.cardclip-row { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; margin: 0 0 4px; }
+.cardclip-row { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; margin: 0 0 var(--s-1); }
 .msg-user .cardclip-row { justify-content: flex-end; }
 .cardclip-chip.is-link { padding-right: 9px; box-shadow: inset 0 0 0 1px var(--line); background: none; }
 .cardclip-chip.is-link:hover { background: var(--sunken); }
@@ -577,7 +577,7 @@ video.as-media { background: #000; }
 #session .log-inner { flex: none; }
 /* The frame the earlier messages are loaded into is no box: they are lines of the log like the others. */
 turbo-frame.log-earlier { display: contents; }
-.log-earlier-link { align-self: center; display: inline-flex; align-items: center; gap: 8px; min-height: 32px; margin-bottom: var(--s-4); padding: 0 14px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font-size: var(--t-sm); font-weight: 500; }
+.log-earlier-link { align-self: center; display: inline-flex; align-items: center; gap: var(--s-2); min-height: 32px; margin-bottom: var(--s-4); padding: 0 14px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font-size: var(--t-sm); font-weight: 500; }
 .log-earlier-link:hover { color: var(--fg); }
 .log-earlier-link b { color: var(--faint); font-weight: 600; font-variant-numeric: tabular-nums; }
 .log-earlier-link.is-later { margin: var(--s-6) 0 0; }
@@ -588,7 +588,7 @@ turbo-frame.log-earlier[busy] > .log-earlier-link { opacity: .5; pointer-events:
 /* What the session is at, at the end of the conversation: one quiet line per piece of running work. */
 .session-status { display: grid; gap: 6px; justify-items: start; margin-top: var(--s-6); }
 .session-status[hidden] { display: none; }
-.status-line { display: flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; color: var(--muted); font-size: var(--t-sm); }
+.status-line { display: flex; align-items: center; gap: var(--s-2); max-width: 100%; min-width: 0; color: var(--muted); font-size: var(--t-sm); }
 .status-line b { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-weight: 600; }
 .status-line[data-state="done"] b { color: var(--muted); font-weight: 500; }
 .status-line[data-state="decision"] .status-mark { color: var(--urg-high); }
@@ -611,7 +611,7 @@ turbo-frame.log-earlier[busy] > .log-earlier-link { opacity: .5; pointer-events:
 a.open-jump { text-decoration: none; }
 /* The filter beside the composer (session.mjs sessionFilters): one quiet line icon at the bar's right; its menu
    opens upward, the one in view ticked; a dot on the icon while a filter is on. */
-#session .session-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; align-items: end; }
+#session .session-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--s-2); align-items: end; }
 #session .session-compose > :not(.composer, .session-filter) { grid-column: 1 / -1; }
 .session-filter { margin-bottom: 7px; }
 /* (session.css keeps a row free under the composer for the old pills; on a wide screen nothing stands there now.
@@ -624,7 +624,7 @@ a.open-jump { text-decoration: none; }
 .session-filter-btn .ico { width: 19px; height: 19px; }
 .session-filter-dot { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
 .session-filter-menu.t-pop { top: auto; bottom: calc(100% + 8px); left: auto; right: 0; }
-.session-filter-menu a { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px 0 8px; border-radius: var(--r-sm); color: var(--fg); font-size: var(--t-sm); font-weight: 500; text-decoration: none; white-space: nowrap; }
+.session-filter-menu a { display: flex; align-items: center; gap: var(--s-2); min-height: 36px; padding: 0 10px 0 var(--s-2); border-radius: var(--r-sm); color: var(--fg); font-size: var(--t-sm); font-weight: 500; text-decoration: none; white-space: nowrap; }
 .session-filter-menu a[aria-current="true"] { font-weight: 700; }
 .session-filter-tick { width: 16px; height: 16px; visibility: hidden; }
 .session-filter-menu a[aria-current="true"] .session-filter-tick { visibility: visible; }
@@ -639,32 +639,32 @@ a.open-jump { text-decoration: none; }
 /* ---- the session's files (session.mjs filesChip, filesDrawer; controller "files"): "N files"
    beside the quiet line opens a drawer from the right, the conversation stays; on a phone "Files (N)" in the filter
    menu opens it as a sheet from below. Sober: lines and tokens, nothing drawn. ---- */
-#session .pane-now .files-chip { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; padding: 1px 9px 1px 6px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); font: 600 var(--t-xs)/1.5 var(--font); text-decoration: none; white-space: nowrap; }
+#session .pane-now .files-chip { flex: none; align-self: center; display: inline-flex; align-items: center; gap: var(--s-1); margin-left: 2px; padding: 1px 9px 1px 6px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); font: 600 var(--t-xs)/1.5 var(--font); text-decoration: none; white-space: nowrap; }
 #session .pane-now .files-chip .ico { width: 13px; height: 13px; }
 #session .pane-now .files-chip span { overflow: visible; min-width: 0; }
 #session .pane-now .files-chip:hover, #session[data-files-open] .pane-now .files-chip { color: var(--fg); background: var(--sunken); }
 .session-filter-files .session-filter-tick { visibility: visible; }
 @media (min-width: 861px) { .session-filter-menu .session-filter-files { display: none; }
 }
-.files-drawer { position: fixed; z-index: 60; top: var(--s-3); right: var(--s-3); bottom: calc(var(--s-3) + 68px); width: min(380px, calc(100vw - 2 * var(--s-3))); display: flex; flex-direction: column; border-radius: var(--r-lg); background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+.files-drawer { position: fixed; z-index: var(--z-panel); top: var(--s-3); right: var(--s-3); bottom: calc(var(--s-3) + 68px); width: min(380px, calc(100vw - 2 * var(--s-3))); display: flex; flex-direction: column; border-radius: var(--r-lg); background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
 .files-drawer[hidden] { display: none; }
-.files-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 8px 8px 18px; border-bottom: 1px solid var(--line); }
+.files-head { flex: none; display: flex; align-items: center; gap: var(--s-2); padding: 10px var(--s-2) var(--s-2) 18px; border-bottom: 1px solid var(--line); }
 .files-head h3 { margin: 0; font: 800 1.1rem/1 var(--display); }
 .files-close { margin-left: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
 .files-close .ico { width: 18px; height: 18px; }
 .files-frame { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .files-frame[busy]:empty::before { content: ""; display: block; margin: var(--s-6) auto; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: transparent; animation: files-turn .8s linear infinite; }
-.files-list { padding: 4px 8px 12px; }
-.files-sum { margin: 8px 10px 4px; color: var(--muted); font-size: var(--t-xs); }
-.files-group { display: grid; gap: 8px; padding: 10px; }
+.files-list { padding: var(--s-1) var(--s-2) var(--s-3); }
+.files-sum { margin: var(--s-2) 10px var(--s-1); color: var(--muted); font-size: var(--t-xs); }
+.files-group { display: grid; gap: var(--s-2); padding: 10px; }
 .files-group + .files-group { border-top: 1px solid var(--line); }
-.files-group-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.files-where { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; color: var(--fg); text-decoration: none; }
+.files-group-head { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.files-where { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--s-2); color: var(--fg); text-decoration: none; }
 .files-where b { flex: none; color: var(--muted); font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .files-where b time { font: inherit; }
 .files-where span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); font-weight: 600; }
 a.files-where:hover span { text-decoration: underline; }
-.files-jump { flex: none; display: inline-flex; align-items: center; gap: 1px; padding: 3px 4px 3px 9px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font-size: .72rem; font-weight: 600; text-decoration: none; }
+.files-jump { flex: none; display: inline-flex; align-items: center; gap: 1px; padding: 3px var(--s-1) 3px 9px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font-size: .72rem; font-weight: 600; text-decoration: none; }
 .files-jump .ico { width: 13px; height: 13px; }
 .files-thumbs { display: flex; align-items: center; gap: 6px; }
 .files-thumb { position: relative; flex: none; display: grid; place-items: center; width: 64px; height: 44px; overflow: hidden; border-radius: 6px; background: var(--sunken); color: var(--faint); box-shadow: inset 0 0 0 1px var(--line); }
@@ -678,7 +678,7 @@ a.files-where:hover span { text-decoration: underline; }
 @media (min-width: 1280px) { #session[data-files-open] { padding-right: 392px; }
 }
 @media (max-width: 860px) {
-  .files-drawer { top: auto; left: 0; right: 0; bottom: 0; width: auto; height: min(74vh, 640px); padding-bottom: env(safe-area-inset-bottom, 0px); border-radius: var(--r-xl) var(--r-xl) 0 0; z-index: 2700; }
+  .files-drawer { top: auto; left: 0; right: 0; bottom: 0; width: auto; height: min(74vh, 640px); padding-bottom: env(safe-area-inset-bottom, 0px); border-radius: var(--r-xl) var(--r-xl) 0 0; z-index: var(--z-update); }
 }
 @media (prefers-reduced-motion: reduce) { #session .is-jumped { animation-duration: .01s; box-shadow: 0 0 0 3px var(--accent); }
 }
@@ -693,7 +693,7 @@ a.files-where:hover span { text-decoration: underline; }
 /* Quiet (not a stop): a grey hint, no hand. */
 .t-quiet { color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
 .agent-badge[data-state="blocked"] .hand-pen, .t-blocked .hand-pen { stroke: var(--surface); stroke-width: 1.7; }
-.t-blocked { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: 4px; font: 600 .8rem/1.2 var(--font); }
+.t-blocked { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: var(--s-1); font: 600 .8rem/1.2 var(--font); }
 .t-blocked .hand-mark { position: static; flex: none; width: 26px; height: 26px; }
 .t-blocked span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 860px) { .t-blocked span { display: none; }
@@ -709,7 +709,7 @@ a.files-where:hover span { text-decoration: underline; }
 
 /* ---- A main session's way to another desk (session.mjs deskMove): small and quiet beside the name ---- */
 #session .pane-who > .t-pick-desk { flex: none; margin-left: 6px; }
-.t-head-desk { display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 0 4px 0 6px; border-radius: 8px; color: var(--faint); }
+.t-head-desk { display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 0 var(--s-1) 0 6px; border-radius: 8px; color: var(--faint); }
 .t-head-desk:hover, .t-pick-desk[open] > .t-head-desk { color: var(--fg); background: var(--sunken); }
 .t-head-desk > .sketch { width: 20px; height: 20px; }
 .t-head-more { padding: 0 5px; }
@@ -761,10 +761,10 @@ a.files-where:hover span { text-decoration: underline; }
 
 /* ---- Delete session, last in the session's More menu: after a thin rule, in Shred's colour; it opens a small confirm in
    the menu itself (the drawn box of the Desk's duck sheet), Delete in the danger colour, Cancel quiet. ---- */
-.desk-move-rule { margin: 6px 4px; border: 0; border-top: 1px solid var(--line); }
+.desk-move-rule { margin: 6px var(--s-1); border: 0; border-top: 1px solid var(--line); }
 .desk-move-delete > summary, .desk-move-delete > summary .sketch { color: var(--urg-critical); }
 .desk-move-delete > summary::after { display: none; }
-.session-delete-ask { display: grid; gap: 10px; max-width: 300px; margin: 4px 2px 2px; padding: 12px 12px 10px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); }
+.session-delete-ask { display: grid; gap: 10px; max-width: 300px; margin: var(--s-1) 2px 2px; padding: var(--s-3) var(--s-3) 10px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); }
 .session-delete-ask p { margin: 0; font: 400 var(--t-sm)/1.4 var(--font); color: var(--muted); white-space: normal; }
 .session-delete-ask p b { display: block; margin-bottom: 2px; font: 700 var(--t-md)/1.3 var(--display); color: var(--fg); }
 .desk-move .session-delete-yes { display: inline-flex; width: auto; min-height: 40px; padding: 0 14px 0 10px; border: 1.6px solid var(--urg-critical); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--urg-critical); color: var(--surface); font: 700 var(--t-sm)/1 var(--font); }
@@ -780,6 +780,6 @@ a.files-where:hover span { text-decoration: underline; }
 #session .composer > .composer-files { order: 0; }
 #session .composer > textarea { order: 1; }
 #session .composer > .composer-clip { order: 2; width: 38px; height: 38px; }
-#session .composer > .send { order: 3; width: 38px; height: 38px; border-radius: var(--r-md); background: var(--accent); color: var(--accent-fg, #fff); }
-#session .composer > .send:disabled { background: var(--accent); color: var(--accent-fg, #fff); opacity: .45; }
+#session .composer > .send { order: 3; width: 38px; height: 38px; border-radius: var(--r-md); background: var(--accent); color: var(--accent-fg); }
+#session .composer > .send:disabled { background: var(--accent); color: var(--accent-fg); opacity: .45; }
 @media (max-width: 860px) { #session .composer > :is(.composer-clip, .send) { width: 44px; height: 44px; } #session .composer { border-radius: 14px; } }
