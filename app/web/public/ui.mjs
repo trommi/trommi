@@ -2596,6 +2596,13 @@ ${(thumbs ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options
       return tile(cls, lead ? 'yes' : 'no', worded ? shortOf(o) : size === 'none' && !bare ? '' : o.label, { value: o.key, title, aria: final ? `${o.label} (settles it)` : o.label, short: worded, final })
     })}</form>`
   }
+  // More than two ways, one of them advised by its agent (his pick "advised", 7 October): that option is the lead tile,
+  // one press takes it (the same answer as on the card); beside it "+N other ways" opens the card.
+  const advisedOne = card.kind === 'decision' && !card.multiple ? card.options.find(o => advisedKeys(card)[0] === o.key && advisedKeys(card).length === 1) : null
+  if (advisedOne) {
+    const others = card.options.length - 1, final = advisedOne.final === true
+    return html`<form class="inbox-actions is-advised-pair" method="post" action="${act(card, base, 'decide')}">${stay}${seen}<a class="inbox-answer is-thumb is-others" data-nav href="${cardPath(card, base)}" title="The other ${others} ways: open the card" aria-label="${others} other ways: open the card"><b>+${others}</b><span>other ways</span></a><button class="inbox-answer is-thumb is-lead is-advised is-take" data-controller="advice" type="submit" name="key" value="${advisedOne.key}" title="${[advisedOne.label, advisedOne.detail, 'the agent recommends this', final ? FINAL_TIP : ''].filter(Boolean).join(' · ')}" aria-label="${advisedOne.label}, advised${final ? ' (settles it)' : ''}">${sk('yes')}<strong>${advisedOne.label}</strong><small>advised</small></button></form>`
+  }
   // More than two ways: one tile, "Choose". It is a link to the card's own page, where every option stands.
   const count = card.multiple ? `${card.options.length} options, several` : `${card.options.length} options`
   return html`<div class="inbox-actions"><a class="inbox-answer is-wide is-lead" data-nav href="${cardPath(card, base)}" title="${count}" aria-label="Choose: ${count}"><span class="inbox-disc">${sk('choose')}</span><span>Choose</span></a></div>`
