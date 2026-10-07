@@ -795,8 +795,8 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
   :is(.desk-duck-yes, .desk-duck-no, .tc-more-item, .tc-more .tc-more-list > .cardclip-copy, .t-picture-back, .session-buttons button, .session-filter-menu a, .t-menu button) { min-height: 44px; }
   .room-tabs a { display: inline-flex; align-items: center; min-height: 44px; }
   .ledger-find { height: 44px; }
-  :is(.row-mark, .tc-from, .tc-clip, .focus-mark-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout) { position: relative; }
-  :is(.row-mark, .tc-from, .tc-step, .tc-clip, .focus-mark-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
+  :is(.row-mark, .tc-from, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout) { position: relative; }
+  :is(.row-mark, .tc-from, .tc-step, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
 }
 
 /* ---- A phone names the page once: the top line says it (Agents, Devices, Settings, Media, Links), so the page's own
