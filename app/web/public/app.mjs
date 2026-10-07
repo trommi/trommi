@@ -217,13 +217,16 @@ function boardModel(state, agents = state.agents, desk = null) {
   // Each row's link, and how many of his answers its session has not picked up. A folded main shows its own, unless
   // one of its subs is cut off: that one must not hide in the fold.
   for (const u of units) {
-    u.link = linkOf(u.agent, now)
+    // (a helper runs inside its main's process: it never listens on its own, its main's link says it for both)
+    u.link = u.parent ? null : linkOf(u.agent, now)
     u.unheard = state.cards.filter(c => c.agent === u.id && heardOf(c, now)?.late).length
   }
+  // (what a helper's agent has not picked up is told once, on its main: the helpers' rows stay calm)
+  for (const u of units) if (u.subs) { u.unheard += u.subs.reduce((n, x) => n + x.unheard, 0); for (const x of u.subs) x.unheard = 0 }
   for (const u of units) if (u.subs) {
     const all = [u, ...u.subs]
-    u.whole.link = all.map(x => x.link).find(l => l?.state === 'cut') ?? u.link
-    u.whole.unheard = all.reduce((n, x) => n + x.unheard, 0)
+    u.whole.link = u.link
+    u.whole.unheard = u.unheard
   }
   // The sessions that are cut off, once per connector (a helper's session is cut off with its main: one line says it).
   const cut = units.filter(u => u.link?.state === 'cut' && !(u.parent?.link?.state === 'cut' && u.parent.agent.agent_device_id === u.agent.agent_device_id)).map(u => ({ agent: u.agent, link: u.link }))

@@ -854,3 +854,6 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
   html[data-rail="folded"] .desk-card-n.is-zero { display: none; }
 }
 .desk-card { --lamp: #e2a21b; } :root[data-theme="dark"] .desk-card { --lamp: #f2bd4a; }
+
+/* (a helper whose main does not listen: calm and a little dimmed; the main's row says why) */
+#agents .agent-row.is-sub.is-hushed .agent-entry { opacity: .62; }
