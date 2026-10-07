@@ -2,7 +2,7 @@
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
-import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, linkItems, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
+import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, pageItems, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -280,7 +280,7 @@ function deskStacks(model, base, open = null, q = '') {
   // Off the desk: Snoozed, Done and Trash in one pile, the newest first (what is being worked on stands on the Desk: withAgents).
   const all = piles.filter(p => p.kind !== 'works').flatMap(p => p.sheets.map(s => Object.assign(s, { g: p.kind }))).sort((a, b) => b.at - a.at)
   // (the notes are in the sidebar now, his word 4 October: the foot holds Off the desk and Media)
-  return html`<div class="inbox-stacks stack-tabs is-straight" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${offPile(all, model, base, open === 'off', terms.length ? all.filter(found) : null, q)}${mediaPile(model, base)}${linksPile(model, base)}</div>`
+  return html`<div class="inbox-stacks stack-tabs is-straight" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${offPile(all, model, base, open === 'off', terms.length ? all.filter(found) : null, q)}${mediaPile(model, base)}${pagesPile(model, base)}</div>`
 }
 
 const SHOWN = 10     // the unfolded pile shows so many lines, then "N more"
@@ -319,14 +319,14 @@ function mediaPile(model, base) {
   return html`<a class="media-pile" id="desk-media" data-nav href="${base}/assets" aria-label="${name}" title="All pictures, videos and files your agents sent"><span class="desk-obj photo-pile${photos.length ? '' : ' is-blank'}" aria-hidden="true">${photos.reverse().map((i, at) => html`<span class="photo" style="--i:${at}">${mediaPreview(i)}</span>`)}</span><span class="off-label">Media <span class="off-count">${all.length}</span></span></a>`
 }
 
-/** The pile "Links N" beside Media: every web link and page the agents gave (ui.mjs linkItems), as a loose stack of
- *  paper slips, each with the chain's drawing, its title and where it points; the newest on top. A click opens the
- *  page /links (media.mjs). Without any it is not there. */
-function linksPile(model, base) {
-  const all = linkItems(model, base)
+/** The pile "Pages N" beside Media: the pages the agents made in this room (ui.mjs pageItems), as three sheets of paper
+ *  with a folded corner, each with its title and a few lines of writing; the newest in front. A click opens the page
+ *  /pages (media.mjs). Without any it is not there. */
+function pagesPile(model, base) {
+  const all = pageItems(model, base)
   if (!all.length) return ''
-  const name = `Links, ${all.length === 1 ? '1 link' : `${all.length} links`}: open the list`
-  return html`<a class="media-pile links-pile" id="desk-links" data-nav href="${base}/links" aria-label="${name}" title="Every link and page your agents gave"><span class="desk-obj lk-pile" aria-hidden="true">${all.slice(0, 3).reverse().map((i, at) => html`<span class="lk-slip" style="--i:${at}">${sk(i.kind === 'web' ? 'link' : 'page')}<span class="lk-slip-t">${i.title}</span><span class="lk-slip-h">${i.host}</span></span>`)}</span><span class="off-label">Links <span class="off-count">${all.length}</span></span></a>`
+  const name = `Pages, ${all.length === 1 ? '1 page' : `${all.length} pages`}: open the list`
+  return html`<a class="media-pile pages-pile" id="desk-pages" data-nav href="${base}/pages" aria-label="${name}" title="Every page your agents made in this room"><span class="desk-obj pg-pile" aria-hidden="true">${all.slice(0, 3).reverse().map((i, at) => html`<span class="pg-sheet" style="--i:${at}"><span class="pg-t">${i.title}</span><span class="pg-lines"></span></span>`)}</span><span class="off-label">Pages <span class="off-count">${all.length}</span></span></a>`
 }
 
 // The stacks at the foot of the Desk: a click fans one out, a click gathers it. A stream may replace the stacks;

@@ -86,7 +86,8 @@ instead); files come network first, the cache only offline. On the dev server (`
   with a final option (a small pen tick on its tile) never lies here: the answer settles it, it goes to "Off the desk"
   at once ("settled by your answer"), and Take back opens it again.
 - **Foot:** "Off the desk" (a list of snoozed, done, shredded cards; a line opens its card, where Wake up and Take back
-  are) and Media (a pile of the newest pictures; the gallery at `/assets`).
+  are), Media (a pile of the newest pictures; the gallery at `/assets`) and Pages (the pages agents made in the room,
+  one per file, each with Share; the list at `/pages`, `/links` redirects there).
 - **Note:** one drawn yellow note at the window's bottom-right; it unfolds there to write, takes attachments, sends to the crown (`sidebar.mjs` `cornerNote`).
 - **Sidebar:** the Desk box, the sessions (a main with its helpers on a pen bracket, tallies, the red hand), "New agent" and
   the Trommi menu at its foot. One sidebar, two presentations (`sidebar.css` "A phone"): beside the page on a wide
@@ -149,7 +150,7 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 
 ### Addresses
 
-`/` the Desk · `/desk/:id` switch desk · `/blitz` Blitz · `/scribble-board` the Scribble Board · `/card/:nr` a card (`?v=n` an older version, `/picture/:n` a picture; old `/q/:nr`, `/c/:nr`, `/p/:n` addresses are moved there) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/q/:nr` a card from its session · `/agents` the Ledger · `/devices` the room's devices · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
+`/` the Desk · `/desk/:id` switch desk · `/blitz` Blitz · `/assets` Media · `/pages` Pages · `/scribble-board` the Scribble Board · `/card/:nr` a card (`?v=n` an older version, `/picture/:n` a picture; old `/q/:nr`, `/c/:nr`, `/p/:n` addresses are moved there) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/q/:nr` a card from its session · `/agents` the Ledger · `/devices` the room's devices · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
 
 ### IndexedDB
 
