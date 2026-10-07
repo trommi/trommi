@@ -120,8 +120,13 @@ ${raw(L.gone)}
     const TICKBOX = raw('<svg class="clip-box" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 5.2 Q12 4.4 19.3 4.9 Q20 12 19.5 19.2 Q12 20 4.9 19.4 Q4.2 12 4.6 5.2 Z"/><path class="clip-tick" d="M7.4 12.6 Q9.6 14.6 10.9 16.6 Q14.6 10.2 20.6 5.2"/></svg>')
     const copyLine = (text, word, small = false) => html`<button type="button" class="clip-copy${small ? ' is-small' : ''}" data-action="invite-clip#copy" data-invite-clip-text-param="${text}" title="Copy"><code>${text}</code><span class="clip-copy-word" data-word="${word}">${word}</span></button>`
     const step = (state, inner) => html`<li class="clip-step${state ? ` is-${state}` : ''}">${TICKBOX}<div class="clip-step-body">${inner}</div></li>`
+    /** What is left of a link's time, in words: never "0 more min". */
+    const leftWords = until => { const ms = until - Date.now(); return ms > 90_000 ? `${Math.round(ms / 60000)} more min.` : ms > 0 ? 'less than a minute.' : 'no time left.' }
     const clipboard = (inv, error = '') => {
-      const state = inv.invite_state === 'open' && inv.expires_at <= Date.now() ? 'expired' : inv.invite_state, open = state === 'open', joined = state === 'joined', coming = state === 'adding' || state === 'confirm_code'
+      // (a link whose time is up has run out, whatever step it stood at: an "adding" that never finished, a check code
+      // nobody compared; a short grace for an adding under way)
+      const late = inv.expires_at + (inv.invite_state === 'adding' ? 60_000 : 0) <= Date.now()
+      const state = late && ['open', 'adding', 'confirm_code'].includes(inv.invite_state) ? 'expired' : inv.invite_state, open = state === 'open', joined = state === 'joined', coming = state === 'adding' || state === 'confirm_code'
       const dead = !open && !joined && !coming
       const who = joined ? t.model().agents.find(a => a.agent_device_id === inv.newcomer?.device_id || a.id === inv.newcomer?.device_id) ?? null : null
       const name = newcomerName(inv) || who?.name || 'The agent'
@@ -131,6 +136,8 @@ ${raw(L.gone)}
       // confirms that the six emoji the new connector's terminal shows are the ones shown here before anything is granted.
       const cont = inv.takeover ? t.model().everyone?.find(a => a.device_id === inv.session_id || a.session_id === inv.session_id) ?? t.model().agents.find(a => a.device_id === inv.session_id) ?? null : null
       const contName = inv.takeover ? cont?.label || cont?.given || cont?.name || 'this session' : ''
+      // the session it continues is gone (deleted, archived, removed): nothing to continue, only the way back
+      if (inv.takeover && !joined && (!cont || cont.archived || cont.removed)) return html`<main id="room" class="room room-clip" aria-label="Continue a session"><div id="invite-${inv.invite_id}" class="room-invite" data-state="gone"><section class="clip">${CLAMP}<h2>Continue ${contName}</h2><p class="clip-sub">The session this link continues is gone: it was deleted or put in the archive. The link does nothing any more.</p><a href="/" data-nav class="room-done clip-done">Back to the Desk</a></section></div></main>`
       const ask = state === 'confirm_code' && checkEmoji(inv.check_code).length > 0
       const keep = inv.takeover ? html`<input type="hidden" name="continue" value="${inv.session_id}">` : ''
       const last = ask ? html`<div class="clip-ask" role="group" aria-label="${inv.takeover ? `Confirm: continue ${contName}` : 'Confirm the agent'}"><b>${inv.takeover ? `A connector wants to continue ${contName}.` : 'An agent wants to join.'}</b>
@@ -142,13 +149,13 @@ ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${in
         : joined && inv.takeover ? html`<b class="clip-in">${cont ? avatar(cont, { crown: false }) : ''}<span>${contName} goes on with the new connector</span></b><small>The connector that held it before is retired.</small>`
         : joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>${h && !h.done ? html`<small>Handing over the session…</small>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}`
         : coming ? html`<b>Adding ${newcomerName(inv) || 'the agent'}…</b>`
-        : dead ? html`<b>${state === 'expired' ? 'The link has expired' : inv.error === 'code-mismatch' ? 'They did not match: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
+        : dead ? html`<b>${state === 'expired' ? 'This link has run out' : inv.error === 'code-mismatch' ? 'They did not match: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
         : html`<b>Waiting for the agent…</b>`
       const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
         : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent">${keep}<button type="submit">New link</button></form>`
-        : html`<p class="clip-note">The link works once · <span data-invite-clip-target="left">${Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))} more min.</span></p>`
+        : html`<p class="clip-note">The link works once · <span data-invite-clip-target="left">${leftWords(inv.expires_at)}</span></p>`
       return html`<main id="room" class="room room-clip" aria-label="${inv.takeover ? `Continue ${contName}` : 'Invite an agent'}"><div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">
-<section class="clip" data-controller="invite-clip" data-invite-clip-until-value="${open ? inv.expires_at : 0}">${CLAMP}
+<section class="clip" data-controller="invite-clip" data-invite-clip-until-value="${open || coming ? inv.expires_at + (state === 'adding' ? 60_000 : 0) : 0}">${CLAMP}
 ${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link for this session: the connector that joins with it goes on as ${contName}. On a computer with Claude Code and Node 22+.</p>`
         : html`<h2>Invite an agent</h2><p class="clip-sub">On a computer with Claude Code and Node 22+.</p>`}
 <ol class="clip-list">
@@ -160,13 +167,12 @@ ${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : 'wait', last)}
     const inviteMain = (inv, error = '') => {
       if (!inv) return roomShell('Invite', html`<p class="room-lead">This invite is gone.</p>${back}`)
       const agent = inv.device_role === 'agent', state = inv.invite_state
-      const left = Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))
       let body
       if (agent) return clipboard(inv, error)
       if (state === 'open') body = html`<div class="room-pair"><div class="room-qr" data-controller="room">${raw(qrSvg(inv.link, 'QR code to pair'))}</div>
 <ol class="room-steps"><li>On the new device, open the camera and scan the code. Or open app.trommi.com there and choose "Pair a device".</li><li>Both devices then show six emoji. If they are the same, tap "They match" here.</li></ol></div>
 <details class="room-more"><summary>No scanner? Send the link</summary><p class="room-meta">Send the link to yourself (a message to yourself works) and open it on the new device. The secret is after the #; it never reaches a server.</p>${copyBox(inv.link, 'Invite link')}</details>
-<p class="room-wait">Waiting for the new device… The code works once, ${left} more min.</p>`
+<p class="room-wait">Waiting for the new device… The code works once, ${leftWords(inv.expires_at)}</p>`
       else if (state === 'confirm_code') body = html`<p class="room-lead">A device wants to join. Does it show these six emoji, in this order?</p>
 ${emojiRow(inv.check_code)}${matchButtons(inv)}
 ${errorLine(error)}<p class="room-meta">"They don't match" burns the invite: nobody is added.</p>${back}`
@@ -198,7 +204,7 @@ ${errorLine(error)}<p class="room-meta">"They don't match" burns the invite: nob
       t.redirect(res, `/pair/${match[1]}`)
     })
     t.live('invite', {
-      take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); handOver(inv); return [id, String(inviteMain(inv)).replace(/\d+ more min\./g, '').replace(/data-invite-clip-until-value="\d+"/, '')] })),
+      take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); handOver(inv); return [id, String(inviteMain(inv)).replace(/\d+ more min\.|less than a minute\.|no time left\./g, '').replace(/data-invite-clip-until-value="\d+"/, '')] })),
       diff: (was, now, c) => { const id = c.params.get('invite'); return was.get(id) !== now.get(id) ? String(t.stream('refresh')) : '' },
     })
 
@@ -787,7 +793,7 @@ controller('invite-clip', class extends Controller {
   disconnect() { clearInterval(this.timer); clearTimeout(this.said) }
   count() {
     const ms = this.untilValue - Date.now()
-    if (this.hasLeftTarget) this.leftTarget.textContent = ms > 90000 ? `${Math.round(ms / 60000)} more min.` : ms > 0 ? 'under a minute.' : 'no time left.'
+    if (this.hasLeftTarget) this.leftTarget.textContent = ms > 90000 ? `${Math.round(ms / 60000)} more min.` : ms > 0 ? 'less than a minute.' : 'no time left.'
     if (ms <= 0) { clearInterval(this.timer); window.Turbo?.visit(location.pathname, { action: 'replace' }) }
   }
   async copy(e) {

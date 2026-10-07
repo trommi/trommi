@@ -1512,7 +1512,8 @@ async function start(client, { fresh = false } = {}) {
   const askCodes = ids => {
     for (const id of ids ?? []) {
       const inv = client.model.invites.get(id)
-      if (inv?.invite_state !== 'confirm_code') { if (inv && inv.invite_state !== 'open') document.getElementById(`code-ask-${id}`)?.remove(); continue }
+      // (a link whose time is up asks nothing any more: its note goes, and none comes)
+      if (inv?.invite_state !== 'confirm_code' || inv.expires_at <= Date.now()) { if (inv && inv.invite_state !== 'open') document.getElementById(`code-ask-${id}`)?.remove(); continue }
       if (codeAsked.has(id)) continue
       codeAsked.add(id)
       if (location.pathname === `/pair/${id}`) continue
@@ -1520,7 +1521,7 @@ async function start(client, { fresh = false } = {}) {
       if (!host) { codeAsked.delete(id); continue }
       const who = inv.takeover ? model().everyone?.find(a => a.device_id === inv.session_id) : null
       const head = inv.takeover ? `A connector wants to continue ${who?.label || who?.given || who?.name || 'a session'}` : inv.device_role === 'agent' ? 'An agent wants to join' : 'A device wants to join'
-      host.insertAdjacentHTML('afterbegin', String(toast({ head, line: 'Compare the six emoji.', link: { href: `/pair/${id}`, label: 'Confirm' }, role: 'alert', ms: 5 * 60_000 })))
+      host.insertAdjacentHTML('afterbegin', String(toast({ head, line: 'Compare the six emoji.', link: { href: `/pair/${id}`, label: 'Confirm' }, role: 'alert', ms: Math.min(5 * 60_000, Math.max(1000, inv.expires_at - Date.now())) })))
       host.firstElementChild.id = `code-ask-${id}`
     }
   }
