@@ -406,7 +406,6 @@ body.is-pairing .crown-fold { visibility: hidden; }
   [data-rail="folded"] .crown-edges .e-w { display: none; }
   [data-rail="folded"] .crown-edges .e-n { display: inline; }
 
-
 /* ---- a session at work (the sidebar, server-rendered: sidebar.mjs avatar working) ----
    Its drawing fills itself in, scribble-like: a faint trace of it stays, and its strokes draw themselves over it,
    hold a moment, fade, and begin again. Only the strokes' dash and opacity move. No ring stands at the right for it. */
@@ -496,10 +495,10 @@ a.agent-badge { text-decoration: none; }
 .topbar #brand-doors button.menu-desk-add svg { width: 15px; height: 15px; }
 .topbar #brand-doors .menu-leave { display: flex; align-items: center; gap: 2px; }
 .topbar #brand-doors .menu-leave .menu-logout { flex: 1; min-width: 0; }
-.topbar #brand-doors .menu-leave button.menu-theme::after { content: none; }
+
 .topbar #brand-doors:focus { outline: 0; }
-.topbar #brand-doors .menu-leave button.menu-theme { flex: none; width: 36px; min-height: 36px; padding: 0; justify-content: center; border-radius: 9px; }
-@media (max-width: 860px) { .topbar #brand-doors .menu-leave button.menu-theme { width: 44px; min-height: 44px; } .topbar #brand-doors button.menu-desk-add { min-height: 40px; }
+
+@media (max-width: 860px) { .topbar #brand-doors button.menu-desk-add { min-height: 40px; }
 }
   .topbar { height: 48px; top: 8px; left: 8px; width: 256px; border-radius: 0; background: var(--bg); box-shadow: 0 1px 0 var(--line); }
   #agents::before { height: 64px; }
@@ -551,7 +550,6 @@ a.agent-badge { text-decoration: none; }
 .corner-note-clip .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .corner-note-clip:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
 .corner-note-box.is-drop .corner-note-body { box-shadow: inset 0 0 0 2px #8a6d14, 0 2px 6px rgb(20 30 25 / .18); }
-.corner-note-err { font-size: var(--t-xs); color: var(--urg-critical); }
 
 /* ---- The note (sidebar.mjs cornerNote): the one drawn yellow sticky at the window's bottom-right; a click unfolds it
    there, growing upward, with the field, the attachments, the bin and the crown; folded, its first line stands beside

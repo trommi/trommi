@@ -1,10 +1,9 @@
 /* On a tile filled with colour: no band (it would be a smudge behind white words) but a light line
    under the words, like a pale marker on dark paper. A host says so with --advice-under: 1. */
-.inbox-answer.is-lead.is-advised,
-.focus-opt[data-state="done"].is-advised { --advice-under: 1; --advice: color-mix(in srgb, var(--surface) 82%, var(--tone-pen)); --marker: .95; }
+.inbox-answer.is-lead.is-advised { --advice-under: 1; --advice: color-mix(in srgb, var(--surface) 82%, var(--tone-pen)); --marker: .95; }
 /* The Focus window's pair of squares appends no mark of its own: there the band is laid behind the
    label as a background (the same marker, one line). The two strokes of the old circle are gone. */
-.focus-opt.is-advised::before, .focus-opt.is-advised::after { content: none; }
+
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .event:hover .event-time, .event:focus-visible .event-time { opacity: 1; }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
@@ -48,15 +47,10 @@ button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
 }
 .says-back:focus-visible { outline: 3px solid var(--bg); outline-offset: 2px; }
 /* In the Focus window the same two motions, a little longer than the window's own steps. */
-.focus-card[data-out="sent"] { animation: focus-leave-answered 300ms cubic-bezier(.4, 0, .7, .2) forwards; }
-.focus-card[data-out="later"] { animation: focus-leave-later 300ms cubic-bezier(.4, 0, .7, .2) forwards; }
-.focus-card[data-in="sent"], .focus-card[data-in="later"] { animation-delay: 170ms; animation-fill-mode: backwards; }
-@media (prefers-reduced-motion: reduce) {
-  .focus .focus-card[data-out="sent"], .focus .focus-card[data-out="later"] { animation: row-fade 160ms linear forwards !important; }
-}
+
 .inbox-row:hover .inbox-when > .cardclip-copy, .inbox-row:focus-within .inbox-when > .cardclip-copy, .inbox-row.is-current .inbox-when > .cardclip-copy, .inbox-when > .cardclip-copy.is-done { opacity: 1; }
 .cardclip-offer:hover, .cardclip-offer:focus-within { color: var(--fg); box-shadow: inset 0 0 0 1px var(--fg); }
-.quick:not(:focus-within) .cardclip-offer { display: none; }
+
 .rowmenu-in button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .inbox-stacks .stack-search label:focus-within { border-bottom-color: var(--fg); color: var(--fg); }
 .off-open:hover strong, .off-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
@@ -394,8 +388,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .t-picture-bar { display: flex; align-items: center; gap: var(--s-3); padding: 10px 14px; min-width: 0; }
 .t-picture-where { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 400 var(--t-sm)/1.3 var(--font); }
 .t-picture-view { display: grid; place-items: center; min-height: 0; padding: 0 14px 14px; cursor: zoom-out; }
-.t-picture-fit { position: relative; display: inline-block; max-width: 100%; max-height: 100%; }
-.t-picture-fit img { display: block; max-width: 100%; max-height: calc(100dvh - 90px); object-fit: contain; border-radius: var(--r-md); box-shadow: var(--shadow-md); background: var(--surface); }
+
 .t-picture .tc-step { position: fixed; margin-top: -23px; }
 .t-picture .tc-step.is-prev { left: 14px; }
 .t-picture .tc-step.is-next { right: 14px; }
@@ -546,31 +539,15 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .t-picture.as-view { grid-template-rows: auto auto minmax(0, 1fr); }
 .t-picture.as-view:not(:has(.as-note)) { grid-template-rows: auto minmax(0, 1fr); }
 .as-view .t-picture-where { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msg:hover .say,
-.ask-card:hover .say,
-.focus-title:hover .say,
-.say:focus-visible,
-.say[data-say] { opacity: 1; }
-.focus-card:hover .focus-title .say { opacity: .7; }
-.say:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-/* The question of the window: at the end of its title. */
-.focus-title > .say { width: 30px; height: 30px; margin: -6px 0 -2px 8px; }
 
-@media (hover: none) {
-  .say, .focus-card:hover .focus-title .say { opacity: .62; }
-}
+/* The question of the window: at the end of its title. */
 
 /* The agent's advice on a tile: a line under the words, until the drawn marker's island stands. */
-.focus-opt.is-advised .focus-opt-label { background: linear-gradient(transparent 55%, color-mix(in srgb, var(--advice, var(--accent)) 30%, transparent) 55%); }
+
 #says-host .says-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 a.focus-stage-step,
 a.focus-back-desk { text-decoration: none; }
 a.focus-stage-step { display: grid; place-items: center; }
-label.focus-opt { cursor: pointer; }
-label.focus-opt > input { position: absolute; opacity: 0; pointer-events: none; }
-label.focus-opt:has(> input:checked) { border-color: var(--accent); }
-div.focus-opt { cursor: default; }
-.focus-card .inbox-tab { align-self: flex-start; }
 
 /* One picture, large, at its own address (/q/<n>/p/<i>): the browser's Back closes it. */
 .t-picture { position: fixed; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--bg); }
@@ -583,15 +560,13 @@ div.focus-opt { cursor: default; }
 .t-picture .focus-stage-step.is-prev { left: 14px; }
 .t-picture .focus-stage-step.is-next { right: 14px; }
 
-.focus-opt.is-advised .focus-opt-label { width: fit-content; }
 .t-menu button:hover, .t-menu button:focus-visible { background: var(--sunken); }
 .session-filter-menu a:hover, .session-filter-menu a:focus-visible { background: var(--sunken); }
 .files-close:hover, .files-close:focus-visible { background: var(--sunken); color: var(--fg); }
 .files-jump:hover, .files-jump:focus-visible { background: var(--sunken); }
 .focus-chip { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: var(--sunken); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); }
 .t-opt-links ul { margin: 4px 0 0; padding-left: 1.1em; }
-.t-picture-fit { position: relative; display: inline-block; max-width: 100%; max-height: 100%; }
-.t-picture-fit img { display: block; }
+
 /* The way back from a large picture (focus.css hides .focus-back-desk outside the card's window): shown in the bar, for a session's picture and a card's alike. */
 #session .pane-who:hover .crown-toggle[aria-pressed="false"], #session .pane-who .crown-toggle:focus-visible { opacity: .5; }
 .topbar #brand-doors button.menu-desk-add:is(:hover, :focus-visible) { color: var(--fg); }
@@ -632,13 +607,10 @@ div.focus-opt { cursor: default; }
 .t-picture-back:hover .sketch, .t-picture-back:focus-visible .sketch { translate: -3px 0; color: var(--fg); }
 .t-picture-back h1 { margin: 0; font: 800 1.3rem/1.2 var(--display); letter-spacing: -.01em; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .t-picture-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; border-radius: 6px; }
-.t-picture-sub { flex: 0 1 auto; min-width: 0; margin-left: auto; display: flex; align-items: center; gap: var(--s-3); }
-.t-picture-sub .t-picture-where { flex: 0 1 auto; }
-.t-picture-sub .t-picture-where > span { font-family: var(--mono); font-size: var(--t-xs); }
+
 @media (max-width: 860px) {
   .t-picture-back h1 { font-size: 1.08rem; }
-  .t-picture-sub { margin-left: 32px; flex: 1 1 100%; }
-  .t-picture-sub .page-chip { margin-left: auto; }
+
   /* (a phone: the tag hangs from the head, over the picture's top-right corner) */
 
 }
@@ -754,7 +726,7 @@ div.focus-opt { cursor: default; }
 /* (a phone's gallery: Later's tag stands small in the head, beside the question, not over the picture) */
 @media (max-width: 860px) {
   .t-picture-back { flex: 1 1 0; }
-  .t-picture-sub { order: 2; }
+
 }
 
 /* ---- a final option: choosing it settles the card. A small pen tick and two quiet words at the tile's end; on a
@@ -794,7 +766,7 @@ div.focus-opt { cursor: default; }
   .tc-card > .tc-left > .tc-lead > .tc-title:first-child { margin-top: var(--s-5); }
   .tc-card > .tc-left > .tc-lead > .tc-meta { order: 0; margin: var(--s-2) var(--s-5) var(--s-4); }
   .tc-card > .tc-right { order: 1; align-self: stretch; width: auto; box-shadow: 0 -1px 0 var(--line), 0 1px 0 var(--line); }
-  .tc-card > .tc-left > .tc-lead > :is(.tc-text, .tc-more-text, .tc-versions, .tc-why) { order: 2; margin: var(--s-4) var(--s-5) 0; }
+  .tc-card > .tc-left > .tc-lead > :is(.tc-text, .tc-more-text, .tc-why) { order: 2; margin: var(--s-4) var(--s-5) 0; }
   .tc-card > .tc-left > :is(.tc-media, turbo-frame) { order: 3; margin: var(--s-4) var(--s-5) var(--s-5); }
 }
 

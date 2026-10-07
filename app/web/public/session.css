@@ -352,7 +352,7 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
   /* The top line above already says which session this is; the title keeps only the filters,
      and for sessions laid together the names, to pick the one column there is room for. */
   .pane-title { min-height: 0; padding: 6px var(--gutter); gap: var(--s-2) var(--s-3); flex-wrap: wrap; }
-  .pane-title .modes { display: none; }
+
   .pane-who { flex: 1 1 auto; }
   .pane-who:empty, body:not([data-pair]) .pane-who { display: none; }
   .pane-title h2 { font-size: 1rem; }
@@ -378,8 +378,8 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 @media (max-width: 860px) {
 
   /* A finger needs 44px. These keep their look; an unseen area around them takes the tap. */
-  :is(.agent-badge, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .desk-blitz, .inbox-when > .cardclip-copy, .inbox-takeback) { position: relative; }
-  :is(.agent-badge, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .desk-blitz, .inbox-when > .cardclip-copy, .inbox-takeback, .open-jump, .jump, .rh-open)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
+  :is(.agent-badge, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .desk-blitz, .inbox-when > .cardclip-copy) { position: relative; }
+  :is(.agent-badge, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .desk-blitz, .inbox-when > .cardclip-copy, .open-jump, .jump, .rh-open)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
   .msg-details summary { min-height: 40px; }
   .composer-file { height: 34px; }
   /* the Snooze corner of a question inside a conversation */
@@ -446,7 +446,7 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 .cardclip-chip.is-link { padding-right: 9px; box-shadow: inset 0 0 0 1px var(--line); background: none; }
 .cardclip-chip.is-link:hover { background: var(--sunken); }
 .cardclip-chip.is-link:hover .cardclip-title { text-decoration: underline; text-underline-offset: 3px; }
-.quick .cardclip-chip, .quick .cardclip-offer { background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
+
 .pane-list .inbox-row.is-current::before { display: none; }/* A session's page on a wide window (861px and up): heading, conversation, one under the other.
    The heading (drawing, name, the quiet line, the crown switch) has its own line at the page's top, on the
    conversation's column, as the Desk's and the Agents' headings do. The conversation begins under the heading,
@@ -504,12 +504,7 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
   #session .pane-title:has(.pane-now:empty) .pane-who { align-items: center; }
 
   /* ---- the filters: a quiet row under the composer, at the column's left edge ---- */
-  #session .filters {
-    position: static; grid-column: 1 / -1; grid-row: 4; justify-self: start; align-self: end; gap: 2px;
-    margin: 0 0 6px calc(max(var(--gutter), (100% - 47.5rem) / 2 + var(--gutter)) + 2px); pointer-events: auto;
-  }
-  #session .filters :is(a, button) { min-height: 26px; padding: 0 9px; border-radius: 7px; font-size: var(--t-xs); }
-  #session .filters b { margin-left: 6px; padding: 1px 6px; }
+
   body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: 38px; }
   /* Sessions laid together have a composer each: "Files" stands beside their names in the heading. */
 
@@ -527,14 +522,12 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
     position: absolute; z-index: 4; inset: 0; display: flex; align-items: flex-end; flex-wrap: nowrap;
     min-height: 0; padding: 0 var(--gutter) max(3px, env(safe-area-inset-bottom, 0px)); pointer-events: none;
   }
-  body[data-view="chat"]:not([data-pair]) #session .filters { margin: 0 0 0 4px; gap: 2px; pointer-events: auto; }
-  body[data-view="chat"]:not([data-pair]) #session .filters :is(a, button) { min-height: 32px; padding: 0 9px; font-size: var(--t-xs); }
+
   body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: calc(38px + env(safe-area-inset-bottom, 0px)); }
-  :root[data-typing] body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
+
   :root[data-typing] body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
 }
 @media (max-width: 860px) and (max-height: 520px) {
-  body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
   body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
 }
 
@@ -570,10 +563,9 @@ video.as-media { background: #000; }
 }
 
 /* Where it stands. An agent's message: beside the time. */
-.msg-head > .say { margin: -4px 0 -4px -4px; }
+
 /* The human's own: to the left of the bubble. */
-.bubble:has(> .say) { position: relative; }
-.bubble > .say { position: absolute; right: calc(100% + 4px); top: 50%; margin-top: -13px; }
+
 /* A session's heading: its mark and its name, each the control that changes it. */
 .t-session-edit { display: inline-flex; align-items: center; gap: var(--s-3); min-width: 0; }
 .t-head-mark, .t-head-name { display: block; }

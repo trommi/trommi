@@ -233,26 +233,12 @@ const SKETCH = {
   pen: [[[5.2, 18.8], [6.2, 15], [15.6, 5.2], [17.4, 4.6], [19.4, 6.6], [18.8, 8.4], [9, 17.8], [5.4, 18.9]], [[14.2, 6.8], [17.2, 9.8]], [[11.6, 20.4], [14.4, 19.2], [16.4, 20.6], [19.4, 19.6]]],
   // three z rising, each a little larger: asleep for now
   snooze: [[[4.4, 15.6], [9, 15.3], [9.2, 15.5], [4.8, 20.2], [4.6, 20.4], [9.6, 20.1]], [[10.4, 9.6], [15.4, 9.3], [15.6, 9.5], [10.8, 14.4], [10.6, 14.6], [16, 14.2]], [[15.4, 3.4], [20.8, 3.1], [21, 3.3], [15.8, 8.6], [15.6, 8.8], [21.4, 8.4]]],
-  // two question marks written by hand, no two alike: the "??" of "What??"
-  q1: [[[7.4, 8.6], [8, 5.2], [11.6, 3.4], [15.4, 4.8], [16.2, 8.2], [13.4, 11.4], [11.8, 13.6], [11.9, 16.2]], [[11.8, 20.2], [12.1, 20.8]]],
-  q2: [[[8.2, 7.4], [10, 4.4], [13.8, 3.8], [16.6, 6.2], [15.8, 9.8], [12.6, 12], [12, 14.4], [12.4, 16.6]], [[12.3, 20.4], [12.7, 20.9]]],
-  // a clock whose rim is an arrow turning back: the earlier versions of a question
-  timemachine: [[[6.2, 7.8], [9.4, 4.7], [13.8, 4.2], [17.8, 6.6], [19.6, 10.8], [18.6, 15.4], [15.2, 18.6], [10.8, 19], [7, 16.6], [5.2, 12.8]], [[3.2, 8.6], [6.3, 7.6], [7.5, 10.8]], [[12.2, 8.2], [12.1, 12.2], [15, 13.8]]],
-  q3: [[[7.8, 9], [8.6, 5.6], [12, 4], [15.6, 5.2], [16, 8.6], [13, 11], [12.2, 13.4], [12, 16.4]], [[12, 20.2], [12.4, 20.9]]],
   // two hands that meet: left to the agent
   trust: [[[3.2, 9.8], [7.4, 8.8], [10.6, 10.4], [13.2, 12.8], [15.6, 14.4]], [[20.8, 9.8], [16.6, 9], [13.8, 9.8], [11.4, 12.2], [9.4, 13.8]], [[9.6, 14], [11.4, 16.6], [13.6, 16.8], [15.4, 14.6]], [[3, 7.4], [3.5, 12.2]], [[21, 7.6], [20.5, 12.2]]],
   // a sheet going into the slot, strips coming out below: thrown away
   shred: [[[3.6, 10.8], [12, 10.3], [20.4, 10.9]], [[7.4, 10], [7.6, 3.6], [16.4, 3.4], [16.6, 10]], [[8, 12.6], [7.5, 16.2], [8.3, 20.2]], [[12, 12.8], [12.4, 17], [11.8, 21]], [[16, 12.6], [16.5, 15.8], [15.8, 19.6]]],
   // a wastebasket: thrown away
   bin: [[[4.8, 7.8], [12, 7.4], [19.2, 7.9]], [[6.6, 8.4], [7.7, 20], [16.3, 20.2], [17.4, 8.2]], [[10.1, 11], [10.4, 17.2]], [[13.9, 11], [13.6, 17.2]], [[9.4, 7.2], [9.9, 4.5], [14.1, 4.3], [14.6, 7.2]]],
-  // the waste-paper basket at the end of the Desk's stacks (desk.mjs): rim, body, a loose weave; full: a crumpled sheet over the rim
-  basket: [[[3.6, 8.3], [8, 7.7], [12.2, 7.6], [16.4, 7.9], [20.4, 8.4]], [[4.9, 8.8], [5.9, 14.6], [7.1, 21.1], [12.1, 21.6], [16.9, 21], [18, 14.8], [19.2, 8.9]], [[8.7, 10.6], [9.3, 15.4], [9.9, 19.6]], [[12.2, 10.8], [12.1, 15.2], [12.3, 19.9]], [[15.6, 10.5], [15, 15.3], [14.4, 19.5]], [[6.4, 14.9], [9.6, 14.4], [13.2, 14.7], [17.6, 14.3]]],
-  'basket-full': [[[3.6, 8.3], [8, 7.7], [12.2, 7.6], [16.4, 7.9], [20.4, 8.4]], [[4.9, 8.8], [5.9, 14.6], [7.1, 21.1], [12.1, 21.6], [16.9, 21], [18, 14.8], [19.2, 8.9]], [[8.7, 10.6], [9.3, 15.4], [9.9, 19.6]], [[12.2, 10.8], [12.1, 15.2], [12.3, 19.9]], [[15.6, 10.5], [15, 15.3], [14.4, 19.5]], [[6.4, 14.9], [9.6, 14.4], [13.2, 14.7], [17.6, 14.3]], [[8.6, 7.4], [7.8, 5.6], [8.9, 3.9], [10.9, 4.1], [12.4, 2.7], [14.8, 3.2], [15.9, 4.9], [15.2, 7.2]], [[10.1, 5.8], [11.6, 6.6], [12.7, 5.1], [13.9, 6.2]]],
-  // other waste-paper baskets, proposed for the Desk's stacks (a decision card): a bucket with its lid ajar, a heap of
-  // crumpled paper balls, a small shredder with its strips
-  'bin-lid': [[[5.6, 10.8], [6.2, 16], [6.8, 21.1], [12, 21.4], [17.2, 21], [17.8, 16], [18.4, 10.8]], [[4.6, 10.6], [12, 10.2], [19.4, 10.6]], [[4.2, 8.4], [11.4, 5.6], [18.8, 3.4]], [[10.6, 6], [11.2, 4.4], [12.8, 4]], [[9.8, 13.4], [10, 16.4], [10.2, 19.2]], [[14.2, 13.4], [14, 16.4], [13.8, 19.2]], [[7.6, 10.2], [8.6, 8], [10.4, 8.6], [11.6, 7.4]]],
-  'bin-balls': [[[7.4, 14.0], [9.7, 14.5], [11.6, 16.0], [11.1, 18.3], [9.9, 20.1], [7.8, 21.0], [5.7, 20.1], [3.9, 18.9], [3.4, 16.8], [4.3, 14.7], [6.8, 14.5], [8.9, 14.4]], [[16.4, 14.5], [19.0, 14.2], [20.5, 16.2], [19.7, 18.4], [19.5, 20.9], [16.8, 21.9], [14.3, 21.0], [12.5, 19.2], [12.9, 17.1], [14.0, 15.5], [15.6, 13.9], [17.8, 14.8]], [[11.9, 7.4], [14.0, 7.9], [15.0, 9.6], [15.7, 11.5], [14.4, 13.3], [12.3, 14.6], [9.9, 13.7], [8.1, 12.2], [8.0, 10.0], [8.9, 7.9], [11.2, 7.1], [13.4, 7.6]], [[5.6, 16], [7, 17.4], [6.6, 19], [8.6, 18.6]], [[14.6, 15.8], [16.4, 17], [15.6, 19.4], [18, 18.8]], [[10.4, 9], [11.4, 11.4], [12.6, 9.6], [13.4, 12]]],
-  'bin-shredder': [[[4.2, 9.2], [12, 8.9], [19.8, 9.2], [19.9, 11.6], [19.8, 14.1], [12, 14.3], [4.2, 14.1], [4.1, 11.6], [4.2, 9.2]], [[6.4, 11.7], [12, 11.5], [17.6, 11.7]], [[8.2, 8.9], [8.1, 6], [8.2, 3.7], [8.3, 3.5], [12, 3.4], [15.7, 3.5], [15.8, 3.7], [15.9, 6], [16, 8.9]], [[9.8, 5.6], [14, 5.5]], [[9.8, 7.2], [12.6, 7.1]], [[7, 14.4], [7.4, 17.6], [6.8, 21]], [[10, 14.4], [10.3, 17.8], [10, 20.2]], [[13.2, 14.4], [12.8, 17.4], [13.3, 20.8]], [[16.6, 14.4], [16.9, 17], [16.5, 19.6]]],
   // a magnifier: search a stack's sheets (desk.mjs)
   search: [[[10.5, 4.2], [6.1, 5.7], [4.3, 10.3], [6.3, 14.7], [10.7, 16.3], [15, 14.5], [16.7, 10.1], [14.7, 5.6], [10.1, 4]], [[15.1, 15.2], [19.9, 19.9]]],
   // a paperclip, bent in one go: attach something
@@ -277,11 +263,6 @@ const SKETCH = {
   play: [[[3.8, 5.2], [20.4, 4.9], [20.6, 19], [3.6, 19.3], [3.9, 4.8]], [[9.8, 8.6], [15.4, 12.2], [9.9, 15.6], [9.7, 8.2]]],
   // a key: the administration opens with one of its own
   key: [[[8, 5.2], [11.6, 6.8], [12, 10.8], [8.6, 13], [5, 11.4], [4.6, 7.4], [8.3, 5]], [[11.2, 11.6], [15.4, 15.8], [19.8, 20.4]], [[15.6, 16.2], [18, 13.8]], [[18.2, 18.8], [20.6, 16.6]]],
-  // scissors, open: each blade runs into its grip in one stroke, the grips are loops that do not close
-  scissors: [
-    [[21.4, 5.2], [16.6, 9.6], [11.4, 13.6], [8.6, 16.2], [5.6, 16], [3.8, 18.4], [5, 21], [7.8, 21.2], [9.2, 18.8], [8.2, 16.6]],
-    [[21.8, 19.6], [16.4, 14.8], [11.6, 10.6], [8.8, 8], [5.8, 8.4], [3.6, 6.2], [4.6, 3.4], [7.6, 3], [9.2, 5.4], [8.4, 7.8]],
-  ],
   // scissors again, for the web: the blades are two straight cuts, the grips two loops of their own
   snip: [
     [[21.4, 5.2], [9.6, 15]],
@@ -341,8 +322,6 @@ const SKETCH = {
   bubble: [[[4.4, 8.6], [6, 6.4], [12, 6], [18.2, 6.4], [19.8, 8.8], [19.6, 14.6], [17.8, 16.8], [11.6, 17], [8.4, 20.6], [8.2, 17], [5.8, 16.6], [4.3, 14.4], [4.5, 8.2]]],
   // a desk with its lamp: the top, two legs, the lamp's foot, its arm with a knee, the shade bent over the top
   desk: [[[2.4, 12.6], [12, 12.2], [21.6, 12.6]], [[4.6, 12.9], [4.9, 17], [4.6, 20.8]], [[19.4, 12.9], [19.1, 17], [19.4, 20.8]], [[15.4, 12], [17.4, 12.1], [19.4, 12]], [[17.4, 11.8], [19.6, 7.6], [19.9, 7.2], [19.4, 6.8], [14.6, 4.2]], [[14.8, 2.6], [11.4, 3.4], [9.4, 5.6], [8.8, 7.6], [9.2, 8], [15.4, 6.2], [15.8, 5.8], [15.4, 3.4], [14.6, 2.5]]],
-  // a shrug: a small figure, shoulders up, both arms out, palms up
-  shrug: [[[12, 3], [14.2, 4], [14.4, 6.4], [12.2, 7.6], [9.8, 6.6], [9.6, 4.2], [11.8, 3]], [[12, 9.8], [8.8, 9.2], [6.2, 11.6], [3.8, 9.4]], [[2, 8.8], [5.2, 8.2]], [[12, 9.8], [15.2, 9.2], [17.8, 11.6], [20.2, 9.4]], [[18.8, 8.2], [22, 8.8]], [[12, 9.8], [12.2, 15.6]], [[12.2, 15.6], [9.6, 21.2]], [[12.2, 15.6], [14.8, 21.2]]],
   // a table: a sheet ruled into cells
   grid: [[[4, 5.6], [12, 5.3], [20, 5.6], [20.2, 12], [20, 18.6], [12, 18.8], [4.2, 18.5], [3.9, 12], [4.1, 5.3]], [[4.4, 10], [19.8, 10.2]], [[10, 5.8], [10.2, 18.4]]],
   // three options, one of them ticked
@@ -352,7 +331,6 @@ const SKETCH = {
     [[4.4, 12.4], [6.4, 12.3]], [[11.2, 12.4], [15, 12.7], [19, 12.2]],
     [[4.4, 18], [6.5, 18.2]], [[11.4, 18.2], [14, 17.9], [16.8, 18.3]],
   ],
-  other: [[[4.6, 8.6], [11, 8.2], [18.8, 8.7]], [[14.6, 4.8], [19.2, 8.6], [14.9, 12.2]], [[19.4, 15.6], [12, 15.9], [5.2, 15.4]], [[9.4, 11.9], [4.8, 15.5], [9.2, 19.3]]],
   // an hourglass in one go, a little sand below: whenever
   whenever: [
     [[6.4, 3.8], [17.8, 3.6], [17.4, 6.4], [12.6, 11.8], [17.6, 17.6], [18, 20.4], [6.2, 20.6], [6.5, 17.8], [11.4, 12.2], [6.6, 6.6], [6.2, 3.4]],
@@ -1428,7 +1406,7 @@ export function sketch(name) {
  *  pick. One pass of the marker per line of the label, a little uneven, its ends slanted; it lies
  *  behind the words and never on them. This is the one place that draws it; whoever shows advice
  *  appends what this returns to the option (or to its label), and the mark finds the words by itself:
- *  the option's label (.focus-opt-label, or the option's own strong / span), else all the text of
+ *  the option's own strong / span, else all the text of
  *  what it was put into. It measures the lines once it stands in the page and again whenever its
  *  host changes size. An option without words (a bare thumb) gets a short swipe where its word would
  *  be. Ink and strength are CSS: --advice and --marker (tokens.css); the host needs position: relative
@@ -1445,12 +1423,12 @@ function adviceLoop() {
   const measure = () => {
     const host = svg.parentElement
     if (!host) return null
-    const label = host.querySelector('.focus-opt-label') ?? host.querySelector(':scope > strong, :scope > span:not(.inbox-disc)') ?? host
+    const label = host.querySelector(':scope > strong, :scope > span:not(.inbox-disc)') ?? host
     // The words only: every piece of text in the label, line box by line box (a drawing in it has no line).
     const rects = []
     const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT)
     for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-      if (!text.nodeValue.trim() || text.parentElement.closest('svg, kbd, .focus-sr')) continue
+      if (!text.nodeValue.trim() || text.parentElement.closest('svg, kbd')) continue
       const range = document.createRange()
       range.selectNodeContents(text)
       rects.push(...range.getClientRects())
@@ -2404,11 +2382,11 @@ function start(signal) {
     'list.first': () => { const all = rows(); return all.length ? setMark(all[0]) : false },
     'list.last': () => { const all = rows(); return all.length ? setMark(all.at(-1)) : false },
     'list.open': () => inRow('a.inbox-text, a.inbox-revising-open'),
-    'list.later': () => (current()?.matches('.inbox-done') ? inRow('[data-later] .inbox-takeback, [data-later].inbox-done .inbox-takeback') : inRow('.inbox-later')),
+    'list.later': () => (current()?.matches('.inbox-done') ? false : inRow('.inbox-later')),
     'list.revise': () => inRow('.inbox-revise'),
     'list.trust': () => inRow('.inbox-trust'),
     'list.shred': () => inRow('.inbox-shred'),
-    'list.takeback': () => (current()?.matches('.inbox-done') ? inRow('.inbox-takeback') : backNote()),
+    'list.takeback': () => (current()?.matches('.inbox-done') ? false : backNote()),
     'list.leave': () => { if (!current()) return false; setMark(null); document.activeElement?.blur?.() },
 
     // The arrows walk the answers of a card (its page, and beside a large picture): the options in order, the duck,

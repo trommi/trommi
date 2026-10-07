@@ -265,7 +265,6 @@ a.ledger-sheet-item { display: flex; align-items: center; }
 .ledger-line[data-state="stopped"] .ledger-state { color: var(--urg-critical); }
 .ledger-tabs { margin: 0 0 var(--s-4, 16px); }
 
-
 /* ---- One tree per main (his pick "tree", 7 October), in the board's own order: the desk is a heading, a main's line
    stands with its crown and drawing, its helpers under it on the sidebar's pen bracket; no grip, no Model / Machine and
    no main or desk column (they are the tree and the heading); a line's small buttons show under the pointer or the
