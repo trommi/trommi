@@ -343,7 +343,13 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   // "<session> asked" opens a talk; alone it would say what the card's own line says already, so it is left out then.
   const why = card.urgency_reason ? html`<p class="tc-why">${sk('knock')}<span>${card.urgency_reason}</span></p>` : ''
   const any = lead.length || items.length || more
-  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments"${why || any ? '' : raw(' hidden')}>${why}${any ? deed(sheet(who ? raw(doodleSvg(who.mark)) : ''), `${name} ${card.kind === 'info' ? 'sent this to read' : 'asked'}`, card.created, { cls: 'is-asked' }) : ''}${lead}${older}${folded}${now.map(x => x.html)}</section>`
+  // The newest ten entries stand; the ones before wait in groups of ten behind a quiet "Load earlier (N)" (card#earlier).
+  const SHOW = 10, cut = Math.max(0, now.length - SHOW)
+  const groups = []
+  for (let end = cut; end > 0; end -= SHOW) groups.unshift(now.slice(Math.max(0, end - SHOW), end))
+  const hidden = groups.map(g => html`<div class="tc-earlier-group" hidden>${g.map(x => x.html)}</div>`)
+  const loadEarlier = cut ? html`<button type="button" class="tc-load-earlier" data-action="card#earlier">Load earlier (${cut})</button>` : ''
+  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments"${why || any ? '' : raw(' hidden')}>${why}${loadEarlier}${any ? deed(sheet(who ? raw(doodleSvg(who.mark)) : ''), `${name} ${card.kind === 'info' ? 'sent this to read' : 'asked'}`, card.created, { cls: 'is-asked' }) : ''}${lead}${older}${folded}${hidden}${now.slice(cut).map(x => x.html)}</section>`
 }
 
 /** Where the card stands in the stack, for the walk: { at, of, prev, next } (cards), or null when it is not waiting. */
@@ -390,7 +396,7 @@ ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="
   const tone = model.byAgent.get(card.agent)?.hue
   // The tray (his pick "ink", 7 October): card, field and talk lie on one pad in the session's tone, one step deeper,
   // with a pen outline and hatched corners; the card is white with an ink outline and a drop shadow, an object on it;
-  // the field is a white note right under the card ("Zettel drunter"), the talk below it.
+  // the talk in time order, the field to write in at its foot (sticky at the window's foot while the talk is long).
   const pad = html`<div class="tc-pad"${tone != null ? html` style="--hue:${tone}"` : ''}>${corner('tl')}${corner('tr')}${corner('bl')}${corner('br')}${strip}`
   const notesOpen = raw('<div class="tc-notes">')
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
@@ -414,7 +420,8 @@ ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 </article>
 ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
 </div>
-${notesOpen}<form class="tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
+${notesOpen}${cardThread(card, model, self, { more: older })}
+<form class="tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
 ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}
 <span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>
@@ -422,7 +429,6 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${askWords(card, model, asker)}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
 <div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${open && (card.kind === 'decision' || card.kind === 'info') ? `. Hold ${CTRL_WORD}: send and reverse, back to ${asker || 'the agent'}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick">${sk('send')}${open && (card.kind === 'decision' || card.kind === 'info') ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button></div></div>
 </form>
-${cardThread(card, model, self, { more: older })}
 </div>
 </div>
 </main>`
@@ -908,6 +914,17 @@ controller('card', class extends Controller {
     this.element.classList.toggle('foot-passed', r.bottom < box.bottom - 96)
   }
   // Proposals, local only (card.css "pad proposals"): ?pad=<key> tries a way to join the card, the pad and the field.
+  // "Load earlier (N)": the next ten entries above, the page keeps its place (what was in view stays in view)
+  earlier(event) {
+    const button = event.currentTarget, feed = button.closest('.tc-feed'), groups = [...feed.querySelectorAll('.tc-earlier-group[hidden]')]
+    const group = groups.at(-1)
+    if (!group) return button.remove()
+    const before = this.element.scrollHeight
+    group.hidden = false
+    this.element.scrollTop += this.element.scrollHeight - before
+    const left = feed.querySelectorAll('.tc-earlier-group[hidden] > *').length
+    if (left) button.textContent = `Load earlier (${left})`; else button.remove()
+  }
   toAnswers() { this.element.querySelector('.tc-card')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }
   // (another picture or a video came into the frame: it is the one that stands now, and the one Full screen opens)
   framed() {
