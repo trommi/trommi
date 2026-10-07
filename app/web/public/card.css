@@ -745,9 +745,9 @@ div.focus-opt { cursor: default; }
 .tc-clamp .clamp-hole { fill: var(--tone-wash); }
 .tc-clamp .clamp-line { opacity: .5; }
 .tc-page[data-pad="clip"] .tc-rails > .tc-rail, .tc-page[data-pad="clip"] .tc-rails > .tc-more { top: -64px; }
-.tc-page[data-pad="clip"] .tc-frame > .tc-chat { position: relative; z-index: 0; display: block; max-width: none; margin: -18px 22px 0; padding: 30px 16px 14px; border-radius: 0 0 14px 14px; background: color-mix(in srgb, var(--surface) 86%, var(--tone-wash)); box-shadow: 0 0 0 1px var(--tone-edge), 0 10px 18px -16px rgb(20 40 35 / .5); }
-.tc-page[data-pad="clip"] .tc-chat > .tc-c-who { display: none; }
-.tc-page[data-pad="clip"] .tc-chat > .tc-ask { display: grid; }
+.tc-page:is([data-pad="clip"], [data-pad="sheetunder"]) .tc-frame > .tc-chat { position: relative; z-index: 0; display: block; max-width: none; margin: -18px 22px 0; padding: 30px 16px 14px; border-radius: 0 0 14px 14px; background: color-mix(in srgb, var(--surface) 86%, var(--tone-wash)); box-shadow: 0 0 0 1px var(--tone-edge), 0 10px 18px -16px rgb(20 40 35 / .5); }
+.tc-page:is([data-pad="clip"], [data-pad="sheetunder"]) .tc-chat > .tc-c-who { display: none; }
+.tc-page:is([data-pad="clip"], [data-pad="sheetunder"]) .tc-chat > .tc-ask { display: grid; }
 /* tight: the pad hugs card and field: less blue round them, the field as wide as the card, close under it */
 .tc-page[data-pad="tight"] .tc-pad { padding: 68px 0 22px; }
 .tc-page[data-pad="tight"] .tc-pad > .tc-frame { max-width: calc(100% - 72px); }
@@ -757,7 +757,7 @@ div.focus-opt { cursor: default; }
 .tc-page[data-pad="tight"] .tc-chat > .tc-ask:focus-within { box-shadow: 0 0 0 2px var(--tone-pen), 0 14px 24px -18px rgb(20 40 35 / .5); }
 .tc-page[data-pad="tight"] .tc-corner { width: 40px; height: 40px; }
 /* (sheet, clip, tight: Later's tag hangs under the field now, inside the pad) */
-.tc-page:is([data-pad="sheet"], [data-pad="clip"], [data-pad="tight"]) .tc-pad { padding-bottom: 104px; }
+.tc-page:is([data-pad="sheet"], [data-pad="clip"], [data-pad="sheetunder"], [data-pad="tight"]) .tc-pad { padding-bottom: 104px; }
 
 /* ---- Send held with Ctrl (Cmd): the reverse card, in its colours; Ctrl+Enter or a click sends and reverses ---- */
 .tc-send-uno { display: none; }

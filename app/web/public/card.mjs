@@ -936,7 +936,7 @@ controller('card', class extends Controller {
     const q = sel => this.element.querySelector(sel)
     const frame = q('.tc-frame'), card = q('.tc-card'), chat = q('.tc-chat'), later = q('.tc-frame > .tc-later'), ask = q('.tc-chat > .tc-ask')
     if (!frame || !card || !chat) return
-    if (['sheet', 'clip', 'tight'].includes(key)) { card.after(chat); if (later) chat.after(later) }
+    if (['sheet', 'clip', 'sheetunder', 'tight'].includes(key)) { card.after(chat); if (later) chat.after(later) }
     if (key === 'inside' && ask) {
       for (const c of ask.querySelectorAll('textarea, input, button')) c.setAttribute('form', chat.id)
       const pair = q('.tc-answer .tc-or-pair')
