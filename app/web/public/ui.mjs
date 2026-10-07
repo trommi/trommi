@@ -591,7 +591,7 @@ export const sk = (name, cls) => raw(sketchSvg(name, cls))
 // ---- the board's words (one place; the old client has them in ui.mjs) ----
 export const WORDS = {
   later: 'Later', duck: 'Duck it', wake: 'Wake up', ack: 'Acknowledge', what: 'What??', trust: 'I don’t give a duck', revise: 'Reverse',
-  revising: 'In revision', shred: 'Shred', walk: 'Rapid fire', desk: 'Desk', takeBack: 'Take back',
+  revising: 'In revision', shred: 'Shred', walk: 'Blitz', desk: 'Desk', takeBack: 'Take back',
 }
 export const EXPLAIN_TEXT = 'Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do.'
 
@@ -2159,7 +2159,7 @@ const LAYOUT = [
     { id: 'go.desk', keys: ['g d', 'g i'], does: 'Desk', verb: 'go to the Desk' },
     { id: 'go.agents', keys: ['g a'], does: 'Agents', verb: 'go to the Agents page' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'menu', verb: 'open the Trommi menu: desks and places' },
-    { id: 'go.walk', keys: ['g f'], does: 'Rapid fire', verb: 'Rapid fire: every open question, one after the other' },
+    { id: 'go.walk', keys: ['g b'], does: 'Blitz', verb: 'Blitz: every open question, one after the other' },
     // 1…9 alone are the desks'; G then 1…9 are the sessions'.
     { id: 'go.session', keys: ['g 1…9'], does: 'session 1 to 9', verb: 'go to that session of the sidebar', needs: 'sidebar' },
     { id: 'desk.switch', keys: ['1…9'], does: 'desk 1 to 9', verb: 'switch to that desk', needs: 'desks' },
@@ -2424,7 +2424,7 @@ function start(signal) {
     'note.new': () => document.dispatchEvent(new CustomEvent('trommi:note')),
     'go.desk': () => go(`${base()}/`),
     'go.agents': () => go(`${base()}/agents`),
-    'go.walk': () => go(`${base()}/walk`),
+    'go.walk': () => go(`${base()}/blitz`),
     'go.jump': () => openJump(),
     'desk.switch': n => { press(desks()[n - 1]) },   // a number past the last desk does nothing
     'go.session': n => { press(sessions()[n - 1]) },

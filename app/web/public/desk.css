@@ -1098,11 +1098,11 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .desk-hello { grid-column: 1; margin: 0; font: 800 clamp(2.1rem, 3.6vw, 2.9rem)/1.08 var(--display); letter-spacing: -.028em; color: var(--fg); }
 .desk-hello em { font-style: normal; padding-bottom: 5px; background: var(--under-ink) left bottom / 100% 9px no-repeat; }
 .desk-tools { grid-column: 2; flex: none; display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
-.desk-walk { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
-.desk-walk .walk-burst { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.desk-walk-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
-/* the duck for all (desk.mjs duckAll): Rapid fire's small sibling, in the same drawn box (ink outline, the crooked
-   corners, the shadow, the height), the duck in full ink; under the pointer or the keyboard it lifts as Rapid fire
+.desk-blitz { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
+.desk-blitz .blitz-bolt { flex: none; width: 22px; height: 22px; fill: #f5d64a; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.desk-blitz-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
+/* the duck for all (desk.mjs duckAll): Blitz's small sibling, in the same drawn box (ink outline, the crooked
+   corners, the shadow, the height), the duck in full ink; under the pointer or the keyboard it lifts as Blitz
    does and turns the note's yellow (the duck stays ink). Pressed, a small sheet asks. */
 .desk-duck { position: relative; }
 .desk-duck-open { list-style: none; box-sizing: border-box; display: grid; place-items: center; width: 44px; height: 40px; border: 1.6px solid var(--fg); border-radius: 12px 9px 13px 8px / 8px 13px 9px 12px; background: var(--surface); color: var(--fg); cursor: pointer; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: .8deg; transition: translate 90ms, box-shadow 90ms, background 120ms; }
@@ -1125,14 +1125,14 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   #inbox .desk-top { position: relative; grid-template-columns: minmax(0, 1fr); margin-top: var(--s-2); margin-bottom: var(--s-5); padding: 0 2px; }
   .desk-hello { font-size: clamp(1.4rem, 7.2vw, 2rem); white-space: nowrap; }
   .desk-tools { grid-column: 1; grid-row: auto; justify-content: flex-end; margin-top: var(--s-3); padding-right: 6px; }
-  .desk-walk { min-height: 44px; }
+  .desk-blitz { min-height: 44px; }
   .desk-duck { position: static; }
   .desk-duck-open { width: 48px; height: 44px; }
   .desk-duck-ask { left: auto; right: 6px; top: calc(100% + 6px); }
 }
-@media (any-hover: hover) { .desk-walk:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
-.desk-walk:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
-.desk-walk:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+@media (any-hover: hover) { .desk-blitz:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
+.desk-blitz:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
+.desk-blitz:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
 
 /* ---- The pictures of a row have a column of their own (ui.mjs deskRow .inbox-fan): as wide as the fan is, a gap to
    the answers, never under them; the words beside it give way (they are cut with an ellipsis); where the rows are
