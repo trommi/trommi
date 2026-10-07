@@ -352,12 +352,20 @@ function menuDoors(model, base) {
 export const SIDE_FOOT = raw(`<div class="side-foot"><button type="button" class="rail-fold" data-controller="rail" data-action="click->rail#toggle pointerover@document->rail#tip focusin@document->rail#tip focusout@document->rail#untip turbo:before-cache@document->rail#untip" title="Fold the sidebar to a rail ( [ )" aria-label="Fold the sidebar to a rail ( [ )" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.3 4.4Q4.8 11.6 5.4 19.7"/><path d="M15.1 6.1Q12.2 9.2 9.1 12.1Q12.1 14.7 14.8 18"/></svg></button></div>`)
 
 /** How big the desk's name may stand in the Desk box: s (as "Desk"), m (a little smaller), l (two smaller lines). */
+/** The desk's name on the rail's tag: two short lines at most, whole words (a word too long is cut by its line). */
+function tagLines(name) {
+  const words = String(name).trim().split(/\s+/), lines = []
+  while (words.length && lines.length < 2) { let line = words.shift(); while (words.length && (line + ' ' + words[0]).length <= 6) line += ` ${words.shift()}`; lines.push(line) }
+  if (words.length) lines[1] += '…'
+  return lines
+}
 const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? 's' : n <= 11 ? 'm' : 'l' }
 export function topbar(model, base, current) {
     return html`<header class="topbar"><div class="brand">
 <h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a>
 <button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings" title="Menu">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b><span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
 ${menuDoors(model, base)}
+<button type="button" class="rail-tag" aria-haspopup="menu" aria-controls="brand-doors" title="Desk ${model.deskName}: switch desks" aria-label="Desk ${model.deskName}: switch desks"><span class="rail-tag-string" aria-hidden="true"></span><span class="rail-tag-paper"><b>${tagLines(model.deskName).map(l => html`<span>${l}</span>`)}</b></span></button>
 </div></header>`
 }
 
@@ -730,7 +738,7 @@ export function register(t) {
   document.addEventListener('click', e => {
     const t = e.target instanceof Element ? e.target : null
     if (!t) return
-    const menu = t.closest('#brand-menu'), doors = $('#brand-doors')
+    const menu = t.closest('#brand-menu, .rail-tag') && $('#brand-menu'), doors = $('#brand-doors')   // (the rail's desk tag opens the same menu, at its desks)
     if (menu && doors) { delete doors.dataset.from; doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); return }
     if (doors && !doors.hidden && !t.closest('#brand-doors')) shut()
     if (t.closest('#theme-toggle')) {
