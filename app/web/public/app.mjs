@@ -425,6 +425,8 @@ export class BoardState {
         online: Boolean(s.is_online), offline_since: s.offline_since ?? null, model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === key || crown === s.agent_device_id, parent, main: Boolean(p.is_main),
         desk: set.desk ?? null, archived: 'archived' in set ? Boolean(set.archived) : closedChild(s), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0, device_active: lastOfDevice.get(s.agent_device_id) ?? 0,
         removed: s.is_active === false,
+        // (a session on a person's own device, not an agent's: it is never deleted from the board: session.mjs Delete)
+        own: s.agent_device_id === m.room.my_device_id || m.members.get(s.agent_device_id)?.device_role === 'human',
         link: s.link ?? null, heard_up_to: s.heard_up_to ?? null,
       }
     })
@@ -730,7 +732,7 @@ function hubFacade(client, board) {
       const put = (x, fields) => { writes[`session/${x.device_id}`] = { ...(writes[`session/${x.device_id}`] ?? setOf(x)), ...fields } }
       if ('label' in body) put(a, { name: String(body.label ?? '').slice(0, 60) })
       if ('icon' in body) put(a, { icon: body.icon || null })
-      if ('archived' in body) { if (body.archived && a.online) throw fail(409, 'this session is connected; it can be archived once it is away'); put(a, { archived: Boolean(body.archived) }) }
+      if ('archived' in body) { if (body.archived && a.online && !body.deleting) throw fail(409, 'this session is connected; it can be archived once it is away'); put(a, { archived: Boolean(body.archived) }) }
       if ('group' in body) put(a, { group: body.group ? String(body.group).slice(0, 40) : null })
       if ('desk' in body) put(a, { desk: body.desk })
       if ('parent' in body) put(a, { parent: body.parent ?? null })

@@ -287,6 +287,28 @@ export function register(t) {
     show(req, res, url, new Map([[id, error]]), 422)
   })
 
+  // Delete a session (its More menu): what the app can already do, one after the other. Its open questions are shredded
+  // (as Shred), it and its helpers go to the archive (as Archive), and the agent devices that carried only them are
+  // removed from the room (as Remove under Devices). A session on a person's own device is never deleted this way.
+  t.post(/^\/sessions\/([^/]+)\/delete$/, async ({ req, res, match }) => {
+    const m = t.model(), id = decodeURIComponent(match[1]), a = m.byAgent.get(id)
+    const fail = text => (t.wantsStream(req) ? t.sendStream(req, res, t.toast({ head: 'Not deleted', line: text, role: 'alert' })) : t.redirect(res, `${BASE}/s/${encodeURIComponent(id)}`))
+    if (!a) return fail('no such session')
+    if (a.own) return fail('this session runs on your own device')
+    const all = [a, ...m.agents.filter(x => x.parent === a.id)], ids = new Set(all.map(x => x.id))
+    const client = hub.client, members = client?.model?.members
+    const me = client?.model?.room?.my_device_id
+    try {
+      for (const c of m.state.cards) if (ids.has(c.agent) && c.status === 'open' && c.kind !== 'permission') await hub.shred(c.id, '')
+      for (const x of all) await hub.editSession({ agent: x.id, archived: true, deleting: true })
+      // (a device that also carries a session that stays is left in the room)
+      const devices = [...new Set(all.map(x => x.agent_device_id).filter(Boolean))].filter(d => d !== me && members?.get(d)?.device_role !== 'human' && !m.agents.some(x => !ids.has(x.id) && x.agent_device_id === d))
+      if (devices.length) await client.removeDevices(devices)
+    } catch (err) { return fail(err.message || 'the board did not take it') }
+    if (!t.wantsStream(req)) return t.redirect(res, `${BASE}/`)
+    return t.sendStream(req, res, html`${t.stream('visit', `${BASE}/`)}${t.toast({ head: 'Deleted', line: a.name })}`)
+  })
+
   t.live('agents', {
     take(m) {
       const ctx = around(m, BASE), { on, off, archived } = parts(m)
