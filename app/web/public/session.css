@@ -390,7 +390,8 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 }
 /* A question in the conversation: its title ends before the small Later button at the card's top right (a title that
    filled its line ran under it). */
-@media (min-width: 861px) { .log .inbox-row:has(.inbox-when .inbox-later) .inbox-question { padding-right: 54px; } }
+/* (only the first line gives way to the small Later button; the title then uses the whole text column, as on the Desk) */
+@media (min-width: 861px) { .log .inbox-row:has(.inbox-when .inbox-later) .inbox-question::before { content: ""; float: right; width: 40px; height: 1.1em; } }
 /* A session's title on a wide window, and the view of sessions laid together.
    One session is one stream: its questions stand in its conversation. Here is only the
    head of its page on a wide window: a large mark, the name, a line with what it is at.

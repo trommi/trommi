@@ -628,6 +628,15 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
    page's dog-ear (the main area's top-right corner) and of a card's round buttons (they stand at its outer edges). ---- */
 #says-host { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); bottom: auto; left: var(--side, 0px); right: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-inline: 76px; pointer-events: none; }
 #says-host > * { pointer-events: auto; }
+/* (under a page's own head, never over its greeting or heading) */
+body[data-t-view="desk"] #says-host { top: 100px; }
+body[data-t-view="session"] #says-host { top: 84px; }
+body:is([data-t-view="agents"], [data-t-view="room"], [data-t-view="settings"]) #says-host { top: 138px; }
+body:is([data-t-view="gallery"], [data-t-view="links"]) #says-host { top: 76px; }
+@media (max-width: 860px) {
+  body[data-t-view="desk"] #says-host { top: calc(180px + env(safe-area-inset-top, 0px)); }
+  body:is([data-t-view="agents"], [data-t-view="room"], [data-t-view="settings"]) #says-host { top: calc(108px + env(safe-area-inset-top, 0px)); }
+}
 #says-host:empty { display: none; }
 .says form { margin: 0; flex: none; }
 #says-host .says {

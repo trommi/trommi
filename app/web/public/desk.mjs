@@ -524,9 +524,12 @@ controller('desk', class extends Controller {
     // Where the list stands across, for the strips: read when its box changes (layout is fresh then), never per frame.
     this.ro = new ResizeObserver(() => { this.across = this.list.getBoundingClientRect(); this.look() })
     this.ro.observe(this.list)
+    // (folding the sidebar moves the list without resizing it: the window's resize, which the fold sends, measures again)
+    this.moved = () => { this.across = this.list.getBoundingClientRect(); this.look() }
+    addEventListener('resize', this.moved)
     this.offSelect = selectWays(this.element)
   }
-  disconnect() { this.io.disconnect(); this.mo.disconnect(); this.ro.disconnect(); cancelAnimationFrame(this.frame); this.offSelect?.() }
+  disconnect() { removeEventListener('resize', this.moved); this.io.disconnect(); this.mo.disconnect(); this.ro.disconnect(); cancelAnimationFrame(this.frame); this.offSelect?.() }
   forget(node) { for (const row of this.shown) if (row === node || node.contains(row)) this.shown.delete(row) }
 
   // A stream is about to put a row in: it is "new" until it has been in sight.
