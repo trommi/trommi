@@ -810,8 +810,8 @@ html[data-rail="folded"] .desk-switch-open { display: none; }
 .demo-toggle[aria-checked="true"] .demo-switch { background: #f5d64a; }
 .demo-toggle[aria-checked="true"] .demo-switch b { translate: 14px 0; }
 .demo-band { position: fixed; z-index: 85; left: 16px; bottom: 70px; padding: 4px 12px 5px; border: 1.6px solid var(--fg); border-radius: 10px 12px 9px 13px / 12px 9px 13px 10px; background: #f5d64a; color: #2d2406; font: 700 var(--t-xs)/1.2 var(--font); text-decoration: none; white-space: nowrap; rotate: -1deg; }
-.demo-band u { text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
-.demo-band:hover u { text-decoration-thickness: 2.5px; }
+.demo-band a { color: inherit; text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
+.demo-band a:hover { text-decoration-thickness: 2.5px; }
 /* (in the sidebar, above the Trommi row: clear of every page's head; folded, in the page's bottom-left corner; a phone: a slim strip over the top line) */
 :root:has(#brand-doors:not([hidden])) .demo-band { visibility: hidden; }
 html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14px; }

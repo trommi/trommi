@@ -1064,7 +1064,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
   else parts.push({ key: 'main', html: String(main) })
   if (FRONT.has(view) && padKept && model) parts.push({ key: 'pad', html: String(whiteboard.whiteboardMain(model)) })
   if (FRONT.has(view) || view === 'whiteboard') parts.push({ key: 'curl', html: String(curlHTML(FRONT.has(view) ? 'desk' : 'pad', FRONT.has(view) ? `${base}/scribble-board` : `${base}${padFrom}`)) })
-  if (mock) parts.push({ key: 'demo', html: '<a class="demo-band" href="/?mock=0" data-turbo="false" title="Leave the demo: back to your desks">Demo · <u>leave</u></a>' })
+  if (mock) parts.push({ key: 'demo', html: '<span class="demo-band">Demo · <a href="/screens?mock=1" target="_blank" rel="noopener" title="Every screen of the app in the demo, for review">All screens</a> · <a href="/?mock=0" data-turbo="false" title="Leave the demo: back to your desks">leave</a></span>' })
   parts.push({ key: 'says', html: `<div class="says-host says-page" id="says-host" data-turbo-permanent>${says}</div>` })
   parts.push({ key: 'sheets', html: String(html`${keySheet()}${view === 'desk' ? rowSheet(base) : ''}`) })
   return parts
