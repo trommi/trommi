@@ -814,3 +814,85 @@ function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 5
     human: { drafts: {}, snoozes: {}, ducks: {}, crown: { agent_device_id: ss[0].agent_device_id }, desks: {}, session_settings: Object.fromEntries(ss.map(s => [s.agent_device_id, s.settings])), read_up_to: {} },
   }
 }
+
+// ---- All screens (demo only): /screens, a review page of every screen and state as live frames ----
+// The Trommi menu shows "All screens" while the demo is on (sidebar.mjs); app.mjs adds this view only in the demo. A
+// state that needs a click is driven by ?state=<name> on the frame's address (demoState, run once after the page is in).
+const SCREENS = [
+  ['Desk', [['All desks', '/'], ['With the selection bar', '/', 'select'], ['Duck for all: the confirm', '/', 'duck'], ['A toast with Undo', '/', 'toast'], ['The foot: Off the desk and Media', '/', 'bottom'], ['Off the desk, open', '/stacks/off'], ['Trommi menu', '/', 'menu'], ['Desk switcher', '/', 'switch'], ['Sidebar folded to the rail', '/', 'rail'], ['Phone drawer', '/', 'drawer'], ['Keys sheet', '/', 'keys'], ['Corner note, open', '/', 'note']]],
+  ['Card page', [['Short card', '/q/30'], ['Long card, top', '/q/31'], ['Long card, scrolled inside', '/q/31', 'inside'], ['The strip (card scrolled away)', '/q/31', 'strip'], ['Yes or no', '/q/46'], ['Several answers', '/q/11'], ['Info card', '/q/19'], ['Answered', '/q/1'], ['With the agent', '/q/1', 'with-agent'], ['More menu', '/q/30', 'more'], ['Focus mode (Full screen)', '/q/31/p/1'], ['Blitz', '/blitz']]],
+  ['Session', [['Conversation', '/s/trommi'], ['Three-dot menu', '/s/trommi', 'session-more'], ['Questions only', '/s/trommi?only=questions'], ['Files', '/s/trommi/files'], ['A helper', '/s/trommi-ui']]],
+  ['Agents, devices, settings', [['Agents (tree)', '/agents'], ['Devices', '/devices'], ['Pairing a device', '/devices', 'pair'], ['Settings', '/settings'], ['Log out', '/logout']]],
+  ['Invite clipboard', [['Fresh link', '/', 'invite'], ['Emoji compare', '/s/trommi', 'invite-emoji'], ['Link run out', '/', 'invite-ended']]],
+  ['Media and links', [['Media', '/assets'], ['Links', '/links'], ['Links: share open', '/links', 'share']]],
+  ['Scribble Board', [['Board', '/scribble-board'], ['Its keys', '/scribble-board', 'board-help']]],
+  ['Help', [['Help page', '/help.html']]],
+]
+const frameSrc = (path, state) => `${path}${path.includes('?') ? '&' : '?'}mock=1${state ? `&state=${state}` : ''}`
+export function screensMain() {
+  const frame = (title, path, state) => { const src = frameSrc(path, state); return `<figure class="scr-item"><figcaption><a href="${src}" target="_blank" rel="noopener">${title}</a> <code>${path}${state ? ` · ${state}` : ''}</code></figcaption><div class="scr-pair"><div class="scr-box is-wide"><iframe data-src="${src}" title="${title}, desktop" loading="lazy" width="1440" height="900"></iframe></div><div class="scr-box is-phone"><iframe data-src="${src}" title="${title}, phone" loading="lazy" width="390" height="844"></iframe></div></div></figure>` }
+  return `<main id="screens" class="scr-page" data-controller="screens"><style>
+.scr-page{grid-column:1/-1;overflow-y:auto;height:100%;padding:24px 32px 80px;background:var(--bg);color:var(--fg)}
+.scr-head{display:flex;align-items:center;gap:16px;margin-bottom:8px}.scr-head h1{font:800 2rem/1.1 var(--display);margin:0}
+.scr-head p{margin:0;color:var(--muted)}.scr-theme{margin-left:auto;min-height:36px;padding:0 14px;border:1.6px solid var(--fg);border-radius:9px 12px 8px 13px/12px 8px 13px 9px;background:var(--surface);color:var(--fg);font:700 var(--t-sm)/1 var(--font);cursor:pointer}
+.scr-page h2{font:800 1.4rem/1.2 var(--display);margin:32px 0 12px;padding-top:12px;border-top:1px dashed var(--line-strong)}
+.scr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(620px,1fr));gap:24px 28px}
+.scr-item{margin:0}.scr-item figcaption{display:flex;gap:10px;align-items:baseline;margin-bottom:6px;font:600 var(--t-sm)/1.3 var(--font)}
+.scr-item figcaption a{color:var(--fg)}.scr-item code{font:500 var(--t-xs)/1 var(--mono);color:var(--muted)}
+.scr-pair{display:flex;gap:12px;align-items:flex-start}
+.scr-box{position:relative;flex:none;overflow:hidden;border:1.5px solid var(--fg);border-radius:8px;background:var(--surface);box-shadow:0 8px 18px -12px rgb(20 30 25/.4)}
+.scr-box.is-wide{width:480px;height:300px}.scr-box.is-phone{width:130px;height:281px;border-radius:14px}
+.scr-box iframe{position:absolute;left:0;top:0;border:0;transform-origin:0 0;pointer-events:none}
+.scr-box.is-wide iframe{transform:scale(.3333)}.scr-box.is-phone iframe{transform:scale(.3333)}
+</style><header class="scr-head"><h1>All screens</h1><p>The demo room, every screen and state; a title opens it alone.</p><button type="button" class="scr-theme" data-action="screens#theme">Light / dark</button></header>
+${SCREENS.map(([group, list]) => `<h2>${group}</h2><div class="scr-grid">${list.map(([t, p, s]) => frame(t, p, s)).join('')}</div>`).join('')}</main>`
+}
+export const screensView = { register(t) { t.get(/^\/screens$/, ({ req, res }) => t.page(req, res, { title: 'All screens · Trommi', view: 'screens', sidebar: false, stream: null, main: screensMain() })) } }
+
+/** Frames load as they come into view; the page's light/dark goes into every frame. */
+export function screensController({ Controller, controller }) {
+  controller('screens', class extends Controller {
+    connect() {
+      this.dark = document.documentElement.dataset.theme === 'dark'
+      this.io = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) { const f = e.target; f.src = f.dataset.src; f.addEventListener('load', () => this.paint(f)); this.io.unobserve(f) } }, { rootMargin: '400px' })
+      for (const f of this.element.querySelectorAll('iframe[data-src]')) this.io.observe(f)
+    }
+    disconnect() { this.io?.disconnect() }
+    paint(f) { try { const d = f.contentDocument?.documentElement; if (!d) return; if (this.dark) d.dataset.theme = 'dark'; else delete d.dataset.theme } catch {} }
+    theme() {
+      this.dark = !this.dark
+      if (this.dark) document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme
+      for (const f of this.element.querySelectorAll('iframe[src]')) this.paint(f)
+    }
+  })
+}
+
+/** ?state=<name> on a demo page: the click a state needs, done once the page is in (only in the demo). */
+export async function demoState(name) {
+  const $ = s => document.querySelector(s), wait = ms => new Promise(r => setTimeout(r, ms)), click = s => $(s)?.click()
+  await wait(500)
+  const S = {
+    select: async () => { for (const b of [...document.querySelectorAll('#desk-list .inbox-row .row-mark')].slice(1, 3)) { b.click(); await wait(150) } },
+    duck: () => click('.desk-duck-open'),
+    toast: () => click('#desk-list .inbox-row .inbox-answer.is-thumb.is-lead:not(.is-ack)'),
+    bottom: () => { const m = $('#inbox'); if (m) m.scrollTop = m.scrollHeight },
+    menu: () => click('#brand-menu'),
+    switch: () => click('.desk-switch-open'),
+    rail: () => { document.documentElement.dataset.rail = 'folded'; dispatchEvent(new Event('resize')) },
+    drawer: () => click('#drawer-open'),
+    keys: () => document.dispatchEvent(new Event('trommi:keys')),
+    note: () => click('.corner-note-head'),
+    inside: () => { const l = $('.tc-card > .tc-left'); if (l) l.scrollTop = 900 },
+    strip: () => { const m = $('#cardpage'); if (m) m.scrollTop = 2600 },
+    more: () => click('.tc-more-open'),
+    'with-agent': () => { const c = window.trommi.model().state.cards.find(x => x.with_agent); if (c) window.trommi.router.visit(`/q/${c.number}`) },
+    'session-more': () => click('.t-head-more'),
+    pair: () => click('#pair-start'),
+    invite: () => click('#sidebar-invite'),
+    'invite-emoji': async () => { click('.t-head-more'); await wait(200); [...document.querySelectorAll('.desk-move button')].find(b => /invite link/.test(b.textContent))?.click() },
+    'invite-ended': async () => { click('#sidebar-invite'); await wait(900); const inv = [...window.trommi.client.model.invites.values()].at(-1); if (inv) { inv.expires_at = Date.now() - 1000; window.trommi.client.changed(c => c.invites.add(inv.invite_id)) } },
+    share: () => { const s = $('.lk-share .lk-switch input'); if (s) { s.checked = true; s.dispatchEvent(new Event('change', { bubbles: true })) } },
+    'board-help': () => click('#help-btn'),
+  }
+  await S[name]?.()
+}
