@@ -163,16 +163,49 @@ controller('corner-note', class extends Controller {
       this.idValue = made.id
     }
     const read = f => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve({ name: f.name || `pasted-${Date.now()}.png`, data: r.result }); r.onerror = () => reject(r.error); r.readAsDataURL(f) })
+    // What is on its way shows at once (his word, 7 October: a grey box and no sign of anything): the picture itself from
+    // this device, a drawn ring turning and "uploading…"; done, the note's own chip takes its place with the same
+    // picture; refused, the chip says so and offers to try again.
+    const kept = this.files(), box = this.element.querySelector('.corner-note-files')
+    const previews = got.map(f => (/^image\//.test(f.type) ? URL.createObjectURL(f) : null))
+    const pending = got.map((f, i) => {
+      const chip = el('span', `corner-note-file is-uploading${previews[i] ? ' is-pic' : ''}`)
+      if (previews[i]) chip.append(Object.assign(document.createElement('img'), { src: previews[i], alt: '' })); else chip.append(el('span', '', f.name || 'file'))
+      chip.insertAdjacentHTML('beforeend', '<i class="note-up" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.2A8.8 8.8 0 1 1 3.4 10.4"/></svg></i><b class="note-up-word">uploading…</b>')
+      box.append(chip)
+      return chip
+    })
     try {
       const fresh = await Promise.all(got.map(read))
-      const res = await fetch('/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: [...this.files(), ...fresh] }) })
+      const res = await fetch('/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: [...kept, ...fresh] }) })
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
-      this.paintFiles()
-    } catch (err) { console.warn('note', err); this.element.querySelector('.corner-note-files').insertAdjacentHTML('beforeend', '<em class="corner-note-err">Not attached</em>') }
+      this.paintFiles(previews)
+    } catch (err) {
+      console.warn('note', err)
+      for (const chip of pending) {
+        chip.classList.replace('is-uploading', 'is-failed')
+        chip.querySelector('.note-up-word').textContent = 'upload failed'
+        const again = el('button', 'note-up-again', 'retry')
+        again.type = 'button'
+        again.addEventListener('click', e => { e.stopPropagation(); for (const c of pending) c.remove(); this.attach(got) }, { once: true })
+        chip.append(again)
+      }
+    }
   }
-  paintFiles() {
+  /** previews: this device's own pictures of the newest attachments, shown until the note's copies are drawn. */
+  paintFiles(previews = []) {
     const m = (window.trommi?.model?.().state.notes ?? []).find(n => n.id === this.idValue)
-    this.element.querySelector('.corner-note-files').innerHTML = noteFiles(m?.attachments ?? [])
+    const box = this.element.querySelector('.corner-note-files')
+    box.innerHTML = noteFiles(m?.attachments ?? [])
+    const chips = [...box.querySelectorAll('.corner-note-file')].slice(-previews.length || box.children.length)
+    previews.forEach((url, i) => {
+      const img = url && chips[i]?.querySelector('img')
+      if (!img) return
+      const real = img.src, probe = new Image()
+      img.src = url
+      probe.src = real
+      ;(probe.decode ? probe.decode() : Promise.resolve()).then(() => { img.src = real; URL.revokeObjectURL(url) }, () => {})
+    })
   }
   pick() {
     let input = this.element.querySelector('input[type=file]')
