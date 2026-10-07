@@ -271,7 +271,8 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-chips .t-chip-drop { background: none; color: var(--muted); text-decoration: underline; cursor: pointer; }
 
 /* something to read: two clear tiles */
-.tc-info-ways { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tc-info-ways { display: flex; flex-direction: column; gap: 8px; }
+.tc-info-ways > .tc-tile.is-ack { display: flex; justify-content: center; align-items: center; min-height: 56px; gap: 10px; font-size: var(--t-md); }
 .tc-tile { display: grid; justify-items: center; align-content: center; gap: 6px; min-height: 110px; padding: 10px; border: 0; border-radius: var(--r-md); background: var(--sunken); color: var(--fg); font: 700 var(--t-sm)/1.2 var(--display); cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
 .tc-tile .sketch { width: 30px; height: 30px; }
 .tc-tile.is-ack { background: var(--accent); color: var(--accent-fg, #fff); box-shadow: none; }

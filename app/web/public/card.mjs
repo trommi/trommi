@@ -204,7 +204,9 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
   }
   if (card.with_agent) return box(html`<div class="tc-opts">${still(WORDS.revising, 'It is with its session and comes back reworked.')}</div>${back(card, base, 'takeback')}`)
   // Something to read: two clear tiles, What?? (it comes back explained) and Acknowledge (read, closed).
-  if (card.kind === 'info') return box(html`<div class="tc-info-ways"><button class="tc-tile is-what" type="submit" form="${form}" formaction="${act(card, base, 'what')}" title="${WORDS.what}: ask the session to explain this; it comes back explained" aria-label="What?? — explain this to me">${sk('what')}</button><button class="tc-tile is-ack" type="submit" form="${form}" formaction="${act(card, base, 'close')}" title="${WORDS.ack}: read, close it">${sk('tick')}<span>${WORDS.ack}</span></button></div>`)
+  // An info: Acknowledge is its answer; at the column's foot What?? and the reverse card, as on a decision (the reverse
+  // card hands it back for rework with the comments; Ctrl with Send does the same from the field).
+  if (card.kind === 'info') return box(html`<div class="tc-or tc-info-ways"><button class="tc-tile is-ack" type="submit" form="${form}" formaction="${act(card, base, 'close')}" title="${WORDS.ack}: read, close it">${sk('tick')}<span>${WORDS.ack}</span></button><div class="tc-or-pair"><button class="tc-tile tc-wtf is-what" type="submit" form="${form}" formaction="${act(card, base, 'what')}" title="${WORDS.what}: ask the session to explain this; it comes back explained" aria-label="What?? — explain this to me">${sk('what')}</button>${reviseTile(card, model, base)}</div></div>`)
   const advised = advisedKeys(card)
   const shownKey = pictureKeys(card).get(pic - 1)
   const draft = card.draft ?? {}
@@ -382,7 +384,7 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   const few = open && card.kind === 'decision' && !card.multiple && card.options.length <= 4
   const strip = html`<div class="tc-bar" aria-label="This question, in short"><div class="tc-bar-in"><b class="tc-bar-title">${card.title}</b>
 ${few ? html`<span class="tc-bar-chips">${card.options.map(o => html`<button class="tc-chip" type="submit" form="${form}" formaction="${act(card, base, 'decide')}" name="key" value="${o.key}" title="${o.final === true ? `${o.label} · ${FINAL_TIP}` : o.label}">${o.label}${o.final === true ? finalSign() : ''}</button>`)}</span>` : ''}${jump}
-${open && card.kind === 'decision' ? html`<i class="tc-bar-sep"></i>${mini('is-duck', 'trust', 'I don’t give a duck', sk('duck'))}${mini('is-what', 'what', 'What?? Explain this to me', sk('what'))}${mini('is-reverse', 'revise', `Reverse: back to ${asker || 'the agent'} for rework, with the comments`, sk('reverse'))}` : open && card.kind === 'info' ? html`<i class="tc-bar-sep"></i>${mini('is-what', 'what', 'What?? Explain this to me', sk('what'))}${mini('is-ack', 'close', `${WORDS.ack}: read, close it`, sk('tick'))}` : ''}
+${open && card.kind === 'decision' ? html`<i class="tc-bar-sep"></i>${mini('is-duck', 'trust', 'I don’t give a duck', sk('duck'))}${mini('is-what', 'what', 'What?? Explain this to me', sk('what'))}${mini('is-reverse', 'revise', `Reverse: back to ${asker || 'the agent'} for rework, with the comments`, sk('reverse'))}` : open && card.kind === 'info' ? html`<i class="tc-bar-sep"></i>${mini('is-what', 'what', 'What?? Explain this to me', sk('what'))}${mini('is-reverse', 'revise', `Reverse: back to ${asker || 'the agent'} for rework, with the comments`, sk('reverse'))}${mini('is-ack', 'close', `${WORDS.ack}: read, close it`, sk('tick'))}` : ''}
 ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-bar-later" method="post" action="${base}/cards/batch"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
 </div></div>`
   const tone = model.byAgent.get(card.agent)?.hue
@@ -415,7 +417,7 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 <span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>
 <div class="tc-ask"><div class="tc-chips" data-card-target="chips" hidden></div>
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${askWords(card, model, asker)}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
-<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${open && card.kind === 'decision' ? `. Hold ${CTRL_WORD}: send and reverse, back to ${asker || 'the agent'}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick">${sk('send')}${open && card.kind === 'decision' ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button></div></div>
+<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${open && (card.kind === 'decision' || card.kind === 'info') ? `. Hold ${CTRL_WORD}: send and reverse, back to ${asker || 'the agent'}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick">${sk('send')}${open && (card.kind === 'decision' || card.kind === 'info') ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button></div></div>
 </form>
 </div>
 </main>`
@@ -947,7 +949,7 @@ controller('card', class extends Controller {
   typed() { this.grow(); this.keep() }
   // (Where the browser sizes a field to its content itself (field-sizing, cardpage.css), no measuring: it cost a forced layout per page.)
   grow() { if (GROWS) return; const f = this.hasFieldTarget ? this.fieldTarget : null; if (f) { f.style.height = 'auto'; f.style.height = `${Math.min(f.scrollHeight, 220)}px` } }
-  // Enter sends, Shift+Enter is a new line. Ctrl+Enter (Cmd+Enter) on a decision sends and reverses: the words go back
+  // Enter sends, Shift+Enter is a new line. Ctrl+Enter (Cmd+Enter) on a decision or an info sends and reverses: the words go back
   // with the card, for rework (the reverse card's own way: revise takes the field's words as the hand-back's message).
   keys(event) {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing || (!this.fieldTarget.value.trim() && !this.filesTarget.files.length)) return
