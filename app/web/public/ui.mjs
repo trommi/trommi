@@ -2123,7 +2123,7 @@ const LAYOUT = [
     { id: 'card.prev', keys: ['ArrowLeft'], does: 'previous question', repeat: true },
     { id: 'card.pic.next', keys: ['Shift+ArrowRight'], does: 'next picture', repeat: true },
     { id: 'card.pic.prev', keys: ['Shift+ArrowLeft'], does: 'previous picture', repeat: true },
-    { id: 'card.leave', keys: ['Escape'], does: 'leave a field, then back to the Desk', typing: true },
+    { id: 'card.leave', keys: ['Escape'], does: 'leave a field, full screen, then back to the Desk', typing: true },
   ] },
   { scope: 'picture', title: 'A picture', keys: [
     { id: 'ans.down', keys: ['ArrowDown'], does: 'through the answers beside the picture', repeat: true },
@@ -2399,7 +2399,7 @@ function start(signal) {
     'card.prev': () => press($('.tc-rails a.is-prev')),
     'card.pic.next': () => press($('.tc-card .tc-step.is-next')),
     'card.pic.prev': () => press($('.tc-card .tc-step.is-prev')),
-    'card.leave': (n, e) => { if (typingIn(e.target)) return e.target.blur(); return press($('.tc-rails .tc-back')) },
+    'card.leave': (n, e) => { if (typingIn(e.target)) return e.target.blur(); return press($('.tc-page.is-full .tc-full.is-leave') ?? $('.tc-rails .tc-back')) },
 
     'ledger.next': () => step(1),
     'ledger.prev': () => step(-1),

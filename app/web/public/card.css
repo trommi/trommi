@@ -401,31 +401,6 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 
 /* A card's picture, large (picturePage): it fits the width and scrolls; a click shows it at its own size (both ways)
    and back. The card's answer stands at the right (a phone: a bar at the foot), always in reach. */
-.t-picture.is-deciding { --answer-w: 340px; grid-template-columns: minmax(0, 1fr) var(--answer-w); grid-template-rows: auto minmax(0, 1fr); }
-.t-picture.is-deciding > .t-picture-view { grid-column: 1; grid-row: 2; display: flex; overflow: auto; overscroll-behavior: contain; padding: 0 14px 14px; cursor: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
-.t-picture.is-deciding > .t-picture-view:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.t-picture.is-deciding .t-picture-fit { flex: none; margin: auto; max-width: 100%; max-height: none; cursor: zoom-in; }
-.t-picture.is-deciding .t-picture-fit img { width: auto; height: auto; max-width: 100%; max-height: none; object-fit: initial; }
-.t-picture.is-deciding:has(.t-picture-zoom:checked) .t-picture-fit { max-width: none; cursor: zoom-out; }
-.t-picture.is-deciding:has(.t-picture-zoom:checked) .t-picture-fit img { max-width: none; }
-.t-picture.is-deciding .tc-step.is-next { right: calc(var(--answer-w) + 14px); }
-.t-picture-answer { grid-column: 2; grid-row: 2; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: var(--s-4) var(--s-4) calc(var(--s-4) + env(safe-area-inset-bottom)); background: var(--surface); box-shadow: -1px 0 0 var(--line); scrollbar-width: thin; }
-@media (max-width: 860px) {
-  .t-picture.is-deciding { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
-  .t-picture.is-deciding > .t-picture-view { padding: 0 8px 8px; }
-  .t-picture.is-deciding .tc-step.is-next { right: 14px; }
-  .t-picture-answer { grid-column: 1; grid-row: 3; max-height: 46dvh; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); box-shadow: 0 -1px 0 var(--line), 0 -8px 24px rgb(0 0 0 / .06); }
-  .t-picture-answer .tc-answer { gap: 8px; }
-  .t-picture-answer .tc-opts { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px; }
-  .t-picture-answer .tc-opt { min-height: 44px; padding: 8px 30px 8px 12px; }
-  .t-picture-answer .tc-opt-detail { display: none; }
-  .t-picture-answer .tc-opt-note { grid-column: 1 / -1; }
-  .t-picture-answer .tc-or { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch; gap: 6px; }
-  .t-picture-answer .tc-or > i { display: none; }
-  .t-picture-answer .tc-or > .tc-whatever { min-height: 48px; }
-  .t-picture-answer .tc-or-pair { gap: 6px; }
-  .t-picture-answer .tc-or-pair .tc-tile, .t-picture-answer .tc-info-ways .tc-tile { min-height: 48px; }
-}
 
 /* "or": the duck and ??? side by side, as tiles (card Nr. 176 and his word on the card page) */
 .tc-or-pair { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
@@ -562,21 +537,11 @@ div.focus-opt { cursor: default; }
 
 /* ---- the gallery of one question (/q/<n>/p/<i>): one slim row above (the way back, where one stands, the page behind
    the picture), the picture, the small pictures under it, the answer beside ---- */
-.t-picture.is-deciding { grid-template-rows: auto minmax(0, 1fr) auto; }
-.t-picture.is-deciding > .t-picture-view { padding-top: 2px; }
-.t-picture-strip { grid-column: 1; grid-row: 3; display: flex; justify-content: center; min-width: 0; padding: 6px 14px calc(8px + env(safe-area-inset-bottom)); overflow-x: auto; scrollbar-width: none; }
-.t-picture-strip { gap: 8px; }
-.t-picture-strip .tc-strip { flex-wrap: nowrap; gap: 8px; }
+
 /* (a video in the gallery: the player as large as the place lets it be) */
-.t-picture.is-deciding > .t-picture-view.is-video { align-items: center; justify-content: center; }
+
 .t-picture-view.is-video .tc-video { width: min(100%, 960px); height: auto; }
 .t-picture-view.is-video video { width: 100%; height: auto; max-height: calc(100dvh - 170px); }
-.t-picture-strip .tc-thumb { width: 72px; height: 48px; }
-@media (max-width: 860px) {
-  .t-picture.is-deciding { grid-template-rows: auto minmax(0, 1fr) auto auto; }
-  .t-picture-strip { justify-content: flex-start; padding: 4px 8px 6px; }
-  .t-picture-strip .tc-thumb { width: 56px; height: 40px; }
-}
 
 /* ---- The three side answers take colour under the pointer, the keyboard or the finger (at rest calm grey): What?? a
    violet, the reverse card the four colours of the wild card, laid as four flat fields round a point a little off
@@ -599,8 +564,7 @@ div.focus-opt { cursor: default; }
    an arrow at its left; beside it which picture this is and the page behind it. The picture begins right under the
    head. At the right, from the window's top, stands the card's own right column (.tc-right: the same buttons, sizes,
    spacing, the pair at its foot), a little short of the window's foot, where Later's tag hangs under it. ---- */
-.t-picture.is-deciding { --answer-w: 330px; --card-h: 0px; grid-template-columns: minmax(0, 1fr) var(--answer-w); grid-template-rows: auto minmax(0, 1fr) auto; }
-.t-picture.is-deciding > .t-picture-bar { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--s-5); padding: 14px 18px 10px 12px; }
+
 .t-picture-back { flex: 1 1 22rem; min-width: 0; display: flex; align-items: flex-start; gap: 8px; color: var(--fg); text-decoration: none; }
 .t-picture-back .sketch { flex: none; width: 24px; height: 24px; margin-top: 3px; stroke-width: 2; color: var(--muted); transition: translate 120ms, color 120ms; }
 .t-picture-back:hover .sketch, .t-picture-back:focus-visible .sketch { translate: -3px 0; color: var(--fg); }
@@ -609,21 +573,12 @@ div.focus-opt { cursor: default; }
 .t-picture-sub { flex: 0 1 auto; min-width: 0; margin-left: auto; display: flex; align-items: center; gap: var(--s-3); }
 .t-picture-sub .t-picture-where { flex: 0 1 auto; }
 .t-picture-sub .t-picture-where > span { font-family: var(--mono); font-size: var(--t-xs); }
-.t-picture.is-deciding > .t-picture-view { padding: 0 14px 10px; align-items: flex-start; }
-.t-picture.is-deciding .t-picture-fit { margin: 0 auto; }
-.t-picture.is-deciding > .t-picture-answer { position: relative; top: auto; z-index: 1; grid-column: 2; grid-row: 1 / 4; align-self: stretch; margin-bottom: 118px; min-height: 0; overflow-y: auto; padding: var(--s-5) var(--s-5) var(--s-4); border-radius: 0 0 0 var(--r-xl); background: var(--surface); box-shadow: 0 0 0 1px var(--line); scrollbar-width: thin; }
-.t-picture.is-deciding .tc-later { position: absolute; z-index: 0; right: 0; bottom: 118px; width: var(--answer-w); }
-.t-picture.is-deciding .tc-later .sel-later { right: 30px; }
 @media (max-width: 860px) {
-  .t-picture.is-deciding { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; }
-  .t-picture.is-deciding > .t-picture-bar { position: relative; z-index: 2; padding: 10px 12px 8px 8px; background: var(--bg); }
   .t-picture-back h1 { font-size: 1.08rem; }
   .t-picture-sub { margin-left: 32px; flex: 1 1 100%; }
   .t-picture-sub .page-chip { margin-left: auto; }
-  .t-picture.is-deciding > .t-picture-answer { grid-column: 1; grid-row: 4; margin: 0; max-height: 46dvh; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); border-radius: 0; box-shadow: 0 -1px 0 var(--line), 0 -8px 24px rgb(0 0 0 / .06); }
   /* (a phone: the tag hangs from the head, over the picture's top-right corner) */
-  .t-picture.is-deciding .tc-later { top: 100%; bottom: auto; right: 0; width: 80px; height: 0; z-index: -1; }
-  .t-picture.is-deciding .tc-later .sel-later { right: 6px; }
+
 }
 
 /* ---- a card with a lot on it: paragraphs, lists, code and tables keep their distance wherever the text is nested;
@@ -632,8 +587,7 @@ div.focus-opt { cursor: default; }
 #cardpage .tc-left .rich :not(pre) > code { background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
 #cardpage .rich table { display: block; max-width: 100%; overflow-x: auto; }
 #cardpage .tc-c-in .shots img { max-width: 100%; height: auto; }
-.t-picture-back h1 { text-align: left; }
-@media (max-width: 860px) { .t-picture.is-deciding .tc-step { top: 32%; } }   /* (a phone: clear of the small pictures under the large one) */
+.t-picture-back h1 { text-align: left; }   /* (a phone: clear of the small pictures under the large one) */
 
 /* ---- The tray (card.mjs .tc-pad): card and talk on one drawn desk pad in the session's pale tone: a pen outline, a
    second line inside it, four hatched corners. The card lies on it with a soft shadow; the talk is written straight
@@ -714,13 +668,7 @@ div.focus-opt { cursor: default; }
 @media (prefers-reduced-motion: reduce) { .tc-bar-in { transition: none; } }
 /* (a phone's gallery: Later's tag stands small in the head, beside the question, not over the picture) */
 @media (max-width: 860px) {
-  .t-picture.is-deciding .tc-later { position: static; flex: none; width: auto; height: auto; z-index: auto; }
-  .t-picture.is-deciding .tc-later .sel-later { position: static; padding: 0 4px; translate: none; }
-  .t-picture.is-deciding .tc-later .sel-later::before { content: none; }
-  .t-picture.is-deciding .tc-later .sel-later svg { width: 22px; height: 46px; animation: none; }
-  .t-picture.is-deciding > .t-picture-bar { align-items: flex-start; }
   .t-picture-back { flex: 1 1 0; }
-  .t-picture.is-deciding .tc-later { order: 1; }
   .t-picture-sub { order: 2; }
 }
 
@@ -729,7 +677,6 @@ div.focus-opt { cursor: default; }
 .final-sign { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); white-space: nowrap; }
 .final-sign .sketch { width: 13px; height: 13px; stroke-width: 2; }
 .tc-opt > .final-sign { margin-left: auto; padding-left: 6px; }
-.t-picture-answer .tc-opt > .final-sign > span { display: none; }
 .tc-chip > .final-sign { margin-left: 6px; vertical-align: -1px; }
 .tc-opt.is-settled .tc-opt-label { display: inline-flex; align-items: center; gap: 7px; }
 .tc-opt.is-settled .tc-opt-label .sketch { flex: none; width: 16px; height: 16px; stroke-width: 2; color: var(--stamp-ink-done, currentColor); }
@@ -807,3 +754,30 @@ div.focus-opt { cursor: default; }
   .tc-card > .tc-left > .tc-lead > :is(.tc-text, .tc-more-text, .tc-versions, .tc-why) { order: 2; margin: var(--s-4) var(--s-5) 0; }
   .tc-card > .tc-left > :is(.tc-media, turbo-frame) { order: 3; margin: var(--s-4) var(--s-5) var(--s-5); }
 }
+
+/* ---- Full screen (his word, 6 October: no separate gallery, Full screen on the card is enough): the card itself fills the
+   main area, its pictures large on the left, its own right column beside them (the same answers, the same Later tag);
+   the round button that opened it closes it, as Esc does. ---- */
+.tc-page.is-full { overflow: hidden; }
+.tc-page.is-full .tc-card { position: fixed; z-index: 50; left: var(--side, 0px); right: 0; top: 0; bottom: 0; max-width: none; min-height: 0; margin: 0; border-radius: 0; box-shadow: none; }
+.tc-page.is-full .tc-card > .tc-left { overflow-y: auto; padding: 20px 24px 20px 72px; }
+.tc-page.is-full .tc-card > .tc-left > .tc-lead > :not(.tc-title) { display: none; }
+.tc-page.is-full .tc-card > .tc-left > .tc-lead > .tc-title { font-size: var(--t-xl); }
+.tc-page.is-full .tc-card > .tc-right { position: static; min-height: 0; overflow-y: auto; }
+.tc-page.is-full .tc-stage:not(.is-video) { max-height: none; align-self: stretch; }
+.tc-page.is-full .tc-stage .tc-figure img { max-height: calc(100dvh - 200px); width: auto; margin-inline: auto; object-fit: contain; }
+.tc-page.is-full .tc-stage.is-video { height: calc(100dvh - 220px); align-self: stretch; }
+.tc-page.is-full .tc-stage .tc-step { top: 50%; }
+.tc-page.is-full .tc-rails > .tc-full { position: fixed; z-index: 51; left: calc(var(--side, 0px) + 14px); top: 16px; }
+.tc-page.is-full .tc-rails > :not(.tc-full), .tc-page.is-full .tc-later, .tc-page.is-full .tc-bar { display: none; }
+@media (max-width: 860px) {
+  .tc-page.is-full .tc-card { top: calc(48px + env(safe-area-inset-top, 0px)); overflow-y: auto; }
+  .tc-page.is-full .tc-card > .tc-left { padding: 64px 12px 12px; overflow: visible; }
+  .tc-page.is-full .tc-stage .tc-figure img { max-height: 70dvh; }
+  .tc-page.is-full .tc-rails > .tc-full { left: 12px; top: calc(60px + env(safe-area-inset-top, 0px)); }
+}
+@container cardpage (max-width: 600px) {
+  .tc-page.is-full .tc-card > .tc-left > :is(.tc-media, turbo-frame) { order: 0; margin-top: 0; }
+  .tc-page.is-full .tc-card > .tc-left > .tc-lead > .tc-title { margin-left: 64px; font-size: var(--t-lg); }
+}
+@media (max-width: 860px) { .tc-page.is-full .tc-card > .tc-left { padding: 0; } }
