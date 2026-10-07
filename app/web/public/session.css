@@ -361,6 +361,8 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 
   .log { scrollbar-gutter: auto; }
   .log-inner { padding-block: var(--s-5) var(--s-5); }
+  .chat-pane:not(.is-several) .log-inner { padding-bottom: 106px; }
+  .session-cards { padding-bottom: 110px; }   /* (the last line ends above the corner note and the jump to the open questions) */
   .msg { margin-top: var(--s-6); }
   .msg-user { max-width: 88%; }
   .event { min-height: 44px; margin-top: var(--s-4); }
