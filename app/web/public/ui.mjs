@@ -2117,15 +2117,10 @@ const LAYOUT = [
     { id: 'ans.right', keys: ['ArrowRight'], does: 'on What??: over to Reverse' },
     { id: 'ans.left', keys: ['ArrowLeft'], does: 'on Reverse: over to What??' },
     { id: 'card.send', keys: ['Enter'], does: 'take the marked answer; tick it where several are allowed, or send when none is marked' },
-    { id: 'card.later', keys: ['l', 's'], does: 'Later' },
-    { id: 'card.trust', keys: ['r'], does: 'Duck it: the agent decides' },
-    { id: 'card.revise', keys: ['b'], does: 'Reverse: back to the agent for rework, with the comments' },
-    { id: 'card.what', keys: ['e'], does: 'What??: ask the agent to explain' },
-    { id: 'card.shred', keys: ['x'], does: 'Shred: throw it away unanswered' },
-    { id: 'card.write', keys: ['a'], does: 'write to the agent about the question' },
-    { id: 'card.back', keys: ['u', 'Backspace'], does: 'undo: the newest toast\'s Undo, else this answer or the hand-back' },
-    { id: 'card.next', keys: ['j', 'ArrowRight'], does: 'next question, without answering', repeat: true },
-    { id: 'card.prev', keys: ['k', 'ArrowLeft'], does: 'previous question', repeat: true },
+    // (no letters here: on a question's own page a letter is writing, it goes into the field; see typeToField)
+    { id: 'card.back', keys: ['Backspace'], does: 'undo: the newest toast\'s Undo, else this answer or the hand-back' },
+    { id: 'card.next', keys: ['ArrowRight'], does: 'next question, without answering', repeat: true },
+    { id: 'card.prev', keys: ['ArrowLeft'], does: 'previous question', repeat: true },
     { id: 'card.pic.next', keys: ['Shift+ArrowRight'], does: 'next picture', repeat: true },
     { id: 'card.pic.prev', keys: ['Shift+ArrowLeft'], does: 'previous picture', repeat: true },
     { id: 'card.leave', keys: ['Escape'], does: 'leave a field, then back to the Desk', typing: true },
@@ -2181,7 +2176,7 @@ export const SHORT = [
   { id: 'open', keys: ['Enter'], does: 'open; on a card: take the marked answer' },
   { id: 'back', keys: ['Escape'], does: 'back: leave a field, close, back to the Desk' },
   { id: 'note.new', keys: ['n'], does: 'a new note' },
-  { id: 'later', keys: ['l'], does: 'Later: put the question off' },
+  { id: 'later', keys: ['l'], does: 'Later: put the question off (on the Desk; on a card a letter goes into the field)' },
   { id: 'help', keys: ['?'], does: 'this list' },
 ]
 
@@ -2254,6 +2249,16 @@ function start(signal) {
   const view = () => document.body.dataset.tView ?? ''
   const shown = node => Boolean(node && !node.closest('[hidden], [inert]') && node.getClientRects().length)
   const typingIn = node => Boolean(node?.closest?.('input:not([type=checkbox], [type=radio], [type=button], [type=submit]), textarea, select, [contenteditable]:not([contenteditable="false"])'))
+  /** A character typed on a question's page outside any field: into the card's field, at its end. */
+  function typeToField(e) {
+    if (view() !== 'card' || e.key.length !== 1 || e.key === ' ' || e.key === '?') return false
+    const field = $('.tc-field')
+    if (!field || !shown(field) || field.disabled) return false
+    field.focus({ preventScroll: true })
+    field.setRangeText(e.key, field.value.length, field.value.length, 'end')
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  }
   const isControl = node => Boolean(node?.closest?.('button, a[href], summary, [role="button"]'))
   /** Go to a page the way a click on a link does (Turbo for the pages rendered here, a whole load for the others: t/boot.js). */
   function go(path) {
@@ -2389,12 +2394,6 @@ function start(signal) {
       if (at?.closest?.('.tc-answer') && at.matches('button')) return false
       return press($('.tc-answer .tc-send-many'))
     },
-    'card.later': () => press($('.tc-later .sel-later, .t-picture-later .sel-later')),
-    'card.trust': () => press($('.tc-answer .tc-whatever')),
-    'card.revise': () => press($('.tc-answer .tc-reverse')),   // the reverse card: handed back at once
-    'card.what': () => press($('.tc-answer .tc-wtf, .tc-answer .tc-tile.is-what, .tc-more-item.is-what')),
-    'card.shred': () => press($('.tc-more-item.is-shred')),
-    'card.write': () => { const field = $('.tc-field'); if (!field) return false; field.focus() },
     'card.back': () => { if ($('#says-host .says:not([hidden]) .says-back')) return backNote(); const b = $('.tc-answer button[formaction$="/reopen"], .tc-answer button[formaction$="/takeback"]'); return b ? press(b) : false },
     'card.next': () => press($('.tc-rails a.is-next')),
     'card.prev': () => press($('.tc-rails a.is-prev')),
@@ -2524,6 +2523,10 @@ function start(signal) {
       if (name === 'Escape') document.addEventListener('keydown', ev => { if (ev === e && !e.defaultPrevented && run(name, e, { typing: true })) e.preventDefault() }, { once: true, signal })
       return
     }
+    // On a question's own page a letter, a digit or a mark is writing: it goes into the field to write to the agent,
+    // never into a key that sends the card away (Later was "s", Shred "x", the duck "r"; one letter typed before the
+    // field had the keyboard put the card off, and the next one stood on the clipboard in its place).
+    if (typeToField(e)) return taken()
     if (pending) {
       const { prefix } = pending
       setPending(null)

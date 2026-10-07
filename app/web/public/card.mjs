@@ -26,6 +26,8 @@ const FORTH = pen('<path d="M4.6 12.3 Q11.8 11.5 19 12.1"/><path d="M13.1 6 Q16.
 const CROSS = pen('<path d="M6.3 6.6 Q12.2 12.1 17.8 17.7"/><path d="M17.6 6.2 Q12 12.2 6.2 17.9"/>')
 const DOTS = pen('<path d="M5.4 12 Q5.9 11.5 6.4 12 Q5.9 12.6 5.4 12 M11.5 12 Q12 11.5 12.5 12 Q12 12.6 11.5 12 M17.6 12 Q18.1 11.5 18.6 12 Q18.1 12.6 17.6 12" stroke-width="2.6"/>')
 const FULL = pen('<path d="M4.4 9.3 Q4.1 6.6 4.5 4.4 Q6.9 4.1 9.4 4.4"/><path d="M14.7 4.2 Q17.3 4.5 19.6 4.3 Q19.9 6.7 19.6 9.2"/><path d="M19.8 14.8 Q19.5 17.4 19.7 19.7 Q17.2 19.9 14.8 19.6"/><path d="M9.3 19.8 Q6.7 19.5 4.3 19.7 Q4.1 17.2 4.4 14.9"/>')
+// Held Ctrl (Cmd on a Mac) while writing on a decision: Send is the reverse card (controller "card", held()).
+const CTRL_WORD = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '') ? '⌘' : 'Ctrl'
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
 const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
@@ -412,7 +414,7 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 <span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>
 <div class="tc-ask"><div class="tc-chips" data-card-target="chips" hidden></div>
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${askWords(card, model, asker)}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
-<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you" aria-label="Send to the agent">${sk('send')}</button></div></div>
+<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${open && card.kind === 'decision' ? `. Hold ${CTRL_WORD}: send and reverse, back to ${asker || 'the agent'}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick">${sk('send')}${open && card.kind === 'decision' ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button></div></div>
 </form>
 </div>
 </main>`
@@ -777,6 +779,10 @@ controller('card', class extends Controller {
   static values = { draft: String, pictures: Array }
 
   connect() {
+    this.held = this.held.bind(this)
+    for (const name of ['keydown', 'keyup']) addEventListener(name, this.held, true)
+    addEventListener('blur', this.held)
+    this.tryPad()
     this.grow()
     if (this.hasMarksTarget) this.mountMarks()
     this.link = this.link.bind(this)
@@ -799,6 +805,8 @@ controller('card', class extends Controller {
     this.link()
   }
   disconnect() {
+    for (const name of ['keydown', 'keyup']) removeEventListener(name, this.held, true)
+    removeEventListener('blur', this.held)
     this.sized?.disconnect()
     removeEventListener('resize', this.link)
     removeEventListener('resize', this.placed)
@@ -920,6 +928,22 @@ controller('card', class extends Controller {
     this.element.classList.toggle('card-gone', r.bottom < box.top + 90)
     this.element.classList.toggle('foot-passed', r.bottom < box.bottom - 96)
   }
+  // Proposals, local only (card.css "pad proposals"): ?pad=<key> tries a way to join the card, the pad and the field.
+  tryPad() {
+    const key = new URLSearchParams(location.search).get('pad')
+    if (!key) return
+    this.element.dataset.pad = key
+    const q = sel => this.element.querySelector(sel)
+    const frame = q('.tc-frame'), card = q('.tc-card'), chat = q('.tc-chat'), later = q('.tc-frame > .tc-later'), ask = q('.tc-chat > .tc-ask')
+    if (!frame || !card || !chat) return
+    if (['sheet', 'clip', 'tight'].includes(key)) { card.after(chat); if (later) chat.after(later) }
+    if (key === 'inside' && ask) {
+      for (const c of ask.querySelectorAll('textarea, input, button')) c.setAttribute('form', chat.id)
+      const pair = q('.tc-answer .tc-or-pair')
+      if (pair) pair.before(ask); else q('.tc-answer')?.append(ask)
+    }
+    if (key === 'clip') q('.tc-pad')?.insertAdjacentHTML('afterbegin', '<svg class="tc-clamp" viewBox="0 0 180 64" aria-hidden="true"><path class="clamp-back" d="M14 30 Q13 14 30 13 L62 12 Q66 2 90 2 Q114 2 118 12 L150 13 Q167 14 166 30 L165 52 Q164 61 152 61 L28 61 Q15 61 15 52 Z"/><path class="clamp-hole" d="M78 12 Q90 6 102 12 Q102 20 90 20 Q78 20 78 12 Z"/><path class="clamp-line" d="M24 44 Q90 41 156 44"/></svg>')
+  }
   toAnswers() { this.element.querySelector('.tc-card')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }
   // (another picture or a video came into the frame: it is the one that stands now, and the one Full screen opens)
   framed() {
@@ -950,11 +974,29 @@ controller('card', class extends Controller {
   typed() { this.grow(); this.keep() }
   // (Where the browser sizes a field to its content itself (field-sizing, cardpage.css), no measuring: it cost a forced layout per page.)
   grow() { if (GROWS) return; const f = this.hasFieldTarget ? this.fieldTarget : null; if (f) { f.style.height = 'auto'; f.style.height = `${Math.min(f.scrollHeight, 220)}px` } }
-  // Enter sends, Shift+Enter is a new line.
+  // Enter sends, Shift+Enter is a new line. Ctrl+Enter (Cmd+Enter) on a decision sends and reverses: the words go back
+  // with the card, for rework (the reverse card's own way: revise takes the field's words as the hand-back's message).
   keys(event) {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing || (!this.fieldTarget.value.trim() && !this.filesTarget.files.length)) return
     event.preventDefault()
-    this.formTarget.requestSubmit(this.formTarget.querySelector('.tc-send'))
+    const reverse = (event.ctrlKey || event.metaKey) && this.reverseTile()
+    this.formTarget.requestSubmit(reverse || this.formTarget.querySelector('.tc-send'))
+  }
+  reverseTile() { return this.element.querySelector('.tc-answer .tc-reverse') }
+  // While Ctrl (Cmd) is held with the keyboard in the field, Send wears the reverse card; let go, it is Send again.
+  held(event) {
+    const send = this.hasFormTarget ? this.formTarget.querySelector('.tc-send') : null
+    if (!send?.querySelector('.tc-send-uno')) return
+    const on = event.type !== 'blur' && (event.ctrlKey || event.metaKey) && Boolean(this.formTarget.querySelector('.tc-ask')?.contains(document.activeElement)) && Boolean(this.reverseTile())
+    send.classList.toggle('is-reverse', on)
+    send.setAttribute('aria-label', on ? 'Send and reverse: back to the agent for rework' : 'Send to the agent')
+  }
+  // A click on Send with Ctrl (Cmd) held: send and reverse, as Ctrl+Enter.
+  sendClick(event) {
+    const tile = (event.ctrlKey || event.metaKey) && this.reverseTile()
+    if (!tile) return
+    event.preventDefault()
+    this.formTarget.requestSubmit(tile)
   }
 
   // ---- the draft: what is ticked and written is kept on the hub a moment after the last stroke ----
