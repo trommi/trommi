@@ -834,7 +834,7 @@ export function screensMain() {
   return `<main id="screens" class="scr-page" data-controller="screens"><style>
 .scr-page{grid-column:1/-1;overflow-y:auto;height:100%;padding:24px 32px 80px;background:var(--bg);color:var(--fg)}
 .scr-head{display:flex;align-items:center;gap:16px;margin-bottom:8px}.scr-head h1{font:800 2rem/1.1 var(--display);margin:0}
-.scr-head p{margin:0;color:var(--muted)}.scr-theme{margin-left:auto;min-height:36px;padding:0 14px;border:1.6px solid var(--fg);border-radius:9px 12px 8px 13px/12px 8px 13px 9px;background:var(--surface);color:var(--fg);font:700 var(--t-sm)/1 var(--font);cursor:pointer}
+.scr-head p{margin:0;color:var(--muted)}.scr-theme.is-tour{margin-left:auto;background:var(--fg);color:var(--bg)}.scr-theme{min-height:36px;padding:0 14px;border:1.6px solid var(--fg);border-radius:9px 12px 8px 13px/12px 8px 13px 9px;background:var(--surface);color:var(--fg);font:700 var(--t-sm)/1 var(--font);cursor:pointer}
 .scr-page h2{font:800 1.4rem/1.2 var(--display);margin:32px 0 12px;padding-top:12px;border-top:1px dashed var(--line-strong)}
 .scr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(620px,1fr));gap:24px 28px}
 .scr-item{margin:0}.scr-item figcaption{display:flex;gap:10px;align-items:baseline;margin-bottom:6px;font:600 var(--t-sm)/1.3 var(--font)}
@@ -844,7 +844,17 @@ export function screensMain() {
 .scr-box.is-wide{width:480px;height:300px}.scr-box.is-phone{width:130px;height:281px;border-radius:14px}
 .scr-box iframe{position:absolute;left:0;top:0;border:0;transform-origin:0 0;pointer-events:none}
 .scr-box.is-wide iframe{transform:scale(.3333)}.scr-box.is-phone iframe{transform:scale(.3333)}
-</style><header class="scr-head"><h1>All screens</h1><p>The demo room, every screen and state; a title opens it alone.</p><button type="button" class="scr-theme" data-action="screens#theme">Light / dark</button></header>
+.tour{position:fixed;inset:0;z-index:200;display:grid;grid-template-rows:minmax(0,1fr) auto;background:var(--sunken)}
+.tour-stage{position:relative;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 392px;gap:16px;padding:12px;align-items:start}
+.tour-stage iframe{display:block;border:1.5px solid var(--fg);background:var(--surface);box-shadow:0 18px 40px -20px rgb(20 30 25/.5)}
+.tour-stage .is-wide{width:100%;height:100%;border-radius:10px}
+.tour-stage .is-phone{width:390px;height:min(844px,100%);border-radius:22px;justify-self:end}
+.tour-bar{display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 12px;border-top:1.5px solid var(--fg);background:var(--surface);color:var(--fg);font:600 var(--t-sm)/1.2 var(--font)}
+.tour-bar button,.tour-bar select{min-height:34px;padding:0 12px;border:0;border-radius:10px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line-strong);color:var(--fg);font:600 var(--t-sm)/1 var(--font);cursor:pointer}
+.tour-bar .tour-play{background:var(--fg);color:var(--bg);box-shadow:none;min-width:84px}
+.tour-where{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}.tour-where b{color:var(--fg)}
+.tour-wait{font:500 var(--t-xs)/1 var(--font);color:var(--muted)}
+</style><header class="scr-head"><h1>All screens</h1><p>The demo room, every screen and state; a title opens it alone.</p><button type="button" class="scr-theme is-tour" data-action="screens#tour">▶ Play tour</button><button type="button" class="scr-theme" data-action="screens#eager" title="Load every frame now, for scrolling through all of them">Load all</button><button type="button" class="scr-theme" data-action="screens#theme">Light / dark</button></header>
 ${SCREENS.map(([group, list]) => `<h2>${group}</h2><div class="scr-grid">${list.map(([t, p, s]) => frame(t, p, s)).join('')}</div>`).join('')}</main>`
 }
 export const screensView = { register(t) { t.get(/^\/screens$/, ({ req, res }) => t.page(req, res, { title: 'All screens · Trommi', view: 'screens', sidebar: false, stream: null, main: screensMain() })) } }
@@ -856,8 +866,76 @@ export function screensController({ Controller, controller }) {
       this.dark = document.documentElement.dataset.theme === 'dark'
       this.io = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) { const f = e.target; f.src = f.dataset.src; f.addEventListener('load', () => this.paint(f)); this.io.unobserve(f) } }, { rootMargin: '400px' })
       for (const f of this.element.querySelectorAll('iframe[data-src]')) this.io.observe(f)
+      if (new URLSearchParams(location.search).get('tour') === '1') requestAnimationFrame(() => this.tour())
     }
-    disconnect() { this.io?.disconnect() }
+    disconnect() { this.io?.disconnect(); this.endTour() }
+    // Load every frame now (for scrolling through all of them)
+    eager() { for (const f of this.element.querySelectorAll('iframe[data-src]:not([src])')) { this.io.unobserve(f); f.src = f.dataset.src; f.addEventListener('load', () => this.paint(f)) } }
+    // ---- the tour: one screen at a time at its real size, desktop then phone, held a while once it is in ----
+    stops() {
+      const out = []
+      let group = ''
+      for (const el of this.element.querySelectorAll('h2, .scr-item')) {
+        if (el.tagName === 'H2') { group = el.textContent; continue }
+        const name = el.querySelector('figcaption a').textContent, src = el.querySelector('iframe').dataset.src
+        out.push({ group, name, src })
+      }
+      return out
+    }
+    tour() {
+      if (this.box) return
+      this.list = this.stops(); this.at = 0; this.playing = true; this.hold = 4000
+      const box = this.box = document.createElement('div')
+      box.className = 'tour'
+      box.innerHTML = '<div class="tour-stage"></div><div class="tour-bar" role="toolbar" aria-label="Tour"><button type="button" class="tour-play">Pause</button><button type="button" class="tour-prev" title="The one before (←)">←</button><button type="button" class="tour-next" title="The next (→)">→</button><select class="tour-speed" aria-label="How long each screen stands"><option value="2000">2 s</option><option value="4000" selected>4 s</option><option value="8000">8 s</option></select><span class="tour-where"></span><span class="tour-wait"></span><button type="button" class="tour-close" title="Back to the grid (Esc)">Close</button></div>'
+      document.body.append(box)
+      const q = s => box.querySelector(s)
+      q('.tour-play').addEventListener('click', () => this.toggle())
+      q('.tour-prev').addEventListener('click', () => this.go(this.at - 1))
+      q('.tour-next').addEventListener('click', () => this.go(this.at + 1))
+      q('.tour-speed').addEventListener('change', e => { this.hold = Number(e.target.value); this.arm() })
+      q('.tour-close').addEventListener('click', () => this.endTour())
+      this.keys = e => {
+        if (e.key === ' ') { e.preventDefault(); this.toggle() } else if (e.key === 'ArrowRight') { e.preventDefault(); this.go(this.at + 1) } else if (e.key === 'ArrowLeft') { e.preventDefault(); this.go(this.at - 1) } else if (e.key === 'Escape') { e.preventDefault(); this.endTour() }
+      }
+      addEventListener('keydown', this.keys, true)
+      this.go(0)
+    }
+    toggle() { this.playing = !this.playing; this.box.querySelector('.tour-play').textContent = this.playing ? 'Pause' : 'Play'; this.arm() }
+    endTour() { clearTimeout(this.timer); if (this.keys) removeEventListener('keydown', this.keys, true); this.box?.remove(); this.box = null }
+    go(i) {
+      if (!this.box) return
+      this.at = (i + this.list.length) % this.list.length
+      const s = this.list[this.at], stage = this.box.querySelector('.tour-stage')
+      clearTimeout(this.timer); this.ready = false
+      // one step: the screen at a desktop's size on the left and at a phone's on the right, both at their real size
+      const frame = cls => { const f = document.createElement('iframe'); f.className = cls; f.tabIndex = -1; f.style.pointerEvents = 'none'; f.title = `${s.name}${cls === 'is-phone' ? ', phone' : ''}`; return f }
+      const wide = frame('is-wide'), phone = frame('is-phone')
+      const loaded = f => new Promise(done => f.addEventListener('load', async () => {
+        this.paint(f)
+        await new Promise(r => setTimeout(r, 1300))   // (the frame's own state click, demoState, waits 500 ms)
+        // the pictures in view decoded (a lazy one below the fold never comes: at most 3 s)
+        try {
+          const vh = f.contentWindow.innerHeight
+          const shown = [...f.contentDocument.images].filter(im => { const r = im.getBoundingClientRect(); return r.width && r.top < vh && r.bottom > 0 })
+          await Promise.race([Promise.all(shown.map(im => (im.complete ? (im.decode?.() ?? Promise.resolve()) : new Promise(r => { im.addEventListener('load', r, { once: true }); im.addEventListener('error', r, { once: true }) })).catch(() => {}))), new Promise(r => setTimeout(r, 3000))])
+        } catch {}
+        done()
+      }, { once: true }))
+      const both = Promise.all([loaded(wide), loaded(phone)])
+      wide.src = s.src; phone.src = s.src
+      stage.replaceChildren(wide, phone)
+      const at = this.at
+      both.then(() => { if (this.box && this.at === at) { this.ready = true; this.arm() } })
+      this.box.querySelector('.tour-where').innerHTML = `<b>${this.at + 1} / ${this.list.length}</b> · ${s.group} · ${s.name}`
+      this.box.querySelector('.tour-wait').textContent = 'loading…'
+    }
+    arm() {
+      clearTimeout(this.timer)
+      if (!this.box) return
+      this.box.querySelector('.tour-wait').textContent = this.ready ? (this.playing ? '' : 'paused') : 'loading…'
+      if (this.playing && this.ready) this.timer = setTimeout(() => this.go(this.at + 1), this.hold)
+    }
     paint(f) { try { const d = f.contentDocument?.documentElement; if (!d) return; if (this.dark) d.dataset.theme = 'dark'; else delete d.dataset.theme } catch {} }
     theme() {
       this.dark = !this.dark
