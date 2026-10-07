@@ -46,6 +46,8 @@ import { connectorFiles } from './build.mjs'
 import { assetPath } from '../app/web/worker.js'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
+// Run inside Claude Code, this process has its session id; every connector and join here gets its own, or none.
+delete process.env.CLAUDE_CODE_SESSION_ID
 /** The check code a connector printed ("check code 🐶 🎂 … (dog, cake, …)"), read back from its words, as the core writes it. */
 const codeInTerminal = text => {
   const m = /check code [^(\n]*\(([a-z ,]+)\)/.exec(text)
@@ -680,8 +682,10 @@ export async function integration({ test, tmp }) {
       const keyed = () => mine().filter(f => /-\d+\.key$/.test(f) && !f.startsWith('replaced-'))
       const agentsNow = () => new Set([...human.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).map(m => m.device_id))
       /** `connector.mjs join` as the connect script runs it; `onCode(code)` is the human with the app. */
+      // The join runs in this folder's Claude Code session (its session id), in a shell of its own (its own session key).
+      const claudeSession = crypto.randomUUID()
       const joinCli = (link, onCode = null) => new Promise(resolve => {
-        const child = spawn(process.execPath, [path.join(here, 'connector.mjs'), 'join'], { env: { ...process.env, ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: link, TROMMI_FOLDER_WATCH: '0', TROMMI_SESSION_KEY: `cli-${Math.random().toString(36).slice(2)}` }, cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] })
+        const child = spawn(process.execPath, [path.join(here, 'connector.mjs'), 'join'], { env: { ...process.env, ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: link, TROMMI_FOLDER_WATCH: '0', TROMMI_SESSION_KEY: `cli-${Math.random().toString(36).slice(2)}`, CLAUDE_CODE_SESSION_ID: claudeSession }, cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] })
         let err = '', told = false
         child.stderr.on('data', d => {
           err += d
@@ -742,7 +746,7 @@ export async function integration({ test, tmp }) {
       await until('the session is the newcomer\'s', () => JSON.stringify(human.model.sessions.get(session_id).agent_device_ids) === JSON.stringify([heir]))
       assert.equal(human.model.members.get(firstDevice).is_active, true, 'the device this session was before is left a member (the human removes it)')
       // Its Claude Code session starts: the connector opens the new key and is that session.
-      const mcp = await startConnector({ env: { ...env, TROMMI_FOLDER: dir }, cwd: dir })
+      const mcp = await startConnector({ env: { ...env, TROMMI_FOLDER: dir, CLAUDE_CODE_SESSION_ID: claudeSession }, cwd: dir })
       await mcp.ready().catch(e => { throw new Error(`${e.message}\n${mcp.stderr()}`) })
       const q = (await mcp.call('create_decision', { title: 'Still me?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })).match(/card ([0-9a-f]{32})/)[1]
       await until('its card in the continued session', () => human.model.cards.get(q)?.session_id === session_id)
@@ -752,7 +756,7 @@ export async function integration({ test, tmp }) {
       const again = await human.createInvite({ device_role: 'agent', session_id, takeover: true })
       const live = await joinCli(again.link, confirmWith(again))
       assert.equal(live.code, 0, live.err)
-      assert.match(live.err, /that key is put aside as .* and this session uses the new one/)
+      assert.match(live.err, /that key is put aside as .* and this session uses the new one/, live.err)
       assert.doesNotMatch(live.err, /restart/)
       const heir2 = human.model.invites.get(again.invite_id).newcomer.device_id
       assert.notEqual(heir2, heir)
@@ -765,9 +769,69 @@ export async function integration({ test, tmp }) {
       await mcp.close()
     })
 
+    // Keys of one folder whose devices are out (retired by a takeover, removed by the human) are put aside by the
+    // connector itself, which goes on with the next usable key; a session's own joined key is preferred on reconnect.
+    await test('e2e: dead keys: a fresh connector skips removed slots to the live one; a running one moves on when its device is removed; a reconnect picks the slot its session joined with', async () => {
+      const dir = path.join(tmp, 'deadkeys')
+      fs.mkdirSync(dir, { recursive: true })
+      const room = path.join(keys, human.model.room.room_id)
+      const live = () => fs.readdirSync(room).filter(f => f.includes('-deadkeys-') && /-\d+\.key$/.test(f) && !f.startsWith('replaced-')).map(f => Number(/-(\d+)\.key$/.exec(f)[1])).sort()
+      const aside = () => fs.readdirSync(room).filter(f => f.startsWith('replaced-') && f.includes('-deadkeys-') && f.endsWith('.key')).length
+      const lockOf = (n, pid) => fs.existsSync(path.join(room, fs.readdirSync(room).find(f => f.includes('-deadkeys-') && f.endsWith(`-${n}.key`)).replace(/key$/, `lock.${pid}`)))
+      /** A plain join in this folder for the Claude Code session `claude`: resolves with the new device id. */
+      const join = async claude => {
+        const invite = await human.createInvite({ device_role: 'agent' })
+        const out = await new Promise(resolve => {
+          const child = spawn(process.execPath, [path.join(here, 'connector.mjs'), 'join'], { env: { ...process.env, ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: invite.link, TROMMI_FOLDER_WATCH: '0', TROMMI_SESSION_KEY: `cli-${claude}`, CLAUDE_CODE_SESSION_ID: claude }, cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
+          let text = ''
+          child.stdout.on('data', d => { text += d }); child.stderr.on('data', d => { text += d })
+          child.on('exit', code => resolve({ code, text }))
+        })
+        assert.equal(out.code, 0, out.text)
+        return /as device ([0-9a-f]+)/.exec(out.text)[1]
+      }
+      const remove = async id => { await human.removeDevices([id]); await until('removed', () => human.model.members.get(id)?.is_active === false) }
+      const devs = []
+      for (const c of ['dk-a', 'dk-b', 'dk-c', 'dk-d']) devs.push(await join(c))
+      assert.deepEqual(live(), [1, 2, 3, 4])
+      await remove(devs[0]); await remove(devs[1])
+      // (1) A fresh connector of another session: slots 1 and 2 are out; it ends on 3, and its first call works.
+      const x = await startConnector({ env: { ...env, TROMMI_FOLDER: dir, CLAUDE_CODE_SESSION_ID: 'dk-x' }, cwd: dir })
+      const first = await x.call('list_cards').catch(e => { throw new Error(`${e.message}\n${x.stderr()}`) })
+      assert.ok(Array.isArray(JSON.parse(first)))
+      assert.deepEqual(live(), [3, 4], 'the two dead keys are put aside')
+      assert.equal(aside(), 2)
+      assert.ok(lockOf(3, x.pid), 'on slot 3')
+      assert.match(x.stderr(), /slot 1: (its device was removed from the room|another connector continues its session, its device is retired); the key is put aside/)   // (the core calls a removal right after an agent's add a retirement)
+      assert.match(x.stderr(), /slot 2: its device was removed from the room; the key is put aside/)
+      // (2) Its device is removed while it runs: it moves on to slot 4 at once, without a restart, and the next call works.
+      // The call right after the removal goes through, on the next key.
+      await remove(devs[2])
+      const id = (await x.call('create_info', { title: 'Still here', body: 'on the fourth key' }).catch(e => { throw new Error(`${e.message}\n${x.stderr()}`) })).match(/info ([0-9a-f]{32})/)[1]
+      await until('moved on to slot 4', () => live().join() === '4' && lockOf(4, x.pid), 20000).catch(e => { throw new Error(`${e.message}\n${x.stderr()}`) })
+      await until('the card from the fourth key', () => human.model.cards.get(id)?.title === 'Still here')
+      assert.equal(x.events.some(e => e.params?.meta?.retired === '1'), false, 'no retired notice while a key is left')
+      // (3) The last key goes too: now it says so, plainly.
+      await remove(devs[3])
+      await x.next(e => e.method === 'notifications/claude/channel' && e.params.meta?.retired === '1', 'the retired notice')
+      await assert.rejects(x.call('list_cards'), /This connector is retired: the human removed its key .* invites this session again/)
+      await x.close()
+      assert.deepEqual(live(), [])
+      // (4) Two sessions join; a fresh connector of the second one (a /mcp Reconnect: same session id, new process) takes
+      // its own slot 2, not the lower slot 1 of the other.
+      await join('dk-other')
+      const mineDev = await join('dk-mine')
+      assert.deepEqual(live(), [1, 2])
+      const back = await startConnector({ env: { ...env, TROMMI_FOLDER: dir, CLAUDE_CODE_SESSION_ID: 'dk-mine' }, cwd: dir })
+      await back.call('list_cards').catch(e => { throw new Error(`${e.message}\n${back.stderr()}`) })
+      assert.ok(lockOf(2, back.pid), 'on the slot its session joined with')
+      assert.match(back.stderr(), new RegExp(`as ${mineDev.slice(0, 12)}`))
+      await back.close()
+    })
+
     await test('e2e: lease-lost: another process takes over the key; the connector exits without posting', async () => {
       const room = path.join(keys, human.model.room.room_id)
-      const slot = fs.readdirSync(room).find(f => /-1\.key$/.test(f) && !f.includes('heir'))
+      const slot = fs.readdirSync(room).find(f => /-1\.key$/.test(f) && !f.includes('heir') && !f.includes('deadkeys'))
       const prefix = slot.replace(/key$/, '')
       // The other process: the same key, its own copy of the state (as a second Claude would have after a copy of the folder).
       const twin = fs.mkdtempSync(path.join(tmp, 'twin-'))

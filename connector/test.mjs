@@ -16,7 +16,7 @@ import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createBridge, TOOLS, RELOAD_TOOL, INBOX_TOOL, TOOL_EXAMPLES, INSTRUCTIONS, DESCRIPTIONS, TEASER_MAX, monitorNote, inboxToolName, parsePrompt } from './tools.mjs'
-import { isSpare, yieldState, claimsAtStart, checkIn, checkOut, othersHere, folderWatch, leaveMark, lossMatters, presenceOf, askYield, doorOf, bellPath, ring, openDoorAt, lockSlot, unlockSlot, claimSlot, alive, openDoor, knock, createHookDesk, hookRequest, redact, deniedText, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES, pointerLine } from './connector.mjs'
+import { isSpare, yieldState, claimsAtStart, checkIn, checkOut, othersHere, folderWatch, leaveMark, lossMatters, presenceOf, askYield, doorOf, bellPath, ring, openDoorAt, lockSlot, unlockSlot, claimSlot, alive, openDoor, knock, createHookDesk, hookRequest, redact, deniedText, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES, pointerLine, ownedBy, slotOrder } from './connector.mjs'
 import { zip, marketplaceFiles, pluginManifest, pluginFiles } from './build.mjs'
 import * as codec from '../shared/codec.mjs'
 import { encryptAsset, decryptAsset } from '../shared/crypto/zcrypto.mjs'
@@ -513,6 +513,17 @@ await test('key: at start a connector takes the key only when nobody else could 
   assert.equal(claimsAtStart({ spare: false, others: 2, reconnect: true }), true, 'the reconnected connector of the holding session')
   assert.equal(claimsAtStart({ spare: false, others: 1, joining: true }), true)
   for (const o of [{ others: 0 }, { others: 0, reconnect: true }, { others: 0, joining: true }]) assert.equal(claimsAtStart({ spare: true, ...o }), false)
+})
+
+await test('key: a session\'s own slots come first (the key it joined with), then one its earlier connector holds, then the rest', () => {
+  assert.equal(ownedBy({ owner: 'cc:a' }, { owner: 'cc:a' }), true)
+  assert.equal(ownedBy({ owner: 'cc:b' }, { owner: 'cc:a' }), false)
+  assert.equal(ownedBy(null, { owner: 'cc:a' }), false)
+  assert.equal(ownedBy({ owner: '', claude_pid: 7 }, { owner: '', claude_pid: 7 }), true, 'without a session id: the same Claude Code process')
+  assert.equal(ownedBy({ owner: '', claude_pid: null }, { owner: '', claude_pid: 7 }), false, 'a join in a shell names no process')
+  assert.deepEqual(slotOrder([1, 3, 4, 5], { owned: n => n === 5 }), [5, 1, 3, 4])
+  assert.deepEqual(slotOrder([1, 3, 4, 5], { owned: n => n === 5, heldBySession: n => n === 4 }), [5, 4, 1, 3])
+  assert.deepEqual(slotOrder([2, 1]), [1, 2])
 })
 
 await test('key: a holder gives the key up only when its session does not use it', () => {
