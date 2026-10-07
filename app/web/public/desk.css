@@ -1232,3 +1232,10 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .inbox-groups .inbox-group[data-run="many"] > .inbox-row:not(:first-of-type) button.row-mark > :is(svg:first-child, .crown-mark) { visibility: hidden; }
 .inbox-groups .inbox-group[data-run="many"] > .inbox-row:not(:first-of-type) button.row-mark::before { content: ""; position: absolute; left: calc(50% - 2px); top: calc(50% - 12px); width: 18px; height: 12px; background: var(--tone-pen); -webkit-mask: var(--run-hook) left top / contain no-repeat; mask: var(--run-hook) left top / contain no-repeat; pointer-events: none; }
 .inbox-groups .inbox-group[data-run="many"] > .inbox-row:not(:first-of-type) button.row-mark:is(:hover, :focus-visible)::before, .inbox-groups .inbox-group[data-run="many"] > .inbox-row.is-chosen button.row-mark::before, #inbox.is-choosing .inbox-groups .inbox-group[data-run="many"] > .inbox-row button.row-mark::before { display: none; }
+
+/* ---- More air (his word, 7 October): between the big greeting and the first row half as much again (32 → 48px, a
+   phone 20 → 30px), and between the two piles at the Desk's foot (Off the desk, Media) 30 % more, the pair still centred ---- */
+#inbox .desk-top { margin-bottom: 48px; }
+:is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs { column-gap: 57px; }
+@media (max-width: 860px) { #inbox .desk-top { margin-bottom: 30px; } }
+@container rows (max-width: 600px) { :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs { column-gap: 29px; } }
