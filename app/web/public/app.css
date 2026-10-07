@@ -518,7 +518,7 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
 
 /* ---- the sheet behind "?" ---- */
 .keys-sheet {
-  width: min(760px, calc(100vw - 2 * var(--s-4))); max-height: min(86vh, 860px); margin: auto; padding: var(--s-6) var(--s-8) var(--s-6);
+  width: min(480px, calc(100vw - 2 * var(--s-4))); max-height: min(86vh, 860px); margin: auto; padding: var(--s-6) var(--s-8) var(--s-6);
   border: 0; border-radius: var(--r-lg); background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto;
 }
 /* No veil over the page: the sheet lies on it with a line and a shadow; Escape, "?" or a click beside it closes. */
@@ -797,4 +797,11 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
   .ledger-find { height: 44px; }
   :is(.row-mark, .tc-from, .tc-clip, .focus-mark-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout) { position: relative; }
   :is(.row-mark, .tc-from, .tc-step, .tc-clip, .focus-mark-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
+}
+
+/* ---- A phone names the page once: the top line says it (Agents, Devices, Settings, Media, Links), so the page's own
+   big heading is left out there; the tabs and the line under the heading stay ---- */
+@media (max-width: 860px) {
+  #ledger .ledger-head h2, .room-paged .room-head, .gal-head > h2 { display: none; }
+  #ledger .ledger-head { margin-top: 0; }
 }
