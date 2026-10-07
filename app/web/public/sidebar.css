@@ -873,3 +873,7 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
 .note-up-again { margin-left: 4px; padding: 2px 8px; border: 0; border-radius: 8px; background: rgb(255 255 255 / .8); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .4); color: #3b300d; font: 600 var(--t-xs)/1.2 var(--font); cursor: pointer; }
 .corner-note-file.is-pic.is-failed { padding: 3px 3px 22px; }
 @media (prefers-reduced-motion: reduce) { .note-up svg { animation-duration: 3s; } }
+/* (the desk card's stack as thin paper edges, like a main's stack: each edge shows 3–4px; in dark the edges stay thin
+   lines of the session's ink over the pale ground, no heavy slab) */
+.desk-card-stack i { height: 9px; box-shadow: 0 0 0 1px var(--tone-pen); }
+:root[data-theme="dark"] .desk-card-stack i { background: var(--tone-wash); box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone-pen) 75%, transparent); }
