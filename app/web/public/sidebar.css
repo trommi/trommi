@@ -740,3 +740,22 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   html[data-rail="folded"] .rail-subs { display: block; position: absolute; z-index: 3; right: 1px; bottom: -14px; min-width: 18px; height: 16px; padding: 0 3px; border: 0; border-radius: 8px; background: var(--bg); color: var(--muted); font: 600 11px/16px var(--font); font-variant-numeric: tabular-nums; text-align: center; cursor: pointer; }
   html[data-rail="folded"] .rail-subs:hover, html[data-rail="folded"] .rail-subs:focus-visible { color: var(--fg); }
 }
+
+/* ---- The desk's name on the folded rail (his pick "tag", 7 October): a small paper tag hangs on a string from the desk
+   drawing, of the Later tag's family (white paper, ink outline, a hole, a little turned), the name on it in two short
+   lines at most (then an ellipsis; the whole name is the tooltip). A click opens the Trommi menu at its desks. Only
+   folded; the open sidebar says the name itself. ---- */
+.rail-tag { display: none; }
+@media (min-width: 861px) {
+  html[data-rail="folded"] .rail-tag { display: grid; justify-items: center; position: absolute; left: 50%; top: calc(100% - 6px); translate: -50% 0; width: 60px; padding: 0; border: 0; background: none; color: var(--fg); cursor: pointer; }
+  html[data-rail="folded"] #agents::before { height: 128px !important; }
+  .rail-tag-string { width: 1.6px; height: 12px; border-radius: 1px; background: var(--fg); }
+  .rail-tag-paper { position: relative; box-sizing: border-box; width: 56px; margin-top: -2px; padding: 11px 3px 6px; border: 1.6px solid var(--fg); border-radius: 4px 4px 7px 7px; background: var(--surface); rotate: -4deg; transform-origin: 50% 0; transition: rotate 160ms var(--ease-out); }
+  .rail-tag-paper::before { content: ""; position: absolute; top: 3px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border: 1.4px solid var(--fg); border-radius: 50%; box-sizing: border-box; }
+  .rail-tag-paper b { display: grid; font: 800 .7rem/1.12 var(--display); text-align: center; }
+  .rail-tag-paper b > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .rail-tag:is(:hover, :focus-visible) .rail-tag-paper { rotate: 2deg; }
+  .rail-tag:focus-visible { outline: none; }
+  .rail-tag:focus-visible .rail-tag-paper { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--fg); }
+}
+@media (prefers-reduced-motion: reduce) { .rail-tag-paper { transition: none; } }
