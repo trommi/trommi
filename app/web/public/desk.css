@@ -60,7 +60,7 @@
    The tab stands in the list's own flow above the run's first card (so it never lies on the card
    before it): the session's drawing, crown and name on the session's colour. The run's cards stand
    close under it, 4px apart, square where they meet, and do not repeat the drawing. */
-.inbox-group[data-sender] { --run-color: var(--tone-pen); --run-on: var(--surface); gap: var(--s-4); }
+.inbox-group[data-sender] { gap: var(--s-4); }
 .inbox-group[data-sender] .inbox-who { display: none; }
 .inbox-group[data-sender] .inbox-text.has-sender { padding-left: 0; }
 .inbox-row[data-from] .inbox-byline :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
@@ -333,12 +333,10 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 }
 .inbox-done { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: var(--s-3); min-height: 60px; padding: 8px 12px 8px 14px; border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); scroll-margin: 72px 0 28px; }
 .inbox-done:focus { outline: none; }
-.inbox-takeback { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-size: var(--t-sm); font-weight: 600; white-space: nowrap; }
-.inbox-takeback:hover { border-color: var(--fg); }
-.inbox-takeback:disabled { opacity: .5; }
+
 @container rows (max-width: 520px) {
   .inbox-done { grid-template-columns: 26px minmax(0, 1fr); }
-  .inbox-takeback { grid-column: 2; justify-self: start; }
+
 }
 
 /* What went wrong with an answer on a row: on the row's lower edge, in full, never cut by the text's fixed lines. */
@@ -440,8 +438,6 @@ dialog.rowmenu::backdrop { background: transparent; }
 /* The name of a stack: a rubber stamp on its top sheet, below the count. Capitals in a double frame drawn a little out of
    true, turned a few degrees (each stack its own tilt), in an ink of its own; the ink took unevenly (one small mask of
    noise, rastered once). The inks are variables, so the palette can retune them. */
-.inbox-stacks { --stamp-works: #5c4a8a; --stamp-later: #46607c; --stamp-memos: #8a5f0c; --stamp-done: #1b6a57; }
-:root[data-theme="dark"] .inbox-stacks { --stamp-works: #b9a8e6; --stamp-later: #9fb6d0; --stamp-memos: #d9b35a; --stamp-done: #6fd0b5; }
 /* The search over a fanned stack (desk.mjs): one quiet line, a magnifier drawn with the pen and a field
    on a ruled line; the sheets below it stand in a frame (.stack-list) that the search fills. */
 .inbox-stacks .stack-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; min-width: 0; }
@@ -463,9 +459,6 @@ dialog.rowmenu::backdrop { background: transparent; }
 .inbox-stacks .inbox-revising-open .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
 .inbox-stacks .inbox-done[data-later] .inbox-revising-open .sketch { color: var(--gold-pen); }
 .inbox-stacks .inbox-revising-open .agent-ring { margin-left: -3px; }
-.inbox-stacks .inbox-done .inbox-takeback { grid-column: auto; min-height: 28px; padding: 0 4px; border: 0; border-radius: 0; background: none; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; opacity: 1; }
-.inbox-stacks .inbox-done .inbox-takeback:hover { color: var(--fg); }
-.inbox-stacks .inbox-done .inbox-takeback:disabled { opacity: .5; }
 
 /* a narrow list (the phone, a slim pane): the lines without the grey text */
 @container rows (max-width: 600px) {
@@ -518,17 +511,10 @@ dialog.rowmenu::backdrop { background: transparent; }
 .off-label > .off-count { font: 700 .86rem/1 var(--mono); letter-spacing: 0; }
 .off-fold { display: none; margin-left: auto; align-items: center; gap: 4px; color: var(--accent); letter-spacing: .06em; }
 .off-fold .sketch { width: 14px; height: 14px; transform: rotate(180deg); }
-.off-fan { position: relative; display: block; height: calc(34px + (var(--n) - 1) * 25px); }
-.off-sheet { position: absolute; left: calc(var(--i) * 3px); right: calc(var(--i) * -2px); top: calc(var(--i) * 25px); z-index: calc(10 - var(--i)); box-sizing: border-box; height: 34px; display: flex; align-items: flex-end; gap: 9px; padding: 0 12px 7px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: calc(-.8deg + var(--i) * .45deg); transition: translate 140ms ease-out; }
-.off-sheet:first-child { align-items: center; padding-bottom: 0; }
-.off-sheet:nth-child(2n) { rotate: calc(.6deg - var(--i) * .2deg); }
-.off-sheet.is-blank { border-style: dashed; border-color: color-mix(in srgb, var(--fg) 30%, var(--surface)); box-shadow: none; color: var(--faint); }
-.off-sheet .ago { flex: none; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
-@media (any-hover: hover) { .off-head:not(:disabled):hover .off-sheet { translate: 0 -2px; }
-}
+
 .off-pile.is-empty .off-label { opacity: .5; }
 .inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open .inbox-stack-head.off-head { padding: 9px 12px; border: 2px solid var(--fg); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); }
-.off-pile.is-open .off-fan { display: none; }
+
 .off-pile.is-open .off-fold { display: inline-flex; }
 
 /* the unfolded pile: one box under the row */
@@ -540,8 +526,7 @@ dialog.rowmenu::backdrop { background: transparent; }
 .inbox-stacks .off-list .inbox-done.off-line { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 0; padding: 6px 8px; border-radius: 0; background: none; box-shadow: none; border-top: 1px solid var(--line); }
 .off-open { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--fg); text-decoration: none; }
 .off-open strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-md)/1.3 var(--font); }
-.inbox-stacks .off-line .inbox-takeback { min-height: 28px; padding: 0 6px; font-weight: 600; }
-.inbox-stacks .off-line[data-later] .inbox-takeback { color: var(--stamp-ink-later); }
+
 .off-more { display: block; padding: 8px 8px 4px; border-top: 1px solid var(--line); color: var(--accent); font: 600 var(--t-sm)/1 var(--font); text-align: center; cursor: pointer; }
 .off-more input { position: absolute; opacity: 0; pointer-events: none; }
 .off-more:not(:has(input:checked)) .off-more-shut, .off-more:has(input:checked) .off-more-open { display: none; }
@@ -591,7 +576,7 @@ dialog.rowmenu::backdrop { background: transparent; }
 @media (prefers-reduced-motion: reduce) { .inbox-row.is-current::before, .keys-pending { animation: none; }
 }
 /* A question in the conversation: after its age, at the end of the row's head. */
-.inbox-row-head > .say { margin: -3px 0 -3px 2px; }/* The few rules of the server-rendered board that the old styles do not have: forms and
+/* The few rules of the server-rendered board that the old styles do not have: forms and
    links standing where the old client had buttons, the picture's own page, the passing note's place.
    Everything else is styled by the sheets the old client uses. Colours are tokens only. */
 
@@ -654,8 +639,6 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 }
 /* With the agents (desk.mjs withAgents, his pick B): the cards being worked on, slim and grey below the open ones. */
 #desk-ip[hidden] { display: none; }
-@keyframes ip-turn { to { rotate: 360deg; } }
-
 /* ---- The foot of the Desk as one piece (his word, 4 October: "aus einem Guss"): Notes, Off the desk and Media in three
    equal columns on the card column's edges; one heading style, one slip (height, corner, border, step, turn) for all
    three, five slips at most; the open list below across all three. A phone: one column, the same slips. ---- */
@@ -666,9 +649,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .inbox-stacks.stack-tabs .off-head, .inbox-stacks.stack-tabs > .media-pile { gap: 12px; }
 .off-label { min-height: 18px; }
 /* one slip */
-.off-fan { margin-right: 10px; }
-.off-sheet { left: calc(var(--i) * 3px); right: calc(var(--i) * -2px); height: 34px; border-width: 1.4px; border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; }
-@media (any-hover: hover) { .media-pile:hover .off-sheet { translate: 0 -2px; } }
+
 @container rows (max-width: 600px) {
   :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs { grid-template-columns: minmax(0, 1fr); }
   .inbox-stacks.stack-tabs > [data-stack="notes"] > .inbox-stack-title, .inbox-stacks.stack-tabs > .media-pile { order: 0; }
@@ -985,8 +966,6 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .off-find[open] .off-search { margin: 0 0 4px; }
 .off-find .off-search label { border: 0 !important; border-bottom: 1px solid var(--line-strong) !important; border-radius: 0; background: none; }
 .off-find .off-search label > .sketch { display: none; }
-.off-pile[data-stack="off"] .off-line .inbox-takeback { min-height: 24px; padding: 0 2px; border: 0; background: none; font: 500 var(--t-xs)/1 var(--font); color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
-.off-pile[data-stack="off"] .off-line .inbox-takeback:hover { color: var(--fg); }
 
 /* ---- The photos without frames (his word: "Die Rahmen machen keinen Sinn"): the pictures themselves, rounded, a soft
    shadow, a hairline in the paper's colour ---- */

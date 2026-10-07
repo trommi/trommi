@@ -6,7 +6,6 @@
   --surface: #ffffff;
   --surface-2: #fafbf8;
   --sunken: #eceee8;
-  --overlay: rgb(12 18 15 / .55);
 
   /* text */
   --fg: #141c18;
@@ -44,10 +43,10 @@
   --tone-turn: 10;
 
   /* the crown of a desk's crowned session: gold, the pen it is drawn with, the wash inside it, the three stones */
-  --gold: #c39a1f; --gold-pen: #a8820f;
+  --gold-pen: #a8820f;
 
   /* the inks of the stamps on the stacks (desk.css): stamp blue, violet, green */
-  --stamp-ink-later: #2b3f9e; --stamp-ink-works: #5c3aa0; --stamp-ink-done: #1b6a57; --stamp-ink-notes: #8a5f0c;
+  --stamp-ink-later: #2b3f9e; --stamp-ink-done: #1b6a57;
   --crown-wash: #f2c94c; --crown-jewel: #cf3a2b;
 
   /* status strip traffic light: decision waits on the human, working is in progress, done is finished */
@@ -86,7 +85,7 @@
 /* Light is the default for everyone. Dark applies only when the user picks it
    (data-theme="dark" on <html>), never from the system setting. */
 :root[data-theme="dark"] {
-  --bg: #0e1311; --surface: #171d1a; --surface-2: #1c2420; --sunken: #111715; --overlay: rgb(0 0 0 / .65);
+  --bg: #0e1311; --surface: #171d1a; --surface-2: #1c2420; --sunken: #111715;
   --fg: #e9eeea; --muted: #9aa8a0; --faint: #6c7a73;
   --line: #252f2a; --line-strong: #35423b;
   --accent: #6fd0b5; --accent-hover: #8adcc5; --accent-soft: #17332b; --accent-fg: #08130f;
@@ -99,8 +98,8 @@
   --tone-edge-l: .4;  --tone-edge-c: .05;
   --tone-mid-l: .62;  --tone-mid-c: .075;
   --tone-pen-l: .8;   --tone-pen-c: .095;
-  --gold: #d2ab3c; --gold-pen: #dcb84e;
-  --stamp-ink-later: #9aacf2; --stamp-ink-works: #bda2f0; --stamp-ink-done: #6fd0b5; --stamp-ink-notes: #e2bd5c;
+  --gold-pen: #dcb84e;
+  --stamp-ink-later: #9aacf2; --stamp-ink-done: #6fd0b5;
   --crown-jewel: #ff6f5c;
   --st-decision: #ff8a80; --st-decision-soft: #41191a;
   --st-working: #f2c14e; --st-working-soft: #3a2f10;
@@ -157,18 +156,8 @@ a.asset-link:hover { box-shadow: 0 0 0 1px var(--fg); }
    under the pointer; the board (kraft, a pen line around it, drawn once and stretched as a border image) and the
    metal clip are drawings, so each theme has its own. */
 :root {
-  --clip-paper: color-mix(in srgb, var(--surface) 88%, #efe2b4);
-  --clip-rule: color-mix(in srgb, #4a7fc0 20%, transparent);
-  --clip-wash: color-mix(in srgb, var(--fg) 7%, transparent);
-  --clip-shadow: 0 16px 30px -14px rgb(60 40 20 / .5);
-  --clip-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M9.5 1.4Q30 .8 50.6 1.5Q58.4 1.8 58.6 9.6Q59.1 30 58.5 50.4Q58.3 58.5 50.2 58.6Q30 59.2 9.8 58.5Q1.6 58.3 1.5 50.3Q.9 30 1.4 9.7Q1.6 1.7 9.5 1.4Z' fill='%23cdb597' stroke='%236b4f33' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M11.5 11.5H48.5V48.5H11.5Z' fill='none' stroke='%236b4f33' stroke-opacity='.5'/%3E%3C/svg%3E");
-  --clip-metal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 34' fill='none' stroke='%233f4843' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath fill='%23c5cac6' d='M8 31Q7 20 12 17Q30 15.4 34 14Q36 4.6 48 4.4Q60 4.6 62 14Q66 15.4 84 17Q89 20 88 31Z'/%3E%3Cpath d='M41.6 12.6Q42 8.8 48 8.6Q54 8.8 54.4 12.6'/%3E%3Cpath stroke='%23fff' stroke-opacity='.75' stroke-width='1.2' d='M17 22.4Q48 20.8 79 22.2'/%3E%3C/svg%3E");
 }
 :root[data-theme="dark"] {
-  --clip-rule: color-mix(in srgb, #7fa9dd 22%, transparent);
-  --clip-shadow: 0 16px 30px -14px rgb(0 0 0 / .7);
-  --clip-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M9.5 1.4Q30 .8 50.6 1.5Q58.4 1.8 58.6 9.6Q59.1 30 58.5 50.4Q58.3 58.5 50.2 58.6Q30 59.2 9.8 58.5Q1.6 58.3 1.5 50.3Q.9 30 1.4 9.7Q1.6 1.7 9.5 1.4Z' fill='%236f5a42' stroke='%23b89670' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M11.5 11.5H48.5V48.5H11.5Z' fill='none' stroke='%230e1311' stroke-opacity='.6'/%3E%3C/svg%3E");
-  --clip-metal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 34' fill='none' stroke='%23e3e8e4' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath fill='%23818984' d='M8 31Q7 20 12 17Q30 15.4 34 14Q36 4.6 48 4.4Q60 4.6 62 14Q66 15.4 84 17Q89 20 88 31Z'/%3E%3Cpath d='M41.6 12.6Q42 8.8 48 8.6Q54 8.8 54.4 12.6'/%3E%3Cpath stroke='%23fff' stroke-opacity='.35' stroke-width='1.2' d='M17 22.4Q48 20.8 79 22.2'/%3E%3C/svg%3E");
 }
 /* Shell: page layout, a session's conversation with its filters, lists, sidebar, phone views.
    Every colour, shadow, radius, and easing comes from tokens.css. */
@@ -214,21 +203,11 @@ html:where([data-ui]), :where([data-ui]) body { margin: 0; overflow: hidden; ove
 @keyframes blink { 50% { opacity: .3; } }
 
 /* Filters lay a list over the conversation: two quiet words at the head's right end, filled while one holds. */
-.filters { flex: none; display: flex; align-items: center; gap: var(--s-1); }
-.filters button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
-.filters button:hover { color: var(--fg); background: var(--sunken); }
-.filters button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
-.filters b { display: inline-block; margin-left: 7px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--urg-high); color: var(--surface); font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
-.filters b:empty { display: none; }
+
 /* The switch between the session's two modes is part of its title: words, the current one underlined. */
-.modes { flex: none; display: flex; align-items: center; margin-right: calc(-1 * var(--s-3)); }
-.modes button { position: relative; min-height: 40px; padding: 0 var(--s-3); border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font-size: var(--t-md); font-weight: 500; white-space: nowrap; }
-.modes button + button { margin-left: var(--s-2); }
-.modes button + button::before { content: "·"; position: absolute; left: calc(-1 * var(--s-1) - .15em); color: var(--faint); font-weight: 700; }
-.modes button:hover { color: var(--fg); background: var(--sunken); }
-.modes button[aria-current] { color: var(--fg); font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
+
 /* Something new was said while you were looking at a list or the canvas. */
-.modes button[data-unread]::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 7px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+
 .column { width: 100%; max-width: 47.5rem; margin-inline: auto; padding-inline: var(--gutter); }
 /* "☞" before a paragraph (ui.js rich()): the drawn hand points at it from the margin, the text a shade stronger */
 .rich-point { position: relative; padding-left: 34px; font-weight: 600; }
@@ -310,7 +289,6 @@ a.asset-preview:hover::after { box-shadow: inset 0 0 0 1px var(--line-strong); }
 /* ---- marks drawn by hand: each session's scribble, and the icons of the same family ---- */
 .doodle { width: 100%; height: 100%; display: block; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
 .sketch { display: block; width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
-@keyframes loop-open { to { stroke-dashoffset: -16; } }
 body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
 .is-drawing .mark-trace { opacity: .5; }
 @keyframes mark-travel { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
@@ -348,10 +326,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 /* ---- a session's head and its canvas ----
    The switch "Conversation · Scribble" is gone: the canvas opens from the composer. Nothing floats over the head:
    the note button is left out inside a session ("/" still opens it), the Scratchpad is one quiet icon at its right end. */
-html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
-@media (min-width: 1200px) {
-  html body:not([data-pair]):not([data-scope="all"]) .filters { margin: 0 var(--s-4) 9px 0; }
-}
+
 /* The canvas in the pane's place: it carries the way back to the conversation. */
 
 /* The choice of drawing opens right under the picture that was clicked: forty tiles in the session's colour. */
@@ -373,8 +348,7 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
 /* ---- phone: one column; the slim top line (sidebar.css "A phone"), under it the page ---- */
 @media (max-width: 860px) {
   :where([data-ui]) body { --bar-h: 48px; --gutter: var(--s-4); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
-  .filters { margin-left: auto; }
-  .filters button { min-height: 36px; }
+
   /* (room at the foot, so the last row can be scrolled clear of the two floating buttons) */
   body[data-scope="all"] #inbox { grid-column: 1; grid-row: 2; padding: var(--s-5) var(--gutter) 96px; }
   .mic { width: 44px; height: 44px; }
@@ -432,9 +406,6 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
   .says.says .back-line path { animation-duration: var(--back-ms, 4s) !important; }
 }
 @keyframes row-answered { to { opacity: 0; translate: 72px -6px; rotate: 1.2deg; } }
-@keyframes row-later { to { opacity: 0; translate: 0 64px; scale: .96; } }
-@keyframes focus-leave-answered { to { opacity: 0; transform: translate3d(0, -64px, 0) rotate(-.6deg); } }
-@keyframes focus-leave-later { to { opacity: 0; transform: translate3d(0, 88px, 0) scale(.95); } }
 @keyframes row-fade { to { opacity: 0; } }
 
 /* A phone has no free corner: while a note is up, the view gives it a strip at its lower edge
@@ -446,11 +417,9 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
 .says[data-fresh] { pointer-events: none; }
 
 @media (min-width: 1200px) {
-  :where([data-ui]) body { --beside-col: 50.5rem; --talk-w: clamp(340px, 30vw, 440px); }
+  :where([data-ui]) body { --beside-col: 50.5rem; }
   /* (The name's box reaches under them and is positioned: they stand above it, so they can be pressed.) */
-  body:not([data-pair]):not([data-scope="all"]) :is(.filters, .modes) { position: relative; z-index: 1; }
-  body:not([data-pair]):not([data-scope="all"]) .filters { grid-column: 2; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-3) 10px 0; }
-  body:not([data-pair]):not([data-scope="all"]) .modes { grid-column: 3; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-4) 6px 0; }
+
 }
 @media (min-width: 1200px) {
   body[data-talk-drag] { cursor: col-resize; user-select: none; -webkit-user-select: none; }
@@ -472,8 +441,6 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
 .cardclip-paste { height: 28px; padding: 0 4px 0 10px; border: 0; background: none; color: inherit; font: 500 var(--t-xs)/1 var(--font); white-space: nowrap; cursor: pointer; }
 
 @keyframes rowmenu-up { from { translate: 0 100%; } }
-@keyframes rowmenu-fade { from { opacity: 0; } }
-
 /* ---- a new version of the app took over (js/app/pwa.mjs): one quiet line above the round buttons at the foot ---- */
 .app-update {
   position: fixed; z-index: 2700; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); translate: -50% 0;
@@ -487,8 +454,6 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
 
 /* In the works: the gear turns while there is something on the stack (one turn in 7 s; transform only, so it stays on
    the compositor; the ink's noise lies on the stamp around it and does not turn along). Still on an empty stack. */
-@keyframes stack-stamp-turn { to { transform: rotate(1turn); } }
-
 /* Real links: what one navigates with is an <a href>, and looks exactly like the button it
    was. Zero specificity (:where), so every rule written for the class still decides; this only takes the
    browser's link looks away and gives back what a button has by itself. The focus ring is the page's own. */
@@ -592,9 +557,6 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
 
 /* ---- the filters are real links (js/link.js; hrefs kept by app.js paintLinks): what app.css says for
    `.filters button`, for the anchor. (#mode-*, #tab-* are links too; .modes and .tabbar are shown nowhere.) ---- */
-.filters a { display: inline-flex; align-items: center; min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
-.filters a:hover { color: var(--fg); background: var(--sunken); }
-.filters a[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 
 ::view-transition-old(tc-card) { animation: tc-fly 260ms cubic-bezier(.5, 0, .75, 0) both; }
 ::view-transition-new(tc-card) { animation: tc-land 220ms 80ms ease-out both; }
@@ -609,25 +571,10 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
 /* ---- Read aloud: the small speaker beside every message ----
    Quiet at rest: it shows when the message is under the pointer or it has the focus, and stays
    while it reads. Where nothing hovers (touch) it is always there, small and pale. */
-.say { position: relative; display: none; flex: none; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--faint); cursor: pointer; opacity: 0; vertical-align: middle; font-size: 0; line-height: 0; letter-spacing: 0; transition: opacity var(--d-fast), color var(--d-fast), background var(--d-fast); -webkit-tap-highlight-color: transparent; touch-action: manipulation; -webkit-touch-callout: none; user-select: none; }
-.say:hover { background: var(--sunken); color: var(--fg); }
+
 /* Under a finger the small speaker takes a tap from 38px around it; what is seen stays 26px. */
-@media (pointer: coarse) { .say::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
-}
-.say > * { grid-area: 1 / 1; }
 
 /* Reading: the speaker becomes a stop, a ring closes round it as the message is read. */
-.say[data-say="loading"], .say[data-say="playing"] { color: var(--accent); box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent); }
-.say[data-say="loading"] { animation: say-wait 1.4s var(--ease-in-out) infinite; }
-.say[data-say="failed"] { color: var(--urg-critical); }
-@keyframes say-wait { 50% { box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 45%, transparent); } }
-@media (hover: none) {
-  .say:hover { background: none; color: var(--faint); }
-  .say[data-say="loading"]:hover, .say[data-say="playing"]:hover { color: var(--accent); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .say[data-say="loading"] { animation: none; }
-}
 
 /* ---- toast: ONE slot, never a stack (his word, 7 October: "it is always placed oddly"). It stands where content never
    is: the bottom-left corner of the main area, in the page's margin beside the sidebar, small: "<what happened> ·
@@ -818,14 +765,14 @@ body > main#room:not(.room-paged) > .room-head .room-bell { display: none; }
 /* ---- One quiet button for every secondary action (his pick "outline", 7 October): white, a fine line, radius 10, the
    ink's words: Open and Copy on Links, Take back, Close (the keys sheet), Cancel, Back, Log out of this device, the
    invite clipboard's Copy, Copy link and Stop sharing. ---- */
-html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .inbox-takeback, .clip-copy-word, .clip-copy.is-small .clip-copy-word) {
+html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .clip-copy-word, .clip-copy.is-small .clip-copy-word) {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; height: auto; padding: 0 14px;
   border: 0; border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg);
   font: 600 var(--t-sm)/1 var(--font); text-decoration: none; cursor: pointer;
 }
-html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .inbox-takeback):hover, html body .clip-copy:hover .clip-copy-word { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
+html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no):hover, html body .clip-copy:hover .clip-copy-word { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
 html body .clip-copy.is-small .clip-copy-word { min-height: 30px; padding: 0 10px; }
-@media (pointer: coarse) { html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .inbox-takeback) { min-height: 44px; } }
+@media (pointer: coarse) { html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no) { min-height: 44px; } }
 
 /* ---- The agent's advice (his pick "stroke", 7 October): one short, slightly wavy pen stroke at the foot of the advised
    tile or option, centred a little above its bottom edge (on a card's option at the bottom right); white on a filled

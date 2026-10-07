@@ -479,14 +479,13 @@ function cardMarks({ scroll, blocks, labelOf, onChange }) {
   const anchorOf = target => {
     const all = blocks()
     const block = all.find(b => b.contains(target))
-    if (!block || block.classList.contains('focus-title')) return null
+    if (!block) return null
     if (block.dataset.key) return { kind: 'option', key: block.dataset.key }
     return { kind: 'text', quote: block.textContent.trim().replace(/\s+/g, ' ').slice(0, 48) }
   }
   /** Where a note of that anchor stands: after its block, under its option, or at the end of the text. */
   function placeOf(anchor) {
     if (anchor.kind === 'text') return blocks().find(b => !b.classList.contains('focus-mark') && b.textContent.trim().replace(/\s+/g, ' ').startsWith(anchor.quote ?? '\u0000')) ?? null
-    if (anchor.kind === 'option') return scroll.closest('.focus-card')?.querySelector(`.focus-opt[data-key="${CSS.escape(anchor.key)}"]`) ?? null
     return null
   }
   const noteNodes = new Map()   // mark id -> node
@@ -516,7 +515,7 @@ function cardMarks({ scroll, blocks, labelOf, onChange }) {
       if (document.activeElement !== field && field.value !== mark.text) field.value = mark.text
       const place = placeOf(mark.anchor)
       node.dataset.kind = mark.anchor.kind
-      const home = place ?? scroll.querySelector('.focus-body, .focus-lead')
+      const home = place ?? scroll.querySelector('.focus-lead')
       if (node.previousElementSibling !== home && !(node.previousElementSibling?.classList.contains('focus-mark') && node.isConnected)) home?.after(node)
       node.grow()
     }
@@ -543,7 +542,7 @@ function cardMarks({ scroll, blocks, labelOf, onChange }) {
   scroll.append(quill)
   let quillAt = null
   const offer = block => {
-    if (pen || !block || block.classList.contains('focus-title') || block.dataset.key) { if (!quill.matches(':hover')) quill.hidden = true; return }
+    if (pen || !block || block.dataset.key) { if (!quill.matches(':hover')) quill.hidden = true; return }
     quillAt = block
     const box = scroll.getBoundingClientRect(), r = block.getBoundingClientRect()
     quill.style.left = `${Math.max(2, r.left - box.left + scroll.scrollLeft - 28)}px`

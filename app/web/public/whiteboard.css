@@ -1,4 +1,3 @@
-
 /* ---- the page ---- */
 #whiteboard { display: none; }
 body[data-page="whiteboard"] #inbox, body[data-page="whiteboard"] #session { display: none; }
@@ -12,7 +11,6 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 /* The global pad. Everything is prefixed pad-; colours, shadows, radii and
    easings of the chrome come from /app.css. The paper follows the theme;
    ink colours are content and are painted by elements.js. */
-
 
 .pad { container: pad / inline-size; position: absolute; inset: 0; overflow: hidden; background: var(--surface); color: var(--fg); font: 400 var(--t-md)/1.4 var(--font); -webkit-font-smoothing: auto; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .pad *, .pad *::before, .pad *::after, .pad-dialog, .pad-dialog * { box-sizing: border-box; }
