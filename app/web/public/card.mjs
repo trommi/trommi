@@ -770,6 +770,9 @@ controller('card', class extends Controller {
     addEventListener('blur', this.held)
     this.grow()
     if (this.hasMarksTarget) this.mountMarks()
+    // (the card's pictures are fetched and decoded ahead, so a hover from option to option swaps at once)
+    const warm = () => { this.warm = (this.picturesValue ?? []).map(p => { const i = new Image(); i.decoding = 'async'; i.src = p.src; i.decode?.().catch(() => {}); return i }) }
+    if ('requestIdleCallback' in window) requestIdleCallback(warm, { timeout: 1500 }); else setTimeout(warm, 300)
     this.link = this.link.bind(this)
     this.placed = this.placed.bind(this)
     addEventListener('resize', this.placed)
@@ -847,10 +850,21 @@ controller('card', class extends Controller {
     if (key != null) fig.dataset.key = key; else delete fig.dataset.key
     const thumbs = [...this.element.querySelectorAll('.tc-thumb[data-at]')]
     for (const t of thumbs) t.toggleAttribute('data-peek', !restoring && Number(t.dataset.at) === pic.at)
-    if (now === pic.at) return this.link()
-    img.src = pic.src
-    if (img.hasAttribute('width')) { if (pic.width && pic.height) { img.width = pic.width; img.height = pic.height } else { img.removeAttribute('width'); img.removeAttribute('height') } }
-    else img.style.width = pic.width ? `${pic.width}px` : ''
+    if (now === pic.at && !this.pending) return this.link()
+    // The picture that stands stays until the next one is decoded: no empty frame between the two (his word, 7 October:
+    // it flashed). A newer request wins over one still decoding.
+    const token = this.pending = {}
+    const next = new Image()
+    next.src = pic.src
+    const swap = () => {
+      if (this.pending !== token) return
+      this.pending = null
+      img.src = pic.src
+      if (img.hasAttribute('width')) { if (pic.width && pic.height) { img.width = pic.width; img.height = pic.height } else { img.removeAttribute('width'); img.removeAttribute('height') } }
+      else img.style.width = pic.width ? `${pic.width}px` : ''
+      this.link()
+    }
+    ;(next.decode ? next.decode() : Promise.resolve()).then(swap, swap)
     fig.dataset.at = pic.at
     fig.href = pic.href
     fig.dataset.circlesMarksValue = JSON.stringify(pic.marks ?? [])
