@@ -1072,6 +1072,8 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
         const out = me.paths.busy.length ? null : me.out ?? lastOut(cfg, room_id)
         me.phase = out ? 'retired' : 'needs-invite'
         me.error = out ? outText(out) : null
+        // retired: the free slot pickSlot claimed is no use to it; a join of another session may need it
+        if (out) { unlockSlot(me.paths); me.paths = null; me.storage = null }
         if (out && me.out && !me.out.told) { me.out.told = true; log(me.error); onRetired(me) }
         return me
       }
