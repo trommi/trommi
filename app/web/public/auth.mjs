@@ -123,10 +123,10 @@ ${raw(L.gone)}
     /** What is left of a link's time, in words: never "0 more min". */
     const leftWords = until => { const ms = until - Date.now(); return ms > 90_000 ? `${Math.round(ms / 60000)} more min.` : ms > 0 ? 'less than a minute.' : 'no time left.' }
     const clipboard = (inv, error = '') => {
-      // (a link whose time is up has run out, whatever step it stood at: an "adding" that never finished, a check code
-      // nobody compared; a short grace for an adding under way)
-      const late = inv.expires_at + (inv.invite_state === 'adding' ? 60_000 : 0) <= Date.now()
-      const state = late && ['open', 'adding', 'confirm_code'].includes(inv.invite_state) ? 'expired' : inv.invite_state, open = state === 'open', joined = state === 'joined', coming = state === 'adding' || state === 'confirm_code'
+      // (an unused link whose time is up has run out; once a connector has answered it (check code, adding) the page stays
+      // open until the agent is really in, or the hub says the invite ended (his word, 7 October))
+      const late = inv.expires_at <= Date.now()
+      const state = late && inv.invite_state === 'open' ? 'expired' : inv.invite_state, open = state === 'open', joined = state === 'joined', coming = state === 'adding' || state === 'confirm_code'
       const dead = !open && !joined && !coming
       const who = joined ? t.model().agents.find(a => a.agent_device_id === inv.newcomer?.device_id || a.id === inv.newcomer?.device_id) ?? null : null
       const name = newcomerName(inv) || who?.name || 'The agent'
@@ -137,7 +137,8 @@ ${raw(L.gone)}
       const cont = inv.takeover ? t.model().everyone?.find(a => a.device_id === inv.session_id || a.session_id === inv.session_id) ?? t.model().agents.find(a => a.device_id === inv.session_id) ?? null : null
       const contName = inv.takeover ? cont?.label || cont?.given || cont?.name || 'this session' : ''
       // the session it continues is gone (deleted, archived, removed): nothing to continue, only the way back
-      if (inv.takeover && !joined && (!cont || cont.archived || cont.removed)) return html`<main id="room" class="room room-clip" aria-label="Continue a session"><div id="invite-${inv.invite_id}" class="room-invite" data-state="gone"><section class="clip">${CLAMP}<h2>Continue ${contName}</h2><p class="clip-sub">The session this link continues is gone: it was deleted or put in the archive. The link does nothing any more.</p><a href="/" data-nav class="room-done clip-done">Back to the Desk</a></section></div></main>`
+      // (only while nobody answered the link: continuing retires the old holder, which must not read as "gone")
+      if (inv.takeover && !joined && (cont?.archived || (open && !cont))) return html`<main id="room" class="room room-clip" aria-label="Continue a session"><div id="invite-${inv.invite_id}" class="room-invite" data-state="gone"><section class="clip">${CLAMP}<h2>Continue ${contName}</h2><p class="clip-sub">The session this link continues is gone: it was deleted or put in the archive. The link does nothing any more.</p><a href="/" data-nav class="room-done clip-done">Back to the Desk</a></section></div></main>`
       const ask = state === 'confirm_code' && checkEmoji(inv.check_code).length > 0
       const keep = inv.takeover ? html`<input type="hidden" name="continue" value="${inv.session_id}">` : ''
       const last = ask ? html`<div class="clip-ask" role="group" aria-label="${inv.takeover ? `Confirm: continue ${contName}` : 'Confirm the agent'}"><b>${inv.takeover ? `A connector wants to continue ${contName}.` : 'An agent wants to join.'}</b>
@@ -153,9 +154,10 @@ ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${in
         : html`<b>Waiting for the agent…</b>`
       const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
         : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent">${keep}<button type="submit">New link</button></form>`
+        : coming ? html`<p class="clip-note">The link is in use: this page stays until the agent is in.</p>`
         : html`<p class="clip-note">The link works once · <span data-invite-clip-target="left">${leftWords(inv.expires_at)}</span></p>`
       return html`<main id="room" class="room room-clip" aria-label="${inv.takeover ? `Continue ${contName}` : 'Invite an agent'}"><div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">
-<section class="clip" data-controller="invite-clip" data-invite-clip-until-value="${open || coming ? inv.expires_at + (state === 'adding' ? 60_000 : 0) : 0}">${CLAMP}
+<section class="clip" data-controller="invite-clip" data-invite-clip-until-value="${open ? inv.expires_at : 0}">${CLAMP}
 ${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link for this session: the connector that joins with it goes on as ${contName}. On a computer with Claude Code and Node 22+.</p>`
         : html`<h2>Invite an agent</h2><p class="clip-sub">On a computer with Claude Code and Node 22+.</p>`}
 <ol class="clip-list">
