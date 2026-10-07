@@ -352,7 +352,7 @@ function placeOf(card, model) {
 
 /** The whole <main> of a card's page. pic: which picture stands. walk: a step of "Next, please". version: as it was
  *  then. from: the session it was opened from (/s/<id>/q/<n>): the way back and the links lead there. */
-function cardPage(card, model, base, { pic = 1, walk = false, error = '', version = null, from = null, more: older = false } = {}) {
+function cardPage(card, model, base, { pic = 1, walk = false, error = '', version = null, from = null, more: older = false, full = false } = {}) {
   const old = versionOf(card, version)
   const open = card.status === 'open' && !card.with_agent && !old
   // The draft and the pen stay while the card is with its session too: the reworked card comes back live into a page
@@ -388,12 +388,12 @@ ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="
   const tone = model.byAgent.get(card.agent)?.hue
   const pad = html`<div class="tc-pad"${tone != null ? html` style="--hue:${tone}"` : ''}>${corner('tl')}${corner('tr')}${corner('bl')}${corner('br')}${strip}`
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
-  return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
+  return html`<main id="cardpage" class="tc-page${full && media ? ' is-full' : ''}" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
 ${pad}<div class="tc-frame">
 <nav class="tc-rails" aria-label="Around this question">
 <a class="tc-rail tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${CROSS}</a>
 ${place ? html`${step(place.prev, 'is-prev', 'The question before', BACK)}${step(place.next, 'is-next', 'The next question', FORTH)}` : ''}
-${media ? html`<a class="tc-rail tc-full" data-nav href="${cardPath(card, self)}/p/${shownPic}" data-card-target="gallery" title="Full screen: ${fullWord}, large" aria-label="Full screen: open ${fullWord} large">${FULL}</a>` : ''}
+${media && full ? html`<a class="tc-rail tc-full is-leave" data-nav href="${cardPath(card, self)}?pic=${shownPic}" data-card-target="gallery" data-back data-turbo-action="replace" title="Leave full screen · Esc" aria-label="Leave full screen">${FULL}</a>` : media ? html`<a class="tc-rail tc-full" data-nav href="${cardPath(card, self)}/p/${shownPic}" data-card-target="gallery" title="Full screen: ${fullWord}, large" aria-label="Full screen: open ${fullWord} large">${FULL}</a>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-rail tc-more-open" title="More" aria-label="More for this question">${DOTS}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' && card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : ''}
 ${copyButton(card)}
@@ -419,34 +419,6 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 </form>
 </div>
 </main>`
-}
-
-/** The gallery of a card, what Full screen opens: one picture or video large, at its own address (the browser's Back
- *  closes it; videos come after the pictures, as on the card). from: the session it was opened from. The head is the card's question, in the display face, and the way back to the card; beside it
- *  which picture this is and the page behind it. The picture fits the width and scrolls (a tall screenshot is read top
- *  to bottom); a click shows it at its own size and back. Beside it stands the card's right column itself (cardAnswer
- *  in .tc-right, the same markup and styles as on the card's page; a phone: a bar at the foot), with Later's tag
- *  hanging under it. */
-function picturePage(card, model, base, at, { from = null } = {}) {
-  const images = imagesOf(card), videos = videosOf(card), all = [...images, ...videos]
-  const i = Math.min(Math.max(1, at), all.length), a = all[i - 1], video = i > images.length
-  const session = from ? model.byAgent.get(from) : null
-  const self = from ? `${base}/s/${encodeURIComponent(from)}` : base
-  const here = cardPath(card, self)
-  const form = `card-form-${card.id}`, zoom = `t-picture-zoom-${card.id}`
-  const drafting = card.status === 'open' && card.kind === 'decision'
-  const key = video ? undefined : pictureKeys(card).get(i - 1)
-  const shown = video
-    ? html`<div class="t-picture-view is-video"><figure class="tc-video"><video src="${a.url}#t=0.001" controls playsinline preload="metadata" aria-label="Video ${i} of ${all.length}: ${a.name}"></video></figure></div>`
-    : html`<input type="checkbox" class="t-picture-zoom" id="${zoom}" hidden>
-<div class="t-picture-view" tabindex="0" role="region" aria-label="The picture: scroll to see all of it"><label class="t-picture-fit" for="${zoom}" title="Click: its own size, or fit to the width" data-card-target="figure" data-at="${i}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img${srcOf(a)} alt="${a.name}" decoding="async"${a.width > 0 && a.height > 0 ? html` width="${a.width}" height="${a.height}"` : ''}></label></div>`
-  return html`<div class="t-picture is-deciding" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(card, self))}">
-<header class="t-picture-bar"><a class="t-picture-back" data-nav href="${here}?pic=${i}" data-card-target="gallery" data-back title="Back to the question · Esc" aria-label="Back to the question: ${card.title}">${BACK}<h1>${card.title}</h1></a><div class="t-picture-sub">${where(a, i, all.length, 't-picture-where')}${video ? '' : pageChip(a.page, true)}</div>${card.status === 'open' && !card.with_agent && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}</header>
-${shown}
-${all.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : all.length}" data-turbo-action="replace" aria-label="The one before">${BACK}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < all.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next one">${FORTH}</a><nav class="t-picture-strip" aria-label="The pictures${videos.length ? ' and videos' : ''} of this question">${strip(images, i, n => `${here}/p/${n}`)}${clips(videos, i, n => `${here}/p/${n}`, images.length)}</nav>` : ''}
-<aside class="t-picture-answer tc-right" aria-label="Your answer" data-kind="${card.kind}">${cardAnswer(card, model, base, { pic: video ? 0 : i })}</aside>
-<form id="${form}" method="post" action="${act(card, base, 'message')}" hidden data-card-target="form">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}"><input type="hidden" name="note" value="${card.draft?.note ?? ''}">` : ''}</form>
-</div>`
 }
 
 // ---- focus marks ----
@@ -887,7 +859,7 @@ controller('card', class extends Controller {
   pullStart(event) {
     const tag = event.target.closest?.('.sel-later')
     if (!tag || event.button > 0 || this.pulling) return
-    const card = this.element.querySelector('.tc-card, .t-picture-answer'), y0 = event.clientY, calm = matchMedia('(prefers-reduced-motion: reduce)').matches
+    const card = this.element.querySelector('.tc-card'), y0 = event.clientY, calm = matchMedia('(prefers-reduced-motion: reduce)').matches
     let dy = 0
     const set = v => { dy = v; tag.style.setProperty('--pull', `${v}px`); if (card && !calm) card.style.translate = `0 ${(v * .4).toFixed(1)}px` }
     tag.setPointerCapture(event.pointerId)
@@ -913,7 +885,7 @@ controller('card', class extends Controller {
   pullAway(tag) {
     this.pulling = true
     const go = () => { this.going = true; tag.form.requestSubmit(tag) }
-    const card = this.element.querySelector('.tc-card, .t-picture-answer')
+    const card = this.element.querySelector('.tc-card')
     if (!card || matchMedia('(prefers-reduced-motion: reduce)').matches) return go()
     const from = parseFloat(card.style.translate.split(' ')[1]) || 0, far = innerHeight
     const how = { duration: 300, easing: 'cubic-bezier(.55, 0, .9, .45)', fill: 'forwards' }
@@ -1244,7 +1216,7 @@ export function register(t) {
       const m = model(), card = m.cardByRef(ref)
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
       if (!imagesOf(card).length && !videosOf(card).length) return redirect(res, cardPath(card, BASE))
-      t.page(req, res, { model: m, title: `${card.title} · picture ${at}`, view: 'picture', sidebar: false, css: 'picture', stream: null, main: picturePage(card, m, BASE, Number(at), { from: from ? decodeURIComponent(from) : null }), bodyAttrs: ' data-focus-page="card"' })
+      cardView(req, res, card, m, { more: moreOf(card), pic: Number(at) || 1, full: true, from: from ? decodeURIComponent(from) : null })
     })
     t.post(/^\/cards\/([0-9a-f]+)\/draft$/, ({ res, match, form }) => {
       const card = model().byCard.get(match[1])
