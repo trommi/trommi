@@ -2503,6 +2503,9 @@ function start(signal) {
   on(document, 'turbo:before-visit', () => setPending(null))
   signal.addEventListener('abort', () => setPending(null))
 
+  // (Only what is in view owns the keys: the Scribble Board kept mounted under the Desk (display none, or only the
+  // corner's clipped glimpse of it) does not, else every key of the Desk was dead after a visit to the board.)
+  const ownsKeys = () => [...document.querySelectorAll('[data-owns-keys]')].some(n => !n.closest('[hidden], [inert], [style*="clip-path"]') && n.getClientRects().length > 0)
   // ---- the listener ----
   on(document, 'keydown', e => {
     if (e.defaultPrevented || e.altKey || e.isComposing || e.keyCode === 229) return
@@ -2520,7 +2523,7 @@ function start(signal) {
       return   // Escape is the dialog's own
     }
     // A dialog owns the keyboard while it is open; so does whatever says so, and a player with its own keys.
-    if (document.querySelector('dialog[open], [data-owns-keys]:not([hidden])') || t?.closest('video, audio, details[open]')) return
+    if (document.querySelector('dialog[open]') || ownsKeys() || t?.closest('video, audio, details[open]')) return
     const name = nameOf(e)
     // The open menu's Escape closes the menu (t/boot.js), and nothing else.
     if (name === 'Escape' && menuOpen()) return
