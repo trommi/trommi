@@ -198,6 +198,14 @@ html:where([data-ui]), :where([data-ui]) body { margin: 0; overflow: hidden; ove
 :where([data-ui]) button { cursor: pointer; touch-action: manipulation; }
 [hidden] { display: none !important; }
 :focus { outline: none; }
+/* One focus ring for every control (the keyboard's place): the ink, 2px, a little off its edge. Rules that place it
+   differently use the same token. */
+:root { --focus-ring: var(--fg); --note-yellow: #f5d64a; }
+/* (one note yellow in each theme: the corner note, its sticky, a note in a conversation, the cut-out's paper) */
+:root[data-theme="dark"] { --note-yellow: #d9c35f; }
+:where(a, button, summary, input, select, textarea, [tabindex], label):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Where there is no keyboard (a finger), no key hints anywhere: the small key caps beside words, the note's send keys */
+@media (pointer: coarse) { :is(button, a, summary, label, .corner-note-foot, .tc-ask-row, .says, .menu-desk) kbd, .corner-note-keys { display: none !important; } }
 ::selection { background: var(--accent-soft); color: var(--fg); }
 .offscreen { position: fixed; left: -200vw; top: 0; opacity: 0; }
 
@@ -736,7 +744,7 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
 .curl-fold { fill: none; stroke: var(--fg); stroke-width: 1.6; stroke-linecap: round; }
 .curl-grab { position: absolute; right: 0; top: 0; width: 64px; height: 64px; padding: 0; border: 0; background: none; cursor: grab; pointer-events: auto; touch-action: none; }
 .curl-grab:active { cursor: grabbing; }
-.curl-grab:focus-visible { outline: 2px solid var(--fg); outline-offset: -6px; }
+.curl-grab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -6px; }
 :root.is-choosing #whiteboard[style*="clip-path"] { visibility: hidden; }
 
 /* ---- a session's link: whether it hears him (ui.mjs linkCap, linkNote, linkSlip; app.mjs linkOf, heardOf) ----

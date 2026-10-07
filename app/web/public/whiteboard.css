@@ -18,7 +18,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad *, .pad *::before, .pad *::after, .pad-dialog, .pad-dialog * { box-sizing: border-box; }
 .pad [hidden] { display: none !important; }
 :where(.pad, .pad-dialog) button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; margin: 0; }
-:where(.pad, .pad-dialog) :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:where(.pad, .pad-dialog) :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 .pad-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; cursor: crosshair; }
 .pad[data-cursor="select"] .pad-canvas { cursor: default; }
@@ -106,7 +106,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-cut .cut-paper { fill: #fdf2c4; stroke: none; }
 .pad-cut .cut-letter { stroke: #1d1a12; transition: translate 160ms, rotate 160ms; transform-box: fill-box; transform-origin: 50% 50%; }
 .pad-cut .cut-scissors { transition: translate 200ms; }
-:root[data-theme="dark"] .pad-cut .cut-paper { fill: #d9c35f; }
+:root[data-theme="dark"] .pad-cut .cut-paper { fill: var(--note-yellow); }
 .pad-cut:hover, .pad-cut:focus-visible { rotate: 0deg; translate: 0 -2px; outline: none; }
 .pad-cut:hover .cut-scissors, .pad-cut:focus-visible .cut-scissors { translate: 5px 0; }
 .pad-cut:focus-visible .cut-line { opacity: 1; }

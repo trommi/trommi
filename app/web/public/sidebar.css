@@ -518,7 +518,7 @@ a.agent-badge { text-decoration: none; }
 
 .corner-note-box.is-open .corner-note-head { display: none; }
 .corner-note-body[hidden] { display: none; }
-.corner-note-body { display: grid; gap: 4px; padding: 10px 10px 6px; border-radius: 2px; background: #f7de6c; box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3), 0 2px 6px rgb(20 30 25 / .18); rotate: -.4deg; }
+.corner-note-body { display: grid; gap: 4px; padding: 10px 10px 6px; border-radius: 2px; background: var(--note-yellow); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3), 0 2px 6px rgb(20 30 25 / .18); rotate: -.4deg; }
 .corner-note-field { width: 100%; min-height: 64px; resize: none; padding: 2px; border: 0; background: none; color: #2d2406; font: 500 var(--t-sm)/1.45 var(--font); outline: none; }
 .corner-note-foot { display: flex; align-items: center; gap: 4px; }
 .corner-note-foot > i { flex: 1; }
@@ -560,7 +560,7 @@ a.agent-badge { text-decoration: none; }
 .corner-note-head { display: flex; flex-direction: row-reverse; align-items: center; gap: 8px; min-height: 64px; padding: 0; border: 0; background: none; color: #3b300d; cursor: pointer; }
 .corner-note-ico { flex: none; width: 63px; height: 63px; overflow: visible; rotate: -4deg; transition: rotate 140ms, translate 140ms; }
 .corner-note-head:hover .corner-note-ico { rotate: -1deg; translate: 0 -2px; }
-.corner-note-ico .note-fill { fill: #f5d64a; } .corner-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; opacity: .8; }
+.corner-note-ico .note-fill { fill: var(--note-yellow); } .corner-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; opacity: .8; }
 .corner-note-box:not(.has-words) .note-lines { display: none; }   /* (an empty note: a blank sticky) */
 /* On the Scribble Board the sticky can be dragged out of its corner onto the board (sidebar.mjs park): while it is
    carried, a small sticky with its words follows the pointer and the corner's one fades. */
@@ -570,7 +570,6 @@ body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cu
 .corner-note-ghost p { max-height: 170px; overflow: hidden; overflow-wrap: anywhere; }
 .corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: 12px 12px 8px; }
 .corner-note-field { max-height: 50vh; }
-:root[data-theme="dark"] .corner-note-body { background: #d9c35f; }
 /* In a conversation the note never lies on the composer or its buttons: it stands above the composer's line, only
    the sticky (a dot says it holds words), so the least of the conversation is under it. */
 body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-area-inset-bottom, 0px)); }
@@ -756,7 +755,7 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   .rail-tag-paper b > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .rail-tag:is(:hover, :focus-visible) .rail-tag-paper { rotate: 2deg; }
   .rail-tag:focus-visible { outline: none; }
-  .rail-tag:focus-visible .rail-tag-paper { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--fg); }
+  .rail-tag:focus-visible .rail-tag-paper { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 }
 @media (prefers-reduced-motion: reduce) { .rail-tag-paper { transition: none; } }
 
@@ -785,7 +784,8 @@ html body .desk-switch .desk-switch-item, html body .desk-switch .desk-switch-it
 .desk-switch-item .sketch.menu-lamp { flex: none; width: 22px; height: 22px; stroke-width: 1.7; color: var(--muted); overflow: visible; }
 .desk-switch-item:not(.is-all) .sketch.menu-lamp { width: 19px; height: 19px; }
 .desk-switch-item .sketch.menu-lamp.is-lit { color: var(--fg); }
-.desk-switch-item:hover, .desk-switch-item:focus-visible { background: var(--sunken); outline: none; }
+.desk-switch-item:hover, .desk-switch-item:focus-visible { background: var(--sunken); }
+.desk-switch-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .desk-switch-item[aria-checked="true"] { background: var(--sunken); }
 .desk-switch-item[aria-checked="true"] b { font-weight: 800; }
 .desk-switch .menu-lamp .lamp-light { stroke: var(--lamp, #e2a21b); }
