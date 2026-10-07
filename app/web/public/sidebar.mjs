@@ -249,17 +249,17 @@ export function sidebarRows(model, base, current = null) {
 }
 /** The same rows one by one, for the live stream: [id, row] of those connected (here) and those that are not (away);
  *  shape says their order, so that a change within one row replaces that row only (turbo.mjs). */
-/** One desk as a card in the sidebar on All desks: its drawing (lit while something waits), name, its crowned or first
- *  main with how many helpers, the number of open questions, the stack of its sessions' colours under it. */
+/** One desk as a row in the sidebar on All desks (his pick "rows", 8 October: calm rows like folders in a list; no pill,
+ *  no stack: those stay an agent's with its helpers): the desk drawing (lit while something waits), its name, who
+ *  works there; at the right the main session's small drawing (with its crown) and "+N" helpers, and the open count,
+ *  a quiet number (a dash when nothing waits). A pen rule parts the desks. A press opens the desk. */
 function deskCard(model, base, d) {
   const mine = model.agents.filter(a => model.deskOf(a) === d.id)
   const lead = mine.find(a => a.starred) ?? mine.find(a => !a.parent) ?? mine[0]
   const open = model.fresh.filter(c => model.deskOf(model.byAgent.get(c.agent)) === d.id).length
   const others = mine.length - (lead ? 1 : 0)
-  const who = lead ? `${lead.name}${others ? ` · ${others} ${others === 1 ? 'helper' : 'helpers'}` : ''}` : 'no session yet'
-  // (the stack: the very edges of a folded main, crown-edges, the same drawing, offsets and colours; his word 8 October)
-  const stack = mine.slice(0, EDGES)
-  return html`<div class="agent-row desk-card-row" id="agent-desk-${d.id}" style="--n:${stack.length}"><a class="desk-card" data-nav draggable="false" href="${base}/?desk=${d.id}" title="Open the desk ${d.name}" >${deskMark(open > 0)}<span class="desk-card-text"><strong>${d.name || 'Desk'}</strong><small>${who}</small></span>${open ? html`<b class="desk-card-n" aria-label="${open} open">${open}</b>` : ''}</a>${stack.length ? html`<span class="crown-edges desk-card-edges" aria-hidden="true">${stack.map((a, i) => { const q = edgeQuirk(a.id); return html`<i style="--i:${i};--hue:${a.hue};--tilt:${q.tilt}deg;--dx:${q.dx}px">${raw(q.svg)}</i>` })}</span>` : ''}</div>`
+  const who = lead ? `${lead.name}${others ? ` and ${others} ${others === 1 ? 'helper' : 'helpers'}` : ''}` : 'no session yet'
+  return html`<div class="agent-row desk-card-row" id="agent-desk-${d.id}"><a class="desk-card" data-nav draggable="false" href="${base}/?desk=${d.id}" title="Open the desk ${d.name}" aria-label="${d.name || 'Desk'}: ${who}, ${open ? `${open} open` : 'nothing open'}">${deskMark(open > 0)}<span class="desk-card-text"><strong>${d.name || 'Desk'}</strong><small>${who}</small></span><span class="desk-card-who" aria-hidden="true">${lead ? avatar(lead) : ''}${others ? html`<small>+${others}</small>` : ''}</span><b class="desk-card-n${open ? '' : ' is-none'}" aria-hidden="true">${open || '–'}</b></a><svg class="desk-rule" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M1 3.4 Q40 2.2 90 3.1 T199 2.6"/></svg></div>`
 }
 function sidebarParts(model, base, current = null) {
   const top = model.units.filter(u => !u.parent)

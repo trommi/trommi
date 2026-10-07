@@ -595,7 +595,7 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   :root:not([data-rail="folded"]) #agents::before { margin-bottom: 18px; margin-left: -16px; }
   :root:not([data-rail="folded"]) #agents .agent-row.is-sub { margin-left: 28px; }
   :root:not([data-rail="folded"]) #agents .agent-row.is-sub.is-last { margin-bottom: 20px; }
-  :root:not([data-rail="folded"]) #agents :is(.agent-row.is-main[data-fold="shut"], .desk-card-row) { margin-bottom: calc(var(--n) * 4px + 28px); }
+  :root:not([data-rail="folded"]) #agents .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 4px + 28px); }
   /* the rail: no bracket; every drawing on the rail's middle line, one step from row to row */
   html[data-rail="folded"] #agents .crown-bracket { display: none !important; }
   html[data-rail="folded"] #agents .agent-row { margin: 0 0 6px; }
@@ -829,26 +829,32 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
 .topbar #brand-doors .menu-look { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
 .topbar #brand-doors .menu-look button.menu-theme-row { display: flex; align-items: center; gap: 10px; }
 
-/* ---- All desks in the sidebar (his pick "cards"): each desk one card like a main's: the desk drawing, its name, who
-   works there, the open count in a round mark, the stack of its sessions' colours under it; a press opens the desk.
-   Folded: one desk drawing per desk with its count and a tiny name. ---- */
-/* (its stack is a folded main's: .crown-edges, the same drawing, offsets and colours; the row keeps the main's room for it) */
-.desk-card-edges { pointer-events: none; }
-.desk-card-row { position: relative; margin: 6px 0 calc(var(--n, 0) * 4px + 18px); }
-.desk-card { position: relative; z-index: 1; flex: 1; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: 58px; padding: 8px 12px 8px 10px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); color: var(--fg); text-decoration: none; }
-.desk-card:hover { background: color-mix(in srgb, var(--surface) 60%, var(--sunken)); }
-.desk-card > .sketch.menu-lamp { width: 32px; height: 32px; stroke-width: 1.6; color: var(--fg); overflow: visible; }
+/* ---- All desks in the sidebar (his pick "rows", 8 October): calm rows like folders in a list: the desk drawing, its
+   name, who works there; at the right the main's small drawing with "+N" and the open count, a quiet orange number
+   (a dash when none). A pen rule between desks. No pill, no stack (those stay an agent's). A press opens the desk; the
+   row under the pointer lies on a white ground. Folded: the desk drawings with the number beside. ---- */
+.desk-card-row { position: relative; display: block; margin: 0; }
+.desk-card { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto minmax(14px, auto); align-items: center; column-gap: 8px; min-height: 56px; padding: 8px 8px 8px 6px; border-radius: var(--r-md); color: var(--fg); text-decoration: none; transition: background var(--d-fast), box-shadow var(--d-fast); }
+.desk-card:hover, .desk-card:focus-visible { background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
+.desk-card > .sketch.menu-lamp { width: 28px; height: 28px; stroke-width: 1.6; color: var(--fg); overflow: visible; }
 .desk-card-text { display: grid; min-width: 0; text-align: left; }
-.desk-card-text strong { font: 700 17px/1.25 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-card-text strong { font: 700 16px/1.25 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .desk-card-text small { font: 500 var(--t-xs)/1.3 var(--font); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.desk-card-n { display: grid; place-items: center; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 14px; background: var(--urg-high); color: #fff; font: 700 var(--t-xs)/1 var(--font); }
+.desk-card-who { display: inline-flex; align-items: center; gap: 2px; }
+.desk-card-who .agent-avatar { width: 22px; height: 22px; padding: 0; }
+.desk-card-who .agent-avatar .doodle { width: 20px; height: 20px; }
+.desk-card-who small { font: 600 11px/1 var(--font); color: var(--muted); }
+.desk-card-n { justify-self: end; font: 700 var(--t-sm)/1 var(--font); color: var(--urg-high); }
+.desk-card-n.is-none { color: var(--muted); font-weight: 500; }
+.desk-rule { display: none; width: calc(100% - 28px); height: 6px; margin: 8px 14px; overflow: visible; fill: none; stroke: var(--line-strong); stroke-width: 1.6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.desk-rule path { vector-effect: non-scaling-stroke; }
+.desk-card-row:has(+ .desk-card-row) .desk-rule { display: block; }
 @media (min-width: 861px) {
-  html[data-rail="folded"] .desk-card-row { margin: 0 0 10px; }
-  html[data-rail="folded"] .desk-card { display: grid; grid-template-columns: 1fr; justify-items: center; width: 60px; min-height: 0; padding: 6px 0 4px; background: none; box-shadow: none; }
-  html[data-rail="folded"] .desk-card > .sketch.menu-lamp { width: 28px; height: 28px; }
-  html[data-rail="folded"] .desk-card-text small, html[data-rail="folded"] .desk-card-edges { display: none; }
-  html[data-rail="folded"] .desk-card-text strong { max-width: 60px; font-size: 10px; font-weight: 700; color: var(--muted); text-align: center; }
-  html[data-rail="folded"] .desk-card-n { position: absolute; top: -4px; right: 2px; min-width: 18px; height: 18px; font-size: 10px; }
+  html[data-rail="folded"] .desk-card-row { margin: 0 0 6px; }
+  html[data-rail="folded"] .desk-card { display: grid; grid-template-columns: 1fr; justify-items: center; width: 60px; min-height: 0; padding: 6px 0; background: none; box-shadow: none; }
+  html[data-rail="folded"] .desk-card > .sketch.menu-lamp { width: 30px; height: 30px; }
+  html[data-rail="folded"] :is(.desk-card-text, .desk-card-who, .desk-rule, .desk-card-n.is-none) { display: none !important; }
+  html[data-rail="folded"] .desk-card-n { position: absolute; top: 0; right: 4px; font-size: 11px; }
 }
 .desk-card { --lamp: #e2a21b; } :root[data-theme="dark"] .desk-card { --lamp: #f2bd4a; }
 
