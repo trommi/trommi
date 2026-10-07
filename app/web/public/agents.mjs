@@ -111,11 +111,12 @@ function ledgerLine(u, ctx, { error = '' } = {}) {
   const NONE = raw('<i class="ledger-ib is-none" aria-hidden="true"></i>')
   const acts = html`<span class="ledger-acts">
 ${mains.length ? pick({ cls: 'ledger-desk ledger-main', hook: 'main', mark: sk('under'), title: `Main agent of ${a.name}: the session this one works for`, label: main ? main.name : 'No main', action: `${forms}/edit`, name: 'parent', set: Boolean(main), options: [{ value: '', label: 'No main', current: !main }, ...mains.map(x => ({ value: x.id, label: `↳ ${x.name}`, current: x.id === a.parent }))] }) : ''}
-${desks.length > 1 ? pick({ cls: 'ledger-desk', hook: 'desk', title: `Desk of ${a.name}: move to another desk`, label: desks.find(d => d.id === a.desk)?.name ?? 'Desk', action: `${forms}/edit`, name: 'desk', options: desks.map(d => ({ value: d.id, label: d.name, current: d.id === a.desk })) }) : ''}
+${desks.length > 1 ? pick({ cls: 'ledger-desk', hook: 'desk', mark: sk('desk'), title: `Desk of ${a.name}: move to another desk`, label: desks.find(d => d.id === a.desk)?.name ?? 'Desk', action: `${forms}/edit`, name: 'desk', options: desks.map(d => ({ value: d.id, label: d.name, current: d.id === a.desk })) }) : ''}
 <a class="ledger-ib" data-ledger="open" data-nav href="${to}" title="Open the conversation" aria-label="${a.name}: open the conversation">${sk('go')}</a>
 ${u.open ? html`<a class="ledger-ib" data-ledger="walk" data-nav href="${cardPath(card, base)}?walk=1" title="Its questions, one after the other" aria-label="${a.name}: its questions, one after the other">${sk('tray')}</a>` : NONE}
 ${together}
 ${!a.online ? post(`${forms}/edit`, '', html`<button class="ledger-ib" data-ledger="archive" type="submit" name="archived" value="1" title="Archive: put this session away" aria-label="Archive ${a.name}">${sk('archive')}</button>`) : m.agents.some(x => !x.online) ? NONE : ''}
+${delPick(a, base, Boolean(u.subs))}
 ${sheet(u, ctx, { group, others })}</span>`
 
   // The crown: one per desk, given by his hand (the hub takes it from whoever wore it on this desk).
@@ -132,6 +133,12 @@ ${acts}
 <a class="ledger-open" data-nav href="${to}" tabindex="-1" aria-hidden="true"></a>
 ${error ? html`<p class="ledger-err" role="alert">${error}</p>` : ''}
 </div>`
+}
+
+/** Delete session, among a line's small buttons: the same confirm as in the session's More menu (agents.mjs /delete). */
+function delPick(a, base, subs) {
+  if (a.own) return ''
+  return html`<details class="t-pick ledger-pick ledger-del"><summary class="ledger-ib" data-ledger="delete" title="Delete session" aria-label="Delete ${a.name}">${sk('bin')}</summary><div class="desk-move t-pop"><form class="session-delete-ask" method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/delete"><input type="hidden" name="stay" value="1"><p><b>Delete ${a.name}?</b> Its connector is removed from the room and ${subs ? 'the session with its helpers moves' : 'the session moves'} to the archive. Open questions are shredded.</p><div class="desk-duck-ways"><button type="submit" class="session-delete-yes">${sk('bin')}<span>Delete</span></button><button type="button" class="desk-duck-no" data-pop-close>Cancel</button></div></form></div></details>`
 }
 
 /** A session that was put away. */
@@ -179,14 +186,24 @@ function agentsMain(m, base, { find = '', sort = 'order', down = false, errors =
   const th = ([key, label]) => html`<a class="ledger-th th-${key}" data-nav role="columnheader" aria-sort="${sort === key ? (down ? 'descending' : 'ascending') : 'none'}" href="${query({ sort: key, down: sort === key && !down ? '1' : '' })}">${label}${sort === key ? html`<i>${down ? '↓' : '↑'}</i>` : ''}</a>`
   const line = u => ledgerLine(u, ctx, { error: errors.get(u.id) })
   const anyMain = m.units.some(u => ctx.mainsFor(u).length)
+  // In the board's own order (his pick "tree", 7 October): one tree per main, its helpers under it on the sidebar's pen
+  // bracket; the desk is the heading over its trees (no column says the desk or the main again); connected trees first.
+  const tree = sort === 'order'
+  const shown = new Set([...on, ...off])
+  const deskList = ctx.desks.length ? ctx.desks : [{ id: null, name: m.deskName || 'Desk' }]
+  const deskOf = u => (ctx.desks.some(d => d.id === u.agent.desk) ? u.agent.desk : deskList[0].id)
+  const tops = [...on, ...off].filter(u => !u.parent)
+  const treeOf = u => html`<div class="ledger-tree">${line(u)}${u.subs?.some(s => shown.has(s)) ? html`<div class="ledger-kids">${u.subs.filter(s => shown.has(s)).map(line)}</div>` : ''}</div>`
+  const loose = [...on, ...off].filter(u => u.parent && !shown.has(u.parent))
+  const trees = deskList.map(d => { const mine = tops.filter(u => deskOf(u) === d.id); const kids = loose.filter(u => deskOf(u) === d.id); return mine.length || kids.length ? html`<h3 class="ledger-deskhead">${sk('desk')}<span>${d.name || 'Desk'}</span></h3>${mine.map(treeOf)}${kids.map(line)}` : '' })
   return html`<main id="ledger" aria-label="Agents"><div class="ledger-page">
 ${roomTabs('agents', 'ledger-tabs')}
 <header class="ledger-head"><h2>Agents</h2><p id="ledger-lead">${leadWords(m)}</p></header>
 <div class="ledger-tools"><form method="get" action="${base}/agents" role="search">${sort !== 'order' ? html`<input type="hidden" name="sort" value="${sort}">${down ? raw('<input type="hidden" name="down" value="1">') : ''}` : ''}<label class="ledger-find"><input type="search" name="find" value="${find}" autocomplete="off" placeholder="Find a session, a machine, a model" aria-label="Find a session"><kbd>/</kbd></label></form>${sort !== 'order' || words ? html`<a class="ledger-link" data-nav href="${base}/agents">${words ? 'Show all, in your order' : 'Back to your order'}</a>` : ''}</div>
-<div class="ledger" role="table" id="ledger-list" data-controller="pops"${sort !== 'order' || words ? raw(' data-sorted') : ''}${ctx.desks.length > 1 ? raw(' data-desks') : ''}${anyMain ? raw(' data-mains') : ''}>
+<div class="ledger${tree ? ' is-tree' : ''}" role="table" id="ledger-list" data-controller="pops"${sort !== 'order' || words ? raw(' data-sorted') : ''}${ctx.desks.length > 1 ? raw(' data-desks') : ''}${anyMain ? raw(' data-mains') : ''}>
 <div class="ledger-line is-head" role="row"><span></span><span></span>${th(COLS[0])}${th(COLS[1])}<span class="ledger-th">Asks or does</span>${COLS.slice(2).map(th)}<span></span></div>
-${on.map(line)}
-${off.length ? html`<h3 class="ledger-sub">Disconnected</h3>${off.map(line)}` : ''}
+${tree ? trees : html`${on.map(line)}
+${off.length ? html`<h3 class="ledger-sub">Disconnected</h3>${off.map(line)}` : ''}`}
 ${!on.length && !off.length && m.agents.length ? html`<p class="ledger-none">No session fits. <a class="ledger-link" data-nav href="${base}/agents">Show all</a></p>` : ''}
 ${!m.agents.length ? raw('<p class="ledger-none">No session is connected yet.</p>') : ''}
 ${archived.length ? html`<h3 class="ledger-sub">Archive</h3>${archived.map(a => archivedLine(a, ctx, { error: errors.get(a.id) }))}` : ''}
@@ -314,7 +331,7 @@ export function register(t) {
       const ctx = around(m, BASE), { on, off, archived } = parts(m)
       return {
         // Which lines stand where; when that changes, the page fetches itself anew (it keeps its own sorting and finding).
-        shape: JSON.stringify([on.map(u => u.id), off.map(u => u.id), archived.map(a => a.id), ctx.desks.length > 1, m.units.some(u => ctx.mainsFor(u).length)]),
+        shape: JSON.stringify([on.map(u => `${u.id}:${u.agent.desk}`), off.map(u => `${u.id}:${u.agent.desk}`), archived.map(a => a.id), ctx.desks.length > 1, m.units.some(u => ctx.mainsFor(u).length)]),
         // By each column: a page that is sorted by one fetches itself anew when that order changes.
         orders: Object.fromEntries(Object.entries(VAL).map(([key, val]) => [key, JSON.stringify([...m.units].sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : 0)).map(u => [u.id, u.online]))])),
         lead: leadWords(m),
