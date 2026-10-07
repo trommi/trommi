@@ -1176,3 +1176,24 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .inbox-answer > .final-sign > svg.sketch, .inbox-groups .inbox-row .inbox-actions .inbox-answer > .final-sign > svg.sketch { width: 13px !important; height: 13px !important; stroke-width: 2.2; }
 /* why a card lies under Done without an agent's word: "settled by your answer", quiet beside the title */
 .off-why { flex: 0 1 auto; min-width: 9ch; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: 400 var(--t-xs)/1.3 var(--font); white-space: nowrap; }
+
+/* ---- A phone's Desk row, his pick "under" (7 October): the title gets the whole width (two lines at most), the teaser
+   two lines under it, then the answers as one row of wide tiles a thumb's size (50px), the drawing and the words side
+   by side. The pictures' fan stays on the card. "Acknowledge" reads "Got it" here. ---- */
+@media (max-width: 860px) {
+  html body :is(#inbox, #session) .inbox-groups .inbox-row { display: grid; grid-template-columns: minmax(0, 1fr) !important; row-gap: 12px; align-items: start; padding: 14px 12px 12px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-content { grid-column: 1 !important; grid-row: 1 !important; display: flex; align-items: flex-start; gap: 10px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .inbox-fan { display: none; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-content > .row-mark { flex: none; margin-top: 1px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { flex: 1 1 0; min-width: 0; display: grid; gap: 4px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-question { display: -webkit-box !important; -webkit-box-orient: vertical; -webkit-line-clamp: 2 !important; overflow: hidden; white-space: normal; text-wrap: pretty; font: 700 1.08rem/1.22 var(--display) !important; letter-spacing: -.012em; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-body { display: -webkit-box !important; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; font-size: var(--t-sm); line-height: 1.4; color: var(--muted); }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-actions { grid-column: 1 !important; grid-row: 2 !important; display: flex !important; width: auto; gap: 8px; margin: 0 !important; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer, html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-wide { flex: 1 1 0; width: auto; min-width: 0; height: 50px; min-height: 0; display: flex; grid-auto-flow: column; flex-direction: row; align-items: center; justify-content: center; gap: 10px; padding: 0 12px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer .sketch { width: 22px !important; height: 22px !important; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer > span:last-child:not(.inbox-disc) { font-size: var(--t-sm); white-space: nowrap; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-what .sketch-what { width: 62px !important; height: 22px !important; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-ack > span:last-child:not(.inbox-disc) { font-size: 0; letter-spacing: 0; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-ack > span:last-child:not(.inbox-disc)::after { content: "Got it"; font-size: var(--t-sm); }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-stacked { grid-auto-flow: column; }
+}
