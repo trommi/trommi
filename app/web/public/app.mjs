@@ -160,13 +160,17 @@ export function heardOf(card, now = Date.now()) {
  *  theirs (a card has no desk of its own: it is where its session is, so a session that moves takes all of them
  *  along: open, with the agents, put away, its pictures). Nothing of another desk shows here; the Trommi menu's desk
  *  list says what waits there. Without desks on the hub the board is one. */
+// "All desks" (his word, 7 October: "one overall desk … the existing desks are its children"): the desk id ALL_DESKS
+// stands for every desk at once; nothing is stored on the hub for it, it is this browser's choice like any desk.
+export const ALL_DESKS = 'all'
 function boardModel(state, agents = state.agents, desk = null) {
   const desks = state.desks?.length ? state.desks : null
-  const deskId = desks ? (desks.some(d => d.id === desk) ? desk : desks[0].id) : null
+  const all = Boolean(desks && desks.length > 1 && desk === ALL_DESKS)
+  const deskId = all ? ALL_DESKS : desks ? (desks.some(d => d.id === desk) ? desk : desks[0].id) : null
   const deskOf = a => (desks ? (desks.some(d => d.id === a?.desk) ? a.desk : desks[0].id) : null)
   const everyone = agents.map(a => ({ ...a, given: a.name, name: a.label || a.name, mark: a.icon || a.id, archived: Boolean(a.archived) }))
   for (const a of everyone) a.hue = hueFor(a)
-  const onDesk = a => !desks || deskOf(a) === deskId
+  const onDesk = a => !desks || all || deskOf(a) === deskId
   // (A session of another desk is named with its desk wherever it shows here.)
   if (desks) for (const a of everyone) if (!onDesk(a)) a.name = `${a.name} · ${desks.find(d => d.id === deskOf(a))?.name ?? ''}`
   const here = everyone.filter(a => !a.archived && onDesk(a))
@@ -225,12 +229,12 @@ function boardModel(state, agents = state.agents, desk = null) {
   const cut = units.filter(u => u.link?.state === 'cut' && !(u.parent?.link?.state === 'cut' && u.parent.agent.agent_device_id === u.agent.agent_device_id)).map(u => ({ agent: u.agent, link: u.link }))
 
   return {
-    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, onDesk, desk: deskId, desks: desks ?? [], revising, snoozed, done, units,
+    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, onDesk, desk: deskId, all, deskOf, desks: desks ?? [], revising, snoozed, done, units,
     cut, unheard: units.reduce((n, u) => n + u.unheard, 0),
     knocking: fresh.filter(isKnock).length,
     blocked: units.filter(u => u.blocked).length,
     working: units.filter(u => u.online && u.running).length,
-    deskName: desks?.find(d => d.id === deskId)?.name || 'Desk',
+    deskName: all ? 'All desks' : desks?.find(d => d.id === deskId)?.name || 'Desk',
     cardByRef: ref => state.cards.find(c => String(c.number) === String(ref)) ?? byCard.get(String(ref)) ?? null,
   }
 }
@@ -1438,7 +1442,7 @@ async function start(client, { fresh = false } = {}) {
   const model = (d = desk) => {
     if (pending && !wasCatchingUp) { update(); frame ||= requestAnimationFrame(() => apply()) }
     if (cached?.version === board.version && cached.desk === d) return cached.m
-    const m = boardModel(board.state, hub.agents(), d)
+    const m = boardModel(board.state, hub.agents(), d ?? (board.state.desks?.length > 1 ? ALL_DESKS : null))
     board.desk = m.desk
     cached = { version: board.version, desk: d, m }
     return m

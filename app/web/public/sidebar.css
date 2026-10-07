@@ -759,3 +759,11 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   .rail-tag:focus-visible .rail-tag-paper { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--fg); }
 }
 @media (prefers-reduced-motion: reduce) { .rail-tag-paper { transition: none; } }
+
+/* ---- All desks (his word, 7 October): in the menu the overall desk stands first and the desks under it, set in as its
+   children; in the sidebar every desk is a quiet heading (its drawing and name) over its mains. ---- */
+.topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all) .menu-desk { padding-left: 30px; }
+.topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all) .menu-desk .sketch.menu-lamp { width: 20px; height: 20px; }
+.agent-deskhead { display: flex; align-items: center; gap: 10px; margin: 14px 0 4px; padding: 0 var(--s-3); font: 700 13px/1.2 var(--font); letter-spacing: .02em; color: var(--muted); }
+.agent-deskhead .sketch { width: 22px; height: 22px; stroke-width: 1.6; color: var(--fg); overflow: visible; }
+#agents > .agent-deskhead:first-child { margin-top: 0; }

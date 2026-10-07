@@ -1217,3 +1217,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-others { flex-direction: row; display: flex; gap: 6px; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-others > b { font-size: 1.05rem; }
 }
+
+/* ---- All desks: each row says its desk, quietly, at the start of its line under the title ---- */
+.inbox-row .row-desk { font-weight: 600; color: var(--fg); opacity: .7; }
+.inbox-row .row-desk::after { content: " · "; font-weight: 400; }
