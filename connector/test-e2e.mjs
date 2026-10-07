@@ -777,7 +777,8 @@ export async function integration({ test, tmp }) {
       const room = path.join(keys, human.model.room.room_id)
       const live = () => fs.readdirSync(room).filter(f => f.includes('-deadkeys-') && /-\d+\.key$/.test(f) && !f.startsWith('replaced-')).map(f => Number(/-(\d+)\.key$/.exec(f)[1])).sort()
       const aside = () => fs.readdirSync(room).filter(f => f.startsWith('replaced-') && f.includes('-deadkeys-') && f.endsWith('.key')).length
-      const lockOf = (n, pid) => fs.existsSync(path.join(room, fs.readdirSync(room).find(f => f.includes('-deadkeys-') && f.endsWith(`-${n}.key`)).replace(/key$/, `lock.${pid}`)))
+      // (a slot's own key, never one put aside under `replaced-…` with the same ending: directory order differs by file system)
+      const lockOf = (n, pid) => { const k = fs.readdirSync(room).find(f => !f.startsWith('replaced-') && f.includes('-deadkeys-') && f.endsWith(`-${n}.key`)); return !!k && fs.existsSync(path.join(room, k.replace(/key$/, `lock.${pid}`))) }
       /** A plain join in this folder for the Claude Code session `claude`: resolves with the new device id. */
       const join = async claude => {
         const invite = await human.createInvite({ device_role: 'agent' })
@@ -788,11 +789,11 @@ export async function integration({ test, tmp }) {
           child.on('exit', code => resolve({ code, text }))
         })
         assert.equal(out.code, 0, out.text)
-        return /as device ([0-9a-f]+)/.exec(out.text)[1]
+        return { id: /as device ([0-9a-f]+)/.exec(out.text)[1], slot: Number(/-(\d+)\.key$/m.exec(out.text)[1]) }
       }
       const remove = async id => { await human.removeDevices([id]); await until('removed', () => human.model.members.get(id)?.is_active === false) }
       const devs = []
-      for (const c of ['dk-a', 'dk-b', 'dk-c', 'dk-d']) devs.push(await join(c))
+      for (const c of ['dk-a', 'dk-b', 'dk-c', 'dk-d']) devs.push((await join(c)).id)
       assert.deepEqual(live(), [1, 2, 3, 4])
       await remove(devs[0]); await remove(devs[1])
       // (1) A fresh connector of another session: slots 1 and 2 are out; it ends on 3, and its first call works.
@@ -820,12 +821,13 @@ export async function integration({ test, tmp }) {
       // (4) Two sessions join; a fresh connector of the second one (a /mcp Reconnect: same session id, new process) takes
       // its own slot 2, not the lower slot 1 of the other.
       await join('dk-other')
-      const mineDev = await join('dk-mine')
+      const mine = await join('dk-mine')
       assert.deepEqual(live(), [1, 2])
+      assert.equal(mine.slot, 2, 'the second join takes the second slot')
       const back = await startConnector({ env: { ...env, TROMMI_FOLDER: dir, CLAUDE_CODE_SESSION_ID: 'dk-mine' }, cwd: dir })
       await back.call('list_cards').catch(e => { throw new Error(`${e.message}\n${back.stderr()}`) })
-      assert.ok(lockOf(2, back.pid), 'on the slot its session joined with')
-      assert.match(back.stderr(), new RegExp(`as ${mineDev.slice(0, 12)}`))
+      assert.ok(lockOf(mine.slot, back.pid), `on the slot its session joined with\n${back.stderr()}`)
+      assert.match(back.stderr(), new RegExp(`as ${mine.id.slice(0, 12)}`))
       await back.close()
     })
 
