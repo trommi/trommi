@@ -5,12 +5,12 @@
 /* The Focus window's pair of squares appends no mark of its own: there the band is laid behind the
    label as a background (the same marker, one line). The two strokes of the old circle are gone. */
 .focus-opt.is-advised::before, .focus-opt.is-advised::after { content: none; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .event:hover .event-time, .event:focus-visible .event-time { opacity: 1; }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
 .composer textarea:focus-visible { outline: none; }
 .agent-invite-go:hover, .agent-invite-go:focus-visible { background: var(--sunken); color: var(--fg); }
-.agent-invite-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agent-invite-go:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .crown-toggle:hover, .crown-toggle:focus-visible { opacity: 1; scale: 1.12; }
 @media (hover: hover) {
   .agent-row .crown-toggle[aria-pressed="false"]:is(:hover, :focus-visible), .pane-who .crown-toggle[aria-pressed="false"]:is(:hover, :focus-visible) { opacity: 1; }
@@ -26,7 +26,7 @@ button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
 .inbox-when .inbox-later-flap, .inbox-when .inbox-tab-act:is(:hover, :focus-visible) .inbox-later-flap { justify-content: center; padding: 0; background: none; box-shadow: inset 0 0 0 1px var(--line-strong); }
 .inbox-when .inbox-tab-act:is(:hover, :focus-visible) .inbox-later-flap { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
 .inbox-when .inbox-tab-act:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
-.desk-invite-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.desk-invite-go:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 @media (min-width: 861px) {
   .inbox-gutter:is(:hover, :focus-visible)::after { opacity: 1; }
   .inbox-gutter:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
@@ -37,7 +37,7 @@ button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
   .rail-fold:hover, .rail-fold:focus-visible { color: var(--fg); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
 }
 .topbar #brand-doors .menu-foot button:hover, .topbar #brand-doors .menu-foot button:focus-visible { background: var(--sunken); }
-.crown-fold.is-plain:focus-visible { opacity: 1; outline: 2px solid var(--fg); outline-offset: -4px; }
+.crown-fold.is-plain:focus-visible { opacity: 1; outline: 2px solid var(--focus-ring); outline-offset: -4px; }
 .crown-fold:hover, .crown-fold:focus-visible { scale: 1.15; }
 /* the pointer on the stack, or on the crown (the keys too): the edges fan out a little, like cards being thumbed. Transforms only:
    nothing below moves; the lowest edge comes down some 9px, into the air above the next row.
@@ -60,11 +60,11 @@ button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
 .rowmenu-in button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .inbox-stacks .stack-search label:focus-within { border-bottom-color: var(--fg); color: var(--fg); }
 .off-open:hover strong, .off-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
-.off-more:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.off-more:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 
 /* Every stop of the Tab key shows a ring, the Snooze tab of a row included. */
-.inbox-later:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inbox-later:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .rh:hover .rh-open, .rh-open:focus-visible, .rh.is-capped .rh-open, .rh.is-wide .rh-open { opacity: 1; pointer-events: auto; }/* A card's own page (card.mjs, card Nr. 191): inside the board's frame, the sidebar beside it.
    One calm card of fixed height in two columns, the comments below it. Tokens only. */
 
@@ -85,7 +85,7 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 .tc-rail::-webkit-details-marker { display: none; }
 :is(.tc-rail, .t-picture .tc-step) .sketch { width: 22px; height: 22px; stroke-width: 2; }
 :is(.tc-rail, .t-picture .tc-step):is(:hover, :focus-visible), .tc-more[open] > .tc-rail { border-color: var(--fg); background: var(--sunken); }
-:is(.tc-rail, .t-picture .tc-step):focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+:is(.tc-rail, .t-picture .tc-step):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .tc-rails > .tc-rail, .tc-rails > .tc-more { position: absolute; z-index: 3; }
 .tc-rails { --step: 54px; }
 .tc-rails > .tc-rail, .tc-rails > .tc-more { top: -57px; }
@@ -213,7 +213,7 @@ turbo-frame.tc-media { flex: none; display: flex; flex-direction: column; gap: 8
 .tc-opt { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 10px 34px 10px 14px; border: 0; border-radius: var(--r-md); background: var(--tone-wash, var(--sunken)); box-shadow: inset 0 0 0 1px var(--tone-edge, var(--line)); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
 .tc-opt:hover { box-shadow: inset 0 0 0 2px var(--tone-mid, var(--accent)); }
 /* the answer the keyboard stands on (↑ ↓, ui.mjs walkAnswers): the ring of the option under the pointer, in ink, and a lift */
-:is(.tc-opt, .tc-tile):focus-visible, label.tc-opt:has(input:focus-visible) { outline: 2px solid var(--fg); outline-offset: 2px; box-shadow: inset 0 0 0 2px var(--fg); translate: -1px -2px; }
+:is(.tc-opt, .tc-tile):focus-visible, label.tc-opt:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; box-shadow: inset 0 0 0 2px var(--fg); translate: -1px -2px; }
 .tc-opt.is-still { cursor: default; box-shadow: inset 0 0 0 1px var(--line); background: var(--sunken); }
 .tc-opt.is-picked { box-shadow: inset 0 0 0 2px var(--accent); }
 .tc-opt.is-picked .tc-opt-label { color: var(--accent); }
@@ -491,7 +491,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .say:focus-visible,
 .say[data-say] { opacity: 1; }
 .focus-card:hover .focus-title .say { opacity: .7; }
-.say:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.say:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 /* The question of the window: at the end of its title. */
 .focus-title > .say { width: 30px; height: 30px; margin: -6px 0 -2px 8px; }
 
@@ -501,7 +501,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 
 /* The agent's advice on a tile: a line under the words, until the drawn marker's island stands. */
 .focus-opt.is-advised .focus-opt-label { background: linear-gradient(transparent 55%, color-mix(in srgb, var(--advice, var(--accent)) 30%, transparent) 55%); }
-#says-host .says-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#says-host .says-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 a.focus-stage-step,
 a.focus-back-desk { text-decoration: none; }
 a.focus-stage-step { display: grid; place-items: center; }
@@ -534,7 +534,7 @@ div.focus-opt { cursor: default; }
 /* The way back from a large picture (focus.css hides .focus-back-desk outside the card's window): shown in the bar, for a session's picture and a card's alike. */
 #session .pane-who:hover .crown-toggle[aria-pressed="false"], #session .pane-who .crown-toggle:focus-visible { opacity: .5; }
 .topbar #brand-doors button.menu-desk-add:is(:hover, :focus-visible) { color: var(--fg); }
-.media-pile:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 6px; }
+.media-pile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 6px; border-radius: 6px; }
 
 /* ---- the gallery of one question (/q/<n>/p/<i>): one slim row above (the way back, where one stands, the page behind
    the picture), the picture, the small pictures under it, the answer beside ---- */
@@ -570,7 +570,7 @@ div.focus-opt { cursor: default; }
 .t-picture-back .sketch { flex: none; width: 24px; height: 24px; margin-top: 3px; stroke-width: 2; color: var(--muted); transition: translate 120ms, color 120ms; }
 .t-picture-back:hover .sketch, .t-picture-back:focus-visible .sketch { translate: -3px 0; color: var(--fg); }
 .t-picture-back h1 { margin: 0; font: 800 1.3rem/1.2 var(--display); letter-spacing: -.01em; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.t-picture-back:focus-visible { outline: 2px solid var(--fg); outline-offset: 4px; border-radius: 6px; }
+.t-picture-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; border-radius: 6px; }
 .t-picture-sub { flex: 0 1 auto; min-width: 0; margin-left: auto; display: flex; align-items: center; gap: var(--s-3); }
 .t-picture-sub .t-picture-where { flex: 0 1 auto; }
 .t-picture-sub .t-picture-where > span { font-family: var(--mono); font-size: var(--t-xs); }
@@ -649,7 +649,7 @@ div.focus-opt { cursor: default; }
 .tc-mini.is-what:is(:hover, :focus-visible) { background: var(--what-violet); color: #fff; }
 .tc-mini.is-reverse:is(:hover, :focus-visible) { background: conic-gradient(from 7deg at 53% 47%, var(--uno-red) 0 25%, var(--uno-yellow) 0 50%, var(--uno-green) 0 75%, var(--uno-blue) 0); color: #fff; }
 .tc-mini.is-ack { background: var(--accent); color: var(--accent-fg, #fff); box-shadow: none; }
-.tc-mini:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.tc-mini:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .tc-bar-sep { flex: none; width: 1px; height: 26px; margin: 0 2px; background: var(--line-strong); }
 .tc-bar-later { position: absolute; right: 30px; top: 53px; margin: 0; }
 .tc-bar-later .sel-later { display: block; padding: 0 8px 6px; border: 0; background: none; cursor: pointer; }

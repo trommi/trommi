@@ -13,7 +13,7 @@
 .note-send.is-none .crown-mark { --gold-pen: var(--muted); }
 .note-send.is-none .crown-wash { display: none; }
 .note-send.is-none .crown-jewel { fill: none; }
-.note-send:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.note-send:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 a.note-send { text-decoration: none; box-sizing: border-box; }
 
 /* ---- A note he sent (session.mjs, msg.note): in the flow on his side, at the time it was sent, as the slip of
@@ -27,7 +27,7 @@ a.note-send { text-decoration: none; box-sizing: border-box; }
 .msg-note-cap { display: flex; align-items: center; gap: 5px; margin: 0 0 4px; color: #6a5d24; font: 700 .66rem/1 var(--font); letter-spacing: .14em; text-transform: uppercase; }
 .msg-note-cap .sketch { width: 14px; height: 14px; }
 .msg-note-at .msg-time { margin-top: 6px; }
-:root[data-theme="dark"] .msg-note { background: #d9c35f; color: #231c06; border-color: #a58c2c; }
+:root[data-theme="dark"] .msg-note { background: var(--note-yellow); color: #231c06; border-color: #a58c2c; }
 :root[data-theme="dark"] .msg-note-cap { color: #4d4214; }
 :root[data-theme="dark"] .msg-note-tape { background: color-mix(in srgb, #fff2b8 58%, transparent); }
 .msg-note-when { margin-left: auto; font-weight: 500; letter-spacing: .04em; text-transform: none; font-size: var(--t-xs); }
