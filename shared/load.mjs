@@ -32,6 +32,9 @@ export async function createLoadRoom({ hub_url, humans = 1, agents = 4, found_to
   for (let i = 0; i < agents; i++) {
     const inv = await observer.createInvite({ device_role: 'agent', label: `Load ${i}` })
     const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: `Load agent ${i}`, poll_ms: 50, ...opts })
+    const code = await j.check_code
+    for (let k = 0; k < 200 && observer.model.invites.get(inv.invite_id).invite_state !== 'confirm_code'; k++) await sleep(25)
+    await observer.confirmInvite(inv.invite_id, observer.model.invites.get(inv.invite_id).check_code === code)   // every agent invite asks too
     const c = await j.client
     await c.start()
     as.push(c)

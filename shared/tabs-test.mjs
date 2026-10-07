@@ -65,7 +65,11 @@ try {
     const inv = await client.createInvite({ device_role: 'agent' })
     window.founder = client
     return { link: inv.link }`)
-  const agent = await joinRoom({ link: founded.link, storage: memoryStorage(), device_name: 'agent', poll_ms: 50 }).client
+  const joining = joinRoom({ link: founded.link, storage: memoryStorage(), device_name: 'agent', poll_ms: 50 })
+  // every agent invite asks: the human compares the six emoji (here: the founder confirms the code the agent shows)
+  const agentCode = await joining.check_code
+  await A.run(`for (let k = 0; k < 400; k++) { const i = [...founder.model.invites.values()][0]; if (i?.invite_state === 'confirm_code') { await founder.confirmInvite(i.invite_id, i.check_code === '${agentCode}'); return true } await new Promise(r => setTimeout(r, 25)) } throw new Error('no code')`)
+  const agent = await joining.client
   await agent.start()
   await agent.whenSession()
   const texts = []

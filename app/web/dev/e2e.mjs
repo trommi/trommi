@@ -9,7 +9,7 @@
 import { launchChromium } from '../../../dev/cdp.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
-import { joinRoom, memoryStorage } from '../../../shared/index.mjs'
+import { joinRoom, memoryStorage, checkEmoji } from '../../../shared/index.mjs'
 import { execSync } from 'node:child_process'
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : fallback }
@@ -80,7 +80,7 @@ try {
   check(await A.js("return document.querySelector('#account').textContent.includes('Make a new kit')"), 'Settings: kit made')
   await A.shot('e2e-2b-settings.png')
 
-  // ---- A invites an agent from the empty Desk ("Invite your first agent"); the agent joins (no check code) ----
+  // ---- A invites an agent from the empty Desk ("Invite your first agent"); the agent joins after the emoji are compared ----
   await A.js("trommi.router.visit('/devices')")
   await A.until("document.querySelector('#agent-invite')", 'devices page with Invite an agent')
   await A.js("trommi.router.visit('/')")
@@ -100,6 +100,12 @@ try {
   check(await A.js("return [...document.querySelectorAll('.clip-copy')].some(i => /^curl -fsSL \\S+\\/connect \\| sh -s '\\S+\\/join#v1\\./.test(i.dataset.inviteClipTextParam))"), 'agent invite shows the connect command (curl …/connect | sh -s <link>)')
   check(link.startsWith(`${APP}/join#v1.`) || link.includes('/join#v1.'), 'agent invite link with the secret after #')
   const j = joinRoom({ link, storage: memoryStorage(), device_name: 'night-agent', device_info: { device_name: 'night-agent', platform: 'node', folder: '~/git/test', host: 'e2e' }, poll_ms: 100 })
+  // Every agent invite asks: the clipboard shows the six emoji the agent's terminal prints, and nothing is added before "They match".
+  const agentEmoji = checkEmoji(await j.check_code).map(e => e.emoji).join(' ')
+  await A.until("document.querySelector('[data-state=confirm_code] .clip-ask .check-emoji')", 'the clipboard shows the six emoji to compare')
+  check(await A.js("return [...document.querySelectorAll('[data-state=confirm_code] .clip-ask .check-emoji-glyph')].map(e => e.textContent).join(' ')") === agentEmoji, 'the clipboard shows the same six emoji as the agent\'s terminal')
+  check(await A.js("return [...trommi.client.model.members.values()].filter(m => m.device_role === 'agent').length === 0"), 'no agent added before "They match"')
+  await A.js("document.querySelector('[data-state=confirm_code] .clip-ask .check-yes').click()")
   agent = await j.client
   agent.on('error', e => results.push(`note agent error: ${e?.code} ${e?.message}`))
   // One lease per process (R4): start() takes it under this process instance; a second claim under another instance
@@ -109,7 +115,7 @@ try {
   if (agent.whenSession) await Promise.race([agent.whenSession(), sleep(15000)])
   await agent.claimSession?.({ process_instance: 'e2e', agent_name: 'night-agent' }).catch(e => results.push(`note claimSession: ${e.message}`))
   await A.until("document.querySelector('[data-state=joined]')", 'agent joined on the invite page')
-  check(true, 'agent added without a check code')
+  check(true, 'agent added after "They match"')
   const commands = []
   agent.on('command', c => commands.push(c))
   await agent.setStatus({ 'status_line/tests': { label: 'Tests', state: 'working', detail: '12/40' }, profile: { model: 'claude-opus-5-5', task: 'E2E-Test', icon: 'draw:flask', agent_name: 'night-agent' } })

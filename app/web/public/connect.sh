@@ -76,7 +76,7 @@ else
 fi
 
 # ---- 3. join ------------------------------------------------------------------------------------------------------
-say "Joining your Trommi account… (keep the app open: it adds this agent by itself, or shows six emoji to compare with the ones shown below)"
+say "Joining your Trommi account… (keep the app open: it shows six emoji; compare them with the ones shown below and tap \"They match\" there)"
 TROMMI_INVITE="$LINK" node "$CONNECTOR" join </dev/null >/dev/null || fail "joining did not work (the line above says why)"
 say "Joined."
 

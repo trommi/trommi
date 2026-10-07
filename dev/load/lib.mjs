@@ -144,11 +144,14 @@ export async function found({ hub_url, dir }) {
   return { client, recovery_code, storage }
 }
 
-/** Add an agent member through a real agent invite (no check code). */
+/** Add an agent member through a real agent invite (with the check code, as every invite). */
 export async function addAgent(inviter, { dir, name, label = null }) {
   const storage = await leanStorage(dir, { persist: true })
   const inv = await inviter.createInvite({ device_role: 'agent', label })
   const j = joinRoom({ link: inv.link, storage, device_name: name, device_info: { device_name: name, platform: 'node', folder: `~/git/${name}`, host: 'loadgen' }, poll_ms: 100, fetch: NET.fetch })
+  const code = await j.check_code
+  await until(() => inviter.model.invites.get(inv.invite_id)?.invite_state === 'confirm_code', 'inviter waits for the agent\'s code')
+  await inviter.confirmInvite(inv.invite_id, inviter.model.invites.get(inv.invite_id).check_code === code)
   const c = await j.client
   // v1.1 (R6): agents send under a session key; the inviter's core posts the grant once the agent joined
   if (!c.session_id) {
