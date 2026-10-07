@@ -26,6 +26,7 @@ const FORTH = pen('<path d="M4.6 12.3 Q11.8 11.5 19 12.1"/><path d="M13.1 6 Q16.
 const CROSS = pen('<path d="M6.3 6.6 Q12.2 12.1 17.8 17.7"/><path d="M17.6 6.2 Q12 12.2 6.2 17.9"/>')
 const DOTS = pen('<path d="M5.4 12 Q5.9 11.5 6.4 12 Q5.9 12.6 5.4 12 M11.5 12 Q12 11.5 12.5 12 Q12 12.6 11.5 12 M17.6 12 Q18.1 11.5 18.6 12 Q18.1 12.6 17.6 12" stroke-width="2.6"/>')
 const FULL = pen('<path d="M4.4 9.3 Q4.1 6.6 4.5 4.4 Q6.9 4.1 9.4 4.4"/><path d="M14.7 4.2 Q17.3 4.5 19.6 4.3 Q19.9 6.7 19.6 9.2"/><path d="M19.8 14.8 Q19.5 17.4 19.7 19.7 Q17.2 19.9 14.8 19.6"/><path d="M9.3 19.8 Q6.7 19.5 4.3 19.7 Q4.1 17.2 4.4 14.9"/>')
+const DRAW = pen('<path d="M4.6 19.6 Q5 17.6 5.6 15.9 Q10.6 10.8 16 5.2 Q17.6 4 18.9 5.3 Q20 6.6 18.7 8 Q13.3 13.4 8.2 18.5 Q6.5 19.2 4.6 19.6"/><path d="M14.4 6.9 Q15.8 8.1 17.1 9.6"/>')
 // Held Ctrl (Cmd on a Mac) while writing on a decision: Send is the reverse card (controller "card", held()).
 const CTRL_WORD = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '') ? '⌘' : 'Ctrl'
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
@@ -406,6 +407,7 @@ ${pad}<div class="tc-frame">
 <a class="tc-rail tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${CROSS}</a>
 ${place ? html`${step(place.prev, 'is-prev', 'The question before', BACK)}${step(place.next, 'is-next', 'The next question', FORTH)}` : ''}
 ${media && full ? html`<a class="tc-rail tc-full is-leave" data-nav href="${cardPath(card, self)}?pic=${shownPic}" data-card-target="gallery" data-back data-turbo-action="replace" data-action="click->card#unfullscreen" title="Leave full screen · Esc" aria-label="Leave full screen">${FULL}</a>` : media ? html`<a class="tc-rail tc-full" data-nav href="${cardPath(card, self)}/picture/${shownPic}" data-card-target="gallery" data-action="click->card#fullscreen" title="Full screen: ${fullWord}, large" aria-label="Full screen: open ${fullWord} large">${FULL}</a>` : ''}
+${drafting || (open && card.kind === 'info') ? html`<button type="button" class="tc-rail tc-draw" data-action="card#trace" aria-pressed="false" title="Draw on the card: lay a tracing sheet over it" aria-label="Draw on the card">${DRAW}</button>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-rail tc-more-open" title="More" aria-label="More for this question">${DOTS}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' && card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : ''}
 ${copyButton(card)}
@@ -427,7 +429,7 @@ ${drafting || (open && card.kind === 'info') ? html`<input type="hidden" name="m
 <span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>
 <div class="tc-ask"><div class="tc-chips" data-card-target="chips" hidden></div>
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${askWords(card, model, asker)}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
-<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${open && (card.kind === 'decision' || card.kind === 'info') ? `. Hold ${CTRL_WORD}: send and reverse, back to ${asker || 'the agent'}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick">${sk('send')}${open && (card.kind === 'decision' || card.kind === 'info') ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button></div></div>
+<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label>${drafting || (open && card.kind === 'info') ? html`<button type="button" class="tc-draw tc-draw-pen" data-action="card#trace" aria-pressed="false" title="Draw on the card: lay a tracing sheet over it" aria-label="Draw on the card">${sk('pen')}</button>` : ''}<span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${open && (card.kind === 'decision' || card.kind === 'info') ? `. Hold ${CTRL_WORD}: send and reverse, back to ${asker || 'the agent'}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick">${sk('send')}${open && (card.kind === 'decision' || card.kind === 'info') ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button></div></div>
 </form>
 </div>
 </div>
@@ -435,131 +437,35 @@ ${drafting || (open && card.kind === 'info') ? html`<input type="hidden" name="m
 }
 
 // ---- focus marks ----
-// Writing and scribbling anywhere on a question card (the Focus window, behind its flag).
-//
-// The card itself is the surface. A click on what is asked (a paragraph, the title, empty space) puts a caret
-// there: a small note that stays with what was clicked. The pen scribbles over everything that scrolls. Both
-// are "marks":
-//   { id, anchor: { kind: 'card' | 'text' | 'option', key?, quote? }, text }               a written note
-//   { id, anchor: { kind: 'card' }, strokes: [{ color, pts: [x0, y0, x1, y1, …] }] }          a scribble
+// Writing and drawing on a question card. A pencil in a paragraph's margin begins a note that stays with that
+// paragraph (or option); the tracing sheet (traceSheet below) is laid over the whole card to draw on. Both are "marks":
+//   { id, anchor: { kind: 'text' | 'option', key?, quote? }, text }                          a written note
+//   { id: 'pen-card' | 'pen-pic-<n>', anchor: { kind: 'card' } | { kind: 'picture', index },
+//     strokes: [{ tool: 'pen' | 'hl', color, pts: [x0, y0, …] }], words: [{ x, y, text, color }], text?, scroll? }
+//                                                                                             a tracing sheet
 // A note on a piece of the text carries how that piece begins (quote), to find it again after a rewording; a
-// paragraph that is an option counts as that option. Stroke points are fractions of the content's WIDTH (y too), so a scribble keeps its place while the
-// column keeps its width and scales with it otherwise.
+// paragraph that is an option counts as that option. A sheet's points are fractions of the card's WIDTH (y too), so
+// a drawing scales with the card; its words are its text too (what the agent reads), and scroll is where the question
+// column stood while drawing (put back when the sheet is laid on again). One sheet over the card, one per picture in
+// Full screen. They go with whatever is sent from the card, the sheet as a picture beside them (controller "card").
 //
 //   const marks = cardMarks({ scroll, blocks(), labelOf(key), onChange() })
-//   marks.controls            the pen, the eraser, undo: put them on the card
 //   marks.get() / set(list)   the marks, plain data (for the card's draft)
-//   marks.note(anchor)        begin a note there (the keyboard's way in; a click on the content does it by itself)
+//   marks.note(anchor)        begin a note there (the keyboard's way in)
 //   marks.text()              the written notes for the agent, each with what it refers to; '' when there are none
 //   marks.optionNotes()       { key: text } for notes written on options
-//   marks.picture()           Promise<PNG data URL | null>: the card as the human sees it, notes and scribbles drawn in
+//   marks.sheet(id, anchor, make) / touch(id) / inked()   a tracing sheet's mark; it changed; the sheets drawn on
 //   marks.count()
 
 const NS = 'http://www.w3.org/2000/svg'
 const newId = () => Math.random().toString(36).slice(2, 10)
-const INK = ['var(--urg-high)', 'var(--accent)']
 
 function cardMarks({ scroll, blocks, labelOf, onChange }) {
   let list = []
-  let pen = false, erasing = false, ink = 0
-  let drawing = null
+  let pen = false
 
-  // ── the layer the scribbles lie on: as large as what scrolls, scrolling with it ──
-  const layer = document.createElementNS(NS, 'svg')
-  layer.setAttribute('class', 'focus-ink')
-  layer.setAttribute('aria-hidden', 'true')
-  scroll.append(layer)
-  const width = () => scroll.clientWidth || 1
-  const fit = () => { layer.style.height = '0px'; layer.style.height = `${scroll.scrollHeight}px`; paintInk() }
-  new ResizeObserver(fit).observe(scroll)
-
-  const pathOf = pts => {
-    const w = width()
-    let d = ''
-    for (let i = 0; i < pts.length; i += 2) d += `${i ? 'L' : 'M'}${(pts[i] * w).toFixed(1)} ${(pts[i + 1] * w).toFixed(1)}`
-    return d
-  }
-  function paintInk() {
-    const nodes = []
-    for (const mark of list) for (const [at, stroke] of (mark.strokes ?? []).entries()) {
-      const path = document.createElementNS(NS, 'path')
-      path.setAttribute('d', pathOf(stroke.pts))
-      path.style.stroke = stroke.color
-      path.dataset.mark = mark.id
-      path.dataset.at = at
-      nodes.push(path)
-    }
-    layer.replaceChildren(...nodes)
-  }
-  const point = e => { const box = scroll.getBoundingClientRect(); return [(e.clientX - box.left + scroll.scrollLeft) / width(), (e.clientY - box.top + scroll.scrollTop) / width()] }
-
-  layer.addEventListener('pointerdown', e => {
-    if (!pen || e.button) return
-    e.preventDefault()
-    if (erasing) return rub(e)
-    layer.setPointerCapture(e.pointerId)
-    let mark = list.findLast(m => m.strokes)
-    if (!mark) { mark = { id: `pen-${newId()}`, anchor: { kind: 'card' }, strokes: [] }; list.push(mark) }
-    drawing = { mark, stroke: { color: INK[ink], pts: point(e) } }
-    mark.strokes.push(drawing.stroke)
-    paintInk()
-  })
-  layer.addEventListener('pointermove', e => {
-    if (erasing && e.buttons & 1) return rub(e)
-    if (!drawing) return
-    const [x, y] = point(e), pts = drawing.stroke.pts
-    if (Math.hypot(x - pts.at(-2), y - pts.at(-1)) * width() < 2) return
-    pts.push(Number(x.toFixed(4)), Number(y.toFixed(4)))
-    layer.lastElementChild?.setAttribute('d', pathOf(pts))
-  })
-  const lift = () => { if (!drawing) return; if (drawing.stroke.pts.length < 4) drawing.mark.strokes.pop(); drawing = null; changed() }
-  layer.addEventListener('pointerup', lift)
-  layer.addEventListener('pointercancel', lift)
-  function rub(e) {
-    const hit = document.elementFromPoint(e.clientX, e.clientY)
-    if (!(hit instanceof SVGPathElement) || hit.parentNode !== layer) return
-    const mark = list.find(m => m.id === hit.dataset.mark)
-    mark?.strokes.splice(Number(hit.dataset.at), 1)
-    changed()
-  }
-
-  // ── the controls: the pen, a second colour, the eraser, undo ──
-  const control = (cls, label, drawingName, act) => {
-    const b = el('button', `focus-mark-tool ${cls}`)
-    b.type = 'button'
-    b.title = label
-    b.setAttribute('aria-label', label)
-    b.append(sketch(drawingName))
-    b.addEventListener('click', act)
-    return b
-  }
-  const penBtn = control('focus-mark-pen', 'Draw on the card (D)', 'pen', () => setPen(!pen))
-  // While the pen is in the hand the row says so, and offers the way out and a clean sheet.
-  const state = el('span', 'focus-mark-state', 'Drawing')
-  const doneBtn = el('button', 'focus-mark-done', 'Done')
-  doneBtn.type = 'button'
-  doneBtn.title = 'Stop drawing (Esc)'
-  doneBtn.addEventListener('click', () => setPen(false))
-  const clearBtn = el('button', 'focus-mark-clear', 'Clear drawing')
-  clearBtn.type = 'button'
-  clearBtn.addEventListener('click', () => { for (const m of list) if (m.strokes) m.strokes = []; changed(); paintTools() })
-  const inkBtn = control('focus-mark-ink', 'The other colour', 'pen', () => { ink = (ink + 1) % INK.length; erasing = false; paintTools() })
-  const rubBtn = control('focus-mark-rub', 'Eraser: rub a line away', 'no', () => { erasing = !erasing; paintTools() })
-  const undoBtn = control('focus-mark-undo', 'Undo the last line', 'back', () => { const mark = list.findLast(m => m.strokes?.length); mark?.strokes.pop(); changed() })
-  const controls = el('span', 'focus-mark-tools')
-  controls.append(penBtn, state, undoBtn, rubBtn, inkBtn, clearBtn, doneBtn)
-  function paintTools() {
-    penBtn.setAttribute('aria-pressed', String(pen))
-    rubBtn.setAttribute('aria-pressed', String(erasing))
-    inkBtn.style.color = INK[ink]
-    inkBtn.hidden = rubBtn.hidden = undoBtn.hidden = state.hidden = doneBtn.hidden = !pen
-    // a drawing that is there can be cleared without taking the pen up first
-    clearBtn.hidden = !pen || !list.some(m => m.strokes?.length)
-    controls.toggleAttribute('data-pen', pen)
-    layer.toggleAttribute('data-pen', pen)
-    layer.toggleAttribute('data-rub', pen && erasing)
-  }
-  function setPen(on) { pen = on; erasing = false; quill.hidden = true; paintTools() }
+  // (While the tracing sheet lies on the card, no pencil is offered in the margin.)
+  function setPen(on) { pen = on; quill.hidden = true }
 
   // ── written notes ──
   const anchorOf = target => {
@@ -649,9 +555,7 @@ function cardMarks({ scroll, blocks, labelOf, onChange }) {
 
   function changed() {
     list = list.filter(m => m.text != null || m.strokes?.length)
-    paintInk()
     paintNotes()
-    paintTools()
     onChange()
   }
 
@@ -666,88 +570,283 @@ function cardMarks({ scroll, blocks, labelOf, onChange }) {
   }
   const optionNotes = () => Object.fromEntries(written().filter(m => m.anchor.kind === 'option').map(m => [m.anchor.key, m.text.trim()]))
 
-  /** The card as the human sees it, with notes and scribbles: what scrolls is copied with its looks written into
-   *  every element, its pictures taken in as data, laid into an SVG and painted on a canvas at twice the size.
-   *  Where a browser will not hand such a canvas out (Safari taints it), the notes and the scribbles are painted
-   *  plainly on paper instead. */
-  async function picture() {
-    const w = scroll.clientWidth, h = Math.min(scroll.scrollHeight, 6000)
-    const scale = 2
-    const done = canvas => { try { return canvas.toDataURL('image/png') } catch { return null } }
-    try {
-      const copy = scroll.cloneNode(true)
-      const from = [scroll, ...scroll.querySelectorAll('*')], to = [copy, ...copy.querySelectorAll('*')]
-      for (let i = 0; i < from.length; i++) {
-        const a = from[i], b = to[i]
-        if (!(b instanceof HTMLElement || b instanceof SVGElement)) continue
-        const style = getComputedStyle(a)
-        let css = ''
-        for (const prop of style) css += `${prop}:${style.getPropertyValue(prop)};`
-        b.setAttribute('style', css)
-        if (b instanceof HTMLTextAreaElement) b.textContent = a.value
-        if (b instanceof HTMLIFrameElement) { const box = el('div'); box.setAttribute('style', `${css}background:#eee;`); b.replaceWith(box) }
-      }
-      copy.style.overflow = 'visible'
-      copy.style.height = `${h}px`
-      copy.style.maxHeight = 'none'
-      copy.style.background = getComputedStyle(scroll.closest('.focus-card') ?? scroll).backgroundColor
-      await Promise.all([...copy.querySelectorAll('img')].map(async img => {
-        try {
-          const blob = await (await fetch(img.src)).blob()
-          img.src = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(blob) })
-        } catch { img.removeAttribute('src') }
-      }))
-      copy.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
-      const svg = `<svg xmlns="${NS}" width="${w}" height="${h}"><foreignObject width="100%" height="100%">${new XMLSerializer().serializeToString(copy)}</foreignObject></svg>`
-      const image = new Image()
-      await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` })
-      const canvas = document.createElement('canvas')
-      canvas.width = w * scale
-      canvas.height = h * scale
-      const c = canvas.getContext('2d')
-      c.fillStyle = '#fff'
-      c.fillRect(0, 0, canvas.width, canvas.height)
-      c.drawImage(image, 0, 0, canvas.width, canvas.height)
-      const out = done(canvas)
-      if (out) return out
-    } catch {}
-    // the plain way: paper, the notes as lines of text, the scribbles where they were drawn
-    const canvas = document.createElement('canvas')
-    canvas.width = w * scale
-    canvas.height = h * scale
-    const c = canvas.getContext('2d')
-    c.scale(scale, scale)
-    c.fillStyle = '#fff'
-    c.fillRect(0, 0, w, h)
-    c.fillStyle = '#222'
-    c.font = '16px system-ui, sans-serif'
-    let y = 28
-    for (const line of [text(), ...Object.entries(optionNotes()).map(([key, t]) => `on option "${labelOf(key)}": ${t}`)].join('\n').split('\n')) { c.fillText(line, 16, y); y += 22 }
-    c.lineWidth = 2.5
-    c.lineCap = c.lineJoin = 'round'
-    for (const mark of list) for (const stroke of mark.strokes ?? []) {
-      c.strokeStyle = '#b4531a'
-      c.beginPath()
-      for (let i = 0; i < stroke.pts.length; i += 2) c[i ? 'lineTo' : 'moveTo'](stroke.pts[i] * w, stroke.pts[i + 1] * w)
-      c.stroke()
-    }
-    return done(canvas)
-  }
-
-  paintTools()
   return {
-    controls, note, text, optionNotes, picture, setPen,
-    penOn: () => pen,
-    get: () => list.map(m => ({ ...m, strokes: m.strokes?.map(s => ({ color: s.color, pts: [...s.pts] })) })),
+    note, text, optionNotes, setPen,
+    get: () => list.map(m => ({ ...m, ...(m.strokes ? { strokes: m.strokes.map(s => ({ ...s, pts: [...s.pts] })) } : {}), ...(m.words ? { words: m.words.map(w => ({ ...w })) } : {}) })),
     set(next) {
-      list = (Array.isArray(next) ? next : []).filter(m => m && m.id && m.anchor && !(m.anchor.kind === 'card' && m.text != null) && !(m.strokes && m.text == null && !String(m.id).startsWith('pen-'))).map(m => ({ id: m.id, anchor: m.anchor, ...(m.text != null ? { text: String(m.text) } : {}), ...(m.strokes ? { strokes: m.strokes } : {}) }))
-      fit()
+      list = (Array.isArray(next) ? next : []).filter(m => m && m.id && m.anchor && (String(m.id).startsWith('pen-') ? m.strokes || m.words : m.text != null && m.anchor.kind !== 'card')).map(m => ({ id: m.id, anchor: m.anchor, ...(m.text != null ? { text: String(m.text) } : {}), ...(m.strokes ? { strokes: m.strokes } : {}), ...(m.words ? { words: m.words } : {}), ...(m.scroll ? { scroll: m.scroll } : {}) }))
       paintNotes()
-      paintTools()
     },
     count: () => list.filter(m => m.text?.trim() || m.strokes?.length).length,
-    refit: fit,
+    /** The drawing of one tracing sheet (id 'pen-card' or 'pen-pic-<n>'): its mark, made when asked to. */
+    sheet(id, anchor, make) { let m = list.find(x => x.id === id); if (!m && make) { m = { id, anchor, strokes: [], words: [] }; list.push(m) } return m ?? null },
+    /** The sheet's drawing changed: an empty one is dropped, its words are the mark's text (what the agent reads). */
+    touch(id) {
+      const m = list.find(x => x.id === id)
+      if (m) { m.strokes ??= []; m.words ??= []; const said = m.words.map(w => w.text.trim()).filter(Boolean).join(' · '); if (said) m.text = said; else delete m.text }
+      list = list.filter(x => !String(x.id).startsWith('pen-') || x.strokes?.length || x.words?.length)
+      onChange()
+    },
+    inked: () => list.filter(m => String(m.id).startsWith('pen-') && (m.strokes?.length || m.words?.length)),
   }
+}
+
+// ---- the tracing sheet ----
+// The pen above the card (and the one in the field's row) lays a sheet of tracing paper, taped at the top, over the
+// WHOLE card: the question, its picture and the answers show through; mouse, pen and finger draw on it. The Scribble
+// Board's tools stand at the foot: pen, highlighter, colours, eraser, text, undo and redo, and "Send with the card".
+// Esc or the cross takes the sheet off; the drawing stays on the card (its draft) until it is sent or cleared.
+//
+//   const sheet = traceSheet({ card, marks, id, anchor, left, onSend, onClose })   card: the .tc-card element
+//   sheet.close()                       take it off (as Esc)
+const PEN_INKS = [['ink', 'Ink'], ['#d9480f', 'Rust'], ['#0b7a5c', 'Green'], ['#1971c2', 'Blue']]
+const HL_INK = '#ffd43b'
+const TOOL_PATHS = {
+  pen: ['M4 20l1.2-4.4L16.6 4.2a2 2 0 012.9 0l.3.3a2 2 0 010 2.9L8.4 18.8z', 'M14.5 6.5l3 3'],
+  hl: ['M14.5 4l5.5 5.5-8 8H7.5v-4.5z', 'M11.5 7l5.5 5.5', 'M4 21h10'],
+  eraser: ['M20 20H9.5l-5-5a2 2 0 010-2.8l8-8a2 2 0 012.8 0l4.9 4.9a2 2 0 010 2.8L12 20', 'M8.7 8.3l7 7'],
+  text: ['M5.5 7V5h13v2', 'M12 5v14', 'M9.5 19h5'],
+  undo: ['M9 14L4 9l5-5', 'M4 9h10.5a5.5 5.5 0 010 11H11'],
+  redo: ['M15 14l5-5-5-5', 'M20 9H9.5a5.5 5.5 0 000 11H13'],
+  trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12', 'M9 7V4h6v3'],
+  send: ['M12 19V5', 'M5.5 11.5L12 5l6.5 6.5'],
+  close: ['M6 6l12 12', 'M18 6L6 18'],
+}
+const toolIcon = name => { const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('class', 'tc-trace-icon'); svg.setAttribute('aria-hidden', 'true'); for (const d of TOOL_PATHS[name]) { const p = document.createElementNS(NS, 'path'); p.setAttribute('d', d); svg.append(p) } return svg }
+const isDark = () => document.documentElement.dataset.theme === 'dark'
+const DARK_INKS = { ink: '#e9eeea', '#d9480f': '#ff8a4c', '#0b7a5c': '#45d1a3', '#1971c2': '#6cb2ff' }
+const inkOf = color => (isDark() ? DARK_INKS[color] ?? color : color === 'ink' ? '#1b1f23' : color)
+const SHEET_TOOL = 'trommi-trace-tool'
+
+function traceSheet({ card, marks, id, anchor, left, onSend, onClose }) {
+  let mark = marks.sheet(id, anchor, false)
+  let { tool, color } = (() => { try { return { tool: 'pen', color: 'ink', ...JSON.parse(localStorage.getItem(SHEET_TOOL) || '{}') } } catch { return { tool: 'pen', color: 'ink' } } })()
+  if (!['pen', 'hl', 'eraser', 'text'].includes(tool)) tool = 'pen'
+  const past = [], next = []
+  const snap = () => JSON.stringify({ strokes: mark?.strokes ?? [], words: mark?.words ?? [] })
+  // (the question column stands where it stood when this was drawn)
+  if (left && mark?.scroll != null) left.scrollTop = mark.scroll
+
+  const sheet = el('div', 'tc-trace')
+  sheet.setAttribute('role', 'application')
+  sheet.setAttribute('aria-label', 'Tracing sheet over the card: draw with mouse, pen or finger. Esc takes it off.')
+  const tape = el('span', 'tc-trace-tape')
+  const ink = document.createElementNS(NS, 'svg')
+  ink.setAttribute('class', 'tc-trace-ink')
+  const words = el('div', 'tc-trace-words')
+  sheet.append(ink, words, tape)
+  card.append(sheet)
+  card.closest('.tc-page')?.classList.add('is-tracing')
+
+  const width = () => sheet.clientWidth || 1
+  const pathOf = pts => { const w = width(); let d = ''; for (let i = 0; i < pts.length; i += 2) d += `${i ? 'L' : 'M'}${(pts[i] * w).toFixed(1)} ${(pts[i + 1] * w).toFixed(1)}`; return pts.length === 2 ? `${d}l0.1 0` : d }
+  function paint() {
+    ink.replaceChildren(...(mark?.strokes ?? []).map((s, at) => { const p = document.createElementNS(NS, 'path'); p.setAttribute('d', pathOf(s.pts)); p.setAttribute('class', `is-${s.tool ?? 'pen'}`); p.style.stroke = s.tool === 'hl' ? s.color : inkOf(s.color); p.dataset.at = at; return p }))
+    words.replaceChildren(...(mark?.words ?? []).map((w, at) => { const t = el('span', 'tc-trace-word', w.text); t.style.left = `${w.x * width()}px`; t.style.top = `${w.y * width()}px`; t.style.color = inkOf(w.color); t.dataset.at = at; return t }))
+    paintTools()
+  }
+  new ResizeObserver(() => paint()).observe(sheet)
+  const point = e => { const box = sheet.getBoundingClientRect(); return [Number(((e.clientX - box.left) / width()).toFixed(4)), Number(((e.clientY - box.top) / width()).toFixed(4))] }
+  const own = () => (mark ??= marks.sheet(id, anchor, true))
+  function changed(before) {
+    if (before != null && before !== snap()) { past.push(before); next.length = 0 }
+    if (mark) { if (left && !mark.scroll && left.scrollTop) mark.scroll = Math.round(left.scrollTop); marks.touch(id); if (!marks.sheet(id)) mark = null }
+    paint()
+  }
+
+  // ── drawing: one pointer draws; a second finger stops the line and moves the page instead ──
+  let drawing = null, fingers = new Map()
+  sheet.addEventListener('pointerdown', e => {
+    if (e.button || e.target.closest('.tc-trace-type')) return
+    fingers.set(e.pointerId, [e.clientX, e.clientY])
+    if (fingers.size > 1) { if (drawing) { mark.strokes.pop(); drawing = null; paint() } return }
+    e.preventDefault()
+    sheet.setPointerCapture(e.pointerId)
+    if (tool === 'eraser') return rub(e)
+    if (tool === 'text') return type(point(e))
+    const before = snap()
+    drawing = { before, stroke: { tool, color: tool === 'hl' ? HL_INK : color, pts: point(e) } }
+    own().strokes.push(drawing.stroke)
+    paint()
+  })
+  sheet.addEventListener('pointermove', e => {
+    const was = fingers.get(e.pointerId)
+    if (was && fingers.size > 1) { window.scrollBy(was[0] - e.clientX, was[1] - e.clientY); if (left) left.scrollTop += 0; fingers.set(e.pointerId, [e.clientX, e.clientY]); return }
+    if (tool === 'eraser' && e.buttons & 1) return rub(e)
+    if (!drawing) return
+    const [x, y] = point(e), pts = drawing.stroke.pts
+    if (Math.hypot(x - pts.at(-2), y - pts.at(-1)) * width() < 1.5) return
+    pts.push(x, y)
+    ink.lastElementChild?.setAttribute('d', pathOf(pts))
+  })
+  const lift = e => { fingers.delete(e.pointerId); if (!drawing) return; const { before } = drawing; drawing = null; changed(before) }
+  sheet.addEventListener('pointerup', lift)
+  sheet.addEventListener('pointercancel', lift)
+  sheet.addEventListener('wheel', e => e.preventDefault(), { passive: false })   // (the card stays still under the sheet)
+  function rub(e) {
+    for (const hit of document.elementsFromPoint(e.clientX, e.clientY)) {
+      if (!sheet.contains(hit)) continue
+      const before = snap()
+      if (hit instanceof SVGPathElement) { mark.strokes.splice(Number(hit.dataset.at), 1); return changed(before) }
+      if (hit.classList.contains('tc-trace-word')) { mark.words.splice(Number(hit.dataset.at), 1); return changed(before) }
+    }
+  }
+  // ── text: a click puts a field there; Enter or leaving it puts the words on the sheet ──
+  function type([x, y], at = null) {
+    sheet.querySelector('.tc-trace-type')?.blur()
+    const field = el('textarea', 'tc-trace-type')
+    field.rows = 1
+    field.placeholder = 'Write'
+    field.setAttribute('aria-label', 'Words on the sheet')
+    field.style.left = `${x * width()}px`
+    field.style.top = `${y * width()}px`
+    field.style.color = inkOf(color)
+    if (at != null) field.value = mark.words[at].text
+    sheet.append(field)
+    requestAnimationFrame(() => field.focus())
+    let done = false
+    const put = () => {
+      if (done) return; done = true
+      const before = snap(), text = field.value.trim()
+      field.remove()
+      if (at != null) { if (text) mark.words[at].text = text; else mark.words.splice(at, 1) }
+      else if (text) own().words.push({ x, y, text, color })
+      changed(before)
+    }
+    field.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing)) { e.preventDefault(); field.blur() } })
+    field.addEventListener('blur', put)
+  }
+  words.addEventListener('pointerdown', e => {
+    const w = e.target.closest('.tc-trace-word')
+    if (!w || tool !== 'text') return
+    e.stopPropagation(); e.preventDefault()
+    const at = Number(w.dataset.at); type([mark.words[at].x, mark.words[at].y], at)
+  })
+
+  // ── the tools, at the foot ──
+  const bar = el('div', 'tc-trace-tools')
+  bar.setAttribute('role', 'toolbar')
+  bar.setAttribute('aria-label', 'Drawing tools')
+  const button = (cls, label, name, act) => { const b = el('button', `tc-trace-btn ${cls}`); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label); if (name) b.append(toolIcon(name)); b.addEventListener('click', act); return b }
+  const pick = t => { tool = t; sheet.querySelector('.tc-trace-type')?.blur(); remember(); paintTools() }
+  const remember = () => { try { localStorage.setItem(SHEET_TOOL, JSON.stringify({ tool, color })) } catch {} }
+  const tools = { pen: button('is-tool', 'Pen · P', 'pen', () => pick('pen')), hl: button('is-tool', 'Highlighter · H', 'hl', () => pick('hl')) }
+  const swatches = PEN_INKS.map(([c, name]) => { const b = button('is-swatch', name, null, () => { color = c; if (tool !== 'text') tool = 'pen'; remember(); paintTools() }); b.dataset.color = c; b.append(el('span', 'tc-trace-dot')); return b })
+  tools.eraser = button('is-tool', 'Eraser · E', 'eraser', () => pick('eraser'))
+  tools.text = button('is-tool', 'Text · T', 'text', () => pick('text'))
+  const undo = button('', 'Undo · Ctrl+Z', 'undo', () => step(past, next))
+  const redo = button('', 'Redo · Ctrl+Shift+Z', 'redo', () => step(next, past))
+  const clear = button('is-clear', 'Clear the sheet', 'trash', () => { if (!mark) return; const before = snap(); mark.strokes = []; mark.words = []; changed(before) })
+  const send = el('button', 'tc-trace-send')
+  send.type = 'button'
+  send.title = 'Send the drawing with the card, and what is written in the field'
+  send.append(toolIcon('send'), el('span', '', 'Send with the card'))
+  send.addEventListener('click', () => { close(); onSend() })
+  const off = button('is-off', 'Take the sheet off · Esc (the drawing stays)', 'close', () => close())
+  const group = (...nodes) => { const g = el('span', 'tc-trace-group'); g.append(...nodes); return g }
+  bar.append(group(tools.pen, tools.hl, ...swatches), group(tools.eraser, tools.text), group(undo, redo), group(clear), send, off)
+  document.body.append(bar)
+  function step(from, to) {
+    if (!from.length) return
+    to.push(snap())
+    const { strokes, words: w } = JSON.parse(from.pop())
+    own().strokes = strokes; mark.words = w
+    changed(null)
+  }
+  function paintTools() {
+    for (const [name, b] of Object.entries(tools)) b.setAttribute('aria-pressed', String(tool === name))
+    for (const b of swatches) { b.setAttribute('aria-pressed', String(b.dataset.color === color && tool !== 'hl' && tool !== 'eraser')); b.style.setProperty('--c', inkOf(b.dataset.color)) }
+    undo.disabled = !past.length
+    redo.disabled = !next.length
+    clear.disabled = send.disabled = !(mark?.strokes?.length || mark?.words?.length)
+    sheet.dataset.tool = tool
+  }
+  // ── keys while the sheet lies there: Esc takes it off, the tools by their letters, undo and redo ──
+  const keys = e => {
+    if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return
+    const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey
+    if (e.key === 'Escape') close()
+    else if (mod && k === 'z') step(e.shiftKey ? next : past, e.shiftKey ? past : next)
+    else if (mod && k === 'y') step(next, past)
+    else if (!mod && !e.altKey && { p: 'pen', h: 'hl', e: 'eraser', t: 'text' }[k]) pick({ p: 'pen', h: 'hl', e: 'eraser', t: 'text' }[k])
+    else return
+    e.preventDefault(); e.stopImmediatePropagation()
+  }
+  addEventListener('keydown', keys, true)
+  let open = true
+  function close() {
+    if (!open) return; open = false
+    sheet.querySelector('.tc-trace-type')?.blur()
+    removeEventListener('keydown', keys, true)
+    sheet.remove(); bar.remove()
+    card.closest('.tc-page')?.classList.remove('is-tracing')
+    onClose()
+  }
+  paint()
+  requestAnimationFrame(() => (tools[tool] ?? tools.pen).focus({ preventScroll: true }))
+  return { close, get open() { return open } }
+}
+
+/** The card as the human sees it, with a sheet's drawing on it: what the card shows is copied with its looks written
+ *  into every element, its pictures taken in as data, laid into an SVG and painted on a canvas at twice the size; the
+ *  drawing is painted over it. Where a browser will not hand such a canvas out (Safari taints it), the drawing and its
+ *  words go on plain paper instead. Promise<Blob | null>. */
+async function cardPicture(card, mark) {
+  const w = Math.round(card.clientWidth), h = Math.min(Math.round(card.clientHeight), 6000), scale = 2
+  let canvas, c
+  const paper = () => { canvas = document.createElement('canvas'); canvas.width = w * scale; canvas.height = h * scale; c = canvas.getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, canvas.width, canvas.height) }
+  paper()
+  const blob = () => new Promise(resolve => { try { canvas.toBlob(resolve, 'image/png') } catch { resolve(null) } })
+  const drawing = () => {
+    c.save(); c.scale(scale, scale); c.lineCap = c.lineJoin = 'round'
+    for (const s of mark.strokes ?? []) {
+      c.globalAlpha = s.tool === 'hl' ? .38 : 1
+      c.lineWidth = s.tool === 'hl' ? 16 : 2.8
+      c.strokeStyle = s.tool === 'hl' ? s.color : inkOf(s.color)
+      c.beginPath()
+      for (let i = 0; i < s.pts.length; i += 2) c[i ? 'lineTo' : 'moveTo'](s.pts[i] * w, s.pts[i + 1] * w)
+      if (s.pts.length === 2) c.lineTo(s.pts[0] * w + .1, s.pts[1] * w)
+      c.stroke()
+    }
+    c.globalAlpha = 1
+    c.font = '600 17px system-ui, sans-serif'
+    c.textBaseline = 'top'
+    for (const word of mark.words ?? []) { c.fillStyle = inkOf(word.color); word.text.split('\n').forEach((line, i) => c.fillText(line, word.x * w + 2, word.y * w + 2 + i * 22)) }
+    c.restore()
+  }
+  try {
+    const copy = card.cloneNode(true)
+    copy.querySelector('.tc-trace')?.remove()
+    const from = [card, ...card.querySelectorAll('*')].filter(n => !n.closest('.tc-trace')), to = [copy, ...copy.querySelectorAll('*')]
+    for (let i = 0; i < from.length; i++) {
+      const a = from[i], b = to[i]
+      if (!(b instanceof HTMLElement || b instanceof SVGElement)) continue
+      const style = getComputedStyle(a)
+      let css = ''
+      for (const prop of style) css += `${prop}:${style.getPropertyValue(prop)};`
+      b.setAttribute('style', css)
+      if (b instanceof HTMLTextAreaElement) b.textContent = a.value
+      if (b instanceof HTMLIFrameElement || b instanceof HTMLVideoElement) { const box = el('div'); box.setAttribute('style', `${css}background:#ddd;`); b.replaceWith(box) }
+      // (what was scrolled inside the card is shown as it stood)
+      if (a.scrollTop && b instanceof HTMLElement) for (const kid of b.children) kid.style.translate = `0 ${-a.scrollTop}px`
+    }
+    Object.assign(copy.style, { position: 'static', margin: '0', width: `${w}px`, height: `${h}px`, translate: 'none', transform: 'none', animation: 'none' })
+    await Promise.all([...copy.querySelectorAll('img')].map(async img => {
+      try {
+        const got = await (await fetch(img.src)).blob()
+        img.src = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(got) })
+        img.removeAttribute('srcset')
+      } catch { img.removeAttribute('src') }
+    }))
+    copy.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml')
+    const svg = `<svg xmlns="${NS}" width="${w}" height="${h}"><foreignObject width="100%" height="100%">${new XMLSerializer().serializeToString(copy)}</foreignObject></svg>`
+    const image = new Image()
+    await new Promise((resolve, reject) => { image.onload = resolve; image.onerror = reject; image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` })
+    c.drawImage(image, 0, 0, canvas.width, canvas.height)
+    c.getImageData(0, 0, 1, 1)   // (throws where the canvas is tainted)
+  } catch { paper() }
+  drawing()
+  return blob()
 }
 
 // ---- controller "card" ----
@@ -802,12 +901,13 @@ controller('card', class extends Controller {
     removeEventListener('resize', this.placed)
     this.element.removeEventListener('scroll', this.link, { capture: true })
     clearTimeout(this.timer)
+    this.sheet?.close()
   }
 
-  // ---- marks: draw on the card with the pen, write a note at a paragraph (the old client's card.mjs) ----
-  // They travel in the form's field "marks" with whatever is pressed, and in the draft while nothing is.
+  // ---- marks: a note at a paragraph, a drawing on the tracing sheet (the old client's card.mjs) ----
+  // They travel in the form's field "marks" with whatever is pressed, and in the draft while nothing is. A sheet that
+  // was drawn on also goes as a picture of the card with the drawing (attached as the form is sent).
   async mountMarks() {
-
     const left = this.element.querySelector('.tc-left')
     if (!left || !this.element.isConnected || this.marksUi) return
     const labels = new Map([...this.element.querySelectorAll('.tc-opt[data-key]')].map(b => [b.dataset.key, b.querySelector('.tc-opt-label')?.textContent ?? b.dataset.key]))
@@ -815,10 +915,67 @@ controller('card', class extends Controller {
       scroll: left,
       blocks: () => [...left.querySelectorAll('.tc-title, .tc-text .rich > *, .focus-mark')],
       labelOf: key => labels.get(key) ?? key,
-      onChange: () => { this.marksTarget.value = JSON.stringify(this.marksUi.get()); this.keep() },
+      onChange: () => { this.marksTarget.value = JSON.stringify(this.marksUi.get()); this.keep(); this.keepHere(); this.inked() },
     })
+    // (a card without a draft on the hub, an info: its drawing is kept on this device)
+    if (!this.draftValue && this.marksTarget.value === '[]') try { this.marksTarget.value = localStorage.getItem(this.hereKey()) || '[]' } catch {}
     try { this.marksUi.set(JSON.parse(this.marksTarget.value || '[]')) } catch {}
-    this.element.querySelector('.tc-ask-row .tc-clip')?.after(this.marksUi.controls)
+    this.attachDrawing = this.attachDrawing.bind(this)
+    this.formTarget.addEventListener('submit', this.attachDrawing)
+    this.inked()
+    // (a drawing kept from before: its picture is made ready, so an answer takes it along)
+    if (this.sheetMark()) requestAnimationFrame(() => this.drawingPicture())
+  }
+  hereKey() { return `trommi-marks-${this.element.dataset.id}` }
+  keepHere() {
+    if (this.draftValue) return
+    try { const v = this.marksTarget.value; if (v && v !== '[]') localStorage.setItem(this.hereKey(), v); else localStorage.removeItem(this.hereKey()) } catch {}
+  }
+  /** The sheet of this view: over the card, or over the picture standing large in Full screen. */
+  sheetId() {
+    const at = this.element.classList.contains('is-full') ? Number(this.element.querySelector('.tc-stage[data-at]')?.dataset.at) || 1 : 0
+    return at ? { id: `pen-pic-${at}`, anchor: { kind: 'picture', index: at - 1 } } : { id: 'pen-card', anchor: { kind: 'card' } }
+  }
+  sheetMark() { const m = this.marksUi?.sheet(this.sheetId().id); return m && (m.strokes?.length || m.words?.length) ? m : null }
+  // The pen above the card, or in the field's row: lays the sheet on; again: takes it off.
+  trace(event) {
+    event?.preventDefault()
+    if (!this.marksUi) return
+    if (this.sheet?.open) return this.sheet.close()
+    const { id, anchor } = this.sheetId()
+    this.marksUi.setPen(true)
+    this.sheet = traceSheet({
+      card: this.element.querySelector('.tc-card'), marks: this.marksUi, id, anchor, left: this.element.querySelector('.tc-card > .tc-left'),
+      onClose: () => { this.marksUi.setPen(false); this.inked(); this.drawingPicture() },
+      onSend: async () => {
+        await this.drawingPicture()
+        const send = this.formTarget.querySelector('.tc-send')
+        if (send) this.formTarget.requestSubmit(send)
+      },
+    })
+    this.inked()
+  }
+  /** The pens say whether a drawing waits on the card; the field's chips show it, a tap lays the sheet on again. */
+  inked() {
+    const on = Boolean(this.sheetMark()), open = Boolean(this.sheet?.open)
+    for (const b of this.element.querySelectorAll('.tc-draw')) { b.toggleAttribute('data-inked', on); b.setAttribute('aria-pressed', String(open)) }
+    if (!on) this.drawing = null
+    this.files()
+  }
+  async drawingPicture() {
+    const mark = this.sheetMark()
+    if (!mark) { this.drawing = null; return null }
+    const blob = await cardPicture(this.element.querySelector('.tc-card'), mark).catch(() => null)
+    this.drawing = blob ? new File([blob], `drawing-on-card-${this.element.getAttribute('aria-label')?.match(/\d+/)?.[0] ?? 'card'}.png`, { type: 'image/png' }) : null
+    return this.drawing
+  }
+  // (sent: the picture of the drawing joins the files, once; the router reads the form after this)
+  attachDrawing() {
+    if (!this.drawing || !this.sheetMark() || !this.hasFilesTarget) return
+    if ([...this.filesTarget.files].some(f => f.name === this.drawing.name)) return
+    const all = new DataTransfer()
+    for (const f of [...this.filesTarget.files, this.drawing]) all.items.add(f)
+    this.filesTarget.files = all.files
   }
 
   // ---- the pictures and the options are one thing ----
@@ -1031,14 +1188,22 @@ controller('card', class extends Controller {
     if (!success || !formSubmission?.submitter?.classList.contains('tc-send')) return
     if (this.hasFieldTarget) { this.fieldTarget.value = ''; this.grow() }
     if (this.hasFilesTarget) { this.filesTarget.value = ''; this.files() }
-    if (this.marksUi && this.hasMarksTarget) { this.marksUi.set([]); this.marksTarget.value = '[]' }
+    if (this.marksUi && this.hasMarksTarget) { this.marksUi.set([]); this.marksTarget.value = '[]'; this.keepHere(); this.drawing = null; this.inked() }
   }
 
   // ---- files: chosen, pasted or dropped ----
   files() {
-    const list = [...this.filesTarget.files]
-    this.chipsTarget.hidden = !list.length
+    if (!this.hasFilesTarget || !this.hasChipsTarget) return
+    const list = [...this.filesTarget.files].filter(f => !f.name.startsWith('drawing-on-card-'))
+    const drawn = this.sheetMark() && !this.sheet?.open
+    this.chipsTarget.hidden = !list.length && !drawn
     this.chipsTarget.replaceChildren(...list.map(f => { const chip = document.createElement('span'); chip.className = 'focus-chip'; chip.textContent = f.name; return chip }))
+    if (drawn) {
+      const chip = document.createElement('button')
+      chip.type = 'button'; chip.className = 'focus-chip is-drawing'; chip.textContent = 'Drawing on the card'; chip.title = 'It goes along with what you send. Open the sheet again'
+      chip.addEventListener('click', () => this.trace())
+      this.chipsTarget.prepend(chip)
+    }
     if (list.length) {
       const drop = document.createElement('button')
       drop.type = 'button'; drop.className = 'focus-chip t-chip-drop'; drop.textContent = 'Remove'

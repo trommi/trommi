@@ -409,11 +409,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-or-pair .tc-whatever .sketch-duck { width: 48px; height: 40px; stroke-width: 2; }
 .tc-wtf b { font: 800 1.5rem/40px var(--display); letter-spacing: .06em; }
 
-/* ---- marks on the card: the pen's ink over the left column, a written note at a paragraph (card.mjs) ---- */
-.focus-ink { position: absolute; left: 0; top: 0; width: 100%; z-index: 3; overflow: visible; pointer-events: none; fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
-.focus-ink[data-pen] { pointer-events: auto; cursor: crosshair; touch-action: none; }
-.focus-ink[data-rub] { cursor: cell; }
-.focus-ink[data-rub] path { pointer-events: stroke; stroke-width: 9; stroke-opacity: .5; }
+/* ---- marks on the card: a written note at a paragraph (card.mjs) ---- */
 .tc-text:has(.focus-mark) { max-height: none; }
 .focus-mark { display: flex; align-items: flex-start; gap: 6px; margin: 6px 0 10px 10px; padding: 4px 8px; border-left: 2px solid var(--urg-high); color: var(--urg-high); cursor: text; }
 .focus-mark .sketch { flex: none; width: 15px; height: 15px; margin-top: 5px; }
@@ -421,16 +417,81 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .focus-mark-quill { position: absolute; z-index: 2; width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--muted); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); cursor: pointer; }
 .focus-mark-quill .sketch { width: 14px; height: 14px; }
 .focus-mark-quill:hover { color: var(--urg-high); box-shadow: 0 0 0 1px var(--urg-high); }
-.focus-mark-tools { display: inline-flex; align-items: center; gap: 0; }
-.focus-mark-tool { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
-.focus-mark-tool .sketch { width: 18px; height: 18px; }
-.focus-mark-tool:hover { background: var(--sunken); color: var(--fg); }
-.focus-mark-tool[aria-pressed="true"] { background: var(--fg); color: var(--surface); }
-.focus-mark-state { padding: 0 4px 0 2px; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--urg-high); white-space: nowrap; }
-.focus-mark-done, .focus-mark-clear { flex: none; height: 28px; padding: 0 8px; border: 0; border-radius: 8px; background: none; font: 600 var(--t-xs)/1 var(--font); white-space: nowrap; color: var(--muted); cursor: pointer; }
-.focus-mark-done { background: var(--fg); color: var(--surface); }
-.focus-mark-tools[hidden], .focus-mark-tool[hidden], .focus-mark-state[hidden], .focus-mark-done[hidden], .focus-mark-clear[hidden] { display: none; }
-.tc-ask-row:has(.focus-mark-tools[data-pen]) .tc-saved { display: none; }
+
+/* ---- the tracing sheet (card.mjs traceSheet; his pick "trace", 7 October): a sheet of tracing paper taped over the
+   whole card, the card showing through; the Scribble Board's tools in a pill at the window's foot ---- */
+.tc-draw-pen { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.tc-draw-pen:hover { background: var(--sunken); color: var(--fg); }
+.tc-draw-pen .sketch { width: 19px; height: 19px; }
+.tc-draw { position: relative; }
+.tc-draw[aria-pressed="true"] { border-color: var(--urg-high); background: var(--urg-high-soft); color: var(--urg-high); box-shadow: 0 0 0 1px var(--urg-high); }
+.tc-draw[data-inked]::after { content: ""; position: absolute; right: 3px; top: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--urg-high); box-shadow: 0 0 0 2px var(--surface); }
+.tc-draw-pen[data-inked]::after { right: 4px; top: 4px; width: 7px; height: 7px; }
+.tc-rails > .tc-draw { right: var(--step); }
+.tc-rails:has(> .tc-full) > .tc-draw { right: calc(2 * var(--step)); }
+.tc-rails:has(> .tc-draw) > .is-next { right: calc(2 * var(--step) + 12px); }
+.tc-rails:has(> .tc-draw) > .is-prev { right: calc(3 * var(--step) + 12px); }
+.tc-rails:has(> .tc-draw):has(> .tc-full) > .is-next { right: calc(3 * var(--step) + 12px); }
+.tc-rails:has(> .tc-draw):has(> .tc-full) > .is-prev { right: calc(4 * var(--step) + 12px); }
+@container cardpage (max-width: 760px) {
+  .tc-rails > .tc-draw { right: calc(30px + var(--step)); }
+  .tc-rails:has(> .tc-full) > .tc-draw { right: calc(30px + 2 * var(--step)); }
+}
+.tc-page.is-full .tc-rails > .tc-rail.tc-draw { display: grid; position: fixed; z-index: 97; left: 72px; right: auto; top: 12px; }
+.tc-page.is-full:has(.tc-draw) .tc-card > .tc-left > .tc-lead { padding-left: 106px; }
+@media (max-width: 860px) {
+  .tc-page.is-full .tc-rails > .tc-rail.tc-draw { left: 60px; top: calc(8px + env(safe-area-inset-top, 0px)); }
+  .tc-page.is-full:has(.tc-draw) .tc-card > .tc-left > .tc-lead { padding-left: 102px; }
+}
+.focus-chip.is-drawing { border: 1px solid var(--urg-high); background: var(--urg-high-soft); color: var(--urg-high); font-weight: 600; cursor: pointer; }
+
+.tc-trace { --sheet-line: var(--urg-high); position: absolute; inset: 0; z-index: 20; border-radius: inherit; background: color-mix(in srgb, #fbf6e4 42%, transparent); box-shadow: inset 0 0 0 2px var(--sheet-line); cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; animation: sheet-lay 220ms var(--ease-out, ease-out); }
+:root[data-theme="dark"] .tc-trace { background: color-mix(in srgb, #2a2a22 45%, transparent); }
+.tc-trace[data-tool="eraser"] { cursor: cell; }
+.tc-trace[data-tool="text"] { cursor: text; }
+.tc-page.is-full .tc-trace { position: fixed; border-radius: 0; }
+@keyframes sheet-lay { from { opacity: 0; translate: 0 -6px; } }
+@media (prefers-reduced-motion: reduce) { .tc-trace { animation: none; } }
+/* (the tape: a strip of paper over the top edge) */
+.tc-trace-tape { position: absolute; left: 50%; top: -9px; width: 112px; height: 20px; translate: -50% 0; rotate: -1.5deg; background: color-mix(in srgb, #f3e3a8 80%, transparent); box-shadow: 0 1px 2px rgb(0 0 0 / .12); pointer-events: none; }
+.tc-page.is-full .tc-trace-tape { top: 0; }
+.tc-trace-ink { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; fill: none; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.tc-trace-ink path { stroke-width: 2.8; }
+.tc-trace-ink path.is-hl { stroke-width: 16; stroke-opacity: .38; }
+.tc-trace[data-tool="eraser"] .tc-trace-ink path { pointer-events: stroke; }
+.tc-trace-words { position: absolute; inset: 0; pointer-events: none; }
+.tc-trace-word, .tc-trace-type { position: absolute; max-width: 280px; padding: 2px; font: 600 17px/22px var(--font); white-space: pre-wrap; }
+.tc-trace:is([data-tool="text"], [data-tool="eraser"]) .tc-trace-word { pointer-events: auto; cursor: pointer; }
+.tc-trace-type { min-width: 140px; margin: 0; border: 1px dashed currentColor; border-radius: 4px; background: color-mix(in srgb, var(--surface) 80%, transparent); resize: none; field-sizing: content; outline: none; }
+
+.tc-trace-tools { position: fixed; z-index: 98; left: 50%; bottom: max(16px, env(safe-area-inset-bottom, 0px)); translate: -50% 0; display: flex; align-items: center; gap: 4px; padding: 5px; border-radius: var(--r-pill, 999px); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); animation: sheet-tools 200ms var(--ease-out, ease-out); }
+@keyframes sheet-tools { from { opacity: 0; translate: -50% 10px; } }
+.tc-trace-group { display: flex; align-items: center; gap: 2px; padding-right: 4px; margin-right: 2px; border-right: 1px solid var(--line); }
+.tc-trace-btn { flex: none; position: relative; width: 40px; height: 40px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--fg); cursor: pointer; }
+.tc-trace-btn:hover:not(:disabled) { background: var(--sunken); }
+.tc-trace-btn:disabled { color: var(--line-strong); cursor: default; }
+.tc-trace-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.tc-trace-btn:focus-visible, .tc-trace-send:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.tc-trace-icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tc-trace-btn.is-swatch { width: 32px; }
+.tc-trace-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 1px rgb(0 0 0 / .15); }
+.tc-trace-btn.is-swatch[aria-pressed="true"] { background: none; }
+.tc-trace-btn.is-swatch[aria-pressed="true"] .tc-trace-dot { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--c); }
+.tc-trace-send { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 16px 0 12px; border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-fg, #fff); font: 600 var(--t-sm, .9rem)/1 var(--font); white-space: nowrap; cursor: pointer; }
+.tc-trace-send:hover:not(:disabled) { background: var(--accent-hover, var(--accent)); }
+.tc-trace-send:disabled { opacity: .45; cursor: default; }
+.tc-trace-send .tc-trace-icon { stroke-width: 2.2; }
+/* (a phone: the sheet over the card at full width, the tools a bar at the foot that scrolls sideways when it must) */
+@media (max-width: 860px) {
+  .tc-trace-tools { left: 0; right: 0; bottom: 0; translate: none; flex-wrap: wrap; justify-content: center; row-gap: 6px; border-radius: 16px 16px 0 0; padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px)); animation: none; }
+  .tc-trace-group { padding-right: 2px; margin-right: 0; }
+  .tc-trace-group:has(.is-clear) { border-right: 0; }
+  .tc-trace-btn { width: 36px; height: 40px; }
+  .tc-trace-btn.is-swatch { width: 28px; }
+  .tc-trace-send { flex: 1 1 60%; justify-content: center; height: 44px; }
+  .tc-trace-btn.is-off { width: 44px; height: 44px; }
+  .tc-page.is-tracing { padding-bottom: 120px; }
+}
 
 /* What??: the word written by hand (pen.js sketchSvg('what'), card Nr. 206), no caption under it */
 .tc-wtf .sketch-what, .tc-tile.is-what .sketch-what { width: 92px; height: 32px; stroke-width: 2.6; }
