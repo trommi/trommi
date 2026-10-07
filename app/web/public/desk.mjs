@@ -201,6 +201,9 @@ function stackCards(model) {
 function tailWho(i) {
   const name = i.sender.name, doing = i.card.status === 'open' ? 'is reworking it' : 'is on it'
   const who = (sign, words, state = '') => html`<span class="tail-who"${state ? html` data-link="${state}"` : ''}>${sign}<span><b>${name}</b> ${words}</span></span>`
+  // (answered with an option that settles it: nothing is being worked on; the card is simply with its session)
+  const final = i.card.settled || i.card.options?.some(o => o.final === true && (i.card.choices ?? []).includes(o.key))
+  if (final) return html`<span class="tail-who">${raw(ringSvg())}<span>with <b>${name}</b></span></span>`
   const link = linkOf(i.sender), h = heardOf(i.card)
   if (!link || !h) return who(raw(ringSvg()), doing)
   if (h.heard) return link.state === 'cut' ? who(sk('ear-off'), 'has it, but is cut off', 'cut') : link.state === 'gone' ? who(sk('plug'), 'had it, and is gone', 'gone') : who(sk('tick'), `has it, ${doing}`, 'heard')
