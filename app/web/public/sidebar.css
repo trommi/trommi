@@ -858,3 +858,18 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
 
 /* (a helper whose main does not listen: calm and a little dimmed; the main's row says why) */
 #agents .agent-row.is-sub.is-hushed .agent-entry { opacity: .62; }
+
+/* ---- A file on its way into the note: its picture (from this device) at once, a pen ring turning and "uploading…";
+   refused: "upload failed" and retry ---- */
+.corner-note-file.is-uploading, .corner-note-file.is-failed { position: relative; gap: 6px; padding-right: 8px; cursor: default; }
+.corner-note-file.is-uploading img, .corner-note-file.is-failed img { opacity: .55; }
+.note-up { position: absolute; left: 4px; top: 4px; width: 22px; height: 22px; display: grid; place-items: center; }
+.note-up svg { width: 22px; height: 22px; fill: none; stroke: #3b300d; stroke-width: 2.4; stroke-linecap: round; animation: note-up 900ms linear infinite; }
+@keyframes note-up { to { rotate: 360deg; } }
+.note-up-word { font: 600 var(--t-xs)/1.2 var(--font); color: #3b300d; white-space: nowrap; }
+.corner-note-file.is-pic .note-up-word { position: absolute; left: 4px; right: 4px; bottom: 3px; text-align: center; font-size: 10px; background: rgb(255 255 255 / .75); border-radius: 3px; }
+.corner-note-file.is-failed .note-up { display: none; }
+.corner-note-file.is-failed .note-up-word { color: var(--urg-critical); }
+.note-up-again { margin-left: 4px; padding: 2px 8px; border: 0; border-radius: 8px; background: rgb(255 255 255 / .8); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .4); color: #3b300d; font: 600 var(--t-xs)/1.2 var(--font); cursor: pointer; }
+.corner-note-file.is-pic.is-failed { padding: 3px 3px 22px; }
+@media (prefers-reduced-motion: reduce) { .note-up svg { animation-duration: 3s; } }
