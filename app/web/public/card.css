@@ -763,3 +763,21 @@ div.focus-opt { cursor: default; }
   .tc-page.is-full .tc-card > .tc-left > .tc-lead > .tc-title { margin-left: 64px; font-size: var(--t-lg); }
 }
 @media (max-width: 860px) { .tc-page.is-full .tc-card > .tc-left { padding: 0; } }
+
+/* ---- A card is never taller than the window (his word, 7 October, back from "the card grows with its content"): from
+   under the round buttons to a little above the window's foot, so the tray and the start of the talk peek below. A
+   longer content scrolls inside the card's left side (title, text, pictures), a soft fade at its foot says there is
+   more; the right column (options, duck, What?? and the reverse card, Later's tag under the corner) stands whole. A short
+   card keeps its own height. A phone's card grows as before (answers first). ---- */
+@container cardpage (min-width: 761px) {
+  .tc-page:not(.is-full) .tc-card { max-height: max(420px, calc(100dvh - 200px)); grid-template-rows: minmax(0, 1fr); }
+  .tc-page:not(.is-full) .tc-card > .tc-left { min-height: 0; }
+  .tc-page:not(.is-full) .tc-card > .tc-right { display: flex; flex-direction: column; min-height: 0; max-height: 100%; }
+  .tc-page:not(.is-full) .tc-card .tc-answer { min-height: 0; }
+  .tc-page:not(.is-full) .tc-card .tc-opts { flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+  .tc-page:not(.is-full) .tc-card .tc-or { flex: 1 0 auto; }
+  .tc-page:not(.is-full) .tc-card .tc-answer { flex: 1 1 auto; display: flex; flex-direction: column; }
+  .tc-page:not(.is-full) .tc-card > .tc-left { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent); }
+  .tc-page:not(.is-full) .tc-card > .tc-left.is-end { -webkit-mask-image: none; mask-image: none; }
+  .tc-page:not(.is-full) .tc-card .tc-stage:not(.is-video) { max-height: 52vh; }
+}

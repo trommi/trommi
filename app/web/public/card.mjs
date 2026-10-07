@@ -774,6 +774,7 @@ controller('card', class extends Controller {
     this.placed = this.placed.bind(this)
     addEventListener('resize', this.placed)
     this.element.addEventListener('scroll', this.placed, { passive: true })
+    this.element.querySelector('.tc-card > .tc-left')?.addEventListener('scroll', this.placed, { passive: true })
     this.placed()
     // (the card grows after it was placed: a picture loads, a note's field opens, the talk arrives)
     this.sized = new ResizeObserver(this.placed)
@@ -907,6 +908,9 @@ controller('card', class extends Controller {
   // Where the card stands against the window: gone (out of view above: the strip comes), and its foot passed (the
   // field to write in may stick to the window's foot without lying on the card).
   placed() {
+    // (the left side that scrolls inside the card: no fade once its end is in view)
+    const left = this.element.querySelector('.tc-card > .tc-left')
+    if (left) left.classList.toggle('is-end', left.scrollHeight - left.scrollTop - left.clientHeight < 4)
     const card = this.element.querySelector('.tc-card')
     if (!card) return
     const box = this.element.getBoundingClientRect(), r = card.getBoundingClientRect()
