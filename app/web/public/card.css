@@ -786,3 +786,18 @@ div.focus-opt { cursor: default; }
   .tc-card .tc-or-pair .tc-wtf .sketch-what { width: 66px; height: 23px; stroke-width: 2.3; }
   .tc-card .tc-or-pair .tc-reverse .sketch { width: 26px; height: 26px; }
 }
+
+/* ---- A phone's card: the answers first (decided 6 October, "focus"): the title and its line, then the options, the
+   duck, What?? and the reverse card, and only then the long text and the pictures, so the answers are in view
+   without scrolling. ---- */
+@container cardpage (max-width: 600px) {
+  .tc-card { display: flex; flex-direction: column; }
+  .tc-card > .tc-left, .tc-card > .tc-left > .tc-lead { display: contents; }
+  .tc-card > .tc-left > .tc-lead > :is(.tc-knock, .inbox-tab) { order: 0; align-self: flex-start; margin: var(--s-5) var(--s-5) 0; }
+  .tc-card > .tc-left > .tc-lead > .tc-title { order: 0; margin: var(--s-3) var(--s-5) 0; }
+  .tc-card > .tc-left > .tc-lead > .tc-title:first-child { margin-top: var(--s-5); }
+  .tc-card > .tc-left > .tc-lead > .tc-meta { order: 0; margin: var(--s-2) var(--s-5) var(--s-4); }
+  .tc-card > .tc-right { order: 1; align-self: stretch; width: auto; box-shadow: 0 -1px 0 var(--line), 0 1px 0 var(--line); }
+  .tc-card > .tc-left > .tc-lead > :is(.tc-text, .tc-more-text, .tc-versions, .tc-why) { order: 2; margin: var(--s-4) var(--s-5) 0; }
+  .tc-card > .tc-left > :is(.tc-media, turbo-frame) { order: 3; margin: var(--s-4) var(--s-5) var(--s-5); }
+}
