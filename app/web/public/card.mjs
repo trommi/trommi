@@ -388,7 +388,11 @@ ${open && card.kind === 'decision' ? html`<i class="tc-bar-sep"></i>${mini('is-d
 ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-bar-later" method="post" action="${base}/cards/batch"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
 </div></div>`
   const tone = model.byAgent.get(card.agent)?.hue
-  const pad = html`<div class="tc-pad"${tone != null ? html` style="--hue:${tone}"` : ''}>${corner('tl')}${corner('tr')}${corner('bl')}${corner('br')}${strip}`
+  // The card stands free on the page; the session's pale sheet with its pen outline and hatched corners lies only behind
+  // the field to write in and the talk, a little gap under the card (decided 6 October, "Blatt"); the field is the first
+  // thing on it, a note right under the card ("Zettel drunter").
+  const pad = html`<div class="tc-pad"${tone != null ? html` style="--hue:${tone}"` : ''}>${strip}`
+  const notesOpen = raw(`<div class="tc-notes">${corner('tl')}${corner('tr')}${corner('bl')}${corner('br')}`)
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
   return html`<main id="cardpage" class="tc-page${full && media ? ' is-full' : ''}" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
 ${pad}<div class="tc-frame">
@@ -410,8 +414,7 @@ ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 </article>
 ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
 </div>
-${cardThread(card, model, self, { more: older })}
-<form class="tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
+${notesOpen}<form class="tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
 ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}
 <span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>
@@ -419,6 +422,8 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${askWords(card, model, asker)}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
 <div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${open && (card.kind === 'decision' || card.kind === 'info') ? `. Hold ${CTRL_WORD}: send and reverse, back to ${asker || 'the agent'}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick">${sk('send')}${open && (card.kind === 'decision' || card.kind === 'info') ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button></div></div>
 </form>
+${cardThread(card, model, self, { more: older })}
+</div>
 </div>
 </main>`
 }
@@ -757,7 +762,6 @@ controller('card', class extends Controller {
     this.held = this.held.bind(this)
     for (const name of ['keydown', 'keyup']) addEventListener(name, this.held, true)
     addEventListener('blur', this.held)
-    this.tryPad()
     this.grow()
     if (this.hasMarksTarget) this.mountMarks()
     this.link = this.link.bind(this)
@@ -904,21 +908,6 @@ controller('card', class extends Controller {
     this.element.classList.toggle('foot-passed', r.bottom < box.bottom - 96)
   }
   // Proposals, local only (card.css "pad proposals"): ?pad=<key> tries a way to join the card, the pad and the field.
-  tryPad() {
-    const key = new URLSearchParams(location.search).get('pad')
-    if (!key) return
-    this.element.dataset.pad = key
-    const q = sel => this.element.querySelector(sel)
-    const frame = q('.tc-frame'), card = q('.tc-card'), chat = q('.tc-chat'), later = q('.tc-frame > .tc-later'), ask = q('.tc-chat > .tc-ask')
-    if (!frame || !card || !chat) return
-    if (['sheet', 'clip', 'sheetunder', 'tight'].includes(key)) { card.after(chat); if (later) chat.after(later) }
-    if (key === 'inside' && ask) {
-      for (const c of ask.querySelectorAll('textarea, input, button')) c.setAttribute('form', chat.id)
-      const pair = q('.tc-answer .tc-or-pair')
-      if (pair) pair.before(ask); else q('.tc-answer')?.append(ask)
-    }
-    if (key === 'clip') q('.tc-pad')?.insertAdjacentHTML('afterbegin', '<svg class="tc-clamp" viewBox="0 0 180 64" aria-hidden="true"><path class="clamp-back" d="M14 30 Q13 14 30 13 L62 12 Q66 2 90 2 Q114 2 118 12 L150 13 Q167 14 166 30 L165 52 Q164 61 152 61 L28 61 Q15 61 15 52 Z"/><path class="clamp-hole" d="M78 12 Q90 6 102 12 Q102 20 90 20 Q78 20 78 12 Z"/><path class="clamp-line" d="M24 44 Q90 41 156 44"/></svg>')
-  }
   toAnswers() { this.element.querySelector('.tc-card')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }
   // (another picture or a video came into the frame: it is the one that stands now, and the one Full screen opens)
   framed() {

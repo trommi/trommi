@@ -282,7 +282,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
    hangs on one rail: who at the left (the session's small drawing, the pen for you), the content right of it; the
    field to write in is the column's last entry and hangs on the same rail. What happened (asked, a new version, taken
    back) is a small quiet line on the content's edge. Why a card is urgent is one centred line between card and talk. ---- */
-.tc-pad > :is(.tc-feed, .tc-chat) { --who: 34px; --who-gap: 14px; max-width: min(100%, 660px); }
+.tc-notes > :is(.tc-feed, .tc-chat) { --who: 34px; --who-gap: 14px; max-width: min(100%, 660px); }
 .tc-feed { display: grid; margin-top: var(--s-5); padding: 0; }
 .tc-feed[hidden] { display: none; }
 .tc-why { display: flex; justify-content: center; align-items: baseline; gap: 8px; margin: 0 0 var(--s-3); color: var(--urg-high); font: 600 var(--t-sm)/1.45 var(--font); text-align: center; }
@@ -594,11 +594,24 @@ div.focus-opt { cursor: default; }
    second line inside it, four hatched corners. The card lies on it with a soft shadow; the talk is written straight
    on the pad (no boxes), what happened and the times in the session's ink. Its top is the room for the row of round
    buttons above the card (.tc-rails). ---- */
-.tc-pad { position: relative; max-width: 1084px; padding: 76px 0 14px; border-radius: 12px; background: var(--tone-wash); box-shadow: inset 0 0 0 1.6px var(--tone-pen), inset 0 0 0 5px var(--tone-wash), inset 0 0 0 6px var(--tone-edge); }
+.tc-pad { position: relative; max-width: 1084px; padding: 76px 0 14px; }
+/* the sheet behind the field and the talk: the session's pale tone, a pen outline, a second line inside, four hatched corners */
+.tc-notes { position: relative; box-sizing: border-box; max-width: 820px; margin: 34px auto 0; padding: 30px 64px 22px; border-radius: 12px; background: var(--tone-wash); box-shadow: inset 0 0 0 1.6px var(--tone-pen), inset 0 0 0 5px var(--tone-wash), inset 0 0 0 6px var(--tone-edge); }
+.tc-notes > :is(.tc-feed, .tc-chat) { margin-inline: auto; }
+.tc-notes > .tc-feed { margin-top: var(--s-4); }
+/* (the card and Later's tag lie over the sheet; the sheet's corners are smaller than a pad's) */
+.tc-pad > .tc-frame { z-index: 2; }
+.tc-notes { z-index: 1; }
+.tc-notes > .tc-corner { width: 40px; height: 40px; }
+/* the field: a note of paper on the sheet, right under the card */
+.tc-notes > .tc-chat { display: block; margin-top: 0; padding: 0; }
+.tc-notes > .tc-chat > .tc-c-who { display: none; }
+.tc-notes > .tc-chat > .tc-ask { display: grid; padding: 8px 8px 8px 16px; border-radius: 6px 6px 10px 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--tone-edge), 0 8px 16px -12px rgb(20 40 35 / .45); rotate: -.3deg; }
+.tc-notes > .tc-chat > .tc-ask:focus-within { box-shadow: 0 0 0 2px var(--tone-pen), 0 8px 16px -12px rgb(20 40 35 / .45); }
 .tc-corner { position: absolute; z-index: 1; width: 54px; height: 54px; fill: var(--tone-edge); stroke: var(--tone-pen); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; }
 .tc-corner .hatch { fill: none; stroke-width: 1.2; opacity: .55; }
 .tc-corner.tl { left: -3px; top: -3px; } .tc-corner.tr { right: -3px; top: -3px; rotate: 90deg; } .tc-corner.bl { left: -3px; bottom: -3px; rotate: 270deg; } .tc-corner.br { right: -3px; bottom: -3px; rotate: 180deg; }
-.tc-pad .tc-card { box-shadow: 0 0 0 1px var(--line), 0 14px 24px -18px rgb(20 40 35 / .5); }
+.tc-pad .tc-card { box-shadow: 0 0 0 1.3px var(--line-strong), 0 16px 26px -18px rgb(20 40 35 / .55); }
 .tc-pad .tc-rail { background: var(--surface); }
 .tc-pad :is(.tc-did, .tc-deed) { color: var(--tone-pen); }
 .tc-pad .tc-feed .msg-time { color: color-mix(in srgb, var(--tone-pen) 70%, var(--tone-wash)); }
@@ -608,7 +621,6 @@ div.focus-opt { cursor: default; }
 .tc-pad .tc-ask:focus-within { box-shadow: inset 0 0 0 2px var(--tone-pen); }
 .tc-pad .rich :not(pre) > code, .tc-pad .rich pre { background: color-mix(in srgb, var(--surface) 70%, transparent); }
 .tc-pad .tc-why { margin-top: 2px; }
-.tc-page.foot-passed .tc-chat { position: sticky; bottom: 0; z-index: 4; background: linear-gradient(to bottom, transparent, var(--tone-wash) 14px); }
 /* the strip: the card's paper, come along under the top edge once the card is out of view */
 .tc-bar { position: sticky; top: 0; z-index: 6; height: 0; max-width: 1060px; }
 .tc-bar-in { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 10px 0 20px; border-radius: 16px; background: var(--surface); box-shadow: 0 0 0 1px var(--tone-edge), 0 10px 20px -14px rgb(20 40 35 / .55); opacity: 0; translate: 0 -14px; pointer-events: none; visibility: hidden; transition: opacity 160ms, translate 160ms, visibility 0s 160ms; }
@@ -636,8 +648,9 @@ div.focus-opt { cursor: default; }
 .tc-bar-later .sel-later:is(:hover, :focus-visible) svg { rotate: 5deg; translate: 0 3px; }
 @container cardpage (max-width: 1000px) { .tc-bar-chips { display: none; } .tc-bar-chips + .tc-chip.is-jump { display: block; } }
 @container cardpage (max-width: 760px) {
-  /* a phone: the pad goes from edge to edge */
-  .tc-pad { margin-inline: calc(-1 * var(--s-3)); padding: 62px var(--s-3) 12px; border-radius: 0; box-shadow: inset 0 1.6px 0 var(--tone-pen), inset 0 -1.6px 0 var(--tone-pen); }
+  /* a phone: the sheet goes from edge to edge */
+  .tc-pad { padding: 62px 0 12px; }
+  .tc-notes { margin: 26px calc(-1 * var(--s-3)) 0; padding: 22px var(--s-3) 12px; border-radius: 0; box-shadow: inset 0 1.6px 0 var(--tone-pen), inset 0 -1.6px 0 var(--tone-pen); }
   .tc-corner { width: 36px; height: 36px; } .tc-corner.tl, .tc-corner.bl { left: 0; } .tc-corner.tr, .tc-corner.br { right: 0; }
   .tc-bar { top: -10px; }
   .tc-bar-in { height: 50px; gap: 4px; padding: 0 6px 0 12px; border-radius: 14px; }
@@ -665,7 +678,7 @@ div.focus-opt { cursor: default; }
   .tc-page.card-gone > .tc-pad > .tc-frame > .tc-later, .tc-page.card-gone .tc-frame > .tc-later { visibility: hidden; }
 }
 @media (min-width: 861px) { #cardpage { padding-top: var(--s-6); padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } }
-@media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } .tc-pad > .tc-chat { padding-right: 52px; } }   /* (the corner note stands beside the field, in the window's corner) */
+@media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } }   /* (the corner note stands beside the field, in the window's corner) */
 @media (prefers-reduced-motion: reduce) { .tc-bar-in { transition: none; } }
 /* (a phone's gallery: Later's tag stands small in the head, beside the question, not over the picture) */
 @media (max-width: 860px) {
@@ -681,48 +694,6 @@ div.focus-opt { cursor: default; }
 .tc-chip > .final-sign { margin-left: 6px; vertical-align: -1px; }
 .tc-opt.is-settled .tc-opt-label { display: inline-flex; align-items: center; gap: 7px; }
 .tc-opt.is-settled .tc-opt-label .sketch { flex: none; width: 16px; height: 16px; stroke-width: 2; color: var(--stamp-ink-done, currentColor); }
-
-/* ---- pad proposals, local only (card controller tryPad, ?pad=<key>): how card, pad and field hang together ---- */
-/* sheet: the field is the card's own foot, one sheet: the card's paper goes on under a line */
-.tc-page[data-pad="sheet"] .tc-card { border-bottom-left-radius: 0; border-bottom-right-radius: 0; box-shadow: 0 0 0 1px var(--line); }
-.tc-page[data-pad="sheet"] .tc-frame > .tc-chat { display: block; max-width: none; margin: 0; padding: 12px 16px 14px; border-radius: 0 0 var(--r-xl) var(--r-xl); background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 14px 24px -18px rgb(20 40 35 / .5); position: relative; z-index: 1; }
-.tc-page[data-pad="sheet"] .tc-chat > .tc-c-who { display: none; }
-.tc-page[data-pad="sheet"] .tc-chat > .tc-ask { display: grid; box-shadow: none; background: var(--sunken); }
-.tc-page[data-pad="sheet"] .tc-chat > .tc-ask:focus-within { box-shadow: inset 0 0 0 2px var(--tone-pen); }
-/* inside: the field stands in the answer column, in its empty middle */
-.tc-page[data-pad="inside"] .tc-chat:not(:has(.tc-c-who + .tc-ask)) { display: none; }
-.tc-page[data-pad="inside"] .tc-answer .tc-ask { margin-top: auto; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 6px 6px 6px 12px; border-radius: 14px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.tc-page[data-pad="inside"] .tc-answer .tc-ask .tc-field { min-height: 64px; padding: 6px 0; font-size: var(--t-sm); }
-.tc-page[data-pad="inside"] .tc-answer .tc-ask .tc-ask-row { gap: 2px; }
-.tc-page[data-pad="inside"] .tc-answer .tc-ask:focus-within { box-shadow: inset 0 0 0 2px var(--tone-pen); }
-.tc-page[data-pad="inside"] .tc-answer .tc-ask + .tc-or-pair { margin-top: 0; padding-top: 10px; }
-/* tray: the pad's foot is a ledge, a band in the pad's edge tone across its whole width; the field lies in it */
-.tc-page[data-pad="tray"] .tc-pad { padding-bottom: 0; }
-.tc-page[data-pad="tray"] .tc-pad > .tc-frame { z-index: 5; }
-.tc-page[data-pad="tray"] .tc-pad > .tc-chat { max-width: none; margin: 34px 0 0; padding: 18px 112px 20px; display: block; border-radius: 0 0 12px 12px; background: var(--tone-edge); box-shadow: inset 0 1.6px 0 var(--tone-pen), inset 0 5px 0 color-mix(in srgb, var(--tone-pen) 18%, transparent), inset 1.6px 0 0 var(--tone-pen), inset -1.6px 0 0 var(--tone-pen), inset 0 -1.6px 0 var(--tone-pen); }
-.tc-page[data-pad="tray"] .tc-chat > .tc-c-who { display: none; }
-.tc-page[data-pad="tray"] .tc-chat > .tc-ask { display: grid; max-width: 640px; margin-inline: auto; box-shadow: inset 0 0 0 1px var(--tone-pen); }
-.tc-page[data-pad="tray"] .tc-corner:is(.bl, .br) { display: none; }
-/* clip: a clamp at the top holds the card; the field is a second sheet tucked under the card, its top under the card */
-.tc-page[data-pad="clip"] .tc-pad { padding-top: 92px; }
-.tc-clamp { position: absolute; z-index: 4; left: calc(50% - 90px); top: -14px; width: 180px; height: 64px; fill: none; stroke: var(--tone-pen); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; }
-.tc-clamp .clamp-back { fill: color-mix(in srgb, var(--tone-edge) 70%, var(--surface)); }
-.tc-clamp .clamp-hole { fill: var(--tone-wash); }
-.tc-clamp .clamp-line { opacity: .5; }
-.tc-page[data-pad="clip"] .tc-rails > .tc-rail, .tc-page[data-pad="clip"] .tc-rails > .tc-more { top: -64px; }
-.tc-page:is([data-pad="clip"], [data-pad="sheetunder"]) .tc-frame > .tc-chat { position: relative; z-index: 0; display: block; max-width: none; margin: -18px 22px 0; padding: 30px 16px 14px; border-radius: 0 0 14px 14px; background: color-mix(in srgb, var(--surface) 86%, var(--tone-wash)); box-shadow: 0 0 0 1px var(--tone-edge), 0 10px 18px -16px rgb(20 40 35 / .5); }
-.tc-page:is([data-pad="clip"], [data-pad="sheetunder"]) .tc-chat > .tc-c-who { display: none; }
-.tc-page:is([data-pad="clip"], [data-pad="sheetunder"]) .tc-chat > .tc-ask { display: grid; }
-/* tight: the pad hugs card and field: less blue round them, the field as wide as the card, close under it */
-.tc-page[data-pad="tight"] .tc-pad { padding: 68px 0 22px; }
-.tc-page[data-pad="tight"] .tc-pad > .tc-frame { max-width: calc(100% - 72px); }
-.tc-page[data-pad="tight"] .tc-frame > .tc-chat { display: block; max-width: none; margin: 12px 0 0; padding: 0; }
-.tc-page[data-pad="tight"] .tc-chat > .tc-c-who { display: none; }
-.tc-page[data-pad="tight"] .tc-chat > .tc-ask { display: grid; padding: 8px 8px 8px 18px; border-radius: var(--r-xl); box-shadow: 0 0 0 1px var(--line), 0 14px 24px -18px rgb(20 40 35 / .5); }
-.tc-page[data-pad="tight"] .tc-chat > .tc-ask:focus-within { box-shadow: 0 0 0 2px var(--tone-pen), 0 14px 24px -18px rgb(20 40 35 / .5); }
-.tc-page[data-pad="tight"] .tc-corner { width: 40px; height: 40px; }
-/* (sheet, clip, tight: Later's tag hangs under the field now, inside the pad) */
-.tc-page:is([data-pad="sheet"], [data-pad="clip"], [data-pad="sheetunder"], [data-pad="tight"]) .tc-pad { padding-bottom: 104px; }
 
 /* ---- Send held with Ctrl (Cmd): the reverse card, in its colours; Ctrl+Enter or a click sends and reverses ---- */
 .tc-send-uno { display: none; }
