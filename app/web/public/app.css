@@ -813,3 +813,15 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
 .page-head p { margin: 6px 0 0; font: 400 var(--t-lg)/1.4 var(--font); color: var(--muted); }
 body > main#room:not(.room-paged) > .room-head .room-bell { display: none; }
 @media (max-width: 860px) { .page-head p { font-size: var(--t-md); margin-top: 0; } .page-head.page-head { margin-bottom: var(--s-4); } body > main#room:not(.room-paged) > .room-head h2 { display: none; } }
+
+/* ---- One quiet button for every secondary action (his pick "outline", 7 October): white, a fine line, radius 10, the
+   ink's words: Open and Copy on Links, Take back, Close (the keys sheet), Cancel, Back, Log out of this device, the
+   invite clipboard's Copy, Copy link and Stop sharing. ---- */
+html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .inbox-takeback, .clip-copy-word, .clip-copy.is-small .clip-copy-word) {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; height: auto; padding: 0 14px;
+  border: 0; border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg);
+  font: 600 var(--t-sm)/1 var(--font); text-decoration: none; cursor: pointer;
+}
+html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .inbox-takeback):hover, html body .clip-copy:hover .clip-copy-word { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
+html body .clip-copy.is-small .clip-copy-word { min-height: 30px; padding: 0 10px; }
+@media (pointer: coarse) { html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .inbox-takeback) { min-height: 44px; } }
