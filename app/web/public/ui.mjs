@@ -256,6 +256,8 @@ const SKETCH = {
   // a magnifier: search a stack's sheets (desk.mjs)
   search: [[[10.5, 4.2], [6.1, 5.7], [4.3, 10.3], [6.3, 14.7], [10.7, 16.3], [15, 14.5], [16.7, 10.1], [14.7, 5.6], [10.1, 4]], [[15.1, 15.2], [19.9, 19.9]]],
   // a paperclip, bent in one go: attach something
+  // a link of a chain: two open loops and the bar between them (the Desk's Links pile, the Links page)
+  link: [[[10.8, 10.6], [7.4, 14], [6.6, 16.8], [8.2, 18.6], [10.8, 18], [13.6, 15.2]], [[13.2, 13.4], [16.6, 10], [17.4, 7.2], [15.8, 5.4], [13.2, 6], [10.4, 8.8]], [[9.6, 14.4], [14.4, 9.6]]],
   clip: [[[15.8, 7.4], [9.6, 13.8], [8.6, 16.4], [10.2, 18.2], [12.8, 17.4], [18.8, 11.2], [19.6, 7.8], [17.4, 5.2], [14, 5.6], [6.6, 13.2], [5.2, 17.2], [7.2, 20.4], [11.2, 20.6], [17.2, 15]]],
   explain: [
     [[7.6, 9.6], [7.8, 6.4], [10.4, 4.2], [13.6, 4.4], [15.6, 6.8], [15, 9.6], [12.6, 11.6], [11.6, 13.4], [11.7, 15.6]],
@@ -2747,6 +2749,71 @@ export function galleryItems(model, base = '') {
   }
   out.sort((x, y) => y.ts - x.ts)
   galleryKept.set(state, { base, key, cards: state.cards, assets: state.assets, out })
+  return out
+}
+
+// ---- what the agents linked: the Desk's Links pile and the page /links ----
+// Every web link and page the agents gave: the pages they published (assets of type html), the pages behind a card's
+// pictures (page chips: an address, or a file of the room), and every http(s) address in a card's words (body, teaser,
+// sections, options) or in an agent's message (the conversations as far as they are loaded). One entry per address
+// (or per file of the room), the newest first. kind: 'page' (a published page) | 'file' (a page file of the room) |
+// 'web' (an address outside). att: the attachment_id of a file of the room (what Share shares), else null.
+const URL_RE = /https?:\/\/[^\s<>()\[\]"'`]+/g
+const MD_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g
+const urlsKept = new Map()   // text -> [[url, label]] (bounded: texts repeat from one state to the next)
+function urlsIn(text) {
+  if (!text || typeof text !== 'string' || !text.includes('http')) return []
+  const hit = urlsKept.get(text)
+  if (hit) return hit
+  const labels = new Map()
+  for (const m of text.matchAll(MD_LINK)) labels.set(m[2], m[1].trim())
+  const out = [...new Set([...text.matchAll(URL_RE)].map(m => m[0].replace(/[.,;:!?*_]+$/, '')))].filter(u => { try { return Boolean(new URL(u).host) } catch { return false } }).map(u => [u, labels.get(u) ?? ''])
+  if (urlsKept.size > 2000) urlsKept.clear()
+  urlsKept.set(text, out)
+  return out
+}
+/** An address as a short line: its host and path, without the scheme and www. */
+export const shortUrl = url => { const t = String(url).replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, ''); return t.length > 60 ? `${t.slice(0, 59)}…` : t }
+const hostOf = url => { try { return new URL(url).host.replace(/^www\./, '') } catch { return '' } }
+const linksKept = new WeakMap()
+/** [{ key, kind, url, href, title, host, agent, ts, att }], the newest first. Kept per state. */
+export function linkItems(model, base = '') {
+  const { state } = model
+  const key = `${model.desk}|${model.everyone.map(a => a.desk).join(',')}|${base}`
+  const hit = linksKept.get(state)
+  if (hit && hit.key === key) return hit.out
+  const by = new Map()
+  const put = item => { const was = by.get(item.key); if (!was || item.ts > was.ts) by.set(item.key, was && !item.title ? { ...item, title: was.title } : item) }
+  const here = agentId => { const agent = model.byAgent.get(agentId); return agent && model.onDesk(agent) ? agent : null }
+  const web = (url, label, agent, ts) => put({ key: `web:${url}`, kind: 'web', url, href: url, title: label || '', host: hostOf(url), agent, ts, att: null })
+  const pageOf = (a, agent, ts) => {
+    const p = a?.page
+    if (!p) return
+    if (p.kind === 'link' && /^https?:/.test(p.url)) web(p.url, '', agent, ts)
+    else if (p.kind === 'file' && /^\/att\/[0-9a-f]{32}$/.test(p.url)) put({ key: `file:${p.url.slice(5)}`, kind: 'file', url: p.url, href: p.url, title: p.name || 'Page', host: 'A page of this room', agent, ts, att: p.url.slice(5) })
+  }
+  for (const a of state.assets ?? []) {
+    const agent = here(a.agent)
+    if (!agent || a.type !== 'html') continue
+    put({ key: `asset:${a.id}`, kind: 'page', url: a.att?.url ?? '', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, title: a.title || 'Untitled page', host: 'Published page', agent, ts: a.created ?? 0, att: a.att?.ref?.attachment_id ?? null })
+  }
+  for (const c of state.cards) {
+    const agent = here(c.agent)
+    if (!agent || c.kind === 'permission') continue
+    const ts = c.revised ?? c.created ?? 0
+    const words = [c.body, c.teaser, ...(c.sections ?? []).map(x => x.text), ...(c.options ?? []).flatMap(o => [o.label, o.detail])]
+    for (const text of words) for (const [url, label] of urlsIn(text)) web(url, label, agent, ts)
+    for (const a of c.attachments ?? []) pageOf(a, agent, ts)
+  }
+  for (const msg of state.messages ?? []) {
+    if (msg.from !== 'agent') continue
+    const agent = here(msg.agent)
+    if (!agent) continue
+    for (const [url, label] of urlsIn(msg.text)) web(url, label, agent, msg.ts ?? 0)
+    for (const a of msg.attachments ?? []) pageOf(a, agent, msg.ts ?? 0)
+  }
+  const out = [...by.values()].map(i => (i.title ? i : { ...i, title: shortUrl(i.url) })).sort((x, y) => y.ts - x.ts)
+  linksKept.set(state, { key, out })
   return out
 }
 

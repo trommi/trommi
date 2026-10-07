@@ -7,7 +7,7 @@
 // a plain chat message are not here: they stand in their session's Files drawer (session.mjs looseFiles), which reads
 // that session's conversation; an index of them across sessions would need every conversation loaded.
 import { CLIENT, core, hubUrl } from './app.mjs'
-import { galleryItems, html, mediaPreview, raw, sk, smallMark } from './ui.mjs'
+import { Controller, agoSpan, controller, galleryItems, html, linkItems, mediaPreview, raw, shortUrl, sk, smallMark } from './ui.mjs'
 const KIND = { image: 'Pictures', video: 'Videos', file: 'Files' }   // Files: pages and every other file
 const kindOf2 = i => (i.type === 'image' || i.type === 'video' ? i.type : 'file')
 // One tile per decision (his pick B, 4 October): its pictures as a small fanned stack in the paper look of the Desk's
@@ -40,10 +40,91 @@ ${items.length ? html`<div class="gal-grid">${items.map(tile)}</div>` : all.leng
 </div></main>`
 }
 
+// ---- links ----
+// The page the Desk's pile "Links N" opens: every web link and page the agents gave (ui.mjs linkItems), the newest
+// first, one line each: what it is, where it points, which session gave it and when, Open.
+//   GET  /links          the list
+//   POST /links/share    att=<attachment_id> days=1..30: a link for people outside the room; stop=<share_id>: end it
+// An address outside gets Copy. A file of the room (a published page, a page behind a picture) gets Share: a switch
+// that makes a share link in this browser (client.shareAttachment: the secret and the file key only after the #, the
+// hub keeps the secret's hash), then the link to copy, until when it holds (7 days unless chosen, 30 at most) and
+// Stop sharing. The links this device made are kept in its storage (myShares); one made elsewhere is not shown here.
+const DAYS = [1, 3, 7, 14, 30]
+let shares = []   // this device's open shares, newest first (loaded when the page opens and after each change)
+const loadShares = async t => { try { shares = await t.hub.myShares() } catch (err) { console.warn('shares', err); shares = [] } }
+const shareOf = att => (att ? shares.find(x => x.attachment_id === att && x.link && x.expires_at > Date.now()) ?? null : null)
+// (an id for a line: the key made short and safe)
+const rowId = key => { let h = 5381; for (let i = 0; i < key.length; i++) h = ((h << 5) + h + key.charCodeAt(i)) >>> 0; return `lk-${h.toString(36)}` }
+const until = ts => new Date(ts).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+
+function shareForm(i, base) {
+  const sh = shareOf(i.att)
+  if (!sh) {
+    return html`<form class="lk-share" method="post" action="${base}/links/share" data-controller="lkshare"><input type="hidden" name="att" value="${i.att}">
+<label class="lk-switch"><input type="checkbox" name="on" data-action="change->lkshare#flip"><span class="lk-knob" aria-hidden="true"></span><span>Share outside the room</span></label>
+<label class="lk-days"><span class="offscreen">How long</span><select name="days">${DAYS.map(d => html`<option value="${d}"${d === 7 ? raw(' selected') : ''}>for ${d === 1 ? '1 day' : `${d} days`}</option>`)}</select></label>
+<noscript><button type="submit" class="lk-btn">Share</button></noscript></form>`
+  }
+  return html`<form class="lk-share is-on" method="post" action="${base}/links/share" data-controller="lkshare"><input type="hidden" name="att" value="${i.att}"><input type="hidden" name="share" value="${sh.share_id}">
+<label class="lk-switch"><input type="checkbox" name="on" checked data-action="change->lkshare#flip"><span class="lk-knob" aria-hidden="true"></span><span>Shared</span></label>
+<span class="lk-until">until ${until(sh.expires_at)}</span>
+<span class="lk-copy" data-controller="copy" data-copy-text-value="${sh.link}"><input class="lk-url" type="text" readonly value="${sh.link}" aria-label="The link for people outside the room" data-action="focus->lkshare#pick"><button type="button" class="lk-btn" data-action="copy#copy"><span data-copy-target="label">Copy link</span></button></span>
+<button type="submit" class="lk-btn lk-stop" name="stop" value="${sh.share_id}">Stop sharing</button></form>`
+}
+function linkRow(i, base) {
+  const own = i.kind === 'page'
+  const open = own ? html`<a class="lk-btn" data-nav href="${i.href}">Open</a>` : html`<a class="lk-btn" href="${i.href}" target="_blank" rel="noopener${i.kind === 'web' ? ' noreferrer' : ''}">Open</a>`
+  const title = own ? html`<a class="lk-title" data-nav href="${i.href}">${i.title}</a>` : html`<a class="lk-title" href="${i.href}" target="_blank" rel="noopener${i.kind === 'web' ? ' noreferrer' : ''}" title="${i.url}">${i.title}</a>`
+  const where = i.kind !== 'web' ? i.host : i.title === shortUrl(i.url) ? i.host : shortUrl(i.url)   // (no address twice)
+  return html`<li class="lk-row" id="${rowId(i.key)}" data-kind="${i.kind}"><span class="lk-glyph" aria-hidden="true">${sk(i.kind === 'web' ? 'link' : 'page')}</span>
+<div class="lk-main">${title}<span class="lk-meta"><span class="lk-host">${where}</span><span class="lk-from"><span class="gal-who">${smallMark(i.agent)}</span>${i.agent.name}</span>${agoSpan(i.ts, 'ago lk-ago')}</span></div>
+<div class="lk-acts">${open}${i.kind === 'web' ? html`<span data-controller="copy" data-copy-text-value="${i.url}"><button type="button" class="lk-btn" data-action="copy#copy"><span data-copy-target="label">Copy</span></button></span>` : ''}</div>
+${i.att ? shareForm(i, base) : ''}</li>`
+}
+const linksList = (model, base) => { const all = linkItems(model, base); return html`<ol class="lk-list" id="links-list">${all.map(i => linkRow(i, base))}</ol>` }
+function linksMain(model, base) {
+  const n = linkItems(model, base).length
+  return html`<main id="gallery" class="gal-page lk-page" aria-label="Links"><div class="gal-column lk-column">
+<header class="gal-head"><h2>Links</h2><p>${n ? 'Every link and page your agents gave, the newest first.' : 'Nothing yet: links and pages your agents give show up here.'}</p></header>
+${linksList(model, base)}
+</div></main>`
+}
+
+// The switch sends its form at once; the link's field is chosen whole when it is focused.
+controller('lkshare', class extends Controller {
+  flip() { this.element.classList.add('is-busy'); this.element.requestSubmit() }
+  pick(event) { event.target.select() }
+})
+
 export function register(t) {
   t.get(/^\/assets$/, ({ req, res, url }) => {
     const m = t.model()
     t.page(req, res, { model: m, title: 'Media · Trommi', view: 'gallery', stream: null, bodyAttrs: ' data-page="gallery"', main: galleryMain(m, t.BASE, { kind: url.searchParams.get('kind') ?? '', from: url.searchParams.get('from') ?? '' }) })
+  })
+  // (the sessions' conversations are read as far as they are loaded: opening the list loads each one's newest page once)
+  const asked = new Set()
+  t.get(/^\/links$/, async ({ req, res }) => {
+    await loadShares(t)
+    for (const a of t.hub.state().agents) if (!asked.has(a.id)) { asked.add(a.id); Promise.resolve(t.hub.loadOlder?.(a.id)).catch(() => {}) }
+    const m = t.model()
+    t.page(req, res, { model: m, title: 'Links · Trommi', view: 'links', stream: null, bodyAttrs: ' data-page="gallery"', main: linksMain(m, t.BASE) })
+  })
+  t.post(/^\/links\/share$/, async ({ req, res, form }) => {
+    const att = String(form.get('att') ?? ''), stop = String(form.get('stop') ?? '') || (!form.has('on') ? String(form.get('share') ?? '') : '')
+    if (!/^[0-9a-f]{32}$/.test(att) || (stop && !/^[0-9a-f]{32}$/.test(stop))) { res.code = 400; return }
+    let said
+    try {
+      if (stop) { await t.hub.stopSharing(stop, att); said = { head: 'Sharing stopped', line: 'The link opens nothing any more' } }
+      else if (!shareOf(att)) { const r = await t.hub.shareFile(att, Number(form.get('days') ?? 7)); said = { head: 'Shared', line: `Anyone with the link can open it until ${until(r.expires_at)}` } }
+    } catch (err) { said = { head: stop ? 'Not stopped' : 'Not shared', line: err.message, role: 'alert' } }
+    await loadShares(t)
+    if (!t.wantsStream(req)) return t.redirect(res, `${t.BASE}/links`)
+    const m = t.model(), i = linkItems(m, t.BASE).find(x => x.att === att)
+    t.sendStream(req, res, `${i ? t.stream('replace', rowId(i.key), linkRow(i, t.BASE)) : ''}${said ? t.toast(said) : ''}`)
+  })
+  t.live('links', {
+    take: m => ({ list: linksList(m, t.BASE) }),
+    diff: (was, now) => (t.differs(was.list, now.list) ? t.stream('replace', 'links-list', now.list) : ''),
   })
 }
 

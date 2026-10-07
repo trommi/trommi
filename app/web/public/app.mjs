@@ -252,6 +252,13 @@ const blobs = new Map()      // attachment_id -> Promise<Blob>, kept while the p
 let client = null
 export function rememberRef(ref) { if (ref?.attachment_id && !ref.url) refs.set(ref.attachment_id, ref) }
 function attachTo(c) { client = c }
+/** A file of the room by its attachment_id, as its reference (with file_key): remembered, or found in the model. */
+function refOfFile(c, id) {
+  if (refs.has(id)) return refs.get(id)
+  const m = c.model
+  for (const list of [...[...m.published.values()].map(p => p.attachments), ...[...m.cards.values()].map(x => x.attachments)]) for (const a of list ?? []) if (a.attachment_id === id) return a
+  return null
+}
 /** A Blob (or File) as an encrypted attachment of the room; pictures carry their size. Returns the README reference. */
 export async function uploadFile(c, blob, { file_name, media_type, object_id }) {
   const meta = { file_name, media_type, object_id }
@@ -666,6 +673,19 @@ function hubFacade(client, board) {
     loadOlder: ref => client.loadTimeline(timelineOf(ref), { limit: 50 }),
     /** Are there older items of that timeline than the window holds? */
     hasMore: ref => Boolean(m().timelines.get(timelineOf(ref))?.has_more),
+
+    // ---- links for people outside the room (the Links page, media.mjs) ----
+    // A human device shares any file of the room: the secret is drawn here, the hub keeps its hash; the link (secret
+    // and file key after the #) is kept in this device's storage so Copy works again later. days: 1 to 30.
+    async shareFile(attachment_id, days = 7) {
+      const ref = refOfFile(client, attachment_id)
+      if (!ref) throw fail(404, 'this file is not known here')
+      const d = Math.min(30, Math.max(1, Math.round(Number(days) || 7)))
+      return client.shareAttachment(ref, { expires_at: Date.now() + d * 86400_000 - 60_000, app_url: location.origin, keep_link: true })
+    },
+    stopSharing: (share_id, attachment_id) => client.revokeShare(share_id, { attachment_id }),
+    /** This device's open shares: [{ share_id, attachment_id, expires_at, link }]. */
+    myShares: async () => (await client.myShares?.()) ?? [],
 
     async decide(cardId, answer, note = '', seen, notes, files = [], marks) {
       const c = card(cardId)
