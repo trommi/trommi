@@ -651,6 +651,7 @@ async function loadFixture(kind) {
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
   if (kind === 'quiet') return quietDesk(structuredClone(fixtureCache))
   const f = overloaded(filler(putAway(structuredClone(fixtureCache))))
+  if (kind === 'many') return manyHelpers(crowded(f))
   return kind === 'side' ? crowded(f) : kind === 'link' ? linkDemo(f) : f
 }
 
@@ -695,6 +696,13 @@ function linkDemo(f) {
 
 // A full sidebar (?mock=side): eight more sessions beside the demo's two trees, with long names and none, one, two,
 // five, six and twelve open questions, two of them disconnected.
+// One main with many helpers (?mock=many): the full sidebar's eight sessions become trommi's helpers, fourteen in all;
+// the folded rail must stay calm with them.
+function manyHelpers(f) {
+  const main = f.sessions[0].agent_session_id
+  for (const s of f.sessions.slice(-8)) s.profile = { ...s.profile, parent_session: main }
+  return f
+}
 function crowded(f) {
   const now = Date.now(), MIN = 60e3, like = f.cards.find(c => c.object_state === 'open' && c.card_type === 'decision' && c.urgency === 'normal' && !c.in_revision)
   const session = (id, name, icon, online, line, asks) => {

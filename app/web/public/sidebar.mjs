@@ -11,13 +11,13 @@ function row(u, base, current) {
   const names = u.subs?.map(s => s.agent.name) ?? []
   const tip = u.subs ? `Unfold ${a.name}'s ${names.length === 1 ? 'sub' : `${names.length} subs`}: ${names.join(', ')}` : ''
   const lie = u.subs ? (u.subs.length > EDGES ? [...u.subs].sort((x, y) => Boolean(y.blocked) - Boolean(x.blocked)).slice(0, EDGES) : u.subs) : []
-  const cls = ['agent-row', u.parent && 'is-sub', (a.main || u.subs) && 'is-main', shown.open || shown.blocked ? 'has-badge' : '', !u.online && 'is-offline', current === u.id && 'is-active'].filter(Boolean).join(' ')
+  const cls = ['agent-row', u.parent && 'is-sub', (a.main || u.subs) && 'is-main', shown.open || shown.blocked ? 'has-badge' : '', !u.online && 'is-offline', current === u.id && 'is-active', u.subs?.some(x => x.id === current) && 'has-active'].filter(Boolean).join(' ')
   return html`<div class="${cls}" id="agent-${a.id}" data-folds-target="row" data-unit="${a.id}" data-members="${a.id}"${u.parent ? html` data-parent="${u.parent.id}" hidden` : ''}${u.subs ? html` data-fold="shut" style="--ghue:${a.hue};--n:${lie.length}" data-controller="lean" data-action="pointermove->lean#follow pointerleave->lean#rest"` : ''}>
 <a class="agent-entry" data-nav href="${base}/s/${encodeURIComponent(a.id)}" draggable="false" title="${shown.online && shown.running ? `Working${a.task ? `: ${a.task}` : ''}` : a.task ?? ''}"${current === u.id ? raw(' aria-current="page"') : ''}>${avatar(a, { crown: !u.subs, working: Boolean(shown.online && shown.running) })}<span class="agent-text"><strong>${a.name}</strong>${shown.online && shown.running ? html`<span class="sr-only"> (working)</span>` : ''}${linkCap(shown.link, shown.unheard)}</span></a>
 ${u.subs ? html`<button class="crown-fold${a.starred ? '' : ' is-plain'}" type="button" aria-expanded="false" title="${tip}" aria-label="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${a.starred ? raw(crownSvg()) : ''}</button>
 <svg class="crown-bracket" aria-hidden="true" data-folds-target="bracket"><path/><path class="crown-bracket-hit" data-action="click->folds#toggle" data-folds-id-param="${a.id}"><title>Fold ${a.name}'s subs</title></path></svg>
 <span class="crown-edges" title="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${lie.map((s, i) => { const q = edgeQuirk(s.id); return html`<i${s.blocked ? raw(' class="is-knock"') : ''} style="--i:${i};--hue:${s.agent.hue};--tilt:${q.tilt}deg;--dx:${q.dx}px">${raw(q.svg)}</i>` })}</span>` : ''}
-${badge(u, shown, base, true)}
+${u.subs ? html`<button type="button" class="rail-subs" data-action="click->folds#toggle" data-folds-id-param="${a.id}" title="${tip}" aria-label="${tip}">${u.subs.length}</button>` : ''}${badge(u, shown, base, true)}
 </div>`
 }
 
@@ -272,6 +272,8 @@ controller('folds', class extends Controller {
   }
   toggle({ params: { id } }) {
     const open = new Set(read(FOLD_KEY, []))
+    // (on the rail a main's helpers are its stack and count: a click opens the sidebar with them unfolded)
+    if (document.documentElement.dataset.rail === 'folded') { open.add(id); write(FOLD_KEY, [...open]); for (const row of this.rowTargets) this.apply(row); document.querySelector('.rail-fold')?.click(); return }
     if (open.has(id)) open.delete(id); else open.add(id)
     write(FOLD_KEY, [...open])
     for (const row of this.rowTargets) this.apply(row)
