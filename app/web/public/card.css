@@ -690,7 +690,7 @@ div.focus-opt { cursor: default; }
   .tc-bar-later .sel-later svg { width: 19px; height: 40px; }
 }
 @media (min-width: 861px) { #cardpage { padding-top: var(--s-6); padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } }
-@media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } }
+@media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } .tc-pad > .tc-chat { padding-right: 52px; } }   /* (the corner note stands beside the field, in the window's corner) */
 @media (prefers-reduced-motion: reduce) { .tc-bar-in { transition: none; } }
 /* (a phone's gallery: Later's tag stands small in the head, beside the question, not over the picture) */
 @media (max-width: 860px) {

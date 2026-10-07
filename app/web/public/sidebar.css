@@ -576,9 +576,14 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 @media (min-width: 861px) and (max-width: 1120px) { body[data-t-view="card"] .corner-note-box { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); } }
 /* the phone: above the composer of a conversation and the pens of the Scribble Board */
 @media (max-width: 860px) {
-  body[data-t-view="session"] .corner-note-box { bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }
+  body[data-t-view="session"] .corner-note-box { bottom: calc(146px + env(safe-area-inset-bottom, 0px)); }   /* (over the composer and the jump to the open questions; the conversation ends above it: session.css) */
   body[data-t-view="whiteboard"] .corner-note-box { bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
-  body[data-t-view="card"] .corner-note-box { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }   /* (above the field that sticks to the foot) */
+  /* a phone's note is a smaller sticky (48px, in a 48px target), nearer the corner; nothing one needs stays under it:
+     every page ends above it (the Desk, Agents, Devices: their foot's padding; a conversation: session.css), and on a
+     card it stands in the corner beside the field to write in, which ends before it (card.css) */
+  .corner-note-box { right: calc(10px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .corner-note-head { min-height: 48px; }
+  .corner-note-ico { width: 48px; height: 48px; }
 }
 
 /* ---- The bracket stands clear of the rows (his word, 6 October: "zu nah dran … überdeckt den Strich"): the subs
