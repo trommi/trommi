@@ -811,7 +811,7 @@ const ACTION = 'pointerenter->says#pause pointerleave->says#run turbo:submit-sta
 function undoForm({ action, label = 'Undo', fields = {} }) {
   const button = html`<button class="says-back" type="${action ? 'submit' : 'button'}" title="${label} (U)" aria-keyshortcuts="u">${UNDO}${label}<kbd>U</kbd></button>`
   if (!action) return button
-  return html`<form method="post" action="${action}"><input type="hidden" name="stay" value="1"><input type="hidden" name="quiet" value="1">${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}${button}</form>`
+  return html`<form method="post" action="${action}"><input type="hidden" name="stay" value="1"><input type="hidden" name="quiet" value="1"><input type="hidden" name="undo" value="1">${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}${button}</form>`
 }
 
 /** One toast. head: what happened, in one or two words; line: of what (a title, a name), may be empty; undo: the route

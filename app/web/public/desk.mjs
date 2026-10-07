@@ -769,6 +769,12 @@ export function register(t) {
       }
       if (!t.wantsStream(req)) return redirect(res, BASE || '/')
       const n = done.length, back = BACK[way]
+      // Undone from a toast: one card, back to its page; several (the selection bar), back to the Desk
+      if (form.has('undo') && n) {
+        const at = new URL(String(req.headers.referer ?? '/'), location.origin).pathname
+        const to = n === 1 ? cardPath(m0.byCard.get(done[0]), BASE) : `${BASE}/`
+        if (at !== to) return t.sendStream(req, res, t.stream('visit', to))
+      }
       return t.sendStream(req, res, t.toast({ head: SAID[way], line: n === 1 ? m0.byCard.get(done[0]).title : `${n} cards`, undo: back && n ? { action: `${BASE}/cards/batch`, fields: { way: back, ids: done.join(',') } } : null }))
     })
     t.get(/^\/blitz$/, ({ res, url }) => {
