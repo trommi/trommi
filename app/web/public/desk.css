@@ -1197,3 +1197,23 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-ack > span:last-child:not(.inbox-disc)::after { content: "Got it"; font-size: var(--t-sm); }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-stacked { grid-auto-flow: column; }
 }
+
+/* ---- Several options, one advised (his pick "advised", 7 October): the advised option is the lead tile with its words
+   (two lines at most) and "advised" under them; "+N other ways" beside it opens the card. ---- */
+.inbox-actions.is-advised-pair .inbox-answer.is-take { display: grid; grid-auto-flow: row; justify-items: center; align-content: center; gap: 3px; padding: 6px 8px; text-align: center; }
+.inbox-actions.is-advised-pair .inbox-answer.is-take > strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; font: 700 var(--t-sm)/1.15 var(--font); overflow-wrap: anywhere; }
+.inbox-actions.is-advised-pair .inbox-answer.is-take > small { font: 500 .68rem/1 var(--font); opacity: .85; }
+.inbox-actions.is-advised-pair .inbox-answer.is-take > .sketch { width: 22px; height: 22px; }
+.inbox-actions.is-advised-pair .inbox-answer.is-others { display: grid; grid-auto-flow: row; justify-items: center; align-content: center; gap: 2px; text-decoration: none; color: var(--card-ink, var(--fg)); }
+.inbox-actions.is-advised-pair .inbox-answer.is-others > b { font: 800 1.35rem/1 var(--display); }
+.inbox-actions.is-advised-pair .inbox-answer.is-others > span { font: 600 var(--t-xs)/1.1 var(--font); }
+@media (min-width: 861px) {
+  html body :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-actions.is-advised-pair { width: auto; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take { width: 168px; }
+}
+@media (max-width: 860px) {
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take { flex: 2 1 0; grid-auto-flow: row; display: grid; height: auto; min-height: 50px; padding: 6px 10px; gap: 2px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take > .sketch { display: none; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-others { flex-direction: row; display: flex; gap: 6px; }
+  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-others > b { font-size: 1.05rem; }
+}
