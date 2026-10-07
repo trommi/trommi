@@ -149,7 +149,7 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 
 ### Addresses
 
-`/` the Desk · `/desk/:id` switch desk · `/walk` Rapid fire · `/scribble-board` the Scribble Board · `/q/:nr` or `/c/:nr` a card (`?v=n` an older version, `/p/:n` a picture) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/q/:nr` a card from its session · `/agents` the Ledger · `/devices` the room's devices · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
+`/` the Desk · `/desk/:id` switch desk · `/blitz` Blitz · `/scribble-board` the Scribble Board · `/q/:nr` or `/c/:nr` a card (`?v=n` an older version, `/p/:n` a picture) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/q/:nr` a card from its session · `/agents` the Ledger · `/devices` the room's devices · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
 
 ### IndexedDB
 

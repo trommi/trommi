@@ -25,7 +25,7 @@ function deskCards(model) {
   return byUrgency(out)
 }
 /** The Desk's top is where one arrives: one big line in the display face, its last word underlined with the pen, and
- *  at the right, on the list's right edge, the tools for what waits (the duck for all, Rapid fire: the count stands
+ *  at the right, on the list's right edge, the tools for what waits (the duck for all, Blitz: the count stands
  *  there). The line is one of the greetings below, picked once per page load (it does not change while the page stays
  *  open); when nothing waits, one of the calm ones. The app knows no name of the human, so none is said. */
 const GREETINGS = [
@@ -88,17 +88,18 @@ ${deskHead(model, base)}
 
 // ---- the walk's button ----
 // A drawn button into the walk through every open question (his word, 6 October: "ein Button mit eigenem Design"):
-// three quick strokes, the word (WORDS.walk, the one place it stands), the count in an ink disc. desk.css (.desk-walk).
-const BURST = raw('<svg class="walk-burst" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.6 Q9 6.9 13.6 7.3"/><path d="M5.6 12.2 Q12 11.5 20.6 12"/><path d="M3.8 16.9 Q8.6 16.3 12.2 16.6"/><path d="M16.2 8.2 Q18.8 10 20.8 12 Q18.6 14 16.4 15.9"/></svg>')
+// a small lightning bolt in the pen's line, the word (WORDS.walk, the one place it stands: Blitz), the count in an ink
+// disc. desk.css (.desk-blitz). The address is /blitz; a card in the walk carries ?walk=1, as a session's own walk does.
+const BOLT = raw('<svg class="blitz-bolt" viewBox="0 0 24 24" aria-hidden="true"><path d="M13.9 2.9 Q10.2 8.2 6.3 13.4 Q9.4 13 12.2 13.2 Q10.8 17.2 9.7 21.2 Q14 15.7 18 10.2 Q14.8 10.7 11.9 10.6 Q13.1 6.7 13.9 2.9 Z"/></svg>')
 
 /** The button for n > 0 open cards (model.fresh, in the hub's order): a link to the walk. */
 function nextPlease(model, base) {
   const n = model.fresh.length
-  return html`<a class="desk-walk" data-nav href="${base}/walk" title="${WORDS.walk}: every open question, one after the other (G F)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G F">${BURST}<span>${WORDS.walk}</span><b class="desk-walk-n">${n}</b></a>`
+  return html`<a class="desk-blitz" data-nav href="${base}/blitz" title="${WORDS.walk}: every open question, one after the other (G B)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G B">${BOLT}<span>${WORDS.walk}</span><b class="desk-blitz-n">${n}</b></a>`
 }
 
 // ---- the duck for all ----
-// Left of Rapid fire, smaller and quieter: the duck of "I don't give a duck". One press asks, in a small sheet of its
+// Left of Blitz, smaller and quieter: the duck of "I don't give a duck". One press asks, in a small sheet of its
 // own (no browser dialog); "Yes" answers every open decision on this Desk the way the single card's duck does, one
 // answer per card (POST <base>/cards/batch, way "duck": hub.trust per card, one toast whose Undo takes all back).
 // Infos and permission requests are not touched (the sheet does not say so: one line and two buttons). Not there when no decision is open.
@@ -770,7 +771,7 @@ export function register(t) {
       const n = done.length, back = BACK[way]
       return t.sendStream(req, res, t.toast({ head: SAID[way], line: n === 1 ? m0.byCard.get(done[0]).title : `${n} cards`, undo: back && n ? { action: `${BASE}/cards/batch`, fields: { way: back, ids: done.join(',') } } : null }))
     })
-    t.get(/^\/walk$/, ({ res, url }) => {
+    t.get(/^\/blitz$/, ({ res, url }) => {
       const next = model().fresh[0], said = url.searchParams.get('said')
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
