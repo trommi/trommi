@@ -737,32 +737,37 @@ div.focus-opt { cursor: default; }
   .tc-card > .tc-left > :is(.tc-media, turbo-frame) { order: 3; margin: var(--s-4) var(--s-5) var(--s-5); }
 }
 
-/* ---- Full screen (his word, 6 October: no separate gallery, Full screen on the card is enough): the card itself fills the
-   main area, its pictures large on the left, its own right column beside them (the same answers, the same Later tag);
-   the round button that opened it closes it, as Esc does. ---- */
-.tc-page.is-full { overflow: hidden; }
-.tc-page.is-full .tc-card { position: fixed; z-index: 50; left: var(--side, 0px); right: 0; top: 0; bottom: 0; max-width: none; min-height: 0; margin: 0; border-radius: 0; box-shadow: none; }
-.tc-page.is-full .tc-card > .tc-left { overflow-y: auto; padding: 20px 24px 20px 72px; }
+/* ---- Full screen, a real focus mode (his word, 7 October: "it has to be really good"): the card's content fills the
+   whole window on a calm ground, over the sidebar, the top line, the tray, the note, the dog-ear and the talk: a slim
+   head line with the question and the way out, the pictures large on the left (the filmstrip under them, the arrows on
+   the picture), the card's own answer column on the right. The button asks the browser for its real full screen as
+   well (card#fullscreen); Esc or the button leave both. A phone: the pictures the whole width, the answers a bar at the
+   foot. ---- */
+@keyframes focus-in { from { opacity: 0; scale: .985; } }
+body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .topbar, .side-foot, #drawer-veil) { visibility: hidden; }
+/* (no container here: the focus mode is placed against the window, not the page's column) */
+#cardpage.tc-page.is-full { overflow: hidden; container-type: normal; }
+.tc-page.is-full .tc-card { position: fixed; z-index: 96; inset: 0; max-width: none; max-height: none; min-height: 0; margin: 0; border-radius: 0; background: var(--bg); box-shadow: none; grid-template-rows: minmax(0, 1fr); animation: focus-in 180ms var(--ease-out); }
+.tc-page.is-full .tc-card > .tc-left { overflow-y: auto; padding: 14px 24px 18px; background: var(--bg); -webkit-mask-image: none; mask-image: none; }
+.tc-page.is-full .tc-card > .tc-left > .tc-lead { padding-left: 52px; min-height: 40px; align-content: center; }
 .tc-page.is-full .tc-card > .tc-left > .tc-lead > :not(.tc-title) { display: none; }
-.tc-page.is-full .tc-card > .tc-left > .tc-lead > .tc-title { font-size: var(--t-xl); }
-.tc-page.is-full .tc-card > .tc-right { position: static; min-height: 0; overflow-y: auto; }
-.tc-page.is-full .tc-stage:not(.is-video) { max-height: none; align-self: stretch; }
-.tc-page.is-full .tc-stage .tc-figure img { max-height: calc(100dvh - 200px); width: auto; margin-inline: auto; object-fit: contain; }
-.tc-page.is-full .tc-stage.is-video { height: calc(100dvh - 220px); align-self: stretch; }
+.tc-page.is-full .tc-card > .tc-left > .tc-lead > .tc-title { font-size: var(--t-lg); line-height: 1.2; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
+.tc-page.is-full .tc-card > .tc-right { position: static; min-height: 0; overflow-y: auto; background: var(--surface); box-shadow: -1px 0 0 var(--line); }
+.tc-page.is-full .tc-stage:not(.is-video) { max-height: none; align-self: stretch; display: grid; place-items: center; background: var(--bg); box-shadow: none; }
+.tc-page.is-full .tc-stage .tc-figure img { max-height: calc(100dvh - 170px); width: auto; margin-inline: auto; object-fit: contain; }
+.tc-page.is-full .tc-stage.is-video { height: calc(100dvh - 190px); align-self: stretch; }
 .tc-page.is-full .tc-stage .tc-step { top: 50%; }
-.tc-page.is-full .tc-rails > .tc-full { position: fixed; z-index: 51; left: calc(var(--side, 0px) + 14px); top: 16px; }
-.tc-page.is-full .tc-rails > :not(.tc-full), .tc-page.is-full .tc-later, .tc-page.is-full .tc-bar { display: none; }
+.tc-page.is-full .tc-rails > .tc-full { position: fixed; z-index: 97; left: 18px; top: 12px; }
+.tc-page.is-full .tc-rails > :not(.tc-full), .tc-page.is-full .tc-later, .tc-page.is-full .tc-bar, .tc-page.is-full .tc-notes { display: none; }
+@media (prefers-reduced-motion: reduce) { .tc-page.is-full .tc-card { animation: none; } }
 @media (max-width: 860px) {
-  .tc-page.is-full .tc-card { top: calc(48px + env(safe-area-inset-top, 0px)); overflow-y: auto; }
-  .tc-page.is-full .tc-card > .tc-left { padding: 64px 12px 12px; overflow: visible; }
-  .tc-page.is-full .tc-stage .tc-figure img { max-height: 70dvh; }
-  .tc-page.is-full .tc-rails > .tc-full { left: 12px; top: calc(60px + env(safe-area-inset-top, 0px)); }
+  .tc-page.is-full .tc-card { display: block; overflow-y: auto; padding-bottom: 46dvh; }
+  .tc-page.is-full .tc-card > .tc-left { padding: calc(10px + env(safe-area-inset-top, 0px)) 8px 12px; overflow: visible; }
+  .tc-page.is-full .tc-card > .tc-left > .tc-lead { padding-left: 50px; }
+  .tc-page.is-full .tc-stage .tc-figure img { max-height: 52dvh; width: 100%; }
+  .tc-page.is-full .tc-card > .tc-right { position: fixed; left: 0; right: 0; top: auto; bottom: 0; max-height: 44dvh; padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); box-shadow: 0 -1px 0 var(--line), 0 -10px 24px -14px rgb(20 30 25 / .3); }
+  .tc-page.is-full .tc-rails > .tc-full { left: 10px; top: calc(8px + env(safe-area-inset-top, 0px)); }
 }
-@container cardpage (max-width: 600px) {
-  .tc-page.is-full .tc-card > .tc-left > :is(.tc-media, turbo-frame) { order: 0; margin-top: 0; }
-  .tc-page.is-full .tc-card > .tc-left > .tc-lead > .tc-title { margin-left: 64px; font-size: var(--t-lg); }
-}
-@media (max-width: 860px) { .tc-page.is-full .tc-card > .tc-left { padding: 0; } }
 
 /* ---- A card is never taller than the window (his word, 7 October, back from "the card grows with its content"): from
    under the round buttons to a little above the window's foot, so the tray and the start of the talk peek below. A
@@ -781,3 +786,4 @@ div.focus-opt { cursor: default; }
   .tc-page:not(.is-full) .tc-card > .tc-left.is-end { -webkit-mask-image: none; mask-image: none; }
   .tc-page:not(.is-full) .tc-card .tc-stage:not(.is-video) { max-height: 52vh; }
 }
+.tc-page.is-full .tc-card > .tc-left, .tc-page.is-full .tc-card .tc-lead { background: var(--bg); }

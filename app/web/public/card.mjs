@@ -405,7 +405,7 @@ ${pad}<div class="tc-frame">
 <nav class="tc-rails" aria-label="Around this question">
 <a class="tc-rail tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${CROSS}</a>
 ${place ? html`${step(place.prev, 'is-prev', 'The question before', BACK)}${step(place.next, 'is-next', 'The next question', FORTH)}` : ''}
-${media && full ? html`<a class="tc-rail tc-full is-leave" data-nav href="${cardPath(card, self)}?pic=${shownPic}" data-card-target="gallery" data-back data-turbo-action="replace" title="Leave full screen · Esc" aria-label="Leave full screen">${FULL}</a>` : media ? html`<a class="tc-rail tc-full" data-nav href="${cardPath(card, self)}/p/${shownPic}" data-card-target="gallery" title="Full screen: ${fullWord}, large" aria-label="Full screen: open ${fullWord} large">${FULL}</a>` : ''}
+${media && full ? html`<a class="tc-rail tc-full is-leave" data-nav href="${cardPath(card, self)}?pic=${shownPic}" data-card-target="gallery" data-back data-turbo-action="replace" data-action="click->card#unfullscreen" title="Leave full screen · Esc" aria-label="Leave full screen">${FULL}</a>` : media ? html`<a class="tc-rail tc-full" data-nav href="${cardPath(card, self)}/p/${shownPic}" data-card-target="gallery" data-action="click->card#fullscreen" title="Full screen: ${fullWord}, large" aria-label="Full screen: open ${fullWord} large">${FULL}</a>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-rail tc-more-open" title="More" aria-label="More for this question">${DOTS}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' && card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : ''}
 ${copyButton(card)}
@@ -776,6 +776,7 @@ controller('card', class extends Controller {
     this.element.addEventListener('scroll', this.placed, { passive: true })
     this.element.querySelector('.tc-card > .tc-left')?.addEventListener('scroll', this.placed, { passive: true })
     this.placed()
+    this.fs = () => this.fsChanged(); document.addEventListener('fullscreenchange', this.fs)
     // (the card grows after it was placed: a picture loads, a note's field opens, the talk arrives)
     this.sized = new ResizeObserver(this.placed)
     for (const el of this.element.querySelectorAll('.tc-card, .tc-pad')) this.sized.observe(el)
@@ -929,6 +930,14 @@ controller('card', class extends Controller {
     const left = feed.querySelectorAll('.tc-earlier-group[hidden] > *').length
     if (left) button.textContent = `Load earlier (${left})`; else button.remove()
   }
+  // Full screen asks the browser for its real full screen too (a gesture: the click); refused (an iPhone), the focus
+  // mode stands alone. Leaving the page's focus mode leaves the browser's; the browser's own Esc leaves the page's too.
+  fullscreen() {
+    const root = document.documentElement
+    if (!document.fullscreenElement && root.requestFullscreen) root.requestFullscreen({ navigationUI: 'hide' }).then(() => { sessionStorage.setItem('trommi-fs', '1') }, () => {})
+  }
+  unfullscreen() { sessionStorage.removeItem('trommi-fs'); if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {}) }
+  fsChanged() { if (!document.fullscreenElement && sessionStorage.getItem('trommi-fs')) { sessionStorage.removeItem('trommi-fs'); this.element.querySelector('.tc-page.is-full .tc-full.is-leave, .tc-full.is-leave')?.click() } }
   toAnswers() { this.element.querySelector('.tc-card')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }) }
   // (another picture or a video came into the frame: it is the one that stands now, and the one Full screen opens)
   framed() {
