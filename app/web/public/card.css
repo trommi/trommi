@@ -776,3 +776,13 @@ div.focus-opt { cursor: default; }
 .tc-send.is-reverse > .sketch { display: none; }
 .tc-send.is-reverse > .tc-send-uno { display: grid; place-items: center; }
 .tc-send.is-reverse .tc-send-uno .sketch { width: 22px; height: 22px; stroke-width: 2.2; }
+
+/* ---- What?? and the reverse card at the column's foot (his pick B, 7 October): the right column is as tall as the card,
+   its foot the same inset as its top and right, the pair flush in its bottom-right corner, as high as an option (the
+   same radius and line; the lettering and the card drawn smaller). ---- */
+@media (min-width: 861px) {
+  .tc-card > .tc-right { align-self: stretch; padding-bottom: var(--s-5); }
+  .tc-card .tc-or-pair .tc-tile { min-height: 52px; padding: 6px 10px; }
+  .tc-card .tc-or-pair .tc-wtf .sketch-what { width: 66px; height: 23px; stroke-width: 2.3; }
+  .tc-card .tc-or-pair .tc-reverse .sketch { width: 26px; height: 26px; }
+}
