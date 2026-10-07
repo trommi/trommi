@@ -1246,3 +1246,10 @@ html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { padding-r
 
 /* (a phone: the advised pair a little taller, the stroke clear under the words) */
 @media (max-width: 860px) { html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-advised::after { bottom: 3px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer { height: 60px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take { padding-bottom: 14px; } }
+
+/* ---- a Done row (ui.mjs doneRow; his word, 7 October): what an agent finished lies on the Desk until he archives it.
+   Quiet: the tick in the done ink before the title, the summary in the grey line, the row a shade paler. ---- */
+.row-urg.is-done { color: var(--stamp-ink-done); }
+.row-urg.is-done > svg { stroke-width: 2.4; }
+.inbox-body-about.is-done { color: var(--stamp-ink-done); font-weight: 600; }
+.inbox-row.is-done .inbox-question { color: color-mix(in srgb, var(--fg) 82%, var(--surface)); }

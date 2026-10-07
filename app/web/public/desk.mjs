@@ -1,7 +1,7 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
-import { BASE, heardOf, linkOf, stream, flipOut } from './app.mjs'
+import { BASE, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
 import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, linkItems, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
@@ -12,7 +12,10 @@ import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm,
 // the hub's order holds within each.
 const urgRank = c => (c.urgency === 'critical' ? 2 : isKnock(c) ? 1 : 0)
 const byUrgency = cards => cards.map((c, i) => [c, i]).sort(([a, i], [b, j]) => urgRank(b) - urgRank(a) || i - j).map(([c]) => c)
-function deskCards(model) {
+// Below the open questions (and above the cards out with the agents): the Done rows, what the agents finished, the
+// newest first, until he archives them (app.mjs boardCard landed).
+function deskCards(model) { return [...openCards(model), ...(model.landed ?? [])] }
+function openCards(model) {
   const r = model.reads ?? []
   if (!r.length) return byUrgency(model.fresh)
   const out = [...model.fresh]
@@ -36,8 +39,8 @@ const GREETINGS = [
 const CALM = ['All quiet.', 'Nothing needs you.', 'Clear desk.', 'Carry on.', 'As you were.', 'Go outside.']
 const dice = Math.random()
 const greeting = calm => { const set = calm ? CALM : GREETINGS; return set[Math.floor(dice * set.length)] }
-/** No question waits, but it is not quiet: a session cannot hear him, or an answer of his was not picked up. */
-const unquiet = model => (model.cut?.length ? (model.cut.length === 1 ? 'One can’t hear you.' : 'Some can’t hear you.') : model.unheard ? (model.unheard === 1 ? 'An answer waits.' : 'Answers wait.') : '')
+/** No question waits, but it is not quiet: a session cannot hear him, an answer of his was not picked up, or Done rows wait to be seen. */
+const unquiet = model => (model.cut?.length ? (model.cut.length === 1 ? 'One can’t hear you.' : 'Some can’t hear you.') : model.unheard ? (model.unheard === 1 ? 'An answer waits.' : 'Answers wait.') : model.landed?.length ? (model.landed.length === 1 ? 'Something got done.' : 'Things got done.') : '')
 function deskHead(model, base) {
   const n = model.fresh.length
   if (!model.units.length) return deskInvite()
@@ -60,8 +63,9 @@ function runs(model) {
   for (const card of deskCards(model)) {
     const sender = model.byAgent.get(card.agent)
     if (!sender) continue
-    if (groups.at(-1)?.sender === sender) groups.at(-1).cards.push(card)
-    else groups.push({ sender, cards: [card] })
+    // (a Done row never joins a run of open questions: it stands as its own)
+    if (groups.at(-1)?.sender === sender && groups.at(-1).done === Boolean(card.landed)) groups.at(-1).cards.push(card)
+    else groups.push({ sender, cards: [card], done: Boolean(card.landed) })
   }
   return groups
 }
@@ -71,7 +75,7 @@ function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(ca
   // (The slip for the sessions that are cut off stands above the questions: #link-slip, hidden while there is none.)
   return html`${linkSlip(model.cut ?? [], base)}${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
 ${withAgents(model, base)}${deskStacks(model, base, pile, q)}
-${model.open.length || (model.reads ?? []).length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon as an agent has a question, it shows up here.</p></div>`}`
+${model.open.length || (model.reads ?? []).length || model.landed?.length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon as an agent has a question, it shows up here.</p></div>`}`
 }
 
 /** The Desk's <main>. */
@@ -81,7 +85,7 @@ const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="D
 ${deskHead(model, base)}
 <div class="inbox-news-at"><button class="inbox-news" type="button" data-desk-target="news" data-action="desk#toNew" hidden></button></div>
 <div class="inbox-groups" id="desk-list" data-desk-target="list">${deskList(model, base, opts)}</div>
-<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span>${sideWays({ many: true, between: html`<button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button>` })}<button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
+<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span>${sideWays({ many: true, between: html`<button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button><button type="submit" name="way" value="archive" class="sel-archive" hidden>${sk('archive')}<span>Archive</span></button>` })}<button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
 <div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" data-desk-target="up" data-action="desk#toKnock" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>
 <div class="inbox-edge is-down"><button class="inbox-edge-knock" type="button" data-desk-target="down" data-action="desk#toKnock" data-dir="down" hidden>↓ ${sk('knock')}<span></span></button></div>
 </main>`
@@ -187,7 +191,7 @@ function stackCards(model) {
     later: model.snoozed.filter(c => stackOf(c, ctx) === 'later'),
     revising: model.revising.filter(c => stackOf(c, ctx) === 'works'),
     acting: newest(closed.filter(c => c.status === 'decided' && stackOf(c, ctx) === 'works'), c => c.decided),
-    done: newest(closed.filter(c => stackOf(c, ctx) === 'done'), c => c.decided),
+    done: newest(closed.filter(c => stackOf(c, ctx) === 'done' && !c.landed), c => c.decided),
     trash: newest(closed.filter(c => stackOf(c, ctx) === 'trash'), c => (c.status === 'shredded' ? c.shredded : c.created)),
   }
 }
@@ -454,7 +458,9 @@ function selectWays(root) {
     bar.elements.ids.value = [...chosen].join(',')
     const kinds = [...chosen].map(id => root.querySelector(`#row-${CSS.escape(id)}`)?.dataset.kind ?? '')
     bar.querySelector('.sel-read').hidden = !kinds.includes('info')
-    bar.querySelector('.sel-duck').hidden = kinds.every(k => k === 'info')
+    bar.querySelector('.sel-archive').hidden = !kinds.includes('done')
+    bar.querySelector('.sel-duck').hidden = kinds.every(k => k === 'info' || k === 'done')
+    for (const way of ['.sel-later', '.sel-shred']) { const b = bar.querySelector(way); if (b) b.hidden = kinds.every(k => k === 'done') }
   }
   const onClick = e => {
     const mark = e.target.closest?.('[data-select]')
@@ -757,10 +763,10 @@ export function register(t) {
     })
     // Several cards at once (the selection bar): each through the same way as one card's own button; one toast whose
     // Undo takes all of them back (later -> wake, the others -> reopen).
-    const BATCH = { later: id => t.hub.snooze(id, {}), wake: id => t.hub.snooze(id, { clear: true }), duck: id => t.hub.trust(id, ''), shred: id => t.hub.shred(id, ''), read: id => t.hub.closeInfo(id), reopen: id => t.hub.reopen(id) }
-    const BACK = { later: 'wake', duck: 'reopen', shred: 'reopen', read: 'reopen' }
-    const WHAT = { later: 'snooze', duck: 'trust', shred: 'shred' }   // (a single card's toast: app.mjs SAID)
-    const SAID = { later: WORDS.later, duck: 'Left to the agents', shred: 'Shredded', read: 'Read', wake: 'Back on the Desk', reopen: 'Back on the Desk' }
+    const BATCH = { later: id => t.hub.snooze(id, {}), wake: id => t.hub.snooze(id, { clear: true }), duck: id => t.hub.trust(id, ''), shred: id => t.hub.shred(id, ''), read: id => t.hub.closeInfo(id), reopen: id => t.hub.reopen(id), archive: id => t.hub.archive(id), unarchive: id => t.hub.archive(id, false) }
+    const BACK = { later: 'wake', duck: 'reopen', shred: 'reopen', read: 'reopen', archive: 'unarchive' }
+    const WHAT = { later: 'snooze', duck: 'trust', shred: 'shred', archive: 'archive' }   // (a single card's toast: app.mjs SAID)
+    const SAID = { later: WORDS.later, duck: 'Left to the agents', shred: 'Shredded', read: 'Read', wake: 'Back on the Desk', reopen: 'Back on the Desk', archive: 'Archived', unarchive: 'Back on the Desk' }
     t.post(/^\/cards\/batch$/, async ({ req, res, form }) => {
       const way = String(form.get('way') ?? ''), m0 = model()
       if (!Object.hasOwn(BATCH, way)) { res.code = 400; return }
@@ -771,6 +777,7 @@ export function register(t) {
         if (way === 'duck' && c.kind !== 'decision') continue
         if (way === 'read' && c.kind !== 'info') continue
         if ((way === 'later' || way === 'shred') && c.kind === 'permission') continue
+        if (way === 'archive' ? !c.landed : c.landed && way !== 'unarchive') continue
         try { await BATCH[way](id); done.push(id) } catch (err) { console.warn(way, id, err.message) }
       }
       // From a card's own page (from: that card): on to the next open card, or back to where it was opened from
@@ -779,8 +786,9 @@ export function register(t) {
         const m = model(), from = m0.byCard.get(String(form.get('from'))), home = String(form.get('back') ?? '')
         const said = done.length && WHAT[way] ? `said=${done[0]}:${WHAT[way]}` : ''
         if (home.startsWith(`${BASE}/s/`) && /^[\w\-/%+.]+$/.test(home)) return redirect(res, `${home}${said ? `?${said}` : ''}`)
-        const after = from ? m0.fresh.slice(m0.fresh.indexOf(from) + 1) : []
-        const next = done.length ? after.map(c => m.byCard.get(c.id)).find(c => c && m.fresh.includes(c)) ?? m.fresh.find(c => c.id !== from?.id) : from
+        const walk0 = walkOf(m0), walk = walkOf(m)
+        const after = from ? walk0.slice(walk0.indexOf(from) + 1) : []
+        const next = done.length ? after.map(c => m.byCard.get(c.id)).find(c => c && walk.includes(c)) ?? walk.find(c => c.id !== from?.id) : from
         return redirect(res, next ? `${cardPath(next, BASE)}${said ? `?${said}` : ''}` : `${BASE}/${said ? `?${said}` : ''}`)
       }
       if (!t.wantsStream(req)) return redirect(res, BASE || '/')
@@ -794,11 +802,11 @@ export function register(t) {
       return t.sendStream(req, res, t.toast({ head: SAID[way], line: n === 1 ? m0.byCard.get(done[0]).title : `${n} cards`, undo: back && n ? { action: `${BASE}/cards/batch`, fields: { way: back, ids: done.join(',') } } : null }))
     })
     t.get(/^\/blitz$/, ({ res, url }) => {
-      const next = model().fresh[0], said = url.searchParams.get('said')
+      const next = walkOf(model())[0], said = url.searchParams.get('said')
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
     t.live('desk', {
-      take: m => { const all = deskCards(m); return { order: all.map(c => c.id), agents: new Map(all.map(c => [c.id, c.agent])), rows: new Map(all.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), slip: linkSlip(m.cut ?? [], BASE), ip: withAgents(m, BASE), stacks: deskStacks(m, BASE) } },
+      take: m => { const all = deskCards(m); return { order: all.map(c => c.id), agents: new Map(all.map(c => [c.id, c.landed ? `${c.agent}|done` : c.agent])), rows: new Map(all.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), slip: linkSlip(m.cut ?? [], BASE), ip: withAgents(m, BASE), stacks: deskStacks(m, BASE) } },
       diff(was, now, client, m) {
         const out = []
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
@@ -811,7 +819,8 @@ export function register(t) {
         const keptSet = new Set(kept), wasRuns = []
         for (const id of was.order) { if (!wasRuns.length || was.agents.get(wasRuns.at(-1).at(-1)) !== was.agents.get(id)) wasRuns.push([]); wasRuns.at(-1).push(id) }
         const merges = runsOf(kept, id => was.agents.get(id)) < wasRuns.filter(r => r.some(id => keptSet.has(id))).length
-        if (!sameOrder || merges) { const w = windowed(m); out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => (w(c) === now.rows.get(c.id) ? now.rows.get(c.id) : w(c)) }))) }
+        if (!sameOrder || merges || added.some(id => m.byCard.get(id)?.landed)) {   // (a Done row that lands: drawn again, in its place among the others)
+        const w = windowed(m); out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => (w(c) === now.rows.get(c.id) ? now.rows.get(c.id) : w(c)) }))) }
         else {
           for (const id of was.order) if (!now.rows.has(id)) out.push(stream('remove', `row-${id}`))
           for (const id of kept) if (was.rows.get(id) !== now.rows.get(id) && t.differs(was.rows.get(id), now.rows.get(id))) out.push(stream('replace', `row-${id}`, now.rows.get(id)))
@@ -819,7 +828,7 @@ export function register(t) {
           for (const id of added) {
             const card = m.byCard.get(id), sender = m.byAgent.get(card.agent); if (!sender) continue
             const prev = now.order[now.order.indexOf(id) - 1]
-            if (prev && now.agents.get(prev) === card.agent) out.push(stream('after', `row-${prev}`, now.rows.get(id)))
+            if (prev && now.agents.get(prev) === now.agents.get(id)) out.push(stream('after', `row-${prev}`, now.rows.get(id)))
             else out.push(stream('before', 'desk-ip', runSection(sender, now.rows.get(id), 1)))
           }
         }

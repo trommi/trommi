@@ -267,6 +267,12 @@ try {
   await A.until(`!document.getElementById('row-${pile.done}')`, 'answered row leaves')
   const td = Date.now(); while (!commands.some(c => c.command === 'answer' && c.object_id === pile.done) && Date.now() - td < 10000) await sleep(30)
   await agent.close(pile.done, 'erledigt')
+  // closed by its session: it lands on the Desk as a Done row first; Archive puts it down to Off the desk
+  await A.until(`trommi.model().landed.some(c => c.id === '${pile.done}')`, 'the finished card is a Done row').then(() => check(true, 'a card its session closed lies on the Desk as Done'), e => check(false, e.message))
+  await A.js(`document.getElementById('row-${pile.done}')?.scrollIntoView({ block: 'center' })`)
+  await A.until(`document.querySelector('#row-${pile.done}.is-done .is-archive')`, 'the Done row with Archive')
+  await A.js(`document.querySelector('#row-${pile.done} .is-archive').click()`)
+  await A.until(`!document.getElementById('row-${pile.done}')`, 'archived Done row leaves').then(() => check(true, 'Archive puts the Done row down to Off the desk'), e => check(false, e.message))
   // answered, its session still at it: Working
   await A.js(`document.querySelector('#row-${pile.acting} form[action$="/decide"] button[value="a"], #row-${pile.acting} button[name=key][value=a]')?.click()`)
   await A.until(`!document.getElementById('row-${pile.acting}')`, 'answered row leaves')

@@ -150,6 +150,10 @@ export function heardOf(card, now = Date.now()) {
   return { heard, waiting: heard ? 0 : Math.max(0, now - at), late: heard === false && now - at >= UNHEARD_MS }
 }
 
+// Cards an agent finished before the Done rows came (7 October) count as archived: only what is finished from then on
+// lands on the Desk. (The demo room's cards are older: there every finished card lands.)
+const DONE_SINCE = Date.UTC(2026, 9, 7, 0, 0)
+
 // ---- model ----
 // What the views show, worked out once per render from the hub's state. The rules are those the old
 // client had in js/store.js, js/inbox.js and js/agents.js; here they run on the hub, so every browser
@@ -163,6 +167,8 @@ export function heardOf(card, now = Date.now()) {
 // "All desks" (his word, 7 October: "one overall desk … the existing desks are its children"): the desk id ALL_DESKS
 // stands for every desk at once; nothing is stored on the hub for it, it is this browser's choice like any desk.
 export const ALL_DESKS = 'all'
+/** The walk (Blitz, a card's before and next): the open questions, then the Done rows. */
+export const walkOf = m => [...m.fresh, ...(m.landed ?? [])]
 function boardModel(state, agents = state.agents, desk = null) {
   const desks = state.desks?.length ? state.desks : null
   const all = Boolean(desks && desks.length > 1 && desk === ALL_DESKS)
@@ -191,6 +197,8 @@ function boardModel(state, agents = state.agents, desk = null) {
   const fresh = open.filter(c => !c.with_agent && !isInfo(c))
   const revising = open.filter(c => c.with_agent).sort((a, b) => b.with_agent - a.with_agent)
   const snoozed = state.cards.filter(c => c.status === 'open' && c.snoozed_until && !shelved.has(c.agent) && mine(c)).sort((a, b) => (b.snoozed_at ?? 0) - (a.snoozed_at ?? 0))
+  // Done rows: what the agents finished and he has not archived yet, the newest first (below the open questions).
+  const landed = state.cards.filter(c => c.landed && !shelved.has(c.agent) && mine(c)).sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0))
   const answered = state.cards.filter(c => c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)) && mine(c))
   const shredded = state.cards.filter(c => c.status === 'shredded' && mine(c))
   const at = c => (c.status === 'shredded' ? c.shredded : c.decided) ?? 0
@@ -232,7 +240,7 @@ function boardModel(state, agents = state.agents, desk = null) {
   const cut = units.filter(u => u.link?.state === 'cut' && !(u.parent?.link?.state === 'cut' && u.parent.agent.agent_device_id === u.agent.agent_device_id)).map(u => ({ agent: u.agent, link: u.link }))
 
   return {
-    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, onDesk, desk: deskId, all, deskOf, desks: desks ?? [], revising, snoozed, done, units,
+    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, onDesk, desk: deskId, all, deskOf, desks: desks ?? [], revising, snoozed, done, landed, units,
     cut, unheard: units.reduce((n, u) => n + u.unheard, 0),
     knocking: fresh.filter(isKnock).length,
     blocked: units.filter(u => u.blocked).length,
@@ -368,7 +376,7 @@ export class BoardState {
       for (const id of change.permissions) this.cardCache.delete(id)
       for (const key of change.registers) {
         const at = key.indexOf('/'), kind = key.slice(0, at), id = key.slice(at + 1)
-        if (kind === 'draft' || kind === 'snooze' || kind === 'duck') this.cardCache.delete(id)
+        if (kind === 'draft' || kind === 'snooze' || kind === 'duck' || kind === 'archived') this.cardCache.delete(id)
         if (kind === 'session' || key === 'crown') { this.cardCache.clear(); this.eventCache.clear() }   // agent ids and names change
       }
     }
@@ -518,6 +526,17 @@ export class BoardState {
     if (draft && status === 'open') card.draft = { keys: draft.keys ?? [], note: draft.note ?? '', notes: draft.notes ?? {}, ...(draft.marks?.length ? { marks: draft.marks } : {}), ts: draft.ts ?? 0 }
     if (snooze?.until > Date.now() && status === 'open') { card.snoozed_until = snooze.until; card.snoozed_at = snooze.at ?? 0 }
     else if (snooze?.until && status === 'open') card.unsnoozed = snooze.until   // woken by hand or by the clock: "Back from snooze"
+    // Done by its agent (his word, 7 October: "when something is finished, it should still lie on the Desk"): the agent
+    // closed it after his answer (close_card, with its one-line summary). It lies on the Desk as a Done row until he
+    // archives it: his register archived/<object_id> (encrypted in the room like snooze/ and draft/, the same on all his
+    // devices); archived_before (Archive all) archives every card finished before that time. Not a card his own answer
+    // settled (a final option), not one withdrawn, merged or shredded.
+    if (status === 'done' && c.closed_how === 'closed' && a && !a.pending && a.answer_action !== 'read' && a.answer_action !== 'shred') {
+      card.finished = c.updated_at ?? a.answered_at ?? 0
+      const archived = h.raw.get(`archived/${c.object_id}`)?.value
+      if (archived) card.archived = archived.at ?? true
+      else if (card.finished > (Number(h.raw.get('archived_before')?.value) || (mock ? 0 : DONE_SINCE))) card.landed = true
+    }
     if (c.merged_into_object_id) card.merged_into = c.merged_into_object_id
     if (c.merged_from_object_ids?.length) card.merged_from = c.merged_from_object_ids.map(id => ({ id, number: this.numberOf?.get(id), title: m.cards.get(id)?.title ?? '' }))
     return card
@@ -717,6 +736,9 @@ function hubFacade(client, board) {
       await client.shred({ object_id: cardId, note, marks: marks ?? [], attachments: await upload(files, cardId) })
       draftOff(cardId)
     },
+    // Archive a Done row: it goes down to Off the desk (undo: back on the Desk). Archive all: every finished card.
+    archive(cardId, on = true) { return client.setRegisters({ [`archived/${cardId}`]: on ? { at: Date.now() } : null }) },
+    archiveAll() { return client.setRegisters({ archived_before: Date.now() }) },
     async snooze(cardId, { clear = false } = {}) {
       const c = card(cardId)
       if (c.kind === 'permission') throw new Error('an approval cannot be put off')
@@ -958,6 +980,7 @@ export function renderStreamMessage(text) {
 export const SAID = {
   decide: { head: 'Answered', back: 'reopen' }, trust: { head: WORDS.trust, back: 'reopen' }, close: { head: 'Read', back: 'reopen' },
   shred: { head: 'Shredded', back: 'reopen' }, snooze: { head: WORDS.later, back: 'wake' }, revise: { head: 'Handed back', back: 'takeback' }, message: { head: 'Message sent' }, what: { head: `Asked: ${WORDS.what}`, back: 'takeback' },
+  archive: { head: 'Archived', back: 'unarchive' }, unarchive: { head: 'Back on the Desk' },
 }
 export const BASE = ''
 const STREAM = 'text/vnd.turbo-stream.html'
