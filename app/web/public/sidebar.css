@@ -726,3 +726,17 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 .topbar #brand-doors .menu-desk-rows.is-sorting .menu-desk-row:not(.is-dragging) { transition: none; }
 .topbar #brand-doors .menu-desk-row.is-dragging { z-index: 5; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--fg), 0 12px 22px -10px rgb(20 30 25 / .45); rotate: -1.2deg; touch-action: none; }
 .topbar #brand-doors .menu-desk-row.is-dragging button.menu-desk-pen { opacity: 0; }
+
+/* ---- The rail with many helpers (his word, 7 October: "???"): folded, the sidebar lists the mains alone. A main's helpers
+   are not drawn one by one: they lie as its stack under its drawing (folded or not), with their number small beside it;
+   a click on the stack or the number opens the sidebar with them unfolded. A helper's knock colours its edge of the stack;
+   the main whose helper is in view is the marked row. The open sidebar is as before. ---- */
+.rail-subs { display: none; }
+@media (min-width: 861px) {
+  html[data-rail="folded"] #agents .agent-row.is-sub { display: none !important; }
+  html[data-rail="folded"] #agents .agent-row.is-main .crown-edges[hidden] { display: block !important; }
+  html[data-rail="folded"] #agents .agent-row.is-main[data-fold] { margin-bottom: calc(var(--n) * 2px + 16px); }
+  html[data-rail="folded"] #agents .agent-row.is-main.has-active .agent-entry { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--fg) 60%, var(--line-strong)), var(--shadow-sm); }
+  html[data-rail="folded"] .rail-subs { display: block; position: absolute; z-index: 3; right: 1px; bottom: -14px; min-width: 18px; height: 16px; padding: 0 3px; border: 0; border-radius: 8px; background: var(--bg); color: var(--muted); font: 600 11px/16px var(--font); font-variant-numeric: tabular-nums; text-align: center; cursor: pointer; }
+  html[data-rail="folded"] .rail-subs:hover, html[data-rail="folded"] .rail-subs:focus-visible { color: var(--fg); }
+}
