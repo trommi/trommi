@@ -825,3 +825,15 @@ html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .d
 html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .inbox-takeback):hover, html body .clip-copy:hover .clip-copy-word { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
 html body .clip-copy.is-small .clip-copy-word { min-height: 30px; padding: 0 10px; }
 @media (pointer: coarse) { html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .inbox-takeback) { min-height: 44px; } }
+
+/* ---- The agent's advice (his pick "stroke", 7 October): one short, slightly wavy pen stroke at the foot of the advised
+   tile or option, centred a little above its bottom edge (on a card's option at the bottom right); white on a filled
+   tile, the advice ink on a pale one. It marks the tile, not the words: the label stays clean. ---- */
+:root { --advice-stroke: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 6'%3E%3Cpath d='M1.5 3.6Q8 1.8 15 3.1T28.5 2.4' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E"); }
+html body :is(.inbox-answer, .tc-opt, .tc-chip, .ledger-ans).is-advised::after { content: ""; position: absolute; z-index: 1; left: calc(50% - 15px); bottom: 7px; width: 30px; height: 6px; background: var(--urg-high); -webkit-mask: var(--advice-stroke) center / 100% 100% no-repeat; mask: var(--advice-stroke) center / 100% 100% no-repeat; pointer-events: none; }
+html body :is(.inbox-answer, .tc-chip).is-advised.is-lead::after, html body .inbox-row[data-from] .inbox-answer.is-lead.is-advised::after { background: rgb(255 255 255 / .92); }
+html body .tc-opt.is-advised::after { left: auto; right: 14px; bottom: 8px; }
+html body .tc-chip.is-advised::after { bottom: 2px; width: 22px; left: calc(50% - 11px); }
+.advice-loop { display: none !important; }
+.ledger-ans.is-advised { box-shadow: none !important; }
+html body .inbox-answer.is-take.is-advised { padding-bottom: 12px; }
