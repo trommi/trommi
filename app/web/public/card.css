@@ -696,12 +696,18 @@ div.focus-opt { cursor: default; }
 /* a phone: Later's tag hangs nowhere (it lay on the words of the talk): it stands in the strip as its last button, and
    every button of the strip is a finger's size */
 @container cardpage (max-width: 520px) {
-  .tc-bar-in { height: 54px; gap: 2px; padding: 0 4px 0 12px; }
+  /* the title on a line of its own (two at most), the jump and the buttons under it */
+  .tc-bar-in { flex-wrap: wrap; height: auto; gap: 2px; row-gap: 4px; padding: 10px 6px 6px 14px; }
+  .tc-bar-title { flex: 1 1 100%; min-width: 0; padding-right: 8px; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: var(--t-sm); line-height: 1.2; }
+  .tc-bar-in > .tc-chip.is-jump { margin-right: auto; }
   .tc-mini { height: 44px; min-width: 42px; }
   .tc-chip.is-jump { min-height: 44px; }
   .tc-bar-later { position: static; flex: none; }
   .tc-bar-later .sel-later { display: grid; place-items: center; width: 36px; height: 44px; padding: 0; }
   .tc-bar-later .sel-later svg { width: 19px; height: 40px; }
+  .tc-bar-later .tag-string { display: none; }   /* (the tag lies in the strip: no string out of it) */
+  /* one Later tag: while the strip stands, the card's own tag (scrolled up behind the top line) is gone */
+  .tc-page.card-gone > .tc-pad > .tc-frame > .tc-later, .tc-page.card-gone .tc-frame > .tc-later { visibility: hidden; }
 }
 @media (min-width: 861px) { #cardpage { padding-top: var(--s-6); padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } }
 @media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } .tc-pad > .tc-chat { padding-right: 52px; } }   /* (the corner note stands beside the field, in the window's corner) */
