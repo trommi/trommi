@@ -315,7 +315,8 @@ button.agent-badge:active { scale: .95; }
 .topbar #brand-doors .menu-foot .conn { order: 9; justify-content: flex-start; justify-self: start; height: 30px; margin: 4px 0 0; padding: 0 12px; border: 0; font-size: var(--t-xs); color: var(--muted); }
 .topbar #brand-doors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: none; }
 #theme-toggle::after { content: "Light"; }
-:root[data-theme="dark"] #theme-toggle::after { content: "Dark"; }
+:root[data-theme-mode="dark"] #theme-toggle::after { content: "Dark"; }
+:root[data-theme-mode="system"] #theme-toggle::after, :root:not([data-theme-mode]) #theme-toggle::after { content: "System"; }
 #theme-toggle::after { margin-left: auto; font: 500 var(--t-xs)/1 var(--font); color: var(--muted); }
 @media (pointer: coarse), (max-width: 860px) {
   .topbar #brand-doors { width: min(300px, calc(100vw - 24px)); }

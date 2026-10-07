@@ -1,7 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
 // The markup is the one app.css and sidebar.css style (the old client built it in js/agents.js).
 import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
-import { BELL, Controller, PLUS, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
+import { BELL, Controller, PLUS, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -362,7 +362,7 @@ function menuDoors(model, base) {
 <div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents and devices: the sessions, and who is in the room">${sk('heads')}<span>Agents &amp; devices</span></a><a role="menuitem" href="${base}/settings" data-nav draggable="false" id="menu-settings" title="Settings: your account, this device's storage">${sk('key')}<span>Settings</span></a>${inDemo() ? html`<a role="menuitem" href="${base}/screens?mock=1" target="_blank" rel="noopener" id="menu-screens" title="Every screen of the app in the demo, for review">${sk('page')}<span>All screens</span></a>` : ''}<a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
 <div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
 <div class="menu-demo"><button role="menuitemcheckbox" type="button" id="demo-toggle" class="demo-toggle" aria-checked="${String(inDemo())}" title="${inDemo() ? 'Leave the demo: back to your desks' : 'The demo: a made-up room, nothing is kept'}">${DEMO_MARK}<span>Demo</span><i class="demo-switch" aria-hidden="true"><b></b></i></button></div>
-<div class="menu-look"><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme-row" aria-label="Light or dark (T)" title="Light or dark (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<span>Light / dark</span></button></div>
+<div class="menu-look"><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme-row" aria-label="Theme: light, dark or the system's (T)" title="Theme: Light → Dark → System (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<span>Theme</span></button></div>
 <div class="menu-leave"><a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log out</span></a></div>
 </nav>`
 }
@@ -777,11 +777,7 @@ export function register(t) {
     if (doors && !doors.hidden && !t.closest('#brand-doors')) shut()
     // the demo: a switch, never a desk; off takes the tab back to its own room for sure (app.mjs ?mock=0)
     if (t.closest('#demo-toggle')) { location.assign(inDemo() ? '/?mock=0' : '/?mock=1'); return }
-    if (t.closest('#theme-toggle')) {
-      const dark = document.documentElement.dataset.theme !== 'dark'
-      if (dark) document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme
-      try { localStorage.setItem('agent-board-theme', dark ? 'dark' : 'light') } catch {}
-    }
+    if (t.closest('#theme-toggle')) setThemeMode(nextThemeMode())   // Light → Dark → System
   })
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { shut(); const sw = $('#desk-switch'); if (sw && !sw.hidden) { sw.hidden = true; $('.desk-switch-open')?.focus() } } })
   drawer()

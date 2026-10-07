@@ -579,6 +579,18 @@ export function arrowStrokes(points, seed) {
 // For ui.js (sketch and adviceLoop draw with the same hand and tables).
 
 /** A media query that also stands when the module is imported outside a page (the connector's tests). */
+/** The theme: 'light', 'dark' or 'system' (follows the OS; the default). Kept in localStorage 'agent-board-theme'; the page's
+ *  head sets it before the first paint (index.html), this keeps it and follows the OS while it is 'system'. */
+export function themeMode() { try { return localStorage.getItem('agent-board-theme') || 'system' } catch { return 'system' } }
+export function setThemeMode(mode) {
+  const root = document.documentElement, dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+  root.dataset.themeMode = mode
+  if (dark) root.dataset.theme = 'dark'; else delete root.dataset.theme
+  try { if (mode === 'system') localStorage.removeItem('agent-board-theme'); else localStorage.setItem('agent-board-theme', mode) } catch {}
+}
+/** The next in the round Light → Dark → System. */
+export const nextThemeMode = () => ({ light: 'dark', dark: 'system', system: 'light' })[themeMode()] ?? 'system'
+globalThis.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (themeMode() === 'system') setThemeMode('system') })
 export const mq = q => globalThis.matchMedia?.(q) ?? { matches: false, addEventListener() {}, removeEventListener() {} }
 /** Under prefers-reduced-motion nothing moves by itself. */
 export const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -2434,9 +2446,7 @@ function start(signal) {
     'back': () => backNote(),
     'theme': () => {
       if ($('#theme-toggle')) return press($('#theme-toggle'))
-      const dark = document.documentElement.dataset.theme !== 'dark'
-      if (dark) document.documentElement.dataset.theme = 'dark'; else delete document.documentElement.dataset.theme
-      try { localStorage.setItem('agent-board-theme', dark ? 'dark' : 'light') } catch {}
+      setThemeMode(nextThemeMode())
     },
     'field.leave': (n, e) => { if (!typingIn(e.target)) return false; e.target.blur() },
   }
