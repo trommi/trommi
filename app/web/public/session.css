@@ -780,3 +780,14 @@ a.files-where:hover span { text-decoration: underline; }
 .desk-move .session-delete-yes:hover { background: color-mix(in srgb, var(--urg-critical) 88%, var(--fg)); }
 .desk-move .session-delete-ask .desk-duck-no { width: auto; }
 @media (max-width: 860px) { .desk-move .session-delete-yes, .desk-move .session-delete-ask .desk-duck-no { min-height: 44px; } .desk-move.t-pop { max-width: calc(100vw - 16px); } }
+
+/* ---- One field to write in (his pick "rect", 7 October): a session's composer has the card's form: rectangular, the
+   words first, the tools (the paperclip) at the right, the send button a green square ---- */
+#session .composer { align-items: center; gap: 6px; padding: 6px 6px 6px 14px; border-radius: 14px; box-shadow: inset 0 0 0 1px var(--line-strong); border-color: transparent; }
+#session .composer:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
+#session .composer > .composer-files { order: 0; }
+#session .composer > textarea { order: 1; }
+#session .composer > .composer-clip { order: 2; width: 38px; height: 38px; }
+#session .composer > .send { order: 3; width: 38px; height: 38px; border-radius: var(--r-md); background: var(--accent); color: var(--accent-fg, #fff); }
+#session .composer > .send:disabled { background: var(--accent); color: var(--accent-fg, #fff); opacity: .45; }
+@media (max-width: 860px) { #session .composer > :is(.composer-clip, .send) { width: 44px; height: 44px; } #session .composer { border-radius: 14px; } }
