@@ -84,9 +84,16 @@ async function addHuman(inviter, name, storage = memoryStorage({ extractable_key
   await c.start()
   return c
 }
-async function addAgent(inviter, name, storage = memoryStorage(), label = null) {
-  const inv = await inviter.createInvite({ device_role: 'agent', label })
+/** An agent's join: the human compares the six emoji its terminal prints with the app's and taps "They match" (every agent invite asks). */
+async function confirmAgent(inviter, inv, j) {
+  const code = await j.check_code
+  await until(() => inviter.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'inviter waits for the agent\'s code')
+  await compareCodes(inviter, inv.invite_id, code)
+}
+async function addAgent(inviter, name, storage = memoryStorage(), label = null, desk = null) {
+  const inv = await inviter.createInvite({ device_role: 'agent', label, desk })
   const j = joinRoom({ link: inv.link, storage, device_name: name, device_info: { device_name: name, platform: 'node', folder: '~/git/x', host: 'pc' }, poll_ms: 50 })
+  await confirmAgent(inviter, inv, j)
   const c = track(await j.client)
   await c.start()
   if (z.KEY_SCOPE) await c.whenSession()
@@ -106,7 +113,7 @@ await test('found: room, recovery code, device register, warm model', async () =
   await until(() => phone.model.room.connection === 'live', 'stream live')
 })
 
-await test('two humans + agent: invite with check code, agent without, roles and names', async () => {
+await test('two humans + agent: invite with check code, the agent too, roles and names', async () => {
   const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
   await settleAll(phone, laptop, agent)
   await until(() => laptop.model.members.size === 3 && phone.model.members.get(agent.my_device_id)?.device_name === 'Agent 0', 'members everywhere')
@@ -116,6 +123,12 @@ await test('two humans + agent: invite with check code, agent without, roles and
   eq(phone.model.sessions.get(agent.session_id).device_name, 'Agent 0', 'session name')
   const labelled = await addAgent(phone, 'calls itself x', memoryStorage(), 'Krypto')
   await until(() => laptop.model.sessions.get(labelled.session_id)?.settings?.name === 'Krypto', 'inviter label in session/<id> (R8)')
+  // An invite made on a desk: the new session lands on it (kept on the inviting device, not in the link).
+  const inv = await phone.createInvite({ device_role: 'agent', desk: 'projekte' })
+  assert(!inv.link.includes('projekte'), 'the desk is not in the link')
+  const placed = await addAgent(phone, 'on a desk', memoryStorage(), 'Omalux', 'projekte')
+  await until(() => laptop.model.sessions.get(placed.session_id)?.settings?.desk === 'projekte' && laptop.model.sessions.get(placed.session_id)?.settings?.name === 'Omalux', 'the session on the invite\'s desk')
+  eq(phone.model.sessions.get(labelled.session_id)?.settings?.desk, undefined, 'without a desk: the default')
 })
 
 await test('"they don\'t match" burns the invite and adds nobody', async () => {
@@ -870,6 +883,7 @@ if (z.KEY_SCOPE) await test('lease: one process never takes its own lease over (
   }
   const inv = await phone.createInvite({ device_role: 'agent' })
   const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Channel', device_info: { device_name: 'Channel', platform: 'claude-code', folder: '~/git/x', host: 'pc' }, poll_ms: 50, fetch: hooked })
+  await confirmAgent(phone, inv, j)
   const agent = track(await j.client)
   await until(async () => { await agent._refreshSessions(); return agent.session_id }, 'session assigned before the start')
   const errors = []
@@ -897,6 +911,7 @@ if (z.KEY_SCOPE) await test('lease: lease-lost renews first on every path (uploa
   track(phone); await phone.start()
   const inv = await phone.createInvite({ device_role: 'agent' })
   const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Paths', poll_ms: 50, fetch: hooked })
+  await confirmAgent(phone, inv, j)
   const agent = track(await j.client)
   await agent.start({ process_instance: 'paths-1' })
   await agent.whenSession()
@@ -1066,7 +1081,7 @@ await test('review 3: a held command met again in a replay is emitted once', asy
   eq(cmds.filter(c => c.content.text === 'held once').length, 1, 'emitted once')
 })
 
-await test('review 3 agent invites: a link two devices answer adds nobody; with confirm_code it is bound to the agent whose code the human confirms', async () => {
+await test('review 3 agent invites: a link two devices answer adds nobody; every agent invite is bound to the agent whose code the human confirms', async () => {
   const { phone } = await room()
   // (1) A leaked bearer link: the intended agent and someone else both answer before the phone looks. Before: the
   // first comer was added. Now: nobody, the invite is spent, the phone shows invite-contested.
@@ -1082,8 +1097,9 @@ await test('review 3 agent invites: a link two devices answer adds nobody; with 
   await sleep(300)
   eq([...phone.model.members.values()].filter(m => m.device_role === 'agent').length, 0, 'nobody was added')
   intruder.cancel(); agent.cancel()
-  // (2) confirm_code: the human confirms the code the intended agent prints; an intruder who answered first is not added.
-  const bound = await phone.createInvite({ device_role: 'agent', confirm_code: true })
+  // (2) The human confirms the code the intended agent prints; an intruder who answered first is not added.
+  const bound = await phone.createInvite({ device_role: 'agent' })
+  eq(bound.confirm_code, true, 'every agent invite asks for the check code')
   const first = joinRoom({ link: bound.link, storage: memoryStorage(), device_name: 'Intruder', poll_ms: 50 })
   first.client.catch(() => {})
   await until(() => phone.model.invites.get(bound.invite_id).invite_state === 'confirm_code', 'waits for the code')
@@ -1093,9 +1109,14 @@ await test('review 3 agent invites: a link two devices answer adds nobody; with 
   try { await phone.confirmInvite(bound.invite_id, false) } catch (e) { err = e }
   eq(err?.code, 'code-mismatch', 'the intended agent\'s code does not match the intruder\'s request')
   first.cancel()
-  const ok3 = await phone.createInvite({ device_role: 'agent', confirm_code: true })
+  const ok3 = await phone.createInvite({ device_role: 'agent' })
+  await sleep(300)
+  eq(phone.model.invites.get(ok3.invite_id).invite_state, 'open', 'nobody answered yet')
   const real = joinRoom({ link: ok3.link, storage: memoryStorage(), device_name: 'Real', poll_ms: 50 })
   await until(() => phone.model.invites.get(ok3.invite_id).invite_state === 'confirm_code', 'waits for the code')
+  await sleep(300)
+  eq(phone.model.invites.get(ok3.invite_id).invite_state, 'confirm_code', 'not added before "They match"')
+  eq([...phone.model.members.values()].filter(m => m.device_role === 'agent').length, 0, 'nobody added yet')
   await compareCodes(phone, ok3.invite_id, await real.check_code)
   const c = track(await real.client)
   await until(() => phone.model.members.get(c.my_device_id)?.device_role === 'agent', 'the intended agent is added')
@@ -1536,6 +1557,7 @@ await test('fuzz F4: an agent invite whose finalize hits a network failure once 
   phone.hub.postMember = async (...a) => { if (!failed++) throw new z.ZError('offline', 'simulated', { status: 0 }); return realPost(...a) }
   const inv = await phone.createInvite({ device_role: 'agent' })
   const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Retry', poll_ms: 50 })
+  await confirmAgent(phone, inv, j).catch(() => {})   // the first finalize fails (offline); it is retried by itself
   const c = track(await Promise.race([j.client, sleep(15_000).then(() => { j.cancel(); throw new Error('timeout: the agent was never added') })]))
   assert(failed >= 1, 'the failure happened')
   await until(() => phone.model.members.get(c.my_device_id)?.device_role === 'agent', 'added after the retry')

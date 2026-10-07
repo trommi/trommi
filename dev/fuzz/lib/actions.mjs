@@ -218,6 +218,13 @@ export class Runner {
       let stop = false
       const watcher = (async () => { while (!stop) { if (['failed', 'expired'].includes(inviter.client.model.invites.get(f.inv.invite_id)?.invite_state)) throw Object.assign(new Error('invite failed on the inviting side'), { inviteFailed: true }); await sleep(50) } })()
       watcher.catch(() => {})
+      // Every agent invite asks: the human compares the six emoji the agent prints with the app's and taps "They match".
+      const confirm = (async () => {
+        const code = await j.check_code
+        await untilTrue(() => inviter.client?.model.invites.get(f.inv.invite_id)?.invite_state === 'confirm_code', 'inviter never saw the agent', 20000)
+        await inviter.client.confirmInvite(f.inv.invite_id, inviter.client.model.invites.get(f.inv.invite_id)?.check_code === code)
+      })()
+      confirm.catch(() => {})
       try { client = await inviteStep(this, a, inviter.client ? inviter : null, Promise.race([j.client, watcher]), 'agent join') } finally { stop = true }
     } catch (e) {
       j.cancel(); j.client.catch(() => {}); w_forget(this.w, d)

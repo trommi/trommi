@@ -91,6 +91,16 @@ ${raw(L.gone)}
       try { await client.assignSession({ session_id: String(form.get('session_id')), agent_device_id: String(form.get('agent_device_id')), with_history: form.get('with_history') === 'yes' }) } catch (err) { return page(req, res, 'Devices', devicesMain(`Not handed over: ${err.message}`), {}, 422) }
       t.redirect(res, '/devices')
     })
+    // The desk a new agent's session goes on: the desk in view; on "All desks" the desk of the session open there (the
+    // page the invite was made from), else the first desk. Kept with the invite on this device (createInvite desk).
+    const inviteDesk = req => {
+      const bm = t.model()
+      if (!bm.desks?.length) return null
+      if (!bm.all) return bm.desk
+      const at = new URL(String(req.headers.referer ?? '/'), location.origin).pathname, ref = /^\/s\/([^/+]+)/.exec(at)?.[1], sid = ref ? (() => { try { return decodeURIComponent(ref) } catch { return ref } })() : null
+      const a = sid ? bm.everyone?.find(x => x.id === sid || x.device_id === sid) : null
+      return a ? bm.deskOf(a) : bm.desks[0].id
+    }
     t.post(/^\/pair$/, async ({ req, res, form }) => {
       try {
         const agent = form.get('role') === 'agent'
@@ -98,7 +108,7 @@ ${raw(L.gone)}
         // continue=<session>: "Copy invite link again" on a session's page. The link is for THAT session: the connector that
         // joins with it continues it, after the human confirmed its check code here (the core: createInvite takeover).
         const cont = agent ? String(form.get('continue') ?? '') : ''
-        const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}), ...(cont ? { session_id: cont, takeover: true } : {}) })
+        const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}), ...(cont ? { session_id: cont, takeover: true } : agent ? { desk: inviteDesk(req) } : {}) })
         const session_id = String(form.get('session_id') ?? '')
         if (agent && session_id) handovers.set(invite.invite_id, { session_id, with_history: form.get('with_history') === 'yes', done: false })
         t.redirect(res, `/pair/${invite.invite_id}`)
@@ -151,7 +161,7 @@ ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${in
         : joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>${h && !h.done ? html`<small>Handing over the session…</small>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}`
         : coming ? html`<b>Adding ${newcomerName(inv) || 'the agent'}…</b>`
         : dead ? html`<b>${state === 'expired' ? 'This link has run out' : inv.error === 'code-mismatch' ? 'They did not match: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
-        : html`<b>Waiting for the agent…</b>`
+        : html`<b>Compare the six emoji</b><small>The command prints six emoji, each with a word, and they show here too. Nobody is added before you tap "They match".</small>`
       const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
         : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent">${keep}<button type="submit">New link</button></form>`
         : coming ? html`<p class="clip-note">The link is in use: this page stays until the agent is in.</p>`
@@ -162,8 +172,8 @@ ${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link fo
         : html`<h2>Invite an agent</h2><p class="clip-sub">On a computer with Claude Code and Node 22+.</p>`}
 <ol class="clip-list">
 ${step(done, html`<b>Copy this into a terminal in your project</b>${open ? copyLine(`curl -fsSL ${location.origin}/connect | sh -s '${inv.link}'`, 'Copy') : ''}`)}
-${step(done, html`<b>Start Claude Code there</b>${open ? copyLine('claude', 'Copy', true) : ''}`)}
-${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : 'wait', last)}
+${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : open ? '' : 'wait', last)}
+${step(joined ? 'done' : dead ? 'dead' : '', html`<b>Start Claude Code there</b>${dead ? '' : copyLine('claude', 'Copy', true)}`)}
 </ol>${foot}</section></div></main>`
     }
     const inviteMain = (inv, error = '') => {

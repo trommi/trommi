@@ -199,13 +199,11 @@ class MockClient {
     this.changed(c => { this.model.invites.set(invite_id, invite); c.invites.add(invite_id) })
     setTimeout(() => this.changed(c => {
       invite.newcomer = { device_id: hex(64), device_name: device_role === 'agent' ? 'claude-session' : 'Phone (new)' }
-      // (a link that continues a session always asks to compare the check code, as the core does)
-      const ask = device_role !== 'agent' || takeover
-      invite.invite_state = ask ? 'confirm_code' : 'adding'
+      // every invite asks to compare the check code, agents included, as the core does
+      invite.invite_state = 'confirm_code'
       // the core's format: six numbers 0–63, shown as emoji (shared/check-emoji.mjs)
-      if (ask) invite.check_code = Array.from({ length: 6 }, () => String(Math.floor(Math.random() * 64)).padStart(2, '0')).join('-')
+      invite.check_code = Array.from({ length: 6 }, () => String(Math.floor(Math.random() * 64)).padStart(2, '0')).join('-')
       c.invites.add(invite_id)
-      if (!ask) setTimeout(() => this.addMember(invite), 400)
     }), 2500)
     return invite
   }

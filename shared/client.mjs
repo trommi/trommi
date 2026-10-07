@@ -1838,12 +1838,14 @@ export class Client {
   // ---- membership: invites, removal ---------------------------------------------------------
 
   /**
-   * An invite link. Agent invites are bearer links: the first agent that answers is added. Review 3: with
-   * confirm_code: true an agent invite is bound to the intended agent like a human pairing (the connector prints the
-   * check code as emoji, the app shows the same; the human confirms the match with confirmInvite), and every agent invite that two different devices
-   * answer is burned instead of going to whoever came first (alert invite-contested).
+   * An invite link. Every invite is bound to the device the human confirms, agents included (review 3; since 7 October
+   * no agent is added by itself): the newcomer shows the check code as emoji (the connector in its terminal), this
+   * device shows the same, and the human confirms the match with confirmInvite ("They don't match" burns it). An agent
+   * invite that two different devices answer is burned too (alert invite-contested).
+   * desk: the desk the new agent's session is placed on (the desk the invite was made on). Like the takeover binding it
+   * is kept with the invite on this device only, never sent to the hub or put in the link.
    */
-  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null, session_id = null, with_history = false, confirm_code = false, takeover = false } = {}) {
+  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null, session_id = null, with_history = false, takeover = false, desk = null } = {}) {
     this._needHuman()
     const role = device_role === 'agent' ? ROLE.AGENT : ROLE.HUMAN
     // takeover: the agent that joins with this link continues the existing session `session_id` (its cards, its helper
@@ -1851,12 +1853,12 @@ export class Client {
     // on this device which session the link continues before anything is granted.
     if (takeover) {
       if (role !== ROLE.AGENT || !this.sessionKeys.has(session_id)) throw new ZError('bad-argument', 'a takeover invite names an existing session and is for an agent')
-      with_history = true; confirm_code = true; label = null
+      with_history = true; label = null
     }
     const { link, offer, invite } = await z.createInvite({ state: this.state, inviter: this.device, hub: this.hub.hub_url, role, app: app_url, ...(ttl_ms ? { ttlMs: ttl_ms } : {}) })
     const r = await this.hub.postInvite(b64u(offer))
     const invite_id = r.invite_id
-    const pub = { invite_id, device_role, link, label, session_id, with_history, takeover: !!takeover, confirm_code: device_role === 'agent' ? !!confirm_code : true, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
+    const pub = { invite_id, device_role, link, label, session_id, with_history, takeover: !!takeover, desk: device_role === 'agent' && !session_id && typeof desk === 'string' && desk ? desk.slice(0, 64) : null, confirm_code: true, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
     invite.public = pub
     this.invitesPrivate.set(invite_id, invite)
     this.model.invites.set(invite_id, pub)
@@ -1916,10 +1918,8 @@ export class Client {
         }
         inv.code = accepted.code
         if (accepted.requestHash) inv.requestHash = accepted.requestHash
-        const auto = inv.role === ROLE.AGENT && inv.public.confirm_code !== true
         // check_code: the same code the newcomer shows (as emoji, shared/check-emoji.mjs); the human compares the two.
-        this._setInvite(invite_id, { check_code: auto ? null : accepted.code, newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: auto ? 'adding' : 'confirm_code' })
-        if (auto) await this._finalizeInvite(invite_id, { skipCheckCode: true })
+        this._setInvite(invite_id, { check_code: accepted.code, newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: 'confirm_code' })
         return
       }
     } finally { inv._checking = false }
@@ -1962,14 +1962,17 @@ export class Client {
           await this._takeOverLocked(invite_id, newId)
         } else if (inv.role === ROLE.AGENT) {
           // R6: an agent gets a session: the one named in the invite (handover, with or without history) or a new one.
+          const fresh = !inv.public.session_id
           const sid = inv.public.session_id
             ? (await this._assignSessionLocked({ session_id: inv.public.session_id, agent_device_ids: [newId], with_history: !!inv.public.with_history }), inv.public.session_id)
             : await this._createSessionLocked({ agent_device_ids: [newId] })
           inv.public.session_id = sid
-          // R8: the label the human chose when inviting wins over what the agent calls itself.
-          if (inv.public.label) {
+          // R8: the label the human chose when inviting wins over what the agent calls itself; a new session goes on the
+          // desk the invite was made on.
+          const place = { ...(inv.public.label ? { name: inv.public.label } : {}), ...(inv.public.desk && fresh ? { desk: inv.public.desk } : {}) }
+          if (Object.keys(place).length) {
             const cur = this.model.human.session_settings.get(sid) ?? {}
-            this.setRegisters({ [`session/${sid}`]: { ...cur, name: inv.public.label } }).catch(e => this._localAlert('invite', e))
+            this.setRegisters({ [`session/${sid}`]: { ...cur, ...place } }).catch(e => this._localAlert('invite', e))
           }
         } else {
           await this._resealSessionsLocked()   // a new human device gets every session key

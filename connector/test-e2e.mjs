@@ -115,6 +115,23 @@ export async function startConnector({ env, cwd, script = path.join(here, 'conne
   return Object.assign(handle, { pid: transport.pid, client, events, said, call, ready, next, stderr: () => err, close: () => client.close() })
 }
 
+/**
+ * The human at the app for the tests that are not about the invite: every agent invite asks for the six emoji, and this
+ * taps "They match" for a plain agent link once the agent answered (a takeover link is confirmed by its own test).
+ */
+export function confirmAgents(human) {
+  const tapped = new Set()
+  const timer = setInterval(() => {
+    for (const inv of human.model.invites.values()) {
+      if (inv.device_role !== 'agent' || inv.takeover || inv.invite_state !== 'confirm_code' || tapped.has(inv.invite_id)) continue
+      tapped.add(inv.invite_id)
+      human.confirmInvite(inv.invite_id, true).catch(() => {})
+    }
+  }, 100)
+  timer.unref()
+  return () => clearInterval(timer)
+}
+
 export async function integration({ test, tmp }) {
   const core = await import('../shared/index.mjs')
   // A stand-in push service: the hub's loss watch pushes here (HUB_PUSH_HOSTS), after HUB_LOSS_MS.
@@ -135,6 +152,15 @@ export async function integration({ test, tmp }) {
       await human.start()
       const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
       connector = await startConnector({ env: { ...env, TROMMI_INVITE: invite.link }, cwd: project })
+      // Every agent invite asks: the terminal prints six emoji, the app shows the same, nothing is added before "They match".
+      const code = await until('the check code in the terminal', () => codeInTerminal(connector.stderr()))
+      assert.match(connector.stderr(), /the Trommi app shows six emoji on its invite page/)
+      await until('the app waits for the code', () => human.model.invites.get(invite.invite_id).invite_state === 'confirm_code')
+      assert.equal(human.model.invites.get(invite.invite_id).check_code, code, 'the app shows the code the terminal shows')
+      await sleep(500)
+      assert.equal([...human.model.members.values()].filter(m => m.device_role === 'agent').length, 0, 'no agent before "They match"')
+      await human.confirmInvite(invite.invite_id, true)
+      confirmAgents(human)
       await connector.ready()
       agentId = [...human.model.members.values()].find(m => m.device_role === 'agent')?.device_id
       assert.ok(agentId, 'the human sees the agent in the member list')
@@ -879,6 +905,7 @@ export async function updates({ test, tmp }) {
   try {
     ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
     await human.start()
+    confirmAgents(human)
     const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
     const env = { TROMMI_KEYS_DIR: path.join(tmp, 'update-keys'), TROMMI_FOLDER: project, TROMMI_HUB: hub.hub_url, TROMMI_INVITE: invite.link, TROMMI_UPDATE_POLL_MS: '300', TROMMI_VERSION_CHECK_MS: '400' }
     ch = await startConnector({ env, cwd: project, script: path.join(repo, 'connector/connector.mjs') })
@@ -1052,6 +1079,7 @@ export async function hooks({ test, tmp }) {
     await test('e2e: the hook\'s prompt is a permission request at the human; allow on the board is the hook\'s decision', async () => {
       ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
       await human.start()
+      confirmAgents(human)
       const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
       connector = await startConnector({ env: { ...env, TROMMI_INVITE: invite.link }, cwd: project })
       await connector.ready()
@@ -1180,6 +1208,7 @@ export async function monitor({ test, tmp: root }) {
     await test('monitor e2e: a human message wakes the monitor with a pointer; inbox returns the message', async () => {
       ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
       await human.start()
+      confirmAgents(human)
       const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
       mon = monitor(process.pid)
       connector = await startConnector({ env: { ...env, TROMMI_INVITE: invite.link }, cwd: project })
@@ -1284,6 +1313,7 @@ export async function connect({ test, tmp: root, argv = [] }) {
     await test(`second machine: the connect script via ${IMAGE ?? SHELL}${NOPLUGIN ? ' (no plugin support)' : ' (plugin)'} installs the built connector; started as Claude Code starts it, it is in the room`, async () => {
       ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
       await human.start()
+      confirmAgents(human)
       const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
       // The link is a secret: given by environment to the outer shell, never on a command line we print.
       let line = `curl -fsSL "$APP/connect" | ${IMAGE ? 'sh' : SHELL} -s "$LINK"`
@@ -1370,6 +1400,7 @@ export async function keyclaim({ test, tmp: root }) {
     await test('keyclaim: the room, and one agent key for the folder', async () => {
       ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
       await human.start()
+      confirmAgents(human)
       const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
       const first = await startConnector({ env: { ...env, TROMMI_INVITE: invite.link }, cwd: project })
       await first.ready()
@@ -1514,6 +1545,7 @@ export async function link({ test, tmp: root }) {
     await test('link: a session with the live channel hears at once: no sign, and the receipt follows the answer', async () => {
       ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
       await human.start()
+      confirmAgents(human)
       await human.hub.pushSubscription({ endpoint: `http://${pushHost}/push/phone`, keys: { p256dh: browserPub.toString('base64url'), auth: auth.toString('base64url') } })
       const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
       a = await startConnector({ env: { ...env, TROMMI_INVITE: invite.link }, cwd: project, session: 'claude-a' })

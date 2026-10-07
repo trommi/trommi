@@ -1158,7 +1158,7 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
         // The check code as emoji with their words (a terminal may draw emoji badly); the app shows the same six.
         j.check_code.then(code => {
           log(`invite answered: check code ${core.checkEmoji(code).map(e => e.emoji).join('  ')}  (${core.checkEmoji(code).map(e => e.word).join(', ')})`)
-          log('if the Trommi app shows six emoji: the same six in the same order? Tap "They match" there; if not, "They don\'t match". Waiting for the app to add this session')
+          log('the Trommi app shows six emoji on its invite page: the same six in the same order? Tap "They match" there; if not, "They don\'t match". Waiting for the app to add this session')
         }).catch(() => {})
         client = await j.client
       } catch (err) {

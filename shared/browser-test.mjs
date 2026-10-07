@@ -67,6 +67,9 @@ try {
   out(founded.extractable === false, 'browser founds a room; device key non-extractable in IndexedDB')
   // 2. a Node agent joins from the browser's invite
   const j = joinRoom({ link: founded.link, storage: memoryStorage(), device_name: 'Node agent', poll_ms: 50 })
+  // every agent invite asks: the browser's human confirms the six emoji the agent shows
+  const agentCode = await j.check_code
+  await run(`for (let k = 0; k < 400; k++) { const i = [...client.model.invites.values()][0]; if (i?.invite_state === 'confirm_code') { await client.confirmInvite(i.invite_id, i.check_code === '${agentCode}'); return true } await new Promise(r => setTimeout(r, 25)) } throw new Error('no code')`)
   const agent = await j.client
   await agent.start()
   if (agent.whenSession) await agent.whenSession()
