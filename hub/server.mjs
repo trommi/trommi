@@ -455,7 +455,8 @@ export async function startHub({
   }
 
   // ---- links for people outside the room (share_asset) ---------------------------------------------
-  // The uploader registers a share: { share_id, share_secret_hash = b64u(SHA-256(secret)), expires_at }. Whoever
+  // The uploader, or a human device of the room for any attachment of it (the app's Links page), registers a share:
+  // { share_id, share_secret_hash = b64u(SHA-256(secret)), expires_at }. Whoever
   // holds the secret (it travels in the link's #, never to a server but this hub, in a header) gets the encrypted
   // bytes; the key to open them is in the # as well and never reaches the hub.
   const SHARE_MAX_MS = 30 * DAY
@@ -467,7 +468,7 @@ export async function startHub({
     hexParam(attachmentId, HEX32, 'attachment_id')
     const a = db.q('SELECT uploader_device_id FROM attachments WHERE room_id = ? AND attachment_id = ?').get(r.id, attachmentId)
     if (!a) fail('not-found', 'no such attachment')
-    if (a.uploader_device_id !== me.id) fail('forbidden', 'only the uploader shares an attachment')
+    if (a.uploader_device_id !== me.id && me.role !== 'human') fail('forbidden', 'only the uploader or a human device shares an attachment')
     const body = await readJson(req)
     r.hub.authorise(bearer(req), { member: true })          // C04: still a member once the body is in
     const shareId = hexParam(body.share_id, HEX32, 'share_id')

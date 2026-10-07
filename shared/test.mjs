@@ -465,6 +465,15 @@ await test('attachments: encrypt, PUT, lazy GET, decrypt, sha256 bound', async (
     let e2 = null
     try { await openShared(outsider, link) } catch (e) { e2 = e }
     eq(e2?.code, 'not-found', 'revoked')
+    // a human device shares the agent's attachment (the app's Links page) and keeps the link on this device
+    const mine = await phone.shareAttachment(phone.model.cards.get(id).attachments[0], { app_url: 'https://app.example', keep_link: true, expires_at: Date.now() + 7 * 86400_000 })
+    assert(z.bytesEqual(await openShared(outsider, mine.link), bytes), 'outsider decrypts the human share')
+    eq((await phone.myShares()).map(x => [x.share_id, x.link]), [[mine.share_id, mine.link]], 'kept on this device')
+    await phone.revokeShare(mine.share_id)
+    eq((await phone.myShares()).length, 0, 'gone from this device')
+    let e3 = null
+    try { await openShared(outsider, mine.link) } catch (e) { e3 = e }
+    eq(e3?.code, 'not-found', 'revoked by the human')
   }
 })
 

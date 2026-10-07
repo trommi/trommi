@@ -660,6 +660,43 @@ test('attachments: written once, served whole and in ranges, members only, 64 Mi
   await w.hub.close()
 })
 
+test('share links: a human device of the room shares any attachment of it (the Links page); not an agent that did not upload it, not another room', async () => {
+  const w = await world()
+  const put = async (c, roomPath, asset) => (await fetch(`${w.base}${roomPath}/attachments/${hex(asset.blobId)}`, { method: 'PUT', headers: { authorization: `Bearer ${c.token}`, ...(c === w.agent ? await leaseHeader(w, c) : {}) }, body: asset.blob })).status
+  const byAgent = await z.encryptAsset(crypto.randomBytes(5000)), byPhone = await z.encryptAsset(crypto.randomBytes(5000))
+  assert.equal(await put(w.agent, R(w), byAgent), 201)
+  assert.equal(await put(w.phone, R(w), byPhone), 201)
+  const fresh = (hours = 1) => { const secret = crypto.randomBytes(32); return { secret, body: { share_id: crypto.randomBytes(16).toString('hex'), share_secret_hash: b64u(crypto.createHash('sha256').update(secret).digest()), expires_at: Date.now() + hours * 3600000 } } }
+  // The laptop (a human that did not upload it) shares the agent's attachment; an outsider with the secret reads it.
+  const s1 = fresh()
+  assert.deepEqual(await ok(w, 'POST', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares`, { token: w.laptop.token, body: s1.body }), { share_id: s1.body.share_id, expires_at: s1.body.expires_at })
+  const read = await fetch(`${w.base}/v1/shares/${s1.body.share_id}`, { headers: { 'cf-connecting-ip': freshIp(), 'x-share-secret': b64u(s1.secret) } })
+  assert.equal(read.status, 200)
+  assert.deepEqual(new Uint8Array(await read.arrayBuffer()), byAgent.blob)
+  assert.equal(Buffer.compare(w.hub.db.prepare('SELECT share_secret_hash FROM shares WHERE share_id = ?').get(s1.body.share_id).share_secret_hash, crypto.createHash('sha256').update(s1.secret).digest()), 0, 'the hub keeps the hash only')
+  // The same checks as for the uploader: at most 30 days, a share id once.
+  await refused(w, 'POST', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares`, { token: w.laptop.token, body: fresh(24 * 31).body }, 400, 'bad-argument')
+  await refused(w, 'POST', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares`, { token: w.laptop.token, body: { ...fresh().body, expires_at: Date.now() - 1 } }, 400, 'bad-argument')
+  assert.equal((await api(w, 'POST', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares`, { token: w.phone.token, body: fresh(24 * 30 - 1).body })).status, 201)
+  await refused(w, 'POST', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares`, { token: w.phone.token, body: s1.body }, 409, 'replay')
+  // An agent shares only what it uploaded.
+  await refused(w, 'POST', `${R(w)}/attachments/${hex(byPhone.blobId)}/shares`, { token: w.agent.token, body: fresh().body }, 403, 'forbidden')
+  // Another room: its human is no member here, and an attachment of this room is not found through that room.
+  const w2 = { ...w, ip: freshIp() }
+  const other = await foundRoom(w2)
+  const theirs = await z.encryptAsset(crypto.randomBytes(3000))
+  assert.equal(await put(other, R(w2), theirs), 201)
+  assert.ok([401, 403].includes((await api(w, 'POST', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares`, { token: other.token, body: fresh().body })).status), 'a device of another room is refused')
+  await refused(w2, 'POST', `${R(w2)}/attachments/${hex(byAgent.blobId)}/shares`, { token: other.token, body: fresh().body }, 404, 'not-found')
+  await refused(w, 'POST', `${R(w)}/attachments/${hex(theirs.blobId)}/shares`, { token: w.laptop.token, body: fresh().body }, 404, 'not-found')
+  await refused(w, 'POST', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares`, { body: fresh().body }, 401, 'unauthorised')
+  // Revoked by a human device (here the one that made it), then gone; the other room's human cannot revoke it.
+  assert.ok([401, 403].includes((await api(w, 'DELETE', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares/${s1.body.share_id}`, { token: other.token })).status))
+  assert.deepEqual(await ok(w, 'DELETE', `${R(w)}/attachments/${hex(byAgent.blobId)}/shares/${s1.body.share_id}`, { token: w.laptop.token }), { ok: true })
+  assert.equal((await fetch(`${w.base}/v1/shares/${s1.body.share_id}`, { headers: { 'cf-connecting-ip': freshIp(), 'x-share-secret': b64u(s1.secret) } })).status, 404)
+  await w.hub.close()
+})
+
 test('share links: the uploader shares an attachment with a secret; anyone with it reads the bytes (Range), until expiry or revocation', async () => {
   const w = await world()
   const asset = await z.encryptAsset(crypto.randomBytes(100000))
@@ -667,7 +704,6 @@ test('share links: the uploader shares an attachment with a secret; anyone with 
   assert.equal((await fetch(`${w.base}${R(w)}/attachments/${aid}`, { method: 'PUT', headers: { authorization: `Bearer ${w.agent.token}`, ...await leaseHeader(w, w.agent) }, body: asset.blob })).status, 201)
   const secret = crypto.randomBytes(32), shareId = crypto.randomBytes(16).toString('hex')
   const share = { share_id: shareId, share_secret_hash: b64u(crypto.createHash('sha256').update(secret).digest()), expires_at: Date.now() + 3600000 }
-  await refused(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.phone.token, body: share }, 403, 'forbidden')
   await refused(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.agent.token, body: { ...share, expires_at: Date.now() + 40 * 86400000 } }, 400, 'bad-argument')
   assert.deepEqual(await ok(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.agent.token, body: share }), { share_id: shareId, expires_at: share.expires_at })
   await refused(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.agent.token, body: share }, 409, 'replay')
