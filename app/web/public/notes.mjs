@@ -64,8 +64,8 @@ export function register(t) {
 
 // ---- note store ----
 // Notes as end-to-end objects (trommi-hub client/core README, "note"): every human device may write a new version,
-// concurrent versions are settled by the core's causal order (R2). What the old hub's POST /note did (server.mjs
-// memoAct) is done here with the core, behind the same { code, text } answer.
+// concurrent versions are settled by the core's causal order (R2). Writing one is done here with the core,
+// behind a { code, text } answer.
 //
 // The note's own fields beyond the core's (text) travel through as they are:
 //   attachments  README attachment references (uploaded, encrypted, before the version is written)

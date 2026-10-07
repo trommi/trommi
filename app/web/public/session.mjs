@@ -1,7 +1,5 @@
 // A session's page: its heading, the conversation, the composer, the filter ("Questions only"), the
-// files drawer and a picture as a page of its own. The markup is the one app.css and session.css style (the old
-// client built it in js/chat.js, js/beside.js, js/history.js and app.js paintTitle); what is new stands in
-// app.css under "the session page".
+// files drawer and a picture as a page of its own. The markup is the one app.css and session.css style.
 //
 //   GET  <base>/s/<id>                  the conversation: the latest PAGE messages; ?before=<message> the ones before
 //                                       that one (the "Earlier" link at the top loads them into a Turbo Frame)

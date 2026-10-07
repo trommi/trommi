@@ -131,9 +131,8 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 }
 
 // ---- stacks ----
-// The foot of the Desk: his notes ("Notes": every note not sent yet; a new note lies here, plain, until he sends it),
-// then one place per state a card can be in once it left the open rows: "Later", "In the works", "Done" and the
-// waste-paper basket ("Trash").
+// The foot of the Desk: one pile, "Off the desk", for every card that left the open rows (Later, Done, Trash; what is
+// with the agents stands on the Desk as the tail, withAgents), beside it Media and Links.
 //
 // Which card lies where (stackOf below; the hub's card fields decide, nothing else):
 //   later   status "open" and snoozed_until set: he put it off; "Wake up" fetches it back
@@ -144,22 +143,20 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 //   done    status "decided" but older than ACTING_MS or its session is offline (its line says "not closed by the
 //           agent"), and status "done" with an answer of his (choice, or trusted; one that was a final option settled
 //           the card at once, it was never "decided": its line says "settled by your answer"), or an info he read; "Take back"
+//           (one its agent finished, close_card, first lies on the Desk as a Done row until he archives it: landed)
 //   trash   status "shredded" (he threw it away; "Take back" fishes it out), or status "done" without an answer
 //           of his (its session withdrew it; the hub takes nothing back there, so the line has no way back)
 // A permission card is never listed (the hub closes it by itself). The newest lies on top of each.
 //
-// The look (his pick "A, gefächerter Papierstapel", 4 October; it replaced the four tabs of card Nr. 198): Notes is a small
-// stamped tab first in the row (the controller "piles": a click opens its list right below the row, one open at a time,
-// Escape closes). Beside it ONE pile, "Off the desk N", for everything that left the open rows: the newest five sheets
-// lie fanned on top of each other, each with the sign of its place (three Z, the gear, the tick, the basket), its title
-// and when. A click unfolds the pile (the same controller): filter chips with counts (All · Snoozed · Working · Done ·
-// Trash; radio buttons, CSS shows the lines of the checked one), the search, the newest ten lines and "N more". Each
-// line has its way back (Wake up, Take back). Markup:
+// The look (his pick "A", 4 October, and "a ticked, struck-through shopping list"): ONE pile, "Off the desk N": a
+// slip with the newest five lines, each with the sign of its place (three Z, the tick, the bin). A click unfolds the
+// pile (controller "piles"): the search, the newest ten lines and "N more"; a line opens its card, where Wake up and
+// Take back are. Markup:
 //   <section class="inbox-stack inbox-pile off-pile" data-stack="off" data-pile="off">
 //     <h3 class="inbox-stack-title"><button class="inbox-stack-head inbox-pile-head off-head" aria-label="Off the desk, 51 cards">
-//       <span class="off-label">Off the desk <b class="off-count">51</b></span><span class="off-fan"> five .off-sheet </span></button></h3>
+//       <span class="off-label">Off the desk <b class="off-count">51</b></span><span class="desk-obj shop-slip"> the newest five lines </span></button></h3>
 //     <div class="inbox-pile-sheets off-body"> chips, the search, the lines in <turbo-frame id="stack-list-off"> </div></section>
-// An empty pile is a faint label over one dashed sheet that cannot be pressed. Look: desk.css, desk.css.
+// An empty pile is a faint label over one dashed sheet that cannot be pressed. Look: desk.css.
 
 const OPEN_MAX = 200   // an open stack (?pile=) or a search shows at most so many; the rest are found by searching
 const STACKS = ['off']

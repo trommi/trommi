@@ -13,7 +13,7 @@
 .inbox-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-4); }
 /* Our own card (card Nr. 87, "Farben so nicht"): a plain white row, grey text, one neutral line and one
    soft shadow. The colour stands only where one answers: the tiles, the tabs, the knock. It is a tone
-   (tokens.css: --tone-wash, --tone-edge, --tone-mid, --tone-pen): the asking session's on the Desk, where
+   (sidebar.css: --tone-wash, --tone-edge, --tone-mid, --tone-pen): the asking session's on the Desk, where
    the row carries its hue; the urgency's where no session is named. */
 .inbox-row {
   --urg-color: var(--urg-normal);
@@ -33,7 +33,7 @@
 .inbox-row[data-urgency="critical"] { --urg-color: var(--urg-critical); --urg-soft: var(--urg-critical-soft); }
 .inbox-row:not([data-from]) { --tone-pen: var(--urg-color); --tone-mid: var(--urg-color); --tone-edge: var(--line-strong); --tone-wash: var(--urg-soft); }
 /* A card that says who asks (the desk) answers in that session's tones: its tiles and tabs (the row carries
-   --hue, tokens.css works out the tones). What knocks keeps its warning colour on top: the label and the
+   --hue, sidebar.css works out the tones). What knocks keeps its warning colour on top: the label and the
    leading tile, so urgency still wins the eye. */
 .inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--urg-color); }
 /* The sender's drawing, small, before the title; the text stands beside it. The byline then does not
@@ -69,7 +69,7 @@
 .inbox-row.is-current { outline: 3px solid var(--fg); outline-offset: 3px; }
 /* Whole lines only, in whole pixels: head 26, gap 8, 8 above the title, title 28 a line, gap 6,
    text 25 a line, 16 below. One title line leaves room for two of text, two title lines for one
-   (data-tall, measured in inbox.js). */
+   (data-tall, measured in desk.mjs). */
 .inbox-content { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: var(--s-2); padding: 0 var(--s-4) var(--s-4) var(--s-5); min-width: 0; overflow: hidden; }
 .inbox-content > * { min-width: 0; }
 .inbox-row-head { height: 26px; display: flex; align-items: flex-start; gap: var(--s-3); margin-left: calc(-1 * var(--s-5)); }
@@ -132,7 +132,7 @@
 .inbox-later-flap b { font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; }
 .inbox-tab-act:active .inbox-later-flap { filter: brightness(.95); }
 /* Shift held (bar.js sets body[data-shift]): the row's one tab is Shred instead of Snooze, slid out and red */
-/* On the card, beside the title (inbox.js puts .inbox-tabs into .inbox-when): one small square button with the
+/* On the card, beside the title (desk.mjs puts .inbox-tabs into .inbox-when): one small square button with the
    drawing alone, the word is its tooltip; nothing lies outside the row. Shift held: the same place is Shred. */
 .inbox-when .inbox-tabs { position: static; display: flex; gap: var(--s-1); margin: -6px 0 -6px 2px; }
 .inbox-when .inbox-tab-act, .inbox-when .inbox-tab-act:first-child { --nub: 28px; width: 28px; max-width: 28px; height: 28px; border-radius: 8px; filter: none; transition: none; color: var(--card-ink); }
@@ -152,10 +152,10 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .inbox-answer { flex: none; width: 124px; height: 124px; min-width: 0; padding: var(--s-2) 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: var(--tone-wash); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 .inbox-answer .sketch { width: 32px; height: 32px; }
 /* Thumbs are the answer; the word under one says what the thumb means here. It stands whole, in one
-   or two lines at a size that reads: inbox.js lets only labels onto a tile that fit that way. */
+   or two lines at a size that reads: desk.mjs lets only labels onto a tile that fit that way. */
 .inbox-answer.is-thumb .sketch { width: 44px; height: 44px; stroke-width: 1.5; }
 .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { max-width: 100%; font-size: var(--t-sm); font-weight: 600; line-height: 1.2; text-wrap: balance; overflow-wrap: normal; }
-/* A longer pair of labels: smaller, up to three lines; a word is never broken inside (inbox.js labelSize). */
+/* A longer pair of labels: smaller, up to three lines; a word is never broken inside (desk.mjs labelSize). */
 .inbox-answer.is-thumb.is-small { gap: var(--s-1); }
 .inbox-answer.is-thumb.is-small .sketch { width: 34px; height: 34px; }
 .inbox-answer.is-thumb.is-small > span:last-child:not(.inbox-disc) { font-size: .72rem; line-height: 1.15; }
@@ -177,7 +177,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 /* Put off: dashed, because where these cards stand is provisional. */
 /* The dashed edge is an outline, so the row and its tiles are exactly as large as an open one. */
 .inbox-row[data-later] { background: none; box-shadow: none; outline: 1px dashed var(--tone-mid); outline-offset: -1px; }
-/* ---- piles (inbox.js pile()): "Snoozed", "With the agent", "Answered" ----
+/* ---- piles (desk.mjs pile()): "Snoozed", "With the agent", "Answered" ----
    At the foot of the list they stand side by side behind a dashed rule (one compact line each in a
    narrow column). Folded, a pile is: its count as a tally of pen strokes, five to a gate; its name and
    number; and one line under it, the latest of what it holds. Open, it takes the whole width: its
@@ -266,7 +266,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { text-align: center; }
 }
 /* Two long answers (card Nr. 157): the tile shows the agent's short word (options[i].short), the thumb small
-   with it: above it in a square tile, beside it where tiles are flat. The word stands whole; inbox.js
+   with it: above it in a square tile, beside it where tiles are flat. The word stands whole; desk.mjs
    (fitShorts) picks the step for the pair: one line, a size smaller, two lines, last the thumb above. */
 .inbox-answer.is-thumb.is-short { padding-inline: var(--s-1); }
 .inbox-answer.is-thumb.is-short .sketch { width: 26px; height: 26px; stroke-width: 1.7; }
@@ -277,7 +277,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 /* Who asks, on a wide screen (card Nr. 164): no tab above the rows; the session's drawing stands alone in a
    narrow column left of each card, in the session's colour, level with the title. Its name is a small note
    under it, written out into the margin so it lies over nothing, under the pointer or the keyboard; a click
-   opens the session (inbox.js questionRow). A phone says who asks in the card's first line (phone-desk.css). */
+   opens the session (desk.mjs questionRow). A phone says who asks in the card's first line (phone-desk.css). */
 .inbox-gutter { display: none; }
 @media (min-width: 861px) {
   .inbox-group[data-sender] { padding-left: 46px; }
@@ -287,10 +287,10 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-gutter .doodle { stroke-width: 2.2; }
   .inbox-gutter::after { content: attr(data-name); position: absolute; z-index: 5; right: 0; top: calc(100% + 4px); padding: 5px 9px; border-radius: 7px; background: currentColor; font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms; -webkit-text-fill-color: var(--surface); }
 }
-/* Rows that came in above the fold while he is further down (inbox.js keepRow): said, not pushed. */
+/* Rows that came in above the fold while he is further down (desk.mjs keepRow): said, not pushed. */
 .inbox-news-at { position: sticky; top: 8px; z-index: 6; height: 0; display: flex; justify-content: center; pointer-events: none; }
 .inbox-news-at:has(~ .inbox-edge.is-up > :not([hidden])) .inbox-news { translate: 0 26px; }
-/* A knock out of sight (inbox.js tellKnocks): a slim strip on the edge of the list it lies beyond, as wide as
+/* A knock out of sight (desk.mjs tellKnocks): a slim strip on the edge of the list it lies beyond, as wide as
    the list. It is the edge: rows pass under it, it floats over no tile. */
 .inbox-edge { position: fixed; z-index: 6; pointer-events: none; }
 .inbox-edge-knock { pointer-events: auto; width: 100%; height: 26px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0; border: 0; border-radius: 0 0 10px 10px; background: var(--urg-high); color: var(--surface); font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; }
@@ -318,14 +318,10 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-revising-open { min-height: 44px; }
 }
 
-/* "Next, please" as index cards (card Nr. 166, "index"): the heading is the divider tab in front, standing on the
-   first card; the cards behind it peek out as small tabs with their titles, then "+N". Fixed heights: nothing
-   shifts when a card arrives. */
-
 /* ---- a question leaves: one calm motion that shows where it goes ---- */
 /* In a list the row that left stays for a moment as a ghost in its old place: an answered one
    slides off to the side, one that was put off (Later, asked to explain) sinks towards the
-   "Later" group at the end. The rows below move up once it is on its way (inbox.js). */
+   "Later" group at the end. The rows below move up once it is on its way (desk.mjs). */
 .inbox-groups { position: relative; }
 .inbox-row.is-leaving { position: absolute; z-index: 0; margin: 0; pointer-events: none; animation: row-answered 300ms cubic-bezier(.4, 0, .7, .2) forwards; }
 @media (prefers-reduced-motion: reduce) {
@@ -358,7 +354,6 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-groups .inbox-row > :not(.inbox-more) { grid-row: auto; grid-column: 1; }
   /* the finger is down and holding: the card answers before the sheet comes */
   .inbox-groups .inbox-row.is-held { scale: .985; box-shadow: 0 0 0 2px var(--tone-pen); }
-  /* what is read and chosen below the card (the unfolded options) can be selected as before */
 
   /* not on the row: copy and clock, the Snooze corner, the text, the pictures and what the card carries */
   .inbox-groups .inbox-row :is(.inbox-tabs, .inbox-when, .inbox-body, .inbox-sep, .inbox-who) { display: none; }
@@ -398,7 +393,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 /* ---- the sheet a long press brings up ---- */
 dialog.rowmenu {
   --ink: var(--tone-pen);
-  /* opened with show(), not in the top layer (sheet_controller.js): above the round buttons and the memo */
+  /* opened with show(), not in the top layer (desk.mjs): above the round buttons and the memo */
   position: fixed; z-index: var(--z-rowmenu); inset: auto 0 0 0; width: 100%; max-width: 480px; max-height: 82dvh; margin: 0 auto; padding: 0; border: 0;
   border-radius: 20px 20px 0 0; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto; overscroll-behavior: contain;
   animation: rowmenu-up 240ms var(--ease-out, ease-out) both;
@@ -537,9 +532,7 @@ dialog.rowmenu::backdrop { background: transparent; }
 @container rows (max-width: 600px) {
   .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex-basis: 100%; }
   .inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "s o w" ". t w"; gap: 2px 10px; padding: 7px var(--s-1); }.off-line > .off-open { grid-area: o; }
-}/* The keyboard: the mark on the row it is on, the caps that say which key answers,
-   the small notice while a sequence is under way, and the sheet behind "?".
-   What the keys do is declared in js/keys.js. */
+}
 
 /* ---- the row the keyboard is on ---- */
 /* Unmistakable, in ink: a thick frame, a scribbled arrow in the margin, and on each of its
@@ -575,10 +568,6 @@ dialog.rowmenu::backdrop { background: transparent; }
 
 @media (prefers-reduced-motion: reduce) { .inbox-row.is-current::before, .keys-pending { animation: none; }
 }
-/* A question in the conversation: after its age, at the end of the row's head. */
-/* The few rules of the server-rendered board that the old styles do not have: forms and
-   links standing where the old client had buttons, the picture's own page, the passing note's place.
-   Everything else is styled by the sheets the old client uses. Colours are tokens only. */
 
 /* A tile that is a link ("Choose" leads to the card's own page), and forms that hold a row's tiles and tabs. */
 a.inbox-answer { text-decoration: none; box-sizing: border-box; }
@@ -771,7 +760,6 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 }
 .inbox-groups .inbox-row .inbox-byline .inbox-from { display: none !important; }
 @media (max-width: 860px) { .inbox-groups .inbox-row .inbox-content > .inbox-byline:not(:has(.inbox-whenever)) { display: none !important; } }
-/* 0: a tiny muted drawing of the session in the row, before the time and the zzZ; its name on hover */
 
 /* ---- Three lines and square answers (his word, 4 October: "etwas mehr Info, damit die Buttons quadratisch sind"):
    the title (one line), who asked and when (small, muted, the session's tiny drawing), one line of context; the

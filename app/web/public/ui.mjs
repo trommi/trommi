@@ -45,9 +45,6 @@ const attrs = map => raw(Object.entries(map).map(([name, value]) => (value == nu
 // (server/views) and the page (islands) draw with the same code and the same seeds: a name or a session id
 // always gives the same strokes, byte for byte.
 //
-// The stroke tables and generators below are the ones of ui.mjs and js/agents.js (the old client builds
-// DOM nodes from them). Until the old client is retired they stand in both places: when a drawing changes
-// there, run `node dev/pen-sync.mjs` to copy the tables here again.
 
 // ---- tables (copied from ui.mjs by dev/pen-sync.mjs; do not edit between the two marks) ----
 // pen-tables:begin
@@ -220,7 +217,7 @@ const SKETCH = {
     [[8.9, 20.9], [12.2, 20.6], [15.5, 21]],
   ],
   later: [[[12, 3.8], [12.3, 10], [11.9, 16.4]], [[6.6, 11.6], [12.1, 17.2], [17.4, 11.3]], [[4.6, 20.8], [12, 20.3], [19.6, 20.6]]],
-  // The Focus window's composer: send is an arrow up with a kick in its shaft; explain is a question mark
+  // The composer: send is an arrow up with a kick in its shaft; explain is a question mark
   // with three short rays, an "aha" about to happen.
   send: [[[12.4, 20.4], [11.6, 15.6], [12.5, 10.4], [12, 4.6]], [[6.2, 10.4], [12, 4.2], [17.8, 10]]],
   // a playing card with two arrows chasing each other: the turn goes back to the other side
@@ -477,7 +474,7 @@ export function handSvg() {
 }
 
 
-// The working ring (agents.js ring): a loop circled by hand and, while the session works, a tapering stroke that goes round it.
+// The working ring: a loop circled by hand and, while the session works, a tapering stroke that goes round it.
 const RING_TURN = 1900
 const RING_STROKE = [[30, 1.15, .45], [19, 1.75, .8], [8, 2.3, 1]]
 const ringWay = () => once('ring-way', () => {
@@ -507,10 +504,10 @@ function hueOf(id) {
   for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0
   return HUES[h % HUES.length]
 }
-/** The colour of a session's mark (agents.js hueFor). agent: { id, mark }. */
+/** The colour of a session's mark. agent: { id, mark }. */
 export const hueFor = agent => drawingHue(drawingOf(agent.mark)) ?? hueOf(agent.id)
 
-// ---- a sub's card edge in a folded main's stack (agents.js edgeQuirk) ----
+// ---- a sub's card edge in a folded main's stack ----
 function penLine(pts) {
   let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`
   for (let i = 1; i < pts.length - 1; i++) {
@@ -577,7 +574,7 @@ export const sk = (name, cls) => raw(sketchSvg(name, cls))
 
 // ---- text ----
 // Words and small rules the views share: what a card says in one line, how a label fits a tile, the light
-// markdown agents write as safe HTML. The rules are those of the old client (ui.mjs, js/inbox.js); the
+// markdown agents write as safe HTML. The
 // output is strings made with html`` (html.mjs), so every piece of board content is escaped.
 
 // ---- the board's words (one place; the old client has them in ui.mjs) ----
@@ -637,7 +634,7 @@ const tidyLinks = (text, assets) => withoutLayouts(text).replace(/`?(https?:\/\/
 /** A text as one line of plain words: no fences, no markup signs, links as what they are. */
 export const plain = (text, assets) => tidyLinks(String(text ?? '').replace(/```[\s\S]*?```/g, ' '), assets).replace(/(?<![\w.])__(?=\S)([^_\n]+?)__/g, '$1').replace(/[*`#]/g, '').replace(/\s+/g, ' ').trim()
 
-// ---- tiles: how the labels of a two-way question stand under the thumbs (inbox.js) ----
+// ---- tiles: how the labels of a two-way question stand under the thumbs ----
 const fits = (label, width, lines) => {
   let n = 1, used = 0
   for (const word of String(label).trim().replace(/-(?=\S)/g, '- ').split(/\s+/)) {
@@ -786,7 +783,7 @@ export const pageChip = (page, always = false) => (page || always ? html`<a clas
 // stays while the pointer rests on it. U presses its Undo (controller "keys").
 //
 //   toast({ head, line?, undo?: { action, label?, fields? }, role?, ms? })   the markup (html)
-//   in turbo.mjs: t.toast(opts) is the stream action that puts one on the page (prepend into #says-host),
+//   in app.mjs (the board): t.toast(opts) is the stream action that puts one on the page (prepend into #says-host),
 //                 t.says(card, way) the toast of a card's answer
 //
 // The Undo is a form that posts to the route that takes the action back (a card's /reopen, /wake, /takeback; a
@@ -1409,7 +1406,7 @@ export function sketch(name) {
  *  the option's own strong / span, else all the text of
  *  what it was put into. It measures the lines once it stands in the page and again whenever its
  *  host changes size. An option without words (a bare thumb) gets a short swipe where its word would
- *  be. Ink and strength are CSS: --advice and --marker (tokens.css); the host needs position: relative
+ *  be. Ink and strength are CSS: --advice and --marker (app.css); the host needs position: relative
  *  (.is-advised has it). (It was a loop round the option once: hence the name.) */
 function adviceLoop() {
   const NS = 'http://www.w3.org/2000/svg'
@@ -1447,7 +1444,7 @@ function adviceLoop() {
     // No words to lie behind: a short swipe in the lower part of the tile, where its word would be.
     if (!lines.length) lines.push({ x: frame.width * k * .26, y: frame.height * k * .68, w: frame.width * k * .48, h: 16 })
     // On a tile that is filled with colour a band behind white words is only a smudge: there (the host
-    // says so with --advice-under: 1, tokens.css) the mark is a light line drawn under the words instead,
+    // says so with --advice-under: 1, app.css) the mark is a light line drawn under the words instead,
     // no wider than they are, with a slight tilt.
     const under = getComputedStyle(host).getPropertyValue('--advice-under').trim() === '1'
     return () => {
@@ -1623,7 +1620,7 @@ input,button,select,textarea{font:inherit;color:inherit}
 .tag.good{background:var(--st-done-soft)}.tag.warn{background:var(--st-working-soft)}.tag.bad{background:var(--st-decision-soft)}
 `
 
-// The board's tokens as they are right now, light or dark: every custom property that tokens.css sets on :root.
+// The board's tokens as they are right now, light or dark: every custom property that the stylesheets set on :root.
 let tokenNames = null
 function tokens() {
   if (!tokenNames) {
