@@ -264,3 +264,30 @@ a.ledger-sheet-item { display: flex; align-items: center; }
 }
 .ledger-line[data-state="stopped"] .ledger-state { color: var(--urg-critical); }
 .ledger-tabs { margin: 0 0 var(--s-4, 16px); }
+
+
+/* ---- One tree per main (his pick "tree", 7 October), in the board's own order: the desk is a heading, a main's line
+   stands with its crown and drawing, its helpers under it on the sidebar's pen bracket; no grip, no Model / Machine and
+   no main or desk column (they are the tree and the heading); a line's small buttons show under the pointer or the
+   keyboard. A sorted list stays the table. ---- */
+.ledger-deskhead { display: flex; align-items: center; gap: 10px; margin: var(--s-6) 0 var(--s-2); padding: 0 6px; font: 700 var(--t-md)/1.2 var(--display); color: var(--muted); }
+.ledger-deskhead .sketch { width: 26px; height: 26px; color: var(--fg); stroke-width: 1.7; }
+.ledger-tree { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.ledger-tree .ledger-line { border-bottom: 0; }
+.ledger-kids { position: relative; margin-left: 30px; }
+.ledger-kids::before { content: ""; position: absolute; left: 0; top: -2px; bottom: 26px; width: 2px; border-radius: 2px; background: var(--fg); }
+.ledger-kids > .ledger-line > .ledger-face { position: relative; }
+.ledger-kids > .ledger-line > .ledger-face::before { content: ""; position: absolute; left: -22px; top: 50%; width: 11px; height: 2px; border-radius: 2px; background: var(--fg); }
+@media (min-width: 861px) {
+  #ledger .ledger.is-tree .ledger-line:not(.is-archived) { grid-template-columns: 44px minmax(0, 1.1fr) 150px minmax(0, 2fr) 76px auto !important; }
+  #ledger .ledger.is-tree .ledger-line.is-head { display: none; }
+  #ledger .ledger.is-tree .ledger-line:not(.is-archived) > .ledger-grip, #ledger .ledger.is-tree .ledger-line:not(.is-archived) > span.ledger-cell:nth-child(6), #ledger .ledger.is-tree .ledger-line:not(.is-archived) > span.ledger-cell:nth-child(7) { display: none !important; }
+  #ledger .ledger.is-tree .ledger-acts summary.ledger-desk { width: 34px; height: 34px; margin: 0; padding: 0; justify-content: center; border-color: transparent; background: none; color: var(--muted); }
+  #ledger .ledger.is-tree .ledger-acts summary.ledger-desk > span { display: none; }
+  #ledger .ledger.is-tree .ledger-acts summary.ledger-desk > .sketch { width: 20px; height: 20px; margin: 0; }
+  #ledger .ledger.is-tree .ledger-line:not(:hover):not(:focus-within):not(:has(details[open])) .ledger-acts :is(.ledger-ib, .ledger-desk, .ledger-link) { opacity: 0; }
+  #ledger .ledger.is-tree .ledger-line:not(:hover):not(:focus-within) .crown-toggle[aria-pressed="false"] { opacity: 0; }
+  #ledger .ledger.is-tree .ledger-line:hover { background: var(--sunken); border-radius: 12px; }
+  #ledger .ledger.is-tree .ledger-acts { gap: 2px; }
+  #ledger .ledger-del .t-pop { left: auto; right: 0; }
+}
