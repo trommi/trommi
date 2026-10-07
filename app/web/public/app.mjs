@@ -1044,6 +1044,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
   else parts.push({ key: 'main', html: String(main) })
   if (FRONT.has(view) && padKept && model) parts.push({ key: 'pad', html: String(whiteboard.whiteboardMain(model)) })
   if (FRONT.has(view) || view === 'whiteboard') parts.push({ key: 'curl', html: String(curlHTML(FRONT.has(view) ? 'desk' : 'pad', FRONT.has(view) ? `${base}/scribble-board` : `${base}${padFrom}`)) })
+  if (mock) parts.push({ key: 'demo', html: '<a class="demo-band" href="/?mock=0" data-turbo="false" title="Leave the demo: back to your desks">Demo · <u>leave</u></a>' })
   parts.push({ key: 'says', html: `<div class="says-host says-page" id="says-host" data-turbo-permanent>${says}</div>` })
   parts.push({ key: 'sheets', html: String(html`${keySheet()}${view === 'desk' ? rowSheet(base) : ''}`) })
   return parts
@@ -1585,6 +1586,9 @@ async function boot() {
   const params = new URLSearchParams(location.search)
   if (params.has('mock')) { if (params.get('mock') === '0') sessionStorage.removeItem('trommi-mock'); else sessionStorage.setItem('trommi-mock', params.get('mock') || '1') }
   mock = sessionStorage.getItem('trommi-mock')
+  // (the switch is in the tab now: the address goes back to plain, so a reload or a saved link does not decide it again)
+  if (params.has('mock')) { params.delete('mock'); history.replaceState(history.state, '', `${location.pathname}${params.size ? `?${params}` : ''}${location.hash}`) }
+  document.documentElement.classList.toggle('is-demo', Boolean(mock))
   // A link for someone outside the room (/a/<share_id>#…): its own small page, no room needed.
   if (/^\/a\/[0-9a-f]{32}$/.test(location.pathname)) return showShare()
   // A room that is stored but does not open is never shown as "not logged in": the start page would offer Log in, which

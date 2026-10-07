@@ -800,3 +800,17 @@ html[data-rail="folded"] .desk-switch-open { display: none; }
 /* ---- The crown sits centred over its drawing (his word, 7 October: it sat over the drawing's right part): every crown
    that rests on a session's drawing moves a few px to the left (it leans, so its box centre is right of its look). ---- */
 :is(#agents, #ledger, .pane-who, .inbox-row) .crown-mark { translate: -2.5px 0; }
+
+/* ---- The demo is a switch in the Trommi menu, never a desk; while it is on a small band at the top says so, with the
+   way out ---- */
+.topbar #brand-doors .menu-demo { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.topbar #brand-doors button.demo-toggle { display: flex; align-items: center; gap: 10px; }
+.demo-switch { position: relative; flex: none; margin-left: auto; width: 34px; height: 20px; border: 1.6px solid var(--fg); border-radius: 11px 10px 11px 10px; background: var(--surface); transition: background var(--d-fast); }
+.demo-switch b { position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--fg); transition: translate var(--d-fast); }
+.demo-toggle[aria-checked="true"] .demo-switch { background: #f5d64a; }
+.demo-toggle[aria-checked="true"] .demo-switch b { translate: 14px 0; }
+.demo-band { position: fixed; z-index: 85; top: 0; left: calc(var(--side, 0px) + 50%); translate: calc(-50% - var(--side, 0px) / 2) 0; padding: 4px 14px 5px; border: 1.6px solid var(--fg); border-top: 0; border-radius: 0 0 10px 10px; background: #f5d64a; color: #2d2406; font: 700 var(--t-xs)/1.2 var(--font); text-decoration: none; white-space: nowrap; }
+.demo-band u { text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
+.demo-band:hover u { text-decoration-thickness: 2.5px; }
+:root.is-demo #says-host { top: calc(36px + env(safe-area-inset-top, 0px)); }
+@media (max-width: 860px) { .demo-band { left: 50%; translate: -50% 0; top: calc(48px + env(safe-area-inset-top, 0px)); } :root.is-demo #says-host { top: calc(86px + env(safe-area-inset-top, 0px)); } }
