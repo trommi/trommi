@@ -72,25 +72,25 @@ body[data-page="gallery"] #gallery {
 .gal-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gal-meta small { display: none; }
 
-/* ---- Links (media.mjs): the pile "Links N" at the foot of the Desk beside Media, and the page /links it opens.
-   The pile is paper slips like its neighbours (desk.css .shop-slip, .photo-pile): three link slips, each with the
-   chain's drawing, its title and where it points, the newest in front. The page is sober: one line per link. ---- */
-.lk-pile { width: 210px; }
-.lk-slip { position: absolute; left: calc(8px + var(--i) * 7px); top: calc(4px + var(--i) * 38px); z-index: calc(1 + var(--i)); width: 176px; height: 44px; padding: 7px 10px 0 34px; display: grid; align-content: start; gap: 1px; box-sizing: border-box; text-align: left;
-  background: var(--slip-paper); border: 1px solid color-mix(in srgb, var(--fg) 18%, var(--surface)); border-radius: 2px 3px 2px 4px; box-shadow: 0 2px 3px var(--shade); rotate: calc(-2.5deg + var(--i) * 2deg); }
-.lk-slip:last-child { rotate: -.8deg; }
-.lk-slip > .sketch { position: absolute; left: 9px; top: 9px; width: 18px; height: 18px; color: var(--tone-pen, var(--fg)); }
-.lk-slip-t { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 600 .8rem/1.25 var(--display); color: var(--fg); }
-.lk-slip-h { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 500 .66rem/1.2 var(--font); color: var(--faint); }
+/* ---- Pages (media.mjs): the pile "Pages N" at the foot of the Desk beside Media, and the page /pages it opens.
+   The pile is paper like its neighbours (desk.css .shop-slip, .photo-pile): three sheets with a folded corner, each
+   with its title and a few lines of writing, fanned, the newest in front. The page is sober: one line per page. ---- */
+.pg-pile { width: 210px; }
+.pg-sheet { --fold: 14px; position: absolute; top: calc(6px + var(--i) * 3px); left: calc(14px + var(--i) * 52px); z-index: calc(1 + var(--i)); width: 82px; height: 104px; box-sizing: border-box; padding: 9px 8px 0; display: grid; align-content: start; gap: 6px;
+  background: var(--slip-paper); border: 1px solid color-mix(in srgb, var(--fg) 30%, var(--surface)); border-radius: 2px 3px 2px 3px; box-shadow: 0 2px 3px var(--shade);
+  clip-path: polygon(0 0, calc(100% - var(--fold)) 0, 100% var(--fold), 100% 100%, 0 100%); rotate: calc(-4deg + var(--i) * 3.5deg); text-align: left; }
+.pg-sheet::after { content: ""; position: absolute; right: -1px; top: -1px; width: var(--fold); height: var(--fold); background: linear-gradient(225deg, transparent 50%, color-mix(in srgb, var(--fg) 14%, var(--slip-paper)) 50%); border-left: 1px solid color-mix(in srgb, var(--fg) 30%, var(--surface)); border-bottom: 1px solid color-mix(in srgb, var(--fg) 30%, var(--surface)); }
+.pg-sheet:last-child { rotate: 2deg; }
+.pg-t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; padding-right: 6px; font: 700 .62rem/1.25 var(--display); color: var(--fg); overflow-wrap: break-word; hyphens: auto; }
+.pg-lines { height: 26px; background: repeating-linear-gradient(transparent 0 6px, color-mix(in srgb, var(--fg) 22%, transparent) 6px 7px); }
 @container rows (max-width: 600px) {
-  .lk-pile { width: 108px; height: 76px; }
-  .lk-slip { width: 96px; height: 28px; padding: var(--s-1) 5px 0 var(--s-5); left: calc(4px + var(--i) * 4px); top: calc(2px + var(--i) * 22px); }
-  .lk-slip > .sketch { left: 4px; top: 5px; width: 13px; height: 13px; }
-  .lk-slip-t { font-size: .58rem; }
-  .lk-slip-h { display: none; }
+  .pg-pile { width: 108px; height: 76px; }
+  .pg-sheet { --fold: 8px; width: 44px; height: 60px; padding: 5px 4px 0; gap: 3px; left: calc(6px + var(--i) * 28px); top: calc(4px + var(--i) * 2px); }
+  .pg-t { font-size: .42rem; -webkit-line-clamp: 2; padding-right: 3px; }
+  .pg-lines { height: 14px; background: repeating-linear-gradient(transparent 0 4px, color-mix(in srgb, var(--fg) 22%, transparent) 4px 5px); }
 }
 
-/* the page /links */
+/* the page /pages */
 .lk-column { max-width: 900px; }
 .lk-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .lk-row { text-align: left; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 6px 14px; padding: 14px 2px; border-bottom: 1px solid var(--line); }
@@ -134,8 +134,8 @@ body[data-page="gallery"] #gallery {
   .lk-switch { min-height: 40px; }
 }
 /* the Desk's foot with Links: three objects side by side in the middle (Off the desk, Media, Links) */
-:is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs:has(> .links-pile) { grid-template-columns: minmax(0, 1fr) max-content max-content max-content minmax(0, 1fr) !important; }
-#inbox .inbox-stacks.stack-tabs > .media-pile.links-pile { grid-column: 4; grid-row: 1; }
-#inbox .inbox-stacks.stack-tabs:not(:has(> #desk-media)) > .media-pile.links-pile { grid-column: 3; }
-#inbox .inbox-stacks.stack-tabs .lk-pile { rotate: -.5deg; }
-@container rows (max-width: 600px) { :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs:has(> .links-pile) { column-gap: 14px; } }
+:is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs:has(> .pages-pile) { grid-template-columns: minmax(0, 1fr) max-content max-content max-content minmax(0, 1fr) !important; }
+#inbox .inbox-stacks.stack-tabs > .media-pile.pages-pile { grid-column: 4; grid-row: 1; }
+#inbox .inbox-stacks.stack-tabs:not(:has(> #desk-media)) > .media-pile.pages-pile { grid-column: 3; }
+#inbox .inbox-stacks.stack-tabs .pg-pile { rotate: -.5deg; }
+@container rows (max-width: 600px) { :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs:has(> .pages-pile) { column-gap: 14px; } }

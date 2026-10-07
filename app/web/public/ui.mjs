@@ -2160,6 +2160,8 @@ const LAYOUT = [
     { id: 'go.agents', keys: ['g a'], does: 'Agents', verb: 'go to the Agents page' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'menu', verb: 'open the Trommi menu: desks and places' },
     { id: 'go.walk', keys: ['g b'], does: 'Blitz', verb: 'Blitz: every open question, one after the other' },
+    { id: 'go.media', keys: ['g m'], does: 'Media', verb: 'go to the Media: every picture, video and file' },
+    { id: 'go.pages', keys: ['g p'], does: 'Pages', verb: 'go to the Pages: every page your agents made in this room' },
     // 1…9 alone are the desks'; G then 1…9 are the sessions'.
     { id: 'go.session', keys: ['g 1…9'], does: 'session 1 to 9', verb: 'go to that session of the sidebar', needs: 'sidebar' },
     { id: 'desk.switch', keys: ['1…9'], does: 'desk 1 to 9', verb: 'switch to that desk', needs: 'desks' },
@@ -2429,6 +2431,8 @@ function start(signal) {
     'go.desk': () => go(`${base()}/`),
     'go.agents': () => go(`${base()}/agents`),
     'go.walk': () => go(`${base()}/blitz`),
+    'go.media': () => go(`${base()}/assets`),
+    'go.pages': () => go(`${base()}/pages`),
     'go.jump': () => openJump(),
     'desk.switch': n => { press(desks()[n - 1]) },   // a number past the last desk does nothing
     'go.session': n => { press(sessions()[n - 1]) },
@@ -2781,68 +2785,47 @@ export function galleryItems(model, base = '') {
   return out
 }
 
-// ---- what the agents linked: the Desk's Links pile and the page /links ----
-// Every web link and page the agents gave: the pages they published (assets of type html), the pages behind a card's
-// pictures (page chips: an address, or a file of the room), and every http(s) address in a card's words (body, teaser,
-// sections, options) or in an agent's message (the conversations as far as they are loaded). One entry per address
-// (or per file of the room), the newest first. kind: 'page' (a published page) | 'file' (a page file of the room) |
-// 'web' (an address outside). att: the attachment_id of a file of the room (what Share shares), else null.
-const URL_RE = /https?:\/\/[^\s<>()\[\]"'`]+/g
-const MD_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g
-const urlsKept = new Map()   // text -> [[url, label]] (bounded: texts repeat from one state to the next)
-function urlsIn(text) {
-  if (!text || typeof text !== 'string' || !text.includes('http')) return []
-  const hit = urlsKept.get(text)
-  if (hit) return hit
-  const labels = new Map()
-  for (const m of text.matchAll(MD_LINK)) labels.set(m[2], m[1].trim())
-  const out = [...new Set([...text.matchAll(URL_RE)].map(m => m[0].replace(/[.,;:!?*_]+$/, '')))].filter(u => { try { return Boolean(new URL(u).host) } catch { return false } }).map(u => [u, labels.get(u) ?? ''])
-  if (urlsKept.size > 2000) urlsKept.clear()
-  urlsKept.set(text, out)
-  return out
-}
-/** An address as a short line: its host and path, without the scheme and www. */
-export const shortUrl = url => { const t = String(url).replace(/^https?:\/\/(www\.)?/, '').replace(/[?#].*$/, '').replace(/\/$/, ''); return t.length > 60 ? `${t.slice(0, 59)}…` : t }
-const hostOf = url => { try { return new URL(url).host.replace(/^www\./, '') } catch { return '' } }
-const linksKept = new WeakMap()
-/** [{ key, kind, url, href, title, host, agent, ts, att }], the newest first. Kept per state. */
-export function linkItems(model, base = '') {
+// ---- the pages the agents made in this room: the Desk's Pages pile and the page /pages ----
+// Only artifacts of the room (his word, 8 October): an HTML page an agent published, a page sent as a file with a card
+// or a message, a page behind a picture. No addresses of foreign websites. One entry per file (its attachment id), the
+// newest first; a published page keeps its own title and address.
+const pagesKept = new WeakMap()
+const isPage = a => a && (a.type === 'text/html' || /\.html?$/i.test(a.name ?? ''))
+/** [{ key, kind: 'page' | 'file', href, title, agent, ts, att }], the newest first. Kept per state. */
+export function pageItems(model, base = '') {
   const { state } = model
   const key = `${model.desk}|${model.everyone.map(a => a.desk).join(',')}|${base}`
-  const hit = linksKept.get(state)
+  const hit = pagesKept.get(state)
   if (hit && hit.key === key) return hit.out
   const by = new Map()
-  const put = item => { const was = by.get(item.key); if (!was || item.ts > was.ts) by.set(item.key, was && !item.title ? { ...item, title: was.title } : item) }
+  // (one entry per file: the newest time it came; a published page's own entry wins over the same file sent along)
+  const put = item => { const was = by.get(item.key); if (!was) return by.set(item.key, item); by.set(item.key, { ...(was.kind === 'page' ? was : item.kind === 'page' ? item : item.ts > was.ts ? item : was), ts: Math.max(was.ts, item.ts) }) }
   const here = agentId => { const agent = model.byAgent.get(agentId); return agent && model.onDesk(agent) ? agent : null }
-  const web = (url, label, agent, ts) => put({ key: `web:${url}`, kind: 'web', url, href: url, title: label || '', host: hostOf(url), agent, ts, att: null })
-  const pageOf = (a, agent, ts) => {
-    const p = a?.page
-    if (!p) return
-    if (p.kind === 'link' && /^https?:/.test(p.url)) web(p.url, '', agent, ts)
-    else if (p.kind === 'file' && /^\/att\/[0-9a-f]{32}$/.test(p.url)) put({ key: `file:${p.url.slice(5)}`, kind: 'file', url: p.url, href: p.url, title: p.name || 'Page', host: 'A page of this room', agent, ts, att: p.url.slice(5) })
+  const attId = url => /^\/att\/([0-9a-f]{32})$/.exec(String(url ?? ''))?.[1] ?? null
+  // (a file of the room: its attachment id, or its address where the room hands it out by one, as the demo does)
+  const file = (url, name, id, agent, ts) => { const at = id ?? attId(url); if (at || url) put({ key: `file:${at ?? url}`, kind: 'file', href: url, title: name || 'Page', agent, ts, att: at }) }
+  const fromAttachments = (list, agent, ts) => {
+    for (const a of list ?? []) {
+      if (a?.page?.kind === 'file') file(a.page.url, a.page.name, attId(a.page.url), agent, ts)
+      if (isPage(a)) file(a.url, a.name, a.ref?.attachment_id ?? null, agent, ts)
+    }
   }
   for (const a of state.assets ?? []) {
     const agent = here(a.agent)
     if (!agent || a.type !== 'html') continue
-    put({ key: `asset:${a.id}`, kind: 'page', url: a.att?.url ?? '', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, title: a.title || 'Untitled page', host: 'Published page', agent, ts: a.created ?? 0, att: a.att?.ref?.attachment_id ?? null })
+    const id = a.att?.ref?.attachment_id ?? attId(a.att?.url)
+    put({ key: `file:${id ?? a.att?.url ?? a.id}`, kind: 'page', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, title: a.title || 'Untitled page', agent, ts: a.created ?? 0, att: id })
   }
   for (const c of state.cards) {
     const agent = here(c.agent)
-    if (!agent || c.kind === 'permission') continue
-    const ts = c.revised ?? c.created ?? 0
-    const words = [c.body, c.teaser, ...(c.sections ?? []).map(x => x.text), ...(c.options ?? []).flatMap(o => [o.label, o.detail])]
-    for (const text of words) for (const [url, label] of urlsIn(text)) web(url, label, agent, ts)
-    for (const a of c.attachments ?? []) pageOf(a, agent, ts)
+    if (agent && c.kind !== 'permission') fromAttachments(c.attachments, agent, c.revised ?? c.created ?? 0)
   }
   for (const msg of state.messages ?? []) {
-    if (msg.from !== 'agent') continue
-    const agent = here(msg.agent)
-    if (!agent) continue
-    for (const [url, label] of urlsIn(msg.text)) web(url, label, agent, msg.ts ?? 0)
-    for (const a of msg.attachments ?? []) pageOf(a, agent, msg.ts ?? 0)
+    const agent = msg.from === 'agent' ? here(msg.agent) : null
+    if (agent) fromAttachments(msg.attachments, agent, msg.ts ?? 0)
   }
-  const out = [...by.values()].map(i => (i.title ? i : { ...i, title: shortUrl(i.url) })).sort((x, y) => y.ts - x.ts)
-  linksKept.set(state, { key, out })
+  const out = [...by.values()].sort((x, y) => y.ts - x.ts)
+  pagesKept.set(state, { key, out })
   return out
 }
 

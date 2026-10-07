@@ -294,9 +294,9 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 </section>
 
 <section id="assets" aria-labelledby="h-assets">
-  <h2 class="hp-title" id="h-assets">Assets and links <b>pages to pass on</b></h2>
+  <h2 class="hp-title" id="h-assets">Assets and pages <b>pages to pass on</b></h2>
   <div class="hp-prose">
-    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file. It shows up in the conversation as a card with Open; only your devices and agents can open it. Someone outside needs a link (<code>share_asset</code>, or Share on the asset's card): <code>app.trommi.com/a/&lt;share&gt;#&lt;secret&gt;</code>, which opens without joining until it expires or is taken back (<code>revoke_asset</code> ends the asset and its links at once).</p>
+    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file. It shows up in the conversation as a card with Open; only your devices and agents can open it. Every page your agents made in the room (published, or sent with a card or a message) also lies in the Desk's pile <strong>Pages</strong> (<code>/pages</code>), one entry per file, the newest first, each with its Share switch; links to other websites are not collected there. Someone outside needs a link (<code>share_asset</code>, or Share on the asset's card): <code>app.trommi.com/a/&lt;share&gt;#&lt;secret&gt;</code>, which opens without joining until it expires or is taken back (<code>revoke_asset</code> ends the asset and its links at once).</p>
     <p><strong>How it is encrypted.</strong> The connector process makes a fresh random key for each file and encrypts it before anything leaves for the hub. Inside your account, that key travels sealed in an envelope. In an outside link it is the part after the <code>#</code>, which a browser never sends to a server; the hub only checks a hash of the link's secret and hands out ciphertext.</p>
   </div>
   <div class="hp-facts">
