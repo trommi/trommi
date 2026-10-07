@@ -12,7 +12,7 @@ import * as notes from './notes.mjs'
 import * as media from './media.mjs'
 import * as whiteboard from './whiteboard.mjs'
 import { DRAWER_VEIL, SIDE_FOOT, cornerNote, phoneBar, sidebarRows, topbar } from './sidebar.mjs'
-import { WORDS, calm, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
+import { Controller, WORDS, calm, controller, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { roomScreen } from './auth.mjs'
 import { rowSheet } from './desk.mjs'
@@ -1473,7 +1473,10 @@ async function start(client, { fresh = false } = {}) {
     t.get(/^\/$/, ({ res, url }) => { const d = url.searchParams.get('desk'); if (d == null) return false; desk = d; write('trommi-desk', d); t.redirect(res, '/') })
     t.get(/^\/desk\/([\w-]+)$/, ({ res, match }) => { desk = match[1]; write('trommi-desk', desk); t.redirect(res, '/') })
   } }
-  const b = createBoard({ hub, model, views: [desks, ...VIEWS] })
+  // (the demo only: the review page of all screens, and ?state= hooks: demo/demo.mjs)
+  const demo = mock ? await import('./demo/demo.mjs') : null
+  if (demo) { demo.screensController({ Controller, controller }); const state = new URLSearchParams(location.search).get('state'); if (state) document.addEventListener('turbo:load', () => demo.demoState(state), { once: true }) }
+  const b = createBoard({ hub, model, views: [desks, ...(demo ? [demo.screensView] : []), ...VIEWS] })
   const router = createRouter({ board: b, flush: () => apply() })
   startPush(client)
   window.trommi = { client, board, router, model, mock: Boolean(mock) }
