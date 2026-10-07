@@ -34,16 +34,17 @@ async function browser(name, width = 1440, height = 900) {
   await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 600 })
   const js = async (code) => {
     const r = await page.send('Runtime.evaluate', { expression: `(async () => { ${code} })()`, awaitPromise: true, returnByValue: true })
-    if (r.exceptionDetails) throw new Error(`${name}: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`)
+    if (r.exceptionDetails) throw new Error(`${name}: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}\n    in: ${code.trim().slice(0, 160)}`)
     return r.result.value
   }
   const until = async (code, what, ms = 15000) => {
     const t = Date.now()
     while (Date.now() - t < ms) { if (await js(`return Boolean(${code})`).catch(() => false)) return Date.now() - t; await sleep(40) }
+    await shot(`e2e-timeout-${name}-${what.replace(/[^\w]+/g, '-').slice(0, 40)}.png`).catch(() => {})
     throw new Error(`${name}: timed out waiting for ${what}`)
   }
   const go = async url => { await page.send('Page.navigate', { url }); await sleep(200) }
-  const shot = async file => { if (!SHOTS) return; const s = await page.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(SHOTS, file), Buffer.from(s.data, 'base64')) }
+  async function shot(file) { if (!SHOTS) return; const s = await page.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(SHOTS, file), Buffer.from(s.data, 'base64')) }
   return { b, page, js, until, go, shot, errors, close: () => b.close() }
 }
 
@@ -164,8 +165,8 @@ try {
   await A.js("document.getElementById('desk-media').click()")
   await A.until("document.body.dataset.page === 'gallery' && document.querySelectorAll('#gallery .gal-grid .gal-tile').length === 2", 'gallery with two tiles').then(() => check(true, 'clicking the pile opens the media gallery'), e => check(false, e.message))
   check(await A.js("return [...document.querySelectorAll('#gallery .gal-tile .asset-preview')].every(p => p.querySelector('img, video, svg.asset-glyph'))"), 'gallery: no empty tile (each has its picture, video or drawn kind)')
-  check(await A.js("return [...document.querySelectorAll('#gallery .gal-seg a')].map(a => a.firstChild.textContent).join(' ') === 'All Pictures Videos Files' && !!document.querySelector('#gallery .gal-video video') && !!document.querySelector('#gallery .gal-video .gal-play')"), 'gallery: All · Pictures · Videos · Files; the video tile has its frame and a play mark')
-  await A.js("[...document.querySelectorAll('#gallery .gal-seg a')].find(a => a.textContent.startsWith('Videos')).click()")
+  check(await A.js("return [...document.querySelectorAll('#gallery .gal-kinds a')].map(a => a.getAttribute('aria-label')).join(' · ') === 'Everything · Pictures · Videos · Files and pages' && document.querySelector('#gallery .gal-kinds a[aria-current]')?.getAttribute('aria-label') === 'Everything' && !!document.querySelector('#gallery .gal-video video') && !!document.querySelector('#gallery .gal-video .gal-play')"), 'gallery: the four drawn kinds Everything · Pictures · Videos · Files and pages; the video tile has its frame and a play mark')
+  await A.js("document.querySelector('#gallery .gal-kinds a[aria-label=Videos]').click()")
   await A.until("location.search.includes('kind=video') && document.querySelectorAll('#gallery .gal-tile').length === 1 && document.querySelector('#gallery .gal-tile .gal-video')", 'Videos filter').then(() => check(true, 'gallery filter Videos shows only the video'), e => check(false, e.message))
   await A.shot('e2e-4c-gallery.png')
   await A.js("document.querySelector('#gallery .gal-tile').click()")
@@ -186,10 +187,14 @@ try {
   check(commands.some(c => c.command === 'answer' && (c.choices ?? c.content?.choices ?? []).includes('b')), 'agent received the answer "b"')
 
   // ---- take it back from the toast's Undo ----
-  const undo = await A.js("const b = document.querySelector('#says-host .says-back'); if (b) { b.click(); return true } return false")
+  const undoSel = `#says-host .says:not([hidden]) form[action$="/cards/${cardId}/reopen"] .says-back`
+  const undo = await A.until(`document.querySelector('${undoSel}')`, 'the answer toast with Undo', 5000).then(() => A.js(`document.querySelector('${undoSel}').click(); return true`), () => false)
   if (undo) {
-    await A.until(`document.getElementById('row-${cardId}')`, 'row back after Undo')
-    check(true, 'Undo (decide again) puts the card back')
+    // (Undo from a toast leads to that card's page, the answers in view; the row stands on the Desk again)
+    await A.until(`document.querySelector('#cardpage') && location.pathname.startsWith('/card/')`, 'the card page after Undo')
+    check(true, 'Undo (decide again) opens the card again on its page')
+    await A.js("trommi.router.visit('/')")
+    await A.until(`document.getElementById('row-${cardId}')`, 'row back after Undo').then(() => check(true, 'Undo (decide again) puts the row back on the Desk'), e => check(false, e.message))
     const tu = Date.now(); while (!commands.some(c => c.command === 'decide_again') && Date.now() - tu < 10000) await sleep(30)
     check(commands.some(c => c.command === 'decide_again'), 'agent received decide_again')
   } else check(false, 'toast with Undo after answering')
@@ -236,6 +241,11 @@ try {
   // ---- the note: it waits at the window's bottom-right; sent from there (to the crown) it reaches the agent marked as a note and stands in
   //      the session's chat taped on, from the optimistic echo on, never as a bubble ----
   const noteText = 'Notiz e2e: Backup vor der Migration'
+  // (a note goes to the session that wears the crown: given on the Agents page, by his hand)
+  await A.js("trommi.router.visit('/agents')")
+  await A.until("document.querySelector('.ledger-crown[aria-pressed=false]')", 'Agents page with the crown to give')
+  await A.js("document.querySelector('.ledger-crown[aria-pressed=false]').click()")
+  await A.until("trommi.model().agents.some(a => a.starred) && document.querySelector('.ledger-crown[aria-pressed=true]')", 'crown given').then(() => check(true, 'Agents page: the crown is given with one click'), e => check(false, e.message))
   await A.js(`const now = Date.now(); await trommi.client.saveNote({ text: '${noteText}', created_at: now, updated_at: now })`)
   await A.js("trommi.router.visit('/')")
   await A.until(`document.querySelector('#corner-note-box.has-words .corner-note-field')?.value.startsWith('Notiz e2e')`, 'the note at the bottom-right').then(() => check(true, 'the note waits at the bottom-right, the sticky shows it holds words'), e => check(false, e.message))
@@ -263,8 +273,11 @@ try {
   // snoozed from its row; the toast's Undo fetches it back; snoozed again
   await A.js(`const f = document.querySelector('#row-${pile.snooze} form[action$="/snooze"]'); f.requestSubmit()`)
   await A.until(`!document.getElementById('row-${pile.snooze}')`, 'snoozed row leaves')
-  await A.until("document.querySelector('#says-host .says-back')", 'toast with Undo after Later')
-  await A.js("document.querySelector('#says-host .says-back').click()")
+  const laterUndo = `#says-host .says:not([hidden]) form[action*="/cards/${pile.snooze}/"] .says-back`
+  await A.until(`document.querySelector('${laterUndo}')`, 'toast with Undo after Later')
+  await A.js(`document.querySelector('${laterUndo}').click()`)
+  await A.until(`document.querySelector('#cardpage') && location.pathname.startsWith('/card/')`, 'the card page after Undo of Later').then(() => check(true, 'Undo of Later opens the card again on its page'), e => check(false, e.message))
+  await A.js("trommi.router.visit('/')")
   await A.until(`document.getElementById('row-${pile.snooze}')`, 'row back after Undo of Later').then(() => check(true, 'Undo of Later puts the card back'), e => check(false, e.message))
   await A.js(`const f = document.querySelector('#row-${pile.snooze} form[action$="/snooze"]'); f.requestSubmit()`)
   await A.until(`!document.getElementById('row-${pile.snooze}')`, 'snoozed row leaves again')
@@ -290,7 +303,7 @@ try {
     await A.js(`document.querySelector('#cardpage button[formaction$="/${way}"]').click()`)
     await A.until("location.pathname === '/'", `back on the Desk after ${way}`).catch(() => A.js("trommi.router.visit('/')"))
   }
-  await A.until(`document.querySelector('#desk-stacks [data-pile=off]') && ['${pile.snooze}', '${pile.shred}'].every(id => document.querySelector('#desk-stacks .off-line[data-id="' + id + '"]')) && document.querySelector('#desk-stacks .off-line[data-id="${pile.done}"][data-g=done]') && document.querySelector('#desk-ip .ipb-card[data-id="${pile.revise}"]')`, 'three in the pile, the asked one with the agents', 20000)
+  await A.until(`document.querySelector('#desk-stacks [data-pile=off]') && ['${pile.snooze}', '${pile.shred}'].every(id => document.querySelector('#desk-stacks .off-line[data-id="' + id + '"]')) && document.querySelector('#desk-stacks .off-line[data-id="${pile.done}"][data-g=done]') && document.querySelector('#desk-ip .tail-card[data-id="${pile.revise}"]')`, 'three in the pile, the asked one with the agents', 20000)
     .then(() => check(true, 'snoozed, shredded and done cards lie in the one pile; the asked one (What??) stays on the Desk with the agents'), e => check(false, e.message))
   check(await A.js("return !document.querySelector('#desk-stacks [data-stack=later], #desk-stacks [data-stack=works], #desk-stacks [data-stack=done], #desk-stacks [data-stack=trash]')"), 'no separate Later / Working / Done / Trash stacks any more')
   check(await A.js("const s = [...document.querySelectorAll('[data-stack=off] .shop-slip .shop-line')]; return s.length >= 3 && s.length <= 5 && s.every(x => x.dataset.g)"), 'the folded list shows the newest lines, each marked by its place')
@@ -303,15 +316,20 @@ try {
   await A.js(`document.querySelector('.off-line[data-id="${pile.snooze}"] a.off-open').click()`)
   await A.until(`document.querySelector('#cardpage button[formaction$="/wake"]')`, 'the snoozed card with Wake up').then(() => check(true, 'a line opens its card, with its way back'), e => check(false, e.message))
   await A.js(`document.querySelector('#cardpage button[formaction$="/wake"]').click()`)
+  // (Wake up answers with the card's page again, the card awake on it; then to the Desk)
+  await A.until(`!trommi.model().byCard.get('${pile.snooze}').snoozed_until && document.querySelector('#cardpage') && !document.querySelector('#cardpage button[formaction$="/wake"]')`, 'the card page, awake').then(() => check(true, 'Wake up: the card stays open on its page, awake'), e => check(false, e.message))
   await A.js("trommi.router.visit('/')")
   await A.until(`document.getElementById('row-${pile.snooze}')`, 'woken up', 15000).then(() => check(true, 'woken up from its card, back on the Desk'), e => check(false, e.message))
   await A.shot('e2e-pile.png')
   // ---- a session that moves to another desk takes its cards along: nothing of it stays on the old desk (open rows,
   //      infos, with the agents, Off the desk, Media, the menu's count), and all of it is back after the move back ----
   {
-    const home = await A.js("return trommi.model().desk ?? 'main'")
     const made = await A.js("const r = await fetch('/desk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Zweiter Desk' }) }); return (await r.json()).desk?.id")
-    await A.js("trommi.router.visit('/')")
+    // (with two desks and none chosen, the browser shows All desks: the test looks at the first desk, where the session stands)
+    await A.until("trommi.model().desks.length === 2", 'two desks')
+    const home = await A.js("return trommi.model().desks.find(d => d.id !== '" + made + "').id")
+    await A.js(`trommi.router.visit('/?desk=${home}')`)
+    await A.until(`!trommi.model().all && trommi.model().desk === '${home}' && document.querySelector('#inbox')`, 'the first desk in view')
     const count = `(() => { const m = trommi.model(), of = l => l.filter(c => c.agent === '${sid}' || m.byAgent.get(c.agent)?.parent === '${sid}').length; return of(m.fresh) + of(m.reads) + of(m.revising) + of(m.snoozed) + of(m.done) })()`
     const before = await A.js(`return ${count}`)
     const move = to => A.js(`await fetch('/sessions/${sid}/edit', { method: 'POST', headers: { Accept: 'text/vnd.turbo-stream.html' }, body: new URLSearchParams({ stay: '1', moved: '1', desk: '${'${to}'}' }) })`.replace('${to}', to))
