@@ -1205,8 +1205,6 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* every tile the same size (his word, 7 October: different widths are ugly): the advised words in two lines at most,
    then the ellipsis; one pen mark, under "advised" */
 .inbox-actions.is-advised-pair .inbox-answer.is-take > strong { font-size: var(--t-xs); line-height: 1.15; overflow-wrap: break-word; }
-.inbox-actions.is-advised-pair .inbox-answer.is-take > small { position: relative; padding-bottom: 3px; }
-.inbox-actions.is-advised-pair .inbox-answer.is-take > small::after { content: ""; position: absolute; left: -3px; right: -3px; bottom: -2px; height: 5px; background: currentColor; opacity: .8; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 5' preserveAspectRatio='none'%3E%3Cpath d='M1 3.4Q10 1.6 20 2.6T39 1.8' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / 100% 100% no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 5' preserveAspectRatio='none'%3E%3Cpath d='M1 3.4Q10 1.6 20 2.6T39 1.8' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") center / 100% 100% no-repeat; }
 @media (max-width: 860px) {
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take { flex: 1 1 0; grid-auto-flow: row; display: grid; height: auto; min-height: 50px; padding: 6px 10px; gap: 2px; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take > .sketch { display: none; }
@@ -1245,3 +1243,6 @@ html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-when .inbox-late
 .inbox-later.is-tag:is(:hover, :focus-visible) svg { rotate: 6deg; }
 html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { padding-right: 24px; }
 @media (max-width: 860px) { html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-when { top: 0; right: 0; } }
+
+/* (a phone: the advised pair a little taller, the stroke clear under the words) */
+@media (max-width: 860px) { html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-advised::after { bottom: 3px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer { height: 60px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take { padding-bottom: 14px; } }

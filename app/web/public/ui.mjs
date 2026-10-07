@@ -1488,11 +1488,9 @@ function adviceFrame(measure) {
 // adviceLoop in ui.mjs, which measures the words and redraws when its host changes size). On a tile, a card option.
 
 controller('advice', class extends Controller {
-  connect() {
-    if (this.element.querySelector(':scope > .advice-loop')) return
-    this.element.append(adviceLoop())
-  }
-  disconnect() { this.element.querySelector(':scope > .advice-loop')?.remove() }
+  // (his pick "stroke", 7 October: the advice is one short pen stroke at the tile's foot, drawn by CSS on .is-advised;
+  // the label stays clean, so this draws nothing any more and clears what an older page left)
+  connect() { this.element.querySelector(':scope > .advice-loop')?.remove() }
 })
 
 // ---- richhtml ----
@@ -2603,7 +2601,7 @@ ${(thumbs ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options
   const advisedOne = card.kind === 'decision' && !card.multiple ? card.options.find(o => advisedKeys(card)[0] === o.key && advisedKeys(card).length === 1) : null
   if (advisedOne) {
     const others = card.options.length - 1, final = advisedOne.final === true
-    return html`<form class="inbox-actions is-advised-pair" method="post" action="${act(card, base, 'decide')}">${stay}${seen}<a class="inbox-answer is-thumb is-others" data-nav href="${cardPath(card, base)}" title="The other ${others} ways: open the card" aria-label="${others} other ways: open the card"><b>+${others}</b><span>other ways</span></a><button class="inbox-answer is-thumb is-lead is-take" type="submit" name="key" value="${advisedOne.key}" title="${[advisedOne.label, advisedOne.detail, 'the agent recommends this', final ? FINAL_TIP : ''].filter(Boolean).join(' · ')}" aria-label="${advisedOne.label}, advised${final ? ' (settles it)' : ''}">${sk('yes')}<strong>${advisedOne.label}</strong><small>advised</small></button></form>`
+    return html`<form class="inbox-actions is-advised-pair" method="post" action="${act(card, base, 'decide')}">${stay}${seen}<a class="inbox-answer is-thumb is-others" data-nav href="${cardPath(card, base)}" title="The other ${others} ways: open the card" aria-label="${others} other ways: open the card"><b>+${others}</b><span>other ways</span></a><button class="inbox-answer is-thumb is-lead is-take is-advised" type="submit" name="key" value="${advisedOne.key}" title="${[advisedOne.label, advisedOne.detail, 'the agent recommends this', final ? FINAL_TIP : ''].filter(Boolean).join(' · ')}" aria-label="${advisedOne.label}, advised${final ? ' (settles it)' : ''}">${sk('yes')}<strong>${advisedOne.label}</strong></button></form>`
   }
   // More than two ways: one tile, "Choose". It is a link to the card's own page, where every option stands.
   const count = card.multiple ? `${card.options.length} options, several` : `${card.options.length} options`
