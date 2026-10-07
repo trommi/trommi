@@ -9,7 +9,7 @@
 // ever reached the hub or a second device: there is nothing to carry over, and the Whiteboard is where drawing is kept
 // from now on. The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's canvas.mjs).
-import { Controller, controller, html, markArt, raw } from './ui.mjs'
+import { Controller, controller, html, markArt, nextThemeMode, raw, setThemeMode } from './ui.mjs'
 import { canvasWire } from './app.mjs'
 /** The canvas timeline of a desk: desk/ and 32 hex. A desk id that is not 32 hex already ('main', a menu desk's 8 hex)
  *  is folded into 16 bytes (its UTF-8, XOR by position, the length last): the same desk is the same timeline on every
@@ -1933,15 +1933,7 @@ function mountPad(main, { canvasId: PAD, client }) {
   for (const b of main.querySelectorAll('.pad-tool')) {
     b.addEventListener('click', () => { if (tool === b.dataset.tool && (tool === 'pen' || tool === 'hl')) toggleStyle(); else if (tool === 'area' && b.dataset.tool === 'area') setTool(toolBefore); else setTool(b.dataset.tool) })   // (the scissors again: out of cutting)
   }
-  function setTheme(next) {
-    if (next === dark()) return
-    if (next) root.dataset.theme = 'dark'; else delete root.dataset.theme
-  }
-  $('theme').addEventListener('click', () => {
-    const next = !dark()
-    setTheme(next)
-    try { localStorage.setItem('agent-board-theme', next ? 'dark' : 'light') } catch {}
-  })
+  $('theme').addEventListener('click', () => setThemeMode(nextThemeMode()))   // Light → Dark → System, as the menu
   $('help-btn').addEventListener('click', () => $('help').showModal())
   for (const dialog of main.querySelectorAll('dialog')) {
     dialog.addEventListener('click', e => { if (e.target === dialog || e.target.closest('[data-close]')) dialog.close() })
