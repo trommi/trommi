@@ -765,3 +765,17 @@ a.files-where:hover span { text-decoration: underline; }
   body[data-t-view="session"]:not([data-pair]) #session .pane-who :is(.session-editor, .mark-picker).t-pop { position: fixed; top: calc(52px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; width: auto; max-width: none; }
   body[data-t-view="session"]:not([data-pair]) #session .pane-who .desk-move.t-pop { top: calc(100% + 4px); }
 }
+
+/* ---- Delete session, last in the session's More menu: after a thin rule, in Shred's colour; it opens a small confirm in
+   the menu itself (the drawn box of the Desk's duck sheet), Delete in the danger colour, Cancel quiet. ---- */
+.desk-move-rule { margin: 6px 4px; border: 0; border-top: 1px solid var(--line); }
+.desk-move-delete > summary, .desk-move-delete > summary .sketch { color: var(--urg-critical); }
+.desk-move-delete > summary::after { display: none; }
+.session-delete-ask { display: grid; gap: 10px; max-width: 300px; margin: 4px 2px 2px; padding: 12px 12px 10px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); }
+.session-delete-ask p { margin: 0; font: 400 var(--t-sm)/1.4 var(--font); color: var(--muted); white-space: normal; }
+.session-delete-ask p b { display: block; margin-bottom: 2px; font: 700 var(--t-md)/1.3 var(--display); color: var(--fg); }
+.desk-move .session-delete-yes { display: inline-flex; width: auto; min-height: 40px; padding: 0 14px 0 10px; border: 1.6px solid var(--urg-critical); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--urg-critical); color: var(--surface); font: 700 var(--t-sm)/1 var(--font); }
+.desk-move .session-delete-yes .sketch { color: currentColor; }
+.desk-move .session-delete-yes:hover { background: color-mix(in srgb, var(--urg-critical) 88%, var(--fg)); }
+.desk-move .session-delete-ask .desk-duck-no { width: auto; }
+@media (max-width: 860px) { .desk-move .session-delete-yes, .desk-move .session-delete-ask .desk-duck-no { min-height: 44px; } .desk-move.t-pop { max-width: calc(100vw - 16px); } }
