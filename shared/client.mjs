@@ -1832,7 +1832,7 @@ export class Client {
   /**
    * An invite link. Agent invites are bearer links: the first agent that answers is added. Review 3: with
    * confirm_code: true an agent invite is bound to the intended agent like a human pairing (the connector prints the
-   * six-digit check code; the human confirms it with confirmInvite), and every agent invite that two different devices
+   * check code as emoji, the app shows the same; the human confirms the match with confirmInvite), and every agent invite that two different devices
    * answer is burned instead of going to whoever came first (alert invite-contested).
    */
   async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null, session_id = null, with_history = false, confirm_code = false, takeover = false } = {}) {
@@ -1908,26 +1908,29 @@ export class Client {
         }
         inv.code = accepted.code
         if (accepted.requestHash) inv.requestHash = accepted.requestHash
-        const choices = [accepted.code]
-        while (choices.length < 4) { const c = String(globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0'); if (!choices.includes(c)) choices.push(c) }
-        for (let i = choices.length - 1; i > 0; i--) { const j = globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1); [choices[i], choices[j]] = [choices[j], choices[i]] }
         const auto = inv.role === ROLE.AGENT && inv.public.confirm_code !== true
-        this._setInvite(invite_id, { code_choices: choices, newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: auto ? 'adding' : 'confirm_code' })
+        // check_code: the same code the newcomer shows (as emoji, shared/check-emoji.mjs); the human compares the two.
+        this._setInvite(invite_id, { check_code: auto ? null : accepted.code, newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: auto ? 'adding' : 'confirm_code' })
         if (auto) await this._finalizeInvite(invite_id, { skipCheckCode: true })
         return
       }
     } finally { inv._checking = false }
   }
 
-  /** Human invites: the six digits the human typed on this (the inviting) device. A wrong code burns the invite. */
-  async confirmInvite(invite_id, typed_code) {
+  /**
+   * The human compared the check code this device shows (invite.check_code, as emoji) with the newcomer's:
+   * matches true adds the newcomer, matches false burns the invite (nobody is added). Only this device, the one that
+   * made the link, can confirm.
+   */
+  async confirmInvite(invite_id, matches) {
+    if (typeof matches !== 'boolean') throw new ZError('bad-argument', 'confirmInvite takes true (the codes match) or false (they do not)')
     const inv = this.invitesPrivate.get(invite_id)
     if (!inv || inv.public.invite_state !== 'confirm_code') throw new ZError('bad-invite', 'this invite waits for no code')
-    if (String(typed_code).replace(/\s/g, '') !== inv.code) {
+    if (!matches) {
       inv.finalized = true
       this._setInvite(invite_id, { invite_state: 'failed', error: 'code-mismatch' })
       this.hub.deleteInvite(invite_id).catch(() => {})     // the hub tells the newcomer at once (status 410 invite-burned)
-      throw new ZError('code-mismatch', 'the code does not match: nobody was added, the invite is spent')
+      throw new ZError('code-mismatch', 'the check codes do not match: nobody was added, the invite is spent')
     }
     this._setInvite(invite_id, { invite_state: 'adding' })
     await this._finalizeInvite(invite_id, { codeConfirmed: true })

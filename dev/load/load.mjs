@@ -283,7 +283,7 @@ async function catchupPhase() {
   const j = joinRoom({ link: inv.link, storage, device_name: 'fresh', poll_ms: 100, fetch: NET.fetch })
   const code = await j.check_code
   await until(() => p.model.invites.get(inv.invite_id)?.invite_state === 'confirm_code', 'code')
-  await p.confirmInvite(inv.invite_id, code)
+  await p.confirmInvite(inv.invite_id, p.model.invites.get(inv.invite_id).check_code === code)
   const c = await j.client
   const rss0 = process.memoryUsage().rss
   const t = performance.now()

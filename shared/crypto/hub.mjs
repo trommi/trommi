@@ -544,7 +544,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       storage.putInvite(inv.id, { ...inv, requests: [...inv.requests, { hash: requestHash, bytes: request, device: id(q.id), at: now() }] })
       return { requestHash, inviter: inv.inviter }
     }),
-    /** The inviter calls an invite off (a wrong check code was typed): it answers invite-burned from now on. */
+    /** The inviter calls an invite off (the human said the check codes do not match, or two devices answered an agent link): it answers invite-burned from now on. */
     burnInvite: (token, inviteId) => serial(async () => {
       const s = session(token, { human: true })
       const inv = storage.invite(inviteId)

@@ -7,7 +7,7 @@
 // Calm and sober: this is about keys; pen drawings only on the choice buttons.
 // Core features that may not be there yet (escrow, usage, session handover) are shown only when the core has them.
 import { BELL, Controller, avatar, controller, copyText, doodleSvg, errorLine, html, raw, roomPage, roomShell, sketchSvg } from './ui.mjs'
-import { CLIENT, account, core, ses, stream } from './app.mjs'
+import { CLIENT, account, checkEmoji, core, ses, stream } from './app.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
 const foundCode = () => ses('trommi-found-code', new URLSearchParams(location.search).get('found_code')) || undefined
@@ -15,7 +15,11 @@ const deviceGuess = () => (/iPhone|Android.*Mobile/.test(navigator.userAgent) ? 
 const ago = ts => { const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago` }
 const art = name => raw(['phone', 'house'].includes(name) ? doodleSvg(`draw:${name}`) : sketchSvg(name))
 const has = (o, fn) => typeof o?.[fn] === 'function'
-const code6 = c => `${String(c).slice(0, 3)} ${String(c).slice(3)}`
+// The check code as six emoji with a word under each: the same on both devices (and in a connector's terminal). The human
+// compares them; the function is the core's (shared/check-emoji.mjs), so app and connector cannot drift apart.
+const emojiRow = (code, id = '') => html`<ol class="check-emoji"${id ? raw(` id="${id}"`) : ''} data-code="${code}" aria-label="Check code: ${checkEmoji(code).map(e => e.word).join(', ')}">${checkEmoji(code).map(e => html`<li><span class="check-emoji-glyph" aria-hidden="true">${e.emoji}</span><span class="check-emoji-word">${e.word}</span></li>`)}</ol>`
+// The two answers to "the same six?": the only way to confirm (no typing, no picking), only on the device that made the link.
+const matchButtons = (inv, yesLabel = 'They match') => html`<div class="check-answer"><form method="post" action="/pair/${inv.invite_id}/confirm"><input type="hidden" name="match" value="yes"><button type="submit" class="room-primary check-yes">${yesLabel}</button></form><form method="post" action="/pair/${inv.invite_id}/confirm"><input type="hidden" name="match" value="no"><button type="submit" class="check-no">They don't match</button></form></div>`
 // One place for agents and devices (the menu's "Agents & devices"): the Agents page carries the same tabs (agents.mjs).
 const copyBox = (value, label, cls = '') => html`<div class="room-link${cls ? ` ${cls}` : ''}" data-controller="room"><input readonly value="${value}" aria-label="${label}" data-room-target="field" data-action="focus->room#select"><button type="button" data-action="room#copy" data-room-text-param="${value}"><span data-room-target="label">Copy</span></button></div>`
 const sessionName = s => s.settings?.name || s.profile?.agent_name || s.agent_session_id || s.device_name || 'Session'
@@ -124,19 +128,21 @@ ${raw(L.gone)}
       const h = handovers.get(inv.invite_id)
       const done = open ? '' : 'done'
       // A link that continues an existing session ("Copy invite link again"): the human sees which session, and
-      // confirms the number the new connector's terminal shows before anything is granted.
+      // confirms that the six emoji the new connector's terminal shows are the ones shown here before anything is granted.
       const cont = inv.takeover ? t.model().everyone?.find(a => a.device_id === inv.session_id || a.session_id === inv.session_id) ?? t.model().agents.find(a => a.device_id === inv.session_id) ?? null : null
       const contName = inv.takeover ? cont?.label || cont?.given || cont?.name || 'this session' : ''
-      const ask = inv.takeover && state === 'confirm_code' && inv.code_choices?.length
+      const ask = state === 'confirm_code' && checkEmoji(inv.check_code).length > 0
       const keep = inv.takeover ? html`<input type="hidden" name="continue" value="${inv.session_id}">` : ''
-      const last = ask ? html`<div class="clip-ask" role="group" aria-label="Confirm: continue ${contName}"><b>A connector wants to continue ${contName}.</b>
-<small>Which number does its terminal show? Tap it, and that connector continues <strong>${contName}</strong>: its questions, helper sessions and conversation. The connector that held ${contName} until now is retired.</small>
-<div class="room-choices clip-choices">${inv.code_choices.map(c => html`<form method="post" action="/pair/${inv.invite_id}/confirm"><input type="hidden" name="code" value="${c}"><button type="submit" class="room-choice" aria-label="${code6(c)}: continue ${contName}">${code6(c)}</button></form>`)}</div>
-${errorLine(error)}<small>None matches? Tap nothing. A wrong number burns the link, and ${contName} stays as it is.</small></div>`
+      const last = ask ? html`<div class="clip-ask" role="group" aria-label="${inv.takeover ? `Confirm: continue ${contName}` : 'Confirm the agent'}"><b>${inv.takeover ? `A connector wants to continue ${contName}.` : 'An agent wants to join.'}</b>
+<small>Its terminal shows six emoji, each with a word. Are they these, in this order?</small>
+${emojiRow(inv.check_code)}
+${inv.takeover ? html`<small>If they match, that connector continues <strong>${contName}</strong>: its questions, helper sessions and conversation. The connector that held ${contName} until now is retired.</small>` : ''}
+${matchButtons(inv)}
+${errorLine(error)}<small>"They don't match" burns the link: nobody is added${inv.takeover ? html`, and ${contName} stays as it is` : ''}.</small></div>`
         : joined && inv.takeover ? html`<b class="clip-in">${cont ? avatar(cont, { crown: false }) : ''}<span>${contName} goes on with the new connector</span></b><small>The connector that held it before is retired.</small>`
         : joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>${h && !h.done ? html`<small>Handing over the session…</small>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}`
         : coming ? html`<b>Adding ${newcomerName(inv) || 'the agent'}…</b>`
-        : dead ? html`<b>${state === 'expired' ? 'The link has expired' : inv.error === 'code-mismatch' ? 'Wrong number: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
+        : dead ? html`<b>${state === 'expired' ? 'The link has expired' : inv.error === 'code-mismatch' ? 'They did not match: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
         : html`<b>Waiting for the agent…</b>`
       const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
         : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent">${keep}<button type="submit">New link</button></form>`
@@ -158,20 +164,17 @@ ${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : 'wait', last)}
       let body
       if (agent) return clipboard(inv, error)
       if (state === 'open') body = html`<div class="room-pair"><div class="room-qr" data-controller="room">${raw(qrSvg(inv.link, 'QR code to pair'))}</div>
-<ol class="room-steps"><li>On the new device, open the camera and scan the code. Or open app.trommi.com there and choose "Pair a device".</li><li>The new device shows a number. Tap the same one here.</li></ol></div>
+<ol class="room-steps"><li>On the new device, open the camera and scan the code. Or open app.trommi.com there and choose "Pair a device".</li><li>Both devices then show six emoji. If they are the same, tap "They match" here.</li></ol></div>
 <details class="room-more"><summary>No scanner? Send the link</summary><p class="room-meta">Send the link to yourself (a message to yourself works) and open it on the new device. The secret is after the #; it never reaches a server.</p>${copyBox(inv.link, 'Invite link')}</details>
 <p class="room-wait">Waiting for the new device… The code works once, ${left} more min.</p>`
-      else if (state === 'confirm_code' && inv.code_choices?.length) body = html`<p class="room-lead">A device wants to join. Which number does it show?</p>
-<div class="room-choices">${inv.code_choices.map(c => html`<form method="post" action="/pair/${inv.invite_id}/confirm"><input type="hidden" name="code" value="${c}"><button type="submit" class="room-choice">${code6(c)}</button></form>`)}</div>
-${errorLine(error)}<p class="room-meta">None matches? Tap nothing and go back. A wrong number burns the invite.</p>${back}`
-      else if (state === 'confirm_code') body = html`<p class="room-lead">A device wants to join. Type the six digits it shows:</p>
-<form method="post" action="/pair/${inv.invite_id}/confirm" class="room-code-form"><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus aria-label="Number of the new device" class="room-code-input"><button type="submit" class="room-primary">Add</button></form>
-${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
+      else if (state === 'confirm_code') body = html`<p class="room-lead">A device wants to join. Does it show these six emoji, in this order?</p>
+${emojiRow(inv.check_code)}${matchButtons(inv)}
+${errorLine(error)}<p class="room-meta">"They don't match" burns the invite: nobody is added.</p>${back}`
       else if (state === 'adding') body = html`<p class="room-wait">Adding ${newcomerName(inv) || (agent ? 'the agent' : 'the device')}…</p>`
       else if (state === 'joined') {
         const h = handovers.get(inv.invite_id)
         body = html`<p class="room-lead room-ok">✓ ${newcomerName(inv) || (agent ? 'The agent' : 'The new device')} is in now.</p>${h && !h.done ? html`<p class="room-wait">Handing over the session…</p>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}<a href="/devices" data-nav class="room-done">Done</a>`
-      } else if (inv.error === 'code-mismatch') body = html`<p class="room-error" role="alert">Wrong number. Nobody was added; the invite is used up.</p>${again(agent)}${back}`
+      } else if (inv.error === 'code-mismatch') body = html`<p class="room-error" role="alert">They did not match. Nobody was added; the invite is used up.</p>${again(agent)}${back}`
       else body = html`<p class="room-error" role="alert">${state === 'expired' ? 'The invite has expired.' : `That did not work${inv.error ? ` (${inv.error})` : ''}.`}</p>${errorLine(error)}${again(agent)}${back}`
       return roomShell(agent ? 'Invite an agent' : state === 'confirm_code' ? 'Add a new device?' : 'Pair a device', html`<div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">${body}</div>`)
     }
@@ -189,7 +192,7 @@ ${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
       page(req, res, inv?.device_role === 'agent' ? 'Invite an agent' : 'Pair a device', inviteMain(inv), { view: 'invite', stream: `&invite=${match[1]}` })
     })
     t.post(/^\/pair\/([0-9a-f]+)\/confirm$/, async ({ req, res, match, form }) => {
-      try { await client.confirmInvite(match[1], String(form.get('code') ?? '').replace(/\D/g, '')) } catch (err) {
+      try { await client.confirmInvite(match[1], form.get('match') === 'yes') } catch (err) {
         return page(req, res, 'Pair a device', inviteMain(m().invites.get(match[1]), err.code === 'code-mismatch' ? '' : err.message), { view: 'invite', stream: `&invite=${match[1]}` }, 422)
       }
       t.redirect(res, `/pair/${match[1]}`)
@@ -540,9 +543,9 @@ ${errorLine(error)}
     if (camera) scanQr(root.querySelector('#scan-video'), go).then(stop => { stopScan = stop }).catch(() => root.querySelector('.room-scan')?.remove())
   }
 
-  // Join with the link in the address: name, then show the check code to tap on the other device.
+  // Join with the link in the address: name, then show the check code (six emoji) to compare with the other device.
   function joinFlow(error = '') {
-    show(roomShell('Log in with a signed-in device', html`<p class="room-lead">This device now makes its own keys. Then it shows a number that you tap on the other device.</p>
+    show(roomShell('Log in with a signed-in device', html`<p class="room-lead">This device now makes its own keys. Then both devices show six emoji; on the other device you confirm that they match.</p>
 ${errorLine(error)}
 <form id="join-form" class="room-form">${nameField}<button type="submit" class="room-primary">Next</button></form>`), '#join-form button')
     on('#join-form', 'submit', async e => {
@@ -554,8 +557,8 @@ ${errorLine(error)}
         const join = c.joinRoom({ link, device_name: name, storage: await storage(), client: CLIENT })
         history.replaceState(null, '', '/join')   // the secret leaves the address bar
         join.check_code.then(code => {
-          show(roomShell('Log in with a signed-in device', html`<p class="room-lead">On the other device, tap this number:</p><p class="room-code" id="check-code">${code6(code)}</p><p class="room-wait">Waiting until it adds this device…</p>
-<p class="room-meta">Tapped the wrong number there? Then the code is used up. <a href="/" id="join-cancel">Cancel and scan again</a></p>`), null)
+          show(roomShell('Log in with a signed-in device', html`<p class="room-lead">The other device shows six emoji too. If they are these, in this order, tap "They match" there:</p>${emojiRow(code, 'check-code')}<p class="room-wait">Waiting until it adds this device…</p>
+<p class="room-meta">They don't match? Tap "They don't match" there; the code is then used up. <a href="/" id="join-cancel">Cancel and scan again</a></p>`), null)
           on('#join-cancel', 'click', ev => { ev.preventDefault(); join.cancel(); history.replaceState(null, '', '/'); scanFlow() })
         })
         await done(await join.client)
@@ -563,7 +566,7 @@ ${errorLine(error)}
         if (err.code === 'cancelled') return
         console.error(err)
         if (err.code === 'room-exists') return roomExists()
-        const why = { 'invite-used': 'The code was used already.', 'invite-expired': 'The code has expired.', 'invite-burned': 'A wrong number was tapped; the code is used up.' }[err.code] ?? err.message
+        const why = { 'invite-used': 'The code was used already.', 'invite-expired': 'The code has expired.', 'invite-burned': 'The other device said the emoji did not match; the code is used up.' }[err.code] ?? err.message
         show(roomShell('Log in with a signed-in device', html`<p class="room-error" role="alert">Not logged in: ${why}</p><p class="room-lead">Show a new code on the other device.</p><button type="button" class="room-primary" id="scan-again">Scan again</button>${backLink}`), '#scan-again')
         on('#scan-again', 'click', () => scanFlow()); wireBack()
       }

@@ -1,5 +1,5 @@
 // app-perf.mjs: the app (trommi/trommi) in headless Chromium against the crazy room that dev/load/crazy.mjs seeded on
-// a real hub. A seeded human device (Node) invites the browser; the browser joins with the six-digit check code,
+// a real hub. A seeded human device (Node) invites the browser; the browser joins with the check code (emoji),
 // like a new laptop or phone, catches up the whole room, and then we measure what a person does, desktop and
 // phone (390x844, CPU 4x slower): first load (join -> Desk live), warm reload, Desk render, the huge session chat,
 // scrolling back, type + send (own message visible), answer a card, the huge card thread, a stroke through the
@@ -43,7 +43,7 @@ async function profile(name, { width, height, throttle }) {
   const add = (k, v) => { if (v != null && Number.isFinite(v)) (out.timings[k] ??= []).push(+v.toFixed(1)) }
   const longs = async () => { const l = await js('const l = window.__long; window.__long = []; return l'); return l }
 
-  // ---- join: invite from the seeded phone, check code typed on the phone side ----
+  // ---- join: invite from the seeded phone, check code compared on the phone side ----
   if (throttle) await page.send('Emulation.setCPUThrottlingRate', { rate: throttle })
   await phone.catchUp()
   if (phone.writeSnapshot && !process.argv.includes('--no-snapshot')) { const ts = performance.now(); await phone.writeSnapshot(); await phone.settle({ timeout_ms: 60_000 }).catch(() => {}); out.snapshot_write_ms = Math.round(performance.now() - ts) }
@@ -51,11 +51,11 @@ async function profile(name, { width, height, throttle }) {
   await page.send('Page.navigate', { url: inv.link })
   await waitFor("document.querySelector('#join-form')", 'join form', 60_000)
   await js(`document.querySelector('#join-form input[name=device_name]').value = '${name}'; document.querySelector('#join-form button').click()`)
-  await waitFor("document.getElementById('check-code') || document.querySelector('[data-code-choices], .code-choices')", 'check code', 60_000)
-  const code = (await js("return document.getElementById('check-code')?.textContent ?? ''")).replace(/\D/g, '')
+  await waitFor("document.getElementById('check-code')", 'check code', 60_000)
+  const code = await js("return document.getElementById('check-code').dataset.code")
   await until(() => phone.model.invites.get(inv.invite_id)?.invite_state === 'confirm_code', 'phone waits for the code', 60_000)
   const tJoin = Date.now()
-  await phone.confirmInvite(inv.invite_id, code)
+  await phone.confirmInvite(inv.invite_id, phone.model.invites.get(inv.invite_id).check_code === code)
   await waitFor("document.documentElement.hasAttribute('data-ready')", 'app ready after join')
   out.first_ready_ms = Date.now() - tJoin
   await waitFor("trommi.client.model.room.connection === 'live' && trommi.client.model.room.last_envelope_number >= " + (info.envelopes - 50), 'caught up', 1_800_000)

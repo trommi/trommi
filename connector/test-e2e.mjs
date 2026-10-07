@@ -39,12 +39,20 @@ import { DatabaseSync } from 'node:sqlite'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fileStorage } from '../shared/storage-file.mjs'
+import { CHECK_EMOJI } from '../shared/check-emoji.mjs'
 import { knock, socketPath } from './connector.mjs'
 import { INSTRUCTIONS, DESCRIPTIONS } from './tools.mjs'
 import { connectorFiles } from './build.mjs'
 import { assetPath } from '../app/web/worker.js'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
+/** The check code a connector printed ("check code 🐶 🎂 … (dog, cake, …)"), read back from its words, as the core writes it. */
+const codeInTerminal = text => {
+  const m = /check code [^(\n]*\(([a-z ,]+)\)/.exec(text)
+  if (!m) return null
+  const idx = m[1].split(', ').map(w => CHECK_EMOJI.findIndex(e => e.word === w))
+  return idx.length === 6 && idx.every(i => i >= 0) ? idx.map(i => String(i).padStart(2, '0')).join('-') : null
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 async function until(what, fn, ms = 15000) {
   const end = Date.now() + ms
@@ -613,11 +621,12 @@ export async function integration({ test, tmp }) {
         fs.mkdirSync(dir, { recursive: true })
         const invite = await human.createInvite({ device_role: 'agent', session_id, takeover: true })
         const next = await startConnector({ env: { ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: invite.link }, cwd: dir })
-        // The connector prints the check code in its terminal; the human picks it in the app.
-        const code = await until('the check code in the terminal', () => /check code (\d{3}) (\d{3})/.exec(next.stderr()))
+        // The connector prints the check code as emoji and words in its terminal; the app shows the same; the human compares.
+        const code = await until('the check code in the terminal', () => codeInTerminal(next.stderr()))
         await until('the app waits for the code', () => human.model.invites.get(invite.invite_id).invite_state === 'confirm_code')
         assert.equal(human.model.sessions.get(session_id).agent_device_ids.includes(human.model.invites.get(invite.invite_id).newcomer.device_id), false, 'nothing is granted before the code')
-        await human.confirmInvite(invite.invite_id, code[1] + code[2])
+        assert.equal(human.model.invites.get(invite.invite_id).check_code, code, 'the app shows the code the terminal shows')
+        await human.confirmInvite(invite.invite_id, human.model.invites.get(invite.invite_id).check_code === code)
         await next.ready().catch(e => { throw new Error(`${e.message}\n${next.stderr()}`) })
         return next
       }
@@ -676,14 +685,14 @@ export async function integration({ test, tmp }) {
         let err = '', told = false
         child.stderr.on('data', d => {
           err += d
-          const m = /check code (\d{3}) (\d{3})/.exec(err)
-          if (m && !told && onCode) { told = true; Promise.resolve(onCode(m[1] + m[2])).catch(e => { err += `\nonCode: ${e.message}` }) }
+          const m = codeInTerminal(err)
+          if (m && !told && onCode) { told = true; Promise.resolve(onCode(m)).catch(e => { err += `\nonCode: ${e.message}` }) }
         })
         child.on('exit', code => resolve({ code, err }))
       })
       const confirmWith = invite => async code => {
         await until('the app waits for the code', () => human.model.invites.get(invite.invite_id).invite_state === 'confirm_code')
-        await human.confirmInvite(invite.invite_id, code)
+        await human.confirmInvite(invite.invite_id, human.model.invites.get(invite.invite_id).check_code === code)
       }
       // This folder's session joins the room as a member of its own (a plain agent link).
       const agentsBefore = agentsNow()
@@ -693,11 +702,11 @@ export async function integration({ test, tmp }) {
       const firstKey = path.join(room, keyed()[0]), firstSha = sha(firstKey), oldName = path.basename(firstKey, '.key')
       const firstDevice = await until('this session\'s own device', () => [...agentsNow()].find(id => !agentsBefore.has(id)))
 
-      // (1) A link for the other session whose number the human gets wrong: nothing changes for this session.
+      // (1) A link for the other session that the human calls "They don't match": nothing changes for this session.
       const wrong = await human.createInvite({ device_role: 'agent', session_id, takeover: true })
       const no = await joinCli(wrong.link, async code => {
         await until('the app waits for the code', () => human.model.invites.get(wrong.invite_id).invite_state === 'confirm_code')
-        await human.confirmInvite(wrong.invite_id, String((Number(code) + 1) % 1000000).padStart(6, '0')).catch(() => {})
+        await human.confirmInvite(wrong.invite_id, false).catch(() => {})
       })
       assert.notEqual(no.code, 0)
       assert.match(no.err, /joining with a new key, the old one stays/)

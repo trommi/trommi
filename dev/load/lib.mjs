@@ -159,14 +159,14 @@ export async function addAgent(inviter, { dir, name, label = null }) {
   return { client: c, storage }
 }
 
-/** Add a human member through a real human invite with the six-digit check code. */
+/** Add a human member through a real human invite with the check code (compared as emoji). */
 export async function addHuman(inviter, { dir, name }) {
   const storage = await leanStorage(dir, { persist: true })
   const inv = await inviter.createInvite({ device_role: 'human' })
   const j = joinRoom({ link: inv.link, storage, device_name: name, poll_ms: 100, fetch: NET.fetch })
   const code = await j.check_code
   await until(() => inviter.model.invites.get(inv.invite_id)?.invite_state === 'confirm_code', 'inviter waits for the code')
-  await inviter.confirmInvite(inv.invite_id, code)
+  await inviter.confirmInvite(inv.invite_id, inviter.model.invites.get(inv.invite_id).check_code === code)   // the human compares the emoji
   const c = await j.client
   return { client: c, storage }
 }

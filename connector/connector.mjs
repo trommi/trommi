@@ -1023,7 +1023,11 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
       let client
       try {
         const j = core.joinRoom({ link: String(link).trim(), device_name: '', device_info, storage, client: CLIENT })
-        j.check_code.then(code => log(`invite answered: check code ${code.slice(0, 3)} ${code.slice(3)} (if the Trommi app asks which number this session shows, it is this one); waiting for the app to add this session`)).catch(() => {})
+        // The check code as emoji with their words (a terminal may draw emoji badly); the app shows the same six.
+        j.check_code.then(code => {
+          log(`invite answered: check code ${core.checkEmoji(code).map(e => e.emoji).join('  ')}  (${core.checkEmoji(code).map(e => e.word).join(', ')})`)
+          log('if the Trommi app shows six emoji: the same six in the same order? Tap "They match" there; if not, "They don\'t match". Waiting for the app to add this session')
+        }).catch(() => {})
         client = await j.client
       } catch (err) {
         // Not added (not confirmed, run out, used): the key this session had is the one it keeps.
