@@ -362,7 +362,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-sheet .doodle { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .tc-sheet .sketch { width: 18px; height: 18px; stroke-width: 2.2; }
 .tc-sheet.is-done { color: var(--stamp-ink-done); border-color: var(--stamp-ink-done); rotate: -3deg; }
-/* read: the tick on the accent, as on Acknowledge; shredded: the shredder; What??: the written word; put off: Later's tag */
+/* read: the tick on the accent, as on Got it; shredded: the shredder; What??: the written word; put off: Later's tag */
 .tc-read { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--accent-fg, #fff); }
 .tc-read .sketch { width: 18px; height: 18px; stroke-width: 2.2; }
 .tc-deed.is-shred .tc-deed-thing { color: var(--urg-high); }

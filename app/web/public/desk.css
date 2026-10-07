@@ -164,7 +164,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .inbox-answer small { font: 500 var(--t-xs)/1.2 var(--font); opacity: .8; }
 .inbox-answer.is-wide[aria-expanded="true"] .sketch { opacity: .5; }
 .inbox-answer.is-lead { background: var(--tone-pen); color: var(--surface); }
-/* An info card: "What??" and "Acknowledge" stand where the answers do; in the byline a small page says it is to read. */
+/* An info card: "What??" and "Got it" stand where the answers do; in the byline a small page says it is to read. */
 .inbox-toread { color: var(--tone-mid); }
 @media (any-hover: hover) {
   .inbox-answer:hover { box-shadow: inset 0 0 0 2px var(--tone-pen); }
@@ -826,10 +826,9 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   .inbox-groups .inbox-row .inbox-answer, .inbox-groups .inbox-row .inbox-answer.is-wide { flex: none; width: 76px; min-width: 0; height: 76px; min-height: 0; grid-auto-flow: row; grid-template-columns: minmax(0, auto); justify-items: center; align-content: center; gap: 4px; padding: 4px; }
   .inbox-groups .inbox-row .inbox-answer .sketch { width: 26px !important; height: 26px !important; }
   .inbox-groups .inbox-row .inbox-answer > span:last-child:not(.inbox-disc) { position: static !important; width: auto !important; height: auto !important; clip-path: none !important; overflow: hidden !important; max-width: 100%; text-align: center !important; font-size: .7rem; line-height: 1.1; white-space: nowrap; text-overflow: ellipsis; }
-  /* (What?? written large enough to read: the 26px of the other tiles' drawings shrank it to a speck; and the one long word, Acknowledge, whole) */
+  /* (What?? written large enough to read: the 26px of the other tiles' drawings shrank it to a speck) */
   .inbox-groups .inbox-row .inbox-answer.is-what .sketch-what { width: 56px !important; height: 20px !important; }
   .inbox-groups .inbox-row .inbox-answer.is-ack { padding-inline: 2px; }
-  .inbox-groups .inbox-row .inbox-answer.is-ack > span:last-child:not(.inbox-disc) { font-size: .64rem; letter-spacing: -.015em; }
   .inbox-groups .inbox-row .inbox-content { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
   .inbox-groups .inbox-row .inbox-content > .inbox-byline { display: none !important; }
   .inbox-groups .inbox-row .inbox-content > .inbox-fan { order: 2; }
@@ -1177,7 +1176,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 
 /* ---- A phone's Desk row, his pick "under" (7 October): the title gets the whole width (two lines at most), the teaser
    two lines under it, then the answers as one row of wide tiles a thumb's size (50px), the drawing and the words side
-   by side. The pictures' fan stays on the card. "Acknowledge" reads "Got it" here. ---- */
+   by side. The pictures' fan stays on the card. ---- */
 @media (max-width: 860px) {
   html body :is(#inbox, #session) .inbox-groups .inbox-row { display: grid; grid-template-columns: minmax(0, 1fr) !important; row-gap: 12px; align-items: start; padding: 14px 12px 12px; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row > .inbox-content { grid-column: 1 !important; grid-row: 1 !important; display: flex; align-items: flex-start; gap: 10px; }
@@ -1191,8 +1190,6 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer .sketch { width: 22px !important; height: 22px !important; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer > span:last-child:not(.inbox-disc) { font-size: var(--t-sm); white-space: nowrap; }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-what .sketch-what { width: 62px !important; height: 22px !important; }
-  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-ack > span:last-child:not(.inbox-disc) { font-size: 0; letter-spacing: 0; }
-  html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-ack > span:last-child:not(.inbox-disc)::after { content: "Got it"; font-size: var(--t-sm); }
   html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-stacked { grid-auto-flow: column; }
 }
 
