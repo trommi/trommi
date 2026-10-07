@@ -35,7 +35,7 @@ function galleryMain(model, base, opts = {}) {
   const kind = opts.kind === 'html' ? 'file' : KIND[opts.kind] ? opts.kind : '', from = opts.from ?? ''
   const items = all.filter(i => (!kind || kindOf2(i) === kind) && (!from || i.agent.id === from))
   return html`<main id="gallery" class="gal-page" aria-label="Media"><div class="gal-column">
-<header class="gal-head"><h2>Media</h2>${all.length ? filters(kind, from, `${base}/assets`) : html`<p>Nothing yet: pictures, videos, pages and files your agents send show up here.</p>`}</header>
+<header class="gal-head page-head"><h2>Media</h2><p>${all.length ? 'Every picture, video and page your agents sent.' : 'Nothing yet: pictures, videos, pages and files your agents send show up here.'}</p></header>${all.length ? filters(kind, from, `${base}/assets`) : ''}
 ${items.length ? html`<div class="gal-grid">${items.map(tile)}</div>` : all.length ? html`<p class="gal-none">Nothing of this kind${from ? ' from this session' : ''}.</p>` : ''}
 </div></main>`
 }
@@ -85,7 +85,7 @@ const linksList = (model, base) => { const all = linkItems(model, base); return 
 function linksMain(model, base) {
   const n = linkItems(model, base).length
   return html`<main id="gallery" class="gal-page lk-page" aria-label="Links"><div class="gal-column lk-column">
-<header class="gal-head"><h2>Links</h2><p>${n ? 'Every link and page your agents gave, the newest first.' : 'Nothing yet: links and pages your agents give show up here.'}</p></header>
+<header class="gal-head page-head"><h2>Links</h2><p>${n ? 'Every link and page your agents gave, the newest first.' : 'Nothing yet: links and pages your agents give show up here.'}</p></header>
 ${linksList(model, base)}
 </div></main>`
 }

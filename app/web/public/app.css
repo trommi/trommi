@@ -802,6 +802,14 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
 /* ---- A phone names the page once: the top line says it (Agents, Devices, Settings, Media, Links), so the page's own
    big heading is left out there; the tabs and the line under the heading stay ---- */
 @media (max-width: 860px) {
-  #ledger .ledger-head h2, .room-paged .room-head, .gal-head > h2 { display: none; }
+  #ledger .ledger-head h2, .room-paged .room-head h2, .gal-head > h2 { display: none; }
   #ledger .ledger-head { margin-top: 0; }
 }
+
+/* ---- One calm page head (his pick "plain", 7 October): Media, Links, Agents, Devices, Settings, Log out and the invite
+   pages: the title large in the display face, one grey line under it (never beside it), on the page's column ---- */
+.page-head.page-head, body > main#room:not(.room-paged) > .room-head { display: block; margin: 0 0 var(--s-6); }
+.page-head h2, body > main#room:not(.room-paged) > .room-head h2 { margin: 0; font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
+.page-head p { margin: 6px 0 0; font: 400 var(--t-lg)/1.4 var(--font); color: var(--muted); }
+body > main#room:not(.room-paged) > .room-head .room-bell { display: none; }
+@media (max-width: 860px) { .page-head p { font-size: var(--t-md); margin-top: 0; } .page-head.page-head { margin-bottom: var(--s-4); } body > main#room:not(.room-paged) > .room-head h2 { display: none; } }
