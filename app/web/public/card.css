@@ -313,6 +313,17 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-feed a.tc-older { justify-self: center; display: inline-flex; align-items: center; min-height: 32px; padding: 0 14px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font: 500 var(--t-sm)/1 var(--font); text-decoration: none; }
 .tc-feed a.tc-older:hover { color: var(--fg); }
 .tc-turn-before { color: var(--accent); font: 600 var(--t-xs)/1 var(--font); }
+.tc-turn-before > summary { cursor: pointer; width: fit-content; padding: 4px 0; list-style: none; }
+.tc-turn-before > summary::-webkit-details-marker { display: none; }
+.tc-turn-before > summary::after { content: " ▸"; }
+.tc-turn-before[open] > summary::after { content: " ▾"; }
+/* the version before, opened in place: read-only, quieter than the card that stands now */
+.tc-was { display: grid; gap: var(--s-3); max-width: 74ch; margin-top: 6px; padding: 14px 16px; border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line); background: color-mix(in srgb, var(--surface) 55%, transparent); color: var(--fg); font: 400 var(--t-md)/1.6 var(--font); }
+.tc-was > * { margin: 0; }
+.tc-was-title { font: 650 var(--t-md)/1.35 var(--font); }
+.tc-was .shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 220px)); gap: var(--s-2); }
+.tc-was .shots img { display: block; width: 100%; height: auto; border-radius: var(--r-sm); box-shadow: inset 0 0 0 1px var(--line); }
+.tc-feed .tc-was-open { justify-self: start; font: 600 var(--t-xs)/1 var(--font); }
 /* ---- what was done with the card (card.mjs cardThread, deed): each act lies in the talk as the small thing the app
    draws for it, at its moment: the thing where a message has its who, beside it one quiet line (what, when), under it
    what was written along. Markers between the messages, never cards. Taken back: the same thing again, faded. ---- */

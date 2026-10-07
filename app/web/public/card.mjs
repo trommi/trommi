@@ -301,7 +301,8 @@ function cardThread(card, model, base = '', { more = false } = {}) {
         if (asked) items[askedAt].brought = m.version
         askedAt = -1
         const before = m.version > 1 && versionOf(card, m.version - 1)
-        const more = before ? html`<a class="tc-turn-before" data-nav href="${cardPath(card, base)}?v=${m.version - 1}">See version ${m.version - 1}</a>` : ''
+        // The version before stays readable here, as the talk does: it opens in place (title, text, options, pictures).
+        const more = before ? html`<details class="tc-turn-before"><summary>See version ${before.n}</summary><div class="tc-was"><b class="tc-was-title">${before.title || card.title}</b>${textOf(before) ? words(fitText(textOf(before)).shown) : ''}${before.options?.length ? html`<div class="tc-opts">${before.options.map(o => still(o.label, plain(o.detail)))}</div>` : ''}${shots(before.attachments)}${files(before.attachments)}<a class="tc-was-open" data-nav href="${cardPath(card, base)}?v=${before.n}">Open version ${before.n} as it was</a></div></details>` : ''
         items.push({ turn: m.version, html: html`<div class="tc-turn" id="turn-${m.id}" data-version="${m.version}">${deed(sheet(html`<b>${m.version}</b>`, 'is-again'), html`<b>Version ${m.version}${asked ? ', as you asked' : ''}</b>`, m.ts, { said: [note], more })}</div>` })
       } else if (m.kind === 'handback_withdrawn') items.push({ html: deed(uno, 'You took it back', m.ts, { cls: 'is-undone' }) })
       else if (m.kind === 'decided') items.push({ html: answered(m) })
