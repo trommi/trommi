@@ -1596,18 +1596,26 @@ export class Client {
     return bytes
   }
   /**
-   * A link for someone outside the room (the uploader shares its own attachment): `<app>/a/<share_id>#<secret>.<file_key>.<sha256>`.
-   * The hub stores only SHA-256(secret); everything after # stays in the browser. expires_at: ms, at most 30 days ahead.
+   * A link for someone outside the room (an agent shares its own attachment, a human device any of the room):
+   * `<app>/a/<share_id>#<secret>.<file_key>.<sha256>`. The hub stores only SHA-256(secret); everything after # stays
+   * in the browser. expires_at: ms, at most 30 days ahead. keep_link: the link itself is kept in this device's storage
+   * (the app's Links page copies it again later; storage holds the device key and the room's file keys already).
    */
-  async shareAttachment(ref, { expires_at = Date.now() + 30 * 86400_000 - 60_000, app_url = 'https://app.trommi.com' } = {}) {
+  async shareAttachment(ref, { expires_at = Date.now() + 30 * 86400_000 - 60_000, app_url = 'https://app.trommi.com', keep_link = false } = {}) {
     const secret = globalThis.crypto.getRandomValues(new Uint8Array(32))
     const share_id = randomHex(16)
     const r = await this.hub.postShare(ref.attachment_id, { share_id, share_secret_hash: b64u(await z.sha256(secret)), expires_at })
+    const link = shareLink(app_url, share_id, secret, ref)
     const shares = (await this.storage.get('shares')) ?? {}
-    shares[share_id] = { attachment_id: ref.attachment_id, expires_at: r.expires_at ?? expires_at }
+    shares[share_id] = { attachment_id: ref.attachment_id, expires_at: r.expires_at ?? expires_at, ...(keep_link ? { link, created_at: Date.now() } : {}) }
     for (const [id, x] of Object.entries(shares)) if (x.expires_at < Date.now()) delete shares[id]
     await this.storage.set('shares', shares)
-    return { share_id, link: shareLink(app_url, share_id, secret, ref), expires_at: r.expires_at ?? expires_at }
+    return { share_id, link, expires_at: r.expires_at ?? expires_at }
+  }
+  /** The open shares this device made: [{ share_id, attachment_id, expires_at, link? }] (link only when kept), newest first. */
+  async myShares() {
+    const shares = (await this.storage.get('shares')) ?? {}
+    return Object.entries(shares).filter(([, x]) => x.expires_at > Date.now()).map(([share_id, x]) => ({ share_id, ...x })).sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))
   }
   /** End a share link. attachment_id is looked up from this device's own shares (pass it when another device made the share). */
   async revokeShare(share_id, { attachment_id = null } = {}) {
