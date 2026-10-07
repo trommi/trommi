@@ -1162,6 +1162,58 @@ test('the recovery key reads envelopes in the pruned form (for the cuts of a rec
   await w.hub.close()
 })
 
+
+test('night: an aborted catch-up stops reading the database; an aborted or unreadable download never leaks a file or crashes the hub', async () => {
+  const w = await world()
+  // A long room cheaply: one real envelope, copied 6,400 times in SQL (the stream serves rows, it does not verify them).
+  await posted(w, w.agent)
+  const db = w.hub.db
+  db.exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 6400)
+    INSERT INTO envelopes SELECT room_id, envelope_number + i, sender_device_id, sender_sequence + i, previous_envelope_hash, envelope_hash, key_epoch, recipient_device_id,
+      object_id, object_state, urgency, answered_at, envelope_kind, timeline_kind, timeline_id, send_push, attachment_ids, padded_size, sent_at, received_at,
+      envelope_header, envelope_nonce, encrypted_body, encrypted_body_hash, envelope_signature, void_code FROM envelopes, n WHERE room_id = '${w.roomId}'`)
+  const before = w.hub.stats.catchUpSlices
+  const got = await new Promise((resolve, reject) => {
+    const req = http.request(`${w.base}${R(w)}/stream?after_envelope_number=0`, { headers: { authorization: `Bearer ${w.phone.token}`, 'cf-connecting-ip': w.ip } }, res => {
+      res.once('data', () => { req.destroy(); resolve(true) })
+    })
+    req.on('error', () => {}); req.end()
+  })
+  assert.ok(got)
+  await sleep(300)
+  const after = w.hub.stats.catchUpSlices
+  await sleep(300)
+  assert.equal(w.hub.stats.catchUpSlices, after, 'an aborted catch-up reads no more slices')
+  assert.ok(after - before < 6400 / 64, `an aborted catch-up stops early: ${after - before} slices`)
+
+  // Downloads: a client that goes away mid-file leaves no open file behind.
+  const blob = crypto.randomBytes(8 << 20)
+  const id = 'ab'.repeat(16)
+  const put = await fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${w.phone.token}`, 'cf-connecting-ip': w.ip }, body: blob })
+  assert.equal(put.status, 201)
+  const file = path.join(w.dir, 'attachments', w.roomId, id)
+  const openFds = () => { try { return fs.readdirSync('/proc/self/fd').filter(fd => { try { return fs.readlinkSync(`/proc/self/fd/${fd}`) === file } catch { return false } }).length } catch { return 0 } }
+  for (let i = 0; i < 3; i++) {
+    await new Promise(resolve => {
+      const req = http.request(`${w.base}${R(w)}/attachments/${id}`, { headers: { authorization: `Bearer ${w.phone.token}`, 'cf-connecting-ip': w.ip } }, res => { res.once('data', () => { req.destroy(); resolve() }) })
+      req.on('error', () => {}); req.end()
+    })
+  }
+  for (const end = Date.now() + 3000; openFds() && Date.now() < end;) await sleep(50)
+  assert.equal(openFds(), 0, 'aborted downloads closed their files')
+  // A stored file the hub cannot read (gone, unreadable) is an answer, not a crash.
+  if (process.getuid?.() !== 0) {
+    fs.chmodSync(file, 0)
+    const r = await api(w, 'GET', `${R(w)}/attachments/${id}`, { token: w.phone.token })
+    assert.ok(r.status >= 400, `unreadable file: ${r.status}`)
+    fs.chmodSync(file, 0o600)
+  }
+  fs.rmSync(file)
+  await refused(w, 'GET', `${R(w)}/attachments/${id}`, { token: w.phone.token }, 404, 'not-found')
+  assert.equal((await api(w, 'GET', '/healthz')).status, 200)
+  await w.hub.close()
+})
+
 let failed = 0
 const t0 = performance.now()
 const notes = []

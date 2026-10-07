@@ -45,6 +45,19 @@ export function fileStore(dir) {
     },
     /** A readable stream of bytes start..end (inclusive), or of the whole file. */
     get: (roomId, id, { start, end } = {}) => fs.createReadStream(fileOf(dir, roomId, id), { start, end }),
+    /**
+     * Open for serving: { size, read({ start, end }) -> readable that owns the file and closes it, close() } or null
+     * if there is no such file. Opened before the answer starts, so a file deleted or unreadable in between is a 404
+     * or a refusal, never an 'error' event nobody listens to. Call read() once, or close().
+     */
+    open(roomId, id) {
+      let fd
+      try { fd = fs.openSync(fileOf(dir, roomId, id), 'r') } catch (err) { if (err.code === 'ENOENT') return null; throw err }
+      try {
+        const size = fs.fstatSync(fd).size
+        return { size, read: ({ start, end } = {}) => fs.createReadStream(null, { fd, start, end, autoClose: true }), close: () => fs.closeSync(fd) }
+      } catch (err) { fs.closeSync(fd); throw err }
+    },
     /** Size in bytes, or null if there is no such attachment. */
     size(roomId, id) {
       try { return fs.statSync(fileOf(dir, roomId, id)).size } catch { return null }

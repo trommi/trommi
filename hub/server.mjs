@@ -8,6 +8,7 @@
 // HUB_PUSH_HOSTS, HUB_PUSH_SUBJECT, HUB_TRUST_CF (1: trust cf-connecting-ip, only from a loopback or private peer,
 // i.e. cloudflared on this machine or through Docker's port proxy; off by default).
 import http from 'node:http'
+import { pipeline } from 'node:stream/promises'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -99,7 +100,7 @@ export async function startHub({
   const envelopeLimit = buckets(LIMITS.envelopesPerSecond, LIMITS.envelopeBurst, now)
   const pushLimit = buckets(10 / 60, 10, now)
   const openLimit = buckets(LIMITS.openRequestsPerIpMinute / 60, LIMITS.openRequestsPerIpMinute, now)
-  const stats = { roomLoads: [] }
+  const stats = { roomLoads: [], catchUpSlices: 0 }
 
   // ---- rooms, loaded on first use --------------------------------------------------
 
@@ -129,7 +130,7 @@ export async function startHub({
 
   const sse = (event, data, id) => `${id != null ? `id: ${id}\n` : ''}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
   function deliver(r, chunk, filter = () => true) {
-    for (const s of r.streams) if (!s.res.writableEnded && filter(s)) ops.send(s, chunk)
+    for (const s of r.streams) if (!s.res.writableEnded && !s.res.destroyed && filter(s)) ops.send(s, chunk)
   }
   const deviceStreams = (r, deviceId) => [...r.streams].filter(s => s.deviceId === deviceId)
   function closeStreams(r, ids, which = () => true) {
@@ -394,14 +395,16 @@ export async function startHub({
     res.on('error', () => {})
     const ping = setInterval(() => { if (!res.writableEnded) res.write(sse('ping', {})) }, pingMs)
     // An agent's lease lives while it has a stream open, and 60 s after the last one closed.
-    const lease = me.role === 'agent' ? setInterval(() => r.hub.touchLease(me.id), 20000) : null
-    if (lease) r.hub.touchLease(me.id)
+    // A timer and the close handler call this: a throw there would be an uncaught exception and take the hub down.
+    const touch = () => { try { r.hub.touchLease(me.id) } catch (err) { log(`lease touch: ${err.message}`) } }
+    const lease = me.role === 'agent' ? setInterval(touch, 20000) : null
+    if (lease) touch()
     r.offlineSince.delete(me.id)
     if (deviceStreams(r, me.id).length === 1) streamOpened(r, me.id)
     const done = () => {
       clearInterval(ping); if (lease) clearInterval(lease)
       if (!r.streams.delete(s)) return
-      if (me.role === 'agent') r.hub.touchLease(me.id)
+      if (me.role === 'agent') touch()
       if (deviceStreams(r, me.id).length) return
       r.offlineSince.set(me.id, now())
       streamsGone(r, me.id)
@@ -410,17 +413,22 @@ export async function startHub({
     res.write(': trommi hub\n\n')
     // Catch-up first (the depth rule of GET envelopes), then whatever arrived meanwhile, then live.
     let sent = after
+    // A stream is over when the hub ended it or when it was destroyed (the client went away, a buffer cap dropped it):
+    // writableEnded alone stays false after a destroy, and the catch-up would read the whole room for nobody.
+    const over = () => res.writableEnded || res.destroyed
     // In small slices: read a few rows, write them, and wait until the socket took them before reading more,
     // so a thousand slow clients catching up from 0 hold kilobytes each, not megabytes.
-    while (!res.writableEnded) {
+    while (!over()) {
       const rows = envelopeRows(r.id, sent, CATCH_UP_SLICE)
-      for (const row of rows) if (!res.writableEnded) res.write(sse('envelope', record(row), row.envelope_number))
+      stats.catchUpSlices++
+      for (const row of rows) if (!over()) res.write(sse('envelope', record(row), row.envelope_number))
       if (rows.length) sent = rows.at(-1).envelope_number
-      if (rows.length < CATCH_UP_SLICE) break
-      if (res.writableLength > CATCH_UP_HIGH_WATER) await new Promise(ok => res.once('drain', ok).once('close', ok))
+      if (rows.length < CATCH_UP_SLICE || over()) break
+      // Both listeners go once either fires: a long catch-up must not pile up 'close' listeners on the response.
+      if (res.writableLength > CATCH_UP_HIGH_WATER) await new Promise(ok => { const go = () => { res.off('drain', go); res.off('close', go); ok() }; res.on('drain', go); res.on('close', go) })
       else await new Promise(ok => setImmediate(ok))      // let live traffic and other streams in between slices
     }
-    if (res.writableEnded) return
+    if (over()) return
     for (const c of s.pending) if (c.n == null || c.n > sent) res.write(c.text)
     s.pending = []
     s.catchingUp = false
@@ -509,29 +517,35 @@ export async function startHub({
   }
 
   function serveFile(req, res, roomId, attachmentId, { cacheable = true } = {}) {
-    const size = db.q('SELECT 1 FROM attachments WHERE room_id = ? AND attachment_id = ?').get(roomId, attachmentId) ? files.size(roomId, attachmentId) : null
-    if (size == null) fail('not-found', 'no such attachment')
-    const r = { id: roomId }
-    const headers = { 'content-type': 'application/octet-stream', 'accept-ranges': 'bytes', 'cache-control': cacheable ? 'private, max-age=31536000, immutable' : 'private, no-store' }
-    const range = req.headers.range
-    if (range) {
-      const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
-      let start, end
-      if (m && m[1] !== '') { start = Number(m[1]); end = m[2] !== '' ? Math.min(Number(m[2]), size - 1) : size - 1 }
-      else if (m && m[2] !== '') { start = Math.max(0, size - Number(m[2])); end = size - 1 }
-      if (!m || start > end || start >= size) {
-        res.writeHead(416, { 'content-range': `bytes */${size}`, 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'bad-argument', message: 'range not satisfiable' }))
-        return
+    // Opened before the answer starts (a file evicted or pruned meanwhile is a 404, an unreadable one a 500, never an
+    // unhandled stream error), and piped with pipeline(): a client that goes away mid-file closes the file too.
+    const f = db.q('SELECT 1 FROM attachments WHERE room_id = ? AND attachment_id = ?').get(roomId, attachmentId) ? files.open(roomId, attachmentId) : null
+    if (!f) fail('not-found', 'no such attachment')
+    let body = null
+    try {
+      const size = f.size
+      const headers = { 'content-type': 'application/octet-stream', 'accept-ranges': 'bytes', 'cache-control': cacheable ? 'private, max-age=31536000, immutable' : 'private, no-store' }
+      const range = req.headers.range
+      if (range) {
+        const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
+        let start, end
+        if (m && m[1] !== '') { start = Number(m[1]); end = m[2] !== '' ? Math.min(Number(m[2]), size - 1) : size - 1 }
+        else if (m && m[2] !== '') { start = Math.max(0, size - Number(m[2])); end = size - 1 }
+        if (!m || start > end || start >= size) {
+          res.writeHead(416, { 'content-range': `bytes */${size}`, 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: 'bad-argument', message: 'range not satisfiable' }))
+          return
+        }
+        res.writeHead(206, { ...headers, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1 })
+        if (req.method === 'HEAD') return res.end()
+        body = f.read({ start, end })
+      } else {
+        res.writeHead(200, { ...headers, 'content-length': size })
+        if (req.method === 'HEAD') return res.end()
+        body = f.read()
       }
-      res.writeHead(206, { ...headers, 'content-range': `bytes ${start}-${end}/${size}`, 'content-length': end - start + 1 })
-      if (req.method === 'HEAD') return res.end()
-      files.get(r.id, attachmentId, { start, end }).pipe(res)
-      return
-    }
-    res.writeHead(200, { ...headers, 'content-length': size })
-    if (req.method === 'HEAD') return res.end()
-    files.get(r.id, attachmentId).pipe(res)
+    } finally { if (!body) f.close() }
+    pipeline(body, res).catch(() => {})
   }
 
   async function roomRoute(req, res, url, roomId, rest) {
