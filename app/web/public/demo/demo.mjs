@@ -285,6 +285,7 @@ function putAway(f) {
     else if (how === 'revise') c.in_revision = { by: 'hand_back', envelope_number: n }
     else if (how === 'answer') Object.assign(c, { answer: answer('answer'), object_state: 'answered', closed_how: 'answered' })
     else if (how === 'shred') Object.assign(c, { answer: answer('shred'), object_state: 'closed', closed_how: 'shredded' })
+    else if (how?.done) Object.assign(c, { answer: answer('answer'), object_state: 'closed', closed_how: 'closed', close_summary: how.done, updated_at: at })   // finished by its agent: a Done row
     if (c.answer) c.answers = [c.answer]
     f.cards.push(c)
   }
@@ -293,6 +294,8 @@ function putAway(f) {
   mk('Delete the old test data?', cr, 35, 'shred')
   mk('Icon set: our own strokes or Lucide?', ui, 52, 'revise')
   mk('Backup at 3 at night?', zu, 95, 'snooze')
+  mk('Ship the new invite page?', ui, 9, { done: 'Live: the invite page is on app.trommi.com, old links redirect.' })
+  mk('Rotate the push keys tonight?', cr, 26, { done: 'Done: keys rotated on all 3 devices, no notification lost.' })
   return f
 }
 
