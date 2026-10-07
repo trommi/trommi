@@ -181,6 +181,15 @@ class MockClient {
     return { attachment_id: hex(32), file_key: '', sha256: '', total_size: blob.size, ...meta, url: URL.createObjectURL(blob) }
   }
   async attachmentBlob(ref) { return (await fetch(ref.url)).blob() }
+  // Share links (the Links page): kept in this tab, the form of the real link (the mock has no keys: stand-ins).
+  async shareAttachment(ref, { expires_at = Date.now() + 30 * 86400000 - 60000, app_url = location.origin, keep_link = false } = {}) {
+    const b64 = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    const share_id = hex(32), link = `${app_url}/a/${share_id}#${b64()}.${ref.file_key || b64()}.${ref.sha256 || b64()}`
+    ;(this.shares ??= new Map()).set(share_id, { attachment_id: ref.attachment_id, expires_at, ...(keep_link ? { link, created_at: Date.now() } : {}) })
+    return { share_id, link, expires_at }
+  }
+  async revokeShare(share_id) { this.shares?.delete(share_id) }
+  async myShares() { return [...(this.shares ?? new Map())].filter(([, x]) => x.expires_at > Date.now()).map(([share_id, x]) => ({ share_id, ...x })).sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0)) }
   async fetchAttachment(ref) { return new Uint8Array(await (await this.attachmentBlob(ref)).arrayBuffer()) }
 
   // ---- membership (mock: an invite that is joined by a pretend phone after a moment) ----
@@ -650,9 +659,31 @@ async function loadFixture(kind) {
   if (kind === 'crazy') return crazyFixture()
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
   if (kind === 'quiet') return quietDesk(structuredClone(fixtureCache))
-  const f = overloaded(filler(putAway(structuredClone(fixtureCache))))
+  const f = webLinks(overloaded(filler(putAway(structuredClone(fixtureCache)))))
   if (kind === 'many') return manyHelpers(crowded(f))
   return kind === 'side' ? crowded(f) : kind === 'link' ? linkDemo(f) : f
+}
+
+// Web links the agents gave (the Desk's Links pile, the page /links): addresses in a card's words and in the
+// sessions' chat, a page behind a picture; the published pages of the fixture come along by themselves.
+function webLinks(f) {
+  const now = Date.now(), MIN = 60e3
+  const dev = id => f.sessions.find(s => s.agent_session_id === id)?.agent_device_id
+  const db = f.cards.find(c => c.title === 'Which database?')
+  if (db) db.body = `${db.body}\n\nCompare [SQLite: when to use it](https://sqlite.org/whentouse.html) and the [Postgres docs](https://www.postgresql.org/docs/current/).`
+  const pic = f.cards.find(c => c.attachments?.some(a => a.page))
+  if (pic) pic.attachments = pic.attachments.map((a, i) => (i === 0 && a.page ? { ...a, page: 'https://preview.trommi.dev/designs/desk-variant-a.html' } : a))
+  let n = f.room.last_envelope_number
+  const say = (id, text, ago) => {
+    const d = dev(id); if (!d) return
+    const key = `chat:session/${d}`
+    ;(f.timelines[key] ??= []).push({ envelope_number: ++n, local_id: null, pending: false, envelope_hash: hex(64), sender_device_id: d, recipient_device_id: null, sent_at: now - ago * MIN, item_state: 'loaded', content_type: 'message', content: { text, attachments: [] } })
+  }
+  say('trommi', 'The preview is up: https://preview.trommi.dev/desk and the CI run is green: https://github.com/trommi/trommi/actions/runs/18234455', 14)
+  say('crypto', 'For the key derivation I followed [RFC 5869 (HKDF)](https://www.rfc-editor.org/rfc/rfc5869) and the libsodium notes at https://doc.libsodium.org/key_derivation.', 52)
+  say('trommi-docs', 'Draft of the help page, as published: https://help.trommi.com/start. Style guide I used: https://developers.google.com/style', 95)
+  f.room.last_envelope_number = n
+  return f
 }
 
 // ?mock=link: one session in each state of its link (app.mjs linkOf), and receipts. UI hears on its next step and is at
