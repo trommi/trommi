@@ -1574,7 +1574,7 @@ async function start(client, { fresh = false } = {}) {
   const load = (key, limit) => { if (opened.has(key)) return; opened.add(key); client.loadTimeline(key, { limit }).catch(err => console.warn('timeline', err)) }
   const loadOpen = () => {
     const path = location.pathname
-    const q = /^\/(?:s\/[^/]+\/)?[qc]\/([\w-]+)/.exec(path)
+    const q = /^\/(?:s\/[^/]+\/)?(?:card|q|c)\/([\w-]+)/.exec(path)
     if (q) { const card = model().cardByRef(decodeURIComponent(q[1])); if (card) load(`chat:card/${card.id}`, 50) }
     if (path === '/') for (const c of model().revising ?? []) load(`chat:card/${c.id}`, 5)
   }

@@ -159,7 +159,7 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 
 const OPEN_MAX = 200   // an open stack (?pile=) or a search shows at most so many; the rest are found by searching
 const STACKS = ['off']
-const cardPath = (card, base) => `${base}/q/${encodeURIComponent(card.number ?? card.id)}`
+const cardPath = (card, base) => `${base}/card/${encodeURIComponent(card.number ?? card.id)}`
 const answeredBy = c => (c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && Boolean(c.read))
 
 /** The place a card lies at the foot of the Desk: 'later' | 'works' | 'done' | 'trash', or null (it is an open row, or never listed). */

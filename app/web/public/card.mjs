@@ -123,7 +123,7 @@ function cardMedia(card, base, at = 1, query = '') {
   const step = (n, cls, label, d) => (all.length > 1 ? html`<a class="tc-step ${cls}" data-nav href="${to(n)}" data-turbo-action="replace" aria-label="${label}">${icon(d)}</a>` : '')
   const shown = video
     ? html`<figure class="tc-video"><video src="${a.url}#t=0.001" controls playsinline preload="metadata" aria-label="Video ${i} of ${all.length}: ${a.name}"></video></figure>`
-    : html`<a class="tc-figure" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="figure" data-at="${i}" title="Open it large" aria-label="Picture ${i} of ${images.length}: ${a.name}. Open it large"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt=""${srcOf(a)}${ownWidth(a)} decoding="async" draggable="false"></a>`
+    : html`<a class="tc-figure" data-nav href="${here}/picture/${i}" data-turbo-frame="_top" data-card-target="figure" data-at="${i}" title="Open it large" aria-label="Picture ${i} of ${images.length}: ${a.name}. Open it large"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt=""${srcOf(a)}${ownWidth(a)} decoding="async" draggable="false"></a>`
   return html`<turbo-frame id="card-media-${card.id}" class="tc-media">
 <div class="tc-stage${video ? ' is-video' : ''}" data-at="${i}">${shown}${step(i > 1 ? i - 1 : all.length, 'is-prev', 'The one before', ARROW_L)}${step(i < all.length ? i + 1 : 1, 'is-next', 'The next one', ARROW_R)}</div>
 ${all.length > 1 ? html`<div class="tc-thumbs">${strip(images, i, to)}${clips(videos, i, to, images.length)}</div>` : ''}
@@ -359,7 +359,7 @@ function placeOf(card, model) {
 }
 
 /** The whole <main> of a card's page. pic: which picture stands. walk: a step of "Next, please". version: as it was
- *  then. from: the session it was opened from (/s/<id>/q/<n>): the way back and the links lead there. */
+ *  then. from: the session it was opened from (/s/<id>/card/<n>): the way back and the links lead there. */
 function cardPage(card, model, base, { pic = 1, walk = false, error = '', version = null, from = null, more: older = false, full = false } = {}) {
   const old = versionOf(card, version)
   const open = card.status === 'open' && !card.with_agent && !old
@@ -405,7 +405,7 @@ ${pad}<div class="tc-frame">
 <nav class="tc-rails" aria-label="Around this question">
 <a class="tc-rail tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${CROSS}</a>
 ${place ? html`${step(place.prev, 'is-prev', 'The question before', BACK)}${step(place.next, 'is-next', 'The next question', FORTH)}` : ''}
-${media && full ? html`<a class="tc-rail tc-full is-leave" data-nav href="${cardPath(card, self)}?pic=${shownPic}" data-card-target="gallery" data-back data-turbo-action="replace" data-action="click->card#unfullscreen" title="Leave full screen · Esc" aria-label="Leave full screen">${FULL}</a>` : media ? html`<a class="tc-rail tc-full" data-nav href="${cardPath(card, self)}/p/${shownPic}" data-card-target="gallery" data-action="click->card#fullscreen" title="Full screen: ${fullWord}, large" aria-label="Full screen: open ${fullWord} large">${FULL}</a>` : ''}
+${media && full ? html`<a class="tc-rail tc-full is-leave" data-nav href="${cardPath(card, self)}?pic=${shownPic}" data-card-target="gallery" data-back data-turbo-action="replace" data-action="click->card#unfullscreen" title="Leave full screen · Esc" aria-label="Leave full screen">${FULL}</a>` : media ? html`<a class="tc-rail tc-full" data-nav href="${cardPath(card, self)}/picture/${shownPic}" data-card-target="gallery" data-action="click->card#fullscreen" title="Full screen: ${fullWord}, large" aria-label="Full screen: open ${fullWord} large">${FULL}</a>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-rail tc-more-open" title="More" aria-label="More for this question">${DOTS}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' && card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : ''}
 ${copyButton(card)}
@@ -877,7 +877,7 @@ controller('card', class extends Controller {
       if (pic.page) { this.pageTarget.href = pic.page.url; this.pageTarget.querySelector('b').textContent = pic.page.name }
     }
     // (the way to the gallery opens the picture that stands; the gallery's way back returns to it)
-    if (this.hasGalleryTarget) this.galleryTarget.href = 'back' in this.galleryTarget.dataset ? pic.href.replace(/\/p\/(\d+)$/, '?pic=$1') : pic.href
+    if (this.hasGalleryTarget) this.galleryTarget.href = 'back' in this.galleryTarget.dataset ? pic.href.replace(/\/picture\/(\d+)$/, '?pic=$1') : pic.href
     img.addEventListener('load', () => this.link(), { once: true })
     this.link()
   }
@@ -957,7 +957,7 @@ controller('card', class extends Controller {
   framed() {
     this.stood = null
     const at = this.element.querySelector('.tc-stage[data-at]')?.dataset.at
-    if (at && this.hasGalleryTarget) this.galleryTarget.href = this.galleryTarget.getAttribute('href').replace(/\/p\/\d+$/, `/p/${at}`)
+    if (at && this.hasGalleryTarget) this.galleryTarget.href = this.galleryTarget.getAttribute('href').replace(/\/picture\/\d+$/, `/picture/${at}`)
     this.link()
   }
 
@@ -1197,7 +1197,7 @@ export function register(t) {
       const text = err.message || 'the board did not take it'
       const m = model(), now = card && m.byCard.get(card.id)
       // (Sent from the card's own page, where no Desk row stands: what went wrong comes as a note.)
-      const onCard = /^\/(?:s\/[^/]+\/)?[qc]\/[\w-]+$/.test(new URL(String(req.headers.referer ?? '/'), location.origin).pathname)
+      const onCard = /^\/(?:s\/[^/]+\/)?card\/[\w-]+$/.test(new URL(String(req.headers.referer ?? '/'), location.origin).pathname)
       if (stay && onCard) return t.sendStream(req, res, t.toast({ head: what === 'message' ? 'Not sent' : 'Not saved', line: text, role: 'alert' }), 422)
       if (stay) return t.sendStream(req, res, now && m.fresh.includes(now) ? stream('replace', `row-${now.id}`, deskRow(now, m, BASE, { error: `Not saved: ${text}` })) : t.toast({ head: 'Not saved', line: text, role: 'alert' }))
       if (!now) return t.notFound(req, res, 'This question is not on the board any more.')
@@ -1238,7 +1238,9 @@ export function register(t) {
     // The comments are a timeline loaded newest page first; ?older=1 loads the page before, then the card is shown.
     const threadOf = card => `chat:card/${card.id}`
     const moreOf = card => card.kind !== 'permission' && Boolean(hub.hasMore?.(threadOf(card)))
-    t.get(/^\/(?:s\/([^/]+)\/)?[qc]\/([\w-]+)$/, async ({ req, res, url, match }) => {
+    // Old addresses (/q/<n>, /c/<n>, …/p/<m>) still open: they are moved to /card/<n>(/picture/<m>).
+    t.get(/^(\/s\/[^/]+)?\/[qc]\/([\w-]+)(?:\/p\/(\d+))?$/, ({ res, url, match: [, s, ref, at] }) => redirect(res, `${BASE}${s ?? ''}/card/${ref}${at ? `/picture/${at}` : ''}${url.search}`))
+    t.get(/^\/(?:s\/([^/]+)\/)?card\/([\w-]+)$/, async ({ req, res, url, match }) => {
       let m = model(), card = m.cardByRef(match[2])
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
       if (url.searchParams.has('older') && moreOf(card)) {
@@ -1247,7 +1249,7 @@ export function register(t) {
       }
       cardView(req, res, card, m, { more: moreOf(card), said: String(url.searchParams.get('said') ?? ''), pic: Number(url.searchParams.get('pic')) || 1, walk: url.searchParams.has('walk'), version: Number(url.searchParams.get('v')) || null, from: match[1] ? decodeURIComponent(match[1]) : null })
     })
-    t.get(/^\/(?:s\/([^/]+)\/)?[qc]\/([\w-]+)\/p\/(\d+)$/, ({ req, res, match: [, from, ref, at] }) => {
+    t.get(/^\/(?:s\/([^/]+)\/)?card\/([\w-]+)\/picture\/(\d+)$/, ({ req, res, match: [, from, ref, at] }) => {
       const m = model(), card = m.cardByRef(ref)
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
       if (!imagesOf(card).length && !videosOf(card).length) return redirect(res, cardPath(card, BASE))
