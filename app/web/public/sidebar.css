@@ -822,7 +822,6 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
   /* (a phone: the band is a slim strip over the top line; the page moves down by it) */
   :root.is-demo body[data-t-view="session"]:not([data-pair]) #session .pane-who { top: calc(22px + env(safe-area-inset-top, 0px)); }
   :root.is-demo body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-blocked > span { top: calc(70px + env(safe-area-inset-top, 0px)); }
-  :root.is-demo #says-host { margin-top: 22px; }
 }
 
 /* ---- The Trommi menu: the theme on a row of its own ("Light / dark", with how it stands at its end), Settings beside

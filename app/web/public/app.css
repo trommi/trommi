@@ -440,7 +440,6 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
 /* A phone has no free corner: while a note is up, the view gives it a strip at its lower edge
    (above the tab bar; the composer moves up with the view), so the note lies over nothing. */
 @media (max-width: 860px) {
-  body[data-says] main { margin-bottom: 72px; }
   .says-page .says { rotate: 0deg; max-width: calc(100vw - 16px); padding-block: 7px 11px; }
 }
 /* For a moment a new note lets taps through, so a second tap meant for the next answer cannot hit "Back". */
@@ -630,43 +629,45 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
   .say[data-say="loading"] { animation: none; }
 }
 
-/* ---- toast: one quiet pill at the top, in the middle of the page's main area (right of the sidebar), the same on every
-   page (ui.mjs); his word, 7 October: at the foot it lay on a card's field. "<what happened>: <of what>  ↶ Undo", the
-   newest on top, three at most; a scribbled line under it is the time left. It stands over everything, clear of the
-   page's dog-ear (the main area's top-right corner) and of a card's round buttons (they stand at its outer edges). ---- */
-#says-host { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); bottom: auto; left: var(--side, 0px); right: 0; z-index: 80; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-inline: 76px; pointer-events: none; }
+/* ---- toast: ONE slot, never a stack (his word, 7 October: "it is always placed oddly"). It stands where content never
+   is: the bottom-left corner of the main area, in the page's margin beside the sidebar, small: "<what happened> ·
+   ↶ Undo" over the title of what. The same action again merges into it ("Archived · 3", Undo takes back the last, the
+   titles in its tooltip); another action replaces it (ui.mjs controller "says"). A phone: a slim bar just above the
+   bottom safe area, the whole width; while it stands the corner note and a card's field step up over it. ---- */
+#says-host { position: fixed; z-index: 80; left: calc(var(--side, 0px) + 10px); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); top: auto; right: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; pointer-events: none; }
 #says-host > * { pointer-events: auto; }
-/* (under a page's own head, never over its greeting or heading) */
-body[data-t-view="desk"] #says-host { top: 100px; }
-body[data-t-view="session"] #says-host { top: 84px; }
-body:is([data-t-view="agents"], [data-t-view="room"], [data-t-view="settings"]) #says-host { top: 138px; }
-body:is([data-t-view="gallery"], [data-t-view="links"]) #says-host { top: 76px; }
-@media (max-width: 860px) {
-  body[data-t-view="desk"] #says-host { top: calc(180px + env(safe-area-inset-top, 0px)); }
-  body:is([data-t-view="agents"], [data-t-view="room"], [data-t-view="settings"]) #says-host { top: calc(108px + env(safe-area-inset-top, 0px)); }
-}
 #says-host:empty { display: none; }
 .says form { margin: 0; flex: none; }
 #says-host .says {
-  rotate: 0deg; max-width: min(440px, 100%); min-height: 40px; box-sizing: border-box; gap: 8px;
-  padding: 2px 4px 4px 16px; border-radius: 999px; background: var(--surface); color: var(--fg);
+  rotate: 0deg; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 2px; row-gap: 0; width: max-content; max-width: 172px; min-width: 140px; box-sizing: border-box;
+  padding: 4px 4px 8px 10px; border-radius: 12px; background: var(--surface); color: var(--fg);
   box-shadow: 0 0 0 1px var(--line), var(--shadow-md); animation: toast-in 200ms var(--ease-out);
 }
 #says-host .says[hidden] { display: none; }
-@keyframes toast-in { from { opacity: 0; translate: 0 -8px; } }
-#says-host .says-words { display: flex; align-items: baseline; gap: .35em; min-width: 0; padding-block: 6px; white-space: nowrap; }
-#says-host .says-words b { flex: none; font: 600 var(--t-sm)/1.3 var(--font); letter-spacing: 0; }
-#says-host .says-words b:not(:last-child)::after { content: ':'; }
-#says-host .says-words span { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 400 var(--t-sm)/1.3 var(--font); color: var(--muted); opacity: 1; }
+@keyframes toast-in { from { opacity: 0; translate: 0 8px; } }
+#says-host .says-words { display: contents; }
+#says-host .says-words b { grid-column: 1; grid-row: 1; }
+#says-host .says-words span { grid-column: 1 / -1; grid-row: 2; padding-right: 6px; }
+#says-host .says > form, #says-host .says > .says-go { grid-column: 2; grid-row: 1; }
+#says-host .says-words b { font: 600 var(--t-sm)/1.3 var(--font); letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#says-host .says-words span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--t-xs)/1.3 var(--font); color: var(--muted); opacity: 1; }
 #says-host .says[role="alert"] .says-words b { color: var(--deny); }
-#says-host .says-back { min-height: 36px; padding: 0 10px 0 8px; gap: 5px; background: transparent; color: var(--accent); }
+#says-host .says-back { min-height: 28px; padding: 0 7px 0 5px; gap: 4px; background: transparent; color: var(--accent); font-size: var(--t-xs); }
 #says-host .says-back:hover { filter: none; background: var(--accent-soft); }
-#says-host .says-back .back-arrow { width: 17px; height: 17px; }
-#says-host .says-back kbd { color: var(--muted); }
-#says-host .says:not(:has(form)) { padding-right: 16px; }
-#says-host .back-line { left: 20px; bottom: 2px; width: calc(100% - 40px); color: var(--accent); opacity: .35; }
-/* a phone: under the top line, inside the safe area, the whole width but the dog-ear's corner */
-@media (max-width: 860px) { #says-host { top: calc(56px + env(safe-area-inset-top, 0px)); left: 0; padding-inline: max(8px, env(safe-area-inset-left, 0px)) max(8px, env(safe-area-inset-right, 0px)); } }
+#says-host .says-back .back-arrow { width: 15px; height: 15px; }
+#says-host .says-back kbd { display: none; }
+#says-host .says:not(:has(form, .says-go)) { grid-template-columns: minmax(0, 1fr); padding-right: 12px; }
+#says-host .back-line { left: 12px; bottom: 1px; width: calc(100% - 24px); color: var(--accent); opacity: .35; }
+@media (max-width: 860px) {
+  #says-host { left: 0; right: 0; bottom: 0; align-items: stretch; padding: 0 max(8px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px)); }
+  #says-host .says { width: auto; max-width: none; min-height: 44px; padding-block: 3px 5px; border-radius: 12px; grid-template-columns: minmax(0, 1fr) auto; }
+  #says-host .says-words { display: flex; grid-column: 1; grid-row: 1; align-items: baseline; gap: .4em; min-width: 0; }
+  #says-host .says-words b { flex: none; }
+  #says-host .says-words span { padding: 0; }
+  body[data-says] .corner-note-box { bottom: calc(62px + env(safe-area-inset-bottom, 0px)); }
+  body[data-says] .tc-page.foot-passed .tc-notes > .tc-chat { bottom: 60px; }
+  body[data-says] main { padding-bottom: 56px; }
+}
 .keys-sheet header form { margin: 0; }
 .keys-foot a { color: inherit; }
 

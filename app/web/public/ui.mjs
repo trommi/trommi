@@ -802,10 +802,10 @@ export const srcOf = file => attrs({ src: thumb(file).src })
 export const pageChip = (page, always = false) => (page || always ? html`<a class="page-chip" data-card-target="page" target="_blank" rel="noopener noreferrer" href="${page?.url ?? '#'}" title="This picture has a page behind it: open the page"${page ? '' : raw(' hidden')}>${sk('page')}<b>${page?.name ?? ''}</b><i>open</i></a>` : '')
 
 // ---- toast ----
-// The toast: one quiet pill at the bottom centre of the main area that says what just happened ("Answered: <title>", "Note sent to
-// <name>") and, when it can be taken back, an Undo button. The same on every page and on the phone. It goes by
-// itself (about five seconds, a held note's own hold), stays while the pointer rests on it, and stacks: three at
-// most, the newest on top. U presses the newest Undo (controller "keys").
+// The toast: one small note in the bottom-left corner of the main area (a phone: a slim bar at the foot) that says what
+// just happened ("Answered", "<title>") and, when it can be taken back, an Undo button. ONE slot: the same action again
+// merges into it ("Archived · 3"), another replaces it. It goes by itself (about six seconds, a held note's own hold),
+// stays while the pointer rests on it. U presses its Undo (controller "keys").
 //
 //   toast({ head, line?, undo?: { action, label?, fields? }, role?, ms? })   the markup (html)
 //   in turbo.mjs: t.toast(opts) is the stream action that puts one on the page (prepend into #says-host),
@@ -1135,23 +1135,41 @@ function keyMatches(event, filter) {
 const stimulus = new Application()
 export const controller = (name, Klass) => stimulus.register(name, Klass)
 
-// The toast (ui.mjs): it goes by itself; while the pointer rests on it, it stays.
-// Several stack, the newest on top, three at most. Once its Undo is pressed it is gone (kept, hidden, until the form's
+// The toast (ui.mjs): it goes by itself; while the pointer rests on it, it stays. One slot (slot() below). Once its Undo is pressed it is gone (kept, hidden, until the form's
 // answer is in: a form taken out of the page would lose its stream answer).
 controller('says', class extends Controller {
-  static values = { ms: { type: Number, default: 5000 } }
+  static values = { ms: { type: Number, default: 6000 } }
   connect() {
     // (Moved along with its place to the next page, it goes on with the time it had left.)
     if (this.element.dataset.born) { this.left = Number(this.element.dataset.born) - Date.now(); if (this.left <= 0) return this.element.remove(); this.element.style.setProperty('--back-ms', `${this.left}ms`); return this.run() }
     this.element.dataset.born = Date.now() + this.msValue
     const host = this.element.parentElement
-    if (host?.id === 'says-host') for (const old of [...host.children].filter(n => n.matches('.says:not([hidden])')).slice(3)) old.remove()
+    if (host?.id === 'says-host') this.slot(host)
     // A toast that came with the page's address (?said=…) is not shown again by a refresh of that page.
     const url = new URL(location.href)
     if (url.searchParams.has('said')) { url.searchParams.delete('said'); history.replaceState(history.state, '', url) }
     this.left = this.msValue; this.element.style.setProperty('--back-ms', `${this.left}ms`); this.run()
   }
-  disconnect() { clearTimeout(this.timer) }
+  // One slot: the same action again merges into this toast ("Archived · 3", its Undo takes back the last; the titles
+  // in its tooltip); another replaces it. (A toast whose Undo was pressed stays, hidden, for its form's answer; a device
+  // that asks for its check code stays too: it is a question, not news.)
+  slot(host) {
+    const me = this.element, words = me.querySelector('.says-words'), head = words?.querySelector('b')?.textContent ?? ''
+    const line = words?.querySelector('span')?.textContent ?? ''
+    const shown = [...host.children].filter(n => n !== me && n.matches('.says:not([hidden])') && !n.querySelector('.says-go'))
+    const same = me.querySelector('form') && shown.find(n => n.dataset.head === head && n.querySelector('form'))
+    const titles = [...(same ? JSON.parse(same.dataset.titles || '[]') : []), line].filter(Boolean).slice(-30)
+    me.dataset.head = head
+    me.dataset.titles = JSON.stringify(titles)
+    if (same && titles.length > 1) {
+      words.replaceChildren(Object.assign(document.createElement('b'), { textContent: `${head} · ${titles.length}` }), Object.assign(document.createElement('span'), { textContent: `Last: ${line}` }))
+      me.title = titles.join('\n')
+      const back = me.querySelector('.says-back'); if (back) back.title = 'Undo the last (U)'
+    }
+    for (const old of shown) old.remove()
+    document.body.dataset.says = ''
+  }
+  disconnect() { clearTimeout(this.timer); if (!document.querySelector('#says-host .says:not([hidden])')) delete document.body.dataset.says }
   run() { if (this.element.hidden) return; this.since = Date.now(); this.element.dataset.born = this.since + this.left; delete this.element.dataset.paused; clearTimeout(this.timer); this.timer = setTimeout(() => this.element.remove(), Math.max(this.left, 800)) }
   pause() { clearTimeout(this.timer); this.left -= Date.now() - this.since; this.element.dataset.paused = '' }
   leave() { clearTimeout(this.timer); this.element.hidden = true }
