@@ -203,8 +203,8 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
     return box(html`<div class="tc-opts">${still(said, card.note ? `Your note: ${card.note}` : '', 'is-picked')}${card.options.filter(o => card.option_notes?.[o.key]).map(o => still(o.label, `Your note: ${card.option_notes[o.key]}`))}${card.settled ? still(html`${sk('tick')}${SETTLED}`, `${model.byAgent.get(card.agent)?.name ?? 'The agent'} marked this answer as final: nothing follows from it.`, 'is-settled') : ''}${card.summary ? still('Done by the agent', card.summary) : ''}</div>${can ? back(card, base, 'reopen') : ''}`)
   }
   if (card.with_agent) return box(html`<div class="tc-opts">${still(WORDS.revising, 'It is with its session and comes back reworked.')}</div>${back(card, base, 'takeback')}`)
-  // Something to read: two clear tiles, What?? (it comes back explained) and Acknowledge (read, closed).
-  // An info: Acknowledge is its answer; at the column's foot What?? and the reverse card, as on a decision (the reverse
+  // Something to read: two clear tiles, What?? (it comes back explained) and Got it (read, closed).
+  // An info: Got it is its answer; at the column's foot What?? and the reverse card, as on a decision (the reverse
   // card hands it back for rework with the comments; Ctrl with Send does the same from the field).
   if (card.kind === 'info') return box(html`<div class="tc-or tc-info-ways"><button class="tc-tile is-ack" type="submit" form="${form}" formaction="${act(card, base, 'close')}" title="${WORDS.ack}: read, close it">${sk('tick')}<span>${WORDS.ack}</span></button><div class="tc-or-pair"><button class="tc-tile tc-wtf is-what" type="submit" form="${form}" formaction="${act(card, base, 'what')}" title="${WORDS.what}: ask the session to explain this; it comes back explained" aria-label="What?? — explain this to me">${sk('what')}</button>${reviseTile(card, model, base)}</div></div>`)
   const advised = advisedKeys(card)

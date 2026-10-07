@@ -592,7 +592,7 @@ export const sk = (name, cls) => raw(sketchSvg(name, cls))
 
 // ---- the board's words (one place; the old client has them in ui.mjs) ----
 export const WORDS = {
-  later: 'Later', duck: 'Duck it', wake: 'Wake up', ack: 'Acknowledge', what: 'What??', trust: 'I don’t give a duck', revise: 'Reverse',
+  later: 'Later', duck: 'Duck it', wake: 'Wake up', ack: 'Got it', what: 'What??', trust: 'I don’t give a duck', revise: 'Reverse',
   revising: 'In revision', shred: 'Shred', walk: 'Blitz', desk: 'Desk', takeBack: 'Take back',
 }
 export const EXPLAIN_TEXT = 'Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do.'
