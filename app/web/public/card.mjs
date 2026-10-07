@@ -14,7 +14,7 @@
 // "card" (controller "card") adds the pencil for a note on one option, the draft kept while typing,
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
-import { BASE, SAID, heardOf, linkOf, stream } from './app.mjs'
+import { BASE, SAID, heardOf, linkOf, stream, walkOf } from './app.mjs'
 import { Controller, EXPLAIN_TEXT, FINAL_TIP, LATER_TAG, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
@@ -199,6 +199,14 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
   if (old) return box(html`<div class="tc-opts">${(old.options ?? []).map(o => still(o.label, plain(o.detail)))}</div><p class="tc-quiet">Version ${old.n} cannot be answered. <a data-nav href="${cardPath(card, base)}">The question as it stands now</a></p>`)
   if (card.status !== 'open') {
     const picked = card.choices?.length ? card.choices : [card.choice]
+    // Done by its agent and still on the Desk: what it says it did, his answer under it, Archive (and What?? to ask).
+    if (card.landed || card.archived) {
+      const yours = card.kind === 'info' ? '' : card.trusted ? `${WORDS.trust}${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ')
+      const done = html`<div class="tc-done-say"><span class="tc-done-mark" role="img" aria-label="Done">${sk('tick')}</span><span><b>Done</b>${card.summary ? html` · ${plain(card.summary)}` : ''}</span></div>`
+      return box(html`${done}<div class="tc-opts">${yours ? still(yours, card.note ? `Your answer · your note: ${card.note}` : 'Your answer', 'is-picked') : ''}</div>${card.landed
+        ? html`<div class="tc-or tc-done-ways"><button class="tc-tile is-archive" type="submit" form="${form}" formaction="${act(card, base, 'archive')}" title="Archive: seen it, down to Off the desk">${sk('archive')}<span>Archive</span></button><button class="tc-tile is-what" type="submit" form="${form}" formaction="${act(card, base, 'what')}" title="${WORDS.what}: ask the session about what it did">${sk('what')}</button></div>`
+        : html`<p class="tc-quiet">Archived: it lies in Off the desk.</p>${back(card, base, 'unarchive', 'Back on the Desk')}`}`)
+    }
     const said = card.status === 'shredded' ? 'Shredded' : card.kind === 'info' ? 'Read' : card.trusted ? `${WORDS.trust}${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || 'Withdrawn by the agent'
     const can = card.status === 'shredded' || card.choice != null || card.trusted || (card.kind === 'info' && card.read)
     return box(html`<div class="tc-opts">${still(said, card.note ? `Your note: ${card.note}` : '', 'is-picked')}${card.options.filter(o => card.option_notes?.[o.key]).map(o => still(o.label, `Your note: ${card.option_notes[o.key]}`))}${card.settled ? still(html`${sk('tick')}${SETTLED}`, `${model.byAgent.get(card.agent)?.name ?? 'The agent'} marked this answer as final: nothing follows from it.`, 'is-settled') : ''}${card.summary ? still('Done by the agent', card.summary) : ''}</div>${can ? back(card, base, 'reopen') : ''}`)
@@ -355,8 +363,8 @@ function cardThread(card, model, base = '', { more = false } = {}) {
 
 /** Where the card stands in the stack, for the walk: { at, of, prev, next } (cards), or null when it is not waiting. */
 function placeOf(card, model) {
-  const at = model.fresh.indexOf(card)
-  return at < 0 ? null : { at: at + 1, of: model.fresh.length, prev: model.fresh[at - 1] ?? null, next: model.fresh[at + 1] ?? null }
+  const walk = walkOf(model), at = walk.indexOf(card)
+  return at < 0 ? null : { at: at + 1, of: walk.length, prev: walk[at - 1] ?? null, next: walk[at + 1] ?? null }
 }
 
 /** The whole <main> of a card's page. pic: which picture stands. walk: a step of "Next, please". version: as it was
@@ -1343,6 +1351,8 @@ export function register(t) {
     takeback: card => hub.takeBack(card.id),
     revise: async (card, f, files) => { await say(card, noteOf(f) || HAND_BACK_TEXT, { handback: true }, files, marksIn(f)); forgetSent(card) },
     what: card => say(card, EXPLAIN_TEXT, { explain: true }),
+    archive: card => hub.archive(card.id),
+    unarchive: card => hub.archive(card.id, false),
     message(card, f, files) {
       const marks = marksIn(f)
       if (!noteOf(f) && !files.length && !marks) throw new Error('write something first')
@@ -1352,7 +1362,7 @@ export function register(t) {
   const filesOf = form => (form ? [...form.values()].filter(v => v instanceof File && v.size > 0) : [])
   async function actRoute(req, res, form, id, what, cardView) {
     const before = model(), card = before.byCard.get(id)
-    const after = card ? before.fresh.slice(before.fresh.indexOf(card) + 1).map(c => c.id) : []
+    const walk0 = walkOf(before), after = card ? walk0.slice(walk0.indexOf(card) + 1).map(c => c.id) : []
     const wantsStream = t.wantsStream(req)
     const stay = form.has('stay') && wantsStream
     try {
@@ -1378,7 +1388,7 @@ export function register(t) {
         const to = cardPath(card, s ? `${BASE}${s}` : BASE)
         if (at !== to) return t.sendStream(req, res, stream('visit', to))
       }
-      return t.sendStream(req, res, html`${m.fresh.some(c => c.id === id) ? '' : stream('remove', `row-${id}`)}${quiet ? '' : stream('prepend', 'says-host', says(m.byCard.get(id), what))}`)
+      return t.sendStream(req, res, html`${walkOf(m).some(c => c.id === id) ? '' : stream('remove', `row-${id}`)}${quiet ? '' : stream('prepend', 'says-host', says(m.byCard.get(id), what))}`)
     }
     const said = quiet ? '' : `said=${id}:${what}`
     const home = String(form.get('back') ?? '')
@@ -1387,7 +1397,7 @@ export function register(t) {
     if (fromSession) return redirect(res, `${home}${said ? `?${said}` : ''}`)
     // (in the walk, and after the reverse card on a card's own page: on to the next open card)
     if (form.has('walk') || (form.has('next') && what === 'revise')) {
-      const m = model(), next = after.map(x => m.byCard.get(x)).find(c => c && m.fresh.includes(c)) ?? m.fresh.find(c => c.id !== id)
+      const m = model(), walk = walkOf(m), next = after.map(x => m.byCard.get(x)).find(c => c && walk.includes(c)) ?? walk.find(c => c.id !== id)
       return redirect(res, next ? `${cardPath(next, BASE)}?${form.has('walk') ? 'walk=1' : ''}${said ? `${form.has('walk') ? '&' : ''}${said}` : ''}` : `${BASE}/${said ? `?${said}` : ''}`)
     }
     return redirect(res, `${BASE}/${said ? `?${said}` : ''}`)

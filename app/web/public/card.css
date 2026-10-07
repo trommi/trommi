@@ -848,3 +848,14 @@ body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .to
   .tc-page:not(.is-full) .tc-card .tc-stage:not(.is-video) { max-height: 52vh; }
 }
 .tc-page.is-full .tc-card > .tc-left, .tc-page.is-full .tc-card .tc-lead { background: var(--bg); }
+
+/* ---- a card its agent finished, still on the Desk (card.mjs cardAnswer): "Done · <summary>", then Archive ---- */
+.tc-done-say { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; padding: 12px 14px; border-radius: var(--r-md); background: color-mix(in srgb, var(--stamp-ink-done) 10%, var(--surface)); color: var(--fg); font: 500 var(--t-sm)/1.45 var(--font); }
+.tc-done-say b { color: var(--stamp-ink-done); }
+.tc-done-mark { flex: none; display: grid; place-items: center; width: 22px; height: 22px; color: var(--stamp-ink-done); }
+.tc-done-mark .sketch { width: 22px; height: 22px; stroke-width: 2.4; }
+.tc-done-ways { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 12px; }
+.tc-done-ways .tc-tile { display: flex; align-items: center; justify-content: center; min-height: 64px; gap: 10px; }
+.tc-tile.is-archive { background: var(--accent); color: var(--accent-fg, #fff); font-size: var(--t-md); }
+.tc-done-ways .tc-tile.is-what { min-width: 96px; }
+.tc-done-ways .tc-tile.is-what .sketch-what { width: 72px; height: 26px; }

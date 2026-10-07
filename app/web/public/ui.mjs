@@ -2581,6 +2581,12 @@ const tile = (cls, drawing, label, { name = 'key', value = '', action = null, ti
 function tiles(card, base) {
   const stay = raw('<input type="hidden" name="stay" value="1">')
   const seen = card.revised ? html`<input type="hidden" name="revised" value="${card.revised}">` : ''
+  // A Done row (the agent finished it): What?? to ask about it, Archive to put it down to Off the desk.
+  if (card.landed) {
+    return html`<form class="inbox-actions" method="post" action="${act(card, base, 'archive')}">${stay}
+${tile('is-thumb is-what', 'what', '', { action: act(card, base, 'what'), title: `${WORDS.what}: ask the session about what it did`, aria: 'What?? — ask about it' })}
+${tile('is-thumb is-lead is-ack is-archive', 'archive', 'Archive', { title: 'Archive: seen it, down to Off the desk' })}</form>`
+  }
   if (card.kind === 'info') {
     return html`<form class="inbox-actions" method="post" action="${act(card, base, 'close')}">${stay}
 ${tile('is-thumb is-what', 'what', '', { action: act(card, base, 'what'), title: `${WORDS.what}: ask the session to explain this; it comes back explained`, aria: 'What?? — explain this to me' })}
@@ -2646,6 +2652,8 @@ export function deskRow(card, model, base, { error = '' } = {}) {
   const knock = isKnock(card)
   const quiet = knock ? '' : card.kind === 'info' ? html`<span class="inbox-whenever inbox-toread" title="To read: nothing to decide" role="img" aria-label="To read">${sk('page')}</span>`
     : card.urgency === 'low' ? html`<span class="inbox-whenever" title="Whenever: nothing waits on this" role="img" aria-label="Whenever">${sk('whenever')}</span>` : ''
+  // A Done row: the title, the agent's closing line where the teaser stands, a quiet green tick; no Later, no Shred.
+  if (card.landed) return doneRow(card, model, base, from, error)
   const trustTip = `I don’t give a duck: your call (R)${advisedLabels(card) ? ` · agent takes ${advisedLabels(card)}` : ''}`
   const href = cardPath(card, base)
   return html`<article class="inbox-row" id="row-${card.id}"${knockAttr(card)} tabindex="-1" data-id="${card.id}" data-urgency="${card.urgency}"${card.kind === 'info' ? raw(' data-kind="info"') : ''}${from ? html` data-from="${from.id}" style="--hue:${from.hue}"` : ''}>
@@ -2661,6 +2669,26 @@ ${card.kind === 'decision' ? tab('inbox-trust', 'duck', WORDS.trust, trustTip, a
 ${card.kind !== 'permission' ? tab('inbox-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw this away unanswered. The session is told; it will not ask again`, act(card, base, 'shred')) : ''}
 </form>${agoSpan(card.created, 'inbox-ago')}</span>
 <p class="inbox-byline">${quiet}${from ? html`<span class="inbox-from">${smallMark(from)}<span>${from.name}</span></span><span class="inbox-sep"> · </span>` : ''}</p>
+</div>
+${tiles(card, base)}
+<p class="inbox-error inbox-row-error" role="alert"${error ? '' : raw(' hidden')}>${error}</p>
+</article>`
+}
+
+// ---- a Done row (his word, 7 October): what an agent finished stays on the Desk until he archives it ----
+// The same row as a question (the session's gutter and mark, the title as the link to the card), but quiet: a green
+// tick before the title, the agent's closing summary instead of the teaser, when it was finished, and two tiles,
+// What?? and Archive. data-kind="done" (the selection bar offers Archive for it).
+function doneRow(card, model, base, from, error = '') {
+  const href = cardPath(card, base)
+  const said = plain(card.summary || 'Done', model.state.assets)
+  return html`<article class="inbox-row is-done" id="row-${card.id}" tabindex="-1" data-id="${card.id}" data-kind="done" data-urgency="${card.urgency}"${from ? html` data-from="${from.id}" style="--hue:${from.hue}"` : ''}>
+${from ? html`<a class="inbox-gutter" data-nav href="${base}/s/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
+<div class="inbox-content">
+<header class="inbox-row-head"></header>
+${from ? html`<button class="row-mark" type="button" style="--hue:${from.hue}" title="${from.name}: select (Shift: a range)" aria-label="Select: ${card.title}" aria-pressed="false" data-select>${markArt(from)}<span class="row-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6.4 12.6Q8.8 15.1 10.4 17Q14 11.4 18.2 7.2"/></svg></span></button>` : ''}<a class="inbox-text${from ? ' has-sender' : ''}" data-nav href="${href}" title="${cardNr(card)}${from ? ` · ${from.name}` : ''}: done · ${card.title}">${from ? html`<span class="inbox-from-mark inbox-who" style="--hue:${from.hue}" title="${from.name}" role="img" aria-label="From ${from.name}">${markArt(from)}</span>` : ''}<strong class="inbox-question" data-controller="fit"><span class="row-urg is-done" role="img" title="Done by ${from?.name ?? 'the agent'}" aria-label="Done">${sk('tick')}</span>${card.title}</strong>${from ? html`<span class="row-meta"><span class="row-meta-mark">${raw(doodleSvg(from.mark))}</span><span class="row-meta-who">${from.name}</span><span class="row-meta-dot">·</span>${agoSpan(card.finished, 'row-meta-ago')}</span>` : ''}<span class="inbox-body">${model.all && from ? html`<span class="row-desk" title="Desk ${deskNameOf(model, from)}">${deskNameOf(model, from)}</span>` : ''}<span class="inbox-body-about is-done">Done</span><span class="inbox-body-text"> · ${said}</span></span></a>
+<span class="inbox-when" title="${cardNr(card)} · done ${ago(card.finished)}">${agoSpan(card.finished, 'inbox-ago')}</span>
+<p class="inbox-byline">${from ? html`<span class="inbox-from">${smallMark(from)}<span>${from.name}</span></span><span class="inbox-sep"> · </span>` : ''}</p>
 </div>
 ${tiles(card, base)}
 <p class="inbox-error inbox-row-error" role="alert"${error ? '' : raw(' hidden')}>${error}</p>
