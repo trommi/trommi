@@ -820,7 +820,7 @@ function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 5
 // state that needs a click is driven by ?state=<name> on the frame's address (demoState, run once after the page is in).
 const SCREENS = [
   ['Desk', [['All desks', '/'], ['With the selection bar', '/', 'select'], ['Duck for all: the confirm', '/', 'duck'], ['A toast with Undo', '/', 'toast'], ['The foot: Off the desk and Media', '/', 'bottom'], ['Off the desk, open', '/stacks/off'], ['Trommi menu', '/', 'menu'], ['Desk switcher', '/', 'switch'], ['Sidebar folded to the rail', '/', 'rail'], ['Phone drawer', '/', 'drawer'], ['Keys sheet', '/', 'keys'], ['Corner note, open', '/', 'note']]],
-  ['Card page', [['Short card', '/q/30'], ['Long card, top', '/q/31'], ['Long card, scrolled inside', '/q/31', 'inside'], ['The strip (card scrolled away)', '/q/31', 'strip'], ['Yes or no', '/q/46'], ['Several answers', '/q/11'], ['Info card', '/q/19'], ['Answered', '/q/1'], ['With the agent', '/q/1', 'with-agent'], ['More menu', '/q/30', 'more'], ['Focus mode (Full screen)', '/q/31/p/1'], ['Blitz', '/blitz']]],
+  ['Card page', [['Short card', '/card/30'], ['Long card, top', '/card/31'], ['Long card, scrolled inside', '/card/31', 'inside'], ['The strip (card scrolled away)', '/card/31', 'strip'], ['Yes or no', '/card/46'], ['Several answers', '/card/11'], ['Info card', '/card/19'], ['Answered', '/card/1'], ['With the agent', '/card/1', 'with-agent'], ['More menu', '/card/30', 'more'], ['Focus mode (Full screen)', '/card/31/picture/1'], ['Blitz', '/blitz']]],
   ['Session', [['Conversation', '/s/trommi'], ['Three-dot menu', '/s/trommi', 'session-more'], ['Questions only', '/s/trommi?only=questions'], ['Files', '/s/trommi/files'], ['A helper', '/s/trommi-ui']]],
   ['Agents, devices, settings', [['Agents (tree)', '/agents'], ['Devices', '/devices'], ['Pairing a device', '/devices', 'pair'], ['Settings', '/settings'], ['Log out', '/logout']]],
   ['Invite clipboard', [['Fresh link', '/', 'invite'], ['Emoji compare', '/s/trommi', 'invite-emoji'], ['Link run out', '/', 'invite-ended']]],
@@ -963,7 +963,7 @@ export async function demoState(name) {
     inside: () => { const l = $('.tc-card > .tc-left'); if (l) l.scrollTop = 900 },
     strip: () => { const m = $('#cardpage'); if (m) m.scrollTop = 2600 },
     more: () => click('.tc-more-open'),
-    'with-agent': () => { const c = window.trommi.model().state.cards.find(x => x.with_agent); if (c) window.trommi.router.visit(`/q/${c.number}`) },
+    'with-agent': () => { const c = window.trommi.model().state.cards.find(x => x.with_agent); if (c) window.trommi.router.visit(`/card/${c.number}`) },
     'session-more': () => click('.t-head-more'),
     pair: () => click('#pair-start'),
     invite: () => click('#sidebar-invite'),

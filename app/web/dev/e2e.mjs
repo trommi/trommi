@@ -143,7 +143,7 @@ try {
   const vidCard = await agent.sendCard({ title: 'Dieser Ablauf?', body: 'Video anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }], attachments: [vref] })
   await A.until(`document.getElementById('row-${vidCard}')`, 'video card row')
   const vnr = await A.js(`return trommi.model().byCard.get('${vidCard}').number`)
-  await A.js(`trommi.router.visit('/q/${vnr}')`)
+  await A.js(`trommi.router.visit('/card/${vnr}')`)
   await A.until("document.querySelector('#cardpage .tc-video video[controls][playsinline]')", 'video player on the card').then(() => check(true, 'a video card shows a <video controls playsinline>'), e => check(false, e.message))
   await A.until("(v => v && v.readyState >= 1 && v.duration > 2.5)(document.querySelector('#cardpage .tc-video video'))", 'video decrypted, its metadata read', 15000).then(() => check(true, 'encrypted video decrypted: metadata (3 s) loaded'), e => check(false, e.message))
   check(await A.js("const v = document.querySelector('#cardpage .tc-video video'); return v.paused && !v.autoplay"), 'the video does not play by itself')
@@ -190,7 +190,7 @@ try {
 
   // ---- the card page: What?? ----
   const nr = await A.js(`return trommi.model().byCard.get('${cardId}').number`)
-  await A.js(`trommi.router.visit('/q/${nr}')`)
+  await A.js(`trommi.router.visit('/card/${nr}')`)
   await A.until("document.querySelector('#cardpage')", 'card page')
   await A.shot('e2e-5-card.png')
   t0 = Date.now()
@@ -200,12 +200,12 @@ try {
   timing('What?? -> command at the agent', Date.now() - t0)
   check(await A.until("location.pathname === '/'", 'back on the Desk after What??').then(() => true, () => false), 'What?? goes back to the Desk, like the board')
   await agent.sendMessage({ object_id: cardId, text: 'Erklärung: A ist schneller, B ist sicherer.' })
-  await A.js(`trommi.router.visit('/q/${nr}')`)
-  await A.until("location.pathname.startsWith('/q/') && document.querySelector('#cardpage') && document.body.textContent.includes('B ist sicherer')", 'explanation in the card thread', 15000).then(() => check(true, 'agent reply shows in the card thread'), e => check(false, e.message))
+  await A.js(`trommi.router.visit('/card/${nr}')`)
+  await A.until("location.pathname.startsWith('/card/') && document.querySelector('#cardpage') && document.body.textContent.includes('B ist sicherer')", 'explanation in the card thread', 15000).then(() => check(true, 'agent reply shows in the card thread'), e => check(false, e.message))
 
   // ---- the picture, large: a tall one scrolls, and the card's answer stands beside it; a tap there decides ----
   const pn = await A.js(`return trommi.model().byCard.get('${picCard}').number`)
-  await A.js(`trommi.router.visit('/q/${pn}/p/1')`)
+  await A.js(`trommi.router.visit('/card/${pn}/picture/1')`)
   await A.until("[...document.querySelectorAll('.tc-page.is-full .tc-stage img')].some(i => i.complete && i.naturalWidth > 0)", 'large picture shown', 15000).catch(e => check(false, e.message))
   const big = await A.js("const i = document.querySelector('.tc-page.is-full .tc-stage img'); return i ? Math.round(i.getBoundingClientRect().width) : 0")
   check(big > 400, `Full screen shows the picture large on the card itself (${big} px wide)`)
@@ -273,7 +273,7 @@ try {
   // shredded and handed back from the card page
   for (const [k, way] of [['shred', 'shred'], ['revise', 'what']]) {
     const n = await A.js(`return trommi.model().byCard.get('${pile[k]}').number`)
-    await A.js(`trommi.router.visit('/q/${n}')`)
+    await A.js(`trommi.router.visit('/card/${n}')`)
     await A.until(`document.querySelector('#cardpage button[formaction$="/${way}"]')`, `card page with ${way}`)
     await A.js(`document.querySelector('#cardpage button[formaction$="/${way}"]').click()`)
     await A.until("location.pathname === '/'", `back on the Desk after ${way}`).catch(() => A.js("trommi.router.visit('/')"))
@@ -391,11 +391,11 @@ try {
   await agent.close(cardId, 'Erledigt mit B')
   await agent.close(cardId, 'Erledigt mit B')
   await A.until(`trommi.client.model.cards.get('${cardId}')?.versions.length >= 3`, 'both closing versions on A', 15000)
-  await A.js(`trommi.router.visit('/q/${nr}')`); await A.js(`trommi.router.visit('/s/${sid}')`)
-  await A.until(`location.pathname === '/s/${sid}' && document.querySelector('.ask a[href$="/q/${nr}"]')`, 'session page after the close')
-  const said = await A.js(`const mine = [...document.querySelectorAll('.event')].filter(e => e.getAttribute('href')?.endsWith('/q/${nr}') && e.offsetParent); return { done: mine.filter(e => e.querySelector('.event-kind')?.textContent === 'Done').length, revised: mine.filter(e => e.classList.contains('event-revised')).length }`)
+  await A.js(`trommi.router.visit('/card/${nr}')`); await A.js(`trommi.router.visit('/s/${sid}')`)
+  await A.until(`location.pathname === '/s/${sid}' && document.querySelector('.ask a[href$="/card/${nr}"]')`, 'session page after the close')
+  const said = await A.js(`const mine = [...document.querySelectorAll('.event')].filter(e => e.getAttribute('href')?.endsWith('/card/${nr}') && e.offsetParent); return { done: mine.filter(e => e.querySelector('.event-kind')?.textContent === 'Done').length, revised: mine.filter(e => e.classList.contains('event-revised')).length }`)
   check(said.done === 1 && said.revised === 0, `a closed question shows "Done" once and no "Question revised" (${said.done} done, ${said.revised} revised)`)
-  await A.js(`trommi.router.visit('/q/${nr}')`)
+  await A.js(`trommi.router.visit('/card/${nr}')`)
   await A.until("document.querySelector('#cardpage')", 'card page after the close')
   check(await A.js("return !document.querySelector('#cardpage .tc-turn[data-version]:not([data-version=\"1\"])')"), 'a closing version is no "Version n" on the card page')
 

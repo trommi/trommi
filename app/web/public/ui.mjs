@@ -2563,7 +2563,7 @@ function start(signal) {
 }
 
 // ---- a card as a row: the Desk's rows, and an open question inside its session's conversation ----
-export const cardPath = (card, base) => `${base}/q/${encodeURIComponent(card.number ?? card.id)}`
+export const cardPath = (card, base) => `${base}/card/${encodeURIComponent(card.number ?? card.id)}`
 const COPY_ICON = raw('<svg viewBox="0 0 24 24" class="sketch cardclip-ico" aria-hidden="true"><path d="M9.2 8.6C12.6 8.3 16 8.4 19.3 8.7C19.7 12.2 19.6 15.8 19.4 19.4C16 19.8 12.6 19.7 9.1 19.5C8.7 16 8.8 12.4 9 9"/><path d="M15 5.6C14.8 4.9 14.3 4.5 13.6 4.5C10.9 4.3 8.2 4.4 5.4 4.6C4.8 4.7 4.5 5.1 4.5 5.7C4.3 8.4 4.3 11.2 4.6 14C4.7 14.6 5.1 14.9 5.8 15"/></svg>')
 /** The small button that copies a card as one line, to paste into another agent (controller "clip"). */
 export function copyButton(card) {
@@ -2652,7 +2652,7 @@ export function deskRow(card, model, base, { error = '' } = {}) {
 ${from ? html`<a class="inbox-gutter" data-nav href="${base}/s/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
 <div class="inbox-content">
 <header class="inbox-row-head"></header>
-${media.length ? html`<a class="inbox-fan" data-nav href="${href}${images.length ? '/p/1' : ''}" aria-label="${media.length === 1 ? 'Look at the picture' : `Look at ${media.length} pictures and videos`}">${media.slice(0, 3).map(a => kindOf(a) === 'image' ? html`<img${srcOf(a, 56)} alt="" loading="lazy" decoding="async" width="56" height="42">` : html`<video src="${a.url}" muted playsinline preload="metadata"></video>`)}</a>` : ''}
+${media.length ? html`<a class="inbox-fan" data-nav href="${href}${images.length ? '/picture/1' : ''}" aria-label="${media.length === 1 ? 'Look at the picture' : `Look at ${media.length} pictures and videos`}">${media.slice(0, 3).map(a => kindOf(a) === 'image' ? html`<img${srcOf(a, 56)} alt="" loading="lazy" decoding="async" width="56" height="42">` : html`<video src="${a.url}" muted playsinline preload="metadata"></video>`)}</a>` : ''}
 ${from ? html`<button class="row-mark" type="button" style="--hue:${from.hue}" title="${from.name}: select (Shift: a range)" aria-label="Select: ${card.title}" aria-pressed="false" data-select>${markArt(from)}<span class="row-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6.4 12.6Q8.8 15.1 10.4 17Q14 11.4 18.2 7.2"/></svg></span></button>` : ''}<a class="inbox-text${from ? ' has-sender' : ''}" data-nav href="${href}" title="${cardNr(card)}${from ? ` · ${from.name}` : ''}: ${card.title}">${from ? html`<span class="inbox-from-mark inbox-who" style="--hue:${from.hue}" title="${from.name}" role="img" aria-label="From ${from.name}">${markArt(from)}</span>` : ''}<strong class="inbox-question" data-controller="fit">${knock ? html`<span class="row-urg is-${card.urgency === 'critical' ? 'block' : 'knock'}" role="img" title="${knockWord(card)}" aria-label="${knockWord(card)}">${card.urgency === 'critical' ? raw(handSvg()) : sk('knock')}</span>` : card.kind !== 'info' && card.urgency === 'low' ? html`<span class="row-urg is-whenever" role="img" title="Whenever: nothing waits on this" aria-label="Whenever">${sk('whenever')}</span>` : ''}${card.title}</strong>${from ? html`<span class="row-meta"><span class="row-meta-mark">${raw(doodleSvg(from.mark))}</span><span class="row-meta-who">${from.name}</span><span class="row-meta-dot">·</span>${agoSpan(card.created, 'row-meta-ago')}</span>` : ''}${about || words ? html`<span class="inbox-body">${model.all && from ? html`<span class="row-desk" title="Desk ${deskNameOf(model, from)}">${deskNameOf(model, from)}</span>` : ''}${about ? html`<span class="inbox-body-about">${about}</span>` : ''}${words ? html`<span class="inbox-body-text">${about ? ` · ${words}` : words}</span>` : ''}</span>` : ''}</a>
 <span class="inbox-when" title="${cardNr(card)} · asked ${ago(card.created)}"><form class="inbox-tabs" method="post" action="${act(card, base, 'snooze')}"><input type="hidden" name="stay" value="1">
 <button class="inbox-tab-act inbox-later is-tag" type="submit" formaction="${act(card, base, 'snooze')}" aria-label="${WORDS.later}: put this question off; it waits for you below" title="${WORDS.later}: put this question off; it waits for you below">${LATER_TAG}</button>
@@ -2750,10 +2750,10 @@ export function galleryItems(model, base = '') {
     const agent = model.byAgent.get(c.agent)
     if (!agent || !model.onDesk(agent)) continue
     const pics = (c.attachments ?? []).filter(a => kindOf(a) === 'image')
-    if (pics.length) out.push({ id: c.id, type: 'image', title: c.title, agent, ts: c.created ?? 0, url: pics[0].url, name: pics[0].name, href: `${base}/q/${encodeURIComponent(c.number ?? c.id)}/p/1`, from: `Nr. ${c.number}`, more: pics.length, urls: pics.slice(0, 3).map(a => a.url) })
+    if (pics.length) out.push({ id: c.id, type: 'image', title: c.title, agent, ts: c.created ?? 0, url: pics[0].url, name: pics[0].name, href: `${base}/card/${encodeURIComponent(c.number ?? c.id)}/picture/1`, from: `Nr. ${c.number}`, more: pics.length, urls: pics.slice(0, 3).map(a => a.url) })
     // Its videos stand on the card after the pictures (card.mjs cardMedia): the tile opens the card at the first one.
     const vids = (c.attachments ?? []).filter(a => kindOf(a) === 'video')
-    if (vids.length) out.push({ id: `${c.id}-v`, type: 'video', title: c.title, agent, ts: c.created ?? 0, url: vids[0].url, name: vids[0].name, href: `${base}/q/${encodeURIComponent(c.number ?? c.id)}?pic=${pics.length + 1}`, from: `Nr. ${c.number}`, more: vids.length })
+    if (vids.length) out.push({ id: `${c.id}-v`, type: 'video', title: c.title, agent, ts: c.created ?? 0, url: vids[0].url, name: vids[0].name, href: `${base}/card/${encodeURIComponent(c.number ?? c.id)}?pic=${pics.length + 1}`, from: `Nr. ${c.number}`, more: vids.length })
   }
   out.sort((x, y) => y.ts - x.ts)
   galleryKept.set(state, { base, key, cards: state.cards, assets: state.assets, out })

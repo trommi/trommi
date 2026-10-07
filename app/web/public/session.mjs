@@ -63,7 +63,7 @@ const timeNode = (ts, cls) => html`<time class="${cls}" datetime="${new Date(ts)
 const sizeText = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${Math.round(n / 1e3)} kB` : `${n} B`)
 
 const sessionPath = (id, base) => `${base}/s/${encodeURIComponent(id)}`
-const questionPath = (card, base) => `${sessionPath(card.agent, base)}/q/${encodeURIComponent(card.number ?? card.id)}`
+const questionPath = (card, base) => `${sessionPath(card.agent, base)}/card/${encodeURIComponent(card.number ?? card.id)}`
 const choiceLabel = card => { const keys = card.choices?.length ? card.choices : card.choice != null ? [card.choice] : []; return keys.map(key => (card.options ?? []).find(o => o.key === key)?.label ?? key).join(', ') }
 const isPicture = a => kindOf(a) === 'image' && a.url
 
@@ -119,8 +119,8 @@ function ask(m, s, base) {
   if (!card) return eventLine(m, null, base)
   const here = s.askAt.get(card.id) === m.id
   if (here && s.fresh.includes(card)) {
-    // (The row's own links go to <base>/q/<n>; inside a session they keep the session in the address.)
-    const row = String(deskRow(card, model, base)).replaceAll(`href="${base}/q/`, `href="${sessionPath(s.id, base)}/q/`)
+    // (The row's own links go to <base>/card/<n>; inside a session they keep the session in the address.)
+    const row = String(deskRow(card, model, base)).replaceAll(`href="${base}/card/`, `href="${sessionPath(s.id, base)}/card/`)
     return html`<div class="ask ask-card" id="msg-${m.id}">${raw(row)}</div>`
   }
   const over = card.status !== 'open'
@@ -218,7 +218,7 @@ function build(m, cont, about, s, base) {
   if (m.from === 'user' && m.note) return html`<article class="msg msg-user msg-note-at" id="msg-${m.id}"><figure class="msg-note"><i class="msg-note-tape" aria-hidden="true"></i><figcaption class="msg-note-cap">${sk('page')}<span>Note</span>${m.note.written ? html`<span class="msg-note-when">written ${clock(m.note.written)}</span>` : ''}</figcaption><p>${m.text}</p>${attachments(m.attachments ?? [], s, base, m.id)}</figure>${timeNode(m.ts, 'msg-time')}</article>`
   if (m.from === 'user') {
     const list = m.attachments ?? []
-    return html`<article class="msg msg-user${cont ? ' cont' : ''}" id="msg-${m.id}">${list.filter(a => a.kind === 'scribble' && a.url).map(a => html`<a class="scribble-card" href="${a.url}" target="_blank" rel="noopener" aria-label="Scribble sent: open the picture"><img${srcOf(a, 280)} alt="" loading="lazy" decoding="async" width="280" height="210"><span>Scribble</span></a>`)}${attachments(list.filter(a => a.kind !== 'scribble'), s, base, m.id)}${aboutNode}${m.cards?.length ? html`<div class="cardclip-row">${m.cards.map(c => html`<a class="cardclip-chip is-link" data-nav href="${sessionPath(s.id, base)}/q/${encodeURIComponent(c.number)}" title="Nr. ${c.number} · ${c.title}${c.choice_label ? ` → ${c.choice_label}` : ''}"><b>Nr. ${c.number}</b><span class="cardclip-title">${c.title}</span>${c.choice_label ? html`<span class="cardclip-answer">→ ${c.choice_label}</span>` : ''}</a>`)}</div>` : ''}${m.text ? html`<div class="bubble"><p>${m.text}</p></div>` : ''}${timeNode(m.ts, 'msg-time')}</article>`
+    return html`<article class="msg msg-user${cont ? ' cont' : ''}" id="msg-${m.id}">${list.filter(a => a.kind === 'scribble' && a.url).map(a => html`<a class="scribble-card" href="${a.url}" target="_blank" rel="noopener" aria-label="Scribble sent: open the picture"><img${srcOf(a, 280)} alt="" loading="lazy" decoding="async" width="280" height="210"><span>Scribble</span></a>`)}${attachments(list.filter(a => a.kind !== 'scribble'), s, base, m.id)}${aboutNode}${m.cards?.length ? html`<div class="cardclip-row">${m.cards.map(c => html`<a class="cardclip-chip is-link" data-nav href="${sessionPath(s.id, base)}/card/${encodeURIComponent(c.number)}" title="Nr. ${c.number} · ${c.title}${c.choice_label ? ` → ${c.choice_label}` : ''}"><b>Nr. ${c.number}</b><span class="cardclip-title">${c.title}</span>${c.choice_label ? html`<span class="cardclip-answer">→ ${c.choice_label}</span>` : ''}</a>`)}</div>` : ''}${m.text ? html`<div class="bubble"><p>${m.text}</p></div>` : ''}${timeNode(m.ts, 'msg-time')}</article>`
   }
   // The agent's words (the light markdown; a layout fenced as html goes into the sandboxed frame, ui.mjs), with what it attached.
   const text = m.published ? assetCard(assetOf(m, s), s, base) : raw(String(words(m.text ?? '', { assets, extra: m.html ?? '' })).replace(/<\/div>$/, () => `${attachments(m.attachments, s, base, m.id)}</div>`))
@@ -379,7 +379,7 @@ function questionList(s, base) {
     return eventLine({ kind, text: text === card.title ? '' : text, ts: card.decided ?? card.shredded ?? card.created ?? 0 }, card, base, { wrap: true, cont: true })
   }
   return html`<div class="session-cards" id="session-questions-${s.id}"><header class="inbox-head"><div class="inbox-title"><h2>${s.fresh.length ? (s.fresh.length === 1 ? '1 question waits for you' : `${s.fresh.length} questions wait for you`) : 'No question waits for you.'}</h2></div></header>
-<div class="inbox-groups">${s.fresh.length ? runSection(s.agent, s.fresh.map(c => raw(String(deskRow(c, model, base)).replaceAll(`href="${base}/q/`, `href="${sessionPath(s.id, base)}/q/`))), s.fresh.length) : ''}</div>
+<div class="inbox-groups">${s.fresh.length ? runSection(s.agent, s.fresh.map(c => raw(String(deskRow(c, model, base)).replaceAll(`href="${base}/card/`, `href="${sessionPath(s.id, base)}/card/`))), s.fresh.length) : ''}</div>
 ${rest.length ? html`<h3 class="hist-heading"><span>Earlier questions</span><b>${rest.length}</b></h3><div class="session-past">${rest.map(line)}</div>` : ''}</div>`
 }
 
