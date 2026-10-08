@@ -312,6 +312,7 @@ function endList(model, base) {
   }
   const more = items.length - shown
   return html`<section id="desk-end" class="endlist" aria-label="Done and put away" data-controller="endlist">
+<div class="end-divider" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span>Off your mind</span></div>
 <ol class="end-rows">${items.map(row)}</ol>
 <div class="end-foot">${more > 0 ? html`<button type="button" class="end-more" data-action="endlist#more">Load more <span>${Math.min(END_STEP, more)} of ${more}</span></button>` : ''}<a class="end-all" data-nav href="${base}/stacks/off">All ${items.length}</a></div>
 </section>`
