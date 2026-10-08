@@ -197,6 +197,8 @@ const H = {
   },
   // ---- the room snapshot (snapshot.ts) ----
   async write_snapshot() { const v = await need().writeSnapshot(); return { envelope_number: v.envelope_number } },
+  /** A hostile agent: a status with any values, past the client's key check (the receiving side must refuse what is not its). */
+  async forge_status({ values }) { const c = need(); await c._send({ kind: codec.KIND.status, content: { values }, session_id: c.session_id, echo: null }); await settle(); return {} },
   async snapshot_info() { return { snapshot_cursor: need().snapshotCursor ?? null } },
   // ---- the agent (the connector's core) ----
   /** Many messages at once (a room past the snapshot threshold of 2,000 envelopes). */
