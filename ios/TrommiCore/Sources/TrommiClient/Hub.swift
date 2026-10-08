@@ -144,4 +144,10 @@ public final class HubClient {
     try await request("POST", "/accounts/login", body: ["email": email, "auth_key": authKey], auth: false)
   }
   public func devices() async throws -> JSON { try await request("GET", roomPath("/devices")) }
+  /** This iPhone's APNs registration (README "Push", APNs): { token, environment, topic, key }; remove: forget it. */
+  public func registerApns(token: String, environment: String, topic: String, key: String, remove: Bool = false) async throws {
+    var body: JSON = ["apns": ["token": token, "environment": environment, "topic": topic, "key": key]]
+    if remove { body["remove"] = true }
+    _ = try await request("POST", roomPath("/push_subscriptions"), body: body)
+  }
 }

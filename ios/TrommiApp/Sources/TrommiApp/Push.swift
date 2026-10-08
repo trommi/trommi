@@ -1,0 +1,107 @@
+// Push.swift: notifications through APNs (README "Push", APNs). The app asks once, registers with Apple, and hands its
+// device token to the hub of every room on this phone, with a key of its own: the hub seals the Web Push message
+// ({ room_id, envelope_number, urgency } or the agent-lost word) under it as `e`, Apple sees only a fixed text. A push
+// that arrives while the app is open, or a tap on one, refreshes the board.
+#if canImport(UIKit)
+import CryptoKit
+import Foundation
+import TrommiClient
+import TrommiCore
+import UIKit
+import UserNotifications
+
+final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+  /** The board to refresh (set by the App struct). */
+  @MainActor weak var model: BoardModel?
+  private var token: String?
+
+  func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+    UNUserNotificationCenter.current().delegate = self
+    // A room signed in later gets the token the next time the app comes to the front.
+    NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.ask() }
+    return true
+  }
+
+  /** Ask for permission (iOS asks the person once), then register with Apple; the token arrives below. */
+  func ask() {
+    guard !Store.rooms(base: Store.defaultBase()).isEmpty else { return }
+    UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+      guard granted else { return }
+      DispatchQueue.main.async { UIApplication.shared.registerForRemoteNotifications() }
+    }
+  }
+
+  func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    let t = deviceToken.map { String(format: "%02x", $0) }.joined()
+    token = t
+    Task.detached { await Push.register(token: t) }
+  }
+
+  func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+    NSLog("trommi push: no APNs token: \(error.localizedDescription)")
+  }
+
+  // In the foreground: show it as a banner too, and refresh at once.
+  func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+    await refresh(notification.request.content.userInfo)
+    return [.banner, .list, .sound]
+  }
+
+  // A tap on it.
+  func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    await refresh(response.notification.request.content.userInfo)
+  }
+
+  @MainActor private func refresh(_ info: [AnyHashable: Any]) async {
+    if let e = info["e"] as? String, let m = Push.open(e) { NSLog("trommi push: \(m["kind"] as? String ?? "card") in room \((m["room_id"] as? String ?? "").prefix(8))") }
+    await model?.refresh()
+  }
+}
+
+enum Push {
+  /** The 32-byte key the hub seals `e` with; made once, kept next to the rooms (mode 0600). */
+  static func key() -> SymmetricKey {
+    let file = Store.defaultBase().appendingPathComponent("push.key")
+    if let d = try? Data(contentsOf: file), d.count == 32 { return SymmetricKey(data: d) }
+    let k = SymmetricKey(size: .bits256)
+    let d = k.withUnsafeBytes { Data($0) }
+    try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? d.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    return k
+  }
+
+  /** `e` of a push: nonce || ciphertext || tag (base64url), AAD "trommi-apns-v1" (hub/apns.mjs seal). */
+  static func open(_ e: String) -> [String: Any]? {
+    var s = e.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+    while s.count % 4 != 0 { s += "=" }
+    guard let data = Data(base64Encoded: s), let box = try? AES.GCM.SealedBox(combined: data),
+          let plain = try? AES.GCM.open(box, using: key(), authenticating: Data("trommi-apns-v1".utf8)) else { return nil }
+    return (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any]
+  }
+
+  /** A development build (xtool, the profile says aps-environment development) talks to Apple's sandbox. */
+  static var environment: String {
+    guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+          let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .isoLatin1) else { return "production" }
+    return text.range(of: #"<key>aps-environment</key>\s*<string>development</string>"#, options: .regularExpression) != nil ? "sandbox" : "production"
+  }
+
+  /** Hand the token to the hub of every room on this phone, once per room and token. */
+  static func register(token: String) async {
+    let keyText = key().withUnsafeBytes { Data($0) }.base64EncodedString()
+      .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    let env = environment, topic = Bundle.main.bundleIdentifier ?? "com.trommi.ios"
+    let base = Store.defaultBase()
+    for id in Store.rooms(base: base) {
+      let mark = "push.\(id).\(env).\(token)"
+      if UserDefaults.standard.bool(forKey: mark) { continue }
+      do {
+        let room = try Room.open(base: base, roomId: id)
+        try await room.hub.registerApns(token: token, environment: env, topic: topic, key: keyText)
+        UserDefaults.standard.set(true, forKey: mark)
+      } catch { NSLog("trommi push: registration for room \(id.prefix(8)) failed: \(error)") }
+    }
+  }
+}
+#endif
