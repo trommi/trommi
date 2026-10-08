@@ -22,7 +22,7 @@ export function deskCanvas(desk) {
   out[15] ^= bytes.length & 0xff
   return `desk/${[...out].map(b => b.toString(16).padStart(2, '0')).join('')}`
 }
-const canvasOf = model => deskCanvas(model.desk)
+const canvasOf = model => deskCanvas(model.homeDesk ?? model.desk)   // (on All: the desk last chosen, app.mjs homeDesk)
 
 
 /** The sessions for the pad's "Send to…" (read by the controller whiteboard). */
