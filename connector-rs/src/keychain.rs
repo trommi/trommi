@@ -9,6 +9,9 @@
 //! TROMMI_KEYSTORE: `keychain` (always; fail when none answers), `file` (never), `auto` (default: the keychain when
 //! it answers a probe within two seconds, else the file; and always the file in a slot folder that has key files
 //! with the secret in them: one shared with the JS connector, see use_keychain_in).
+//!
+//! Linux: the Secret Service (keyring crate). macOS: the login keychain through `/usr/bin/security` (security_cli.rs),
+//! so the macOS build links no Apple framework and cross-compiles without Apple's SDK.
 use crate::error::{Result, ZError};
 
 pub const SERVICE: &str = "trommi-connector";
@@ -26,66 +29,118 @@ fn account_of(reference: &[u8]) -> Result<String> {
     Ok(rest)
 }
 
-/// Run a keychain call on a thread of its own (the Secret Service client must not run inside the async runtime).
-#[cfg(feature = "keychain")]
-fn on_thread<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static, timeout_ms: u64) -> Result<T> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(f());
-    });
-    rx.recv_timeout(std::time::Duration::from_millis(timeout_ms)).map_err(|_| ZError::new("keychain", "the keychain did not answer"))?
+#[cfg(any(target_os = "macos", test))]
+mod security_cli;
+
+/// The OS keychain: Secret Service through the keyring crate on Linux, `/usr/bin/security` on macOS.
+#[cfg(all(feature = "keychain", target_os = "linux"))]
+mod os {
+    use crate::error::{Result, ZError};
+    use std::time::Duration;
+
+    /// Run a keychain call on a thread of its own (the Secret Service client must not run inside the async runtime).
+    fn on_thread<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static, timeout: Duration) -> Result<T> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        rx.recv_timeout(timeout).map_err(|_| ZError::new("keychain", "the keychain did not answer"))?
+    }
+
+    fn entry(account: &str) -> Result<keyring::Entry> {
+        keyring::Entry::new(super::SERVICE, account).map_err(|e| ZError::new("keychain", e.to_string()))
+    }
+
+    pub fn available() -> bool {
+        std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some()
+    }
+
+    pub fn set(account: &str, secret: &[u8], timeout: Duration) -> Result<()> {
+        let (a, s) = (account.to_string(), secret.to_vec());
+        on_thread(move || entry(&a)?.set_secret(&s).map_err(|e| ZError::new("keychain", e.to_string())), timeout)
+    }
+
+    pub fn get(account: &str, timeout: Duration) -> Result<Vec<u8>> {
+        let a = account.to_string();
+        on_thread(move || entry(&a)?.get_secret().map_err(|e| ZError::new("keychain", e.to_string())), timeout)
+    }
+
+    pub fn delete(account: &str, timeout: Duration) -> Result<()> {
+        let a = account.to_string();
+        on_thread(move || entry(&a)?.delete_credential().map_err(|e| ZError::new("keychain", e.to_string())), timeout)
+    }
 }
 
-#[cfg(feature = "keychain")]
-fn entry(account: &str) -> Result<keyring::Entry> {
-    keyring::Entry::new(SERVICE, account).map_err(|e| ZError::new("keychain", e.to_string()))
+#[cfg(all(feature = "keychain", target_os = "macos"))]
+mod os {
+    use super::security_cli::{self as cli, SECURITY};
+    use crate::error::Result;
+    use std::path::Path;
+    use std::time::Duration;
+
+    pub fn available() -> bool {
+        Path::new(SECURITY).exists()
+    }
+
+    pub fn set(account: &str, secret: &[u8], timeout: Duration) -> Result<()> {
+        cli::set(Path::new(SECURITY), super::SERVICE, account, secret, timeout)
+    }
+
+    pub fn get(account: &str, timeout: Duration) -> Result<Vec<u8>> {
+        cli::get(Path::new(SECURITY), super::SERVICE, account, timeout).map(|s| s.to_vec())
+    }
+
+    pub fn delete(account: &str, timeout: Duration) -> Result<()> {
+        cli::delete(Path::new(SECURITY), super::SERVICE, account, timeout)
+    }
 }
+
+#[cfg(not(all(feature = "keychain", any(target_os = "linux", target_os = "macos"))))]
+mod os {
+    use crate::error::{Result, ZError};
+    use std::time::Duration;
+
+    fn none<T>() -> Result<T> {
+        Err(ZError::new("keychain", "this build has no keychain support"))
+    }
+    pub fn available() -> bool {
+        false
+    }
+    pub fn set(_: &str, _: &[u8], _: Duration) -> Result<()> {
+        none()
+    }
+    pub fn get(_: &str, _: Duration) -> Result<Vec<u8>> {
+        none()
+    }
+    pub fn delete(_: &str, _: Duration) -> Result<()> {
+        none()
+    }
+}
+
 
 /// Store a device secret: returns the bytes of the key file that names it.
 pub fn store(secret: &[u8]) -> Result<Vec<u8>> {
-    #[cfg(feature = "keychain")]
-    {
-        let account = crate::crypto::random_hex(16);
-        let (a, s) = (account.clone(), secret.to_vec());
-        on_thread(move || entry(&a)?.set_secret(&s).map_err(|e| ZError::new("keychain", e.to_string())), 30_000)?;
-        let mut out = PREFIX.to_vec();
-        out.extend_from_slice(account.as_bytes());
-        out.push(b'\n');
-        Ok(out)
-    }
-    #[cfg(not(feature = "keychain"))]
-    {
-        let _ = secret;
-        Err(ZError::new("keychain", "this build has no keychain support"))
-    }
+    let account = crate::crypto::random_hex(16);
+    os::set(&account, secret, std::time::Duration::from_secs(30))?;
+    let mut out = PREFIX.to_vec();
+    out.extend_from_slice(account.as_bytes());
+    out.push(b'\n');
+    Ok(out)
 }
 
 /// The device secret a keychain reference names.
 pub fn load(reference: &[u8]) -> Result<Vec<u8>> {
     let account = account_of(reference)?;
-    #[cfg(feature = "keychain")]
-    {
-        on_thread(move || entry(&account)?.get_secret().map_err(|e| ZError::new("keychain", format!("the key is not in the keychain ({e})"))), 30_000)
-    }
-    #[cfg(not(feature = "keychain"))]
-    {
-        let _ = account;
-        Err(ZError::new("keychain", "this build has no keychain support"))
-    }
+    os::get(&account, std::time::Duration::from_secs(30)).map_err(|e| ZError::new("keychain", format!("the key is not in the keychain ({})", e.message)))
 }
 
 /// Remove the keychain entry a reference names (tests; a slot put aside keeps its entry, as it keeps its file).
 pub fn forget(reference: &[u8]) -> Result<()> {
     let account = account_of(reference)?;
-    #[cfg(feature = "keychain")]
-    {
-        on_thread(move || entry(&account)?.delete_credential().map_err(|e| ZError::new("keychain", e.to_string())), 10_000)
+    if !os::available() {
+        return Ok(());
     }
-    #[cfg(not(feature = "keychain"))]
-    {
-        let _ = account;
-        Ok(())
-    }
+    os::delete(&account, std::time::Duration::from_secs(10))
 }
 
 /// Whether new keys go into the keychain (TROMMI_KEYSTORE, default auto).
@@ -126,25 +181,16 @@ pub fn shared_with_files(dir: &std::path::Path) -> bool {
 
 /// A store, read and delete of a throwaway entry, within two seconds.
 pub fn probe() -> bool {
-    #[cfg(feature = "keychain")]
-    {
-        if cfg!(target_os = "linux") && std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
-            return false;
-        }
-        on_thread(
-            || {
-                let e = entry(&format!("probe-{}", crate::crypto::random_hex(4)))?;
-                e.set_secret(b"probe").map_err(|x| ZError::new("keychain", x.to_string()))?;
-                let ok = e.get_secret().map(|s| s == b"probe").unwrap_or(false);
-                let _ = e.delete_credential();
-                Ok(ok)
-            },
-            2_000,
-        )
-        .unwrap_or(false)
+    if !os::available() {
+        return false;
     }
-    #[cfg(not(feature = "keychain"))]
-    {
-        false
-    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let account = format!("probe-{}", crate::crypto::random_hex(4));
+        let t = std::time::Duration::from_millis(2_000);
+        let ok = os::set(&account, b"probe", t).is_ok() && os::get(&account, t).map(|s| s == b"probe").unwrap_or(false);
+        let _ = os::delete(&account, t);
+        let _ = tx.send(ok);
+    });
+    rx.recv_timeout(std::time::Duration::from_millis(2_000)).unwrap_or(false)
 }
