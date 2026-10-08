@@ -39,20 +39,23 @@ let asJSON = flag("--json")
 let command = args.first ?? "help"
 let rest = Array(args.dropFirst())
 
-func pickRoom() throws -> Room {
+nonisolated(unsafe) var openedRoom: Room?
+@MainActor func pickRoom() throws -> Room {
   let rooms = Store.rooms(base: base).filter { roomPrefix == nil || $0.hasPrefix(roomPrefix!) }
   if rooms.isEmpty { die("no room here yet: join one with `trommi-swift join` (\(base.path))") }
   if rooms.count > 1 { die("several rooms: name one with --room (\(rooms.map { String($0.prefix(12)) }.joined(separator: ", ")))") }
-  return try Room.open(base: base, roomId: rooms[0])
+  let r = try Room.open(base: base, roomId: rooms[0])
+  openedRoom = r
+  return r
 }
 
 func short(_ id: String) -> String { String(id.prefix(12)) }
 
-func printCards(_ room: Room) {
+@MainActor func printCards(_ room: Room) {
   let cards = room.openCards
   if asJSON {
     let list: [[String: Any]] = cards.map { c in
-      ["id": c.id, "title": c.title, "card_type": c.cardType, "urgency": c.urgencyName, "state": c.stateName, "session_id": c.sessionId ?? NSNull(), "creator": c.creator,
+      ["id": c.objectId, "title": c.title, "card_type": c.cardType, "urgency": c.urgency, "state": c.objectState, "session_id": c.sessionId ?? NSNull(), "creator": c.agentDeviceId,
        "options": c.options.map { ["key": $0.key, "label": $0.label] }]
     }
     print(String(data: try! JSONSerialization.data(withJSONObject: list, options: [.sortedKeys]), encoding: .utf8)!)
@@ -61,13 +64,13 @@ func printCards(_ room: Room) {
   if cards.isEmpty { print("No open cards."); return }
   print("\(cards.count) open card\(cards.count == 1 ? "" : "s"):")
   for c in cards {
-    let mark = c.urgency >= 2 ? "!" : "•"
-    print("\(mark) \(c.title.isEmpty ? "(no title)" : c.title)   [\(c.cardType), \(c.urgencyName), \(short(c.id))]")
+    let mark = c.urgency == "high" || c.urgency == "critical" ? "!" : "•"
+    print("\(mark) \(c.title.isEmpty ? "(no title)" : c.title)   [\(c.cardType), \(c.urgency), \(short(c.objectId))]")
     for o in c.options { print("    - \(o.label)\(o.label != o.key ? "  (\(o.key))" : "")\(o.final ? "  [settles]" : "")") }
   }
 }
 
-func run() async throws {
+@MainActor func run() async throws {
   switch command {
   case "join":
     var link = rest.first ?? "-"
@@ -86,6 +89,7 @@ func run() async throws {
       case .joined: print("Joined. This device is a member of the room now.")
       }
     }
+    openedRoom = room
     let host = ProcessInfo.processInfo.hostName
     try await room.sendDeviceRegister(name: deviceName ?? "trommi-swift (\(host))", platform: "trommi-swift")
     let report = try await room.sync()
@@ -98,6 +102,7 @@ func run() async throws {
     let password = readLine(strippingNewline: true) ?? ""
     if password.isEmpty { die("no password") }
     let room = try await Room.loginWithPassword(hubURL: hubOption ?? "https://hub.trommi.com", email: email, password: password, base: base)
+    openedRoom = room
     print("Logged in. This device is a member of the room now.")
     try await room.sendDeviceRegister(name: deviceName ?? "trommi-swift (\(ProcessInfo.processInfo.hostName))", platform: "trommi-swift")
     let report = try await room.sync()
@@ -114,7 +119,10 @@ func run() async throws {
     guard rest.count >= 2 else { die("usage: trommi-swift answer <card> <option>...") }
     let room = try pickRoom()
     try await room.sync()
-    let r = try await room.answer(cardId: rest[0], choices: Array(rest.dropFirst()))
+    let prefix = rest[0]
+    guard let id = room.board.cards.keys.first(where: { $0.hasPrefix(prefix) }) else { die("no such card") }
+    try await room.answer(cardId: id, choices: Array(rest.dropFirst()))
+    let r = try await room.flush()
     print(asJSON ? "{\"envelope_number\":\(r.number),\"envelope_hash\":\"\(r.hash)\"}" : "answered (envelope \(r.number))")
   case "rooms":
     for id in Store.rooms(base: base) {
@@ -136,12 +144,8 @@ func run() async throws {
   }
 }
 
-let done = DispatchSemaphore(value: 0)
-Task {
-  do { try await run() }
-  catch let e as ZError { die(e.description) }
-  catch let e as HubError { die("hub: \(e.description)") }
-  catch { die("\(error)") }
-  done.signal()
-}
-done.wait()
+do { try await run(); if let r = openedRoom { try await r.flush() } }
+catch let e as ZError { die(e.description) }
+catch let e as HubError { die("hub: \(e.description)") }
+catch { die("\(error)") }
+exit(0)

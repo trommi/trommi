@@ -13,6 +13,8 @@ public struct HubError: Error, CustomStringConvertible {
   public let status: Int
   public let code: String
   public let message: String
+  /** The rest of the error body (minimum_version, voided, envelope_number, …). */
+  public var extra: JSON = [:]
   public var description: String { "\(code) (\(status)): \(message)" }
 }
 
@@ -69,7 +71,7 @@ public final class HubClient {
     if status == 401 && auth && !retried { token = nil; return try await request(method, path, query: query, body: body, auth: auth, retried: true) }
     let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
     if status >= 400 || status < 200 {
-      throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "")
+      throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
     }
     return json
   }
@@ -142,6 +144,38 @@ public final class HubClient {
   /** Email + password sign-in (anonymous): { room_id, key_wrapped, kdf, challenge }, or 401 wrong-login. */
   public func accountLogin(email: String, authKey: String) async throws -> JSON {
     try await request("POST", "/accounts/login", body: ["email": email, "auth_key": authKey], auth: false)
+  }
+  /** A conversation's items with their bodies, newest first below `before` (README "GET threads"). */
+  public func threads(kind: String, timelineId: String, before: Int, limit: Int = 50) async throws -> JSON {
+    try await request("GET", roomPath("/threads"), query: ["timeline_kind": kind, "timeline_id": timelineId, "before_envelope_number": String(before), "limit": String(limit)])
+  }
+  /** An attachment's encrypted bytes. */
+  public func getAttachment(_ id: String) async throws -> Bytes {
+    var req = URLRequest(url: URL(string: "\(hubURL)/v1\(roomPath("/attachments/\(try Self.checkHex(id, 32, "attachment_id"))"))")!)
+    req.setValue(Self.clientName, forHTTPHeaderField: "trommi-client")
+    req.setValue("1", forHTTPHeaderField: "trommi-protocol")
+    req.setValue("Bearer \(try await accessToken())", forHTTPHeaderField: "authorization")
+    let (data, status) = try await send(req)
+    if status != 200 {
+      let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
+      throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
+    }
+    return Array(data)
+  }
+  /** Upload an encrypted attachment (PUT, octet stream). */
+  public func putAttachment(_ id: String, _ blob: Bytes) async throws {
+    var req = URLRequest(url: URL(string: "\(hubURL)/v1\(roomPath("/attachments/\(try Self.checkHex(id, 32, "attachment_id"))"))")!)
+    req.httpMethod = "PUT"
+    req.setValue(Self.clientName, forHTTPHeaderField: "trommi-client")
+    req.setValue("1", forHTTPHeaderField: "trommi-protocol")
+    req.setValue("application/octet-stream", forHTTPHeaderField: "content-type")
+    req.setValue("Bearer \(try await accessToken())", forHTTPHeaderField: "authorization")
+    req.httpBody = Data(blob)
+    let (data, status) = try await send(req)
+    if status >= 300 {
+      let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
+      throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
+    }
   }
   public func devices() async throws -> JSON { try await request("GET", roomPath("/devices")) }
   /** This iPhone's APNs registration (README "Push", APNs): { token, environment, topic, key }; remove: forget it. */
