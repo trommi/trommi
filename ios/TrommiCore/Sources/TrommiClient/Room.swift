@@ -1281,6 +1281,77 @@ public final class Room {
     return sid
   }
 
+  // ---- canvases (the Scribble Board: shared/canvas.mjs, whiteboard.mjs openCanvas) ----------------------------------------
+
+  /** Every item of a timeline after an envelope number with its body: GET threads, each checked against the verified hash. */
+  public func loadAfter(_ key: String, after: Int) async throws {
+    let t = board.timelineOf(key)
+    t.windowOpen = true
+    let p = parseTimelineKey(key)
+    let secrets = Room.secretLookup(room: roomSecrets, sessions: sessionSecrets)
+    var from = after
+    var ch = Change()
+    while true {
+      let r = try await noted { try await hub.threadsAfter(kind: p.kind, timelineId: p.timelineId, after: from) }
+      let list = r["envelopes"] as? [JSON] ?? []
+      for e in list {
+        guard let n = (e["envelope_number"] as? NSNumber)?.intValue, let b = e["envelope"] as? String, let bytes = try? unb64u(b) else { continue }
+        from = max(from, n)
+        guard var item = t.items[n], item.content == nil, let hh = item.envelopeHash, let vh = try? unhex(hh) else { continue }
+        do {
+          let o = try openVerifiedEnvelope(bytes, state: state, secrets: secrets, envelopeHash: vh)
+          let d = Room.decodePayload(o.payload, header: o.header)
+          item.content = d.content; item.contentType = d.content?["content_type"].string
+          item.itemState = d.content == nil ? "undecryptable" : d.state == "ok" ? "loaded" : d.state
+        } catch let e as ZError { item.itemState = e.code == "pruned" ? "pruned" : "undecryptable" }
+        t.items[n] = item
+      }
+      if list.isEmpty || !(r["has_more"] as? Bool ?? false) { break }
+    }
+    ch.timelines.insert(key)
+    emit(ch)
+  }
+
+  /** A canvas as it stands: the newest snapshot (register canvas_snapshot/<timeline>), then every item after it. */
+  public func loadCanvas(_ timelineId: String) async throws -> CanvasState {
+    let st = CanvasState()
+    let key = timelineKeyOf("canvas", timelineId)
+    var after = 0
+    if let snap = board.human.canvasSnapshots[timelineId], !snap["attachment"].isNull,
+       let bytes = try? await fetchAttachment(snap["attachment"]), let json = gunzip(bytes).flatMap({ JV.parse($0) }) {
+      st.load(snapshot: json)
+      after = st.lastEnvelopeNumber
+    }
+    try await loadAfter(key, after: after)
+    applyCanvasItems(st, key)
+    return st
+  }
+  /** The loaded items of a canvas timeline into a canvas state (in hub order; the frontier skips what it holds). */
+  @discardableResult public func applyCanvasItems(_ st: CanvasState, _ key: String) -> Set<String> {
+    var changed = Set<String>()
+    guard let t = board.timelines[key] else { return changed }
+    for n in t.items.keys.sorted() {
+      guard let it = t.items[n], it.itemState == "loaded", let c = it.content, let seq = it.senderSequence else { continue }
+      let role = board.members[it.senderDeviceId]?.deviceRole ?? "human"
+      if let got = st.apply(sender: it.senderDeviceId, seq: seq, hash: it.envelopeHash, envelopeNumber: n, content: c, senderRole: role) { changed.formUnion(got) }
+    }
+    return changed
+  }
+  /** One canvas item (strokes, erase, move, send_away) into a canvas timeline: a desk's under the room key. */
+  public func sendCanvas(_ timelineId: String, _ content: JV) async throws {
+    let p = parseTimelineKey("x:\(timelineId)")
+    let sid: String? = p.scope == "session" ? p.scopeId : p.scope == "card" ? board.cards[p.scopeId]?.sessionId : nil
+    try await send(kind: KIND.TIMELINE_ITEM, content: content, timeline: (kind: "canvas", id: timelineId), sessionId: sid)
+  }
+  /** A selection of the board to a session: its picture and words as selection_sent; what was sent leaves the canvas. */
+  public func sendSelection(sessionId: String, canvas timelineId: String, text: String, picture: JV, strokeIds: [String]) async throws {
+    guard let to = sessionStates[sessionId]?.agentIds.first ?? board.sessions[sessionId]?.agentDeviceId else { throw ZError("bad-argument", "this session has no agent") }
+    var c: [String: JV] = ["content_type": "selection_sent", "attachments": [picture], "stroke_ids": .arr(strokeIds.map { .str($0) })]
+    if !text.isEmpty { c["text"] = .str(text) }
+    try await send(kind: KIND.TIMELINE_ITEM, content: .obj(c), recipient: to, timeline: (kind: "chat", id: "session/\(sessionId)"), sessionId: sessionId)
+    if !strokeIds.isEmpty { try await sendCanvas(timelineId, .obj(["content_type": "send_away", "stroke_ids": .arr(strokeIds.map { .str($0) })])) }
+  }
+
   // ---- the open cards (the spike's list; the app reads the board) -----------------------------------
 
   /** The open cards (decisions and infos) in stack order. */

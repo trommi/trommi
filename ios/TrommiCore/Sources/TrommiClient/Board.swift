@@ -344,7 +344,8 @@ public final class Timeline {
   public var numbers: [Int] = []
   public var loadedDownTo = Int.max
   public var hasMore = false
-  public var windowOpen = false
+  // (this app keeps every item header of a timeline: the window pages bodies in from GET threads)
+  public var windowOpen = true
   init(_ key: String) {
     self.key = key
     let p = parseTimelineKey(key)

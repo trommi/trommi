@@ -225,6 +225,22 @@ try {
     assert.match(r2.stdout, /closed/)
   })
 
+  await test('history and canvas: the conversation\'s bodies page in (GET threads); the Scribble Board\'s strokes go both ways', async () => {
+    for (const t of ['first words', 'second words', 'third words']) await agent.sendMessage({ text: t })
+    await until('the messages at the human', () => [...human.model.timelines.values()].some(t => [...t.items.values()].some(i => i.content?.text === 'third words')))
+    const to = JSON.parse((await run(['dump'], { home })).stdout).agents.find(a => a.name === 'Agent')
+    const h = (await run(['history', to.id], { home })).stdout
+    for (const t of ['first words', 'second words', 'third words']) assert.ok(h.includes(`agent: ${t}`), `the history holds "${t}"`)
+    // a stroke from the JS core (canvas.mjs encodePoints) reaches Swift, a Swift stroke reaches the JS core
+    const { encodePoints } = await import('../shared/canvas.mjs')
+    const tl = (await import('../app/web/public/whiteboard.mjs').catch(() => null))?.deskCanvas?.('main') ?? null
+    const timeline = tl ?? 'desk/' + [...new Uint8Array(16).map((_, i) => 0)].join('')
+    await human.sendStrokes({ timeline_id: timeline, strokes: [{ ...encodePoints([0, 0, 5, 5, 9, 2]), style: { tool: 'pen', color: 'ink', size: 4 } }] })
+    const c = (await run(['canvas', 'main', '--draw'], { home })).stdout
+    assert.match(c, /pen 3 points/, 'the JS stroke in Swift')
+    assert.ok(c.split('\n').filter(l => / pen /.test(l)).length >= 2, 'and the Swift stroke')
+  })
+
   await test('board: what Swift\'s Desk reads (cards, status, stack, registers) is what the app\'s core holds', async () => {
     await human.setRegisters({ [`snooze/${[...human.model.cards.keys()][0]}`]: { until: Date.now() + 3600_000 } })
     await until('the snooze at the hub', () => human.model.human.raw.has(`snooze/${[...human.model.cards.keys()][0]}`) && !human.model.human.raw.get(`snooze/${[...human.model.cards.keys()][0]}`).pending)
