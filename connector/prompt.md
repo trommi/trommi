@@ -75,10 +75,6 @@ Remove one line from the status strip, or all lines when no id is given (e.g. wh
 
 Tell the board who you are: call it once when the session starts with the model you run as and a one-line task, and again when your task changes; the human tells sessions apart by it. Pass icon: the drawing that fits your task, so the human knows your session by its symbol. A separate Claude session with its own key that helps another passes parent; your own subagents use open_session instead.
 
-## create_voiceover
-
-Turn text into spoken audio (MP3) with a natural voice, e.g. narration for a video you render or a spoken summary for the human. Returns the absolute path of the MP3; attach it to a reply to let the human hear it, or mux it into a video with ffmpeg.
-
 ## list_cards
 
 List all your cards with number, status, urgency, chosen option, and queue_position (1 = the card the human sees now, null = not open); every card with its version (1 when first filed, one more with each rewording), a decided one with answered_version, the version the answer was given to, and one the human handed back with with_agent; open cards come with body, options and, when they were filed as one structured text, sections (pass them back changed to revise_card). Call it before filing a question: rework or merge (merge_cards) what you already have open on the subject, on your own initiative; more than about three open questions on one theme should become one card with multiple: true. Other agents may share the board; you only see and change your own cards.
@@ -102,10 +98,6 @@ Open a child session under your own session for a helper (a subagent of yours), 
 ## close_session
 
 Close a child session when its helper (subagent) is done: its status lines are cleared and the board moves it out of the active list into the archive, where the human can still read it. Post the helper's result first (reply with session: "<name>"), or pass it as summary. Cards the human answered there that the helper never closed are closed with it. Open questions in it stay on the human's stack until answered. open_session with the same name opens it again.
-
-## adopt_session
-
-As a main agent, take a session that already exists as your helper (sub): the board shows it under you. Only a session on your machine that has no other main and leads no helpers itself. This starts nothing; it only says which existing session belongs to you. release: true lets it go again.
 
 ## share_asset
 

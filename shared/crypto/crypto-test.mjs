@@ -171,11 +171,9 @@ test('runtime probe finds every primitive', async () => {
 // ---- identity, signatures, sealed box ------------------------------------------
 
 group('identity')
-test('generate, export public, sign, verify', async () => {
+test('generate, sign, verify', async () => {
   const d = await z.generateDevice()
   assert.equal(d.signKey.extractable, false); assert.equal(d.kexKey.extractable, false)
-  const pub = await z.decodeDevicePublic(z.encodeDevicePublic(d))
-  assert.deepEqual(pub, z.publicDevice(d))
   const sig = await z.sign(d, 'test/label', utf8('message'))
   assert.equal(sig.length, 64)
   assert.equal(await z.verify(d.signPub, 'test/label', utf8('message'), sig), true)
@@ -1062,25 +1060,6 @@ test('tamper: flipped bits, truncation, reordered and dropped chunks, wrong key,
   const grafted = concat(b.blob.slice(0, 22), a.blob.slice(22))
   await rejects(() => z.decryptAsset(grafted, a.key), 'decrypt-failed')
 })
-test('asset key wrapped under the room key, and the link fragment form', async () => {
-  const w = await makeWorld()
-  const a = await z.encryptAsset(utf8('canvas'))
-  const wrapped = await z.wrapAssetKey(w.roomId, w.phone.secrets.get(1), a.blobId, a.key)
-  assert.equal(wrapped.length, 2 + 4 + 16 + 12 + 48)
-  // A random nonce (C12): wrapping a different key under the same blob id never reuses one.
-  const again = await z.wrapAssetKey(w.roomId, w.phone.secrets.get(1), a.blobId, a.key)
-  assert.notDeepEqual(again.slice(22, 34), wrapped.slice(22, 34))
-  await fetchKey(w.laptop, w)
-  const un = await z.unwrapAssetKey(w.roomId, w.laptop.secrets, wrapped)
-  assert.deepEqual(un.key, a.key); assert.deepEqual(un.blobId, a.blobId)
-  for (let i = 0; i < wrapped.length; i++) await rejects(() => z.unwrapAssetKey(w.roomId, w.laptop.secrets, flip(wrapped, i)), ['decrypt-failed', 'bad-version', 'bad-format', 'no-key'])
-  await rejects(() => z.unwrapAssetKey(fill(32, 1), w.laptop.secrets, wrapped), 'decrypt-failed')
-  await rejects(() => z.unwrapAssetKey(w.roomId, new Map(), wrapped), 'no-key')
-  const link = z.assetLink('https://hub.example/blob/abc', a.blobId, a.key)
-  assert.match(link, /^https:\/\/hub\.example\/blob\/abc#a1\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/)
-  assert.deepEqual(z.parseAssetLink(link), { url: 'https://hub.example/blob/abc', blobId: a.blobId, key: a.key })
-  await rejects(() => z.parseAssetLink(link.replace('#a1', '#a2')), 'bad-version')
-})
 
 // ---- recovery ------------------------------------------------------------------
 
@@ -1403,7 +1382,7 @@ async function buildVectors() {
   v.encoding = { bytes: '00fbff10', base64url: b64u(unhex('00fbff10')), hash: { label: 'trommi/v1/log-entry', data: H(utf8('abc')), out: H(await z.hash(z.LABEL.logEntry, utf8('abc'))) },
     hkdf: { ikm: H(fill(32, 1)), salt: H(fill(32, 2)), label: 'trommi/v1/sender-key', context: '00000001', length: 32, out: H(await z.hkdf(fill(32, 1), fill(32, 2), z.LABEL.senderKey, unhex('00000001'), 32)) } }
   v.devices = {
-    phone: { signSeed: H(fill(32, 0x11)), kexSeed: H(fill(32, 0x12)), ...pubs(phone), public: H(z.encodeDevicePublic(phone)), secretFile: H(await z.exportDeviceSecret(phone)) },
+    phone: { signSeed: H(fill(32, 0x11)), kexSeed: H(fill(32, 0x12)), ...pubs(phone), secretFile: H(await z.exportDeviceSecret(phone)) },
     laptop: { signSeed: H(fill(32, 0x21)), kexSeed: H(fill(32, 0x22)), ...pubs(laptop) },
     agent: { signSeed: H(fill(32, 0x31)), kexSeed: H(fill(32, 0x32)), ...pubs(agent), secretFile: H(await z.exportDeviceSecret(agent)) },
     tablet: { signSeed: H(fill(32, 0x41)), kexSeed: H(fill(32, 0x42)), ...pubs(tablet) },
@@ -1541,8 +1520,6 @@ async function buildVectors() {
   v.assets = {
     small: { rngSeed: 0xb0, plaintext: H(utf8('asset')), key: H(small.key), blobId: H(small.blobId), blob: H(small.blob), sha256: H(small.sha256) },
     twoChunks: { rngSeed: 0xb8, plaintext: '70000 bytes, byte i = 7i mod 256', key: H(big.key), blobId: H(big.blobId), blobLength: big.blob.length, sha256: H(big.sha256) },
-    wrap: { epoch: 1, rngSeed: 0xbc, wrapped: H(await z.wrapAssetKey(room.roomId, room.secret, small.blobId, small.key, { _rng: fixedRng(0xbc) })) },
-    link: z.assetLink('https://hub.example/blob/1', small.blobId, small.key),
   }
   return v
 }
@@ -1682,8 +1659,6 @@ test('the stored vectors open from their bytes alone (as a second implementation
   assert.equal(who(auth.member), 'Agent'); assert.equal(hex(auth.challenge), v.hubAuth.challenge)
   // Assets.
   assert.equal(txt(await z.decryptAsset(unhex(v.assets.small.blob), unhex(v.assets.small.key), unhex(v.assets.small.sha256))), 'asset')
-  assert.equal(hex((await z.unwrapAssetKey(unhex(v.room.roomId), new Map([[1, s1]]), unhex(v.assets.wrap.wrapped))).key), v.assets.small.key)
-  assert.equal(hex(z.parseAssetLink(v.assets.link).key), v.assets.small.key)
   assert.equal(z.parseInviteLink(v.invites[0].link).hub, 'https://hub.example')
 })
 /** The agent's own envelope, as its chain state would hold it after sending. */

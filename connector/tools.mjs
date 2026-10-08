@@ -152,6 +152,8 @@ export function htmlBeside(html, text, { field = 'html', beside = 'text' } = {})
 export const MAX_ASSET = 64 * 1024 * 1024
 export const ASSET_TYPES = ['html', 'image', 'video', 'audio', 'file']
 export const RETENTION_DAYS = 30
+/** The longest an outside release (share_asset) lasts. */
+const SHARE_MAX_HOURS = RETENTION_DAYS * 24
 export const URGENCIES = ['low', 'normal', 'high', 'critical']
 export const STATUSES = ['decision', 'working', 'done']
 // The summary of an answered card that its helper never closed and close_session closes with the session.
@@ -392,17 +394,6 @@ export const TOOLS = [
     },
   },
   {
-    name: 'create_voiceover',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        text: { type: 'string', description: 'What to say, up to about 4000 characters; split longer narration into several calls' },
-        style: { type: 'string', description: 'Optional delivery instruction in plain words, e.g. "calm documentary narrator" or "upbeat and fast"' },
-      },
-      required: ['text'],
-    },
-  },
-  {
     name: 'list_cards',
     inputSchema: { type: 'object', properties: {} },
   },
@@ -416,8 +407,6 @@ export const TOOLS = [
         type: { type: 'string', enum: ASSET_TYPES, description: 'How the viewer shows it. html: a page in a sandboxed frame, which must be self-contained (inline CSS and scripts, data: images), because nothing is loaded from the network; image, video, audio: shown or played; file: offered as a download. Left out: inferred from the file extension, html for content.' },
         title: { type: 'string', description: 'Shown above the asset and on the board; defaults to the file name' },
         note: { type: 'string', description: 'Optional line shown with the link on the board, e.g. what the page is for' },
-        silent: { type: 'boolean', description: 'true: do not show the asset on the board. The hub then never sees the key or the title; the returned link is the only copy.' },
-        keep: { type: 'boolean', description: `true: keep until revoked. Default: deleted after ${RETENTION_DAYS} days.` },
       },
     },
   },
@@ -456,25 +445,13 @@ export const TOOLS = [
     },
   },
   {
-    name: 'adopt_session',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'The id or the name of the session' },
-        release: { type: 'boolean', description: 'true: it is no longer your helper' },
-      },
-      required: ['id'],
-    },
-  },
-  {
     name: 'share_asset',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'The asset id returned by publish_asset' },
         release: { type: 'boolean', description: 'true (default): release it. false: take the release back; the link stops working at once, the asset itself stays.' },
-        expires_hours: { type: 'number', description: 'The release ends by itself after this many hours. 0 or left out: no end.' },
-        keep: { type: 'boolean', description: `true: also keep the asset beyond the ${RETENTION_DAYS} days after which it would be deleted.` },
+        expires_hours: { type: 'number', description: `The release ends by itself after this many hours. 0 or left out: the longest, ${SHARE_MAX_HOURS / 24} days.` },
       },
       required: ['id'],
     },
@@ -528,13 +505,11 @@ export const TOOL_EXAMPLES = {
   set_status: { id: 'migration', label: 'Migration', state: 'decision', detail: 'waiting for the go-ahead', card_id: 'a1b2c3d4' },
   clear_status: { id: 'migration' },
   introduce: { model: 'Claude Opus 5.5', task: 'Prepare migration and deploy', icon: 'database' },
-  create_voiceover: { text: 'The deploy went through. Two things need your answer.', style: 'calm, friendly' },
   list_cards: {},
   publish_asset: { path: '/home/me/project/out/report.html', title: 'Load test, 2 October', note: 'Charts for the three variants' },
   list_assets: {},
   revoke_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A' },
   share_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A', expires_hours: 72 },
-  adopt_session: { id: 'web-ui' },
   open_session: { name: 'Design', task: 'Pictures for the landing page', icon: 'brush' },
   close_session: { name: 'Design', summary: 'Three landing page pictures are in out/landing/, the blue one recommended' },
 }
@@ -990,7 +965,6 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     log(`not settled: ${err.message}`)
   })
 
-  const SHARE_MAX_HOURS = 30 * 24
   function ownAsset(id) {
     const asset = [...model().published.values()].find(p => mine(p) && p.object_id === String(id ?? ''))
     if (!asset) throw new Error(`no asset ${id}; list_assets shows yours`)
@@ -1148,7 +1122,6 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         return `child session "${name}" closed: archived on the board, still readable there${left.length ? `; ${left.length} answered card${left.length === 1 ? '' : 's'} of it ${left.length === 1 ? 'was' : 'were'} closed with it` : ''}${open ? `; ${open} open question${open === 1 ? '' : 's'} of it stay${open === 1 ? 's' : ''} on the human's stack, and the session stays in the active list until ${open === 1 ? 'it is' : 'they are'} answered` : ''}. open_session("${name}") opens it again.`
       }
       case 'publish_asset': {
-        if (args.silent === true) throw new Error('silent assets are not available on the new hub yet: publish it without silent, or attach the file to a reply')
         if (args.path == null && args.content == null) throw new Error('give path or content')
         if (args.type != null && !ASSET_TYPES.includes(args.type)) throw new Error(`type must be one of ${ASSET_TYPES.join(', ')}`)
         let ref
@@ -1197,10 +1170,6 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
           'It opens a plain viewer without the board; the key is after the #, the hub never sees it. share_asset with release: false or revoke_asset ends it.',
         ].join('\n')
       }
-      case 'adopt_session':
-        throw new Error('adopt_session is not available on the new hub: a session\'s profile is signed by that session alone. Ask the helper to call introduce with parent set to your session id.')
-      case 'create_voiceover':
-        throw new Error('create_voiceover is not available on the new hub yet; use the old board (server "board") for narration.')
     }
     throw new Error(`unknown tool: ${name}`)
   }

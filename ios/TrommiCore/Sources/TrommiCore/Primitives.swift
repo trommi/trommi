@@ -25,7 +25,6 @@ public enum LABEL {
   public static let inviteRequestSig = "trommi/v1/invite-request-sig"
   public static let inviteRevealSig = "trommi/v1/invite-reveal-sig"
   public static let inviteCode = "trommi/v1/invite-code"
-  public static let assetWrap = "trommi/v1/asset-wrap"
   public static let recoverySign = "trommi/v1/recovery/sign"
   public static let recoveryKex = "trommi/v1/recovery/kex"
   public static let hubAuth = "trommi/v1/hub-auth"

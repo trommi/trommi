@@ -180,7 +180,7 @@ function str16(w, s, max) {
 /** Second byte of every top-level object, after the version byte. */
 export const OBJ = Object.freeze({
   LOG_ENTRY: 0x01, ENVELOPE: 0x02, ENVELOPE_PRUNED: 0x03, SEALED: 0x04, INVITE_OFFER: 0x05, INVITE_REQUEST: 0x06,
-  INVITE_REVEAL: 0x07, BACK_LINK: 0x08, ASSET: 0x09, ASSET_WRAP: 0x0a, DEVICE_PUBLIC: 0x0b, DEVICE_SECRET: 0x0c, HUB_AUTH: 0x0d,
+  INVITE_REVEAL: 0x07, BACK_LINK: 0x08, ASSET: 0x09, DEVICE_SECRET: 0x0c, HUB_AUTH: 0x0d,
 })
 
 /** Every domain-separation label. A label is used as utf8(label) || 0x00 in front of the data. */
@@ -205,7 +205,6 @@ export const LABEL = Object.freeze({
   inviteRequestSig: 'trommi/v1/invite-request-sig',
   inviteRevealSig: 'trommi/v1/invite-reveal-sig',
   inviteCode: 'trommi/v1/invite-code',
-  assetWrap: 'trommi/v1/asset-wrap',
   recoverySign: 'trommi/v1/recovery/sign',
   recoveryKex: 'trommi/v1/recovery/kex',
   hubAuth: 'trommi/v1/hub-auth',
@@ -316,18 +315,6 @@ export async function deviceFromSeeds(signSeed, kexSeed, { extractable = false }
 }
 
 export const publicDevice = d => ({ id: d.id, signPub: d.signPub, kexPub: d.kexPub })
-
-/** 0x01 0x0b signPub(32) kexPub(32) */
-export function encodeDevicePublic(d) {
-  return new W().u8(VERSION).u8(OBJ.DEVICE_PUBLIC).raw(d.signPub, 32, 'signPub').raw(d.kexPub, 32, 'kexPub').done()
-}
-export async function decodeDevicePublic(bytes) {
-  const r = new R(bytes)
-  header(r, OBJ.DEVICE_PUBLIC)
-  const signPub = r.take(32), kexPub = r.take(32)
-  r.end()
-  return { id: await deviceId(signPub, kexPub), signPub, kexPub }
-}
 
 /** 0x01 0x0c signSeed(32) kexSeed(32): for an agent's key file (mode 0600). Needs an extractable device. */
 export async function exportDeviceSecret(d) {
@@ -949,9 +936,7 @@ export async function createInvite({ state, inviter, hub, role, app = 'https://a
 }
 
 /** Parse an offer without judging it (a hub reads the invite id, role and expiry from it). */
-export function decodeInviteOffer(bytes) { return decodeOffer(bytes) }
 /** Parse a request without judging it. Only the inviter, who holds the link secret, can check its MAC. */
-export function decodeInviteRequest(bytes) { return decodeRequest(bytes) }
 
 /** An offer is good if an active human member of this room signed it and it has not run out. Returns the parsed offer. */
 export async function verifyInviteOffer(state, offer, now = Date.now()) {
@@ -1744,38 +1729,4 @@ export async function decryptAsset(blob, key, expectedSha256) {
   const out = []
   for (let i = 0; i < chunks; i++) out.push(await decryptAssetChunk(blob, key, i))
   return concat(...out)
-}
-
-async function assetWrapKey(roomId, secret, blobId) {
-  return aesKey(await hkdf(secret.key, roomId, LABEL.assetWrap, concat(epochCtx(secret.epoch), need(blobId, 16, 'blob id')), 32))
-}
-const assetWrapAad = (roomId, epoch, blobId) => concat(Uint8Array.of(VERSION, OBJ.ASSET_WRAP), roomId, epochCtx(epoch), blobId)
-
-/** 0x01 0x0a epoch(u32) blobId(16) nonce(12) ciphertext(48): an asset key under the room key, random nonce (R9, C12). */
-export async function wrapAssetKey(roomId, secret, blobId, assetKey, opts) {
-  const nonce = rngOf(opts)(12)
-  const ct = await gcmSeal(await assetWrapKey(roomId, secret, blobId), nonce, assetWrapAad(roomId, secret.epoch, blobId), need(assetKey, 32, 'asset key'))
-  return concat(Uint8Array.of(VERSION, OBJ.ASSET_WRAP), epochCtx(secret.epoch), blobId, nonce, ct)
-}
-export async function unwrapAssetKey(roomId, secrets, wrapped) {
-  const r = new R(wrapped)
-  header(r, OBJ.ASSET_WRAP)
-  const epoch = r.u32(), blobId = r.take(16), nonce = r.take(12), ct = r.take(r.left())
-  const secret = typeof secrets === 'function' ? secrets(epoch) : secrets?.get(epoch)
-  if (!secret) fail('no-key', `no key for epoch ${epoch}`, { epoch })
-  return { blobId, epoch, key: await gcmOpen(await assetWrapKey(roomId, secret, blobId), nonce, assetWrapAad(roomId, epoch, blobId), ct) }
-}
-
-/** `<url>#a1.<blobId>.<key>`: whoever has the link can read the asset. The fragment never reaches a server. */
-export function assetLink(url, blobId, key) {
-  return `${url}#a${VERSION}.${b64u(need(blobId, 16, 'blob id'))}.${b64u(need(key, 32, 'asset key'))}`
-}
-export function parseAssetLink(link) {
-  const at = String(link).indexOf('#')
-  const parts = at < 0 ? [] : String(link).slice(at + 1).split('.')
-  if (parts[0] !== `a${VERSION}`) fail('bad-version', 'asset link version')
-  if (parts.length !== 3) fail('bad-format', 'asset link')
-  const blobId = unb64u(parts[1]), key = unb64u(parts[2])
-  if (blobId.length !== 16 || key.length !== 32) fail('bad-format', 'asset link')
-  return { url: String(link).slice(0, at), blobId, key }
 }

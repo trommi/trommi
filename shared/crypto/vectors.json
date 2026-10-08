@@ -25,7 +25,6 @@
       "signPub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
       "kexPub": "052a50773ac8d91773f2dc9662e12f0defe915e415b8a1c8e20a5a3d6ab2b843",
       "id": "3aa4b92a663bce06a197c5ca80edaa12313c6fecb3637d0c956b9b645d77e9ac",
-      "public": "010bd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737052a50773ac8d91773f2dc9662e12f0defe915e415b8a1c8e20a5a3d6ab2b843",
       "secretFile": "010c11111111111111111111111111111111111111111111111111111111111111111212121212121212121212121212121212121212121212121212121212121212"
     },
     "laptop": {
@@ -618,12 +617,6 @@
       "blobId": "c9cacbcccdcecfd0d1d2d3d4d5d6d7d8",
       "blobLength": 70054,
       "sha256": "8398e45a1664af9168675ba24635ca4235e1950851fdf8409f3753a1a743df6e"
-    },
-    "wrap": {
-      "epoch": 1,
-      "rngSeed": 188,
-      "wrapped": "010a00000001c1c2c3c4c5c6c7c8c9cacbcccdcecfd0bcbdbebfc0c1c2c3c4c5c6c72e190c431f408604f08205dcb16f74d5d81f30b3a42980960c1e553c94f921d273ff91441112a999f0a19989fabae12d"
-    },
-    "link": "https://hub.example/blob/1#a1.wcLDxMXGx8jJysvMzc7P0A.sLGys7S1tre4ubq7vL2-v8DBwsPExcbHyMnKy8zNzs8"
+    }
   }
 }

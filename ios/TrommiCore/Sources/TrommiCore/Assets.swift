@@ -38,29 +38,3 @@ public func decryptAsset(_ blob: Bytes, key: Bytes, expectedSha256: Bytes? = nil
   let l = try assetLayout(blob)
   return try (0..<l.chunks).flatMap { try decryptAssetChunk(blob, key: key, index: $0) }
 }
-private func assetWrapKey(_ roomId: Bytes, _ s: EpochSecret, _ blobId: Bytes) throws -> Bytes {
-  hkdf(s.key, salt: roomId, label: LABEL.assetWrap, context: epochCtx(s.epoch) + (try need(blobId, 16, "blob id")), length: 32)
-}
-private func assetWrapAad(_ roomId: Bytes, _ epoch: Int, _ blobId: Bytes) -> Bytes { [VERSION, OBJ.ASSET_WRAP] + roomId + epochCtx(epoch) + blobId }
-/** 0x01 0x0a epoch blobId nonce(12, random: never derived) ciphertext(48). */
-public func wrapAssetKey(roomId: Bytes, secret: EpochSecret, blobId: Bytes, assetKey: Bytes, rng: RNG = systemRandom) throws -> Bytes {
-  let nonce = rng(12)
-  return [VERSION, OBJ.ASSET_WRAP] + epochCtx(secret.epoch) + blobId + nonce + (try gcmSeal(key: try assetWrapKey(roomId, secret, blobId), nonce: nonce, aad: assetWrapAad(roomId, secret.epoch, blobId), try need(assetKey, 32, "asset key")))
-}
-public func unwrapAssetKey(roomId: Bytes, secrets: (Int) -> EpochSecret?, _ wrapped: Bytes) throws -> (blobId: Bytes, epoch: Int, key: Bytes) {
-  var r = R(wrapped)
-  try header(&r, OBJ.ASSET_WRAP)
-  let epoch = try r.u32(), blobId = try r.take(16), nonce = try r.take(12), ct = try r.take(r.left)
-  guard let s = secrets(epoch) else { throw fail("no-key", "no key for epoch \(epoch)") }
-  return (blobId, epoch, try gcmOpen(key: try assetWrapKey(roomId, s, blobId), nonce: nonce, aad: assetWrapAad(roomId, epoch, blobId), ct))
-}
-public func assetLink(url: String, blobId: Bytes, key: Bytes) -> String { "\(url)#a\(VERSION).\(b64u(blobId)).\(b64u(key))" }
-public func parseAssetLink(_ link: String) throws -> (url: String, blobId: Bytes, key: Bytes) {
-  guard let at = link.firstIndex(of: "#") else { throw fail("bad-version", "asset link version") }
-  let parts = link[link.index(after: at)...].split(separator: ".", omittingEmptySubsequences: false).map(String.init)
-  if parts[0] != "a\(VERSION)" { throw fail("bad-version", "asset link version") }
-  if parts.count != 3 { throw fail("bad-format", "asset link") }
-  let blobId = try unb64u(parts[1]), key = try unb64u(parts[2])
-  if blobId.count != 16 || key.count != 32 { throw fail("bad-format", "asset link") }
-  return (String(link[..<at]), blobId, key)
-}

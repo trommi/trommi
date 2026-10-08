@@ -180,7 +180,7 @@ func header(_ r: inout R, _ type: UInt8) throws {
 public enum OBJ {
   public static let LOG_ENTRY: UInt8 = 0x01, ENVELOPE: UInt8 = 0x02, ENVELOPE_PRUNED: UInt8 = 0x03, SEALED: UInt8 = 0x04
   public static let INVITE_OFFER: UInt8 = 0x05, INVITE_REQUEST: UInt8 = 0x06, INVITE_REVEAL: UInt8 = 0x07, BACK_LINK: UInt8 = 0x08
-  public static let ASSET: UInt8 = 0x09, ASSET_WRAP: UInt8 = 0x0a, DEVICE_PUBLIC: UInt8 = 0x0b, DEVICE_SECRET: UInt8 = 0x0c, HUB_AUTH: UInt8 = 0x0d
+  public static let ASSET: UInt8 = 0x09, DEVICE_SECRET: UInt8 = 0x0c, HUB_AUTH: UInt8 = 0x0d
   public static let GRANT: UInt8 = 0x0e, SESSION_BACK_LINK: UInt8 = 0x0f
 }
 

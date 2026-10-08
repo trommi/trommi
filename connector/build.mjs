@@ -138,18 +138,6 @@ export function marketplaceFiles(connectorText, app = 'https://app.trommi.com') 
   return { 'marketplace.json': Buffer.from(JSON.stringify(json, null, 2) + '\n'), [name]: archive }
 }
 
-/** A local marketplace directory with the plugin unpacked (tests; claude plugin marketplace add <dir>). */
-export function writeLocalMarketplace(dir, connectorText) {
-  const version = sha256(connectorText).slice(0, 12)
-  for (const [f, b] of Object.entries(pluginFiles(connectorText, version))) {
-    fs.mkdirSync(path.dirname(path.join(dir, 'plugins/trommi', f)), { recursive: true })
-    fs.writeFileSync(path.join(dir, 'plugins/trommi', f), b)
-  }
-  fs.mkdirSync(path.join(dir, '.claude-plugin'), { recursive: true })
-  fs.writeFileSync(path.join(dir, '.claude-plugin/marketplace.json'), JSON.stringify(marketplace('./plugins/trommi', version), null, 2) + '\n')
-  return { dir, plugin: path.join(dir, 'plugins/trommi'), version }
-}
-
 // ---- everything together -------------------------------------------------------------------------------------
 
 /** Everything this build makes: { 'path under gen/': text or Buffer }. */

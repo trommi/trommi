@@ -61,13 +61,6 @@ export function addItem(change, key, item) { let l = change.items.get(key); if (
 export function changeIsEmpty(c) {
   return c.items.size === 0 && !c.members && !c.alerts && !c.outbox && !c.stack && !c.room && ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines', 'registers', 'invites'].every(k => c[k].size === 0)
 }
-export function mergeChange(into, c) {
-  for (const k of ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines', 'registers', 'invites']) for (const v of c[k]) into[k].add(v)
-  for (const k of ['members', 'alerts', 'outbox', 'stack', 'room']) into[k] ||= c[k]
-  for (const [k, l] of c.items) for (const it of l) addItem(into, k, it)
-  return into
-}
-
 export const timelineKey = (timeline_kind, timeline_id) => `${timeline_kind}:${timeline_id}`
 export function parseTimelineKey(key) {
   const at = key.indexOf(':')
@@ -905,9 +898,6 @@ export function deserialiseSession(o) { return { ...o, registers: new Map(o.regi
 export function serialiseTimelineMeta(t) { const { items, ...rest } = t; return { ...rest, loaded_down_to: Number.isFinite(t.loaded_down_to) ? t.loaded_down_to : null, window_open: false } }
 // F8: the window is empty after a restart, so paging starts again from the newest item (a persisted low mark would skip it).
 export function deserialiseTimelineMeta(o) { return { ...o, items: new Map(), loaded_down_to: Infinity, window_open: false } }
-export function serialiseHuman(h) {
-  return { raw: [...h.raw] }
-}
 /** Human registers are rebuilt from raw values (one source of truth). */
 export function deserialiseHuman(model, o) {
   const change = emptyChange()
