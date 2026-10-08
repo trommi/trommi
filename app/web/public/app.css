@@ -590,9 +590,10 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
   #says-host .says-words { display: flex; grid-column: 1; grid-row: 1; align-items: baseline; gap: .4em; min-width: 0; }
   #says-host .says-words b { flex: none; }
   #says-host .says-words span { padding: 0; }
-  body[data-says] .corner-note-box { bottom: calc(62px + env(safe-area-inset-bottom, 0px)); }
-  body[data-says] .tc-page.foot-passed .tc-notes > .tc-chat { bottom: 60px; }
-  body[data-says] main { padding-bottom: 56px; }
+  /* (while a toast shows: the attribute the toast sets, or the toast itself where the attribute was lost with a page swap) */
+  :is(body[data-says], body:has(#says-host > .says:not([hidden]))):not([data-t-view="session"], [data-t-view="whiteboard"]) .corner-note-box { bottom: calc(62px + env(safe-area-inset-bottom, 0px)); }
+  :is(body[data-says], body:has(#says-host > .says:not([hidden]))) .tc-page.foot-passed .tc-notes > .tc-chat { bottom: 60px; }
+  :is(body[data-says], body:has(#says-host > .says:not([hidden]))) main { padding-bottom: 56px; }
 }
 .keys-sheet header form { margin: 0; }
 .keys-foot a { color: inherit; }
