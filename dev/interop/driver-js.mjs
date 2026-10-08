@@ -1,6 +1,7 @@
 // driver-js.mjs: the interop driver of the JS core (shared/, what the web app and the connector run). One device per
 // process, JSON lines on stdin/stdout (dev/interop/protocol.mjs). A human device (found_room, join with a human
 // invite, login) or an agent (join with an agent invite: agent_card, close_card, agent_inbox, …).
+import fs from 'node:fs'
 import readline from 'node:readline'
 import * as core from '../../shared/index.mjs'
 import * as A from '../../shared/account.mjs'
@@ -15,6 +16,7 @@ const until = async (what, fn, ms = 20_000) => { const end = Date.now() + ms; fo
 let client = null, joining = null, recoveryCode = null
 const inbox = []
 const te = new TextEncoder()
+const STROKES = JSON.parse(fs.readFileSync(new URL('./fixtures/strokes.json', import.meta.url), 'utf8'))
 
 async function adopt(c) {
   client = c
@@ -172,14 +174,26 @@ const H = {
   },
   async hub_envelopes({ after = 0, limit = 1000 } = {}) { return (await need().hub.envelopes({ after_envelope_number: after, limit })).envelopes },
   async alerts() { return need().model.alerts.map(a => ({ code: a.code, envelope_number: a.envelope_number ?? null })) },
-  async canvas_draw({ desk = 'main', points = [10, 10, 40, 30, 80, 20] }) {
+  /** A stroke on a desk's Scribble Board: `entry` as a strokes item carries it (README "Scribble strokes"), default the
+   *  first sample of dev/interop/fixtures/strokes.json. */
+  async scribble_draw({ desk = 'main', entry = null }) {
+    const W = await import('../../app/web/public/whiteboard.mjs').catch(() => null)
+    const timeline_id = W?.deskCanvas?.(desk) ?? deskCanvas(desk)
+    await need().sendStrokes({ timeline_id, strokes: [entry ?? STROKES.strokes[0].entry] })
+    await settle(); return {}
+  },
+  /** The shapes on a desk's Scribble Board as this core decodes them (scribble.mjs shapeOf). */
+  async scribble_shapes({ desk = 'main' }) {
     const S = await import('../../shared/scribble.mjs')
     const W = await import('../../app/web/public/whiteboard.mjs').catch(() => null)
     const timeline_id = W?.deskCanvas?.(desk) ?? deskCanvas(desk)
-    // the web's own wire format of a stroke (scribble.mjs: entryOf, or encodePoints in the older form)
-    const stroke = S.encodePoints ? { ...S.encodePoints(points), style: { tool: 'pen', color: 'ink', size: 4 } } : S.entryOf({ tool: 'pen', pts: points, color: 'ink', z: 0 })
-    await need().sendStrokes({ timeline_id, strokes: [stroke] })
-    await settle(); return {}
+    const items = await need().loadTimelineAfter(`scribble:${timeline_id}`, 0)
+    const out = []
+    for (const i of items.items ?? items) for (const [k, e] of (i.content?.strokes ?? []).entries()) {
+      const sh = S.shapeOf(e, `${i.envelope_number}:${k}`, i.sender_device_id)
+      out.push(sh ? { id: sh.id, tool: sh.tool, points: (sh.pts?.length ?? 0) / 2 } : { id: `${i.envelope_number}:${k}`, tool: e?.tool ?? null, points: -1 })
+    }
+    return out
   },
   // ---- the agent (the connector's core) ----
   async agent_card({ newer_schema, ...fields }) {
