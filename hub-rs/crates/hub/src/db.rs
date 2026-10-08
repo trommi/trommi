@@ -89,6 +89,11 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   room_id TEXT NOT NULL, device_id TEXT NOT NULL, endpoint TEXT NOT NULL, subscription TEXT NOT NULL, created_at INTEGER NOT NULL, level TEXT NOT NULL DEFAULT 'all',
   PRIMARY KEY (room_id, device_id, endpoint)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS live_activities (
+  room_id TEXT NOT NULL, device_id TEXT NOT NULL, environment TEXT NOT NULL, topic TEXT NOT NULL, tag TEXT NOT NULL DEFAULT '',
+  start_token TEXT, activity_token TEXT, started_at INTEGER, sent TEXT, created_at INTEGER NOT NULL,
+  PRIMARY KEY (room_id, device_id)
+) WITHOUT ROWID;
 "#;
 
 /// Tables made by the other modules of the Node hub at start (server.mjs shares, test-rooms.mjs, accounts.mjs).

@@ -871,9 +871,20 @@ test('apns: an iPhone token gets the same pushes, a fixed text and the message s
   assert.ok(crypto.verify('sha256', Buffer.from(`${head}.${claims}`), { key: publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(sig, 'base64url')))
   const { aps, e, ...rest } = got[0].body
   assert.deepEqual(rest, {})
-  assert.deepEqual(aps, { alert: { title: 'Trommi', body: 'Dringend: eine neue Frage.' }, sound: 'default' })
-  assert.deepEqual(openApns(e, key), { room_id: w.roomId, envelope_number: n, urgency: 3 })
+  assert.deepEqual(aps, { alert: { title: 'Trommi', body: 'Dringend: eine neue Frage.' }, sound: 'default', 'mutable-content': 1 })
+  const sealed = openApns(e, key)
+  assert.deepEqual({ ...sealed, t: undefined }, { room_id: w.roomId, envelope_number: n, urgency: 3, t: undefined })
   assert.ok(!JSON.stringify(got[0].body).includes(w.roomId))
+  // The ticket fetches exactly that envelope for exactly that device, without an access token.
+  const laptopId = hex(w.laptop.device.id)
+  const pe = (q, t = sealed.t) => `${R(w)}/push_envelope?envelope_number=${q.n ?? n}&device_id=${q.d ?? laptopId}&ticket=${t}`
+  const fetched = await ok(w, 'GET', pe({}))
+  const listed = (await ok(w, 'GET', `${R(w)}/envelopes?after_envelope_number=${n - 1}&limit=1`, { token: w.laptop.token })).envelopes[0]
+  assert.deepEqual(fetched, listed)
+  await refused(w, 'GET', pe({ n: n + 1 }), {}, 403, 'forbidden')
+  await refused(w, 'GET', pe({ d: hex(w.phone.device.id) }), {}, 403, 'forbidden')
+  await refused(w, 'GET', pe({}, sealed.t.slice(0, -2) + (sealed.t.endsWith('AA') ? 'AB' : 'AA')), {}, 403, 'forbidden')
+  await refused(w, 'GET', pe({}, 'x'), {}, 403, 'forbidden')
   // The loss watch reaches it too.
   const lease = await leaseHeader(w, w.agent)
   await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: true }, headers: lease })
@@ -896,6 +907,81 @@ test('apns: an iPhone token gets the same pushes, a fixed text and the message s
   assert.equal((await ok(w2, 'GET', '/v1/push_key')).apns, false)
   await refused(w2, 'POST', `${R(w2)}/push_subscriptions`, { token: w2.laptop.token, body: { apns: reg } }, 400, 'bad-argument')
   await w2.hub.close()
+})
+
+test('live activity: started when an agent works, updated with two counts, ended when none works; tokens per device', async () => {
+  const got = []
+  let answer = () => [200, '']
+  const fake = http2.createServer()
+  fake.on('stream', (stream, headers) => {
+    const parts = []
+    stream.on('data', c => parts.push(c))
+    stream.on('end', () => {
+      got.push({ headers, body: JSON.parse(Buffer.concat(parts).toString()) })
+      const [status, reason] = answer(headers)
+      stream.respond({ ':status': status })
+      stream.end(reason ? JSON.stringify({ reason }) : '')
+    })
+  })
+  await new Promise(ok2 => fake.listen(0, '127.0.0.1', ok2))
+  const origin = `http://127.0.0.1:${fake.address().port}`
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const config = { key: privateKey.export({ type: 'pkcs8', format: 'pem' }), keyId: 'KEY1234567', teamId: 'TEAM123456', topics: ['com.trommi.ios'] }
+  const w = await world({ apns: config, apnsHosts: { sandbox: origin, production: origin }, liveMs: 50 })
+  const L = `${R(w)}/live_activity`
+  const startTok = 'cd'.repeat(40), actTok = 'ef'.repeat(40)
+  const reg = tok => ({ token: tok, environment: 'sandbox', topic: 'com.trommi.ios' })
+  const wait = async k => { for (let i = 0; i < 100 && got.length < k; i++) await sleep(20); await sleep(120); assert.equal(got.length, k, JSON.stringify(got.map(g => g.body))) }
+  await refused(w, 'POST', L, { token: w.agent.token, body: { apns: reg(startTok), kind: 'start', tag: 'abcd1234' } }, 403, 'forbidden')
+  await refused(w, 'POST', L, { token: w.laptop.token, body: { apns: reg(startTok), kind: 'start' } }, 400, 'bad-argument')
+  await refused(w, 'POST', L, { token: w.laptop.token, body: { apns: reg(startTok), kind: 'later', tag: 'abcd1234' } }, 400, 'bad-argument')
+  await refused(w, 'POST', L, { token: w.laptop.token, body: { apns: { ...reg(startTok), topic: 'com.evil' }, kind: 'start', tag: 'abcd1234' } }, 400, 'bad-argument')
+  assert.deepEqual(await ok(w, 'POST', L, { token: w.laptop.token, body: { apns: reg(startTok), kind: 'start', tag: 'abcd1234' } }), { ok: true, working: 0, waiting: 0 })
+  await sleep(150)
+  assert.equal(got.length, 0)   // nobody works: nothing starts
+  // A question waits, an agent starts to work: one start, to the push-to-start token, with the tag and two counts.
+  await posted(w, w.agent, { kind: KIND.PERMISSION_REQUEST, push: false, card: { id: await z.objectIdOf(w.agent.device.id, 1), state: 1, urgency: 1 } })
+  const lease = await leaseHeader(w, w.agent)
+  await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: true }, headers: lease })
+  await wait(1)
+  assert.equal(got[0].headers[':path'], `/3/device/${startTok}`)
+  assert.equal(got[0].headers['apns-push-type'], 'liveactivity')
+  assert.equal(got[0].headers['apns-topic'], 'com.trommi.ios.push-type.liveactivity')
+  const { timestamp, alert, ...start } = got[0].body.aps
+  assert.ok(Number.isInteger(timestamp) && alert.body)
+  assert.deepEqual(start, { event: 'start', 'content-state': { working: 1, waiting: 1 }, 'attributes-type': 'TrommiActivityAttributes', attributes: { tag: 'abcd1234' } })
+  assert.ok(!JSON.stringify(got[0].body).includes(w.roomId))
+  // Still working, the token of the activity not here yet: no second start.
+  await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: false }, headers: lease })
+  await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: true }, headers: lease })
+  await sleep(200)
+  assert.equal(got.length, 1)
+  // The activity's token: updates go there (a second question), the end when nobody works.
+  assert.deepEqual(await ok(w, 'POST', L, { token: w.laptop.token, body: { apns: reg(actTok), kind: 'activity' } }), { ok: true, working: 1, waiting: 1 })
+  await posted(w, w.agent, { kind: KIND.PERMISSION_REQUEST, push: false, card: { id: await z.objectIdOf(w.agent.device.id, 2), state: 1, urgency: 1 } })
+  await wait(2)
+  assert.equal(got[1].headers[':path'], `/3/device/${actTok}`)
+  assert.equal(got[1].headers['apns-priority'], '10')
+  assert.equal(got[1].body.aps.event, 'update')
+  assert.deepEqual(got[1].body.aps['content-state'], { working: 1, waiting: 2 })
+  await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: false }, headers: lease })
+  await wait(3)
+  assert.equal(got[2].body.aps.event, 'end')
+  assert.deepEqual(got[2].body.aps['content-state'], { working: 0, waiting: 2 })
+  assert.ok(got[2].body.aps['dismissal-date'] > got[2].body.aps.timestamp)
+  assert.equal(w.hub.db.q('SELECT activity_token FROM live_activities').get().activity_token, null)
+  // Working again: a new start; Apple says the start token is gone: it is forgotten.
+  answer = () => [410, 'Unregistered']
+  await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: true }, headers: lease })
+  await wait(4)
+  assert.equal(got[3].body.aps.event, 'start')
+  assert.equal(w.hub.db.q('SELECT start_token FROM live_activities').get().start_token, null)
+  // remove: true forgets a token; the row goes with the last one.
+  await ok(w, 'POST', L, { token: w.laptop.token, body: { apns: reg(actTok), kind: 'activity' } })
+  await ok(w, 'POST', L, { token: w.laptop.token, body: { apns: reg(actTok), kind: 'activity', remove: true } })
+  assert.equal(w.hub.db.q('SELECT COUNT(*) AS n FROM live_activities').get().n, 0)
+  await w.hub.close()
+  fake.close()
 })
 
 test('loss watch: an agent with running work whose stream stays gone gets ONE push to the humans; offline_since; a disarm or a return pushes nothing', async () => {

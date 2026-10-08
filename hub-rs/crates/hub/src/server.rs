@@ -64,6 +64,8 @@ pub struct Live {
     pub streams: Vec<Arc<Stream>>,
     pub offline_since: HashMap<String, i64>,
     pub link: HashMap<String, LinkEntry>,
+    /// A Live Activity round is due (live_soon): at most one per HUB_LIVE_MS.
+    pub live_due: bool,
 }
 pub struct Room {
     pub id: String,
@@ -92,6 +94,7 @@ pub struct Hub {
     pub accounts: crate::accounts::Accounts,
     pub push: Pusher,
     pub apns: Option<Apns>,
+    pub tickets: crate::push::PushTickets,
     pub files: Files,
     pub streams: Mutex<HashMap<u64, Arc<Stream>>>,
     pub closing: AtomicBool,
@@ -171,6 +174,7 @@ impl Hub {
         if let Some(a) = &apns {
             log(&format!("apns on for {}", a.topics.join(", ")));
         }
+        let tickets = crate::push::PushTickets::new(&dir);
         let tests = TestRooms::new(&db.w(), &cfg);
         let accounts = crate::accounts::Accounts::new(&cfg)?;
         let metrics = crate::metrics::Metrics::new(&dir, &cfg);
@@ -188,6 +192,7 @@ impl Hub {
             accounts,
             push,
             apns,
+            tickets,
             files,
             db,
             hub_url,
@@ -347,6 +352,7 @@ impl Hub {
                 e.working = false;
                 (if cut { "cut" } else { "gone" }, since)
             };
+            hub.live_soon(&room);
             hub.send_link_push(&room.id, &dev, push.0, push.1.map(|s| json!(s)).unwrap_or(Value::Null)).await;
         });
     }
@@ -393,9 +399,114 @@ impl Hub {
         let message = json!({ "room_id": room, "envelope_number": n, "urgency": urgency });
         let sends = subs.iter().map(|s| async {
             let sub: Value = serde_json::from_str(&s.2).unwrap_or(Value::Null);
+            // an iPhone also gets a ticket for this one envelope (its Notification Service Extension shows the title)
+            let mut message = message.clone();
+            if sub.get("apns").is_some() {
+                message.as_object_mut().unwrap().insert("t".into(), json!(self.tickets.issue(room, &s.0, n, now())));
+            }
             let status = self.push_to(&sub, &message, web_urgency).await;
             if status == 404 || status == 410 {
                 let _ = self.db.w().execute("DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?", params![room, s.0, s.1]);
+            }
+        });
+        futures_util::future::join_all(sends).await;
+    }
+
+    // ---- Live Activity (hub/server.mjs liveSoon, liveCounts, liveNow) ---------------------------------
+
+    pub fn live_soon(self: &Arc<Self>, r: &Arc<Room>) {
+        if self.apns.is_none() {
+            return;
+        }
+        {
+            let mut live = r.live.lock();
+            if live.live_due {
+                return;
+            }
+            live.live_due = true;
+        }
+        let (hub, room) = (self.clone(), r.clone());
+        let ms = self.cfg.live_ms;
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            room.live.lock().live_due = false;
+            hub.live_now(&room).await;
+        });
+    }
+    fn live_counts(&self, r: &Room) -> (i64, i64) {
+        let agents: std::collections::HashSet<String> = self
+            .db
+            .read(|c| c.prepare_cached("SELECT device_id FROM devices WHERE room_id = ? AND device_role = 'agent' AND removed_entry_number IS NULL").and_then(|mut s| s.query_map([&r.id], |x| x.get(0))?.collect()))
+            .unwrap_or_default();
+        let working = r.live.lock().link.iter().filter(|(id, e)| e.working && agents.contains(*id)).count() as i64;
+        let waiting: i64 = self
+            .db
+            .read(|c| {
+                c.prepare_cached(
+                    "SELECT COUNT(*) FROM objects o JOIN devices d ON d.room_id = o.room_id AND d.device_id = o.owner_device_id
+      WHERE o.room_id = ? AND o.object_state = 1 AND d.device_role = 'agent'",
+                )
+                .and_then(|mut s| s.query_row([&r.id], |x| x.get(0)))
+            })
+            .unwrap_or(0);
+        (working, waiting)
+    }
+    async fn live_now(&self, r: &Room) {
+        let Some(apns) = &self.apns else { return };
+        type Row = (String, String, String, String, Option<String>, Option<String>, Option<i64>, Option<String>);
+        let rows: Vec<Row> = {
+            let c = self.db.w();
+            c.prepare_cached(
+                "SELECT l.device_id, l.environment, l.topic, l.tag, l.start_token, l.activity_token, l.started_at, l.sent FROM live_activities l
+      JOIN devices d ON d.room_id = l.room_id AND d.device_id = l.device_id WHERE l.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL",
+            )
+            .and_then(|mut s| s.query_map([&r.id], |x| Ok((x.get(0)?, x.get(1)?, x.get(2)?, x.get(3)?, x.get(4)?, x.get(5)?, x.get(6)?, x.get(7)?)))?.collect())
+            .unwrap_or_default()
+        };
+        if rows.is_empty() {
+            return;
+        }
+        let (working, waiting) = self.live_counts(r);
+        let key = format!("{working}:{waiting}");
+        let log = |m: &str| self.log(m);
+        let set = |dev: &str, sql: &str, p: &[&dyn rusqlite::ToSql]| {
+            let mut all: Vec<&dyn rusqlite::ToSql> = p.to_vec();
+            all.push(&r.id);
+            all.push(&dev);
+            let _ = self.db.w().execute(&format!("UPDATE live_activities SET {sql} WHERE room_id = ? AND device_id = ?"), all.as_slice());
+        };
+        let sends = rows.iter().map(|(dev, env, topic, tag, start, act, started, sent)| {
+            let (key, log, set) = (&key, &log, &set);
+            async move {
+                let reg = |tok: &str| json!({ "token": tok, "environment": env, "topic": topic });
+                if let Some(act) = act {
+                    if working == 0 {
+                        apns.send_live(&reg(act), "end", working, waiting, "", false, log).await;
+                        return set(dev, "activity_token = NULL, started_at = NULL, sent = NULL", &[]);
+                    }
+                    if sent.as_deref() == Some(key.as_str()) {
+                        return;
+                    }
+                    let before: i64 = sent.as_deref().and_then(|s| s.split(':').nth(1)).and_then(|w| w.parse().ok()).unwrap_or(0);
+                    let status = apns.send_live(&reg(act), "update", working, waiting, "", waiting > before, log).await;
+                    return if status == 410 { set(dev, "activity_token = NULL, started_at = NULL, sent = NULL", &[]) } else { set(dev, "sent = ?", &[key]) };
+                }
+                if working == 0 {
+                    if started.is_some() {
+                        set(dev, "started_at = NULL, sent = NULL", &[]);
+                    }
+                    return;
+                }
+                let Some(start) = start else { return };
+                if started.is_some_and(|t| now() - t < 8 * 3_600_000) {
+                    return;
+                }
+                let status = apns.send_live(&reg(start), "start", working, waiting, tag, false, log).await;
+                if status == 410 {
+                    set(dev, "start_token = NULL", &[]);
+                } else if status == 200 {
+                    set(dev, "started_at = ?, sent = ?", &[&now(), key]);
+                }
             }
         });
         futures_util::future::join_all(sends).await;
@@ -770,6 +881,9 @@ impl Hub {
         if out.push && self.push_limit.take(&format!("{}:{}", r.id, me.id)) == 0 {
             let (hub, room, sender) = (self.clone(), r.id.clone(), me.id.clone());
             tokio::spawn(async move { hub.send_pushes(&room, &sender, out.n, out.urgency).await });
+        }
+        if out.urgency.is_some() {
+            self.live_soon(r);
         }
         Ok(json(200, &json!({ "envelope_number": out.n })))
     }
@@ -1533,11 +1647,19 @@ impl Hub {
             let body = self.read_json(ctx).await?;
             let report = Self::link_report(&body)?;
             let cut_since = report["cut_since"].as_i64();
+            let mut changed = false;
             {
                 let mut live = r.live.lock();
                 let e = live.link.entry(me.id.clone()).or_default();
-                e.working = report["working"] == Value::Bool(true);
+                let working = report["working"] == Value::Bool(true);
+                if e.working != working {
+                    changed = true;
+                }
+                e.working = working;
                 e.report = Some(report);
+            }
+            if changed {
+                self.live_soon(&r);
             }
             self.announce(&r, &me.id);
             let push = {
@@ -1571,7 +1693,16 @@ impl Hub {
             self.fenced(&r, ctx, &me)?;
             let body = self.read_json(ctx).await?;
             let Some(working) = body.get("working").and_then(|w| w.as_bool()) else { return fail("bad-argument", "working") };
-            r.live.lock().link.entry(me.id.clone()).or_default().working = working;
+            let changed = {
+                let mut live = r.live.lock();
+                let e = live.link.entry(me.id.clone()).or_default();
+                let changed = e.working != working;
+                e.working = working;
+                changed
+            };
+            if changed {
+                self.live_soon(&r);
+            }
             return Ok(json(200, &json!({ "ok": true })));
         }
         if a == Some("session_grants") && b.is_none() && m == "POST" {
@@ -1793,6 +1924,62 @@ impl Hub {
                 c.execute(&sql, params![r.id, me.id, endpoint, serde_json::to_string(&sub).unwrap(), now(), level.and_then(|l| l.as_str()).unwrap_or("all")])?;
             }
             return Ok(json(200, &json!({ "ok": true })));
+        }
+        // One envelope for an iPhone's Notification Service Extension, against the ticket of its push: no access token.
+        if m == "GET" && a == Some("push_envelope") && b.is_none() {
+            self.open_route(ctx, &r.id)?;
+            let n = int_param(&ctx.query, "envelope_number", 0, 1, 9007199254740991)?;
+            let dev = hex_param(ctx.query.get("device_id"), 64, "device_id")?.to_string();
+            if !self.tickets.check(&r.id, &dev, n, ctx.query.get("ticket"), now()) {
+                return fail("forbidden", "no valid ticket for this envelope");
+            }
+            let active = self
+                .db
+                .read(|c| c.prepare_cached("SELECT 1 FROM devices WHERE room_id = ? AND device_id = ? AND device_role = 'human' AND removed_entry_number IS NULL").and_then(|mut s| s.query_row([&r.id, &dev], |_| Ok(())).optional()))
+                .ok()
+                .flatten()
+                .is_some();
+            if !active {
+                return fail("forbidden", "not an active human device");
+            }
+            let rows = self.envelope_rows(&r.id, n - 1, 1);
+            let Some(row) = rows.first().filter(|x| x.n == n) else { return fail("not-found", "no such envelope") };
+            return Ok(json(200, &Self::envelope_record(row, true)));
+        }
+        // An iPhone's Live Activity tokens: kind start (push-to-start, with its tag) or activity; remove: true forgets one.
+        if m == "POST" && a == Some("live_activity") && b.is_none() {
+            let token = bearer(ctx)?;
+            let me = r.core.lock().authorise(&token, true, false)?;
+            let body = self.read_json(ctx).await?;
+            let Some(apns) = &self.apns else { return fail("bad-argument", "this hub sends no APNs push") };
+            let Some(reg) = body.get("apns").and_then(|a| apns.check_live(a)) else {
+                return fail("bad-argument", "not an APNs token: { token, environment: sandbox | production, topic }");
+            };
+            let kind = body.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            if kind != "start" && kind != "activity" {
+                return fail("bad-argument", "kind is start or activity");
+            }
+            let col = if kind == "start" { "start_token" } else { "activity_token" };
+            let tok = reg["token"].as_str().unwrap().to_string();
+            if body.get("remove") == Some(&Value::Bool(true)) {
+                let c = db();
+                c.execute(&format!("UPDATE live_activities SET {col} = NULL WHERE room_id = ? AND device_id = ? AND {col} = ?"), params![r.id, me.id, tok])?;
+                c.execute("DELETE FROM live_activities WHERE room_id = ? AND device_id = ? AND start_token IS NULL AND activity_token IS NULL", params![r.id, me.id])?;
+            } else {
+                let tag = body.get("tag").and_then(|t| t.as_str()).unwrap_or("");
+                if kind == "start" && !((8..=32).contains(&tag.len()) && tag.bytes().all(|x| matches!(x, b'0'..=b'9' | b'a'..=b'f'))) {
+                    return fail("bad-argument", "tag: 8 to 32 lowercase hex");
+                }
+                let sql = format!(
+                    "INSERT INTO live_activities (room_id, device_id, environment, topic, tag, {col}, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (room_id, device_id) DO UPDATE SET environment = excluded.environment, topic = excluded.topic, {col} = excluded.{col}{}",
+                    if kind == "start" { ", tag = excluded.tag" } else { "" }
+                );
+                db().execute(&sql, params![r.id, me.id, reg["environment"].as_str().unwrap(), reg["topic"].as_str().unwrap(), if kind == "start" { tag } else { "" }, tok, now()])?;
+                self.live_soon(&r);
+            }
+            let (working, waiting) = self.live_counts(&r);
+            return Ok(json(200, &json!({ "ok": true, "working": working, "waiting": waiting })));
         }
         fail("not-found", "no such route")
     }

@@ -91,6 +91,7 @@ pub fn is_opaque(c: &str) -> bool {
         || c.ends_with("_hash")
         || c.ends_with("_salt")
         || c.ends_with("_wrapped")
+        || c.ends_with("_token")
 }
 fn is_device_column(c: &str) -> bool { c == "device_id" || c.ends_with("_device_id") }
 /// A number as JavaScript's String(n) prints it.

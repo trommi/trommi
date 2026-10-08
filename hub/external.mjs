@@ -106,6 +106,7 @@ function envOf(o) {
   set('HUB_STREAM_CAP_EVERY_MS', o.streamCapEveryMs)
   set('HUB_BODY_TIMEOUT_MS', o.bodyTimeoutMs)
   set('HUB_LOSS_MS', o.lossMs)
+  set('HUB_LIVE_MS', o.liveMs)
   if (o.adminPort !== undefined) env.ADMIN_PORT = String(o.adminPort)
   return env
 }
