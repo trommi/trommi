@@ -9,7 +9,7 @@
 import { launchChromium } from '../../../dev/cdp.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
-import { joinRoom, memoryStorage, checkEmoji } from '../../../shared/index.mjs'
+import { joinRoom, memoryStorage, checkEmoji } from '../../../shared/index.ts'
 import { execSync } from 'node:child_process'
 import { guard } from '../../../dev/guard.mjs'
 guard({ usage: 'node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR] [--email E] [--resolve RULES] [--hub-down CMD --hub-up CMD]', values: ['app', 'hub', 'shots', 'email', 'resolve', 'hub-down', 'hub-up'], targets: ['app', 'hub'], resolve: 'resolve' })

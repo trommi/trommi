@@ -24,7 +24,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { fork } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { memoryStorage, joinRoom, z } from '../../shared/index.mjs'
+import { memoryStorage, joinRoom, z } from '../../shared/index.ts'
 import { HERE, NET, useTestKey, deleteTestRoom, arg, flag, sleep, until, pct, found, addAgent, addHuman, reopen, leanSender, trimWindows, startLocalHub, writeJson, readJsonl, text, rngOf, stroke, hex16 } from './lib.mjs'
 import { guard } from '../guard.mjs'
 guard({ usage: 'node dev/load/load.mjs --hub=local|URL --total=N --agents=N --humans=N --out=DIR [--phases=…]', values: ['agents', 'depth', 'every', 'hub', 'humans', 'out', 'pages', 'pens', 'phases', 'ramp', 'rate', 'stalled', 'stall-from', 'stall-ms', 'step-ms', 'streams-per-device', 'strokes', 'test-key', 'total', 'workers'], flags: ['keep-hub', 'keep-room'], targets: ['hub'] })

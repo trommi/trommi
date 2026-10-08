@@ -21,7 +21,7 @@ export type FromWorker =
   | { t: 'snapshot'; model: ModelSnapshot; extra: Extra }
   | { t: 'event'; event: 'alert' | 'error' | 'reset'; data: unknown }
 
-/** What travels beside the model: the client's counters and this tab's role (tabs.mjs). */
+/** What travels beside the model: the client's counters and this tab's role (tabs.ts). */
 export interface Extra { stats?: Record<string, number> | null; tabRole?: string | null; [k: string]: unknown }
 
 /** The client's methods the page may call (shared/README.md "Human actions", "Sessions and keys", timelines,
@@ -29,7 +29,7 @@ export interface Extra { stats?: Record<string, number> | null; tabRole?: string
 export const CALLS: readonly string[] = Object.freeze([
   // life
   'start', 'stop', 'flush', 'settle', 'catchUp',
-  // human actions (tabs.mjs FORWARDED)
+  // human actions (tabs.ts FORWARDED)
   'sendMessage', 'answer', 'trust', 'markRead', 'shred', 'decideAgain', 'verdict', 'setRegisters', 'setDraft', 'snooze',
   'duck', 'setCrown', 'setDesk', 'saveNote', 'deleteNote', 'sendStrokes', 'createInvite', 'confirmInvite', 'removeDevices',
   'createSession', 'assignSession', 'leaveRoom', 'writeSnapshot',

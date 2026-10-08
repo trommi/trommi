@@ -9,7 +9,7 @@ import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../hub/server.mjs'
 import { launchChromium } from '../dev/cdp.mjs'
-import { joinRoom, memoryStorage } from './index.mjs'
+import { joinRoom, memoryStorage } from './index.ts'
 import { toJs } from '../dev/ts.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -56,7 +56,7 @@ try {
     return r.result.value
   }
   await nav()
-  const imp = `const core = await import('${ORIGIN}/shared/index.mjs');`
+  const imp = `const core = await import('${ORIGIN}/shared/index.ts');`
   // 1. found in the browser
   const founded = await run(`${imp}
     const storage = core.idbStorage({ name: 'trommi-test', prefix: 'r1/' })

@@ -1,12 +1,12 @@
 // core-worker.ts: the client core in a dedicated Web Worker, so the page's thread never verifies, decrypts, reduces or
 // reads storage. The page talks to it through remote.ts (RemoteClient); the protocol is worker-protocol.ts.
 //
-// The worker opens the stored room as the page did before (tabs.mjs: one writing tab per device, the others follow;
+// The worker opens the stored room as the page did before (tabs.ts: one writing tab per device, the others follow;
 // Web Locks and BroadcastChannel work in workers), runs it, and after every change posts the records the change names
 // (mirror.ts patchOf). Calls come in by name and run on the client; what they return goes back (structured clone). Nothing here knows the app's views.
 //
 //   new Worker('/gen/vendor/core-worker.mjs', { type: 'module' })   (the app's build names the bundled one)
-import { openRoomInTabs } from './tabs.mjs'
+import { openRoomInTabs } from './tabs.ts'
 import { idbStorage } from './storage-idb.ts'
 import { patchOf, snapshotOf } from './mirror.ts'
 import type { Change } from './types.ts'
@@ -66,7 +66,7 @@ port.onmessage = async ({ data: m }) => {
       storageOpts = m.storage
       clientName = m.client
       const storage = idbStorage(storageOpts)
-      const open = openRoomInTabs as unknown as (o: Record<string, unknown>) => Promise<AnyClient | null>   // (tabs.mjs: not typed yet)
+      const open = openRoomInTabs as unknown as (o: Record<string, unknown>) => Promise<AnyClient | null>   // (tabs.ts: not typed yet)
       const c = await open({ storage, makeStorage: () => idbStorage(storageOpts), client: m.client })
       client = c
       if (c) attach(c)

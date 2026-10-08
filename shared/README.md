@@ -2,7 +2,7 @@
 
 One ES-module library that every Trommi client uses: the app (`app/web`, copied into `public/gen/vendor/` by its build, `app/web/dev/build.mjs`) and the agent connector (`connector/connector.mjs`). WebCrypto and `fetch` only; runs unchanged in browsers and Node 26. The only client-specific parts are the **storage adapter** (which also keeps the device keys).
 
-**TypeScript.** The library moves to strict TypeScript one file at a time (`tsconfig.json` at the repository root; `npm run typecheck`, part of `npm test`). A converted file is `x.ts` beside the `.mjs` files that are not yet; it is imported with its real extension (`'./codec.ts'`). Nothing is compiled ahead: Node 26 runs `.ts` itself (type stripping, hence `erasableSyntaxOnly`: no `enum`, `namespace` or parameter properties), the app's build erases the types for the browser (esbuild; `dev/ts.mjs` for single files), the connector's build bundles it as it is.
+**TypeScript.** The library is strict TypeScript (since 8 October 2026; it moved one file at a time) (`tsconfig.json` at the repository root; `npm run typecheck`, part of `npm test`). Every module is imported with its real extension (`'./codec.ts'`). Nothing is compiled ahead: Node 26 runs `.ts` itself (type stripping, hence `erasableSyntaxOnly`: no `enum`, `namespace` or parameter properties), the app's build erases the types for the browser (esbuild; `dev/ts.mjs` for single files), the connector's build bundles it as it is.
 
 The wire contract is the README section "Hub v1: the wire protocol" of this repository. This file is the contract **between the core and its users**: the model the app renders from (stream C) and the API the connector drives (stream D). Names follow the README: snake_case, ids as lowercase hex, times in ms.
 
@@ -12,17 +12,17 @@ The wire contract is the README section "Hub v1: the wire protocol" of this repo
 
 | File | What |
 | --- | --- |
-| `index.mjs` | re-exports everything below; import this |
-| `crypto/` | the pure crypto, no dependencies: `zcrypto.mjs` (the library; bytes: `FORMAT.md`, design: `CRYPTO.md`), `argon2.mjs`, `session-grants.mjs` (per-session keys), `hub.mjs` (what the hub checks), their tests and `vectors.json` |
+| `index.ts` | re-exports everything below; import this |
+| `crypto/` | the pure crypto, no dependencies: `zcrypto.mjs` (the library; bytes: `FORMAT.md`, design: `CRYPTO.md`), `argon2.mjs`, `session-grants.mjs` (per-session keys), `hub.mjs` (what the hub checks), their tests and `vectors.json`; JavaScript, kept byte for byte (audited); `*.d.mts` beside them give their types to the TypeScript core |
 | `types.ts` | the protocol's and the model's shapes as TypeScript types (nothing at run time) |
 | `transport.ts` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
-| `room.mjs` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
-| `client.mjs` | the `Client`: sync engine (one cursor, verify every header, decrypt heads, lazy timelines), outbox, membership, sessions, human actions |
-| `snapshot.mjs` | room snapshots (fast first start) |
+| `room.ts` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
+| `client.ts` | the `Client`: sync engine (one cursor, verify every header, decrypt heads, lazy timelines), outbox, membership, sessions, human actions |
+| `snapshot.ts` | room snapshots (fast first start) |
 | `codec.ts` | body payloads (`schema_version` 1) for the seven kinds, attachment references |
 | `model.ts`, `model-shape.ts` | the board model reducer and the projections; an empty model and change |
-| `agent.mjs` | what an agent does: objects, messages, status, permission requests, `authoriseCommand` |
-| `storage-memory.ts`, `storage-idb.ts`, `storage-file.mjs` | storage adapters (memory for tests, IndexedDB for browsers, a directory for Node) |
+| `agent.ts` | what an agent does: objects, messages, status, permission requests, `authoriseCommand` |
+| `storage-memory.ts`, `storage-idb.ts`, `storage-file.ts` | storage adapters (memory for tests, IndexedDB for browsers, a directory for Node) |
 | `core-worker.ts`, `remote.ts`, `mirror.ts`, `worker-protocol.ts` | the core in a Web Worker (browsers): the worker runs the client; the page holds an exact copy of its model, patched after every change, and calls the client's actions by name (below, "The core in a worker") |
 | `ink.ts`, `scribble.ts`, `palette.ts` | the Scribble Board's stroke format, its reducer and colours |
 | `test.mjs` | `node shared/test.mjs` (Node, against `hub/server.mjs` in-process); `mirror-test.mjs`: the worker's copy of the model stays equal to it |

@@ -38,7 +38,7 @@ import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { fileStorage } from '../shared/storage-file.mjs'
+import { fileStorage } from '../shared/storage-file.ts'
 import { CHECK_EMOJI } from '../shared/check-emoji.ts'
 import { knock, socketPath } from './connector.mjs'
 import { INSTRUCTIONS, DESCRIPTIONS } from './tools.mjs'
@@ -138,7 +138,7 @@ export function confirmAgents(human) {
 }
 
 export async function integration({ test, tmp }) {
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   // A stand-in push service: the hub's loss watch pushes here (HUB_PUSH_HOSTS), after HUB_LOSS_MS.
   const pushed = []
   const pushService = http.createServer((req, res) => { const parts = []; req.on('data', c => parts.push(c)); req.on('end', () => { pushed.push(Buffer.concat(parts)); res.writeHead(201).end() }) })
@@ -897,7 +897,7 @@ export async function integration({ test, tmp }) {
  * file ask for a restart, and the update is hinted once on the next tool result.
  */
 export async function updates({ test, tmp }) {
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   const hub = await startHub(tmp, { HUB_RECOMMENDED_CONNECTOR: '9.0.0' })
   // A copy of connector/ and shared/ beside node_modules, so the test can change files without touching the repository.
   const repo = path.join(tmp, 'update-repo')
@@ -1091,7 +1091,7 @@ function hook(kind, input, env, cwd) {
 }
 
 export async function hooks({ test, tmp }) {
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   const hub = await startHub(tmp)
   const run = path.join(tmp, 'run3'), project = path.join(tmp, 'project3')
   for (const d of [run, project]) fs.mkdirSync(d, { recursive: true })
@@ -1213,7 +1213,7 @@ export async function hooks({ test, tmp }) {
 
 export async function monitor({ test, tmp: root }) {
   const tmp = fs.mkdtempSync(path.join(root, 'monitor-'))
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   const hub = await startHub(tmp)
   const run = path.join(tmp, 'run')
   fs.mkdirSync(run, { recursive: true })
@@ -1328,7 +1328,7 @@ export async function connect({ test, tmp: root, argv = [] }) {
   await new Promise(r => app.listen(0, '127.0.0.1', r))
   const APP = `http://127.0.0.1:${app.address().port}`
 
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   const hub = await startHub(tmp)
   let human, connector
   const run = (cmd, args, opts) => new Promise((resolve) => {
@@ -1401,7 +1401,7 @@ export async function connect({ test, tmp: root, argv = [] }) {
 
 export async function keyclaim({ test, tmp: root }) {
   const tmp = fs.mkdtempSync(path.join(root, 'keyclaim-'))
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   const hub = await startHub(tmp)
   const run = path.join(tmp, 'run'), project = path.join(tmp, 'project'), keys = path.join(tmp, 'keys')
   for (const d of [run, project]) fs.mkdirSync(d, { recursive: true })
@@ -1533,7 +1533,7 @@ export async function keyclaim({ test, tmp: root }) {
 // Claude Code session a connector belongs to, so a restart under the same key is a reconnect of that session.
 export async function link({ test, tmp: root }) {
   const tmp = fs.mkdtempSync(path.join(root, 'link-'))
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   const pushed = []
   const pushService = http.createServer((req, res) => { const parts = []; req.on('data', c => parts.push(c)); req.on('end', () => { pushed.push(Buffer.concat(parts)); res.writeHead(201).end() }) })
   await new Promise(r => pushService.listen(0, '127.0.0.1', r))
