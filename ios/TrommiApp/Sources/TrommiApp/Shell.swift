@@ -165,20 +165,38 @@ struct MenuPill: View {
 /** The Chat page's list (Messages, WhatsApp): the desk's sessions, the crowned one first, then by what happened last. */
 struct ChatsScreen: View {
   @EnvironmentObject var model: BoardModel
+  /** The parents whose helpers are unfolded (folded at first, as the desktop sidebar). */
+  @State private var open = Set<String>()
   var body: some View {
     let _ = RenderCount.body("ChatsScreen")
     let _ = model.version
     let v = model.view
-    let crown = model.desk?.crownOf(desk: model.deskId)
-    let units = (v?.units ?? []).sorted { a, b in
-      if (a.agent.id == crown?.id) != (b.agent.id == crown?.id) { return a.agent.id == crown?.id }
-      return a.agent.active > b.agent.active
-    }
+    let d = model.desk
+    let units = v?.units ?? []
+    let byId = Dictionary(units.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    // grouped by desk on All Desks (the desks' order), one group otherwise
+    let groups: [(id: String, name: String?)] = v?.all == true ? (d?.desks ?? []).map { ($0.id, Optional($0.name)) } : [(v?.deskId ?? "", nil)]
     List {
-      ForEach(units) { u in
-        Button { model.chatPath = [.session(u.id)] } label: { ChatRow(unit: u, crowned: u.agent.id == crown?.id, unread: model.unread(u.agent)) }
-          .listRowBackground(Color.clear)
-          .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+      ForEach(groups, id: \.id) { g in
+        let crown = d?.crownOf(desk: g.name == nil ? model.deskId : g.id)
+        let tops = units.filter { $0.parent == nil && (g.name == nil || (d?.deskOf($0.agent) ?? groups.first?.id) == g.id) }.sorted { a, b in
+          if (a.agent.id == crown?.id) != (b.agent.id == crown?.id) { return a.agent.id == crown?.id }
+          return a.agent.active > b.agent.active
+        }
+        if !tops.isEmpty {
+          Section {
+            ForEach(tops) { u in
+              row(u, crowned: u.agent.id == crown?.id, helpers: u.subs.count)
+              if open.contains(u.id) {
+                ForEach(u.subs, id: \.self) { s in if let su = byId[s] { row(su, crowned: false, helpers: 0) } }
+              }
+            }
+          } header: {
+            if let n = g.name {
+              HStack(spacing: 8) { PenMark("sketch:desk", color: Ink.muted).frame(width: 18, height: 18); Text(n).font(Face.text(13, .semibold)).foregroundStyle(Ink.muted) }
+            }
+          }
+        }
       }
     }
     .listStyle(.plain)
@@ -188,6 +206,22 @@ struct ChatsScreen: View {
     .navigationBarTitleDisplayMode(.inline)
     .toolbar { ToolbarItem(placement: .topBarLeading) { MenuPill() } }
     .refreshable { await model.refresh() }
+  }
+  private func row(_ u: DeskUnit, crowned: Bool, helpers: Int) -> some View {
+    HStack(spacing: 0) {
+      Button { model.chatPath = [.session(u.id)] } label: { ChatRow(unit: u, crowned: crowned, unread: model.unread(u.agent)) }
+        .buttonStyle(.plain)
+      if helpers > 0 {
+        Button { withAnimation(.snappy) { if open.contains(u.id) { open.remove(u.id) } else { open.insert(u.id) } } } label: {
+          Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Ink.muted)
+            .rotationEffect(.degrees(open.contains(u.id) ? 90 : 0)).frame(width: 44, height: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(open.contains(u.id) ? "Hide \(helpers) helpers" : "Show \(helpers) helpers")
+      }
+    }
+    .listRowBackground(Color.clear)
+    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 8))
   }
 }
 struct ChatRow: View {
