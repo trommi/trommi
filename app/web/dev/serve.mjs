@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generate } from './build.mjs'
-import { releaseKey, releaseHeaders } from '../worker.js'
+import { releaseKey, releaseHeaders, SITE_ASSOCIATION } from '../worker.js'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 // The connector's release (worker.js: from R2), here from connector-rs/build-plugin.mjs's output when it was run.
 const RELEASE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../connector-rs/dist')
@@ -53,6 +53,7 @@ async function serve(req, res) {
   const url = new URL(req.url, 'http://x')
   // The connect script (curl -fsSL <app>/connect | sh -s '<link>'), as worker.js serves it.
   if (url.pathname === '/connect' || url.pathname === '/connect/') { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, 'connect.sh'))) }
+  if (url.pathname === SITE_ASSOCIATION.address) { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, SITE_ASSOCIATION.file))) }
   const key = releaseKey(url.pathname)
   if (key) {
     const f = path.join(RELEASE, key)

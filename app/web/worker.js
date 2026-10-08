@@ -5,8 +5,11 @@
 //   - the connector's release (connector-rs/build-plugin.mjs: the binaries, the Trommi plugin and its marketplace) comes
 //     from the R2 bucket bound as RELEASES, which dev/deploy/connector.sh fills: Cloudflare's build of this app has no
 //     Rust toolchain, so the binaries are built on a developer's machine and uploaded apart from the app;
+//   - /.well-known/apple-app-site-association (the iOS app's universal links: /card/…, /s/…, /settings… open in Trommi
+//     when it is installed) is public/apple-app-site-association.json, served as JSON;
 //   - everything else is the static app.
-// dev/serve.mjs answers the release addresses from connector-rs/dist/ (build-plugin.mjs's default output).
+// dev/serve.mjs answers the release addresses from connector-rs/dist/ (build-plugin.mjs's default output) and the
+// association file from public/.
 
 /**
  * The R2 key of a release address, or null. Named by content (never change, cached for good):
@@ -22,6 +25,9 @@ export function releaseHeaders(key) {
   return { 'Content-Type': type, 'Cache-Control': named ? 'public, max-age=31536000, immutable' : 'no-cache', 'X-Content-Type-Options': 'nosniff' }
 }
 
+/** The address Apple fetches for the iOS app's universal links, and the file of public/ that answers it. */
+export const SITE_ASSOCIATION = { address: '/.well-known/apple-app-site-association', file: '/apple-app-site-association.json' }
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
@@ -33,6 +39,11 @@ export default {
       const r = await env.ASSETS.fetch(new Request(new URL('/connect.sh', url), { method: request.method === 'HEAD' ? 'HEAD' : 'GET' }))
       if (!r.ok) return r
       return new Response(r.body, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' } })
+    }
+    if (url.pathname === SITE_ASSOCIATION.address) {
+      const r = await env.ASSETS.fetch(new Request(new URL(SITE_ASSOCIATION.file, url), { method: request.method === 'HEAD' ? 'HEAD' : 'GET' }))
+      if (!r.ok) return r
+      return new Response(r.body, { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff' } })
     }
     const key = releaseKey(url.pathname)
     if (key) {
