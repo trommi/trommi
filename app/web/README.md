@@ -186,12 +186,19 @@ Headless Chromium; "phone" = 390x844 with the CPU 4x slower. Scripts: `dev/perf.
 | What | Desktop | Phone 4x |
 | --- | --- | --- |
 | Warm reload, app.trommi.com, to the Desk painted (service worker, cache-first) | 47–57 ms | 130–150 ms |
-| Cold load, app.trommi.com (≈80 files, no build step) | 260–550 ms | ≈400 ms |
+| Cold load, app.trommi.com (≈80 files, no build step; before the bundle) | 260–550 ms | ≈400 ms |
 | Real room, warm reload from IndexedDB (e2e, 31 cards) | 16–63 ms | – |
 | Card sent by an agent → row on the Desk (prod, live stream) | 85–130 ms | – |
 | Answer → command at the agent (prod) | 170–250 ms | – |
 | Crazy room (113k envelopes): first load of a new device | 29 s (was 367 s) | 86 s |
 | Crazy room: Desk / huge session chat / switch session / card thread / answer / own send visible | 6 / 48 / 57 / 19 / 18 / 3 ms | 25 / 211 / 220 / 60 / – / 11 ms |
 | Mock crazy room (300 open cards, 50k messages): patch after a change | 4–7 ms | 20–30 ms |
+
+**8 October 2026 (the bundle and the board caches),** crazy room on a local hub, phone 4x, p95 (p50) before → after:
+Desk 614 (547) → 68 (61) ms · answer a card 473 (231) → 160 (84) ms · open the huge session chat 357 (229) → 319 (206) ms
+· warm reload to the Desk painted 2,706 (1,702) → 1,668 (1,304) ms · JS heap 163 → 83 MB. Switching sessions stays at
+≈210 ms: the router waits up to 120 ms for the session's newest chat page from the hub (session.mjs firstPage). JS a
+cold start fetches: 1,353 KB in 26 files (brotli 373 KB) → 483 KB in 7 files (brotli 141 KB); a cold start on a phone
+(4x CPU, 150 ms RTT, 1.6 Mbps, brotli) to the start page 3.0 → 2.1 s, to the demo Desk 4.0 → 2.9 s.
 
 What made the difference: rows rendered only near the viewport (`desk.mjs` startDeskWindow), patch-only updates keyed by id, no page patching while the core catches up (one whole render every 2.5 s and once when live), board state rebuilt only for what a change names, no `:has()` over the whole document, advice marks measured in one batch, the service worker serving every file from its cache and revalidating only `index.html`. Still over budget: opening and switching sessions on a 4x phone (≈200 ms), a new device's first load in a huge room (bound by the core's verify/decrypt of every envelope; the core's room snapshot is the way out).

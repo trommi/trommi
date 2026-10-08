@@ -762,5 +762,5 @@ Measured on 4 October 2026 with real E2E members (`dev/load/`). "local" is the r
 | Open a chat next to 10,000 strokes | one covering-index search, chat items only, 1 ms at the hub |
 | Removing a member (27 members, 24 sessions) | crypto 3-14 ms; the whole v1.1 removal 1.7-2.3 s (one grant per session) |
 | App, crazy room, desktop | v1.1 with the room snapshot (45k envelopes): first load 2.4 s, interactions p95 24-126 ms, own message visible 8 ms (p95). v1.0 (113k): first load 29 s, all p95 < 100 ms |
-| App, same room, phone (CPU 4×) | v1.1: first load 3.4 s; opening a session, switching sessions, card threads, answers p95 290-580 ms (over budget); own message visible 44 ms (p95) |
+| App, same room, phone (CPU 4×) | v1.1: first load 3.4 s; opening a session, switching sessions, card threads, answers p95 290-580 ms (over budget); own message visible 44 ms (p95). 8 Oct (bundle, board caches): Desk p95 614 → 68 ms, answer 473 → 160 ms, open the huge chat 357 → 319 ms, switch ≈210 ms (waits for the hub's chat page), warm reload 2.7 → 1.7 s |
 | Open gaps | after a snapshot join no chat history is shown; local p99 about 1.1 s from about 800/s on current main (backpressure) |
