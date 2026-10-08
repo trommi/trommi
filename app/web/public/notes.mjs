@@ -35,7 +35,9 @@ export function register(t) {
       return toast({ head: 'Note thrown away', line: text.trim().replace(/\s+/g, ' ').slice(0, 80) || `${files} attached`, undo: { action: `${base}/notes`, fields: { text } } })
     },
     async send(note, f, m) {
-      const to = crownOf(m)
+      // (on All desks the note names which desk's crowned session gets it)
+      const asked = f.has('to') ? m.everyone.find(a => a.id === String(f.get('to')) && a.starred && !a.archived) : null
+      const to = asked ?? crownOf(m)
       if (!to) throw new Error('no crown on this desk yet: give a session the crown on the Agents page')
       const sent = await call({ id: note.id, to: to.id, send: true, ...(f.has('text') ? { text: String(f.get('text')) } : {}) })
       // The store holds it for a moment (sent.held.ms): until then the toast's Undo brings the note back as it was.

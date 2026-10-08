@@ -44,11 +44,14 @@ const MAC = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '')
 const SEND_KEYS = MAC ? 'Meta+Enter' : 'Control+Enter', SEND_WORD = MAC ? '⌘ Enter' : 'Ctrl+Enter'
 export function cornerNote(model, base) {
   const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
+  // On All desks the note asks which desk's crowned session gets it (his word, 8 October; the last one marked)
+  const crowns = model.all ? (model.desks ?? []).map(d => ({ desk: d, a: model.everyone.find(a => a.starred && !a.archived && model.deskOf(a) === d.id) })).filter(x => x.a) : []
+  const chooser = crowns.length > 1 ? html`<div class="note-to-pick" role="menu" aria-label="Send to" hidden>${crowns.map(x => html`<button type="button" role="menuitem" class="note-to-row" data-action="corner-note#sendTo" data-to="${x.a.id}">${raw(sketchSvg('desk'))}<span><b>${x.desk.name || 'Desk'}</b><small>${x.a.name}</small></span></button>`)}</div>` : ''
   const text = note?.text ?? '', files = note?.attachments ?? []
   return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
 <button type="button" class="corner-note-head" data-action="corner-note#open" title="${text || files.length ? 'Your note: open it (N)' : 'New note (N)'}" aria-label="${text || files.length ? 'Your note: open it' : 'New note'}" aria-expanded="false">${NOTE_ICON}</button>
 <div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop keydown->corner-note#key">${crown ? html`<span class="corner-note-to">${avatar(crown, { crown: false })}<b>${crown.name}</b></span>` : ''}<textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" aria-keyshortcuts="${SEND_KEYS}" data-action="input->corner-note#typed">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
-<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<span class="corner-note-sending"><button type="button" class="note-send corner-note-send" data-action="corner-note#send" data-name="${crown.name}" aria-label="Send to ${crown.name}" aria-keyshortcuts="${SEND_KEYS}">${raw(crownSvg())}</button><kbd class="corner-note-keys" aria-hidden="true">${SEND_WORD}</kbd></span>` : html`<a class="corner-note-nocrown" data-nav href="${base}/settings/agents">Give a session the crown to send</a>`}</footer></div>
+<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<span class="corner-note-sending">${chooser}<button type="button" class="note-send corner-note-send" data-action="corner-note#send" data-name="${crown.name}" aria-label="Send to ${crown.name}" aria-keyshortcuts="${SEND_KEYS}">${raw(crownSvg())}</button><kbd class="corner-note-keys" aria-hidden="true">${SEND_WORD}</kbd></span>` : html`<a class="corner-note-nocrown" data-nav href="${base}/settings/agents">Give a session the crown to send</a>`}</footer></div>
 </section>`
 }
 controller('corner-note', class extends Controller {
@@ -118,7 +121,7 @@ controller('corner-note', class extends Controller {
     this.element.querySelector('.corner-note-head').setAttribute('aria-expanded', 'true')
     this.element.querySelector('.corner-note-body').hidden = false
     this.fit(); this.field.focus(); this.field.setSelectionRange(this.field.value.length, this.field.value.length)
-    this.away = e => { if (!this.element.contains(e.target)) this.close() }
+    this.away = e => { if (this.element.contains(e.target)) return; if (e.target.closest?.('.tab[data-tab="note"]')) this.element.dataset.tabClosed = '1'; this.close() }
     setTimeout(() => document.addEventListener('pointerdown', this.away), 0)
   }
   close() {
@@ -225,14 +228,23 @@ controller('corner-note', class extends Controller {
   over(e) { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); this.element.classList.add('is-drop') } }
   out() { this.element.classList.remove('is-drop') }
   drop(e) { this.out(); if (e.dataTransfer?.files?.length) { e.preventDefault(); this.attach(e.dataTransfer.files) } }
-  async send() {
+  sendTo(e) { e.stopPropagation(); const to = e.currentTarget.dataset.to; try { localStorage.setItem('trommi-note-to', to) } catch {} ; this.element.querySelector('.note-to-pick').hidden = true; this.send(null, to) }
+  async send(e, to = null) {
     const text = this.field.value
     if (!text.trim() && !this.files().length) return this.field.focus()
+    const pick = this.element.querySelector('.note-to-pick')
+    if (pick && !to) {
+      // (on All desks: the crowns to choose from, the last one marked; Enter or a second press sends to it)
+      let last = null; try { last = localStorage.getItem('trommi-note-to') } catch {}
+      const rows = [...pick.querySelectorAll('.note-to-row')], marked = rows.find(r => r.dataset.to === last) ?? rows[0]
+      if (pick.hidden) { pick.hidden = false; for (const r of rows) r.classList.toggle('is-last', r === marked); marked?.focus(); return }
+      to = marked?.dataset.to
+    }
     if (!this.idValue) { await this.save(); if (!this.idValue) return }
     const id = this.idValue
     this.idValue = ''; this.field.value = ''; this.element.querySelector('.corner-note-files').innerHTML = ''
     this.close()
-    await this.post(`/notes/${id}/send`, { text })
+    await this.post(`/notes/${id}/send`, to ? { text, to } : { text })
   }
   async bin() {
     const id = this.idValue, text = this.field.value
@@ -396,6 +408,8 @@ function menuSessions(model, base) {
   return html`<div class="menu-sessions" id="menu-sessions">${rows.length ? html`<p class="menu-h">Sessions</p>` : ''}${rows.map(a => { const n = fresh.filter(c => c.agent === a.id).length; return html`<a role="menuitem" class="menu-session" data-nav draggable="false" href="${base}/s/${encodeURIComponent(a.id)}">${avatar(a, { crown: false, working: Boolean(a.working) })}<b>${a.name}</b>${n ? html`<i class="menu-n">${n}</i>` : ''}</a>` })}</div>`
 }
 
+const NOTE_EMPTY = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5.4 4.6Q12 4.2 18.8 4.7Q19.3 10 19.1 14.6L14.4 19.4Q9.8 19.7 5.2 19.3Q4.8 12 5.4 4.6Z"/><path d="M19.1 14.6Q15.6 14.3 14.6 15Q14.3 17 14.4 19.4"/></svg>'), NOTE_WRITTEN = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5.4 4.6Q12 4.2 18.8 4.7Q19.3 10 19.1 14.6L14.4 19.4Q9.8 19.7 5.2 19.3Q4.8 12 5.4 4.6Z"/><path d="M19.1 14.6Q15.6 14.3 14.6 15Q14.3 17 14.4 19.4"/><path d="M8 8.6Q12 8.2 15.8 8.5"/><path d="M8 11.7Q11.6 11.4 15.6 11.6"/><path d="M8 14.8Q10 14.6 11.8 14.8"/></svg>')
+const noteGlyph = model => { const n = deskNotesOf(model)[0]; return html`<span class="tab-note-ico" id="tab-note-ico">${n && (String(n.text ?? '').trim() || n.attachments?.length) ? NOTE_WRITTEN : NOTE_EMPTY}</span>` }
 /** The phone's bar (his word, 8 October: "Menu" is no tab; the menu is the pill at the top left, as on a wide screen):
  *  a small glass capsule at the foot, centred: Scribble · Desk · Note. The Desk carries what waits as its number (red
  *  while something knocks); Note opens the corner note to the crowned session. On a card's own page it stands back. */
@@ -408,7 +422,7 @@ export function tabBar(model, base, view) {
   return html`<nav class="tabbar" id="tabbar" aria-label="Chat, Desk, Note"${['card', 'picture', 'whiteboard', 'session'].includes(view) ? raw(' hidden') : ''}>
 <a class="tab" data-tab="chat" data-nav draggable="false" href="${chat ? `${base}/s/${encodeURIComponent(chat)}` : `${base}/chats`}"${view === 'chats' ? raw(' aria-current="page"') : ''}>${sk('bubble')}<span>Chat</span><i class="tab-badge" id="chat-badge"${unread ? '' : raw(' hidden')}>${unread}</i></a>
 <a class="tab" data-tab="desk" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}>${sk('desk')}<span>Desk</span>${waitingBadge(fresh.length, knocks)}</a>
-<button type="button" class="tab" data-tab="note" aria-controls="corner-note-box" aria-expanded="false">${sk('letter')}<span>Note</span></button>
+<button type="button" class="tab" data-tab="note" aria-controls="corner-note-box" aria-expanded="false">${noteGlyph(model)}<span>Note</span></button>
 </nav>`
 }
 const waitingBadge = (n, knocks) => html`<i class="tab-badge${knocks ? ' is-knock' : ''}" id="tab-badge"${n ? '' : raw(' hidden')}>${n > 99 ? '99+' : n}</i>`
@@ -966,9 +980,9 @@ export function register(t) {
   document.addEventListener('click', e => {
     const tab = e.target instanceof Element ? e.target.closest('.tab[data-tab="note"]') : null
     if (!tab) return
-    const head = $('#corner-note-box .corner-note-head'), open = head?.getAttribute('aria-expanded') === 'true'
-    if (open) $('#corner-note-box [data-action~="corner-note#fold"], #corner-note-box .corner-note-fold')?.click()
-    else head?.click()
+    const box = $('#corner-note-box'), head = $('#corner-note-box .corner-note-head')
+    if (box?.dataset.tabClosed) { delete box.dataset.tabClosed; tab.setAttribute('aria-expanded', 'false'); return }
+    head?.click()
     requestAnimationFrame(() => tab.setAttribute('aria-expanded', String($('#corner-note-box .corner-note-head')?.getAttribute('aria-expanded') === 'true')))
   })
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { shut(); const sw = $('#desk-switch'); if (sw && !sw.hidden) { sw.hidden = true; $('.desk-switch-open')?.focus() } } })
@@ -979,8 +993,8 @@ export function register(t) {
   narrow.addEventListener('change', rail)
   if (narrow.matches) rail()
   t.live('', {
-    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), place: deskPlace(m), pill: pillPlace(m), badge: waitingBadge((m.allFresh ?? m.fresh).length, (m.allFresh ?? m.fresh).some(c => ['high', 'critical'].includes(c.urgency))), sw: deskSwitchList(m, BASE), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
-    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.place, now.place) ? stream('replace', 'desk-place', now.place) : ''}${t.differs(was.pill, now.pill) && !document.getElementById('brand-menu')?.dataset.session ? stream('replace', 'pill-place', now.pill) : ''}${t.differs(was.badge, now.badge) ? stream('replace', 'tab-badge', now.badge) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
+    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), place: deskPlace(m), pill: pillPlace(m), noteIco: noteGlyph(m), badge: waitingBadge((m.allFresh ?? m.fresh).length, (m.allFresh ?? m.fresh).some(c => ['high', 'critical'].includes(c.urgency))), sw: deskSwitchList(m, BASE), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
+    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.place, now.place) ? stream('replace', 'desk-place', now.place) : ''}${t.differs(was.pill, now.pill) && !document.getElementById('brand-menu')?.dataset.session ? stream('replace', 'pill-place', now.pill) : ''}${t.differs(was.noteIco, now.noteIco) ? stream('replace', 'tab-note-ico', now.noteIco) : ''}${t.differs(was.badge, now.badge) ? stream('replace', 'tab-badge', now.badge) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
       : was.rows.shape !== now.rows.shape ? stream('update', 'agents', now.sidebar)
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })
