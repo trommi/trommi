@@ -3,7 +3,7 @@
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
 import { lastUndo, undoLast } from './ui.mjs'
-import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, act, galleryItems, html, isKnock, pageItems, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
+import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, artifactItems, avatar, calm, cardNr, controller, deskRow, el, act, html, isKnock, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -132,7 +132,7 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 // ---- stacks ----
 // Every card that left the open rows (Later, Done, Trash; what is with the agents stands on the Desk as the tail,
 // withAgents) stands in the end list (endList below); its whole list with the search is the page /stacks/off. The foot
-// of the Desk holds Media and Pages.
+// of the Desk holds Artifacts.
 //
 // Which card lies where (stackOf below; the hub's card fields decide, nothing else):
 //   later   status "open" and snoozed_until set: he put it off; "Wake up" fetches it back
@@ -284,13 +284,13 @@ function offSheets(model) {
   // Off the desk: Snoozed, Done and Trash in one list, the newest first (what is being worked on stands on the Desk: withAgents).
   return piles.filter(p => p.kind !== 'works').flatMap(p => p.sheets.map(s => Object.assign(s, { g: p.kind }))).sort((a, b) => b.at - a.at)
 }
-/** The foot of the Desk: Media and Pages; on its own page (/stacks/off, the end list's "All") the whole list of what
+/** The foot of the Desk: Artifacts; on its own page (/stacks/off, the end list's "All") the whole list of what
  *  left the Desk, with its search. */
 function deskStacks(model, base, open = null, q = '') {
   const all = open === 'off' ? offSheets(model) : null
   const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const found = sheet => { const text = `${sheet.card.title} ${model.byAgent.get(sheet.card.agent)?.name ?? ''} ${sheet.said}`.toLowerCase(); return terms.every(w => text.includes(w)) }
-  return html`<div class="inbox-stacks stack-tabs is-straight${all ? '' : ' is-two'}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${all ? offPile(all, model, base, true, terms.length ? all.filter(found) : null, q) : ''}${mediaPile(model, base)}${pagesPile(model, base)}</div>`
+  return html`<div class="inbox-stacks stack-tabs is-straight${all ? '' : ' is-two'}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${all ? offPile(all, model, base, true, terms.length ? all.filter(found) : null, q) : ''}${artifactsPile(model, base)}</div>`
 }
 
 // ---- the end of the Desk's list (his word, 8 October: "much slimmer at the end of the list, a checkbox to tick off,
@@ -359,27 +359,19 @@ function offPile(all, model, base, stands, hits, q) {
 }
 
 
-/** The pile "Media N" at the foot of the Desk (in #desk-stacks, beside Notes and "Off the desk"): the same slips as the
- *  other two piles (one geometry for all three, his word "aus einem Guss"), each with a small print of the picture or
- *  video and its title, the newest on top; a click opens the gallery. Without any it is not there. */
-function mediaPile(model, base) {
-  const all = galleryItems(model, base)
+/** The pile "Artifacts N" at the foot of the Desk (in #desk-stacks): everything the agents made or sent, Media and
+ *  Pages in one (ui.mjs artifactItems). The newest three pictures or videos lie fanned like prints; with none, the
+ *  newest pages as sheets of paper with a folded corner. A click opens /artifacts (media.mjs). Without any it is not there. */
+function artifactsPile(model, base) {
+  const all = artifactItems(model, base)
   if (!all.length) return ''
-  const pics = all.filter(i => i.type === 'image').length, vids = all.filter(i => i.type === 'video').length
-  const name = `Media, ${all.length === 1 ? '1 thing' : `${all.length} things`}${pics || vids ? ` (${[pics && `${pics} pictures`, vids && `${vids} videos`].filter(Boolean).join(', ')})` : ''}: open the gallery`
-  // (a loose pile of real photos: the newest three pictures or videos, the newest on top)
-  const photos = all.filter(i => (i.type === 'image' || i.type === 'video') && i.url).slice(0, 3)
-  return html`<a class="media-pile" id="desk-media" data-nav href="${base}/assets" aria-label="${name}" title="All pictures, videos and files your agents sent"><span class="desk-obj photo-pile${photos.length ? '' : ' is-blank'}" aria-hidden="true">${photos.reverse().map((i, at) => html`<span class="photo" style="--i:${at}">${mediaPreview(i)}</span>`)}</span><span class="off-label">Media <span class="off-count">${all.length}</span></span></a>`
-}
-
-/** The pile "Pages N" beside Media: the pages the agents made in this room (ui.mjs pageItems), as three sheets of paper
- *  with a folded corner, each with its title and a few lines of writing; the newest in front. A click opens the page
- *  /pages (media.mjs). Without any it is not there. */
-function pagesPile(model, base) {
-  const all = pageItems(model, base)
-  if (!all.length) return ''
-  const name = `Pages, ${all.length === 1 ? '1 page' : `${all.length} pages`}: open the list`
-  return html`<a class="media-pile pages-pile" id="desk-pages" data-nav href="${base}/pages" aria-label="${name}" title="Every page your agents made in this room"><span class="desk-obj pg-pile" aria-hidden="true">${all.slice(0, 3).reverse().map((i, at) => html`<span class="pg-sheet${i.pic ? ' has-pic' : ''}" style="--i:${at}${i.pic ? `;background-image:url('${i.pic}')` : ''}"><span class="pg-t">${i.title}</span><span class="pg-lines"></span></span>`)}</span><span class="off-label">Pages <span class="off-count">${all.length}</span></span></a>`
+  const name = `Artifacts, ${all.length === 1 ? '1 thing' : `${all.length} things`}: open them`
+  const photos = all.filter(x => x.kind === 'media' && (x.item.type === 'image' || x.item.type === 'video') && x.item.url).slice(0, 3).map(x => x.item)
+  const pages = all.filter(x => x.kind === 'pages').slice(0, 3).map(x => x.item)
+  const obj = photos.length
+    ? html`<span class="desk-obj photo-pile" aria-hidden="true">${photos.reverse().map((i, at) => html`<span class="photo" style="--i:${at}">${mediaPreview(i)}</span>`)}</span>`
+    : html`<span class="desk-obj pg-pile" aria-hidden="true">${pages.reverse().map((i, at) => html`<span class="pg-sheet${i.pic ? ' has-pic' : ''}" style="--i:${at}${i.pic ? `;background-image:url('${i.pic}')` : ''}"><span class="pg-t">${i.title}</span><span class="pg-lines"></span></span>`)}</span>`
+  return html`<a class="media-pile" id="desk-artifacts" data-nav href="${base}/artifacts" aria-label="${name}" title="Every picture, video, file and page your agents made">${obj}<span class="off-label">Artifacts <span class="off-count">${all.length}</span></span></a>`
 }
 
 // The stacks at the foot of the Desk: a click fans one out, a click gathers it. A stream may replace the stacks;

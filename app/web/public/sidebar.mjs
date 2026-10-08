@@ -383,7 +383,6 @@ const NEW_DESK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"
 const LIGHT = '<g class="lamp-light"><path class="lamp-glow" d="M14.9 2.4Q11.7 3.7 10.7 4.7Q9.6 5.7 9 6.6Q8.5 7.4 9 7.6Q9.5 7.9 12.4 7Q15.2 6.1 15.6 6.1Q15.9 6.1 15.8 4.7Q15.7 3.4 14.9 2.4Z"/><path class="lamp-cone" d="M9.2 7.9Q12.4 7.1 15.6 6.3L17.3 11.9Q12 12.1 6.4 12.2Z"/><path d="M7.6 9Q5.9 10.1 4.3 11.2"/><path d="M7.1 7.2Q5.3 7.3 3.5 7.5"/><path d="M7.9 5Q6.4 4.2 4.9 3.5"/></g>'
 /** The desk drawing of the menu's desk rows and the Desk box: its lamp lit while something waits on that desk. */
 const deskMark = lit => raw(lit ? sketchSvg('desk', 'menu-lamp is-lit').replace(/(<svg[^>]*>)/, `$1${LIGHT}`) : sketchSvg('desk', 'menu-lamp'))
-
 /** The desk rows of the menu (#menu-desk-rows, kept current by the live stream): the desk in view checked (the marked
  *  row); a desk's lamp is lit while something waits on it. */
 function menuDeskRows(model, base) {
@@ -434,7 +433,7 @@ const GEAR = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><pa
 /** The Trommi menu (#brand-doors): the wide screen's (from the sidebar's foot) and the phone's (from the pill), one
  *  component: the desks (each with its drawing and what waits, New Desk…), Settings, and one row of small buttons for
  *  this device: Push (Off → All → Only knocking), Theme (Light → Dark → System), Keyboard Shortcuts, Demo. A phone
- *  also has its places here (Scribble, Off your mind, Media, Pages). Log Out is in Settings · Account. */
+ *  also has its places here (Scribble, Artifacts). Log Out is in Settings · Account. */
 function menuDoors(model, base) {
   return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" data-owns-keys hidden>
 <div class="menu-desks" id="menu-desks">${menuDeskRows(model, base)}
@@ -442,7 +441,7 @@ function menuDoors(model, base) {
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Add</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 <a role="menuitem" class="menu-settings" href="${base}/settings" data-nav draggable="false" id="menu-settings">${GEAR}<span>Settings</span></a>
-<div class="menu-places">${[['scribble-board', 'pen', 'Scribble'], ['stacks/off', 'archive', 'Off your mind'], ['assets', 'picture', 'Media'], ['pages', 'page', 'Pages']].map(([p, icon, word]) => html`<a role="menuitem" href="${base}/${p}" data-nav draggable="false">${sk(icon)}<span>${word}</span></a>`)}</div>
+<div class="menu-places">${[['scribble-board', 'pen', 'Scribble'], ['artifacts', 'picture', 'Artifacts']].map(([p, icon, word]) => html`<a role="menuitem" href="${base}/${p}" data-nav draggable="false">${sk(icon)}<span>${word}</span></a>`)}</div>
 <div class="menu-icons" role="group" aria-label="This device">
 <button role="menuitem" type="button" id="push-toggle" class="menu-ico" data-level="off" aria-label="Push on this device: No" title="Push on this device">${sk('bell')}</button>
 <button role="menuitem" type="button" id="theme-toggle" class="menu-ico menu-theme-row" aria-label="Theme: Light, Dark or System (T)" title="Theme: Light → Dark → System (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<i class="ico-auto" aria-hidden="true">A</i></button>
@@ -567,10 +566,10 @@ if (typeof document !== 'undefined') {
 // pen lines; a red dot while a session is stopped or a card knocks) and the name of the place in view: the desk, or
 // the session with its drawing. Wide screens show neither.
 const HANDLE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M4.2 6.9Q12 6.1 19.9 6.8"/><path d="M4.1 12.3Q11 11.6 19.6 12.2"/><path d="M4.4 17.3Q12.4 18 19.8 17.1"/></svg>')
-const PLACES = { off: 'Off your mind', agents: 'Settings', room: 'Settings', gallery: 'Media', pages: 'Pages', whiteboard: 'Scribble Board' }
+const PLACES = { off: 'Off your mind', agents: 'Settings', room: 'Settings', artifacts: 'Artifacts', whiteboard: 'Scribble Board' }
 /** The phone's menu (his word, 8 October): a glass sheet that grows out of the pill: Settings; the desks (the one in
  *  view checked, New Desk…); the sessions (the first eight by what waits and activity, then All Sessions… as a sheet
- *  from below); then Scribble, Off your mind, Media, Pages. */
+ *  from below); then Scribble, Artifacts. */
 function phoneMenu(model, base) {
   const fresh = model.allFresh ?? model.fresh
   const desks = desksOf(model), here = d => !model.all && (model.desk ? d.id === model.desk : d === desks[0])
@@ -581,7 +580,7 @@ ${row(`${base}/settings/agents`, sk('key'), 'Settings', { cls: 'is-settings' })}
 ${desks.length > 1 ? row(`${base}/?desk=all`, deskMark(false), 'All Desks', { on: Boolean(model.all), n: fresh.length }) : ''}${desks.map(d => row(`${base}/?desk=${d.id}`, deskMark(false), d.name, { on: here(d) }))}
 <button type="button" class="pm-row pm-add" data-action="phone-menu#newDesk">${PLUS}<b>New Desk…</b></button>
 <form class="pm-desk-form" data-action="submit->phone-menu#makeDesk" hidden><input name="name" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Add</button><p class="pm-error" role="alert"></p></form>
-<div class="pm-places">${row(`${base}/scribble-board`, sk('pen'), 'Scribble')}${row(`${base}/stacks/off`, sk('archive'), 'Off your mind')}${row(`${base}/assets`, sk('picture'), 'Media')}${row(`${base}/pages`, sk('page'), 'Pages')}</div>
+<div class="pm-places">${row(`${base}/scribble-board`, sk('pen'), 'Scribble')}${row(`${base}/artifacts`, sk('picture'), 'Artifacts')}</div>
 </div>`
 }
 

@@ -18,7 +18,7 @@ const LAZY = {
   agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings(?:\/agents)?$|sessions\/)/ },
   card: { load: () => import('./card.mjs'), paths: /^(?:\/s\/[^/]+)?\/card\/|^\/cards\/[0-9a-f]+\// },
   session: { load: () => import('./session.mjs'), paths: /^\/s\// },
-  media: { load: () => import('./media.mjs'), paths: /^\/(?:assets|pages)(?:\/|$)/ },
+  media: { load: () => import('./media.mjs'), paths: /^\/artifacts(?:\/|$)/ },
   whiteboard: { load: () => import('./whiteboard.mjs'), paths: /^\/scribble-board$/ },
 }
 const loaded = {}   // name -> the view's module, once loaded
