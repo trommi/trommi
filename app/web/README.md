@@ -32,7 +32,7 @@ node dev/perf.mjs                       # the very big demo room (?mock=crazy), 
 ## Layout
 
 ```
-worker.js              http -> https, /connect (the connect script), the generated files at their public addresses
+worker.js              http -> https, /connect (the connect script), the connector's release from R2
 wrangler.jsonc  dev/   serve, build, check, verify, e2e, e2e-mobile, look, perf, make-fixture (cdp: the repository's dev/cdp.mjs)
 public/
   index.html  sw.js  manifest.webmanifest  _headers  connect.sh  frame.html (the sandbox a published page runs in)
@@ -46,9 +46,13 @@ public/
   demo/                the demo room (demo.mjs, fixture.json, files/), also the "Demo" desk
   fonts/  icons/  drawings.json
   gen/                 generated at deploy time by dev/build.mjs, not in git: app/ (the bundle: app-<hash>.mjs and its
-                       chunks), vendor/tools-reference.mjs (for the help page), bundle.<hash>.css, build.txt; connector.mjs(.sha256), plugins/ (connector/build.mjs),
-                       served at /connector.mjs, /connector.mjs.sha256, /plugins/…
+                       chunks), vendor/tools-reference.mjs (for the help page), bundle.<hash>.css, build.txt
 ```
+
+`worker.js` also serves the connector's release (connector-rs, built and uploaded by `dev/deploy/connector.sh`) from
+the R2 bucket bound as `RELEASES`: `/connector/<sha256>/trommi-connector-<target>`,
+`/connector/trommi-connector-<target>.sha256`, `/plugins/marketplace.json`, `/plugins/trommi-<version>.zip`. Locally
+`dev/serve.mjs` serves them from `connector-rs/dist/` (`node connector-rs/build-plugin.mjs --app http://127.0.0.1:8900`).
 
 ## Rules
 
@@ -78,12 +82,12 @@ repository's `shared/` as chunks of its own, the demo, `core-worker-<hash>.mjs`,
 (the app learns its address from `__TROMMI_CORE_WORKER__`; the dev server starts `/gen/vendor/core-worker.mjs`), the
 account screens' part of it, `core-worker-account-<hash>.mjs` (loaded only by them), and `core-start-<hash>.mjs`, which
 `index.html` runs first, async and before its style sheets (so the worker is fetched beside them), to start the worker; every
-name carries its content's hash, `_headers` keeps them immutable), `public/gen/vendor/tools-reference.mjs` (the connector's tools and events for the help page), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
+name carries its content's hash, `_headers` keeps them immutable), `public/gen/vendor/tools-reference.mjs` (the connector's tools and events for the help page, from `connector-rs/tools.json` and `connector/prompt.md`), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
 order: `app.css` first), `public/gen/build.txt` (the commit; the Web app deploy workflow waits until app.trommi.com
 serves it), the script and the modulepreload list of `index.html` (the entry with `?v=<build>`, the page's side of the
-core worker and the chunks a cold start imports), `VERSION` + `SHELL` of `sw.js`, and the connector's files `public/gen/connector.mjs`,
-`connector.mjs.sha256` and `plugins/` (`connector/build.mjs`). The bundle and the connector need the repository's npm
-packages (esbuild, the MCP SDK, zod): in Cloudflare's build `dev/build.mjs` runs `npm ci` at the repository root first.
+core worker and the chunks a cold start imports), and `VERSION` + `SHELL` of `sw.js`. The bundle needs the repository's npm packages (esbuild): in Cloudflare's build
+`dev/build.mjs` runs `npm ci` at the repository root first. The connector is not built here (no Rust toolchain in
+Cloudflare's build): its release is uploaded apart from the app (above).
 In the repository `index.html` and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`).
 `dev/serve.mjs` serves the build from memory: by default with the sources as modules of their own (no esbuild needed),
 `--bundle` as deployed. `node dev/build.mjs` checks only and prints the cold start's size; `--write` writes into
@@ -99,10 +103,10 @@ from this origin under the same CSP (workers take no integrity attribute).
 **Cloudflare's build settings** (the Workers project `trommi-app`, Settings → Build): root directory `app/web`, build
 command `node dev/build.mjs` (from `wrangler.jsonc`), deploy command `npx wrangler deploy`, Node from `.node-version`
 (`26.8.2`; the same file at the repository root, and `engines` in `package.json`), watch paths `app/web/*`, `shared/*`,
-`connector/*`, `package.json`, `package-lock.json`. The build runs `npm ci` at the repository root (so esbuild is the
+`connector/*`, `connector-rs/tools.json`, `package.json`, `package-lock.json`. The build runs `npm ci` at the repository root (so esbuild is the
 exact version of `package-lock.json`), refuses to build with another Node or esbuild than the pinned ones, and names
 both in `gen/manifest.json`. Its output does not depend on the directory it runs in (esbuild's `absWorkingDir` is the
-repository) or on the time; the plugin's zip has fixed dates and order.
+repository) or on the time.
 
 `gen/manifest.json` lists every file the app serves with its SHA-256; `gen/build.txt` names the commit and the
 **build hash**, the SHA-256 of that manifest. The build is reproducible (content-named files, a zip with fixed dates,

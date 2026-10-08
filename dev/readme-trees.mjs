@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process'
 const files = execSync('git ls-files', { encoding: 'utf8' }).trim().split('\n')
-const top = ['app/web', 'connector', 'hub', 'hub-rs', 'shared', 'dev']
+const top = ['app/web', 'connector', 'connector-rs', 'hub', 'hub-rs', 'shared', 'dev']
 const tree = list => {
   const root = {}
   for (const f of list) { let n = root; for (const p of f.split('/')) n = n[p] ??= {} }
