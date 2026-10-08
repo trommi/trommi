@@ -573,7 +573,8 @@ public final class DeskModel {
   public func hasOlder(agent: String) -> Bool {
     guard let dev = agentToDev[agent] else { return false }
     let keys = [timelineKeyOf("chat", "session/\(dev)")] + (board.sessions[dev]?.cardIds ?? []).map { timelineKeyOf("chat", "card/\($0)") }
-    return keys.contains { k in board.timelines[k].map { t in t.items.values.contains { $0.itemState == "header" } } ?? false }
+    // headers without bodies, or (after a snapshot boot) items the hub holds that are not here at all
+    return keys.contains { k in board.timelines[k].map { t in t.items.values.contains { $0.itemState == "header" } || (t.hasMore && t.items.count < t.itemCount) } ?? false }
   }
 
   private func itemsOf(_ t: Timeline?, agent: String, cardId: String?, into out: inout [Message]) {

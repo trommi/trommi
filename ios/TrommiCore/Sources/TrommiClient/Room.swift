@@ -167,6 +167,11 @@ public final class Room {
    *  in the store only (a room of 80,000 envelopes is not kept twice in memory). */
   private var log: [Int: Rec] = [:]
   private var restoredCount = 0
+  /** After a snapshot boot (shared/snapshot.ts): its envelope number and each sender's sequence in it. */
+  public private(set) var snapshotCursor: Int?
+  /** Boot a new human device from the newest room snapshot (JS options.snapshot); off: replay from envelope 1. */
+  public var snapshotBoot = true
+  private var snapshotChains: [String: UInt64]?
   private var cacheDirty = false
   private var cacheTask: Task<Void, Never>?
   /** Whether the board came from the cache (shown before the first catch-up). */
@@ -514,6 +519,9 @@ public final class Room {
         }
       } catch let e as ZError where e.code == "log-behind" {
         return (pres, refused, chains, (i, "log-behind"))
+      } catch let e as ZError where e.code == "replay" {
+        // already applied (the overlap read again after a snapshot boot): the cursor passes it, nothing applies
+        if let (h, _) = try? peekEnvelope(x.bytes) { pres.append(Pre(number: x.n, header: h, hash: [], payload: nil, bind: nil, contentState: "replay", isVoid: true)) }
       } catch let e as ZError {
         refused.append((x.n, e.description))
       } catch {
@@ -541,6 +549,8 @@ public final class Room {
     _ = await restoring?.value
     try await PerfLog.time("refreshSessions") { try await refreshSessions() }
     Task { await self.refreshDevices() }
+    // a new human device in a big room: the newest room snapshot of a human device, then only the tail after it
+    if cursor == 0 && board.myRole == "human" && !restored && snapshotBoot { _ = await PerfLog.time("snapshot boot") { await bootFromSnapshot() } }
     var change = Change()
     while true {
       let page = try await PerfLog.time("envelopes page") { try await noted { try await hub.envelopes(after: cursor) } }
@@ -835,6 +845,8 @@ public final class Room {
     var ch = Change()
     for e in r["envelopes"] as? [JSON] ?? [] {
       guard let n = (e["envelope_number"] as? NSNumber)?.intValue, let b = e["envelope"] as? String, let bytes = try? unb64u(b) else { continue }
+      // an item from before a snapshot boot has no header here yet: checked on its own first (D5)
+      if t.items[n] == nil, let it = itemFromBeforeSnapshot(t, n, bytes) { t.items[n] = it; if !t.numbers.contains(n) { t.numbers.append(n); t.numbers.sort() } }
       guard var item = t.items[n], item.itemState == "header" || item.itemState == "undecryptable", let hh = item.envelopeHash, let vh = try? unhex(hh) else { continue }
       do {
         let o = try openVerifiedEnvelope(bytes, state: state, secrets: secrets, envelopeHash: vh)
@@ -1549,6 +1561,9 @@ public final class Room {
     var lamport: Int
     var chains: Chains
     var sessionSecrets: [String: SecretJSON]
+    /** After a snapshot boot: its cursor and each sender's sequence in it (items from before it are checked against these). */
+    var snapshotCursor: Int? = nil
+    var snapshotChains: [String: UInt64]? = nil
   }
   private var cacheURL: URL { store.dir.appendingPathComponent("cache.bin") }
   /** The cache key, read from the Keychain once (a Keychain read can take tens of ms: never once per save). */
@@ -1614,7 +1629,8 @@ public final class Room {
     // (the index of where records lie is read again when next needed: these copies supersede older ones)
     if !recs.isEmpty { storeIndexMemo = nil }
     // the chain heads without their kept hashes: those are the records' own (rebuilt from them at the next launch)
-    let head = Head(records: restoredCount + log.count, cursor: cursor, lamport: lamport, chains: chains.mapValues { var c = $0; c.hashes = [:]; return c }, sessionSecrets: sessionSecrets.mapValues(SecretJSON.init))
+    let head = Head(records: restoredCount + log.count, cursor: cursor, lamport: lamport, chains: chains.mapValues { var c = $0; c.hashes = [:]; return c }, sessionSecrets: sessionSecrets.mapValues(SecretJSON.init),
+                    snapshotCursor: snapshotCursor, snapshotChains: snapshotChains)
     let gHash = grantsHash()
     let grants: [String: [String]]? = gHash == grantsWritten ? nil : sessionGrants.mapValues { $0.map(b64u) }
     grantsWritten = gHash
@@ -1690,6 +1706,8 @@ public final class Room {
       return (h, snap, ix)
     }.value
     guard let f = found else { rs.wipe(); return false }
+    // booted from a room snapshot but its board is not here: the records alone do not make the board (boot again)
+    if f.snap == nil && f.head.snapshotCursor != nil { rs.wipe(); return false }
     // the records after the snapshot (all without one) up to the head's cursor (one past it came after the last head:
     // it is read again from the hub); fewer than the head counted means a store damaged beyond its tail
     let base = f.snap?.cursor ?? 0
@@ -1740,6 +1758,7 @@ public final class Room {
     }
     if PerfLog.on { PerfLog.line(String(format: "restore: waited %.1f ms, applied %.1f ms (board %.1f)", Double(waitNs) / 1e6, Double(applyNs) / 1e6, Double(boardNs) / 1e6)) }
     restoredCount = f.head.records
+    snapshotCursor = f.head.snapshotCursor; snapshotChains = f.head.snapshotChains
     // no snapshot yet (the first launch after the store came): one at the next save
     sinceSnapshot = f.snap == nil ? Room.snapshotEvery : upto - lo0
     let c = (cursor: f.head.cursor, lamport: f.head.lamport, chains: f.head.chains)
@@ -1773,3 +1792,131 @@ public final class Room {
   public var openCards: [Card] { board.stack.compactMap { board.cards[$0] } }
 }
 
+
+// ---- the room snapshot: a new human device boots from it (shared/snapshot.ts) ------------------------------------
+
+extension Room {
+  public static let SNAPSHOT_SCHEMA = 2
+  static let SNAPSHOT_OVERLAP = 1000
+  static let SNAPSHOT_SCAN_PAGES = 12
+
+  struct FoundSnapshot { var value: JV; var envelopeNumber: Int; var sender: String }
+
+  /**
+   * The newest room_snapshot pointer: the newest pages of envelopes scanned backwards for a status head under the room
+   * key, signed by a human device that is a member now (D5), whose values name room_snapshot at or before its own number.
+   */
+  func findSnapshot() async throws -> FoundSnapshot? {
+    let first = try await noted { try await hub.envelopes(after: 0, limit: 1000, newest: true) }
+    let last = (first["last_envelope_number"] as? NSNumber)?.intValue ?? 0
+    if last < 2000 { return nil }                       // a small room: replaying is as fast
+    let rows = { (r: JSON) -> [(n: Int, bytes: Bytes)] in
+      (r["envelopes"] as? [JSON] ?? []).compactMap { e in
+        guard let n = (e["envelope_number"] as? NSNumber)?.intValue, let b = e["envelope"] as? String, let bytes = try? unb64u(b) else { return nil }
+        return (n, bytes)
+      }
+    }
+    let firstRows = rows(first)
+    let newestPage = firstRows.last?.n == last && firstRows.first?.n == max(1, last - 999)
+    let secrets = Room.secretLookup(room: roomSecrets, sessions: sessionSecrets)
+    var before = last
+    for page in 0..<Room.SNAPSHOT_SCAN_PAGES where before > 0 {
+      let after = max(0, before - 1000)
+      let list = page == 0 && newestPage ? firstRows : rows(try await noted { try await hub.envelopes(after: after, limit: 1000) })
+      for (n, bytes) in list.reversed() where n > after && n <= before {
+        guard let (h, split) = try? peekEnvelope(bytes), h.kind == KIND.STATUS, !split.pruned, h.keyScope == KEY_SCOPE.ROOM else { continue }
+        var scratch = Chains()
+        guard let o = try? openEnvelope(bytes, state: state, chains: &scratch, secrets: secrets, selfId: device.id, quarantine: true, allowChainStart: true, allowRemovedSender: true, commit: false),
+              o.quarantined == nil, let payload = o.payload else { continue }
+        // D5/D6: only from a human device that is still a member now (not one removed since)
+        guard let m = state.member(h.sender), m.role == ROLE.HUMAN, m.removedSeq == nil else { continue }
+        let v = Room.decodePayload(payload, header: o.header).content?["values"]["room_snapshot"] ?? .null
+        if v["attachment"].object != nil, let at = v["envelope_number"].int, at <= n { return FoundSnapshot(value: v, envelopeNumber: n, sender: hex(h.sender)) }
+      }
+      before = after
+    }
+    return nil
+  }
+
+  /**
+   * Load the newest room snapshot into this fresh device (cursor 0) and set the cursor an overlap before its end (D6):
+   * the catch-up then reads the tail with full chain checks from the snapshot's chain heads on; what lies inside them is
+   * recognised by (sender, sequence) and skipped, a different hash at a head is equivocation. Returns true if loaded.
+   */
+  func bootFromSnapshot() async -> Bool {
+    guard cursor == 0, board.myRole == "human" else { return false }
+    func no(_ why: String) -> Bool {
+      if ProcessInfo.processInfo.environment["TROMMI_DEBUG"] != nil { FileHandle.standardError.write(Data("[snapshot] no boot: \(why)\n".utf8)) }
+      PerfLog.line("snapshot boot: no (\(why))")
+      return false
+    }
+    do {
+      guard let found = try await findSnapshot() else { return no("no pointer") }
+      let v = found.value
+      let s = v["envelope_number"].int ?? 0
+      // the member list it was written under is the one this device verified, and no removal or recovery came after it
+      guard let logSeq = v["log_seq"].int, logSeq >= 0, logSeq <= state.head.seq, hex(state.hashes[logSeq]) == v["log_hash"].string else { return no("another member list") }
+      if logSeq < lastMemberChange(state) { return no("written before the newest member change") }
+      let raw = try await fetchAttachment(v["attachment"])
+      let encoding = v["encoding"].string ?? "identity"
+      guard let bytes = encoding == "gzip" ? gunzip(raw) : raw else { return no("not gzip") }
+      let parsed: JV? = await Task.detached(priority: .userInitiated) {
+        (try? JSONSerialization.jsonObject(with: Data(bytes), options: [])).map { JV(any: $0) }
+      }.value
+      guard let snap = parsed, snap["schema"].int == Room.SNAPSHOT_SCHEMA, snap["room_id"].string == record.roomId, snap["envelope_number"].int == s else { return no("not this room's snapshot (schema \(parsed?["schema"].int ?? -1))") }
+      // the chain heads (keys are base64url sender ids), this device's own chain excepted (a frontier's `told` is only
+      // kept for the own chain here: what this device's next envelope says it has seen, R5)
+      let me = hex(device.id)
+      var heads = [String: UInt64]()
+      for (k, x) in snap["chains"].object ?? [:] {
+        guard let id = try? unb64u(k), id.count == 32, let a = x.array, a.count == 2, let seq = a[0].int, seq > 0, let hb = a[1].string, let hash = try? unb64u(hb), hash.count == 32 else { continue }
+        let sender = hex(id)
+        if sender == me { continue }
+        var c = Chain(); c.seq = UInt64(seq); c.hash = hash; c.hashes = [UInt64(seq): hash]
+        chains[sender] = c
+        heads[sender] = UInt64(seq)
+      }
+      let grantSessions = Set(sessionStates.keys)
+      let lam = SnapshotModel.apply(snap["model"], to: board, grantSessions: grantSessions)
+      lamport = max(lamport, lam)
+      var mc = Change(); applyMemberList(&mc)                 // the device registers' names on the members
+      for (sid, st) in sessionStates { board.applySessionGrant(st, change: &mc) }
+      cursor = max(0, s - Room.SNAPSHOT_OVERLAP)
+      board.lastEnvelopeNumber = cursor
+      snapshotCursor = s
+      snapshotChains = heads
+      sinceSnapshot = Room.snapshotEvery                  // the board snapshot at the first settled save: the store has no records before it
+      board.project()
+      var ch = Change(); ch.stack = true; ch.room = true; ch.members = true
+      for id in board.cards.keys { ch.cards.insert(id) }
+      for id in board.sessions.keys { ch.sessions.insert(id) }
+      emit(ch)
+      if PerfLog.on { PerfLog.line("snapshot boot: envelope \(s) from \(found.sender.prefix(8)), \(raw.count / 1024) KiB, \(board.cards.count) cards") }
+      return true
+    } catch { return no("\(error)") }
+  }
+
+  /**
+   * An item from before the snapshot this device never saw the header of (loadOlder): its signature and membership
+   * checked on their own; it must name this very timeline as a thread item, from a sender allowed to write there, at most
+   * as far as that sender's chain head in the snapshot; one (sender, sequence) is one item whatever its number (D5).
+   */
+  func itemFromBeforeSnapshot(_ t: Timeline, _ n: Int, _ bytes: Bytes) -> TimelineItem? {
+    guard let sc = snapshotCursor, n <= sc else { return nil }
+    var scratch = Chains()
+    guard let v = try? verifyEnvelope(bytes, state: state, chains: &scratch, allowChainStart: true, allowRemovedSender: true, commit: false) else { return nil }
+    let h = v.header
+    let sender = hex(h.sender)
+    let tk = h.timelineKind.map { TIMELINE_KIND_NAME[$0] ?? String($0) }
+    guard h.kind == KIND.TIMELINE_ITEM, tk == t.kind, h.timelineId == t.timelineId else { return nil }
+    if let head = snapshotChains?[sender], h.seq > head { return nil }
+    let role = state.member(h.sender).map { $0.role == ROLE.HUMAN ? "human" : "agent" } ?? "unknown"
+    let rec = Rec(envelopeNumber: n, envelopeHash: hex(v.hash), senderDeviceId: sender, senderRole: role, recipientDeviceId: isZero(h.recipient) ? nil : hex(h.recipient),
+                  sentAt: h.time, kind: h.kind, isHead: h.isHead, object: nil, timelineKind: tk, timelineId: h.timelineId,
+                  sessionId: h.keyScope == KEY_SCOPE.SESSION ? h.sessionId.map(hex) : nil, content: nil, contentState: "header", bind: nil,
+                  causal: Causal(senderDeviceId: sender, senderSequence: h.seq, sentAt: h.time, lamport: 0), senderSequence: h.seq, epoch: h.epoch)
+    if board.timelineRefusal(rec) != nil { return nil }
+    if t.items.values.contains(where: { $0.senderDeviceId == sender && $0.senderSequence == h.seq }) { return nil }
+    return Board.itemOf(rec)
+  }
+}

@@ -21,7 +21,7 @@ let DRIVER_COMMANDS = [
   "version_info", "join", "join_wait", "login", "forgot", "whoami", "sync", "members", "sessions", "list_cards", "card",
   "answer", "shred", "mark_read", "decide_again", "chat_send", "chat_list", "set_register", "registers", "note_save", "notes",
   "invite", "invite_status", "invite_confirm", "remove_member", "leave", "register_push", "check_envelope", "alerts",
-  "account_status", "make_kit", "change_password", "scribble_draw", "scribble_shapes", "set_live",
+  "account_status", "make_kit", "change_password", "scribble_draw", "scribble_shapes", "set_live", "snapshot_info",
 ]
 
 @MainActor final class Driver {
@@ -127,6 +127,9 @@ let DRIVER_COMMANDS = [
       let r = try await Room.resetPassword(hubURL: try Driver.str(a, "hub_url"), email: try Driver.str(a, "email"), words: try Driver.str(a, "words"), newPassword: try Driver.str(a, "new_password"), base: base)
       try await adopt(r, name: a["name"].string)
       return .obj(["device_id": .str(r.record.myDeviceId)])
+    case "snapshot_info":
+      let r = try need()
+      return .obj(["snapshot_cursor": .n(r.snapshotCursor)])
     case "whoami":
       let r = try need()
       return .obj(["device_id": .str(r.record.myDeviceId), "room_id": .str(r.record.roomId), "role": .str(r.record.role), "live": .bool(r.live), "key_epoch": .n(r.state.epoch)])

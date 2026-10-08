@@ -135,8 +135,11 @@ public final class HubClient {
   }
   /** Every session with its newest grant number (GET sessions). */
   public func sessions() async throws -> JSON { try await request("GET", roomPath("/sessions")) }
-  public func envelopes(after: Int, limit: Int = 1000) async throws -> JSON {
-    try await request("GET", roomPath("/envelopes"), query: ["after_envelope_number": String(after), "limit": String(limit)])
+  /** newest: the newest `limit` envelopes after the cursor (a hub without it answers from the cursor on: check the numbers). */
+  public func envelopes(after: Int, limit: Int = 1000, newest: Bool = false) async throws -> JSON {
+    var q = ["after_envelope_number": String(after), "limit": String(limit)]
+    if newest { q["newest"] = "1" }
+    return try await request("GET", roomPath("/envelopes"), query: q)
   }
   public func postEnvelope(_ bytes: Bytes) async throws -> JSON { try await request("POST", roomPath("/envelopes"), body: ["envelope": b64u(bytes)]) }
   /** A member entry (here: a device adding itself with the recovery key) and the room key sealed for it. */
