@@ -188,3 +188,27 @@ export async function startHub(o = {}) {
   }
   return hub
 }
+
+/**
+ * startAdmin() of hub/admin.mjs for the external hub's admin page alone (`<HUB_CMD> admin`): the same options
+ * (dbPath, dataDir, host, port, env with ADMIN_LOGINS and ADMIN_PASSWORD_HASH, allowPublishedLoopback, now). An in-process
+ * `metrics` object cannot cross: the page reads <dataDir>/metrics.db read-only, as a standalone admin does.
+ */
+export async function startAdmin({ dbPath, dataDir, port = 8791, host = '127.0.0.1', env = process.env, allowPublishedLoopback = false, now, log } = {}) {
+  const [bin, ...args] = process.env.HUB_CMD.split(' ')
+  args.push('admin', '--db', dbPath, '--host', host, '--port', String(port))
+  if (dataDir) args.push('--data', dataDir)
+  if (allowPublishedLoopback) args.push('--published-loopback')
+  const childEnv = { ...process.env, ADMIN_LOGINS: env.ADMIN_LOGINS ?? '', ADMIN_PASSWORD_HASH: env.ADMIN_PASSWORD_HASH ?? '' }
+  if (now) childEnv.HUB_TEST_NOW = String(now())
+  const child = spawn(bin, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+  let err = '', out = ''
+  const exit = new Promise(ok => child.once('exit', ok))
+  child.stderr.on('data', d => { err += d; log?.warn?.(String(d).trim()) })
+  const adminPort = await new Promise((ok, bad) => {
+    child.stdout.on('data', d => { out += d; const m = /admin on .*:(\d+)/.exec(out); if (m) ok(Number(m[1])) })
+    exit.then(() => bad(new Error(err.trim() || 'admin exited')))
+    child.once('error', bad)
+  })
+  return { port: adminPort, close: async () => { child.kill('SIGTERM'); await Promise.race([exit, new Promise(ok => setTimeout(ok, 3000).unref())]) } }
+}

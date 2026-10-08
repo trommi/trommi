@@ -7,7 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
-import { startAdmin, hashPassword, verifyPassword, renderCell, PASSWORD_FILE } from './admin.mjs';
+import { startAdmin as startAdminHere, hashPassword, verifyPassword, renderCell, PASSWORD_FILE } from './admin.mjs';
+// HUB_CMD=<a hub binary>: the page of that hub (its `admin` command, hub/external.mjs); the helpers above stay JavaScript's.
+const startAdmin = process.env.HUB_CMD ? (await import('./external.mjs')).startAdmin : startAdminHere;
 import { hubMetrics, openSeries } from './ops/metrics.mjs';
 
 const LOGIN = 'admin@example.com';
@@ -360,7 +362,7 @@ try {
   });
 
   await test('wired into the hub with ADMIN_PORT: overview (CPU, RAM, disk, hub metrics), tables, login page', async () => {
-    const { startHub } = await import('./server.mjs');
+    const { startHub } = process.env.HUB_CMD ? await import('./external.mjs') : await import('./server.mjs');
     const hubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-admin-hub-'));
     const saved = { ...process.env };
     Object.assign(process.env, { ADMIN_LOGINS: LOGIN, ADMIN_PASSWORD_HASH: env.ADMIN_PASSWORD_HASH });
@@ -472,7 +474,7 @@ try {
   });
 
   await test('hub without ADMIN_LOGINS: admin not started, hub still runs', async () => {
-    const { startHub } = await import('./server.mjs');
+    const { startHub } = process.env.HUB_CMD ? await import('./external.mjs') : await import('./server.mjs');
     const hubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-admin-hub2-'));
     const saved = process.env.ADMIN_LOGINS;
     delete process.env.ADMIN_LOGINS;
