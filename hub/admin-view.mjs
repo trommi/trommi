@@ -5,6 +5,8 @@
 //           objects, attachments, keys, invites, account), a paged, sortable, filterable table on the right and,
 //           with a row selected, every column of it plus the decoded cleartext envelope header and links to
 //           related rows.
+//   /test-accounts  the throwaway accounts of old e2e runs (email ending in @example.org) and a "Delete these N test
+//           rooms" form that needs the number typed; the deletion itself is the hub's (hub/ops/delete-room.mjs).
 //
 // What never leaves this module in full: ciphertext, signed blobs and secrets (OPAQUE_COLUMN and every BLOB that
 // is not a device id) are shown as size + first 16 bytes hex. Opaque columns can neither be filtered, sorted nor
@@ -230,6 +232,10 @@ table.grid{border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:
 .login{max-width:380px;margin:12vh auto 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px}
 .login h1{font-size:17px;margin-bottom:4px}.login form{display:flex;flex-direction:column;gap:10px;margin-top:14px}
 .login label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.scroll{overflow:auto;margin:10px 0 0}
+.confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.confirm input{width:7em}
+button.danger{background:var(--bad);border-color:var(--bad);color:#fff}button.danger:hover{filter:brightness(1.08);background:var(--bad)}
+.ok{color:var(--accent-ink)}
 .form{max-width:440px;display:flex;flex-direction:column;gap:12px}.form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 @media (max-width:820px){
 .cols{grid-template-columns:minmax(0,1fr)}
@@ -267,7 +273,7 @@ const foot = `<script>${JS}</script></body></html>`;
 
 export function topBar(login, csrf, on = '') {
   const tab = (href, label, key) => `<a href="${href}"${on === key ? ' class="on"' : ''}>${label}</a>`;
-  return `<header class="top"><span class="brand">${BELL}<b>Trommi</b> <small>hub admin</small></span><nav>${tab('/', 'Übersicht', 'overview')}${tab('/data', 'Daten', 'data')}${tab('/password', 'Passwort ändern', 'password')}</nav>
+  return `<header class="top"><span class="brand">${BELL}<b>Trommi</b> <small>hub admin</small></span><nav>${tab('/', 'Übersicht', 'overview')}${tab('/data', 'Daten', 'data')}${tab('/test-accounts', 'Test accounts', 'tests')}${tab('/password', 'Passwort ändern', 'password')}</nav>
 <div class="who"><span class="login-name">${esc(login)}</span><form method="post" action="/logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button>Abmelden</button></form></div></header>`;
 }
 
@@ -909,5 +915,42 @@ export function renderOverview({ db, dbPath, dataDir, metrics, startedAt, range:
 <div class="charts">${charts.join('')}</div>
 <div class="cols"><section class="card"><h3>Hub</h3><dl class="kv">${hub.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></section>
 <section class="card"><h3>Tables <a class="n" href="/data">open data browser →</a></h3>${tablesHtml}</section></div>
+</main>${foot}`;
+}
+
+// ---------- test accounts ----------
+
+/**
+ * The accounts whose email ends with @example.org (from hub/ops/delete-room.mjs testAccounts) and the delete form.
+ * Their emails are shown in full: they are throwaway addresses by construction, and the list is fixed by the
+ * suffix, so it is no oracle on real addresses (those stay opaque everywhere else).
+ * result: what deleteTestRooms returned (shown after a deletion); message: an error line.
+ */
+export function renderTestAccounts(list, { login = '', csrf = '', canDelete = false, message = '', result = null } = {}) {
+  const when = (t) => (Number.isFinite(t) && t > 0 ? dateFmt.format(t) : '–');
+  const n = list.length;
+  let done = '';
+  if (result) {
+    const totals = Object.entries(result.totals || {}).filter(([k]) => k !== 'files').sort(([a], [b]) => a.localeCompare(b));
+    done = `<section class="card"><h3 class="ok">Deleted ${esc(fmtNum(result.deleted.length))} test room${result.deleted.length === 1 ? '' : 's'}</h3><dl class="kv">
+<dt>backup</dt><dd class="mono">${esc(result.backup)}</dd>
+${totals.map(([t, c]) => `<dt>${esc(t)}</dt><dd>${esc(fmtNum(c))} rows</dd>`).join('')}
+<dt>attachment files</dt><dd>${esc(fmtNum(result.totals?.files || 0))}</dd>
+${result.refused.length ? `<dt class="err">refused</dt><dd class="err">${result.refused.map((r) => esc(`${r.room_id.slice(0, 12)}: ${r.message}`)).join('<br>')}</dd>` : ''}
+</dl><p class="note">Every deleted room is also written to deletions.log in the hub's data directory.</p></section>`;
+  }
+  const rows = list.map((r) => `<tr><td class="mono">${esc(r.email)}</td><td><a class="id" href="${esc(dataHref({ room: r.room_id }))}">${esc(r.room_id.slice(0, 12))}…</a></td>
+<td>${esc(when(r.created_at))}</td><td>${esc(when(r.last_activity))}</td><td class="num">${esc(fmtNum(r.envelopes))}</td><td class="num">${esc(fmtNum(r.attachments))}</td></tr>`).join('');
+  const table = n ? `<div class="scroll"><table class="grid"><thead><tr><th>email</th><th>room</th><th>created</th><th>last activity</th><th>envelopes</th><th>attachments</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">No accounts with an email ending in @example.org.</p>';
+  const form = n && canDelete
+    ? `<form class="confirm" method="post" action="/test-accounts/delete"><input type="hidden" name="csrf" value="${esc(csrf)}">
+<label for="confirm-n" class="muted">Type ${n} to confirm</label><input id="confirm-n" type="text" name="confirm" inputmode="numeric" autocomplete="off" required pattern="${n}">
+<button class="danger">Delete these ${n} test rooms</button></form>
+<p class="note">Removes every row of these rooms (account, members, devices, keys, envelopes, cards, attachments and their files, push registrations, links) in one transaction per room, after an online backup of hub.db to backups/ in the data directory. Only rooms whose account email ends with @example.org can be deleted.</p>`
+    : n ? '<p class="note">Deleting needs the running hub (this listener has no hub attached).</p>' : '';
+  return `${head('Test accounts · Trommi hub admin')}${login ? topBar(login, csrf, 'tests') : ''}<main class="page">
+<div class="head"><h1>Test accounts</h1><span class="muted">${esc(fmtNum(n))} with an email ending in @example.org</span></div>
+${message ? `<p class="err">${esc(message)}</p>` : ''}${done}
+<section class="card">${table}${form}</section>
 </main>${foot}`;
 }

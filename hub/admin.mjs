@@ -19,14 +19,17 @@
 //   2. A session cookie from the admin password (scrypt hash in <dataDir>/admin-password-hash, or the
 //      initial ADMIN_PASSWORD_HASH env value while that file does not exist).
 //
-// Hub data is opened read-only. The only write this module ever does is the password hash file.
+// Hub data is opened read-only. This module itself writes only the password hash file; the one destructive action,
+// "Delete these N test rooms" (/test-accounts), is not done here but handed to actions.deleteTestRooms, which the hub
+// passes in (hub/ops/delete-room.mjs: backup first, rooms of @example.org accounts only, on the hub's own connection).
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { CSP, renderLoginPage, renderPasswordPage, renderOverview, renderData } from './admin-view.mjs';
+import { CSP, renderLoginPage, renderPasswordPage, renderOverview, renderData, renderTestAccounts } from './admin-view.mjs';
+import { testAccounts } from './ops/delete-room.mjs';
 
 const scryptAsync = promisify(crypto.scrypt);
 const SESSION_MS = 12 * 60 * 60 * 1000;
@@ -108,9 +111,10 @@ function safeEqual(a, b) {
  * startAdmin({ dbPath | db, dataDir, port = 8791, host = '127.0.0.1', env = process.env, metrics?, allowPublishedLoopback?, now? });
  * host must be loopback, or 0.0.0.0 inside a container with allowPublishedLoopback (port published on the host's 127.0.0.1 only).
  * env: ADMIN_LOGINS (comma list, required), ADMIN_PASSWORD_HASH (initial hash, used only while <dataDir>/admin-password-hash is missing).
+ * actions.deleteTestRooms(roomIds, { by }): from the hub (ops.deleteTestRooms); without it the delete button is off.
  * → Promise<{ server, port, close }>
  */
-export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, host = '127.0.0.1', env = process.env, metrics, allowPublishedLoopback = false, now = Date.now, log = console } = {}) {
+export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, host = '127.0.0.1', env = process.env, metrics, actions = {}, allowPublishedLoopback = false, now = Date.now, log = console } = {}) {
   const loopback = ['127.0.0.1', '::1', 'localhost'].includes(host);
   if (!loopback && !(allowPublishedLoopback && host === '0.0.0.0')) throw new Error('admin: binds a loopback address only (the Tailscale-User-Login header is trusted only from tailscale serve on this host)');
   const allowed = parseLogins(env.ADMIN_LOGINS);
@@ -230,10 +234,23 @@ export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, ho
           log.warn?.(`admin: password changed by ${login}; all sessions ended`);
           return redirect(res, '/', { 'set-cookie': cookie('', 0) });
         }
+        if (url.pathname === '/test-accounts/delete') {
+          const database = openDb();
+          const list = testAccounts(database);
+          const typed = String(body.get('confirm') || '').trim();
+          const page = (status, extra) => send(res, status, renderTestAccounts(testAccounts(openDb()), { login, csrf: session.csrf, canDelete: !!actions.deleteTestRooms, ...extra }), html);
+          if (!actions.deleteTestRooms) return page(503, { message: 'Deleting is not available on this listener (it needs the running hub).' });
+          if (!list.length) return page(400, { message: 'There are no test accounts to delete.' });
+          if (typed !== String(list.length)) return page(400, { message: `Type ${list.length} to confirm; nothing was deleted.` });
+          const result = await actions.deleteTestRooms(list.map((r) => r.room_id), { by: login });
+          log.warn?.(`admin: ${login} deleted ${result.deleted.length} test rooms (backup ${result.backup})`);
+          return page(200, { result });
+        }
         return send(res, 404, 'not found\n');
       }
       if (method !== 'GET' && method !== 'HEAD') return send(res, 405, 'method not allowed\n');
       if (url.pathname === '/password') return send(res, 200, method === 'HEAD' ? '' : renderPasswordPage(login, session.csrf, '', MIN_PASSWORD), html);
+      if (url.pathname === '/test-accounts') return send(res, 200, method === 'HEAD' ? '' : renderTestAccounts(testAccounts(openDb()), { login, csrf: session.csrf, canDelete: !!actions.deleteTestRooms }), html);
       // /: overview (old links /?table=… still open the data view); /data: the data browser.
       const wantsData = url.pathname === '/data' || (url.pathname === '/' && url.searchParams.has('table'));
       if (url.pathname !== '/' && url.pathname !== '/data') return send(res, 404, 'not found\n');
