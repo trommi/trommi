@@ -2239,7 +2239,8 @@ export class Client {
 
   _setRoom(fields) { Object.assign(this.model.room, fields); const ch = M.emptyChange(); ch.room = true; this._emitChange(ch) }
 
-  async pushSubscribe(subscription, remove = false) { return this.hub.pushSubscription(subscription, remove) }
+  async pushSubscribe(subscription, remove = false, level = null) { return this.hub.pushSubscription(subscription, remove, level) }
+  async pushStates() { return (await this.hub?.pushStates?.()) ?? { devices: {} } }
 }
 
 const NOTE_META = new Set(['lamport', 'object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash', 'unsupported'])

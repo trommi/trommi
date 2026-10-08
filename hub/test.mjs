@@ -754,6 +754,37 @@ test('limits: JSON size, envelope rate, founding per address, open requests', as
   await w3.hub.close()
 })
 
+test('push: a registration with level knocking rings only for urgency high and critical; every human sees the levels', async () => {
+  const received = []
+  const fake = http.createServer((req, res) => { req.on('data', () => {}); req.on('end', () => { received.push(req.url); res.writeHead(201); res.end() }) })
+  await new Promise(ok2 => fake.listen(0, '127.0.0.1', ok2))
+  const pushHost = `127.0.0.1:${fake.address().port}`
+  const w = await world({ pushHosts: [pushHost] })
+  const browser = crypto.createECDH('prime256v1'); const browserPub = browser.generateKeys(); const auth = crypto.randomBytes(16)
+  const subscription = { endpoint: `http://${pushHost}/push/laptop`, keys: { p256dh: browserPub.toString('base64url'), auth: auth.toString('base64url') } }
+  await refused(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { subscription, level: 'sometimes' } }, 400, 'bad-argument')
+  await ok(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { subscription, level: 'knocking' } })
+  assert.deepEqual(await ok(w, 'GET', `${R(w)}/push_subscriptions`, { token: w.laptop.token }), { devices: { [Buffer.from(w.laptop.device.id).toString('hex')]: { web: 1, apns: 0, level: 'knocking' } } })
+  await refused(w, 'GET', `${R(w)}/push_subscriptions`, { token: w.agent.token }, 403, 'forbidden')
+  // a normal card asks to push: nobody rings
+  await posted(w, w.agent, { kind: KIND.PERMISSION_REQUEST, push: true, card: { id: await z.objectIdOf(w.agent.device.id, 1), state: 1, urgency: 1 } })
+  await sleep(150)
+  assert.equal(received.length, 0)
+  // a high one knocks
+  await posted(w, w.agent, { kind: KIND.PERMISSION_REQUEST, push: true, card: { id: await z.objectIdOf(w.agent.device.id, 2), state: 1, urgency: 2 } })
+  for (let i = 0; i < 50 && !received.length; i++) await sleep(20)
+  assert.equal(received.length, 1)
+  // registered again without a level, it keeps knocking; with level all it rings for every card
+  await ok(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { subscription } })
+  assert.equal((await ok(w, 'GET', `${R(w)}/push_subscriptions`, { token: w.laptop.token })).devices[Buffer.from(w.laptop.device.id).toString('hex')].level, 'knocking')
+  await ok(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { subscription, level: 'all' } })
+  await posted(w, w.agent, { kind: KIND.PERMISSION_REQUEST, push: true, card: { id: await z.objectIdOf(w.agent.device.id, 3), state: 1, urgency: 1 } })
+  for (let i = 0; i < 50 && received.length < 2; i++) await sleep(20)
+  assert.equal(received.length, 2)
+  await w.hub.close()
+  fake.close()
+})
+
 test('push: a send_push envelope reaches every other human device as { room_id, envelope_number, urgency }, nothing else', async () => {
   const received = []
   const fake = http.createServer((req, res) => { const parts = []; req.on('data', c => parts.push(c)); req.on('end', () => { received.push({ headers: req.headers, body: Buffer.concat(parts), url: req.url }); res.writeHead(201).end() }) })

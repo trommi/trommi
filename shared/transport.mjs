@@ -235,7 +235,10 @@ export class Hub {
   /** For the outsider's viewer page: the ciphertext of a shared attachment, no sign-in. */
   getShared(share_id, share_secret) { return this.request('GET', `/shares/${checkId('share_id', share_id)}`, { auth: false, binary: true, headers: { 'x-share-secret': share_secret } }) }
   getAttachment(attachment_id) { return this.request('GET', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { binary: true }) }
-  pushSubscription(subscription, remove = false) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription } }) }
+  /** level: 'all' | 'knocking' (README "Push"); left out, a registration made again keeps its level. */
+  pushSubscription(subscription, remove = false, level = null) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription, ...(level ? { level } : {}) } }) }
+  /** Every human device's push state: { devices: { <device_id>: { web, apns, level } } }. */
+  pushStates() { return this.request('GET', this.roomPath('/push_subscriptions')) }
   pushKey() { return this.request('GET', '/push_key', { auth: false }) }
 
   /**
