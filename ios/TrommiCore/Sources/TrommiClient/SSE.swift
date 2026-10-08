@@ -18,7 +18,7 @@ public final class SSEReader: NSObject, URLSessionDataDelegate, @unchecked Senda
   private let lock = NSLock()
   private let staleMs: Double
 
-  public init(staleMs: Double = 70_000) { self.staleMs = staleMs }
+  public init(staleMs: Double = 40_000) { self.staleMs = staleMs }
 
   public func start(_ req: URLRequest) -> AsyncStream<SSEEvent> {
     AsyncStream { c in

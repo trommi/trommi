@@ -113,6 +113,8 @@ struct SessionScreen: View {
         .toolbar(writing ? .hidden : .automatic, for: .tabBar)
         .onAppear { lastCount = all.count; proxy.scrollTo("bottom", anchor: .bottom); model.lastChat = a.id; model.markRead(a) }
         .onChange(of: model.version) { _, _ in model.markRead(a) }
+        // what a catch-up brought as headers only (the app was away, the hub restarted): filled while the chat is open
+        .task(id: model.version) { try? await Task.sleep(nanoseconds: 150_000_000); await model.loadNewer(agent: a.id) }
       }
       .background(Ink.bg.ignoresSafeArea())
       .navigationBarTitleDisplayMode(.inline)

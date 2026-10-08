@@ -663,6 +663,13 @@ public final class Board {
     timelines[key] = t
     return t
   }
+  /** An item's state once its body is here: loaded, or unsupported for a content type of a newer Trommi. */
+  public static func bodyState(_ content: JV?, _ decoded: String) -> String {
+    guard let c = content else { return "undecryptable" }
+    if decoded != "ok" { return decoded }
+    if let ct = c["content_type"].string, !Compat.CONTENT_TYPES.contains(ct) { return "unsupported" }
+    return "loaded"
+  }
   public static func itemOf(_ rec: Rec) -> TimelineItem {
     let state: String
     if rec.content != nil { state = rec.contentState == "ok" ? "loaded" : rec.contentState }

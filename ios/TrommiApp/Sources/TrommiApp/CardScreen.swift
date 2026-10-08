@@ -347,7 +347,7 @@ struct LinkNote: View {
     }
     .padding(12).frame(maxWidth: .infinity, alignment: .leading)
     .background(RoundedRectangle(cornerRadius: 12).fill(Ink.surface.opacity(0.7)))
-    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.line))
+    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.lineStrong))
   }
 }
 

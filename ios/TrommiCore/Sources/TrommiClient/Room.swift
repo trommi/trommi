@@ -598,6 +598,7 @@ public final class Room {
       let batch = Array(rest)
       let out = await Task.detached(priority: .userInitiated) { Room.check(batch, state: st, chains: ch, secrets: secrets, me: me, ownHashes: ownHashes) }.value
       chains = out.chains
+      if ProcessInfo.processInfo.environment["TROMMI_LIVE_LOG"] != nil { liveLog("checked \(batch.first?.n ?? 0)...\(batch.last?.n ?? 0): \(out.pres.count) ok, refused \(out.refused.map { "\($0.0) \($0.1)" }), stop \(out.stop.map { "\($0.index) \($0.code)" } ?? "-")") }
       for (n, why) in out.refused {
         report.refused += 1
         if report.refused <= 5 { report.warnings.append("envelope \(n) refused: \(why)") }
@@ -787,8 +788,15 @@ public final class Room {
    * member entries and grants, applied at once. Returns when the task is cancelled; reconnects with a growing pause after
    * a drop, and when nothing (not even a ping) came for 70 s; catches up from GET envelopes before each new stream.
    */
+  /** TROMMI_LIVE_LOG=<file>: the stream's connects and ends, appended (debugging reconnects). */
+  private func liveLog(_ s: String) {
+    guard let p = ProcessInfo.processInfo.environment["TROMMI_LIVE_LOG"] else { return }
+    let line = "\(nowMs()) \(record.myDeviceId.prefix(6)) \(s)\n"
+    if let h = FileHandle(forWritingAtPath: p) { h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile() } else { FileManager.default.createFile(atPath: p, contents: Data(line.utf8)) }
+  }
   public func runLive() async {
-    var pause: UInt64 = 1_000_000_000
+    // short pauses between tries (a restarted hub is back within a second or two), never more than 5 s
+    var pause: UInt64 = 300_000_000
     while !Task.isCancelled {
       let reader = SSEReader()
       do {
@@ -802,32 +810,43 @@ public final class Room {
         req.setValue("1", forHTTPHeaderField: "trommi-protocol")
         req.setValue("text/event-stream", forHTTPHeaderField: "accept")
         req.timeoutInterval = 3600
+        liveLog("connect after \(cursor)")
         let events = reader.start(req)
         for await ev in events {
           if Task.isCancelled { break }
           switch ev {
           case .status(let status):
+            liveLog("status \(status)")
             if status == 426 { upgrade = UpgradeNotice(minimumVersion: nil, message: "Please update Trommi."); var ch = Change(); ch.room = true; emit(ch); reader.stop(); return }
             if status == 401 { token401 = true; reader.stop(); break }
             if status != 200 { reader.stop(); break }
             live = true; board.connection = "live"
             var ch = Change(); ch.room = true; emit(ch)
-            pause = 1_000_000_000
+            pause = 300_000_000
           case .event(let name, let data):
             if let v = JV.parse(Array(data.utf8)) { await handleStreamEvent(name, v) }
           }
         }
       } catch {}
       reader.stop()
+      liveLog("stream ended")
       if Task.isCancelled { break }
       if token401 { token401 = false; _ = try? await hub.signIn() }
       live = false; board.connection = "offline"
       var ch = Change(); ch.room = true; emit(ch)
       if upgrade != nil { return }
       try? await Task.sleep(nanoseconds: pause)
-      pause = min(pause * 2, 30_000_000_000)
-      // Whatever came meanwhile: GET envelopes (the stream resumes after the cursor too).
-      _ = try? await serial { [self] in var r = SyncReport(), c = Change(); _ = try await self.catchUpQuietly(&r, &c); self.board.project(); self.emit(c) }
+      pause = min(pause * 2, 5_000_000_000)
+      // Whatever came meanwhile (a restarted hub, a dropped stream): the member list, the room keys and the sessions
+      // whose grant moved (a removal, a new key while away: the stream's member_entry and session_grant events were
+      // missed), presence, then GET envelopes; the stream resumes after the cursor.
+      _ = try? await serial { [self] in
+        _ = try? await self.refreshMembers()
+        try? await self.refreshRoomKeys()
+        try? await self.refreshSessions()
+        var r = SyncReport(), c = Change(); _ = try await self.catchUpQuietly(&r, &c); self.board.project(); self.emit(c)
+      }
+      Task { await self.refreshDevices() }
     }
     live = false
   }
@@ -838,10 +857,67 @@ public final class Room {
    * The next older page of a conversation into the window ("Earlier"; the catch-up holds only the headers of thread
    * items): GET threads, each body checked against the hash the chain verified, then opened (openVerifiedEnvelope).
    */
+  /**
+   * Bodies from GET threads into the items whose headers this device verified: each checked against the hash its chain
+   * verified, then opened. Returns how many bodies were opened.
+   */
+  private func applyThreadBodies(_ t: Timeline, _ key: String, _ envelopes: [JSON], _ ch: inout Change) -> Int {
+    var loaded = 0
+    let secrets = Room.secretLookup(room: roomSecrets, sessions: sessionSecrets)
+    for e in envelopes {
+      guard let n = (e["envelope_number"] as? NSNumber)?.intValue, let b = e["envelope"] as? String, let bytes = try? unb64u(b) else { continue }
+      // an item from before a snapshot boot has no header here yet: checked on its own first (D5)
+      if t.items[n] == nil, let it = itemFromBeforeSnapshot(t, n, bytes) { t.items[n] = it; if !t.numbers.contains(n) { t.numbers.append(n); t.numbers.sort() } }
+      guard var item = t.items[n], item.itemState == "header" || item.itemState == "undecryptable", let hh = item.envelopeHash, let vh = try? unhex(hh) else { continue }
+      do {
+        let o = try openVerifiedEnvelope(bytes, state: state, secrets: secrets, envelopeHash: vh)
+        let d = Room.decodePayload(o.payload, header: o.header)
+        item.content = d.content; item.contentType = d.content?["content_type"].string
+        item.itemState = Board.bodyState(d.content, d.state)
+        if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon(n) }
+        loaded += 1
+      } catch let e as ZError {
+        item.itemState = e.code == "pruned" ? "pruned" : "undecryptable"
+        if e.code == "hash-mismatch" || e.code == "bad-signature" { board.pushAlert(&ch, code: "timeline", message: e.description, envelopeNumber: n) }
+      } catch { item.itemState = "undecryptable" }
+      t.items[n] = item
+      ch.timelines.insert(key)
+    }
+    return loaded
+  }
+
+  /**
+   * The bodies of items newer than the oldest one shown that came as headers only (a catch-up reads conversations as
+   * headers: after a reconnect, the app coming back, a restarted hub): from this device's store, else GET threads for
+   * just that span. Returns how many were filled.
+   */
+  @discardableResult public func loadNewer(_ key: String) async throws -> Int {
+    let t = board.timelineOf(key)
+    guard let low = t.items.values.filter({ $0.itemState != "header" }).compactMap({ $0.envelopeNumber }).min() else { return 0 }
+    var gaps = t.items.filter { $0.key > low && $0.value.itemState == "header" }.keys.sorted()
+    guard !gaps.isEmpty else { return 0 }
+    let local = await fillFromStore(t, numbers: gaps)
+    gaps.removeAll { local.contains($0) }
+    var ch = Change(); ch.timelines.insert(key)
+    var n = local.count
+    if let lo = gaps.first, let hi = gaps.last {
+      let p = parseTimelineKey(key)
+      let span = t.items.keys.filter { $0 >= lo && $0 <= hi }.count
+      let r = try await noted { try await hub.threads(kind: p.kind, timelineId: p.timelineId, before: hi + 1, limit: min(500, max(1, span))) }
+      n += applyThreadBodies(t, key, r["envelopes"] as? [JSON] ?? [], &ch)
+      await keepBodies(t, (r["envelopes"] as? [JSON] ?? []).compactMap { ($0["envelope_number"] as? NSNumber)?.intValue })
+    }
+    emit(ch)
+    return n
+  }
+
   @discardableResult public func loadOlder(_ key: String, limit: Int = 50) async throws -> (loaded: Int, hasMore: Bool) {
     let t = board.timelineOf(key)
     t.windowOpen = true
     let p = parseTimelineKey(key)
+    // first what came as headers above the window (newest first matters: it is what one reads)
+    let newer = (try? await loadNewer(key)) ?? 0
+    if newer > 0 { return (newer, true) }
     // Below the oldest item whose body is here.
     let loadedNumbers = t.items.values.filter { $0.itemState != "header" }.compactMap { $0.envelopeNumber }
     let before = min(t.loadedDownTo, loadedNumbers.min() ?? (board.lastEnvelopeNumber + 1))
@@ -854,28 +930,8 @@ public final class Room {
       return (local.count, t.hasMore)
     }
     let r = try await noted { try await hub.threads(kind: p.kind, timelineId: p.timelineId, before: before, limit: limit) }
-    var loaded = 0
-    let secrets = Room.secretLookup(room: roomSecrets, sessions: sessionSecrets)
     var ch = Change()
-    for e in r["envelopes"] as? [JSON] ?? [] {
-      guard let n = (e["envelope_number"] as? NSNumber)?.intValue, let b = e["envelope"] as? String, let bytes = try? unb64u(b) else { continue }
-      // an item from before a snapshot boot has no header here yet: checked on its own first (D5)
-      if t.items[n] == nil, let it = itemFromBeforeSnapshot(t, n, bytes) { t.items[n] = it; if !t.numbers.contains(n) { t.numbers.append(n); t.numbers.sort() } }
-      guard var item = t.items[n], item.itemState == "header" || item.itemState == "undecryptable", let hh = item.envelopeHash, let vh = try? unhex(hh) else { continue }
-      do {
-        let o = try openVerifiedEnvelope(bytes, state: state, secrets: secrets, envelopeHash: vh)
-        let d = Room.decodePayload(o.payload, header: o.header)
-        item.content = d.content; item.contentType = d.content?["content_type"].string
-        item.itemState = d.content == nil ? "undecryptable" : d.state == "ok" ? "loaded" : d.state
-        if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon(n) }
-        loaded += 1
-      } catch let e as ZError {
-        item.itemState = e.code == "pruned" ? "pruned" : "undecryptable"
-        if e.code == "hash-mismatch" || e.code == "bad-signature" { board.pushAlert(&ch, code: "timeline", message: e.description, envelopeNumber: n) }
-      }
-      t.items[n] = item
-      ch.timelines.insert(key)
-    }
+    let loaded = applyThreadBodies(t, key, r["envelopes"] as? [JSON] ?? [], &ch)
     t.loadedDownTo = min(t.loadedDownTo, (r["envelopes"] as? [JSON] ?? []).compactMap { ($0["envelope_number"] as? NSNumber)?.intValue }.min() ?? t.loadedDownTo)
     t.hasMore = r["has_more"] as? Bool ?? false
     await keepBodies(t, (r["envelopes"] as? [JSON] ?? []).compactMap { ($0["envelope_number"] as? NSNumber)?.intValue })
@@ -1447,7 +1503,7 @@ public final class Room {
           let o = try openVerifiedEnvelope(bytes, state: state, secrets: secrets, envelopeHash: vh)
           let d = Room.decodePayload(o.payload, header: o.header)
           item.content = d.content; item.contentType = d.content?["content_type"].string
-          item.itemState = d.content == nil ? "undecryptable" : d.state == "ok" ? "loaded" : d.state
+          item.itemState = Board.bodyState(d.content, d.state)
           if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon(n) }
         } catch let e as ZError { item.itemState = e.code == "pruned" ? "pruned" : "undecryptable" }
         t.items[n] = item
@@ -1486,7 +1542,9 @@ public final class Room {
    * were stored); returns the numbers filled. Nothing found: the caller asks the hub.
    */
   private func fillFromStore(_ t: Timeline, below: Int, limit: Int) async -> [Int] {
-    let want = Array(t.items.filter { $0.key < below && $0.value.itemState == "header" }.keys.sorted().suffix(limit))
+    await fillFromStore(t, numbers: Array(t.items.filter { $0.key < below && $0.value.itemState == "header" }.keys.sorted().suffix(limit)))
+  }
+  private func fillFromStore(_ t: Timeline, numbers want: [Int]) async -> [Int] {
     guard !want.isEmpty, let rs = try? recordStore() else { return [] }
     var ix = storeIndexMemo
     if ix == nil { ix = await Task.detached(priority: .userInitiated) { rs.index(keepBytes: false) }.value; storeIndexMemo = ix }
