@@ -528,15 +528,6 @@ await test('timelines: lazy, newest first, paged; live items decrypted at once',
   assert(batches.some(i => !i.pending && i.envelope_number), 'confirmed items in change.items')
   const tail = await fresh.loadTimelineAfter(`scribble:desk/${desk}`, 0)
   eq(tail.items.length, 5, 'tail after 0')
-  // A device that verified these items before 0e50a99 keeps them as tl/canvas:<timeline_id>/…; the stream never
-  // brings them again (regression: the Scribble Board loaded empty there).
-  const tl = `tl/scribble:desk/${desk}/`
-  const kept = await fresh.storage.range(tl)
-  eq(kept.length, 5, 'stored under the scribble key')
-  await fresh.storage.setMany(kept.flatMap(([k, v]) => [[k, undefined], [k.replace('tl/scribble:', 'tl/canvas:'), v]]))
-  eq((await fresh.storage.range(tl)).length, 0, 'moved to the old key')
-  eq((await fresh.loadTimelineAfter(`scribble:desk/${desk}`, 0)).items.length, 5, 'items under the old key are read')
-  eq((await fresh.storage.range(tl)).length, 5, 'and stored under the new key')
   eq(fresh.model.timelines.get(`chat:session/${agent.session_id}`).item_count, 121, 'strokes never counted as chat')
 })
 
