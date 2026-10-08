@@ -952,7 +952,7 @@ export function expandCard(v) {
   if (lv?.content?.[AT_REST]) {
     const { [AT_REST]: own, rest, keys } = lv.content
     const content = {}
-    for (const k of keys) content[k] = own.includes(k) ? structuredClone(v[k]) : rest[k]
+    for (const k of keys) content[k] = own.includes(k) ? v[k] : rest[k]   // (shared, as the reducer shares them: a new version replaces fields, never edits them)
     v.versions[v.versions.length - 1] = { ...lv, content }
   }
   if (v.answer === AT_REST) v.answer = v.answers?.at(-1) ?? null
