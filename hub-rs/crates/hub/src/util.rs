@@ -28,6 +28,11 @@ pub fn iso_stamp() -> String {
     let (y, mo, d, h, mi, s) = civil(ms / 1000);
     format!("{y:04}-{mo:02}-{d:02}T{h:02}-{mi:02}-{s:02}-{:03}Z", ms % 1000)
 }
+/// new Date(ms).toISOString()
+pub fn iso_time(ms: i64) -> String {
+    let (y, mo, d, h, mi, s) = civil(ms.div_euclid(1000));
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{:03}Z", ms.rem_euclid(1000))
+}
 pub fn civil(secs: i64) -> (i64, i64, i64, i64, i64, i64) {
     let days = secs.div_euclid(86400);
     let rem = secs.rem_euclid(86400);

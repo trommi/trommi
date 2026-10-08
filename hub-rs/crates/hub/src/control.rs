@@ -63,6 +63,14 @@ pub async fn handle(hub: &Arc<Hub>, ctx: &mut Ctx) -> HResult<Resp> {
         }
         "/__test/accounts" => json!({ "expire": hub.accounts.expire, "ttl": hub.accounts.ttl, "transport": hub.accounts.mailer.transport }),
         "/__test/accounts/sweep" => json!(hub.accounts.sweep(hub)),
+        "/__test/delete_test_rooms" => {
+            let ids: Vec<String> = body.get("ids").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+            let by = body.get("by").and_then(|v| v.as_str()).unwrap_or("admin").to_string();
+            match crate::delete_room::delete_rooms(hub, &ids, &by, false) {
+                Ok(v) => v,
+                Err(e) => return Err(crate::error::Fail::internal(e)),
+            }
+        }
         "/__test/close_room" => {
             hub.close_room(body.get("room_id").and_then(|v| v.as_str()).unwrap_or(""));
             json!({ "ok": true })
