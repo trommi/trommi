@@ -62,7 +62,8 @@ struct DeskScreen: View {
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
 
-      ToolbarItem(placement: .principal) { DeskTitle() }
+      if hSize == .regular { ToolbarItem(placement: .principal) { DeskTitle() } }
+      else { ToolbarItem(placement: .topBarLeading) { MenuPill() } }
       ToolbarItem(placement: .topBarTrailing) { if hSize == .regular { NoteButton() } }
     }
     .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }

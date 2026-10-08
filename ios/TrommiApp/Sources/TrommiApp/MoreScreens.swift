@@ -4,6 +4,10 @@
 import SwiftUI
 import TrommiClient
 import TrommiCore
+import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // ---- Blitz --------------------------------------------------------------------------------------------------
 
@@ -151,18 +155,34 @@ struct NoteButton: View {
       .sheet(isPresented: $open) { NoteSheet().presentationDetents([.medium, .large]) }
   }
 }
+/** The note as a sheet (the iPad's corner button). */
 struct NoteSheet: View {
-  @EnvironmentObject var model: BoardModel
   @Environment(\.dismiss) private var dismiss
+  var body: some View { NoteScreen(onDone: { dismiss() }) }
+}
+
+/**
+ * The note (notes.mjs): the yellow slip to the desk's crowned session, a page of its own on the iPhone (the bar stays).
+ * Words, pictures and files (encrypted like the composer's); kept as a note object while he writes (every device sees
+ * it), sent with a three-second Undo, then gone from the desk.
+ */
+struct NoteScreen: View {
+  @EnvironmentObject var model: BoardModel
+  var onDone: (() -> Void)? = nil
   @State private var text = ""
   @State private var noteId: String?
+  @State private var files: [JV] = []          // uploaded attachment references
   @State private var loaded = false
+  @State private var uploading = false
+  @State private var pickingPhotos = false
+  @State private var importing = false
+  @State private var camera = false
   @FocusState private var focused: Bool
   var body: some View {
     let crown = model.desk?.crownOf(desk: model.deskId)
     VStack(alignment: .leading, spacing: 12) {
       HStack {
-        Text("Note").font(Face.display(24, .heavy)).foregroundStyle(Ink.noteInk)
+        Text("Note").font(Face.display(26, .heavy)).foregroundStyle(Ink.noteInk)
         Spacer()
         if let c = crown { HStack(spacing: 6) { Text("to").font(Face.text(14)).foregroundStyle(Ink.noteInk.opacity(0.7)); AgentMark(agent: c, size: 20); Text(c.name).font(Face.text(14, .semibold)).foregroundStyle(Ink.noteInk) } }
       }
@@ -170,59 +190,120 @@ struct NoteSheet: View {
         .font(Face.text(18)).foregroundStyle(Ink.noteInk)
         .scrollContentBackground(.hidden)
         .focused($focused)
-        .frame(minHeight: 160)
-      HStack(spacing: 10) {
-        Button { bin() } label: { Label("Throw away", systemImage: "trash").font(Face.text(15, .medium)) }.foregroundStyle(Ink.noteInk.opacity(0.8))
+        .frame(minHeight: 140)
+      if !files.isEmpty || uploading {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 8) {
+            ForEach(Array(files.enumerated()), id: \.offset) { i, f in
+              ZStack(alignment: .topTrailing) {
+                if kindOf(f) == "image" { AttachmentImage(ref: f).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 8)) }
+                else { VStack { Sketch("clip", color: Ink.noteInk).frame(width: 18, height: 18); Text(f["file_name"].string ?? "file").font(Face.text(11)).lineLimit(2) }.frame(width: 72, height: 72).background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.5))) }
+                Button { files.remove(at: i); keepSoon() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Ink.noteInk) }.offset(x: 6, y: -6)
+              }
+            }
+            if uploading { ProgressView().frame(width: 72, height: 72) }
+          }.padding(.top, 6)
+        }
+      }
+      HStack(spacing: 14) {
+        Menu {
+          Button { camera = true } label: { Label("Camera", systemImage: "camera") }
+          Button { pickingPhotos = true } label: { Label("Pictures and videos", systemImage: "photo.on.rectangle") }
+          Button { importing = true } label: { Label("A file", systemImage: "doc") }
+        } label: { Sketch("clip", color: Ink.noteInk).frame(width: 24, height: 24).frame(width: 44, height: 44) }
+        .accessibilityLabel("Attach")
+        Button { bin() } label: { Image(systemName: "trash").font(.system(size: 17)).frame(width: 44, height: 44) }.foregroundStyle(Ink.noteInk.opacity(0.8)).accessibilityLabel("Throw away")
         Spacer()
         Button { send(crown) } label: {
           HStack(spacing: 6) { PenMark("crown").frame(width: 20, height: 15); Text(crown == nil ? "No crown yet" : "Send to \(crown!.name)").font(Face.text(16, .semibold)) }
-            .foregroundStyle(Ink.noteInk).padding(.horizontal, 14).padding(.vertical, 10).background(Capsule().fill(Color.white.opacity(0.5)))
-        }.disabled(crown == nil || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .foregroundStyle(Ink.noteInk).padding(.horizontal, 14).padding(.vertical, 11).background(Capsule().fill(Color.white.opacity(0.5)))
+        }.disabled(crown == nil || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty) || uploading)
       }
       if crown == nil { Text("Give a session the crown (its menu: Give it the crown): a note goes to it.").font(Face.text(13)).foregroundStyle(Ink.noteInk.opacity(0.7)) }
+      Spacer(minLength: 0)
     }
     .padding(20)
     .background(Ink.noteYellow.ignoresSafeArea())
     .onAppear {
-      if !loaded, let n = model.desk?.notes.filter({ $0.held.isNull }).sorted(by: { $0.updated > $1.updated }).first { text = n.text; noteId = n.id }
-      loaded = true; focused = true
+      if !loaded, let n = model.desk?.notes.filter({ $0.held.isNull }).sorted(by: { $0.updated > $1.updated }).first { text = n.text; noteId = n.id; files = n.attachments }
+      loaded = true
     }
+    .onChange(of: text) { _, _ in keepSoon() }
     .onDisappear { keep() }
+    .sheet(isPresented: $pickingPhotos) { PhotoPicker(limit: 12) { picked in Task { await add(picked) } }.ignoresSafeArea() }
+    .sheet(isPresented: $camera) { CameraPicker { data in Task { await add([(data, .jpeg)]) } }.ignoresSafeArea() }
+    .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
+      if case .success(let urls) = r {
+        var got = [(data: Data, type: UTType?)]()
+        for u in urls { let ok = u.startAccessingSecurityScopedResource(); defer { if ok { u.stopAccessingSecurityScopedResource() } }; if let d = try? Data(contentsOf: u) { got.append((d, UTType(filenameExtension: u.pathExtension))) } }
+        Task { await add(got, names: urls.map { $0.lastPathComponent }) }
+      }
+    }
+  }
+  /** Files onto the note: encrypted and uploaded as the composer does (pictures as JPEG, at most 2400 px). */
+  private func add(_ items: [(data: Data, type: UTType?)], names: [String] = []) async {
+    uploading = true
+    defer { uploading = false }
+    for (i, (d, type)) in items.enumerated() {
+      do {
+        #if canImport(UIKit)
+        if (type?.conforms(to: .image) ?? false), let img = UIImage(data: d) {
+          let s = min(1, 2400 / max(img.size.width, img.size.height))
+          let size = CGSize(width: (img.size.width * s).rounded(), height: (img.size.height * s).rounded())
+          let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
+          let j = UIGraphicsImageRenderer(size: size, format: fmt).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }.jpegData(compressionQuality: 0.85) ?? d
+          files.append(try await model.upload(j, name: "picture-\(files.count + 1).jpg", type: "image/jpeg", width: Int(size.width), height: Int(size.height)))
+          continue
+        }
+        #endif
+        let name = i < names.count ? names[i] : "file-\(files.count + 1).\(type?.preferredFilenameExtension ?? "bin")"
+        files.append(try await model.upload(d, name: name, type: type?.preferredMIMEType ?? "application/octet-stream"))
+      } catch { model.fail("Not attached", error) }
+    }
+    keep()
+  }
+  @State private var keepTask: Task<Void, Never>?
+  private func keepSoon() {
+    keepTask?.cancel()
+    keepTask = Task { try? await Task.sleep(nanoseconds: 1_200_000_000); if !Task.isCancelled { keep() } }
   }
   private func keep() {
-    guard let room = model.room else { return }
-    let t = text
-    let id = noteId
+    guard let room = model.room, loaded else { return }
+    let t = text, id = noteId, atts = files
     Task {
-      if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { if let id = id { try? await room.deleteNote(id) }; return }
-      if let id = id, model.desk?.notes.first(where: { $0.id == id })?.text == t { return }
-      _ = try? await room.saveNote(objectId: id, fields: id == nil ? ["text": .str(t), "created_at": .n(nowMs()), "updated_at": .n(nowMs())] : ["text": .str(t), "updated_at": .n(nowMs())])
+      if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && atts.isEmpty { if let id = id { try? await room.deleteNote(id); noteId = nil }; return }
+      if let id = id, let n = model.desk?.notes.first(where: { $0.id == id }), n.text == t, n.attachments == atts { return }
+      var fields: [String: JV] = ["text": .str(t), "attachments": .arr(atts), "updated_at": .n(nowMs())]
+      if id == nil { fields["created_at"] = .n(nowMs()) }
+      if let made = try? await room.saveNote(objectId: id, fields: fields), noteId == nil { noteId = made }
     }
   }
   private func bin() {
-    let t = text, id = noteId
-    text = ""; noteId = nil
-    dismiss()
+    let t = text, id = noteId, atts = files
+    text = ""; noteId = nil; files = []
+    onDone?()
     guard let room = model.room, let id = id else { return }
     Task {
       try? await room.deleteNote(id)
-      model.say("Note thrown away", String(t.prefix(80)), undo: { [weak model] in _ = try? await model?.room?.saveNote(fields: ["text": .str(t), "created_at": .n(nowMs()), "updated_at": .n(nowMs())]) })
+      model.say("Note thrown away", String(t.prefix(80)), undo: { [weak model] in _ = try? await model?.room?.saveNote(fields: ["text": .str(t), "attachments": .arr(atts), "created_at": .n(nowMs()), "updated_at": .n(nowMs())]) })
     }
   }
   private func send(_ to: Agent?) {
     guard let to = to, let room = model.room else { return }
-    let t = text.trimmingCharacters(in: .whitespacesAndNewlines), id = noteId
-    text = ""; noteId = nil
-    dismiss()
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines), id = noteId, atts = files
+    text = ""; noteId = nil; files = []
+    keepTask?.cancel()
+    onDone?()
     // held for three seconds: the toast's Undo brings it back (notes.mjs HOLD_MS)
     var undone = false
-    model.say("Note sent to \(to.name)", "", undo: { [weak model] in undone = true; model?.say("Not sent", "The note is back") })
+    model.say("Note sent to \(to.name)", "", undo: { undone = true })
     Task {
       try? await Task.sleep(nanoseconds: 3_000_000_000)
-      if undone { text = t; return }
+      if undone { text = t; files = atts; noteId = id; return }
       do {
         var fields: [String: JV] = [:]
         if let id = id, id.count == 32 { fields["note"] = .obj(["object_id": .str(id), "written_at": .n(nowMs())]) }
+        if !atts.isEmpty { fields["attachments"] = .arr(atts) }
         guard let key = model.desk?.sessionKey(of: to.id) else { throw ZError("not-found", "unknown session") }
         try await room.sendMessage(sessionId: key, text: t, fields: fields)
         if let id = id { try? await room.deleteNote(id) }
@@ -230,6 +311,30 @@ struct NoteSheet: View {
     }
   }
 }
+
+#if canImport(UIKit)
+/** The camera, for a picture on the note. */
+struct CameraPicker: UIViewControllerRepresentable {
+  let done: (Data) -> Void
+  func makeCoordinator() -> C { C(done: done) }
+  func makeUIViewController(context: Context) -> UIImagePickerController {
+    let p = UIImagePickerController()
+    p.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+    p.delegate = context.coordinator
+    return p
+  }
+  func updateUIViewController(_ c: UIImagePickerController, context: Context) {}
+  final class C: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    let done: (Data) -> Void
+    init(done: @escaping (Data) -> Void) { self.done = done }
+    func imagePickerController(_ p: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+      p.dismiss(animated: true)
+      if let img = info[.originalImage] as? UIImage, let d = img.jpegData(compressionQuality: 0.9) { done(d) }
+    }
+    func imagePickerControllerDidCancel(_ p: UIImagePickerController) { p.dismiss(animated: true) }
+  }
+}
+#endif
 
 // ---- the drawing a session wears --------------------------------------------------------------------------------
 
