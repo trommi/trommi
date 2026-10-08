@@ -338,7 +338,6 @@ struct NoteScreen: View {
     .toolbar {
       if hSize != .regular && onDone == nil { ToolbarItem(placement: .topBarLeading) { MenuPill() } }
       ToolbarItem(placement: .topBarTrailing) { recipient(target) }
-      ToolbarItemGroup(placement: .keyboard) { Spacer(); Button { focused = false } label: { Image(systemName: "keyboard.chevron.compact.down") }.accessibilityLabel("Hide Keyboard") }
     }
     .onAppear {
       if !loaded, let n = model.desk?.notes.filter({ $0.held.isNull }).sorted(by: { $0.updated > $1.updated }).first { text = n.text; noteId = n.id; files = n.attachments }
@@ -407,7 +406,7 @@ struct NoteScreen: View {
         if (type?.conforms(to: .image) ?? false), let img = UIImage(data: d) {
           let s = min(1, 2400 / max(img.size.width, img.size.height))
           let size = CGSize(width: (img.size.width * s).rounded(), height: (img.size.height * s).rounded())
-          let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
+          let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1; fmt.preferredRange = .standard; fmt.opaque = true
           let j = UIGraphicsImageRenderer(size: size, format: fmt).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }.jpegData(compressionQuality: 0.85) ?? d
           files.append(try await model.upload(j, name: "picture-\(files.count + 1).jpg", type: "image/jpeg", width: Int(size.width), height: Int(size.height)))
           continue
@@ -447,7 +446,9 @@ struct NoteScreen: View {
   }
   private func send(_ to: Agent?) {
     guard let to = to, let room = model.room else { return }
-    let t = text.trimmingCharacters(in: .whitespacesAndNewlines), id = noteId, atts = files
+    // the pictures on the screen, else those kept on the note object (attached in an earlier opening of the note)
+    let kept = noteId.flatMap { id in model.desk?.notes.first { $0.id == id }?.attachments } ?? []
+    let t = text.trimmingCharacters(in: .whitespacesAndNewlines), id = noteId, atts = files.isEmpty ? kept : files
     text = ""; noteId = nil; files = []
     keepTask?.cancel()
     onDone?()

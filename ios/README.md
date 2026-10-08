@@ -105,6 +105,22 @@ Apple ID, the phone in your hand); after that, building and shipping are command
    `ship.sh` builds a release, signs (creates the distribution certificate and profile on its first run), validates
    offline, uploads; it never submits for review. Without `--upload` it proves the pipeline with a local test identity.
 
+## Keyboard and tab bar
+
+As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard, the system's behaviour not fought.
+
+- **All screens:** the keyboard goes away by dragging the content down (`.scrollDismissesKeyboard(.interactively)`)
+  or by a tap in the content. The system tab bar hides while the keyboard is up and comes back after.
+- **Chat:** the composer is a bottom bar (`safeAreaBar`, a safe area inset before iOS 26). It rides on the keyboard
+  and reserves its height, so the last message scrolls clear of it. Folded, it is a round glass pencil beside the
+  tab bar; a tap opens the field with the keyboard. With nothing written it folds back once the keyboard is gone, but
+  never while the photo picker, the camera or the file importer is open. A tap in the conversation hides the keyboard.
+- **Note:** a panel inside the page, above the tab bar, not a sheet (a sheet covered the bar). The page stays
+  visible behind it, dimmed. The keyboard lifts the panel as it lifts the page. Drag the handle down or tap beside the
+  panel to close it; the draft stays on the note.
+- **Desk:** no text field; the keyboard only appears in sheets (New Desk, Rename), which the system handles.
+- **Settings:** forms with the system's keyboard handling; a drag dismisses it.
+
 ## TestFlight from CI
 
 `.github/workflows/ios-beta.yml` builds main when started by hand (`gh workflow run ios-beta.yml`, or Actions → iOS beta

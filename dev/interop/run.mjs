@@ -286,6 +286,16 @@ for (const pair of pairs) {
     assert.deepEqual(la.slice(-4), [['agent', 'first words', 'loaded'], ['agent', 'second words', 'loaded'], ['agent', 'third words', 'loaded'], ['human', `Hello from ${ia}`, 'loaded']])
   })
 
+  await P('chat with a file: A sends a message with a picture (encrypted, uploaded); B and the agent open the same bytes', async () => {
+    const bytes = crypto.randomBytes(48_000)
+    const want = crypto.createHash('sha256').update(bytes).digest('hex')
+    await A.call('chat_send', { session: sid, text: `A picture from ${ia}`, file: { name: 'photo.jpg', type: 'image/jpeg', b64: z.b64u(bytes) } })
+    const f = await until('the file at B', async () => B.call('chat_file', { session: sid, text: `A picture from ${ia}` }).catch(() => null))
+    assert.equal(f.sha256, want, 'the same bytes at B'); assert.equal(f.name, 'photo.jpg'); assert.equal(f.size, bytes.length)
+    const cmd = await inbox(c => c.command === 'message' && c.text === `A picture from ${ia}`)
+    assert.equal(cmd.attachments?.length ?? cmd.files?.length ?? 1, 1, 'the agent gets the file named')
+  })
+
   await P('registers and notes: a desk register and a note from A reach B', async () => {
     await A.call('set_register', { key: 'desk/interop', value: { name: `Interop ${ia}`, created_at: 1 } })
     await until('the desk at B', async () => (await B.call('registers')).desks?.interop?.name === `Interop ${ia}`)

@@ -74,6 +74,9 @@ struct SessionScreen: View {
         }
         .defaultScrollAnchor(.bottom)
         .scrollDismissesKeyboard(.interactively)
+        .barEdge()
+        // a tap in the conversation puts the keyboard away (Messages)
+        .simultaneousGesture(TapGesture().onEnded { hideKeyboard() })
         .refreshable { await model.refresh() }
         .onChange(of: all.count) { old, new in
           if new > old {
@@ -89,7 +92,7 @@ struct SessionScreen: View {
             }.padding(.bottom, 8)
           }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .bottomBar {
           // the composer folds into a round glass pencil (the tab bar stays); a tap opens it and the keyboard; done
           // with an empty field, it folds again (his decision, 8 October)
           VStack(spacing: 0) {
@@ -196,19 +199,19 @@ struct SessionScreen: View {
         }
       }
     } label: {
-      HStack(spacing: 8) {
-        ZStack { if working { WorkingRing(working: true, color: Tone.color(hue: a.hue, .mid)).frame(width: 34, height: 34) }; AgentMark(agent: a, size: 24) }
-        VStack(alignment: .leading, spacing: 0) {
-          Text(a.name).font(Face.display(18, .bold)).foregroundStyle(Ink.fg).lineLimit(1)
-          if let s = stopped { Text("Stopped: \(s.1)").font(Face.text(12, .medium)).foregroundStyle(Ink.urgCritical).lineLimit(1) }
-          else if let q = quiet { Text(q).font(Face.text(12)).foregroundStyle(Ink.muted) }
-          else if let l = linkOf(a), l.state != "live" { Text(l.word).font(Face.text(12)).foregroundStyle(Ink.urgHigh) }
-          else { Text(a.online ? (a.task.isEmpty ? "connected" : a.task) : "disconnected").font(Face.text(12)).foregroundStyle(Ink.muted).lineLimit(1) }
-        }
+      // one glass bubble, centred (his word, 8 October): the drawing, the name, ▾; how it hears is said below, by the
+      // composer (SessionLinkNote), a stop by a red dot here
+      HStack(spacing: 7) {
+        ZStack { if working { WorkingRing(working: true, color: Tone.color(hue: a.hue, .mid)).frame(width: 30, height: 30) }; AgentMark(agent: a, size: 22) }
+        Text(a.name).font(Face.display(17, .bold)).foregroundStyle(Ink.fg).lineLimit(1)
+        if stopped != nil { Circle().fill(Ink.urgCritical).frame(width: 7, height: 7) }
         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.muted)
       }
+      .padding(.horizontal, 10).frame(minHeight: 40)
+      .barGlass()
     }
-    .accessibilityLabel("\(a.name): switch chat")
+    .accessibilityLabel(stopped.map { "\(a.name), stopped: \($0.1). Switch chat" } ?? "\(a.name): switch chat")
+    .accessibilityHint(quiet ?? "")
   }
   private func more(_ a: Agent, _ d: DeskModel, freshCount: Int) -> some View {
     Menu {
@@ -353,7 +356,7 @@ struct MessageView: View {
       Spacer(minLength: 44)
       VStack(alignment: .trailing, spacing: 4) {
         about(m)
-        if !m.attachments.isEmpty { Attachments(list: m.attachments, onPicture: { picture = $0 }) }
+        if !m.attachments.isEmpty && m.noteWritten == nil { Attachments(list: m.attachments, onPicture: { picture = $0 }) }
         CopiedCards(ids: m.copiedCards)
         MarksLine(marks: m.marks)
         if m.noteWritten != nil {
@@ -361,6 +364,8 @@ struct MessageView: View {
             HStack(spacing: 6) { Sketch("page", color: Ink.noteInk).frame(width: 14, height: 14); Text("Note").font(Face.text(12, .bold)); if let w = m.noteWritten!, w > 0 { Text("written \(clockOf(w))").font(Face.text(12)) } }
               .foregroundStyle(Ink.noteInk.opacity(0.8))
             Text(m.text).font(Face.text(16)).foregroundStyle(Ink.noteInk)
+            // its pictures and files on the slip (a tap: full screen)
+            if !m.attachments.isEmpty { Attachments(list: m.attachments, onPicture: { picture = $0 }) }
           }
           .padding(14).frame(maxWidth: 320, alignment: .leading)
           .background(Rectangle().fill(Ink.noteYellow).rotationEffect(.degrees(-0.8)).shadow(color: .black.opacity(0.12), radius: 3, y: 2))
@@ -587,6 +592,7 @@ struct Composer: View {
   @State private var files: [Pending] = []
   @State private var importing = false
   @State private var pickingPhotos = false
+  @State private var camera = false
   @State private var sending = false
   @State private var error: String?
   /** Cards attached to this message (copied_cards). */
@@ -638,6 +644,9 @@ struct Composer: View {
         Menu {
           Button { pickingPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
           Button { importing = true } label: { Label("Choose File", systemImage: "doc") }
+          #if canImport(UIKit)
+          if UIImagePickerController.isSourceTypeAvailable(.camera) { Button { camera = true } label: { Label("Take Photo", systemImage: "camera") } }
+          #endif
         } label: {
           Image(systemName: "plus").font(.system(size: 19, weight: .semibold)).foregroundStyle(Ink.fg).frame(width: 44, height: 44).glass(Circle(), interactive: true)
         }
@@ -666,9 +675,18 @@ struct Composer: View {
     .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 8)
     .onAppear { if autofocus { focused = true } }
     // the keyboard's own way down (with nothing written the chat's composer folds back into its pencil)
-    .toolbar { ToolbarItemGroup(placement: .keyboard) { if focused { Spacer(); Button { focused = false } label: { Image(systemName: "keyboard.chevron.compact.down") }.accessibilityLabel("Hide Keyboard") } } }
-    .onChange(of: focused) { _, on in if !on && !canSend { onIdle?() } }
+    // folds back into the pencil only when nothing is written and nothing is being picked: the photo picker, the camera
+    // and the file importer take the focus away while they are open (folding then dropped what they brought: his
+    // pictures never reached the chat, 8 October); a short wait lets the menu's choice open its picker first
+    .onChange(of: focused) { _, on in
+      guard !on else { return }
+      Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        if !focused && !canSend && !pickingPhotos && !importing && !camera && !sending { onIdle?() }
+      }
+    }
     .sheet(isPresented: $pickingPhotos) { PhotoPicker(limit: MAX_FILES - files.count) { picked in Task { await take(picked) } }.ignoresSafeArea() }
+    .sheet(isPresented: $camera) { CameraPicker { data in Task { await take([(data, .jpeg)]) } }.ignoresSafeArea() }
     .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
       if case .success(let urls) = r {
         for u in urls.prefix(MAX_FILES - files.count) {
@@ -690,7 +708,7 @@ struct Composer: View {
         // pictures go as JPEG (HEIC is not shown everywhere), at most 2400 px
         let s = min(1, 2400 / max(img.size.width, img.size.height))
         let size = CGSize(width: (img.size.width * s).rounded(), height: (img.size.height * s).rounded())
-        let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1
+        let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1; fmt.preferredRange = .standard; fmt.opaque = true
         let small = UIGraphicsImageRenderer(size: size, format: fmt).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
         if let j = small.jpegData(compressionQuality: 0.85) {
           files.append(Pending(name: "picture-\(files.count + 1).jpg", type: "image/jpeg", data: j, width: Int(size.width), height: Int(size.height)))

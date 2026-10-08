@@ -21,7 +21,7 @@ let DRIVER_COMMANDS = [
   "version_info", "join", "join_wait", "login", "forgot", "whoami", "sync", "members", "sessions", "list_cards", "card",
   "answer", "shred", "mark_read", "decide_again", "chat_send", "chat_list", "set_register", "registers", "note_save", "notes",
   "invite", "invite_status", "invite_confirm", "remove_member", "leave", "register_push", "check_envelope", "alerts",
-  "account_status", "make_kit", "change_password", "scribble_draw", "scribble_shapes", "set_live", "snapshot_info", "presence",
+  "account_status", "make_kit", "change_password", "scribble_draw", "scribble_shapes", "set_live", "snapshot_info", "presence", "chat_file",
 ]
 
 @MainActor final class Driver {
@@ -183,9 +183,26 @@ let DRIVER_COMMANDS = [
     case "chat_send":
       let r = try need()
       let sid = a["session"].string
-      try await r.sendMessage(sessionId: sid, cardId: a["card"].string, text: try Driver.str(a, "text"))
+      // file: { name, type, b64 }: uploaded (encrypted) and named in the message, as the app's composer does
+      var fields: [String: JV] = [:]
+      if let f = a["file"].object, let b = f["b64"]?.string {
+        let ref = try await r.uploadAttachment(try unb64u(b), fileName: f["name"]?.string ?? "file", mediaType: f["type"]?.string ?? "application/octet-stream", width: nil, height: nil)
+        fields["attachments"] = .arr([ref])
+      }
+      try await r.sendMessage(sessionId: sid, cardId: a["card"].string, text: try Driver.str(a, "text"), fields: fields)
       let f = try await r.flush()
       return .obj(["envelope_number": .n(f.number)])
+    case "chat_file":
+      // the first file of the message with this text, fetched and opened: its name and SHA-256
+      let r = try need()
+      let key = timelineKeyOf("chat", "session/\(try Driver.str(a, "session"))")
+      _ = try await r.loadOlder(key, limit: 100)
+      let want = try Driver.str(a, "text")
+      guard let it = r.board.timelineOf(key).items.values.first(where: { $0.content?["text"].string == want }), let ref = it.content?["attachments"][0], ref.object != nil else {
+        throw DriverError(code: "not-found", message: "no message with a file and that text")
+      }
+      let bytes = try await r.fetchAttachment(ref)
+      return .obj(["name": .s(ref["file_name"].string), "sha256": .str(hex(sha256(bytes))), "size": .n(bytes.count)])
     case "chat_list":
       let r = try need()
       let key: String

@@ -82,6 +82,24 @@ class Rules(unittest.TestCase):
         self.assertTrue(any(x['rule'] == 'text-over-text' and 'newer Trommi' in x['text'] for x in p))
 
 
+class Build15(unittest.TestCase):
+    """Two screenshots from the owner (build 15, iPhone 402x874 pt; image 1105 px wide: 2.75 px per pt)."""
+
+    def test_keyboard_button_over_send(self):
+        # the composer's keyboard-hide bubble lay on the send arrow (removed: the keyboard goes by a drag or a tap)
+        p = rules.check({'name': 'chat-keyboard', 'screen': {'w': 402, 'h': 874, 'scale': 3}, 'safe': {'top': 62, 'bottom': 34, 'left': 0, 'right': 0},
+                         'elements': [el('Send', [356, 484, 30, 28], interactive=True), el('Hide Keyboard', [337, 495, 45, 45], interactive=True, chrome=True)]})
+        self.assertIn('overlap', kinds(p, 'error'))
+
+    def test_rows_under_the_pen_and_the_tab_bar(self):
+        # the history: the minimized tab bar (left) and the pen (right) float over rows and their times; scrolled to the
+        # end they must clear them (the composer bar is a safeAreaBar now): the probe's end state names any that stay
+        p = rules.check({'name': 'chat-history', 'screen': {'w': 402, 'h': 874, 'scale': 3}, 'safe': {'top': 62, 'bottom': 34, 'left': 0, 'right': 0},
+                         'elements': [el('Write', [337, 737, 49, 48], interactive=True, chrome=True), el('glass: Chat tab', [27, 800, 45, 45], chrome=True),
+                                      el('10:44', [358, 750, 30, 16], text=True, state='end'), el('What?? und Uno bündig unten rechts', [38, 803, 300, 22], text=True, state='end')]})
+        self.assertIn('under-chrome', kinds(p))
+
+
 def known_trommi():
     """The Desk on an iPhone Air with two cards chosen, the update line showing.
 

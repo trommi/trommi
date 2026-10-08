@@ -75,7 +75,7 @@ struct DeskScreen: View {
     .toolbar {
 
       if hSize == .regular { ToolbarItem(placement: .principal) { DeskTitle() } }
-      else { ToolbarItem(placement: .topBarLeading) { MenuPill() } }
+      else { ToolbarItem(placement: .principal) { MenuPill() } }
       ToolbarItem(placement: .topBarTrailing) { if hSize == .regular { NoteButton() } else { DeskWays() } }
     }
     .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }

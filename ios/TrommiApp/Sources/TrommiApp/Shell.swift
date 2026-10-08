@@ -36,20 +36,14 @@ struct BoardShell: View {
         TabView(selection: Binding(get: { model.tab }, set: { t in
           if t == .note { noteOpen = true } else { noteOpen = false; if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) } }
         })) {
-          Tab(value: BoardModel.Tab.chat) { chats } label: { Image(systemName: "bubble.left.and.bubble.right").accessibilityLabel("Chat") }
+          Tab(value: BoardModel.Tab.chat) { chats.modifier(NotePanel(open: $noteOpen)) } label: { Image(systemName: "bubble.left.and.bubble.right").accessibilityLabel("Chat") }
           Tab(value: BoardModel.Tab.desk) {
-            stack.toolbar(model.selected.isEmpty ? .automatic : .hidden, for: .tabBar)
+            stack.toolbar(model.selected.isEmpty ? .automatic : .hidden, for: .tabBar).modifier(NotePanel(open: $noteOpen))
           } label: { PenImage.of("sketch:desk", size: 24).accessibilityLabel("Desk") }
           .badge(model.view?.fresh.count ?? 0)
           Tab(value: BoardModel.Tab.note) { Color.clear } label: { Image(systemName: hasNote ? "note.text" : "note").accessibilityLabel(hasNote ? "Note, written" : "Note") }
         }
         .modifier(TabBarLook())
-        .sheet(isPresented: $noteOpen) {
-          NavigationStack { NoteScreen(onDone: { noteOpen = false }) }
-            .presentationDetents([.medium, .large])
-            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
-            .presentationDragIndicator(.visible)
-        }
       }
     }
     .overlay(alignment: hSize == .regular ? .bottom : .top) { ToastHost(top: hSize != .regular).ignoresSafeArea(edges: hSize == .regular ? [] : .top) }
@@ -170,6 +164,7 @@ struct ChatsScreen: View {
   @EnvironmentObject var model: BoardModel
   /** The parents whose helpers are unfolded (folded at first, as the desktop sidebar). */
   @State private var open = Set<String>()
+  @State private var opened = false
   var body: some View {
     let _ = RenderCount.body("ChatsScreen")
     let _ = model.version
@@ -205,10 +200,18 @@ struct ChatsScreen: View {
     .listStyle(.plain)
     .scrollContentBackground(.hidden)
     .barEdge()
+    // helpers that were busy in the last day start unfolded
+    .onAppear {
+      guard !opened else { return }
+      opened = true
+      let since = nowMs() > 86_400_000 ? nowMs() - 86_400_000 : 0
+      for u in model.view?.units ?? [] where !u.subs.isEmpty {
+        if u.subs.contains(where: { s in (model.view?.units.first { $0.id == s }?.agent.active ?? 0) > since }) { open.insert(u.id) }
+      }
+    }
     .background(Ink.bg)
-    .navigationTitle("Chats")
     .navigationBarTitleDisplayMode(.inline)
-    .toolbar { ToolbarItem(placement: .topBarLeading) { MenuPill() } }
+    .toolbar { ToolbarItem(placement: .principal) { MenuPill() } }
     .refreshable { await model.refresh() }
   }
   private func row(_ u: DeskUnit, crowned: Bool, helpers: Int) -> some View {
@@ -216,9 +219,16 @@ struct ChatsScreen: View {
       Button { model.chatPath = [.session(u.id)] } label: { ChatRow(unit: u, crowned: crowned, unread: model.unread(u.agent)) }
         .buttonStyle(.plain)
       if helpers > 0 {
+        // the helpers: their count and a chevron that turns (the row itself opens the chat)
         Button { withAnimation(.snappy) { if open.contains(u.id) { open.remove(u.id) } else { open.insert(u.id) } } } label: {
-          Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Ink.muted)
-            .rotationEffect(.degrees(open.contains(u.id) ? 90 : 0)).frame(width: 44, height: 44).contentShape(Rectangle())
+          HStack(spacing: 5) {
+            Text(helpers == 1 ? "1 helper" : "\(helpers) helpers").font(Face.text(13, .medium))
+            Image(systemName: "chevron.down").font(.system(size: 11, weight: .bold)).rotationEffect(.degrees(open.contains(u.id) ? 180 : 0))
+          }
+          .foregroundStyle(Ink.muted)
+          .padding(.horizontal, 10).frame(minHeight: 30)
+          .background(Capsule().fill(Ink.fg.opacity(0.07)))
+          .frame(minHeight: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(open.contains(u.id) ? "Hide \(helpers) helpers" : "Show \(helpers) helpers")
@@ -491,6 +501,9 @@ struct ToastHost: View {
     }
     .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.toast)
     .onChange(of: model.toast) { old, new in
+      #if canImport(UIKit)
+      defer { if top { if let n = new, n.undo != nil { IslandWindow.shared.show(n, count: count, model: model) } else { IslandWindow.shared.hide() } } }
+      #endif
       guard let n = new, n.undo != nil else { return }
       if let o = old, o.undo != nil, o.id != n.id, let at = lastUndoAt, Date().timeIntervalSince(at) < Self.undoSeconds { count += 1 } else { count = 1 }
       lastUndoAt = Date()
@@ -523,31 +536,16 @@ struct ToastHost: View {
     }.frame(width: size, height: size)
   }
   @ViewBuilder private func phone(_ t: Toast) -> some View {
-    if let undo = t.undo, let ip = island {
-      // the island grows: a pure black capsule laid over the Dynamic Island, a wing wider on each side; the count in the
-      // left wing, the arrow in its 5 s ring in the right one; a tap anywhere on it undoes, a swipe up lets it go
-      Button { model.toast = nil; count = 1; Task { await undo() } } label: {
-        ZStack {
-          Capsule().fill(.black)
-          HStack(spacing: 0) {
-            Group { if count > 1 { Text("\(count)").font(.system(size: 14, weight: .bold, design: .rounded)).foregroundStyle(.white) } }
-              .frame(width: ip.leftWing.width)
-            Spacer(minLength: 0)
-            ring(true, size: 22).frame(width: ip.rightWing.width)
-          }
-        }
-        .frame(width: ip.pill.width, height: ip.pill.height)
-        .contentShape(Capsule())
-      }
-      .buttonStyle(.plain)
-      .accessibilityLabel(count > 1 ? "Undo: \(t.head), \(count) actions" : "Undo: \(t.head)")
-      .offset(x: ip.pill.minX, y: ip.pill.minY + min(0, drag.height))
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-      .gesture(dismissGesture())
-      .transition(.modifier(active: IslandGrow(x: IslandPill.islandSize.width / ip.pill.width), identity: IslandGrow(x: 1)))
-    } else {
-      phoneFallback(t)
-    }
+    // on a phone with a Dynamic Island the undo is the island's pill, in its own window (IslandWindow.swift)
+    if t.undo != nil && onIsland { Color.clear.frame(width: 0, height: 0) }
+    else { phoneFallback(t) }
+  }
+  private var onIsland: Bool {
+    #if canImport(UIKit)
+    return IslandWindow.shared.geometry() != nil
+    #else
+    return false
+    #endif
   }
   @ViewBuilder private func phoneFallback(_ t: Toast) -> some View {
     Group {
@@ -650,3 +648,44 @@ struct UpdateRequired: View {
 }
 
 
+
+
+/**
+ * The note as a panel over the page, ABOVE the tab bar (his word, 8 October: a sheet covered the bar): inside the tab's
+ * content, so its bottom is the bar's top and the keyboard lifts it as it lifts the content. The page stays visible,
+ * dimmed; a tap beside it or a swipe down closes it; the draft stays (NoteScreen keeps it on the note object).
+ */
+struct NotePanel: ViewModifier {
+  @Binding var open: Bool
+  @State private var drag: CGFloat = 0
+  func body(content: Content) -> some View {
+    content.overlay {
+      if open {
+        GeometryReader { geo in
+          ZStack(alignment: .bottom) {
+            Color.black.opacity(0.28).ignoresSafeArea(edges: .top)
+              .onTapGesture { withAnimation(.snappy) { open = false } }
+              .transition(.opacity)
+            VStack(spacing: 0) {
+              Capsule().fill(Ink.noteInk.opacity(0.35)).frame(width: 38, height: 5).padding(.top, 8).padding(.bottom, 2)
+                .frame(maxWidth: .infinity).contentShape(Rectangle())
+                .gesture(DragGesture().onChanged { drag = max(0, $0.translation.height) }.onEnded { v in
+                  withAnimation(.snappy) { if v.translation.height > 80 || v.predictedEndTranslation.height > 200 { open = false }; drag = 0 }
+                })
+                .accessibilityLabel("Close the note").accessibilityAddTraits(.isButton)
+                .accessibilityAction { open = false }
+              NavigationStack { NoteScreen(onDone: { withAnimation(.snappy) { open = false } }) }
+            }
+            .frame(height: max(320, geo.size.height * 0.55))
+            .background(Ink.noteYellow)
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22, style: .continuous))
+            .shadow(color: .black.opacity(0.25), radius: 18, y: -2)
+            .offset(y: drag)
+            .transition(.move(edge: .bottom))
+          }
+        }
+      }
+    }
+    .animation(.snappy, value: open)
+  }
+}

@@ -127,10 +127,20 @@ const H = {
   async shred({ card, note }) { await need().shred({ object_id: cardOf(card).object_id, note }); await settle(); return {} },
   async mark_read({ card }) { await need().markRead({ object_id: cardOf(card).object_id }); await settle(); return {} },
   async decide_again({ card }) { await need().decideAgain({ object_id: cardOf(card).object_id }); await settle(); return {} },
-  async chat_send({ session, card, text }) {
+  async chat_send({ session, card, text, file }) {
     const c = need()
-    await c.sendMessage({ ...(card ? { object_id: cardOf(card).object_id } : {}), ...(session && c.is_human ? { session_id: session } : {}), text })
+    const attachments = file ? [await c.uploadAttachment(z.unb64u(file.b64), { file_name: file.name, media_type: file.type })] : undefined
+    await c.sendMessage({ ...(card ? { object_id: cardOf(card).object_id } : {}), ...(session && c.is_human ? { session_id: session } : {}), text, ...(attachments ? { attachments } : {}) })
     await settle(); return {}
+  },
+  async chat_file({ session, text }) {
+    const c = need()
+    const items = await c.timelineWindow(`chat:session/${session ?? c.session_id}`, { limit: 500 })
+    const it = items.find(i => i.content?.text === text && i.content?.attachments?.length)
+    if (!it) fail('not-found', 'no message with a file and that text')
+    const ref = it.content.attachments[0]
+    const bytes = await c.fetchAttachment(ref)
+    return { name: ref.file_name ?? null, sha256: z.hex(await z.sha256(bytes)), size: bytes.length }
   },
   async chat_list({ session, card }) {
     const c = need()
