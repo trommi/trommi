@@ -169,6 +169,8 @@ public final class Room {
   private var restoredCount = 0
   /** After a snapshot boot (shared/snapshot.ts): its envelope number and each sender's sequence in it. */
   public private(set) var snapshotCursor: Int?
+  /** The pages a snapshot boot read, used once by the catch-up that follows instead of being fetched again. */
+  var bootScan: [(n: Int, bytes: Bytes, isVoid: Bool)] = []
   /** Boot a new human device from the newest room snapshot (JS options.snapshot); off: replay from envelope 1. */
   public var snapshotBoot = true
   private var snapshotChains: [String: UInt64]?
@@ -552,15 +554,27 @@ public final class Room {
     // a new human device in a big room: the newest room snapshot of a human device, then only the tail after it
     if cursor == 0 && board.myRole == "human" && !restored && snapshotBoot { _ = await PerfLog.time("snapshot boot") { await bootFromSnapshot() } }
     var change = Change()
+    var scan = bootScan
+    bootScan = []
     while true {
-      let page = try await PerfLog.time("envelopes page") { try await noted { try await hub.envelopes(after: cursor) } }
-      let list = (page["envelopes"] as? [JSON] ?? []).compactMap { rec -> (n: Int, bytes: Bytes, isVoid: Bool)? in
-        guard let n = (rec["envelope_number"] as? NSNumber)?.intValue, let b = rec["envelope"] as? String, let bytes = try? unb64u(b) else { return nil }
-        return (n, bytes, rec["void"] as? Bool ?? false)
+      var list: [(n: Int, bytes: Bytes, isVoid: Bool)]
+      var full = false
+      if let last = scan.last, last.n > cursor, let first = scan.first, first.n <= cursor + 1 {
+        // the snapshot boot's pages, from memory
+        list = scan.filter { $0.n > cursor }; scan = []
+        full = true
+      } else {
+        let limit = scan.first.map { $0.n > cursor + 1 ? min(1000, $0.n - cursor - 1) : 1000 } ?? 1000
+        let page = try await PerfLog.time("envelopes page") { try await noted { try await hub.envelopes(after: cursor, limit: limit) } }
+        list = (page["envelopes"] as? [JSON] ?? []).compactMap { rec -> (n: Int, bytes: Bytes, isVoid: Bool)? in
+          guard let n = (rec["envelope_number"] as? NSNumber)?.intValue, let b = rec["envelope"] as? String, let bytes = try? unb64u(b) else { return nil }
+          return (n, bytes, rec["void"] as? Bool ?? false)
+        }
+        full = list.count >= limit || !scan.isEmpty
       }
       if list.isEmpty { break }
       try await process(list, report: &report, change: &change)
-      if list.count < 1000 { break }
+      if !full { break }
     }
     if let own = record.ownSent, (chains[hex(device.id)]?.seq ?? 0) < own.seq, outbox.isEmpty {
       report.warnings.append("the hub shows fewer of this device's envelopes (\(chains[hex(device.id)]?.seq ?? 0)) than it sent (\(own.seq))")
@@ -1800,7 +1814,7 @@ extension Room {
   static let SNAPSHOT_OVERLAP = 1000
   static let SNAPSHOT_SCAN_PAGES = 12
 
-  struct FoundSnapshot { var value: JV; var envelopeNumber: Int; var sender: String }
+  struct FoundSnapshot { var value: JV; var envelopeNumber: Int; var sender: String; var scanned: [(n: Int, bytes: Bytes, isVoid: Bool)] = [] }
 
   /**
    * The newest room_snapshot pointer: the newest pages of envelopes scanned backwards for a status head under the room
@@ -1810,12 +1824,14 @@ extension Room {
     let first = try await noted { try await hub.envelopes(after: 0, limit: 1000, newest: true) }
     let last = (first["last_envelope_number"] as? NSNumber)?.intValue ?? 0
     if last < 2000 { return nil }                       // a small room: replaying is as fast
-    let rows = { (r: JSON) -> [(n: Int, bytes: Bytes)] in
+    let rows = { (r: JSON) -> [(n: Int, bytes: Bytes, isVoid: Bool)] in
       (r["envelopes"] as? [JSON] ?? []).compactMap { e in
         guard let n = (e["envelope_number"] as? NSNumber)?.intValue, let b = e["envelope"] as? String, let bytes = try? unb64u(b) else { return nil }
-        return (n, bytes)
+        return (n, bytes, e["void"] as? Bool ?? false)
       }
     }
+    // the pages read, oldest first: the catch-up after the boot reads them from memory (snapshot.ts scanned)
+    var scanned = [[(n: Int, bytes: Bytes, isVoid: Bool)]]()
     let firstRows = rows(first)
     let newestPage = firstRows.last?.n == last && firstRows.first?.n == max(1, last - 999)
     let secrets = Room.secretLookup(room: roomSecrets, sessions: sessionSecrets)
@@ -1823,8 +1839,14 @@ extension Room {
     for page in 0..<Room.SNAPSHOT_SCAN_PAGES where before > 0 {
       let after = max(0, before - 1000)
       let list = page == 0 && newestPage ? firstRows : rows(try await noted { try await hub.envelopes(after: after, limit: 1000) })
-      for (n, bytes) in list.reversed() where n > after && n <= before {
-        if let p = Room.snapshotPointer(bytes, number: n, state: state, secrets: secrets, me: device.id) { return FoundSnapshot(value: p.value, envelopeNumber: n, sender: p.sender) }
+      scanned.insert(list.filter { $0.n > after && $0.n <= before }, at: 0)
+      for (n, bytes, _) in list.reversed() where n > after && n <= before {
+        if let p = Room.snapshotPointer(bytes, number: n, state: state, secrets: secrets, me: device.id) {
+          let flat = scanned.flatMap { $0 }
+          // only one gapless run of numbers is reused (the hub's numbers are hints; a gap is read again)
+          let gapless = zip(flat, flat.dropFirst()).allSatisfy { $1.n == $0.n + 1 }
+          return FoundSnapshot(value: p.value, envelopeNumber: n, sender: p.sender, scanned: gapless ? flat : [])
+        }
       }
       before = after
     }
@@ -1860,19 +1882,25 @@ extension Room {
       return false
     }
     do {
+      let t0 = DispatchTime.now().uptimeNanoseconds
+      func lap(_ what: String) { if PerfLog.on { PerfLog.line(String(format: "snapshot boot: %@ at %.0f ms", what, Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)) } }
       guard let found = try await findSnapshot() else { return no("no pointer") }
+      lap("pointer")
       let v = found.value
       let s = v["envelope_number"].int ?? 0
       // the member list it was written under is the one this device verified, and no removal or recovery came after it
       guard let logSeq = v["log_seq"].int, logSeq >= 0, logSeq <= state.head.seq, hex(state.hashes[logSeq]) == v["log_hash"].string else { return no("another member list") }
       if logSeq < lastMemberChange(state) { return no("written before the newest member change") }
       let raw = try await fetchAttachment(v["attachment"])
+      lap("attachment")
       let encoding = v["encoding"].string ?? "identity"
       guard let bytes = encoding == "gzip" ? gunzip(raw) : raw else { return no("not gzip") }
+      lap("gunzip")
       let parsed: JV? = await Task.detached(priority: .userInitiated) {
-        (try? JSONSerialization.jsonObject(with: Data(bytes), options: [])).map { JV(any: $0) }
+        FastJSON.parse(bytes)
       }.value
       guard let snap = parsed, snap["schema"].int == Room.SNAPSHOT_SCHEMA, snap["room_id"].string == record.roomId, snap["envelope_number"].int == s else { return no("not this room's snapshot (schema \(parsed?["schema"].int ?? -1))") }
+      lap("parsed")
       // the chain heads (keys are base64url sender ids), this device's own chain excepted (a frontier's `told` is only
       // kept for the own chain here: what this device's next envelope says it has seen, R5)
       let me = hex(device.id)
@@ -1888,12 +1916,14 @@ extension Room {
       let grantSessions = Set(sessionStates.keys)
       let lam = SnapshotModel.apply(snap["model"], to: board, grantSessions: grantSessions)
       lamport = max(lamport, lam)
+      lap("model")
       var mc = Change(); applyMemberList(&mc)                 // the device registers' names on the members
       for (sid, st) in sessionStates { board.applySessionGrant(st, change: &mc) }
       cursor = max(0, s - Room.SNAPSHOT_OVERLAP)
       board.lastEnvelopeNumber = cursor
       snapshotCursor = s
       snapshotChains = heads
+      bootScan = found.scanned
       sinceSnapshot = Room.snapshotEvery                  // the board snapshot at the first settled save: the store has no records before it
       board.project()
       var ch = Change(); ch.stack = true; ch.room = true; ch.members = true
