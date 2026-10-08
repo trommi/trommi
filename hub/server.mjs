@@ -24,6 +24,8 @@ import { createMailer } from './mail.mjs'
 
 export const PROTOCOL_VERSION = 1
 const DAY = 86400000
+/** What a push registration rings for: every card that asks to push, or only the knocking ones (urgency high, critical). */
+const PUSH_LEVELS = ['all', 'knocking']
 export const LIMITS = limitsFromEnv({
   json: 1 << 20,
   ciphertext: 65536 + 16,
@@ -362,8 +364,9 @@ export async function startHub({
 
   async function sendPushes(r, senderId, out) {
     const urgency = out.card?.urgency ?? null
+    const knocks = urgency != null && urgency >= z.URGENCY.HIGH
     const subs = db.q(`SELECT p.device_id, p.endpoint, p.subscription FROM push_subscriptions p JOIN devices d ON d.room_id = p.room_id AND d.device_id = p.device_id
-      WHERE p.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL AND p.device_id != ?`).all(r.id, senderId)
+      WHERE p.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL AND p.device_id != ? AND (p.level = 'all' OR ?)`).all(r.id, senderId, knocks ? 1 : 0)
     const webUrgency = urgency >= z.URGENCY.HIGH ? 'high' : 'normal'
     await Promise.all(subs.map(async s => {
       const status = await pushTo(JSON.parse(s.subscription), { room_id: r.id, envelope_number: out.n, urgency }, { urgency: webUrgency })
@@ -776,6 +779,20 @@ export async function startHub({
       if (m === 'POST' && !parts[3]) return postShare(r, req, res, b)
       if (m === 'DELETE' && parts[3] && !parts[4]) return deleteShare(r, req, res, b, parts[3])
     }
+    // Every human device's push state, for its settings page: per device how many registrations and their levels (no
+    // endpoint, no key: what a device registered stays its own).
+    if (m === 'GET' && a === 'push_subscriptions' && !b) {
+      hub.authorise(bearer(req), { human: true })
+      const rows = db.q(`SELECT p.device_id, p.endpoint, p.level FROM push_subscriptions p JOIN devices d ON d.room_id = p.room_id AND d.device_id = p.device_id
+        WHERE p.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL`).all(r.id)
+      const devices = {}
+      for (const row of rows) {
+        const d = devices[row.device_id] ??= { web: 0, apns: 0, level: row.level }
+        d[row.endpoint.startsWith('apns:') ? 'apns' : 'web']++
+        if (row.level === 'all') d.level = 'all'
+      }
+      return send(res, 200, { devices })
+    }
     if (m === 'POST' && a === 'push_subscriptions' && !b) {
       const me = hub.authorise(bearer(req), { human: true })
       const body = await readJson(req)
@@ -785,12 +802,14 @@ export async function startHub({
       if (body.apns != null && !a) fail('bad-argument', 'not an APNs registration: { token, environment: sandbox | production, topic, key }')
       const sub = a ? { endpoint: `apns:${a.token}`, apns: a } : push.check(body.subscription)
       if (!sub) fail('bad-argument', 'not a Web Push subscription of a browser push service')
+      if (body.level != null && !PUSH_LEVELS.includes(body.level)) fail('bad-argument', `level is one of ${PUSH_LEVELS.join(', ')}`)
       if (body.remove === true) db.q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?').run(r.id, me.id, sub.endpoint)
       else {
         const n = db.q('SELECT COUNT(*) AS n FROM push_subscriptions WHERE room_id = ? AND device_id = ?').get(r.id, me.id).n
         if (n >= LIMITS.pushSubscriptionsPerDevice && !db.q('SELECT 1 FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?').get(r.id, me.id, sub.endpoint)) fail('too-many', 'too many push subscriptions for this device')
-        db.q('INSERT INTO push_subscriptions (room_id, device_id, endpoint, subscription, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET subscription = excluded.subscription')
-          .run(r.id, me.id, sub.endpoint, JSON.stringify(sub), now())
+        // (a registration made again keeps its level unless the body names one)
+        db.q(`INSERT INTO push_subscriptions (room_id, device_id, endpoint, subscription, created_at, level) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO UPDATE SET subscription = excluded.subscription${body.level != null ? ', level = excluded.level' : ''}`)
+          .run(r.id, me.id, sub.endpoint, JSON.stringify(sub), now(), body.level ?? 'all')
       }
       return send(res, 200, { ok: true })
     }

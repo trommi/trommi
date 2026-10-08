@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS agent_leases (
   PRIMARY KEY (room_id, device_id)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS push_subscriptions (
-  room_id TEXT NOT NULL, device_id TEXT NOT NULL, endpoint TEXT NOT NULL, subscription TEXT NOT NULL, created_at INTEGER NOT NULL,
+  room_id TEXT NOT NULL, device_id TEXT NOT NULL, endpoint TEXT NOT NULL, subscription TEXT NOT NULL, created_at INTEGER NOT NULL, level TEXT NOT NULL DEFAULT 'all',
   PRIMARY KEY (room_id, device_id, endpoint)
 ) WITHOUT ROWID;
 `
@@ -132,6 +132,9 @@ export function openDb(dir, { log = () => {} } = {}) {
   }
   // Void records (review 2 #5): a refused envelope kept pruned so the sender's chain moves on; void_code is the refusal.
   if (!db.prepare("SELECT 1 FROM pragma_table_info('envelopes') WHERE name = 'void_code'").get()) db.exec('ALTER TABLE envelopes ADD COLUMN void_code TEXT')
+  // What a push registration rings for (README "Push"): all (every card that asks to push) or knocking (only urgency
+  // high and critical, and a session that lost its link). Added without a schema bump: rows from before ring for all.
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('push_subscriptions') WHERE name = 'level'").get()) db.exec("ALTER TABLE push_subscriptions ADD COLUMN level TEXT NOT NULL DEFAULT 'all'")
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
   const cache = new Map()
   db.q = sql => { let s = cache.get(sql); if (!s) cache.set(sql, s = db.prepare(sql)); return s }
