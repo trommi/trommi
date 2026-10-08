@@ -920,9 +920,21 @@ export function screensController({ Controller, controller }) {
       }, { once: true }))
       const both = Promise.all([loaded(wide), loaded(phone)])
       wide.src = s.src; phone.src = s.src
-      stage.replaceChildren(wide, phone)
+      // The next pair loads in a layer of its own over the one in view, unseen (opacity 0); the old pair stays until the
+      // new one is in, then the new layer fades in (140 ms) and the old goes: never an empty or white stage between two.
+      // A step not yet in when the next is asked for is dropped.
+      const layer = document.createElement('div')
+      layer.className = 'tour-layer is-next'; layer.append(wide, phone)
+      for (const l of stage.querySelectorAll('.tour-layer.is-next')) l.remove()
+      stage.append(layer)
       const at = this.at
-      both.then(() => { if (this.box && this.at === at) { this.ready = true; this.arm() } })
+      both.then(() => {
+        if (!this.box || this.at !== at || !layer.isConnected) return
+        const old = [...stage.querySelectorAll('.tour-layer:not(.is-next)')]
+        layer.classList.remove('is-next')
+        setTimeout(() => old.forEach(l => l.remove()), 160)
+        this.ready = true; this.arm()
+      })
       this.box.querySelector('.tour-where').innerHTML = `<b>${this.at + 1} / ${this.list.length}</b> · ${s.group} · ${s.name}`
       this.box.querySelector('.tour-wait').textContent = 'loading…'
     }
