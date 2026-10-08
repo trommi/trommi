@@ -82,13 +82,11 @@ struct TabBarLook: ViewModifier {
     if #available(iOS 26.0, *) { content.tabBarMinimizeBehavior(.onScrollDown).tint(Ink.fg) } else { content.tint(Ink.fg) }
   }
 }
-/** A pushed screen hides the tab bar (its own controls at the bottom), except a chat: there it stays beside the pencil
- *  until he writes (SessionScreen hides it while the composer is open). */
+/** A pushed screen hides the tab bar (its own controls at the bottom); a chat too, its composer stays at the bottom
+ *  (Messages, WhatsApp). Back to the list, the bar returns. */
 struct BarFor: ViewModifier {
   let route: Route
-  func body(content: Content) -> some View {
-    if case .session = route { content } else { content.toolbar(.hidden, for: .tabBar) }
-  }
+  func body(content: Content) -> some View { content.toolbar(.hidden, for: .tabBar) }
 }
 
 /**
