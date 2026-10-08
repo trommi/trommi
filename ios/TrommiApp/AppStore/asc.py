@@ -65,9 +65,16 @@ def call(method, path, body=None, ok=()):
     except urllib.error.HTTPError as e:
         text = e.read().decode(errors="replace")
         if e.code in ok:
-            return {}
+            return {"error": e.code, "detail": "; ".join(x.get("detail", "") for x in _errors(text))}
         die(f"{method} {path}: HTTP {e.code} {text}")
     return json.loads(raw) if raw else {}
+
+
+def _errors(text):
+    try:
+        return json.loads(text).get("errors", [])
+    except ValueError:
+        return [{"detail": text[:300]}]
 
 
 def rel(kind, ident):
@@ -154,11 +161,15 @@ def internal(build_id, group, email=""):
             # Internal testers must be users of the team; Apple answers 409 when the address is not one.
             added = call("POST", "/v1/betaTesters", {"data": {"type": "betaTesters", "attributes": {"email": email},
                          "relationships": {"betaGroups": {"data": [{"type": "betaGroups", "id": gid}]}}}}, ok=(409,))
-            if added:
+            if "error" not in added:
                 print("tester added to the group")
             else:
-                print(f"::warning::App Store Connect did not take {email} as an internal tester (409): add the tester "
-                      f"in App Store Connect (TestFlight > {group}); internal testers must be users of the team")
+                users = call("GET", f"/v1/users?filter[username]={q(email)}&limit=5")["data"]
+                roles = users[0]["attributes"].get("roles") if users else None
+                print(f"team user {email}: {'roles ' + str(roles) if users else 'not found'}")
+                print(f"::warning::App Store Connect did not take {email} as an internal tester (409: "
+                      f"{added['detail']}): add the tester in App Store Connect (TestFlight > {group}); internal "
+                      "testers must be users of the team")
 
 
 def notes(build_id, text):
