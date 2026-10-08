@@ -18,7 +18,8 @@
 #   TESTFLIGHT_TESTER [82179548+chriopter@users.noreply.github.com]   kept in the group "Intern"
 #   OUT_DIR        [~/.cache/trommi-ship]   where the .ipa is kept
 #   APPLE_DEV      [~/.local/share/omarchy-apple-dev]   its tools/asc.py (stamp, frameworks, identity, validate, upload)
-# Nothing here prints key material or tokens. App extensions are not shipped: any PlugIns/ in the build is dropped.
+# Nothing here prints key material or tokens. The Share Extension (PlugIns/TrommiShare.appex, com.trommi.ios.share) ships
+# with its own App Store profile; both carry the App Group group.com.trommi.ios (ios/README.md "Share Extension").
 set -euo pipefail
 
 dry=0
@@ -72,7 +73,7 @@ ulimit -n 65536 2>/dev/null || true
 xtool dev build --configuration release
 app=$(find xtool -maxdepth 1 -name '*.app' -print -quit)
 [ -n "$app" ] || { echo "no .app under xtool/" >&2; exit 1; }
-if [ -d "$app/PlugIns" ]; then echo "dropping app extensions: $(ls "$app/PlugIns")"; rm -rf "$app/PlugIns"; fi
+[ -d "$app/PlugIns/TrommiShare.appex" ] || { echo "the Share Extension is missing (PlugIns/TrommiShare.appex)" >&2; exit 1; }
 
 echo "== 3. App icon (actool, AppStore/Assets.xcassets) =="
 min=$("$PY" -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1],"rb"))["MinimumOSVersion"])' "$app/Info.plist")
@@ -94,11 +95,13 @@ PYEOF
 
 echo "== 5. Distribution identity and signature =="
 sign_dir="$work/signing"
-"$PY" "$TOOLS/asc.py" identity "$app" "$sign_dir"     # Apple Distribution certificate + App Store profile via the API
+# App Store profiles for the app and PlugIns/TrommiShare.appex (APP_GROUPS: the group the profiles must carry)
+APP_GROUPS=group.com.trommi.ios "$PY" "$TOOLS/asc.py" identity "$app" "$sign_dir"
 chmod 600 "$ASC_IDENTITY_DIR/key.pem"
-# The profile's entitlements plus the app's own (aps-environment: production from AppStore/TrommiApp.entitlements),
-# each one checked against what the profile grants.
-"$PY" - "$sign_dir/entitlements.plist" "$app_dir/AppStore/TrommiApp.entitlements" "$app/embedded.mobileprovision" <<'PYEOF'
+# Each bundle: its profile's entitlements plus its own (the app: aps-environment production and the App Group; the
+# extension: the App Group), each one checked against what its profile grants.
+merge_entitlements() {
+"$PY" - "$1" "$2" "$3" <<'PYEOF'
 import plistlib, sys
 out, extra, prov = sys.argv[1:]
 ent = plistlib.load(open(out, "rb"))
@@ -106,11 +109,16 @@ raw = open(prov, "rb").read()
 granted = plistlib.loads(raw[raw.index(b"<?xml"):raw.index(b"</plist>") + 8])["Entitlements"]
 for k, v in plistlib.load(open(extra, "rb")).items():
     if granted.get(k) != v:
-        sys.exit(f"the App Store profile does not grant {k} = {v} (it grants {granted.get(k)!r})")
+        sys.exit(f"the App Store profile does not grant {k} = {v} (it grants {granted.get(k)!r}); for the App Group: "
+                 "ios/README.md \"Share Extension\" (assign group.com.trommi.ios to the id in the developer portal)")
     ent[k] = v
 plistlib.dump(ent, open(out, "wb"))
 print("entitlements:", ", ".join(f"{k}={v}" for k, v in sorted(ent.items())))
 PYEOF
+}
+merge_entitlements "$sign_dir/entitlements.plist" "$app_dir/AppStore/TrommiApp.entitlements" "$app/embedded.mobileprovision"
+merge_entitlements "$sign_dir/TrommiShare-entitlements.plist" "$app_dir/AppStore/TrommiShare.entitlements" \
+  "$app/PlugIns/TrommiShare.appex/embedded.mobileprovision"
 team=$("$PY" -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1],"rb"))["com.apple.developer.team-identifier"])' \
   "$sign_dir/entitlements.plist")
 [[ "$team" =~ ^[A-Z0-9]{10}$ ]] || { echo "team id '$team' is not a bare 10-character team id" >&2; exit 1; }
@@ -119,6 +127,8 @@ sign_args=(--pem-file "$sign_dir/key.pem" --certificate-der-file "$sign_dir/cert
 shopt -s nullglob
 for framework in "$app"/Frameworks/*.framework; do rcodesign sign "${sign_args[@]}" "$framework"; done
 shopt -u nullglob
+# inside out: the extension before the app, so the app's seal covers the signed extension
+rcodesign sign "${sign_args[@]}" --entitlements-xml-file "$sign_dir/TrommiShare-entitlements.plist" "$app/PlugIns/TrommiShare.appex"
 rcodesign sign "${sign_args[@]}" --entitlements-xml-file "$sign_dir/entitlements.plist" "$app"
 
 echo "== 6. Package and offline validation =="

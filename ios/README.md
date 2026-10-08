@@ -163,11 +163,13 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
 - Build: `xtool dev build --configuration release`, then the app icon from `AppStore/Assets.xcassets` (the SDK's Linux
   `actool`), `ITSAppUsesNonExemptEncryption` (`ITS_NON_EXEMPT_ENCRYPTION`, default `NO`), and omarchy-apple-dev's
   `tools/asc.py stamp` and `frameworks` (DT* keys, Xcode 27.1 `27A9275` from
-  `~/.cache/xtool/darwin-iPhoneOS27.1.xtoolsdk.version.plist`). App extensions are dropped.
-- Signing: an Apple Distribution certificate and an App Store profile (`omarchy-apple-dev com.trommi.ios …`), created
-  through the API with the Admin key on the first run; the distribution key stays in
+  `~/.cache/xtool/darwin-iPhoneOS27.1.xtoolsdk.version.plist`, for the app and `PlugIns/TrommiShare.appex`).
+- Signing: an Apple Distribution certificate and an App Store profile each for `com.trommi.ios` and
+  `com.trommi.ios.share` (`omarchy-apple-dev <id> …`, with `APP_GROUPS=group.com.trommi.ios`), created through the API
+  with the Admin key (remade on each run, so a capability change is picked up); the distribution key stays in
   `~/.appstoreconnect/private_keys/distribution/key.pem` (0600). Entitlements: the profile's plus
-  `AppStore/TrommiApp.entitlements` (`aps-environment: production`), each checked against the profile; `rcodesign`.
+  `AppStore/TrommiApp.entitlements` (`aps-environment: production`, the App Group) and, for the extension,
+  `AppStore/TrommiShare.entitlements` (the App Group), each checked against its profile; `rcodesign`, the extension first.
 - Offline validation (`asc.py validate`, 40 checks), upload with the Build Uploads API (`asc.py upload`), then this
   folder's `asc.py wait`, `internal … Intern`, and `notes`: "Neu in Build N (sha):" and the subjects of the commits
   under `ios/` since the commit the previous build's What to Test names (`asc.py last-sha`); `NOTES` overrides it.
@@ -193,9 +195,12 @@ the board. No Notification Service Extension: the text says nothing, so nothing 
 ## Share Extension
 
 Trommi in the iOS share sheet (`Sources/TrommiShare`, bundle id `com.trommi.ios.share`, xtool.yml `extensions:`,
-AppStore/project.yml target `TrommiShareExtension`). Its sheet has two ways: **Add to Note** (the default: pictures,
-screenshots, files, links and text become attachments and lines of the one note; nothing is sent) and **Send to Agent…**
-(the sessions as a tree, desks → crowned session → helpers, an optional line, Send).
+AppStore/project.yml target `TrommiShareExtension`). Its sheet is the note itself, compact, on the note's yellow paper:
+what was shared as thumbnails (a cross takes one out), a text field, the chip **To: <desk> · <crowned session> ▾** (each
+desk's crowned session with the desk's and the session's drawing; the desk picked last in the sheet, else the one the
+app's note went to last) and two ways: **Send** (the round paper plane: one message to that crown) and **Keep in Note**
+(into the one note; nothing is sent). After Send it says "Wird gesendet, sobald Trommi öffnet", or "Geht an …" when the
+running app took the share at once.
 
 - The extension holds no room, no device key, no board: it links only `ShareInbox` (TrommiCore), well inside an
   extension's memory. It seals what was shared into the App Group container `group.com.trommi.ios` ("Trommi Share":
@@ -206,13 +211,13 @@ screenshots, files, links and text become attachments and lines of the one note;
   (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; the app makes it, the extension only reads it). The additional
   data binds each file to its role and name. Nothing lies in plaintext outside the app; the device keys stay in the
   app's own Keychain group.
-- The app (`ShareImport.swift`) writes a sealed snapshot of desks and sessions (names, ids, desk, parent, crown) on each
-  change of the board, and imports on coming to the front (after the catch-up) and at once on the ring: files are
-  encrypted and uploaded as the note's own, then into the note (`saveNote`), or one message to the session
-  (`sendMessage`). A send is taken out of the inbox before it is sealed, so it is never repeated; if it fails, or the
+- The app (`ShareImport.swift`) writes a sealed snapshot of the desks and their crowned sessions (names, ids, hues, the
+  drawings as small PNGs: the extension has no pen) on each change of the board, and imports on coming to the front (after the catch-up) and at once on the ring: files are
+  encrypted and uploaded as the note's own, then into the note (`saveNote`), or one message to the desk's crowned
+  session as it is at import time (`sendMessage`). A send is taken out of the inbox before it is sealed, so it is never repeated; if it fails, or the
   session is gone, what was shared goes into the note instead.
 - Not sent from the extension: it would need the device key and the sync engine, and two processes sealing with one
-  device key fork its envelope chain (`chain-behind`). So "Send to Agent…" says "Sends as soon as Trommi opens".
+  device key fork its envelope chain (`chain-behind`). So Send says "Wird gesendet, sobald Trommi öffnet" unless the app runs.
 - The App Group id per build: `group.com.trommi.ios` in the entitlements. xtool signed in with the API key (this
   machine) keeps it as written; signed in with an Apple ID it registers `group.XTL-<team>.com.trommi.ios` and rewrites
   the entitlement. The code tries both (`ShareGroup`).
