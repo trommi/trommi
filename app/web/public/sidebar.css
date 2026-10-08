@@ -1103,3 +1103,14 @@ html body .topbar #brand-doors .menu-icons .menu-ico { justify-content: center; 
 .note-to-row small { color: var(--muted); font-size: var(--t-xs); }
 .note-to-row.is-last, .note-to-row:hover, .note-to-row:focus-visible { background: color-mix(in srgb, var(--fg) 8%, transparent); outline: none; }
 .tab-note-ico { display: grid; place-items: center; }
+/* a phone's chat: the composer folded into a round glass pen at the foot's right, beside the capsule */
+.compose-fab { display: none; }
+@media (max-width: 860px) {
+  body[data-t-view="session"] .compose-fab { position: fixed; z-index: 50; right: max(14px, env(safe-area-inset-right, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); display: grid; place-items: center; width: 50px; height: 50px; padding: 0; border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); border-radius: 50%; background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6); color: var(--fg); box-shadow: 0 10px 26px -14px rgb(20 30 25 / .55), inset 0 1px 0 rgb(255 255 255 / .5); }
+  body[data-t-view="session"] .compose-fab .sketch { width: 24px; height: 24px; stroke-width: 1.9; }
+  body[data-t-view="session"] .compose-fab[data-draft]::after { content: ""; position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent, var(--fg)); box-shadow: 0 0 0 2px var(--bg); }
+  body[data-t-view="session"] .tabbar { left: calc(50% - 30px); }
+  :root:not([data-compose]) body[data-t-view="session"] #session .session-compose { display: none; }
+  :root[data-compose] body[data-t-view="session"] :is(.compose-fab, .tabbar) { display: none; }
+  :root:not([data-compose]) body[data-t-view="session"] #session .dock { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 70px); }
+}
