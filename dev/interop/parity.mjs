@@ -30,7 +30,7 @@ const files = (dir, ext) => { try { return fs.readdirSync(path.join(root, dir)).
 const cat = list => list.map(f => rd(f)).join('\n')
 
 const WEB = cat([...files('app/web/public', '.mjs')])
-const JSCORE = cat(['shared/client.mjs', 'shared/agent.mjs', 'shared/model.ts', 'shared/transport.ts', 'shared/account.mjs', 'shared/room.mjs', 'shared/scribble.ts', 'shared/codec.ts'])
+const JSCORE = cat(['shared/client.mjs', 'shared/agent.mjs', 'shared/model.ts', 'shared/transport.ts', 'shared/account.ts', 'shared/room.mjs', 'shared/scribble.ts', 'shared/codec.ts'])
 const SWCORE = cat([...files('ios/TrommiCore/Sources/TrommiClient', '.swift'), ...files('ios/TrommiCore/Sources/TrommiCore', '.swift')])
 const SWAPP = cat(files('ios/TrommiApp/Sources/TrommiApp', '.swift'))
 const DRIVER_SWIFT = rd('ios/TrommiCore/Sources/trommi-swift/Driver.swift')
@@ -52,7 +52,7 @@ function readmeRoutes() {
 }
 const norm = p => `/v1${p}`.replace(/\$\{[^}]*\}|\\\([^)]*(\([^)]*\))?[^)]*\)|:[a-z_]+/g, ':x').replace(/\/+$/, '').replace(/\?.*$/, '')
 function jsRoutes() {
-  const src = cat(['shared/transport.ts', 'shared/account.mjs', 'shared/client.mjs', 'shared/room.mjs']) + WEB
+  const src = cat(['shared/transport.ts', 'shared/account.ts', 'shared/client.mjs', 'shared/room.mjs']) + WEB
   const out = new Set()
   for (const m of src.matchAll(/request\(\s*'(GET|POST|PUT|DELETE)',\s*(?:[\w.]+\.)?(roomPath\()?\s*(?:`([^`]*)`|'([^']*)')/g)) out.add(`${m[1]} ${norm((m[2] ? '/rooms/:x' : '') + (m[3] ?? m[4]))}`)
   if (/roomPath\('\/stream'\)/.test(src)) out.add('GET /v1/rooms/:x/stream')
