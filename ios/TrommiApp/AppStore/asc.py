@@ -7,6 +7,7 @@ JWT is signed with the openssl command line tool, so it runs on a stock macOS ru
   asc.py internal BUILD_ID GROUP [EMAIL]
                                     the internal TestFlight group GROUP exists (every build), holds BUILD_ID, and
                                     EMAIL (a user of the team) is one of its testers
+  asc.py notes BUILD_ID TEXT        TestFlight "What to Test" of that build (every localization; de-DE if none)
 
 Environment: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH (the .p8 file). Nothing here prints key material or tokens.
 """
@@ -160,6 +161,19 @@ def internal(build_id, group, email=""):
                       f"in App Store Connect (TestFlight > {group}); internal testers must be users of the team")
 
 
+def notes(build_id, text):
+    text = text.strip()[:4000]
+    locs = call("GET", f"/v1/builds/{build_id}/betaBuildLocalizations?limit=50")["data"]
+    for loc in locs:
+        call("PATCH", f"/v1/betaBuildLocalizations/{loc['id']}", {"data": {"type": "betaBuildLocalizations",
+             "id": loc["id"], "attributes": {"whatsNew": text}}})
+        print(f"What to Test ({loc['attributes'].get('locale')}): {text}")
+    if not locs:
+        call("POST", "/v1/betaBuildLocalizations", {"data": {"type": "betaBuildLocalizations",
+             "attributes": {"locale": "de-DE", "whatsNew": text}, "relationships": {"build": rel("builds", build_id)}}})
+        print(f"What to Test (de-DE): {text}")
+
+
 def gh_out(name, value):
     print(f"{name}: {value}")
     if os.environ.get("GITHUB_OUTPUT"):
@@ -168,7 +182,7 @@ def gh_out(name, value):
 
 
 if __name__ == "__main__":
-    cmds = {"prepare": prepare, "wait": wait, "internal": internal}
+    cmds = {"prepare": prepare, "wait": wait, "internal": internal, "notes": notes}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         sys.exit(__doc__)
     cmds[sys.argv[1]](*sys.argv[2:])

@@ -117,10 +117,12 @@ Connect and hands it to the internal TestFlight group **Intern**; the deployment
   (`AppStore/TrommiApp.entitlements`) and the Info.plist keys xtool adds. Version: `MARKETING_VERSION` there; build
   number: the workflow's run number. Linux builds (`xtool dev`, `ship.sh`) do not use this folder.
 - `TrommiApp/AppStore/asc.py`: the App Store Connect API steps (standard library and `openssl`): the bundle id with
-  Push Notifications, the app record check, waiting for the processed build, the group and its tester.
+  Push Notifications, the app record check, waiting for the processed build, the group and its tester, the build's
+  TestFlight "What to Test" (the commit subject).
 - Signing: automatic, through the API key (`-allowProvisioningUpdates -authenticationKey…`); export
   `app-store-connect`, `destination: upload`, `testFlightInternalTestingOnly`.
-- Environment `ios-beta`: secret `ASC_KEY` (the `.p8`), variables `ASC_KEY_ID`, `ASC_ISSUER_ID`, `APPLE_TEAM_ID`;
+- Environment `ios-beta`: secret `ASC_KEY` (the `.p8` of a team key with the Admin role: cloud-managed distribution
+  signing refuses App Manager keys), variables `ASC_KEY_ID`, `ASC_ISSUER_ID`, `APPLE_TEAM_ID`;
   optional `ITS_NON_EXEMPT_ENCRYPTION` (`YES` or `NO`, written into every build as `ITSAppUsesNonExemptEncryption`;
   unset, each build shows "Missing Compliance" until it is answered in App Store Connect) and `TESTFLIGHT_TESTER`.
 - Once, by a person: the app record (App Store Connect → Apps → + → New App: iOS, name Trommi, bundle id

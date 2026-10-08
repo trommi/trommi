@@ -5,9 +5,10 @@
 # Connect API key) -> export for App Store Connect with destination upload (internal testing only) -> wait until App Store
 # Connect has processed the build (VALID) -> the group "Intern" holds it and the owner is a tester.
 # Version: MARKETING_VERSION in AppStore/project.yml; build number: this workflow's run number.
-# Environment "ios-beta": secret ASC_KEY (the .p8 of an App Manager key), variables ASC_KEY_ID, ASC_ISSUER_ID,
-# APPLE_TEAM_ID; optional ITS_NON_EXEMPT_ENCRYPTION (YES or NO: the export compliance answer written into every build;
-# unset, each build waits for the answer in App Store Connect) and TESTFLIGHT_TESTER (default: the account holder).
+# Environment "ios-beta": secret ASC_KEY (the .p8 of a team key with the Admin role: cloud-managed distribution
+# signing refuses App Manager keys), variables ASC_KEY_ID, ASC_ISSUER_ID, APPLE_TEAM_ID;
+# optional ITS_NON_EXEMPT_ENCRYPTION (YES or NO: the export compliance answer written into every build; unset, each
+# build waits for the answer in App Store Connect) and TESTFLIGHT_TESTER (default: the account holder).
 # Linux development builds (xtool dev, ios/README.md) do not use any of this.
 name: iOS beta (TestFlight)
 
@@ -125,6 +126,16 @@ jobs:
 
       - name: Internal group "Intern"
         run: python3 "$APPSTORE/asc.py" internal "${{ steps.verify.outputs.build_id }}" Intern "${{ vars.TESTFLIGHT_TESTER || '82179548+chriopter@users.noreply.github.com' }}"
+
+      # TestFlight "What to Test": the commit this build comes from.
+      - name: What to Test
+        continue-on-error: true
+        env:
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          subject=${SUBJECT%%$'\n'*}
+          [ -n "$subject" ] || subject=$(git log -1 --format=%s)
+          python3 "$APPSTORE/asc.py" notes "${{ steps.verify.outputs.build_id }}" "Neu in Build $BUILD (${GITHUB_SHA::7}): $subject"
 
       - name: Remove the key
         if: always()
