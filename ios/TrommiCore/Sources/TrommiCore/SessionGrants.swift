@@ -169,7 +169,7 @@ public func verifyGrants(_ grants: [Bytes], _ room: RoomState) throws -> Session
  * Used by a new human device that must re-seal nothing (the inviter does that); kept for parity tests.
  */
 public func createSessionGrant(state: RoomState, signer: Device, sessionState: SessionState?, sessionId: Bytes? = nil, current: EpochSecret? = nil, agentIds: [Bytes] = [],
-                               withHistory: Bool = false, rotate: Bool = false, time: UInt64 = nowMs(), rng: RNG = systemRandom) throws -> (grant: Bytes, secret: EpochSecret, wraps: [(id: Bytes, sealed: Bytes)], backLink: Bytes?, sessionState: SessionState) {
+                               withHistory: Bool = false, historyAgentIds: [Bytes]? = nil, rotate: Bool = false, time: UInt64 = nowMs(), rng: RNG = systemRandom) throws -> (grant: Bytes, secret: EpochSecret, wraps: [(id: Bytes, sealed: Bytes)], backLink: Bytes?, sessionState: SessionState) {
   let isRecovery = bytesEqual(signer.id, state.recovery.id)
   if !isRecovery && state.memberAt(signer.id)?.role != ROLE.HUMAN { throw fail("not-human", "only a human device (or the recovery key) grants session keys") }
   let sid = try sessionState.map { try unhex($0.sessionId) } ?? (try need(sessionId ?? rng(16), 16, "session id"))
@@ -179,9 +179,14 @@ public func createSessionGrant(state: RoomState, signer: Device, sessionState: S
   else { guard let c = current, c.epoch == sessionState!.epoch, c.hist != nil else { throw fail("bad-argument", "pass the full current session secret to re-seal it") }; secret = c }
   let ids = agentIds.sorted { compareBytes($0, $1) < 0 }
   for id in ids { guard state.memberAt(id)?.role == ROLE.AGENT else { throw fail("bad-argument", "only active agents can be assigned to a session") } }
+  // Per-agent history: historyAgentIds names the agents that get the history key, the others get the key only; the
+  // grant's history flag then means "some agent got history in this grant". nil: every agent follows withHistory.
+  let histIds = historyAgentIds.map { Set($0.map(hex)) }
+  let histFor: (Bytes) -> Bool = { id in histIds.map { $0.contains(hex(id)) } ?? withHistory }
+  let withHistory = histIds != nil ? ids.contains(where: histFor) : withHistory
   let recipients = state.activeMembers.filter { $0.role == ROLE.HUMAN }.map { SessionRecipient(id: $0.id, kexPub: $0.kexPub, withHist: true) }
     + [SessionRecipient(id: state.recovery.id, kexPub: state.recovery.kexPub, withHist: true)]
-    + ids.map { SessionRecipient(id: $0, kexPub: state.memberAt($0)!.kexPub, withHist: withHistory) }
+    + ids.map { SessionRecipient(id: $0, kexPub: state.memberAt($0)!.kexPub, withHist: histFor($0)) }
   let wraps = try wrapSessionKey(roomId: state.roomId, sessionId: sid, secret: secret, recipients: recipients, rng: rng)
   let c = try sessionCommits(sessionId: sid, secret)
   let w = W()

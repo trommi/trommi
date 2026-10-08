@@ -19,6 +19,8 @@
 //                 a Swift message reaches the agent, a Swift note and register reach the app's core.
 //   pairing       Swift makes the invite ("Pair a device" on the iPhone), a JS device joins, both show the same six emoji,
 //                 Swift confirms, adds it and re-seals every session key: the new device reads the room's cards.
+//   agents        Swift invites an agent (its link, the emoji, a session of its own), removes it (new room key, every
+//                 session re-keyed: the other agent still reaches both), and a Swift device logs out (removes itself).
 //   refusals      "They don't match" in the app: the Swift join stops, nobody is added.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -69,7 +71,7 @@ const test = async (name, fn) => {
 
 const hub = await startHub(tmp)
 const home = path.join(tmp, 'swift-home')
-let human, agent, agent2, swiftId, recoveryCode
+let human, agent, agent2, agent3, swiftId, recoveryCode
 const commands = []
 try {
   await test('JS: the human founds a room on a local hub, an agent joins (check code confirmed) and files cards', async () => {
@@ -232,6 +234,43 @@ try {
     await c.stop()
   })
 
+  await test('agent invite from Swift: a JS agent joins with the link, the emoji match, it gets a session of its own and its card reaches Swift', async () => {
+    const linkFile = path.join(tmp, 'agent-link')
+    const p = swift(['invite-agent', '--link-out', linkFile, '--yes', '--name', 'Helper from Swift'], { home })
+    const link = await until('the link file', () => { try { return fs.readFileSync(linkFile, 'utf8') } catch { return null } })
+    const j = core.joinRoom({ link, storage: core.memoryStorage(), device_name: 'Agent 3', device_info: { device_name: 'Agent 3', platform: 'node' }, poll_ms: 50 })
+    const code = await j.check_code
+    assert.equal(await until('the code in Swift', () => codeIn(p.stdout)), code)
+    agent3 = await j.client
+    const r = await p.done
+    assert.equal(r.code, 0, r.stderr)
+    await agent3.start(); await agent3.whenSession()
+    const id = await agent3.sendCard({ title: 'From the agent Swift invited', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })
+    await until('the card in Swift', async () => (await swiftOpen()).some(c => c.id === id))
+    await until('the session name in the app', () => [...human.model.sessions.values()].some(s => s.settings?.name === 'Helper from Swift'))
+  })
+
+  await test('removal from Swift: the agent is out, a new room key, every session re-keyed; the other agent still reaches both', async () => {
+    const epoch = human.model.room.key_epoch
+    const sessionEpoch = Math.max(...[...agent.sessionKeys.values()].map(k => k.state.epoch))
+    await run(['remove', agent3.my_device_id], { home })
+    await until('the agent removed in the app', () => human.model.members.get(agent3.my_device_id)?.is_active === false)
+    await until('a new room key epoch', () => human.model.room.key_epoch === epoch + 1)
+    await until('the other agent\'s session re-keyed (A1)', async () => { await agent.catchUp().catch(() => {}); return Math.max(...[...agent.sessionKeys.values()].map(k => k.state.epoch)) > sessionEpoch })
+    const id = await agent.sendCard({ title: 'After the Swift removal', options: [{ key: 'ok', label: 'OK' }] })
+    await until('the new card in the app', () => human.model.cards.get(id)?.title === 'After the Swift removal')
+    await until('the new card in Swift', async () => (await swiftOpen()).some(c => c.id === id))
+  })
+
+  await test('log out from Swift: the device removes itself, the app sees it gone, nothing is left in its folder', async () => {
+    const lhome = path.join(tmp, 'swift-login')
+    const id = (await run(['whoami'], { home: lhome })).stdout.match(/device ([0-9a-f]{64})/)[1]
+    const r = await run(['leave'], { home: lhome })
+    assert.match(r.stdout, /Logged out/)
+    await until('the device removed in the app', () => human.model.members.get(id)?.is_active === false)
+    assert.equal(fs.readdirSync(lhome).filter(f => /^[0-9a-f]{64}$/.test(f)).length, 0, 'the room folder is gone')
+  })
+
   await test('"They don\'t match" in the app: the Swift join stops, nobody is added', async () => {
     const inv = await human.createInvite({ device_role: 'human' })
     const p = swift(['join'], { home: path.join(tmp, 'swift-other'), stdin: inv.link })
@@ -245,7 +284,7 @@ try {
     assert.equal(human.model.members.size, before)
   })
 } finally {
-  for (const c of [human, agent, agent2]) await c?.stop?.().catch?.(() => {})
+  for (const c of [human, agent, agent2, agent3]) await c?.stop?.().catch?.(() => {})
   hub.stop()
   console.log(`\n${passed} passed, ${failed} failed`)
   fs.rmSync(tmp, { recursive: true, force: true })

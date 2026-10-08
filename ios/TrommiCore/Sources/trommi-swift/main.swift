@@ -179,6 +179,29 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     print("check code \(e.map { $0.emoji }.joined(separator: " ")) (\(e.map { $0.word }.joined(separator: ", ")))")
     try await room.confirmPairing(p, matches: confirmYes)
     print("Added. The new device is a member now.")
+  case "invite-agent":
+    guard let out = linkOut else { die("usage: trommi-swift invite-agent --link-out <file> [--yes] [--name <label>]") }
+    let room = try pickRoom()
+    try await room.sync()
+    var inv = try await room.createAgentInvite(app: "http://127.0.0.1/join", label: deviceName)
+    try Data(inv.pairing.link.utf8).write(to: URL(fileURLWithPath: out))
+    while !(try await room.checkPairing(&inv.pairing)) { try await Task.sleep(nanoseconds: 200_000_000) }
+    let e = checkEmoji(inv.pairing.code ?? "")
+    print("check code \(e.map { $0.emoji }.joined(separator: " ")) (\(e.map { $0.word }.joined(separator: ", ")))")
+    let sid = try await room.confirmAgent(inv, matches: confirmYes)
+    print("Added. Its session: \(sid)")
+  case "remove":
+    guard !rest.isEmpty else { die("usage: trommi-swift remove <device id>...") }
+    let room = try pickRoom()
+    try await room.sync()
+    try await room.removeDevices(rest)
+    print("Removed. Key epoch \(room.state.epoch).")
+  case "leave":
+    let room = try pickRoom()
+    try await room.sync()
+    try await room.leaveRoom()
+    openedRoom = nil
+    print("Logged out. This device holds nothing of the room any more.")
   case "rooms":
     for id in Store.rooms(base: base) {
       let r = try Room.open(base: base, roomId: id)

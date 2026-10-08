@@ -360,16 +360,32 @@ final class BoardModel: ObservableObject {
     }
   }
   /**
-   * Delete a session (agents.mjs /sessions/:id/delete): its open questions are shredded and it goes to the archive.
-   * (Removing its connector from the room's member list, with the new keys that needs, is done from the web app.)
+   * Delete a session (agents.mjs /sessions/:id/delete): its connector is removed from the room (new keys), its open
+   * questions are shredded and it goes to the archive.
    */
   func deleteSession(_ a: Agent) {
     guard let room = room, let d = desk else { return }
     act {
       for c in d.cards where c.agent == a.id && c.status == "open" && c.kind != "permission" { try? await room.shred(cardId: c.id) }
       try await room.editSession(a.deviceId, ["archived": true])
+      if let dev = a.agentDeviceId, room.board.members[dev]?.isActive == true, !a.own { try await room.removeDevices([dev]) }
       self.say("Deleted", a.name)
       if self.path.last == .session(a.id) { self.path.removeLast() }
+    }
+  }
+  /** Remove a device of the room (Devices): a new room key, every session re-keyed. */
+  func removeDevice(_ id: String, name: String) {
+    guard let room = room else { return }
+    act("Not removed") { try await room.removeDevices([id]); self.say("Removed", name) }
+  }
+  /** Log out of this device: it removes itself from the room; nothing of Trommi is left here. */
+  func logOut() {
+    guard let room = room else { return }
+    act("Not logged out") {
+      do { try await room.leaveRoom() } catch let e as HubError where e.status == 0 { room.forgetHere() }
+      self.liveTask?.cancel(); self.liveTask = nil
+      self.room = nil; self.desk = nil; self.path = []
+      self.phase = .start
     }
   }
   /** Desks: register desk/<id>. */
