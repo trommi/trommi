@@ -348,7 +348,7 @@ function commandOf(model, c) {
       const ct = content.content_type
       const scope = rec.timeline_id?.startsWith('card/') ? rec.timeline_id.slice(5) : null
       const unsupported = rec.content_state === 'newer_schema' ? 'a newer message format' : M.contentTypeKnown(content) ? null : `content_type ${ct}`
-      return { ...out, command: ct === 'selection_sent' ? 'selection_sent' : 'message', object_id: scope, card: scope ? model.cards.get(scope) ?? null : null, ...(unsupported ? { unsupported } : {}) }
+      return { ...out, command: ct === 'selection_sent' ? 'selection_sent' : ct === 'clip_request' && !unsupported ? 'clip_request' : 'message', object_id: scope, card: scope ? model.cards.get(scope) ?? null : null, ...(unsupported ? { unsupported } : {}) }
     }
     case codec.KIND.answer: {
       const a = content.answer_action
