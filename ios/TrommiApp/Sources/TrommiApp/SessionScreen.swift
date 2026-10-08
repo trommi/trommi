@@ -21,6 +21,8 @@ struct SessionScreen: View {
   @EnvironmentObject var model: BoardModel
   let agentId: String
   @State private var onlyQuestions = false
+  @State private var writing = false
+  @Environment(\.horizontalSizeClass) private var hSize
   @State private var atBottom = true
   @State private var unseen = 0
   @State private var lastCount = 0
@@ -88,12 +90,27 @@ struct SessionScreen: View {
           }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
+          // the composer folds into a round glass pencil (the tab bar stays); a tap opens it and the keyboard; done
+          // with an empty field, it folds again (his decision, 8 October)
           VStack(spacing: 0) {
             SessionLinkNote(agent: a, messages: all)
-            Composer(placeholder: composeWords(a), agent: a.id, onSent: { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } })
+            if writing || hSize == .regular {
+              Composer(placeholder: composeWords(a), agent: a.id, autofocus: hSize != .regular, onSent: { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } },
+                       onIdle: { withAnimation(.snappy) { writing = false } })
+            } else {
+              HStack {
+                Spacer()
+                Button { withAnimation(.snappy) { writing = true } } label: {
+                  Image(systemName: "pencil").font(.system(size: 20, weight: .semibold)).foregroundStyle(Ink.fg).frame(width: 52, height: 52).glass(Circle(), interactive: true)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Write to \(a.name)")
+              }
+              .padding(.horizontal, 16).padding(.bottom, 8)
+            }
           }
-          .background(.bar)
         }
+        .toolbar(writing ? .hidden : .automatic, for: .tabBar)
         .onAppear { lastCount = all.count; proxy.scrollTo("bottom", anchor: .bottom); model.lastChat = a.id; model.markRead(a) }
         .onChange(of: model.version) { _, _ in model.markRead(a) }
       }
@@ -560,7 +577,10 @@ struct Composer: View {
   let placeholder: String
   let agent: String
   var cardId: String? = nil
+  var autofocus = false
   var onSent: (() -> Void)? = nil
+  /** The keyboard went away with nothing written: the chat folds the composer into its pencil. */
+  var onIdle: (() -> Void)? = nil
   @State private var text = ""
   @State private var files: [Pending] = []
   @State private var importing = false
@@ -611,33 +631,39 @@ struct Composer: View {
           }
         }
       }
+      // as Messages on iOS 26: a round glass "+" for files, the field as a glass capsule with the send arrow inside
       HStack(alignment: .bottom, spacing: 8) {
         Menu {
           Button { pickingPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
           Button { importing = true } label: { Label("Choose File", systemImage: "doc") }
         } label: {
-          Sketch("clip", color: Ink.muted).frame(width: 22, height: 22).frame(width: 40, height: 40)
+          Image(systemName: "plus").font(.system(size: 19, weight: .semibold)).foregroundStyle(Ink.fg).frame(width: 44, height: 44).glass(Circle(), interactive: true)
         }
         .accessibilityLabel("Attach")
-        TextField(placeholder, text: $text, axis: .vertical)
-          .font(Face.text(17))
-          .lineLimit(1...7)
-          .focused($focused)
-          .padding(.horizontal, 14).padding(.vertical, 10)
-          .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Ink.surface))
-          .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(focused ? Ink.accent.opacity(0.6) : Ink.lineStrong))
-        Button(action: send) {
-          Group {
-            if sending { ProgressView().tint(Ink.accentFg) }
-            else { Image(systemName: "arrow.up").font(.system(size: 17, weight: .bold)) }
+        HStack(alignment: .bottom, spacing: 4) {
+          TextField(placeholder, text: $text, axis: .vertical)
+            .font(Face.text(17))
+            .lineLimit(1...7)
+            .focused($focused)
+            .padding(.leading, 16).padding(.vertical, 11)
+          Button(action: send) {
+            Group {
+              if sending { ProgressView().tint(Ink.accentFg) }
+              else { Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)) }
+            }
+            .foregroundStyle(Ink.accentFg).frame(width: 34, height: 34).background(Circle().fill(canSend ? Ink.accent : Ink.faint))
+            .frame(width: 44, height: 44).contentShape(Rectangle())
           }
-          .foregroundStyle(Ink.accentFg).frame(width: 40, height: 40).background(Circle().fill(canSend ? Ink.accent : Ink.faint))
+          .buttonStyle(.plain)
+          .disabled(!canSend || sending)
+          .accessibilityLabel("Send")
         }
-        .disabled(!canSend || sending)
-        .accessibilityLabel("Send")
+        .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
       }
     }
     .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 8)
+    .onAppear { if autofocus { focused = true } }
+    .onChange(of: focused) { _, on in if !on && !canSend { onIdle?() } }
     .sheet(isPresented: $pickingPhotos) { PhotoPicker(limit: MAX_FILES - files.count) { picked in Task { await take(picked) } }.ignoresSafeArea() }
     .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
       if case .success(let urls) = r {
