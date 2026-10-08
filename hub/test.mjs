@@ -466,14 +466,13 @@ test('agent lease: one process per key; a new process takes over, the old one ge
   const w = await world()
   const a = await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })
   assert.ok(a.lease_generation > 0); assert.ok(a.expires_at > Date.now())
-  // Review 3: a stream, an upload and an ephemeral post of an agent need the generation too.
+  // Review 3: a stream and an upload of an agent need the generation too.
   // (strict: no header is lease-lost, and so is one that is not a generation)
   const none = { 'x-lease-generation': 'none' }
   await refused(w, 'GET', `${R(w)}/stream`, { token: w.agent.token }, 409, 'lease-lost')
   await refused(w, 'PUT', `${R(w)}/attachments/${'ab'.repeat(16)}`, { token: w.agent.token, raw: new Uint8Array(10) }, 409, 'lease-lost')
   await refused(w, 'GET', `${R(w)}/stream`, { token: w.agent.token, headers: none }, 409, 'lease-lost')
   await refused(w, 'PUT', `${R(w)}/attachments/${'ab'.repeat(16)}`, { token: w.agent.token, raw: new Uint8Array(10), headers: none }, 409, 'lease-lost')
-  await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: 'x' }, headers: none }, 409, 'lease-lost')
   const s = await openStream(w, w.agent, 0, w.agent.token, { 'x-lease-generation': String(a.lease_generation) })
   assert.equal((await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })).lease_generation, a.lease_generation, 'the same process renews')
   await refused(w, 'POST', `${R(w)}/agent_lease`, { token: w.phone.token, body: { process_instance: 'p1' } }, 403, 'forbidden')
@@ -556,23 +555,6 @@ test('removal: tokens revoked, streams closed at once, new epoch keys for who st
   const devs = (await ok(w, 'GET', `${R(w)}/devices`, { token: w.phone.token })).devices
   assert.deepEqual(devs.map(d => d.is_active), [true, false, true])
   agentStream.close()
-  await w.hub.close()
-})
-
-test('ephemeral: relayed to the other open streams only, never stored; own envelopes only', async () => {
-  const w = await world()
-  const phoneStream = await openStream(w, w.phone)
-  const agentStream = await openStream(w, w.agent)
-  // Typing indicator from the agent: a sealed envelope that is relayed, not chained into anything stored.
-  const typing = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: z.newChains(), keyScope: 1, sessionId: SID, secret: w.agent.session, kind: KIND.STATUS, payload: utf8('{"typing":true}') })
-  assert.deepEqual(await ok(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: b64u(typing.bytes) }, headers: await leaseHeader(w, w.agent) }), { ok: true })
-  const ev = await phoneStream.until(e => e.event === 'ephemeral', 'ephemeral at the phone')
-  assert.equal(ev.data.device_id, hex(w.agent.device.id)); assert.equal(ev.data.envelope, b64u(typing.bytes))
-  await sleep(100)
-  assert.equal(agentStream.events.some(e => e.event === 'ephemeral'), false, 'not echoed to the sender')
-  assert.equal((await ok(w, 'GET', `${R(w)}/envelopes`, { token: w.phone.token })).last_envelope_number, 0, 'nothing stored')
-  await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.phone.token, body: { envelope: b64u(typing.bytes) } }, 403, 'wrong-sender')
-  phoneStream.close(); agentStream.close()
   await w.hub.close()
 })
 
@@ -1078,7 +1060,7 @@ test('review 2 C06: cf-connecting-ip only when enabled, and only from a loopback
   await w.hub.close()
 })
 
-test('review 2 C02/C04/C05/H3, ids: no attachment hijack, removed devices finish nothing, ephemeral verified, pending uploads expire, ids strict', async () => {
+test('review 2 C02/C04/H3, ids: no attachment hijack, removed devices finish nothing, pending uploads expire, ids strict', async () => {
   let clock = Date.now()
   const w = await world({ now: () => clock })
   const put = async (c, id, body) => fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${c.token}`, ...(c === w.agent ? await leaseHeader(w, c) : {}) }, body })
@@ -1101,14 +1083,6 @@ test('review 2 C02/C04/C05/H3, ids: no attachment hijack, removed devices finish
   await refused(w, 'DELETE', `${R(w)}/attachments/${hex(asset.blobId)}/shares/xyz`, { token: w.phone.token }, 400, 'bad-argument')
   await refused(w, 'GET', `${R(w)}/sessions/${'0'.repeat(31)}/grants`, { token: w.phone.token }, 400, 'bad-argument')
   await refused(w, 'GET', `${R(w)}/invites/${'g'.repeat(32)}`, {}, 400, 'bad-argument')
-  // C05: an ephemeral envelope with a broken signature is refused, not relayed; a good one is relayed.
-  const eph = await seal(w.phone, { keyScope: 0 })
-  const broken = eph.bytes.slice(); broken[broken.length - 1] ^= 1
-  await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.phone.token, body: { envelope: b64u(broken) } }, 400, 'bad-signature')
-  assert.deepEqual(await ok(w, 'POST', `${R(w)}/ephemeral`, { token: w.phone.token, body: { envelope: b64u(eph.bytes) } }), { ok: true })
-  // An agent cannot relay under the room key (it holds none).
-  const agentEph = await seal(w.agent, { keyScope: 0, secret: w.phone.secrets.get(1) }).catch(() => null)
-  if (agentEph) await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: b64u(agentEph.bytes) }, headers: await leaseHeader(w, w.agent) }, 403)
   // C04: the laptop starts an upload, is removed while it runs, and the upload stores nothing.
   const big = await z.encryptAsset(new Uint8Array(200000))
   const req = http.request(`${w.base}${R(w)}/attachments/${hex(big.blobId)}`, { method: 'PUT', headers: { authorization: `Bearer ${w.laptop.token}`, 'content-length': big.blob.length } })

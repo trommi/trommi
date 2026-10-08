@@ -12,7 +12,7 @@ import { monitorEventLoopDelay, PerformanceObserver } from 'node:perf_hooks'
 
 const BUCKETS_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 10000]
 const ROUTES = new Set(['challenge', 'access_tokens', 'members', 'devices', 'sealed_room_keys', 'key_back_links', 'invites', 'envelopes', 'threads',
-  'stream', 'agent_lease', 'agent_sessions', 'sessions', 'attachments', 'push_subscriptions', 'usage', 'ephemeral'])
+  'stream', 'agent_lease', 'agent_sessions', 'sessions', 'attachments', 'push_subscriptions', 'usage'])
 const SAMPLE_MS = 10000, SAMPLES = 360
 const MINUTE = 60000, KEEP_MS = 7 * 24 * 3600000
 export const METRICS_FILE = 'metrics.db'

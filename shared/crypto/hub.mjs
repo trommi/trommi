@@ -631,21 +631,6 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       return { n, push: pushAllowed, card, isHead: h.isHead, kind: h.kind, recipient: isZeroId(h.recipient) ? null : id(h.recipient) }
     }),
 
-    /**
-     * C05: an ephemeral envelope (typing, a pen preview) is relayed only if it is the signed-in device's own, signed,
-     * from an active member, under a key it may use now. Its chain position is not checked or advanced (never stored).
-     * Returns the audience: { humans: true, agents: [hex] } (session scope: humans and the assigned agents; room: humans).
-     */
-    checkEphemeral: (token, bytes) => serial(async () => {
-      const s = session(token, { member: true })
-      const head = z.peekEnvelope(bytes)
-      if (head.pruned) fail('bad-format', 'an envelope is posted with its ciphertext')
-      if (id(head.header.sender) !== s.id) fail('wrong-sender', 'a device sends its own envelopes only')
-      const v = await z.verifyEnvelope(bytes, { state: room(), chains: z.newChains(), allowChainStart: true, commit: false })
-      const sess = await authoriseScope(v.header, s.role)
-      return { agents: sess ? sess.agents : [] }
-    }),
-
     /** Members only here; hub/server.mjs also serves the recovery key, in the pruned form (headers for recovery cuts). */
     envelopes(token, { after = 0, limit = 200 } = {}) {
       session(token, { member: true })
