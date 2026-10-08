@@ -5,7 +5,7 @@ use crate::config::Config;
 use crate::db::{self, Db};
 use crate::error::{answer, fail, Fail, HResult};
 use crate::files::{Files, PutError};
-use crate::http::{b64, header, hex_param, hex_value, int_param, json, read_body, read_json, Body, Conn, Resp};
+use crate::http::{b64, header, hex_param, hex_value, int_param, json, read_json, Body, Conn, Resp};
 use crate::limits::Buckets;
 use crate::ops::{self, Flow, TestRooms, Versions, WalLast};
 use crate::push::{Apns, Pusher};
@@ -69,12 +69,6 @@ pub struct Room {
     pub id: String,
     pub core: Mutex<RoomCore>,
     pub live: Mutex<Live>,
-}
-
-#[derive(Default)]
-pub struct Stats {
-    pub room_loads: Vec<(String, f64)>,
-    pub catch_up_slices: AtomicU64,
 }
 
 pub struct Hub {
@@ -159,11 +153,6 @@ impl Hub {
             println!("[hub] {msg}");
         }
     }
-    pub fn logger(self: &Arc<Self>) -> impl Fn(&str) + Send + Sync + 'static {
-        let h = self.clone();
-        move |m: &str| h.log(m)
-    }
-
     pub fn new(cfg: Config, hub_url: String) -> Result<Hub, String> {
         let quiet = cfg.quiet;
         let log = move |m: &str| {
@@ -256,7 +245,6 @@ impl Hub {
             }
         }
     }
-    pub fn loaded_room(&self, id: &str) -> Option<Arc<Room>> { self.rooms.lock().get(id).and_then(|s| s.get().cloned()) }
     /// The room leaves memory; its streams end.
     pub fn close_room(&self, id: &str) {
         let slot = self.rooms.lock().remove(id);
@@ -1936,9 +1924,4 @@ impl EnvRow {
     fn from_row(r: &rusqlite::Row) -> rusqlite::Result<EnvRow> {
         Ok(EnvRow { n: r.get(0)?, header: r.get(1)?, nonce: r.get(2)?, signature: r.get(3)?, ct_hash: r.get(4)?, void_code: r.get(5)?, body: r.get(6)? })
     }
-}
-
-/// The request body of an upload is read by put_attachment; this keeps an unused body from holding anything.
-pub async fn drain(body: Incoming, max: usize) {
-    let _ = read_body(body, max as f64, Duration::from_secs(1), &Conn { peer: "127.0.0.1:0".parse().unwrap(), cut: Arc::new(Notify::new()) }, || Fail::destroy()).await;
 }

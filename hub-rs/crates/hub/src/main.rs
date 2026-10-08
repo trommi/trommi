@@ -4,6 +4,8 @@
 
 mod accounts;
 mod admin;
+mod admin_assets;
+mod admin_view;
 mod config;
 mod control;
 mod db;
@@ -38,6 +40,7 @@ fn main() {
         Some("backup") => std::process::exit(backup(args.get(2).map(|s| s.as_str()))),
         Some("healthcheck") => std::process::exit(healthcheck()),
         Some("hash") => std::process::exit(admin::hash_command()),
+        Some("admin") => std::process::exit(admin_only(&args[2..])),
         Some("--version") | Some("version") => {
             println!("trommi-hub {} (commit {})", env!("CARGO_PKG_VERSION"), std::env::var("COMMIT").unwrap_or_else(|_| "dev".into()));
         }
@@ -69,6 +72,44 @@ fn backup(out: Option<&str>) -> i32 {
             1
         }
     }
+}
+
+/// `trommi-hub admin --db <hub.db> [--data <dir>] [--host 127.0.0.1] [--port 8791] [--published-loopback]`: the admin
+/// page alone, on a hub.db another process writes (ADMIN_LOGINS, ADMIN_PASSWORD_HASH from the environment).
+fn admin_only(args: &[String]) -> i32 {
+    let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    if let Some(t) = std::env::var("HUB_TEST_NOW").ok().and_then(|v| v.parse::<i64>().ok()) {
+        util::enable_test_clock();
+        util::set_test_now(t);
+    }
+    let Some(db) = opt("--db") else {
+        eprintln!("usage: trommi-hub admin --db <hub.db> [--data <dir>] [--host 127.0.0.1] [--port 8791] [--published-loopback]");
+        return 2;
+    };
+    let opts = admin::Options {
+        db_path: db.into(),
+        data_dir: opt("--data").map(Into::into),
+        host: opt("--host").unwrap_or_else(|| "127.0.0.1".into()),
+        port: opt("--port").and_then(|p| p.parse().ok()).unwrap_or(8791),
+        allow_published_loopback: args.iter().any(|a| a == "--published-loopback"),
+        logins: std::env::var("ADMIN_LOGINS").unwrap_or_default(),
+        password_hash: std::env::var("ADMIN_PASSWORD_HASH").unwrap_or_default(),
+    };
+    let host = opts.host.clone();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async move {
+        match admin::start_with(opts, None, std::sync::Arc::new(|m: &str| eprintln!("[admin] {m}"))).await {
+            Ok(port) => {
+                println!("[hub] admin on {host}:{port}");
+                let _ = tokio::signal::ctrl_c().await;
+                0
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        }
+    })
 }
 
 fn healthcheck() -> i32 {

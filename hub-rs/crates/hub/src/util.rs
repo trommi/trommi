@@ -20,7 +20,6 @@ pub fn now() -> i64 {
 }
 pub fn wall() -> i64 { SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0) }
 pub fn enable_test_clock() { TEST_CLOCK.store(true, Ordering::Relaxed) }
-pub fn test_clock_on() -> bool { TEST_CLOCK.load(Ordering::Relaxed) }
 pub fn set_test_now(t: i64) { TEST_NOW.store(t, Ordering::Relaxed) }
 
 /// "2026-10-08T12-00-00-000Z" (new Date().toISOString() with : and . replaced).

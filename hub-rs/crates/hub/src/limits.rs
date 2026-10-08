@@ -39,7 +39,6 @@ impl Buckets {
         let t = now();
         self.map.lock().retain(|_, b| t - b.at <= 3600000);
     }
-    pub fn len(&self) -> usize { self.map.lock().len() }
 }
 
 /// allow(key) is false once `max` hits fell into the last `window_ms`. Capped at `keys` keys (oldest out).
