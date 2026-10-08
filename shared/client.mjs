@@ -1536,7 +1536,12 @@ export class Client {
     const prefix = `tl/${timeline_key}/`
     let recs = (await this.storage.range(prefix, { before: prefix + pad(before), limit, reverse: true })).map(([, v]) => v)
     const missing = recs.filter(r => !r.c && r.cs !== 'pruned' && r.cs !== 'undecryptable' && r.cs !== 'newer_schema')
-    if (missing.length || recs.length < limit) {
+    // A short timeline this device verified whole (every item it counted is stored, with its body): nothing to ask the
+    // hub for (a session with a few messages opened again cost a round trip each time).
+    const meta = this.model.timelines.get(timeline_key)
+    const whole = !missing.length && recs.length < limit && meta && before > (meta.newest_envelope_number ?? Infinity) && recs.length >= meta.item_count && !(this.snapshotCursor > 0)
+    if (whole) this._hubHasMore = false
+    else if (missing.length || recs.length < limit) {
       const { timeline_kind, timeline_id } = M.parseTimelineKey(timeline_key)
       // A full window from storage with a few bodies missing (headers from catch-up): fetch only the span from the newest
       // missing item down to the oldest one, not the whole window again (one new message costs one envelope).

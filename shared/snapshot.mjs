@@ -45,12 +45,43 @@ export function snapshotOf(client) {
   }
 }
 
+/**
+ * The snapshot as JSON bytes, made in slices that leave the page time between them (a huge room's model is tens of
+ * MB of JSON: in one piece it was a task of seconds on a phone). Each slice is ~YIELD_MS of work; the result is the
+ * same text JSON.stringify gives.
+ */
+const YIELD_MS = 12
+export async function jsonBytes(snap) {
+  const te = new TextEncoder(), parts = []
+  let t0 = performance.now()
+  const breathe = async () => { if (performance.now() - t0 > YIELD_MS) { await new Promise(r => setTimeout(r, 0)); t0 = performance.now() } }
+  const { model, ...head } = snap
+  parts.push(te.encode(JSON.stringify(head).slice(0, -1) + ',"model":{'))
+  const keys = Object.keys(model)
+  for (let k = 0; k < keys.length; k++) {
+    const list = model[keys[k]]
+    parts.push(te.encode(`${k ? ',' : ''}${JSON.stringify(keys[k])}:[`))
+    for (let i = 0; i < list.length; i++) {
+      parts.push(te.encode((i ? ',' : '') + (JSON.stringify(list[i]) ?? 'null')))
+      await breathe()
+    }
+    parts.push(te.encode(']'))
+  }
+  parts.push(te.encode('}}'))
+  let n = 0
+  for (const p of parts) n += p.length
+  const out = new Uint8Array(n)
+  let at = 0
+  for (const p of parts) { out.set(p, at); at += p.length }
+  return out
+}
+
 /** Human devices: write a snapshot now. Returns the register value. */
 export async function writeSnapshot(client) {
   if (!client.is_human) throw new ZError('forbidden', 'only human devices write room snapshots')
   await client.settle().catch(() => {})
   const snap = await client.serial(async () => snapshotOf(client))
-  const { bytes, encoding } = await gzip(new TextEncoder().encode(JSON.stringify(snap)))
+  const { bytes, encoding } = await gzip(await jsonBytes(snap))
   const ref = await client.uploadAttachment(bytes, { file_name: 'room-snapshot.json' + (encoding === 'gzip' ? '.gz' : ''), media_type: encoding === 'gzip' ? 'application/gzip' : 'application/json' })
   client.attachmentCache.delete(ref.attachment_id)
   // The frontier lives in the attachment: status bodies stay under 4 KiB (R5) whatever the number of senders.
