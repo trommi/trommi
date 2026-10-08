@@ -45,6 +45,8 @@ struct TrommiApp: App {
       #endif
         .onChange(of: scenePhase) { _, p in model.scene(active: p == .active) }
         .onAppear { PerfScript.runIfAsked(model) }
+        // universal links of app.trommi.com (Links.swift)
+        .onOpenURL { model.open(url: $0) }
     }
   }
 }
@@ -228,6 +230,9 @@ final class BoardModel: ObservableObject {
         baselineReads()
         ShareImport.shared.boardChanged()
       }
+      // what the Notification Service Extension and the Live Activity may know (NotifyBridge.swift); a link that waited
+      NotifyBridge.shared.boardChanged(self)
+      openPendingLink()
       let t0 = DispatchTime.now().uptimeNanoseconds
       version &+= 1
       if PerfLog.on { DispatchQueue.main.async { PerfLog.line(String(format: "render after version bump ≈ %.1f ms", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)); RenderCount.flush("render") } }
@@ -255,7 +260,7 @@ final class BoardModel: ObservableObject {
     self.active = active
     // what was shared meanwhile (ShareImport.swift): after the catch-up, so the note and the sessions are current
     if active { startLive(); Task { await refresh(); ShareImport.shared.run() } }
-    else { liveTask?.cancel(); liveTask = nil; live = false; room?.saveCache(snapshot: true) }
+    else { liveTask?.cancel(); liveTask = nil; live = false; room?.saveCache(snapshot: true); NotifyBridge.shared.writeNow(self) }
   }
   private func startLive() {
     #if canImport(Darwin)
@@ -578,6 +583,10 @@ final class BoardModel: ObservableObject {
     act("Not logged out") {
       do { try await room.leaveRoom() } catch let e as HubError where e.status == 0 { room.forgetHere() }
       self.liveTask?.cancel(); self.liveTask = nil
+      NotifyBridge.shared.signedOut()
+      #if canImport(ActivityKit) && os(iOS)
+      LiveActivities.endAll()
+      #endif
       self.room = nil; self.desk = nil; self.path = []
       ShareImport.shared.signedOut()
       self.phase = .start

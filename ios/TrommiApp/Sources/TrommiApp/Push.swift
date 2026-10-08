@@ -1,7 +1,9 @@
 // Push.swift: notifications through APNs (README "Push", APNs). The app asks once, registers with Apple, and hands its
 // device token to the hub of every room on this phone, with a key of its own: the hub seals the Web Push message
-// ({ room_id, envelope_number, urgency } or the agent-lost word) under it as `e`, Apple sees only a fixed text. A push
-// that arrives while the app is open, or a tap on one, refreshes the board.
+// ({ room_id, envelope_number, urgency, t } or the agent-lost word) under it as `e`, Apple sees only a fixed text. The
+// Notification Service Extension (Sources/TrommiNotify) puts the card's title and its session in place of that text,
+// decrypted on the phone, and the card's path (`trommi-path`). A push that arrives while the app is open refreshes the
+// board; a tap opens the card (Links.swift).
 #if canImport(UIKit)
 import CryptoKit
 import Foundation
@@ -20,6 +22,9 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
 
   func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
     UNUserNotificationCenter.current().delegate = self
+    #if canImport(ActivityKit)
+    Task { @MainActor in LiveActivities.watch() }
+    #endif
     // A room signed in later gets the token the next time the app comes to the front.
     NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.ask() }
     return true
@@ -51,9 +56,11 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
     return [.banner, .list, .sound]
   }
 
-  // A tap on it.
+  // A tap on it: the card (the path the extension found), and the board read again.
   func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-    await refresh(response.notification.request.content.userInfo)
+    let info = response.notification.request.content.userInfo
+    if let p = info["trommi-path"] as? String, p.hasPrefix("/") { await MainActor.run { model?.open(path: p) } }
+    await refresh(info)
   }
 
   @MainActor private func refresh(_ info: [AnyHashable: Any]) async {
@@ -73,6 +80,12 @@ enum Push {
     try? d.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
     return k
+  }
+
+  /** The push key as the hub and the extension take it (base64url). */
+  static func keyText() -> String {
+    key().withUnsafeBytes { Data($0) }.base64EncodedString()
+      .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
   }
 
   /** `e` of a push: nonce || ciphertext || tag (base64url), AAD "trommi-apns-v1" (hub/apns.mjs seal). */
@@ -101,13 +114,15 @@ enum Push {
     level = l
     for k in UserDefaults.standard.dictionaryRepresentation().keys where k.hasPrefix("push.") { UserDefaults.standard.removeObject(forKey: k) }
     if let t = UserDefaults.standard.string(forKey: "trommi-push-token") { await register(token: t) }
+    #if canImport(ActivityKit)
+    LiveActivities.levelChanged()
+    #endif
   }
   /** Hand the token to the hub of every room on this phone, once per room, token and level. */
   @MainActor static func register(token: String) async {
     UserDefaults.standard.set(token, forKey: "trommi-push-token")
     let level = Push.level
-    let keyText = key().withUnsafeBytes { Data($0) }.base64EncodedString()
-      .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    let keyText = Push.keyText()
     let env = environment, topic = Bundle.main.bundleIdentifier ?? "com.trommi.ios"
     let base = Store.defaultBase()
     for id in Store.rooms(base: base) {
