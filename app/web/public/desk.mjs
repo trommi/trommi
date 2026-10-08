@@ -1,7 +1,7 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
-import { BASE, closedMemo, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
+import { BASE, GOALS_LINES, cleanGoals, closedMemo, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
 import { lastUndo, undoLast } from './ui.mjs'
 import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, artifactItems, avatar, calm, cardNr, controller, deskRow, el, act, html, isKnock, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
@@ -44,7 +44,17 @@ function deskHead(model, base) {
   const n = model.fresh.length
   if (!model.units.length) return deskInvite()
   const words = ((!n && unquiet(model)) || greeting(!n)).split(' '), last = words.pop()
-  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><h2 class="desk-hello">${words.join(' ')} <em>${last}</em></h2>${n ? html`<div class="desk-tools">${duckAll(model, base)}${nextPlease(model, base)}</div>` : ''}</header>`
+  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><h2 class="desk-hello">${words.join(' ')} <em>${last}</em></h2>${deskGoals(model)}${n ? html`<div class="desk-tools">${duckAll(model, base)}${nextPlease(model, base)}</div>` : ''}</header>`
+}
+
+/** The desk's goals (his word, 8 October): a short note of his own right under the greeting, at most five lines
+ *  ("1. … 2. … 3. …"), kept in the desk's register (desk/<id>, field goals: end-to-end encrypted like its name, on
+ *  every device of his). Empty: only a faint "Goals…". A click writes in place (controller "goals" below); not on All
+ *  desks. The write: app.mjs hub.desk({ id, goals }). */
+function deskGoals(model) {
+  if (model.all) return ''
+  const text = model.goals ?? ''
+  return html`<div class="desk-goals" data-controller="goals" data-goals-desk-value="${model.desk ?? 'main'}"><button type="button" class="desk-goals-show${text ? '' : ' is-empty'}" data-action="goals#edit" title="This desk’s goals: a few lines (click to write)">${text || 'Goals…'}</button></div>`
 }
 
 /** The Desk of a new account (no session yet): a calm note with one way on, inviting the first agent. The button sends
@@ -413,6 +423,61 @@ function artifactsPile(model, base) {
 // The stacks at the foot of the Desk: a click fans one out, a click gathers it. A stream may replace the stacks;
 // the one that stood open stands open again, with the filter and "N more" of the pile "Off the desk" as they were.
 let openPile, offMore = false
+// ---- controller "goals" ----
+// The goals under the greeting written in place: a click turns the line into a field of up to GOALS_LINES lines
+// (Enter a new line, none past the last; Ctrl/⌘+Enter or a click beside keeps; Esc leaves it as it was). While he
+// writes, the live stream does not replace the heading the field stands in: what comes is held, and applied when he
+// is done (or dropped, when his own write follows: the stream then brings the heading anew).
+controller('goals', class extends Controller {
+  static values = { desk: String }
+  connect() { this.held = new Map(); this.hold = e => this.holdStream(e) }
+  disconnect() { if (this.field) this.done(true, { flush: false }) }
+  edit() {
+    if (this.field) return
+    const show = this.element.querySelector('.desk-goals-show'), was = show.classList.contains('is-empty') ? '' : show.textContent
+    const f = this.field = document.createElement('textarea')
+    Object.assign(f, { className: 'desk-goals-field', value: was, maxLength: GOALS_LINES * 120, placeholder: 'Goals for this desk: up to five lines', spellcheck: true })
+    f.setAttribute('aria-label', 'This desk’s goals, up to five lines')
+    this.was = was; show.hidden = true; this.element.append(f); this.fit()
+    f.addEventListener('input', () => this.fit())
+    f.addEventListener('keydown', e => this.key(e))
+    f.addEventListener('blur', () => this.done(true))
+    document.addEventListener('turbo:before-stream-render', this.hold)
+    f.focus(); f.setSelectionRange(f.value.length, f.value.length)
+  }
+  fit() {
+    const f = this.field, lines = f.value.split('\n')
+    if (lines.length > GOALS_LINES) { const at = f.selectionStart; f.value = lines.slice(0, GOALS_LINES).join('\n'); f.setSelectionRange(Math.min(at, f.value.length), Math.min(at, f.value.length)) }
+    f.rows = Math.min(GOALS_LINES, f.value.split('\n').length)
+  }
+  key(e) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.done(false) }
+    else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.done(true) }
+    else if (e.key === 'Enter' && this.field.value.split('\n').length >= GOALS_LINES) e.preventDefault()
+  }
+  holdStream(e) {
+    const el = e.target, target = el?.getAttribute?.('target')
+    if (!this.field || target !== 'desk-head' || !document.getElementById(target)?.contains(this.element)) return
+    e.preventDefault(); this.held.set(`${el.getAttribute('action')} ${target}`, el.cloneNode(true))
+  }
+  done(keep, { flush = true } = {}) {
+    const f = this.field
+    if (!f) return
+    this.field = null
+    document.removeEventListener('turbo:before-stream-render', this.hold)
+    const text = cleanGoals(f.value), show = this.element.querySelector('.desk-goals-show'), changed = keep && text !== this.was
+    f.remove()
+    if (show) { show.hidden = false; if (changed) { show.textContent = text || 'Goals…'; show.classList.toggle('is-empty', !text) } }
+    const held = [...this.held.values()]; this.held.clear()
+    const apply = () => { if (flush) for (const el of held) document.documentElement.append(el) }
+    if (!changed) return apply()
+    // (his own write: the heading comes anew with it; what was held is dropped, unless the write fails)
+    fetch('/desk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.deskValue, goals: text }) })
+      .then(r => { if (!r.ok) throw new Error(`desk goals: ${r.status}`) })
+      .catch(err => { console.warn(err); apply() })
+  }
+})
+
 controller('piles', class extends Controller {
   static targets = ['pile']
   connect() {

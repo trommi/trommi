@@ -236,4 +236,8 @@ running app took the share at once.
 - Creating an account (founding a room) and the old recovery-code recovery: on the web.
 - Freshness (R3) on envelopes of an older key epoch; drawing on a card (the web's pen tool), card versions as they were.
 - A re-seal that fails after the device added itself is not retried (the JS core keeps `reseal_pending`).
+- **Desk goals** (web since 8 October 2026): the desk register `desk/<desk_id>` carries `goals`, a string of at most 5
+  lines of at most 200 characters each (no blank lines at either end); shown under the Desk's greeting on that desk
+  (nothing on All desks), empty = a faint "Goals…"; a tap writes in place, the write keeps every other field of the
+  register (name, created_at, order, crown). Web: `app/web/public/desk.mjs` `deskGoals`, `app.mjs` `cleanGoals`.
 - Screenshots of the phone from Linux: `pymobiledevice3 developer dvt screenshot` works over its userspace tunnel without root (`npm run interop:screens -- --iphone-current`).

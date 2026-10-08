@@ -1059,7 +1059,17 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 #inbox .desk-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px var(--s-5); flex-wrap: nowrap; margin-top: var(--s-6); margin-bottom: var(--s-8); padding: 0 var(--s-1); box-sizing: border-box; }
 .desk-hello { grid-column: 1; margin: 0; font: 800 clamp(2.1rem, 3.6vw, 2.9rem)/1.08 var(--display); letter-spacing: -.028em; color: var(--fg); }
 .desk-hello em { font-style: normal; padding-bottom: 5px; background: var(--under-ink) left bottom / 100% 9px no-repeat; }
-.desk-tools { grid-column: 2; flex: none; display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
+.desk-tools { grid-column: 2; grid-row: 1; flex: none; display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
+/* the desk's goals (desk.mjs deskGoals): a quiet line or a few under the greeting, in the text face; empty only a faint
+   "Goals…"; a click writes in place, the field the same size and face as the words */
+.desk-goals { grid-column: 1; min-width: 0; margin-top: 4px; }
+.desk-goals-show, .desk-goals-field { display: block; width: min(100%, 600px); box-sizing: border-box; margin: 0; padding: 3px 6px; margin-inline: -6px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: 500 var(--t-md)/1.45 var(--font); text-align: left; white-space: pre-line; overflow-wrap: anywhere; }
+.desk-goals-show { cursor: text; }
+.desk-goals-show.is-empty { color: var(--faint); font-style: italic; }
+@media (any-hover: hover) { .desk-goals-show:hover { background: var(--sunken); color: var(--fg); } }
+.desk-goals-show:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.desk-goals-field { resize: none; color: var(--fg); background: var(--sunken); white-space: pre-wrap; outline: 0; box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+.desk-goals-field::placeholder { color: var(--faint); }
 .desk-blitz { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 40px; padding: 0 var(--s-2) 0 var(--s-3); border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
 .desk-blitz .blitz-bolt { flex: none; width: 22px; height: 22px; fill: var(--yellow); stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .desk-blitz-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }

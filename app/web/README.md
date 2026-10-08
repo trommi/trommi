@@ -117,6 +117,9 @@ instead); files come network first, the cache only offline. On the dev server (`
 
 ## The Desk
 
+- **Goals:** under the greeting, a desk's own short note (at most five lines), written in place with a click; empty
+  only a faint "Goals…", nothing on All desks. Kept in the desk's register (`desk/<id>`, `goals`), so every device of
+  his sees it; agents do not yet (they ignore human registers).
 - **Rows:** every open card is one row in the hub's order, blocking first, then knocks; infos stand among them (What?? and
   ✓ instead of answers). A row: the session's drawing (a click selects it; Shift: a range), the urgency sign, the title,
   two lines of teaser (`card.teaser`, else the body), the pictures as a small fan, square answer tiles. A row that
