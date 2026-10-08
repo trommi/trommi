@@ -267,8 +267,8 @@ export function sidebarRows(model, base, current = null) {
 // small orange dot while something waits there), New desk. The folded rail's tag opens the same list. On All the
 // sidebar shows every session, a hand-drawn divider over each desk's; a desk shows only its own.
 function deskSwitchList(model, base) {
-  const item = (href, name, on, waits) => html`<a role="menuitemradio" class="desk-switch-item" data-nav draggable="false" href="${href}" aria-checked="${String(on)}">${deskMark(waits)}<b>${name}</b>${waits ? raw('<i class="desk-switch-dot" aria-label="something waits"></i>') : ''}</a>`
-  return html`<span class="desk-switch-list" id="desk-switch-list">${item(`${base}/?desk=all`, 'All Desks', model.all, false)}${desksOf(model).map(d => item(`${base}/?desk=${d.id}`, d.name, !model.all && d.id === model.desk, d.open > 0))}<button type="button" role="menuitem" class="desk-switch-add desk-word-add">${PLUS}<span>New Desk…</span></button></span>`
+  const item = (href, name, on, waits, all = false) => html`<a role="menuitemradio" class="desk-switch-item${all ? ' is-all' : ''}" data-nav draggable="false" href="${href}" aria-checked="${String(on)}">${all ? ALL_MARK : deskMark(waits)}<b>${name}</b>${waits ? raw('<i class="desk-switch-dot" aria-label="something waits"></i>') : ''}</a>`
+  return html`<span class="desk-switch-list" id="desk-switch-list">${item(`${base}/?desk=all`, 'All Desks', model.all, false, true)}${desksOf(model).map(d => item(`${base}/?desk=${d.id}`, d.name, !model.all && d.id === model.desk, d.open > 0))}<button type="button" role="menuitem" class="desk-switch-add desk-word-add">${PLUS}<span>New Desk…</span></button></span>`
 }
 const RULE = raw('<svg class="desk-rule" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M1 3.4 Q40 2.2 90 3.1 T199 2.6"/></svg>')
 /** On All: the divider over one desk's sessions: its drawing, its name (a press shows that desk alone), a pen rule, the count. */
@@ -383,13 +383,16 @@ const NEW_DESK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"
 const LIGHT = '<g class="lamp-light"><path class="lamp-glow" d="M14.9 2.4Q11.7 3.7 10.7 4.7Q9.6 5.7 9 6.6Q8.5 7.4 9 7.6Q9.5 7.9 12.4 7Q15.2 6.1 15.6 6.1Q15.9 6.1 15.8 4.7Q15.7 3.4 14.9 2.4Z"/><path class="lamp-cone" d="M9.2 7.9Q12.4 7.1 15.6 6.3L17.3 11.9Q12 12.1 6.4 12.2Z"/><path d="M7.6 9Q5.9 10.1 4.3 11.2"/><path d="M7.1 7.2Q5.3 7.3 3.5 7.5"/><path d="M7.9 5Q6.4 4.2 4.9 3.5"/></g>'
 /** The desk drawing of the menu's desk rows and the Desk box: its lamp lit while something waits on that desk. */
 const deskMark = lit => raw(lit ? sketchSvg('desk', 'menu-lamp is-lit').replace(/(<svg[^>]*>)/, `$1${LIGHT}`) : sketchSvg('desk', 'menu-lamp'))
+/** All Desks' own drawing: two desks, one behind the other (the parent row of the desk lists). */
+const ALL_MARK = raw(sketchSvg('desks', 'menu-lamp menu-all-mark'))
+
 /** The desk rows of the menu (#menu-desk-rows, kept current by the live stream): the desk in view checked (the marked
  *  row); a desk's lamp is lit while something waits on it. */
 function menuDeskRows(model, base) {
   const desks = desksOf(model)
   const here = d => (model.all ? false : model.desk ? d.id === model.desk : d === desks[0])
   // (a row: the link to the desk, and beside it the pencil that renames it: menu#rename puts a field in the name's place)
-  const allRow = desks.length > 1 ? html`<span class="menu-desk-row is-all" data-desk="all"><a role="menuitemradio" class="menu-desk is-all" data-nav draggable="false" href="${base}/?desk=all" data-desk="all" aria-checked="${String(Boolean(model.all))}">${deskMark(model.allFresh?.length > 0)}<b>All Desks</b>${model.allFresh?.length ? html`<i class="menu-n">${model.allFresh.length}</i>` : ''}</a></span>` : ''
+  const allRow = desks.length > 1 ? html`<span class="menu-desk-row is-all" data-desk="all"><a role="menuitemradio" class="menu-desk is-all" data-nav draggable="false" href="${base}/?desk=all" data-desk="all" aria-checked="${String(Boolean(model.all))}">${ALL_MARK}<b>All Desks</b>${model.allFresh?.length ? html`<i class="menu-n">${model.allFresh.length}</i>` : ''}</a></span>` : ''
   return html`<span class="menu-desk-rows${desks.length > 1 ? ' has-all' : ''}" id="menu-desk-rows">${allRow}${desks.map((d, i) => html`<span class="menu-desk-row" data-desk="${d.id}"><a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b>${d.open ? html`<i class="menu-n">${d.open}</i>` : ''}</a><button type="button" class="menu-desk-pen" data-action="click->menu#rename" data-menu-id-param="${d.id}" title="Rename ${d.name}" aria-label="Rename the desk ${d.name}">${sk('pen')}</button></span>`)}</span>`
 }
 
