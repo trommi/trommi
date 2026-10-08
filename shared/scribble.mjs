@@ -1,107 +1,81 @@
-// The canvas on the wire (README "Canvases", Security rules R1, R2, R9), without DOM: the shapes as timeline
-// items carry them, the reducer that turns a canvas timeline into shapes, and the snapshot. The app's Whiteboard
-// (app/web/public/whiteboard.mjs openCanvas) drives it with the client core.
+// The Scribble Board on the wire (README "Scribble strokes", Security rules R1, R2, R9), without DOM: the shapes as
+// timeline items carry them, the reducer that turns a scribble timeline into shapes, and the snapshot. The app's
+// Scribble Board (app/web/public/whiteboard.mjs openCanvas) drives it with the client core; ink.mjs packs a stroke's
+// points, palette.mjs names its colours.
 //
-// A canvas item's body (content_type and its fields as in the README):
+// A scribble item's body (content_type and its fields as in the README):
 //   strokes    { strokes: [Entry] }           new shapes, or a piece of a stroke still being drawn (~ every 150 ms)
 //   erase      { stroke_ids }                 gone (erase wins over everything, for good)
-//   send_away  { stroke_ids }                 gone because it was sent to a session ("what was sent leaves the canvas")
-//   move       { stroke_ids, offset: [dx, dy] }   offsets add up
-// Entry = { points, pressure?, style: { tool, color?, size? }, z?, group?, text?, wrap?, attachment?, nw?, nh?, mime?, name?, continues? }
-//   tool 'pen' | 'hl': a stroke; points: the line (R9: base64url, 1/8 px, the first point absolute as two int32 BE,
-//                      then int16 BE deltas); pressure: base64url, one byte per point
-//   tool 'text' | 'voice' | 'sticky': a note (sticky: on a yellow paper of the width wrap); points: the top left corner; text, wrap, style.size, style.color
-//   tool 'image': a picture; points: top left and bottom right; attachment: the README attachment reference
-//   continues: the stroke id of the first piece of the same stroke (only from the same sender): these points go on it
+//   send_away  { stroke_ids }                 gone because it was sent to a session ("what was sent leaves the board")
+//   move       { stroke_ids, offset: [dx, dy] }   offsets add up (a stroke: onto its transform's tx, ty)
+// Entry, by tool (board units, colour tokens):
+//   stroke  { tool: 'pen' | 'marker', color, width, points, transform?: [a, b, c, d, tx, ty], z?, group? }
+//           points: ink.mjs packPoints (x, y, t, force, azimuth?, altitude? per point), as a PKStroke
+//   piece   { continues: <stroke id>, points }   more points of a stroke still being drawn (only from its sender)
+//   note    { tool: 'text' | 'voice' | 'sticky', at: [x, y], text, size, color, wrap?, z?, group? }   (at: top left)
+//   picture { tool: 'image', rect: [x0, y0, x1, y1], attachment, nw?, nh?, mime?, name?, z?, group? }
 // A stroke id is never read from a body: every receiver derives it (R1) as `<sender_device_id>/<sender_sequence>/<index>`,
 // so nobody can name, continue or collide with another member's shapes; agents may erase and move only their own.
 //
-// Merging: adding is once per id, erasing wins, moving adds offsets. All three commute, so the canvas is the same
+// Merging: adding is once per id, erasing wins, moving adds offsets. All three commute, so the board is the same
 // whatever order the items arrive in (no causal order is needed, R2), and an item is applied at most once: each
 // sender's items come in its sender_sequence order, and the frontier (sender -> [sequence, envelope_hash]) says up to
 // where a sender is applied. The snapshot carries that frontier; items it covers are skipped.
 
-import { b64u, unb64u } from './crypto/zcrypto.mjs'
-
-const Q = 8   // 1/8 px
-
-// ---- points (R9) ----
-/** World points [x0, y0, x1, y1, …] -> base64url. A jump wider than an int16 delta (4096 px) is split into steps;
- *  pr (pressure per point) is stretched along. Returns { points, pressure? }. */
-export function encodePoints(pts, pr = null) {
-  const n = pts.length >> 1
-  if (!n) return { points: '' }
-  const q = v => Math.round(v * Q)
-  const xs = [q(pts[0])], ys = [q(pts[1])], ps = pr ? [pr[0]] : null
-  for (let i = 1; i < n; i++) {
-    const x = q(pts[2 * i]), y = q(pts[2 * i + 1])
-    const lx = xs[xs.length - 1], ly = ys[ys.length - 1]
-    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(x - lx), Math.abs(y - ly)) / 32767))
-    for (let k = 1; k <= steps; k++) {
-      xs.push(Math.round(lx + ((x - lx) * k) / steps)); ys.push(Math.round(ly + ((y - ly) * k) / steps))
-      if (ps) ps.push(pr[i])
-    }
-  }
-  const m = xs.length
-  const buf = new DataView(new ArrayBuffer(8 + 4 * (m - 1)))
-  buf.setInt32(0, xs[0]); buf.setInt32(4, ys[0])
-  for (let i = 1; i < m; i++) { buf.setInt16(8 + 4 * (i - 1), xs[i] - xs[i - 1]); buf.setInt16(10 + 4 * (i - 1), ys[i] - ys[i - 1]) }
-  const out = { points: b64u(new Uint8Array(buf.buffer)) }
-  if (ps) out.pressure = b64u(Uint8Array.from(ps, p => Math.max(0, Math.min(255, Math.round((p ?? 0.5) * 255)))))
-  return out
-}
-/** base64url -> world points (numbers). Malformed input gives []. */
-export function decodePoints(text) {
-  let bytes
-  try { bytes = unb64u(text ?? '') } catch { return [] }
-  if (bytes.length < 8 || (bytes.length - 8) % 4) return []
-  const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  let x = v.getInt32(0), y = v.getInt32(4)
-  const out = [x / Q, y / Q]
-  for (let o = 8; o < bytes.length; o += 4) { x += v.getInt16(o); y += v.getInt16(o + 2); out.push(x / Q, y / Q) }
-  return out
-}
-export function decodePressure(text, n) {
-  if (!text) return null
-  let bytes
-  try { bytes = unb64u(text) } catch { return null }
-  if (bytes.length !== n) return null
-  return Array.from(bytes, b => Math.round((b / 255) * 100) / 100)
-}
+import { packPoints, unpackPoints, bake, STROKE_TOOLS } from './ink.mjs'
+export * from './ink.mjs'       // one import for the app: the format, the shape and the palette
+export * from './palette.mjs'
 
 // ---- shapes ----
-// A shape is the canvas's own form of one element: { id, by, tool, pts (world), pr, color, size, z, group, text, wrap,
-// attachment, nw, nh, mime, name }. Strokes keep every point in world units; a note and a picture keep their corners.
-const TOOLS = new Set(['pen', 'hl', 'text', 'voice', 'sticky', 'image'])
+// A shape is the board's own form of one element: { id, by, tool, pts (board units), z, group, … }.
+//   stroke: pts = its points with the transform baked in, t, f, az, al, sim (ink.mjs), color, width
+//   note:   pts = [x, y], text, size, color, wrap        picture: pts = [x0, y0, x1, y1], attachment, nw, nh, mime, name
+const STROKES = new Set(STROKE_TOOLS)
 const WORDS = new Set(['text', 'voice', 'sticky'])   // the tools that carry text and wrap
+const TOOLS = new Set([...STROKES, ...WORDS, 'image'])
+export const WIDTH = Object.freeze({ pen: 4, marker: 18 })   // a stroke's default width
 const str = (v, max = 200) => (typeof v === 'string' ? v.slice(0, max) : null)
 const num = (v, d = 0) => (Number.isFinite(v) ? v : d)
+const r2 = v => Math.round(v * 100) / 100
+const nums = (v, n) => (Array.isArray(v) && v.length === n && v.every(Number.isFinite) ? v : null)
+export const isStroke = s => STROKES.has(s?.tool)
+export const inkOf = s => ({ pts: s.pts, t: s.t, f: s.f, az: s.az ?? null, al: s.al ?? null, sim: Boolean(s.sim) })
 
 /** A shape -> an Entry (for a strokes item, or for the snapshot with id and by added). */
 export function entryOf(s) {
-  const e = { ...encodePoints(s.pts, s.pr), style: { tool: s.tool } }
-  if (s.color != null) e.style.color = s.color
-  if (s.size != null) e.style.size = s.size
+  const e = { tool: s.tool }
+  if (isStroke(s)) Object.assign(e, { color: s.color ?? (s.tool === 'marker' ? 'yellow' : 'ink'), width: r2(num(s.width, WIDTH[s.tool])), points: packPoints(inkOf(s)) })
+  else if (WORDS.has(s.tool)) {
+    Object.assign(e, { at: [r2(s.pts[0]), r2(s.pts[1])], text: s.text ?? '', size: num(s.size, 20), color: s.color ?? 'ink' })
+    if (s.wrap != null) e.wrap = s.wrap
+  } else if (s.tool === 'image') {
+    Object.assign(e, { rect: s.pts.slice(0, 4).map(r2), attachment: s.attachment })
+    for (const k of ['nw', 'nh', 'mime', 'name']) if (s[k] != null) e[k] = s[k]
+  }
   if (s.z != null) e.z = s.z
   if (s.group) e.group = s.group
-  if (WORDS.has(s.tool)) { e.text = s.text ?? ''; if (s.wrap != null) e.wrap = s.wrap }
-  if (s.tool === 'image') { e.attachment = s.attachment; for (const k of ['nw', 'nh', 'mime', 'name']) if (s[k] != null) e[k] = s[k] }
   return e
 }
 /** An Entry -> a shape (null when it is not one this app can show). */
 export function shapeOf(e, id, by) {
-  const tool = e?.style?.tool
+  const tool = e?.tool
   if (!TOOLS.has(tool)) return null
-  const pts = decodePoints(e.points)
-  if (!pts.length || (tool === 'image' && pts.length < 4)) return null
-  const s = { id, by, tool, pts, pr: tool === 'pen' ? decodePressure(e.pressure, pts.length >> 1) : null, color: str(e.style.color, 40), size: num(e.style.size, tool === 'hl' ? 18 : 4), z: num(e.z), group: str(e.group, 80) }
-  if (WORDS.has(tool)) { s.text = String(e.text ?? '').slice(0, 20000); s.wrap = Number.isFinite(e.wrap) ? e.wrap : null }
-  if (tool === 'image') {
-    if (!e.attachment?.attachment_id) return null
-    s.attachment = e.attachment
-    s.nw = num(e.nw, 0); s.nh = num(e.nh, 0); s.mime = str(e.mime, 80); s.name = str(e.name)
+  const s = { id, by, tool, z: num(e.z), group: str(e.group, 80) }
+  if (STROKES.has(tool)) {
+    const got = unpackPoints(e.points)
+    if (!got) return null
+    const { ink, scale } = bake(got, e.transform)
+    const w = num(e.width, WIDTH[tool])
+    return Object.assign(s, ink, { color: str(e.color, 40), width: (w > 0 && w <= 1000 ? w : WIDTH[tool]) * scale })
   }
-  return s
+  if (WORDS.has(tool)) {
+    const at = nums(e.at, 2)
+    if (!at) return null
+    return Object.assign(s, { pts: [...at], text: String(e.text ?? '').slice(0, 20000), size: num(e.size, 20), color: str(e.color, 40), wrap: Number.isFinite(e.wrap) ? e.wrap : null })
+  }
+  const rect = nums(e.rect, 4)
+  if (!rect || !e.attachment?.attachment_id) return null
+  return Object.assign(s, { pts: [...rect], attachment: e.attachment, nw: num(e.nw, 0), nh: num(e.nh, 0), mime: str(e.mime, 80), name: str(e.name) })
 }
 
 // ---- the reducer ----
@@ -132,11 +106,11 @@ export class CanvasState {
       ;(Array.isArray(c.strokes) ? c.strokes : []).forEach((e, i) => {
         if (e?.continues != null) {
           const head = this.shapes.get(e.continues)
-          if (!own(e.continues) || !head || (head.tool !== 'pen' && head.tool !== 'hl')) return
-          const more = decodePoints(e.points)
-          if (!more.length) return
-          if (head.pr) { const p = decodePressure(e.pressure, more.length >> 1); head.pr.push(...(p ?? new Array(more.length >> 1).fill(0.5))) }
-          for (const v of more) head.pts.push(v)
+          if (!own(e.continues) || !head || !isStroke(head)) return
+          const more = unpackPoints(e.points)
+          if (!more) return
+          head.pts.push(...more.pts); head.t.push(...more.t); head.f.push(...more.f)
+          if (head.az && more.az) { head.az.push(...more.az); head.al.push(...more.al) } else head.az = head.al = null
           changed.add(head.id)
           return
         }
@@ -165,7 +139,7 @@ export class CanvasState {
 
   /** The snapshot's content (JSON-able): every shape, the frontier, the newest envelope number. */
   snapshot() {
-    return { v: 1, shapes: [...this.shapes.values()].map(s => ({ id: s.id, by: s.by, ...entryOf(s) })), frontier: Object.fromEntries(this.frontier), last_envelope_number: this.last_envelope_number }
+    return { v: 2, shapes: [...this.shapes.values()].map(s => ({ id: s.id, by: s.by, ...entryOf(s) })), frontier: Object.fromEntries(this.frontier), last_envelope_number: this.last_envelope_number }
   }
   /** Shapes of a snapshot (in slices, for a big one: load(snap, { shapes: false }) first). */
   addShapes(entries) {

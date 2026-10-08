@@ -22,7 +22,7 @@ export const FIELDS = Object.freeze({
   erase: ['content_type', 'stroke_ids', 'offset'],
   move: ['content_type', 'stroke_ids', 'offset'],
   send_away: ['content_type', 'stroke_ids', 'offset'],
-  selection_sent: ['content_type', 'text', 'attachments', 'stroke_ids'],
+  selection_sent: ['content_type', 'text', 'attachments', 'stroke_ids', 'board'],
   card: ['object_type', 'object_version', 'previous_version_hash', 'card_type', 'title', 'teaser', 'body', 'options', 'sections', 'html', 'allows_multiple',
     'recommended', 'urgency_reason', 'attachments', 'change_note', 'close_summary', 'withdraw_reason', 'merged_into_object_id', 'merged_from_object_ids'],
   note: ['object_type', 'object_version', 'previous_version_hash', 'text'],
