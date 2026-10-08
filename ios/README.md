@@ -10,7 +10,7 @@ A native iOS app in pure Swift and SwiftUI, no JavaScriptCore and no web view fo
 | `TrommiCore/Tests` | XCTest over every section of `shared/crypto/vectors.json` (byte for byte where the bytes are deterministic; Ed25519 signatures by verifying, CryptoKit signs with randomness), plus `Fixtures/extra-vectors.json` written by the JS core (`dev/ios-extra-vectors.mjs`: session grants, account KDF, the check emoji table) and RFC 9106 for Argon2id. |
 | `TrommiApp` | The SwiftUI app (an xtool project). Sign in: scan the QR code of "Pair a device", email and password, Forgot password. The Desk (rows in their session's tones, answer tiles, long-press ways, the selection bar, Blitz, the duck for all, with the agents, the end list), a card's page, the conversation (the app's core screen), the sidebar (a drawer on the iPhone, a column on the iPad), Off your mind, Media and Pages, the Scribble Board, the corner note, Settings (agents, devices with pairing, account). The web's drawings come from `Resources/pen.json` (`dev/ios-pen.mjs` draws them with the web's own pen), its fonts are bundled as static TTF (OFL, `Resources/Fonts/LICENSES.txt`), Liquid Glass for the chrome on iOS 26+. |
 
-The JS core is the reference: `dev/ios-parity.mjs` runs `trommi-swift` against a local hub with the JS core as the human and an agent, both directions.
+The JS core is the reference: `dev/interop/` (README "Interop") drives the JS core and `trommi-swift driver` against each other on a local hub, every pair of directions, and reports the feature parity.
 
 ## On this Linux machine (no sudo)
 
@@ -20,7 +20,7 @@ Swift 6.4.0 from swift.org (the `ubuntu26.04` build, signature checked) is unpac
 . ~/.local/share/swift/env.sh                       # puts that toolchain on PATH
 cd ios/TrommiCore
 swift test                                          # the vectors, session grants, Argon2id, compat, the board and the pen
-swift build && (cd ../.. && node dev/ios-parity.mjs)    # Swift <-> JS on a local hub, 17 checks (see the file's head)
+swift build && (cd ../.. && npm run interop)           # Swift <-> JS on a local hub (dev/interop/run.mjs), then npm run interop:parity
 node dev/ios-pen.mjs                                # (from the repo root) pen.json, the pen vectors, Wordlist.swift
 node dev/ios-reference-shots.mjs OUT                # the web's demo screens as reference pictures (a local dev server on :8900)
 node dev/ios-extra-vectors.mjs                      # (from the repo root) regenerate Fixtures/extra-vectors.json
@@ -151,4 +151,4 @@ the board. No Notification Service Extension: the text says nothing, so nothing 
 - Creating an account (founding a room) and the old recovery-code recovery: on the web.
 - Freshness (R3) on envelopes of an older key epoch; drawing on a card (the web's pen tool), card versions as they were.
 - A re-seal that fails after the device added itself is not retried (the JS core keeps `reseal_pending`).
-- Screenshots of the phone from Linux need the RSD tunnel, which needs root (`sudo pymobiledevice3 remote tunneld`).
+- Screenshots of the phone from Linux: `pymobiledevice3 developer dvt screenshot` works over its userspace tunnel without root (`npm run interop:screens -- --iphone-current`).

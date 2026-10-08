@@ -132,7 +132,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>hub/</code> · 25 files</summary>
+<details><summary><code>hub/</code> · 27 files</summary>
 
 ```
 ├── ops/
@@ -154,6 +154,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── apns.mjs
 ├── attachments.mjs
 ├── deploy-admin.sh
+├── deploy-apns.sh
 ├── deploy-backup.sh
 ├── Dockerfile
 ├── heap-test.mjs
@@ -184,7 +185,6 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── account.mjs
 ├── agent.mjs
 ├── browser-test.mjs
-├── scribble.mjs
 ├── check-emoji.mjs
 ├── client.mjs
 ├── codec.mjs
@@ -192,6 +192,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── model.mjs
 ├── README.md
 ├── room.mjs
+├── scribble.mjs
 ├── snapshot.mjs
 ├── storage-file.mjs
 ├── storage-idb.mjs
@@ -207,7 +208,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>dev/</code> · 32 files</summary>
+<details><summary><code>dev/</code> · 41 files</summary>
 
 ```
 ├── fuzz/
@@ -235,6 +236,16 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── run.mjs
 │   ├── sync-target.sh
 │   └── worker.mjs
+├── interop/
+│   ├── fixtures/
+│   │   └── screens.json
+│   ├── .gitignore
+│   ├── driver-js.mjs
+│   ├── parity-baseline.json
+│   ├── parity.mjs
+│   ├── protocol.mjs
+│   ├── run.mjs
+│   └── screens.mjs
 ├── load/
 │   ├── app-perf.mjs
 │   ├── crazy.mjs
@@ -245,7 +256,8 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   └── worker.mjs
 ├── cdp.mjs
 ├── ios-extra-vectors.mjs
-├── ios-parity.mjs
+├── ios-pen.mjs
+├── ios-reference-shots.mjs
 └── readme-trees.mjs
 ```
 
@@ -265,6 +277,50 @@ npm run fuzz    # node dev/fuzz/run.mjs --quick
 
 Each suite starts its own hubs on free ports with throwaway data directories. A local hub for the app:
 `HUB_PORT=8890 HUB_DATA=/tmp/trommi-dev node hub/server.mjs`.
+
+### Interop: web and iPhone against each other (`dev/interop/`)
+
+The JS core (`shared/`, what the web app and the connector run) is the reference; the iPhone's core is TrommiCore
+(`ios/TrommiCore`). Both expose one device as a **driver**: a process speaking JSON lines on stdin/stdout
+(`dev/interop/protocol.mjs` has the command table and the result shapes).
+
+```
+driver -> {"ready": true, "impl": "js" | "swift", "driver_protocol": 1}
+runner -> {"id": 7, "cmd": "answer", "args": {"card": "<object id>", "choices": ["now"]}}
+driver -> {"id": 7, "ok": true, "result": {...}}  |  {"id": 7, "ok": false, "error": {"code": "needs-update", "message": "..."}}
+```
+
+JS: `node dev/interop/driver-js.mjs` (human or agent). Swift: `trommi-swift driver --home <dir>` (a human device;
+`ios/TrommiCore/Sources/trommi-swift/Driver.swift`). A command a driver does not have answers `unsupported`.
+
+```bash
+(cd ios/TrommiCore && swift build)   # the Swift driver (without it the Swift pairs are skipped)
+npm run interop                      # node dev/interop/run.mjs: a local hub, every pair js-js, js-swift, swift-js
+node dev/interop/run.mjs --pairs js-swift --only answer --require-swift
+npm run interop:parity               # node dev/interop/parity.mjs: the parity matrix (--check for CI, --update-baseline)
+npm run interop:screens              # node dev/interop/screens.mjs: web screens beside the iPhone's (--iphone, --iphone-current)
+```
+
+- **run.mjs**: per pair a room of its own on one local hub (APNs and Web Push on, pointing nowhere): a JS founder, a JS
+  agent, the actor A and the observer B. Checked: joining (the same six emoji, nobody added before "They match"),
+  cards (options, final, multiple, urgency, teaser, sections, html), answer, settle, read, shred, revise, close,
+  withdraw, decide again, the conversation (bodies paged in), registers, notes, the stack, pairing and agent invites
+  from A, removal (new key epoch), writes of removed members, a forged signature, a changed byte and a replay
+  (`check_envelope`: the same refusal code on both sides), a card and a message of a newer version (unsupported,
+  never answered), push registration, the Scribble Board, "They don't match", the account (login, wrong password,
+  status, Emergency Kit, password, Forgot password) and log out. Results: `dev/interop/out/run.json`.
+- **parity.mjs**: what the web does against what the iPhone has, from code: the README's route table against the
+  call sites on both sides, the wire vocabulary (`codec.mjs` against `Compat.swift`), every body field of `codec.mjs
+  FIELDS`, the driver commands, and a feature list (each row names its evidence in the web code, the Swift core and
+  the app; a row whose web evidence no longer matches is "stale"). `ios/TrommiApp/features.json` may declare a row
+  (`{ "features": { "<id>": { "status": "full" | "partial" | "missing", "note" } } }`); a failed interop scenario caps
+  its row at partial. Output `dev/interop/out/parity.{md,html,json}`; `--check` fails on any row worse than
+  `dev/interop/parity-baseline.json`.
+- **screens.mjs**: every state of `/screens` (`demo.mjs SCREENS`, listed in `dev/interop/fixtures/screens.json`) at
+  393×852, light and dark, beside the iPhone's picture of the same state: the app is started with
+  `TROMMI_SCREEN=<state id> TROMMI_THEME=<light|dark>` (`pymobiledevice3 developer dvt launch`, the demo data of
+  `app/web/public/demo/fixture.json`) and captured with `pymobiledevice3 developer dvt screenshot` (a userspace tunnel,
+  no root). Page: `dev/interop/out/screens.html`.
 
 ## Hub v1: the wire protocol (hub.trommi.com)
 
