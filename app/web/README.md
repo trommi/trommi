@@ -1,18 +1,19 @@
 # Trommi app
 
-The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`) only in sealed envelopes. No framework: plain ES modules and CSS, one file per view. Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`; its build step `dev/build.mjs` makes what is generated).
+The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`) only in sealed envelopes. No framework: plain ES modules and CSS, one file per view; deployed as one minified bundle that loads each view when it is first needed. Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`; its build step `dev/build.mjs` makes what is generated).
 
 ## Running it
 
 ```bash
-node dev/serve.mjs 8900                 # the app as deployed, built in memory on every request (never stale, no service worker)
+node dev/serve.mjs 8900                 # the app from its sources, built in memory on every request (never stale, no service worker)
+node dev/serve.mjs 8900 --bundle        # the same as deployed: the minified bundle, views loaded on demand
 open http://127.0.0.1:8900/             # not logged in on this device: Create account or Log in
 open http://127.0.0.1:8900/?mock=1      # the demo room: fixture cards of every kind, simulated agents, no hub
 open http://127.0.0.1:8900/?mock=side   # the same room with a full sidebar: long names, every kind of count
 ```
 
 A design change: edit the view's `.mjs` and `.css`, reload, push. Nothing to build or release; nothing generated is
-committed.
+committed (the deploy bundles it).
 
 The hub is fixed, with no setting on screen. Hidden developer override: `?hub=<url>` (and `?found_code=<code>` for a founding token), kept for the tab session only (sessionStorage); default `https://hub.trommi.com`, on localhost `http://127.0.0.1:8890` (the dev hub: `HUB_PORT=8890 node hub/server.mjs`).
 
@@ -41,8 +42,8 @@ public/
   desk  card  session  sidebar  notes  media  agents  whiteboard   (.mjs + .css each)
   demo/                the demo room (demo.mjs, fixture.json, files/), also the "Demo" desk
   fonts/  icons/  drawings.json
-  gen/                 generated at deploy time by dev/build.mjs, not in git: vendor/ (the core and the tools
-                       reference), bundle.<hash>.css, build.txt; connector.mjs(.sha256), plugins/ (connector/build.mjs),
+  gen/                 generated at deploy time by dev/build.mjs, not in git: app/ (the bundle: app-<hash>.mjs and its
+                       chunks), vendor/tools-reference.mjs (for the help page), bundle.<hash>.css, build.txt; connector.mjs(.sha256), plugins/ (connector/build.mjs),
                        served at /connector.mjs, /connector.mjs.sha256, /plugins/…
 ```
 
@@ -55,21 +56,28 @@ public/
 3. `gen/` is never edited by hand and never committed: the build makes it at deploy time.
 4. A file is split only when it passes ~3000 lines.
 5. JavaScript is `.mjs` only. Importing a module does nothing; `app.mjs` boots the page (so Node tests can import it).
+6. A view other than the Desk's (desk, sidebar, notes) is loaded on demand: `app.mjs` `LAZY` names the addresses each
+   answers; the router loads it before the first such address, and all of them once the first page is idle. A view
+   that adds a page adds its addresses there.
 
 `dev/check.mjs` (CI) fails on a file outside this layout, a view that imports another view, crypto outside the core,
 and an inline script whose hash is not in `_headers`.
 
 ### The build
 
-`dev/build.mjs` runs in Cloudflare's build (`WORKERS_CI=1`) and makes `public/gen/vendor/` (the core, from the
-repository's `shared/`, and `tools-reference.mjs`, the connector's tools and events for the help page), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
+`dev/build.mjs` runs in Cloudflare's build (`WORKERS_CI=1`) and makes `public/gen/app/` (esbuild, minified and split:
+the entry `app-<hash>.mjs` with app, ui, desk, sidebar and notes, one chunk per lazy view, the core from the
+repository's `shared/` as chunks of its own, the demo; every name carries its content's hash, `_headers` keeps them
+immutable), `public/gen/vendor/tools-reference.mjs` (the connector's tools and events for the help page), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
 order: `app.css` first), `public/gen/build.txt` (the commit; the Web app deploy workflow waits until app.trommi.com
-serves it), the modulepreload list of `index.html`, `VERSION` + `SHELL` of `sw.js`, and the connector's files
-`public/gen/connector.mjs`, `connector.mjs.sha256` and `plugins/` (`connector/build.mjs`). Only those last ones need npm
-packages (esbuild, the MCP SDK, zod): in Cloudflare's build `dev/build.mjs` runs `npm ci` at the repository root first;
-locally, without `node_modules`, a check and the dev server go on without them, and `--write` fails. In the repository `index.html`
-and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`). `dev/serve.mjs` serves the same build
-from memory. `node dev/build.mjs` checks only; `--write` writes into `public/` (never commit that).
+serves it), the script and the modulepreload list of `index.html` (the entry with `?v=<build>`, the core and the chunks a
+cold start imports), `VERSION` + `SHELL` of `sw.js`, and the connector's files `public/gen/connector.mjs`,
+`connector.mjs.sha256` and `plugins/` (`connector/build.mjs`). The bundle and the connector need the repository's npm
+packages (esbuild, the MCP SDK, zod): in Cloudflare's build `dev/build.mjs` runs `npm ci` at the repository root first.
+In the repository `index.html` and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`).
+`dev/serve.mjs` serves the build from memory: by default with the sources as modules of their own (no esbuild needed),
+`--bundle` as deployed. `node dev/build.mjs` checks only and prints the cold start's size; `--write` writes into
+`public/` (never commit that).
 
 The service worker: a new deploy takes over at once and the page reloads (a field with unsent words: a quiet "Reload"
 instead); files come network first, the cache only offline. On the dev server (`VERSION "dev"`) there is none.
@@ -162,7 +170,9 @@ The core owns the schema (trommi-hub `shared/README.md`, "Storage adapter"): dat
 - **Patch only**: after a change, only elements whose markup changed are replaced; Desk rows are cached per card object (a card the change did not name keeps its row string), the sidebar per row, the body per part (a navigation keeps the topbar and sidebar if their markup is the same).
 - **Windowed**: conversations are timelines loaded newest page first (50), older pages on "Earlier"; a session page loads its cards' threads lazily; Desk rows and log messages out of sight are skipped by layout and paint (`content-visibility: auto`).
 - **Lazy decrypt**: attachments are rendered as `/att/<id>` with `loading="lazy"`; the service worker asks the page, which fetches and decrypts only that file, only when it is shown or opened.
-- **No framework, one stylesheet**: a dozen modules, preloaded at once; one stylesheet bundle.
+- **No framework, one stylesheet, a small first load**: one minified bundle; a cold start fetches the entry, the core and
+  their shared chunks (preloaded at once), every other view comes when it is first needed or once the page is idle;
+  one stylesheet bundle.
 - **CSP**: `script-src 'self' 'wasm-unsafe-eval'` (WebAssembly for Argon2id only) plus the hashes of the two inline scripts (the theme before first paint, the help page), fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub.
 
 ### The demo room
