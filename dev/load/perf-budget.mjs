@@ -125,10 +125,18 @@ async function web() {
     page.on('Network.dataReceived', e => { if (reqs.has(e.requestId)) { hub.bytes += e.encodedDataLength || e.dataLength; if (reqs.get(e.requestId)) hub.stream += e.dataLength } })
     page.on('Network.loadingFinished', e => { if (reqs.has(e.requestId) && !reqs.get(e.requestId)) hub.bytes += 0 })
     const resetHub = () => { hub = { requests: 0, bytes: 0, stream: 0, list: [] } }
-    const js = async code => {
-      const r = await page.send('Runtime.evaluate', { expression: `(async () => { ${code} })()`, awaitPromise: true, returnByValue: true })
-      if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text)
-      return r.result.value
+    const js = async (code, tries = 4) => {
+      // (a page that reloads under us, e.g. the service worker taking a new version, is asked again a moment later)
+      for (let i = 0; ; i++) {
+        try {
+          const r = await page.send('Runtime.evaluate', { expression: `(async () => { ${code} })()`, awaitPromise: true, returnByValue: true })
+          if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text)
+          return r.result.value
+        } catch (e) {
+          if (i + 1 >= tries || !/navigated|context was destroyed|Cannot find context/i.test(e.message)) throw e
+          await sleep(500)
+        }
+      }
     }
     const waitFor = async (code, what, ms = 120_000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await js(`return Boolean(${code})`).catch(() => false)) return Date.now() - t; await sleep(25) } throw new Error(`timed out: ${what}`) }
     const longs = () => js('const l = window.__long; window.__long = []; return l')
@@ -169,9 +177,10 @@ async function web() {
       if (profiling) { await page.send('Profiler.enable'); await page.send('Profiler.start') }
       await page.send('Page.reload')
       await waitFor("document.documentElement.hasAttribute('data-ready')", 'ready after reload')
+      await waitFor("window.trommi?.readyAt > 0", 'ready time')
       warm.push(await js('return window.trommi.readyAt'))
       if (profiling) { const { profile } = await page.send('Profiler.stop'); fs.writeFileSync(`${PROF}-warm.cpuprofile`, JSON.stringify(profile)) }
-      results.warm_parts = await js('return { open_ms: Math.round(window.trommi.openMs ?? 0), first_paint_ms: Math.round(window.trommi.firstPaintMs ?? 0) }')
+      results.warm_parts = await js('return { open_ms: Math.round(window.trommi?.openMs ?? 0), first_paint_ms: Math.round(window.trommi?.firstPaintMs ?? 0) }').catch(() => null)
       await waitFor("window.trommi.client.model.room.connection === 'live'", 'live after reload')
       await sleep(800)
     }
@@ -188,6 +197,7 @@ async function web() {
       await page.send('Network.clearBrowserCache')
       await page.send('Page.reload', { ignoreCache: true })
       await waitFor("document.documentElement.hasAttribute('data-ready')", 'ready after cold reload')
+      await waitFor("window.trommi?.readyAt > 0", 'ready time')
       cold.push(await js('return window.trommi.readyAt'))
       await waitFor("window.trommi.client.model.room.connection === 'live'", 'live after cold reload')
       await sleep(2500)    // the service worker installs again
@@ -235,7 +245,7 @@ async function web() {
     const scroll = () => js(`const el = document.scrollingElement; const t = performance.now(); let y = el.scrollTop, dir = -1; while (performance.now() - t < 2000) { y += dir * 120; if (y <= 0) { y = 0; dir = 1 } if (y >= el.scrollHeight - innerHeight) { y = el.scrollHeight - innerHeight; dir = -1 } el.scrollTop = y; await new Promise(r => requestAnimationFrame(r)) } return true`)
     if (PARTS.includes('scroll')) {
     await visit('/'); await sleep(300); await longs()
-    if (PROF) { await page.send('Profiler.start') }
+    if (PROF) { await page.send('Profiler.enable'); await page.send('Profiler.start') }
     await scroll()
     await visit(`/s/${bigAgent}`); await sleep(500); await longs()
     for (let i = 0; i < 4; i++) await js("document.querySelector('.log-earlier-link')?.click(); await new Promise(r => setTimeout(r, 400))")
@@ -262,7 +272,7 @@ async function web() {
     }
     if (PARTS.includes('live')) {
     await visit('/'); await sleep(300); await longs()
-    if (PROF) { await page.send('Profiler.start') }
+    if (PROF) { await page.send('Profiler.enable'); await page.send('Profiler.start') }
     await burst()
     await visit(`/s/${bigAgent}`); await sleep(300)
     await burst()

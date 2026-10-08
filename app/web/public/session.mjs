@@ -515,25 +515,35 @@ export function register(t) {
   // Opened for the first time on this device: the newest page of its chat and of its recent questions' threads
   // (from storage, else from the hub), waited for only briefly; what comes later arrives by the live stream.
   const RECENT_THREADS = 20
+  const unread = tl => tl && tl.loaded_down_to === Infinity && tl.item_count > 0
+  // Its questions' threads, in the background (the live log puts late items at their places): only those with a word
+  // at or above the floor of what the conversation shows, the window in view, at most RECENT_THREADS of them. A thread
+  // whose last word is older than the window cannot show in it; "Earlier" lowers the floor and brings those (reach).
+  function threadsInWindow(agent) {
+    const model = t.hub.client?.model
+    if (!model || !agent) return
+    const tl = timeline(agent)
+    const floor = tl && Number.isFinite(tl.loaded_down_to) && tl.has_more ? tl.loaded_down_to : 0
+    const ids = (model.sessions.get(agent.device_id)?.card_ids ?? []).filter(cid => { const m = model.timelines.get(`chat:card/${cid}`); return unread(m) && (m.newest_envelope_number ?? 0) >= floor })
+    for (const cid of ids.slice(-RECENT_THREADS)) older(`chat:card/${cid}`).catch?.(() => {})
+  }
   async function firstPage(id) {
     const model = t.hub.client?.model, agent = t.model().byAgent.get(id)
     if (!model || !agent) return
-    const unread = tl => tl && tl.loaded_down_to === Infinity && tl.item_count > 0
     const wait = []
-    if (unread(timeline(agent))) wait.push(older(id))
-    for (const cid of (model.sessions.get(agent.device_id)?.card_ids ?? []).slice(-RECENT_THREADS)) {
-      const key = `chat:card/${cid}`
-      // (Its questions' threads come in the background: the live log puts late items at their places.)
-      if (unread(model.timelines.get(key))) older(key).catch?.(() => {})
-    }
-    // Only the session's own chat is waited for, and not long (a phone switching sessions must stay under ~100 ms).
-    if (wait.length) await Promise.race([Promise.all(wait), new Promise(r => setTimeout(r, 120))])
+    if (unread(timeline(agent))) wait.push(older(id).then(() => threadsInWindow(agent)))
+    else threadsInWindow(agent)
+    // Only the session's own chat is waited for, and only as long as reading it from this device takes: what must come
+    // from the hub follows by the live stream (an empty log is drawn whole once its page is there). A phone switching
+    // sessions must stay under ~100 ms; a hub round trip is longer than that on a phone network.
+    if (wait.length) await Promise.race([Promise.all(wait), new Promise(r => setTimeout(r, 40))])
   }
   // "Earlier" asked for what is before `before`: when memory holds nothing older above the floor, the next page.
   async function reach(s, before) {
     for (let n = 0; n < 4 && s.more; n++) {
       if (s.messages.findIndex(m => m.id === before) > 0) break
       await older(s.id)
+      threadsInWindow(t.model().byAgent.get(s.id))
       s = current(s.id) ?? s
     }
     return s
@@ -643,6 +653,8 @@ export function register(t) {
         // What stood there and stands there still, changed: that element. What is new goes in before the first message
         // after it that stood there (at the end, mostly; a question's thread loaded late lands at its places). What came
         // in older than all that stood there is an earlier page ("Earlier" shows it).
+        // (a log that stood empty, its first page still on the way from the hub: drawn whole once it is there)
+        if (!a.items.length && b.items.length) return String(t.stream('refresh'))
         const first = a.items[0]?.seq ?? Infinity
         const fresh = b.items.filter(i => !a.byId.has(i.id) && i.seq >= first)
         // (More new ones than a window holds: the latest window again, rather than a log that grows without end.)
