@@ -5,11 +5,12 @@
 #   dev/deploy/connector.sh [--dry-run] [--allow-unpushed] [--no-build]
 #
 # Cloudflare's build of the web app has no Rust toolchain, so the connector is built here and uploaded apart from the
-# app: node connector-rs/build-plugin.mjs makes the static musl binaries (Linux x86_64 and aarch64), the plugin zip and
-# marketplace.json in connector-rs/dist/; they go into the R2 bucket trommi-releases (app/web/wrangler.jsonc, binding
-# RELEASES), from which app/web/worker.js serves them at https://app.trommi.com/connector/… and /plugins/…. The files
-# named by their content go first, the pointers (the .sha256 files, then marketplace.json) last, so a reader never
-# sees a pointer to a file that is not there yet. Then it checks what app.trommi.com serves.
+# app: node connector-rs/build-plugin.mjs makes the binaries (static musl for Linux x86_64 and aarch64; macOS arm64 and
+# x86_64 with cargo-zigbuild and zig, no Apple SDK), the plugin zip and marketplace.json in connector-rs/dist/; they
+# go into the R2 bucket trommi-releases (app/web/wrangler.jsonc, binding RELEASES), from which app/web/worker.js
+# serves them at https://app.trommi.com/connector/… and /plugins/…. The files named by their content go first, the
+# pointers (the .sha256 files, then marketplace.json) last, so a reader never sees a pointer to a file that is not
+# there yet. Then it checks what app.trommi.com serves.
 # --dry-run builds (local, harmless) and prints the uploads. --no-build takes connector-rs/dist/ as it is.
 # Once: npx wrangler login; npx wrangler r2 bucket create trommi-releases.
 set -euo pipefail
@@ -22,14 +23,14 @@ for a in "$@"; do
     --dry-run) DRY=1 ;;
     --allow-unpushed) ALLOW_UNPUSHED=1 ;;
     --no-build) BUILD=0 ;;
-    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option $a (see --help)" ;;
   esac
 done
 WRANGLER=(npx --yes wrangler@4)
 BUCKET=trommi-releases
 DIST="$REPO/connector-rs/dist"
-TARGETS=(x86_64-unknown-linux-musl aarch64-unknown-linux-musl)
+TARGETS=(x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin)
 
 guard_tree
 

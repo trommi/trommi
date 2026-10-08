@@ -18,7 +18,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { connectorCmd, parsePrompt } from './binary.mjs'
-import { releaseFiles, pluginManifest, zip, LAUNCHER } from '../connector-rs/build-plugin.mjs'
+import { releaseFiles, pluginManifest, zip, LAUNCHER, ALL_TARGETS, zigShimScript } from '../connector-rs/build-plugin.mjs'
 import { releaseKey, releaseHeaders } from '../app/web/worker.js'
 
 let passed = 0, failed = 0
@@ -276,6 +276,35 @@ await test('plugin: the launcher picks this machine\'s binary and passes the arg
   fs.writeFileSync(path.join(dir, 'trommi-connector'), LAUNCHER, { mode: 0o755 })
   fs.writeFileSync(path.join(dir, target, 'trommi-connector'), '#!/bin/sh\necho "ran $*"\n', { mode: 0o755 })
   assert.equal(execFileSync(path.join(dir, 'trommi-connector'), ['monitor', 'x y'], { encoding: 'utf8' }), 'ran monitor x y\n')
+})
+
+await test('plugin: the launcher picks the binary by uname on Linux and macOS (both arches) and refuses others', () => {
+  const dir = path.join(tmp, 'plugin-uname'), bin = path.join(dir, 'bin'), fake = path.join(dir, 'fake')
+  fs.mkdirSync(fake, { recursive: true })
+  fs.mkdirSync(bin, { recursive: true })
+  fs.writeFileSync(path.join(bin, 'trommi-connector'), LAUNCHER, { mode: 0o755 })
+  for (const t of ALL_TARGETS) {
+    fs.mkdirSync(path.join(bin, t), { recursive: true })
+    fs.writeFileSync(path.join(bin, t, 'trommi-connector'), `#!/bin/sh\necho "${t} $*"\n`, { mode: 0o755 })
+  }
+  fs.writeFileSync(path.join(fake, 'uname'), '#!/bin/sh\ncase "$1" in -s) echo "$FAKE_S" ;; -m) echo "$FAKE_M" ;; esac\n', { mode: 0o755 })
+  const run = (s, m) => execFileSync(path.join(bin, 'trommi-connector'), ['whoami'], { encoding: 'utf8', env: { ...process.env, PATH: `${fake}:${process.env.PATH}`, FAKE_S: s, FAKE_M: m }, stdio: ['ignore', 'pipe', 'pipe'] })
+  assert.equal(run('Linux', 'x86_64'), 'x86_64-unknown-linux-musl whoami\n')
+  assert.equal(run('Linux', 'aarch64'), 'aarch64-unknown-linux-musl whoami\n')
+  assert.equal(run('Darwin', 'arm64'), 'aarch64-apple-darwin whoami\n')
+  assert.equal(run('Darwin', 'x86_64'), 'x86_64-apple-darwin whoami\n')
+  assert.throws(() => run('FreeBSD', 'amd64'), /no connector binary for FreeBSD\/amd64/)
+})
+
+await test('release: the zig shim puts the macOS minimum into the zig target and passes everything else on', () => {
+  const dir = path.join(tmp, 'zigshim')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, "real zig's"), '#!/bin/sh\nfor a do printf "[%s]" "$a"; done\n', { mode: 0o755 })
+  fs.writeFileSync(path.join(dir, 'zig'), zigShimScript(path.join(dir, "real zig's"), '11.0'), { mode: 0o755 })
+  const out = execFileSync(path.join(dir, 'zig'), ['cc', '-target', 'aarch64-macos-none', 'a b', '-target', 'x86_64-linux-musl'], { encoding: 'utf8' })
+  assert.equal(out, '[cc][-target][aarch64-macos.11.0-none][a b][-target][x86_64-linux-musl]')
+  assert.deepEqual(ALL_TARGETS, ['x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl', 'aarch64-apple-darwin', 'x86_64-apple-darwin'])
+  for (const t of ALL_TARGETS) assert.equal(releaseKey(`/connector/trommi-connector-${t}.sha256`), `connector/trommi-connector-${t}.sha256`)
 })
 
 await test('release: binaries named by content, pointers at the newest; the zip is deterministic; the marketplace names its sha256', () => {
