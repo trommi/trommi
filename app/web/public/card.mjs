@@ -27,8 +27,19 @@ const CROSS = pen('<path d="M6.3 6.6 Q12.2 12.1 17.8 17.7"/><path d="M17.6 6.2 Q
 const DOTS = pen('<path d="M5.4 12 Q5.9 11.5 6.4 12 Q5.9 12.6 5.4 12 M11.5 12 Q12 11.5 12.5 12 Q12 12.6 11.5 12 M17.6 12 Q18.1 11.5 18.6 12 Q18.1 12.6 17.6 12" stroke-width="2.6"/>')
 const FULL = pen('<path d="M4.4 9.3 Q4.1 6.6 4.5 4.4 Q6.9 4.1 9.4 4.4"/><path d="M14.7 4.2 Q17.3 4.5 19.6 4.3 Q19.9 6.7 19.6 9.2"/><path d="M19.8 14.8 Q19.5 17.4 19.7 19.7 Q17.2 19.9 14.8 19.6"/><path d="M9.3 19.8 Q6.7 19.5 4.3 19.7 Q4.1 17.2 4.4 14.9"/>')
 const DRAW = pen('<path d="M4.6 19.6 Q5 17.6 5.6 15.9 Q10.6 10.8 16 5.2 Q17.6 4 18.9 5.3 Q20 6.6 18.7 8 Q13.3 13.4 8.2 18.5 Q6.5 19.2 4.6 19.6"/><path d="M14.4 6.9 Q15.8 8.1 17.1 9.6"/>')
-// Held Ctrl (Cmd on a Mac) while writing on a decision: Send is the reverse card (controller "card", held()).
+// Send and reverse (the words go back with the card, for rework): Shift held over Send turns it into the reverse card,
+// and a Shift-click sends so; Ctrl+Enter (⌘+Enter) from the field; and without a keyboard the chevron beside Send, whose
+// small menu holds "Send and Reverse" (controller "card": held, sendClick, sendReverse).
 const CTRL_WORD = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '') ? '⌘' : 'Ctrl'
+const CHEVRON = pen('<path d="M6.4 14.6 Q9.4 11.8 12.1 9.2 Q14.9 11.9 17.6 14.4"/>')
+/** Send, and where the card can go back (an open decision or info) the reverse card on it while Shift is held over it,
+ *  and the chevron beside it: a small menu above with "Send and Reverse". */
+function sendButton(canReverse, asker) {
+  const to = asker || 'the agent'
+  const send = html`<button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${canReverse ? `. Shift-click (or ${CTRL_WORD}+Enter): send and reverse, back to ${to}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick${canReverse ? ' pointerenter->card#held pointerleave->card#held' : ''}">${sk('send')}${canReverse ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button>`
+  if (!canReverse) return send
+  return html`<span class="tc-send-split">${send}<details class="tc-send-menu" data-controller="pops"><summary class="tc-send-more" title="More ways to send" aria-label="More ways to send">${CHEVRON}</summary><div class="tc-send-pop" role="menu"><button type="button" role="menuitem" class="tc-send-rev" data-action="card#sendReverse" data-pop-close><span class="tc-send-rev-uno" aria-hidden="true">${sk('reverse')}</span><span>Send and Reverse</span><small>back to ${to} for rework</small></button></div></details></span>`
+}
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
 const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
@@ -447,7 +458,7 @@ ${drafting || (open && card.kind === 'info') ? html`<input type="hidden" name="m
 <span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>
 <div class="tc-ask"><div class="tc-chips" data-card-target="chips" hidden></div>
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${askWords(card, model, asker)}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
-<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label>${drafting || (open && card.kind === 'info') ? html`<button type="button" class="tc-draw tc-draw-pen" data-action="card#trace" aria-pressed="false" title="Draw on the card: lay a tracing sheet over it" aria-label="Draw on the card">${sk('pen')}</button>` : ''}<span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you${open && (card.kind === 'decision' || card.kind === 'info') ? `. Hold ${CTRL_WORD}: send and reverse, back to ${asker || 'the agent'}` : ''}" aria-label="Send to the agent" data-action="click->card#sendClick">${sk('send')}${open && (card.kind === 'decision' || card.kind === 'info') ? html`<span class="tc-send-uno" aria-hidden="true">${sk('reverse')}</span>` : ''}</button></div></div>
+<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label>${drafting || (open && card.kind === 'info') ? html`<button type="button" class="tc-draw tc-draw-pen" data-action="card#trace" aria-pressed="false" title="Draw on the card: lay a tracing sheet over it" aria-label="Draw on the card">${sk('pen')}</button>` : ''}<span class="tc-saved" role="status" data-card-target="saved" hidden></span>${sendButton(open && (card.kind === 'decision' || card.kind === 'info'), asker)}</div></div>
 </form>
 </div>
 </div>
@@ -1181,20 +1192,28 @@ controller('card', class extends Controller {
     this.formTarget.requestSubmit(reverse || this.formTarget.querySelector('.tc-send'))
   }
   reverseTile() { return this.element.querySelector('.tc-answer .tc-reverse') }
-  // While Ctrl (Cmd) is held with the keyboard in the field, Send wears the reverse card; let go, it is Send again.
+  // While Shift is held and the pointer (or the keyboard) is on Send, Send wears the reverse card; let go, it is Send
+  // again. (Not while typing: Shift there makes capitals and new lines.)
   held(event) {
     const send = this.hasFormTarget ? this.formTarget.querySelector('.tc-send') : null
     if (!send?.querySelector('.tc-send-uno')) return
-    const on = event.type !== 'blur' && (event.ctrlKey || event.metaKey) && Boolean(this.formTarget.querySelector('.tc-ask')?.contains(document.activeElement)) && Boolean(this.reverseTile())
+    if (event.type === 'pointerenter') this.overSend = true
+    else if (event.type === 'pointerleave') this.overSend = false
+    const on = event.type !== 'blur' && event.shiftKey && (this.overSend || document.activeElement === send) && Boolean(this.reverseTile())
     send.classList.toggle('is-reverse', on)
     send.setAttribute('aria-label', on ? 'Send and reverse: back to the agent for rework' : 'Send to the agent')
   }
-  // A click on Send with Ctrl (Cmd) held: send and reverse, as Ctrl+Enter.
+  // A Shift-click on Send: send and reverse, as Ctrl+Enter.
   sendClick(event) {
-    const tile = (event.ctrlKey || event.metaKey) && this.reverseTile()
+    const tile = event.shiftKey && this.reverseTile()
     if (!tile) return
     event.preventDefault()
     this.formTarget.requestSubmit(tile)
+  }
+  // "Send and Reverse" from the chevron's menu (no keyboard needed)
+  sendReverse() {
+    const tile = this.reverseTile()
+    if (tile) this.formTarget.requestSubmit(tile)
   }
 
   // ---- the draft: what is ticked and written is kept on the hub a moment after the last stroke ----
