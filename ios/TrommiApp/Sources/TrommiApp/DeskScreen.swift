@@ -75,7 +75,7 @@ struct DeskScreen: View {
 
       if hSize == .regular { ToolbarItem(placement: .principal) { DeskTitle() } }
       else { ToolbarItem(placement: .topBarLeading) { MenuPill() } }
-      ToolbarItem(placement: .topBarTrailing) { if hSize == .regular { NoteButton() } }
+      ToolbarItem(placement: .topBarTrailing) { if hSize == .regular { NoteButton() } else { DeskWays() } }
     }
     .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }
   }
@@ -94,24 +94,7 @@ struct DeskScreen: View {
         // iPhone: the greeting wraps beside two small round glass buttons (the duck for all, Blitz with its count)
         HStack(alignment: .top, spacing: 10) {
           Greeting(text: line).layoutPriority(1)
-          Spacer(minLength: 4)
-          if n > 0 {
-            if !decisions.isEmpty {
-              Button { duckAsk = true } label: {
-                PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 26, height: 22).frame(width: 46, height: 46).glass(Circle(), interactive: true)
-              }
-              .buttonStyle(.plain)
-              .accessibilityLabel(decisions.count == 1 ? "I don’t give a duck: for the one open decision" : "I don’t give a duck: for all \(decisions.count) open decisions")
-            }
-            Button { model.path.append(.blitz) } label: {
-              PenMark("desk:BOLT").frame(width: 22, height: 22).frame(width: 46, height: 46).glass(Circle(), interactive: true)
-                .overlay(alignment: .topTrailing) {
-                  Text("\(n)").font(Face.text(11, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 5).frame(minWidth: 19, minHeight: 19).background(Capsule().fill(Ink.fg)).offset(x: 4, y: -3)
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(Words.walk): \(n == 1 ? "1 open question" : "\(n) open questions")")
-          }
+          Spacer(minLength: 0)
         }
         .padding(.top, 18).padding(.bottom, 6)
         .confirmationDialog(decisions.count == 1 ? "Answer it with “I don’t give a duck”?" : "Answer all \(decisions.count) with “I don’t give a duck”?", isPresented: $duckAsk, titleVisibility: .visible) {
@@ -613,5 +596,49 @@ struct DeskTitle: View {
       Text(model.view?.deskName ?? "Desk").font(Face.display(19, .bold)).foregroundStyle(Ink.fg)
     }
     .id(model.version)
+  }
+}
+
+
+/** The Desk's two ways at the top right of the iPhone (beside the floating pill): the duck for all and Blitz with its count. */
+struct DeskWays: View {
+  @EnvironmentObject var model: BoardModel
+  @State private var duckAsk = false
+  var body: some View {
+    let _ = model.version
+    let fresh = model.view?.fresh ?? []
+    let decisions = fresh.filter { $0.kind == "decision" }.map { $0.id }
+    let n = fresh.count
+    if n > 0 {
+      HStack(spacing: 6) {
+        if !decisions.isEmpty {
+          Button { duckAsk = true } label: { PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 24, height: 20).frame(width: 36, height: 36) }
+            .accessibilityLabel("I don’t give a duck: for all \(decisions.count) open decisions")
+            .popover(isPresented: $duckAsk, arrowEdge: .top) {
+              VStack(alignment: .leading, spacing: 14) {
+                Text(decisions.count == 1 ? "Answer it with “I don’t give a duck”?" : "Answer all \(decisions.count) with “I don’t give a duck”?").font(Face.display(18, .bold)).foregroundStyle(Ink.fg).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                  Button { duckAsk = false } label: { Text("Cancel").font(Face.text(16, .semibold)).frame(maxWidth: .infinity, minHeight: 44) }
+                    .buttonStyle(.plain).foregroundStyle(Ink.fg).background(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.fg, lineWidth: 1.5))
+                  Button { duckAsk = false; model.duckAll(decisions) } label: {
+                    HStack(spacing: 6) { PenMark("sketch:duck", color: Ink.bg, duck: false).frame(width: 22, height: 18); Text(decisions.count == 1 ? "Yes, Duck It" : "Yes, Duck All").font(Face.text(16, .semibold)) }
+                      .frame(maxWidth: .infinity, minHeight: 44)
+                  }
+                  .buttonStyle(.plain).foregroundStyle(Ink.bg).background(RoundedRectangle(cornerRadius: 12).fill(Ink.fg))
+                }
+              }
+              .padding(18).frame(width: 320)
+              .presentationCompactAdaptation(.popover)
+            }
+        }
+        Button { model.path.append(.blitz) } label: {
+          PenMark("desk:BOLT").frame(width: 20, height: 20).frame(width: 36, height: 36)
+            .overlay(alignment: .topTrailing) {
+              Text("\(n)").font(Face.text(10, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 4).frame(minWidth: 17, minHeight: 17).background(Capsule().fill(Ink.fg)).offset(x: 3, y: -2)
+            }
+        }
+        .accessibilityLabel("\(Words.walk): \(n) open questions")
+      }
+    }
   }
 }

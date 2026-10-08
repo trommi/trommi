@@ -86,16 +86,9 @@ struct BottomBar: View {
     let v = model.view
     let n = v?.fresh.count ?? 0
     let knocks = (v?.knocking ?? 0) > 0
-    let unread = (v?.units ?? []).filter { model.unread($0.agent) }.count
     HStack(spacing: 4) {
       item("Chat", on: model.tab == .chat) {
         Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 18, weight: .regular))
-          .overlay(alignment: .topTrailing) {
-            if unread > 0 {
-              Text("\(unread)").font(Face.text(11, .bold)).foregroundStyle(.white).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18)
-                .background(Capsule().fill(Ink.fg)).offset(x: 12, y: -8)
-            }
-          }
       } action: {
         // the Chat page opens into the chat he used last (the crowned one first); a second tap: the list
         if model.tab == .chat { withAnimation(.snappy) { model.chatPath = [] } }
@@ -104,7 +97,6 @@ struct BottomBar: View {
           model.tab = .chat
         }
       }
-      .accessibilityLabel(unread > 0 ? "Chat, \(unread) unread" : "Chat")
       item("Desk", on: model.tab == .desk) {
         PenMark("sketch:desk", color: Ink.fg).frame(width: 24, height: 24)
           .overlay(alignment: .topTrailing) {
@@ -236,27 +228,17 @@ struct ChatRow: View {
   let crowned: Bool
   let unread: Bool
   var body: some View {
-    let _ = RenderCount.body("ChatRow")
     let a = unit.agent
-    let last = model.desk?.messagesOf(agent: a.id).last { $0.from != "event" }
+    // one line: the drawing and the name; on the right only a green dot (breathing while it works, steady for news)
     HStack(spacing: 12) {
-      AgentMark(agent: a, size: 40).opacity(unit.online ? 1 : 0.6)
-        .overlay(alignment: .topLeading) { if crowned { PenMark("crown").frame(width: 16, height: 12).offset(x: -4, y: -6) } }
-      VStack(alignment: .leading, spacing: 2) {
-        HStack {
-          Text(a.name).font(Face.text(17, unread ? .bold : .semibold)).foregroundStyle(Ink.fg).lineLimit(1)
-          Spacer(minLength: 6)
-          if a.active > 0 { Text(agoText(a.active)).font(Face.text(13)).foregroundStyle(unread ? Ink.accent : Ink.faint) }
-        }
-        HStack {
-          Text(last.map { ($0.from == "human" ? "You: " : "") + $0.text.replacingOccurrences(of: "\n", with: " ") } ?? (a.task.isEmpty ? " " : a.task))
-            .font(Face.text(15)).foregroundStyle(Ink.muted).lineLimit(2)
-          Spacer(minLength: 6)
-          if unread { Circle().fill(Ink.accent).frame(width: 10, height: 10).accessibilityLabel("Unread") }
-          Badge(unit: unit)
-        }
-      }
+      AgentMark(agent: a, size: 30).opacity(unit.online ? 1 : 0.6)
+      Text(a.name).font(Face.text(17, .medium)).foregroundStyle(unit.online ? Ink.fg : Ink.muted).lineLimit(1)
+      Spacer(minLength: 6)
+      if unit.online && unit.running { PulseDot() }
+      else if unread { Circle().fill(Ink.stDone).frame(width: 8, height: 8).accessibilityLabel("New message") }
     }
+    .padding(.leading, unit.parent != nil ? 24 : 0)
+    .frame(minHeight: 40)
     .contentShape(Rectangle())
   }
 }
