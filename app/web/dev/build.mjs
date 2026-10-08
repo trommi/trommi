@@ -33,6 +33,28 @@ export const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '.
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const sha = data => crypto.createHash('sha256').update(data).digest('hex').slice(0, 12)
 
+// ---- the toolchain ----
+// The build is reproducible (README "Verifying the build"): the same commit gives the same bytes, wherever it is built.
+// That needs the same Node (zlib's deflate makes the plugin's zip; type stripping) and the same esbuild: both pinned
+// (.node-version, package.json engines and the exact esbuild of package-lock.json). In Cloudflare's build a mismatch
+// fails the build; anywhere else it is said, and the manifest names the toolchain, so verify.mjs can tell why it differs.
+export function toolchain(repo = REPO) {
+  const node = fs.readFileSync(path.join(repo, '.node-version'), 'utf8').trim()
+  const lock = JSON.parse(fs.readFileSync(path.join(repo, 'package-lock.json'), 'utf8'))
+  return { node, esbuild: lock.packages?.['node_modules/esbuild']?.version ?? null }
+}
+async function checkToolchain(repo) {
+  const want = toolchain(repo)
+  const esbuild = await import('esbuild').then(m => m.version, () => null)
+  const have = { node: process.versions.node, esbuild }
+  const off = Object.keys(want).filter(k => have[k] && want[k] && have[k] !== want[k])
+  if (!off.length) return have
+  const why = `build: not the pinned toolchain (${off.map(k => `${k} ${have[k]}, pinned ${want[k]}`).join('; ')}): its bytes will differ from the deployed build`
+  if (process.env.WORKERS_CI === '1') throw new Error(why)
+  if (!checkToolchain.said) { checkToolchain.said = true; console.warn(why) }
+  return have
+}
+
 // ---- the core ----
 const NOT_VENDORED = /(^test|-test\.(mjs|ts)$|^test-|^storage-file\.(mjs|ts)$|^hub\.(mjs|ts)$|\.d\.m?ts$)/   // tests, Node-only, the hub's side, declarations
 function vendorFiles(repo, { sourcemap = false } = {}) {
@@ -157,21 +179,21 @@ async function bundle(pub, vendor) {
       b.onLoad({ filter: /.*/, namespace: 'vendor' }, a => { const f = a.path === 'core.mjs' ? 'index.mjs' : a.path; return f in vendor ? { contents: vendor[f], loader: 'js' } : { errors: [{ text: `gen/vendor/${f} is not in the core` }] } })
     },
   }
-  const rel = o => path.relative(pub, path.resolve(o)).split(path.sep).join('/')
+  const rel = o => path.relative(pub, path.resolve(REPO, o)).split(path.sep).join('/')   // (metafile paths are relative to absWorkingDir)
   const out = {}
   // The core's worker (shared/core-worker.ts): one file of its own, the whole core in it. The app learns its address
   // from __TROMMI_CORE_WORKER__ (without it, as on the dev server, it starts /gen/vendor/core-worker.mjs).
   // What only the account screens need (the key derivation, the word list, founding and joining) is a file of its own,
   // which the worker imports when one asks (core-worker-account-<hash>.mjs, with its own copy of the core it uses), so
   // the worker of a stored room is one file and one round trip.
-  const acc = await esbuild.build({
+  const acc = await esbuild.build({ absWorkingDir: REPO,   // (the same names and bytes from any directory: verify.mjs)
     entryPoints: [{ in: 'gen/vendor/account.mjs', out: 'core-worker-account' }], bundle: true, format: 'esm', minify: true, write: false,
     outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
   })
   const accountFile = rel(acc.outputFiles[0].path)
   out[accountFile] = acc.outputFiles[0].text
   const accountExternal = { name: 'account-external', setup(b) { b.onResolve({ filter: /^\.\/account\.mjs$/, namespace: 'vendor' }, a => (a.importer === 'core-worker.mjs' ? { path: `./${path.posix.basename(accountFile)}`, external: true } : undefined)) } }
-  const w = await esbuild.build({
+  const w = await esbuild.build({ absWorkingDir: REPO,   // (the same names and bytes from any directory: verify.mjs)
     entryPoints: [{ in: 'gen/vendor/core-worker.mjs', out: 'core-worker' }], bundle: true, format: 'esm', minify: true, write: false, metafile: true,
     outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [accountExternal, fromVendor],
   })
@@ -179,14 +201,14 @@ async function bundle(pub, vendor) {
   const worker = rel(w.outputFiles[0].path)
   out[worker] = w.outputFiles[0].text
   // core-start (shared/core-start.ts): the tiny module index.html runs before the entry, which starts that worker.
-  const st = await esbuild.build({
+  const st = await esbuild.build({ absWorkingDir: REPO,   // (the same names and bytes from any directory: verify.mjs)
     entryPoints: [{ in: 'gen/vendor/core-start.mjs', out: 'core-start' }], bundle: true, format: 'esm', minify: true, write: false,
     outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
     define: { __TROMMI_CORE_WORKER__: JSON.stringify(`/${worker}`) },
   })
   const start = rel(st.outputFiles[0].path)
   out[start] = st.outputFiles[0].text
-  const r = await esbuild.build({
+  const r = await esbuild.build({ absWorkingDir: REPO,   // (the same names and bytes from any directory: verify.mjs)
     entryPoints: [path.join(pub, 'app.mjs')], bundle: true, splitting: true, format: 'esm', minify: true, write: false, metafile: true,
     outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', chunkNames: '[name]-[hash]', outExtension: { '.js': '.mjs' },
     target: ['es2022'], logLevel: 'silent', plugins: [fromVendor], define: { __TROMMI_CORE_WORKER__: JSON.stringify(`/${worker}`) },
@@ -279,7 +301,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // The build's manifest: every file this build serves with its SHA-256, and its own hash, the build hash, in
   // build.txt (README "Verifying the build": anyone can build the commit and compare).
   const served = [...new Set([...walk(pub).filter(f => !f.startsWith('gen/') && !(bundled && BUNDLED.test(f))), ...Object.keys(out)])].filter(f => f !== 'gen/build.txt' && f !== 'gen/manifest.json').sort()
-  const manifest = { commit: commitOf(repo), files: Object.fromEntries(served.map(f => [f, crypto.createHash('sha256').update(content(f)).digest('hex')])) }
+  const manifest = { commit: commitOf(repo), toolchain: await checkToolchain(repo), files: Object.fromEntries(served.map(f => [f, crypto.createHash('sha256').update(content(f)).digest('hex')])) }
   out['gen/manifest.json'] = `${JSON.stringify(manifest, null, 1)}\n`
   out['gen/build.txt'] += `build: ${crypto.createHash('sha256').update(out['gen/manifest.json']).digest('hex')}\n`
   const firstLoad = js ? [...js.first, js.worker, js.start].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null   // (the core worker too: boot starts it at once)
