@@ -438,7 +438,7 @@ ${model.desks.length > 1 ? deskSwitch(model, base) : ''}
 // pen lines; a red dot while a session is stopped or a card knocks) and the name of the place in view: the desk, or
 // the session with its drawing. Wide screens show neither.
 const HANDLE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M4.2 6.9Q12 6.1 19.9 6.8"/><path d="M4.1 12.3Q11 11.6 19.6 12.2"/><path d="M4.4 17.3Q12.4 18 19.8 17.1"/></svg>')
-const PLACES = { agents: 'Settings', room: 'Settings', gallery: 'Media', pages: 'Pages', whiteboard: 'Scribble Board' }
+const PLACES = { off: 'Off your mind', agents: 'Settings', room: 'Settings', gallery: 'Media', pages: 'Pages', whiteboard: 'Scribble Board' }
 export function phoneBar(model, base, { view = '', current = null, title = '' } = {}) {
   const session = current ? model.byAgent.get(current) : null
   const waits = (model.blocked ?? 0) + (model.knocking ?? 0) > 0
