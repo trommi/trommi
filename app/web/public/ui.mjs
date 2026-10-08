@@ -2695,7 +2695,11 @@ export function copyButton(card) {
 export const act = (card, base, what) => `${base}/cards/${card.id}/${what}`
 
 // A way out of the row, tucked beside the title: Snooze, Revise, Whatever, Shred. One form, each button its own address.
-const tab = (cls, drawing, word, label, action, hidden = false) => html`<button class="inbox-tab-act ${cls}" type="submit" formaction="${action}" aria-label="${label}" title="${label}"${hidden ? raw(' hidden') : ''}><i class="inbox-later-flap">${sk(drawing)}<b>${word}</b></i></button>`
+// A hidden one (Revise, Whatever: reached by its key and the row's sheet, never shown; [hidden] is display: none
+// !important) carries no drawing: a quarter of a row's nodes were these.
+const tab = (cls, drawing, word, label, action, hidden = false) => (hidden
+  ? html`<button class="inbox-tab-act ${cls}" type="submit" formaction="${action}" aria-label="${label}" title="${label}" hidden></button>`
+  : html`<button class="inbox-tab-act ${cls}" type="submit" formaction="${action}" aria-label="${label}" title="${label}"><i class="inbox-later-flap">${sk(drawing)}<b>${word}</b></i></button>`)
 
 const tile = (cls, drawing, label, { name = 'key', value = '', action = null, title = '', aria = '', short = false, final = false } = {}) => html`<button class="inbox-answer ${cls}"${/\bis-advised\b/.test(cls) ? raw(' data-controller="advice"') : ''} type="submit"${value ? html` name="${name}" value="${value}"` : ''}${action ? html` formaction="${action}"` : ''}${title ? html` title="${title}"` : ''}${aria ? html` aria-label="${aria}"` : ''}>${final ? finalSign() : ''}<span class="inbox-disc">${sk(drawing)}</span>${label ? html`<span${short ? raw(' class="inbox-short"') : ''}>${label}</span>` : ''}</button>`
 
