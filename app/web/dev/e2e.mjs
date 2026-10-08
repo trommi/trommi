@@ -78,6 +78,8 @@ try {
   await A.js("document.querySelector('#kit-done').click()")
   await A.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'account live')
   check(await A.js("return document.title === 'Desk · Trommi' && !!document.querySelector('#inbox')"), 'empty Desk after creating the account')
+  // shared/core-worker.ts: the room runs in the core worker; the page holds a copy of its model (shared/remote.ts)
+  await A.until("trommi.client.worker instanceof Worker && trommi.client.model.room.connection === 'live'", 'the room live in the core worker').then(() => check(true, 'the core runs in a worker, the room is live'), () => check(false, 'the core runs in a worker, the room is live'))
   await A.js("trommi.router.visit('/settings/account')")
   await A.until(`document.getElementById('account-email')?.textContent === '${EMAIL.toLowerCase()}'`, 'account in Settings').then(() => check(true, 'Settings shows the account email'), e => check(false, e.message))
   check(await A.js("return document.querySelector('#account').textContent.includes('Make a new kit')"), 'Settings: kit made')

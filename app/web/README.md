@@ -1,6 +1,6 @@
 # Trommi app
 
-The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`) only in sealed envelopes. No framework: plain ES modules and CSS, one file per view; deployed as one minified bundle that loads each view when it is first needed. Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`; its build step `dev/build.mjs` makes what is generated).
+The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally (the core in a Web Worker, the page with a copy of its model: `shared/README.md` "The core in a worker"), and talks to the hub (`https://hub.trommi.com`) only in sealed envelopes. No framework: plain ES modules and CSS, one file per view; deployed as one minified bundle that loads each view when it is first needed. Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`; its build step `dev/build.mjs` makes what is generated).
 
 ## Running it
 
@@ -67,11 +67,12 @@ and an inline script whose hash is not in `_headers`.
 
 `dev/build.mjs` runs in Cloudflare's build (`WORKERS_CI=1`) and makes `public/gen/app/` (esbuild, minified and split:
 the entry `app-<hash>.mjs` with app, ui, desk, sidebar and notes, one chunk per lazy view, the core from the
-repository's `shared/` as chunks of its own, the demo; every name carries its content's hash, `_headers` keeps them
-immutable), `public/gen/vendor/tools-reference.mjs` (the connector's tools and events for the help page), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
+repository's `shared/` as chunks of its own, the demo, and `core-worker-<hash>.mjs`, the core's worker in one file
+(the app learns its address from `__TROMMI_CORE_WORKER__`; the dev server starts `/gen/vendor/core-worker.mjs`); every
+name carries its content's hash, `_headers` keeps them immutable), `public/gen/vendor/tools-reference.mjs` (the connector's tools and events for the help page), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
 order: `app.css` first), `public/gen/build.txt` (the commit; the Web app deploy workflow waits until app.trommi.com
-serves it), the script and the modulepreload list of `index.html` (the entry with `?v=<build>`, the core and the chunks a
-cold start imports), `VERSION` + `SHELL` of `sw.js`, and the connector's files `public/gen/connector.mjs`,
+serves it), the script and the modulepreload list of `index.html` (the entry with `?v=<build>`, the page's side of the
+core worker and the chunks a cold start imports), `VERSION` + `SHELL` of `sw.js`, and the connector's files `public/gen/connector.mjs`,
 `connector.mjs.sha256` and `plugins/` (`connector/build.mjs`). The bundle and the connector need the repository's npm
 packages (esbuild, the MCP SDK, zod): in Cloudflare's build `dev/build.mjs` runs `npm ci` at the repository root first.
 In the repository `index.html` and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`).
@@ -170,8 +171,8 @@ The core owns the schema (trommi-hub `shared/README.md`, "Storage adapter"): dat
 - **Patch only**: after a change, only elements whose markup changed are replaced; Desk rows are cached per card object (a card the change did not name keeps its row string), the sidebar per row, the body per part (a navigation keeps the topbar and sidebar if their markup is the same).
 - **Windowed**: conversations are timelines loaded newest page first (50), older pages on "Earlier"; a session page loads its cards' threads lazily; Desk rows and log messages out of sight are skipped by layout and paint (`content-visibility: auto`).
 - **Lazy decrypt**: attachments are rendered as `/att/<id>` with `loading="lazy"`; the service worker asks the page, which fetches and decrypts only that file, only when it is shown or opened.
-- **No framework, one stylesheet, a small first load**: one minified bundle; a cold start fetches the entry, the core and
-  their shared chunks (preloaded at once), every other view comes when it is first needed or once the page is idle;
+- **No framework, one stylesheet, a small first load**: one minified bundle; a cold start fetches the entry, the page's
+  side of the core worker and their shared chunks (preloaded at once) and the core worker, every other view comes when it is first needed or once the page is idle;
   one stylesheet bundle.
 - **CSP**: `script-src 'self' 'wasm-unsafe-eval'` (WebAssembly for Argon2id only) plus the hashes of the two inline scripts (the theme before first paint, the help page), fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub.
 
