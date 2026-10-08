@@ -80,21 +80,29 @@ extension BoardModel {
 struct DemoTag: View {
   @EnvironmentObject var model: BoardModel
   var body: some View {
-    HStack(spacing: 5) {
-      Text("Demo ·")
-      Button("All Screens") { model.demoScreens = true }.underline()
-      Text("·")
-      Button("Leave") { model.leaveDemo() }.underline()
+    // "Demo · Leave" as one clear yellow pill (his word, 8 October); All Screens beside it, quieter
+    HStack(spacing: 8) {
+      Button { model.leaveDemo() } label: {
+        HStack(spacing: 6) {
+          Text("Demo").font(Face.text(15, .bold))
+          Text("·").font(Face.text(15, .bold))
+          Text("Leave").font(Face.text(15, .bold)).underline()
+          Image(systemName: "xmark").font(.system(size: 11, weight: .bold))
+        }
+        .foregroundStyle(Color(hex: 0x2d2406))
+        .padding(.horizontal, 16).frame(minHeight: 36)
+        .background(Capsule().fill(Ink.yellow))
+        .overlay(Capsule().strokeBorder(Color(hex: 0x2d2406), lineWidth: 1.6))
+      }
+      .accessibilityLabel("Leave Demo")
+      Button("All Screens") { model.demoScreens = true }
+        .font(Face.text(14, .semibold)).foregroundStyle(Ink.fg)
+        .padding(.horizontal, 12).frame(minHeight: 36)
+        .glass(Capsule(), interactive: true)
     }
     .buttonStyle(.plain)
-    .font(Face.text(13, .bold)).foregroundStyle(Color(hex: 0x2d2406))
-    .padding(.horizontal, 12).padding(.vertical, 6)
-    .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Ink.yellow))
-    .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Color(hex: 0x2d2406), lineWidth: 1.6))
-    .rotationEffect(.degrees(-1))
-    .padding(.leading, 16).padding(.bottom, 70)
-    .accessibilityElement(children: .contain)
-    .accessibilityLabel("Demo")
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 4)
   }
 }
 

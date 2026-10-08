@@ -689,7 +689,8 @@ struct RootView: View {
       }
     }
     .background(Ink.bg)
-    .overlay(alignment: .bottomLeading) { if model.demo && model.phase == .board { DemoTag() } }
+    // the demo's tag at the top of every screen, below the island: content starts under it, nothing covers it
+    .safeAreaInset(edge: .top, spacing: 0) { if model.demo && model.phase == .board { DemoTag() } }
     .sheet(isPresented: $model.demoScreens) { AllScreensSheet() }
   }
   private var title: String {
