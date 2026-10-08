@@ -655,6 +655,24 @@ function quietDesk(f) {
   return f
 }
 
+// ?mock=foot: nothing open on the Desk ("Carry on."), but full piles at its foot: every question answered, and many
+// pages the agents published (the phone's foot with three full piles and the empty Desk under them).
+function fullFoot(f) {
+  for (const c of f.cards) if (c.closed_how !== 'shredded' && (c.object_state !== 'closed' || c.closed_how === 'closed')) {
+    const v = c.versions?.at(-1)
+    c.answer ??= { answer_action: 'answer', choices: [v?.content?.options?.[0]?.key ?? 'a'], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: c.version_hash, bound_object_version: c.object_version ?? 1, envelope_number: c.first_envelope_number, answered_at: Date.now() }
+    c.answers = [c.answer]; c.object_state = 'closed'; c.closed_how = 'settled'; c.in_revision = null
+  }
+  f.permissions = []
+  const pages = f.published.filter(p => p.attachments?.[0]?.media_type === 'text/html')
+  const names = ['desklook-tabs', 'desklook-table', 'desklook-rows', 'cardscribble-trace', 'toast-slot', 'pages-pile', 'phone-foot', 'done-rows', 'tracing-sheet', 'all-desks']
+  for (let i = 0; i < 60 && pages.length; i++) {
+    const p = pages[i % pages.length], name = `${names[i % names.length]}-${Math.floor(i / names.length) + 1}`
+    f.published.push({ ...structuredClone(p), object_id: hex(32), title: `${name}.html`, attachments: [{ ...p.attachments[0], attachment_id: hex(32), file_name: `${name}.html` }], envelope_number: (p.envelope_number ?? 1) + i + 1 })
+  }
+  return f
+}
+
 let fixtureCache
 async function loadFixture(kind) {
   if (kind === 'crazy') return crazyFixture()
@@ -662,6 +680,7 @@ async function loadFixture(kind) {
   if (kind === 'quiet') return quietDesk(structuredClone(fixtureCache))
   const f = (overloaded(filler(putAway(structuredClone(fixtureCache)))))
   if (kind === 'many') return manyHelpers(crowded(f))
+  if (kind === 'foot') return fullFoot(f)
   return kind === 'side' ? crowded(f) : kind === 'link' ? linkDemo(f) : f
 }
 
@@ -688,7 +707,7 @@ function linkDemo(f) {
     const c = f.cards.find(c => c.title === title); if (!c) return
     if (!c.answer) {
       const v = c.versions[0]
-      c.answer = { answer_action: 'answer', choices: [c.options?.[0]?.key ?? 'ja'], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: v.version_hash, bound_object_version: 1, envelope_number: c.first_envelope_number + 1, envelope_hash: hex(64), by_device_id: f.room.my_device_id, answered_at: now - ago * MIN, taken_back_at: null }
+      c.answer ??= { answer_action: 'answer', choices: [c.options?.[0]?.key ?? 'ja'], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: v.version_hash, bound_object_version: 1, envelope_number: c.first_envelope_number + 1, envelope_hash: hex(64), by_device_id: f.room.my_device_id, answered_at: now - ago * MIN, taken_back_at: null }
       c.answers = [c.answer]; c.object_state = 'answered'; c.closed_how = 'answered'
     }
     c.answer.answered_at = now - ago * MIN
