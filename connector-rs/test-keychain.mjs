@@ -10,7 +10,8 @@ import { execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const BIN = process.env.TROMMI_CONNECTOR_CMD || path.join(REPO, 'connector-rs/target/release/trommi-connector')
+// (set for test-e2e.mjs too: it would run cargo, and there is none under this HOME)
+const BIN = process.env.TROMMI_CONNECTOR_CMD ||= path.join(REPO, 'connector-rs/target/release/trommi-connector')
 if (!process.env.OUTER_DBUS || process.env.OUTER_DBUS === process.env.DBUS_SESSION_BUS_ADDRESS) { console.error('not in a D-Bus session of its own: run test-keychain.sh'); process.exit(2) }
 const { startHub, startConnector, confirmAgents } = await import(path.join(REPO, 'connector/test-e2e.mjs'))
 const core = await import(path.join(REPO, 'shared/index.ts'))
