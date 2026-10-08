@@ -1205,6 +1205,13 @@ html body #desk-stacks:has(> .df-cards) { display: block !important; width: auto
 body > main#inbox { contain: strict; }
 .desk-layer { display: contents; }
 #inbox.is-choosing .inbox-row .row-mark { opacity: 1 !important; }
+/* the select control at a row's left is a ring only (his word, 8 October: the drawing showed twice, the stamp before
+   the title and here): it shows the session's drawing no more, the ring comes with the pointer; its tip is the app's */
+#inbox .inbox-groups .inbox-row button.row-mark > :is(svg:first-child, .crown-mark) { display: none; }
+@media (any-hover: hover) { #inbox .inbox-groups .inbox-row:is(:hover, :focus-within) button.row-mark > .row-check { display: grid; } }
+.inbox-groups .inbox-row button.row-mark[data-tip]::after { content: attr(data-tip); position: absolute; z-index: 5; left: 50%; top: calc(100% + 4px); translate: -50% 0; width: max-content; padding: 5px 9px; border-radius: var(--r-sm); background: var(--fg); color: var(--bg); font: 600 var(--t-xs)/1.2 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+@media (any-hover: hover) { .inbox-groups .inbox-row button.row-mark[data-tip]:hover::after { opacity: 1; transition-delay: .4s; } }
+.inbox-groups .inbox-row button.row-mark[data-tip]:focus-visible::after { opacity: 1; }
 
 /* ---- the session's small drawing before a Desk row's title, in its colour, like a stamp (his pick "mark", 8 October) ---- */
 .row-stamp { position: relative; display: inline-block; vertical-align: -.22em; width: 22px; height: 22px; margin-right: 7px; color: var(--tone-pen); }
