@@ -8,6 +8,10 @@
   Permissions-Policy: camera=(self), geolocation=(), microphone=(self)
 /sw.js
   Cache-Control: no-cache
+# Universal links of the iOS app (worker.js serves it at /.well-known/apple-app-site-association; Apple's CDN fetches it).
+/apple-app-site-association.json
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600
 /index.html
   Cache-Control: no-cache
 # The stylesheet bundle and the app's modules (dev/build.mjs): their names change with their content.

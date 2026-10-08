@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["NL9YA3V25N.com.trommi.ios", "NL9YA3V25N.XTL-70CB783D.com.trommi.ios"],
+        "components": [
+          { "/": "/card/*", "comment": "a card, by its Nr. or id" },
+          { "/": "/s/*", "comment": "a session, a card of it, its files" },
+          { "/": "/settings", "comment": "Settings" },
+          { "/": "/settings/*", "comment": "Settings: sessions, devices, account" }
+        ]
+      }
+    ]
+  }
+}
