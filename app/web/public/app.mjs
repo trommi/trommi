@@ -33,6 +33,8 @@ function view(name) {
 // The app's version, sent to the hub on every request as Trommi-Client: app/<version> (with Trommi-Protocol: 1, by
 // the core). Raise it with every release that changes what the app sends or understands.
 const APP_VERSION = '0.2.0'
+/** What stands where something of a newer Trommi version would be (codec UPDATE_MESSAGE, in the app's words). */
+export const NEEDS_NEWER = 'This needs a newer version of Trommi. Reload to update.'
 export const CLIENT = `app/${APP_VERSION}`
 
 // The client core (gen/vendor, copied from the repository's core/ by dev/build.mjs): every view gets crypto, keys and
@@ -532,8 +534,10 @@ export class BoardState {
       created: c.created_at ?? 0, decided: a?.answered_at ?? (status === 'done' ? c.updated_at : null), recommended: c.recommended ?? null,
       version_hash: c.version_hash, content_state: c.content_state,
     }
-    if (c.sections) card.sections = c.sections
-    if (c.html) card.html = c.html
+    // A card of a newer Trommi (card type or schema): its title where readable, the update line, nothing to answer.
+    if (c.unsupported) Object.assign(card, { kind: 'info', unsupported: true, title: card.title || 'A card from a newer Trommi', body: c.unsupported === 'card_type' && card.body ? card.body : '', teaser: NEEDS_NEWER, options: [] })
+    else if (c.sections) card.sections = c.sections
+    if (c.html && !c.unsupported) card.html = c.html
     if (versions.length) { card.versions = versions; card.revised = current?.sent_at ?? c.updated_at; card.revisions = versions.length; card.revision_note = c.change_note ?? '' }
     if (a) {
       card.answered_version = a.bound_object_version
@@ -660,14 +664,17 @@ export class BoardState {
     const me = this.model.room.my_device_id
     for (const i of t.items.values()) {
       const kind = i.content_type ?? 'message'
-      if (kind !== 'message' && kind !== 'selection_sent') continue
+      // Written by a newer Trommi (a content type or schema this version does not know): a placeholder in its place.
+      const newer = i.item_state === 'unsupported' || i.item_state === 'newer_schema'
+      if (kind !== 'message' && kind !== 'selection_sent' && !newer) continue
       const human = i.sender_device_id === me || this.humans.has(i.sender_device_id)
       const c = i.content ?? {}
       const msg = {
         id: i.envelope_number != null ? `e${i.envelope_number}` : i.local_id, seq: i.envelope_number ?? Number.MAX_SAFE_INTEGER, agent, from: human ? 'user' : 'agent',
-        text: i.item_state === 'loaded' || !i.item_state ? (c.text ?? '') : i.item_state === 'pruned' ? '(removed after 30 days)' : i.item_state === 'newer_schema' ? '(needs a newer app)' : '',
+        text: newer ? NEEDS_NEWER : i.item_state === 'loaded' || !i.item_state ? (c.text ?? '') : i.item_state === 'pruned' ? '(removed after 30 days)' : '',
         attachments: this.atts(c.attachments), ts: i.sent_at ?? 0,
       }
+      if (newer) { msg.attachments = []; msg.unsupported = true; out.push(msg); continue }
       // A selection of the Scribble Board sent to the session: shown as a scribble card.
       if (kind === 'selection_sent') msg.attachments = msg.attachments.map(x => ({ ...x, kind: 'scribble' }))
       if (cardId) msg.card_id = cardId
@@ -1543,6 +1550,16 @@ async function start(client, { fresh = false } = {}) {
   attachTo(client)
   // The hub says this app is too old (426, or upgrade_required on the stream): a calm notice, reload takes the new build.
   client.on('error', err => { if (err?.code === 'client-too-old') notice('Please reload: this app needs a newer version.', err.message, true) })
+  // README "Versioning and compatibility": something on the board was written by a newer Trommi (model.newer): it shows
+  // as a placeholder in its place, and once per page a calm line offers the reload that brings the new build. A newer
+  // version the hub recommends (GET /v1/version) is offered the same way, quieter (the app keeps working).
+  let newerSaid = false
+  const newerNotice = () => {
+    if (newerSaid || !client.model?.newer?.count) return
+    newerSaid = true
+    notice('Some things here need a newer version of Trommi.', `${client.model.newer.what.join(', ')}: reload to update`, true, 'newer')
+  }
+  recommendNewer(client).catch(() => {})
   const board = new BoardState(client)
   board.update()
   let desk = read('trommi-desk')
@@ -1644,6 +1661,7 @@ async function start(client, { fresh = false } = {}) {
   document.addEventListener('turbo:load', () => askCodes(client.model.invites.keys()), { once: true })
   client.on('change', change => {
     askCodes(change.invites)
+    if (change.room) newerNotice()
     if (!pending) pending = merge({ cards: new Set(), sessions: new Set(), permissions: new Set(), notes: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), invites: new Set() }, change)
     else merge(pending, change)
     if (catchingUp()) { if (!wasCatchingUp) { wasCatchingUp = true; conn() } catchUpTimer ||= setTimeout(renderWhole, CATCH_UP_MS); return }
@@ -1651,6 +1669,7 @@ async function start(client, { fresh = false } = {}) {
     frame ||= requestAnimationFrame(() => apply())
   })
   document.addEventListener('turbo:load', conn)
+  document.addEventListener('turbo:load', newerNotice, { once: true })
   // The timeline of the page in view is fetched when it is opened (newest page first; "Earlier" loads more).
   // The card page's thread is fetched when it is opened (newest page first; "Earlier comments" loads more). A session's
   // page loads its own (session.mjs, before its first render). The Desk's Working stack says each card's last
@@ -1726,6 +1745,22 @@ async function adopt(c) {
 function keepStorage() { try { navigator.storage?.persist?.().catch(() => {}) } catch {} }
 
 /** A calm full-width line at the foot (styled by auth.css), with "Reload". update: fetch the new build first. */
+/** Semver "a > b" for x.y.z strings (suffixes ignored). */
+export function versionNewer(a, b) {
+  const p = v => String(v ?? '').split(/[-+]/)[0].split('.').map(n => Number(n) || 0)
+  const x = p(a), y = p(b)
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0)
+  return false
+}
+/** The hub recommends a newer app (GET /v1/version recommended_client_versions.app): a quiet "Reload" line, once. */
+async function recommendNewer(client) {
+  const hub = client.model?.room?.hub_url
+  if (!hub || mock) return
+  const r = await fetch(new URL('/v1/version', hub), { headers: { accept: 'application/json' } })
+  const rec = r.ok ? (await r.json())?.recommended_client_versions?.app : null
+  if (rec && versionNewer(rec, APP_VERSION)) notice('A newer version of Trommi is ready.', `recommended: ${rec}, this is ${APP_VERSION}`, true, 'recommended')
+}
+
 function notice(text, detail, update, why = '') {
   if (document.querySelector('.room-notice')) return
   const box = document.createElement('div')
