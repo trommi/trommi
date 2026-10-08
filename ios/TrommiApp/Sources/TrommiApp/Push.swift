@@ -9,6 +9,9 @@ import TrommiClient
 import TrommiCore
 import UIKit
 import UserNotifications
+import os
+
+private let log = Logger(subsystem: "com.trommi.ios", category: "push")
 
 final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
   /** The board to refresh (set by the App struct). */
@@ -34,11 +37,12 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
   func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
     let t = deviceToken.map { String(format: "%02x", $0) }.joined()
     token = t
+    log.notice("trommi push: APNs token received")
     Task.detached { await Push.register(token: t) }
   }
 
   func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-    NSLog("trommi push: no APNs token: \(error.localizedDescription)")
+    log.error("trommi push: no APNs token: \(error.localizedDescription, privacy: .public)")
   }
 
   // In the foreground: show it as a banner too, and refresh at once.
@@ -53,7 +57,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
   }
 
   @MainActor private func refresh(_ info: [AnyHashable: Any]) async {
-    if let e = info["e"] as? String, let m = Push.open(e) { NSLog("trommi push: \(m["kind"] as? String ?? "card") in room \((m["room_id"] as? String ?? "").prefix(8))") }
+    if let e = info["e"] as? String, let m = Push.open(e) { log.notice("trommi push: \(m["kind"] as? String ?? "card", privacy: .public) in room \(String((m["room_id"] as? String ?? "").prefix(8)), privacy: .public)") }
     await model?.refresh()
   }
 }
@@ -88,7 +92,7 @@ enum Push {
   }
 
   /** Hand the token to the hub of every room on this phone, once per room and token. */
-  static func register(token: String) async {
+  @MainActor static func register(token: String) async {
     let keyText = key().withUnsafeBytes { Data($0) }.base64EncodedString()
       .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     let env = environment, topic = Bundle.main.bundleIdentifier ?? "com.trommi.ios"
@@ -100,7 +104,7 @@ enum Push {
         let room = try Room.open(base: base, roomId: id)
         try await room.hub.registerApns(token: token, environment: env, topic: topic, key: keyText)
         UserDefaults.standard.set(true, forKey: mark)
-      } catch { NSLog("trommi push: registration for room \(id.prefix(8)) failed: \(error)") }
+      } catch { log.error("trommi push: registration for room \(String(id.prefix(8)), privacy: .public) failed: \(String(describing: error), privacy: .public)") }
     }
   }
 }
