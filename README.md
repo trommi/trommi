@@ -12,7 +12,8 @@ envelopes and can read none of them. Formerly "Trommi". License: O'Saasy (`LICEN
 | `shared/` | what app, connector and hub share: the client core (room model, sync, codec, transport, storage; `shared/README.md`) and `shared/crypto/`, the pure crypto (`zcrypto.mjs`, `argon2.mjs`, `session-grants.mjs`, `hub.mjs` = the hub's checks; bytes: `FORMAT.md`, design: `CRYPTO.md`) | imported by the hub and the connector; copied into the app by its build |
 | `app/web/` | the app, static, no framework (`app/web/README.md`); `dev/build.mjs` makes everything in `public/gen/` at deploy time (nothing generated is in git): the app and the core from `shared/` as one minified bundle in `app/` (esbuild, views loaded on demand), the stylesheets as one bundle, and, after `npm ci` at the repository root, the connector's single file, its checksum and the plugin (`connector/build.mjs`) | Cloudflare Workers Builds on every push to `main` (watch paths `app/web/*`, `shared/*`, `connector/*`, `package.json`, `package-lock.json`) |
 | `connector/` | the agent connector, six files: `connector.mjs` (start and everything long-running: MCP stdio server `trommi`, sign-in, stream, slot lock, hot reload, the plugin's hook commands, the monitor, `say`), `tools.mjs` (the tools' schemas and what each does in the room), `prompt.md` (every text the agent reads: the instructions and each tool's description), `build.mjs` (the single-file bundle, its checksum and the plugin zip), `test.mjs` (fast), `test-e2e.mjs` (against a real local hub) | runs on the agent's machine from this checkout, or as one file installed by `curl -fsSL https://app.trommi.com/connect \| sh -s '<link>'` |
-| `hub/` | the hub server (`server.mjs`, `store.mjs`, `accounts.mjs`, `ops/`, `Dockerfile`) | GitHub Action "Hub deploy" on every push to `main` touching `hub/**` or the hub's four `shared/` files |
+| `hub/` | the hub server (`server.mjs`, `store.mjs`, `accounts.mjs`, `ops/`, `Dockerfile`); `external.mjs` runs the hub suites against another hub binary (`HUB_CMD`) | GitHub Action "Hub deploy" on every push to `main` touching `hub/**` or the hub's four `shared/` files |
+| `hub-rs/` | the same hub in Rust (Cargo workspace: `zcrypto`, `trommi-hub`; `Dockerfile`), checked by the hub suites, interop, connector e2e and fuzz against it; parity table and load comparison in `hub-rs/README.md` | not deployed: production runs `hub/` |
 | `dev/` | everything not shipped: `deploy/` (hub and web deploys from this machine, "Deploy without CI"), `fuzz/` (model-based fuzzing of hub and clients, `dev/fuzz/README.md`; the quick run blocks the hub deploy), `load/` (load generator and perf tools with real members), `cdp.mjs` (headless Chromium, also used by the app's dev tools) | |
 
 The old board (plaintext server `server/`, Turbo and SPA clients `client/web/`, the iOS and Linux clients, their tools
@@ -24,7 +25,7 @@ and docs) was removed on 4 October 2026; its history is in git and in
 
 Every tracked file per main folder (`git ls-files`; generated files are not in git). Regenerate with `node dev/readme-trees.mjs`.
 
-<details><summary><code>app/web/</code> · 82 files</summary>
+<details><summary><code>app/web/</code> · 85 files</summary>
 
 ```
 ├── dev/
@@ -35,7 +36,8 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── look.mjs
 │   ├── make-fixture.mjs
 │   ├── perf.mjs
-│   └── serve.mjs
+│   ├── serve.mjs
+│   └── verify.mjs
 ├── public/
 │   ├── demo/
 │   │   ├── files/
@@ -64,7 +66,8 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   │   │   ├── thema-dunkel.png
 │   │   │   └── thema-hell.png
 │   │   ├── demo.mjs
-│   │   └── fixture.json
+│   │   ├── fixture.json
+│   │   └── screens.css
 │   ├── fonts/
 │   │   ├── f0.woff2
 │   │   ├── f1.woff2
@@ -112,6 +115,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── whiteboard.css
 │   └── whiteboard.mjs
 ├── .gitignore
+├── .node-version
 ├── README.md
 ├── worker.js
 └── wrangler.jsonc
@@ -132,7 +136,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>hub/</code> · 28 files</summary>
+<details><summary><code>hub/</code> · 29 files</summary>
 
 ```
 ├── ops/
@@ -158,6 +162,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── deploy-apns.sh
 ├── deploy-backup.sh
 ├── Dockerfile
+├── external.mjs
 ├── heap-test.mjs
 ├── mail.mjs
 ├── push.mjs
@@ -168,10 +173,63 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>shared/</code> · 36 files</summary>
+<details><summary><code>hub-rs/</code> · 39 files</summary>
+
+```
+├── crates/
+│   ├── hub/
+│   │   ├── src/
+│   │   │   ├── accounts.rs
+│   │   │   ├── admin_assets.rs
+│   │   │   ├── admin_view.rs
+│   │   │   ├── admin.rs
+│   │   │   ├── config.rs
+│   │   │   ├── control.rs
+│   │   │   ├── db.rs
+│   │   │   ├── error.rs
+│   │   │   ├── files.rs
+│   │   │   ├── http.rs
+│   │   │   ├── limits.rs
+│   │   │   ├── mail.rs
+│   │   │   ├── main.rs
+│   │   │   ├── metrics.rs
+│   │   │   ├── ops_tests.rs
+│   │   │   ├── ops.rs
+│   │   │   ├── push.rs
+│   │   │   ├── room.rs
+│   │   │   ├── server.rs
+│   │   │   ├── store.rs
+│   │   │   ├── stream.rs
+│   │   │   └── util.rs
+│   │   ├── Cargo.toml
+│   │   └── gen-admin-assets.mjs
+│   └── zcrypto/
+│       ├── src/
+│       │   ├── bytes.rs
+│       │   ├── envelope.rs
+│       │   ├── grants.rs
+│       │   ├── invite.rs
+│       │   ├── lib.rs
+│       │   ├── log.rs
+│       │   └── prim.rs
+│       ├── tests/
+│       │   └── vectors.rs
+│       └── Cargo.toml
+├── .gitignore
+├── Cargo.lock
+├── Cargo.toml
+├── contract.sh
+├── Dockerfile
+└── README.md
+```
+
+</details>
+
+<details><summary><code>shared/</code> · 49 files</summary>
 
 ```
 ├── crypto/
+│   ├── argon2.d.mts
 │   ├── argon2.mjs
 │   ├── crypto-test.mjs
 │   ├── CRYPTO.md
@@ -180,39 +238,51 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── hub-crypto-test.mjs
 │   ├── hub.mjs
 │   ├── session-grants-test.mjs
+│   ├── session-grants.d.mts
 │   ├── session-grants.mjs
 │   ├── vectors.json
+│   ├── zcrypto.d.mts
 │   └── zcrypto.mjs
-├── account.mjs
-├── agent.mjs
+├── account-remote.ts
+├── account.ts
+├── agent.ts
 ├── browser-test.mjs
-├── check-emoji.mjs
-├── client.mjs
-├── codec.mjs
-├── index.mjs
-├── ink.mjs
-├── model.mjs
-├── palette.mjs
+├── check-emoji.ts
+├── client.ts
+├── codec.ts
+├── core-start.ts
+├── core-worker.ts
+├── index.ts
+├── ink.ts
+├── mirror-test.mjs
+├── mirror.ts
+├── model-shape.ts
+├── model.ts
+├── palette.ts
+├── passwords.ts
 ├── README.md
-├── room.mjs
+├── remote.ts
+├── room.ts
 ├── scribble-test.mjs
-├── scribble.mjs
-├── snapshot.mjs
-├── storage-file.mjs
-├── storage-idb.mjs
-├── storage-memory.mjs
+├── scribble.ts
+├── snapshot.ts
+├── storage-file.ts
+├── storage-idb.ts
+├── storage-memory.ts
 ├── tabs-test.mjs
-├── tabs.mjs
+├── tabs.ts
 ├── test-crash-child.mjs
 ├── test-hub.mjs
 ├── test.mjs
-├── transport.mjs
-└── wordlist.mjs
+├── transport.ts
+├── types.ts
+├── wordlist.ts
+└── worker-protocol.ts
 ```
 
 </details>
 
-<details><summary><code>dev/</code> · 53 files</summary>
+<details><summary><code>dev/</code> · 56 files</summary>
 
 ```
 ├── deploy/
@@ -250,6 +320,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   │   └── strokes.json
 │   ├── .gitignore
 │   ├── driver-js.mjs
+│   ├── hub-diff.mjs
 │   ├── parity-baseline.json
 │   ├── parity.mjs
 │   ├── protocol.mjs
@@ -265,6 +336,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── crazy.mjs
 │   ├── hub-local.mjs
 │   ├── huge-room.mjs
+│   ├── ingest-bench.mjs
 │   ├── lib.mjs
 │   ├── load.mjs
 │   ├── perf-budget.mjs
@@ -276,7 +348,8 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── ios-extra-vectors.mjs
 ├── ios-pen.mjs
 ├── ios-reference-shots.mjs
-└── readme-trees.mjs
+├── readme-trees.mjs
+└── ts.mjs
 ```
 
 </details>
@@ -314,6 +387,10 @@ npm run fuzz    # node dev/fuzz/run.mjs --quick
 
 Each suite starts its own hubs on free ports with throwaway data directories. A local hub for the app:
 `HUB_PORT=8890 HUB_DATA=/tmp/trommi-dev node hub/server.mjs`.
+
+The same suites against the Rust hub (`hub-rs/`): `HUB_CMD=hub-rs/target/release/trommi-hub node hub/test.mjs` (also
+`hub/ops/test.mjs`, `hub/accounts-test.mjs`, `hub/admin-test.mjs`, `connector/test-e2e.mjs`, `dev/fuzz/run.mjs`),
+`node dev/interop/run.mjs --hub-cmd …`, or all of it with `hub-rs/contract.sh` (`hub-rs/README.md`).
 
 ### Interop: web and iPhone against each other (`dev/interop/`)
 
