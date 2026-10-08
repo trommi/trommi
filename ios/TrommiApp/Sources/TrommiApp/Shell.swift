@@ -42,9 +42,13 @@ struct BoardShell: View {
             DispatchQueue.main.async { model.tab = back; noteOpen = true }
           } else { noteOpen = false; if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) } }
         })) {
-          Tab(value: BoardModel.Tab.chat) { chats.modifier(NotePanel(open: $noteOpen)) } label: { PenImage.of("sketch:bubble", size: 24).accessibilityLabel("Chat") }
+          Tab(value: BoardModel.Tab.chat) {
+            // the bar only on the list: a chat has its composer at the bottom (decided on the stack itself, where it
+            // is not overridden: a pushed page's own .hidden lost against the stack's, build 18)
+            chats.toolbar(model.chatPath.isEmpty ? .automatic : .hidden, for: .tabBar).modifier(NotePanel(open: $noteOpen))
+          } label: { PenImage.of("sketch:bubble", size: 24).accessibilityLabel("Chat") }
           Tab(value: BoardModel.Tab.desk) {
-            stack.toolbar(model.selected.isEmpty ? .automatic : .hidden, for: .tabBar).modifier(NotePanel(open: $noteOpen))
+            stack.toolbar(model.selected.isEmpty && model.deskPath.isEmpty ? .automatic : .hidden, for: .tabBar).modifier(NotePanel(open: $noteOpen))
           } label: { PenImage.of("sketch:desk", size: 24).accessibilityLabel("Desk") }
           .badge(model.view?.fresh.count ?? 0)
           Tab(value: BoardModel.Tab.note) {
