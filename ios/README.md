@@ -131,6 +131,33 @@ Connect and hands it to the internal TestFlight group **Intern**; the deployment
   `com.trommi.ios`, SKU `trommi-ios`); the export compliance answer (the app encrypts end to end with AES-256-GCM,
   X25519 and Ed25519 through CryptoKit; whether that is exempt is a legal answer, not a build setting).
 
+## TestFlight without CI
+
+`TrommiApp/AppStore/ship-local.sh [REF]` makes the same TestFlight build on this Linux machine, without GitHub Actions
+(REF defaults to `origin/main`, fetched first; `--dry-run` stops at the signed, validated `.ipa`):
+
+```bash
+ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload, then App Store Connect's processing
+```
+
+- Built from a clean `git worktree` of REF in a temporary folder, never from the working tree; the script and `asc.py`
+  next to it run from the checkout you start it in.
+- Build number: the highest build App Store Connect has for the app, plus one (`asc.py next-build`); `BUILD_NUMBER`
+  overrides it. Version: `MARKETING_VERSION` in `AppStore/project.yml`.
+- Build: `xtool dev build --configuration release`, then the app icon from `AppStore/Assets.xcassets` (the SDK's Linux
+  `actool`), `ITSAppUsesNonExemptEncryption` (`ITS_NON_EXEMPT_ENCRYPTION`, default `NO`), and omarchy-apple-dev's
+  `tools/asc.py stamp` and `frameworks` (DT* keys, Xcode 27.1 `27A9275` from
+  `~/.cache/xtool/darwin-iPhoneOS27.1.xtoolsdk.version.plist`). App extensions are dropped.
+- Signing: an Apple Distribution certificate and an App Store profile (`omarchy-apple-dev com.trommi.ios …`), created
+  through the API with the Admin key on the first run; the distribution key stays in
+  `~/.appstoreconnect/private_keys/distribution/key.pem` (0600). Entitlements: the profile's plus
+  `AppStore/TrommiApp.entitlements` (`aps-environment: production`), each checked against the profile; `rcodesign`.
+- Offline validation (`asc.py validate`, 40 checks), upload with the Build Uploads API (`asc.py upload`), then this
+  folder's `asc.py wait`, `internal … Intern`, and `notes`: "Neu in Build N (sha):" and the subjects of the commits
+  under `ios/` since the commit the previous build's What to Test names (`asc.py last-sha`); `NOTES` overrides it.
+- Needs: xtool, `swift-bin` with the darwin SDK, `rcodesign`, `~/pymobile3-venv` (omarchy-apple-dev's installer), and the
+  Admin key `~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8` (`ASC_KEY_ID`, `ASC_ISSUER_ID` default to the team's).
+
 ## Push (APNs)
 
 `Sources/TrommiApp/Push.swift`: on the first start with a room the app asks for notifications, registers with Apple

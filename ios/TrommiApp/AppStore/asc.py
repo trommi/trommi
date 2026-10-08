@@ -8,10 +8,12 @@ JWT is signed with the openssl command line tool, so it runs on a stock macOS ru
                                     the internal TestFlight group GROUP exists (every build), holds BUILD_ID, and
                                     EMAIL (a user of the team) is one of its testers
   asc.py notes BUILD_ID TEXT        TestFlight "What to Test" of that build (every localization; de-DE if none)
+  asc.py next-build                 the highest build number App Store Connect has for the app, plus one
+  asc.py last-sha                   the commit of the newest build whose What to Test names one ("(abc1234)")
 
 Environment: ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH (the .p8 file). Nothing here prints key material or tokens.
 """
-import base64, json, os, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+import base64, json, os, re, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 
 API = "https://api.appstoreconnect.apple.com"
 
@@ -185,6 +187,33 @@ def notes(build_id, text):
         print(f"What to Test (de-DE): {text}")
 
 
+def builds(aid):
+    rows, path = [], f"/v1/builds?filter[app]={aid}&limit=200&fields[builds]=version,uploadedDate"
+    while path:
+        page = call("GET", path)
+        rows += page["data"]
+        nxt = page.get("links", {}).get("next")
+        path = nxt[len(API):] if nxt else None
+    return rows
+
+
+def next_build():
+    aid = app_id(os.environ["BUNDLE_ID"]) or die("no app record")
+    numbers = [int(b["attributes"]["version"]) for b in builds(aid) if b["attributes"]["version"].isdigit()]
+    print(max(numbers, default=0) + 1)
+
+
+def last_sha():
+    aid = app_id(os.environ["BUNDLE_ID"]) or die("no app record")
+    newest = sorted(builds(aid), key=lambda b: b["attributes"].get("uploadedDate") or "", reverse=True)
+    for b in newest[:20]:
+        for loc in call("GET", f"/v1/builds/{b['id']}/betaBuildLocalizations?limit=50")["data"]:
+            m = re.search(r"\(([0-9a-f]{7,40})\)", loc["attributes"].get("whatsNew") or "")
+            if m:
+                print(m.group(1))
+                return
+
+
 def gh_out(name, value):
     print(f"{name}: {value}")
     if os.environ.get("GITHUB_OUTPUT"):
@@ -193,7 +222,8 @@ def gh_out(name, value):
 
 
 if __name__ == "__main__":
-    cmds = {"prepare": prepare, "wait": wait, "internal": internal, "notes": notes}
+    cmds = {"prepare": prepare, "wait": wait, "internal": internal, "notes": notes, "next-build": next_build,
+            "last-sha": last_sha}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         sys.exit(__doc__)
     cmds[sys.argv[1]](*sys.argv[2:])
