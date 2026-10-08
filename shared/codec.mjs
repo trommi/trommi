@@ -35,6 +35,20 @@ export const FIELDS = Object.freeze({
 })
 export const CARD_CONTENT_FIELDS = FIELDS.card.slice(3)
 
+// ---- what this version knows (README "Versioning and compatibility") --------------------------------------------
+// Anything else a newer client may write: it is verified and kept, never applied as something it is not, and shown
+// as "needs a newer Trommi" (model.newer, item_state 'unsupported', card.unsupported).
+/** Timeline item content types. */
+export const CONTENT_TYPES = Object.freeze(Object.keys(FIELDS).filter(k => FIELDS[k][0] === 'content_type'))
+/** Object types (object_version bodies). */
+export const OBJECT_TYPES = Object.freeze(['card', 'note', 'published'])
+/** A card's card_type. */
+export const CARD_TYPES = Object.freeze(['decision', 'info'])
+/** An answer's answer_action. */
+export const ANSWER_ACTIONS = Object.freeze(['answer', 'read', 'shred'])
+/** What every client says (or shows) when it meets something only a newer version understands. */
+export const UPDATE_MESSAGE = 'This needs a newer version of Trommi. Update to see it.'
+
 /** A card's `teaser` (README "card"): the two short lines the Desk row shows under the title. Optional plain text:
  *  a string, already trimmed, not empty, no control characters (no line breaks), at most TEASER_MAX characters. */
 export const TEASER_MAX = 160

@@ -91,6 +91,7 @@ const agentMethods = {
     if (!head || head.content.object_type !== 'card') throw new ZError('not-found', `no own card ${object_id}`)
     const card = this.model.cards.get(object_id)
     if (card && M.holderOf(this.model, card) !== this.my_device_id) throw new ZError('forbidden', 'not this agent\'s card')
+    if (card && !M.cardSupported(card)) throw new ZError('needs-update', `card ${object_id} was made by a newer Trommi connector: ${codec.UPDATE_MESSAGE}`)
     return head
   },
   /** F1: an own card is open only if neither the last sent version nor the room (a human's answer, read, shred) closed it. */
@@ -221,7 +222,7 @@ const agentMethods = {
     if (![codec.KIND.timeline_item, codec.KIND.answer, codec.KIND.verdict, codec.KIND.decide_again].includes(rec.kind)) return null
     const base = { session_id: rec.session_id ?? null, envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, sender_sequence: rec.sender_sequence, sent_at: rec.sent_at, sender_device_id: rec.sender_device_id, object_id: rec.object?.object_id ?? null,
       timeline_key: rec.timeline_id ? M.timelineKey(rec.timeline_kind, rec.timeline_id) : null, rec }
-    if (rec.is_head && !rec.content) return { ...base, refused: 'undecryptable' }
+    if (rec.is_head && !rec.content) return rec.content_state === 'newer_schema' ? { ...base, refused: null, unsupported: 'a newer format' } : { ...base, refused: 'undecryptable' }
     const sk = rec.session_id ? this.sessionKeys.get(rec.session_id) : null
     if (rec.session_id && !sk?.state.agentIds.includes(this.my_device_id)) return { ...base, refused: 'not-assigned', message: 'a command in a session this agent does not hold' }
     const ctx = { state: this.state, agentId: this.device.id, now: Date.now(), ownSeq: this.chains.get(z.b64u(this.device.id))?.seq ?? 0,
@@ -297,7 +298,7 @@ const agentMethods = {
       // by envelope number (the room's head then; review 3: the signed sent_at alone let a future-dated old command count
       // as live) and by time.
       c.history = (this.historyBeforeNumber != null && c.envelope_number <= this.historyBeforeNumber) || (this.historyBefore != null && c.sent_at < this.historyBefore)
-      this.emit('command', commandOf(this.model, c))
+      this.emit('command', c.unsupported ? { ...commandOf(this.model, c), command: 'unsupported', what: c.unsupported } : commandOf(this.model, c))
     }
     if (Object.keys(alerts).length) this.setRegisters(alerts).catch(e => this.emit('error', e))   // not awaited: we are inside the sync queue
     // F15: the hub takes an object's state from the signed header alone, so a refused answer (bad choice, stale version,
@@ -346,12 +347,16 @@ function commandOf(model, c) {
     case codec.KIND.timeline_item: {
       const ct = content.content_type
       const scope = rec.timeline_id?.startsWith('card/') ? rec.timeline_id.slice(5) : null
-      return { ...out, command: ct === 'selection_sent' ? 'selection_sent' : 'message', object_id: scope, card: scope ? model.cards.get(scope) ?? null : null }
+      const unsupported = rec.content_state === 'newer_schema' ? 'a newer message format' : M.contentTypeKnown(content) ? null : `content_type ${ct}`
+      return { ...out, command: ct === 'selection_sent' ? 'selection_sent' : 'message', object_id: scope, card: scope ? model.cards.get(scope) ?? null : null, ...(unsupported ? { unsupported } : {}) }
     }
     case codec.KIND.answer: {
       const a = content.answer_action
       // settled: the answer closed the card itself (every choice a final option); nothing is left for the agent to close.
       const settled = (a ?? 'answer') === 'answer' && codec.OBJECT_STATE_NAME[rec.object?.object_state] === 'closed'
+      // An answer action of a newer version: never taken for a plain answer; the connector says it needs an update.
+      if (typeof a === 'string' && !codec.ANSWER_ACTIONS.includes(a)) return { ...out, command: 'unsupported', what: `answer_action ${a}` }
+      if (rec.content_state === 'newer_schema') return { ...out, command: 'unsupported', what: 'a newer answer format' }
       return { ...out, command: a === 'read' ? 'read' : a === 'shred' ? 'shred' : content.trusted ? 'trust' : 'answer', choices: content.choices ?? [], settled }
     }
     case codec.KIND.decide_again: return { ...out, command: 'decide_again', previous_choices: c.previous_choices ?? [] }

@@ -240,6 +240,7 @@ export class Client {
       this.frontiers = new Map(Object.entries(sync.frontiers ?? {}).map(([k, v]) => [k, new Map(Object.entries(v))]))
       this.lamport = sync.lamport ?? 0
       if (sync.stale_hashes) this._staleHashes = new Set(sync.stale_hashes)
+      if (sync.newer?.count > 0) this.model.newer = { count: sync.newer.count, what: [...(sync.newer.what ?? [])], envelope_number: sync.newer.envelope_number ?? 0 }
       // A device that booted from a room snapshot reads items older than it by signature (lazy threads): keep that across restarts.
       if (sync.snapshot_cursor) { this.snapshotCursor = sync.snapshot_cursor; this._snapshotChains = new Map(Object.entries(sync.snapshot_chains ?? {})) }
     }
@@ -812,7 +813,10 @@ export class Client {
             this._scheduleCatchUp(e.code === 'log-behind' ? 5000 : 1500)
             break
           }
-          M.pushAlert(this.model, change, { code: e.code ?? 'internal', message: e.message, envelope_number: r.envelope_number })
+          // An envelope of a newer format version (its header cannot be read): this device is too old, the data is fine.
+          if (e.code === 'newer-version') M.noteNewer(this.model, change, 'envelope format', { envelope_number: r.envelope_number })
+          M.pushAlert(this.model, change, e.code === 'newer-version' ? { code: 'needs-update', message: `envelope ${r.envelope_number}: ${codec.UPDATE_MESSAGE}`, envelope_number: r.envelope_number }
+            : { code: e.code ?? 'internal', message: e.message, envelope_number: r.envelope_number })
           // L10: a gap would silence that sender on this device for good: replay the room once (at most every 10 minutes).
           // H1: with a backoff from 2 s doubling to 10 minutes (reset after a resync without gaps), so a hub that withheld
           // or reordered envelopes and turned honest again is caught up with soon, not after ten minutes.
@@ -952,7 +956,8 @@ export class Client {
         try {
           pre.opened = await z.openEnvelope(bytes, { ...opts, secrets: this.openKeys, self: this.device.id })
           pre.v = pre.opened
-          if (pre.opened.quarantined) { pre.opened = null; pre.content_state = 'undecryptable' }   // signature and chain good, body broken (R4)
+          // Signature and chain good, body broken (R4), or of a newer format version (this device is too old to read it).
+          if (pre.opened.quarantined) { pre.content_state = pre.opened.quarantined === 'newer-version' ? 'newer_schema' : 'undecryptable'; pre.opened = null }
         } catch (e) {
           if (e.code === 'no-key' && e.keyScope === 1 && !pre.retriedKeys) pre.needKeys = true
           if (!['no-key', 'decrypt-failed', 'kind-mismatch', 'bad-format', 'bad-version'].includes(e.code)) throw e
@@ -1207,6 +1212,7 @@ export class Client {
   _syncRecord() {
     return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered), history_before: this.historyBefore ?? null, history_before_number: this.historyBeforeNumber ?? null, lamport: this.lamport ?? 0,
       ...(this._staleHashes?.size ? { stale_hashes: [...this._staleHashes] } : {}),
+      ...(this.model.newer?.count ? { newer: this.model.newer } : {}),
       ...(this.snapshotCursor ? { snapshot_cursor: this.snapshotCursor, snapshot_chains: Object.fromEntries(this._snapshotChains ?? []) } : {}),
       frontiers: Object.fromEntries([...this.frontiers].map(([k, m]) => [k, Object.fromEntries(m)])) }
   }
@@ -1255,7 +1261,7 @@ export class Client {
         if (typeof content === 'function') { const built = await content(); content = built.content; object = built.object ?? object; bind = built.bind ?? bind; session_id = built.session_id ?? session_id }
         // R2: registers and notes carry a lamport one above every one this device has seen (compareWrites).
         if (kind === codec.KIND.status || (kind === codec.KIND.object_version && content?.object_type === 'note')) { this.lamport = (this.lamport ?? 0) + 1; content = { ...content, lamport: this.lamport } }
-        const payload = codec.encodePayload(kind, content)
+        const payload = (this.encodePayload ?? codec.encodePayload)(kind, content)   // (tests stand in for a newer client here)
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
         if (kind === codec.KIND.status && payload.length + (bind?.length ?? 0) + 16 > 4096) throw new ZError('too-large', 'a status body is at most 4 KiB')
         const blobs = codec.attachmentIdsOf(content).map(unhex)
@@ -1527,7 +1533,7 @@ export class Client {
     if (this._dirty.records.size) await this.flush()
     const prefix = `tl/${timeline_key}/`
     let recs = (await this.storage.range(prefix, { before: prefix + pad(before), limit, reverse: true })).map(([, v]) => v)
-    const missing = recs.filter(r => !r.c && r.cs !== 'pruned' && r.cs !== 'undecryptable')
+    const missing = recs.filter(r => !r.c && r.cs !== 'pruned' && r.cs !== 'undecryptable' && r.cs !== 'newer_schema')
     if (missing.length || recs.length < limit) {
       const { timeline_kind, timeline_id } = M.parseTimelineKey(timeline_key)
       const res = await this.hub.threads({ timeline_kind, timeline_id, before_envelope_number: before, limit })
@@ -1562,7 +1568,7 @@ export class Client {
           r = { ...r, c: d.content, cs: d.content_state }
           this.stats.decrypted++
         } catch (e) {
-          r = { ...r, cs: e.code === 'pruned' ? 'pruned' : 'undecryptable' }
+          r = { ...r, cs: e.code === 'pruned' ? 'pruned' : e.code === 'newer-version' ? 'newer_schema' : 'undecryptable' }
           if (e.code === 'hash-mismatch' || e.code === 'bad-signature') this._localAlert('timeline', e)
         }
         byN.set(envelope_number, r)
@@ -1651,6 +1657,8 @@ export class Client {
     this._needHuman()
     const card = this._card(object_id)
     if (card.object_state !== 'open') throw new ZError('card-closed', 'the card is not open')
+    // A card of a newer version (schema or card type): never answered by what this version guesses it means.
+    if (!M.cardSupported(card)) throw new ZError('needs-update', codec.UPDATE_MESSAGE)
     // fuzz F9 again: retention removed the card's content on this device (options unknown), e.g. a pruned card decided
     // again: an answer from here cannot be checked by this device itself; another device that holds the card answers it.
     if (card.content_state && card.content_state !== 'ok') throw new ZError('card-pruned', 'this device holds only the header of this card (retention); answer it on a device that shows it')
@@ -1720,6 +1728,7 @@ export class Client {
    */
   async saveNote({ object_id = null, ...fields }) {
     this._needHuman()
+    if (object_id && this.model.notes.get(object_id)?.unsupported) throw new ZError('needs-update', codec.UPDATE_MESSAGE)
     let id = object_id
     let echoKey = object_id
     const r = await this._send({
@@ -2233,7 +2242,7 @@ export class Client {
   async pushSubscribe(subscription, remove = false) { return this.hub.pushSubscription(subscription, remove) }
 }
 
-const NOTE_META = new Set(['lamport', 'object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash'])
+const NOTE_META = new Set(['lamport', 'object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash', 'unsupported'])
 function noteFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!NOTE_META.has(k)) out[k] = v; return out }
 
 const fields_session = f => f.session_id ?? null
@@ -2297,7 +2306,7 @@ function decodeOpened(o, header = o.header) {
 
 function itemFromStored(r) {
   return { envelope_number: r.n, local_id: null, pending: false, envelope_hash: r.h, sender_device_id: r.s, sender_sequence: r.q ?? null, recipient_device_id: r.r, sent_at: r.t,
-    item_state: r.c ? (r.cs === 'ok' ? 'loaded' : r.cs) : (r.cs === 'pruned' || r.cs === 'undecryptable' ? r.cs : 'header'), content_type: r.c?.content_type ?? null, content: r.c ?? null }
+    item_state: M.itemStateOf(r.c, r.cs), content_type: r.c?.content_type ?? null, content: r.c ?? null }
 }
 
 const HUMAN_KEY = /^(crown$|room_snapshot$|draft\/|snooze\/|duck\/|desk\/|session\/|canvas_snapshot\/)/
