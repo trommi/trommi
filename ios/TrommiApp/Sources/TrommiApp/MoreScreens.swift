@@ -1,5 +1,5 @@
-// MoreScreens.swift: Blitz (every open question, one after the other), Off your mind (the whole end list with its
-// search), Media and Pages (what the agents published and sent), a picture in full screen, the corner note (the yellow
+// MoreScreens.swift: Blitz (every open question, one after the other), Off your mind (one list: what is being worked
+// on, then what is done; its search), Artifacts (Media and Pages: what the agents published and sent), a picture in full screen, the corner note (the yellow
 // slip to the crowned session), the drawing a session wears.
 import SwiftUI
 import TrommiClient
@@ -55,10 +55,7 @@ struct OffScreen: View {
           Text("Off your ").font(Face.display(34, .heavy))
           Text("mind").font(Face.display(34, .heavy)).background(alignment: .bottom) { PenUnderline().stroke(Ink.accent, lineWidth: 2.2).frame(height: 8).offset(y: 6) }
         }.padding(.top, 10)
-        if let v = model.view {
-          WithAgents(view: v)
-          EndList(view: v, full: true, query: query)
-        }
+        if let v = model.view { OffList(view: v, full: true, query: query) }
       }
       .padding(.horizontal, 16).padding(.bottom, 40)
       .frame(maxWidth: 760).frame(maxWidth: .infinity)
@@ -69,37 +66,120 @@ struct OffScreen: View {
   }
 }
 
-// ---- Media and Pages ----------------------------------------------------------------------------------------
-
-struct MediaScreen: View {
+/**
+ * Off your mind as ONE list (his decision, 8 October): what the agents are still working on first (a small pulsing
+ * green dot, no gear), then what is done (Done rows to tick off, Later, answered, shredded). One line per row, the title
+ * only; a tap opens the card. On the Desk five rows, then Show More (this list in full, with its search).
+ */
+struct OffList: View {
   @EnvironmentObject var model: BoardModel
-  @Environment(\.horizontalSizeClass) private var hSize
+  let view: DeskModel.View
+  let full: Bool
+  var query = ""
+  struct Row: Identifiable { var card: DeskCard; var g: String; var id: String { card.id } }
+  var body: some View {
+    let d = model.desk!
+    let rows = OffList.rows(view, d)
+    let terms = query.lowercased().split(separator: " ").map(String.init)
+    let shown = terms.isEmpty ? rows : rows.filter { r in terms.allSatisfy { "\(r.card.title) \(d.byAgent[r.card.agent]?.name ?? "")".lowercased().contains($0) } }
+    if !shown.isEmpty || full {
+      VStack(alignment: .leading, spacing: 0) {
+        if !full { EndDivider(title: "Off your mind").padding(.bottom, 4) }
+        ForEach(full ? shown : Array(shown.prefix(5))) { r in row(r) }
+        if full && shown.isEmpty { Text(terms.isEmpty ? "Nothing yet." : "Nothing here has these words.").font(Face.text(15)).foregroundStyle(Ink.muted).padding(.vertical, 20) }
+        if !full && shown.count > 5 {
+          Button("Show More") { model.path.append(.off) }.font(Face.text(15, .semibold)).foregroundStyle(Ink.accent).frame(maxWidth: .infinity).padding(.vertical, 12)
+        }
+      }.padding(.top, 8)
+    }
+  }
+  /** Being worked on first (the newest move first), then the end list's order (EndList.endItems: Done rows, Later, the rest). */
+  static func rows(_ v: DeskModel.View, _ d: DeskModel) -> [Row] {
+    let working = d.tasks.filter { $0.state == "working" }
+    let decidedHere = d.cards.filter { c in c.status == "decided" && d.stackOf(c) == "works" && v.here.contains { $0.id == c.agent } }
+    let busy = (v.revising.filter { d.stackOf($0) == "works" } + decidedHere).map { c -> (DeskCard, UInt64) in
+      let line = working.first { $0.cardId == c.id } ?? working.filter { $0.agent == c.agent && $0.cardId == nil }.max { $0.updated < $1.updated }
+      return (c, line?.updated ?? (c.status == "open" ? c.withAgent : c.decided) ?? 0)
+    }.sorted { $0.1 > $1.1 }.map { Row(card: $0.0, g: "works") }
+    let seen = Set(busy.map { $0.id })
+    let rest = EndList(view: v, full: true).endItems(v, d).filter { !seen.contains($0.card.id) }.map { Row(card: $0.card, g: $0.g) }
+    return busy + rest
+  }
+  @ViewBuilder private func row(_ r: Row) -> some View {
+    let c = r.card
+    HStack(spacing: 12) {
+      Group {
+        if r.g == "works" { PulseDot() }
+        else if r.g == "open" { Button { model.archive(c.id) } label: { PenMark("desk:BOX", color: Ink.fg).frame(width: 22, height: 22) }.buttonStyle(.plain).accessibilityLabel("Tick it off: \(c.title)") }
+        else if r.g == "later" { Sketch("snooze", color: Ink.stampLater).frame(width: 20, height: 20) }
+        else { PenMark("desk:BOX_TICK", color: Ink.faint).frame(width: 22, height: 22) }
+      }.frame(width: 26)
+      Button { model.path.append(.card(c.id)) } label: {
+        Text(c.title.isEmpty ? "(no title)" : c.title).font(Face.text(16, .medium))
+          .foregroundStyle(r.g == "done" || r.g == "trash" ? Ink.muted : Ink.fg)
+          .strikethrough(r.g == "trash", color: Ink.faint)
+          .lineLimit(1).truncationMode(.tail)
+          .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(r.g == "works" ? "\(c.title), being worked on" : c.title)
+    }
+    .overlay(alignment: .bottom) { Rectangle().fill(Ink.line).frame(height: 1) }
+  }
+}
+
+/** The small green dot of something still being worked on: it breathes. */
+struct PulseDot: View {
+  @State private var on = false
+  var body: some View {
+    Circle().fill(Ink.stDone).frame(width: 8, height: 8)
+      .background(Circle().fill(Ink.stDone.opacity(0.35)).frame(width: 16, height: 16).scaleEffect(on ? 1 : 0.4).opacity(on ? 0 : 1))
+      .onAppear { withAnimation(.easeOut(duration: 1.4).repeatForever(autoreverses: false)) { on = true } }
+      .accessibilityHidden(true)
+  }
+}
+
+// ---- Artifacts ----------------------------------------------------------------------------------------------
+
+/** Artifacts (Media and Pages in one, his decision 8 October): what the agents published, and the pictures they sent in
+ *  their talk; a filter All · Media · Pages. Route .media opens it on All, .pages on Pages. */
+struct MediaScreen: View {
   let pages: Bool
-  /** The iPhone's Media page (the capsule's tab): the place pill at the top left. */
-  var root = false
+  var body: some View { ArtifactsScreen(start: pages ? .pages : .all) }
+}
+struct ArtifactsScreen: View {
+  enum Filter: String, CaseIterable, Identifiable { case all = "All", media = "Media", pages = "Pages"; var id: String { rawValue } }
+  @EnvironmentObject var model: BoardModel
+  @State private var filter: Filter
+  init(start: Filter = .all) { _filter = State(initialValue: start) }
   var body: some View {
     let _ = model.version
-    let pubs = (model.room?.board.published.values.filter { $0.objectState != "closed" } ?? []).sorted { $0.envelopeNumber > $1.envelopeNumber }
-    let items = pubs.filter { p in let k = kindOf(p.attachments.first ?? .null); return pages ? k == "html" || k == "file" : k == "image" || k == "video" || k == "audio" }
-    // pictures the agents sent in their talk (Media) as well
-    let sent: [JV] = pages ? [] : (model.desk?.agents ?? []).flatMap { a in (model.desk?.messagesOf(agent: a.id) ?? []).filter { $0.from == "agent" }.flatMap { $0.attachments.filter { kindOf($0) == "image" } } }
+    let pubs = (model.board?.published.values.filter { $0.objectState != "closed" } ?? []).sorted { $0.envelopeNumber > $1.envelopeNumber }
+    let isPage: (PublishedObject) -> Bool = { p in let k = kindOf(p.attachments.first ?? .null); return k == "html" || k == "file" }
+    let items = pubs.filter { filter == .all || (filter == .pages) == isPage($0) }
+    // the pictures the agents sent in their talk count as Media
+    let sent: [JV] = filter == .pages ? [] : (model.desk?.agents ?? []).flatMap { a in (model.desk?.messagesOf(agent: a.id) ?? []).filter { $0.from == "agent" }.flatMap { $0.attachments.filter { kindOf($0) == "image" } } }
     ScrollView {
       VStack(alignment: .leading, spacing: 14) {
-        Text(pages ? "Pages" : "Media").font(Face.display(34, .heavy)).padding(.top, 10)
-        if items.isEmpty && sent.isEmpty { Text(pages ? "No pages yet: what the agents publish shows here." : "No pictures yet.").font(Face.text(15)).foregroundStyle(Ink.muted) }
+        Text("Artifacts").font(Face.display(34, .heavy)).padding(.top, 10)
+        Picker("Show", selection: $filter) { ForEach(Filter.allCases) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented)
+        if items.isEmpty && sent.isEmpty {
+          Text(filter == .pages ? "No pages yet: what the agents publish shows here." : filter == .media ? "No pictures yet." : "Nothing yet: what the agents publish and send shows here.")
+            .font(Face.text(15)).foregroundStyle(Ink.muted)
+        }
         ForEach(items, id: \.objectId) { p in PublishedCard(published: p) }
         if !sent.isEmpty {
+          if filter == .all { Text("SENT IN THE TALK").font(Face.text(12, .semibold)).kerning(1.2).foregroundStyle(Ink.muted).padding(.top, 6) }
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 6)], spacing: 6) {
             ForEach(Array(sent.enumerated()), id: \.offset) { _, a in AttachmentImage(ref: a).frame(height: 104).clipShape(RoundedRectangle(cornerRadius: 8)) }
           }
         }
       }
-      .padding(.horizontal, 16).padding(.bottom, root ? 100 : 40)
+      .padding(.horizontal, 16).padding(.bottom, 40)
       .frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
     .background(Ink.bg)
     .navigationBarTitleDisplayMode(.inline)
-    .toolbar { if root && hSize != .regular { ToolbarItem(placement: .topBarLeading) { MenuPill() } } }
   }
 }
 

@@ -68,8 +68,8 @@ struct BoardShell: View {
           case .blitz: BlitzScreen()
           case .off: OffScreen()
           case .settings(let tab): SettingsScreen(tab: tab)
-          case .media: MediaScreen(pages: false, root: false)
-          case .pages: MediaScreen(pages: true, root: false)
+          case .media: MediaScreen(pages: false)
+          case .pages: MediaScreen(pages: true)
           case .picture(let id, let at): PictureScreen(cardId: id, start: at)
           case .scribble: ScribbleScreen()
           }
@@ -366,10 +366,9 @@ struct Sidebar: View {
   private var trommiMenu: some View {
     Menu {
       Button { go(.settings("agents")) } label: { Label("Settings", systemImage: "key") }
-      Button { go(.off) } label: { Label("Off Your Mind", systemImage: "checklist") }
       Button { go(.scribble) } label: { Label("Scribble", systemImage: "scribble.variable") }
-      Button { go(.media) } label: { Label("Media", systemImage: "photo.on.rectangle") }
-      Button { go(.pages) } label: { Label("Pages", systemImage: "doc.richtext") }
+      Button { go(.media) } label: { Label("Artifacts", systemImage: "photo.on.rectangle") }
+      Button { if model.demo { model.demoScreens = true } else { model.startDemo() } } label: { Label(model.demo ? "Demo: All Screens" : "Demo", systemImage: "play.rectangle") }
       Picker("Theme", selection: $model.theme) { ForEach(ThemeMode.allCases) { Text($0.word).tag($0) } }
       Button { go(.settings("account")) } label: { Label("Log Out…", systemImage: "rectangle.portrait.and.arrow.right") }
     } label: {

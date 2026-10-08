@@ -1,0 +1,787 @@
+{
+  "about": "Every state of the web demo (/screens, app/web/public/demo/demo.mjs SCREENS), the contract for the iOS app's demo states. Generated: node dev/interop/screens.mjs --fixture.",
+  "demo_data": {
+    "file": "app/web/public/demo/fixture.json",
+    "what": "the JS model of the demo room (shared/README.md \"The model\"): room, members, sessions, cards, permissions, notes, published, timelines, human registers; made by app/web/dev/make-fixture.mjs",
+    "time": "every timestamp is relative to made_at: shift each by (now - made_at) when loading, as demo.mjs does",
+    "mocks": "web.mock names the demo room: \"1\" the fixture as it is; \"foot\", \"quiet\", \"side\", \"many\", \"link\" are variants demo.mjs builds from it (loadFixture); the app builds the same or shows the fixture with a note",
+    "files": "app/web/public/demo/files/ holds the pictures and videos the fixture's attachments name (attachment_id -> file)"
+  },
+  "hook": {
+    "launch": "TROMMI_SCREEN=<id> (process environment, set by `pymobiledevice3 developer dvt launch <bundle> --env TROMMI_SCREEN=<id> --env TROMMI_THEME=dark`): no room, no network; the demo data loaded, the screen and state opened, nothing stored",
+    "theme": "TROMMI_THEME=light | dark overrides the system appearance",
+    "url": "trommi://screens/<id> opens the same from a link (optional)",
+    "states": "web.state is the click demo.mjs makes once the page is ready (demoState: select, duck, toast, bottom, menu, rail, switch, drawer, keys, note, inside, strip, with-agent, more, session-more, pair, invite, invite-emoji, invite-ended, share, board-help); the app shows the same moment (a sheet open, a menu open, scrolled)",
+    "size": "phone: 393x852 points, light and dark"
+  },
+  "states": [
+    {
+      "id": "desk",
+      "screen": "Desk",
+      "state": "As it is",
+      "web": {
+        "path": "/",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk"
+        },
+        "url": "trommi://screens/desk"
+      }
+    },
+    {
+      "id": "desk--with-the-selection-bar",
+      "screen": "Desk",
+      "state": "With the selection bar",
+      "web": {
+        "path": "/",
+        "state": "select",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--with-the-selection-bar"
+        },
+        "url": "trommi://screens/desk--with-the-selection-bar"
+      }
+    },
+    {
+      "id": "desk--duck-for-all-the-confirm",
+      "screen": "Desk",
+      "state": "Duck for all: the confirm",
+      "web": {
+        "path": "/",
+        "state": "duck",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--duck-for-all-the-confirm"
+        },
+        "url": "trommi://screens/desk--duck-for-all-the-confirm"
+      }
+    },
+    {
+      "id": "desk--a-toast-with-undo",
+      "screen": "Desk",
+      "state": "A toast with Undo",
+      "web": {
+        "path": "/",
+        "state": "toast",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--a-toast-with-undo"
+        },
+        "url": "trommi://screens/desk--a-toast-with-undo"
+      }
+    },
+    {
+      "id": "desk--the-end-list-and-the-piles",
+      "screen": "Desk",
+      "state": "The end list and the piles",
+      "web": {
+        "path": "/",
+        "state": "bottom",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--the-end-list-and-the-piles"
+        },
+        "url": "trommi://screens/desk--the-end-list-and-the-piles"
+      }
+    },
+    {
+      "id": "desk--trommi-menu-open",
+      "screen": "Desk",
+      "state": "Trommi menu open",
+      "web": {
+        "path": "/",
+        "state": "menu",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--trommi-menu-open"
+        },
+        "url": "trommi://screens/desk--trommi-menu-open"
+      }
+    },
+    {
+      "id": "desk--a-desk-alone-filter",
+      "screen": "Desk",
+      "state": "A desk alone (filter)",
+      "web": {
+        "path": "/?desk=test",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--a-desk-alone-filter"
+        },
+        "url": "trommi://screens/desk--a-desk-alone-filter"
+      }
+    },
+    {
+      "id": "desk--sidebar-folded-to-the-rail",
+      "screen": "Desk",
+      "state": "Sidebar folded to the rail",
+      "web": {
+        "path": "/",
+        "state": "rail",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--sidebar-folded-to-the-rail"
+        },
+        "url": "trommi://screens/desk--sidebar-folded-to-the-rail"
+      }
+    },
+    {
+      "id": "desk--rail-the-desk-words",
+      "screen": "Desk",
+      "state": "Rail: the desk words",
+      "web": {
+        "path": "/",
+        "state": "switch",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--rail-the-desk-words"
+        },
+        "url": "trommi://screens/desk--rail-the-desk-words"
+      }
+    },
+    {
+      "id": "desk--phone-drawer-open",
+      "screen": "Desk",
+      "state": "Phone drawer open",
+      "web": {
+        "path": "/",
+        "state": "drawer",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--phone-drawer-open"
+        },
+        "url": "trommi://screens/desk--phone-drawer-open"
+      }
+    },
+    {
+      "id": "desk--keys-sheet",
+      "screen": "Desk",
+      "state": "Keys sheet",
+      "web": {
+        "path": "/",
+        "state": "keys",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--keys-sheet"
+        },
+        "url": "trommi://screens/desk--keys-sheet"
+      }
+    },
+    {
+      "id": "desk--corner-note-open",
+      "screen": "Desk",
+      "state": "Corner note open",
+      "web": {
+        "path": "/",
+        "state": "note",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--corner-note-open"
+        },
+        "url": "trommi://screens/desk--corner-note-open"
+      }
+    },
+    {
+      "id": "desk--empty-full-piles",
+      "screen": "Desk",
+      "state": "Empty, full piles",
+      "web": {
+        "path": "/",
+        "state": null,
+        "mock": "foot"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--empty-full-piles"
+        },
+        "url": "trommi://screens/desk--empty-full-piles"
+      }
+    },
+    {
+      "id": "desk--quiet-desk",
+      "screen": "Desk",
+      "state": "Quiet desk",
+      "web": {
+        "path": "/",
+        "state": null,
+        "mock": "quiet"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "desk--quiet-desk"
+        },
+        "url": "trommi://screens/desk--quiet-desk"
+      }
+    },
+    {
+      "id": "card-page",
+      "screen": "Card page",
+      "state": "As it is",
+      "web": {
+        "path": "/card/30",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page"
+        },
+        "url": "trommi://screens/card-page"
+      }
+    },
+    {
+      "id": "card-page--long-card",
+      "screen": "Card page",
+      "state": "Long card",
+      "web": {
+        "path": "/card/31",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--long-card"
+        },
+        "url": "trommi://screens/card-page--long-card"
+      }
+    },
+    {
+      "id": "card-page--long-card-scrolled-inside",
+      "screen": "Card page",
+      "state": "Long card, scrolled inside",
+      "web": {
+        "path": "/card/31",
+        "state": "inside",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--long-card-scrolled-inside"
+        },
+        "url": "trommi://screens/card-page--long-card-scrolled-inside"
+      }
+    },
+    {
+      "id": "card-page--the-strip-card-scrolled-away",
+      "screen": "Card page",
+      "state": "The strip (card scrolled away)",
+      "web": {
+        "path": "/card/31",
+        "state": "strip",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--the-strip-card-scrolled-away"
+        },
+        "url": "trommi://screens/card-page--the-strip-card-scrolled-away"
+      }
+    },
+    {
+      "id": "card-page--yes-or-no",
+      "screen": "Card page",
+      "state": "Yes or no",
+      "web": {
+        "path": "/card/46",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--yes-or-no"
+        },
+        "url": "trommi://screens/card-page--yes-or-no"
+      }
+    },
+    {
+      "id": "card-page--several-answers",
+      "screen": "Card page",
+      "state": "Several answers",
+      "web": {
+        "path": "/card/11",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--several-answers"
+        },
+        "url": "trommi://screens/card-page--several-answers"
+      }
+    },
+    {
+      "id": "card-page--info-card",
+      "screen": "Card page",
+      "state": "Info card",
+      "web": {
+        "path": "/card/19",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--info-card"
+        },
+        "url": "trommi://screens/card-page--info-card"
+      }
+    },
+    {
+      "id": "card-page--answered",
+      "screen": "Card page",
+      "state": "Answered",
+      "web": {
+        "path": "/card/1",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--answered"
+        },
+        "url": "trommi://screens/card-page--answered"
+      }
+    },
+    {
+      "id": "card-page--with-the-agent",
+      "screen": "Card page",
+      "state": "With the agent",
+      "web": {
+        "path": "/card/1",
+        "state": "with-agent",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--with-the-agent"
+        },
+        "url": "trommi://screens/card-page--with-the-agent"
+      }
+    },
+    {
+      "id": "card-page--finished-by-its-agent",
+      "screen": "Card page",
+      "state": "Finished by its agent",
+      "web": {
+        "path": "/card/34",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--finished-by-its-agent"
+        },
+        "url": "trommi://screens/card-page--finished-by-its-agent"
+      }
+    },
+    {
+      "id": "card-page--more-menu-open",
+      "screen": "Card page",
+      "state": "More menu open",
+      "web": {
+        "path": "/card/30",
+        "state": "more",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "card-page--more-menu-open"
+        },
+        "url": "trommi://screens/card-page--more-menu-open"
+      }
+    },
+    {
+      "id": "full-screen",
+      "screen": "Full screen",
+      "state": "As it is",
+      "web": {
+        "path": "/card/31/picture/1",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "full-screen"
+        },
+        "url": "trommi://screens/full-screen"
+      }
+    },
+    {
+      "id": "full-screen--a-video",
+      "screen": "Full screen",
+      "state": "A video",
+      "web": {
+        "path": "/card/31/picture/9",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "full-screen--a-video"
+        },
+        "url": "trommi://screens/full-screen--a-video"
+      }
+    },
+    {
+      "id": "blitz",
+      "screen": "Blitz",
+      "state": "As it is",
+      "web": {
+        "path": "/blitz",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "blitz"
+        },
+        "url": "trommi://screens/blitz"
+      }
+    },
+    {
+      "id": "session",
+      "screen": "Session",
+      "state": "As it is",
+      "web": {
+        "path": "/s/trommi",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "session"
+        },
+        "url": "trommi://screens/session"
+      }
+    },
+    {
+      "id": "session--three-dot-menu-open",
+      "screen": "Session",
+      "state": "Three-dot menu open",
+      "web": {
+        "path": "/s/trommi",
+        "state": "session-more",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "session--three-dot-menu-open"
+        },
+        "url": "trommi://screens/session--three-dot-menu-open"
+      }
+    },
+    {
+      "id": "session--questions-only",
+      "screen": "Session",
+      "state": "Questions only",
+      "web": {
+        "path": "/s/trommi?only=questions",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "session--questions-only"
+        },
+        "url": "trommi://screens/session--questions-only"
+      }
+    },
+    {
+      "id": "session--files",
+      "screen": "Session",
+      "state": "Files",
+      "web": {
+        "path": "/s/trommi/files",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "session--files"
+        },
+        "url": "trommi://screens/session--files"
+      }
+    },
+    {
+      "id": "session--a-helper",
+      "screen": "Session",
+      "state": "A helper",
+      "web": {
+        "path": "/s/trommi-ui",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "session--a-helper"
+        },
+        "url": "trommi://screens/session--a-helper"
+      }
+    },
+    {
+      "id": "settings",
+      "screen": "Settings",
+      "state": "As it is",
+      "web": {
+        "path": "/settings/agents",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "settings"
+        },
+        "url": "trommi://screens/settings"
+      }
+    },
+    {
+      "id": "settings--devices",
+      "screen": "Settings",
+      "state": "Devices",
+      "web": {
+        "path": "/settings/devices",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "settings--devices"
+        },
+        "url": "trommi://screens/settings--devices"
+      }
+    },
+    {
+      "id": "settings--pairing-a-device",
+      "screen": "Settings",
+      "state": "Pairing a device",
+      "web": {
+        "path": "/settings/devices",
+        "state": "pair",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "settings--pairing-a-device"
+        },
+        "url": "trommi://screens/settings--pairing-a-device"
+      }
+    },
+    {
+      "id": "settings--account",
+      "screen": "Settings",
+      "state": "Account",
+      "web": {
+        "path": "/settings/account",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "settings--account"
+        },
+        "url": "trommi://screens/settings--account"
+      }
+    },
+    {
+      "id": "invite-clipboard",
+      "screen": "Invite clipboard",
+      "state": "As it is",
+      "web": {
+        "path": "/",
+        "state": "invite",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "invite-clipboard"
+        },
+        "url": "trommi://screens/invite-clipboard"
+      }
+    },
+    {
+      "id": "invite-clipboard--emoji-compare",
+      "screen": "Invite clipboard",
+      "state": "Emoji compare",
+      "web": {
+        "path": "/s/trommi",
+        "state": "invite-emoji",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "invite-clipboard--emoji-compare"
+        },
+        "url": "trommi://screens/invite-clipboard--emoji-compare"
+      }
+    },
+    {
+      "id": "invite-clipboard--link-run-out",
+      "screen": "Invite clipboard",
+      "state": "Link run out",
+      "web": {
+        "path": "/",
+        "state": "invite-ended",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "invite-clipboard--link-run-out"
+        },
+        "url": "trommi://screens/invite-clipboard--link-run-out"
+      }
+    },
+    {
+      "id": "media",
+      "screen": "Media",
+      "state": "As it is",
+      "web": {
+        "path": "/assets",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "media"
+        },
+        "url": "trommi://screens/media"
+      }
+    },
+    {
+      "id": "pages",
+      "screen": "Pages",
+      "state": "As it is",
+      "web": {
+        "path": "/pages",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "pages"
+        },
+        "url": "trommi://screens/pages"
+      }
+    },
+    {
+      "id": "pages--share-open",
+      "screen": "Pages",
+      "state": "Share open",
+      "web": {
+        "path": "/pages",
+        "state": "share",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "pages--share-open"
+        },
+        "url": "trommi://screens/pages--share-open"
+      }
+    },
+    {
+      "id": "off-the-desk",
+      "screen": "Off the desk",
+      "state": "As it is",
+      "web": {
+        "path": "/stacks/off",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "off-the-desk"
+        },
+        "url": "trommi://screens/off-the-desk"
+      }
+    },
+    {
+      "id": "scribble-board",
+      "screen": "Scribble Board",
+      "state": "As it is",
+      "web": {
+        "path": "/scribble-board",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "scribble-board"
+        },
+        "url": "trommi://screens/scribble-board"
+      }
+    },
+    {
+      "id": "scribble-board--its-keys",
+      "screen": "Scribble Board",
+      "state": "Its keys",
+      "web": {
+        "path": "/scribble-board",
+        "state": "board-help",
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "scribble-board--its-keys"
+        },
+        "url": "trommi://screens/scribble-board--its-keys"
+      }
+    },
+    {
+      "id": "log-out",
+      "screen": "Log out",
+      "state": "As it is",
+      "web": {
+        "path": "/logout",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "log-out"
+        },
+        "url": "trommi://screens/log-out"
+      }
+    },
+    {
+      "id": "help-page",
+      "screen": "Help page",
+      "state": "As it is",
+      "web": {
+        "path": "/help.html",
+        "state": null,
+        "mock": "1"
+      },
+      "ios": {
+        "env": {
+          "TROMMI_SCREEN": "help-page"
+        },
+        "url": "trommi://screens/help-page"
+      }
+    }
+  ]
+}
