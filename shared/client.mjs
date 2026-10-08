@@ -263,19 +263,20 @@ export class Client {
         this.sessionKeys.set(sid, { state, grants: rec.grants, secrets: new Map(rec.secrets.map(x => [x.epoch, secretFromJson(x)])), since: rec.since })
       } catch (e) { console.error('[core] stored grants of', sid, e.message) }
     }
-    m._device_registers = new Map((await st.get('devregs')) ?? [])
+    // The model's records, asked all at once (each range is one bulk read; one after the other they queued up)
+    const [devregs, online, sessions, cards, perms, notes, pubs, tlmeta, regs, invites] = await Promise.all([
+      st.get('devregs'), st.get('devices'), st.range('session/'), st.range('card/'), st.range('perm/'), st.range('note/'), st.range('pub/'), st.range('tlmeta/'), st.range('reg/'), st.range('invite/')])
+    m._device_registers = new Map(devregs ?? [])
     M.applyMembers(m, membersOf(this.state), M.emptyChange())
-    const online = (await st.get('devices')) ?? []
-    M.applyDevices(m, online, M.emptyChange())
-    for (const [, v] of await st.range('session/')) m.sessions.set(v.session_id ?? v.agent_device_id, M.deserialiseSession(v))
-    for (const [, v] of await st.range('card/')) m.cards.set(v.object_id, v)
-    for (const [, v] of await st.range('perm/')) m.permissions.set(v.object_id, v)
-    for (const [, v] of await st.range('note/')) m.notes.set(v.object_id, v)
-    for (const [, v] of await st.range('pub/')) m.published.set(v.object_id, v)
-    for (const [, v] of await st.range('tlmeta/')) m.timelines.set(v.timeline_key, M.deserialiseTimelineMeta(v))
-    const regs = await st.range('reg/')
+    M.applyDevices(m, online ?? [], M.emptyChange())
+    for (const [, v] of sessions) m.sessions.set(v.session_id ?? v.agent_device_id, M.deserialiseSession(v))
+    for (const [, v] of cards) m.cards.set(v.object_id, v)
+    for (const [, v] of perms) m.permissions.set(v.object_id, v)
+    for (const [, v] of notes) m.notes.set(v.object_id, v)
+    for (const [, v] of pubs) m.published.set(v.object_id, v)
+    for (const [, v] of tlmeta) m.timelines.set(v.timeline_key, M.deserialiseTimelineMeta(v))
     M.deserialiseHuman(m, { raw: regs.map(([k, v]) => [k.slice(4), v]) })
-    for (const [, v] of await st.range('invite/')) {
+    for (const [, v] of invites) {
       this.invitesPrivate.set(v.invite_id, inviteFromJson(v))
       m.invites.set(v.invite_id, v.public)
     }
@@ -581,6 +582,7 @@ export class Client {
     if (!this.is_human) return
     const change = M.emptyChange()
     const model = this.model
+    const marked = new Set()            // cards whose mark changed: persisted without a change event (nothing to show)
     for (const card of model.cards.values()) {
       if (this.model !== model) return                   // a resync built the model anew meanwhile: it settles the new one
       if (card.object_state !== 'open') continue
@@ -590,10 +592,10 @@ export class Client {
       const base = Math.max(M.revisionCutoff(card), card.in_revision?.envelope_number ?? 0)
       const newestMsg = Math.max(t.newest_human_envelope_number ?? 0, t.newest_agent_envelope_number ?? 0)
       if (newestMsg <= base) continue
-      // each conversation state is read once (a plain message newer than the card would be fetched on every catch-up)
-      const checked = (this._revChecked ??= new Map())
+      // each conversation state is read once (a plain message newer than the card would be fetched on every catch-up);
+      // the mark is kept with the card in storage, so a warm start does not read every open card's conversation again
       const mark = `${newestMsg}/${base}`
-      if (checked.get(card.object_id) === mark) continue
+      if (card.rev_checked === mark) continue
       const newest = () => Math.max(t.newest_human_envelope_number ?? 0, t.newest_agent_envelope_number ?? 0, card.envelope_number, M.revisionCutoff(card), card.in_revision?.envelope_number ?? 0)
       let items = null
       for (let k = 0; k < 3 && !items; k++) {            // live records went on while the page was read: read it again
@@ -603,7 +605,7 @@ export class Client {
       }
       if (this.model !== model) return
       if (!items || card.object_state !== 'open') continue
-      checked.set(card.object_id, mark)
+      card.rev_checked = mark; marked.add(card.object_id)
       // newest wins: a human's hand_back / explain puts the card in revision, the agent's present_card takes it back.
       // Only what is newer than `base` counts; a page that does not reach back to it keeps the state where it has no word.
       let rev = card.in_revision ?? null, said = false
@@ -614,6 +616,7 @@ export class Client {
       }
       if (said && JSON.stringify(rev) !== JSON.stringify(card.in_revision ?? null)) { card.in_revision = rev; change.cards.add(card.object_id); change.sessions.add(card.agent_device_id) }
     }
+    if (marked.size) { const quiet = M.emptyChange(); for (const id of marked) quiet.cards.add(id); this._markDirty(quiet, []) }
     if (change.cards.size) { this._markDirty(change, []); this._emitChange(change) }
   }
 
@@ -933,7 +936,6 @@ export class Client {
     this._emitChange(ch)
     // F2: the replay read the conversations as headers again, so the rebuilt cards carry no 'in revision': settle it from
     // the conversations anew (what was checked before the resync says nothing about the new model; settle() waits).
-    this._revChecked = new Map()
     if (this.is_human) this._revisions = this._resolveRevisions().catch(e => this._localAlert('revisions', e))
   }
 
@@ -1536,8 +1538,15 @@ export class Client {
     const missing = recs.filter(r => !r.c && r.cs !== 'pruned' && r.cs !== 'undecryptable' && r.cs !== 'newer_schema')
     if (missing.length || recs.length < limit) {
       const { timeline_kind, timeline_id } = M.parseTimelineKey(timeline_key)
-      const res = await this.hub.threads({ timeline_kind, timeline_id, before_envelope_number: before, limit })
-      this._hubHasMore = res.has_more
+      // A full window from storage with a few bodies missing (headers from catch-up): fetch only the span from the newest
+      // missing item down to the oldest one, not the whole window again (one new message costs one envelope).
+      let from = before, span = limit
+      if (recs.length >= limit) {
+        const hi = Math.max(...missing.map(r => r.n)), lo = Math.min(...missing.map(r => r.n))
+        from = hi + 1; span = recs.filter(r => r.n >= lo && r.n <= hi).length
+      }
+      const res = await this.hub.threads({ timeline_kind, timeline_id, before_envelope_number: from, limit: span })
+      if (recs.length < limit) this._hubHasMore = res.has_more
       const byN = new Map(recs.map(r => [r.n, r]))
       const writes = []
       for (const { envelope_number, envelope } of res.envelopes) {

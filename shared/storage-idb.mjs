@@ -40,6 +40,12 @@ export function idbStorage({ name = 'trommi', prefix = '' } = {}) {
       const s = await store('readonly')
       const lo = after !== undefined ? P(after) : P(p), hi = before !== undefined ? P(before) : P(p) + '￿'
       const range = IDBKeyRange.bound(lo, hi, after !== undefined, before !== undefined)
+      // Forwards: keys and values in two bulk reads (a cursor costs one event per record: 5,000 cards took ~10x longer).
+      if (!reverse) {
+        const n = Number.isFinite(limit) ? limit : undefined
+        const [keys, values] = await Promise.all([done(s.getAllKeys(range, n)), done(s.getAll(range, n))])
+        return keys.map((k, i) => [k.slice(prefix.length), values[i]])
+      }
       const out = []
       await new Promise((resolve, reject) => {
         const req = s.openCursor(range, reverse ? 'prev' : 'next')
