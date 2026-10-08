@@ -5,6 +5,7 @@ import Foundation
 
 public struct AccountKDF: Codable, Equatable {
   public let alg: String, v: Int, m: Int, t: Int, p: Int
+  public init(alg: String, v: Int, m: Int, t: Int, p: Int) { self.alg = alg; self.v = v; self.m = m; self.t = t; self.p = p }
   public static let v1 = AccountKDF(alg: "argon2id", v: 1, m: 65536, t: 3, p: 1)
 }
 

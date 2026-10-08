@@ -60,7 +60,7 @@ struct DeskScreen: View {
       }
       ToolbarItem(placement: .topBarTrailing) { NoteButton() }
     }
-    .overlay(alignment: .bottom) { KnockEdge(view: v) }
+    .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }
   }
 
   @ViewBuilder private func head(_ v: DeskModel.View) -> some View {
@@ -224,7 +224,14 @@ struct DeskRow: View {
       // who asks, the knock
       HStack(spacing: 7) {
         if let a = agent {
-          AgentMark(agent: a, size: 20)
+          Button { if model.selected.contains(card.id) { model.selected.remove(card.id) } else { model.selected.insert(card.id) } } label: {
+            ZStack {
+              AgentMark(agent: a, size: 20).opacity(model.selected.contains(card.id) ? 0 : 1)
+              if model.selected.contains(card.id) { Image(systemName: "checkmark.circle.fill").font(.system(size: 20)).foregroundStyle(Tone.color(hue: hue, .pen)) }
+            }
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel(model.selected.contains(card.id) ? "Selected: \(card.title)" : "Select: \(card.title)")
           Text(a.name).font(Face.text(14, .medium)).foregroundStyle(Tone.color(hue: hue, .pen)).lineLimit(1)
         }
         if card.kind == "info" && !card.isKnock { Sketch("page", color: Ink.muted).frame(width: 16, height: 16) }
@@ -256,6 +263,7 @@ struct DeskRow: View {
     }
     .padding(14)
     .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Tone.color(hue: hue, .wash)))
+    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(model.selected.contains(card.id) ? Tone.color(hue: hue, .pen) : .clear, lineWidth: 2))
     .contextMenu { RowMenu(card: card) }
   }
 }
@@ -524,8 +532,28 @@ struct EndList: View {
   }
 }
 
-/** A knock out of sight: the count at the bottom edge (the web's "↓ 4 knocks" strip). */
-struct KnockEdge: View {
-  let view: DeskModel.View?
-  var body: some View { EmptyView() }
+/** The bar for the chosen cards (desk.mjs sel-bar): Later, Duck it, Read (infos), Shred, and clear. */
+struct SelectionBar: View {
+  @EnvironmentObject var model: BoardModel
+  var body: some View {
+    let chosen = model.selected.compactMap { model.card($0) }
+    HStack(spacing: 6) {
+      Text("\(chosen.count)").font(Face.text(16, .semibold)).frame(minWidth: 30)
+      way("later", PenMark("ui:LATER_TAG").frame(width: 12, height: 24), Words.later)
+      if chosen.contains(where: { $0.kind == "decision" }) { way("duck", PenMark("sketch:duck").frame(width: 26, height: 22), Words.duck) }
+      if chosen.contains(where: { $0.kind == "info" }) { way("read", Sketch("tick").frame(width: 20, height: 20), "Read") }
+      way("shred", Sketch("bin").frame(width: 20, height: 20), Words.shred)
+      Button { model.selected = [] } label: { Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).frame(width: 36, height: 36) }
+        .accessibilityLabel("Clear the selection")
+    }
+    .foregroundStyle(Ink.fg)
+    .padding(.horizontal, 10).padding(.vertical, 6)
+    .glass(Capsule(), interactive: true)
+    .padding(.bottom, 10)
+    .transition(.move(edge: .bottom).combined(with: .opacity))
+  }
+  private func way<V: View>(_ name: String, _ icon: V, _ word: String) -> some View {
+    Button { model.batch(name) } label: { VStack(spacing: 2) { icon; Text(word).font(Face.text(11, .medium)) }.frame(minWidth: 54, minHeight: 44) }
+      .buttonStyle(.plain)
+  }
 }

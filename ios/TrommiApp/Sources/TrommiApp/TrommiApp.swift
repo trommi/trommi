@@ -57,7 +57,7 @@ enum Route: Hashable {
 @MainActor
 final class BoardModel: ObservableObject {
   /** The screens before the board, as the web app's sign-in (app/web/public/auth.mjs: welcome, scan, join, log in). */
-  enum Phase: Equatable { case start, scan, paste, email, deviceName(String), asking, checkCode(String), signingIn, pairFailed(String), board }
+  enum Phase: Equatable { case start, scan, paste, email, forgot, deviceName(String), asking, checkCode(String), signingIn, pairFailed(String), board }
   /** The hub of app.trommi.com (app.mjs): email + password sign in there. A pairing link names its own hub. */
   static let hubURL = "https://hub.trommi.com"
 
@@ -70,6 +70,8 @@ final class BoardModel: ObservableObject {
   @Published var toast: Toast?
   @Published var path: [Route] = []
   @Published var drawer = false
+  /** Cards chosen on the Desk (the selection bar: Later, Duck it, Read, Shred for all of them). */
+  @Published var selected = Set<String>()
   @Published var live = false
   @Published var upgrade: UpgradeNotice?
   /** The hub's word on this version: nothing, an update available (a quiet line), or required (the calm full screen). */
@@ -209,6 +211,24 @@ final class BoardModel: ObservableObject {
     } catch {
       self.error = accountError(error)
       phase = .email
+    }
+  }
+
+  /** Forgot password: the Emergency Kit's words open the room's code, this device adds itself and sets the new password. */
+  func forgot(email: String, words: String, password: String, name: String) async {
+    lastEmail = email
+    error = nil
+    phase = .signingIn
+    do {
+      let r = try await Room.resetPassword(hubURL: Self.hubURL, email: email, words: words, newPassword: password)
+      try await r.sendDeviceRegister(name: name, platform: "ios")
+      attach(r)
+      phase = .board
+      await refresh()
+    } catch {
+      let code = (error as? ZError)?.code ?? ""
+      self.error = code == "wrong-recovery" ? "Email or recovery words are wrong." : code == "bad-recovery-words" ? "Recovery words: \((error as? ZError)?.message ?? "")." : accountError(error)
+      phase = .forgot
     }
   }
 
@@ -388,6 +408,27 @@ final class BoardModel: ObservableObject {
       self.phase = .start
     }
   }
+  /** One way for every selected card (desk.mjs POST /cards/batch): one toast, its Undo takes all back. */
+  func batch(_ way: String) {
+    guard let room = room else { return }
+    let ids = Array(selected)
+    selected = []
+    act {
+      var done = 0
+      for id in ids {
+        guard let c = self.card(id), c.status == "open" else { continue }
+        switch way {
+        case "later": if c.kind != "permission" { try await room.snooze(cardId: id, until: BoardModel.nextMorning()); done += 1 }
+        case "duck": if c.kind == "decision" { try await room.trust(cardId: id); done += 1 }
+        case "read": if c.kind == "info" { try await room.markRead(cardId: id); done += 1 }
+        case "shred": if c.kind != "permission" { try await room.shred(cardId: id); done += 1 }
+        default: break
+        }
+      }
+      let head = ["later": Words.later, "duck": "Left to the agents", "read": "Read", "shred": "Shredded"][way] ?? "Done"
+      self.say(head, done == 1 ? "1 question" : "\(done) questions", undo: { [weak self] in for id in ids { if way == "later" { self?.wake(id) } else { self?.reopen(id) } } })
+    }
+  }
   /** Desks: register desk/<id>. */
   func newDesk(name: String) {
     guard let room = room else { return }
@@ -453,6 +494,7 @@ struct RootView: View {
             case .scan: ScanView()
             case .paste: PasteView()
             case .email: EmailView()
+            case .forgot: ForgotView()
             case .deviceName(let link): DeviceNameView(link: link)
             case .asking: Waiting(text: "Asking the other device…")
             case .checkCode(let code): CheckCodeView(code: code)
@@ -464,7 +506,7 @@ struct RootView: View {
           .navigationTitle(title)
           .navigationBarTitleDisplayMode(model.phase == .start ? .large : .inline)
           .toolbar {
-            if [.scan, .paste, .email].contains(model.phase) || { if case .deviceName = model.phase { return true }; return false }() {
+            if [.scan, .paste, .email, .forgot].contains(model.phase) || { if case .deviceName = model.phase { return true }; return false }() {
               ToolbarItem(placement: .topBarLeading) { Button("Back") { model.go(.start) } }
             }
           }
@@ -477,6 +519,7 @@ struct RootView: View {
     switch model.phase {
     case .start, .board: return "Trommi"
     case .email, .signingIn: return "Log in"
+    case .forgot: return "Forgot password"
     default: return "Log in with a signed-in device"
     }
   }
