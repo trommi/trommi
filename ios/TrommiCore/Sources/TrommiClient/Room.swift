@@ -1150,6 +1150,138 @@ public final class Room {
     if !items.isEmpty { try await refreshSessions() }
   }
 
+  // ---- grants, removal, leaving (client.mjs _makeGrant, _postGrants, removeDevices, _healStaleSessions, leaveRoom) ------
+
+  /** The agents of a session that were given its history (register session_history/<sid>). */
+  func historyAgents(_ sid: String) -> [String] { (board.human.raw["session_history/\(sid)"]?.value["agents"].array ?? []).compactMap { $0.string } }
+
+  /** The next grant of a session for these agents (only active agents; dropping one rotates the key). */
+  func makeGrant(_ sid: String, agents: [String], withHistory: Bool = false, rotate: Bool = false) throws -> (item: JSON, historyAgents: [String], agents: [String]) {
+    guard let ss = sessionStates[sid] else { throw ZError("not-found", "no session \(sid)") }
+    let current = sessionSecrets["\(sid):\(ss.epoch)"]
+    let active = agents.filter { a in (try? unhex(a)).flatMap { state.memberAt($0) }?.role == ROLE.AGENT }
+    let rot = rotate || ss.agentIds.contains { !active.contains($0) } || current == nil
+    let entitled = historyAgents(sid)
+    let hist = active.filter { (withHistory && !ss.agentIds.contains($0)) || entitled.contains($0) }
+    let g = try createSessionGrant(state: state, signer: device, sessionState: ss, current: current, agentIds: active.compactMap { try? unhex($0) },
+                                   historyAgentIds: hist.compactMap { try? unhex($0) }, rotate: rot)
+    var item: JSON = ["session_id": sid, "signed_grant": b64u(g.grant), "sealed_session_keys": g.wraps.map { ["device_id": hex($0.id), "key_sealed": b64u($0.sealed)] }]
+    if let bl = g.backLink { item["key_back_link"] = b64u(bl) }
+    return (item, hist, active)
+  }
+  func postGrants(_ items: [JSON]) async throws {
+    var i = 0
+    while i < items.count { _ = try await noted { try await hub.postSessionGrants(Array(items[i..<min(i + 64, items.count)])) }; i += 64 }
+    if !items.isEmpty { try await refreshSessions() }
+  }
+  /** After a grant: who holds the history now (a dropped agent loses it), in the human register every human device reads. */
+  func noteHistoryAgents(_ sid: String, agents: [String], history: [String]) async {
+    let next = Array(Set(history)).filter { agents.contains($0) }.sorted()
+    if next == historyAgents(sid).sorted() { return }
+    try? await setRegisters(["session_history/\(sid)": .obj(["agents": .arr(next.map { .str($0) })])])
+  }
+
+  /** A1: every session whose newest grant predates a removal is re-keyed now (agents no longer members dropped). */
+  func healStaleSessions() async throws {
+    for _ in 0..<3 {
+      let stale = sessionStates.filter { grantIsStale($0.value, state) && sessionSecrets["\($0.key):\($0.value.epoch)"] != nil }
+      if stale.isEmpty { return }
+      var items = [JSON]()
+      for (sid, ss) in stale { items.append(try makeGrant(sid, agents: ss.agentIds, rotate: true).item) }
+      do { try await postGrants(items); return }
+      catch let e as HubError where e.status >= 400 && e.status < 500 { try await refreshSessions() }
+    }
+  }
+
+  /**
+   * Remove devices: one member entry with the cut (R3: the last envelope of each removed device this device verified),
+   * a new room key for the humans who stay, and a new session key for every session without the removed ones.
+   */
+  public func removeDevices(_ ids: [String]) async throws {
+    try await serial { [self] in
+      if !self.synced { _ = try await self.catchUpInner() }
+      _ = try await self.refreshMembers()
+      try await self.refreshSessions()
+      var cuts = [String: (seq: UInt64, hash: Bytes)]()
+      for id in ids { if let c = self.chains[id] { cuts[id] = (c.seq, c.hash) } }
+      let r = try removeMembers(self.state, signer: self.device, ids: try ids.map { try unhex($0) }, cuts: cuts, previous: self.roomSecrets[self.state.epoch])
+      var body: JSON = ["signed_entry": b64u(r.entry), "sealed_room_keys": r.wraps.map { ["device_id": hex($0.id), "key_sealed": b64u($0.sealed)] }]
+      if let bl = r.backLink { body["key_back_link"] = b64u(bl) }
+      _ = try await self.noted { try await self.hub.request("POST", "/rooms/\(self.record.roomId)/members", body: body, auth: false) }
+      self.roomSecrets[r.secret.epoch] = r.secret
+      self.record.roomSecrets = self.roomSecrets.values.sorted { $0.epoch < $1.epoch }.map(SecretJSON.init)
+      self.saveRecord()
+      _ = try await self.refreshMembers()
+      try await self.refreshSessions()
+      try await self.healStaleSessions()
+    }
+  }
+
+  /**
+   * Log out: this device removes itself (its own cut, a new room key for the humans who stay and the recovery key), then
+   * its key file and room record are deleted here. The next start of a human device re-keys the sessions.
+   */
+  public func leaveRoom() async throws {
+    _ = try? await flush(timeoutMs: 3000)
+    try await serial { [self] in
+      _ = try await self.refreshMembers()
+      let me = hex(self.device.id)
+      var cuts = [String: (seq: UInt64, hash: Bytes)]()
+      if let c = self.chains[me] { cuts[me] = (c.seq, c.hash) }
+      let r = try removeMembers(self.state, signer: self.device, ids: [self.device.id], cuts: cuts, previous: self.roomSecrets[self.state.epoch])
+      var body: JSON = ["signed_entry": b64u(r.entry), "sealed_room_keys": r.wraps.map { ["device_id": hex($0.id), "key_sealed": b64u($0.sealed)] }]
+      if let bl = r.backLink { body["key_back_link"] = b64u(bl) }
+      _ = try await self.noted { try await self.hub.request("POST", "/rooms/\(self.record.roomId)/members", body: body, auth: false) }
+    }
+    try? FileManager.default.removeItem(at: store.dir)
+  }
+  /** Forget this room on this device only (when the hub cannot be reached to log out properly). */
+  public func forgetHere() { try? FileManager.default.removeItem(at: store.dir) }
+
+  // ---- inviting an agent from here (createInvite role agent, finalize: its own new session) -----------------------
+
+  public struct AgentInvite {
+    public var pairing: Pairing
+    public var label: String?
+    public var desk: String?
+  }
+  /** An invite link for an agent (the connector's command); a new session on `desk` once the emoji were confirmed. */
+  public func createAgentInvite(app: String = "https://app.trommi.com/join", label: String? = nil, desk: String? = nil) async throws -> AgentInvite {
+    try await serial { [self] in
+      if !self.synced { _ = try await self.catchUpInner() }
+      let made = try createInvite(state: self.state, inviter: self.device, hub: self.hub.hubURL, role: ROLE.AGENT, app: app)
+      let r = try await self.noted { try await self.hub.postInvite(signedOffer: made.offer) }
+      return AgentInvite(pairing: Pairing(inviteId: r["invite_id"] as? String ?? hex(made.invite.inviteId), link: made.link, expiresAt: made.invite.expiresAt, invite: made.invite), label: label, desk: desk)
+    }
+  }
+  /** The human confirmed the agent's emoji: it is added and gets a new session of its own. Returns the session id. */
+  @discardableResult public func confirmAgent(_ inv: AgentInvite, matches: Bool) async throws -> String {
+    let p = inv.pairing
+    if !matches {
+      try? await hub.deleteInvite(p.inviteId)
+      throw ZError("code-mismatch", "the check codes do not match: nobody was added, the invite is spent")
+    }
+    guard let member = p.member, let newId = p.newcomerId else { throw ZError("bad-invite", "this invite waits for no code") }
+    let sid: String = try await serial { [self] in
+      _ = try await self.refreshMembers()
+      if self.state.memberAt(try unhex(newId)) == nil {
+        let added = try addMember(self.state, signer: self.device, member: member, inviteId: p.invite.inviteId)
+        _ = try await self.noted { try await self.hub.postMember(signedEntry: added.entry, sealedRoomKeys: []) }
+      }
+      _ = try await self.refreshMembers()
+      // R6: the new agent's own session (a first grant: a new session key epoch 1)
+      let g = try createSessionGrant(state: self.state, signer: self.device, sessionState: nil, agentIds: [try unhex(newId)])
+      let sid = g.sessionState.sessionId
+      try await self.postGrants([["session_id": sid, "signed_grant": b64u(g.grant), "sealed_session_keys": g.wraps.map { ["device_id": hex($0.id), "key_sealed": b64u($0.sealed)] }]])
+      return sid
+    }
+    var place: [String: JV] = [:]
+    if let l = inv.label, !l.isEmpty { place["name"] = .str(l) }
+    if let d = inv.desk { place["desk"] = .str(d) }
+    if !place.isEmpty { try? await editSession(sid, place) }
+    return sid
+  }
+
   // ---- the open cards (the spike's list; the app reads the board) -----------------------------------
 
   /** The open cards (decisions and infos) in stack order. */

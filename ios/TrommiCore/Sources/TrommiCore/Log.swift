@@ -11,7 +11,10 @@ public struct Member: Equatable {
   public let kexPub: Bytes
   public init(role: Int, signPub: Bytes, kexPub: Bytes) { self.role = role; self.signPub = signPub; self.kexPub = kexPub }
 }
-public struct Removed: Equatable { public let id: Bytes, seq: UInt64, hash: Bytes }
+public struct Removed: Equatable {
+  public let id: Bytes, seq: UInt64, hash: Bytes
+  public init(id: Bytes, seq: UInt64, hash: Bytes) { self.id = id; self.seq = seq; self.hash = hash }
+}
 public struct Cut: Equatable { public let seq: UInt64, hash: Bytes; public init(seq: UInt64, hash: Bytes) { self.seq = seq; self.hash = hash } }
 
 public struct Entry {
@@ -357,6 +360,27 @@ public func addMember(_ state: RoomState, signer: Device, member: Member, invite
   e.member = member; e.inviteId = inviteId
   let entry = try signEntry(e, signer)
   return (entry, try applyEntry(state, entry))
+}
+
+/**
+ * Remove members and rotate the room key in the same entry (zcrypto.mjs removeMembers): `cuts` names, per removed
+ * device, the last envelope of it the remover saw (R3; none: seq 0). Returns the entry, the new state, the new epoch's
+ * secret, its wraps for the human devices who stay and the recovery key, and the back link to `previous`.
+ */
+public func removeMembers(_ state: RoomState, signer: Device, ids: [Bytes], cuts: [String: (seq: UInt64, hash: Bytes)], previous: EpochSecret?,
+                          time: UInt64 = nowMs(), rng: RNG = systemRandom) throws -> (entry: Bytes, state: RoomState, secret: EpochSecret, wraps: [(id: Bytes, sealed: Bytes)], backLink: Bytes?) {
+  let secret = newEpochSecret(state.epoch + 1, rng: rng)
+  let commits = epochCommits(secret)
+  var e = Entry(type: ENTRY.REMOVE, seq: state.head.seq + 1, prev: state.head.hash, time: time, signerKind: SIGNER.DEVICE, signer: signer.id)
+  e.removed = ids.map { id in let c = cuts[hex(id)]; return Removed(id: id, seq: c?.seq ?? 0, hash: c?.hash ?? ZERO32) }
+  e.epoch = secret.epoch; e.keyCommit = commits.keyCommit; e.histCommit = commits.histCommit
+  let entry = try signEntry(e, signer)
+  let next = try applyEntry(state, entry)
+  var wraps = [(id: Bytes, sealed: Bytes)]()
+  for m in next.activeMembers where m.role == ROLE.HUMAN { wraps.append((m.id, try wrapEpochKey(next, secret, m.id, rng: rng))) }
+  wraps.append((next.recovery.id, try wrapEpochKey(next, secret, next.recovery.id, rng: rng)))
+  let backLink = previous?.hist != nil ? try makeBackLink(next.roomId, secret, previous: previous!) : nil
+  return (entry, next, secret, wraps, backLink)
 }
 
 public func nowMs() -> UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
