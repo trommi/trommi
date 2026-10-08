@@ -50,12 +50,54 @@ public struct Store {
   }
   public func saveDevice(_ d: Device) throws {
     try ensure()
+    #if os(iOS)
+    // On the phone the key lives in the Keychain, on this device only, readable once it was unlocked after a restart.
+    try Keychain.put(account: dir.lastPathComponent, Data(d.exportSecret()))
+    #else
     let url = dir.appendingPathComponent("device.key")
     FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
     try Data(d.exportSecret()).write(to: url, options: .atomic)
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    #endif
   }
-  public func loadDevice() throws -> Device { try Device.importSecret(Array(try Data(contentsOf: dir.appendingPathComponent("device.key")))) }
+  public func loadDevice() throws -> Device {
+    #if os(iOS)
+    let file = dir.appendingPathComponent("device.key")
+    if let k = Keychain.get(account: dir.lastPathComponent) { return try Device.importSecret(Array(k)) }
+    // a key from an earlier version (a file): into the Keychain, the file goes
+    let d = try Device.importSecret(Array(try Data(contentsOf: file)))
+    try Keychain.put(account: dir.lastPathComponent, Data(d.exportSecret()))
+    try? FileManager.default.removeItem(at: file)
+    return d
+    #else
+    return try Device.importSecret(Array(try Data(contentsOf: dir.appendingPathComponent("device.key"))))
+    #endif
+  }
+  /** The key that seals this room's cache: in the Keychain on the phone, a 0600 file elsewhere. */
+  public func cacheKey() throws -> Bytes {
+    #if os(iOS)
+    let acct = "cache-\(dir.lastPathComponent)"
+    if let k = Keychain.get(account: acct), k.count == 32 { return Array(k) }
+    let k = systemRandom(32)
+    try Keychain.put(account: acct, Data(k))
+    return k
+    #else
+    try ensure()
+    let url = dir.appendingPathComponent("cache.key")
+    if let k = try? Data(contentsOf: url), k.count == 32 { return Array(k) }
+    let k = systemRandom(32)
+    FileManager.default.createFile(atPath: url.path, contents: Data(k), attributes: [.posixPermissions: 0o600])
+    return k
+    #endif
+  }
+  /** Forget the room on this device: its folder and (on the phone) its key in the Keychain. */
+  public func wipe() {
+    #if os(iOS)
+    Keychain.delete(account: dir.lastPathComponent)
+    Keychain.delete(account: "cache-\(dir.lastPathComponent)")
+    #endif
+    try? FileManager.default.removeItem(at: dir)
+  }
   public func save(_ r: RoomRecord) throws {
     try ensure()
     let url = dir.appendingPathComponent("room.json")
@@ -114,6 +156,12 @@ public final class Room {
   private var synced = false
   private var echoSeq = 0
   private var token401 = false
+  /** Every record this device verified, by envelope number: what the cache keeps (and replays at the next launch). */
+  private var log: [Int: Rec] = [:]
+  private var cacheDirty = false
+  private var cacheTask: Task<Void, Never>?
+  /** Whether the board came from the cache (shown before the first catch-up). */
+  public private(set) var restored = false
 
   init(store: Store, record: RoomRecord, device: Device) throws {
     self.store = store; self.record = record; self.device = device
@@ -450,7 +498,9 @@ public final class Room {
     try await serial { [self] in try await self.catchUp() }
   }
 
+  private var restoreTried = false
   private func catchUp() async throws -> SyncReport {
+    if cursor == 0 { await restore() }
     var report = SyncReport()
     try await noted { try await hub.signIn() }
     report.warnings += try await refreshMembers()
@@ -539,6 +589,10 @@ public final class Room {
       rec.objectIdOk = (try? objectIdOf(p.header.sender, p.header.seq)).map(hex) == rec.object?.objectId
     }
     board.apply(rec, change: &change)
+    var kept = rec
+    kept.localId = nil
+    log[p.number] = kept
+    cacheSoon()
   }
 
   /** The record of an envelope (client.mjs _record): header values by name, the body decoded, the bind to hex. */
@@ -744,6 +798,7 @@ public final class Room {
         let d = Room.decodePayload(o.payload, header: o.header)
         item.content = d.content; item.contentType = d.content?["content_type"].string
         item.itemState = d.content == nil ? "undecryptable" : d.state == "ok" ? "loaded" : d.state
+        if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon() }
         loaded += 1
       } catch let e as ZError {
         item.itemState = e.code == "pruned" ? "pruned" : "undecryptable"
@@ -1232,10 +1287,10 @@ public final class Room {
       if let bl = r.backLink { body["key_back_link"] = b64u(bl) }
       _ = try await self.noted { try await self.hub.request("POST", "/rooms/\(self.record.roomId)/members", body: body, auth: false) }
     }
-    try? FileManager.default.removeItem(at: store.dir)
+    store.wipe()
   }
   /** Forget this room on this device only (when the hub cannot be reached to log out properly). */
-  public func forgetHere() { try? FileManager.default.removeItem(at: store.dir) }
+  public func forgetHere() { store.wipe() }
 
   // ---- inviting an agent from here (createInvite role agent, finalize: its own new session) -----------------------
 
@@ -1303,6 +1358,7 @@ public final class Room {
           let d = Room.decodePayload(o.payload, header: o.header)
           item.content = d.content; item.contentType = d.content?["content_type"].string
           item.itemState = d.content == nil ? "undecryptable" : d.state == "ok" ? "loaded" : d.state
+          if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon() }
         } catch let e as ZError { item.itemState = e.code == "pruned" ? "pruned" : "undecryptable" }
         t.items[n] = item
       }
@@ -1366,6 +1422,104 @@ public final class Room {
   public func revokeShare(attachmentId: String, shareId: String) async throws {
     _ = try await noted { try await hub.request("DELETE", "/rooms/\(record.roomId)/attachments/\(attachmentId)/shares/\(shareId)") }
   }
+
+  // ---- the cache: the verified state, encrypted at rest (the web's storage and snapshot) ----------------------------------
+  //
+  // What this device verified and decrypted, kept so the next launch shows the board at once and catches up from where
+  // it stopped: the records (header, body, bind: replayed into the board through the same reducer), every sender's
+  // chain, the cursor, the lamport, the session grants (verified again at load) and keys. Sealed with AES-256-GCM under a
+  // key of this device (the Keychain on the phone) and written with the phone's file protection.
+
+  struct Cache: Codable {
+    var v = 1
+    var cursor: Int
+    var lamport: Int
+    var chains: Chains
+    var grants: [String: [String]]
+    var sessionSecrets: [String: SecretJSON]
+    var recs: [Rec]
+    var devices: JV?
+  }
+  private var cacheURL: URL { store.dir.appendingPathComponent("cache.bin") }
+  private func cacheKey() throws -> Bytes { try store.cacheKey() }
+
+  /** Write the cache a moment after the last change (a catch-up brings thousands at once). */
+  private func cacheSoon() {
+    cacheDirty = true
+    if cacheTask != nil { return }
+    cacheTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(nanoseconds: 1_500_000_000)
+      self?.cacheTask = nil
+      self?.saveCache()
+    }
+  }
+  /** Write it now (the app going to the background). */
+  public func saveCache() { Task { await saveCacheAndWait() } }
+  public func saveCacheAndWait() async {
+    guard cacheDirty else { return }
+    cacheDirty = false
+    let c = Cache(cursor: cursor, lamport: lamport, chains: chains, grants: sessionGrants.mapValues { $0.map(b64u) },
+                  sessionSecrets: sessionSecrets.mapValues(SecretJSON.init), recs: log.keys.sorted().compactMap { log[$0] }, devices: nil)
+    guard let key = try? cacheKey() else { return }
+    let url = cacheURL
+    await Task.detached(priority: .utility) {
+      guard let json = try? JSONEncoder().encode(c) else { return }
+      let nonce = systemRandom(12)
+      guard let sealed = try? gcmSeal(key: key, nonce: nonce, aad: utf8("trommi/v1/ios-cache"), Array(json)) else { return }
+      var opts: Data.WritingOptions = [.atomic]
+      #if os(iOS)
+      opts.insert(.completeFileProtectionUntilFirstUserAuthentication)
+      #endif
+      try? Data([1] + nonce + sealed).write(to: url, options: opts)
+    }.value
+  }
+  /**
+   * The board from the cache, before any network: decrypted and decoded off the main thread, then replayed. Returns
+   * false when there is none (or it does not fit this room record: then it is thrown away and the catch-up starts at 0).
+   */
+  @discardableResult public func restore() async -> Bool {
+    if let t = restoring { return await t.value }
+    restoreTried = true
+    let t = Task { @MainActor in await self.restoreOnce() }
+    restoring = t
+    return await t.value
+  }
+  private var restoring: Task<Bool, Never>?
+  private func restoreOnce() async -> Bool {
+    guard let key = try? cacheKey(), let data = try? Data(contentsOf: cacheURL) else { return false }
+    let c: Cache? = await Task.detached(priority: .userInitiated) {
+      let b = Array(data)
+      guard b.count > 13, b[0] == 1, let plain = try? gcmOpen(key: key, nonce: Array(b[1..<13]), aad: utf8("trommi/v1/ios-cache"), Array(b[13...])) else { return nil }
+      return try? JSONDecoder().decode(Cache.self, from: Data(plain))
+    }.value
+    guard let c = c, c.v == 1 else { try? FileManager.default.removeItem(at: cacheURL); return false }
+    var ch = Change()
+    for (sid, raw) in c.grants {
+      let bytes = raw.compactMap { try? unb64u($0) }
+      guard let st = (try? verifyGrants(bytes, state)) ?? nil else { continue }
+      sessionStates[sid] = st
+      sessionGrants[sid] = bytes
+      var byEpoch = [Int: [String]](), ever = [String]()
+      for g in bytes { if let d = try? decodeGrant(g) { for id in d.agentIds.map(hex) { if !(byEpoch[d.epoch] ?? []).contains(id) { byEpoch[d.epoch, default: []].append(id) }; if !ever.contains(id) { ever.append(id) } } } }
+      board.applySessionGrant(st, everAgentIds: ever, epochAgentIds: byEpoch, change: &ch)
+    }
+    for (k, v) in c.sessionSecrets { sessionSecrets[k] = v.secret }
+    for r in c.recs {
+      board.apply(r, change: &ch)
+      log[r.envelopeNumber] = r
+    }
+    chains = c.chains
+    cursor = c.cursor
+    lamport = max(lamport, c.lamport)
+    board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, cursor)
+    board.project()
+    restored = true
+    ch.stack = true; ch.room = true
+    emit(ch)
+    return true
+  }
+  /** Throw the cache away (a resync from envelope 0 follows). */
+  public func dropCache() { try? FileManager.default.removeItem(at: cacheURL); log = [:] }
 
   // ---- the open cards (the spike's list; the app reads the board) -----------------------------------
 

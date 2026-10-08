@@ -71,6 +71,7 @@ public final class HubClient {
     if status == 401 && auth && !retried { token = nil; return try await request(method, path, query: query, body: body, auth: auth, retried: true) }
     let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
     if status >= 400 || status < 200 {
+      if ProcessInfo.processInfo.environment["TROMMI_DEBUG"] != nil { FileHandle.standardError.write(Data("[hub] \(method) \(comps.url!.absoluteString) -> \(status)\n".utf8)) }
       throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
     }
     return json

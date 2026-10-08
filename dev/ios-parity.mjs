@@ -225,20 +225,26 @@ try {
     assert.match(r2.stdout, /closed/)
   })
 
-  await test('history and canvas: the conversation\'s bodies page in (GET threads); the Scribble Board\'s strokes go both ways', async () => {
+  await test('history: the conversation\'s bodies page in (GET threads)', async () => {
     for (const t of ['first words', 'second words', 'third words']) await agent.sendMessage({ text: t })
     await until('the messages at the human', () => [...human.model.timelines.values()].some(t => [...t.items.values()].some(i => i.content?.text === 'third words')))
     const to = JSON.parse((await run(['dump'], { home })).stdout).agents.find(a => a.name === 'Agent')
     const h = (await run(['history', to.id], { home })).stdout
     for (const t of ['first words', 'second words', 'third words']) assert.ok(h.includes(`agent: ${t}`), `the history holds "${t}"`)
-    // a stroke from the JS core (canvas.mjs encodePoints) reaches Swift, a Swift stroke reaches the JS core
-    const { encodePoints } = await import('../shared/canvas.mjs')
-    const tl = (await import('../app/web/public/whiteboard.mjs').catch(() => null))?.deskCanvas?.('main') ?? null
-    const timeline = tl ?? 'desk/' + [...new Uint8Array(16).map((_, i) => 0)].join('')
-    await human.sendStrokes({ timeline_id: timeline, strokes: [{ ...encodePoints([0, 0, 5, 5, 9, 2]), style: { tool: 'pen', color: 'ink', size: 4 } }] })
-    const c = (await run(['canvas', 'main', '--draw'], { home })).stdout
-    assert.match(c, /pen 3 points/, 'the JS stroke in Swift')
-    assert.ok(c.split('\n').filter(l => / pen /.test(l)).length >= 2, 'and the Swift stroke')
+    // (the Scribble Board's strokes are checked against the new stroke format: dev/interop/fixtures/strokes.json)
+  })
+
+  await test('cache: the next start shows the board from the encrypted cache and catches up only what is new', async () => {
+    const before = JSON.parse((await run(['cards', '--json'], { home })).stdout)
+    const dir = path.join(home, human.model.room.room_id)
+    assert.ok(fs.readdirSync(dir).includes('cache.bin'), 'a cache was written')
+    const bytes = fs.readFileSync(path.join(dir, 'cache.bin'))
+    assert.ok(!bytes.includes(Buffer.from(before[0]?.title ?? 'Deploy')), 'the cache holds no plain text')
+    const id = await agent.sendCard({ title: 'After the cache', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })
+    await until('the card at the human', () => human.model.cards.has(id))
+    const r = await run(['cards'], { home })
+    assert.match(r.stdout, /restored from the cache/)
+    assert.ok(r.stdout.includes('After the cache'), 'what came since is caught up')
   })
 
   await test('board: what Swift\'s Desk reads (cards, status, stack, registers) is what the app\'s core holds', async () => {
@@ -339,6 +345,6 @@ try {
   for (const c of [human, agent, agent2, agent3]) await c?.stop?.().catch?.(() => {})
   hub.stop()
   console.log(`\n${passed} passed, ${failed} failed`)
-  fs.rmSync(tmp, { recursive: true, force: true })
+  if (!process.env.KEEP) fs.rmSync(tmp, { recursive: true, force: true })
   process.exit(failed ? 1 : 0)
 }

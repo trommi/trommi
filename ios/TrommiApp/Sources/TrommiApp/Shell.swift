@@ -10,6 +10,7 @@ struct BoardShell: View {
   @EnvironmentObject var model: BoardModel
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var columns = NavigationSplitViewVisibility.all
+  @State private var edgePeek: CGFloat = 0
   var body: some View {
     Group {
       if hSize == .regular {
@@ -23,7 +24,18 @@ struct BoardShell: View {
       } else {
         ZStack(alignment: .leading) {
           stack
-          Drawer()
+          // the left edge opens the sidebar on the Desk (in a pushed screen it goes back, as iOS does)
+          if model.path.isEmpty && !model.drawer {
+            Color.clear.frame(width: 22).contentShape(Rectangle())
+              .gesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
+                .onChanged { v in edgePeek = max(0, v.translation.width) }
+                .onEnded { v in
+                  let open = v.translation.width > 110 || v.predictedEndTranslation.width > 220
+                  withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.drawer = open; edgePeek = 0 }
+                })
+              .ignoresSafeArea()
+          }
+          Drawer(peek: edgePeek)
         }
       }
     }
@@ -69,30 +81,35 @@ struct DrawerButton: View {
   }
 }
 
-/** The phone's drawer: the sidebar sliding in over a veil. */
+/** The phone's drawer: the sidebar sliding in over a veil; it follows the finger both ways and snaps with its speed. */
 struct Drawer: View {
   @EnvironmentObject var model: BoardModel
-  @GestureState private var drag: CGFloat = 0
+  var peek: CGFloat = 0
+  @State private var drag: CGFloat = 0
   var body: some View {
     GeometryReader { geo in
       let w = min(geo.size.width * 0.84, 360)
+      // how far it is out: 0 shut, w open
+      let out = model.drawer ? max(0, w + min(0, drag)) : min(w, peek)
       ZStack(alignment: .leading) {
-        if model.drawer {
-          Color.black.opacity(0.32).ignoresSafeArea()
+        if out > 0 {
+          Color.black.opacity(0.32 * Double(out / w)).ignoresSafeArea()
             .onTapGesture { withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { model.drawer = false } }
-            .transition(.opacity)
           Sidebar(inDrawer: true)
             .frame(width: w)
             .background(Ink.bg.ignoresSafeArea())
-            .offset(x: min(0, drag))
-            .gesture(DragGesture().updating($drag) { v, s, _ in s = v.translation.width }.onEnded { v in
-              if v.translation.width < -80 { withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { model.drawer = false } }
-            })
-            .transition(.move(edge: .leading))
+            .shadow(color: .black.opacity(0.18 * Double(out / w)), radius: 16, x: 4)
+            .offset(x: out - w)
+            .gesture(DragGesture(minimumDistance: 10)
+              .onChanged { v in drag = min(0, v.translation.width) }
+              .onEnded { v in
+                let close = v.translation.width < -w / 3 || v.predictedEndTranslation.width < -w / 2
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { if close { model.drawer = false }; drag = 0 }
+              })
         }
       }
     }
-    .allowsHitTesting(model.drawer)
+    .allowsHitTesting(model.drawer || peek > 0)
   }
 }
 
