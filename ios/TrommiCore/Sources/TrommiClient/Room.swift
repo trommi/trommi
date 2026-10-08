@@ -1352,6 +1352,21 @@ public final class Room {
     if !strokeIds.isEmpty { try await sendCanvas(timelineId, .obj(["content_type": "send_away", "stroke_ids": .arr(strokeIds.map { .str($0) })])) }
   }
 
+  // ---- links for people outside the room (client.mjs shareAttachment) ------------------------------------------------
+
+  /** A link to one file for someone outside the room: `<app>/a/<share_id>#<secret>.<file_key>.<sha256>`; the hub keeps only H(secret). */
+  public func shareAttachment(_ ref: JV, days: Int = 7, app: String = "https://app.trommi.com") async throws -> (link: String, shareId: String, expiresAt: UInt64) {
+    guard let id = ref["attachment_id"].string, let key = ref["file_key"].string, let sha = ref["sha256"].string else { throw ZError("bad-argument", "attachment reference") }
+    let secret = systemRandom(32)
+    let shareId = hex(systemRandom(16))
+    let expires = nowMs() + UInt64(min(30, max(1, days))) * 86_400_000 - 60_000
+    let r = try await noted { try await hub.request("POST", "/rooms/\(record.roomId)/attachments/\(id)/shares", body: ["share_id": shareId, "share_secret_hash": b64u(sha256(secret)), "expires_at": expires]) }
+    return ("\(app)/a/\(shareId)#\(b64u(secret)).\(key).\(sha)", shareId, (r["expires_at"] as? NSNumber)?.uint64Value ?? expires)
+  }
+  public func revokeShare(attachmentId: String, shareId: String) async throws {
+    _ = try await noted { try await hub.request("DELETE", "/rooms/\(record.roomId)/attachments/\(attachmentId)/shares/\(shareId)") }
+  }
+
   // ---- the open cards (the spike's list; the app reads the board) -----------------------------------
 
   /** The open cards (decisions and infos) in stack order. */

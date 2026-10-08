@@ -393,7 +393,17 @@ struct PublishedCard: View {
       .padding(8).background(RoundedRectangle(cornerRadius: 12).fill(Ink.surface)).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.lineStrong))
     }
     .buttonStyle(.plain)
+    .contextMenu {
+      Menu("Share a link (outside the room)") {
+        ForEach([1, 7, 30], id: \.self) { d in Button(d == 1 ? "For a day" : "For \(d) days") { share(a, days: d) } }
+      }
+    }
     .sheet(item: $opened) { f in FileSheet(file: f) }
+    .sheet(item: $shared) { l in ShareLinkSheet(link: l.link, title: published.title) }
+  }
+  @State private var shared: SharedLink?
+  private func share(_ a: JV, days: Int) {
+    Task { do { if let r = try await model.room?.shareAttachment(a, days: days) { shared = SharedLink(link: r.link) } } catch { model.fail("No link", error) } }
   }
   private func open(_ a: JV) {
     Task { do { let d = try await model.attachment(a); opened = OpenedFile(name: a["file_name"].string ?? published.title, type: a["media_type"].string ?? "", data: d) } catch { model.fail("Not opened", error) } }
@@ -631,3 +641,28 @@ struct PhotoPicker: UIViewControllerRepresentable {
   }
 }
 #endif
+
+struct SharedLink: Identifiable { let link: String; var id: String { link } }
+/** A link for someone outside the room: the secret after # never reaches a server. */
+struct ShareLinkSheet: View {
+  let link: String
+  let title: String
+  @Environment(\.dismiss) private var dismiss
+  var body: some View {
+    NavigationStack {
+      VStack(alignment: .leading, spacing: 16) {
+        Text("Anyone with this link can open \(title.isEmpty ? "this file" : "“\(title)”") until it runs out. The secret is after the #; the hub never sees it.").font(Face.text(15)).foregroundStyle(Ink.muted)
+        Text(link).font(Face.mono(12)).textSelection(.enabled).padding(12).background(RoundedRectangle(cornerRadius: 10).fill(Ink.sunken))
+        HStack {
+          Button { copyText(link) } label: { Label("Copy", systemImage: "doc.on.doc") }.buttonStyle(QuietWay())
+          ShareLink(item: link) { Label("Send", systemImage: "square.and.arrow.up") }.buttonStyle(QuietWay())
+        }
+        Spacer()
+      }
+      .padding(20)
+      .navigationTitle("Share link").navigationBarTitleDisplayMode(.inline)
+      .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+    }
+    .presentationDetents([.medium])
+  }
+}
