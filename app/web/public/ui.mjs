@@ -791,7 +791,7 @@ export const srcOf = file => attrs({ src: thumb(file).src })
 
 /** The page behind a picture (the HTML it was rendered from), as one thing to press: a sheet with the file's name.
  *  always: it stands hidden where the picture has no page (the controller shows it for one that has). */
-export const pageChip = (page, always = false) => (page || always ? html`<a class="page-chip" data-card-target="page" target="_blank" rel="noopener noreferrer" href="${page?.url ?? '#'}" title="This picture has a page behind it: open the page"${page ? '' : raw(' hidden')}>${sk('page')}<b>${page?.name ?? ''}</b><i>open</i></a>` : '')
+export const pageChip = (page, always = false, view = '') => (page || always ? html`<a class="page-chip" data-card-target="page"${view && page?.kind === 'file' ? raw(' data-nav') : raw(' target="_blank" rel="noopener noreferrer"')} href="${view && page?.kind === 'file' ? view : page?.url ?? '#'}" title="This picture has a page behind it: open the page"${page ? '' : raw(' hidden')}>${sk('page')}<b>${page?.name ?? ''}</b><i>open</i></a>` : '')
 
 // ---- toast ----
 // The toast: one small note in the bottom-left corner of the main area (a phone: a slim bar at the foot) that says what
@@ -2009,9 +2009,12 @@ controller('later', class extends Controller {
 const WIDTH = 1280            // a page is laid out this wide and scaled down to the card
 const pages = new Map()       // src -> Promise<string>: a card the stream brings anew does not fetch again
 
+let readAtt = null           // app.mjs: an attachment's text, decrypted in this page (no service worker needed)
+export const readAttachmentsWith = fn => { readAtt = fn }
 const pageOf = src => {
   if (!pages.has(src)) {
-    const job = fetch(src).then(res => { if (!res.ok) throw new Error(String(res.status)); return res.text() })
+    const att = /^\/att\/([0-9a-f]{32})$/.exec(src)?.[1]
+    const job = att && readAtt ? readAtt(att) : fetch(src).then(res => { if (!res.ok) throw new Error(String(res.status)); return res.text() })
     job.catch(() => pages.delete(src))
     pages.set(src, job)
   }

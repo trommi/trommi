@@ -6,7 +6,7 @@ import * as desk from './desk.mjs'
 import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
 import { DRAWER_VEIL, SIDE_FOOT, cornerNote, phoneBar, sidebarRows, topbar } from './sidebar.mjs'
-import { Controller, WORDS, calm, controller, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
+import { Controller, WORDS, calm, readAttachmentsWith, controller, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { rowSheet } from './desk.mjs'
 // The views a cold start needs (the Desk, its frame, the notes) come with this module; every other view is loaded
@@ -300,6 +300,8 @@ export async function uploadFile(c, blob, { file_name, media_type, object_id }) 
   if (media_type.startsWith('image/')) { try { const b = await createImageBitmap(blob); meta.width = b.width; meta.height = b.height; b.close() } catch {} }
   return c.uploadAttachment(new Uint8Array(await blob.arrayBuffer()), meta)
 }
+/** An attachment's text, decrypted here (the sandboxed page viewer reads an attached page with it). */
+export const attachmentText = async id => { const b = await blobOf(id); if (!b) throw new Error('gone'); return b.text() }
 const blobOf = id => {
   if (!blobs.has(id)) {
     const ref = refs.get(id)
@@ -504,7 +506,10 @@ export class BoardState {
     const p = typeof a.page === 'string' ? a.page : a.page?.url ?? null
     const own = p?.startsWith('attachment:') ? p.slice(11) : null
     const named = text => { try { return decodeURIComponent(text) } catch { return text } }
-    const page = p ? { url: own ? `/att/${own}` : p, kind: own ? 'file' : 'link', name: own ? list.find(x => x.attachment_id === own)?.file_name ?? 'page.html' : named(p.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop()) || 'page' } : null
+    // (a page given as a path of the agent's machine never reached the room: there is nothing to open)
+    const local = !own && p && /^(?:\/(?:home|Users|tmp|var|private|root|mnt)\/|file:|[A-Za-z]:\\)/.test(p)
+    const pageAtt = own ? list.find(x => x.attachment_id === own) : null
+    const page = p && !local ? { url: own ? pageAtt?.url ?? `/att/${own}` : p, kind: own ? 'file' : 'link', name: own ? pageAtt?.file_name ?? 'page.html' : named(p.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop()) || 'page' } : null
     return { name: a.file_name ?? 'file', url: a.url ?? `/att/${a.attachment_id}`, image: kind === 'image', kind, type, size: a.total_size, width: a.width, height: a.height, caption: a.caption, title: a.caption ?? a.title, page, marks: a.marks, ref: a }
   }
   /** A list of attachment references as the views want them; a page that belongs to a picture is not a file of its own. */
@@ -1548,6 +1553,7 @@ async function openClient() {
 
 async function start(client, { fresh = false } = {}) {
   attachTo(client)
+  readAttachmentsWith(attachmentText)
   // The hub says this app is too old (426, or upgrade_required on the stream): a calm notice, reload takes the new build.
   client.on('error', err => { if (err?.code === 'client-too-old') notice('Please reload: this app needs a newer version.', err.message, true) })
   // README "Versioning and compatibility": something on the board was written by a newer Trommi (model.newer): it shows

@@ -49,7 +49,8 @@ self.addEventListener('fetch', event => {
     event.respondWith((async () => {
       const got = await fromPage(att[1], event.clientId || event.resultingClientId)
       if (!got) return new Response('This file can only be opened inside the app, with the room open.', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
-      const headers = { 'Content-Type': got.type || 'application/octet-stream', 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes', ...(got.name ? { 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(got.name)}` } : {}) }
+      // (sandbox: an attached page opened on its own never runs as the app's origin; the app shows pages in /frame)
+      const headers = { 'Content-Type': got.type || 'application/octet-stream', 'Cache-Control': 'no-store', 'Accept-Ranges': 'bytes', 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:", ...(got.name ? { 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(got.name)}` } : {}) }
       // A video asks for ranges (Safari plays nothing without 206 answers): cut them from the decrypted blob.
       const range = /^bytes=(\d*)-(\d*)$/.exec(event.request.headers.get('range') ?? '')
       const size = got.blob.size
