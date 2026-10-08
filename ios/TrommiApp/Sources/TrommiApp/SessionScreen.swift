@@ -21,7 +21,6 @@ struct SessionScreen: View {
   @EnvironmentObject var model: BoardModel
   let agentId: String
   @State private var onlyQuestions = false
-  @State private var writing = false
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var atBottom = true
   @State private var unseen = 0
@@ -92,27 +91,12 @@ struct SessionScreen: View {
           }
         }
         .bottomBar {
-          // the composer folds into a round glass pencil (the tab bar stays); a tap opens it and the keyboard; done
-          // with an empty field, it folds again (his decision, 8 October)
+          // the composer stays at the bottom (Messages, WhatsApp): a tap in it brings the keyboard; no tab bar in a chat
           VStack(spacing: 0) {
             SessionLinkNote(agent: a, messages: all)
-            if writing || hSize == .regular {
-              Composer(placeholder: composeWords(a), agent: a.id, autofocus: hSize != .regular, onSent: { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } },
-                       onIdle: { withAnimation(.snappy) { writing = false } })
-            } else {
-              HStack {
-                Spacer()
-                Button { withAnimation(.snappy) { writing = true } } label: {
-                  Image(systemName: "pencil").font(.system(size: 20, weight: .semibold)).foregroundStyle(Ink.fg).frame(width: 52, height: 52).glass(Circle(), interactive: true)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Write to \(a.name)")
-              }
-              .padding(.horizontal, 16).padding(.bottom, 8)
-            }
+            Composer(placeholder: composeWords(a), agent: a.id, onSent: { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } })
           }
         }
-        .toolbar(writing ? .hidden : .automatic, for: .tabBar)
         .onAppear { lastCount = all.count; proxy.scrollTo("bottom", anchor: .bottom); model.lastChat = a.id; model.markRead(a) }
         .onChange(of: model.version) { _, _ in model.markRead(a) }
         // what a catch-up brought as headers only (the app was away, the hub restarted): filled while the chat is open
@@ -585,8 +569,6 @@ struct Composer: View {
   var cardId: String? = nil
   var autofocus = false
   var onSent: (() -> Void)? = nil
-  /** The keyboard went away with nothing written: the chat folds the composer into its pencil. */
-  var onIdle: (() -> Void)? = nil
   @State private var text = ""
   @State private var files: [Pending] = []
   @State private var importing = false
@@ -673,17 +655,6 @@ struct Composer: View {
     }
     .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 8)
     .onAppear { if autofocus { focused = true } }
-    // the keyboard's own way down (with nothing written the chat's composer folds back into its pencil)
-    // folds back into the pencil only when nothing is written and nothing is being picked: the photo picker, the camera
-    // and the file importer take the focus away while they are open (folding then dropped what they brought: his
-    // pictures never reached the chat, 8 October); a short wait lets the menu's choice open its picker first
-    .onChange(of: focused) { _, on in
-      guard !on else { return }
-      Task { @MainActor in
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        if !focused && !canSend && !pickingPhotos && !importing && !camera && !sending { onIdle?() }
-      }
-    }
     .sheet(isPresented: $pickingPhotos) { PhotoPicker(limit: MAX_FILES - files.count) { picked in Task { await take(picked) } }.ignoresSafeArea() }
     .sheet(isPresented: $camera) { CameraPicker { data in Task { await take([(data, .jpeg)]) } }.ignoresSafeArea() }
     .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
