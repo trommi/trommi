@@ -555,7 +555,9 @@ public final class DeskModel {
     for i in t.ordered {
       if i.itemState == "header" { continue }
       let kind = i.contentType ?? "message"
-      if i.itemState == "loaded" && kind != "message" && kind != "selection_sent" { continue }
+      // a content type of a newer Trommi: a placeholder in its place; strokes and the like belong to a canvas
+      let newer = !Compat.CONTENT_TYPES.contains(kind) || i.itemState == "newer_schema"
+      if i.itemState == "loaded" && !newer && kind != "message" && kind != "selection_sent" { continue }
       let human = i.senderDeviceId == me || humans.contains(i.senderDeviceId)
       let c = i.content ?? .obj([:])
       let text: String
@@ -567,7 +569,7 @@ public final class DeskModel {
       }
       var msg = Message(id: i.envelopeNumber.map { "e\($0)" } ?? (i.localId ?? UUID().uuidString), seq: Double(i.envelopeNumber ?? Int.max), agent: agent, from: human ? "user" : "agent",
                         text: text, attachments: c["attachments"].array ?? [], ts: i.sentAt)
-      msg.itemState = i.itemState
+      msg.itemState = newer ? "unsupported" : i.itemState
       msg.contentType = kind
       msg.cardId = cardId
       msg.details = c["details"].string

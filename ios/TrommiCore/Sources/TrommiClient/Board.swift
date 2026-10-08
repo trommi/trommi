@@ -449,6 +449,17 @@ public final class Board {
   public var alerts: [BoardAlert] = []
   public var stack: [String] = []
   public var openPermissionIds: [String] = []
+  /** What a newer client wrote that this version cannot show (model.mjs model.newer): how many, what, the newest. */
+  public var newerCount = 0
+  public var newerWhat: [String] = []
+  public var newerEnvelope = 0
+  func noteNewer(_ what: String, _ rec: Rec, _ change: inout Change) -> (applied: Bool, refused: String?) {
+    newerCount += 1
+    if !newerWhat.contains(what) { newerWhat.append(what); if newerWhat.count > 16 { newerWhat.removeFirst() } }
+    newerEnvelope = max(newerEnvelope, rec.envelopeNumber)
+    change.room = true
+    return (false, "needs-update")
+  }
   var deviceRegisters: [String: JV] = [:]
   private var alertSeq = 0
 
@@ -568,6 +579,15 @@ public final class Board {
       s.lastActivityAt = max(s.lastActivityAt, rec.sentAt)
       change.sessions.insert(sid)
     }
+    var rec = rec
+    if rec.contentState == "newer_schema" {
+      _ = noteNewer("schema_version \(rec.content?["schema_version"].int ?? 0)", rec, &change)
+      if rec.kind != KIND.TIMELINE_ITEM { rec.content = nil }
+    } else if rec.kind == KIND.TIMELINE_ITEM, let ct = rec.content?["content_type"].string, !Compat.CONTENT_TYPES.contains(ct) {
+      _ = noteNewer("content_type \(ct)", rec, &change)
+    } else if rec.kind == KIND.ANSWER, let a = rec.content?["answer_action"].string, !Compat.ANSWER_ACTIONS.contains(a) {
+      return noteNewer("answer_action \(a)", rec, &change)
+    }
     switch rec.kind {
     case KIND.TIMELINE_ITEM: return applyTimelineItem(rec, &change)
     case KIND.OBJECT_VERSION: return applyObjectVersion(rec, &change)
@@ -576,7 +596,7 @@ public final class Board {
     case KIND.VERDICT: return applyVerdict(rec, &change)
     case KIND.STATUS: return applyStatus(rec, &change)
     case KIND.DECIDE_AGAIN: return applyDecideAgain(rec, &change)
-    default: return (false, "unknown-kind")
+    default: return noteNewer("envelope kind \(rec.kind)", rec, &change)
     }
   }
 
@@ -662,7 +682,7 @@ public final class Board {
     if c == nil && rec.contentState == "undecryptable" && myRole == "agent" && rec.senderRole == "human" { return (false, nil) }
     if type == "note" { return applyNote(rec, &change) }
     if type == "published" { return applyPublished(rec, &change) }
-    if type != "card" { return refuse(&change, rec, "unknown-object-type", "object_type \(type)") }
+    if type != "card" { return noteNewer("object_type \(type)", rec, &change) }
     var card = cards[objectId]
     if rec.senderRole != "agent" { return refuse(&change, rec, "not-creator", "cards come from agents") }
     let fresh = card == nil
