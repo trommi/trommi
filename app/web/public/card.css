@@ -763,7 +763,7 @@ a.focus-stage-step { display: grid; place-items: center; }
    well (card#fullscreen); Esc or the button leave both. A phone: the pictures the whole width, the answers a bar at the
    foot. ---- */
 @keyframes focus-in { from { opacity: 0; scale: .985; } }
-body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .topbar, .side-foot, #drawer-veil) { visibility: hidden; }
+body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .topbar, .side-foot, #drawer-veil, .demo-band) { visibility: hidden; }
 /* (no container here: the focus mode is placed against the window, not the page's column) */
 #cardpage.tc-page.is-full { overflow: hidden; container-type: normal; }
 .tc-page.is-full .tc-card { position: fixed; z-index: var(--z-full); inset: 0; max-width: none; max-height: none; min-height: 0; margin: 0; border-radius: 0; background: var(--bg); box-shadow: none; grid-template-rows: minmax(0, 1fr); animation: focus-in 180ms var(--ease-out); }
@@ -818,3 +818,13 @@ body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .to
 .tc-done-ways .tc-tile.is-what { min-width: 96px; }
 .tc-done-ways .tc-tile.is-what .sketch-what { width: 72px; height: 26px; }
 .tc-answer > .tc-options-said { margin: 0 0 var(--s-3); }
+
+/* ---- a tall picture stands whole (his word, 8 October: "ich sehe nicht das Ende vom Screenshot"): on the card it is
+   fitted into its frame, never cut; a click opens it large, where a second click shows it at its own size to scroll. ---- */
+.tc-page:not(.is-full) .tc-stage:not(.is-video) .tc-figure img { width: auto !important; max-width: 100%; max-height: 70vh; margin-inline: auto; }
+@container cardpage (min-width: 761px) { .tc-page:not(.is-full) .tc-card .tc-stage:not(.is-video) .tc-figure img { max-height: 52vh; } }
+.tc-page.is-full .tc-stage .tc-figure img { cursor: zoom-in; }
+.tc-page.is-full .tc-stage.is-zoomed { overflow: auto; overscroll-behavior: contain; place-items: start center; height: calc(100dvh - 170px); max-height: calc(100dvh - 170px) !important; }
+@media (max-width: 860px) { .tc-page.is-full .tc-stage.is-zoomed { height: 52dvh; max-height: 52dvh !important; } }
+.tc-page.is-full .tc-stage.is-zoomed .tc-figure { cursor: zoom-out; }
+.tc-page.is-full .tc-stage.is-zoomed .tc-figure img { max-height: none !important; width: auto !important; max-width: 100%; height: auto; cursor: zoom-out; }
