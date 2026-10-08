@@ -3,109 +3,81 @@ body[data-page="gallery"] #gallery {
   display: block; grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface);
   padding: var(--s-4) var(--gutter) var(--s-10); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
 }
-.gal-column { max-width: 1160px; margin-inline: auto; display: grid; gap: var(--s-5); }
-.gal-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
+.gal-column { max-width: 1160px; margin-inline: auto; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-5); }
+.gal-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-1) var(--s-6); }
 .gal-head h2 { margin: 0; font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
 .gal-head p { margin: 0; font-size: var(--t-lg); color: var(--muted); }
-
-.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 48px var(--s-8); }
-.gal-tile { display: grid; gap: 14px; min-width: 0; color: var(--fg); text-decoration: none; }
-.gal-tile .asset-preview { width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 10px; }
-.gal-tile:hover .asset-preview::after { box-shadow: inset 0 0 0 1.5px var(--fg); }
-.gal-file { display: grid; place-items: center; align-content: center; gap: 6px; }
-.gal-ext { font: 700 var(--t-xs)/1 var(--mono); letter-spacing: .06em; color: var(--muted); }
-.gal-meta { display: grid; gap: 3px; min-width: 0; }
-.gal-meta strong { font: 600 15px/1.3 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gal-meta small { color: var(--faint); font: 500 var(--t-xs)/1.2 var(--font); }
-.gal-who { overflow: hidden; text-overflow: ellipsis; }
-
+.gal-none { color: var(--muted); }
 @media (max-width: 860px) {
   body[data-page="gallery"] #gallery { grid-column: 1; grid-row: 2; padding: var(--s-4) var(--gutter) var(--s-8); }
   .gal-head h2 { font-size: 2rem; }
   .gal-head p { font-size: var(--t-sm); }
-  .gal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4) var(--s-3); }
 }
 
-/* a video: its first frame (the decrypted blob, muted, never playing here) under a round play mark */
+/* a file: its drawn kind and its extension; a video: its first frame (the decrypted blob, muted, never playing here)
+   under a round play mark (ui.mjs mediaPreview, also the Desk's Artifacts row) */
+.gal-file { display: grid; place-items: center; align-content: center; gap: 6px; }
+.gal-ext { font: 700 var(--t-xs)/1 var(--mono); letter-spacing: .06em; color: var(--muted); }
 .asset-preview.gal-video { background: #1d1d1f; color: rgb(255 255 255 / .55); }
 .asset-preview.gal-video > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .gal-play { position: absolute; z-index: 1; left: 50%; top: 50%; translate: -50% -50%; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: rgb(0 0 0 / .55); box-shadow: 0 0 0 1.5px rgb(255 255 255 / .85); }
 .gal-play svg { width: 20px; height: 20px; fill: #fff; translate: 1px 0; }
-
-/* fixes: the preview fills its tile (app.css gives it a grid area and a fixed size); the crown stays in the sidebar */
-.gal-tile .asset-preview { grid-area: auto; }
-:is(.gal-page, .media-pile) .crown-mark { display: none; }
-.gal-page .inbox-from-mark { position: relative; overflow: visible; }
-.gal-tile, .gal-meta { text-align: left; justify-items: stretch; }
-.gal-column { grid-template-columns: minmax(0, 1fr); }
-.gal-none { color: var(--muted); }
-
-/* the stack of one decision: up to three sheets of paper, the first on top, the others peeking out turned */
-.gal-fan { position: relative; display: block; aspect-ratio: 4 / 3; margin: 6px 10px var(--s-2) 6px; }
-.gal-sheet { position: absolute; inset: 0; padding: 5px; background: var(--surface); border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; box-shadow: 0 1px 3px var(--shade); transform-origin: 50% 100%; transition: translate 140ms ease-out; }
-.gal-sheet[data-s="0"] { z-index: 3; rotate: -1deg; }
-.gal-sheet[data-s="1"] { z-index: 2; rotate: 3.5deg; translate: 12px -2px; }
-.gal-sheet[data-s="2"] { z-index: 1; rotate: -3deg; translate: -8px 0; }
-.gal-sheet .asset-preview { position: absolute; inset: 5px; width: auto; height: auto; aspect-ratio: auto; border-radius: 2px; }
-.gal-sheet .asset-preview::after { content: none; }
-.gal-tile:hover .gal-sheet[data-s="0"] { translate: 0 -2px; }
-.gal-tile:hover .gal-sheet[data-s="1"] { translate: 18px -3px; }
-.gal-tile:hover .gal-sheet[data-s="2"] { translate: -12px 0; }
-.gal-sheet .asset-page-label { display: none; }
-@media (max-width: 860px) { .gal-grid { gap: var(--s-8) var(--s-6); } .gal-fan { margin: 6px 14px var(--s-2) var(--s-2); } .gal-meta strong { font-size: var(--t-sm); } }
-/* the stacks without frames (his word, 4 October): the pictures themselves, rounded, a soft shadow */
-.gal-sheet { padding: 0; border: 0; border-radius: 6px; background: var(--sunken); box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 60%, transparent), 0 2px 8px rgb(20 30 25 / .16); overflow: hidden; }
-.gal-sheet .asset-preview { inset: 0; border-radius: 6px; }
-/* ---- Simpler (his word, 4 October): each tile's title begins with its session's small drawing; no counts, no session
-   chips ---- */
-.gal-head { align-items: center; }
-.gal-meta strong { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.gal-page .crown-mark { display: none; }
+/* the session's small drawing before a title */
 .gal-who { flex: none; display: grid; width: 18px; height: 18px; }
-.gal-who .inbox-from-mark { position: static; width: 18px; height: 18px; color: var(--tone-pen); }
+.gal-who .inbox-from-mark { position: static; width: 18px; height: 18px; color: var(--tone-pen); overflow: visible; }
 .gal-who .inbox-from-mark svg { width: 100%; height: 100%; }
-.gal-who .crown-mark { display: none; }
-.gal-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gal-meta small { display: none; }
 
-/* ---- Pages (media.mjs): the pages sheets of the Desk's pile "Artifacts N" (when it holds no pictures), and their tiles.
-   The pile is paper like its neighbours (desk.css .shop-slip, .photo-pile): three sheets with a folded corner, each
-   with its title and a few lines of writing, fanned, the newest in front. The page is sober: one line per page. ---- */
-.pg-pile { width: 210px; }
-.pg-sheet { --fold: 14px; position: absolute; top: calc(6px + var(--i) * 3px); left: calc(14px + var(--i) * 52px); z-index: calc(1 + var(--i)); width: 82px; height: 104px; box-sizing: border-box; padding: 9px 8px 0; display: grid; align-content: start; gap: 6px;
-  background: var(--slip-paper); border: 1px solid color-mix(in srgb, var(--fg) 30%, var(--surface)); border-radius: 2px 3px 2px 3px; box-shadow: 0 2px 3px var(--shade);
-  clip-path: polygon(0 0, calc(100% - var(--fold)) 0, 100% var(--fold), 100% 100%, 0 100%); rotate: calc(-4deg + var(--i) * 3.5deg); text-align: left; }
-.pg-sheet::after { content: ""; position: absolute; right: -1px; top: -1px; width: var(--fold); height: var(--fold); background: linear-gradient(225deg, transparent 50%, color-mix(in srgb, var(--fg) 14%, var(--slip-paper)) 50%); border-left: 1px solid color-mix(in srgb, var(--fg) 30%, var(--surface)); border-bottom: 1px solid color-mix(in srgb, var(--fg) 30%, var(--surface)); }
-.pg-sheet:last-child { rotate: 2deg; }
-.pg-t { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; padding-right: 6px; font: 700 .62rem/1.25 var(--display); color: var(--fg); overflow-wrap: break-word; hyphens: auto; }
-.pg-lines { height: 26px; background: repeating-linear-gradient(transparent 0 6px, color-mix(in srgb, var(--fg) 22%, transparent) 6px 7px); }
-@container rows (max-width: 600px) {
-  .pg-pile { width: 108px; height: 76px; }
-  .pg-sheet { --fold: 8px; width: 44px; height: 60px; padding: 5px 4px 0; gap: 3px; left: calc(6px + var(--i) * 28px); top: calc(4px + var(--i) * 2px); }
-  .pg-t { font-size: .42rem; -webkit-line-clamp: 2; padding-right: 3px; }
-  .pg-lines { height: 14px; background: repeating-linear-gradient(transparent 0 4px, color-mix(in srgb, var(--fg) 22%, transparent) 4px 5px); }
+/* ---- Artifacts (media.mjs, his word 8 October): Media and Pages in one grid, the newest first; the filter All · Media ·
+   Pages as three small words in a quiet segmented strip ---- */
+.art-kinds { display: inline-flex; gap: 2px; justify-self: start; padding: 3px; border-radius: var(--r-md); background: var(--sunken); }
+.art-kinds a { display: grid; place-items: center; min-height: 32px; padding: 0 14px; border-radius: 9px; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-decoration: none; }
+.art-kinds a:hover { color: var(--fg); }
+.art-kinds a[aria-current] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
+@media (max-width: 860px) { .art-kinds a { min-height: 36px; } }
+
+/* ---- a tile (his word, 8 October: compact, one object): a soft rounded frame around the picture and its one line
+   (the session's drawing, the title, when); Open and Share as small round icons on the picture's corner. A tile not
+   made yet (.art-ph) has the same frame and size, empty. ---- */
+.art-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--s-5); margin: 0; padding: 0; list-style: none; }
+.art-grid > .gal-none { grid-column: 1 / -1; }
+.art-card { position: relative; display: grid; gap: 8px; min-width: 0; align-content: start; padding: 7px 7px 9px; border-radius: 16px; background: color-mix(in srgb, var(--sunken) 55%, var(--surface)); box-shadow: 0 0 0 1px var(--line), 0 1px 3px rgb(20 30 25 / .06); text-align: left; }
+.art-shot { position: relative; display: block; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 11px; background: var(--sunken); color: var(--fg); text-decoration: none; }
+.art-shot .asset-preview { grid-area: auto; width: 100%; height: 100%; aspect-ratio: auto; border-radius: 11px; }
+.art-shot .asset-preview::after { content: none; }
+.art-shot .asset-page-label { display: none; }
+.art-n { position: absolute; z-index: 2; left: 8px; bottom: 8px; min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box; display: grid; place-items: center; border-radius: 11px; background: rgb(0 0 0 / .6); color: #fff; font: 700 var(--t-xs)/1 var(--font); }
+.art-line { display: flex; align-items: center; height: 20px; gap: 7px; min-width: 0; padding: 0 3px; font: 600 var(--t-sm)/1.3 var(--font); }
+.art-t { flex: 1 1 auto; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); text-decoration: none; }
+.art-t:hover { text-decoration: underline; text-underline-offset: 3px; }
+.art-ago { flex: none; color: var(--faint); font: 500 var(--t-xs)/1 var(--font); }
+.art-card:hover { box-shadow: 0 0 0 1px var(--line-strong), 0 4px 14px rgb(20 30 25 / .1); }
+.art-ph .art-shot { background: var(--sunken); }
+.art-acts { position: absolute; z-index: 3; top: 14px; left: 7px; right: 14px; display: flex; justify-content: flex-end; gap: 6px; pointer-events: none; }
+.art-acts > * { pointer-events: auto; }
+.art-act { display: grid; place-items: center; width: 32px; height: 32px; box-sizing: border-box; border-radius: 50%; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 0 0 1px var(--line-strong), 0 1px 4px rgb(0 0 0 / .14); color: var(--fg); cursor: pointer; list-style: none; text-decoration: none; }
+.art-act::-webkit-details-marker { display: none; }
+.art-act .sketch { width: 18px; height: 18px; }
+.art-act:hover, .art-share[open] > .art-act { background: var(--surface); box-shadow: 0 0 0 1.5px var(--fg), 0 2px 6px rgb(0 0 0 / .18); }
+.art-act.is-on, .art-share[open] > .art-act.is-on { background: var(--fg); color: var(--bg); }
+.art-act:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Share opens under the icons, over its own tile, as wide as the tile */
+.art-share { position: static; }
+.art-share-body { position: absolute; z-index: var(--z-pop); top: 40px; left: 0; right: -7px; box-sizing: border-box; padding: var(--s-3); border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
+@media (max-width: 860px) {
+  .art-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+  .art-card { padding: 5px 5px 7px; border-radius: 14px; }
+  .art-acts { top: 10px; left: 5px; right: 10px; }
+  .art-share-body { right: -5px; }
+  .art-act { width: 36px; height: 36px; }
+  .art-ago { display: none; }
 }
 
-/* the page /artifacts: the share controls */
-.lk-column { max-width: 900px; }
-.lk-list { list-style: none; margin: 0; padding: 0; display: grid; }
-.lk-row { text-align: left; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 6px 14px; padding: 14px 2px; border-bottom: 1px solid var(--line); }
-.lk-glyph { display: grid; place-items: center; color: var(--muted); }
-.lk-glyph .sketch { width: 22px; height: 22px; }
-.lk-main { display: grid; gap: 3px; min-width: 0; }
-.lk-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 600 16px/1.3 var(--font); color: var(--fg); text-decoration: none; }
-.lk-main > .lk-title { text-align: left; }
-.lk-title:hover { text-decoration: underline; text-underline-offset: 3px; }
-.lk-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--s-3); min-width: 0; color: var(--muted); font: 500 var(--t-xs)/1.3 var(--font); }
-.lk-host { min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.lk-from { display: inline-flex; align-items: center; gap: 5px; }
-.lk-from .gal-who { width: 16px; height: 16px; }
-.lk-from .gal-who .inbox-from-mark { width: 16px; height: 16px; }
-.lk-acts { display: flex; gap: 6px; }
+/* ---- Share: a switch, how long, then the link, Copy, until when, Stop sharing ---- */
 .lk-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 0 var(--s-3); border: 0; border-radius: 9px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); text-decoration: none; white-space: nowrap; cursor: pointer; }
 .lk-btn:hover { background: var(--sunken); }
 .is-done > .lk-btn, .is-done.lk-copy > .lk-btn { box-shadow: inset 0 0 0 1.5px var(--fg); }
-/* Share: a switch, how long, then the link, Copy, until when, Stop sharing */
-.lk-share { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); margin: 0; padding-top: var(--s-1); }
+.lk-share { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); margin: 0; padding: 0; }
 .lk-share.is-busy { opacity: .6; pointer-events: none; }
 .lk-switch { position: relative; display: inline-flex; align-items: center; gap: var(--s-2); min-height: 34px; font: 600 var(--t-sm)/1 var(--font); color: var(--fg); cursor: pointer; }
 .lk-switch > input { position: absolute; opacity: 0; width: 1px; height: 1px; }
@@ -116,59 +88,8 @@ body[data-page="gallery"] #gallery {
 .lk-switch > input:focus-visible + .lk-knob { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .lk-days select { min-height: 32px; padding: 0 var(--s-2); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
 .lk-until { color: var(--muted); font: 500 var(--t-sm)/1.2 var(--font); }
-.lk-copy { display: flex; gap: 6px; flex: 1 1 320px; min-width: 0; order: 3; }
+.lk-copy { display: flex; gap: 6px; flex: 1 1 100%; min-width: 0; order: 3; }
 .lk-url { flex: 1 1 auto; min-width: 0; min-height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); color: var(--muted); font: 500 var(--t-xs)/1 var(--mono, ui-monospace, monospace); text-overflow: ellipsis; }
 .lk-stop { order: 4; box-shadow: none; padding: 0 var(--s-1); color: var(--muted); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
 .lk-stop:hover { background: none; color: var(--urg-critical); }
-@media (max-width: 860px) {
-  .lk-row { grid-template-columns: 22px minmax(0, 1fr); gap: 6px 10px; padding: var(--s-3) 0; }
-  .lk-acts { grid-column: 2; }
-  .lk-share { grid-column: 1 / -1; }
-  .lk-copy { flex-basis: 100%; }
-  .lk-btn { min-height: 36px; }
-  .lk-switch { min-height: 40px; }
-}
-#inbox .inbox-stacks.stack-tabs .pg-pile { rotate: -.5deg; }
-
-/* ---- the pages of /artifacts as a grid (his word, 8 October: "like Media, with a mini preview per page"): the rhythm of
-   .gal-grid; each tile the preview (4:3), the title, who and when, Open and the ⋯ that holds Share. ---- */
-.pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 48px var(--s-8); margin: 0; padding: 0; list-style: none; }
-.pg-tile { position: relative; display: grid; gap: 10px; min-width: 0; align-content: start; }
-.pg-shot { display: block; color: var(--fg); text-decoration: none; }
-.pg-shot .asset-preview { width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 10px; }
-.pg-shot:hover .asset-preview::after { box-shadow: inset 0 0 0 1.5px var(--fg); }
-.pg-meta { display: grid; gap: 3px; min-width: 0; }
-.pg-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font: 600 15px/1.3 var(--font); text-decoration: none; }
-.pg-title:hover { text-decoration: underline; }
-.pg-from { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font: 500 var(--t-xs)/1.2 var(--font); }
-.pg-from .ago { margin-left: auto; color: var(--faint); }
-.pg-acts { display: flex; align-items: center; gap: var(--s-2); }
-.pg-menu { position: relative; margin-left: auto; }
-.pg-more { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; color: var(--muted); font: 700 1.1rem/1 var(--font); cursor: pointer; list-style: none; }
-.pg-more::-webkit-details-marker { display: none; }
-.pg-more:hover, .pg-menu[open] > .pg-more { background: var(--sunken); color: var(--fg); }
-.pg-menu-body { position: absolute; z-index: var(--z-pop); right: 0; bottom: calc(100% + 6px); width: min(300px, 80vw); padding: var(--s-3); border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
-.pg-menu-body .lk-share { margin: 0; flex-wrap: wrap; }
-@media (max-width: 860px) {
-  .pg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-5) var(--s-3); }
-  .pg-title { font-size: var(--t-sm); }
-  .pg-more { width: 44px; height: 44px; }
-  .pg-menu-body { right: -4px; }
-}
-.pg-tile, .pg-meta, .pg-title { text-align: left; justify-items: stretch; }
-.pg-sheet.has-pic { padding: 0; background-size: cover; background-position: top center; }
-.pg-sheet.has-pic > :is(.pg-t, .pg-lines) { display: none; }
-/* (Share opens over its own tile, as wide as the tile) */
-.pg-menu { position: static; }
-.pg-menu-body { left: 0; right: 0; width: auto; bottom: 48px; }
-.pg-menu-body .lk-share { margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); grid-column: auto; }
-@media (max-width: 860px) { .pg-menu-body { left: -4px; right: -4px; bottom: 54px; } }
-/* ---- Artifacts (media.mjs, his word 8 October): Media and Pages in one grid, the newest first; the filter All · Media ·
-   Pages as three small words in a quiet segmented strip ---- */
-.art-kinds { display: inline-flex; gap: 2px; justify-self: start; padding: 3px; border-radius: var(--r-md); background: var(--sunken); }
-.art-kinds a { display: grid; place-items: center; min-height: 32px; padding: 0 14px; border-radius: 9px; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-decoration: none; }
-.art-kinds a:hover { color: var(--fg); }
-.art-kinds a[aria-current] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
-.art-item { min-width: 0; }
-.art-grid > .gal-none { grid-column: 1 / -1; }
-@media (max-width: 860px) { .art-kinds a { min-height: 36px; } }
+@media (max-width: 860px) { .lk-btn { min-height: 36px; } .lk-switch { min-height: 40px; } }
