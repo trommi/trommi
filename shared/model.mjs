@@ -682,7 +682,6 @@ function applyVerdict(model, rec, change) {
   change.stack = true
   return { applied: true }
 }
-export const isExpired = (p, now = Date.now()) => p.permission_state === 'pending' && now > p.expires_at
 
 // ---- registers ------------------------------------------------------------------------------
 
@@ -853,29 +852,6 @@ export function project(model, change, now = Date.now()) {
 export function stackOf(model, { desk_id } = {}) {
   if (desk_id == null) return model.stack
   return model.stack.filter(id => (model.sessions.get(model.cards.get(id)?.session_id)?.settings?.desk ?? null) === desk_id)
-}
-
-/** The items of a timeline window, sorted (pending echoes last). */
-export function timelineItems(t) {
-  return [...t.items.values()].sort((a, b) => (a.envelope_number ?? Infinity) - (b.envelope_number ?? Infinity) || (a.sent_at - b.sent_at))
-}
-
-/** For a card's conversation: timeline items merged with card versions and answers, sorted by envelope_number. */
-export function timelineEvents(model, key) {
-  const t = model.timelines.get(key)
-  const out = t ? timelineItems(t).map(item => ({ event: 'item', envelope_number: item.envelope_number, item })) : []
-  const p = parseTimelineKey(key)
-  if (p.scope === 'card') {
-    const card = model.cards.get(p.scope_id)
-    if (card) {
-      for (const v of card.versions) out.push({ event: v.object_version === 1 ? 'card_created' : 'card_version', envelope_number: v.envelope_number, version: v })
-      for (const a of card.answers) {
-        out.push({ event: 'answer', envelope_number: a.envelope_number, answer: a })
-        if (a.taken_back_at) out.push({ event: 'decide_again', envelope_number: a.taken_back_at, answer: a })
-      }
-    }
-  }
-  return out.sort((a, b) => (a.envelope_number ?? Infinity) - (b.envelope_number ?? Infinity))
 }
 
 // ---- persistence: records <-> model ------------------------------------------------------
