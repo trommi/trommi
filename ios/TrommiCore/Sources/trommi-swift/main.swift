@@ -37,6 +37,8 @@ let deviceName = option("--name")
 let hubOption = option("--hub")
 let linkOut = option("--link-out")
 let confirmYes = flag("--yes")
+let titleWanted = option("--title")
+let closedWanted = option("--closed")
 let asJSON = flag("--json")
 let command = args.first ?? "help"
 let rest = Array(args.dropFirst())
@@ -225,6 +227,22 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     openedRoom = room
     try await room.sendDeviceRegister(name: deviceName ?? "trommi-swift", platform: "trommi-swift")
     print("New password set. This device is a member of the room now.")
+  case "watch":
+    // Live: keep the stream open and wait until a card with this title is there (--title) or is no longer open (--closed
+    // <card id prefix>); prints "live" once the stream is up. For the parity check of live updates.
+    let room = try pickRoom()
+    try await room.sync()
+    let live = Task { @MainActor in await room.runLive() }
+    let until = nowMs() + 20_000
+    var said = false
+    while nowMs() < until {
+      if room.live && !said { print("live"); said = true }
+      if let t = titleWanted, room.board.cards.values.contains(where: { $0.title == t }) { print("seen \(t)"); live.cancel(); return }
+      if let c = closedWanted, let card = room.board.cards.values.first(where: { $0.objectId.hasPrefix(c) }), card.objectState != "open" { print("closed \(card.objectId)"); live.cancel(); return }
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+    live.cancel()
+    die("not seen live")
   case "rooms":
     for id in Store.rooms(base: base) {
       let r = try Room.open(base: base, roomId: id)

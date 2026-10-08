@@ -15,6 +15,7 @@
 //                 (Argon2id, auth key, the recovery code unwrapped), adds itself with the recovery key and re-seals every
 //                 session key; the app's core sees the new human device and Swift reads the app's open cards. A wrong
 //                 password: "wrong-login", nobody added.
+//   live          the Swift stream: a new card and another device's answer arrive without a restart.
 //   board         what Swift's Desk model reads (cards, numbers, status, answers, the stack, the registers) is the JS model's;
 //                 a Swift message reaches the agent, a Swift note and register reach the app's core.
 //   pairing       Swift makes the invite ("Pair a device" on the iPhone), a JS device joins, both show the same six emoji,
@@ -205,6 +206,23 @@ try {
     const b = await A.loginWithPassword({ hub_url: hub.hub_url, email, password: 'the newest password 3', storage: core.memoryStorage(), device_name: 'JS after Swift forgot' })
     assert.ok(b.client.my_device_id)
     await b.client.stop?.().catch?.(() => {})
+  })
+
+  await test('live: with the stream open, a card from the agent and an answer from another device reach Swift at once', async () => {
+    const p = swift(['watch', '--title', 'Live from the agent'], { home })
+    await until('the Swift stream is up', () => p.stdout.includes('live'))
+    await agent.sendCard({ title: 'Live from the agent', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+    const r = await p.done
+    assert.equal(r.code, 0, r.stderr)
+    assert.match(r.stdout, /seen Live from the agent/)
+    const id = [...human.model.cards.values()].find(c => c.title === 'Live from the agent').object_id
+    const q = swift(['watch', '--closed', id.slice(0, 12)], { home })
+    await until('the Swift stream is up again', () => q.stdout.includes('live'))
+    await until('the card at the human', () => human.model.cards.get(id)?.object_state === 'open')
+    await human.answer({ object_id: id, choices: ['a'] })
+    const r2 = await q.done
+    assert.equal(r2.code, 0, r2.stderr)
+    assert.match(r2.stdout, /closed/)
   })
 
   await test('board: what Swift\'s Desk reads (cards, status, stack, registers) is what the app\'s core holds', async () => {
