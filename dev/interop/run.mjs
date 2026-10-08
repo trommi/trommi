@@ -6,6 +6,7 @@
 //   (cd ios/TrommiCore && swift build) && node dev/interop/run.mjs          all pairs (Swift pairs skipped without the binary)
 //   node dev/interop/run.mjs --pairs js-swift --only answer                   one pair, scenarios whose name has "answer"
 //   --require-swift: fail instead of skipping when trommi-swift is not built.  Results: dev/interop/out/run.json
+//   --agent rust: the agents (G and the helper) are the Rust connector's core (connector-rs, `cargo build` first)
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -13,7 +14,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { startHub } from '../../hub/server.mjs'
 import * as z from '../../shared/crypto/zcrypto.mjs'
-import { startDriver, swiftAvailable, SWIFT_BIN } from './protocol.mjs'
+import { startDriver, swiftAvailable, SWIFT_BIN, rustAvailable, RUST_BIN } from './protocol.mjs'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const argv = process.argv.slice(2)
@@ -22,6 +23,8 @@ const ALL_PAIRS = ['js-js', 'js-swift', 'swift-js']
 let pairs = (opt('--pairs') ?? ALL_PAIRS.join(',')).split(',')
 const only = opt('--only')
 const requireSwift = argv.includes('--require-swift')
+const AGENT = opt('--agent') ?? 'js'
+if (AGENT === 'rust' && !rustAvailable()) { console.error(`no ${RUST_BIN}: build it (cd connector-rs && cargo build)`); process.exit(2) }
 const skipped = []
 if (!swiftAvailable()) {
   if (requireSwift) { console.error(`no ${SWIFT_BIN}: build it (cd ios/TrommiCore && swift build)`); process.exit(2) }
@@ -130,7 +133,7 @@ for (const pair of pairs) {
   let ok = await P('setup', async () => {
     ctx.F = await driver('js', `${pair}:F`)
     await ctx.F.call('found_room', { hub_url: HUB, name: 'Founder (JS)' })
-    const g = await addDevice(ctx.F, 'js', { role: 'agent', name: 'Agent' })
+    const g = await addDevice(ctx.F, AGENT, { role: 'agent', name: 'Agent' })
     ctx.G = g.driver; ctx.agentId = g.id
     ctx.sid = await until('the agent\'s session', async () => (await ctx.F.call('sessions')).find(s => s.agent_device_ids.includes(ctx.agentId))?.session_id)
     const a = await addDevice(ctx.F, ia, { name: `A (${ia})` })
@@ -259,8 +262,8 @@ for (const pair of pairs) {
     await until('the new device at B', async () => (await B.call('members')).some(m => m.device_id === n.id && m.role === 'human' && m.active))
   })
 
-  await P('agent invite from A: a JS agent joins with A\'s link, gets a session of its own; its card reaches B', async () => {
-    const g2 = await addDevice(A, 'js', { role: 'agent', name: `Helper of ${ia}` })
+  await P('agent invite from A: an agent joins with A\'s link, gets a session of its own; its card reaches B', async () => {
+    const g2 = await addDevice(A, AGENT, { role: 'agent', name: `Helper of ${ia}` })
     ctx.G2 = g2.driver; ctx.g2Id = g2.id
     const id = (await g2.driver.call('agent_card', { title: `From the helper ${ia} invited`, options: [{ key: 'y', label: 'Yes' }] })).id
     await until('the helper\'s card at B', async () => (await cardAt(B, id))?.state === 'open')

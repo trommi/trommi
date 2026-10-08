@@ -8,6 +8,7 @@
 // Logs go to stderr. A command a driver does not have answers {"code": "unsupported"}. The drivers:
 //   js     node dev/interop/driver-js.mjs                     (shared/, the web app's and the connector's core)
 //   swift  ios/TrommiCore/.build/debug/trommi-swift driver --home <dir>   (TrommiCore/TrommiClient, the iPhone's core)
+//   rust   connector-rs/target/debug/trommi-connector driver --home <dir>  (the Rust connector's core; an agent only)
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -72,10 +73,13 @@ export const CARD_KEYS = ['id', 'title', 'card_type', 'state', 'closed_how', 'ur
 const here = path.dirname(new URL(import.meta.url).pathname)
 export const SWIFT_BIN = process.env.TROMMI_SWIFT_BIN ?? path.join(here, '../../ios/TrommiCore/.build/debug/trommi-swift')
 export const swiftAvailable = () => fs.existsSync(SWIFT_BIN)
+// The Rust connector (connector-rs/): an agent device only. `cargo build` in connector-rs makes it.
+export const RUST_BIN = process.env.TROMMI_RUST_BIN ?? path.join(here, '../../connector-rs/target/debug/trommi-connector')
+export const rustAvailable = () => fs.existsSync(RUST_BIN)
 
 /** Start a driver process; returns { impl, call(cmd, args), stop(), stderr() }. call rejects with { code, message }. */
 export async function startDriver(impl, { home, label = impl, env = {}, timeout_ms = 60_000 } = {}) {
-  const [cmd, args] = impl === 'swift' ? [SWIFT_BIN, ['driver', '--home', home]] : [process.execPath, [path.join(here, 'driver-js.mjs')]]
+  const [cmd, args] = impl === 'swift' ? [SWIFT_BIN, ['driver', '--home', home]] : impl === 'rust' ? [RUST_BIN, ['driver', '--home', home]] : [process.execPath, [path.join(here, 'driver-js.mjs')]]
   const p = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...env } })
   let buf = '', err = '', next = 1, ready
   const waiting = new Map()
