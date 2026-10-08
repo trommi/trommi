@@ -805,3 +805,9 @@ html body .inbox-answer.is-take.is-advised { padding-bottom: var(--s-3); }
   #says-host .says:has(form) .says-back { padding: 0; width: 40px; justify-content: center; }
   #says-host .says:has(form) .says-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 }
+
+/* ---- rendering a big room (README "The huge room, per-change cost and the budgets"): the sidebar is a layout
+   boundary of its own (its size comes from the frame, never from its sessions), so a change on the page does not lay it
+   out again and a change in it does not lay out the page; long talks under a card skip what is out of sight ---- */
+#agents { contain: strict; }
+.tc-feed > :is(.msg, .tc-deed) { content-visibility: auto; contain-intrinsic-size: auto 96px; overflow-clip-margin: 80px; }

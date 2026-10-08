@@ -1216,18 +1216,20 @@ let fitObserver = null
 // (The mark is set in the next frame: set inside the observer, it changes the row the title stands in, and WebKit
 // reports "ResizeObserver loop completed with undelivered notifications" as a page error on every Desk.)
 // (All heights are read first, then all marks set: reading after a write would lay the page out again per row.)
-const fitting = () => (fitObserver ??= new ResizeObserver(entries => requestAnimationFrame(() => {
-  const line = new Map(), marks = []
-  for (const { target } of entries) {
-    if (!target.isConnected) continue
-    const h = target.clientHeight
-    if (!h) continue
+// (The heights come with the observer's entries, read when the layout is done anyway: no layout is forced. A line's
+//  height per kind of title is read once, its style does not change.)
+const lineOf = new Map()
+const fitting = () => (fitObserver ??= new ResizeObserver(entries => {
+  const marks = []
+  for (const { target, contentRect } of entries) {
+    const h = contentRect.height
+    if (!h || !target.isConnected) continue
     const cls = target.className
-    if (!line.has(cls)) line.set(cls, parseFloat(getComputedStyle(target).lineHeight))
-    marks.push([target.closest('.inbox-row'), h > line.get(cls) * 1.5])
+    if (!lineOf.has(cls)) lineOf.set(cls, parseFloat(getComputedStyle(target).lineHeight))
+    marks.push([target.closest('.inbox-row'), h > lineOf.get(cls) * 1.5])
   }
-  for (const [row, tall] of marks) row?.toggleAttribute('data-tall', tall)
-})))
+  if (marks.length) requestAnimationFrame(() => { for (const [row, tall] of marks) if (row && row.hasAttribute('data-tall') !== tall) row.toggleAttribute('data-tall', tall) })
+}))
 controller('fit', class extends Controller {
   connect() { fitting().observe(this.element) }
   disconnect() { fitting().unobserve(this.element) }
@@ -1305,15 +1307,24 @@ controller('curl', class extends Controller {
       this.turn()
     })
     if (this.sideValue === 'pad') document.getElementById('whiteboard')?.removeAttribute('style')   // (it is the page now, not what lies under the Desk)
-    this.place()
     // arriving from the other side, the sheet settles into its corner
     let arrived = false; try { arrived = sessionStorage.getItem('trommi-curl') === '1'; sessionStorage.removeItem('trommi-curl') } catch {}
     this.tip = arrived && !this.calm ? [-150, 110] : [...CURL_REST]
-    if (this.sideValue === 'desk' && document.getElementById('whiteboard')) this.wake()
-    this.render()
-    if (arrived && !this.calm) this.spring()
+    // (placed when the page's main area has its size, read where the layout is fresh, before the frame is painted:
+    //  measuring here, while the page is built, laid the whole page out at once, a long task on a big Desk)
+    const first = () => {
+      this.place()
+      if (this.sideValue === 'desk' && document.getElementById('whiteboard')) this.wake()
+      this.render()
+      if (arrived && !this.calm) this.spring()
+    }
+    const main = document.querySelector('main')
+    if (!main) return first()
+    this.sized = new ResizeObserver(() => { if (this.placedOnce) return this.place(); this.placedOnce = true; first() })
+    this.sized.observe(main)
   }
   disconnect() {
+    this.sized?.disconnect()
     cancelAnimationFrame(this.anim); cancelAnimationFrame(this.tick)
     for (const off of this.offs ?? []) off()
     if (document.documentElement.dataset.curl === this.sideValue) delete document.documentElement.dataset.curl
@@ -2695,7 +2706,9 @@ export const sideWays = ({ later = true, duck = true, shred = true, many = false
   return html`${later ? html`<button type="submit" name="way" value="later" class="sel-later" title="${WORDS.later}: put ${it} off, ${many ? 'they wait' : 'it waits'} in Off the desk" aria-label="${WORDS.later}">${LATER_TAG}${word ? html`<span>${WORDS.later}</span>` : ''}</button>` : ''}${duck ? html`<button type="submit" name="way" value="duck" class="sel-duck" title="${WORDS.duck}: ${many ? 'the agents take their' : 'the agent takes its'} own advice" aria-label="${WORDS.duck}">${sk('duck')}<span>${WORDS.duck}</span></button>` : ''}${between}${shred ? html`<button type="submit" name="way" value="shred" class="sel-shred" title="${WORDS.shred}: throw ${it} away" aria-label="${WORDS.shred}">${sk('bin')}<span>${WORDS.shred}</span></button>` : ''}`
 }
 const deskNameOf = (model, agent) => model.desks.find(d => d.id === model.deskOf?.(agent))?.name || 'Desk'
-export function deskRow(card, model, base, { error = '' } = {}) {
+/** slim: the Desk's own row (his word, 8 October: the title and the answers): no session mark, name line, byline or
+ *  picture fan in the markup at all (a big room has hundreds of rows; every drawing is dozens of nodes to style). */
+export function deskRow(card, model, base, { error = '', slim = false } = {}) {
   const from = model.byAgent.get(card.agent)
   const assets = model.state.assets
   // (with the card's own teaser, the urgency's reason stays on the card's page: the teaser says what matters)
@@ -2712,18 +2725,18 @@ export function deskRow(card, model, base, { error = '' } = {}) {
   const trustTip = `I don’t give a duck: your call (R)${advisedLabels(card) ? ` · agent takes ${advisedLabels(card)}` : ''}`
   const href = cardPath(card, base)
   return html`<article class="inbox-row" id="row-${card.id}"${knockAttr(card)} tabindex="-1" data-id="${card.id}" data-urgency="${card.urgency}"${card.kind === 'info' ? raw(' data-kind="info"') : ''}${from ? html` data-from="${from.id}" style="--hue:${from.hue}"` : ''}>
-${from ? html`<a class="inbox-gutter" data-nav href="${base}/s/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
+${from && !slim ? html`<a class="inbox-gutter" data-nav href="${base}/s/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
 <div class="inbox-content">
 <header class="inbox-row-head"></header>
-${media.length ? html`<a class="inbox-fan" data-nav href="${href}${images.length ? '/picture/1' : ''}" aria-label="${media.length === 1 ? 'Look at the picture' : `Look at ${media.length} pictures and videos`}">${media.slice(0, 3).map(a => kindOf(a) === 'image' ? html`<img${srcOf(a, 56)} alt="" loading="lazy" decoding="async" width="56" height="42">` : html`<video src="${a.url}" muted playsinline preload="metadata"></video>`)}</a>` : ''}
-${from ? html`<button class="row-mark" type="button" style="--hue:${from.hue}" title="${from.name}: select (Shift: a range)" aria-label="Select: ${card.title}" aria-pressed="false" data-select>${markArt(from)}<span class="row-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6.4 12.6Q8.8 15.1 10.4 17Q14 11.4 18.2 7.2"/></svg></span></button>` : ''}<a class="inbox-text${from ? ' has-sender' : ''}" data-nav href="${href}" title="${cardNr(card)}${from ? ` · ${from.name}` : ''}: ${card.title}">${from ? html`<span class="inbox-from-mark inbox-who" style="--hue:${from.hue}" title="${from.name}" role="img" aria-label="From ${from.name}">${markArt(from)}</span>` : ''}<strong class="inbox-question" data-controller="fit">${knock ? html`<span class="row-urg is-${card.urgency === 'critical' ? 'block' : 'knock'}" role="img" title="${knockWord(card)}" aria-label="${knockWord(card)}">${card.urgency === 'critical' ? raw(handSvg()) : sk('knock')}</span>` : card.kind !== 'info' && card.urgency === 'low' ? html`<span class="row-urg is-whenever" role="img" title="Whenever: nothing waits on this" aria-label="Whenever">${sk('whenever')}</span>` : ''}${card.title}</strong>${from ? html`<span class="row-meta"><span class="row-meta-mark">${raw(doodleSvg(from.mark))}</span><span class="row-meta-who">${from.name}</span><span class="row-meta-dot">·</span>${agoSpan(card.created, 'row-meta-ago')}</span>` : ''}${about || words ? html`<span class="inbox-body">${model.all && from ? html`<span class="row-desk" title="Desk ${deskNameOf(model, from)}">${deskNameOf(model, from)}</span>` : ''}${about ? html`<span class="inbox-body-about">${about}</span>` : ''}${words ? html`<span class="inbox-body-text">${about ? ` · ${words}` : words}</span>` : ''}</span>` : ''}</a>
+${media.length && !slim ? html`<a class="inbox-fan" data-nav href="${href}${images.length ? '/picture/1' : ''}" aria-label="${media.length === 1 ? 'Look at the picture' : `Look at ${media.length} pictures and videos`}">${media.slice(0, 3).map(a => kindOf(a) === 'image' ? html`<img${srcOf(a, 56)} alt="" loading="lazy" decoding="async" width="56" height="42">` : html`<video src="${a.url}" muted playsinline preload="metadata"></video>`)}</a>` : ''}
+${from ? html`<button class="row-mark" type="button" style="--hue:${from.hue}" title="${from.name}: select (Shift: a range)" aria-label="Select: ${card.title}" aria-pressed="false" data-select>${markArt(from)}<span class="row-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6.4 12.6Q8.8 15.1 10.4 17Q14 11.4 18.2 7.2"/></svg></span></button>` : ''}<a class="inbox-text${from ? ' has-sender' : ''}" data-nav href="${href}" title="${cardNr(card)}${from ? ` · ${from.name}` : ''}: ${card.title}">${from && !slim ? html`<span class="inbox-from-mark inbox-who" style="--hue:${from.hue}" title="${from.name}" role="img" aria-label="From ${from.name}">${markArt(from)}</span>` : ''}<strong class="inbox-question" data-controller="fit">${knock ? html`<span class="row-urg is-${card.urgency === 'critical' ? 'block' : 'knock'}" role="img" title="${knockWord(card)}" aria-label="${knockWord(card)}">${card.urgency === 'critical' ? raw(handSvg()) : sk('knock')}</span>` : card.kind !== 'info' && card.urgency === 'low' ? html`<span class="row-urg is-whenever" role="img" title="Whenever: nothing waits on this" aria-label="Whenever">${sk('whenever')}</span>` : ''}${card.title}</strong>${from && !slim ? html`<span class="row-meta"><span class="row-meta-mark">${raw(doodleSvg(from.mark))}</span><span class="row-meta-who">${from.name}</span><span class="row-meta-dot">·</span>${agoSpan(card.created, 'row-meta-ago')}</span>` : ''}${about || words ? html`<span class="inbox-body">${model.all && from ? html`<span class="row-desk" title="Desk ${deskNameOf(model, from)}">${deskNameOf(model, from)}</span>` : ''}${about ? html`<span class="inbox-body-about">${about}</span>` : ''}${words ? html`<span class="inbox-body-text">${about ? ` · ${words}` : words}</span>` : ''}</span>` : ''}</a>
 <span class="inbox-when" title="${cardNr(card)} · asked ${ago(card.created)}"><form class="inbox-tabs" method="post" action="${act(card, base, 'snooze')}"><input type="hidden" name="stay" value="1">
 <button class="inbox-tab-act inbox-later is-tag" type="submit" formaction="${act(card, base, 'snooze')}" aria-label="${WORDS.later}: put this question off; it waits for you below" title="${WORDS.later}: put this question off; it waits for you below">${LATER_TAG}</button>
 ${card.kind !== 'permission' ? tab('inbox-revise', 'reverse', WORDS.revise, `${WORDS.revise}: hand it back to the session at once; it returns reworked`, act(card, base, 'revise'), true) : ''}
 ${card.kind === 'decision' ? tab('inbox-trust', 'duck', WORDS.trust, trustTip, act(card, base, 'trust'), true) : ''}
 ${card.kind !== 'permission' ? tab('inbox-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw this away unanswered. The session is told; it will not ask again`, act(card, base, 'shred')) : ''}
 </form>${agoSpan(card.created, 'inbox-ago')}</span>
-<p class="inbox-byline">${quiet}${from ? html`<span class="inbox-from">${smallMark(from)}<span>${from.name}</span></span><span class="inbox-sep"> · </span>` : ''}</p>
+${slim ? '' : html`<p class="inbox-byline">${quiet}${from ? html`<span class="inbox-from">${smallMark(from)}<span>${from.name}</span></span><span class="inbox-sep"> · </span>` : ''}</p>`}
 </div>
 ${tiles(card, base)}
 <p class="inbox-error inbox-row-error" role="alert"${error ? '' : raw(' hidden')}>${error}</p>

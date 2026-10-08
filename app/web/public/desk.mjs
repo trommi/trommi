@@ -69,7 +69,7 @@ function runs(model) {
 }
 
 /** Everything inside .inbox-groups (#desk-list). rowOf(card): the row's markup (the stream keeps what it rendered). */
-function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(card, model, base) } = {}) {
+function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(card, model, base, { slim: true }) } = {}) {
   // (The slip for the sessions that are cut off stands above the questions: #link-slip, hidden while there is none.)
   return html`${linkSlip(model.cut ?? [], base)}${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
 ${model.open.length || (model.reads ?? []).length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>Questions land here.</p></div>`}
@@ -607,10 +607,12 @@ controller('desk', class extends Controller {
     // Where the list stands across, for the strips: read when its box changes (layout is fresh then), never per frame.
     // (read in the next frame, not in the observer: measuring there made WebKit report "ResizeObserver loop completed
     // with undelivered notifications" as a page error when the Desk is scrolled)
-    this.ro = new ResizeObserver(() => { this.remeasure = true; this.look() })
+    // (read inside the observer, where the layout is fresh: reading in the next frame, after a stream changed the list,
+    //  laid the whole page out once more; the strips are written in the frame)
+    this.ro = new ResizeObserver(() => { this.across = this.list.getBoundingClientRect(); this.elTop = this.element.getBoundingClientRect().top; this.look() })
     this.ro.observe(this.list)
     // (folding the sidebar moves the list without resizing it: the window's resize, which the fold sends, measures again)
-    this.moved = () => { this.across = this.list.getBoundingClientRect(); this.look() }
+    this.moved = () => { this.across = this.list.getBoundingClientRect(); this.elTop = this.element.getBoundingClientRect().top; this.look() }
     addEventListener('resize', this.moved)
     this.offSelect = selectWays(this.element)
   }
@@ -635,7 +637,6 @@ controller('desk', class extends Controller {
     if (this.frame) return
     this.frame = requestAnimationFrame(() => {
       this.frame = 0
-      if (this.remeasure) { this.remeasure = false; this.across = this.list.getBoundingClientRect() }
       for (const row of this.shown) if (!row.isConnected) this.shown.delete(row)
       const fresh = [...this.unseen].map(id => document.getElementById(id)).filter(row => row && !this.shown.has(row))
       this.news.hidden = !fresh.length
@@ -649,7 +650,7 @@ controller('desk', class extends Controller {
         if (!n) continue
         button.querySelector('span').textContent = knocks(n)
         button.setAttribute('aria-label', `${knocks(n)} ${dir === 'up' ? 'above' : 'below'}: go there`)
-        if (this.across) Object.assign(button.parentElement.style, { left: `${this.across.left}px`, width: `${this.across.width}px`, top: dir === 'up' ? `${Math.max(0, Math.round(this.element.getBoundingClientRect().top))}px` : '', bottom: dir === 'down' ? '0px' : '' })   // (under a phone's top line, not over it)
+        if (this.across) Object.assign(button.parentElement.style, { left: `${this.across.left}px`, width: `${this.across.width}px`, top: dir === 'up' ? `${Math.max(0, Math.round(this.elTop ?? 0))}px` : '', bottom: dir === 'down' ? '0px' : '' })   // (under a phone's top line, not over it)
       }
     })
   }
@@ -834,7 +835,7 @@ export function register(t) {
     const a = m.byAgent.get(c.agent), key = `${a?.name}|${a?.hue}|${a?.mark}|${a?.starred}|${a?.online}|${m.desk}`
     const hit = rowCache.get(c)
     if (hit && hit.key === key) return hit.row
-    const row = deskRow(c, m, BASE)
+    const row = deskRow(c, m, BASE, { slim: true })
     rowCache.set(c, { key, row })
     return row
   }

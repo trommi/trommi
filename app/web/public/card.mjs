@@ -905,7 +905,7 @@ controller('card', class extends Controller {
     addEventListener('resize', this.placed)
     this.element.addEventListener('scroll', this.placed, { passive: true })
     this.element.querySelector('.tc-card > .tc-left')?.addEventListener('scroll', this.placed, { passive: true })
-    this.placed()
+    // (no measuring while the page is built: the ResizeObserver below places it once the layout is there)
     this.fs = () => this.fsChanged(); document.addEventListener('fullscreenchange', this.fs)
     // (the card grows after it was placed: a picture loads, a note's field opens, the talk arrives)
     this.sized = new ResizeObserver(this.placed)
@@ -1399,7 +1399,7 @@ export function register(t) {
       // (Sent from the card's own page, where no Desk row stands: what went wrong comes as a note.)
       const onCard = /^\/(?:s\/[^/]+\/)?card\/[\w-]+$/.test(new URL(String(req.headers.referer ?? '/'), location.origin).pathname)
       if (stay && onCard) return t.sendStream(req, res, t.toast({ head: what === 'message' ? 'Not sent' : 'Not saved', line: text, role: 'alert' }), 422)
-      if (stay) return t.sendStream(req, res, now && m.fresh.includes(now) ? stream('replace', `row-${now.id}`, deskRow(now, m, BASE, { error: `Not saved: ${text}` })) : t.toast({ head: 'Not saved', line: text, role: 'alert' }))
+      if (stay) return t.sendStream(req, res, now && m.fresh.includes(now) ? stream('replace', `row-${now.id}`, deskRow(now, m, BASE, { error: `Not saved: ${text}`, slim: true })) : t.toast({ head: 'Not saved', line: text, role: 'alert' }))
       if (!now) return t.notFound(req, res, 'This question is not on the board any more.')
       return cardView(req, res, now, m, { walk: form.has('walk'), error: `Not saved: ${text}` }, 422)
     }
