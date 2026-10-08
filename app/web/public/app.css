@@ -765,3 +765,14 @@ html body .tc-chip.is-advised::after { bottom: 2px; width: 22px; left: calc(50% 
 .advice-loop { display: none !important; }
 .ledger-ans.is-advised { box-shadow: none !important; }
 html body .inbox-answer.is-take.is-advised { padding-bottom: var(--s-3); }
+
+/* ---- a phone is an app, not a page (his word, 8 October): nothing moves sideways. The window never scrolls (html and
+   body are fixed, above); the views' own scrollers clip what is wider, and nothing rubber-bands sideways. The page takes
+   only vertical pans and pinch zoom (no double-tap zoom); the app's own sideways gestures (the drawer's edge, the card's
+   swipe, Later's pull, drawing) are touch events or carry their own touch-action. Wide code and tables scroll inside
+   their own box. ---- */
+@media (max-width: 860px), (pointer: coarse) {
+  :where([data-ui]) body { touch-action: pan-y pinch-zoom; }
+  :where(#inbox, #cardpage, #session, #ledger, #gallery, main) { overflow-x: hidden; overscroll-behavior-x: none; }
+  :where(.rich, .bubble, .tc-title, .inbox-question) { overflow-wrap: anywhere; }
+}
