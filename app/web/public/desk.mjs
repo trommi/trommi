@@ -347,6 +347,9 @@ const END_STEP = 5
 // The gear that turns while a card is with its agent (desk.css: slowly; still where motion is reduced)
 const BOX = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/></svg>')
 const BOX_TICK = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/><path class="end-check" d="M7.4 12.6 Q9.4 14.8 10.8 16.8 Q14.6 10.4 21.6 3.2"/></svg>')
+/** A section's heading at the Desk's foot: a pen rule with its small label; a link (Show more, All Artifacts) where
+ *  the rule ends, at its right. */
+const divider = (label, link = '') => html`<div class="end-divider"><svg viewBox="0 0 300 8" preserveAspectRatio="none" aria-hidden="true"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span aria-hidden="true">${label}</span>${link}</div>`
 /** The end list. On the Desk the first five rows and "Show more"; full (the page /stacks/off): every row, with its search. */
 function endList(model, base, { full = false, q = '' } = {}) {
   const open = (model.landed ?? []).map(card => ({ card, g: 'open', at: card.finished ?? 0, said: card.summary ? plain(card.summary, model.state.assets) : 'Done' }))
@@ -372,9 +375,8 @@ function endList(model, base, { full = false, q = '' } = {}) {
     return html`<li class="end-row" data-g="${s.g}" data-id="${c.id}">${box}<a class="end-title" data-nav href="${href}" title="${c.title} · ${s.said}">${c.title}</a><span class="end-said">${s.said}</span>${agoSpan(s.at, 'ago end-ago')}</li>`
   }
   return html`<section id="${id}" class="endlist${full ? ' is-full' : ''}" aria-label="Off your mind">
-<div class="end-divider" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span>Off your mind</span></div>
+${divider('Off your mind', !full && (terms.length ? items.length : total) > END_STEP ? html`<a class="end-link" data-nav href="${base}/stacks/off">Show more</a>` : '')}
 <ol class="end-rows">${(full ? items : items.slice(0, END_STEP)).map(row)}</ol>${full && !items.length ? html`<p class="end-none">${terms.length ? 'Nothing here has these words.' : 'Nothing yet.'}</p>` : ''}
-${!full && (terms.length ? items.length : total) > END_STEP ? html`<div class="end-foot"><a class="end-show" data-nav href="${base}/stacks/off">Show more</a></div>` : ''}
 </section>`
 }
 
@@ -415,9 +417,8 @@ function artifactsPile(model, base) {
   const seen = new Set(), four = []
   for (const x of all) { const k = x.item.url || x.item.pic || x.item.title; if (seen.has(k)) continue; seen.add(k); four.push(x); if (four.length === 4) break }
   const thumb = x => x.kind === 'media' ? mediaPreview(x.item) : html`<span class="df-page"${x.item.pic ? raw(` style="background-image:url('${x.item.pic}')"`) : ''}>${x.item.pic ? '' : html`<b>${x.item.title}</b><i></i><i></i><i></i>`}</span>`
-  return html`<section class="df-cards" id="desk-artifacts" aria-label="Artifacts, ${all.length}"><div class="end-divider" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span>Artifacts</span></div>
-<div class="df-row">${four.map(x => html`<a class="df-card" data-nav href="${x.item.href ?? `${base}/artifacts`}" title="${x.item.title || x.item.name}"><span class="df-thumb">${thumb(x)}</span><span class="df-title">${x.item.title || x.item.name}</span></a>`)}</div>
-<a class="df-all" data-nav href="${base}/artifacts">All Artifacts <span class="off-count">${all.length}</span> →</a></section>`
+  return html`<section class="df-cards" id="desk-artifacts" aria-label="Artifacts, ${all.length}">${divider('Artifacts', html`<a class="end-link" data-nav href="${base}/artifacts">All Artifacts <span class="off-count">${all.length}</span> →</a>`)}
+<div class="df-row">${four.map(x => html`<a class="df-card" data-nav href="${x.item.href ?? `${base}/artifacts`}" title="${x.item.title || x.item.name}"><span class="df-thumb">${thumb(x)}</span><span class="df-title">${x.item.title || x.item.name}</span></a>`)}</div></section>`
 }
 
 // The stacks at the foot of the Desk: a click fans one out, a click gathers it. A stream may replace the stacks;
