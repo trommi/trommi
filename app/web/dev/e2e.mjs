@@ -523,11 +523,14 @@ try {
   check(true, 'devices page lists laptop, phone, desktop, phone (kit), agent')
   await A.shot('e2e-10-devices.png')
 
-  // ---- C logs out (Trommi menu -> Log out, asked once): removed from the member list, everything local gone ----
+  // ---- C logs out (Trommi menu -> Settings -> Account -> Log Out, asked once): removed from the member list, everything local gone ----
   const oldC = await C.js("return trommi.client.model.room.my_device_id")
   await C.js("document.getElementById('brand-menu').click()")
-  await C.until("!document.getElementById('brand-doors').hidden && document.getElementById('menu-logout')", 'menu with Log out')
-  await C.js("document.getElementById('menu-logout').click()")
+  await C.until("!document.getElementById('brand-doors').hidden && document.getElementById('menu-settings') && document.getElementById('push-toggle') && document.getElementById('keys-open') && !document.getElementById('menu-logout')", 'the menu: Settings and the icon row, no Log Out')
+  check(true, 'the menu: desks, Settings, Push, Theme, Shortcuts, Demo; Log Out lives in Settings')
+  await C.js("document.getElementById('brand-menu').click(); trommi.router.visit('/settings/account')")
+  await C.until("document.getElementById('settings-logout')", 'Account with Log Out')
+  await C.js("document.getElementById('settings-logout').click()")
   await C.until("document.getElementById('logout-ask')", 'log out asks')
   check(await C.js("return document.getElementById('logout-ask').textContent.trim() === 'Log out of this device? You can log in again with email and password.'"), 'Log out asks once, with the agreed sentence')
   await C.shot('e2e-11-logout-ask.png')

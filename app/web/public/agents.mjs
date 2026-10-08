@@ -244,6 +244,7 @@ export function register(t) {
     t.page(req, res, { model: m, title: 'Settings · Agents · Trommi', view: 'agents', css: 'agents', bodyAttrs: ' data-page="roster"', stream: VAL[q.get('sort')] ? `&sort=${q.get('sort')}` : '', main: agentsMain(m, BASE, { find: q.get('find') ?? '', sort: q.get('sort') ?? 'order', down: q.has('down'), errors }) }, code)
   }
   t.get(/^\/settings\/agents$/, ({ req, res, url }) => show(req, res, url))
+  t.get(/^\/settings$/, ({ res }) => t.redirect(res, `${BASE}/settings/agents`))
   // The drawings of one session's picker: a frame, fetched when the picker is opened.
   t.get(/^\/sessions\/([^/]+)\/marks$/, ({ req, res, url, match }) => {
     const a = t.model().byAgent.get(decodeURIComponent(match[1]))
