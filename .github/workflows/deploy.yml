@@ -66,6 +66,18 @@ jobs:
       - name: Ship image
         run: docker save "$IMAGE" | gzip | ssh -o StrictHostKeyChecking=no "$HOST" 'gunzip | docker load'
 
+      # APNs for the iOS app: the hub environment secret APNS_KEY (the .p8, newlines as \n) and the variables
+      # APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC -> /srv/trommi/apns.env; deploy-admin.sh adds it to the hub's env_file.
+      - name: APNs config (apns.env)
+        env:
+          APNS_KEY: ${{ secrets.APNS_KEY }}
+          APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
+          APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
+          APNS_TOPIC: ${{ vars.APNS_TOPIC }}
+        run: |
+          scp -o StrictHostKeyChecking=no hub/deploy-apns.sh "$HOST:/srv/trommi/deploy-apns.sh"
+          printf '%s\n%s\n%s\n%s\n' "$APNS_KEY" "$APNS_KEY_ID" "$APNS_TEAM_ID" "$APNS_TOPIC" | ssh -o StrictHostKeyChecking=no "$HOST" 'bash /srv/trommi/deploy-apns.sh; s=$?; rm -f /srv/trommi/deploy-apns.sh; exit $s'
+
       - name: Admin page config (admin.env, compose.override.yaml)
         env:
           ADMIN_LOGINS: ${{ vars.ADMIN_LOGINS }}
