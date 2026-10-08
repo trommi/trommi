@@ -8,14 +8,12 @@
 //   gen/build.txt          which commit this build is (the Web app deploy workflow reads it)
 //   index.html             the script, the modulepreload list between <!-- preload --> and <!-- /preload -->, data-build=<version>
 //   sw.js                  VERSION (a hash of every shell file) and SHELL (every file the app serves)
-//   gen/connector.mjs, gen/connector.mjs.sha256, gen/plugins/
-//                          the single-file connector, its checksum and the Claude Code plugin (connector/build.mjs)
 // In the repository index.html and sw.js are templates (empty preload block, VERSION "dev", SHELL []), so two
 // branches never conflict there, and public/gen/ is not in git at all.
 //
-// The bundle and the connector need the repository's npm packages (esbuild, the MCP SDK, zod). Cloudflare's build
-// (WORKERS_CI=1) installs them first: npm ci at the repository root. The dev server without --bundle needs none
-// (without them it goes on without the connector files); a build that writes fails without them.
+// The bundle needs the repository's npm packages (esbuild). Cloudflare's build (WORKERS_CI=1) installs them first: npm
+// ci at the repository root. The dev server without --bundle needs none. The connector (connector-rs, a binary) is not
+// built here: dev/deploy/connector.sh uploads it to the app's R2 bucket (worker.js serves it).
 //
 //   node dev/build.mjs            check only: generate in memory, print what it would write and the cold start's size
 //   node dev/build.mjs --write    write it into public/ (Cloudflare's build: WORKERS_CI=1 counts as --write).
@@ -25,9 +23,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { toJs, renameTs } from '../../../dev/ts.mjs'
+import { parsePrompt } from '../../../connector/binary.mjs'
 
 export const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
@@ -35,7 +34,7 @@ const sha = data => crypto.createHash('sha256').update(data).digest('hex').slice
 
 // ---- the toolchain ----
 // The build is reproducible (README "Verifying the build"): the same commit gives the same bytes, wherever it is built.
-// That needs the same Node (zlib's deflate makes the plugin's zip; type stripping) and the same esbuild: both pinned
+// That needs the same Node (type stripping) and the same esbuild: both pinned
 // (.node-version, package.json engines and the exact esbuild of package-lock.json). In Cloudflare's build a mismatch
 // fails the build; anywhere else it is said, and the manifest names the toolchain, so verify.mjs can tell why it differs.
 export function toolchain(repo = REPO) {
@@ -81,36 +80,24 @@ function commitOf(repo) {
   try { return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim().slice(0, 7) } catch { return 'dev' }
 }
 
-// ---- the connector ----
-// The tools and events for the help page. connector/tools.mjs is Node code (it reads prompt.md and files), so its
-// tables are read in a Node process and written out as data. Made again only when the two files changed.
+// ---- the connector's tools, for the help page ----
+// The schemas, examples and events of connector-rs/tools.json, each tool with its description from connector/prompt.md
+// (the "## <name>" sections, as the connector reads them). Made again only when the two files changed.
 let reference = null
 function toolsReference(repo) {
-  const files = ['tools.mjs', 'prompt.md'].map(f => path.join(repo, 'connector', f))
+  const files = [path.join(repo, 'connector-rs/tools.json'), path.join(repo, 'connector/prompt.md')]
   const key = files.map(f => fs.statSync(f).mtimeMs).join()
   if (reference?.key !== key) {
-    const read = `const t = await import(${JSON.stringify(pathToFileURL(files[0]).href)}); process.stdout.write(JSON.stringify({ TOOLS: t.TOOLS, TOOL_EXAMPLES: t.TOOL_EXAMPLES, EVENTS: t.EVENTS, RETENTION_DAYS: t.RETENTION_DAYS, MAX_ASSET: t.MAX_ASSET }))`
-    const json = execFileSync(process.execPath, ['--input-type=module', '-e', read], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
-    reference = { key, text: `// Written by app/web/dev/build.mjs from connector/tools.mjs and connector/prompt.md. Do not edit.\nexport const { TOOLS, TOOL_EXAMPLES, EVENTS, RETENTION_DAYS, MAX_ASSET } = ${json}\n` }
+    const t = JSON.parse(fs.readFileSync(files[0], 'utf8'))
+    const described = parsePrompt(fs.readFileSync(files[1], 'utf8'))
+    const TOOLS = t.tools.map(tool => ({ name: tool.name, description: described[`## ${tool.name}`] ?? '', ...tool }))
+    const json = JSON.stringify({ TOOLS, TOOL_EXAMPLES: t.examples, EVENTS: t.events, RETENTION_DAYS: t.retention_days, MAX_ASSET: t.max_asset })
+    reference = { key, text: `// Written by app/web/dev/build.mjs from connector-rs/tools.json and connector/prompt.md. Do not edit.\nexport const { TOOLS, TOOL_EXAMPLES, EVENTS, RETENTION_DAYS, MAX_ASSET } = ${json}\n` }
   }
   return reference.text
 }
-
-// The single-file connector, its checksum and the plugin: connector/build.mjs, which needs the npm packages.
 const CI = process.env.WORKERS_CI === '1'
 if (CI) execFileSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: REPO, stdio: 'inherit' })
-const connector = await import(pathToFileURL(path.join(REPO, 'connector/build.mjs')).href).catch(err => {
-  if (err.code === 'ERR_MODULE_NOT_FOUND' && /Cannot find package/.test(err.message)) return null
-  throw err
-})
-// Made again only when a source changed (the dev server asks on every page load; a bundle takes a moment).
-let bundled = null
-function connectorFiles() {
-  if (!connector) return null
-  const key = ['connector', 'shared', 'shared/crypto'].flatMap(d => fs.readdirSync(path.join(REPO, d)).map(f => `${f}:${fs.statSync(path.join(REPO, d, f)).mtimeMs}`)).join()
-  if (bundled?.key !== key) bundled = { key, files: connector.connectorFiles() }
-  return bundled.files
-}
 
 // ---- the stylesheets ----
 const SHEET_LINK = /^<link rel="stylesheet" href="(\/[^"]+\.css)"[^>]*>\n/gm
@@ -226,7 +213,7 @@ async function bundle(pub, vendor) {
   return { out, entry: rel(entry), first: [...first].map(rel), worker, start }
 }
 
-/** Everything the build makes: { 'path under public/': content (text, or bytes for the plugin's zip) }. Nothing is
+/** Everything the build makes: { 'path under public/': content (text) }. Nothing is
  *  written. bundle: false (the dev server) serves the sources as modules of their own, with versioned addresses. */
 export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = true } = {}) {
   const out = {}
@@ -269,7 +256,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   if (js && !out['index.html'].includes(`src="/${js.entry}?v=`)) throw new Error('index.html: the <script type="module" src="/app.mjs"> is missing')
   // (the sources as modules of their own, dev server only: with the same versioned addresses; the bundle's chunks are
   // named by their content)
-  if (!js) for (const f of files) if (f.endsWith('.mjs') && !f.startsWith('gen/connector') && !f.startsWith('gen/plugins/')) out[f] = versioned(content(f), version)
+  if (!js) for (const f of files) if (f.endsWith('.mjs')) out[f] = versioned(content(f), version)
   // (help.html stays as it is: its inline script is allowed by its hash in _headers; it imports /ui.mjs, which imports
   // nothing)
   if (!out['index.html'].includes(`<!-- preload ${version} -->`)) throw new Error('index.html: the <!-- preload --> block is missing')
@@ -295,9 +282,6 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   const sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
   out['sw.js'] = sw.replace(/^const VERSION = .*$/m, `const VERSION = ${JSON.stringify(version)}`).replace(/^const SHELL = .*$/m, `const SHELL = ${JSON.stringify(['/', ...files.map(f => `/${f}`)])}`)
   if (!out['sw.js'].includes(version)) throw new Error('sw.js: the VERSION line is missing')
-  // Not part of the shell: the app itself never loads them (Claude Code and the connect script do).
-  const made = connectorFiles()
-  for (const [f, c] of Object.entries(made ?? {})) out[`gen/${f}`] = c
   // The build's manifest: every file this build serves with its SHA-256, and its own hash, the build hash, in
   // build.txt (README "Verifying the build": anyone can build the commit and compare).
   const served = [...new Set([...walk(pub).filter(f => !f.startsWith('gen/') && !(bundled && BUNDLED.test(f))), ...Object.keys(out)])].filter(f => f !== 'gen/build.txt' && f !== 'gen/manifest.json').sort()
@@ -305,14 +289,13 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   out['gen/manifest.json'] = `${JSON.stringify(manifest, null, 1)}\n`
   out['gen/build.txt'] += `build: ${crypto.createHash('sha256').update(out['gen/manifest.json']).digest('hex')}\n`
   const firstLoad = js ? [...js.first, js.worker, js.start].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null   // (the core worker too: boot starts it at once)
-  return { out, version, sheets: links.length, files: files.length, connector: made ? made['connector.mjs.sha256'].slice(0, 12) : null, firstLoad, chunks: js ? Object.keys(js.out).length : 0 }
+  return { out, version, sheets: links.length, files: files.length, firstLoad, chunks: js ? Object.keys(js.out).length : 0 }
 }
 
 export async function build({ write = false } = {}) {
-  const { out, version, sheets, files, connector, firstLoad, chunks } = await generate()
-  console.log(`build ${version}: ${chunks} modules in the bundle (${Math.round(firstLoad / 1024)} KB at a cold start), ${sheets} sheets in one bundle, ${files} shell files, ${connector ? `connector ${connector} with its plugin` : 'no connector (its npm packages are missing: npm ci)'}${write ? '' : ' (check only, nothing written)'}`)
+  const { out, version, sheets, files, firstLoad, chunks } = await generate()
+  console.log(`build ${version}: ${chunks} modules in the bundle (${Math.round(firstLoad / 1024)} KB at a cold start), ${sheets} sheets in one bundle, ${files} shell files${write ? '' : ' (check only, nothing written)'}`)
   if (!write) return
-  if (!connector) throw new Error('build: the connector cannot be built (esbuild, @modelcontextprotocol/sdk or zod is missing: npm ci at the repository root)')
   fs.rmSync(path.join(PUBLIC, 'gen'), { recursive: true, force: true })
   for (const [f, c] of Object.entries(out)) { fs.mkdirSync(path.dirname(path.join(PUBLIC, f)), { recursive: true }); fs.writeFileSync(path.join(PUBLIC, f), c) }
 }

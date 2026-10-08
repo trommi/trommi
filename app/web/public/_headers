@@ -2,7 +2,7 @@
 # origin; data only to the hub. No inline script or style element but the hashed ones (index.html's theme script, the
 # help page's script and style); style attributes are allowed (style-src-attr: the views set --hue etc. per element).
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-9xvXDCjvw7LwmLUiQWHPJbFHCwbhGsXzaZRDBYWBfS8=' 'sha256-TTiI2F4imaAUorT3Pm4tRJeyZVfUw8qlcK7efdyaCok='; style-src 'self' 'sha256-T0EnS/b94A0PILq6eLQmSmNtMhlApDYDco07H7ACERI='; style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://hub.trommi.com; frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-9xvXDCjvw7LwmLUiQWHPJbFHCwbhGsXzaZRDBYWBfS8=' 'sha256-ybvuf1L5uav+6VcsUPoL5ireqy4OGv2k20ARdev3Y88='; style-src 'self' 'sha256-T0EnS/b94A0PILq6eLQmSmNtMhlApDYDco07H7ACERI='; style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://hub.trommi.com; frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(self), geolocation=(), microphone=(self)
@@ -23,17 +23,3 @@
 /frame.html
   ! Content-Security-Policy
   Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts
-# The connector for Claude Code (connector/build.mjs, built at deploy time) and its checksum: always the newest (the connect script fetches both,
-# at /connector.mjs and /connector.mjs.sha256: worker.js assetPath).
-/gen/connector.mjs
-  Cache-Control: no-cache
-/gen/connector.mjs.sha256
-  Cache-Control: no-cache
-  Content-Type: text/plain; charset=utf-8
-# The Trommi plugin's marketplace for Claude Code (connector/build.mjs): the listing always the newest; the archives
-# are named by version. Public address /plugins/… (worker.js assetPath).
-/gen/plugins/marketplace.json
-  Cache-Control: no-cache
-  Content-Type: application/json; charset=utf-8
-/gen/plugins/*.zip
-  Cache-Control: public, max-age=31536000, immutable

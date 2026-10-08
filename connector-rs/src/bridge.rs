@@ -1,5 +1,5 @@
-//! tools.mjs part 3, the bridge: what each tool does in the room, and a human's command (verified and authorised by
-//! the core) as a <channel> event. Every word the agent reads is the JS connector's.
+//! The bridge: what each tool does in the room, and a human's command (verified and authorised by
+//! the core) as a <channel> event. Every word the agent reads is from connector/prompt.md.
 use crate::client::{BoxFut, Client, Command};
 use crate::error::{Result, ZError};
 use crate::html::{clean_fences, fences_hide, fences_show, html_beside, stripped_hint};

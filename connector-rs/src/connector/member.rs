@@ -1,4 +1,4 @@
-//! connector.mjs "the member": this process as a member of the room. Key slot, sign-in, lease, stream; joining by an
+//! The member: this process as a member of the room. Key slot, sign-in, lease, stream; joining by an
 //! agent invite link; keys that are out (put aside, the next usable key at once); handing the key over.
 use super::door::knock;
 use super::hooks::ancestors;

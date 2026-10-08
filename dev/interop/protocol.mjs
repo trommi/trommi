@@ -6,7 +6,7 @@
 //   driver -> {"id": 7, "ok": true, "result": ...} | {"id": 7, "ok": false, "error": {"code", "message"}}
 //
 // Logs go to stderr. A command a driver does not have answers {"code": "unsupported"}. The drivers:
-//   js     node dev/interop/driver-js.mjs                     (shared/, the web app's and the connector's core)
+//   js     node dev/interop/driver-js.mjs                     (shared/, the web app's core)
 //   swift  ios/TrommiCore/.build/debug/trommi-swift driver --home <dir>   (TrommiCore/TrommiClient, the iPhone's core)
 //   rust   connector-rs/target/debug/trommi-connector driver --home <dir>  (the Rust connector's core; an agent only)
 import { spawn } from 'node:child_process'

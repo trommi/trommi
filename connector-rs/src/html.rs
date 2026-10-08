@@ -1,4 +1,4 @@
-//! tools.mjs part 1: the agent's HTML, cleaned before it is stored (html fields and ```html fences). Nothing that
+//! The agent's HTML, cleaned before it is stored (html fields and ```html fences). Nothing that
 //! runs, loads or navigates; the board's sandboxed frame is what really holds, this keeps the stored content honest
 //! and tells the agent what it lost.
 use crate::error::{Result, ZError};

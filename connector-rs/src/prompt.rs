@@ -1,5 +1,5 @@
-//! Every text the agent reads, from connector/prompt.md (compiled in), and the tools' schemas from tools.json (made
-//! by gen-tools.mjs from connector/tools.mjs): tools/list is the JS connector's, byte for byte.
+//! Every text the agent reads, from connector/prompt.md (compiled in), and the tools' schemas from tools.json (both
+//! edited by hand; build.rs checks them).
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::HashMap;

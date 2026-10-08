@@ -1,6 +1,6 @@
 // run.mjs: the cross-implementation suite (README "Interop"). A local hub, then for every pair of human-device
 // implementations (actor -> observer: js->js, js->swift, swift->js) a room of its own: a JS founder (the web app's core),
-// a JS agent (the connector's core), the actor device A and the observer device B. Every action of A must arrive at B
+// a JS agent (an agent device of shared/'s core), the actor device A and the observer device B. Every action of A must arrive at B
 // (and at the agent) exactly as B's own implementation reads it; refusals must be the same codes on both sides.
 //
 //   (cd ios/TrommiCore && swift build) && node dev/interop/run.mjs          all pairs (Swift pairs skipped without the binary)

@@ -900,7 +900,7 @@ if (z.KEY_SCOPE) await test('lease: a second process takes over, the first gets 
 
 if (z.KEY_SCOPE) await test('lease: one process never takes its own lease over (a post queued at start, the connector claims after start)', async () => {
   const { phone } = await room()
-  // Like connector/connector.mjs: join, then start({ process_instance }) and claim with the same instance. The session is assigned
+  // Like the connector: join, then start({ process_instance }) and claim with the same instance. The session is assigned
   // before the start, so start() queues the device register before it takes the lease.
   const instances = []
   let delayed = false
