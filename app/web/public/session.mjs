@@ -713,6 +713,8 @@ controller('composer', class extends Controller {
 
   fit() {
     const field = this.fieldTarget
+    // (an empty field keeps its CSS height: nothing to measure, no layout forced after a send)
+    if (!field.value) { field.style.height = ''; field.style.overflowY = ''; this.sendTarget.disabled = this.empty; return }
     field.style.height = 'auto'
     const max = Math.max(120, Math.min(260, innerHeight * 0.36))
     field.style.height = `${Math.min(field.scrollHeight, max)}px`
@@ -962,11 +964,21 @@ controller('log', class extends Controller {
         }
       }
     }
-    const grew = this.height == null ? 0 : log.scrollHeight - this.height
-    this.height = log.scrollHeight
-    if (this.pinned) log.scrollTop = 0
-    else if (fresh) { this.unread += fresh; if (grew > 0) log.scrollTop -= grew }   // reading further up: what is in view stays in view
+    // (pinned to the end, the reversed column keeps the end in view by itself: nothing is measured now; reading the
+    //  log's height right after the insertion laid out the whole conversation once more, a long task in a big room)
+    if (this.pinned) { this.height = null; this.measureLater() }
+    else if (fresh) {
+      const grew = this.height == null ? 0 : log.scrollHeight - this.height
+      this.height = log.scrollHeight
+      this.unread += fresh; if (grew > 0) log.scrollTop -= grew   // reading further up: what is in view stays in view
+    } else { this.height = null; this.measureLater() }
     this.paint()
+  }
+  // The log's height, read in the frame after the browser laid it out anyway.
+  measureLater() {
+    if (this.measuring) return
+    this.measuring = true
+    requestAnimationFrame(() => setTimeout(() => { this.measuring = false; if (this.hasLogTarget && this.logTarget.isConnected && this.height == null) this.height = this.logTarget.scrollHeight }, 0))
   }
   paint() {
     if (!this.hasLogTarget) return
