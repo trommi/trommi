@@ -19,7 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { hostStats, openSeries } from './ops/metrics.mjs';
 import { peekEnvelope, joinEnvelope } from '../shared/crypto/zcrypto.mjs';
-import { KIND_NAME, OBJECT_STATE_NAME, URGENCY_NAME, TIMELINE_KIND_NAME } from '../shared/codec.mjs';
+import { KIND_NAME, OBJECT_STATE_NAME, URGENCY_NAME, TIMELINE_KIND_NAME } from '../shared/codec.ts';
 
 export const PAGE_SIZE = 50;
 const COUNT_CAP = 10000;

@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import readline from 'node:readline'
 import * as core from '../../shared/index.mjs'
 import * as A from '../../shared/account.mjs'
-import * as codec from '../../shared/codec.mjs'
+import * as codec from '../../shared/codec.ts'
 import { COMMANDS, DRIVER_PROTOCOL } from './protocol.mjs'
 
 const z = core.z

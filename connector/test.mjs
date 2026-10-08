@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process'
 import { createBridge, TOOLS, RELOAD_TOOL, INBOX_TOOL, TOOL_EXAMPLES, INSTRUCTIONS, DESCRIPTIONS, TEASER_MAX, monitorNote, inboxToolName, parsePrompt } from './tools.mjs'
 import { isSpare, yieldState, claimsAtStart, checkIn, checkOut, othersHere, folderWatch, leaveMark, lossMatters, presenceOf, askYield, doorOf, bellPath, ring, openDoorAt, lockSlot, unlockSlot, claimSlot, alive, openDoor, knock, createHookDesk, hookRequest, redact, deniedText, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES, pointerLine, ownedBy, slotOrder } from './connector.mjs'
 import { zip, marketplaceFiles, pluginManifest, pluginFiles } from './build.mjs'
-import * as codec from '../shared/codec.mjs'
+import * as codec from '../shared/codec.ts'
 import { encryptAsset, decryptAsset } from '../shared/crypto/zcrypto.mjs'
 
 let passed = 0, failed = 0

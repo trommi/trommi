@@ -8,8 +8,8 @@
 //   register room_snapshot = { attachment: <README reference>, encoding, envelope_number, log_seq, log_hash, written_at }  (the frontier is inside the attachment)
 //   attachment = gzip(JSON { schema: 2, room_id, envelope_number, log_seq, log_hash, chains, frontiers, model })
 import * as z from './crypto/zcrypto.mjs'
-import * as M from './model.mjs'
-import * as codec from './codec.mjs'
+import * as M from './model.ts'
+import * as codec from './codec.ts'
 import * as G from './crypto/session-grants.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError } = z

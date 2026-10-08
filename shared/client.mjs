@@ -3,8 +3,8 @@
 // agent.mjs (mixed into the same class). Contract: shared/README.md.
 import * as z from './crypto/zcrypto.mjs'
 import { Hub } from './transport.mjs'
-import * as codec from './codec.mjs'
-import * as M from './model.mjs'
+import * as codec from './codec.ts'
+import * as M from './model.ts'
 import * as G from './crypto/session-grants.mjs'
 import { bootFromSnapshot, writeSnapshot, SNAPSHOT_EVERY } from './snapshot.mjs'
 

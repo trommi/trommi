@@ -1,11 +1,19 @@
-// model.mjs: the board model and its reducer (shared/README.md "The model" is the contract).
-// Pure JavaScript: no crypto, no I/O. The sync engine hands in verified, decoded records in hub order;
+// model.ts: the board model and its reducer (shared/README.md "The model" is the contract; the shapes are types.ts).
+// No crypto, no I/O. The sync engine hands in verified, decoded records in hub order;
 // every client (human or agent) applies the same rules and so arrives at the same board.
-import { OBJECT_STATE_NAME, URGENCY_NAME, URGENCY, KIND, CARD_CONTENT_FIELDS, CONTENT_TYPES, OBJECT_TYPES, CARD_TYPES, ANSWER_ACTIONS } from './codec.mjs'
+import { OBJECT_STATE_NAME, URGENCY_NAME, URGENCY, KIND, CARD_CONTENT_FIELDS, CONTENT_TYPES, OBJECT_TYPES, CARD_TYPES, ANSWER_ACTIONS } from './codec.ts'
+import type {
+  Alert, Answer, AnswerBody, ApplyResult, Body, Card, CardBody, CardOption, Causal, Change, ContentState, HumanRegisters, ItemState, Link, Linked, LinkState,
+  Model, Newer, Note, ObjectState, PermissionRequest, Rec, Session, SessionSettings, StackKey, Timeline, TimelineItem, Urgency,
+} from './types.ts'
 
 export const ALERTS_MAX = 200
-const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
-const isZeroHash = h => /^0*$/.test(h)
+const URGENCY_RANK: Record<string, number> = { critical: 3, high: 2, normal: 1, low: 0 }
+const isZeroHash = (h: string) => /^0*$/.test(h)
+type Obj = Record<string, any>
+
+/** R2's signed facts of a write (Causal), as far as they are known. */
+export type CausalLike = Pick<Causal, 'sender_device_id' | 'sender_sequence'> & { lamport?: number | null | undefined; sent_at?: number }
 
 /**
  * R2: the one order of writes to a register or note, the same on every device whatever the hub's delivery order (a
@@ -16,19 +24,19 @@ const isZeroHash = h => /^0*$/.test(h)
  * sender at an equal lamport made a cycle a2 > a1 > b > a2).
  * causal = { sender_device_id, sender_sequence, sent_at, lamport }.
  */
-export function compareWrites(x, y) {
+export function compareWrites(x: CausalLike, y: CausalLike): number {
   return ((x.lamport ?? 0) - (y.lamport ?? 0)) || (x.sender_device_id < y.sender_device_id ? -1 : x.sender_device_id > y.sender_device_id ? 1 : 0) ||
     (x.sender_sequence - y.sender_sequence)
 }
 /** Does write X win over write Y (compareWrites)? */
-export function causallyAfter(x, y) {
+export function causallyAfter(x: CausalLike | null | undefined, y: CausalLike | null | undefined): boolean {
   if (!y) return true
   if (!x) return false
   return compareWrites(x, y) > 0
 }
 /** A body's lamport, if it is a sane integer (at most LAMPORT_MAX). */
 export const LAMPORT_MAX = 2 ** 48
-export const lamportOf = c => (Number.isSafeInteger(c?.lamport) && c.lamport > 0 && c.lamport <= LAMPORT_MAX ? c.lamport : 0)
+export const lamportOf = (c: { lamport?: unknown } | null | undefined): number => (typeof c?.lamport === 'number' && Number.isSafeInteger(c.lamport) && c.lamport > 0 && c.lamport <= LAMPORT_MAX ? c.lamport : 0)
 /**
  * Review 3 (lamport inflation): an honest writer's lamport is one above the largest it has seen, and everything it saw
  * the hub ordered before its write, so a reader that applies in hub order has seen nearly as much. A lamport more than
@@ -37,9 +45,9 @@ export const lamportOf = c => (Number.isSafeInteger(c?.lamport) && c.lamport > 0
  * cannot read (other sessions' statuses).
  */
 export const LAMPORT_STEP = 2 ** 24
-export const lamportAccepted = (lamport, seen) => lamport > 0 && lamport <= (seen ?? 0) + LAMPORT_STEP
+export const lamportAccepted = (lamport: number, seen: number | null | undefined): boolean => lamport > 0 && lamport <= (seen ?? 0) + LAMPORT_STEP
 
-export function emptyModel() {
+export function emptyModel(): Model {
   return {
     room: { room_id: null, hub_url: null, my_device_id: null, my_role: null, key_epoch: 0, last_entry_number: -1, last_envelope_number: 0, connection: 'offline', agent_session_id: null, outbox_blocked: null },
     members: new Map(), sessions: new Map(), cards: new Map(), permissions: new Map(), notes: new Map(), published: new Map(),
@@ -47,7 +55,7 @@ export function emptyModel() {
     stack: [], open_permission_ids: [], newer: emptyNewer(),
   }
 }
-const emptyNewer = () => ({ count: 0, what: [], envelope_number: 0 })
+const emptyNewer = (): Newer => ({ count: 0, what: [], envelope_number: 0 })
 
 // ---- forward compatibility: what a newer client wrote ---------------------------------------------------------------
 //
@@ -58,32 +66,34 @@ const emptyNewer = () => ({ count: 0, what: [], envelope_number: 0 })
 // UPDATE_MESSAGE). Where a record has a place (a card, a timeline item, a note), that place shows a placeholder:
 // card.unsupported, item_state 'unsupported' / 'newer_schema', note.unsupported.
 export const NEWER_WHAT_MAX = 16
-export function noteNewer(model, change, what, rec) {
+export function noteNewer(model: Model, change: Change, what: string, rec: { envelope_number?: number | null } | null | undefined): void {
   const n = (model.newer ??= emptyNewer())
   n.count++
   if (!n.what.includes(what)) { n.what.push(what); if (n.what.length > NEWER_WHAT_MAX) n.what.shift() }
   n.envelope_number = Math.max(n.envelope_number, rec?.envelope_number ?? 0)
   change.room = true
 }
-const needsUpdate = (model, change, rec, what) => { noteNewer(model, change, what, rec); return { applied: false, refused: 'needs-update' } }
+const needsUpdate = (model: Model, change: Change, rec: Rec, what: string): ApplyResult => { noteNewer(model, change, what, rec); return { applied: false, refused: 'needs-update' } }
 /** Whether this version can show and act on a card (false: a placeholder, no answer from here). */
-export const cardSupported = card => !card?.unsupported
-function emptyHuman() {
+export const cardSupported = (card: { unsupported?: unknown } | null | undefined): boolean => !card?.unsupported
+function emptyHuman(): HumanRegisters {
   return { drafts: new Map(), snoozes: new Map(), ducks: new Map(), crown: null, desks: new Map(), session_settings: new Map(), scribble_snapshots: new Map(), raw: new Map() }
 }
 
 /** A change record: what a batch touched. Every field always present. */
-export function emptyChange() {
+export function emptyChange(): Change {
   return { cards: new Set(), sessions: new Set(), permissions: new Set(), notes: new Set(), published: new Set(), timelines: new Set(), registers: new Set(),
     members: false, invites: new Set(), alerts: false, outbox: false, stack: false, room: false, items: new Map() }
 }
 /** change.items: Map<timeline_key, TimelineItem[]> added or replaced in this batch. */
-export function addItem(change, key, item) { let l = change.items.get(key); if (!l) change.items.set(key, l = []); l.push(item) }
-export function changeIsEmpty(c) {
-  return c.items.size === 0 && !c.members && !c.alerts && !c.outbox && !c.stack && !c.room && ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines', 'registers', 'invites'].every(k => c[k].size === 0)
+export function addItem(change: Change, key: string, item: TimelineItem): void { let l = change.items.get(key); if (!l) change.items.set(key, l = []); l.push(item) }
+const CHANGE_SETS = ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines', 'registers', 'invites'] as const
+export function changeIsEmpty(c: Change): boolean {
+  return c.items.size === 0 && !c.members && !c.alerts && !c.outbox && !c.stack && !c.room && CHANGE_SETS.every(k => c[k].size === 0)
 }
-export const timelineKey = (timeline_kind, timeline_id) => `${timeline_kind}:${timeline_id}`
-export function parseTimelineKey(key) {
+export const timelineKey = (timeline_kind: string, timeline_id: string): string => `${timeline_kind}:${timeline_id}`
+export interface TimelineKeyParts { timeline_kind: string; timeline_id: string; scope: string; scope_id: string }
+export function parseTimelineKey(key: string): TimelineKeyParts {
   const at = key.indexOf(':')
   const timeline_kind = key.slice(0, at), timeline_id = key.slice(at + 1)
   const slash = timeline_id.indexOf('/')
@@ -92,14 +102,19 @@ export function parseTimelineKey(key) {
 
 // ---- members and sessions -------------------------------------------------------------
 
+/** A member of a verified member-list state (client membersOf). */
+export interface LogMember { device_id: string; device_role: 'human' | 'agent'; is_active: boolean; added_entry_number: number; removed_entry_number: number | null }
+/** What GET devices says of a device. */
+export interface DeviceReport { device_id: string; is_online?: boolean; offline_since?: number | null; link?: unknown; agent_session_id?: string | null }
+
 /** Rebuild model.members from a verified member-list state (zcrypto state) plus what GET devices said. */
-export function applyMembers(model, members, change) {
-  const seen = new Set()
+export function applyMembers(model: Model, members: Iterable<LogMember>, change: Change): void {
+  const seen = new Set<string>()
   for (const m of members) {
     seen.add(m.device_id)
     const old = model.members.get(m.device_id)
     const reg = model._device_registers?.get(m.device_id) ?? null
-    const next = { device_id: m.device_id, device_role: m.device_role, fingerprint: m.device_id.slice(0, 16).match(/.{4}/g).join(' '), device_name: reg?.device_name ?? old?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null,
+    const next = { device_id: m.device_id, device_role: m.device_role, fingerprint: m.device_id.slice(0, 16).match(/.{4}/g)!.join(' '), device_name: reg?.device_name ?? old?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null,
       is_active: m.is_active, added_entry_number: m.added_entry_number, removed_entry_number: m.removed_entry_number, is_me: m.device_id === model.room.my_device_id,
       is_online: old?.is_online ?? false, offline_since: old?.offline_since ?? null, link: old?.link ?? null, agent_session_id: old?.agent_session_id ?? null }
     model.members.set(m.device_id, next)
@@ -107,7 +122,7 @@ export function applyMembers(model, members, change) {
   }
   change.members = true
 }
-export function applyDevices(model, devices, change) {
+export function applyDevices(model: Model, devices: Iterable<DeviceReport>, change: Change): void {
   for (const d of devices) {
     const m = model.members.get(d.device_id)
     if (!m) continue
@@ -141,13 +156,15 @@ export function applyDevices(model, devices, change) {
 //   asleep   oncall, and no tool call for ASLEEP_MS
 /** No tool call for this long, in a session that hears only on its next one: it is not listening. */
 export const ASLEEP_MS = 10 * 60_000
-const HEARS = ['live', 'oncall'], CLAUDE = ['alive', 'gone', 'checking']
-const stamp = v => (Number.isSafeInteger(v) && v > 0 ? v : null)
+const HEARS: readonly unknown[] = ['live', 'oncall'], CLAUDE: readonly unknown[] = ['alive', 'gone', 'checking']
+const stamp = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null)
 /** A link report as the model keeps it: known fields of the right type only, null when there is none. */
-export function cleanLink(l) {
-  if (!l || typeof l !== 'object' || !HEARS.includes(l.hears)) return null
-  const exit = l.exit && typeof l.exit === 'object' ? { reason: String(l.exit.reason ?? '').slice(0, 40), claude: CLAUDE.includes(l.exit.claude) ? l.exit.claude : 'gone' } : null
-  return { hears: l.hears, attached: l.attached !== false, last_call_at: stamp(l.last_call_at), working: l.working === true, since: stamp(l.since), cut_since: stamp(l.cut_since), exit }
+export function cleanLink(report: unknown): Link | null {
+  if (!report || typeof report !== 'object') return null
+  const l = report as Obj
+  if (!HEARS.includes(l['hears'])) return null
+  const exit = l['exit'] && typeof l['exit'] === 'object' ? { reason: String(l['exit'].reason ?? '').slice(0, 40), claude: CLAUDE.includes(l['exit'].claude) ? l['exit'].claude : 'gone' } : null
+  return { hears: l['hears'], attached: l['attached'] !== false, last_call_at: stamp(l['last_call_at']), working: l['working'] === true, since: stamp(l['since']), cut_since: stamp(l['cut_since']), exit }
 }
 /**
  * The state of a member's or a session's link (both carry is_online, offline_since, link):
@@ -156,7 +173,7 @@ export function cleanLink(l) {
  *   idle_ms  oncall and asleep: how long ago its last tool call was
  *   reason   gone and cut: the connector's exit reason ('' when it left without a word), or 'folder' / 'detached'
  */
-export function linkState(subject, now = Date.now(), { asleep_ms = ASLEEP_MS } = {}) {
+export function linkState(subject: Linked | null | undefined, now: number = Date.now(), { asleep_ms = ASLEEP_MS }: { asleep_ms?: number } = {}): LinkState {
   const l = subject?.link ?? null
   if (!subject?.is_online) {
     const since = subject?.offline_since ?? null
@@ -178,17 +195,19 @@ export function linkState(subject, now = Date.now(), { asleep_ms = ASLEEP_MS } =
 // a session are handed over in order. End to end like every register. heard_up_to null: this session's connector
 // writes no receipts (an older one), nothing is known.
 /** Whether the session's agent was handed the envelope: true, false, or null when its connector writes no receipts. */
-export const heardBy = (session, envelope_number) => (session?.heard_up_to == null || !Number.isInteger(envelope_number) ? null : envelope_number <= session.heard_up_to)
+export const heardBy = (session: { heard_up_to?: number | null } | null | undefined, envelope_number: unknown): boolean | null =>
+  (session?.heard_up_to == null || !Number.isInteger(envelope_number) ? null : (envelope_number as number) <= session.heard_up_to)
 /** What the agent has to hear of a card: the human's answer in force, else the message that handed it back. Null: nothing. */
-export const cardWaitsOn = card => (card?.answer && !card.answer.pending ? card.answer.envelope_number : card?.in_revision?.envelope_number) ?? null
+export const cardWaitsOn = (card: Pick<Card, 'answer' | 'in_revision'> | null | undefined): number | null =>
+  (card?.answer && !card.answer.pending ? card.answer.envelope_number : card?.in_revision?.envelope_number) ?? null
 /** Whether the card's agent has the human's last word on it (answer or hand-back): true, false, null (nothing to hear, or not known). */
-export function cardHeard(model, card) {
+export function cardHeard(model: Model, card: Card): boolean | null {
   const n = cardWaitsOn(card)
-  return n == null ? null : heardBy(model.sessions.get(card.session_id), n)
+  return n == null ? null : heardBy(card.session_id ? model.sessions.get(card.session_id) : undefined, n)
 }
 
 /** A session (R6): its own key, its agents (assigned by grants), its cards and chat. Keyed by session_id. */
-export function sessionOf(model, session_id) {
+export function sessionOf(model: Model, session_id: string): Session {
   let s = model.sessions.get(session_id)
   if (!s) {
     s = { session_id, agent_device_ids: [], ever_agent_ids: [], epoch_agent_ids: {}, agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false, offline_since: null, link: null, heard_up_to: null, heard_at: null,
@@ -199,15 +218,17 @@ export function sessionOf(model, session_id) {
   return s
 }
 /** Copy the current agent's member facts onto its session. */
-function syncSessionAgent(model, s) {
+function syncSessionAgent(model: Model, s: Session): void {
   const m = s.agent_device_id ? model.members.get(s.agent_device_id) : null
   if (m) { s.agent_session_id = m.agent_session_id ?? m.device_id.slice(0, 16); s.device_name = m.device_name; s.is_active = m.is_active; s.is_online = m.is_online; s.offline_since = m.offline_since ?? null; s.link = m.link ?? null }
 }
-function touchAgent(model, agent_device_id, change) {
+function touchAgent(model: Model, agent_device_id: string, change: Change): void {
   for (const s of model.sessions.values()) if (s.agent_device_ids.includes(agent_device_id) || s.agent_device_id === agent_device_id) { syncSessionAgent(model, s); change.sessions.add(s.session_id) }
 }
+/** A verified grant chain state (shared/crypto/session-grants.mjs) for one session, ids as hex. */
+export interface GrantState { sessionId: string; agentIds: Iterable<string>; epoch: number; withHistory?: boolean; createdByAgent?: boolean; creatorId?: string | null }
 /** A verified grant chain state (shared/crypto/session-grants.mjs) for one session. */
-export function applySessionGrant(model, sessionState, change, everAgentIds = [], epochAgentIds = null) {
+export function applySessionGrant(model: Model, sessionState: GrantState, change: Change, everAgentIds: Iterable<string> = [], epochAgentIds: Record<number, string[]> | null = null): Session {
   const s = sessionOf(model, sessionState.sessionId)
   if (epochAgentIds) s.epoch_agent_ids = epochAgentIds
   s.agent_device_ids = [...sessionState.agentIds]
@@ -229,47 +250,51 @@ export function applySessionGrant(model, sessionState, change, everAgentIds = []
  * session an agent opened itself counts only under a session that agent is assigned to, or the agent a human's grant
  * handed the child to (a continued session keeps its helpers); others as before (display only).
  */
-export function parentSessionOf(model, s) {
+export function parentSessionOf(model: Model, s: Session | null | undefined): string | null {
   const want = s?.profile?.parent_session
-  if (!want || typeof want !== 'string') return null
+  if (!s || !want || typeof want !== 'string') return null
   const parent = model.sessions.get(want) ?? null
   if (s.created_by_agent) return parent && parent !== s && childOf(parent, s) ? parent.session_id : null
   return parent ? parent.session_id : want
 }
 /** A child an agent opened hangs under `parent` if its creator, or an agent a human handed the child to, is assigned to the parent. */
-export const childOf = (parent, s) => (parent.agent_device_ids ?? []).some(a => a === s.creator_device_id || (s.agent_device_ids ?? []).includes(a))
-const everAgent = (model, sid, device) => !!sid && (model.sessions.get(sid)?.ever_agent_ids.includes(device) ?? false)
+export const childOf = (parent: Pick<Session, 'agent_device_ids'>, s: Pick<Session, 'creator_device_id' | 'agent_device_ids'>): boolean =>
+  (parent.agent_device_ids ?? []).some(a => a === s.creator_device_id || (s.agent_device_ids ?? []).includes(a))
+const everAgent = (model: Model, sid: string | null | undefined, device: string | null | undefined): boolean => !!sid && (model.sessions.get(sid)?.ever_agent_ids.includes(device as string) ?? false)
 /**
  * B03/A7: may this agent write into session `sid` with this record? It must be among the agents the grants gave the
  * session key epoch the record was sealed in (rec._epoch). Dropping an agent always starts a new epoch, so this is
  * "assigned when it wrote", the same for history and live. Records without a known epoch fall back to "ever assigned".
  */
-const agentAt = (model, sid, device, rec) => {
+const agentAt = (model: Model, sid: string | null | undefined, device: string | null | undefined, rec: Rec | null | undefined): boolean => {
   const s = sid ? model.sessions.get(sid) : null
   if (!s) return false
-  const at = rec?.session_id === sid && rec._epoch != null ? s.epoch_agent_ids?.[rec._epoch] : null
-  return at ? at.includes(device) : s.ever_agent_ids.includes(device)
+  const at = rec?.session_id === sid && rec?._epoch != null ? s.epoch_agent_ids?.[rec._epoch] : null
+  return at ? at.includes(device as string) : s.ever_agent_ids.includes(device as string)
 }
 
+/** What holds an object: its creator and its session. */
+type Held = { agent_device_id: string; session_id?: string | null }
 /**
  * R1: who holds an object of a session, judged for one record. Its creator; and once the grants no longer assign the
  * creator to the object's session at the record's session key epoch (a human handed the session on, or let another
  * connector continue it), the agents they assign then. Only a human's grant moves it, and the same on every device.
  */
-const holdsAt = (model, obj, device, rec) => !!obj && !!device && (device === obj.agent_device_id
+const holdsAt = (model: Model, obj: Held | null | undefined, device: string | null | undefined, rec: Rec): boolean => !!obj && !!device && (device === obj.agent_device_id
   || (!!obj.session_id && rec?.session_id === obj.session_id && rec._epoch != null && agentAt(model, obj.session_id, device, rec) && !agentAt(model, obj.session_id, obj.agent_device_id, rec)))
 /** Who holds an object now (whom a human addresses, who may revise or close it): its creator while assigned, else the session's agent. */
-export function holderOf(model, obj) {
+export function holderOf(model: Model, obj: Held | null | undefined): string | null {
   const now = obj?.session_id ? model.sessions.get(obj.session_id)?.agent_device_ids ?? [] : []
-  return !obj ? null : !now.length || now.includes(obj.agent_device_id) ? obj.agent_device_id : now[0]
+  return !obj ? null : !now.length || now.includes(obj.agent_device_id) ? obj.agent_device_id : now[0]!
 }
 
 // ---- alerts ---------------------------------------------------------------------------------
 
 let alertSeq = 0
-export function pushAlert(model, change, { code, message = '', envelope_number = null, sender_device_id = null, source = 'local' }) {
-  if (globalThis.process?.env?.CORE_DEBUG) console.error('[alert]', code, message, new Error().stack.split('\n').slice(2, 5).join(' | '))
-  const alert = { alert_id: `${Date.now().toString(36)}-${(alertSeq++).toString(36)}`, code, message, envelope_number, sender_device_id, at: Date.now(), source }
+export interface AlertInput { code: string; message?: string; envelope_number?: number | null; sender_device_id?: string | null; source?: 'local' | 'agent' }
+export function pushAlert(model: Model, change: Change, { code, message = '', envelope_number = null, sender_device_id = null, source = 'local' }: AlertInput): Alert {
+  if (globalThis.process?.env?.['CORE_DEBUG']) console.error('[alert]', code, message, new Error().stack?.split('\n').slice(2, 5).join(' | '))
+  const alert: Alert = { alert_id: `${Date.now().toString(36)}-${(alertSeq++).toString(36)}`, code, message, envelope_number, sender_device_id, at: Date.now(), source }
   model.alerts.push(alert)
   if (model.alerts.length > ALERTS_MAX) model.alerts.splice(0, model.alerts.length - ALERTS_MAX)
   change.alerts = true
@@ -284,7 +309,7 @@ export function pushAlert(model, change, { code, message = '', envelope_number =
  *         content: object | null, content_state, bind: decoded (hex) | null }
  * Returns { applied: boolean, refused?: code } so the agent side can tell what counted.
  */
-export function applyRecord(model, rec, change) {
+export function applyRecord(model: Model, rec: Rec, change: Change): ApplyResult {
   // R6: an agent holds only its own sessions. Records of another session (the hub serves their headers, e.g. pruned
   // after retention) build nothing on an agent: not even a header-only card or answer (fuzz isolation finding).
   if (rec.session_id && model.room.my_role === 'agent' && rec.sender_device_id !== model.room.my_device_id && !everAgent(model, rec.session_id, model.room.my_device_id)) return { applied: false }
@@ -296,7 +321,7 @@ export function applyRecord(model, rec, change) {
   // A body of a newer schema: the head counts by its signed header alone (as a pruned one), its content is not read.
   // Timeline items keep it (item_state 'newer_schema' shows the placeholder in place).
   if (rec.content_state === 'newer_schema') {
-    noteNewer(model, change, rec.content ? `schema_version ${rec.content.schema_version}` : 'body format', rec)
+    noteNewer(model, change, rec.content ? `schema_version ${String(rec.content['schema_version'])}` : 'body format', rec)
     if (rec.kind !== KIND.timeline_item) rec = { ...rec, newer_content: rec.content, content: null }
   }
   switch (rec.kind) {
@@ -311,14 +336,14 @@ export function applyRecord(model, rec, change) {
   }
 }
 
-const refuse = (model, change, rec, code, message) => {
+const refuse = (model: Model, change: Change, rec: Rec, code: string, message: string): ApplyResult => {
   pushAlert(model, change, { code, message, envelope_number: rec.envelope_number, sender_device_id: rec.sender_device_id })
   return { applied: false, refused: code }
 }
 
 // ---- timelines -------------------------------------------------------------------------------
 
-export function timelineOf(model, key) {
+export function timelineOf(model: Model, key: string): Timeline {
   let t = model.timelines.get(key)
   if (!t) {
     const p = parseTimelineKey(key)
@@ -330,26 +355,27 @@ export function timelineOf(model, key) {
 }
 
 /** Item shape from a record (header + content when known). */
-export function itemFromRecord(rec) {
+export function itemFromRecord(rec: Rec): TimelineItem {
   return {
     envelope_number: rec.envelope_number, local_id: rec.local_id ?? null, pending: false, envelope_hash: rec.envelope_hash, sender_device_id: rec.sender_device_id, sender_sequence: rec.sender_sequence ?? null,
     recipient_device_id: rec.recipient_device_id, sent_at: rec.sent_at,
     item_state: itemStateOf(rec.content, rec.content_state),
-    content_type: rec.content?.content_type ?? null, content: rec.content ?? null,
+    content_type: (rec.content?.['content_type'] as string | undefined) ?? null, content: rec.content ?? null,
   }
 }
+const KEPT_STATES: readonly unknown[] = ['pruned', 'undecryptable', 'newer_schema']
 /** A timeline item's state from its body and content_state: loaded, unsupported (a content type of a newer version),
  *  newer_schema, pruned, undecryptable, or header (the body not fetched yet). */
-export const itemStateOf = (content, content_state) => (content ? (content_state !== 'ok' ? content_state : contentTypeKnown(content) ? 'loaded' : 'unsupported')
-  : ['pruned', 'undecryptable', 'newer_schema'].includes(content_state) ? content_state : 'header')
+export const itemStateOf = (content: Body | null | undefined, content_state: ContentState | string | null | undefined): ItemState => (content ? (content_state !== 'ok' ? content_state as ItemState : contentTypeKnown(content) ? 'loaded' : 'unsupported')
+  : KEPT_STATES.includes(content_state) ? content_state as ItemState : 'header')
 /** A timeline item's content type this version knows (an item without one counts as a message). */
-export const contentTypeKnown = content => content?.content_type == null || CONTENT_TYPES.includes(content.content_type)
+export const contentTypeKnown = (content: Body | null | undefined): boolean => content?.['content_type'] == null || CONTENT_TYPES.includes(content['content_type'] as string)
 /** item_state values that mean "a newer client wrote this": the views show the update placeholder. */
-export const itemNeedsUpdate = item => item?.item_state === 'unsupported' || item?.item_state === 'newer_schema'
+export const itemNeedsUpdate = (item: Pick<TimelineItem, 'item_state'> | null | undefined): boolean => item?.item_state === 'unsupported' || item?.item_state === 'newer_schema'
 
 /** R1: who may write into which timeline. Returns null if allowed, else a refusal code. */
-export function timelineRefusal(model, rec) {
-  const p = parseTimelineKey(timelineKey(rec.timeline_kind, rec.timeline_id))
+export function timelineRefusal(model: Model, rec: Rec): string | null {
+  const p = parseTimelineKey(timelineKey(String(rec.timeline_kind), String(rec.timeline_id)))
   const human = rec.sender_role === 'human'
   if (p.timeline_kind === 'chat') {
     if (p.scope === 'session') {
@@ -372,12 +398,12 @@ export function timelineRefusal(model, rec) {
   return null   // a timeline kind this client does not know yet: count it, show nothing
 }
 
-function applyTimelineItem(model, rec, change) {
+function applyTimelineItem(model: Model, rec: Rec, change: Change): ApplyResult {
   const why = timelineRefusal(model, rec)
   if (why) return refuse(model, change, rec, why, `not allowed in ${rec.timeline_id}`)
-  const key = timelineKey(rec.timeline_kind, rec.timeline_id)
+  const key = timelineKey(String(rec.timeline_kind), String(rec.timeline_id))
   if (rec.timeline_kind !== 'chat' && rec.timeline_kind !== 'scribble') noteNewer(model, change, `timeline kind ${rec.timeline_kind}`, rec)
-  else if (rec.content && rec.content_state === 'ok' && !contentTypeKnown(rec.content)) noteNewer(model, change, `content_type ${rec.content.content_type}`, rec)
+  else if (rec.content && rec.content_state === 'ok' && !contentTypeKnown(rec.content)) noteNewer(model, change, `content_type ${String(rec.content['content_type'])}`, rec)
   const t = timelineOf(model, key)
   t.item_count++
   t.newest_envelope_number = Math.max(t.newest_envelope_number, rec.envelope_number)
@@ -395,14 +421,14 @@ function applyTimelineItem(model, rec, change) {
   if (p.timeline_kind === 'chat' && p.scope === 'card') {
     const card = model.cards.get(p.scope_id)
     if (card) {
-      const c = rec.content
+      const c = rec.content as Obj | null
       // README: in revision until the agent's next version or a message with present_card (the agent presents it again,
       // or a human takes the hand-back back).
       // F2: only an open card goes back to its agent (as the mock room does): a hand-back on an answered or closed card
       // changes nothing, so a device that settles it later from the conversation (client._resolveRevisions) agrees. An own
       // answer still in flight (echo) does not count yet: the hub may order it after this message or refuse it.
-      if (c?.present_card) card.in_revision = null
-      else if (rec.sender_role === 'human' && c && (c.hand_back || c.explain) && (card.object_state === 'open' || card.answer?.pending)) card.in_revision = { by: c.hand_back ? 'hand_back' : 'explain', envelope_number: rec.envelope_number }
+      if (c?.['present_card']) card.in_revision = null
+      else if (rec.sender_role === 'human' && c && (c['hand_back'] || c['explain']) && (card.object_state === 'open' || card.answer?.pending)) card.in_revision = { by: c['hand_back'] ? 'hand_back' : 'explain', envelope_number: rec.envelope_number }
       change.cards.add(card.object_id)
       if (card.session_id) change.sessions.add(card.session_id)
     }
@@ -412,7 +438,7 @@ function applyTimelineItem(model, rec, change) {
 
 // ---- objects -------------------------------------------------------------------------------
 
-function newCard(object_id, agent_device_id, rec) {
+function newCard(object_id: string, agent_device_id: string, rec: Rec): Card {
   return {
     object_id, agent_device_id, object_state: 'open', urgency: 'normal', card_type: 'decision', title: '', teaser: null, body: null, options: [], sections: null, html: null,
     allows_multiple: false, recommended: null, urgency_reason: null, attachments: [], change_note: null, close_summary: null, withdraw_reason: null,
@@ -421,13 +447,13 @@ function newCard(object_id, agent_device_id, rec) {
     in_revision: null, timeline_key: timelineKey('chat', `card/${object_id}`), content_state: 'ok',
   }
 }
-const stateOf = rec => ({ object_state: OBJECT_STATE_NAME[rec.object?.object_state] ?? 'open', urgency: URGENCY_NAME[rec.object?.urgency] ?? 'normal' })
+const stateOf = (rec: Rec): { object_state: ObjectState; urgency: Urgency } => ({ object_state: OBJECT_STATE_NAME[rec.object?.object_state as number] ?? 'open', urgency: URGENCY_NAME[rec.object?.urgency as number] ?? 'normal' })
 
-function applyObjectVersion(model, rec, change) {
+function applyObjectVersion(model: Model, rec: Rec, change: Change): ApplyResult {
   const object_id = rec.object?.object_id
   if (!object_id) return refuse(model, change, rec, 'bad-object', 'object version without object id')
-  const c = rec.content
-  const type = (c ?? rec.newer_content)?.object_type ?? (model.notes.has(object_id) || rec.sender_role === 'human' ? 'note' : model.published.has(object_id) ? 'published' : 'card')
+  const c = rec.content as CardBody | null
+  const type = ((c ?? rec.newer_content)?.['object_type'] as string | undefined) ?? (model.notes.has(object_id) || rec.sender_role === 'human' ? 'note' : model.published.has(object_id) ? 'published' : 'card')
   if (!c && rec.content_state === 'undecryptable' && model.room.my_role === 'agent' && rec.sender_role === 'human') return { applied: false }   // room scope: not for agents
   if (!OBJECT_TYPES.includes(type)) return needsUpdate(model, change, rec, `object_type ${type}`)
   if (type === 'note') return applyNote(model, rec, change)
@@ -442,16 +468,16 @@ function applyObjectVersion(model, rec, change) {
   if (c) {
     const expected = (card?.object_version ?? 0) + 1
     if (c.object_version !== expected) return refuse(model, change, rec, 'bad-version', `card version ${c.object_version}, expected ${expected}`)
-    if (expected > 1 && c.previous_version_hash !== card.version_hash) return refuse(model, change, rec, 'bad-version', 'previous_version_hash does not name the current version')
+    if (expected > 1 && c.previous_version_hash !== card!.version_hash) return refuse(model, change, rec, 'bad-version', 'previous_version_hash does not name the current version')
     if (expected === 1 && c.previous_version_hash && !isZeroHash(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'version 1 names a predecessor')
   }
-  if (fresh) {
+  if (!card) {
     card = newCard(object_id, rec.sender_device_id, rec)
     model.cards.set(object_id, card)
     if (rec.session_id) {     // kept sorted by created_at (project no longer sorts it)
       const l = sessionOf(model, rec.session_id).card_ids
       let at = l.length
-      while (at > 0 && (model.cards.get(l[at - 1])?.created_at ?? 0) > card.created_at) at--
+      while (at > 0 && (model.cards.get(l[at - 1]!)?.created_at ?? 0) > card.created_at) at--
       l.splice(at, 0, object_id)
     }
   }
@@ -463,7 +489,7 @@ function applyObjectVersion(model, rec, change) {
   card.updated_at = rec.sent_at
   card.version_hash = rec.envelope_hash
   if (c && rec.content_state === 'ok') {
-    for (const f of CARD_CONTENT_FIELDS) card[f] = c[f] ?? defaultOf(f)
+    for (const f of CARD_CONTENT_FIELDS) (card as Obj)[f] = c[f] ?? defaultOf(f)
     card.object_version = c.object_version
     card.content_state = 'ok'
   } else {
@@ -486,7 +512,7 @@ function applyObjectVersion(model, rec, change) {
   change.stack = true
   return { applied: true }
 }
-function defaultOf(f) {
+function defaultOf(f: string): [] | false | 'decision' | '' | null {
   if (f === 'options' || f === 'attachments') return []
   if (f === 'allows_multiple') return false
   if (f === 'card_type') return 'decision'
@@ -494,15 +520,15 @@ function defaultOf(f) {
   return null
 }
 
-function applyNote(model, rec, change) {
-  const object_id = rec.object.object_id
+function applyNote(model: Model, rec: Rec, change: Change): ApplyResult {
+  const object_id = rec.object!.object_id
   if (rec.sender_role !== 'human') return refuse(model, change, rec, 'not-creator', 'notes come from human devices')
-  const c = rec.content ?? {}
+  const c = (rec.content ?? {}) as Obj
   const cur = model.notes.get(object_id)
   const old = cur?.pending ? cur._base : cur          // an own optimistic echo is not a version
   if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   // Any human device may write a version; two versions naming the same predecessor are settled by causal order (R2).
-  if (old && rec.content && !old.version_hashes.includes(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'note previous_version_hash names no known version')
+  if (old && rec.content && !old.version_hashes.includes(c['previous_version_hash'])) return refuse(model, change, rec, 'bad-version', 'note previous_version_hash names no known version')
   // Retention: a version whose body is gone (pruned, or held as header only) lost its lamport, which is signed inside
   // the body; counted as 0 it lost to the older version this device still held with its body, and a deleted note came
   // back open (fuzz night-srv-w7-98). Where either side has no body, the hub's order decides (the same on every device).
@@ -524,27 +550,27 @@ function applyNote(model, rec, change) {
   return { applied: true }
 }
 
-function noteOf(object_id, rec, c, old) {
+function noteOf(object_id: string, rec: Rec, c: Obj, old: Note | null | undefined): Note {
   const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, lamport: _l, ...extra } = c
-  return { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '',
-    object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
-    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.content ? rec.causal : { ...rec.causal, no_body: true }, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false, unsupported: rec.content_state === 'newer_schema' }
+  return { ...extra, object_id, by_device_id: rec.sender_device_id, text: c['text'] ?? old?.text ?? '',
+    object_version: c['object_version'] ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
+    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.content ? rec.causal as Causal | null : { ...rec.causal!, no_body: true }, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false, unsupported: rec.content_state === 'newer_schema' }
 }
 
-function applyPublished(model, rec, change) {
-  const object_id = rec.object.object_id
+function applyPublished(model: Model, rec: Rec, change: Change): ApplyResult {
+  const object_id = rec.object!.object_id
   const old = model.published.get(object_id)
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'published objects come from agents')
   if (rec.session_id && !agentAt(model, rec.session_id, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-allowed', 'a published object in a session this agent is not assigned to')
   if (old && !holdsAt(model, old, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-creator', 'a published object from someone else than its creator')
   if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
-  const c = rec.content ?? {}
+  const c = (rec.content ?? {}) as Obj
   const expected = (old?.object_version ?? 0) + 1
-  if (rec.content && c.object_version !== expected) return refuse(model, change, rec, 'bad-version', `published version ${c.object_version}, expected ${expected}`)
+  if (rec.content && c['object_version'] !== expected) return refuse(model, change, rec, 'bad-version', `published version ${c['object_version']}, expected ${expected}`)
   // N4: a later version names its predecessor (as cards do).
-  if (rec.content && old && c.previous_version_hash && c.previous_version_hash !== old.version_hash) return refuse(model, change, rec, 'bad-version', 'previous_version_hash does not name the current version')
-  model.published.set(object_id, { object_id, agent_device_id: old?.agent_device_id ?? rec.sender_device_id, session_id: rec.session_id ?? old?.session_id ?? null, attachments: c.attachments ?? old?.attachments ?? [], title: c.title ?? old?.title ?? '',
-    note: c.note ?? null, released_until: c.released_until ?? null, object_version: expected, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
+  if (rec.content && old && c['previous_version_hash'] && c['previous_version_hash'] !== old.version_hash) return refuse(model, change, rec, 'bad-version', 'previous_version_hash does not name the current version')
+  model.published.set(object_id, { object_id, agent_device_id: old?.agent_device_id ?? rec.sender_device_id, session_id: rec.session_id ?? old?.session_id ?? null, attachments: c['attachments'] ?? old?.attachments ?? [], title: c['title'] ?? old?.title ?? '',
+    note: c['note'] ?? null, released_until: c['released_until'] ?? null, object_version: expected, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
   change.published.add(object_id)
   if (rec.session_id) change.sessions.add(rec.session_id)
   return { applied: true }
@@ -556,8 +582,8 @@ function applyPublished(model, rec, change) {
  * Whether an answer counts. The same rule on every client; the agent's authoriseCommand checks the same and more.
  * Returns null if it counts, else a refusal code.
  */
-export function answerRefusal(model, rec) {
-  const card = model.cards.get(rec.object?.object_id)
+export function answerRefusal(model: Model, rec: Rec): string | null {
+  const card = model.cards.get(rec.object?.object_id as string)
   if (rec.sender_role !== 'human') return 'not-human'
   if (!card) return 'card-mismatch'
   if (!holdsAt(model, card, rec.recipient_device_id, rec)) return 'not-for-owner'
@@ -567,7 +593,7 @@ export function answerRefusal(model, rec) {
   if (!b || b.cardId !== card.object_id) return 'card-mismatch'
   if (card.object_state !== 'open') return 'card-closed'
   if ((b.versionHash ?? b.cardHash) !== card.version_hash) return 'answer-stale'
-  const c = rec.content
+  const c = rec.content as AnswerBody | null
   if (!c) return null   // pruned: the hub kept the header only; it counted when it was sent
   // An answer action of a newer version: it counts by its signed header (answered or closed), as a pruned one does.
   if (typeof c.answer_action === 'string' && !ANSWER_ACTIONS.includes(c.answer_action)) return null
@@ -597,29 +623,29 @@ export function answerRefusal(model, rec) {
 }
 
 /** Every choice is an option the agent marked final (and there is at least one): the answer alone ends the matter. */
-export function choicesFinal(card, choices) {
-  const final = new Set((card?.options ?? []).filter(o => o?.final === true).map(o => o.key))
+export function choicesFinal(card: { options?: (CardOption | null | undefined)[] | null } | null | undefined, choices: unknown): boolean {
+  const final = new Set((card?.options ?? []).filter(o => o?.final === true).map(o => o!.key))
   return Array.isArray(choices) && choices.length > 0 && choices.every(k => final.has(k))
 }
 
-function applyAnswer(model, rec, change) {
+function applyAnswer(model: Model, rec: Rec, change: Change): ApplyResult {
   const why = answerRefusal(model, rec)
   if (why) {
     // F15: the hub takes the object's state from this refused answer's header (closed) while the card stays open on every
     // client. Kept on the card (and stored with it), so the owner re-sends the card even after a crash or restart.
-    const card = model.cards.get(rec.object?.object_id)
+    const card = model.cards.get(rec.object?.object_id as string)
     if (card && rec.is_head !== false && stateOf(rec).object_state !== 'open' && rec.envelope_number > (card.refused_head ?? 0) && rec.envelope_number > card.envelope_number) { card.refused_head = rec.envelope_number; change.cards.add(card.object_id) }
     return refuse(model, change, rec, why, 'answer not counted')
   }
-  const card = model.cards.get(rec.object.object_id)
-  const c = rec.content ?? {}
+  const card = model.cards.get(rec.object!.object_id)!
+  const c = (rec.content ?? {}) as AnswerBody
   const newerAction = typeof c.answer_action === 'string' && !ANSWER_ACTIONS.includes(c.answer_action)
   if (newerAction) noteNewer(model, change, `answer_action ${c.answer_action}`, rec)
-  const answer = {
+  const answer: Answer = {
     answer_action: c.answer_action ?? 'answer', choices: c.choices ?? [], note: c.note ?? null, option_notes: c.option_notes ?? {}, attachments: c.attachments ?? [],
     marks: c.marks ?? [], trusted: !!c.trusted, bound_version_hash: rec.bind?.cardHash ?? null, bound_object_version: card.object_version,
-    envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, by_device_id: rec.sender_device_id, answered_at: rec.object.answered_at || rec.sent_at,
-    taken_back_at: null, taken_back_sent_at: null, pending: false, ...(newerAction || rec.newer_content ? { unsupported: true } : {}),
+    envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, by_device_id: rec.sender_device_id, answered_at: rec.object!.answered_at || rec.sent_at,
+    taken_back_at: null, taken_back_sent_at: null, pending: false, ...(newerAction || rec.newer_content ? { unsupported: true as const } : {}),
   }
   card.answer = answer
   card.answers.push(answer)
@@ -630,27 +656,27 @@ function applyAnswer(model, rec, change) {
   card.in_revision = null
   card.updated_at = rec.sent_at
   change.cards.add(card.object_id)
-  card.session_id && change.sessions.add(card.session_id)
+  if (card.session_id) change.sessions.add(card.session_id)
   change.stack = true
   return { applied: true }
 }
 
 /** F15: own open cards the hub holds as closed (a refused answer is their newest head): the owner re-sends them. */
-export function cardsToReassert(model, my_device_id) {
-  const out = []
+export function cardsToReassert(model: Model, my_device_id: string): string[] {
+  const out: string[] = []
   for (const c of model.cards.values()) if (holderOf(model, c) === my_device_id && c.object_state === 'open' && (c.refused_head ?? 0) > c.envelope_number) out.push(c.object_id)
   return out
 }
 
 /** F2: the newest envelope that changed whether the card is open (its version, an answer, a decide-again); a hand-back counts only after it. */
-export function revisionCutoff(card) {
+export function revisionCutoff(card: Pick<Card, 'envelope_number' | 'answers'>): number {
   let n = card.envelope_number
   for (const a of card.answers ?? []) n = Math.max(n, a.envelope_number ?? 0, a.taken_back_at ?? 0)
   return n
 }
 
-export function decideAgainRefusal(model, rec) {
-  const card = model.cards.get(rec.object?.object_id)
+export function decideAgainRefusal(model: Model, rec: Rec): string | null {
+  const card = model.cards.get(rec.object?.object_id as string)
   if (rec.sender_role !== 'human') return 'not-human'
   if (!card) return 'card-mismatch'
   if (!holdsAt(model, card, rec.recipient_device_id, rec)) return 'not-for-owner'
@@ -659,39 +685,39 @@ export function decideAgainRefusal(model, rec) {
   if (rec.bind.versionHash && rec.bind.versionHash !== card.version_hash) return 'card-changed'
   // What the human closed with an answer (read, shredded, settled by a final option) they may take back; what the
   // agent closed (done, withdrawn, merged) stays closed.
-  if (card.object_state === 'closed' && ['closed', 'withdrawn', 'merged'].includes(card.closed_how)) return 'card-closed'
+  if (card.object_state === 'closed' && ['closed', 'withdrawn', 'merged'].includes(card.closed_how as string)) return 'card-closed'
   return null
 }
-function applyDecideAgain(model, rec, change) {
+function applyDecideAgain(model: Model, rec: Rec, change: Change): ApplyResult {
   const why = decideAgainRefusal(model, rec)
   if (why) return refuse(model, change, rec, why, 'decide again not counted')
-  const card = model.cards.get(rec.object.object_id)
-  card.answer.taken_back_at = rec.envelope_number
-  card.answer.taken_back_sent_at = rec.sent_at
+  const card = model.cards.get(rec.object!.object_id)!
+  card.answer!.taken_back_at = rec.envelope_number
+  card.answer!.taken_back_sent_at = rec.sent_at
   card.answer = null
   card.object_state = 'open'
   card.closed_how = null
   card.updated_at = rec.sent_at
   change.cards.add(card.object_id)
-  card.session_id && change.sessions.add(card.session_id)
+  if (card.session_id) change.sessions.add(card.session_id)
   change.stack = true
   return { applied: true }
 }
 
 // ---- permission requests -----------------------------------------------------------------
 
-function applyPermissionRequest(model, rec, change) {
+function applyPermissionRequest(model: Model, rec: Rec, change: Change): ApplyResult {
   const object_id = rec.object?.object_id
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'permission requests come from agents')
   if (rec.session_id && !agentAt(model, rec.session_id, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-allowed', 'a permission request in a session this agent is not assigned to')
   const known = object_id ? model.permissions.get(object_id) : null
   // A second head of the same object from its agent, closed: the agent withdraws its request (the prompt was answered
   // elsewhere). Only a pending request changes; one already answered keeps its verdict, quietly.
-  if (known && known.agent_device_id === rec.sender_device_id && OBJECT_STATE_NAME[rec.object?.object_state] === 'closed') {
+  if (known && known.agent_device_id === rec.sender_device_id && OBJECT_STATE_NAME[rec.object?.object_state as number] === 'closed') {
     if (known.permission_state !== 'pending') return { applied: false }
     known.permission_state = 'withdrawn'
-    known.withdraw_reason = rec.content?.withdraw_reason ?? ''
-    change.permissions.add(object_id)
+    known.withdraw_reason = (rec.content?.['withdraw_reason'] as string | undefined) ?? ''
+    change.permissions.add(known.object_id)
     if (known.session_id) change.sessions.add(known.session_id)
     change.stack = true
     return { applied: true }
@@ -699,16 +725,17 @@ function applyPermissionRequest(model, rec, change) {
   if (!object_id || known) return refuse(model, change, rec, 'bad-object', 'permission request without a new object id')
   if (rec.bind && rec.bind.requestId !== object_id) return refuse(model, change, rec, 'bad-object', 'request id differs from object id')
   if (rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence)')
-  const c = rec.content ?? {}
-  model.permissions.set(object_id, { object_id, agent_device_id: rec.sender_device_id, session_id: rec.session_id ?? null, tool_name: c.tool_name ?? '', description: c.description ?? '', input_preview: c.input_preview ?? '',
-    expires_at: rec.bind?.expiresAt ?? 0, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, sent_at: rec.sent_at, permission_state: 'pending', verdict: null, withdraw_reason: null })
+  const c = (rec.content ?? {}) as Obj
+  const p: PermissionRequest = { object_id, agent_device_id: rec.sender_device_id, session_id: rec.session_id ?? null, tool_name: c['tool_name'] ?? '', description: c['description'] ?? '', input_preview: c['input_preview'] ?? '',
+    expires_at: rec.bind?.expiresAt ?? 0, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, sent_at: rec.sent_at, permission_state: 'pending', verdict: null, withdraw_reason: null }
+  model.permissions.set(object_id, p)
   change.permissions.add(object_id)
   if (rec.session_id) change.sessions.add(rec.session_id)
   change.stack = true
   return { applied: true }
 }
-export function verdictRefusal(model, rec) {
-  const p = model.permissions.get(rec.object?.object_id ?? rec.bind?.requestId)
+export function verdictRefusal(model: Model, rec: Rec): string | null {
+  const p = model.permissions.get((rec.object?.object_id ?? rec.bind?.requestId) as string)
   if (rec.sender_role !== 'human') return 'not-human'
   if (!p || !rec.bind || rec.bind.requestId !== p.object_id) return 'request-mismatch'
   if (rec.recipient_device_id !== p.agent_device_id) return 'not-for-owner'
@@ -716,12 +743,12 @@ export function verdictRefusal(model, rec) {
   if (rec.bind.requestHash !== p.version_hash || rec.bind.expiresAt !== p.expires_at) return 'request-changed'
   return null
 }
-function applyVerdict(model, rec, change) {
+function applyVerdict(model: Model, rec: Rec, change: Change): ApplyResult {
   const why = verdictRefusal(model, rec)
   if (why) return refuse(model, change, rec, why, 'verdict not counted')
-  const p = model.permissions.get(rec.bind.requestId)
-  p.verdict = { allow: rec.bind.allow, by_device_id: rec.sender_device_id, envelope_number: rec.envelope_number }
-  p.permission_state = rec.bind.allow ? 'allowed' : 'denied'
+  const p = model.permissions.get(rec.bind!.requestId!)!
+  p.verdict = { allow: rec.bind!.allow as boolean, by_device_id: rec.sender_device_id, envelope_number: rec.envelope_number }
+  p.permission_state = rec.bind!.allow ? 'allowed' : 'denied'
   change.permissions.add(p.object_id)
   if (p.session_id) change.sessions.add(p.session_id)
   change.stack = true
@@ -731,16 +758,16 @@ function applyVerdict(model, rec, change) {
 // ---- registers ------------------------------------------------------------------------------
 
 const HUMAN_PREFIXES = ['draft/', 'snooze/', 'duck/', 'desk/', 'session/', 'session_history/', 'scribble_snapshot/']
-const isHumanKey = k => k === 'crown' || k === 'room_snapshot' || HUMAN_PREFIXES.some(p => k.startsWith(p))
-const isAgentKey = k => k === 'profile' || k === 'heard' || k.startsWith('status_line/') || k.startsWith('alert/')
+const isHumanKey = (k: string) => k === 'crown' || k === 'room_snapshot' || HUMAN_PREFIXES.some(p => k.startsWith(p))
+const isAgentKey = (k: string) => k === 'profile' || k === 'heard' || k.startsWith('status_line/') || k.startsWith('alert/')
 
-function applyStatus(model, rec, change) {
-  const values = rec.content?.values
+function applyStatus(model: Model, rec: Rec, change: Change): ApplyResult {
+  const values = rec.content?.['values']
   if (!values || typeof values !== 'object') {
     if (rec.content_state === 'ok') return refuse(model, change, rec, 'bad-status', 'status without values')
     return { applied: false }
   }
-  for (const [key, value] of Object.entries(values)) {
+  for (const [key, value] of Object.entries(values as Obj)) {
     if (key.startsWith('device/')) {
       if (key !== `device/${rec.sender_device_id}`) { refuse(model, change, rec, 'foreign-key', `${key} from another device`); continue }
       model._device_registers ??= new Map()
@@ -770,31 +797,35 @@ function applyStatus(model, rec, change) {
   return { applied: true }
 }
 
-export function setHumanRegister(model, key, value, rec, change) {
+/** What a human register write carries (a record, an own echo, or a stored raw value read back). */
+export interface RegisterWrite { envelope_number?: number | null; sender_device_id?: string | null; pending?: boolean; causal?: Causal | null | undefined }
+
+export function setHumanRegister(model: Model, key: string, value: unknown, rec: RegisterWrite, change: Change): false | undefined {
   const h = model.human
   const old = h.raw.get(key)
   // R2: the causally latest write wins, whatever order the hub delivered them in. A delete stays as a tombstone (value null).
   if (!rec.pending && old && !old.pending && rec.causal && old.causal && !causallyAfter(rec.causal, old.causal)) return false
-  h.raw.set(key, { value: value ?? null, envelope_number: rec.envelope_number, by_device_id: rec.sender_device_id, pending: !!rec.pending, causal: rec.causal ?? old?.causal ?? null })
+  h.raw.set(key, { value: value ?? null, envelope_number: rec.envelope_number as number | null, by_device_id: rec.sender_device_id as string | null, pending: !!rec.pending, causal: rec.causal ?? old?.causal ?? null })
   const slash = key.indexOf('/')
   const prefix = slash < 0 ? key : key.slice(0, slash), id = slash < 0 ? null : key.slice(slash + 1)
-  const put = (map, v) => (v === null || v === undefined ? map.delete(id) : map.set(id, v))
+  const put = <V>(map: Map<string, V>, v: unknown) => (v === null || v === undefined ? map.delete(id as string) : map.set(id as string, v as V))
   switch (prefix) {
-    case 'draft': put(h.drafts, value); change.cards.add(id); break
-    case 'snooze': put(h.snoozes, value); change.cards.add(id); change.stack = true; break
-    case 'duck': put(h.ducks, value); change.cards.add(id); break
+    case 'draft': put(h.drafts, value); change.cards.add(id as string); break
+    case 'snooze': put(h.snoozes, value); change.cards.add(id as string); change.stack = true; break
+    case 'duck': put(h.ducks, value); change.cards.add(id as string); break
     case 'crown': h.crown = value ?? null; break
     case 'desk': put(h.desks, value); break
     case 'session': {
       put(h.session_settings, value)
-      const s = sessionOf(model, id); s.settings = value ?? null; change.sessions.add(id); change.stack = true; break
+      const s = sessionOf(model, id as string); s.settings = (value as SessionSettings | null | undefined) ?? null; change.sessions.add(id as string); change.stack = true; break
     }
-    case 'scribble_snapshot': put(h.scribble_snapshots, value); change.timelines.add(timelineKey('scribble', id)); break
+    case 'scribble_snapshot': put(h.scribble_snapshots, value); change.timelines.add(timelineKey('scribble', id as string)); break
   }
   change.registers.add(key)
+  return undefined
 }
 
-function setAgentRegister(model, session_id, key, value, rec, change) {
+function setAgentRegister(model: Model, session_id: string, key: string, value: any, rec: Rec, change: Change): void {
   const s = sessionOf(model, session_id)
   const agent = rec.sender_device_id
   const old = s.registers.get(key)
@@ -804,7 +835,7 @@ function setAgentRegister(model, session_id, key, value, rec, change) {
   if (key === 'profile') s.profile = value ?? null
   else if (key === 'heard') {
     // The mark only rises: a receipt is never taken back.
-    const up_to = Number.isSafeInteger(value?.up_to) && value.up_to >= 0 ? value.up_to : null
+    const up_to = Number.isSafeInteger(value?.up_to) && value.up_to >= 0 ? value.up_to as number : null
     if (up_to != null && up_to >= (s.heard_up_to ?? -1)) { s.heard_up_to = up_to; s.heard_at = stamp(value.at) ?? rec.sent_at ?? null }
   }
   else if (key.startsWith('status_line/')) {
@@ -830,11 +861,11 @@ function setAgentRegister(model, session_id, key, value, rec, change) {
 
 // ---- projections ----------------------------------------------------------------------------
 
-const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
-const stackKey = c => [URGENCY_RANK[c.urgency] ?? 1, c.created_at, c.agent_device_id ?? '', c.object_id]
-const cmpKey = (x, y) => (y[0] - x[0]) || (x[1] - y[1]) || cmpStr(x[2], y[2]) || cmpStr(x[3], y[3])
-function bisect(arr, key, keyOf) { let lo = 0, hi = arr.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (cmpKey(keyOf(arr[mid]), key) < 0) lo = mid + 1; else hi = mid } return lo }
-const byCreated = model => (a, b) => (model.cards.get(a)?.created_at ?? 0) - (model.cards.get(b)?.created_at ?? 0) || cmpStr(a, b)
+const cmpStr = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+const stackKey = (c: Card): StackKey => [URGENCY_RANK[c.urgency] ?? 1, c.created_at, c.agent_device_id ?? '', c.object_id]
+const cmpKey = (x: StackKey, y: StackKey) => (y[0] - x[0]) || (x[1] - y[1]) || cmpStr(x[2], y[2]) || cmpStr(x[3], y[3])
+function bisect(arr: string[], key: StackKey, keyOf: (id: string) => StackKey): number { let lo = 0, hi = arr.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (cmpKey(keyOf(arr[mid]!), key) < 0) lo = mid + 1; else hi = mid } return lo }
+const byCreated = (model: Model) => (a: string, b: string) => (model.cards.get(a)?.created_at ?? 0) - (model.cards.get(b)?.created_at ?? 0) || cmpStr(a, b)
 
 /**
  * Stack, per-session card lists, open permissions. Incremental (perf, 4 Oct): the open cards are kept sorted
@@ -844,36 +875,37 @@ const byCreated = model => (a, b) => (model.cards.get(a)?.created_at ?? 0) - (mo
  * session, a snooze or a session register, or the clock passed the end of a snooze: a chat message, a stroke or a
  * status line costs nothing here.
  */
-export function project(model, change, now = Date.now()) {
+export function project(model: Model, change: Change, now: number = Date.now()): void {
   const before = model.stack, beforePerm = model.open_permission_ids
   let P = model._proj
-  const touchedSessions = new Set()
+  const touchedSessions = new Set<string>()
   if (!P) {
-    P = model._proj = { keys: new Map(), sorted: [], nextPermExpiry: Infinity, stackDirty: true, nextWake: Infinity }
+    const p = model._proj = { keys: new Map<string, StackKey>(), sorted: [] as string[], nextPermExpiry: Infinity, stackDirty: true, nextWake: Infinity, permsDirty: true }
+    P = p
     for (const s of model.sessions.values()) { s.card_ids.sort(byCreated(model)); touchedSessions.add(s.session_id) }
-    for (const c of model.cards.values()) if (c.object_state === 'open') P.keys.set(c.object_id, stackKey(c))
-    P.sorted = [...P.keys.keys()].sort((x, y) => cmpKey(P.keys.get(x), P.keys.get(y)))
-    P.permsDirty = true
+    for (const c of model.cards.values()) if (c.object_state === 'open') p.keys.set(c.object_id, stackKey(c))
+    p.sorted = [...p.keys.keys()].sort((x, y) => cmpKey(p.keys.get(x)!, p.keys.get(y)!))
   } else {
+    const p = P
     for (const id of change.cards) {
       const c = model.cards.get(id)
-      const old = P.keys.get(id)
+      const old = p.keys.get(id)
       // the card's session list of open cards, by edit (sorted by created_at like card_ids)
       const s = c?.session_id ? model.sessions.get(c.session_id) : null
-      if (s) {
+      if (s && c) {
         const at = s.open_card_ids.indexOf(id)
         const open = c.object_state === 'open'
-        if (open && at < 0) { let i = s.open_card_ids.length; while (i > 0 && (model.cards.get(s.open_card_ids[i - 1])?.created_at ?? 0) > c.created_at) i--; s.open_card_ids.splice(i, 0, id) }
+        if (open && at < 0) { let i = s.open_card_ids.length; while (i > 0 && (model.cards.get(s.open_card_ids[i - 1]!)?.created_at ?? 0) > c.created_at) i--; s.open_card_ids.splice(i, 0, id) }
         else if (!open && at >= 0) s.open_card_ids.splice(at, 1)
       }
-      if (old) { const at = bisect(P.sorted, old, k => P.keys.get(k)); if (P.sorted[at] === id) P.sorted.splice(at, 1); else P.sorted.splice(P.sorted.indexOf(id), 1); P.keys.delete(id) }
-      if (c && c.object_state === 'open') { const key = stackKey(c); P.sorted.splice(bisect(P.sorted, key, k => P.keys.get(k)), 0, id); P.keys.set(id, key) }
+      if (old) { const at = bisect(p.sorted, old, k => p.keys.get(k)!); if (p.sorted[at] === id) p.sorted.splice(at, 1); else p.sorted.splice(p.sorted.indexOf(id), 1); p.keys.delete(id) }
+      if (c && c.object_state === 'open') { const key = stackKey(c); p.sorted.splice(bisect(p.sorted, key, k => p.keys.get(k)!), 0, id); p.keys.set(id, key) }
     }
-    if (change.permissions.size || now > P.nextPermExpiry) P.permsDirty = true
+    if (change.permissions.size || now > p.nextPermExpiry) p.permsDirty = true
     // The stack is filtered again only when something it depends on changed: a card, a session (archived), a snooze, or
     // the clock passed a snooze's end.
-    if (change.cards.size || change.sessions.size || now >= P.nextWake) P.stackDirty = true
-    else for (const k of change.registers) if (k.startsWith('snooze/') || k.startsWith('session/')) { P.stackDirty = true; break }
+    if (change.cards.size || change.sessions.size || now >= p.nextWake) p.stackDirty = true
+    else for (const k of change.registers) if (k.startsWith('snooze/') || k.startsWith('session/')) { p.stackDirty = true; break }
   }
   for (const sid of touchedSessions) {
     const s = model.sessions.get(sid)
@@ -882,13 +914,13 @@ export function project(model, change, now = Date.now()) {
   if (P.stackDirty) {
     P.stackDirty = false
     const snoozes = model.human.snoozes
-    const archived = new Set()
+    const archived = new Set<string>()
     for (const s of model.sessions.values()) if (s.settings?.archived) archived.add(s.session_id)
-    const stack = []
+    const stack: string[] = []
     let wake = Infinity
     for (const id of P.sorted) {
       if (snoozes.size) { const v = snoozes.get(id); if (v && (v.until == null || v.until > now)) { if (v.until != null && v.until < wake) wake = v.until; continue } }
-      if (archived.size && archived.has(model.cards.get(id)?.session_id)) continue
+      if (archived.size && archived.has(model.cards.get(id)?.session_id as string)) continue
       stack.push(id)
     }
     model.stack = stack
@@ -900,28 +932,32 @@ export function project(model, change, now = Date.now()) {
     P.nextPermExpiry = Math.min(Infinity, ...pending.map(p => p.expires_at))
     model.open_permission_ids = pending.sort((a, b) => a.envelope_number - b.envelope_number).map(p => p.object_id)
   }
-  const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i])
+  const same = (x: string[], y: string[]) => x.length === y.length && x.every((v, i) => v === y[i])
   if (!same(before, model.stack) || !same(beforePerm, model.open_permission_ids)) change.stack = true
 }
 
 /** The stack of one desk (desk_id), or of all (none). */
-export function stackOf(model, { desk_id } = {}) {
+export function stackOf(model: Model, { desk_id }: { desk_id?: string | null } = {}): string[] {
   if (desk_id == null) return model.stack
-  return model.stack.filter(id => (model.sessions.get(model.cards.get(id)?.session_id)?.settings?.desk ?? null) === desk_id)
+  return model.stack.filter(id => (model.sessions.get(model.cards.get(id)?.session_id as string)?.settings?.desk ?? null) === desk_id)
 }
 
 // ---- persistence: records <-> model ------------------------------------------------------
 
-const mapToObj = m => Object.fromEntries(m)
-const objToMap = o => new Map(Object.entries(o ?? {}))
+const mapToObj = <V>(m: Map<string, V>): Record<string, V> => Object.fromEntries(m)
+const objToMap = <V>(o: Record<string, V> | null | undefined): Map<string, V> => new Map(Object.entries(o ?? {}))
 
-export function serialiseSession(s) { return { ...s, registers: [...s.registers] } }
-export function deserialiseSession(o) { return { ...o, registers: new Map(o.registers ?? []) } }
-export function serialiseTimelineMeta(t) { const { items, ...rest } = t; return { ...rest, loaded_down_to: Number.isFinite(t.loaded_down_to) ? t.loaded_down_to : null, window_open: false } }
+/** A session as stored: its registers as entries. */
+export type StoredSession = Omit<Session, 'registers'> & { registers: [string, Session['registers'] extends Map<string, infer V> ? V : never][] }
+export function serialiseSession(s: Session): StoredSession { return { ...s, registers: [...s.registers] } }
+export function deserialiseSession(o: StoredSession): Session { return { ...o, registers: new Map(o.registers ?? []) } }
+/** A timeline's metadata as stored: no items, no window. */
+export type StoredTimelineMeta = Omit<Timeline, 'items' | 'loaded_down_to'> & { loaded_down_to: number | null }
+export function serialiseTimelineMeta(t: Timeline): StoredTimelineMeta { const { items: _items, ...rest } = t; return { ...rest, loaded_down_to: Number.isFinite(t.loaded_down_to) ? t.loaded_down_to : null, window_open: false } }
 // F8: the window is empty after a restart, so paging starts again from the newest item (a persisted low mark would skip it).
-export function deserialiseTimelineMeta(o) { return { ...o, items: new Map(), loaded_down_to: Infinity, window_open: false } }
+export function deserialiseTimelineMeta(o: StoredTimelineMeta): Timeline { return { ...o, items: new Map(), loaded_down_to: Infinity, window_open: false } }
 /** Human registers are rebuilt from raw values (one source of truth). */
-export function deserialiseHuman(model, o) {
+export function deserialiseHuman(model: Model, o: { raw?: Iterable<[string, { value: unknown; envelope_number: number | null; by_device_id: string | null; causal?: Causal | null }]> } | null | undefined): void {
   const change = emptyChange()
   for (const [key, v] of o?.raw ?? []) setHumanRegister(model, key, v.value, { envelope_number: v.envelope_number, sender_device_id: v.by_device_id, causal: v.causal }, change)
 }

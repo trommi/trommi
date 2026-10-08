@@ -13,7 +13,7 @@ ENV COMMIT=$COMMIT \
     HUB_TRUST_CF=1
 WORKDIR /app
 COPY shared/crypto/zcrypto.mjs shared/crypto/hub.mjs shared/crypto/session-grants.mjs shared/crypto/
-COPY shared/codec.mjs shared/
+COPY shared/codec.ts shared/types.ts shared/
 COPY hub/server.mjs hub/store.mjs hub/attachments.mjs hub/push.mjs hub/apns.mjs hub/accounts.mjs hub/mail.mjs hub/admin.mjs hub/admin-view.mjs hub/
 COPY hub/ops hub/ops
 RUN mkdir -p /data && chown node:node /data
