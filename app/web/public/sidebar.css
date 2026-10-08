@@ -695,7 +695,9 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   .phone-place .desk-lamp > .sketch { width: 26px; height: 26px; stroke-width: 1.6; }
   .phone-place .agent-avatar { width: 28px; height: 28px; }
   /* the page dimmed behind the open drawer; a tap on it closes */
-  .drawer-veil { display: block; position: fixed; z-index: var(--z-veil); inset: 0; background: rgb(20 30 25 / .42); opacity: var(--veil, 0); visibility: hidden; transition: opacity var(--drawer-in), visibility 0s 240ms; }
+  /* (the veil and the drawer reach under the notch and the home bar: top and bottom are the screen's own edges; the drawer's
+     content is padded below the notch) */
+  .drawer-veil { display: block; position: fixed; z-index: var(--z-veil); inset: 0; top: calc(-1 * env(safe-area-inset-top, 0px)); bottom: calc(-1 * env(safe-area-inset-bottom, 0px)); background: rgb(20 30 25 / .42); opacity: var(--veil, 0); visibility: hidden; transition: opacity var(--drawer-in), visibility 0s 240ms; }
   :root[data-drawer="open"] .drawer-veil, :root.is-drawer-drag .drawer-veil { visibility: visible; transition: opacity var(--drawer-in); }
   :root[data-drawer="open"]:not(.is-drawer-drag) .drawer-veil { opacity: 1; }
   /* the sidebar's parts, each on the drawer's left edge */
@@ -703,7 +705,7 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   #agents, html body .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors { visibility: hidden; transition: left var(--drawer-in), visibility 0s 240ms; }
   :root:is([data-drawer="open"], .is-drawer-drag) :is(#agents, .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors) { visibility: visible; transition: left var(--drawer-in); }
   :root.is-drawer-drag :is(#agents, .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors) { transition: none; }
-  #agents { position: fixed; z-index: var(--z-drawer); left: var(--dx); top: 0; bottom: 0; width: var(--drawer-w); margin: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(var(--foot) + var(--s-4) + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); border-right: 0; box-shadow: 1px 0 0 var(--line-strong), 14px 0 36px -18px rgb(20 30 25 / .5); overscroll-behavior: contain; }
+  #agents { position: fixed; z-index: var(--z-drawer); left: var(--dx); top: 0; bottom: 0; min-height: 100lvh; width: var(--drawer-w); margin: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(var(--foot) + var(--s-4) + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); border-right: 0; box-shadow: 1px 0 0 var(--line-strong), 14px 0 36px -18px rgb(20 30 25 / .5); overscroll-behavior: contain; }
   html body .topbar { z-index: var(--z-full); left: calc(var(--dx) + max(8px, env(safe-area-inset-left, 0px))); top: calc(8px + env(safe-area-inset-top, 0px)); width: calc(var(--drawer-w) - 16px); }
   #agents::before { top: 0; }
   .side-foot { z-index: var(--z-drawer); left: var(--dx); height: calc(var(--foot) + env(safe-area-inset-bottom, 0px)); border-right: 0; }
@@ -812,7 +814,8 @@ html[data-rail="folded"] .desk-switch-open { display: none; }
 /* (in the sidebar, above the Trommi row: clear of every page's head; folded, in the page's bottom-left corner; a phone: a slim strip over the top line) */
 :root:has(#brand-doors:not([hidden])) .demo-band { visibility: hidden; }
 html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14px; }
-@media (max-width: 860px) { :root.is-demo body { padding-top: 22px; } .demo-band { left: 0; right: 0; bottom: auto; top: env(safe-area-inset-top, 0px); z-index: 7; height: 22px; padding: 3px 0 0; border: 0; border-bottom: 1.4px solid var(--fg); border-radius: 0; rotate: none; text-align: center; font-size: .68rem; } }
+/* (a phone with a notch: the band lies under it, its words below it; the phone bar then needs no room of its own for it) */
+@media (max-width: 860px) { :root.is-demo body { padding-top: calc(22px + env(safe-area-inset-top, 0px)); } :root.is-demo .phone-bar { height: 48px; padding-top: 0; } .demo-band { left: 0; right: 0; bottom: auto; top: 0; z-index: 6; height: calc(22px + env(safe-area-inset-top, 0px)); box-sizing: border-box; padding: calc(3px + env(safe-area-inset-top, 0px)) 0 0; border: 0; border-bottom: 1.4px solid var(--fg); border-radius: 0; rotate: none; text-align: center; font-size: .68rem; } }
 @media (max-width: 860px) {
   /* (the top line makes room for the band: the place's name and a session's dots stand left of it) */
   /* (a phone: the band is a slim strip over the top line; the page moves down by it) */

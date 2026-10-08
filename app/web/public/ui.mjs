@@ -557,11 +557,28 @@ export function arrowStrokes(points, seed) {
 /** The theme: 'light', 'dark' or 'system' (follows the OS; the default). Kept in localStorage 'agent-board-theme'; the page's
  *  head sets it before the first paint (index.html), this keeps it and follows the OS while it is 'system'. */
 export function themeMode() { try { return localStorage.getItem('agent-board-theme') || 'system' } catch { return 'system' } }
+/** The browser's top strip (the status bar under the notch, Safari's bar): the colour of what stands at the page's top,
+ *  the phone bar's ground; while the phone drawer is open, that ground under the veil, so the strip is no light band
+ *  over a dimmed page (where the browser keeps the strip out of the page; in the app on the home screen the page and
+ *  the drawer reach under it: black-translucent). Called on a theme change and when the drawer opens or closes. */
+export function paintTopStrip() {
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (!meta) return
+  const open = document.documentElement.dataset.drawer === 'open'
+  const from = document.getElementById('phone-bar') ?? document.body
+  const bg = from ? getComputedStyle(from).backgroundColor : ''
+  const rgb = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/.exec(bg)
+  if (!rgb || rgb[4] === '0') return
+  // (open: the page's ground under the veil, rgb(20 30 25 / .42), the colour the strip then lies beside)
+  const [r, g, b] = rgb.slice(1, 4).map(Number), mix = (c, v) => Math.round(c * .58 + v * .42)
+  meta.content = open ? `rgb(${mix(r, 20)}, ${mix(g, 30)}, ${mix(b, 25)})` : `rgb(${r}, ${g}, ${b})`
+}
 export function setThemeMode(mode) {
   const root = document.documentElement, dark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
   root.dataset.themeMode = mode
   if (dark) root.dataset.theme = 'dark'; else delete root.dataset.theme
   try { if (mode === 'system') localStorage.removeItem('agent-board-theme'); else localStorage.setItem('agent-board-theme', mode) } catch {}
+  requestAnimationFrame(paintTopStrip)
 }
 /** The next in the round Light → Dark → System. */
 export const nextThemeMode = () => ({ light: 'dark', dark: 'system', system: 'light' })[themeMode()] ?? 'system'

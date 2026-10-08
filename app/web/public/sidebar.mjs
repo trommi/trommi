@@ -1,7 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
 // The markup is the one app.css and sidebar.css style.
 import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
-import { BELL, Controller, PLUS, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
+import { BELL, Controller, PLUS, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -455,11 +455,13 @@ export const DRAWER_VEIL = raw('<div class="drawer-veil" id="drawer-veil" aria-h
 function drawer() {
   const root = document.documentElement, phone = matchMedia('(max-width: 860px)')
   const isOpen = () => root.dataset.drawer === 'open'
+  requestAnimationFrame(paintTopStrip)
   const width = () => $('#agents')?.offsetWidth || 300
   const set = (open, { focus = true } = {}) => {
     if (open === isOpen()) return
     if (open) root.dataset.drawer = 'open'; else delete root.dataset.drawer
     $('#drawer-open')?.setAttribute('aria-expanded', String(open))
+    paintTopStrip()
     // (what lies under the veil is out of the keyboard's and a screen reader's way while the drawer is open)
     for (const el of document.querySelectorAll('body > main, #phone-bar, #corner-note-box, .curl')) el.inert = open
     if (!focus) return
