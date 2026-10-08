@@ -201,4 +201,6 @@ Desk 614 (547) → 68 (61) ms · answer a card 473 (231) → 160 (84) ms · open
 cold start fetches: 1,353 KB in 26 files (brotli 373 KB) → 483 KB in 7 files (brotli 141 KB); a cold start on a phone
 (4x CPU, 150 ms RTT, 1.6 Mbps, brotli) to the start page 3.0 → 2.1 s, to the demo Desk 4.0 → 2.9 s.
 
+**8 October 2026, the huge room (82,868 envelopes) and the budgets** (trommi-hub `dev/load/perf-budget.mjs`; numbers and causes in trommi-hub README "The huge room, per-change cost and the budgets"): phone 4x + slow 4G, warm start 1,156 → 844 ms, cold 2,855 → 2,296 ms, interactions p95 417 → 171 ms, one new message 12 requests / 95 KiB → 0 / 0.8 KiB.
+
 What made the difference: rows rendered only near the viewport (`desk.mjs` startDeskWindow), patch-only updates keyed by id, no page patching while the core catches up (one whole render every 2.5 s and once when live), board state rebuilt only for what a change names, no `:has()` over the whole document, advice marks measured in one batch, the service worker serving every file from its cache and revalidating only `index.html`. Still over budget: opening and switching sessions on a 4x phone (≈200 ms), a new device's first load in a huge room (bound by the core's verify/decrypt of every envelope; the core's room snapshot is the way out).

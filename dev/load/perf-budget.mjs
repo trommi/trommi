@@ -139,6 +139,8 @@ async function web() {
       }
     }
     const waitFor = async (code, what, ms = 120_000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await js(`return Boolean(${code})`).catch(() => false)) return Date.now() - t; await sleep(25) } throw new Error(`timed out: ${what}`) }
+    // (the time the page was ready, read again if the page reloaded meanwhile: a service worker taking over)
+    const readyAt = async () => { for (let i = 0; i < 100; i++) { const v = await js('return window.trommi?.readyAt ?? null').catch(() => null); if (v > 0) return v; await sleep(100) } throw new Error('no ready time') }
     const longs = () => js('const l = window.__long; window.__long = []; return l')
     const throttle = async on => {
       await page.send('Emulation.setCPUThrottlingRate', { rate: on ? 4 : 1 })
@@ -177,8 +179,7 @@ async function web() {
       if (profiling) { await page.send('Profiler.enable'); await page.send('Profiler.start') }
       await page.send('Page.reload')
       await waitFor("document.documentElement.hasAttribute('data-ready')", 'ready after reload')
-      await waitFor("window.trommi?.readyAt > 0", 'ready time')
-      warm.push(await js('return window.trommi.readyAt'))
+      warm.push(await readyAt())
       if (profiling) { const { profile } = await page.send('Profiler.stop'); fs.writeFileSync(`${PROF}-warm.cpuprofile`, JSON.stringify(profile)) }
       results.warm_parts = await js('return { open_ms: Math.round(window.trommi?.openMs ?? 0), first_paint_ms: Math.round(window.trommi?.firstPaintMs ?? 0) }').catch(() => null)
       await waitFor("window.trommi.client.model.room.connection === 'live'", 'live after reload')
@@ -197,8 +198,7 @@ async function web() {
       await page.send('Network.clearBrowserCache')
       await page.send('Page.reload', { ignoreCache: true })
       await waitFor("document.documentElement.hasAttribute('data-ready')", 'ready after cold reload')
-      await waitFor("window.trommi?.readyAt > 0", 'ready time')
-      cold.push(await js('return window.trommi.readyAt'))
+      cold.push(await readyAt())
       await waitFor("window.trommi.client.model.room.connection === 'live'", 'live after cold reload')
       await sleep(2500)    // the service worker installs again
     }
