@@ -1,6 +1,6 @@
-# Builds the iOS app (ios/TrommiApp) with the official Xcode on a GitHub macOS runner on every push to main that changes
-# ios/, uploads it to App Store Connect and hands it to the internal TestFlight group "Intern" (the "ios-beta"
-# environment links the app's TestFlight page). Steps: the bundle id with Push on and the app record (asc.py prepare) ->
+# Builds the iOS app (ios/TrommiApp) with the official Xcode on a GitHub macOS runner when started by hand
+# (workflow_dispatch), uploads it to App Store Connect and hands it to the internal TestFlight group "Intern" (the
+# "ios-beta" environment links the app's TestFlight page). Steps: the bundle id with Push on and the app record (asc.py prepare) ->
 # Trommi.xcodeproj from AppStore/project.yml (XcodeGen) -> archive (Release, automatic signing through the App Store
 # Connect API key) -> export for App Store Connect with destination upload (internal testing only) -> wait until App Store
 # Connect has processed the build (VALID) -> the group "Intern" holds it and the owner is a tester.
@@ -12,10 +12,8 @@
 # Linux development builds (xtool dev, ios/README.md) do not use any of this.
 name: iOS beta (TestFlight)
 
+# Manual only (macOS minutes count ten times): gh workflow run ios-beta.yml
 on:
-  push:
-    branches: [main]
-    paths: ['ios/**', '!ios/**/*.md', '!ios/TrommiCore/Tests/**', '.github/workflows/ios-beta.yml']
   workflow_dispatch:
 
 concurrency:
@@ -127,7 +125,7 @@ jobs:
       - name: Internal group "Intern"
         run: python3 "$APPSTORE/asc.py" internal "${{ steps.verify.outputs.build_id }}" Intern "${{ vars.TESTFLIGHT_TESTER || '82179548+chriopter@users.noreply.github.com' }}"
 
-      # TestFlight "What to Test": the commit this build comes from.
+      # TestFlight "What to Test": the subject of the commit this build comes from.
       - name: What to Test
         continue-on-error: true
         env:

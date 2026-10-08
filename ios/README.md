@@ -107,8 +107,8 @@ Apple ID, the phone in your hand); after that, building and shipping are command
 
 ## TestFlight from CI
 
-`.github/workflows/ios-beta.yml` builds every push to main that changes `ios/` (not the Markdown, not the tests) with the
-official Xcode 27 on a GitHub macOS runner (`runs-on: xcode-27`, a GitHub preview image), uploads it to App Store
+`.github/workflows/ios-beta.yml` builds main when started by hand (`gh workflow run ios-beta.yml`, or Actions → iOS beta
+→ Run workflow; no push trigger, macOS minutes count ten times) with the official Xcode 27 on a GitHub macOS runner (`runs-on: xcode-27`, a GitHub preview image), uploads it to App Store
 Connect and hands it to the internal TestFlight group **Intern**; the deployment shows as the environment `ios-beta`.
 
 - `TrommiApp/AppStore/project.yml`: the Xcode project, generated in CI with XcodeGen (not checked in): an app target
@@ -119,6 +119,8 @@ Connect and hands it to the internal TestFlight group **Intern**; the deployment
 - `TrommiApp/AppStore/asc.py`: the App Store Connect API steps (standard library and `openssl`): the bundle id with
   Push Notifications, the app record check, waiting for the processed build, the group and its tester, the build's
   TestFlight "What to Test" (the commit subject).
+- Internal testers must be users of the team under the address they sign in with; when the API refuses the tester
+  (409 "Tester(s) cannot be assigned"), add them once in App Store Connect → TestFlight → Intern → Testers → +.
 - Signing: automatic, through the API key (`-allowProvisioningUpdates -authenticationKey…`); export
   `app-store-connect`, `destination: upload`, `testFlightInternalTestingOnly`.
 - Environment `ios-beta`: secret `ASC_KEY` (the `.p8` of a team key with the Admin role: cloud-managed distribution
