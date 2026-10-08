@@ -1,6 +1,6 @@
 # shared/: the Trommi client library
 
-One ES-module library that every Trommi client uses: the app (`app/web`, copied into `public/gen/vendor/` by its build, `app/web/dev/build.mjs`) and the agent connector (`connector/connector.mjs`). WebCrypto and `fetch` only; runs unchanged in browsers and Node 26. The only client-specific parts are the **storage adapter** (which also keeps the device keys).
+One ES-module library, the core of the app (`app/web`, copied into `public/gen/vendor/` by its build, `app/web/dev/build.mjs`); the agent connector (`connector-rs/`) is a Rust port of it. WebCrypto and `fetch` only; runs unchanged in browsers and Node 26. The only client-specific parts are the **storage adapter** (which also keeps the device keys).
 
 **TypeScript.** The library is strict TypeScript (since 8 October 2026; it moved one file at a time) (`tsconfig.json` at the repository root; `npm run typecheck`, part of `npm test`). Every module is imported with its real extension (`'./codec.ts'`). Nothing is compiled ahead: Node 26 runs `.ts` itself (type stripping, hence `erasableSyntaxOnly`: no `enum`, `namespace` or parameter properties), the app's build erases the types for the browser (esbuild; `dev/ts.mjs` for single files), the connector's build bundles it as it is.
 
