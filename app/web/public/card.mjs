@@ -96,7 +96,7 @@ function picturesOf(card, base) {
   const images = imagesOf(card)
   // (Several options may show the same picture: a section names it for each.)
   const shared = i => (card.sections ?? []).filter(s => s.key != null && s.picture != null && images.indexOf(card.attachments?.[s.picture]) === i).map(s => s.key)
-  return images.map((a, i) => { const all = shared(i), key = keys.get(i) ?? null; return { at: i + 1, src: thumb(a).src, width: a.width > 0 ? a.width : null, height: a.height > 0 ? a.height : null, name: a.name, title: a.title && a.title !== a.name ? a.title : '', page: a.page ?? null, marks: a.marks ?? [], key, keys: all.length ? all : key != null ? [key] : [], href: `${cardPath(card, base)}/p/${i + 1}` } })
+  return images.map((a, i) => { const all = shared(i), key = keys.get(i) ?? null; return { at: i + 1, src: thumb(a).src, width: a.width > 0 ? a.width : null, height: a.height > 0 ? a.height : null, name: a.name, title: a.title && a.title !== a.name ? a.title : '', page: a.page ? { ...a.page, view: a.page.kind === 'file' ? `${cardPath(card, base)}/picture/${i + 1}/page` : null } : null, marks: a.marks ?? [], key, keys: all.length ? all : key != null ? [key] : [], href: `${cardPath(card, base)}/p/${i + 1}` } })
 }
 /** Where one stands among the pictures: "2 / 6", the file's name, its caption. */
 const where = (a, i, n, cls) => html`<span class="${cls}" data-card-target="where">${n > 1 ? html`<b>${i} / ${n}</b> ` : ''}<span>${a.name}${a.title && a.title !== a.name ? ` · ${a.title}` : ''}</span></span>`
@@ -128,7 +128,7 @@ function cardMedia(card, base, at = 1, query = '') {
   return html`<turbo-frame id="card-media-${card.id}" class="tc-media">
 <div class="tc-stage${video ? ' is-video' : ''}" data-at="${i}">${shown}${step(i > 1 ? i - 1 : all.length, 'is-prev', 'The one before', ARROW_L)}${step(i < all.length ? i + 1 : 1, 'is-next', 'The next one', ARROW_R)}</div>
 ${all.length > 1 ? html`<div class="tc-thumbs">${strip(images, i, to)}${clips(videos, i, to, images.length)}</div>` : ''}
-<div class="tc-cap">${where(a, i, all.length, 'tc-where')}${video ? '' : pageChip(a.page, true)}</div>
+<div class="tc-cap">${where(a, i, all.length, 'tc-where')}${video ? '' : pageChip(a.page, true, `${here}/picture/${i}/page`)}</div>
 ${attached}
 </turbo-frame>`
 }
@@ -1057,7 +1057,12 @@ controller('card', class extends Controller {
     }
     if (this.hasPageTarget) {
       this.pageTarget.hidden = !pic.page
-      if (pic.page) { this.pageTarget.href = pic.page.url; this.pageTarget.querySelector('b').textContent = pic.page.name }
+      if (pic.page) {
+        const inApp = Boolean(pic.page.view), chip = this.pageTarget
+        chip.href = pic.page.view ?? pic.page.url
+        chip.querySelector('b').textContent = pic.page.name
+        if (inApp) { chip.removeAttribute('target'); chip.removeAttribute('rel'); chip.dataset.nav = '' } else { chip.target = '_blank'; chip.rel = 'noopener noreferrer'; delete chip.dataset.nav }
+      }
     }
     // (the way to the gallery opens the picture that stands; the gallery's way back returns to it)
     if (this.hasGalleryTarget) this.galleryTarget.href = 'back' in this.galleryTarget.dataset ? pic.href.replace(/\/picture\/(\d+)$/, '?pic=$1') : pic.href
@@ -1445,6 +1450,18 @@ export function register(t) {
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
       if (!imagesOf(card).length && !videosOf(card).length) return redirect(res, cardPath(card, BASE))
       cardView(req, res, card, m, { more: moreOf(card), pic: Number(at) || 1, full: true, from: from ? decodeURIComponent(from) : null })
+    })
+    // The page a picture was made from (an attachment of the card): shown in the sandboxed frame, never as a page of the
+    // app's own origin (controller "assetthumb": decrypted here, handed to /frame as one message).
+    t.get(/^\/(?:s\/([^/]+)\/)?card\/([\w-]+)\/picture\/(\d+)\/page$/, ({ req, res, match: [, from, ref, at] }) => {
+      const m = model(), card = m.cardByRef(ref)
+      if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
+      const pic = imagesOf(card)[Number(at) - 1]
+      if (!pic?.page) return redirect(res, cardPath(card, BASE))
+      const back = `${cardPath(card, BASE)}?pic=${Number(at)}`
+      const main = html`<div class="t-picture as-view"><header class="t-picture-bar"><a class="t-picture-back" data-nav href="${back}" aria-label="Back to the card">${sk('back')}<h1>${card.title}</h1></a><span class="t-picture-where"><b>Page</b> ${pic.page.name}</span></header>
+<div class="as-stage" data-type="html"><div class="as-frame-box" data-controller="assetthumb" data-assetthumb-src-value="${pic.page.url}" data-assetthumb-full-value="true"><p class="as-wait">Opening the page…</p></div></div></div>`
+      t.page(req, res, { model: m, title: `${pic.page.name} · Trommi`, view: 'picture', sidebar: false, css: 'asset', stream: null, main, bodyAttrs: ' data-focus-page="card"' })
     })
     t.post(/^\/cards\/([0-9a-f]+)\/draft$/, ({ res, match, form }) => {
       const card = model().byCard.get(match[1])

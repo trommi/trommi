@@ -828,3 +828,6 @@ body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .to
 @media (max-width: 860px) { .tc-page.is-full .tc-stage.is-zoomed { height: 52dvh; max-height: 52dvh !important; } }
 .tc-page.is-full .tc-stage.is-zoomed .tc-figure { cursor: zoom-out; }
 .tc-page.is-full .tc-stage.is-zoomed .tc-figure img { max-height: none !important; width: auto !important; max-width: 100%; height: auto; cursor: zoom-out; }
+
+/* (the way back of a published thing's viewer, session.mjs assetPage: its drawn arrow had lost its size) */
+.t-picture-back > svg.focus-icon { flex: none; width: 24px; height: 24px; margin-top: 3px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
