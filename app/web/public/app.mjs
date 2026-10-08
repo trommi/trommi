@@ -293,9 +293,16 @@ function boardModel(state, agents = state.agents, desk = null) {
     blocked: units.filter(u => u.blocked).length,
     working: units.filter(u => u.online && u.running).length,
     deskName: all ? 'All desks' : desks?.find(d => d.id === deskId)?.name || 'Desk',
+    // (the desk's goals, desk.mjs deskGoals: none on All desks)
+    goals: all ? '' : desks?.find(d => d.id === deskId)?.goals ?? '',
     cardByRef: ref => byNumber().get(String(ref)) ?? byCard.get(String(ref)) ?? null,
   }
 }
+
+/** A desk's goals as they are kept and shown: at most GOALS_LINES lines of at most 200 characters, no blank lines at
+ *  either end, no trailing spaces. */
+export const GOALS_LINES = 5
+export const cleanGoals = text => String(text ?? '').replace(/\r\n?/g, '\n').split('\n').map(l => l.replace(/\s+$/, '').slice(0, 200)).join('\n').replace(/^\n+|\n+$/g, '').split('\n').slice(0, GOALS_LINES).join('\n')
 
 /** Who receives a note: the crowned session of the desk. One crown per desk: the starred session. */
 export const crownOf = model => (model.homeDesk ? model.everyone.find(a => a.starred && !a.archived && model.deskOf(a) === model.homeDesk) : model.agents.find(a => a.starred)) ?? null
@@ -543,7 +550,7 @@ export class BoardState {
     for (const s of sessionsOf(m)) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     // (the order he dragged them into in the menu: each desk's register holds its place, order; a desk made since then
     // comes last. Never dragged: the first desk, then by age)
-    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: String(v.name ?? '').trim() || 'Desk', created: v.created_at ?? 0, order: Number.isFinite(v.order) ? v.order : null, ...('crown' in v ? { crown: v.crown ?? null } : {}) }))
+    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: String(v.name ?? '').trim() || 'Desk', created: v.created_at ?? 0, order: Number.isFinite(v.order) ? v.order : null, goals: typeof v.goals === 'string' ? cleanGoals(v.goals) : '', ...('crown' in v ? { crown: v.crown ?? null } : {}) }))
     const ordered = desks.some(d => d.order != null)
     desks.sort((a, b) => (ordered ? (a.order ?? Infinity) - (b.order ?? Infinity) || a.created - b.created : a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
     const notes = boardNotes(m)
@@ -979,7 +986,7 @@ function hubFacade(client, board) {
       await client.setDesk(deskId, { ...(m().human.desks.get(deskId) ?? { name: desks.find(d => d.id === deskId)?.name ?? 'Desk', created_at: Date.now() }), crown })
     },
     // Desks: the human register desk/<id>.
-    async desk({ id, name, remove, order }) {
+    async desk({ id, name, remove, order, goals }) {
       if (remove) { await client.setDesk(id, null); return { ok: true } }
       // A new order (the menu's rows dragged): every desk's place, in one write, so his devices all see the same list.
       if (Array.isArray(order)) {
@@ -987,6 +994,15 @@ function hubFacade(client, board) {
         if (!ids.length) throw fail(400, 'no such desks')
         await client.setRegisters(Object.fromEntries(ids.map((x, i) => [`desk/${x}`, { ...have.get(x), order: i }])))
         return { ok: true, order: ids }
+      }
+      // A desk's goals (desk.mjs deskGoals): a field of its register like the name. With no desk yet, the first one
+      // ("main") is made for them.
+      if (goals !== undefined) {
+        const have = m().human.desks, did = have.get(id) ? id : !have.size ? 'main' : null
+        if (!did) throw fail(404, 'no such desk')
+        const text = cleanGoals(goals), { goals: _, ...rest } = have.get(did) ?? { name: 'Desk', created_at: Date.now() - 1 }
+        await client.setDesk(did, text ? { ...rest, goals: text } : rest)
+        return { ok: true, desk: { id: did, goals: text } }
       }
       if (id) { await client.setDesk(id, { ...(m().human.desks.get(id) ?? {}), name }); return { ok: true, desk: { id, name } } }
       const made = [...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, '0')).join('')
