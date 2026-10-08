@@ -501,3 +501,29 @@ export interface Change {
   /** Exactly the items added or replaced in this batch, by timeline key. */
   items: Map<string, TimelineItem[]>
 }
+
+// ---- storage (shared/README.md "Storage adapter") ----------------------------------------------------------------
+
+export interface RangeOptions { after?: string | undefined; before?: string | undefined; limit?: number | undefined; reverse?: boolean | undefined }
+/** The device as stored: its id and public keys, and its private keys (CryptoKeys; non-extractable where the adapter wraps them). */
+export interface StoredDevice { id: Uint8Array; signPub: Uint8Array; kexPub: Uint8Array; signKey: CryptoKey; kexKey: CryptoKey; [field: string]: unknown }
+/** A storage adapter: string keys, structured-clone values, ordered windowed reads, and the device's keys. */
+export interface Storage {
+  extractable_keys: boolean
+  /** IndexedDB: saveDevice wraps extractable keys and swaps in non-extractable ones. */
+  wraps_keys?: boolean
+  /** A follower tab's overlay (tabs.mjs): reads a snapshot, writes stay in memory. */
+  overlay?: boolean
+  get(key: string): Promise<any>
+  set(key: string, value: unknown): Promise<void>
+  delete(key: string): Promise<void>
+  /** One transaction; undefined deletes. durable: on disk before it resolves (the outbox, R4 write-ahead). */
+  setMany(entries: Iterable<readonly [string, unknown]>, opts?: { durable?: boolean }): Promise<void>
+  keys(prefix?: string): Promise<string[]>
+  range(prefix: string, opts?: RangeOptions): Promise<[string, any][]>
+  /** Every key and value in one consistent read, except under the skip prefixes. */
+  snapshot?(opts?: { skip?: readonly string[] }): Promise<Map<string, any>>
+  saveDevice(device: StoredDevice): Promise<void>
+  loadDevice(): Promise<StoredDevice | null>
+  close(): Promise<void>
+}
