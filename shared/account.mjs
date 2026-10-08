@@ -21,7 +21,7 @@
 import * as z from './crypto/zcrypto.mjs'
 import { argon2id } from './crypto/argon2.mjs'
 import { WORDS } from './wordlist.mjs'
-import { Hub, normaliseHubUrl } from './transport.mjs'
+import { Hub, normaliseHubUrl } from './transport.ts'
 import { foundRoom, joinWithRecoveryCode } from './room.mjs'
 
 const { ZError, b64u, unb64u, concat, unhex } = z

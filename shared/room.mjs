@@ -1,7 +1,7 @@
 // room.mjs: founding, opening, joining and recovering a room. Each returns a Client (client.mjs) whose
 // state is in `storage`. Contract: shared/README.md "Opening a room".
 import * as z from './crypto/zcrypto.mjs'
-import { Hub, normaliseHubUrl } from './transport.mjs'
+import { Hub, normaliseHubUrl } from './transport.ts'
 import { Client, secretToJson, secretFromJson, verifiedHeads } from './client.mjs'
 import './agent.mjs'
 import * as G from './crypto/session-grants.mjs'
