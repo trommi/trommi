@@ -168,6 +168,14 @@ async function bundle(pub, vendor) {
   if (w.outputFiles.length !== 1) throw new Error('build: the core worker is not one file')
   const worker = rel(w.outputFiles[0].path)
   out[worker] = w.outputFiles[0].text
+  // core-start (shared/core-start.ts): the tiny module index.html runs before the entry, which starts that worker.
+  const st = await esbuild.build({
+    entryPoints: [{ in: 'gen/vendor/core-start.mjs', out: 'core-start' }], bundle: true, format: 'esm', minify: true, write: false,
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+    define: { __TROMMI_CORE_WORKER__: JSON.stringify(`/${worker}`) },
+  })
+  const start = rel(st.outputFiles[0].path)
+  out[start] = st.outputFiles[0].text
   const r = await esbuild.build({
     entryPoints: [path.join(pub, 'app.mjs')], bundle: true, splitting: true, format: 'esm', minify: true, write: false, metafile: true,
     outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', chunkNames: '[name]-[hash]', outExtension: { '.js': '.mjs' },
@@ -184,7 +192,7 @@ async function bundle(pub, vendor) {
   // the worker; the page loads its chunk only when it needs it (the account screens, the demo, a page without workers).
   const first = new Set(), queue = [entry, remoteOut]
   while (queue.length) { const o = queue.shift(); if (first.has(o)) continue; first.add(o); for (const i of r.metafile.outputs[o].imports) if (i.kind === 'import-statement') queue.push(i.path) }
-  return { out, entry: rel(entry), first: [...first].map(rel), worker }
+  return { out, entry: rel(entry), first: [...first].map(rel), worker, start }
 }
 
 /** Everything the build makes: { 'path under public/': content (text, or bytes for the plugin's zip) }. Nothing is
@@ -215,6 +223,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   let modules
   if (js) {
     html = html.replace(/<script type="module" src="\/app\.mjs"><\/script>/, `<script type="module" src="/${js.entry}"></script>`)
+      .replace('<script type="module" src="/gen/vendor/core-start.mjs"></script>', `<script type="module" src="/${js.start}"></script>`)
     modules = js.first.map(f => `/${f}`)
   } else {
     const read = f => { const rel = f.replace(/^\//, ''); return rel in out ? out[rel] : fs.existsSync(path.join(pub, rel)) ? fs.readFileSync(path.join(pub, rel), 'utf8') : null }
@@ -240,7 +249,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // Not part of the shell: the app itself never loads them (Claude Code and the connect script do).
   const made = connectorFiles()
   for (const [f, c] of Object.entries(made ?? {})) out[`gen/${f}`] = c
-  const firstLoad = js ? [...js.first, js.worker].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null   // (the core worker too: boot starts it at once)
+  const firstLoad = js ? [...js.first, js.worker, js.start].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null   // (the core worker too: boot starts it at once)
   return { out, version, sheets: links.length, files: files.length, connector: made ? made['connector.mjs.sha256'].slice(0, 12) : null, firstLoad, chunks: js ? Object.keys(js.out).length : 0 }
 }
 

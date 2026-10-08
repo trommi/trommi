@@ -13,6 +13,7 @@ import type { Change, Model } from './types.ts'
 import type { Extra, FromWorker, ToWorker, WireError } from './worker-protocol.ts'
 import { CALLS } from './worker-protocol.ts'
 import { emptyChange } from './model-shape.ts'
+import type { EarlyCore } from './core-start.ts'
 
 type Listener = (data: any) => void
 type Pending = { resolve: (v: unknown) => void; reject: (e: unknown) => void }
@@ -33,6 +34,8 @@ export interface RemoteOptions {
   client?: string | null
   /** No answer from the worker by then: openRemote fails (the caller may open the room in the page instead). */
   timeout_ms?: number
+  /** The worker core-start.ts started before the app (it opened the room already). */
+  early?: EarlyCore | null
 }
 
 export class RemoteClient {
@@ -129,17 +132,18 @@ export interface RemoteClient {
 }
 
 /** Start the worker and open the stored room in it. null: no room is stored. Throws when the worker does not come up. */
-export function openRemote({ url, storage = { name: 'trommi', prefix: 'room/' }, client = null, timeout_ms = 20_000 }: RemoteOptions): Promise<RemoteClient | null> {
-  const worker = new Worker(url, { type: 'module', name: 'trommi-core' })
+export function openRemote({ url, storage = { name: 'trommi', prefix: 'room/' }, client = null, timeout_ms = 20_000, early = null }: RemoteOptions): Promise<RemoteClient | null> {
+  // A worker core-start.ts started already (it sent the open): take it over with what it said so far.
+  const worker = early?.worker ?? new Worker(url, { type: 'module', name: 'trommi-core' })
   return new Promise((resolve, reject) => {
     let remote: RemoteClient | null = null
     let settled = false
     const timer = setTimeout(() => { if (!settled) { settled = true; worker.terminate(); reject(Object.assign(new Error('the core worker did not answer'), { code: 'worker-timeout' })) } }, timeout_ms)
-    worker.onerror = e => {
-      const err = Object.assign(new Error(`the core worker failed: ${e.message ?? 'not loaded'}`), { code: 'worker-failed' })
+    const failed = (e: { message?: string } | null) => {
+      const err = Object.assign(new Error(`the core worker failed: ${e?.message || 'not loaded'}`), { code: 'worker-failed' })
       if (!settled) { settled = true; clearTimeout(timer); worker.terminate(); reject(err) } else remote?.fail(err)
     }
-    worker.onmessage = ({ data: m }: MessageEvent<FromWorker>) => {
+    const onMessage = ({ data: m }: MessageEvent<FromWorker>) => {
       if (remote) return remote.receive(m)
       if (m.t !== 'opened' || settled) return
       settled = true
@@ -147,8 +151,15 @@ export function openRemote({ url, storage = { name: 'trommi', prefix: 'room/' },
       if (m.error) { worker.terminate(); return reject(errorOf(m.error)) }
       if (!m.model) { worker.terminate(); return resolve(null) }
       remote = new RemoteClient(worker, mirrorOf(m.model), m.extra)
+      // (opened early, without the app's name for the hub: it goes now, before any call)
+      if (early && client) remote.call('configure', { client }).catch(() => {})
       resolve(remote)
     }
-    worker.postMessage({ t: 'open', id: 0, storage, client } satisfies ToWorker)
+    worker.onerror = e => failed(e)
+    worker.onmessage = onMessage
+    if (early) {
+      if (early.error) return failed(early.error)
+      for (const e of early.messages.splice(0)) onMessage(e as MessageEvent<FromWorker>)
+    } else worker.postMessage({ t: 'open', id: 0, storage, client } satisfies ToWorker)
   })
 }
