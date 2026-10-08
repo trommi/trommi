@@ -13,7 +13,7 @@ envelopes and can read none of them. Formerly "Trommi". License: O'Saasy (`LICEN
 | `app/web/` | the app, static, no framework (`app/web/README.md`); `dev/build.mjs` makes everything in `public/gen/` at deploy time (nothing generated is in git): the app and the core from `shared/` as one minified bundle in `app/` (esbuild, views loaded on demand), the stylesheets as one bundle, and, after `npm ci` at the repository root, the connector's single file, its checksum and the plugin (`connector/build.mjs`) | Cloudflare Workers Builds on every push to `main` (watch paths `app/web/*`, `shared/*`, `connector/*`, `package.json`, `package-lock.json`) |
 | `connector/` | the agent connector, six files: `connector.mjs` (start and everything long-running: MCP stdio server `trommi`, sign-in, stream, slot lock, hot reload, the plugin's hook commands, the monitor, `say`), `tools.mjs` (the tools' schemas and what each does in the room), `prompt.md` (every text the agent reads: the instructions and each tool's description), `build.mjs` (the single-file bundle, its checksum and the plugin zip), `test.mjs` (fast), `test-e2e.mjs` (against a real local hub) | runs on the agent's machine from this checkout, or as one file installed by `curl -fsSL https://app.trommi.com/connect \| sh -s '<link>'` |
 | `hub/` | the hub server (`server.mjs`, `store.mjs`, `accounts.mjs`, `ops/`, `Dockerfile`) | GitHub Action "Hub deploy" on every push to `main` touching `hub/**` or the hub's four `shared/` files |
-| `dev/` | everything not shipped: `fuzz/` (model-based fuzzing of hub and clients, `dev/fuzz/README.md`; the quick run blocks the hub deploy), `load/` (load generator and perf tools with real members), `cdp.mjs` (headless Chromium, also used by the app's dev tools) | |
+| `dev/` | everything not shipped: `deploy/` (hub and web deploys from this machine, "Deploy without CI"), `fuzz/` (model-based fuzzing of hub and clients, `dev/fuzz/README.md`; the quick run blocks the hub deploy), `load/` (load generator and perf tools with real members), `cdp.mjs` (headless Chromium, also used by the app's dev tools) | |
 
 The old board (plaintext server `server/`, Turbo and SPA clients `client/web/`, the iOS and Linux clients, their tools
 and docs) was removed on 4 October 2026; its history is in git and in
@@ -211,9 +211,13 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>dev/</code> · 42 files</summary>
+<details><summary><code>dev/</code> · 46 files</summary>
 
 ```
+├── deploy/
+│   ├── hub.sh
+│   ├── lib.sh
+│   └── web.sh
 ├── fuzz/
 │   ├── failures/
 │   │   └── known.md
@@ -259,6 +263,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── rotation.mjs
 │   └── worker.mjs
 ├── cdp.mjs
+├── guard.mjs
 ├── ios-extra-vectors.mjs
 ├── ios-pen.mjs
 ├── ios-reference-shots.mjs
@@ -267,6 +272,25 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 <!-- trees:end -->
+
+## Deploy without CI
+
+When GitHub Actions is out of minutes (or down), two scripts in `dev/deploy/` do from this machine exactly what the
+workflows do. Both refuse to run with uncommitted or staged changes, off `main`, or when `main` is behind or has
+diverged from `origin/main` (they fetch it first); commits not pushed yet only with `--allow-unpushed`. They build from
+`git archive HEAD`, so untracked files never get in. `--dry-run` checks the guards, the secrets file, ssh and wrangler
+login, prints every step and what is live now, and changes nothing.
+
+| Script | Does | Needs |
+| --- | --- | --- |
+| `dev/deploy/hub.sh [--dry-run] [--allow-unpushed] [--skip-config]` | `.github/workflows/deploy.yml`: `test:hub` + quick fuzz, `docker build` (COMMIT = HEAD), `docker save \| ssh docker load`, `hub/deploy-apns.sh` and `hub/deploy-admin.sh` (secrets on stdin), `hub/deploy-backup.sh`, restart, `/healthz` must report HEAD or the previous image is started again, admin page check | Docker; ssh `root@trommi-hub.tail276436.ts.net -p 2222` through the 1Password agent (`~/.1password/agent.sock`), host keys already in `~/.ssh/known_hosts` (`StrictHostKeyChecking=yes`); the secrets file below |
+| `dev/deploy/web.sh [--dry-run] [--allow-unpushed] [--deploy]` | `.github/workflows/web-app.yml`: waits until app.trommi.com serves a build of the newest commit in Cloudflare's watch paths, checks the served connector against its checksum and the plugin it names. Cloudflare builds every push without Actions; `--deploy` builds HEAD here as Cloudflare does (`WORKERS_CI=1`) and uploads it with `wrangler deploy` first | `npx wrangler login` once (for `--deploy`) |
+
+Secrets for `hub.sh` live outside the repository, never in git: `~/.config/trommi/deploy/hub.env` (mode 0600; another
+path with `TROMMI_DEPLOY_ENV`), shell assignments of `APNS_KEY` (the .p8 as one line, newlines as `\n`), `APNS_KEY_ID`,
+`APNS_TEAM_ID`, `APNS_TOPIC`, `ADMIN_LOGINS`, `ADMIN_PASSWORD_HASH` (the values of the `hub` environment in GitHub) and
+optionally `PREVIEW_ORIGINS`. All six must be set, because an empty one switches APNs or the admin page off on the
+server; `--skip-config` leaves the server's `apns.env`, `admin.env` and `compose.override.yaml` as they are instead.
 
 ## Tests
 
