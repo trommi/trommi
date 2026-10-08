@@ -1,4 +1,4 @@
-// The Scribble Board's stroke format and reducer (shared/ink.mjs, shared/scribble.mjs, shared/palette.ts) against
+// The Scribble Board's stroke format and reducer (shared/ink.ts, shared/scribble.ts, shared/palette.ts) against
 // the fixture the iOS app and dev/interop use (dev/interop/fixtures/strokes.json). node shared/scribble-test.mjs
 import assert from 'node:assert/strict'
 import fs from 'node:fs'

@@ -9,7 +9,7 @@
 //   routes      the README's route table (## Routes) against the call sites in shared/ + app/web (JS) and in
 //               TrommiCore/TrommiClient + TrommiApp (Swift)
 //   wire        envelope kinds, object types, card types, content types, answer actions, timeline kinds:
-//               shared/codec.mjs against TrommiCore (Compat.swift, Envelope.swift)
+//               shared/codec.ts against TrommiCore (Compat.swift, Envelope.swift)
 //   fields      every body field of a card, a message and an answer (codec.mjs FIELDS): read by the Swift core, used
 //               by the app
 //   driver      the interop driver commands (driver-js.mjs against Driver.swift)
