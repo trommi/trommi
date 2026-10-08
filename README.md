@@ -19,6 +19,239 @@ The old board (plaintext server `server/`, Turbo and SPA clients `client/web/`, 
 and docs) was removed on 4 October 2026; its history is in git and in
 `~/Nextcloud/Christopher/Backups/trommi-hub-legacy-2026-10-04.bundle`.
 
+<!-- trees:start -->
+### File trees
+
+Every tracked file per main folder (`git ls-files`; generated files are not in git). Regenerate with `node dev/readme-trees.mjs`.
+
+<details><summary><code>app/web/</code> · 82 files</summary>
+
+```
+├── dev/
+│   ├── build.mjs
+│   ├── check.mjs
+│   ├── e2e-mobile.mjs
+│   ├── e2e.mjs
+│   ├── look.mjs
+│   ├── make-fixture.mjs
+│   ├── perf.mjs
+│   └── serve.mjs
+├── public/
+│   ├── demo/
+│   │   ├── files/
+│   │   │   ├── 12ca0ba4.png
+│   │   │   ├── 256ffa7f.png
+│   │   │   ├── 3eebd8de.png
+│   │   │   ├── 40c1a1e0.csv
+│   │   │   ├── 48a1d583.png
+│   │   │   ├── 565e3764.png
+│   │   │   ├── 635b3af5.png
+│   │   │   ├── 6e7ec91e.log
+│   │   │   ├── a62a99e2.json
+│   │   │   ├── asset-cfPICArIl7UaWJknPD4TSg.html
+│   │   │   ├── asset-MowFfYDajnyqlp_QwRhP1g.png
+│   │   │   ├── board-desktop.png
+│   │   │   ├── c573b0a8.png
+│   │   │   ├── c9b8a0bd.png
+│   │   │   ├── clip.webm
+│   │   │   ├── d35bd5f7.png
+│   │   │   ├── page-messwerte.html
+│   │   │   ├── page-plan.html
+│   │   │   ├── page-release.html
+│   │   │   ├── phone-entscheidungen.png
+│   │   │   ├── phone-gespraech.png
+│   │   │   ├── tall-sheet.png
+│   │   │   ├── thema-dunkel.png
+│   │   │   └── thema-hell.png
+│   │   ├── demo.mjs
+│   │   └── fixture.json
+│   ├── fonts/
+│   │   ├── f0.woff2
+│   │   ├── f1.woff2
+│   │   ├── f2.woff2
+│   │   ├── f3.woff2
+│   │   ├── f4.woff2
+│   │   ├── f5.woff2
+│   │   ├── f6.woff2
+│   │   ├── f7.woff2
+│   │   └── fonts.css
+│   ├── icons/
+│   │   ├── trommi-180.png
+│   │   ├── trommi-192.png
+│   │   ├── trommi-512.png
+│   │   ├── trommi-maskable-512.png
+│   │   ├── trommi-maskable.svg
+│   │   └── trommi.svg
+│   ├── _headers
+│   ├── agents.css
+│   ├── agents.mjs
+│   ├── app.css
+│   ├── app.mjs
+│   ├── auth.css
+│   ├── auth.mjs
+│   ├── card.css
+│   ├── card.mjs
+│   ├── connect.sh
+│   ├── desk.css
+│   ├── desk.mjs
+│   ├── drawings.json
+│   ├── frame.html
+│   ├── help.html
+│   ├── index.html
+│   ├── manifest.webmanifest
+│   ├── media.css
+│   ├── media.mjs
+│   ├── notes.css
+│   ├── notes.mjs
+│   ├── session.css
+│   ├── session.mjs
+│   ├── sidebar.css
+│   ├── sidebar.mjs
+│   ├── sw.js
+│   ├── ui.mjs
+│   ├── whiteboard.css
+│   └── whiteboard.mjs
+├── .gitignore
+├── README.md
+├── worker.js
+└── wrangler.jsonc
+```
+
+</details>
+
+<details><summary><code>connector/</code> · 6 files</summary>
+
+```
+├── build.mjs
+├── connector.mjs
+├── prompt.md
+├── test-e2e.mjs
+├── test.mjs
+└── tools.mjs
+```
+
+</details>
+
+<details><summary><code>hub/</code> · 26 files</summary>
+
+```
+├── ops/
+│   ├── env.mjs
+│   ├── escrow.mjs
+│   ├── flow.mjs
+│   ├── http.mjs
+│   ├── index.mjs
+│   ├── metrics.mjs
+│   ├── quota.mjs
+│   ├── test-rooms.mjs
+│   ├── test.mjs
+│   ├── versions.mjs
+│   └── wal.mjs
+├── accounts-test.mjs
+├── accounts.mjs
+├── admin-test.mjs
+├── admin-view.mjs
+├── admin.mjs
+├── attachments.mjs
+├── deploy-admin.sh
+├── deploy-backup.sh
+├── Dockerfile
+├── heap-test.mjs
+├── mail.mjs
+├── push.mjs
+├── server.mjs
+├── store.mjs
+└── test.mjs
+```
+
+</details>
+
+<details><summary><code>shared/</code> · 35 files</summary>
+
+```
+├── crypto/
+│   ├── argon2.mjs
+│   ├── crypto-test.mjs
+│   ├── CRYPTO.md
+│   ├── demo.html
+│   ├── escrow.mjs
+│   ├── FORMAT.md
+│   ├── hub-crypto-test.mjs
+│   ├── hub.mjs
+│   ├── session-grants-test.mjs
+│   ├── session-grants.mjs
+│   ├── vectors.json
+│   └── zcrypto.mjs
+├── account.mjs
+├── agent.mjs
+├── browser-test.mjs
+├── canvas.mjs
+├── check-emoji.mjs
+├── client.mjs
+├── codec.mjs
+├── index.mjs
+├── load.mjs
+├── model.mjs
+├── README.md
+├── room.mjs
+├── snapshot.mjs
+├── storage-file.mjs
+├── storage-idb.mjs
+├── storage-memory.mjs
+├── tabs-test.mjs
+├── tabs.mjs
+├── test-crash-child.mjs
+├── test-hub.mjs
+├── test.mjs
+├── transport.mjs
+└── wordlist.mjs
+```
+
+</details>
+
+<details><summary><code>dev/</code> · 30 files</summary>
+
+```
+├── fuzz/
+│   ├── failures/
+│   │   └── known.md
+│   ├── lib/
+│   │   ├── actions.mjs
+│   │   ├── adversary.mjs
+│   │   ├── check.mjs
+│   │   ├── env.mjs
+│   │   ├── forge.mjs
+│   │   ├── httpfuzz.mjs
+│   │   ├── oracle.mjs
+│   │   ├── rng.mjs
+│   │   ├── shrink.mjs
+│   │   └── world.mjs
+│   ├── regress/
+│   │   ├── note-deleted-then-pruned.json
+│   │   └── owner-says-again.json
+│   ├── .gitignore
+│   ├── FINDINGS.md
+│   ├── known-open.json
+│   ├── model.mjs
+│   ├── README.md
+│   ├── run.mjs
+│   ├── sync-target.sh
+│   └── worker.mjs
+├── load/
+│   ├── app-perf.mjs
+│   ├── crazy.mjs
+│   ├── hub-local.mjs
+│   ├── lib.mjs
+│   ├── load.mjs
+│   ├── rotation.mjs
+│   └── worker.mjs
+├── cdp.mjs
+└── readme-trees.mjs
+```
+
+</details>
+<!-- trees:end -->
+
 ## Tests
 
 ```bash
