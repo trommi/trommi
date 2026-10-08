@@ -214,7 +214,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
    a tool in hand, or something on the paper held); with the bare pointer the Desk's cards lie over this frame. */
 
 /* The pen and the highlighter carry their colour: a dot at the foot of the icon. A second click on the tool in hand opens colour and width there. */
-.pad-tool:is([data-tool="pen"], [data-tool="hl"])::before { content: ""; position: absolute; right: 6px; bottom: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--fg)); box-shadow: 0 0 0 1.5px var(--surface); }
-.pad-tool[data-tool="hl"]::before { border-radius: 3px; }
-.pad-tool:is([data-tool="pen"], [data-tool="hl"])[aria-pressed="true"]::before { box-shadow: 0 0 0 1.5px var(--accent); outline: 1.5px solid var(--accent-fg); outline-offset: 1.5px; }
+.pad-tool:is([data-tool="pen"], [data-tool="marker"])::before { content: ""; position: absolute; right: 6px; bottom: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--fg)); box-shadow: 0 0 0 1.5px var(--surface); }
+.pad-tool[data-tool="marker"]::before { border-radius: 3px; }
+.pad-tool:is([data-tool="pen"], [data-tool="marker"])[aria-pressed="true"]::before { box-shadow: 0 0 0 1.5px var(--accent); outline: 1.5px solid var(--accent-fg); outline-offset: 1.5px; }
 .pad[data-cursor="text"] .pad-canvas { cursor: text; }

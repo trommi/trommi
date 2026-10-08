@@ -11,6 +11,8 @@
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's scribble.mjs).
 import { Controller, controller, html, isTyping, letterKeysOn, markArt, nextThemeMode, raw, setThemeMode } from './ui.mjs'
 import { scribbleWire } from './app.mjs'
+// The core's stroke format, shape and palette (scribble.mjs with ink.mjs and palette.mjs), loaded with this view.
+const { PEN_COLORS, MARKER_COLORS, MARKER_OPACITY, colorOf, anglesOfTilt, forceFromSpeed, packPoints, sampleStroke } = await scribbleWire()
 /** The canvas timeline of a desk: desk/ and 32 hex. A desk id that is not 32 hex already ('main', a menu desk's 8 hex)
  *  is folded into 16 bytes (its UTF-8, XOR by position, the length last): the same desk is the same timeline on every
  *  device, two desks never share one. */
@@ -83,7 +85,7 @@ ${whiteboardSessions(model)}
       <button type="button" class="pad-icon-btn pad-tool" data-tool="select" data-icon="select" aria-label="Select" data-tip="Select · V"></button>
       <!-- the pen carries its colour; a click on it while it is in hand opens colour and width (the same for the highlighter) -->
       <button type="button" class="pad-icon-btn pad-tool" data-tool="pen" data-icon="pen" aria-label="Pen; again: colour and width" aria-haspopup="true" aria-expanded="false" data-tip="Pen · P · again: colour"></button>
-      <button type="button" class="pad-icon-btn pad-tool" data-tool="hl" data-icon="hl" aria-label="Highlighter; again: colour and width" aria-haspopup="true" aria-expanded="false" data-tip="Highlighter · H · again: colour"></button>
+      <button type="button" class="pad-icon-btn pad-tool" data-tool="marker" data-icon="marker" aria-label="Highlighter; again: colour and width" aria-haspopup="true" aria-expanded="false" data-tip="Highlighter · H · again: colour"></button>
       <button type="button" class="pad-icon-btn pad-tool" data-tool="eraser" data-icon="eraser" aria-label="Eraser" data-tip="Eraser · E"></button>
       <button type="button" class="pad-icon-btn pad-tool" data-tool="text" data-icon="text" aria-label="Text: click on the paper and type" data-tip="Text · T"></button>
       <div class="pad-style" id="style" hidden>
@@ -233,7 +235,8 @@ controller('whiteboard', class extends Controller {
 // the audio of a voice note) or null; it stands outside data so that a server can
 // keep and delete the file without reading data.
 // x, y, w, h is the box in world units (CSS pixels at 100 % zoom). data by type:
-//   stroke  { tool: 'pen' | 'hl', color, size, box: [w0, h0], pts: [x0, y0, …], pr?: [p0, …] }
+//   stroke  { tool: 'pen' | 'marker', color (a palette token), width, box: [w0, h0], pts: [x0, y0, …],
+//             t, f, az, al, sim }   (the core's ink.mjs: time, force, azimuth, altitude per point)
 //           pts are relative to the box as it was drawn (w0 x h0); the box may since
 //           have been moved or scaled, the points never change
 //   text    { text, size, color, wrap }       wrap: the width lines break at; null = the default
@@ -243,10 +246,11 @@ controller('whiteboard', class extends Controller {
 //           wrap is the paper's width; the box is the paper
 //   image   { mime, nw, nh, name }
 
-const INK = 'ink'   // the one colour that follows the theme: dark on light paper, light on dark
-const PEN_COLORS = [[INK, 'Ink'], ['#e03131', 'Red'], ['#f08c00', 'Orange'], ['#2f9e44', 'Green'], ['#1971c2', 'Blue'], ['#9c36b5', 'Violet']]
-const HL_COLORS = [['#ffd43b', 'Yellow'], ['#69db7c', 'Green'], ['#ff8cc6', 'Pink'], ['#66c2ff', 'Blue'], ['#ffa94d', 'Orange']]
-const SIZES = { pen: [2, 4, 7, 12], hl: [10, 18, 28, 42] }
+// Colours are the core's palette tokens (palette.mjs): each is painted in its light or dark look.
+const INK = 'ink'
+const named = list => list.map(t => [t, t[0].toUpperCase() + t.slice(1)])
+const PEN_SWATCHES = named(PEN_COLORS), MARKER_SWATCHES = named(MARKER_COLORS)
+const SIZES = { pen: [2, 4, 7, 12], marker: [10, 18, 28, 42] }   // a stroke's width, board units
 const TEXT_SIZE = 20
 const TEXT_WRAP = 460      // a typed line breaks here unless the element was given a width
 const LINE = 1.35
@@ -267,57 +271,23 @@ function newId() {
   return Date.now().toString(36).padStart(9, '0') + [...rand].map(b => (b % 36).toString(36)).join('')
 }
 
-const resolveInk = (color, dark) => (color === INK ? (dark ? '#e9eeea' : '#1b1f23') : color)
+const resolveInk = (token, dark, tool = 'pen') => colorOf(token, tool, dark)
 
-// ── strokes ─────────────────────────────────────────────────────────────────
-// Constant-width strokes are one stroked path through the midpoints (quadratic
-// smoothing). Pressure strokes become one filled path: discs along the curve
-// joined by quads, all wound the same way so nonzero fill unions them.
-// (The points are local to the element.)
+// ── strokes ──────────────────────────────────────────────────────────────────
+// A stroke is drawn as PencilKit draws it (the core's ink.mjs): its points are the control points of a clamped
+// uniform cubic B-spline, sampled about every unit. The pen's outline is the union of discs along that line, the disc
+// at each sample as wide as the force there (thickness), joined by quads; all wound the same way, so one nonzero fill
+// is the outline (round ends and joins, never a notch, and a see-through ink is laid once). The marker is one width:
+// the line stroked with round ends, translucent. (The points are local to the element.)
 const geomCache = new WeakMap()
 function buildGeom(s) {
-  const p = s.pts, n = p.length >> 1, half = s.size / 2
   const path = new Path2D()
-  if (!s.pr) {
-    path.moveTo(p[0], p[1])
-    if (n === 1) path.lineTo(p[0] + 0.01, p[1])
-    else {
-      for (let i = 1; i < n - 1; i++) {
-        const x = p[2 * i], y = p[2 * i + 1]
-        path.quadraticCurveTo(x, y, (x + p[2 * i + 2]) / 2, (y + p[2 * i + 3]) / 2)
-      }
-      path.lineTo(p[2 * n - 2], p[2 * n - 1])
-    }
+  const out = sampleStroke(s.pts, s.f, { tool: s.tool, width: s.width })
+  if (s.tool === 'marker') {
+    path.moveTo(out[0], out[1])
+    if (out.length === 3) path.lineTo(out[0] + 0.01, out[1])
+    for (let i = 3; i < out.length; i += 3) path.lineTo(out[i], out[i + 1])
     return { path, fill: false }
-  }
-  const rad = i => half * (0.35 + 1.3 * (s.pr[i] ?? 0.5))
-  const out = []   // samples: x, y, r
-  const push = (x, y, r) => {
-    const k = out.length
-    if (k && Math.hypot(x - out[k - 3], y - out[k - 2]) < Math.max(0.4, r * 0.3)) return
-    out.push(x, y, r)
-  }
-  const curve = (ax, ay, ar, cx, cy, bx, by, br) => {
-    const len = Math.hypot(cx - ax, cy - ay) + Math.hypot(bx - cx, by - cy)
-    const steps = Math.max(1, Math.ceil(len / Math.max(0.75, Math.min(ar, br) * 0.5)))
-    for (let k = 1; k <= steps; k++) {
-      const t = k / steps, u = 1 - t
-      push(u * u * ax + 2 * u * t * cx + t * t * bx, u * u * ay + 2 * u * t * cy + t * t * by, ar + (br - ar) * t)
-    }
-  }
-  let ax = p[0], ay = p[1], ar = rad(0)
-  out.push(ax, ay, ar)
-  for (let i = 1; i < n - 1; i++) {
-    const cx = p[2 * i], cy = p[2 * i + 1]
-    const bx = (cx + p[2 * i + 2]) / 2, by = (cy + p[2 * i + 3]) / 2, br = (rad(i) + rad(i + 1)) / 2
-    curve(ax, ay, ar, cx, cy, bx, by, br)
-    ax = bx; ay = by; ar = br
-  }
-  if (n > 1) {
-    const bx = p[2 * n - 2], by = p[2 * n - 1]
-    curve(ax, ay, ar, (ax + bx) / 2, (ay + by) / 2, bx, by, rad(n - 1))
-    const k = out.length
-    if (out[k - 3] !== bx || out[k - 2] !== by) out.push(bx, by, rad(n - 1))
   }
   for (let i = 0; i < out.length; i += 3) {
     const x = out[i], y = out[i + 1], r = out[i + 2]
@@ -344,16 +314,16 @@ function geom(data) {
 
 /** Paint stroke data in its own coordinates (the caller has set the transform). */
 function paintStroke(c, data, dark, g = geom(data)) {
-  const color = resolveInk(data.color, dark)
-  if (data.tool === 'hl') {
+  const color = resolveInk(data.color, dark, data.tool)
+  if (data.tool === 'marker') {
     // Multiply reads as a marker on light paper; on dark paper it would vanish.
-    c.globalAlpha = dark ? 0.38 : 0.5
+    c.globalAlpha = dark ? MARKER_OPACITY.dark : MARKER_OPACITY.light
     c.globalCompositeOperation = dark ? 'source-over' : 'multiply'
   }
   if (g.fill) { c.fillStyle = color; c.fill(g.path) }
   else {
     c.strokeStyle = color
-    c.lineWidth = data.size
+    c.lineWidth = data.width
     c.lineCap = c.lineJoin = 'round'
     c.stroke(g.path)
   }
@@ -361,17 +331,22 @@ function paintStroke(c, data, dark, g = geom(data)) {
   c.globalCompositeOperation = 'source-over'
 }
 
-/** Turn points drawn in world units into the box and data of a stroke element. */
-export function strokeFromWorld(pts, pr, { tool, color, size }) {
+/** Part of an ink from point i on (a piece of a stroke being drawn). */
+export const inkFrom = (k, i = 0) => ({ pts: k.pts.slice(2 * i), t: k.t.slice(i), f: k.f.slice(i), az: k.az ? k.az.slice(i) : null, al: k.al ? k.al.slice(i) : null, sim: Boolean(k.sim) })
+
+/** Turn an ink drawn in world units (ink.mjs: pts, t, f, az, al, sim) into the box and data of a stroke element. */
+export function strokeFromWorld(ink, { tool, color, width }) {
+  const pts = ink.pts
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
   for (let i = 0; i < pts.length; i += 2) {
     x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i])
     y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1])
   }
-  const pad = (size / 2) * (pr ? 1.7 : 1) + 1
+  const pad = (width / 2) * (tool === 'marker' ? 1 : 1.6) + 1
   const x = r2(x0 - pad), y = r2(y0 - pad), w = r2(x1 - x0 + 2 * pad), h = r2(y1 - y0 + 2 * pad)
-  const data = { tool, color, size, box: [w, h], pts: pts.map((v, i) => r2(v - (i % 2 ? y : x))) }
-  if (pr) data.pr = pr.map(r2)
+  const n = pts.length >> 1
+  const data = { tool, color, width, box: [w, h], pts: pts.map((v, i) => v - (i % 2 ? y : x)), t: ink.t?.length === n ? ink.t : new Array(n).fill(0),
+    f: ink.f?.length === n ? ink.f : new Array(n).fill(0.25), az: ink.az?.length === n ? ink.az : null, al: ink.al?.length === n ? ink.al : null, sim: Boolean(ink.sim) }
   return { x, y, w, h, data }
 }
 
@@ -496,7 +471,7 @@ function hitElement(el, wx, wy, tol) {
 function strokeNear(el, ax, ay, bx, by, r) {
   const d = el.data, sx = el.w / d.box[0], sy = el.h / d.box[1]
   const p = d.pts, n = p.length >> 1
-  const thr = r + (d.size * Math.max(sx, sy)) / 2
+  const thr = r + (d.width * (d.tool === 'marker' ? 1 : 1.3) * Math.max(sx, sy)) / 2
   if (Math.max(ax, bx) + thr < el.x || Math.min(ax, bx) - thr > el.x + el.w || Math.max(ay, by) + thr < el.y || Math.min(ay, by) - thr > el.y + el.h) return false
   const X = i => el.x + p[2 * i] * sx, Y = i => el.y + p[2 * i + 1] * sy
   if (n === 1) return distPtSeg(X(0), Y(0), ax, ay, bx, by) < thr
@@ -613,7 +588,7 @@ const SLICE = 2000          // shapes per slice when a big canvas is loaded
 const breath = () => (globalThis.scheduler?.yield ? scheduler.yield() : new Promise(r => setTimeout(r)))   // a strokes item stays under the core's 60 KB body limit
 
 export async function openCanvas({ client, timeline_id, onRemote, onState }) {
-  const { CanvasState, entryOf, encodePoints, packSnapshot, unpackSnapshot, chunks } = await scribbleWire()
+  const { CanvasState, entryOf, inkOf, isStroke, packSnapshot, unpackSnapshot, chunks } = await scribbleWire()
   const key = `scribble:${timeline_id}`
   const st = new CanvasState()
   const real = typeof client.sendStrokes === 'function'
@@ -634,8 +609,8 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
   const padId = id => padOf.get(id) ?? id
   function recordOf(s) {
     const base = { id: padId(s.id), pad: timeline_id, rotation: 0, z: s.z ?? 0, group: s.group ?? null, author: s.by, rev: 1, blob: null, sent: [] }
-    if (s.tool === 'pen' || s.tool === 'hl') {
-      const k = strokeFromWorld(s.pts, s.pr?.length === s.pts.length >> 1 ? s.pr : null, { tool: s.tool, color: s.color ?? 'ink', size: s.size })
+    if (isStroke(s)) {
+      const k = strokeFromWorld(inkOf(s), { tool: s.tool, color: s.color ?? (s.tool === 'marker' ? 'yellow' : 'ink'), width: s.width })
       return { ...base, type: 'stroke', x: k.x, y: k.y, w: k.w, h: k.h, data: k.data }
     }
     if (s.tool === 'image') {
@@ -652,7 +627,7 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     const s = { tool: r.type === 'stroke' ? d.tool : r.type, z: r.z, group: r.group ?? null }
     if (r.type === 'stroke') {
       const sx = r.w / d.box[0], sy = r.h / d.box[1]
-      Object.assign(s, { pts: d.pts.map((v, i) => (i % 2 ? r.y + v * sy : r.x + v * sx)), pr: d.pr ?? null, color: d.color, size: r2(d.size * Math.sqrt(sx * sy)) })
+      Object.assign(s, { pts: d.pts.map((v, i) => (i % 2 ? r.y + v * sy : r.x + v * sx)), t: d.t, f: d.f, az: d.az, al: d.al, sim: d.sim, color: d.color, width: r2(d.width * Math.sqrt(sx * sy)) })
     } else if (r.type === 'image') {
       Object.assign(s, { pts: [r.x, r.y, r.x + r.w, r.y + r.h], attachment: refs.get(r.blob), nw: d.nw, nh: d.nh, mime: d.mime, name: d.name })
     } else Object.assign(s, { pts: [r.x, r.y], text: d.text, size: d.size, color: d.color, wrap: d.wrap ?? null })
@@ -695,7 +670,7 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     while (flushing) await flushing
     const ops = queue
     queue = []
-    const live = [...lives.values()].filter(l => l.g.pts.length > l.sent * 2)
+    const live = [...lives.values()].filter(l => l.g.t.length > l.sent)
     if (!ops.length && !live.length) return report()
     flushing = send(ops, live).catch(e => { error = e.code ?? e.message; console.warn('canvas', e) })
     await flushing
@@ -707,13 +682,13 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     // 1. new shapes, and the strokes being drawn: their first piece, or the points since the last piece
     const entries = []   // [entry, version | null]
     for (const op of ops) if (op.add) entries.push([entryOf(op.add), op.ver])
-    const pieces = (l, pts, pr) => (l.ver.wire ? [{ continues: l.ver.wire, ...encodePoints(pts, pr) }, null] : [entryOf({ tool: l.g.tool, pts, pr, color: l.g.color, size: l.g.size, z: l.g.z }), l.ver])
+    const pieces = (l, ink) => (l.ver.wire ? [{ continues: l.ver.wire, points: packPoints(ink) }, null] : [entryOf({ tool: l.g.tool, ...ink, color: l.g.color, width: l.g.width, z: l.g.z }), l.ver])
     for (const l of live) {
-      const pts = l.g.pts.slice(l.sent * 2), pr = l.g.pen ? l.g.pr.slice(l.sent) : null
-      l.sent += pts.length >> 1
-      entries.push(pieces(l, pts, pr))
+      const ink = inkFrom(l.g, l.sent)
+      l.sent += ink.t.length
+      entries.push(pieces(l, ink))
     }
-    for (const op of ops) if (op.tail) entries.push(pieces(op.tail, op.pts, op.pr))
+    for (const op of ops) if (op.tail) entries.push(pieces(op.tail, op.ink))
     for (let at = 0; at < entries.length;) {
       let end = at, size = 0
       while (end < entries.length && (end === at || size + JSON.stringify(entries[end][0]).length < ITEM_BYTES)) size += JSON.stringify(entries[end++][0]).length
@@ -775,8 +750,7 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     l.ver.pad = id
     if (l.ver.wire) padOf.set(l.ver.wire, id)
     claims.set(id, l.ver)
-    const pts = g.pts.slice(l.sent * 2)
-    if (pts.length) queue.push({ tail: l, pts, pr: g.pen ? g.pr.slice(l.sent) : null })
+    if (g.t.length > l.sent) queue.push({ tail: l, ink: inkFrom(g, l.sent) })
     soon()
   }
   /** A stroke that is not kept (a second finger came): what of it went out is erased. */
@@ -866,7 +840,7 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
       if (error) throw new Error(`The canvas could not be saved (${error}).`)
       const attachment = await client.uploadAttachment(dataUrlBytes(png), { file_name: 'selection.png', media_type: 'image/png' })
       const stroke_ids = ids.map(id => versionOf(id).wire).filter(Boolean)
-      if (real) await client.sendStrokes({ timeline_id: `session/${to}`, content_type: 'selection_sent', recipient_device_id: to, ...(text ? { text } : {}), attachments: [attachment], stroke_ids })
+      if (real) await client.sendStrokes({ timeline_id: `session/${to}`, content_type: 'selection_sent', recipient_device_id: to, ...(text ? { text } : {}), attachments: [attachment], stroke_ids, board: timeline_id })
       else await client.sendMessage({ agent_device_id: to, text: text || '', attachments: [{ ...attachment, kind: 'scribble' }] })
     },
     settled: async () => { await flush(); return !error },
@@ -981,7 +955,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     more: ['M6 9l6 6 6-6'],
     select: ['M5 3.5l13.5 6.6-5.7 1.9-2 5.7z', 'M13.5 13.5l5 5'],
     pen: ['M4 20l1.2-4.4L16.6 4.2a2 2 0 012.9 0l.3.3a2 2 0 010 2.9L8.4 18.8z', 'M14.5 6.5l3 3'],
-    hl: ['M14.5 4l5.5 5.5-8 8H7.5v-4.5z', 'M11.5 7l5.5 5.5', 'M4 21h10'],
+    marker: ['M14.5 4l5.5 5.5-8 8H7.5v-4.5z', 'M11.5 7l5.5 5.5', 'M4 21h10'],
     eraser: ['M20 20H9.5l-5-5a2 2 0 010-2.8l8-8a2 2 0 012.8 0l4.9 4.9a2 2 0 010 2.8L12 20', 'M8.7 8.3l7 7'],
     text: ['M5.5 7V5h13v2', 'M12 5v14', 'M9.5 19h5'],
     clip: ['M20 11.5l-8.2 8.2a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9'],   // attach
@@ -1029,7 +1003,7 @@ function mountPad(main, { canvasId: PAD, client }) {
   const view = { x: 0, y: 0, z: 1 }   // screen = world * z + (x, y)
   let W = 0, H = 0, dpr = 1
   let tool = 'pen', drawTool = 'pen'
-  const style = { pen: { color: INK, w: 1 }, hl: { color: HL_COLORS[0][0], w: 1 } }
+  const style = { pen: { color: INK, w: 1 }, marker: { color: MARKER_COLORS[0], w: 1 } }
   let gesture = null
   let preview = null             // id → record as it looks during a move or resize; null otherwise
   const pointers = new Map()
@@ -1209,7 +1183,7 @@ function mountPad(main, { canvasId: PAD, client }) {
 
     if (gesture?.type === 'draw' && gesture.moved) {
       ctx.setTransform(dpr * view.z, 0, 0, dpr * view.z, dpr * view.x, dpr * view.y)
-      const s = { tool: gesture.tool, color: gesture.color, size: gesture.size, pts: gesture.pts, pr: gesture.pen ? gesture.pr : undefined }
+      const s = { tool: gesture.tool, color: gesture.color, width: gesture.width, pts: gesture.pts, f: gesture.f }
       paintStroke(ctx, s, dark(), buildGeom(s))
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -1364,7 +1338,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     pad.dataset.tool = tool
     const st = style[drawTool]
     // each drawing tool shows the colour it draws in
-    for (const k of ['pen', 'hl']) toolButton(k).style.setProperty('--c', resolveInk(style[k].color, dark()))
+    for (const k of ['pen', 'marker']) toolButton(k).style.setProperty('--c', resolveInk(style[k].color, dark(), k))
     for (const b of $('swatches').children) b.setAttribute('aria-pressed', String(b.dataset.color === st.color))
     ;[...$('widths').children].forEach((b, i) => b.setAttribute('aria-pressed', String(i === st.w)))
     const list = selected()
@@ -1405,7 +1379,7 @@ function mountPad(main, { canvasId: PAD, client }) {
   }
 
   function buildSwatches() {
-    $('swatches').replaceChildren(...(drawTool === 'hl' ? HL_COLORS : PEN_COLORS).map(([color, name]) => {
+    $('swatches').replaceChildren(...(drawTool === 'marker' ? MARKER_SWATCHES : PEN_SWATCHES).map(([color, name]) => {
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'pad-swatch'
@@ -1423,7 +1397,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     }))
     paintSwatches()
   }
-  const paintSwatches = () => { for (const b of $('swatches').children) b.style.setProperty('--c', resolveInk(b.dataset.color, dark())) }
+  const paintSwatches = () => { for (const b of $('swatches').children) b.style.setProperty('--c', resolveInk(b.dataset.color, dark(), drawTool)) }
   $('widths').replaceChildren(...[0, 1, 2, 3].map(i => {
     const b = document.createElement('button')
     b.type = 'button'
@@ -1439,7 +1413,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     if (next === 'area' && tool !== 'area') { toolBefore = tool; sel.clear() }
     if (next !== 'area') clearArea()
     tool = next
-    if (next === 'pen' || next === 'hl') {
+    if (next === 'pen' || next === 'marker') {
       if (drawTool !== next) { drawTool = next; buildSwatches() }
     } else closeStyle()
     if (next !== 'eraser') hover = null
@@ -1452,7 +1426,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     saveViewSoon()
   }
   const toolButton = name => document.querySelector(`.pad-tool[data-tool="${name}"]`)
-  const closeStyle = () => { $('style').hidden = true; for (const k of ['pen', 'hl']) toolButton(k).setAttribute('aria-expanded', 'false') }
+  const closeStyle = () => { $('style').hidden = true; for (const k of ['pen', 'marker']) toolButton(k).setAttribute('aria-expanded', 'false') }
   /** Colour and width come up at the tool they belong to: a click on the pen that is already in hand. */
   function toggleStyle() {
     if (!$('style').hidden) return closeStyle()
@@ -1482,7 +1456,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     let marker = null
     for (let k = list.length - 1; k >= 0; k--) {
       if (!hitElement(list[k], wx, wy, tol)) continue
-      if (list[k].type !== 'stroke' || list[k].data.tool !== 'hl') return list[k]
+      if (list[k].type !== 'stroke' || list[k].data.tool !== 'marker') return list[k]
       marker ??= list[k]
     }
     return marker
@@ -1690,28 +1664,32 @@ function mountPad(main, { canvasId: PAD, client }) {
   }
 
   // ── pointer input ───────────────────────────────────────────────────────────
-  function addPoint(g, e, force) {
+  /** One sample of the pointer into the stroke being drawn, as PencilKit records it: where (board units), when (ms
+   *  since the stroke began), how hard (a pen's pressure; mouse and finger: a force from their speed, ink.mjs), and a
+   *  pen's azimuth and altitude. Raw: the shape is smoothed when it is drawn (B-spline), never here. */
+  function addPoint(g, e, last) {
     const [px, py] = local(e)
-    let [wx, wy] = toWorld(px, py)
-    const n = g.pts.length
+    const [wx, wy] = toWorld(px, py)
+    const n = g.t.length
+    const t = Math.max(n ? g.t[n - 1] : 0, Math.round(e.timeStamp - g.ts0))
+    let d = 0
     if (n) {
-      const lx = g.pts[n - 2], ly = g.pts[n - 1]
-      if (!force) {
-        // light streamline: follow the pointer at 68 % per sample to take the jitter out
-        wx = lx + (wx - lx) * 0.68
-        wy = ly + (wy - ly) * 0.68
-        if (Math.hypot(wx - lx, wy - ly) * view.z < 1.1) return
-      } else if (wx === lx && wy === ly) return
+      d = Math.hypot(wx - g.pts[2 * n - 2], wy - g.pts[2 * n - 1]) * view.z   // screen px
+      if (d < (last ? 0.01 : 0.75)) return
     }
-    let p = g.pen && e.pressure > 0 ? e.pressure : 0.5
-    if (g.pr.length) p = g.pr[g.pr.length - 1] * 0.6 + p * 0.4
+    const f = !g.sim ? (e.pressure > 0 ? e.pressure : n ? g.f[n - 1] : 0.25)
+      : forceFromSpeed(n ? g.f[n - 1] : null, n ? d / Math.max(1, t - g.t[n - 1]) : 0)
     g.pts.push(wx, wy)
-    g.pr.push(p)
+    g.t.push(t)
+    g.f.push(Math.round(f * 1000) / 1000)
+    if (g.az) {
+      const a = Number.isFinite(e.azimuthAngle) && Number.isFinite(e.altitudeAngle) ? { az: e.azimuthAngle, al: e.altitudeAngle } : anglesOfTilt(e.tiltX, e.tiltY)
+      g.az.push(a.az); g.al.push(a.al)
+    }
   }
   function endDraw(g) {
-    if (!g.pts.length) return
-    const pr = g.pen && g.pr.some(p => Math.abs(p - g.pr[0]) > 0.03) ? g.pr : null
-    const s = strokeFromWorld(g.pts, pr, { tool: g.tool, color: g.color, size: g.size })
+    if (!g.t.length) return
+    const s = strokeFromWorld(inkFrom(g), { tool: g.tool, color: g.color, width: g.width })
     const el = make('stroke', s, s.data, g.z)
     timeline?.claim(g, el.id)   // its pieces went out while it was drawn: this is the rest of it
     add([el])
@@ -1731,7 +1709,7 @@ function mountPad(main, { canvasId: PAD, client }) {
     gesture = null
     preview = null
     if (!g) return
-    if (g.type === 'draw' && g.moved && performance.now() - g.t0 > 350 && g.pts.length > 24) endDraw(g)
+    if (g.type === 'draw' && g.moved && performance.now() - g.t0 > 350 && g.t.length > 12) endDraw(g)
     else if (g.type === 'draw') timeline?.drop(g)
     if (g.type === 'erase' && g.erased.size) remove([...g.erased].map(id => els.get(id)).filter(Boolean))
     dirty()
@@ -1782,7 +1760,8 @@ function mountPad(main, { canvasId: PAD, client }) {
         gesture = { ...base, type: 'marquee', keep: e.shiftKey ? new Set(sel) : new Set() }
       } else {
         const st = style[tool]
-        gesture = { ...base, type: 'draw', hit, tool, color: st.color, size: SIZES[tool][st.w], pen: tool === 'pen' && e.pointerType === 'pen', pts: [], pr: [], z: topZ() + 1 }
+        const pen = e.pointerType === 'pen'   // pressure and tilt; mouse and finger have neither
+        gesture = { ...base, type: 'draw', hit, tool, color: st.color, width: SIZES[tool][st.w], ts0: e.timeStamp, pts: [], t: [], f: [], az: pen ? [] : null, al: pen ? [] : null, sim: !pen, z: topZ() + 1 }
         addPoint(gesture, e, true)
       }
     }
@@ -1931,7 +1910,7 @@ function mountPad(main, { canvasId: PAD, client }) {
   $('group').addEventListener('click', () => toggleGroup())
   $('delete').addEventListener('click', () => remove(selected()))
   for (const b of main.querySelectorAll('.pad-tool')) {
-    b.addEventListener('click', () => { if (tool === b.dataset.tool && (tool === 'pen' || tool === 'hl')) toggleStyle(); else if (tool === 'area' && b.dataset.tool === 'area') setTool(toolBefore); else setTool(b.dataset.tool) })   // (the scissors again: out of cutting)
+    b.addEventListener('click', () => { if (tool === b.dataset.tool && (tool === 'pen' || tool === 'marker')) toggleStyle(); else if (tool === 'area' && b.dataset.tool === 'area') setTool(toolBefore); else setTool(b.dataset.tool) })   // (the scissors again: out of cutting)
   }
   $('theme').addEventListener('click', () => setThemeMode(nextThemeMode()))   // Light → Dark → System, as the menu
   $('help-btn').addEventListener('click', () => $('help').showModal())
@@ -2014,7 +1993,7 @@ function mountPad(main, { canvasId: PAD, client }) {
       return
     }
     if (e.repeat) return
-    const tools = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', t: 'text', a: 'area' }
+    const tools = { v: 'select', p: 'pen', h: 'marker', e: 'eraser', t: 'text', a: 'area' }
     if (tools[key]) setTool(tools[key])
     else if (key >= '1' && key <= '4') setWidth(Number(key) - 1)
     else if (key === 'i') $('file').click()
@@ -2179,25 +2158,27 @@ function mountPad(main, { canvasId: PAD, client }) {
       }
       const runs = []
       let run = null
+      // a point of the stroke into a run, at (x, y), with time, force and angles of point i
+      const put = (into, x, y, i) => { into.pts.push(x, y); into.t.push(d.t[i]); into.f.push(d.f[i]); if (into.az) { into.az.push(d.az[i]); into.al.push(d.al[i]) } }
       for (let i = 0; i < n; i++) {
         const x = X(i), y = Y(i), inside = within(x, y)
         if (!run || run.inside !== inside) {
           const prev = run
-          run = { inside, pts: [], pr: [] }
+          run = { inside, pts: [], t: [], f: [], az: d.az ? [] : null, al: d.al ? [] : null, sim: d.sim }
           runs.push(run)
           if (prev) {
             const cut = inside ? edge(x, y, X(i - 1), Y(i - 1)) : edge(X(i - 1), Y(i - 1), x, y)
-            prev.pts.push(...cut); prev.pr.push(d.pr?.[i - 1])
-            run.pts.push(...cut); run.pr.push(d.pr?.[i])
+            put(prev, ...cut, i - 1)
+            put(run, ...cut, i)
           }
         }
-        run.pts.push(x, y); run.pr.push(d.pr?.[i])
+        put(run, x, y, i)
       }
       if (!runs.some(run => run.inside)) continue   // only its box reached into the frame: it stays
       changes.push({ id, before: el, after: null })
       for (const run of runs) {
         if (run.inside) continue
-        const part = strokeFromWorld(run.pts, d.pr ? run.pr : null, { tool: d.tool, color: d.color, size: r2(d.size * sx) })
+        const part = strokeFromWorld(run, { tool: d.tool, color: d.color, width: r2(d.width * sx) })
         const piece = make('stroke', part, part.data, ++z)
         changes.push({ id: piece.id, before: null, after: piece })
       }
@@ -2376,8 +2357,8 @@ function mountPad(main, { canvasId: PAD, client }) {
     sizeCanvas()
     if (saved?.z) {
       Object.assign(view, { x: saved.x, y: saved.y, z: clamp(saved.z, MIN_Z, MAX_Z) })
-      if (saved.style?.pen && saved.style?.hl) Object.assign(style, saved.style)
-      if (saved.tool === 'hl') drawTool = 'hl'
+      if (saved.style?.pen && saved.style?.marker) Object.assign(style, saved.style)
+      if (saved.tool === 'marker') drawTool = 'marker'
     } else { setView(W / 2, H / 2, 1); firstLook = !els.size }
     $('zoom').textContent = `${Math.round(view.z * 100)} %`
     buildSwatches()

@@ -380,7 +380,7 @@ try {
   await A.js(`const { openCanvas, strokeFromWorld, deskCanvas } = await trommi.view('whiteboard')
     const tl = deskCanvas(trommi.model().desk)
     const c = await openCanvas({ client: trommi.client, timeline_id: tl })
-    const k = strokeFromWorld([120, 140, 220, 190, 340, 160], null, { tool: 'pen', color: 'ink', size: 4 })
+    const k = strokeFromWorld({ pts: [120, 140, 220, 190, 340, 160], t: [0, 16, 33], f: [0.2, 0.3, 0.25], sim: true }, { tool: 'pen', color: 'ink', width: 4 })
     c.push([{ id: 'e2e-old-paper', before: null, after: { id: 'e2e-old-paper', pad: tl, type: 'stroke', rotation: 0, z: 1, group: null, author: 'human', rev: 1, blob: null, sent: [], ...k } }])
     for (let i = 0; i < 150 && c.state().pending; i++) await new Promise(r => setTimeout(r, 100))
     return c.state()`).then(st => check(!st.error && !st.pending, `a stroke on the desk's canvas timeline is sealed (${JSON.stringify(st)})`))
