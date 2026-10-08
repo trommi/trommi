@@ -173,7 +173,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>hub-rs/</code> · 39 files</summary>
+<details><summary><code>hub-rs/</code> · 40 files</summary>
 
 ```
 ├── crates/
@@ -186,6 +186,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   │   │   ├── config.rs
 │   │   │   ├── control.rs
 │   │   │   ├── db.rs
+│   │   │   ├── delete_room.rs
 │   │   │   ├── error.rs
 │   │   │   ├── files.rs
 │   │   │   ├── http.rs
