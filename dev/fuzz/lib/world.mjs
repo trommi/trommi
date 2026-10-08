@@ -183,7 +183,9 @@ export class World {
       let pending = null
       // an agent whose lease was lost has stopped itself (the channel process would exit): start it again, as the channel's supervisor would
       for (const d of live) if (d.role === 'agent' && d.client?._leaseLost) {
-        this.known.set('F16-agent-lease-lost-after-hub-restart', 'after a hub restart (every deploy) a running agent gets 409 lease-lost on its next post; the core stops itself (README: the channel process exits) and its outbox is stuck until the process is started again')
+        // Not F16 (fixed in 9aa7248: the lease survives a hub restart). The core stops only when ANOTHER live process
+        // holds the key's lease (R4): here a restarted copy of the device, or the harness's re-claim after a hub restart.
+        this.known.set('R4-agent-lease-taken-over', 'an agent process found its lease held by another live process (a restarted copy, or the harness re-claiming after a hub restart) and stopped itself as R4 says; the harness starts it again, as the channel supervisor would')
         this.killDev(d); this.stats.crashes++
         await sleep(100)
         try { await this.boot(d) } catch (e) { await sleep(500); d.faults = { delay: 0, lose_response: 0, offline: 0 }; try { await this.boot(d) } catch (e2) { { if (/tab-conflict/.test(e2.message)) { d.dead = true; d.client = null; continue } throw new Finding('exception', `agent restart after lease-lost failed: ${e2.message}`) } } }

@@ -1900,6 +1900,22 @@ await test('S2 register order (D1): every delivery order of the same writes give
   }
 })
 
+await test('fuzz night-srv-w7-98: a deleted note stays deleted after retention pruned its versions (no body, no lamport: the hub order decides)', async () => {
+  const NOTE = 'ab'.repeat(16)
+  const v = (n, sender, seq, state, content) => ({ kind: codec.KIND.object_version, sender_role: 'human', sender_device_id: sender, sender_sequence: seq, sent_at: n, envelope_number: n,
+    envelope_hash: `h${n}`, object: { object_id: NOTE, object_state: state, urgency: 1 }, causal: { sender_device_id: sender, sender_sequence: seq, sent_at: n, lamport: M.lamportOf(content) },
+    content, content_state: content ? 'ok' : 'pruned' })
+  const run = recs => { const m = M.emptyModel(); m.room.my_role = 'human'; const ch = M.emptyChange(); for (const r of recs) M.applyRecord(m, r, ch); return m.notes.get(NOTE) }
+  // The writer crashed before it kept the delete: it holds v1 with its body, the hub serves the delete pruned.
+  const held = run([v(1, 'a', 1, 1, { object_type: 'note', object_version: 1, text: 'x', lamport: 7 }), v(2, 'a', 2, 3, null)])
+  eq(held.object_state, 'closed', 'the pruned delete wins over the held version')
+  // A device that sees both pruned, written by two humans: the later one wins whatever their device ids.
+  for (const [w1, w2] of [['b', 'a'], ['a', 'b']]) eq(run([v(1, w1, 1, 1, null), v(2, w2, 1, 3, null)]).object_state, 'closed', `pruned versions by ${w1} then ${w2}`)
+  // With both bodies the lamport still decides (R2): a later envelope with a lower lamport loses.
+  const both = run([v(1, 'b', 1, 1, { object_type: 'note', object_version: 1, text: 'new', lamport: 9 }), v(2, 'a', 1, 3, { object_type: 'note', object_version: 2, previous_version_hash: 'h1', text: 'old', lamport: 3 })])
+  eq([both.object_state, both.text], ['open', 'new'], 'bodies: lamport order')
+})
+
 await test('review 3 lamport: a strict total order (no cycle at an equal lamport), inflation refused, counter persisted with the send', async () => {
   // d1c: two writes of one sender at one lamport and a write of another sender: no cycle any more.
   const W = { a1: { sender_device_id: 'a', sender_sequence: 1, sent_at: 30, lamport: 5 }, a2: { sender_device_id: 'a', sender_sequence: 2, sent_at: 10, lamport: 5 }, b: { sender_device_id: 'b', sender_sequence: 1, sent_at: 20, lamport: 5 } }

@@ -643,7 +643,7 @@ export class Runner {
   async do_drop_streams(a) { const d = this.dev(a.dev); if (!d) return 'skip'; for (const ac of [...d.controllers]) { try { ac.abort(new Error('simulated reset')) } catch {} } return 'ok' }
   async do_hub_restart() {
     if (!(await this.w.restartHub())) return 'skip'
-    // KNOWN F16: the agent lease lives in hub memory; after a restart every running agent gets 409 lease-lost on every post until it claims again
+    // The lease survives a restart since F16 (9aa7248); the re-claim stays as an extra take-over path for the agents (R4)
     for (const d of this.w.devs.values()) if (d.role === 'agent' && d.client && !d.dead && !d.removed) {
       for (let k = 0; k < 8; k++) { try { await d.client.claimSession({ process_instance: `pi-${d.name}-re-${Math.random().toString(36).slice(2)}` }); break } catch (e) { d.errors.push(`reclaim: ${e.code ?? e.message}`); await sleep(150) } }
     }
