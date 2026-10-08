@@ -131,31 +131,85 @@ const versioned = (src, version) => String(src)
   .replace(/^(\s*(?:import|export)\s+(?:[^'"]*?from\s+)?)(['"])((?:\.{1,2}\/|\/)[^'"?]+\.mjs)\2/gm, (_, head, q, spec) => `${head}${q}${spec}?v=${version}${q}`)
   .replace(/\bimport\((['"])((?:\.{1,2}\/|\/)[^'"?]+\.mjs)\1\)/g, (_, q, spec) => `import(${q}${spec}?v=${version}${q})`)
 
-/** Everything the build makes: { 'path under public/': content (text, or bytes for the plugin's zip) }. Nothing is written. */
-export function generate({ pub = PUBLIC, repo = REPO } = {}) {
+// ---- the modules ----
+// The deployed app is one bundle (esbuild: minified, split): gen/app/app-<hash>.mjs with the views a cold start needs
+// (app, ui, desk, sidebar, notes), and one chunk per lazy view and for the core (app.mjs imports them with import()),
+// all named by their content. The core comes from the in-memory gen/vendor/ (the plugin below), never from disk.
+// The dev server serves the sources as they are instead (bundle: false): unminified, one file per module.
+const BUNDLED = /^(app|auth|agents|desk|card|session|sidebar|notes|media|whiteboard)\.mjs$|^demo\/demo\.mjs$/   // in the bundle, not served alone
+async function bundle(pub, vendor) {
+  const esbuild = await import('esbuild').catch(() => { throw new Error('build: esbuild is missing (npm ci at the repository root)') })
+  const fromVendor = {
+    name: 'vendor',
+    setup(b) {
+      // (named core/<file>, so the core's chunk is called core-<hash>.mjs, not after its index.mjs)
+      const at = f => ({ path: f === 'index.mjs' ? 'core.mjs' : f, namespace: 'vendor' })
+      b.onResolve({ filter: /(^|\/)gen\/vendor\/[\w.-]+\.mjs$/ }, a => at(a.path.split('/').pop()))
+      b.onResolve({ filter: /^\.\/[\w.-]+\.mjs$/, namespace: 'vendor' }, a => at(a.path.slice(2)))
+      b.onLoad({ filter: /.*/, namespace: 'vendor' }, a => { const f = a.path === 'core.mjs' ? 'index.mjs' : a.path; return f in vendor ? { contents: vendor[f], loader: 'js' } : { errors: [{ text: `gen/vendor/${f} is not in the core` }] } })
+    },
+  }
+  const r = await esbuild.build({
+    entryPoints: [path.join(pub, 'app.mjs')], bundle: true, splitting: true, format: 'esm', minify: true, write: false, metafile: true,
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', chunkNames: '[name]-[hash]', outExtension: { '.js': '.mjs' },
+    target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+  })
   const out = {}
-  for (const [f, c] of Object.entries(vendorFiles(repo))) out[`gen/vendor/${f}`] = c
+  for (const f of r.outputFiles) out[path.relative(pub, f.path).split(path.sep).join('/')] = f.text
+  const outputs = Object.entries(r.metafile.outputs)
+  const entry = outputs.find(([, o]) => /(^|\/)app\.mjs$/.test(o.entryPoint ?? ''))?.[0]
+  const coreOut = outputs.find(([, o]) => o.entryPoint === 'vendor:core.mjs')?.[0]
+  if (!entry || !coreOut) throw new Error('build: the bundle has no app.mjs or no core')
+  const rel = o => path.relative(pub, path.resolve(o)).split(path.sep).join('/')
+  // What a cold start fetches: the entry, the core (boot opens the room with it at once) and every chunk they import
+  // statically (one round trip with modulepreload).
+  const first = new Set(), queue = [entry, coreOut]
+  while (queue.length) { const o = queue.shift(); if (first.has(o)) continue; first.add(o); for (const i of r.metafile.outputs[o].imports) if (i.kind === 'import-statement') queue.push(i.path) }
+  return { out, entry: rel(entry), first: [...first].map(rel) }
+}
+
+/** Everything the build makes: { 'path under public/': content (text, or bytes for the plugin's zip) }. Nothing is
+ *  written. bundle: false (the dev server) serves the sources as modules of their own, with versioned addresses. */
+export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = true } = {}) {
+  const out = {}
+  const vendor = vendorFiles(repo)
+  if (bundled) out['gen/vendor/tools-reference.mjs'] = vendor['tools-reference.mjs']   // (the help page reads it)
+  else for (const [f, c] of Object.entries(vendor)) out[`gen/vendor/${f}`] = c
   out['gen/build.txt'] = `source: trommi/trommi app/web\ncommit: ${commitOf(repo)}\n`
+  const js = bundled ? await bundle(pub, vendor) : null
+  if (js) Object.assign(out, js.out)
 
   let html = fs.readFileSync(path.join(pub, 'index.html'), 'utf8')
   const links = [...html.matchAll(SHEET_LINK)]
   const css = links.map(([, href]) => { const text = fs.readFileSync(path.join(pub, href), 'utf8'); checkSheet(text, href); return `/* ${href} */\n${text}\n` }).join('')
-  const bundle = `gen/bundle.${sha(css)}.css`
-  out[bundle] = css
+  const sheet = `gen/bundle.${sha(css)}.css`
+  out[sheet] = css
   let first = true
-  html = html.replace(FONT_PRELOAD, '').replace(SHEET_LINK, () => (first ? ((first = false), `<link rel="stylesheet" href="/${bundle}">\n`) : ''))
+  html = html.replace(FONT_PRELOAD, '').replace(SHEET_LINK, () => (first ? ((first = false), `<link rel="stylesheet" href="/${sheet}">\n`) : ''))
 
-  const files = [...walk(pub).filter(f => !NOT_SHELL.test(f)), ...Object.keys(out).filter(f => f !== 'gen/build.txt')].sort()
+  const files = [...walk(pub).filter(f => !NOT_SHELL.test(f) && !(bundled && BUNDLED.test(f))), ...Object.keys(out).filter(f => f !== 'gen/build.txt')].sort()
   const content = f => out[f] ?? fs.readFileSync(path.join(pub, f))
   const version = sha(Buffer.concat([...files.flatMap(f => [Buffer.from(f), Buffer.from(content(f))]), Buffer.from(html)]))
-  const read = f => { const rel = f.replace(/^\//, ''); return rel in out ? out[rel] : fs.existsSync(path.join(pub, rel)) ? fs.readFileSync(path.join(pub, rel), 'utf8') : null }
-  const block = [`<!-- preload ${version} -->`, ...preloads(read, ['/app.mjs', '/gen/vendor/index.mjs']).map(f => `<link rel="modulepreload" href="${f}">`), '<!-- /preload -->'].join('\n')
+  let modules
+  if (js) {
+    html = html.replace(/<script type="module" src="\/app\.mjs"><\/script>/, `<script type="module" src="/${js.entry}"></script>`)
+    modules = js.first.map(f => `/${f}`)
+  } else {
+    const read = f => { const rel = f.replace(/^\//, ''); return rel in out ? out[rel] : fs.existsSync(path.join(pub, rel)) ? fs.readFileSync(path.join(pub, rel), 'utf8') : null }
+    modules = preloads(read, ['/app.mjs', '/gen/vendor/index.mjs'])
+  }
+  const block = [`<!-- preload ${version} -->`, ...modules.map(f => `<link rel="modulepreload" href="${f}">`), '<!-- /preload -->'].join('\n')
   out['index.html'] = html.replace(/<!-- preload[^>]*-->[\s\S]*?<!-- \/preload -->/, block).replace('data-build="dev"', `data-build="${version}"`)
-    .replace(/(<link rel="modulepreload" href="[^"?]+\.mjs)"/g, `$1?v=${version}"`).replace(/(<script type="module" src="\/[^"?]+\.mjs)"/g, `$1?v=${version}"`)
-  // (the modules themselves, the core's and the help page's script, with the same versioned addresses)
-  for (const f of files) if (f.endsWith('.mjs') && !f.startsWith('gen/connector') && !f.startsWith('gen/plugins/')) out[f] = versioned(content(f), version)
-  // (help.html stays as it is: its inline script is allowed by its hash in _headers; it imports /ui.mjs, whose own imports
-  // carry the version)
+    // (?v=<build> on the addresses index.html names itself; the bundle's chunks are named by their content and imported
+    // without it, so their preloads must not carry it either: the browser keys modules by the whole address)
+    .replace(/(<link rel="modulepreload" href="[^"?]+\.mjs)"/g, (all, head) => (js && head !== `<link rel="modulepreload" href="/${js.entry}` ? all : `${head}?v=${version}"`))
+    .replace(/(<script type="module" src="\/[^"?]+\.mjs)"/g, `$1?v=${version}"`)
+  if (js && !out['index.html'].includes(`src="/${js.entry}?v=`)) throw new Error('index.html: the <script type="module" src="/app.mjs"> is missing')
+  // (the sources as modules of their own, dev server only: with the same versioned addresses; the bundle's chunks are
+  // named by their content)
+  if (!js) for (const f of files) if (f.endsWith('.mjs') && !f.startsWith('gen/connector') && !f.startsWith('gen/plugins/')) out[f] = versioned(content(f), version)
+  // (help.html stays as it is: its inline script is allowed by its hash in _headers; it imports /ui.mjs, which imports
+  // nothing)
   if (!out['index.html'].includes(`<!-- preload ${version} -->`)) throw new Error('index.html: the <!-- preload --> block is missing')
 
   const sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
@@ -164,16 +218,17 @@ export function generate({ pub = PUBLIC, repo = REPO } = {}) {
   // Not part of the shell: the app itself never loads them (Claude Code and the connect script do).
   const made = connectorFiles()
   for (const [f, c] of Object.entries(made ?? {})) out[`gen/${f}`] = c
-  return { out, version, sheets: links.length, files: files.length, connector: made ? made['connector.mjs.sha256'].slice(0, 12) : null }
+  const firstLoad = js ? js.first.reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null
+  return { out, version, sheets: links.length, files: files.length, connector: made ? made['connector.mjs.sha256'].slice(0, 12) : null, firstLoad, chunks: js ? Object.keys(js.out).length : 0 }
 }
 
-export function build({ write = false } = {}) {
-  const { out, version, sheets, files, connector } = generate()
-  console.log(`build ${version}: ${Object.keys(out).filter(f => f.startsWith('gen/vendor/')).length} core files, ${sheets} sheets in one bundle, ${files} shell files, ${connector ? `connector ${connector} with its plugin` : 'no connector (its npm packages are missing: npm ci)'}${write ? '' : ' (check only, nothing written)'}`)
+export async function build({ write = false } = {}) {
+  const { out, version, sheets, files, connector, firstLoad, chunks } = await generate()
+  console.log(`build ${version}: ${chunks} modules in the bundle (${Math.round(firstLoad / 1024)} KB at a cold start), ${sheets} sheets in one bundle, ${files} shell files, ${connector ? `connector ${connector} with its plugin` : 'no connector (its npm packages are missing: npm ci)'}${write ? '' : ' (check only, nothing written)'}`)
   if (!write) return
   if (!connector) throw new Error('build: the connector cannot be built (esbuild, @modelcontextprotocol/sdk or zod is missing: npm ci at the repository root)')
   fs.rmSync(path.join(PUBLIC, 'gen'), { recursive: true, force: true })
   for (const [f, c] of Object.entries(out)) { fs.mkdirSync(path.dirname(path.join(PUBLIC, f)), { recursive: true }); fs.writeFileSync(path.join(PUBLIC, f), c) }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) build({ write: process.argv.includes('--write') || CI })
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await build({ write: process.argv.includes('--write') || CI })

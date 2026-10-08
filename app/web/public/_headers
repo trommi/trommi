@@ -9,8 +9,10 @@
   Cache-Control: no-cache
 /index.html
   Cache-Control: no-cache
-# The stylesheet bundle of dev/build.mjs: its name changes with its content.
+# The stylesheet bundle and the app's modules (dev/build.mjs): their names change with their content.
 /gen/bundle.*
+  Cache-Control: public, max-age=31536000, immutable
+/gen/app/*
   Cache-Control: public, max-age=31536000, immutable
 # The sandboxed viewer for published pages (scripts of an agent's page run here, never in the app's origin).
 # (Cloudflare answers /frame.html with a redirect to /frame: the rule must name both.)

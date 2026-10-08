@@ -2,22 +2,32 @@
 // views' "hub"), the board (pages, forms, live pieces: every view registers its own), the router, the frame around a
 // page, the service worker's side (attachments, push, new versions). Importing it does nothing; index.html's import
 // starts it (boot, at the end).
-import * as auth from './auth.mjs'
-import * as agents from './agents.mjs'
 import * as desk from './desk.mjs'
-import * as card from './card.mjs'
-import * as session from './session.mjs'
 import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
-import * as media from './media.mjs'
-import * as whiteboard from './whiteboard.mjs'
 import { DRAWER_VEIL, SIDE_FOOT, cornerNote, phoneBar, sidebarRows, topbar } from './sidebar.mjs'
 import { Controller, WORDS, calm, controller, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
-import { roomScreen } from './auth.mjs'
 import { rowSheet } from './desk.mjs'
-import { showShare } from './media.mjs'
-const VIEWS = [auth, agents, desk, card, session, sidebar, notes, media, whiteboard]
+// The views a cold start needs (the Desk, its frame, the notes) come with this module; every other view is loaded
+// when an address of it is first asked for (LAZY: the addresses it answers), and all of them once the page is idle,
+// so a later navigation finds them in memory.
+const VIEWS = [desk, sidebar, notes]
+const LAZY = {
+  auth: { load: () => import('./auth.mjs'), paths: /^\/(?:settings\/(?:devices|account)|devices|pair|logout|join|login)(?:\/|$)/ },
+  agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings|agents|sessions\/)/ },
+  card: { load: () => import('./card.mjs'), paths: /^(?:\/s\/[^/]+)?\/(?:card|q|c)\/|^\/cards\/[0-9a-f]+\// },
+  session: { load: () => import('./session.mjs'), paths: /^\/s\// },
+  media: { load: () => import('./media.mjs'), paths: /^\/(?:assets|links|pages)(?:\/|$)/ },
+  whiteboard: { load: () => import('./whiteboard.mjs'), paths: /^\/scribble-board$/ },
+}
+const loaded = {}   // name -> the view's module, once loaded
+/** A lazy view's module (loaded once; registered on the board, when there is one, as it arrives). */
+function view(name) {
+  const v = LAZY[name]
+  v.promise ??= v.load().then(m => { loaded[name] = m; v.onLoad?.(m); return m }, err => { v.promise = null; throw err })
+  return v.promise
+}
 
 // ---- the app's version ----
 // The app's version, sent to the hub on every request as Trommi-Client: app/<version> (with Trommi-Protocol: 1, by
@@ -1031,6 +1041,8 @@ function createBoard({ hub, model, views }) {
 
   // Every view hooks itself in: its pages, forms and live pieces (and what it wires on the page once).
   for (const view of views) view.register?.(t)
+  // A lazy view hooks itself in when it arrives (asked for by an address, or loaded while the page was idle).
+  for (const [name, v] of Object.entries(LAZY)) { if (loaded[name]) loaded[name].register?.(t); v.onLoad = m => m.register?.(t) }
 
   /** One request of this page: a navigation (GET) or a form (POST). */
   async function request({ method = 'GET', path, form = null, headers = {} }) {
@@ -1038,6 +1050,7 @@ function createBoard({ hub, model, views }) {
     const req = { method, url: url.pathname + url.search, headers, form }
     const res = response()
     const p = url.pathname
+    for (const [name, v] of Object.entries(LAZY)) if (!loaded[name] && v.paths.test(p)) await view(name)
     const list = method === 'GET' ? gets : posts
     for (const { pattern, handler } of list) {
       const match = pattern.exec(p)
@@ -1095,7 +1108,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
   // page mounts nothing anew; the corner itself is the part "curl".
   if (view === 'whiteboard') parts.push({ key: 'pad', html: String(main) })
   else parts.push({ key: 'main', html: String(main) })
-  if (FRONT.has(view) && padKept && model) parts.push({ key: 'pad', html: String(whiteboard.whiteboardMain(model)) })
+  if (FRONT.has(view) && padKept && model && loaded.whiteboard) parts.push({ key: 'pad', html: String(loaded.whiteboard.whiteboardMain(model)) })
   if (FRONT.has(view) || view === 'whiteboard') parts.push({ key: 'curl', html: String(curlHTML(FRONT.has(view) ? 'desk' : 'pad', FRONT.has(view) ? `${base}/scribble-board` : `${base}${padFrom}`)) })
   if (mock) parts.push({ key: 'demo', html: '<span class="demo-band">Demo · <a href="/screens?mock=1" target="_blank" rel="noopener" title="Every screen of the app in the demo, for review">All screens</a> · <a href="/?mock=0" data-turbo="false" title="Leave the demo: back to your desks">leave</a></span>' })
   parts.push({ key: 'says', html: `<div class="says-host says-page" id="says-host" data-turbo-permanent>${says}</div>` })
@@ -1343,7 +1356,9 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     if (streams) { forget(streams); renderStreamMessage(streams) }
   }
   /** The Scribble Board under the Desk's sheet, from now on (the corner was touched): mounted once, kept. */
-  function keepPad() {
+  async function keepPad() {
+    if (padKept || !FRONT.has(page?.opts.view)) return
+    await view('whiteboard')
     if (padKept || !FRONT.has(page?.opts.view)) return
     padKept = true
     paintBody(bodyParts({ ...page.opts, base: '' }))
@@ -1615,6 +1630,9 @@ async function start(client, { fresh = false } = {}) {
   window.trommi.openMs = OPEN_MS
   window.trommi.readyAt = performance.now()   // since navigation start: cold or warm load to the painted page
   document.documentElement.dataset.ready = ''
+  // The other views, once the page is idle: the next navigation (a card, a session, the board) finds them in memory.
+  const idle = globalThis.requestIdleCallback ?? (f => setTimeout(f, 300))
+  idle(() => { for (const name of Object.keys(LAZY)) view(name).catch(err => console.warn('view', name, err)) }, { timeout: 3000 })
   // This tab became the writing tab (the one before it closed): the core is a new client from storage. Draw it whole
   // and fetch the open page's timeline again (the old client's windows went with it).
   client.on('reset', () => {
@@ -1646,14 +1664,14 @@ async function boot() {
   if (params.has('mock')) { params.delete('mock'); history.replaceState(history.state, '', `${location.pathname}${params.size ? `?${params}` : ''}${location.hash}`) }
   document.documentElement.classList.toggle('is-demo', Boolean(mock))
   // A link for someone outside the room (/a/<share_id>#…): its own small page, no room needed.
-  if (/^\/a\/[0-9a-f]{32}$/.test(location.pathname)) return showShare()
+  if (/^\/a\/[0-9a-f]{32}$/.test(location.pathname)) return (await view('media')).showShare()
   // A room that is stored but does not open is never shown as "not logged in": the start page would offer Log in, which
   // this storage refuses (it holds a room). The room screen says what failed and offers Retry and Log out of this device.
   let openError = null
   const client = await openClient().catch(err => { console.error('open', err); openError = err; return null })
   OPEN_MS = performance.now() - T0   // the room from storage (or the demo's fixture) in memory
   if (client) { keepStorage(); await start(client) }
-  else await roomScreen({ start: async (c, o) => { keepStorage(); return start(await adopt(c), o) }, hub: hubUrl(), openError })
+  else await (await view('auth')).roomScreen({ start: async (c, o) => { keepStorage(); return start(await adopt(c), o) }, hub: hubUrl(), openError })
 }
 if (typeof window !== 'undefined') boot()
 

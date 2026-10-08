@@ -1287,7 +1287,7 @@ controller('curl', class extends Controller {
     if (this.awake) return
     this.awake = true
     const router = window.trommi?.router
-    if (this.sideValue === 'desk') { router?.keepPad(); this.render() }
+    if (this.sideValue === 'desk') { this.render(); Promise.resolve(router?.keepPad()).then(() => this.render(), () => {}) }   // (the board's module may still be on its way)
     else router?.peek(this.toValue).then(html => {
       if (!html || !this.element.isConnected) return
       this.back.innerHTML = html.replace(/ data-(?:controller|action)="[^"]*"/g, '')
