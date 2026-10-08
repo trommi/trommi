@@ -201,7 +201,6 @@ struct ChatsScreen: View {
     }
     .listStyle(.plain)
     .scrollContentBackground(.hidden)
-    .barEdge()
     // helpers that were busy in the last day start unfolded
     .onAppear {
       guard !opened else { return }

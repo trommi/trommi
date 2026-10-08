@@ -186,14 +186,6 @@ extension View {
 }
 
 extension View {
-  /** Under the tab bar: content does not show through the glass (iOS 26's hard scroll edge; in dark the clear glass let
-   *  a card's words read through it). */
-  @ViewBuilder func barEdge() -> some View {
-    if #available(iOS 26.0, *) { self.scrollEdgeEffectStyle(.hard, for: .bottom) } else { self }
-  }
-}
-
-extension View {
   /** The bar at the bottom of a scrolling page (a composer, its pencil): iOS 26's safeAreaBar (the system reserves its
    *  height and gives the content a scroll edge under it), else a safe area inset. */
   @ViewBuilder func bottomBar<C: View>(@ViewBuilder _ content: () -> C) -> some View {
