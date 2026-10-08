@@ -197,7 +197,8 @@ function boardModel(state, agents = state.agents, desk = null) {
   if (desks) for (const a of everyone) if (!onDesk(a)) a.name = `${a.name} · ${desks.find(d => d.id === deskOf(a))?.name ?? ''}`
   const here = everyone.filter(a => !a.archived && onDesk(a))
   const byAgent = new Map(everyone.map(a => [a.id, a]))
-  const byCard = new Map(state.cards.map(c => [c.id, c]))
+  const byCard = cardsMemo(state.cards, 'byCard', () => new Map(state.cards.map(c => [c.id, c])))
+  const byNumber = cardsMemo(state.cards, 'byNumber', () => new Map(state.cards.map(c => [String(c.number), c])))
   const shelved = new Set(everyone.filter(a => a.archived).map(a => a.id))
 
   // The stack, in the hub's fixed order (oldest first). A card that is with its session (handed back, asked
@@ -215,27 +216,46 @@ function boardModel(state, agents = state.agents, desk = null) {
   const now = Date.now()
   // One pass over every card (a room holds thousands): Later, the Done rows, what is answered or shredded, and per
   // session how many of his answers it has not picked up.
-  const snoozed = [], landed = [], done = [], unheardOf = new Map()
-  for (const c of state.cards) {
-    if (!mine(c)) continue
-    if (c.status === 'open' && c.snoozed_until && !shelved.has(c.agent)) snoozed.push(c)
-    // Done rows: what the agents finished and he has not archived yet, the newest first (below the open questions).
-    if (c.landed && !shelved.has(c.agent)) landed.push(c)
-    if (c.status === 'shredded' || (c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)))) done.push(c)
-    if ((c.status === 'open' || c.status === 'decided') && heardOf(c, now)?.late) unheardOf.set(c.agent, (unheardOf.get(c.agent) ?? 0) + 1)
-  }
-  snoozed.sort((a, b) => (b.snoozed_at ?? 0) - (a.snoozed_at ?? 0))
-  landed.sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0))
-  const at = c => (c.status === 'shredded' ? c.shredded : c.decided) ?? 0
-  done.sort((a, b) => at(b) - at(a))
+  // (kept while no card changed and the sessions stand where they stood: cardsMemo; only "not picked up", which
+  //  depends on the clock, is counted again, over the few cards whose session has not heard of his answer)
+  const where = `${deskId} ${[...shelved]} ${everyone.map(a => `${a.id}:${deskOf(a)}`)}`
+  const { snoozed, unheard } = cardsMemo(state.cards, `board ${where}`, () => {
+    const snoozed = [], unheard = []
+    for (const c of state.cards) {
+      if (c.status === 'open' && c.snoozed_until && !shelved.has(c.agent) && mine(c)) snoozed.push(c)
+      if ((c.status === 'open' || c.status === 'decided') && c.heard === false && mine(c)) unheard.push(c)
+    }
+    snoozed.sort((a, b) => (b.snoozed_at ?? 0) - (a.snoozed_at ?? 0))
+    return { snoozed, unheard }
+  })
+  const { landed, done } = closedMemo(state, `board ${where}`, () => {
+    const landed = [], done = []
+    for (const c of state.cards) {
+      if (c.status === 'open' || !mine(c)) continue
+      // Done rows: what the agents finished and he has not archived yet, the newest first (below the open questions).
+      if (c.landed && !shelved.has(c.agent)) landed.push(c)
+      if (c.status === 'shredded' || ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read))) done.push(c)
+    }
+    landed.sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0))
+    const at = c => (c.status === 'shredded' ? c.shredded : c.decided) ?? 0
+    done.sort((a, b) => at(b) - at(a))
+    return { landed, done }
+  })
+  const unheardOf = new Map()
+  for (const c of unheard) if (heardOf(c, now)?.late) unheardOf.set(c.agent, (unheardOf.get(c.agent) ?? 0) + 1)
 
   // Per session: what waits on the human, whether it works, whether one of its questions knocks.
+  // (once: the open questions and the working status lines by session; a unit then reads only its own)
+  const freshBy = new Map(), workingBy = new Set()
+  for (const c of fresh) { const l = freshBy.get(c.agent); if (l) l.push(c); else freshBy.set(c.agent, [c]) }
+  for (const t of state.tasks) if (t.state === 'working') workingBy.add(t.agent)
   const summary = ids => {
-    const mine = fresh.filter(c => ids.has(c.agent))
-    const online = everyone.some(a => ids.has(a.id) && a.online)
-    const running = everyone.some(a => ids.has(a.id) && a.online && state.tasks.some(t => t.agent === a.id && t.state === 'working'))
+    const mine = [...ids].flatMap(id => freshBy.get(id) ?? [])
+    const of = everyone.filter(a => ids.has(a.id))
+    const online = of.some(a => a.online)
+    const running = of.some(a => a.online && workingBy.has(a.id))
     // stuck: one of its questions knocks (urgent card). blocked: the session itself is stopped (../blocked.mjs), { why, text }.
-    const blocked = everyone.filter(a => ids.has(a.id)).map(a => blockedOf(a, state, now)).find(Boolean) ?? null
+    const blocked = of.map(a => blockedOf(a, state, now)).find(Boolean) ?? null
     return { open: mine.length, online, running, stuck: mine.some(isKnock), blocked }
   }
   // One row per session; a session that names a main which stands here lies under it, one level deep.
@@ -270,7 +290,7 @@ function boardModel(state, agents = state.agents, desk = null) {
     blocked: units.filter(u => u.blocked).length,
     working: units.filter(u => u.online && u.running).length,
     deskName: all ? 'All desks' : desks?.find(d => d.id === deskId)?.name || 'Desk',
-    cardByRef: ref => state.cards.find(c => String(c.number) === String(ref)) ?? byCard.get(String(ref)) ?? null,
+    cardByRef: ref => byNumber.get(String(ref)) ?? byCard.get(String(ref)) ?? null,
   }
 }
 
@@ -382,6 +402,27 @@ function parentClaim(m, s) {
 }
 const agentIdOf = s => (s.agent_session_id && !/^[0-9a-f]{12,}$/.test(s.agent_session_id) ? s.agent_session_id : sessionKey(s).slice(0, SESSION_ID_LEN))
 
+/**
+ * A value worked out from the board's card list alone, kept while that list is the same object (BoardState.update
+ * hands the previous list on when no card changed). key: the other inputs, as a string; fn: the work.
+ */
+const memos = new WeakMap()
+export function cardsMemo(cards, key, fn) {
+  let m = memos.get(cards)
+  if (!m) memos.set(cards, m = new Map())
+  if (!m.has(key)) m.set(key, fn())
+  return m.get(key)
+}
+
+/** The same for what depends only on the closed cards (answered, done, shredded): kept while no closed card changed,
+ *  so a new open card or an answer to one does not sort the thousands of closed ones again (state.closedGen). */
+let closedKept = { gen: -1, m: new Map() }
+export function closedMemo(state, key, fn) {
+  if (closedKept.gen !== state.closedGen) closedKept = { gen: state.closedGen, m: new Map() }
+  if (!closedKept.m.has(key)) closedKept.m.set(key, fn())
+  return closedKept.m.get(key)
+}
+
 export class BoardState {
   constructor(client) {
     this.client = client
@@ -395,20 +436,25 @@ export class BoardState {
     this.allMsgs = null
     this.state = null
     this.version = 0
+    this.closedGen = 0             // counts up whenever a closed card (or one that was closed) changes: closedMemo
   }
   get model() { return this.client.model }
 
   /** After a change of the core (or with no change: everything). Returns the new state object. */
   update(change = null) {
     const m = this.model
-    if (!change) { this.cardCache.clear(); this.eventCache.clear() }
+    // (touched: some card's board form must be made again; without, the card list of the last state is handed on)
+    let touched = !change || change.cards.size > 0 || change.permissions.size > 0
+    const wasClosed = id => { const b = this.cardCache.get(id); if (b && b.status !== 'open') this.closedGen++ }
+    const drop = id => { wasClosed(id); if (this.cardCache.delete(id)) touched = true }
+    if (!change) { this.cardCache.clear(); this.eventCache.clear(); this.closedGen++ }
     else {
-      for (const id of change.cards) { this.cardCache.delete(id); this.eventCache.delete(id) }
-      for (const id of change.permissions) this.cardCache.delete(id)
+      for (const id of change.cards) { wasClosed(id); this.cardCache.delete(id); this.eventCache.delete(id) }
+      for (const id of change.permissions) { wasClosed(id); this.cardCache.delete(id) }
       for (const key of change.registers) {
         const at = key.indexOf('/'), kind = key.slice(0, at), id = key.slice(at + 1)
-        if (kind === 'draft' || kind === 'snooze' || kind === 'duck' || kind === 'archived') this.cardCache.delete(id)
-        if (kind === 'session' || key === 'crown') { this.cardCache.clear(); this.eventCache.clear() }   // agent ids and names change
+        if (kind === 'draft' || kind === 'snooze' || kind === 'duck' || kind === 'archived') drop(id)
+        if (kind === 'session' || key === 'crown') { this.cardCache.clear(); this.eventCache.clear(); touched = true; this.closedGen++ }   // agent ids and names change
       }
     }
     // Agents (sessions) and their ids on the board. A card's board form names its agent: only when that naming
@@ -416,28 +462,48 @@ export class BoardState {
     const devToAgent = new Map(), agentToDev = new Map()
     for (const s of sessionsOf(m)) { const id = agentIdOf(s), key = sessionKey(s); devToAgent.set(key, id); agentToDev.set(id, key) }
     const naming = [...devToAgent].join()
-    if (naming !== this.naming) { this.naming = naming; this.cardCache.clear(); this.eventCache.clear() }
+    if (naming !== this.naming) { this.naming = naming; this.cardCache.clear(); this.eventCache.clear(); touched = true; this.closedGen++ }
     this.devToAgent = devToAgent; this.agentToDev = agentToDev
     this.forgetMessages(change, m, !this.eventCache.size)
     // Card numbers: the order cards (and permission requests) were first filed in, from 1. Never reused, the same on
     // every device. Sorted again only when a card or request came that was not numbered yet.
     const fresh = !change || !this.numberOf || [...change.cards, ...change.permissions].some(id => !this.numberOf.has(id)) || m.cards.size + m.permissions.size !== this.numberOf.size
-    if (fresh) {
+    // (the common case, a card filed after all the others: it takes the next number, nothing is sorted again)
+    const newIds = fresh && change && this.numberOf ? [...change.cards, ...change.permissions].filter(id => !this.numberOf.has(id)) : null
+    const firstOf = id => m.cards.get(id)?.first_envelope_number ?? m.permissions.get(id)?.envelope_number
+    const appended = newIds && newIds.length && m.cards.size + m.permissions.size === this.numberOf.size + newIds.length &&
+      newIds.every(id => Number.isFinite(firstOf(id)) && firstOf(id) > this.lastNumbered)
+    if (appended) {
+      for (const id of newIds.sort((a, b) => firstOf(a) - firstOf(b))) {
+        this.numberOf.set(id, this.numberOf.size + 1)
+        ;(m.cards.has(id) ? this.order : this.permOrder).push(id)
+        this.lastNumbered = firstOf(id)
+      }
+    } else if (fresh) {
       const numbered = [...[...m.cards.values()].map(c => [c.first_envelope_number, c.object_id, 0]), ...[...m.permissions.values()].map(p => [p.envelope_number, p.object_id, 1])].sort((a, b) => a[0] - b[0])
       this.numberOf = new Map(numbered.map(([, id], i) => [id, i + 1]))
       this.order = numbered.filter(x => !x[2]).map(x => x[1])
       this.permOrder = numbered.filter(x => x[2]).map(x => x[1])
+      this.lastNumbered = numbered.length ? numbered.at(-1)[0] : -Infinity
     }
     const numberOf = this.numberOf
-    const all = this.order.map(id => m.cards.get(id)).filter(Boolean)
-    const perms = this.permOrder.map(id => m.permissions.get(id)).filter(Boolean)
-    const cards = []
-    for (const c of all) { let b = this.cardCache.get(c.object_id); if (!b || b.number !== numberOf.get(c.object_id)) { b = this.boardCard(c, numberOf.get(c.object_id)); this.cardCache.set(c.object_id, b) } cards.push(b) }
-    for (const p of perms) { let b = this.cardCache.get(p.object_id); if (!b) { b = this.permissionCard(p, numberOf.get(p.object_id)); this.cardCache.set(p.object_id, b) } cards.push(b) }
-    this.byId = new Map(cards.map(c => [c.id, c]))
+    const prev = this.state?.cards
+    // No card named by the change and none to number: the list stands as it was (a chat message, a status line, presence
+    // cost nothing per card here; archived/<id> without a cached row is a change too: drop() says so).
+    const keep = !touched && !fresh && prev && change?.registers && ![...change.registers].some(k => k.startsWith('archived'))
+    const all = keep ? [] : this.order.map(id => m.cards.get(id)).filter(Boolean)
+    const perms = keep ? [] : this.permOrder.map(id => m.permissions.get(id)).filter(Boolean)
+    let cards = []
+    let same = Boolean(prev && (keep || prev.length === all.length + perms.length))
+    for (const c of all) { let b = this.cardCache.get(c.object_id); if (!b || b.number !== numberOf.get(c.object_id)) { if (b) wasClosed(c.object_id); b = this.boardCard(c, numberOf.get(c.object_id)); if (b.status !== 'open') this.closedGen++; this.cardCache.set(c.object_id, b) } if (same && prev[cards.length] !== b) same = false; cards.push(b) }
+    for (const p of perms) { let b = this.cardCache.get(p.object_id); if (!b) { b = this.permissionCard(p, numberOf.get(p.object_id)); if (b.status !== 'open') this.closedGen++; this.cardCache.set(p.object_id, b) } if (same && prev[cards.length] !== b) same = false; cards.push(b) }
+    // No card changed (a chat message, a status line, presence): the same list object, so everything derived from the
+    // cards alone (cardsMemo: the Desk's places, the end list) is reused instead of worked out over thousands again.
+    if (same || keep) cards = prev
+    else this.byId = new Map(cards.map(c => [c.id, c]))
     const agents = this.agents()
     const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
-    const queue = cards.filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until).sort((a, b) => a.created - b.created || a.number - b.number).map(c => c.id)
+    const queue = cardsMemo(cards, `queue ${[...shelved]}`, () => cards.filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until).sort((a, b) => a.created - b.created || a.number - b.number).map(c => c.id))
     const tasks = []
     for (const s of sessionsOf(m)) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     // (the order he dragged them into in the menu: each desk's register holds its place, order; a desk made since then
@@ -448,10 +514,13 @@ export class BoardState {
     const notes = boardNotes(m)
     // Published objects (an agent's publish): the first attachment is the thing itself; type by its media type.
     const assetType = t => (t === 'text/html' ? 'html' : t.startsWith('image/') ? 'image' : t.startsWith('video/') ? 'video' : t.startsWith('audio/') ? 'audio' : 'file')
-    const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => { const a = p.attachments?.[0]; return { id: p.object_id, agent: devToAgent.get(keyOf(p)), type: assetType(String(a?.media_type ?? '')), title: p.title, note: p.note ?? '', size: a?.total_size ?? 0, att: this.att(a), envelope_number: p.envelope_number, created: p.sent_at ?? 0 } })
+    // (the same list while no published object changed and the sessions are named as they were: views keep what they
+    //  made of it, ui.mjs galleryItems)
+    const assets = change && !change.published?.size && !change.members && this.state?.assets && this.assetsNaming === naming ? this.state.assets : [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => { const a = p.attachments?.[0]; return { id: p.object_id, agent: devToAgent.get(keyOf(p)), type: assetType(String(a?.media_type ?? '')), title: p.title, note: p.note ?? '', size: a?.total_size ?? 0, att: this.att(a), envelope_number: p.envelope_number, created: p.sent_at ?? 0 } })
+    this.assetsNaming = naming
     const self = this
     const state = {
-      cards, queue, agents, tasks, desks, notes, assets, pending: [], hub: {}, speech: false,
+      cards, queue, closedGen: this.closedGen, agents, tasks, desks, notes, assets, pending: [], hub: {}, speech: false,
       get messages() { return (self.allMsgs ??= self.messages(cards)) },
       messagesOf: agent => self.messagesOf(agent),
       messagesOfCard: id => self.messagesOfCard(id),

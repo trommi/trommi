@@ -1,7 +1,7 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
-import { BASE, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
+import { BASE, closedMemo, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
 import { lastUndo, undoLast } from './ui.mjs'
 import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, artifactItems, avatar, calm, cardNr, controller, deskRow, el, act, html, isKnock, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
@@ -175,22 +175,41 @@ function stackOf(card, { now = Date.now(), online = () => true } = {}) {
   return null
 }
 
-/** The four places with their cards, the newest first: { later, revising, acting, done, trash }. */
+/** The four places with their cards, the newest first: { later, revising, acting, done, trash }. Once per model;
+ *  the closed cards' places are kept while no card changed, the sessions are as online as they were and no answered
+ *  card has passed ACTING_MS since (app.mjs cardsMemo: a chat message does not sort thousands of cards again). */
+const stacksOfModel = new WeakMap()
 function stackCards(model) {
+  if (stacksOfModel.has(model)) return stacksOfModel.get(model)
   const { state, byAgent } = model
   // (A card lies where its session stands now: the model's rule, app.mjs boardModel.)
   const mine = c => model.onDesk(byAgent.get(c.agent))
   const newest = (cards, at) => [...cards].sort((a, b) => (at(b) ?? 0) - (at(a) ?? 0))
-  const closed = state.cards.filter(c => c.status !== 'open' && mine(c))
   // (A session that is cut off still runs: what it was given, or was to be given, stays with it.)
-  const ctx = { now: Date.now(), online: id => Boolean(byAgent.get(id)?.online) || linkOf(byAgent.get(id))?.state === 'cut' }
-  return {
+  const online = id => Boolean(byAgent.get(id)?.online) || linkOf(byAgent.get(id))?.state === 'cut'
+  const now = Date.now()
+  const ctx = { now, online }
+  const key = `stacks ${model.desk} ${model.everyone.map(a => `${a.id}:${model.onDesk(a) ? 1 : 0}${online(a.id) ? 1 : 0}`)}`
+  let closedPlaces = closedMemo(state, key, () => ({ until: 0 }))
+  if (now >= closedPlaces.until) {
+    const closed = state.cards.filter(c => c.status !== 'open' && mine(c))
+    // (an answered card counts as worked on for ACTING_MS: the places hold until the first such card passes it)
+    let until = Infinity
+    for (const c of closed) if (c.status === 'decided' && c.decided && now - c.decided < ACTING_MS) until = Math.min(until, c.decided + ACTING_MS)
+    closedPlaces = Object.assign(closedPlaces, {
+      until,
+      acting: newest(closed.filter(c => c.status === 'decided' && stackOf(c, ctx) === 'works'), c => c.decided),
+      done: newest(closed.filter(c => stackOf(c, ctx) === 'done' && !c.landed), c => c.decided),
+      trash: newest(closed.filter(c => stackOf(c, ctx) === 'trash'), c => (c.status === 'shredded' ? c.shredded : c.created)),
+    })
+  }
+  const out = {
     later: model.snoozed.filter(c => stackOf(c, ctx) === 'later'),
     revising: model.revising.filter(c => stackOf(c, ctx) === 'works'),
-    acting: newest(closed.filter(c => c.status === 'decided' && stackOf(c, ctx) === 'works'), c => c.decided),
-    done: newest(closed.filter(c => stackOf(c, ctx) === 'done' && !c.landed), c => c.decided),
-    trash: newest(closed.filter(c => stackOf(c, ctx) === 'trash'), c => (c.status === 'shredded' ? c.shredded : c.created)),
+    acting: closedPlaces.acting, done: closedPlaces.done, trash: closedPlaces.trash,
   }
+  stacksOfModel.set(model, out)
+  return out
 }
 
 // ---- with the agents: the cards being worked on stay in the stack (his pick B, 4 October) ----
@@ -224,16 +243,8 @@ function workItems(model) {
     return { card, sender, line, at: (card.status === 'open' ? card.with_agent : card.decided) ?? 0 }
   }).filter(i => i.sender).sort((a, b) => (b.line?.updated ?? b.at) - (a.line?.updated ?? a.at))
 }
-function withAgents(model, base) {
-  const cards = stackCards(model)
-  const working = (model.state.tasks ?? []).filter(t => t.state === 'working')
-  const items = [...cards.revising, ...cards.acting].map(card => {
-    const sender = model.byAgent.get(card.agent)
-    const line = working.find(t => t.card_id === card.id) ?? working.filter(t => t.agent === card.agent && !t.card_id).sort((a, b) => b.updated - a.updated)[0] ?? null
-    return { card, sender, line, at: (card.status === 'open' ? card.with_agent : card.decided) ?? 0 }
-  }).filter(i => i.sender).sort((a, b) => (b.line?.updated ?? b.at) - (a.line?.updated ?? a.at))
+function withAgents() {
   // (one list, his word 8 October: the work stands at the top of Off your mind, endList; this keeps the stream's place)
-  void items
   return html`<section id="desk-ip" class="tail" hidden></section>`
 }
 
@@ -254,7 +265,7 @@ ${shopMark(g)}<a class="inbox-revising-open off-open" data-nav href="${cardPath(
 /** The places at the foot of the Desk (#desk-stacks). open: the one that stands fanned out with all its sheets
  *  ('later' | 'works' | 'done' | 'trash'), from ?pile=. q: words searched for in the open one (title, session's name,
  *  the grey line: answer, last word, why). All four always stand, an empty one faint: nothing shifts when a card arrives. */
-function offSheets(model) {
+function offParts(model) {
   const { state } = model
   const cards = stackCards(model)
   const ctx = { now: Date.now(), online: id => Boolean(model.byAgent.get(id)?.online) }
@@ -275,14 +286,21 @@ function offSheets(model) {
   // (A card his own answer settled, a final option, says so on its line: no agent closed it.)
   const answered = c => Object.assign(sheet(c, 'answered', () => `${answerOf(c)}${c.settled ? ` · ${SETTLED.toLowerCase()}` : c.status === 'done' && c.kind !== 'info' ? ' · done by the agent' : c.status === 'decided' && stackOf(c, ctx) === 'done' ? ' · not closed by the agent' : ''}`), c.settled ? { why: SETTLED.toLowerCase() } : {})
   const thrown = c => (c.status === 'shredded' ? sheet(c, 'shredded', () => 'Shredded') : sheet(c, 'withdrawn', () => `Withdrawn${c.summary ? `: ${plain(c.summary, state.assets).slice(0, 220)}` : ''}`))
-  const piles = [
-    { kind: 'later', word: 'Later', sheets: cards.later.map(c => sheet(c, 'later', () => until(c))) },
-    { kind: 'works', word: 'In the works', sheets: [...cards.revising.map(c => sheet(c, 'asked', () => lastWord(c))), ...cards.acting.map(answered)] },
-    { kind: 'done', also: 'answered', word: 'Done', sheets: cards.done.map(answered) },
-    { kind: 'trash', word: 'Trash', bin: true, sheets: cards.trash.map(thrown) },
-  ]
-  // Off the desk: Snoozed, Done and Trash in one list, the newest first (what is being worked on stands on the Desk: withAgents).
-  return piles.filter(p => p.kind !== 'works').flatMap(p => p.sheets.map(s => Object.assign(s, { g: p.kind }))).sort((a, b) => b.at - a.at)
+  // Off the desk: Snoozed, Done and Trash, each the newest first (what is being worked on stands on the Desk: withAgents).
+  // The closed cards' sheets are made once per list of them (stackCards keeps that list while nothing changed).
+  const later = cards.later.map(c => Object.assign(sheet(c, 'later', () => until(c)), { g: 'later' })).sort((a, b) => b.at - a.at)
+  let closed = closedSheets.get(cards.done)
+  if (!closed || closed.trash !== cards.trash) {
+    closed = { trash: cards.trash, list: [...cards.done.map(c => Object.assign(answered(c), { g: 'done' })), ...cards.trash.map(c => Object.assign(thrown(c), { g: 'trash' }))].sort((a, b) => b.at - a.at) }
+    closedSheets.set(cards.done, closed)
+  }
+  return { later, closed: closed.list }
+}
+const closedSheets = new WeakMap()
+/** Everything off the desk in one list, the newest first (the page /stacks/off, its search). */
+function offSheets(model) {
+  const { later, closed } = offParts(model)
+  return [...later, ...closed].sort((a, b) => b.at - a.at)
 }
 /** The foot of the Desk: Artifacts; on its own page (/stacks/off, the end list's "All") the whole list of what
  *  left the Desk, with its search. */
@@ -307,11 +325,14 @@ const BOX_TICK = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true
 /** The end list. On the Desk the first five rows and "Show more"; full (the page /stacks/off): every row, with its search. */
 function endList(model, base, { full = false, q = '' } = {}) {
   const open = (model.landed ?? []).map(card => ({ card, g: 'open', at: card.finished ?? 0, said: card.summary ? plain(card.summary, model.state.assets) : 'Done' }))
-  const rest = offSheets(model)
+  const { later, closed } = offParts(model)
   const works = workItems(model).map(i => ({ card: i.card, g: 'works', at: i.line?.updated ?? i.at, said: `${i.sender.name}${i.line?.label ? ` · ${i.line.label}` : ' is on it'}` }))
-  let items = [...works, ...open, ...rest.filter(s => s.g === 'later'), ...rest.filter(s => s.g !== 'later')]
   const id = full ? 'off-end' : 'desk-end'
   const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  // (the Desk shows the first END_STEP: only so many of the thousands closed are taken, the count says the rest)
+  const whole = full || terms.length
+  let items = [...works, ...open, ...later, ...(whole ? closed : closed.slice(0, END_STEP))]
+  const total = whole ? items.length : works.length + open.length + later.length + closed.length
   if (terms.length) items = items.filter(s => terms.every(w => `${s.card.title} ${model.byAgent.get(s.card.agent)?.name ?? ''} ${s.said}`.toLowerCase().includes(w)))
   if (!items.length && !full) return html`<section id="${id}" class="endlist" hidden></section>`
   // (a box he ticked himself can be unticked: Archive taken back; a card closed by his answer stays ticked)
@@ -328,7 +349,7 @@ function endList(model, base, { full = false, q = '' } = {}) {
   return html`<section id="${id}" class="endlist${full ? ' is-full' : ''}" aria-label="Off your mind">
 <div class="end-divider" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span>Off your mind</span></div>
 <ol class="end-rows">${(full ? items : items.slice(0, END_STEP)).map(row)}</ol>${full && !items.length ? html`<p class="end-none">${terms.length ? 'Nothing here has these words.' : 'Nothing yet.'}</p>` : ''}
-${!full && items.length > END_STEP ? html`<div class="end-foot"><a class="end-show" data-nav href="${base}/stacks/off">Show more</a></div>` : ''}
+${!full && (terms.length ? items.length : total) > END_STEP ? html`<div class="end-foot"><a class="end-show" data-nav href="${base}/stacks/off">Show more</a></div>` : ''}
 </section>`
 }
 

@@ -891,9 +891,17 @@ controller('log', class extends Controller {
     this.seen.observe(this.logTarget, { childList: true, subtree: true })
     this.sizes = new ResizeObserver(() => this.paint())
     this.sizes.observe(this.logTarget)
+    // The open questions out of sight, told by an IntersectionObserver (measuring every question on each scroll and each
+    // new message laid the page out again and again: long tasks in a long conversation).
+    this.asks = new Map()     // .ask-card -> { away, below }
+    this.askSeen = new IntersectionObserver(seen => {
+      for (const e of seen) this.asks.set(e.target, { away: !e.isIntersecting, below: e.boundingClientRect.top > (e.rootBounds?.top ?? 0) })
+      this.paintOpen()
+    }, { root: this.logTarget, rootMargin: '-48px 0px -48px 0px' })
+    for (const n of this.logTarget.querySelectorAll('.ask-card')) this.askSeen.observe(n)
     requestAnimationFrame(() => setTimeout(() => { if (!this.hasLogTarget || !this.logTarget.isConnected) return; this.height ??= this.logTarget.scrollHeight; this.paint() }, 0))
   }
-  disconnect() { this.seen?.disconnect(); this.sizes?.disconnect(); this.near?.disconnect() }
+  disconnect() { this.seen?.disconnect(); this.sizes?.disconnect(); this.near?.disconnect(); this.askSeen?.disconnect() }
 
   // An "Earlier messages" link near the top of what is in view: followed (its frame brings the window before it).
   earlierTargetConnected(link) {
@@ -926,8 +934,10 @@ controller('log', class extends Controller {
   arrived(list) {
     const log = this.logTarget
     let fresh = 0
+    for (const change of list) for (const node of change.removedNodes) if (node.nodeType === 1 && this.asks) for (const n of node.matches('.ask-card') ? [node] : node.querySelectorAll('.ask-card')) { this.asks.delete(n); this.askSeen.unobserve(n) }
     for (const change of list) for (const node of change.addedNodes) {
       if (node.nodeType !== 1) continue
+      if (this.askSeen) for (const n of node.matches('.ask-card') ? [node] : node.querySelectorAll('.ask-card')) this.askSeen.observe(n)
       localise(node.matches('time, .day') ? node.parentNode : node)
       // What is put in at the log's end (before its end mark) is new; anything else replaces what stood there, or is earlier.
       if (change.nextSibling?.id?.startsWith?.('log-end-') && node.matches('.msg-agent, .ask, .event')) fresh++
@@ -960,9 +970,10 @@ controller('log', class extends Controller {
   // The open questions of the conversation that are out of sight, and which of them comes next.
   paintOpen() {
     if (!this.hasOpenTarget) return
-    const box = this.logTarget.getBoundingClientRect()
-    const away = [...this.logTarget.querySelectorAll('.ask-card')].map(node => ({ node, r: node.getBoundingClientRect() })).filter(({ r }) => r.bottom < box.top + 48 || r.top > box.bottom - 48)
-    const below = away.find(({ r }) => r.top > box.top)
+    // (in the order they stand in the log, as the observer last saw them)
+    const away = [...(this.asks ?? [])].filter(([node, r]) => r.away && node.isConnected).map(([node, r]) => ({ node, r }))
+      .sort((a, b) => (a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+    const below = away.find(({ r }) => r.below)
     this.next = (below ?? away.at(-1))?.node ?? null
     this.openTarget.hidden = !this.next
     if (!this.next) return
