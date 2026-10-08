@@ -103,6 +103,22 @@ Apple ID, the phone in your hand); after that, building and shipping are command
    `ship.sh` builds a release, signs (creates the distribution certificate and profile on its first run), validates
    offline, uploads; it never submits for review. Without `--upload` it proves the pipeline with a local test identity.
 
+## Push (APNs)
+
+`Sources/TrommiApp/Push.swift`: on the first start with a room the app asks for notifications, registers with Apple
+and hands its device token to the hub of every room on the phone (`POST push_subscriptions { apns }`, README "Push"),
+with a 32-byte key of its own (`push.key` next to the rooms). Apple sees a fixed text ("Eine neue Frage."); the hub's
+message rides along sealed under that key. A push in the foreground shows as a banner; arriving or tapped, it refreshes
+the board. No Notification Service Extension: the text says nothing, so nothing has to be decrypted before it shows.
+
+- `TrommiApp.entitlements` (`entitlementsPath` in `xtool.yml`) says `aps-environment: development`. xtool reads it from
+  the signed binary and turns on Push Notifications for the App ID (`XTL-70CB783D.com.trommi.ios` on the paid team)
+  before it fetches the development profile; the app then gets sandbox tokens and says `environment: sandbox`
+  (read from `embedded.mobileprovision`). A store build needs `production` there.
+- The hub sends only when it has the team's APNs key (`APNS_*`, README "Push"); `APNS_TOPIC` must list the installed
+  bundle id (`XTL-70CB783D.com.trommi.ios` for xtool builds). Without it the hub refuses the registration, and the app
+  tries again the next time it comes to the front.
+
 ## Not in the spike (the MVP's list)
 
 - Device key in the Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`), not a file in Application Support.
@@ -110,7 +126,7 @@ Apple ID, the phone in your hand); after that, building and shipping are command
   envelope 0 on every refresh.
 - The rest of the model: timelines (chat), registers (status lines, session names, desks), permission requests,
   decide again, notes, attachments, snapshots, alerts; freshness (R3) on live envelopes.
-- Push (APNs: the hub sends Web Push only today), creating an account, the Emergency Kit and "Forgot password",
+- Creating an account, the Emergency Kit and "Forgot password",
   recovery. The email + password login is here (`Room.signInWithPassword`); a later hub step ("check your email") goes
   into `Room.loginAnswer` and `LoginOutcome`.
 - A re-seal that fails after the device added itself is not retried (the JS core keeps `reseal_pending`).
