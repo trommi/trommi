@@ -74,7 +74,7 @@ the entry `app-<hash>.mjs` with app, ui, desk, sidebar and notes, one chunk per 
 repository's `shared/` as chunks of its own, the demo, `core-worker-<hash>.mjs`, the core's worker in one file
 (the app learns its address from `__TROMMI_CORE_WORKER__`; the dev server starts `/gen/vendor/core-worker.mjs`), the
 account screens' part of it, `core-worker-account-<hash>.mjs` (loaded only by them), and `core-start-<hash>.mjs`, which
-`index.html` runs before the entry to start the worker; every
+`index.html` runs first, async and before its style sheets (so the worker is fetched beside them), to start the worker; every
 name carries its content's hash, `_headers` keeps them immutable), `public/gen/vendor/tools-reference.mjs` (the connector's tools and events for the help page), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
 order: `app.css` first), `public/gen/build.txt` (the commit; the Web app deploy workflow waits until app.trommi.com
 serves it), the script and the modulepreload list of `index.html` (the entry with `?v=<build>`, the page's side of the

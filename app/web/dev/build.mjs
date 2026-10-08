@@ -254,7 +254,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   let modules
   if (js) {
     html = html.replace(/<script type="module" src="\/app\.mjs"><\/script>/, `<script type="module" src="/${js.entry}"></script>`)
-      .replace('<script type="module" src="/gen/vendor/core-start.mjs"></script>', `<script type="module" src="/${js.start}"></script>`)
+      .replace('<script type="module" async src="/gen/vendor/core-start.mjs"></script>', `<script type="module" async src="/${js.start}"></script>`)
     modules = js.first.map(f => `/${f}`)
   } else {
     const read = f => { const rel = f.replace(/^\//, ''); return rel in out ? out[rel] : fs.existsSync(path.join(pub, rel)) ? fs.readFileSync(path.join(pub, rel), 'utf8') : null }
@@ -265,7 +265,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
     // (?v=<build> on the addresses index.html names itself; the bundle's chunks are named by their content and imported
     // without it, so their preloads must not carry it either: the browser keys modules by the whole address)
     .replace(/(<link rel="modulepreload" href="[^"?]+\.mjs)"/g, (all, head) => (js && head !== `<link rel="modulepreload" href="/${js.entry}` ? all : `${head}?v=${version}"`))
-    .replace(/(<script type="module" src="\/[^"?]+\.mjs)"/g, `$1?v=${version}"`)
+    .replace(/(<script type="module"(?: async)? src="\/[^"?]+\.mjs)"/g, `$1?v=${version}"`)
   if (js && !out['index.html'].includes(`src="/${js.entry}?v=`)) throw new Error('index.html: the <script type="module" src="/app.mjs"> is missing')
   // (the sources as modules of their own, dev server only: with the same versioned addresses; the bundle's chunks are
   // named by their content)
@@ -283,8 +283,9 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
     const map = JSON.stringify({ integrity: Object.fromEntries(pageModules.map(f => [`/${f}`, sri(f)])) })
     const importmap = `<script type="importmap">${map}</script>`
     out['index.html'] = out['index.html']
-      .replace(`<!-- preload ${version} -->\n`, `<!-- preload ${version} -->\n${importmap}\n`)
-      .replace(/<(link rel="modulepreload"|script type="module") (href|src)="\/(gen\/app\/[^"?]+\.mjs)(\?v=\w+)?"/g, (all, tag, attr, f, q = '') => (f in out ? `<${tag} ${attr}="/${f}${q}" integrity="${sri(f)}"` : all))
+      // (before core-start, the first module script: a page takes no import map after its first module script)
+      .replace(`<script type="module" async src="/${js.start}`, `${importmap}\n<script type="module" async src="/${js.start}`)
+      .replace(/<(link rel="modulepreload"|script type="module"(?: async)?) (href|src)="\/(gen\/app\/[^"?]+\.mjs)(\?v=\w+)?"/g, (all, tag, attr, f, q = '') => (f in out ? `<${tag} ${attr}="/${f}${q}" integrity="${sri(f)}"` : all))
     const mapHash = `'sha256-${crypto.createHash('sha256').update(map).digest('base64')}'`
     const headers = fs.readFileSync(path.join(pub, '_headers'), 'utf8')
     out['_headers'] = headers.replace(/^(\/\*\n\s+Content-Security-Policy: .*?script-src [^;]*)/m, `$1 ${mapHash}`)

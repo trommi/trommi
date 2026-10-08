@@ -11,6 +11,9 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/trommi-180.png">
 <script>try{var m=localStorage.getItem('agent-board-theme')||'system',r=document.documentElement;r.dataset.themeMode=m;if(m==='dark'||(m!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches))r.dataset.theme='dark';if(localStorage.getItem('trommi-rail')==='folded')r.dataset.rail='folded'}catch(e){}</script>
+<script type="module" async src="/gen/vendor/core-start.mjs"></script>
+<!-- preload -->
+<!-- /preload -->
 <link rel="stylesheet" href="/fonts/fallback.css">
 <link rel="stylesheet" href="/app.css">
 <link rel="stylesheet" href="/sidebar.css">
@@ -22,9 +25,6 @@
 <link rel="stylesheet" href="/media.css">
 <link rel="stylesheet" href="/auth.css">
 <link rel="stylesheet" href="/whiteboard.css">
-<!-- preload -->
-<!-- /preload -->
-<script type="module" src="/gen/vendor/core-start.mjs"></script>
 <script type="module" src="/app.mjs"></script>
 </head>
 <body data-view="chat" data-scope="all" data-t-view="desk" data-t-base="">
