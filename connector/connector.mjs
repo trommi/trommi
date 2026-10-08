@@ -1020,7 +1020,7 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
       }
       if (err?.code === 'client-too-old' || err?.code === 'upgrade_required') {
         me.phase = 'too-old'
-        me.error = `The Trommi hub needs a newer connector than ${CLIENT}: update the repository (git pull in ${path.dirname(path.dirname(new URL(import.meta.url).pathname))}) and restart the session. Nothing is sent or acted on until then.`
+        me.error = `The Trommi hub needs a newer connector than ${CLIENT}: ${BUNDLED ? 'update the trommi plugin (or run the connect script again), then /mcp → trommi → Reconnect' : `update the repository (git pull in ${path.dirname(path.dirname(new URL(import.meta.url).pathname))}) and restart the session`}. Nothing is sent or acted on until then.`
         log(me.error)
         return onTooOld(me)
       }
