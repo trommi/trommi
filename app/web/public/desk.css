@@ -1378,3 +1378,22 @@ button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
 #inbox .inbox-row:is(:hover, :focus-within, [aria-selected="true"]) .row-mark, body[data-selecting] #inbox .inbox-row .row-mark { opacity: 1; }
 @media (max-width: 860px) { #inbox .inbox-row .row-mark { display: none; } }
 @media (max-width: 860px) { html body #inbox .inbox-row .inbox-text .inbox-body, html body #inbox .inbox-row .inbox-body-text { display: none !important; } html body #inbox .inbox-row .inbox-text.has-sender { padding-left: 0 !important; } }
+
+/* ---- the Desk's foot: the last four artifacts in a row (his pick "row", 8 October); a phone two by two ---- */
+#desk-stacks:has(> .df-cards) { display: block; }
+.df-cards { margin-top: var(--s-6); text-align: left; }
+.df-cards .end-divider { display: flex; margin-bottom: 8px; }
+.df-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.df-card { display: grid; gap: 6px; min-width: 0; color: var(--fg); text-decoration: none; }
+.df-thumb { position: relative; display: block; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 10px; box-shadow: 0 0 0 1px var(--line-strong); background: var(--sunken); }
+.df-thumb img, .df-thumb video { width: 100%; height: 100%; object-fit: cover; object-position: top left; display: block; }
+.df-thumb > * { width: 100%; height: 100%; }
+.df-page { display: grid; align-content: start; gap: 5px; padding: 10px; box-sizing: border-box; background: #fffdf6 center/cover; }
+.df-page b { font: 700 11px/1.2 var(--font); color: #222; }
+.df-page i { height: 3px; border-radius: 2px; background: #ddd8c8; }
+.df-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 var(--t-sm)/1.3 var(--font); }
+.df-card:hover .df-title { text-decoration: underline; }
+.df-all { display: inline-block; margin-top: 10px; color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; }
+.df-all .off-count { color: var(--muted); font-weight: 500; }
+@media (max-width: 860px) { .df-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+html body #desk-stacks:has(> .df-cards) { display: block !important; width: auto !important; padding: 0 !important; } html body #desk-stacks > .df-cards { width: 100%; max-width: none; box-sizing: border-box; } html body #desk-stacks .df-row { width: 100%; } html body #desk-stacks .df-card { width: auto; }
