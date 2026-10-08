@@ -96,9 +96,10 @@ exit 0`
   return proc
 }
 
-/** Start one headless Chromium with its own throwaway profile. */
-export async function launchChromium({ width = 1440, height = 900, args = [] } = {}) {
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-'))
+/** Start one headless Chromium with its own throwaway profile (or a kept one: keep = a directory that outlives close()). */
+export async function launchChromium({ width = 1440, height = 900, args = [], keep = null } = {}) {
+  const profile = keep ?? fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-'))
+  if (keep) { fs.mkdirSync(keep, { recursive: true }); fs.rmSync(path.join(keep, 'DevToolsActivePort'), { force: true }) }
   // Its own process group, so that close() takes the renderer and helper processes along. No extensions: a
   // chromium-flags.conf (--load-extension) or an external extension of the system (1Password) would otherwise come
   // along, and one of them opens a page of its own in front of ours, after which ours gets about one frame a second.
@@ -106,7 +107,7 @@ export async function launchChromium({ width = 1440, height = 900, args = [] } =
     '--headless=new', '--disable-gpu', '--no-proxy-server', '--disable-extensions', '--disable-component-extensions-with-background-pages', '--hide-scrollbars', '--no-first-run',
     `--user-data-dir=${profile}`, '--remote-debugging-port=0', `--window-size=${width},${height}`, ...args, 'about:blank',
   ], { stdio: 'ignore', detached: true })
-  guard(proc, { group: true, dirs: [profile] })
+  guard(proc, { group: true, dirs: keep ? [] : [profile] })
   let gone = false
   let failure = null
   proc.on('error', err => { failure = err; gone = true })
@@ -122,7 +123,7 @@ export async function launchChromium({ width = 1440, height = 900, args = [] } =
       if (!gone) signal('SIGKILL')
     }
     // Chromium may still be writing while it shuts down.
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 5 && !keep; i++) {
       try { fs.rmSync(profile, { recursive: true, force: true }); break } catch { await sleep(200) }
     }
   }

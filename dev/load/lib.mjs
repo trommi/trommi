@@ -207,3 +207,27 @@ export const hex16 = () => z.hex(crypto.getRandomValues(new Uint8Array(16)))
 
 export function writeJson(file, obj) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(obj, null, 2)) }
 export function readJsonl(file) { try { return fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)) } catch { return [] } }
+
+// ---- the counting hub: dev/load/hub-local.mjs --count on the room's own address (restarted with it when needed) ----
+export async function countingHub(info, roomDir) {
+  const probe = await fetch(`${info.hub_url}/__counters`).then(r => (r.ok ? r.json() : null)).catch(() => null)
+  if (!probe) {
+    if (info.hub_pid) { try { process.kill(info.hub_pid, 'SIGTERM') } catch {} }
+    await until(async () => !(await fetch(`${info.hub_url}/healthz`).then(() => true).catch(() => false)), 'old hub gone', 20_000)
+    const port = new URL(info.hub_url).port
+    const h = await startLocalHub({ data: info.hub_data, metrics: path.join(roomDir, 'hub-metrics.jsonl'), extra: ['--count', `--port=${port}`], detached: true })
+    info.hub_pid = h.pid
+    writeJson(path.join(roomDir, 'huge.json'), info); writeJson(path.join(roomDir, 'crazy.json'), info)
+  }
+  const read = async () => (await fetch(`${info.hub_url}/__counters`)).json()
+  return {
+    async mark() { return read() },
+    /** What one client moved since the mark: KiB in (hub -> device), KiB out, requests, the routes. */
+    async since(m, who) {
+      const now = (await read())[who] ?? { requests: 0, bytes_in: 0, bytes_out: 0, routes: {} }, b = m[who] ?? { requests: 0, bytes_in: 0, bytes_out: 0, routes: {} }
+      const routes = {}
+      for (const [k, v] of Object.entries(now.routes)) { const o = b.routes[k] ?? { requests: 0, bytes_in: 0 }; if (v.requests > o.requests || v.bytes_in > o.bytes_in) routes[k] = { requests: v.requests - o.requests, kb: +((v.bytes_in - o.bytes_in) / 1024).toFixed(1) } }
+      return { kb_in: +((now.bytes_in - b.bytes_in) / 1024).toFixed(1), kb_out: +((now.bytes_out - b.bytes_out) / 1024).toFixed(1), requests: now.requests - b.requests, routes }
+    },
+  }
+}
