@@ -2,6 +2,8 @@
 // messages), desktop and 4x CPU-throttled phone. Prints p50/p95 per interaction, long tasks, heap.
 //   node dev/perf.mjs [--app http://127.0.0.1:8900] [--runs 5] [--mock crazy]
 import { launchChromium } from '../../../dev/cdp.mjs'
+import { guard } from '../../../dev/guard.mjs'
+guard({ usage: 'node dev/perf.mjs [--app URL] [--runs N] [--mock NAME]', values: ['app', 'runs', 'mock'], targets: ['app'] })
 
 const arg = (n, f) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : f }
 const APP = arg('--app', 'http://127.0.0.1:8900'), RUNS = Number(arg('--runs', 5)), MOCK = arg('--mock', 'crazy')

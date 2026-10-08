@@ -11,6 +11,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { joinRoom, memoryStorage, checkEmoji } from '../../../shared/index.mjs'
 import { execSync } from 'node:child_process'
+import { guard } from '../../../dev/guard.mjs'
+guard({ usage: 'node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR] [--email E] [--resolve RULES] [--hub-down CMD --hub-up CMD]', values: ['app', 'hub', 'shots', 'email', 'resolve', 'hub-down', 'hub-up'], targets: ['app', 'hub'], resolve: 'resolve' })
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : fallback }
 // --hub-down 'cmd' / --hub-up 'cmd': stop and start the (local) hub around the first answer, to prove that an answer

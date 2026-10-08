@@ -13,6 +13,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { launchChromium } from '../cdp.mjs'
 import { arg, sleep, until, pct, reopen, useTestKey, writeJson } from './lib.mjs'
+import { guard } from '../guard.mjs'
+guard({ usage: 'node dev/load/app-perf.mjs --crazy=DIR --app=URL [--runs=N] [--profiles=desktop,phone] [--test-key=FILE] [--resolve=RULES] [--out=FILE] [--cpu-prof=PREFIX]', values: ['app', 'cpu-prof', 'crazy', 'out', 'profiles', 'resolve', 'runs', 'test-key'], flags: ['no-snapshot'], targets: ['app'], resolve: 'resolve' })
 
 const CRAZY = path.resolve(arg('crazy', '.'))
 const APP = arg('app', 'http://127.0.0.1:8900').replace(/\/$/, '')
