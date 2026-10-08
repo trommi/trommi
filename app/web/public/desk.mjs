@@ -225,6 +225,7 @@ function withAgents(model, base) {
   // The stack's tail: each card that is out with an agent is a stack card pressed flat (the same outline, drawing and
   // title face, one line high, a shade paler), tucked under the last card; where the answers would be: who is on it.
   return html`<section id="desk-ip" class="tail" aria-label="With the agents: ${items.length}">
+<div class="end-divider is-work" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.2 Q70 5.4 140 3.8 T298 4.6"/></svg><span>With the agents</span></div>
 ${items.map(i => html`<a class="tail-card" data-id="${i.card.id}" data-nav href="${cardPath(i.card, base)}" title="${cardNr(i.card)}: ${i.card.title}" style="--hue:${i.sender.hue}"><span class="tail-mark">${markArt({ ...i.sender, starred: false })}</span><strong class="tail-title">${i.card.title}</strong>${tailWho(i)}${i.at ? agoSpan(i.at) : html`<span class="ago"></span>`}</a>`)}
 </section>`
 }

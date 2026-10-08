@@ -1288,3 +1288,27 @@ button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
   .tail-card > .tail-who > span { display: block; white-space: nowrap; }
   .tail-card > .ago { grid-column: 3; grid-row: 1; }
 }
+
+/* ---- a calm Desk (his iPhone, 8 October: "too much text right after the decisions"): the open questions stand alone;
+   what is with the agents and what is off his mind begin well below them, each under a pen rule with a small label,
+   one line per card: the title and a small mark (the session's drawing, the box, the three Z). Who has it, the closing
+   line, Read, Withdrawn… show under the pointer (and on the card's own page). ---- */
+:is(#inbox, #session) .inbox-groups > .tail, :is(#inbox, #session) .inbox-groups > #desk-ip[hidden] + .endlist { margin-top: clamp(56px, 22vh, 180px); border-top: 0; }
+.tail > .end-divider.is-work { display: flex; margin: 0 0 2px; }
+.tail-card { border-top: 0; }
+.tail > .tail-card:first-of-type { border-top: 1px solid var(--line); }
+#desk-ip[hidden] + .endlist .end-divider { display: flex; }
+#desk-ip[hidden] + .endlist .end-rows { border-top: 0; }
+.tail-card > .tail-who, .tail-card > .ago, .end-row > .end-said, .end-row > .end-ago { display: none; }
+@media (hover: hover) {
+  .tail-card:is(:hover, :focus-visible) > :is(.tail-who, .ago), .end-row:is(:hover, :focus-within) > :is(.end-said, .end-ago) { display: revert; }
+  .tail-card:is(:hover, :focus-visible) > .tail-who { display: inline-flex; }
+}
+.tail-card > .tail-title, .end-row > .end-title { font-weight: 500; }
+.end-row[data-g="open"] > .end-title { font-weight: 600; }
+@media (max-width: 860px) {
+  :is(#inbox, #session) .inbox-groups > .tail, :is(#inbox, #session) .inbox-groups > #desk-ip[hidden] + .endlist { margin-top: max(72px, 40vh); }
+  .tail-card { grid-template-rows: auto; min-height: 44px; }
+  .tail-card > .tail-mark { grid-row: 1; }
+  .end-row { grid-template-areas: "t t b"; }
+}
