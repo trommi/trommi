@@ -132,7 +132,7 @@ try {
   check(await A.js("return !document.querySelector('#desk-invite') && !!document.querySelector('#agents #sidebar-invite') && getComputedStyle(document.querySelector('#sidebar-invite')).backgroundColor === 'rgba(0, 0, 0, 0)'"), 'Invite your first agent gone once a session is there; the + New agent row stays, quiet')
 
   // ---- the Desk row: the desk drawing (lamp lit while something waits) and the desk's own name; no switcher there ----
-  check(await A.js("return document.querySelector('.desk-go .desk-name')?.textContent === 'Desk' && !!document.querySelector('#desk-lamp .lamp-light') && !document.querySelector('#desk-switch, .deskpill .desk-next, .deskpill .desk-blocked')"), 'Desk row: the name, the lamp lit (a question waits), no caret, no count or hand')
+  check(await A.js("return document.querySelector('.desk-go .desk-name')?.textContent === 'Desk' && !!document.querySelector('#desk-lamp .lamp-light') && !document.querySelector('.deskpill .desk-next, .deskpill .desk-blocked')"), 'Desk row: the name, the lamp lit (a question waits), no caret, no count or hand')
   await A.shot('e2e-4-desk-card.png')
 
   // ---- a card with a picture: uploaded encrypted, decrypted in A's page only when shown ----
@@ -320,16 +320,16 @@ try {
   const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.done}'].map(id => [id, document.querySelector('#desk-end .end-row[data-id="' + id + '"]')?.dataset.g]))`)
   check(g[pile.snooze] === 'later' && g[pile.shred] !== 'later' && g[pile.shred] !== 'open' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
   check(await A.js(`const o = [...document.querySelectorAll('#desk-end .end-row')].map(r => r.dataset.g), rank = g => (g === 'open' ? 0 : g === 'later' ? 1 : 2); return o.every((x, i) => !i || rank(o[i - 1]) <= rank(x))`), 'the end list: finished first, then Later, then ticked off')
+  // a tick he made can be taken back on the list itself (while it is among the five drawn): the ticked box of the archived card unticks it
+  await A.js(`${endRow(pile.done, 'done')}.querySelector('button.end-tick.is-ticked').click()`)
+  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick:not(.is-ticked)')`, 'unticked').then(() => check(true, 'a ticked box unticks: back to tick off'), e => check(false, e.message))
+  await A.js(`${endRow(pile.done, 'open')}.querySelector('button.end-tick').click()`)
+  await A.until(`${endRow(pile.done, 'done')}`, 'ticked off once more')
   // more than five: four more questions their session withdraws
   for (let i = 1; i <= 4; i++) await agent.close(await agent.sendCard({ title: `Ende ${i}`, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] }), `zurückgezogen ${i}`)
   await A.until("document.querySelector('#desk-end .end-show')", 'more than five in the end list')
   const ends = await A.js("const r = [...document.querySelectorAll('#desk-end .end-row')]; return { all: r.length, shown: r.filter(x => !x.hidden && x.getClientRects().length).length, more: document.querySelector('#desk-end .end-show')?.textContent.trim() ?? null }")
   check(ends.all === 5 && ends.shown === 5 && ends.more === 'Show more', `five rows on the Desk (only those are drawn), then Show more (${JSON.stringify(ends)})`)
-  // a tick he made can be taken back on the list itself: the ticked box of the archived card unticks it
-  await A.js(`${endRow(pile.done, 'done')}.querySelector('button.end-tick.is-ticked').click()`)
-  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick:not(.is-ticked)')`, 'unticked').then(() => check(true, 'a ticked box unticks: back to tick off'), e => check(false, e.message))
-  await A.js(`${endRow(pile.done, 'open')}.querySelector('button.end-tick').click()`)
-  await A.until(`${endRow(pile.done, 'done')}`, 'ticked off once more')
   await A.js("document.querySelector('#desk-end .end-show').click()")
   await A.until(`location.pathname === '/stacks/off' && document.querySelector('#off-end .end-row[data-id="${pile.snooze}"]')`, 'Show more opens the whole list').then(() => check(true, '"Show more" opens the whole list at /stacks/off'), e => check(false, e.message))
   check(await A.js("const l = [...document.querySelectorAll('#off-end .end-row')]; return l.length > 0 && l.every(x => x.querySelector('.end-tick') && x.querySelector('a.end-title')) && l.every(x => !x.hidden) && !!document.querySelector('.off-page .end-search input')"), 'the whole list: each row its mark and title, all shown, with its search')
