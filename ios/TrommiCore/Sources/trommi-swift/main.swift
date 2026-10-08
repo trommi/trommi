@@ -3,9 +3,11 @@
 //   trommi-swift join [<invite link> | -]     join as a human device; without a link it reads one line from stdin
 //   trommi-swift cards [--json]               sign in, catch up, print the open cards (title, options)
 //   trommi-swift answer <card> <option>...    answer an open card (card id or its first characters)
+//   trommi-swift login <email>                log in with the account's email and password (read from stdin, never
+//                                             an argument); the device adds itself to the account's room
 //   trommi-swift rooms                        the rooms this machine holds a key for
 //   options: --home <dir> (default ~/.local/share/trommi-swift, or $TROMMI_SWIFT_HOME), --room <room id prefix>,
-//            --name <device name> (join; what the other devices show)
+//            --name <device name> (join, login; what the other devices show), --hub <url> (login; default https://hub.trommi.com)
 //
 // Joining is the human's act: run `join` only with a link you made yourself in the app ("add a device"). The terminal
 // shows six emoji; nothing is added before you tap "They match" in the app. The link and the key are never printed.
@@ -32,6 +34,7 @@ func flag(_ name: String) -> Bool { if let i = args.firstIndex(of: name) { args.
 let base = option("--home").map { URL(fileURLWithPath: $0, isDirectory: true) } ?? Store.defaultBase()
 let roomPrefix = option("--room")
 let deviceName = option("--name")
+let hubOption = option("--hub")
 let asJSON = flag("--json")
 let command = args.first ?? "help"
 let rest = Array(args.dropFirst())
@@ -89,6 +92,18 @@ func run() async throws {
     for w in report.warnings { print("warning: \(w)") }
     print("room \(short(room.record.roomId)) at \(room.record.hubURL), device \(short(room.record.myDeviceId)); key in \(room.store.dir.path)/device.key")
     printCards(room)
+  case "login":
+    guard let email = rest.first else { die("usage: trommi-swift login <email>  (the password is read from stdin)") }
+    FileHandle.standardError.write(Data("Password for \(email), then Enter:\n".utf8))
+    let password = readLine(strippingNewline: true) ?? ""
+    if password.isEmpty { die("no password") }
+    let room = try await Room.loginWithPassword(hubURL: hubOption ?? "https://hub.trommi.com", email: email, password: password, base: base)
+    print("Logged in. This device is a member of the room now.")
+    try await room.sendDeviceRegister(name: deviceName ?? "trommi-swift (\(ProcessInfo.processInfo.hostName))", platform: "trommi-swift")
+    let report = try await room.sync()
+    for w in report.warnings { print("warning: \(w)") }
+    print("room \(short(room.record.roomId)) at \(room.record.hubURL), device \(short(room.record.myDeviceId))")
+    printCards(room)
   case "cards":
     let room = try pickRoom()
     let report = try await room.sync()
@@ -112,10 +127,11 @@ func run() async throws {
   default:
     print("""
       trommi-swift join [<invite link> | -]     join as a human device (the link from the app's "add a device"; - or nothing: read it from stdin)
+      trommi-swift login <email>                log in with email and password (password from stdin)
       trommi-swift cards [--json]               catch up and print the open cards
       trommi-swift answer <card> <option>...    answer an open card
       trommi-swift rooms | whoami
-      options: --home <dir>, --room <id prefix>, --name <device name>
+      options: --home <dir>, --room <id prefix>, --name <device name>, --hub <url>
       """)
   }
 }

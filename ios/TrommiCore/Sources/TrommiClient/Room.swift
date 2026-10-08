@@ -165,6 +165,103 @@ public final class Room {
     throw ZError("invite-expired", "the invite ran out before it was confirmed")
   }
 
+  // ---- email + password (shared/account.mjs loginWithPassword, room.mjs joinWithRecoveryCode) --------------------
+
+  /**
+   * Log in on this device with the account's email and password: the hub hands back the room's recovery code sealed
+   * under the password (it never sees either), the device opens it and adds ITSELF as a human device with the
+   * recovery key. One error for unknown email and wrong password: "wrong-login". Every other human device then
+   * shows the alert "recovery-add".
+   */
+  public static func loginWithPassword(hubURL: String, email: String, password: String, base: URL = Store.defaultBase()) async throws -> Room {
+    switch try await signInWithPassword(hubURL: hubURL, email: email, password: password, base: base) {
+    case .joined(let room): return room
+    }
+  }
+
+  /**
+   * What an email + password sign-in led to. Today the hub always answers with the sealed code, so the device is in.
+   * A later step of the hub (a link mailed per new device, an optional one-time code) becomes a case here
+   * ("check your email"), handled in loginAnswer alone.
+   */
+  public enum LoginOutcome { case joined(Room) }
+
+  /** One password: auth_key (for the hub) and wrap_key (opens the code, never leaves the device), both from it. */
+  public static func signInWithPassword(hubURL: String, email: String, password: String, base: URL = Store.defaultBase()) async throws -> LoginOutcome {
+    let email = try normaliseEmail(email)
+    let k = try accountPasswordKeys(email: email, password: password)
+    let r: JSON
+    do { r = try await HubClient(hubURL: hubURL).accountLogin(email: email, authKey: k.authKey) }
+    catch let e as HubError where e.code == "wrong-login" { throw ZError("wrong-login", "email or password is wrong") }
+    return try await loginAnswer(r, hubURL: hubURL, wrapKey: k.wrapKey, base: base)
+  }
+
+  /** The hub's answer to POST accounts/login, the one place it is read: { room_id, key_wrapped, kdf, challenge }. */
+  static func loginAnswer(_ r: JSON, hubURL: String, wrapKey: Bytes, base: URL) async throws -> LoginOutcome {
+    guard let roomId = r["room_id"] as? String, let wrapped = r["key_wrapped"] as? String else { throw ZError("bad-format", "the login answer") }
+    let code = try accountUnwrapCode(wrapKey: wrapKey, roomId: roomId, blob: wrapped, what: "password")
+    return .joined(try await joinWithRecoveryCode(hubURL: hubURL, roomId: roomId, code: code, base: base, challenge: r["challenge"] as? String))
+  }
+
+  /**
+   * A fresh device that holds the room's recovery code: sign in as the recovery key, add itself as a human device
+   * (entry signed by the recovery key; nobody is removed), seal the room key for itself, and re-seal every session's
+   * current key for everyone who holds it (itself included), as the JS core does (client._resealSessions).
+   */
+  public static func joinWithRecoveryCode(hubURL: String, roomId: String, code: String, base: URL = Store.defaultBase(), challenge: String? = nil) async throws -> Room {
+    let hubURL = try checkHubAddress(hubURL)
+    let store = Store(base: base, roomId: roomId)
+    if FileManager.default.fileExists(atPath: store.dir.appendingPathComponent("room.json").path) { throw ZError("room-exists", "this device is already in that room") }
+    let rec = try recoveryDevice(code)
+    let hub = try HubClient(hubURL: hubURL, roomId: roomId, signer: rec)
+    try await hub.signIn(challenge: challenge)
+    async let m = hub.members(after: -1)
+    async let keys = hub.sealedRoomKeys(after: 0)
+    async let bundle = hub.sessionBundle()
+    let entries = try (try await m)["signed_entries"] as? [String] ?? []
+    let state = try verifyLog(try entries.map { try unb64u($0) }, roomId: try unhex(roomId))
+    if !bytesEqual(rec.id, state.recovery.id) { throw ZError("bad-recovery-code", "an old recovery code (a recovery happened since)") }
+    guard let wrap = (try await keys)["sealed_room_keys"].flatMap({ $0 as? [JSON] })?.first(where: { ($0["key_epoch"] as? NSNumber)?.intValue == state.epoch }),
+          let sealedRoom = wrap["key_sealed"] as? String else { throw ZError("no-key", "the hub holds no sealed room key for the recovery key") }
+    let secret = try unwrapEpochKey(state, rec, try unb64u(sealedRoom), epoch: state.epoch)
+    // Every session's grants and current key, as the recovery key holds them (R6).
+    var held: [(sid: String, state: SessionState, current: EpochSecret)] = []
+    for s in (try await bundle)["sessions"] as? [JSON] ?? [] {
+      guard let sid = s["session_id"] as? String, sid.utf8.count == 32, let grants = s["signed_grants"] as? [String], !grants.isEmpty,
+            let ss = try verifyGrants(try grants.map { try unb64u($0) }, state) else { continue }
+      guard let w = (s["sealed_session_keys"] as? [JSON] ?? []).first(where: { ($0["session_key_epoch"] as? NSNumber)?.intValue == ss.epoch }),
+            let sealed = w["key_sealed"] as? String else { continue }
+      held.append((sid, ss, try unwrapSessionKey(roomId: state.roomId, sessionState: ss, device: rec, sealed: try unb64u(sealed), epoch: ss.epoch)))
+    }
+    let device = try Device.generate()
+    let added = try addMember(state, signer: rec, member: Member(role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub))
+    let sealed = try wrapEpochKey(added.state, secret, device.id)
+    try store.saveDevice(device)                         // before the entry that makes it a member
+    _ = try await hub.postMember(signedEntry: added.entry, sealedRoomKeys: [(device.id, sealed)])
+    let record = RoomRecord(hubURL: hubURL, roomId: roomId, myDeviceId: hex(device.id), role: "human", entries: entries + [b64u(added.entry)], pin: pinOf(added.state),
+                            roomSecrets: [SecretJSON(secret)], ownSent: nil, deviceRegisterSent: false)
+    try store.save(record)
+    let room = try Room(store: store, record: record, device: device)
+    // The re-seal: the same grant for each session (agents still in the room; one dropped means a new key epoch), signed
+    // by the new device, posted together (POST session_grants, 64 per request). The history entitlement of the agents
+    // is not known yet at this point, as in the JS core (session_history register unread): none in these grants.
+    var items: [JSON] = []
+    for h in held {
+      let agents = h.state.agentIds.compactMap { try? unhex($0) }
+      let active = agents.filter { added.state.memberAt($0)?.role == ROLE.AGENT }
+      let g = try createSessionGrant(state: added.state, signer: device, sessionState: h.state, current: h.current, agentIds: active, withHistory: false, rotate: active.count != agents.count)
+      var item: JSON = ["session_id": h.sid, "signed_grant": b64u(g.grant), "sealed_session_keys": g.wraps.map { ["device_id": hex($0.id), "key_sealed": b64u($0.sealed)] }]
+      if let bl = g.backLink { item["key_back_link"] = b64u(bl) }
+      items.append(item)
+    }
+    var i = 0
+    while i < items.count {
+      _ = try await hub.postSessionGrants(Array(items[i..<min(i + 64, items.count)]))
+      i += 64
+    }
+    return room
+  }
+
   // ---- keys --------------------------------------------------------------------------------
 
   /** The member list again, verified against the room id this device pinned; refuses rollback and forks. */

@@ -5,10 +5,10 @@ A native iOS app in pure Swift, no JavaScriptCore. This folder holds the spike t
 | Folder | What |
 | --- | --- |
 | `TrommiCore/Sources/TrommiCore` | The crypto core of `shared/crypto/` (FORMAT.md) in Swift: canonical encoding, labels, Ed25519, X25519, AES-256-GCM, HKDF, HMAC, SHA-256 (swift-crypto, which is CryptoKit on Apple platforms), the membership log with every verifier rule, room key epochs, wraps, back links, invites and the emoji check code, hub sign-in, envelopes (seal, verify, open, chains, `seen`, pruned forms, binds), session grants, assets, the account KDF (Argon2id, vendored C reference implementation in `Sources/CArgon2`). |
-| `TrommiCore/Sources/TrommiClient` | A human device on the hub: join by invite link, sign in, member list pinned to the room id, room and session keys (back links included), catch-up with full chain and signature verification, the open cards, answering a card, the device register. |
+| `TrommiCore/Sources/TrommiClient` | A human device on the hub: join by invite link, log in with email and password (account login, the recovery code unwrapped, the device adds itself with the recovery key and re-seals every session key), sign in, member list pinned to the room id, room and session keys (back links included), catch-up with full chain and signature verification, the open cards, answering a card, the device register. |
 | `TrommiCore/Sources/trommi-swift` | The same as a command-line client. |
 | `TrommiCore/Tests` | XCTest over every section of `shared/crypto/vectors.json` (byte for byte where the bytes are deterministic; Ed25519 signatures by verifying, CryptoKit signs with randomness), plus `Fixtures/extra-vectors.json` written by the JS core (`dev/ios-extra-vectors.mjs`: session grants, account KDF, the check emoji table) and RFC 9106 for Argon2id. |
-| `TrommiApp` | The SwiftUI app (an xtool project): join with a pasted invite link, the six emoji, the open cards, tap an option to answer. |
+| `TrommiApp` | The SwiftUI app (an xtool project): sign in by scanning the QR code of "Pair a device" on a signed-in device (camera; or paste its link), the six emoji, or with email and password; the open cards, tap an option to answer. |
 
 The JS core is the reference: `dev/ios-parity.mjs` runs `trommi-swift` against a local hub with the JS core as the human and an agent, both directions.
 
@@ -20,7 +20,7 @@ Swift 6.4.0 from swift.org (the `ubuntu26.04` build, signature checked) is unpac
 . ~/.local/share/swift/env.sh                       # puts that toolchain on PATH
 cd ios/TrommiCore
 swift test                                          # 18 tests: every vector, session grants, Argon2id, account KDF
-swift build && (cd ../.. && node dev/ios-parity.mjs)    # Swift <-> JS on a local hub, 7 checks
+swift build && (cd ../.. && node dev/ios-parity.mjs)    # Swift <-> JS on a local hub, 8 checks (account login included)
 node dev/ios-extra-vectors.mjs                      # (from the repo root) regenerate Fixtures/extra-vectors.json
 cp shared/crypto/vectors.json ios/TrommiCore/Tests/TrommiCoreTests/Fixtures/   # after vectors.json changed
 ```
@@ -85,8 +85,9 @@ Apple ID, the phone in your hand); after that, building and shipping are command
    ~/.local/share/omarchy-apple-dev/device-run.sh    # installs and starts it on the phone
    ```
 
-   In the app: paste an invite link (from app.trommi.com: add a device), compare the six emoji, tap "They match" in the
-   web app; the open cards appear, pull to refresh, tap an option to answer.
+   In the app: "Scan QR code" and scan the code of app.trommi.com → menu → Devices → "Pair a device", compare the six
+   emoji, tap "They match" in the web app; or "Sign in with email". The open cards appear, pull to refresh, tap an
+   option to answer. `xtool dev run` installs only; start the app by tapping its icon.
 
 6. **TestFlight (paid Apple Developer account).** Once, in App Store Connect: Users and Access → Integrations → Team Keys →
    a key with the **App Manager** role; download the `.p8` (only once possible) to e.g.
@@ -109,5 +110,7 @@ Apple ID, the phone in your hand); after that, building and shipping are command
   envelope 0 on every refresh.
 - The rest of the model: timelines (chat), registers (status lines, session names, desks), permission requests,
   decide again, notes, attachments, snapshots, alerts; freshness (R3) on live envelopes.
-- Push (APNs: the hub sends Web Push only today), the account login (email + password: the KDF is here and tested,
-  the flow `joinWithRecoveryCode` is not), recovery.
+- Push (APNs: the hub sends Web Push only today), creating an account, the Emergency Kit and "Forgot password",
+  recovery. The email + password login is here (`Room.signInWithPassword`); a later hub step ("check your email") goes
+  into `Room.loginAnswer` and `LoginOutcome`.
+- A re-seal that fails after the device added itself is not retried (the JS core keeps `reseal_pending`).
