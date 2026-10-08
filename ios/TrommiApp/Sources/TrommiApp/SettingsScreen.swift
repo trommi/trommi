@@ -119,7 +119,15 @@ struct DevicesPane: View {
     let agents = members.filter { $0.isActive && $0.deviceRole != "human" }
     let gone = members.filter { !$0.isActive }
     VStack(alignment: .leading, spacing: 14) {
-      Text("Your devices").font(Face.display(20, .bold))
+      VStack(alignment: .leading, spacing: 8) {
+        Text("Push on this device").font(Face.display(20, .bold))
+        Picker("Push on this device", selection: Binding(get: { pushLevel }, set: { l in pushLevel = l; Task { await Push.setLevel(l); await loadPush() } })) {
+          Text("Yes").tag("all"); Text("Only knocking").tag("knocking"); Text("No").tag("off")
+        }.pickerStyle(.segmented)
+        Text(pushLevel == "knocking" ? "Only urgent questions and a session that lost its link ring here." : pushLevel == "off" ? "Nothing rings here; the board still shows everything." : "Every new question rings here.")
+          .font(Face.text(13)).foregroundStyle(Ink.muted)
+      }
+      Text("Your devices").font(Face.display(20, .bold)).padding(.top, 6)
       ForEach(people, id: \.deviceId) { deviceRow($0) }
       Text("Agents").font(Face.display(20, .bold)).padding(.top, 6)
       if agents.isEmpty { Text("No agent yet.").font(Face.text(15)).foregroundStyle(Ink.muted) }
@@ -129,8 +137,12 @@ struct DevicesPane: View {
         .font(Face.text(13)).foregroundStyle(Ink.muted)
     }
     .sheet(isPresented: $pairing) { PairSheet() }
+    .task { await loadPush() }
   }
   @State private var removing: RoomMember?
+  @State private var pushLevel = Push.level
+  @State private var pushes: [String: (web: Int, apns: Int, level: String)] = [:]
+  private func loadPush() async { if let p = try? await model.room?.hub.pushStates() { pushes = p } }
   private func deviceRow(_ d: RoomMember) -> some View {
     HStack(spacing: 12) {
       Circle().fill(d.isOnline || d.isMe ? Ink.accent : Ink.lineStrong).frame(width: 9, height: 9)
@@ -140,6 +152,10 @@ struct DevicesPane: View {
           if d.isMe { Text("this device").font(Face.text(13)).italic().foregroundStyle(Ink.muted) }
         }
         Text("\(d.deviceRole == "human" ? "Person" : "Agent") · \(d.fingerprint)\(d.isActive ? "" : " · removed")").font(Face.mono(12)).foregroundStyle(Ink.muted)
+        if d.deviceRole == "human" && d.isActive {
+          let p = pushes[d.deviceId]
+          Text(p == nil ? "Push: off" : p!.level == "knocking" ? "Push: only knocking" : "Push: on").font(Face.text(12)).foregroundStyle(Ink.faint)
+        }
       }
       Spacer()
       if d.isActive && !d.isMe {

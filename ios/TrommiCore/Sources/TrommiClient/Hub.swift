@@ -204,9 +204,19 @@ public final class HubClient {
     }
   }
   public func devices() async throws -> JSON { try await request("GET", roomPath("/devices")) }
+  /** Every human device's push state (README "Push level"): device id -> { web, apns, level }; no row: push is off there. */
+  public func pushStates() async throws -> [String: (web: Int, apns: Int, level: String)] {
+    let r = try await request("GET", roomPath("/push_subscriptions"))
+    var out = [String: (web: Int, apns: Int, level: String)]()
+    for (id, v) in r["devices"] as? [String: JSON] ?? [:] {
+      out[id] = ((v["web"] as? NSNumber)?.intValue ?? 0, (v["apns"] as? NSNumber)?.intValue ?? 0, v["level"] as? String ?? "all")
+    }
+    return out
+  }
   /** This iPhone's APNs registration (README "Push", APNs): { token, environment, topic, key }; remove: forget it. */
-  public func registerApns(token: String, environment: String, topic: String, key: String, remove: Bool = false) async throws {
+  public func registerApns(token: String, environment: String, topic: String, key: String, level: String? = nil, remove: Bool = false) async throws {
     var body: JSON = ["apns": ["token": token, "environment": environment, "topic": topic, "key": key]]
+    if let l = level { body["level"] = l }
     if remove { body["remove"] = true }
     _ = try await request("POST", roomPath("/push_subscriptions"), body: body)
   }

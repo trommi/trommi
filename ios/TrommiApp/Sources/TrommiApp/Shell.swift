@@ -10,6 +10,7 @@ struct BoardShell: View {
   @EnvironmentObject var model: BoardModel
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var columns = NavigationSplitViewVisibility.all
+  @State private var edgePeek: CGFloat = 0
 
   var body: some View {
     Group {
@@ -22,20 +23,33 @@ struct BoardShell: View {
           stack
         }
       } else {
-        // iPhone (his pick "both", 8 October): the bottom bar, Menu · Desk · Waiting; no sidebar
+        // iPhone (his picks, 8 October): the pages Scribble · Desk · Note in a compact bar at the bottom; the jump menu is
+        // the pill at the top left (desk drawing and name), and the left edge pulls it in
         ZStack(alignment: .bottom) {
-          stack.safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
-          if model.panel != nil {
-            Color.black.opacity(0.28).ignoresSafeArea()
-              .onTapGesture { withAnimation(.snappy) { model.panel = nil } }
-              .transition(.opacity)
-            BarPanel().padding(.horizontal, 12).padding(.bottom, 74).transition(.move(edge: .bottom).combined(with: .opacity))
+          ZStack {
+            stack.opacity(model.tab == .desk ? 1 : 0).allowsHitTesting(model.tab == .desk)
+            if model.tab == .scribble { NavigationStack { ScribbleScreen() } }
+            if model.tab == .note { NoteScreen().padding(.bottom, 58) }
           }
-          BottomBar().padding(.bottom, 2)
+          .safeAreaInset(edge: .bottom) { if model.tab != .note { Color.clear.frame(height: 58) } }
+          if model.path.isEmpty || model.tab != .desk {
+            Color.clear.frame(width: 20).frame(maxHeight: .infinity).contentShape(Rectangle())
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .gesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
+                .onChanged { v in edgePeek = max(0, v.translation.width) }
+                .onEnded { v in
+                  let open = v.translation.width > 100 || v.predictedEndTranslation.width > 200
+                  withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.menuOpen = open; edgePeek = 0 }
+                })
+              .allowsHitTesting(!model.menuOpen)
+          }
+          JumpMenu(peek: edgePeek)
+          if !model.menuOpen { BottomBar().padding(.bottom, 2) }
         }
+        .overlay(alignment: .topLeading) { if model.tab != .desk && !model.menuOpen { MenuPill().padding(.leading, 12).padding(.top, 2) } }
       }
     }
-    .overlay(alignment: .bottom) { ToastHost() }
+    .overlay(alignment: hSize == .regular ? .bottom : .top) { ToastHost(top: hSize != .regular) }
     .overlay(alignment: .top) { UpdateBanner() }
     .overlay { UpdateRequired() }
     .background(Ink.bg.ignoresSafeArea())
@@ -70,8 +84,8 @@ struct BottomBar: View {
     let knocks = (v?.knocking ?? 0) > 0
     let hasNote = !(model.desk?.notes.filter { $0.held.isNull }.isEmpty ?? true)
     HStack(spacing: 4) {
-      item("Menu", on: model.panel == .menu) { PenMark("draw:grid", color: Ink.fg).frame(width: 22, height: 22) } action: { toggle(.menu) }
-      item("Desk", on: model.panel == nil && model.path.isEmpty && !noteOpen) {
+      item("Scribble", on: model.tab == .scribble) { PenMark("sketch:pen", color: Ink.fg).frame(width: 24, height: 24) } action: { withAnimation(.snappy) { model.tab = .scribble } }
+      item("Desk", on: model.tab == .desk) {
         PenMark("sketch:desk", color: Ink.fg).frame(width: 24, height: 24)
           .overlay(alignment: .topTrailing) {
             if n > 0 {
@@ -79,19 +93,17 @@ struct BottomBar: View {
                 .background(Capsule().fill(knocks ? Ink.urgCritical : Ink.fg)).offset(x: 13, y: -8)
             }
           }
-      } action: { withAnimation(.snappy) { model.panel = nil; model.path = [] } }
+      } action: { withAnimation(.snappy) { if model.tab == .desk { model.path = [] }; model.tab = .desk } }
       .accessibilityLabel(n > 0 ? "Desk, \(n) waiting" : "Desk")
-      item("Note", on: noteOpen) {
+      item("Note", on: model.tab == .note) {
         PenMark("sidebar:NOTE_ICON").frame(width: 26, height: 26).opacity(hasNote ? 1 : 0.85)
-      } action: { withAnimation(.snappy) { model.panel = nil }; noteOpen = true }
+      } action: { withAnimation(.snappy) { model.tab = .note } }
     }
     .padding(5)
     .glass(Capsule(), interactive: true)
     .fixedSize()
     .accessibilityElement(children: .contain)
-    .sheet(isPresented: $noteOpen) { NoteSheet().presentationDetents([.medium, .large]) }
   }
-  @State private var noteOpen = false
   private func toggle(_ p: BoardModel.Panel) { withAnimation(.snappy) { model.panel = model.panel == p ? nil : p } }
   private func item<I: View>(_ word: String, on: Bool, @ViewBuilder icon: () -> I, action: @escaping () -> Void) -> some View {
     Button(action: action) {
@@ -108,10 +120,16 @@ struct BottomBar: View {
 /** The panel over the bar: the jump menu, or what waits for him. */
 struct BarPanel: View {
   @EnvironmentObject var model: BoardModel
+  var drawer = false
   @State private var newDesk = ""
   @State private var making = false
   var body: some View {
     let _ = model.version
+    if drawer {
+      ScrollView { VStack(alignment: .leading, spacing: 2) { menu }.padding(.vertical, 12) }
+    } else { panel }
+  }
+  private var panel: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 2) {
         if model.panel == .menu { menu } else { waiting }
@@ -139,17 +157,17 @@ struct BarPanel: View {
       .contentShape(Rectangle())
     }.buttonStyle(.plain).padding(.horizontal, 8)
   }
-  private func go(_ r: Route) { withAnimation(.snappy) { model.panel = nil; model.path = [r] } }
+  private func go(_ r: Route) { withAnimation(.snappy) { model.panel = nil; model.menuOpen = false; model.tab = .desk; model.path = [r] } }
   @ViewBuilder private var menu: some View {
     let d = model.desk
     let v = model.view
     heading("DESKS")
     if (d?.desks.count ?? 0) > 1 {
-      row({ PenMark("sketch:desk", color: Ink.fg) }, "All desks", count: v?.allFreshCount, on: v?.all == true) { model.deskId = ALL_DESKS; model.panel = nil; model.path = [] }
+      row({ PenMark("sketch:desk", color: Ink.fg) }, "All desks", count: v?.allFreshCount, on: v?.all == true) { model.deskId = ALL_DESKS; model.panel = nil; model.menuOpen = false; model.tab = .desk; model.path = [] }
     }
     ForEach(d?.desks ?? []) { desk in
       row({ PenMark("sketch:desk", color: Ink.fg) }, desk.name, count: d?.view(desk: desk.id).fresh.count, on: v?.all != true && v?.deskId == desk.id) {
-        model.deskId = desk.id; model.panel = nil; model.path = []
+        model.deskId = desk.id; model.panel = nil; model.menuOpen = false; model.tab = .desk; model.path = []
       }
       .contextMenu {
         if (d?.desks.count ?? 0) > 1 { Button("Remove desk", role: .destructive) { model.removeDesk(desk.id) } }
@@ -172,7 +190,7 @@ struct BarPanel: View {
     }
     heading("PLACES")
     row({ Image(systemName: "checklist").foregroundStyle(Ink.fg) }, "Off your mind") { go(.off) }
-    row({ Image(systemName: "scribble.variable").foregroundStyle(Ink.fg) }, "Scribble Board") { go(.scribble) }
+    row({ Image(systemName: "scribble.variable").foregroundStyle(Ink.fg) }, "Scribble Board") { withAnimation(.snappy) { model.menuOpen = false; model.panel = nil; model.tab = .scribble } }
     row({ Image(systemName: "photo.on.rectangle").foregroundStyle(Ink.fg) }, "Media") { go(.media) }
     row({ Image(systemName: "doc.richtext").foregroundStyle(Ink.fg) }, "Pages") { go(.pages) }
     row({ PenMark("sketch:key", color: Ink.fg) }, "Settings") { go(.settings("agents")) }
@@ -180,7 +198,7 @@ struct BarPanel: View {
   private func make() {
     let n = newDesk.trimmingCharacters(in: .whitespaces)
     if !n.isEmpty { model.newDesk(name: n) }
-    newDesk = ""; making = false; model.panel = nil
+    newDesk = ""; making = false; model.panel = nil; model.menuOpen = false
   }
   @ViewBuilder private var waiting: some View {
     let v = model.view
@@ -447,6 +465,8 @@ struct DashedRule: View {
 
 struct ToastHost: View {
   @EnvironmentObject var model: BoardModel
+  var top = false
+  @State private var dragY: CGFloat = 0
   var body: some View {
     VStack {
       if let t = model.toast {
@@ -462,8 +482,12 @@ struct ToastHost: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
         .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .padding(.horizontal, 14).padding(.bottom, 8)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .padding(.horizontal, 14).padding(top ? .top : .bottom, top ? 4 : 8)
+        .offset(y: top ? min(0, dragY) : max(0, dragY))
+        .gesture(DragGesture().onChanged { dragY = $0.translation.height }.onEnded { v in
+          withAnimation(.snappy) { if (top && v.translation.height < -30) || (!top && v.translation.height > 30) { model.toast = nil }; dragY = 0 }
+        })
+        .transition(.move(edge: top ? .top : .bottom).combined(with: .opacity))
         .onTapGesture { withAnimation { model.toast = nil } }
         .task(id: t.id) {
           try? await Task.sleep(nanoseconds: t.undo != nil ? 6_000_000_000 : 3_500_000_000)
@@ -517,5 +541,57 @@ struct UpdateRequired: View {
       .background(Ink.bg.ignoresSafeArea())
       .transition(.opacity)
     }
+  }
+}
+
+
+/** The pill at the top left: the desk's drawing and name; a tap opens the jump menu (the web's pill). */
+struct MenuPill: View {
+  @EnvironmentObject var model: BoardModel
+  var body: some View {
+    let _ = model.version
+    Button { withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.menuOpen = true } } label: {
+      HStack(spacing: 8) {
+        PenMark("sketch:desk", color: Ink.fg).frame(width: 24, height: 24)
+          .overlay(alignment: .topLeading) { if (model.view?.fresh.count ?? 0) > 0 { Circle().fill(Ink.yellow).frame(width: 7, height: 7).offset(x: 3, y: 1) } }
+        Text(model.view?.deskName ?? "Desk").font(Face.display(17, .bold)).foregroundStyle(Ink.fg).lineLimit(1)
+        if !model.live { Circle().fill(Ink.lead).frame(width: 7, height: 7).accessibilityLabel("not connected") }
+      }
+      .padding(.horizontal, 12).frame(minHeight: 40)
+      .glass(Capsule(), interactive: true)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("\(model.view?.deskName ?? "Desk"): the menu")
+  }
+}
+
+/** The jump menu: from the left, following the finger; swipe it back or tap beside it. */
+struct JumpMenu: View {
+  @EnvironmentObject var model: BoardModel
+  var peek: CGFloat = 0
+  @State private var drag: CGFloat = 0
+  var body: some View {
+    GeometryReader { geo in
+      let w = min(geo.size.width * 0.86, 380)
+      let out = model.menuOpen ? max(0, w + min(0, drag)) : min(w, peek)
+      ZStack(alignment: .leading) {
+        if out > 0 {
+          Color.black.opacity(0.3 * Double(out / w)).ignoresSafeArea()
+            .onTapGesture { withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { model.menuOpen = false } }
+          BarPanel(drawer: true)
+            .frame(width: w).frame(maxHeight: .infinity)
+            .background(Ink.surface.ignoresSafeArea())
+            .shadow(color: .black.opacity(0.18 * Double(out / w)), radius: 16, x: 4)
+            .offset(x: out - w)
+            .gesture(DragGesture(minimumDistance: 10)
+              .onChanged { v in drag = min(0, v.translation.width) }
+              .onEnded { v in
+                let close = v.translation.width < -w / 3 || v.predictedEndTranslation.width < -w / 2
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { if close { model.menuOpen = false }; drag = 0 }
+              })
+        }
+      }
+    }
+    .allowsHitTesting(model.menuOpen || peek > 0)
   }
 }

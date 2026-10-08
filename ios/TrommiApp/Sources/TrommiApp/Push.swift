@@ -91,18 +91,31 @@ enum Push {
     return text.range(of: #"<key>aps-environment</key>\s*<string>development</string>"#, options: .regularExpression) != nil ? "sandbox" : "production"
   }
 
-  /** Hand the token to the hub of every room on this phone, once per room and token. */
+  /** The push level of this phone (Settings · Devices): all, knocking, or off. */
+  static var level: String {
+    get { UserDefaults.standard.string(forKey: "trommi-push-level") ?? "all" }
+    set { UserDefaults.standard.set(newValue, forKey: "trommi-push-level") }
+  }
+  /** A new level: told to the hub of every room at once (off removes the registration). */
+  @MainActor static func setLevel(_ l: String) async {
+    level = l
+    for k in UserDefaults.standard.dictionaryRepresentation().keys where k.hasPrefix("push.") { UserDefaults.standard.removeObject(forKey: k) }
+    if let t = UserDefaults.standard.string(forKey: "trommi-push-token") { await register(token: t) }
+  }
+  /** Hand the token to the hub of every room on this phone, once per room, token and level. */
   @MainActor static func register(token: String) async {
+    UserDefaults.standard.set(token, forKey: "trommi-push-token")
+    let level = Push.level
     let keyText = key().withUnsafeBytes { Data($0) }.base64EncodedString()
       .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     let env = environment, topic = Bundle.main.bundleIdentifier ?? "com.trommi.ios"
     let base = Store.defaultBase()
     for id in Store.rooms(base: base) {
-      let mark = "push.\(id).\(env).\(token)"
+      let mark = "push.\(id).\(env).\(token).\(level)"
       if UserDefaults.standard.bool(forKey: mark) { continue }
       do {
         let room = try Room.open(base: base, roomId: id)
-        try await room.hub.registerApns(token: token, environment: env, topic: topic, key: keyText)
+        try await room.hub.registerApns(token: token, environment: env, topic: topic, key: keyText, level: level == "off" ? nil : level, remove: level == "off")
         UserDefaults.standard.set(true, forKey: mark)
       } catch { log.error("trommi push: registration for room \(String(id.prefix(8)), privacy: .public) failed: \(String(describing: error), privacy: .public)") }
     }

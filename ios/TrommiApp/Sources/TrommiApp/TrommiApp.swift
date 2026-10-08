@@ -88,6 +88,10 @@ final class BoardModel: ObservableObject {
   @Published var drawer = false
   /** The panel over the iPhone's bottom bar. */
   enum Panel { case menu, waiting }
+  enum Tab { case scribble, desk, note }
+  @Published var tab: Tab = .desk
+  /** The jump menu (the pill at the top left, the left edge). */
+  @Published var menuOpen = false
   @Published var panel: Panel?
   /** Cards chosen on the Desk (the selection bar: Later, Duck it, Read, Shred for all of them). */
   @Published var selected = Set<String>()
