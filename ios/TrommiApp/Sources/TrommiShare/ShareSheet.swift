@@ -1,5 +1,6 @@
-// The share sheet's face: system chrome (Liquid Glass on iOS 26+: the navigation bar, the mode switch, the button),
-// Trommi's look for the content (the note's yellow paper, the session tree with the crown, IBM Plex Sans).
+// The share sheet's face: the note itself, as the app shows it (the yellow paper, its ink, IBM Plex Sans), compact.
+// What was shared as thumbnails, a text field, "To: <desk> · <crowned session> ▾", and two ways: Send (to that crown)
+// and Keep in Note. The drawings come from the app's snapshot as small pictures (the extension has no pen of its own).
 import Foundation
 import ShareInbox
 #if canImport(UIKit)
@@ -7,12 +8,9 @@ import SwiftUI
 import UIKit
 
 enum SInk {
+  /** The note's paper and ink (Theme.swift Ink.noteYellow, Ink.noteInk). */
   static let noteYellow = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0xd9 / 255, green: 0xc3 / 255, blue: 0x5f / 255, alpha: 1) : UIColor(red: 0xf5 / 255, green: 0xd6 / 255, blue: 0x4a / 255, alpha: 1) })
   static let noteInk = Color(red: 0x3b / 255, green: 0x30 / 255, blue: 0x0d / 255)
-  static let accent = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0x6f / 255, green: 0xd0 / 255, blue: 0xb5 / 255, alpha: 1) : UIColor(red: 0x1b / 255, green: 0x6a / 255, blue: 0x57 / 255, alpha: 1) })
-  static let gold = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0xdc / 255, green: 0xb8 / 255, blue: 0x4e / 255, alpha: 1) : UIColor(red: 0xa8 / 255, green: 0x82 / 255, blue: 0x0f / 255, alpha: 1) })
-  /** A session's colour from its hue (a simple stand-in for the app's oklch tones). */
-  static func hue(_ h: Int) -> Color { Color(hue: Double((h + 10) % 360) / 360, saturation: 0.45, brightness: 0.62) }
 }
 enum SFace {
   static func text(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
@@ -26,120 +24,139 @@ struct ShareRoot: View {
   @FocusState private var typing: Bool
 
   var body: some View {
-    NavigationStack {
-      Group {
-        if model.inbox == nil { unavailable }
-        else {
-          switch model.phase {
-          case .done(let line): done(line)
-          default: form
-          }
-        }
-      }
-      .navigationTitle("Trommi")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button(L("Cancel", "Abbrechen")) { model.cancel() }
-        }
-        ToolbarItem(placement: .confirmationAction) {
-          Button(model.mode == .note ? L("Add", "Hinzufügen") : L("Send", "Senden")) { model.go() }
-            .fontWeight(.semibold)
-            .disabled(!model.canGo)
-        }
-      }
+    VStack(alignment: .leading, spacing: 12) {
+      head
+      if model.inbox == nil { unavailable }
+      else if case .done(let icon, let line) = model.phase { done(icon, line) }
+      else { paper }
     }
+    .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 12)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .foregroundStyle(SInk.noteInk)
+    .background(SInk.noteYellow.ignoresSafeArea())
+    .environment(\.colorScheme, .light)   // the paper is yellow in both modes: the system's controls on it in light
   }
 
-  // ---- the form ----------------------------------------------------------------------------------------
+  // ---- the head: Cancel, the recipient -------------------------------------------------------------------
 
-  private var form: some View {
-    VStack(spacing: 12) {
-      Picker("", selection: $model.mode) {
-        Text(L("Add to Note", "Zur Notiz")).tag(ShareModel.Mode.note)
-        Text(L("Send to Agent…", "An Agent senden…")).tag(ShareModel.Mode.send)
-      }
-      .pickerStyle(.segmented)
-      .padding(.horizontal, 16).padding(.top, 8)
-
-      if model.mode == .note { note } else { send }
+  private var head: some View {
+    HStack(spacing: 8) {
+      Button(L("Cancel", "Abbrechen")) { model.cancel() }
+        .font(SFace.text(16)).foregroundStyle(SInk.noteInk.opacity(0.75))
+      Spacer(minLength: 8)
+      if model.inbox != nil, !model.isDone { recipient }
     }
+    .frame(minHeight: 36)
   }
 
-  /** The note's paper: what was shared, a line to go with it. */
-  private var note: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      strip
-      TextField(L("Add a line…", "Eine Zeile dazu…"), text: $model.text, axis: .vertical)
-        .lineLimit(2...6)
-        .font(SFace.text(17)).foregroundStyle(SInk.noteInk)
-        .focused($typing)
-      Text(L("Goes into your note. Nothing is sent.", "Kommt in deine Notiz. Es wird nichts gesendet."))
-        .font(SFace.text(13)).foregroundStyle(SInk.noteInk.opacity(0.65))
-      problems(SInk.noteInk.opacity(0.75))
-      Spacer(minLength: 0)
-    }
-    .padding(16)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(SInk.noteYellow))
-    .padding(.horizontal, 16).padding(.bottom, 16)
-  }
-
-  /** The tree of sessions, a line, Send. */
-  private var send: some View {
-    VStack(spacing: 0) {
-      if model.tree.isEmpty {
-        Text(L("Open Trommi once: then its sessions show here.", "Öffne Trommi einmal: dann stehen seine Sessions hier."))
-          .font(SFace.text(15)).foregroundStyle(.secondary).padding(24)
-        Spacer()
-      } else {
-        List {
-          if !model.items.isEmpty || model.phase == .loading { Section { strip.listRowBackground(Color.clear).listRowInsets(EdgeInsets()) } }
-          ForEach(model.tree) { d in
-            Section(model.tree.count > 1 || d.desk.name != "Desk" ? d.desk.name : "") {
-              ForEach(d.rows) { r in row(r) }
+  /** "To: <desk drawing> Desk · <session drawing> Session ▾": the desks' crowned sessions, the last one used picked. */
+  @ViewBuilder private var recipient: some View {
+    let crowned = model.snapshot?.crowned ?? []
+    if crowned.isEmpty {
+      Text(L("To: no main session", "An: keine Hauptsession")).font(SFace.text(15)).foregroundStyle(SInk.noteInk.opacity(0.6))
+    } else {
+      Menu {
+        Section(L("Main Session of a Desk", "Hauptsession eines Desks")) {
+          ForEach(crowned) { d in
+            Button { model.pick(d.id) } label: {
+              Label {
+                Text("\(d.name) · \(d.crown?.name ?? "")")
+              } icon: {
+                if d.id == model.desk { Image(systemName: "checkmark") } else { picture(d.crown?.mark, template: false) ?? Image(systemName: "person") }
+              }
             }
           }
-          Section {
-            TextField(L("A short line (optional)", "Eine kurze Zeile (optional)"), text: $model.text, axis: .vertical)
-              .lineLimit(1...4).font(SFace.text(16)).focused($typing)
-            problems(.secondary)
+        }
+      } label: { chip }
+      .accessibilityLabel(L("Recipient: ", "Empfänger: ") + (model.picked.map { "\($0.name), \($0.crown?.name ?? "")" } ?? ""))
+    }
+  }
+  private var chip: some View {
+    HStack(spacing: 5) {
+      Text(L("To:", "An:")).foregroundStyle(SInk.noteInk.opacity(0.7))
+      if let d = model.picked {
+        if (model.snapshot?.crowned.count ?? 0) > 1 {
+          picture(model.snapshot?.deskMark, template: true)?.resizable().scaledToFit().frame(width: 18, height: 18).foregroundStyle(SInk.noteInk.opacity(0.7))
+          Text(d.name).foregroundStyle(SInk.noteInk.opacity(0.7)).lineLimit(1)
+          Text("·").foregroundStyle(SInk.noteInk.opacity(0.5))
+        }
+        picture(d.crown?.mark, template: false)?.resizable().scaledToFit().frame(width: 20, height: 20)
+        Text(d.crown?.name ?? "").fontWeight(.semibold).lineLimit(1)
+      }
+      Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(SInk.noteInk.opacity(0.7))
+    }
+    .font(SFace.text(15))
+    .foregroundStyle(SInk.noteInk)
+    .padding(.horizontal, 10).padding(.vertical, 6)
+    .background(Capsule().fill(Color.white.opacity(0.35)))
+  }
+  private func picture(_ png: Data?, template: Bool) -> Image? {
+    guard let png = png, let ui = UIImage(data: png, scale: 3) else { return nil }
+    return Image(uiImage: ui.withRenderingMode(template ? .alwaysTemplate : .alwaysOriginal))
+  }
+
+  // ---- the paper: what was shared, the words, the two ways ----------------------------------------------
+
+  private var paper: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      if !model.items.isEmpty || model.phase == .loading { strip }
+      TextEditor(text: $model.text)
+        .font(SFace.text(18)).foregroundStyle(SInk.noteInk)
+        .scrollContentBackground(.hidden)
+        .focused($typing)
+        .frame(minHeight: 90)
+        .overlay(alignment: .topLeading) {
+          if model.text.isEmpty {
+            Text(L("Write a note…", "Schreib etwas dazu…")).font(SFace.text(18)).foregroundStyle(SInk.noteInk.opacity(0.45))
+              .padding(.top, 8).padding(.leading, 5).allowsHitTesting(false)
           }
         }
-        .listStyle(.insetGrouped)
-        .scrollDismissesKeyboard(.interactively)
+      problems
+      actions
+      if model.snapshot?.crowned.isEmpty ?? true {
+        Text(model.snapshot == nil ? L("Open Trommi once: then its main sessions show here.", "Öffne Trommi einmal: dann stehen hier seine Hauptsessions.")
+                                   : L("Make a session the main session of its desk (its ⋯ menu): then you can send to it.", "Mach eine Session zur Hauptsession ihres Desks (ihr ⋯-Menü): dann kannst du an sie senden."))
+          .font(SFace.text(13)).foregroundStyle(SInk.noteInk.opacity(0.7))
       }
     }
   }
 
-  private func row(_ r: ShareSnapshot.Row) -> some View {
-    Button { model.picked = r.session.id } label: {
-      HStack(spacing: 10) {
-        if r.depth > 0 { Image(systemName: "arrow.turn.down.right").font(.system(size: 12)).foregroundStyle(.tertiary).padding(.leading, 4) }
-        Circle().fill(SInk.hue(r.session.hue)).frame(width: 10, height: 10)
-          .overlay(Circle().stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
-        Text(r.session.name).font(SFace.text(16, r.depth == 0 ? .medium : .regular)).foregroundStyle(.primary).lineLimit(1)
-        if r.crowned {
-          Image(systemName: "crown.fill").font(.system(size: 12)).foregroundStyle(SInk.gold)
-            .accessibilityLabel(L("main session", "Hauptsession"))
-        }
-        Spacer()
-        if model.picked == r.session.id { Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(SInk.accent) }
+  /** Keep in Note (nothing is sent) on the left, Send (the round paper plane, as on the note in the app) on the right. */
+  private var actions: some View {
+    HStack(spacing: 10) {
+      Button { typing = false; model.go(.note) } label: {
+        Label(L("Keep in Note", "In die Notiz"), systemImage: "note.text.badge.plus")
+          .font(SFace.text(16, .medium))
+          .padding(.horizontal, 14).frame(height: 44)
+          .background(Capsule().strokeBorder(SInk.noteInk.opacity(0.55), lineWidth: 1.2))
       }
-      .contentShape(Rectangle())
+      .disabled(!model.canKeep).opacity(model.canKeep ? 1 : 0.4)
+      Spacer()
+      Button { typing = false; model.go(.send) } label: {
+        Image(systemName: "paperplane.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(SInk.noteYellow)
+          .frame(width: 46, height: 46).background(Circle().fill(SInk.noteInk))
+      }
+      .disabled(!model.canSend).opacity(model.canSend ? 1 : 0.35)
+      .accessibilityLabel(model.picked?.crown.map { L("Send to ", "Senden an ") + $0.name } ?? L("Send", "Senden"))
     }
     .buttonStyle(.plain)
-    .accessibilityAddTraits(model.picked == r.session.id ? .isSelected : [])
   }
 
-  /** What was shared, as small tiles. */
+  /** What was shared, as thumbnails (a cross takes one out). */
   private var strip: some View {
     ScrollView(.horizontal, showsIndicators: false) {
       HStack(spacing: 8) {
-        ForEach(model.items) { l in tile(l) }
-        if model.phase == .loading { ProgressView().frame(width: 64, height: 64) }
+        ForEach(model.items) { l in
+          ZStack(alignment: .topTrailing) {
+            tile(l)
+            Button { model.remove(l.id) } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 18)).foregroundStyle(SInk.noteInk, SInk.noteYellow) }
+              .buttonStyle(.plain).offset(x: 6, y: -6)
+              .accessibilityLabel(L("Remove", "Entfernen"))
+          }
+        }
+        if model.phase == .loading { ProgressView().tint(SInk.noteInk).frame(width: 72, height: 72) }
       }
-      .padding(.vertical, 2)
+      .padding(.top, 6).padding(.trailing, 6)
     }
   }
   private func tile(_ l: Loaded) -> some View {
@@ -147,25 +164,24 @@ struct ShareRoot: View {
       if let t = l.thumb { Image(uiImage: t).resizable().scaledToFill() }
       else {
         VStack(spacing: 4) {
-          Image(systemName: l.item.kind == .url ? "link" : l.item.kind == .text ? "text.alignleft" : "doc").font(.system(size: 18))
-          Text(l.item.kind == .url ? (l.item.name) : l.item.kind == .text ? (l.item.text ?? "") : l.item.name)
-            .font(SFace.text(10)).lineLimit(2).multilineTextAlignment(.center)
+          Image(systemName: l.item.kind == .url ? "link" : l.item.kind == .text ? "text.alignleft" : "paperclip").font(.system(size: 18))
+          Text(l.item.kind == .text ? (l.item.text ?? "") : l.item.name)
+            .font(SFace.text(11)).lineLimit(2).multilineTextAlignment(.center)
         }
         .padding(4)
-        .foregroundStyle(SInk.noteInk)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.white.opacity(0.55))
+        .background(Color.white.opacity(0.5))
       }
     }
-    .frame(width: 64, height: 64)
-    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    .frame(width: 72, height: 72)
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     .accessibilityLabel(l.item.name)
   }
 
-  @ViewBuilder private func problems(_ color: Color) -> some View {
+  @ViewBuilder private var problems: some View {
     if !model.skipped.isEmpty {
       Text(L("Left out: ", "Weggelassen: ") + model.skipped.joined(separator: ", "))
-        .font(SFace.text(13)).foregroundStyle(color)
+        .font(SFace.text(13)).foregroundStyle(SInk.noteInk.opacity(0.75))
     }
     if case .failed(let why) = model.phase {
       Text(L("Not saved: ", "Nicht gespeichert: ") + why).font(SFace.text(13)).foregroundStyle(.red)
@@ -174,12 +190,10 @@ struct ShareRoot: View {
 
   // ---- after ---------------------------------------------------------------------------------------------
 
-  private func done(_ line: String) -> some View {
+  private func done(_ icon: String, _ line: String) -> some View {
     VStack(spacing: 14) {
-      Image(systemName: model.mode == .note ? "note.text.badge.plus" : "paperplane.fill")
-        .font(.system(size: 34, weight: .medium)).foregroundStyle(SInk.accent)
+      Image(systemName: icon).font(.system(size: 34, weight: .medium))
       Text(line).font(SFace.text(18, .medium)).multilineTextAlignment(.center)
-      if model.mode == .send, let n = model.pickedName { Text(n).font(SFace.text(15)).foregroundStyle(.secondary) }
     }
     .padding(32)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -187,7 +201,7 @@ struct ShareRoot: View {
 
   private var unavailable: some View {
     VStack(spacing: 12) {
-      Image(systemName: "lock").font(.system(size: 30)).foregroundStyle(.secondary)
+      Image(systemName: "lock").font(.system(size: 30)).foregroundStyle(SInk.noteInk.opacity(0.7))
       Text(L("Open Trommi once and sign in: then you can share into it.", "Öffne Trommi einmal und melde dich an: dann kannst du hierher teilen."))
         .font(SFace.text(16)).multilineTextAlignment(.center)
     }
