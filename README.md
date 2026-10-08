@@ -132,10 +132,11 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>hub/</code> · 27 files</summary>
+<details><summary><code>hub/</code> · 28 files</summary>
 
 ```
 ├── ops/
+│   ├── delete-room.mjs
 │   ├── env.mjs
 │   ├── flow.mjs
 │   ├── http.mjs
@@ -211,7 +212,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>dev/</code> · 46 files</summary>
+<details><summary><code>dev/</code> · 53 files</summary>
 
 ```
 ├── deploy/
@@ -254,13 +255,21 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── protocol.mjs
 │   ├── run.mjs
 │   └── screens.mjs
+├── ios-audit/
+│   ├── device.py
+│   ├── LayoutProbe.swift
+│   ├── rules.py
+│   └── test_rules.py
 ├── load/
 │   ├── app-perf.mjs
 │   ├── crazy.mjs
 │   ├── hub-local.mjs
+│   ├── huge-room.mjs
 │   ├── lib.mjs
 │   ├── load.mjs
+│   ├── perf-budget.mjs
 │   ├── rotation.mjs
+│   ├── tempo.mjs
 │   └── worker.mjs
 ├── cdp.mjs
 ├── guard.mjs
@@ -940,3 +949,31 @@ Measured on 4 October 2026 with real E2E members (`dev/load/`). "local" is the r
 | App, crazy room, desktop | v1.1 with the room snapshot (45k envelopes): first load 2.4 s, interactions p95 24-126 ms, own message visible 8 ms (p95). v1.0 (113k): first load 29 s, all p95 < 100 ms |
 | App, same room, phone (CPU 4×) | v1.1: first load 3.4 s; opening a session, switching sessions, card threads, answers p95 290-580 ms (over budget); own message visible 44 ms (p95). 8 Oct (bundle, board caches): Desk p95 614 → 68 ms, answer 473 → 160 ms, open the huge chat 357 → 319 ms, switch ≈210 ms (waits for the hub's chat page), warm reload 2.7 → 1.7 s |
 | Open gaps | after a snapshot join no chat history is shown; local p99 about 1.1 s from about 800/s on current main (backpressure) |
+
+#### The huge room, per-change cost and the budgets (8 October 2026)
+
+**The room.** `node dev/load/huge-room.mjs --out=<dir> --keep-hub` seeds it through `shared/` as real members on a local hub (16 min): 44 agent sessions on 8 desks with profiles and status lines, 6 human devices, 5,400 cards (5,000 answered, every second one revised; snoozes, ducks, drafts), one session chat of 22,000 messages (every 6th with one of 400 encrypted PNGs), a card thread of 2,000, 20,000 more messages, 300 notes, 120 published pages, a Scribble Board of 20,000 strokes in the new stroke format plus 5,000 elsewhere: 82,868 envelopes. `<dir>/huge.json` (also as `crazy.json` for `app-perf.mjs`) names the hub, the room, the member directories and the big timelines.
+
+**What one device moves.** `hub-local.mjs --count` puts a counting front on the hub's own address (by `trommi-client` and route, `GET /__counters`). `node dev/load/tempo.mjs --room=<dir> [--impl=js,swift]` joins a fresh device of each core and records, per step, ms, KiB, requests by route, envelopes verified and bodies decrypted: cold start, one new message live, the huge session's first page and 20 pages back, one message while it is open, answering, warm start with nothing new and with one new message, the huge session again from storage. **Verification is never skipped**: every envelope the cursor passes is verified against its sender's chain; bodies are decrypted only when a window shows them (catch-up reads conversations as headers).
+
+**The budgets.** `node dev/load/perf-budget.mjs [--room=<dir>] [--only=engine,web,ios] [--parts=start,interact,scroll,live,one]` (local, minutes; needs the command sandbox off for Chromium) exits 1 when one is exceeded. Web = headless Chromium as a phone (390x844, CPU 4x slower, 150 ms RTT, 1.6 Mbit/s) against `app/web/dev/serve.mjs --prod` (the deployed bundle, its service worker, brotli), joined once and kept in `<dir>/chromium-phone`. Budgets: warm start to the Desk < 1 s, cold start (app files not cached, the room in IndexedDB) < 2 s, every interaction p95 < 100 ms, no long task > 50 ms while scrolling or during live updates, one new message = 1 envelope verified, ≤ 1 body decrypted, no request besides the stream, ≤ 4 KiB; the engines the same per change, a warm start with one new envelope reads no conversation; iOS: one new message writes ≤ 64 KiB of cache, a warm start with nothing new < 300 ms.
+
+| Huge room (82,868 envelopes), phone 4x + slow 4G | Before | After | Budget |
+| --- | --- | --- | --- |
+| Warm start to the Desk | 1,156 ms | 844 ms | 1,000 ms ✓ |
+| Cold start to the Desk (app files not cached) | 2,855 ms | 2,296 ms | 2,000 ms ✗ |
+| Interactions p95: Desk / huge session / Earlier / switch / card / answer / send | 68 / 417 / 712 / 285 / 156 / 191 / 41 ms | 40 / 227 / 110 / 156 / 140 / 171 / 32 ms | 100 ms ✗ |
+| Long tasks > 50 ms: scrolling / live burst (3 s, 5 sessions) | 1 / 6 (26 when a room snapshot was written meanwhile) | 0 / 3 | 0 ✗ |
+| One new message, chat open: verified / decrypted / requests / KiB | 1 / 1 / 12 / 95 | 1 / 1 / 0 / 0.8 | 1 / 1 / 0 / 4 ✓ |
+| One new message: visible in the open chat | 64 ms | 48 ms | 100 ms ✓ |
+| JS core: warm start with 1 new envelope: verified / conversations read / KiB | 1 / 82 / 1,226 | 1 / 0 / 13 | ✓ |
+| JS core: the huge session again from storage: requests / KiB | 15 / 251 | 1 / 0.8 | ✓ |
+| JS core: scroll back one page (50 messages): ms / KiB / decrypted | (paging stopped after the first page) | 22 / 56 / 50 | ✓ |
+| Desktop (app-perf): warm reload p95 / switch p95 / heap / IndexedDB | 631 ms / 147 ms / 154 MB / 25 MB | 372 ms / 61 ms / 122 MB / 10 MB | – |
+| Swift core: cold start / warm start / cache written per new message | 28 s, 55 MB / 2.2–3.5 s / 70 MB | unchanged (iOS proposal below) | ✗ |
+
+What made the difference: a warm start no longer re-reads every open card's conversation (the hand-back check's mark is stored with the card); a timeline window fetches only the span of bodies it lacks, a short timeline stored whole asks nothing; the board's card list is changed in place for the cards a change names, and what depends only on the cards (`cardsMemo`) or only on the closed cards (`closedMemo`) is kept; the end list makes sheets only as far as it shows; Artifacts are kept per card list; controllers look for targets only around the change; a session page waits only for its local chat page (40 ms) and loads card threads only within its window; the phone's closed drawer is not laid out (`content-visibility`); a new Desk row far below the fold comes as an empty row; the room snapshot is written in 12 ms slices (it was a multi-second task on a phone); cards at rest drop their duplicated newest version and answer (22 → 17 MB); IndexedDB reads are bulk `getAll`s, in parallel; the stylesheet is minified (brotli 93 → 58 KB).
+
+Still over budget, and why: the cold start is bound by the bytes on a 1.6 Mbit/s line (340 KiB: JS 150, CSS 58, fonts 137 that compete with the JS; deferring the fonts until after the first paint would bring it under 2 s, at the price of a font swap on a cold start); the remaining interaction and live-update time is style and layout of 2,000–4,000 elements (a Desk insertion lays out the whole document; containment per run section, fewer inline SVG nodes per row and windowing the Desk's placeholders are the next steps); opening the huge session the first time on a device that joined by snapshot waits one hub round trip for its bodies.
+
+**iOS (TrommiClient), measured with trommi-swift on the same room:** every launch replays all 83k records from one encrypted blob (2.2 s on a desktop CPU, several times that on a phone), every change rewrites that whole blob (70 MB, 1.5 s after the change), `Board.project()` re-sorts every session's cards and all open cards per envelope, the catch-up fetches every envelope from 0 (no snapshot boot) and keeps every record in memory, and `GET session_grants` reads all sessions' grant chains at each start (242 KB). Proposed: an append-only encrypted record store (SQLite or segment files keyed by envelope number, with the verified cursor and chain heads per segment) so a change appends one record; projected state persisted beside it so a launch reads the board, not the log; reduce on a background actor with change sets (cards/sessions/timelines touched), projection updated per touched card; timeline bodies fetched per visible window (as `loadOlder` does) and SwiftUI lists windowed (`List`/`LazyVStack` over ids, rows reading the board by id); snapshot boot as in `shared/snapshot.mjs`; sessions refreshed only for those whose grant number moved (`GET sessions`, then `session_grants` for those).
