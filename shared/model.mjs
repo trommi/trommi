@@ -926,3 +926,35 @@ export function deserialiseHuman(model, o) {
   for (const [key, v] of o?.raw ?? []) setHumanRegister(model, key, v.value, { envelope_number: v.envelope_number, sender_device_id: v.by_device_id, causal: v.causal }, change)
 }
 export { mapToObj, objToMap, URGENCY }
+
+// ---- a card at rest (storage, the room snapshot): without what it holds twice ----------------------------------
+// The newest version's content is the card's own fields again, and `answer` is the last of `answers`: stored once
+// (a room's cards were ~4 KB each, most of a warm start's reading). compactCard keeps a field only where rebuilding
+// gives exactly what was there; expandCard gives the same object back.
+const AT_REST = '$card'
+export function compactCard(c) {
+  let out = c
+  const lv = c.versions?.at(-1)
+  if (lv?.content && typeof lv.content === 'object') {
+    const own = [], rest = {}
+    for (const [k, v] of Object.entries(lv.content)) { if (k in c && JSON.stringify(c[k]) === JSON.stringify(v)) own.push(k); else rest[k] = v }
+    if (own.length) {
+      const keys = Object.keys(lv.content)
+      out = { ...c, versions: [...c.versions.slice(0, -1), { ...lv, content: { [AT_REST]: own, rest, keys } }] }
+    }
+  }
+  if (c.answer && c.answers?.length && (c.answers.at(-1) === c.answer || JSON.stringify(c.answers.at(-1)) === JSON.stringify(c.answer))) out = { ...(out === c ? { ...c } : out), answer: AT_REST }
+  return out
+}
+export function expandCard(v) {
+  if (!v || typeof v !== 'object') return v
+  const lv = v.versions?.at(-1)
+  if (lv?.content?.[AT_REST]) {
+    const { [AT_REST]: own, rest, keys } = lv.content
+    const content = {}
+    for (const k of keys) content[k] = own.includes(k) ? structuredClone(v[k]) : rest[k]
+    v.versions[v.versions.length - 1] = { ...lv, content }
+  }
+  if (v.answer === AT_REST) v.answer = v.answers?.at(-1) ?? null
+  return v
+}

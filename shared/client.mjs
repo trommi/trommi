@@ -270,7 +270,7 @@ export class Client {
     M.applyMembers(m, membersOf(this.state), M.emptyChange())
     M.applyDevices(m, online ?? [], M.emptyChange())
     for (const [, v] of sessions) m.sessions.set(v.session_id ?? v.agent_device_id, M.deserialiseSession(v))
-    for (const [, v] of cards) m.cards.set(v.object_id, v)
+    for (const [, v] of cards) m.cards.set(v.object_id, M.expandCard(v))
     for (const [, v] of perms) m.permissions.set(v.object_id, v)
     for (const [, v] of notes) m.notes.set(v.object_id, v)
     for (const [, v] of pubs) m.published.set(v.object_id, v)
@@ -1194,7 +1194,7 @@ export class Client {
   _markDirty(change, tlRecs) {
     const d = this._dirty.records
     const m = this.model
-    for (const id of change.cards) { const c = m.cards.get(id); if (c) d.set(`card/${id}`, c) }
+    for (const id of change.cards) { const c = m.cards.get(id); if (c) d.set(`card/${id}`, M.compactCard(c)) }
     for (const id of change.sessions) { const s = m.sessions.get(id); if (s) d.set(`session/${id}`, M.serialiseSession(s)) }
     for (const id of change.permissions) { const p = m.permissions.get(id); if (p) d.set(`perm/${id}`, p) }
     for (const id of change.notes) { const x = m.notes.get(id); if (x) d.set(`note/${id}`, x) }
