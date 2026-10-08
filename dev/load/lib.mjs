@@ -34,11 +34,11 @@ export function pct(values, ps = [50, 95, 99]) {
 }
 
 /**
- * The file adapter of shared/ (same key file, same state.json), but: thread-item records (`tl/…`) are dropped
- * (a load member never scrolls back) and state.json is written only on flush(). Device keys stay in a 0600 file.
+ * The file adapter of shared/ (same key file, same state files), but thread-item records (`tl/…`) are dropped (a load
+ * member never scrolls back). Device keys stay in a 0600 file.
  */
-export async function leanStorage(dir, { persist = false } = {}) {
-  const st = await fileStorage({ dir, write_delay_ms: persist ? 200 : 1e9 })
+export async function leanStorage(dir) {
+  const st = await fileStorage({ dir })
   const keep = k => !k.startsWith('tl/')
   const set = st.set.bind(st), setMany = st.setMany.bind(st)
   st.set = async (k, v) => (keep(k) ? set(k, v) : undefined)
@@ -138,7 +138,7 @@ export async function deleteTestRoom(hub_url, room_id) {
 
 /** Found a room with one human device ("Phone") whose storage lives in dir/phone. */
 export async function found({ hub_url, dir }) {
-  const storage = await leanStorage(path.join(dir, 'phone'), { persist: true })
+  const storage = await leanStorage(path.join(dir, 'phone'))
   const { client, recovery_code } = await foundRoom({ hub_url, storage, device_name: 'Load phone', fetch: NET.fetch })
   await client.start()
   return { client, recovery_code, storage }
@@ -146,7 +146,7 @@ export async function found({ hub_url, dir }) {
 
 /** Add an agent member through a real agent invite (with the check code, as every invite). */
 export async function addAgent(inviter, { dir, name, label = null }) {
-  const storage = await leanStorage(dir, { persist: true })
+  const storage = await leanStorage(dir)
   const inv = await inviter.createInvite({ device_role: 'agent', label })
   const j = joinRoom({ link: inv.link, storage, device_name: name, device_info: { device_name: name, platform: 'node', folder: `~/git/${name}`, host: 'loadgen' }, poll_ms: 100, fetch: NET.fetch })
   const code = await j.check_code
@@ -164,7 +164,7 @@ export async function addAgent(inviter, { dir, name, label = null }) {
 
 /** Add a human member through a real human invite with the check code (compared as emoji). */
 export async function addHuman(inviter, { dir, name }) {
-  const storage = await leanStorage(dir, { persist: true })
+  const storage = await leanStorage(dir)
   const inv = await inviter.createInvite({ device_role: 'human' })
   const j = joinRoom({ link: inv.link, storage, device_name: name, poll_ms: 100, fetch: NET.fetch })
   const code = await j.check_code
@@ -175,7 +175,7 @@ export async function addHuman(inviter, { dir, name }) {
 }
 
 export async function reopen(dir, { lean = true } = {}) {
-  const storage = lean ? await leanStorage(dir) : await fileStorage({ dir, write_delay_ms: 1e9 })
+  const storage = lean ? await leanStorage(dir) : await fileStorage({ dir })
   return { client: await openRoom({ storage, fetch: NET.fetch }), storage }
 }
 

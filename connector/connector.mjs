@@ -42,7 +42,7 @@
 //   TROMMI_LINK_MS   the link report repeats a moved last tool call at most this often, default 30000
 //   TROMMI_LINK_TICK_MS  how often the folder is looked at and the report checked, default 5000
 //
-// Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json (cursor, chains, model), .lock and
+// Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json and .state.log (cursor, chains, model: shared/storage-file.mjs), .lock and
 // .files/ (the human's attachments, decrypted for Claude). A restarted session reuses its slot (pathsOf, pickSlot).
 // Which process gets the key: the one whose Claude Code session is used ("who gets the key", below the lock).
 

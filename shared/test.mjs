@@ -511,7 +511,7 @@ await test('removal and rotation: one entry, new epoch, removed device opens not
 await test('warm start from file storage: model, cursor, chains; then the delta', async () => {
   const dir = path.join(scratch, 'agent-warm')
   const { phone } = await room()
-  const agent = await addAgent(phone, 'Warm', await fileStorage({ dir, write_delay_ms: 5 }))
+  const agent = await addAgent(phone, 'Warm', await fileStorage({ dir }))
   const id = await agent.sendCard({ title: 'warm', options: [{ key: 'a', label: 'A' }] })
   await settleAll(agent, phone)
   await until(() => phone.model.cards.get(id), 'card')
@@ -522,7 +522,7 @@ await test('warm start from file storage: model, cursor, chains; then the delta'
   await phone.answer({ object_id: id, choices: ['a'] })
   await phone.settle()
   const t0 = performance.now()
-  const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
+  const again = track(await openRoom({ storage: await fileStorage({ dir }) }))
   const loadMs = performance.now() - t0
   eq(again.model.cards.get(id)?.title, 'warm', 'card from storage before any network')
   assert([...again.model.sessions].every(([k, v]) => k === v.session_id), 'sessions restored under their session_id, once each')
@@ -705,7 +705,7 @@ await test('v1.1 R1/R2: forged object ids and foreign timelines refused; registe
 await test('v1.1 R4: commands delivered once per (sender, sequence); ledger survives', async () => {
   const dir = path.join(scratch, 'agent-ledger')
   const { phone } = await room()
-  const agent = await addAgent(phone, 'Ledger', await fileStorage({ dir, write_delay_ms: 5 }))
+  const agent = await addAgent(phone, 'Ledger', await fileStorage({ dir }))
   const seen = []
   agent.on('command', c => seen.push(c))
   await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'do it' })
@@ -714,7 +714,7 @@ await test('v1.1 R4: commands delivered once per (sender, sequence); ledger surv
   eq(seen[0].history, false, 'a fresh join gets real commands')
   await agent.ledger.mark(seen[0].envelope_hash)
   await agent.stop()
-  const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
+  const again = track(await openRoom({ storage: await fileStorage({ dir }) }))
   const later = []
   again.on('command', c => later.push(c))
   await again.start()
@@ -1557,14 +1557,14 @@ if (!useTestHub) await test('fuzz F15 with the owner down (trace smutm8tbj-w2-7)
   // trace: found, invite A0, A0 card, A0 crashes, H0 answers with a bad choice -> the card stays closed at the hub until A0 is back
   const dir = path.join(scratch, 'f15-down')
   const { phone } = await room()
-  const agent = await addAgent(phone, 'Down', await fileStorage({ dir, write_delay_ms: 5 }))
+  const agent = await addAgent(phone, 'Down', await fileStorage({ dir }))
   const id = await agent.sendCard({ title: 'pick', options: [{ key: 'a', label: 'A' }], allows_multiple: true })
   await settleAll(agent, phone)
   await until(() => phone.model.cards.get(id), 'phone has it')
   await agent.stop()
   await phone.answer({ object_id: id, choices: ['zzz'] }).catch(() => {})
   await settleAll(phone)
-  const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
+  const again = track(await openRoom({ storage: await fileStorage({ dir }) }))
   await again.start()
   await again.claimSession({ process_instance: 'again' })
   await settleAll(again, phone)
@@ -1730,7 +1730,7 @@ await test('fuzz undetected-tampering (trace smuv6ie9h-w1-4): an envelope whose 
 if (z.KEY_SCOPE) await test('agent child session: the agent opens one without approval; the human sees it under the parent; another agent cannot read it; it survives a restart', async () => {
   const dir = path.join(scratch, 'agent-child')
   const { phone, agents: [bot] } = await room({ laptop: true, agents: 1 })
-  const agent = await addAgent(phone, 'Main', await fileStorage({ dir, write_delay_ms: 5 }))
+  const agent = await addAgent(phone, 'Main', await fileStorage({ dir }))
   const main = agent.session_id
   const child = await agent.openChildSession({ profile: { agent_name: 'Design', model: 'test', task: 'pictures' } })
   assert(child && child !== main, 'a new session')
@@ -1764,7 +1764,7 @@ if (z.KEY_SCOPE) await test('agent child session: the agent opens one without ap
   await until(() => cmds.find(c => c.command === 'answer' && c.session_id === child), 'answer from the child session')
   // a restart of the agent process: same main, same child, still writes there
   await agent.stop()
-  const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
+  const again = track(await openRoom({ storage: await fileStorage({ dir }) }))
   await again.start()
   eq(again.session_id, main, 'main session after the restart')
   eq(again.childSessionIds().join(), child, 'child after the restart')
