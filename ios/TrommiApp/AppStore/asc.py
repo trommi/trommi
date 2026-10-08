@@ -3,7 +3,7 @@
 JWT is signed with the openssl command line tool, so it runs on a stock macOS runner and on Linux alike.
 
   asc.py prepare BUNDLE_ID          the bundle id (Push Notifications, App Groups) and BUNDLE_ID.share (App Groups)
-                                    are registered; the app record exists
+                                    are registered, their INVALID App Store profiles removed; the app record exists
   asc.py wait VERSION BUILD         waits until App Store Connect has processed that build (VALID), then prints its id
   asc.py internal BUILD_ID GROUP [EMAIL]
                                     the internal TestFlight group GROUP exists (every build), holds BUILD_ID, and
@@ -120,6 +120,14 @@ def prepare(bundle):
     # both ids once in the developer portal (ios/README.md "Share Extension").
     bundle_id(bundle, "Trommi", ["PUSH_NOTIFICATIONS", "APP_GROUPS"])
     bundle_id(f"{bundle}.share", "Trommi Share", ["APP_GROUPS"])
+    # A capability change makes the profiles INVALID; their names stay taken, and omarchy-apple-dev's identity step
+    # (which looks only at ACTIVE ones) could not make new ones under the same name (409). They go here.
+    for ident in (bundle, f"{bundle}.share"):
+        for p in call("GET", f"/v1/profiles?filter[profileType]=IOS_APP_STORE&limit=200")["data"]:
+            name, state = p["attributes"]["name"], p["attributes"]["profileState"]
+            if name.startswith(f"omarchy-apple-dev {ident} ") and state != "ACTIVE":
+                print(f"removing the {state} profile '{name}'")
+                call("DELETE", f"/v1/profiles/{p['id']}")
     aid = app_id(bundle)
     if not aid:
         die(f"no App Store Connect app record for {bundle}: create it once in App Store Connect (Apps > + > New App; "
