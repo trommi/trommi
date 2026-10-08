@@ -271,4 +271,11 @@ public final class HubClient {
     if remove { body["remove"] = true }
     _ = try await request("POST", roomPath("/push_subscriptions"), body: body)
   }
+  /** A Live Activity token (README "Live Activity"): kind start (push-to-start, with the room's tag) or activity. */
+  public func registerLiveActivity(token: String, environment: String, topic: String, kind: String, tag: String? = nil, remove: Bool = false) async throws {
+    var body: JSON = ["apns": ["token": token, "environment": environment, "topic": topic], "kind": kind]
+    if let t = tag { body["tag"] = t }
+    if remove { body["remove"] = true }
+    _ = try await request("POST", roomPath("/live_activity"), body: body)
+  }
 }
