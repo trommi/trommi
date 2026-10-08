@@ -9,7 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { argon2id } from '../shared/crypto/argon2.mjs'
 import * as A from '../shared/account.ts'
-import { memoryStorage } from '../shared/index.mjs'
+import { memoryStorage } from '../shared/index.ts'
 
 const outbox = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-mail-'))
 Object.assign(process.env, { HUB_MAIL_OUTBOX: outbox, HUB_LIMIT_LOGINS_PER_IP_10MIN: '1000', HUB_ACCOUNT_EXPIRE: '1' })

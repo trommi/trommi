@@ -469,7 +469,7 @@ export interface Model {
   // internal: device registers by device id, the projection's sorted state
   _device_registers?: Map<Hex, any>
   _register_log?: Map<string, unknown>
-  _proj?: Projection
+  _proj?: Projection | null
 }
 
 /** model.ts project(): the incremental state of the stack. */
@@ -512,7 +512,7 @@ export interface Storage {
   extractable_keys: boolean
   /** IndexedDB: saveDevice wraps extractable keys and swaps in non-extractable ones. */
   wraps_keys?: boolean
-  /** A follower tab's overlay (tabs.mjs): reads a snapshot, writes stay in memory. */
+  /** A follower tab's overlay (tabs.ts): reads a snapshot, writes stay in memory. */
   overlay?: boolean
   get(key: string): Promise<any>
   set(key: string, value: unknown): Promise<void>

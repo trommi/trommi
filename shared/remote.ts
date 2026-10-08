@@ -13,6 +13,7 @@ import type { Change, Model } from './types.ts'
 import type { Extra, FromWorker, ToWorker, WireError } from './worker-protocol.ts'
 import { CALLS } from './worker-protocol.ts'
 import { emptyChange } from './model-shape.ts'
+import type { EarlyCore } from './core-start.ts'
 
 type Listener = (data: any) => void
 type Pending = { resolve: (v: unknown) => void; reject: (e: unknown) => void }
@@ -33,6 +34,8 @@ export interface RemoteOptions {
   client?: string | null
   /** No answer from the worker by then: openRemote fails (the caller may open the room in the page instead). */
   timeout_ms?: number
+  /** The worker core-start.ts started before the app (it opened the room already). */
+  early?: EarlyCore | null
 }
 
 export class RemoteClient {
@@ -128,27 +131,82 @@ export interface RemoteClient {
   [method: string]: any
 }
 
-/** Start the worker and open the stored room in it. null: no room is stored. Throws when the worker does not come up. */
-export function openRemote({ url, storage = { name: 'trommi', prefix: 'room/' }, client = null, timeout_ms = 20_000 }: RemoteOptions): Promise<RemoteClient | null> {
-  const worker = new Worker(url, { type: 'module', name: 'trommi-core' })
+/** The core worker's address: the bundled one (dev/build.mjs defines it), else the dev server's. */
+declare const __TROMMI_CORE_WORKER__: string | undefined
+export const CORE_WORKER_URL: string = typeof __TROMMI_CORE_WORKER__ === 'string' ? __TROMMI_CORE_WORKER__ : '/gen/vendor/core-worker.mjs'
+
+interface Launch { url: string | URL; client: string | null; timeout_ms: number; early?: EarlyCore | null; worker?: Worker; first: ToWorker | null; onEvent?: (event: string, data: unknown) => void }
+
+/**
+ * A worker (started here, or core-start.ts's) up to its 'opened': the RemoteClient on the room it holds then (null: no
+ * room) and what the step gave besides (an account's recovery code). The timeout is for a worker that does not come up
+ * at all ('ready'); a step may take as long as it takes (a join waits for the other device).
+ */
+function launch({ url, client, timeout_ms, early = null, worker: given, first, onEvent }: Launch): Promise<{ remote: RemoteClient | null; value: unknown }> {
+  const worker = early?.worker ?? given ?? new Worker(url, { type: 'module', name: 'trommi-core' })
   return new Promise((resolve, reject) => {
     let remote: RemoteClient | null = null
-    let settled = false
-    const timer = setTimeout(() => { if (!settled) { settled = true; worker.terminate(); reject(Object.assign(new Error('the core worker did not answer'), { code: 'worker-timeout' })) } }, timeout_ms)
-    worker.onerror = e => {
-      const err = Object.assign(new Error(`the core worker failed: ${e.message ?? 'not loaded'}`), { code: 'worker-failed' })
+    let settled = false, up = false
+    const timer = setTimeout(() => { if (!settled && !up) { settled = true; worker.terminate(); reject(Object.assign(new Error('the core worker did not answer'), { code: 'worker-timeout' })) } }, timeout_ms)
+    const failed = (e: { message?: string } | null) => {
+      const err = Object.assign(new Error(`the core worker failed: ${e?.message || 'not loaded'}`), { code: 'worker-failed' })
       if (!settled) { settled = true; clearTimeout(timer); worker.terminate(); reject(err) } else remote?.fail(err)
     }
-    worker.onmessage = ({ data: m }: MessageEvent<FromWorker>) => {
+    const onMessage = ({ data: m }: MessageEvent<FromWorker>) => {
       if (remote) return remote.receive(m)
+      if (m.t === 'ready') { up = true; clearTimeout(timer); return }
+      if (m.t === 'event') { onEvent?.(m.event, m.data); return }
       if (m.t !== 'opened' || settled) return
       settled = true
       clearTimeout(timer)
       if (m.error) { worker.terminate(); return reject(errorOf(m.error)) }
-      if (!m.model) { worker.terminate(); return resolve(null) }
+      if (!m.model) { worker.terminate(); return resolve({ remote: null, value: m.value }) }
       remote = new RemoteClient(worker, mirrorOf(m.model), m.extra)
-      resolve(remote)
+      // (opened early, without the app's name for the hub: it goes now, before any call)
+      if (early && client) remote.call('configure', { client }).catch(() => {})
+      resolve({ remote, value: m.value })
     }
-    worker.postMessage({ t: 'open', id: 0, storage, client } satisfies ToWorker)
+    worker.onerror = e => failed(e)
+    worker.onmessage = onMessage
+    if (early) {
+      if (early.error) return failed(early.error)
+      for (const e of early.messages.splice(0)) onMessage(e as MessageEvent<FromWorker>)
+    }
+    if (first) worker.postMessage(first)
   })
+}
+
+/** Start the worker and open the stored room in it. null: no room is stored. Throws when the worker does not come up. */
+export async function openRemote({ url, storage = { name: 'trommi', prefix: 'room/' }, client = null, timeout_ms = 20_000, early = null }: RemoteOptions): Promise<RemoteClient | null> {
+  // (a worker core-start.ts started already sent the open)
+  const first: ToWorker | null = early ? null : { t: 'open', id: 0, storage, client }
+  return (await launch({ url, client, timeout_ms, early, first })).remote
+}
+
+const STORAGE = { name: 'trommi', prefix: 'room/' }
+
+/** An account screen's step that makes a room (account.ts createAccount, loginWithPassword, resetPassword), run in a
+ *  new core worker that then holds the room: { client: RemoteClient, recovery_code? }. args: the function's own, without storage. */
+export async function accountInWorker(fn: string, args: Record<string, unknown>, { url = CORE_WORKER_URL, client = null, timeout_ms = 20_000 }: { url?: string; client?: string | null; timeout_ms?: number } = {}): Promise<{ client: RemoteClient; recovery_code?: string }> {
+  const { storage: _storage, client: _client, ...rest } = args
+  const { remote, value } = await launch({ url, client, timeout_ms, first: { t: 'account', id: 0, fn, args: rest, storage: STORAGE, client } })
+  if (!remote) throw Object.assign(new Error('the core worker made no room'), { code: 'worker-failed' })
+  return { client: remote, ...(value as { recovery_code?: string } | null ?? {}) }
+}
+
+/** Join with an invite link in a new core worker (room.ts joinRoom's shape): { check_code, client, cancel() }. */
+export function joinInWorker(args: Record<string, unknown>, { url = CORE_WORKER_URL, client = null, timeout_ms = 20_000 }: { url?: string; client?: string | null; timeout_ms?: number } = {}): { check_code: Promise<string>; client: Promise<RemoteClient>; cancel(): void } {
+  const { storage: _storage, client: _client, ...rest } = args
+  let codeResolve: (c: string) => void = () => {}, codeReject: (e: unknown) => void = () => {}
+  const check_code = new Promise<string>((res, rej) => { codeResolve = res; codeReject = rej })
+  check_code.catch(() => {})
+  const worker = new Worker(url, { type: 'module', name: 'trommi-core' })
+  const made = launch({ url, client, timeout_ms, worker, first: { t: 'join', id: 0, args: rest, storage: STORAGE, client }, onEvent: (event, data) => { if (event === 'join-code') codeResolve(data as string) } })
+    .then(({ remote }) => { if (!remote) throw Object.assign(new Error('the core worker made no room'), { code: 'worker-failed' }); return remote })
+  made.catch(e => codeReject(e))
+  return {
+    check_code,
+    client: made,
+    cancel() { worker.postMessage({ t: 'call', id: -1, method: 'join.cancel', args: [] } satisfies ToWorker) },
+  }
 }

@@ -1,7 +1,7 @@
 // account.ts: the Trommi account. An email and a password the person chooses (like a password manager), and an
 // optional Emergency Kit (recovery words) for "Forgot password". The account is a way into the ROOM the first
 // device founded: what the password and the kit open is the room's recovery code, from which a new device adds itself
-// (room.mjs joinWithRecoveryCode). The hub never sees the password, the recovery words or the code.
+// (room.ts joinWithRecoveryCode). The hub never sees the password, the recovery words or the code.
 //
 // account v1 (bytes):
 //   email     = trim, lowercase (NFC)
@@ -20,14 +20,12 @@
 // one answer for "no such email" and "wrong password").
 import * as z from './crypto/zcrypto.mjs'
 import { argon2id } from './crypto/argon2.mjs'
-import { WORDS } from './wordlist.ts'
 import type { Storage } from './types.ts'
 import { Hub, normaliseHubUrl } from './transport.ts'
-import * as room from './room.mjs'
-
-// room.mjs is not typed yet: what this file calls of it.
-type Opened = { client: any; recovery_code: string }
-const { foundRoom, joinWithRecoveryCode } = room as unknown as { foundRoom(o: Record<string, unknown>): Promise<Opened>; joinWithRecoveryCode(o: Record<string, unknown>): Promise<{ client: any }> }
+import { foundRoom, joinWithRecoveryCode } from './room.ts'
+import type { Client } from './client.ts'
+import { normaliseEmail, passwordProblem, generateRecoveryWords, parseRecoveryWords } from './passwords.ts'
+export { PASSWORD_MIN, normaliseEmail, passwordProblem, generatePassword, generateRecoveryWords, parseRecoveryWords } from './passwords.ts'
 
 const { ZError, b64u, unb64u, concat, unhex } = z
 
@@ -36,46 +34,10 @@ export interface AccountClient { model: { room: { room_id: string | null } }; hu
 /** The account as the hub keeps it (GET …/account). */
 export interface AccountStatus { email: string; email_verified_at?: number | null; has_recovery?: boolean; revision: number; kdf?: Kdf; key_wrapped: string; [field: string]: unknown }
 export interface Kdf { alg: string; v: number; m: number; t: number; p: number }
-/** What opening a room takes besides the account (room.mjs). */
+/** What opening a room takes besides the account (room.ts). */
 interface DeviceOptions { storage: Storage; device_name?: string; device_info?: Record<string, unknown> | null; fetch?: typeof globalThis.fetch | null; client?: string | null }
 const te = new TextEncoder()
 export const ACCOUNT_KDF: Readonly<Kdf> = Object.freeze({ alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 })
-export const PASSWORD_MIN = 12
-const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,63}$/
-
-export function normaliseEmail(email: unknown): string {
-  const e = String(email ?? '').normalize('NFC').trim().toLowerCase()
-  if (e.length > 254 || !EMAIL.test(e)) throw new ZError('bad-email', 'not an email address')
-  return e
-}
-/** null if the password may be used, else why not. The only rule: at least 12 characters. */
-export function passwordProblem(password: unknown): string | null {
-  return [...String(password ?? '').normalize('NFC')].length >= PASSWORD_MIN ? null : `at least ${PASSWORD_MIN} characters`
-}
-
-/** n uniformly random words of the list (rejection sampling, no modulo bias). */
-function randomWords(n: number): string[] {
-  const out: string[] = []
-  const limit = Math.floor(65536 / WORDS.length) * WORDS.length
-  while (out.length < n) {
-    for (const v of crypto.getRandomValues(new Uint16Array(n * 2))) if (v < limit && out.length < n) out.push(WORDS[v % WORDS.length]!)
-  }
-  return out
-}
-/** A strong password to offer: five words joined by "-" (≈64 bits), e.g. 'acorn-velvet-tidy-hamper-oxford'. */
-export function generatePassword(): string { return randomWords(5).join('-') }
-/** The Emergency Kit's recovery words: twelve words (≈155 bits), one space between. */
-export function generateRecoveryWords(): string { return randomWords(12).join(' ') }
-const WORD_SET = new Set(WORDS)
-/** Normalised recovery words (lowercase, single spaces), or ZError 'bad-recovery-words'. */
-export function parseRecoveryWords(text: unknown): string {
-  const words = String(text ?? '').toLowerCase().split(/[^a-z]+/).filter(Boolean)
-  if (words.length !== 12) throw new ZError('bad-recovery-words', 'the Emergency Kit has 12 words')
-  const unknown = words.filter(w => !WORD_SET.has(w))
-  if (unknown.length) throw new ZError('bad-recovery-words', `not a word of the kit: ${unknown.join(', ')}`)
-  return words.join(' ')
-}
-
 const sha256 = async (b: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> => new Uint8Array(await crypto.subtle.digest('SHA-256', b))
 const accountSalt = (email: string) => sha256(concat(te.encode('trommi/v1/account-salt'), Uint8Array.of(0), te.encode(email)))
 async function hkdfBytes(ikm: Uint8Array<ArrayBuffer>, salt: Uint8Array<ArrayBuffer>, label: string): Promise<Uint8Array<ArrayBuffer>> {
@@ -130,12 +92,12 @@ async function passwordPart(email: string, password: unknown, room_id: string, c
  * which mails a code to confirm the email. Returns { client, recovery_code } — keep recovery_code in memory only
  * until the Emergency Kit is made (makeEmergencyKit) or skipped, never store it.
  */
-export async function createAccount({ hub_url, email: given, password, storage, device_name = '', device_info = null, found_token = null, fetch = null, client: client_name = null }: DeviceOptions & { hub_url: string; email: string; password: string; found_token?: string | null }): Promise<{ client: any; recovery_code: string }> {
+export async function createAccount({ hub_url, email: given, password, storage, device_name = '', device_info = null, found_token = null, fetch = null, client: client_name = null }: DeviceOptions & { hub_url: string; email: string; password: string; found_token?: string | null }): Promise<{ client: Client; recovery_code: string }> {
   const email = normaliseEmail(given)
   const why = passwordProblem(password)
   if (why) throw new ZError('weak-password', why)
   const { client, recovery_code } = await foundRoom({ hub_url, storage, client: client_name, device_name, device_info, found_token, fetch })
-  const room_id = client.model.room.room_id
+  const room_id = client.model.room.room_id!
   await client.hub.request('POST', client.hub.roomPath('/account'), { body: { email, ...(await passwordPart(email, password, room_id, recovery_code)) } })
   return { client, recovery_code }
 }
@@ -192,7 +154,7 @@ export const resendEmailCode = (client: AccountClient): Promise<any> => client.h
  * Log in on a new device with email and password. One error for unknown email and wrong password: 'wrong-login'.
  * The device adds itself to the room (joinWithRecoveryCode). Returns { client }.
  */
-export async function loginWithPassword({ hub_url, email: given, password, storage, device_name = '', device_info = null, fetch = null, client: client_name = null }: DeviceOptions & { hub_url: string; email: string; password: string }): Promise<{ client: any }> {
+export async function loginWithPassword({ hub_url, email: given, password, storage, device_name = '', device_info = null, fetch = null, client: client_name = null }: DeviceOptions & { hub_url: string; email: string; password: string }): Promise<{ client: Client }> {
   const email = normaliseEmail(given)
   if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
   const k = await passwordKeys(email, password)
@@ -206,7 +168,7 @@ export async function loginWithPassword({ hub_url, email: given, password, stora
  * Forgot password: email + the Emergency Kit's words + a new password. The device adds itself, then sets the new
  * password (the old one stops working). Returns { client }. One error for every miss: 'wrong-recovery'.
  */
-export async function resetPassword({ hub_url, email: given, words, new_password, storage, device_name = '', device_info = null, fetch = null, client: client_name = null }: DeviceOptions & { hub_url: string; email: string; words: string; new_password: string }): Promise<{ client: any }> {
+export async function resetPassword({ hub_url, email: given, words, new_password, storage, device_name = '', device_info = null, fetch = null, client: client_name = null }: DeviceOptions & { hub_url: string; email: string; words: string; new_password: string }): Promise<{ client: Client }> {
   const email = normaliseEmail(given)
   const why = passwordProblem(new_password)
   if (why) throw new ZError('weak-password', why)

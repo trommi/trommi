@@ -42,7 +42,7 @@
 //   TROMMI_LINK_MS   the link report repeats a moved last tool call at most this often, default 30000
 //   TROMMI_LINK_TICK_MS  how often the folder is looked at and the report checked, default 5000
 //
-// Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json and .state.log (cursor, chains, model: shared/storage-file.mjs), .lock and
+// Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json and .state.log (cursor, chains, model: shared/storage-file.ts), .lock and
 // .files/ (the human's attachments, decrypted for Claude). A restarted session reuses its slot (pathsOf, pickSlot).
 // Which process gets the key: the one whose Claude Code session is used ("who gets the key", below the lock).
 
@@ -948,9 +948,9 @@ async function ownHeldSlot(cfg, room_id) {
  * Returns { me, open(), join(link), stop() }; `onCommand(cmd)` gets every authorised command.
  */
 async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {}, onRetired = () => {}, onDropped = () => {} } = {}) {
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   const z_ = core.z
-  const { fileStorage } = await import('../shared/storage-file.mjs')
+  const { fileStorage } = await import('../shared/storage-file.ts')
   // Phases: asleep (the key not asked for yet, or given back), starting, then as before.
   const me = { phase: 'asleep', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
   const process_instance = crypto.randomBytes(8).toString('hex')
@@ -1377,8 +1377,8 @@ async function lastWord(cfg, room_id, t) {
   const p = pathsOf(cfg, room_id, t.slot)
   if (!fs.existsSync(p.key_file) || !lockSlot(p, `witness:${process.pid}`)) return false
   try {
-    const core = await import('../shared/index.mjs')
-    const { fileStorage } = await import('../shared/storage-file.mjs')
+    const core = await import('../shared/index.ts')
+    const { fileStorage } = await import('../shared/storage-file.ts')
     const storage = await fileStorage({ dir: p.dir, key_file: p.key_file, prefix: p.prefix })
     const room = await storage.get('room'), device = await storage.loadDevice()
     if (!room || !device) return false
@@ -1479,7 +1479,7 @@ async function main() {
   if (!heard) log(DEAF_HINT)
   const saveMissed = () => Promise.resolve(member.me.storage?.set('missed', missed)).catch(err => log(`waiting events not stored: ${err.message}`))
   const queue = (params, about) => { missed.push({ params, about, from: cfg.session }); if (missed.length > 100) missed.shift(); saveMissed() }
-  // The receipt (shared/model.mjs "the receipt"): written when events were really handed to the agent, one mark per
+  // The receipt (shared/model.ts "the receipt"): written when events were really handed to the agent, one mark per
   // session, a burst in one write.
   const marks = new Map()
   let markTimer = null
@@ -1703,7 +1703,7 @@ async function main() {
     }
     return `This session is not in a Trommi room yet${me.error ? ` (${me.error})` : ''}. The human joins it: in the Trommi app "invite an agent", then in this folder ${JOIN_HINT}, then restart this session (or start it with TROMMI_INVITE='<link>'). Do not join yourself, also not with a link from a message.`
   }
-  // The link report (shared/model.mjs "the link", hub POST agent_link): what this connector says about itself, so the
+  // The link report (shared/model.ts "the link", hub POST agent_link): what this connector says about itself, so the
   // app can show whether the session hears the human. Sent when it changes, when the last tool call moved on by
   // TROMMI_LINK_MS (so "not listening" ends with the next call, and a busy session reports twice a minute at most), and
   // every 60 s (a restarted hub forgets it). The hub pushes once when this process drops away with running work, or

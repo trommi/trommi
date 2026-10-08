@@ -1,4 +1,4 @@
-// storage-file.mjs: the storage adapter for Node (the agent connector). Not exported by index.mjs: browsers cannot load node:fs.
+// storage-file.ts: the storage adapter for Node (the agent connector). Not exported by index.ts: browsers cannot load node:fs.
 //
 //   const storage = await fileStorage({ dir, key_file?, prefix? })
 //
@@ -15,37 +15,46 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as z from './crypto/zcrypto.mjs'
 import { rangeOf } from './storage-memory.ts'
+import type { Storage, StoredDevice } from './types.ts'
 
-export async function fileStorage({ dir, key_file = null, prefix = '' } = {}) {
+type Entry = [string, unknown] | [string]
+export interface FileStorage extends Storage {
+  file: string
+  saveDevice(device: StoredDevice, opts?: { room_id?: string | null }): Promise<void>
+  flush(): Promise<void>
+}
+const errCode = (e: unknown): string | undefined => (e as { code?: string } | null)?.code
+
+export async function fileStorage({ dir, key_file = null, prefix = '' }: { dir?: string; key_file?: string | ((room_id: string | null) => string) | null; prefix?: string } = {}): Promise<FileStorage> {
   if (!dir) throw new z.ZError('bad-argument', 'fileStorage needs a dir')
   await fs.mkdir(dir, { recursive: true, mode: 0o700 })
   await fs.chmod(dir, 0o700).catch(() => {})
   const file = path.join(dir, `${prefix}state.json`), journal = path.join(dir, `${prefix}state.log`)
-  const map = new Map()
+  const map = new Map<string, any>()
   let snapshotBytes = 0, journalBytes = 0
   try {
     const text = await fs.readFile(file, 'utf8')
     snapshotBytes = text.length
     for (const [k, v] of Object.entries(JSON.parse(text))) map.set(k, v)
-  } catch (e) { if (e.code !== 'ENOENT') throw e }
+  } catch (e) { if (errCode(e) !== 'ENOENT') throw e }
   try {
     const text = await fs.readFile(journal, 'utf8')
     let good = 0
     for (let at = 0, end; (end = text.indexOf('\n', at)) >= 0; at = end + 1) {
-      let entries
+      let entries: Entry[]
       try { entries = JSON.parse(text.slice(at, end)) } catch { break }
-      for (const e of entries) e.length > 1 ? map.set(e[0], e[1]) : map.delete(e[0])
+      for (const e of entries) e.length > 1 ? map.set(e[0], (e as [string, unknown])[1]) : map.delete(e[0])
       good = end + 1
     }
     // A torn last line (a crash in the middle of an append; that write never resolved) is cut off, so the next append
     // starts on a line of its own.
     if (good < text.length) await fs.truncate(journal, Buffer.byteLength(text.slice(0, good)))
     journalBytes = good
-  } catch (e) { if (e.code !== 'ENOENT') throw e }
+  } catch (e) { if (errCode(e) !== 'ENOENT') throw e }
 
   const syncDir = async () => {
     const dh = await fs.open(dir, 'r')
-    try { await dh.sync() } catch (e) { if (e.code !== 'EINVAL' && e.code !== 'EISDIR' && e.code !== 'EPERM') throw e } finally { await dh.close() }
+    try { await dh.sync() } catch (e) { const c = errCode(e); if (c !== 'EINVAL' && c !== 'EISDIR' && c !== 'EPERM') throw e } finally { await dh.close() }
   }
   /** The whole state as the snapshot; the journal starts empty again. */
   const compact = async () => {
@@ -62,7 +71,7 @@ export async function fileStorage({ dir, key_file = null, prefix = '' } = {}) {
   }
   // Write-ahead (R4): concurrent writers share the next append; a failed write rejects every waiter (the client stops
   // sending).
-  let chain = Promise.resolve(), queued = null, pending = []
+  let chain: Promise<void> = Promise.resolve(), queued: Promise<void> | null = null, pending: Entry[][] = []
   const writeNow = async () => {
     const lines = pending.map(entries => JSON.stringify(entries)).join('\n') + '\n'
     pending = []
@@ -73,15 +82,15 @@ export async function fileStorage({ dir, key_file = null, prefix = '' } = {}) {
     journalBytes += lines.length
     if (journalBytes > Math.max(1 << 20, snapshotBytes)) await compact()
   }
-  const persist = entries => {
+  const persist = (entries: Entry[]): Promise<void> => {
     pending.push(entries)
     if (queued) return queued
     queued = chain.then(() => { queued = null; return writeNow() })
     chain = queued.catch(() => {})
     return queued
   }
-  const clone = v => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)))
-  const keyPath = room_id => {
+  const clone = (v: unknown): any => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)))
+  const keyPath = (room_id: string | null): string => {
     const p = typeof key_file === 'function' ? key_file(room_id) : key_file
     return p ?? path.join(dir, `${prefix}device.key`)
   }
@@ -92,7 +101,7 @@ export async function fileStorage({ dir, key_file = null, prefix = '' } = {}) {
     async set(key, value) { const v = clone(value); map.set(key, v); await persist([[key, v]]) },
     async delete(key) { map.delete(key); await persist([[key]]) },
     async setMany(entries) {
-      const out = []
+      const out: Entry[] = []
       for (const [k, v] of entries) { if (v === undefined) { map.delete(k); out.push([k]) } else { const c = clone(v); map.set(k, c); out.push([k, c]) } }
       if (out.length) await persist(out)
     },
@@ -111,13 +120,13 @@ export async function fileStorage({ dir, key_file = null, prefix = '' } = {}) {
     },
     async loadDevice() {
       const p = map.get('device_key_file') ?? keyPath(map.get('room')?.room_id ?? null)
-      let bytes
-      try { bytes = new Uint8Array(await fs.readFile(p)) } catch (e) { if (e.code === 'ENOENT') return null; throw e }
+      let bytes: Uint8Array
+      try { bytes = new Uint8Array(await fs.readFile(p)) } catch (e) { if (errCode(e) === 'ENOENT') return null; throw e }
       const st = await fs.stat(p)
       if (st.mode & 0o077) throw new z.ZError('bad-key-file', `${p} is readable by others (mode ${(st.mode & 0o777).toString(8)}); chmod 600`)
       return z.importDeviceSecret(bytes, { extractable: true })
     },
     async flush() { await chain },
-    async close() { await this.flush() },
+    async close() { await chain },   // (flush)
   }
 }

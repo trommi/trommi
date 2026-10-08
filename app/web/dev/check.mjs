@@ -2,7 +2,8 @@
 //   1. a file in public/ outside the allowed set or folders fails;
 //   2. a view imports only from app.mjs and ui.mjs (and the core only through app.mjs); ui.mjs imports nothing;
 //   3. no crypto in the app: crypto.subtle, argon2 and zcrypto only in gen/vendor (the repository's shared/crypto/, copied by the build);
-//   4. the inline scripts of index.html and help.html are allowed by their hash in _headers (CSP).
+//   4. the inline scripts and styles of index.html and help.html are allowed by their hash in _headers (CSP), and no
+//      'unsafe-inline' for style elements (style attributes only: style-src-attr).
 //   node dev/check.mjs
 import fs from 'node:fs'
 import path from 'node:path'
@@ -12,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 const pub = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const VIEWS = ['auth', 'desk', 'card', 'session', 'sidebar', 'notes', 'media', 'agents', 'whiteboard']
 const FILES = new Set(['index.html', 'help.html', 'frame.html', 'sw.js', 'manifest.webmanifest', '_headers', 'connect.sh', 'drawings.json',
-  ...['app', 'ui', ...VIEWS].flatMap(v => [`${v}.mjs`, `${v}.css`]).filter(f => f !== 'ui.css'), 'demo/demo.mjs', 'demo/fixture.json'])
+  ...['app', 'ui', ...VIEWS].flatMap(v => [`${v}.mjs`, `${v}.css`]).filter(f => f !== 'ui.css'), 'demo/demo.mjs', 'demo/fixture.json', 'demo/screens.css'])
 const FOLDERS = ['gen/', 'fonts/', 'icons/', 'demo/files/']
 const problems = []
 const walk = dir => fs.readdirSync(path.join(pub, dir), { withFileTypes: true }).flatMap(e => (e.isDirectory() ? walk(`${dir}${e.name}/`) : [`${dir}${e.name}`]))
@@ -40,6 +41,16 @@ for (const page of ['index.html', 'help.html']) {
   for (const [, body] of read(page).matchAll(/<script(?: type="module")?>([\s\S]*?)<\/script>/g)) {
     const hash = `'sha256-${crypto.createHash('sha256').update(body).digest('base64')}'`
     if (!csp.includes(hash)) problems.push(`${page}: an inline script whose hash ${hash} is not in the CSP of _headers`)
+  }
+}
+
+// 4b. inline style elements: allowed by their hash in style-src (style attributes are style-src-attr's)
+const styleSrc = csp.match(/style-src ([^;]*)/)?.[1] ?? ''
+if (/'unsafe-inline'/.test(styleSrc)) problems.push("_headers: style-src allows 'unsafe-inline' (only style-src-attr may)")
+for (const page of ['index.html', 'help.html']) {
+  for (const [, body] of read(page).matchAll(/<style>([\s\S]*?)<\/style>/g)) {
+    const hash = `'sha256-${crypto.createHash('sha256').update(body).digest('base64')}'`
+    if (!styleSrc.includes(hash)) problems.push(`${page}: an inline style whose hash ${hash} is not in the style-src of _headers`)
   }
 }
 
