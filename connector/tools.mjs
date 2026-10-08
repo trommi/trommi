@@ -531,8 +531,13 @@ export const EVENTS = [
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
-    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "Explain" on that card', cards: 'ids of cards the human copied into this message, comma-separated, often another session\'s: each stands in full in the content (question, options, answer, notes, picture paths), so you can act on a decision you never saw', cards_json: 'the same cards as a JSON list of {id, number, title, agent, choice_label, kind, status, choices}', marks: 'how many notes and drawings the human pinned to parts of that card; they are lines of the content under "Notes pinned to the card:", and the picture of the annotated card is in image_path', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
+    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "What??" on that card: explain it in words, then present it again', cards: 'ids of cards the human copied into this message, comma-separated, often another session\'s: each stands in full in the content (question, options, answer, notes, picture paths), so you can act on a decision you never saw', cards_json: 'the same cards as a JSON list of {id, number, title, agent, choice_label, kind, status, choices}', marks: 'how many notes and drawings the human pinned to parts of that card; they are lines of the content under "Notes pinned to the card:", and the picture of the annotated card is in image_path', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
     example: '<channel source="board" kind="chat">Please check the logs first.</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'explain', when: 'The human pressed "▶ Explain" on one of your open cards: they want a short narrated explainer clip of it.',
+    content: 'a sentence naming the card and what to do', meta: { kind: 'explain', card_id: 'the card' },
+    example: '<channel source="board" kind="explain" card_id="a1b2c3d4">The human pressed "▶ Explain" on "Which font?" …</channel>',
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision', when: 'The human answered a decision card.',
@@ -1310,6 +1315,11 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         delete state.permissions[cmd.object_id]
         saveState()
         return notify('notifications/claude/channel/permission', { request_id, behavior: cmd.allow ?? c.allow ? 'allow' : 'deny' })
+      }
+      case 'clip_request': {
+        // "▶ Explain" (README "Inside the envelope", clip_request): a narrated clip of the card, attached with reply.
+        if (!card || !mine(card)) return log('clip request for a card that is not ours')
+        return send(`The human pressed "▶ Explain" on "${title}": they want a short narrated explainer clip of this card (30-90 s: the question, each option with its picture, your pick). Make it with your clip skill (trommi-clip) if you have one and attach the mp4 with reply (this card_id, attachments); without one, explain it in a few plain sentences with reply and this card_id. Only facts from the card and its conversation, no new numbers.`, { kind: 'explain', card_id: card.object_id })
       }
       case 'selection_sent': {
         const got = await download(c.attachments)
