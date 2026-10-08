@@ -9,7 +9,7 @@
 // ever reached the hub or a second device: there is nothing to carry over, and the Whiteboard is where drawing is kept
 // from now on. The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's canvas.mjs).
-import { Controller, controller, html, markArt, nextThemeMode, raw, setThemeMode } from './ui.mjs'
+import { Controller, controller, html, isTyping, letterKeysOn, markArt, nextThemeMode, raw, setThemeMode } from './ui.mjs'
 import { canvasWire } from './app.mjs'
 /** The canvas timeline of a desk: desk/ and 32 hex. A desk id that is not 32 hex already ('main', a menu desk's 8 hex)
  *  is folded into 16 bytes (its UTF-8, XOR by position, the length last): the same desk is the same timeline on every
@@ -1971,6 +1971,9 @@ function mountPad(main, { canvasId: PAD, client }) {
   on(document, 'keydown', e => {
     if (e.defaultPrevented || e.altKey || document.querySelector('dialog[open]')) return
     if (e.target === editor) return   // the note has its own keys; everything else is text
+    // (writing anywhere, the corner note too, is never a tool's key: ui.mjs isTyping; a letter on a phone without a
+    // keyboard neither: letterKeysOn)
+    if (e.key !== 'Escape' && (isTyping(e) || (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !letterKeysOn(e)))) return
     const cmd = e.ctrlKey || e.metaKey
     const key = e.key.toLowerCase()
     if (e.key === 'Escape') {
