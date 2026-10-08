@@ -10,6 +10,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { refuse } from './http.mjs'
+import { roomTables } from './delete-room.mjs'
 
 const DAY = 86400000, FRESH_MS = 60000, LABEL = 'trommi-test-request/v1'
 
@@ -49,13 +50,9 @@ export function testRooms({ db, dataDir, publicKey = null, closeRoom = async () 
   /** True if the request carries a valid, fresh, unused test signature. */
   const isTestRequest = req => { let v = verdicts.get(req); if (v === undefined) verdicts.set(req, v = verify(req)); return v }
 
-  /** Every table with a room_id column, read from the schema, so new tables are covered without a change here. */
-  const roomTables = () => db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(t => t.name)
-    .filter(name => db.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = 'room_id'`).get(name))
-
   async function remove(roomId) {
     await closeRoom(roomId)
-    db.tx(() => { for (const t of roomTables()) db.q(`DELETE FROM "${t}" WHERE room_id = ?`).run(roomId) })
+    db.tx(() => { for (const t of roomTables(db)) db.q(`DELETE FROM "${t}" WHERE room_id = ?`).run(roomId) })
     fs.rmSync(path.join(dataDir, 'attachments', roomId), { recursive: true, force: true })
     ids.delete(roomId)
     log(`test room ${roomId.slice(0, 8)} deleted`)
