@@ -14,7 +14,7 @@ public let OBJECT_STATE_NAME = [1: "open", 2: "answered", 3: "closed"]
 public let OBJECT_STATE_CODE = ["open": 1, "answered": 2, "closed": 3]
 public let URGENCY_NAME = [0: "low", 1: "normal", 2: "high", 3: "critical"]
 public let URGENCY_CODE = ["low": 0, "normal": 1, "high": 2, "critical": 3]
-public let TIMELINE_KIND_NAME = [1: "chat", 2: "canvas"]
+public let TIMELINE_KIND_NAME = [1: "chat", 2: "scribble"]
 public let CARD_CONTENT_FIELDS = ["card_type", "title", "teaser", "body", "options", "sections", "html", "allows_multiple", "recommended", "urgency_reason",
                                   "attachments", "change_note", "close_summary", "withdraw_reason", "merged_into_object_id", "merged_from_object_ids"]
 
@@ -372,7 +372,7 @@ public struct HumanRegisters {
   public var crown: JV = .null
   public var desks: [String: JV] = [:]
   public var sessionSettings: [String: JV] = [:]
-  public var canvasSnapshots: [String: JV] = [:]
+  public var scribbleSnapshots: [String: JV] = [:]
   public var raw: [String: RegisterValue] = [:]
 }
 
@@ -615,8 +615,10 @@ public final class Board {
     let state: String
     if rec.content != nil { state = rec.contentState == "ok" ? "loaded" : rec.contentState }
     else { state = rec.contentState == "pruned" ? "pruned" : rec.contentState == "undecryptable" ? "undecryptable" : "header" }
+    var state2 = state
+    if state == "loaded", let ct = rec.content?["content_type"].string, !Compat.CONTENT_TYPES.contains(ct) { state2 = "unsupported" }
     return TimelineItem(envelopeNumber: rec.envelopeNumber, localId: rec.localId, pending: false, envelopeHash: rec.envelopeHash, senderDeviceId: rec.senderDeviceId,
-                        senderSequence: rec.senderSequence, recipientDeviceId: rec.recipientDeviceId, sentAt: rec.sentAt, itemState: state,
+                        senderSequence: rec.senderSequence, recipientDeviceId: rec.recipientDeviceId, sentAt: rec.sentAt, itemState: state2,
                         contentType: rec.content?["content_type"].string, content: rec.content)
   }
   /** R1: who may write into which timeline: nil if allowed, else a refusal code. */
@@ -634,7 +636,7 @@ public final class Board {
       }
       return "not-allowed"
     }
-    if p.kind == "canvas" {
+    if p.kind == "scribble" {
       if p.scope == "desk" { return human ? nil : "not-allowed" }
       if p.scope == "session" { return human || agentAt(p.scopeId, rec.senderDeviceId, rec) ? nil : "not-allowed" }
       if p.scope == "card" { return human || (cards[p.scopeId].map { holdsAt(sessionId: $0.sessionId, creator: $0.agentDeviceId, rec.senderDeviceId, rec) } ?? false) ? nil : "not-allowed" }
@@ -732,6 +734,8 @@ public final class Board {
     } else {
       card2.objectVersion += 1
       card2.contentState = rec.contentState
+      // a body of a newer schema: the head counts, the card is a placeholder (never answered from here)
+      if rec.contentState == "newer_schema" { card2.unsupported = true }
     }
     card2.versions.append(CardVersion(objectVersion: card2.objectVersion, versionHash: rec.envelopeHash, previousVersionHash: c?["previous_version_hash"].string,
                                       envelopeNumber: rec.envelopeNumber, sentAt: rec.sentAt, objectState: st.objectState, urgency: st.urgency, content: c))
@@ -835,7 +839,13 @@ public final class Board {
     if action == "read" && card.cardType != "info" { return "bad-answer" }
     return nil
   }
+  /** An own answer shown before the hub has it: how the card was, by the echo's local id (undone when the real one comes). */
+  public var answerEchoes: [String: (state: String, closedHow: String?, answer: Answer?)] = [:]
   private func applyAnswer(_ rec: Rec, _ change: inout Change) -> (applied: Bool, refused: String?) {
+    if let l = rec.localId, let was = answerEchoes.removeValue(forKey: l), let card = rec.object.flatMap({ cards[$0.objectId] }) {
+      card.objectState = was.state; card.closedHow = was.closedHow; card.answer = was.answer
+      card.answers.removeAll { $0.pending }
+    }
     if let why = answerRefusal(rec) {
       if let card = rec.object.flatMap({ cards[$0.objectId] }), rec.isHead, stateOf(rec).objectState != "open", rec.envelopeNumber > (card.refusedHead ?? 0), rec.envelopeNumber > card.envelopeNumber {
         card.refusedHead = rec.envelopeNumber; change.cards.insert(card.objectId)
@@ -944,7 +954,7 @@ public final class Board {
 
   // ---- registers --------------------------------------------------------------------------------
 
-  static let humanPrefixes = ["draft/", "snooze/", "duck/", "desk/", "session/", "session_history/", "canvas_snapshot/"]
+  static let humanPrefixes = ["draft/", "snooze/", "duck/", "desk/", "session/", "session_history/", "scribble_snapshot/"]
   public static func isHumanKey(_ k: String) -> Bool { k == "crown" || k == "room_snapshot" || humanPrefixes.contains { k.hasPrefix($0) } }
   public static func isAgentKey(_ k: String) -> Bool { k == "profile" || k == "heard" || k.hasPrefix("status_line/") || k.hasPrefix("alert/") }
 
@@ -998,7 +1008,7 @@ public final class Board {
     case "session":
       put(&human.sessionSettings)
       let s = sessionOf(id); s.settings = value; change.sessions.insert(id); change.stack = true
-    case "canvas_snapshot": put(&human.canvasSnapshots); change.timelines.insert(timelineKeyOf("canvas", id))
+    case "scribble_snapshot": put(&human.scribbleSnapshots); change.timelines.insert(timelineKeyOf("scribble", id))
     default: break
     }
     change.registers.insert(key)

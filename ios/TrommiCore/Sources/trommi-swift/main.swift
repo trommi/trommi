@@ -260,7 +260,7 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     try await room.sync()
     let tl = deskCanvas(rest.first ?? "main")
     if drawIt {
-      let e = CanvasState.entryOf(CanvasShape(id: "", by: "", tool: "pen", pts: [10, 10, 40, 30, 80, 20], pr: nil, color: "ink", size: 4, z: 0))
+      let e = CanvasState.entryOf(.stroke(Ink(pts: [10, 10, 40, 30, 80, 20], t: [0, 8, 16], f: [0.25, 0.25, 0.25], sim: true), tool: "pen", color: "ink", width: 4))
       try await room.sendCanvas(tl, .obj(["content_type": "strokes", "strokes": [e]]))
       try await room.flush()
       try await room.sync()

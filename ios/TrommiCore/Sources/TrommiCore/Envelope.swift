@@ -14,7 +14,7 @@ public enum KIND {
   public static func isKnown(_ kind: Int) -> Bool { kind >= 1 && kind <= MAX }
 }
 public enum KEY_SCOPE { public static let ROOM = 0, SESSION = 1 }
-public enum TIMELINE { public static let CHAT = 1, CANVAS = 2 }
+public enum TIMELINE { public static let CHAT = 1, SCRIBBLE = 2, CANVAS = 2 }
 public enum TIMELINE_SCOPE { public static let CARD = 1, SESSION = 2, DESK = 3 }
 public enum CARD_STATE { public static let OPEN = 1, ANSWERED = 2, CLOSED = 3 }
 public let SEEN_MAX = 64
