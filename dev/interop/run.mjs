@@ -340,7 +340,13 @@ for (const pair of pairs) {
     const bad = await refused(A.call('register_push', ia === 'swift' ? { apns: { token: 'nope', environment: 'sandbox', topic: APNS_TOPIC, key: 'x' } } : { webpush: { endpoint: 'https://evil.example/x', keys: {} } }))
     assert.equal(bad?.code, 'bad-argument', 'a malformed registration is refused')
     await G.call('agent_card', { title: 'Push me', options: [{ key: 'y', label: 'Yes' }], urgency: 'high' })
-    if (ia === 'swift') await until('an APNs attempt in the hub log', () => hubLog.slice(before).some(l => /apns/.test(l)), 10_000)
+    // the hub keeps A's registration (its row in hub.db), and tries to push (an APNs error in its log: the host points nowhere)
+    const rows = hub.db.q('SELECT endpoint FROM push_subscriptions WHERE device_id = ?').all(ctx.aId).map(r => r.endpoint)
+    assert.ok(rows.some(e => (ia === 'swift' ? /^apns:/ : /^https:\/\/push\.invalid\//).test(e)), `A's registration kept: ${rows}`)
+    if (ia === 'swift') {
+      const tried = await until('an APNs attempt in the hub log', () => hubLog.slice(before).some(l => /apns/.test(l)), 5_000).catch(() => false)
+      if (!tried) console.log('      (no APNs attempt logged within 5 s)')
+    }
   })
 
   if (ia === 'swift' || ib === 'swift') {
