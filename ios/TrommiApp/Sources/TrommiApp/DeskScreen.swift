@@ -47,7 +47,8 @@ struct DeskScreen: View {
           ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
         }
       }
-      .padding(.horizontal, 16).padding(.bottom, 24)
+      // the last row scrolls clear of the floating tab bar
+      .padding(.horizontal, 16).padding(.bottom, 120)
       .frame(maxWidth: 760).frame(maxWidth: .infinity)
       Color.clear.frame(height: 0).id("desk-end")
     }

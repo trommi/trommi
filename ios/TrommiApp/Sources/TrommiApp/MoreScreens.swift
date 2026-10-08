@@ -57,7 +57,8 @@ struct OffScreen: View {
         }.padding(.top, 10)
         if let v = model.view { OffList(view: v, full: true, query: query) }
       }
-      .padding(.horizontal, 16).padding(.bottom, 40)
+      // the last row scrolls clear of the floating tab bar
+      .padding(.horizontal, 16).padding(.bottom, 120)
       .frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
     .searchable(text: $query, prompt: "Search the list")
@@ -107,13 +108,8 @@ struct OffList: View {
   }
   @ViewBuilder private func row(_ r: Row) -> some View {
     let c = r.card
-    HStack(spacing: 12) {
-      Group {
-        if r.g == "works" { PulseDot() }
-        else if r.g == "open" { Button { model.archive(c.id) } label: { PenMark("desk:BOX", color: Ink.fg).frame(width: 22, height: 22) }.buttonStyle(.plain).accessibilityLabel("Tick it off: \(c.title)") }
-        else if r.g == "later" { Sketch("snooze", color: Ink.stampLater).frame(width: 20, height: 20) }
-        else { PenMark("desk:BOX_TICK", color: Ink.faint).frame(width: 22, height: 22) }
-      }.frame(width: 26)
+    // the title from the left edge, the dot or the box on the right (as the web's desktop list)
+    HStack(spacing: 8) {
       Button { model.path.append(.card(c.id)) } label: {
         Text(c.title.isEmpty ? "(no title)" : c.title).font(Face.text(16, .medium))
           .foregroundStyle(r.g == "done" || r.g == "trash" ? Ink.muted : Ink.fg)
@@ -123,6 +119,15 @@ struct OffList: View {
       }
       .buttonStyle(.plain)
       .accessibilityLabel(r.g == "works" ? "\(c.title), being worked on" : c.title)
+      Group {
+        if r.g == "works" { PulseDot() }
+        else if r.g == "open" {
+          Button { model.archive(c.id) } label: { PenMark("desk:BOX", color: Ink.fg).frame(width: 22, height: 22).frame(width: 44, height: 44).contentShape(Rectangle()) }
+            .buttonStyle(.plain).accessibilityLabel("Tick it off: \(c.title)")
+        }
+        else if r.g == "later" { Sketch("snooze", color: Ink.stampLater).frame(width: 20, height: 20) }
+        else { PenMark("desk:BOX_TICK", color: Ink.faint).frame(width: 22, height: 22) }
+      }.frame(width: 44, height: 44)
     }
     .overlay(alignment: .bottom) { Rectangle().fill(Ink.line).frame(height: 1) }
   }
