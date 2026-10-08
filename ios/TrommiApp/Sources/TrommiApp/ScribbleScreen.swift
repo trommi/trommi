@@ -208,7 +208,6 @@ struct ScribbleScreen: View {
         if !selection.isEmpty { selectionBar }
         toolbar
       }
-      .padding(.bottom, 70)
     }
     .navigationTitle("Scribble").navigationBarTitleDisplayMode(.inline)
     .task(id: timeline) { await load() }
