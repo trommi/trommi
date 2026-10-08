@@ -197,8 +197,9 @@ function boardModel(state, agents = state.agents, desk = null) {
   if (desks) for (const a of everyone) if (!onDesk(a)) a.name = `${a.name} · ${desks.find(d => d.id === deskOf(a))?.name ?? ''}`
   const here = everyone.filter(a => !a.archived && onDesk(a))
   const byAgent = new Map(everyone.map(a => [a.id, a]))
-  const byCard = cardsMemo(state.cards, 'byCard', () => new Map(state.cards.map(c => [c.id, c])))
-  const byNumber = cardsMemo(state.cards, 'byNumber', () => new Map(state.cards.map(c => [String(c.number), c])))
+  // (the board state's own map, kept up to date per card; by number only when a card is looked up by it)
+  const byCard = state.byId ?? cardsMemo(state.cards, 'byCard', () => new Map(state.cards.map(c => [c.id, c])))
+  const byNumber = () => cardsMemo(state.cards, 'byNumber', () => new Map(state.cards.map(c => [String(c.number), c])))
   const shelved = new Set(everyone.filter(a => a.archived).map(a => a.id))
 
   // The stack, in the hub's fixed order (oldest first). A card that is with its session (handed back, asked
@@ -290,7 +291,7 @@ function boardModel(state, agents = state.agents, desk = null) {
     blocked: units.filter(u => u.blocked).length,
     working: units.filter(u => u.online && u.running).length,
     deskName: all ? 'All desks' : desks?.find(d => d.id === deskId)?.name || 'Desk',
-    cardByRef: ref => byNumber.get(String(ref)) ?? byCard.get(String(ref)) ?? null,
+    cardByRef: ref => byNumber().get(String(ref)) ?? byCard.get(String(ref)) ?? null,
   }
 }
 
@@ -445,8 +446,10 @@ export class BoardState {
     const m = this.model
     // (touched: some card's board form must be made again; without, the card list of the last state is handed on)
     let touched = !change || change.cards.size > 0 || change.permissions.size > 0
+    let wiped = !change                // every card's board form is made again (names changed, or no change given)
+    const dropped = new Set()
     const wasClosed = id => { const b = this.cardCache.get(id); if (b && b.status !== 'open') this.closedGen++ }
-    const drop = id => { wasClosed(id); if (this.cardCache.delete(id)) touched = true }
+    const drop = id => { wasClosed(id); if (this.cardCache.delete(id)) { touched = true; dropped.add(id) } }
     if (!change) { this.cardCache.clear(); this.eventCache.clear(); this.closedGen++ }
     else {
       for (const id of change.cards) { wasClosed(id); this.cardCache.delete(id); this.eventCache.delete(id) }
@@ -454,7 +457,7 @@ export class BoardState {
       for (const key of change.registers) {
         const at = key.indexOf('/'), kind = key.slice(0, at), id = key.slice(at + 1)
         if (kind === 'draft' || kind === 'snooze' || kind === 'duck' || kind === 'archived') drop(id)
-        if (kind === 'session' || key === 'crown') { this.cardCache.clear(); this.eventCache.clear(); touched = true; this.closedGen++ }   // agent ids and names change
+        if (kind === 'session' || key === 'crown') { this.cardCache.clear(); this.eventCache.clear(); touched = true; wiped = true; this.closedGen++ }   // agent ids and names change
       }
     }
     // Agents (sessions) and their ids on the board. A card's board form names its agent: only when that naming
@@ -462,7 +465,7 @@ export class BoardState {
     const devToAgent = new Map(), agentToDev = new Map()
     for (const s of sessionsOf(m)) { const id = agentIdOf(s), key = sessionKey(s); devToAgent.set(key, id); agentToDev.set(id, key) }
     const naming = [...devToAgent].join()
-    if (naming !== this.naming) { this.naming = naming; this.cardCache.clear(); this.eventCache.clear(); touched = true; this.closedGen++ }
+    if (naming !== this.naming) { this.naming = naming; this.cardCache.clear(); this.eventCache.clear(); touched = true; wiped = true; this.closedGen++ }
     this.devToAgent = devToAgent; this.agentToDev = agentToDev
     this.forgetMessages(change, m, !this.eventCache.size)
     // Card numbers: the order cards (and permission requests) were first filed in, from 1. Never reused, the same on
@@ -491,16 +494,46 @@ export class BoardState {
     // No card named by the change and none to number: the list stands as it was (a chat message, a status line, presence
     // cost nothing per card here; archived/<id> without a cached row is a change too: drop() says so).
     const keep = !touched && !fresh && prev && change?.registers && ![...change.registers].some(k => k.startsWith('archived'))
-    const all = keep ? [] : this.order.map(id => m.cards.get(id)).filter(Boolean)
-    const perms = keep ? [] : this.permOrder.map(id => m.permissions.get(id)).filter(Boolean)
-    let cards = []
-    let same = Boolean(prev && (keep || prev.length === all.length + perms.length))
-    for (const c of all) { let b = this.cardCache.get(c.object_id); if (!b || b.number !== numberOf.get(c.object_id)) { if (b) wasClosed(c.object_id); b = this.boardCard(c, numberOf.get(c.object_id)); if (b.status !== 'open') this.closedGen++; this.cardCache.set(c.object_id, b) } if (same && prev[cards.length] !== b) same = false; cards.push(b) }
-    for (const p of perms) { let b = this.cardCache.get(p.object_id); if (!b) { b = this.permissionCard(p, numberOf.get(p.object_id)); if (b.status !== 'open') this.closedGen++; this.cardCache.set(p.object_id, b) } if (same && prev[cards.length] !== b) same = false; cards.push(b) }
-    // No card changed (a chat message, a status line, presence): the same list object, so everything derived from the
-    // cards alone (cardsMemo: the Desk's places, the end list) is reused instead of worked out over thousands again.
-    if (same || keep) cards = prev
-    else this.byId = new Map(cards.map(c => [c.id, c]))
+    const make = (id, n) => { const c = m.cards.get(id); if (c) { const b = this.boardCard(c, n); if (b.status !== 'open') this.closedGen++; return b } const p = m.permissions.get(id); if (!p) return null; const b = this.permissionCard(p, n); if (b.status !== 'open') this.closedGen++; return b }
+    let cards
+    if (keep) cards = prev
+    else if (prev && this.cardList && !wiped && (!fresh || appended)) {
+      // Only what the change names is made again, in its place; a newly filed card goes at the end of its list. (A
+      // whole pass over thousands of cards per card that changed was most of a live update's time.)
+      const ids = new Set([...change.cards, ...change.permissions, ...dropped])
+      let whole = false
+      for (const id of ids) {
+        const at = this.listIdx.get(id)
+        if (at === undefined) continue
+        if (!m.cards.has(id) && !m.permissions.has(id)) { whole = true; break }          // gone: the list is made again below
+        let b = this.cardCache.get(id)
+        if (!b || b.number !== numberOf.get(id)) { if (b) wasClosed(id); b = make(id, numberOf.get(id)); this.cardCache.set(id, b) }
+        ;(at.perm ? this.permList : this.cardList)[at.i] = b
+        this.byId.set(id, b)
+      }
+      if (!whole) for (const id of appended ? newIds : []) {
+        const b = this.cardCache.get(id) ?? make(id, numberOf.get(id))
+        if (!b) { whole = true; break }
+        this.cardCache.set(id, b)
+        const perm = !m.cards.has(id), list = perm ? this.permList : this.cardList
+        this.listIdx.set(id, { perm, i: list.length }); list.push(b); this.byId.set(id, b)
+      }
+      cards = whole ? null : this.cardList.concat(this.permList)
+    }
+    if (!cards) {
+      const all = this.order.map(id => m.cards.get(id)).filter(Boolean)
+      const perms = this.permOrder.map(id => m.permissions.get(id)).filter(Boolean)
+      const cardList = [], permList = []
+      for (const c of all) { let b = this.cardCache.get(c.object_id); if (!b || b.number !== numberOf.get(c.object_id)) { if (b) wasClosed(c.object_id); b = make(c.object_id, numberOf.get(c.object_id)); this.cardCache.set(c.object_id, b) } cardList.push(b) }
+      for (const p of perms) { let b = this.cardCache.get(p.object_id); if (!b) { b = make(p.object_id, numberOf.get(p.object_id)); this.cardCache.set(p.object_id, b) } permList.push(b) }
+      this.cardList = cardList; this.permList = permList
+      this.listIdx = new Map([...cardList.map((b, i) => [b.id, { perm: false, i }]), ...permList.map((b, i) => [b.id, { perm: true, i }])])
+      cards = cardList.concat(permList)
+      // No card changed after all: the same list object, so everything derived from the cards alone (cardsMemo: the
+      // Desk's places, the end list) is reused instead of worked out over thousands again.
+      if (prev && prev.length === cards.length && cards.every((b, i) => prev[i] === b)) cards = prev
+      else this.byId = new Map(cards.map(c => [c.id, c]))
+    }
     const agents = this.agents()
     const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
     const queue = cardsMemo(cards, `queue ${[...shelved]}`, () => cards.filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until).sort((a, b) => a.created - b.created || a.number - b.number).map(c => c.id))
@@ -520,7 +553,7 @@ export class BoardState {
     this.assetsNaming = naming
     const self = this
     const state = {
-      cards, queue, closedGen: this.closedGen, agents, tasks, desks, notes, assets, pending: [], hub: {}, speech: false,
+      cards, byId: this.byId, queue, closedGen: this.closedGen, agents, tasks, desks, notes, assets, pending: [], hub: {}, speech: false,
       get messages() { return (self.allMsgs ??= self.messages(cards)) },
       messagesOf: agent => self.messagesOf(agent),
       messagesOfCard: id => self.messagesOfCard(id),

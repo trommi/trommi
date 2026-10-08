@@ -705,6 +705,11 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   #agents, html body .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors { visibility: hidden; transition: left var(--drawer-in), visibility 0s 240ms; }
   :root:is([data-drawer="open"], .is-drawer-drag) :is(#agents, .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors) { visibility: visible; transition: left var(--drawer-in); }
   :root.is-drawer-drag :is(#agents, .topbar, .side-foot, .topbar .brand-open, .topbar #brand-doors) { transition: none; }
+  /* (closed, the drawer's sessions cost no style or layout: a page change on a phone laid out ~900 hidden nodes; they
+     render again the moment the drawer opens or a finger drags it, and stay drawn while it slides shut) */
+  #agents { content-visibility: hidden; transition: left var(--drawer-in), visibility 0s 240ms, content-visibility 0s 240ms allow-discrete; }
+  :root:is([data-drawer="open"], .is-drawer-drag) #agents { content-visibility: visible; transition: left var(--drawer-in); }
+  :root.is-drawer-drag #agents { transition: none; }
   #agents { position: fixed; z-index: var(--z-drawer); left: var(--dx); top: 0; bottom: 0; min-height: 100lvh; width: var(--drawer-w); margin: 0; padding-top: env(safe-area-inset-top, 0px); padding-bottom: calc(var(--foot) + var(--s-4) + env(safe-area-inset-bottom, 0px)); padding-left: max(16px, env(safe-area-inset-left, 0px)); border-right: 0; box-shadow: 1px 0 0 var(--line-strong), 14px 0 36px -18px rgb(20 30 25 / .5); overscroll-behavior: contain; }
   html body .topbar { z-index: var(--z-full); left: calc(var(--dx) + max(8px, env(safe-area-inset-left, 0px))); top: calc(8px + env(safe-area-inset-top, 0px)); width: calc(var(--drawer-w) - 16px); }
   #agents::before { top: 0; }
