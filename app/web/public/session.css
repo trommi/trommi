@@ -60,6 +60,8 @@ body[data-filter] .jump { display: none; }
 .msg-about:hover span:last-child { color: var(--fg); text-decoration: underline; }
 .msg-head { display: flex; align-items: center; gap: 10px; margin-bottom: var(--s-2); }
 .msg-name { font-weight: 600; font-size: var(--t-sm); }
+/* The session's drawing beside its name (ui.mjs avatar), small; a main session's crown sits on it as in the sidebar. */
+:is(.msg-head, .working) .agent-avatar { width: 26px; height: 26px; border-radius: 8px; }
 .msg-time { font-size: var(--t-xs); color: var(--faint); font-variant-numeric: tabular-nums; }
 
 .msg-user { align-self: flex-end; max-width: min(82%, 34rem); display: flex; flex-direction: column; align-items: flex-end; }
@@ -194,7 +196,7 @@ body[data-filter] .jump { display: none; }
 
 /* the agent is working */
 .working { display: flex; align-items: center; gap: 10px; margin-top: var(--s-8); color: var(--muted); font-size: var(--t-sm); font-weight: 500; }
-.working .agent-mark { animation: breathe 2.4s var(--ease-in-out) infinite; }
+.working .agent-avatar { animation: breathe 2.4s var(--ease-in-out) infinite; }
 
 /* empty conversation */
 .empty-chat { margin: auto; padding-block: var(--s-8); display: flex; flex-direction: column; align-items: center; text-align: center; max-width: 30rem; }
