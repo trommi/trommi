@@ -35,4 +35,5 @@ libc = "0.2"
 unicode-normalization = "0.1"
 indexmap = "2"
 tokio-util = { version = "0.7", features = ["io"] }
+flate2 = "1"
 mimalloc = { version = "0.1", default-features = false }

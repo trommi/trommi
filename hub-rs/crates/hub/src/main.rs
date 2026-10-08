@@ -9,6 +9,7 @@ mod admin_view;
 mod config;
 mod control;
 mod db;
+mod delete_room;
 mod error;
 mod files;
 mod http;
@@ -100,6 +101,7 @@ fn admin_only(args: &[String]) -> i32 {
         allow_published_loopback: args.iter().any(|a| a == "--published-loopback"),
         logins: std::env::var("ADMIN_LOGINS").unwrap_or_default(),
         password_hash: std::env::var("ADMIN_PASSWORD_HASH").unwrap_or_default(),
+        delete_hook: opt("--delete-hook").filter(|u| std::env::var("HUB_TEST_CONTROL").as_deref() == Ok("1") && u.starts_with("http://127.0.0.1:")),
     };
     let host = opts.host.clone();
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();

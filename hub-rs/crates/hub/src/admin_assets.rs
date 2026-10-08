@@ -120,6 +120,10 @@ table.grid{border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:
 .login{max-width:380px;margin:12vh auto 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px}
 .login h1{font-size:17px;margin-bottom:4px}.login form{display:flex;flex-direction:column;gap:10px;margin-top:14px}
 .login label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.scroll{overflow:auto;margin:10px 0 0}
+.confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.confirm input{width:7em}
+button.danger{background:var(--bad);border-color:var(--bad);color:#fff}button.danger:hover{filter:brightness(1.08);background:var(--bad)}
+.ok{color:var(--accent-ink)}
 .form{max-width:440px;display:flex;flex-direction:column;gap:12px}.form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 @media (max-width:820px){
 .cols{grid-template-columns:minmax(0,1fr)}

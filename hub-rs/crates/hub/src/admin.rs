@@ -89,6 +89,9 @@ pub struct Admin {
     sessions: Mutex<HashMap<String, Session>>,
     failures: Mutex<Vec<(String, i64)>>,
     started_at: i64,
+    /// Test only (`trommi-hub admin --delete-hook URL` under HUB_TEST_CONTROL=1): the test's deleteTestRooms action,
+    /// reached over HTTP (hub/external.mjs), in place of the running hub's.
+    delete_hook: Option<String>,
     pub src: Source,
 }
 
@@ -100,6 +103,7 @@ pub struct Options {
     pub allow_published_loopback: bool,
     pub logins: String,
     pub password_hash: String,
+    pub delete_hook: Option<String>,
 }
 
 /// Start the listener; Err with the reason (loopback only, ADMIN_LOGINS required, a busy port).
@@ -119,6 +123,7 @@ pub async fn start_with(opts: Options, hub: Option<Arc<Hub>>, log: Arc<dyn Fn(&s
         sessions: Mutex::new(HashMap::new()),
         failures: Mutex::new(vec![]),
         started_at: crate::util::now(),
+        delete_hook: opts.delete_hook.clone(),
         src: Source::new(opts.db_path.clone(), opts.data_dir.clone(), hub),
     });
     if admin.current_hash().is_none() {
@@ -154,6 +159,7 @@ pub async fn start(hub: Arc<Hub>, host: &str, port: u16) -> Result<u16, String> 
         allow_published_loopback: hub.cfg.get("ADMIN_PUBLISHED_LOOPBACK") == Some("1"),
         logins: hub.cfg.get("ADMIN_LOGINS").unwrap_or("").into(),
         password_hash: hub.cfg.get("ADMIN_PASSWORD_HASH").unwrap_or("").into(),
+        delete_hook: None,
     };
     let h = hub.clone();
     start_with(opts, Some(hub), Arc::new(move |m: &str| h.log(m))).await
@@ -212,6 +218,8 @@ async fn read_form(body: Incoming) -> Result<Vec<(String, String)>, ()> {
 fn form_get<'a>(f: &'a [(String, String)], k: &str) -> &'a str { f.iter().find(|(a, _)| a == k).map(|(_, v)| v.as_str()).unwrap_or("") }
 
 impl Admin {
+    fn can_delete(&self) -> bool { self.src.hub.is_some() || self.delete_hook.is_some() }
+    fn test_accounts(&self) -> Vec<crate::delete_room::TestAccount> { self.src.db().map(|c| crate::delete_room::test_accounts(&c)).unwrap_or_default() }
     fn current_hash(&self) -> Option<String> {
         if let Some(f) = &self.password_file {
             if let Ok(t) = std::fs::read_to_string(f) {
@@ -321,6 +329,42 @@ impl Admin {
                 log(&format!("admin: password changed by {login}; all sessions ended"));
                 return redirect("/", &[("set-cookie", cookie("", 0))]);
             }
+            if path == "/test-accounts/delete" {
+                let list = self.test_accounts();
+                let typed = form_get(&form, "confirm").trim().to_string();
+                let can = self.can_delete();
+                let page = |status: u16, message: &str, result: Option<&serde_json::Value>| resp(status, view::render_test_accounts(&self.test_accounts(), &login, &csrf, can, message, result), HTML, &[]);
+                if !can {
+                    return page(503, "Deleting is not available on this listener (it needs the running hub).", None);
+                }
+                if list.is_empty() {
+                    return page(400, "There are no test accounts to delete.", None);
+                }
+                if typed != list.len().to_string() {
+                    return page(400, &format!("Type {} to confirm; nothing was deleted.", list.len()), None);
+                }
+                let ids: Vec<String> = list.iter().map(|r| r.room_id.clone()).collect();
+                let by = login.clone();
+                let result = match (self.src.hub.clone(), self.delete_hook.clone()) {
+                    (Some(hub), _) => tokio::task::spawn_blocking(move || crate::delete_room::delete_rooms(&hub, &ids, &by, false)).await.unwrap_or_else(|e| Err(e.to_string())),
+                    (None, Some(url)) => async {
+                        let r = reqwest::Client::new().post(url).header("content-type", "application/json").body(serde_json::json!({ "ids": ids, "opts": { "by": by } }).to_string()).send().await.map_err(|e| e.to_string())?;
+                        serde_json::from_slice::<serde_json::Value>(&r.bytes().await.map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+                    }
+                    .await,
+                    _ => unreachable!(),
+                };
+                return match result {
+                    Ok(r) => {
+                        log(&format!("admin: {login} deleted {} test rooms (backup {})", r["deleted"].as_array().map(|a| a.len()).unwrap_or(0), r["backup"].as_str().unwrap_or("")));
+                        page(200, "", Some(&r))
+                    }
+                    Err(e) => {
+                        log(&format!("admin: {e}"));
+                        resp(500, "internal error\n", TEXT, &[])
+                    }
+                };
+            }
             return resp(404, "not found\n", TEXT, &[]);
         }
         if method != "GET" && method != "HEAD" {
@@ -329,6 +373,9 @@ impl Admin {
         let head = method == "HEAD";
         if path == "/password" {
             return resp(200, if head { String::new() } else { view::render_password_page(&login, &csrf, "", MIN_PASSWORD) }, HTML, &[]);
+        }
+        if path == "/test-accounts" {
+            return resp(200, if head { String::new() } else { view::render_test_accounts(&self.test_accounts(), &login, &csrf, self.can_delete(), "", None) }, HTML, &[]);
         }
         let wants_data = path == "/data" || (path == "/" && params.iter().any(|(k, _)| k == "table"));
         if path != "/" && path != "/data" {

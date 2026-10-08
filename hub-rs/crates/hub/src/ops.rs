@@ -314,7 +314,7 @@ fn base64_lenient(s: &str) -> Result<Vec<u8>, ()> {
 
 /// Every table with a room_id column, read from the schema.
 pub fn room_tables(c: &Connection) -> Vec<String> {
-    let names: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").and_then(|mut s| s.query_map([], |r| r.get(0))?.collect()).unwrap_or_default();
+    let names: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").and_then(|mut s| s.query_map([], |r| r.get(0))?.collect()).unwrap_or_default();
     names.into_iter().filter(|n| c.query_row(&format!("SELECT 1 FROM pragma_table_info('{n}') WHERE name = 'room_id'"), [], |_| Ok(())).optional().ok().flatten().is_some()).collect()
 }
 

@@ -8,6 +8,7 @@
 // synchronous ones (stats.roomLoads, prune() …) through a worker that the caller waits on (Atomics.wait).
 // startHub options become the hub's environment (README of hub-rs, "Configuration"); `now` becomes the header
 // x-test-now on every request this process sends to that hub, so a test's clock is the hub's clock.
+import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { Worker, MessageChannel, receiveMessageOnPort } from 'node:worker_threads'
@@ -169,6 +170,7 @@ export async function startHub(o = {}) {
         expire: async () => { control('test_rooms/expire', {}) },
       },
       updateVersions: next => { control('versions', next) },
+      deleteTestRooms: async (ids, { by } = {}) => control('delete_test_rooms', { ids, by }),
       metrics: { sample: () => { control('metrics/sample', {}) }, history: () => control('metrics/history'), flushMinute: () => { control('metrics/flush', {}) } },
       wal: { checkpoint: () => control('wal/checkpoint', {}) },
       metricsPort: () => metricsPortSeen,
@@ -194,12 +196,24 @@ export async function startHub(o = {}) {
  * (dbPath, dataDir, host, port, env with ADMIN_LOGINS and ADMIN_PASSWORD_HASH, allowPublishedLoopback, now). An in-process
  * `metrics` object cannot cross: the page reads <dataDir>/metrics.db read-only, as a standalone admin does.
  */
-export async function startAdmin({ dbPath, dataDir, port = 8791, host = '127.0.0.1', env = process.env, allowPublishedLoopback = false, now, log } = {}) {
+export async function startAdmin({ dbPath, dataDir, port = 8791, host = '127.0.0.1', env = process.env, allowPublishedLoopback = false, actions = {}, now, log } = {}) {
   const [bin, ...args] = process.env.HUB_CMD.split(' ')
   args.push('admin', '--db', dbPath, '--host', host, '--port', String(port))
   if (dataDir) args.push('--data', dataDir)
   if (allowPublishedLoopback) args.push('--published-loopback')
-  const childEnv = { ...process.env, ADMIN_LOGINS: env.ADMIN_LOGINS ?? '', ADMIN_PASSWORD_HASH: env.ADMIN_PASSWORD_HASH ?? '' }
+  // actions.deleteTestRooms (a test's own action) is reached by the binary over a loopback hook (test control only)
+  let hook = null
+  if (actions.deleteTestRooms) {
+    hook = http.createServer(async (req, res) => {
+      let body = ''
+      for await (const c of req) body += c
+      const { ids, opts } = JSON.parse(body)
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(await actions.deleteTestRooms(ids, opts)))
+    })
+    await new Promise(ok => hook.listen(0, '127.0.0.1', ok))
+    args.push('--delete-hook', `http://127.0.0.1:${hook.address().port}/`)
+  }
+  const childEnv = { ...process.env, ADMIN_LOGINS: env.ADMIN_LOGINS ?? '', ADMIN_PASSWORD_HASH: env.ADMIN_PASSWORD_HASH ?? '', ...(hook ? { HUB_TEST_CONTROL: '1' } : {}) }
   if (now) childEnv.HUB_TEST_NOW = String(now())
   const child = spawn(bin, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] })
   let err = '', out = ''
@@ -210,5 +224,5 @@ export async function startAdmin({ dbPath, dataDir, port = 8791, host = '127.0.0
     exit.then(() => bad(new Error(err.trim() || 'admin exited')))
     child.once('error', bad)
   })
-  return { port: adminPort, close: async () => { child.kill('SIGTERM'); await Promise.race([exit, new Promise(ok => setTimeout(ok, 3000).unref())]) } }
+  return { port: adminPort, close: async () => { child.kill('SIGTERM'); hook?.close(); await Promise.race([exit, new Promise(ok => setTimeout(ok, 3000).unref())]) } }
 }

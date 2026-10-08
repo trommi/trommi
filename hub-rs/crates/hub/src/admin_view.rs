@@ -335,9 +335,10 @@ fn foot() -> String { format!("<script>{JS}</script></body></html>") }
 pub fn top_bar(login: &str, csrf: &str, on: &str) -> String {
     let tab = |href: &str, label: &str, key: &str| format!("<a href=\"{href}\"{}>{label}</a>", if on == key { " class=\"on\"" } else { "" });
     format!(
-        "<header class=\"top\"><span class=\"brand\">{BELL}<b>Trommi</b> <small>hub admin</small></span><nav>{}{}{}</nav>\n<div class=\"who\"><span class=\"login-name\">{}</span><form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button>Abmelden</button></form></div></header>",
+        "<header class=\"top\"><span class=\"brand\">{BELL}<b>Trommi</b> <small>hub admin</small></span><nav>{}{}{}{}</nav>\n<div class=\"who\"><span class=\"login-name\">{}</span><form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button>Abmelden</button></form></div></header>",
         tab("/", "Übersicht", "overview"),
         tab("/data", "Daten", "data"),
+        tab("/test-accounts", "Test accounts", "tests"),
         tab("/password", "Passwort ändern", "password"),
         esc(login),
         esc(csrf)
@@ -1568,6 +1569,75 @@ pub fn render_overview(src: &Source, started_at: i64, wanted: Option<&str>, now:
         hub.iter().map(|(k, v)| format!("<dt>{}</dt><dd>{}</dd>", esc(k), esc(v))).collect::<String>(),
         foot()
     ))
+}
+
+// ---- test accounts -----------------------------------------------------------------------------------
+
+/// The accounts whose email ends with @example.org and the delete form (renderTestAccounts of admin-view.mjs).
+pub fn render_test_accounts(list: &[crate::delete_room::TestAccount], login: &str, csrf: &str, can_delete: bool, message: &str, result: Option<&Value>) -> String {
+    let when = |t: Option<i64>| match t {
+        Some(t) if t > 0 => date_fmt(t),
+        _ => "–".into(),
+    };
+    let n = list.len();
+    let mut done = String::new();
+    if let Some(r) = result {
+        let deleted = r["deleted"].as_array().map(|a| a.len()).unwrap_or(0);
+        let mut totals: Vec<(String, f64)> = r["totals"].as_object().map(|o| o.iter().filter(|(k, _)| *k != "files").map(|(k, v)| (k.clone(), v.as_f64().unwrap_or(0.0))).collect()).unwrap_or_default();
+        totals.sort_by(|a, b| a.0.cmp(&b.0));
+        let refused = r["refused"].as_array().cloned().unwrap_or_default();
+        done = format!(
+            "<section class=\"card\"><h3 class=\"ok\">Deleted {} test room{}</h3><dl class=\"kv\">\n<dt>backup</dt><dd class=\"mono\">{}</dd>\n{}\n<dt>attachment files</dt><dd>{}</dd>\n{}\n</dl><p class=\"note\">Every deleted room is also written to deletions.log in the hub's data directory.</p></section>",
+            esc(&fmt_num(deleted as f64, 0)),
+            if deleted == 1 { "" } else { "s" },
+            esc(r["backup"].as_str().unwrap_or("")),
+            totals.iter().map(|(t, c)| format!("<dt>{}</dt><dd>{} rows</dd>", esc(t), esc(&fmt_num(*c, 0)))).collect::<String>(),
+            esc(&fmt_num(r["totals"]["files"].as_f64().unwrap_or(0.0), 0)),
+            if refused.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<dt class=\"err\">refused</dt><dd class=\"err\">{}</dd>",
+                    refused.iter().map(|x| esc(&format!("{}: {}", x["room_id"].as_str().unwrap_or("").chars().take(12).collect::<String>(), x["message"].as_str().unwrap_or("")))).collect::<Vec<_>>().join("<br>")
+                )
+            }
+        );
+    }
+    let rows: String = list
+        .iter()
+        .map(|r| {
+            format!(
+                "<tr><td class=\"mono\">{}</td><td><a class=\"id\" href=\"{}\">{}…</a></td>\n<td>{}</td><td>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td></tr>",
+                esc(&r.email),
+                esc(&data_href(&Href { room: &r.room_id, ..Default::default() })),
+                esc(&r.room_id[..12.min(r.room_id.len())]),
+                esc(&when(r.created_at)),
+                esc(&when(r.last_activity)),
+                esc(&fmt_num(r.envelopes as f64, 0)),
+                esc(&fmt_num(r.attachments as f64, 0))
+            )
+        })
+        .collect();
+    let table = if n > 0 {
+        format!("<div class=\"scroll\"><table class=\"grid\"><thead><tr><th>email</th><th>room</th><th>created</th><th>last activity</th><th>envelopes</th><th>attachments</th></tr></thead><tbody>{rows}</tbody></table></div>")
+    } else {
+        "<p class=\"muted\">No accounts with an email ending in @example.org.</p>".into()
+    };
+    let form = if n > 0 && can_delete {
+        format!("<form class=\"confirm\" method=\"post\" action=\"/test-accounts/delete\"><input type=\"hidden\" name=\"csrf\" value=\"{}\">\n<label for=\"confirm-n\" class=\"muted\">Type {n} to confirm</label><input id=\"confirm-n\" type=\"text\" name=\"confirm\" inputmode=\"numeric\" autocomplete=\"off\" required pattern=\"{n}\">\n<button class=\"danger\">Delete these {n} test rooms</button></form>\n<p class=\"note\">Removes every row of these rooms (account, members, devices, keys, envelopes, cards, attachments and their files, push registrations, links) in one transaction per room, after an online backup of hub.db to backups/ in the data directory. Only rooms whose account email ends with @example.org can be deleted.</p>", esc(csrf))
+    } else if n > 0 {
+        "<p class=\"note\">Deleting needs the running hub (this listener has no hub attached).</p>".into()
+    } else {
+        String::new()
+    };
+    format!(
+        "{}{}<main class=\"page\">\n<div class=\"head\"><h1>Test accounts</h1><span class=\"muted\">{} with an email ending in @example.org</span></div>\n{}{done}\n<section class=\"card\">{table}{form}</section>\n</main>{}",
+        head("Test accounts · Trommi hub admin"),
+        if login.is_empty() { String::new() } else { top_bar(login, csrf, "tests") },
+        esc(&fmt_num(n as f64, 0)),
+        if message.is_empty() { String::new() } else { format!("<p class=\"err\">{}</p>", esc(message)) },
+        foot()
+    )
 }
 
 #[cfg(test)]
