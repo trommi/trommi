@@ -39,13 +39,15 @@ export const CLIENT = `app/${APP_VERSION}`
 
 // The client core (gen/vendor, copied from the repository's core/ by dev/build.mjs): every view gets crypto, keys and
 // the account through these, never on its own.
-export const core = () => import('./gen/vendor/index.mjs')
+// (joining with a link runs in the core worker: account-remote.mjs)
+export const core = () => Promise.all([import('./gen/vendor/index.mjs'), import('./gen/vendor/account-remote.mjs')]).then(([m, r]) => ({ ...m, joinRoom: r.joinRoom }))
 // The check code as emoji (shared/check-emoji.mjs, the same function the connector prints with): loaded at once, beside
 // the core (which imports it too, so a room's client never exists before it); a live binding, [] until it is there.
 // Not a static import: app.mjs is also imported in Node (tests), where gen/ is not built.
 export let checkEmoji = () => []
 import('./gen/vendor/check-emoji.mjs').then(m => { checkEmoji = m.checkEmoji }, () => {})
-export const account = () => import('./gen/vendor/account.mjs')
+// The account screens' slow parts (the key derivation, founding and joining) run in the core worker (shared/account-remote.ts).
+export const account = () => import('./gen/vendor/account-remote.mjs')
 export const scribbleWire = () => import('./gen/vendor/scribble.mjs')
 
 // Where the hub is (a tab session may override it: ?hub=, for development).
@@ -1925,6 +1927,7 @@ if (typeof window !== 'undefined') boot()
 /** A room made in this tab (account created, device joined or logged in): this tab writes it; later tabs follow. */
 async function adopt(c) {
   if (mock) return c
+  if (c?.worker instanceof Worker) return c   // made in the core worker already (account-remote.mjs)
   // The core worker takes the room over from storage (this client stops first: it flushes and frees the room's lock).
   if (inWorker()) {
     await c.stop()

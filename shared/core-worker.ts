@@ -5,13 +5,21 @@
 // Web Locks and BroadcastChannel work in workers), runs it, and after every change posts the records the change names
 // (mirror.ts patchOf). Calls come in by name and run on the client; what they return goes back (structured clone). Nothing here knows the app's views.
 //
+// The account screens run here too (account.ts, room.ts joinRoom): the slow key derivation and the crypto of founding
+// or joining a room never hold the page up, and the room they make is this worker's from the start.
+//
 //   new Worker('/gen/vendor/core-worker.mjs', { type: 'module' })   (the app's build names the bundled one)
-import { openRoomInTabs } from './tabs.ts'
+import { openRoomInTabs, adoptInTabs } from './tabs.ts'
+import { joinRoom } from './room.ts'
+// (account.ts, with the key derivation and the word list, is loaded only when an account screen asks: a stored room
+// never needs it)
+const accountModule = () => import('./account.ts')
+import type { Client } from './client.ts'
 import { idbStorage } from './storage-idb.ts'
 import { patchOf, snapshotOf } from './mirror.ts'
 import type { Change } from './types.ts'
 import type { ToWorker, FromWorker, WireError } from './worker-protocol.ts'
-import { CALLS } from './worker-protocol.ts'
+import { CALLS, ACCOUNT_CALLS, ACCOUNT_OPENS } from './worker-protocol.ts'
 
 type AnyClient = Record<string, any> & { model: any; on(event: string, fn: (x: any) => void): () => void }
 
@@ -52,6 +60,13 @@ async function call(method: string, args: unknown[]): Promise<unknown> {
     case 'revisions': return c['_revisions']
     case 'storage.close': { await c['storage']?.close?.(); return null }
     // the app's name for the hub (Trommi-Client), for a room core-start.ts opened before the app knew it
+    // the account's routes that take the signed-in client (account.ts: a new kit, a new password, …): the slow key
+    // derivation (Argon2id) runs here, not in the page
+    case 'account': {
+      const name = args[0] as string
+      if (!ACCOUNT_CALLS.includes(name)) throw Object.assign(new Error(`not an account call: ${name}`), { code: 'bad-argument' })
+      return ((await accountModule()) as unknown as Record<string, (c: unknown, a: unknown) => unknown>)[name]!(c, args[1])
+    }
     case 'configure': { clientName = (args[0] as { client?: string } | undefined)?.client ?? null; if (c['hub']) c['hub'].client_name = clientName; return null }
   }
   if (!CALLS.includes(method)) throw Object.assign(new Error(`not a client call: ${method}`), { code: 'bad-argument' })
@@ -60,14 +75,45 @@ async function call(method: string, args: unknown[]): Promise<unknown> {
   return fn.apply(c, args)
 }
 
+/** A client made here (an account created, a login, a device joined): this tab writes its room (tabs.ts), the page gets the model. */
+async function adopt(made: Client, id: number, value: unknown): Promise<void> {
+  const c = await adoptInTabs(made, { makeStorage: () => idbStorage(storageOpts), client: clientName }) as unknown as AnyClient
+  client = c
+  attach(c)
+  post({ t: 'opened', id, model: snapshotOf(c.model), extra: extra(), value })
+}
+let joining: { cancel(): void } | null = null
+
 port.onmessage = async ({ data: m }) => {
+  // The account screens: creating an account, logging in, a new password from the kit, joining with a link. The room
+  // they make is opened here and stays here.
+  if (m.t === 'account' || m.t === 'join') {
+    try {
+      storageOpts = m.storage
+      clientName = m.client
+      const opts = { ...m.args, storage: idbStorage(storageOpts), client: m.client }
+      if (m.t === 'join') {
+        const j = joinRoom(opts as Parameters<typeof joinRoom>[0])
+        joining = j
+        j.check_code.then(code => post({ t: 'event', event: 'join-code', data: code }), () => {})
+        const made = await j.client
+        joining = null
+        await adopt(made, m.id, null)
+      } else {
+        if (!ACCOUNT_OPENS.includes(m.fn)) throw Object.assign(new Error(`not an account call: ${m.fn}`), { code: 'bad-argument' })
+        const r = await ((await accountModule()) as unknown as Record<string, (o: unknown) => Promise<{ client: Client; recovery_code?: string }>>)[m.fn]!(opts)
+        await adopt(r.client, m.id, r.recovery_code != null ? { recovery_code: r.recovery_code } : null)
+      }
+    } catch (e) { joining = null; post({ t: 'opened', id: m.id, model: null, error: wireError(e), extra: extra() }) }
+    return
+  }
+  if (m.t === 'call' && m.method === 'join.cancel') { joining?.cancel(); post({ t: 'result', id: m.id, ok: true, value: null }); return }
   if (m.t === 'open') {
     try {
       storageOpts = m.storage
       clientName = m.client
       const storage = idbStorage(storageOpts)
-      const open = openRoomInTabs as unknown as (o: Record<string, unknown>) => Promise<AnyClient | null>   // (tabs.ts: not typed yet)
-      const c = await open({ storage, makeStorage: () => idbStorage(storageOpts), client: m.client })
+      const c = await openRoomInTabs({ storage, makeStorage: () => idbStorage(storageOpts), client: m.client }) as AnyClient | null
       client = c
       if (c) attach(c)
       post({ t: 'opened', id: m.id, model: c ? snapshotOf(c.model) : null, extra: extra() })
