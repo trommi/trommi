@@ -366,7 +366,7 @@ export async function startHub({
     }))
   }
 
-  /** R4 fencing (review 3: also streams, uploads and ephemeral): an agent names the lease generation it holds. */
+  /** R4 fencing (review 3: also streams and uploads): an agent names the lease generation it holds. */
   function fenced(r, req, me) {
     if (me.role !== 'agent') return null
     const raw = req.headers['x-lease-generation']
@@ -703,22 +703,6 @@ export async function startHub({
       const body = await readJson(req)
       if (typeof body.working !== 'boolean') fail('bad-argument', 'working')
       linkOf(r, me.id).working = body.working
-      return send(res, 200, { ok: true })
-    }
-    if (m === 'POST' && a === 'ephemeral' && !b) {
-      // Typing, cursors, a pen preview: a sealed envelope relayed to the open streams only, never stored.
-      const me = hub.authorise(bearer(req), { member: true })
-      fenced(r, req, me)
-      const wait = ops.unlimited(req, r.id) ? 0 : envelopeLimit.take(`${r.id}:${me.id}`)
-      if (wait) fail('rate-limited', 'too many envelopes from this device', { retryAfter: wait })
-      const body = await readJson(req)
-      const bytes = b64(body.envelope, 'envelope')
-      if (bytes.length > 16384) fail('too-large', 'an ephemeral envelope is at most 16 KiB')
-      // C05 + C04: signed, own, from a device that is still a member, under a key it may use now; only to who holds that key.
-      const aud = await hub.checkEphemeral(bearer(req), bytes)
-      const humans = new Set(db.q("SELECT device_id FROM devices WHERE room_id = ? AND device_role = 'human' AND removed_entry_number IS NULL").all(r.id).map(d => d.device_id))
-      const agents = new Set(aud.agents)
-      deliver(r, { text: sse('ephemeral', { device_id: me.id, envelope: body.envelope }) }, s => s.deviceId !== me.id && (humans.has(s.deviceId) || agents.has(s.deviceId)))
       return send(res, 200, { ok: true })
     }
     // One atomic batch of session grants (a removal re-keys every session in one post): all or none.

@@ -153,7 +153,7 @@ export class Hub {
         let err = {}
         try { err = await within(res.json()) } catch {}
         const e = new ZError(err.error ?? `http-${res.status}`, err.message ?? res.statusText, { status: res.status, retry_after: Number(res.headers.get('retry-after')) || null, body: err })
-        // R4 on uploads and ephemeral posts: sent under a generation this process has since replaced, or the lease ran out
+        // R4 on uploads: sent under a generation this process has since replaced, or the lease ran out
         // while this process lives (a renewal gives it back): once more. Only a renewal refused by the hub (another live
         // process holds the key) is lease-lost for good, and then the process stops (onLeaseLost).
         if (e.code === 'lease-lost' && lease && !leaseRetried) {
@@ -173,7 +173,6 @@ export class Hub {
   }
 
   // ---- routes (README table), thin ------------------------------------------------
-  healthz() { return this.fetch(`${this.hub_url}/healthz`, { headers: this.baseHeaders() }).then(r => r.json()) }
   foundRoom({ signed_entry, sealed_room_keys }) {
     return this.request('POST', '/rooms', { auth: false, body: { signed_entry, sealed_room_keys }, headers: this.found_token ? { 'x-found-token': this.found_token } : {} })
   }
@@ -228,7 +227,6 @@ export class Hub {
   agentLinkLast(report, timeout_ms = 1500) { return this.request('POST', this.roomPath('/agent_link'), { body: report, headers: this.leaseHeaders(), timeout_ms }) }
   /** A hub before the link report: whether the agent has running work (one push to the humans if it then drops away). */
   agentWatch(working) { return this.request('POST', this.roomPath('/agent_watch'), { body: { working: Boolean(working) }, lease: true }) }
-  postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope }, lease: true }) }
   putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { raw: bytes, lease: true }) }
   /** R4: an agent names its lease generation on every write and stream (none for humans). */
   leaseHeaders() { return this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {} }
