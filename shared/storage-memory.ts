@@ -1,8 +1,12 @@
-// storage-memory.mjs: the storage adapter in memory (tests, throwaway clients). Same interface as the others.
-export function memoryStorage({ extractable_keys = true } = {}) {
-  const map = new Map()
-  let device = null
-  const clone = v => (v === undefined ? undefined : structuredClone(v))
+// storage-memory.ts: the storage adapter in memory (tests, throwaway clients). Same interface as the others.
+import type { RangeOptions, Storage, StoredDevice } from './types.ts'
+
+export interface MemoryStorage extends Storage { _map: Map<string, unknown>; snapshot(opts?: { skip?: readonly string[] }): Promise<Map<string, any>> }
+
+export function memoryStorage({ extractable_keys = true }: { extractable_keys?: boolean } = {}): MemoryStorage {
+  const map = new Map<string, unknown>()
+  let device: StoredDevice | null = null
+  const clone = <T>(v: T): T => (v === undefined ? v : structuredClone(v))
   return {
     extractable_keys,
     _map: map,
@@ -20,9 +24,9 @@ export function memoryStorage({ extractable_keys = true } = {}) {
 }
 
 /** Shared by the in-memory adapters: ordered [key, value] pairs under a prefix, between after/before (exclusive). */
-export function rangeOf(map, prefix, { after, before, limit = Infinity, reverse = false } = {}) {
+export function rangeOf<V>(map: Map<string, V>, prefix: string, { after, before, limit = Infinity, reverse = false }: RangeOptions = {}): [string, V][] {
   let keys = [...map.keys()].filter(k => k.startsWith(prefix) && (after === undefined || k > after) && (before === undefined || k < before)).sort()
   if (reverse) keys.reverse()
   if (keys.length > limit) keys = keys.slice(0, limit)
-  return keys.map(k => [k, map.get(k)])
+  return keys.map(k => [k, map.get(k)!])
 }

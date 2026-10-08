@@ -14,7 +14,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as z from './crypto/zcrypto.mjs'
-import { rangeOf } from './storage-memory.mjs'
+import { rangeOf } from './storage-memory.ts'
 
 export async function fileStorage({ dir, key_file = null, prefix = '' } = {}) {
   if (!dir) throw new z.ZError('bad-argument', 'fileStorage needs a dir')

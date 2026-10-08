@@ -17,7 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { rememberOwnCard, arg, flag, sleep, until, found, addAgent, addHuman, leanSender, trimWindows, startLocalHub, writeJson, text, rngOf, hex16 } from './lib.mjs'
-import { packPoints, PEN_COLORS, MARKER_COLORS } from '../../shared/scribble.mjs'
+import { packPoints, PEN_COLORS, MARKER_COLORS } from '../../shared/scribble.ts'
 import { guard } from '../guard.mjs'
 guard({ usage: 'node dev/load/huge-room.mjs --hub=local|<url> --out=<dir> [--scale=1] [--seed=7] [--keep-hub]', values: ['hub', 'out', 'scale', 'seed'], flags: ['keep-hub'], targets: ['hub'] })
 

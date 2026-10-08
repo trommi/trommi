@@ -30,7 +30,7 @@ const files = (dir, ext) => { try { return fs.readdirSync(path.join(root, dir)).
 const cat = list => list.map(f => rd(f)).join('\n')
 
 const WEB = cat([...files('app/web/public', '.mjs')])
-const JSCORE = cat(['shared/client.mjs', 'shared/agent.mjs', 'shared/model.ts', 'shared/transport.mjs', 'shared/account.mjs', 'shared/room.mjs', 'shared/scribble.mjs', 'shared/codec.ts'])
+const JSCORE = cat(['shared/client.mjs', 'shared/agent.mjs', 'shared/model.ts', 'shared/transport.mjs', 'shared/account.mjs', 'shared/room.mjs', 'shared/scribble.ts', 'shared/codec.ts'])
 const SWCORE = cat([...files('ios/TrommiCore/Sources/TrommiClient', '.swift'), ...files('ios/TrommiCore/Sources/TrommiCore', '.swift')])
 const SWAPP = cat(files('ios/TrommiApp/Sources/TrommiApp', '.swift'))
 const DRIVER_SWIFT = rd('ios/TrommiCore/Sources/trommi-swift/Driver.swift')

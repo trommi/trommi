@@ -184,7 +184,7 @@ const H = {
   },
   /** The shapes on a desk's Scribble Board as this core decodes them (scribble.mjs shapeOf). */
   async scribble_shapes({ desk = 'main' }) {
-    const S = await import('../../shared/scribble.mjs')
+    const S = await import('../../shared/scribble.ts')
     const W = await import('../../app/web/public/whiteboard.mjs').catch(() => null)
     const timeline_id = W?.deskCanvas?.(desk) ?? deskCanvas(desk)
     const items = await need().loadTimelineAfter(`scribble:${timeline_id}`, 0)
