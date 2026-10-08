@@ -663,6 +663,8 @@ struct Composer: View {
     }
     .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 8)
     .onAppear { if autofocus { focused = true } }
+    // the keyboard's own way down (with nothing written the chat's composer folds back into its pencil)
+    .toolbar { ToolbarItemGroup(placement: .keyboard) { if focused { Spacer(); Button { focused = false } label: { Image(systemName: "keyboard.chevron.compact.down") }.accessibilityLabel("Hide Keyboard") } } }
     .onChange(of: focused) { _, on in if !on && !canSend { onIdle?() } }
     .sheet(isPresented: $pickingPhotos) { PhotoPicker(limit: MAX_FILES - files.count) { picked in Task { await take(picked) } }.ignoresSafeArea() }
     .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in

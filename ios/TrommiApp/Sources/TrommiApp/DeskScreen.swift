@@ -571,7 +571,7 @@ struct SelectionBar: View {
       if chosen.contains(where: { $0.kind == "decision" }) { way("duck", PenMark("sketch:duck").frame(width: 26, height: 22), Words.duck) }
       if chosen.contains(where: { $0.kind == "info" }) { way("read", Sketch("tick").frame(width: 20, height: 20), "Read") }
       way("shred", Sketch("bin").frame(width: 20, height: 20), Words.shred)
-      Button { model.selected = [] } label: { Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).frame(width: 36, height: 36) }
+      Button { model.selected = [] } label: { Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).frame(width: 44, height: 44).contentShape(Rectangle()) }
         .accessibilityLabel("Clear Selection")
     }
     .foregroundStyle(Ink.fg)
@@ -613,7 +613,7 @@ struct DeskWays: View {
     if n > 0 {
       HStack(spacing: 6) {
         if !decisions.isEmpty {
-          Button { duckAsk = true } label: { PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 24, height: 20).frame(width: 36, height: 36) }
+          Button { duckAsk = true } label: { PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 24, height: 20).frame(width: 44, height: 44).contentShape(Rectangle()) }
             .accessibilityLabel("I don’t give a duck: for all \(decisions.count) open decisions")
             .popover(isPresented: $duckAsk, arrowEdge: .top) {
               VStack(alignment: .leading, spacing: 14) {
@@ -633,7 +633,7 @@ struct DeskWays: View {
             }
         }
         Button { model.path.append(.blitz) } label: {
-          PenMark("desk:BOLT").frame(width: 20, height: 20).frame(width: 36, height: 36)
+          PenMark("desk:BOLT").frame(width: 20, height: 20).frame(width: 44, height: 44).contentShape(Rectangle())
             .overlay(alignment: .topTrailing) {
               Text("\(n)").font(Face.text(10, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 4).frame(minWidth: 17, minHeight: 17).background(Capsule().fill(Ink.fg)).offset(x: 3, y: -2)
             }

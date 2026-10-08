@@ -243,7 +243,7 @@ struct ChatRow: View {
       else if unread { Circle().fill(Ink.stDone).frame(width: 8, height: 8).accessibilityLabel("New message") }
     }
     .padding(.leading, unit.parent != nil ? 24 : 0)
-    .frame(minHeight: 40)
+    .frame(minHeight: 44)
     .contentShape(Rectangle())
   }
 }
