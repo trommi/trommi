@@ -1948,9 +1948,6 @@ export class Client {
     const t = M.timelineOf(this.model, timeline_key)
     t.window_open = true
     const prefix = `tl/${timeline_key}/`
-    // Until 8 October 2026 (0e50a99) a scribble timeline was stored as canvas:<timeline_id>: items this device verified
-    // then are kept under that key, and the stream never brings them again.
-    const legacy = timeline_kind === 'scribble' ? `tl/canvas:${timeline_id}/` : null
     const seen = new Map<number, StoredItem>()
     const out: TimelineItem[] = []
     let after = after_envelope_number
@@ -1960,15 +1957,12 @@ export class Client {
       for (const { envelope_number, envelope } of res.envelopes as EnvelopeRow[]) {
         after = Math.max(after, envelope_number)
         let r: StoredItem | undefined = await this.storage.get(prefix + pad(envelope_number))
-        let moved = false
-        if (!r && legacy) { r = await this.storage.get(legacy + pad(envelope_number)); moved = Boolean(r) }
         // A device started from a room snapshot never stored the items before it (checked on their own, as _readTimeline does).
-        if (!r && this.snapshotCursor && envelope_number <= this.snapshotCursor) { r = (await this._headerBeforeSnapshot(envelope, envelope_number, timeline_kind, timeline_id, seen.values())) ?? undefined; moved = Boolean(r) }
+        if (!r && this.snapshotCursor && envelope_number <= this.snapshotCursor) r = (await this._headerBeforeSnapshot(envelope, envelope_number, timeline_kind, timeline_id, seen.values())) ?? undefined
         if (!r) continue            // beyond this client's verified cursor: the stream brings it
         seen.set(envelope_number, r)
         try {
           let stored = r
-          if (moved) writes.push([prefix + pad(envelope_number), stored])
           if (!r.c) {
             const o = await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.openKeys, envelopeHash: unhex(r.h), self: this.device.id })
             const d = decodeOpened(o)

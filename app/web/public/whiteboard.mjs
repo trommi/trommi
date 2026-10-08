@@ -588,7 +588,7 @@ const SLICE = 2000          // shapes per slice when a big canvas is loaded
 const breath = () => (globalThis.scheduler?.yield ? scheduler.yield() : new Promise(r => setTimeout(r)))   // a strokes item stays under the core's 60 KB body limit
 
 export async function openCanvas({ client, timeline_id, onRemote, onState }) {
-  const { CanvasState, entryOf, inkOf, isStroke, packSnapshot, unpackSnapshot, snapshotUsable, SNAPSHOT_V, chunks } = await scribbleWire()
+  const { CanvasState, entryOf, inkOf, isStroke, packSnapshot, unpackSnapshot, chunks } = await scribbleWire()
   const key = `scribble:${timeline_id}`
   const st = new CanvasState()
   const real = typeof client.sendStrokes === 'function'
@@ -792,8 +792,6 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     if (snap?.attachment) {
       try {
         const got = await unpackSnapshot(await client.fetchAttachment(snap.attachment))
-        // an older snapshot may cover first-format items it never read (scribble.ts SNAPSHOT_V): the whole timeline
-        if (!snapshotUsable(got)) throw new Error(`snapshot v${got?.v} predates v${SNAPSHOT_V}`)
         st.load(got, { shapes: false })
         // in slices, so that a big canvas never holds the page for long (budget: no task over 200 ms on a slow phone)
         for (let i = 0; i < (got.shapes?.length ?? 0); i += SLICE) { st.addShapes(got.shapes.slice(i, i + SLICE)); await breath() }
