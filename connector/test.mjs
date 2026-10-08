@@ -341,6 +341,20 @@ await test('history and late commands are marked; strokes are never chat', async
   assert.equal(events.length, 1)
 })
 
+await test('a newer Trommi wrote it: the agent hears it arrived and that the connector needs an update, never a guess', async () => {
+  const { bridge, events } = bridgeWith()
+  const id = (await bridge.callTool('create_decision', TOOL_EXAMPLES.create_decision)).split(' ')[1]
+  await bridge.command({ command: 'unsupported', object_id: id, what: 'answer_action snooze', content: { answer_action: 'snooze' } })
+  assert.deepEqual(events.at(-1).meta, { kind: 'unsupported', card_id: id, update_required: '1' })
+  assert.match(events.at(-1).content, /too old to read \(answer_action snooze\).*update/)
+  await bridge.command({ command: 'message', timeline_key: 'chat:session/' + 'a'.repeat(32), unsupported: 'content_type voice', content: { content_type: 'voice' } })
+  assert.deepEqual(events.at(-1).meta, { kind: 'unsupported', update_required: '1' })
+  // On a canvas it stays quiet, as strokes do.
+  const n = events.length
+  await bridge.command({ command: 'message', timeline_key: 'canvas:desk/' + 'a'.repeat(32), unsupported: 'content_type sticker', content: { content_type: 'sticker' } })
+  assert.equal(events.length, n)
+})
+
 await test('review 2 PoC: a human cannot write outside the cache through attachment_id or file_name', async () => {
   const { client, bridge, events } = bridgeWith()
   const outside = path.join(tmp, 'outside')

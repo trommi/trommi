@@ -156,6 +156,8 @@ export const RETENTION_DAYS = 30
 const SHARE_MAX_HOURS = RETENTION_DAYS * 24
 export const URGENCIES = ['low', 'normal', 'high', 'critical']
 export const STATUSES = ['decision', 'working', 'done']
+/** What the agent hears when a newer Trommi wrote something this connector cannot read (README "Versioning and compatibility"). */
+export const NEEDS_UPDATE = 'Tell the human that the Trommi connector needs an update to show it (Claude Code: update the trommi plugin, or run the connect script again, then /mcp → trommi → Reconnect). Do not guess what it said.'
 // The summary of an answered card that its helper never closed and close_session closes with the session.
 export const SESSION_ENDED = 'Closed with its session.'
 
@@ -521,6 +523,11 @@ export const EVENTS = [
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'update', when: 'A new version of the connector is on disk (or the hub recommends one).',
     content: 'a sentence naming the version and what to do: file the update card (jetzt / später)', meta: { kind: 'update', update_available: '1', version: 'the new version (a hash of the connector code, or the hub\'s recommended version)', restart_required: '"1" when only a restart loads it (/mcp → trommi → Reconnect), "0" when reload_connector can' },
     example: '<channel source="board" kind="update" update_available="1" version="3f2a9c1d0b7e" restart_required="0">A new version of the Trommi connector is available …</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'unsupported', when: 'The human sent something (a message, an answer) in a format of a newer Trommi version than this connector reads.',
+    content: 'a sentence saying so and that the connector needs an update; nothing of the unreadable part', meta: { kind: 'unsupported', update_required: '1' }, optional: { card_id: 'the card it was about, when it was one of yours' },
+    example: '<channel source="board" kind="unsupported" update_required="1">The human sent something on the board that this Trommi connector is too old to read …</channel>',
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
@@ -1215,8 +1222,15 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     // (The third argument is for the connector's receipt: which session's command this is, and its number.)
     const send = (content, meta) => notify('notifications/claude/channel', { content: cmd.history ? `(Earlier message, for context only; not a new request.)\n${content}` : content, meta: { ...meta, ...flags } },
       { session_id: cmd.session_id ?? card?.session_id ?? client.session_id ?? null, envelope_number: cmd.envelope_number ?? null })
+    // Something a newer Trommi app wrote that this connector cannot read (README "Versioning and compatibility"): the
+    // agent hears that it arrived and that the connector needs an update, never a guess at what it meant.
+    const unsupported = what => send(`The human sent something on ${card ? `"${title}"` : 'the board'} that this Trommi connector is too old to read (${what}). ${NEEDS_UPDATE}`,
+      { kind: 'unsupported', ...(card && mine(card) ? { card_id: card.object_id } : {}), update_required: '1' })
     switch (cmd.command) {
+      case 'unsupported': return unsupported(cmd.what ?? 'a newer format')
       case 'message': {
+        // A chat item of a content type (or schema) this version does not know: said, not dropped.
+        if (cmd.unsupported && cmd.timeline_key?.startsWith('chat:')) return unsupported(cmd.unsupported)
         // Only a message counts as chat; strokes and other timeline items are never commands (README R1/R4).
         if (c.content_type && c.content_type !== 'message') return log(`timeline item ${c.content_type} not relayed`)
         // A human's present_card on a card it had handed back is "take back": the agent need not rework it (as today's board).
