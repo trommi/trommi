@@ -198,7 +198,7 @@ Trommi in the iOS share sheet (`Sources/TrommiShare`, bundle id `com.trommi.ios.
 AppStore/project.yml target `TrommiShareExtension`). Its sheet is the note itself, compact, on the note's yellow paper:
 what was shared as thumbnails (a cross takes one out), a text field, the chip **To: <desk> · <crowned session> ▾** (each
 desk's crowned session with the desk's and the session's drawing; the desk picked last in the sheet, else the one the
-app's note went to last) and two ways: **Send** (the round paper plane: one message to that crown) and **Keep in Note**
+app's note went to last) and two ways: **Send** (the round paper plane: to that crown as a note, the yellow slip in its chat (`content.note`, the share id as its object id)) and **Keep in Note**
 (into the one note; nothing is sent). After Send it says "Wird gesendet, sobald Trommi öffnet", or "Geht an …" when the
 running app took the share at once.
 
