@@ -47,14 +47,14 @@ try {
     const keyFile = /key file (\S+)/.exec(await join(beta, { TROMMI_KEYSTORE: 'auto' }))[1]
     assert.match(fs.readFileSync(keyFile, 'utf8'), /^trommi-keychain v1 /)
   })
-  await test('auto: key files in a slot folder shared with the JS connector; the JS connector opens such a slot', async () => {
+  await test('auto: key files in a slot folder that has a key file with a secret in it; such a slot opens', async () => {
     const room = path.join(keys, human.model.room.room_id)
-    fs.writeFileSync(path.join(room, 'other-host-js-folder-1.key'), Buffer.alloc(66, 1), { mode: 0o600 })   // (a JS connector's key file)
+    fs.writeFileSync(path.join(room, 'other-host-js-folder-1.key'), Buffer.alloc(66, 1), { mode: 0o600 })   // (a key file with its secret)
     const gamma = folder('gamma')
     const keyFile = /key file (\S+)/.exec(await join(gamma, { TROMMI_KEYSTORE: 'auto' }))[1]
     assert.equal(fs.readFileSync(keyFile).length, 66, 'the secret in the key file')
-    const c = await startConnector({ cwd: gamma, env: base(gamma) })
-    try { await c.ready(); await c.call('reply', { text: 'JS on the Rust slot' }) } finally { await c.close() }
+    const c = await startConnector({ command: BIN, cwd: gamma, env: base(gamma) })
+    try { await c.ready(); await c.call('reply', { text: 'from the key file' }) } finally { await c.close() }
   })
   await test('file: never the keychain', async () => {
     const delta = folder('delta')
