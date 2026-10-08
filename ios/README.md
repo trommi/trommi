@@ -194,13 +194,15 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
 - Build: `xtool dev build --configuration release`, then the app icon from `AppStore/Assets.xcassets` (the SDK's Linux
   `actool`), `ITSAppUsesNonExemptEncryption` (`ITS_NON_EXEMPT_ENCRYPTION`, default `NO`), and omarchy-apple-dev's
   `tools/asc.py stamp` and `frameworks` (DT* keys, Xcode 27.1 `27A9275` from
-  `~/.cache/xtool/darwin-iPhoneOS27.1.xtoolsdk.version.plist`, for the app and `PlugIns/TrommiShare.appex`).
-- Signing: an Apple Distribution certificate and an App Store profile each for `com.trommi.ios` and
-  `com.trommi.ios.share` (`omarchy-apple-dev <id> …`, with `APP_GROUPS=group.com.trommi.ios`), created through the API
-  with the Admin key (remade on each run, so a capability change is picked up); the distribution key stays in
-  `~/.appstoreconnect/private_keys/distribution/key.pem` (0600). Entitlements: the profile's plus
-  `AppStore/TrommiApp.entitlements` (`aps-environment: production`, the App Group) and, for the extension,
-  `AppStore/TrommiShare.entitlements` (the App Group), each checked against its profile; `rcodesign`, the extension first.
+  `~/.cache/xtool/darwin-iPhoneOS27.1.xtoolsdk.version.plist`, for the app and every `PlugIns/*.appex`: TrommiShare,
+  TrommiNotify, TrommiLive).
+- Signing: an Apple Distribution certificate and an App Store profile each for `com.trommi.ios`,
+  `com.trommi.ios.share`, `.notify` and `.live` (`omarchy-apple-dev <id> …`, with `APP_GROUPS=group.com.trommi.ios`),
+  created through the API with the Admin key (remade on each run, so a capability change is picked up); the
+  distribution key stays in `~/.appstoreconnect/private_keys/distribution/key.pem` (0600). Entitlements: the profile's
+  plus `AppStore/TrommiApp.entitlements` (`aps-environment: production`, the App Group, `applinks:app.trommi.com`,
+  communication notifications: left out with a warning while the portal has not granted them) and, for each extension,
+  `AppStore/<name>.entitlements` (the App Group), each checked against its profile; `rcodesign`, the extensions first.
 - Offline validation (`asc.py validate`, 40 checks), upload with the Build Uploads API (`asc.py upload`), then this
   folder's `asc.py wait`, `internal … Intern`, and `notes`: "Neu in Build N (sha):" and the subjects of the commits
   under `ios/` since the commit the previous build's What to Test names (`asc.py last-sha`); `NOTES` overrides it.
@@ -212,8 +214,62 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
 `Sources/TrommiApp/Push.swift`: on the first start with a room the app asks for notifications, registers with Apple
 and hands its device token to the hub of every room on the phone (`POST push_subscriptions { apns }`, README "Push"),
 with a 32-byte key of its own (`push.key` next to the rooms). Apple sees a fixed text ("Eine neue Frage."); the hub's
-message rides along sealed under that key. A push in the foreground shows as a banner; arriving or tapped, it refreshes
-the board. No Notification Service Extension: the text says nothing, so nothing has to be decrypted before it shows.
+message rides along sealed under that key. A push in the foreground shows as a banner; arriving, it refreshes the board;
+a tap opens the card (`trommi-path`, Links.swift).
+
+**The card's title, end to end encrypted** (`Sources/TrommiNotify`, bundle id `com.trommi.ios.notify`, the
+Notification Service Extension; the pushes carry `mutable-content: 1`). The hub's sealed message carries a ticket for
+that one envelope (`t`, README "APNs"); the extension, on the phone:
+
+1. reads the context from the App Group (`PushNotify`: `notify/context.sealed`, AES-256-GCM under the context key, a
+   Keychain item with the App Group as access group, after first unlock, this device only);
+2. opens `e` with the push key;
+3. fetches that envelope (`GET push_envelope?envelope_number&device_id&ticket`: no access token, no device key; an
+   ephemeral URL session, 8 s);
+4. checks it (`NotifyOpen.card`): this room; the sender is an agent of the verified member list and signed it; the push
+   flag is set (the hub cannot hand over just any envelope); at most 48 hours old; then decrypts it with that agent's
+   sender key for that session and epoch and reads the title (a permission request: its description);
+5. shows it as a message from the session: a communication notification (`INSendMessageIntent`, the session as sender
+   with its name and drawing, the interaction donated), the title as the text, threaded per session.
+
+Anything that does not hold leaves the fixed text. Why this design, and not the others:
+
+- **Least privilege.** The app writes the context (`NotifyBridge.swift`, at most every 2 s after a change of the board,
+  and when it goes to the background): the push key, each agent's signing key, and per session and agent the
+  *per-sender key* `deriveSenderKey(room, session secret, agent, session)` of the newest two epochs, plus each session's
+  name, board id and drawing (a PNG: the extension has no pen). Such a key opens only what that one agent sends in that
+  one session under that epoch: no human's message, no other agent's, nothing of a later epoch. The extension never
+  gets the device key (it cannot sign, sign in or send; two processes sealing with one device key would also fork its
+  chain), never the room key, never a session's epoch secret, never the record store's key (it cannot read the board or
+  any history).
+- **Not the local store.** Reading the envelope from the app's encrypted record store would need the store's key and
+  the whole store in the extension, and the push usually comes before the app has the envelope at all.
+- **Not a full client.** A catch-up in the extension would need the device key and the member list's verification,
+  within 24 MB: more memory, more key material, more to go wrong. One envelope (a card is at most 64 KiB padded) and
+  a context of tens of KiB stay far below.
+- **The hub learns nothing new**: it already holds the ciphertext; the ticket only lets this phone fetch the one
+  envelope it pushed, for 24 hours, without signing in. Apple sees what it saw before (`e` is sealed under the push key).
+- What the hub could still do: hold a push back, or hand over another real card of the same session's agent that asked
+  to push within 48 hours (a wrong but genuine title). It cannot forge a title.
+
+The communication style needs `com.apple.developer.usernotifications.communication` (in `AppStore/TrommiApp.entitlements`
+only: the App Store Connect API has no capability type for it, and xtool removes capabilities it does not know from its
+development ids). Without it the push shows the session's name and the title, without the drawing.
+
+**Live Activity** (`Sources/TrommiLive`, `com.trommi.ios.live`, a WidgetKit extension; `LiveActivities.swift`):
+"2 agents working · 3 questions waiting" on the lock screen and in the Dynamic Island, with the drawing of the crowned
+session of the desk on screen (`notify/live.sealed` in the App Group, under its own key). The hub starts it with a
+push-to-start push when agents begin to work, updates it with the two counts, and ends it when none works (README
+"Live Activity"). The app only hands over tokens: its push-to-start token to every room's hub with a random tag per room
+(`POST live_activity { kind: start, tag }`), and each running activity's token to the hub whose tag its attributes
+carry (`kind: activity`); iOS wakes the app in the background for that. Push off (Settings · Devices) removes them.
+`NSSupportsLiveActivities` is in `Info.plist`.
+
+**Universal links** (`Links.swift`): `https://app.trommi.com/card/<Nr. or id>`, `/s/<session>`, `/s/<session>/card/<ref>`,
+`/settings` and `/settings/<sessions|devices|account|theme>` open in the app when it is installed
+(`com.apple.developer.associated-domains: applinks:app.trommi.com`; the web app serves
+`/.well-known/apple-app-site-association` for `NL9YA3V25N.com.trommi.ios` and `NL9YA3V25N.XTL-70CB783D.com.trommi.ios`).
+A long press offers "Open in Safari" as usual. A link that names a card the board does not have yet waits up to 20 s.
 
 - `TrommiApp.entitlements` (`entitlementsPath` in `xtool.yml`) says `aps-environment: development` (the TestFlight builds use `AppStore/TrommiApp.entitlements`, `production`). xtool reads it from
   the signed binary and turns on Push Notifications for the App ID (`XTL-70CB783D.com.trommi.ios` on the paid team)
@@ -222,6 +278,13 @@ the board. No Notification Service Extension: the text says nothing, so nothing 
 - The hub sends only when it has the team's APNs key (`APNS_*`, README "Push"); `APNS_TOPIC` must list the installed
   bundle id (`XTL-70CB783D.com.trommi.ios` for xtool builds). Without it the hub refuses the registration, and the app
   tries again the next time it comes to the front.
+- App ids (registered through the API with the Admin key): `com.trommi.ios` (Push Notifications, App Groups, Associated
+  Domains), `com.trommi.ios.notify` and `com.trommi.ios.live` (App Groups), and the same with `XTL-70CB783D.` for
+  xtool's development builds.
+- **Once, in the developer portal** (the API cannot): Identifiers → `com.trommi.ios` → Capabilities → **Communication
+  Notifications** → Save; and for each of `com.trommi.ios.notify`, `com.trommi.ios.live`,
+  `XTL-70CB783D.com.trommi.ios.notify`, `XTL-70CB783D.com.trommi.ios.live`: App Groups → Configure → tick
+  `group.com.trommi.ios` → Save (as for the Share Extension below).
 
 ## Share Extension
 

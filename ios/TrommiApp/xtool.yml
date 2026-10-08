@@ -13,3 +13,13 @@ extensions:
     bundleID: com.trommi.ios.share
     infoPath: Share/Info.plist
     entitlementsPath: Share/TrommiShare.entitlements
+  # The Notification Service Extension (Sources/TrommiNotify): the card's title in a push, decrypted on the phone.
+  - product: TrommiNotify
+    bundleID: com.trommi.ios.notify
+    infoPath: Notify/Info.plist
+    entitlementsPath: Notify/TrommiNotify.entitlements
+  # The Live Activity's widget (Sources/TrommiLive): agents working, questions waiting.
+  - product: TrommiLive
+    bundleID: com.trommi.ios.live
+    infoPath: Live/Info.plist
+    entitlementsPath: Live/TrommiLive.entitlements

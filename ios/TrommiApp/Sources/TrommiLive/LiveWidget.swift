@@ -11,8 +11,9 @@ import UIKit
 import WidgetKit
 
 @main
-struct TrommiLiveBundle: WidgetBundle {
-  var body: some Widget { TrommiLiveActivity() }
+public struct TrommiLiveBundle: WidgetBundle {
+  public init() {}
+  public var body: some Widget { TrommiLiveActivity() }
 }
 
 struct TrommiLiveActivity: Widget {

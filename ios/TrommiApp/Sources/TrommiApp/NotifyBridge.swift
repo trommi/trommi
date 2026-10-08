@@ -55,7 +55,7 @@ final class NotifyBridge {
       do { try NotifyGroup.writeContext(c); lastContext = c } catch { NSLog("trommi notify: context not written: %@", "\(error)") }
     }
     let crown = d.crownOf(desk: m.deskId)
-    let look = LiveLook(mark: crown.map(mark), name: crown?.name)
+    let look = LiveLook(mark: crown.flatMap(mark), name: crown?.name)
     if look != lastLook {
       do { try NotifyGroup.writeLive(look); lastLook = look } catch { NSLog("trommi live: look not written: %@", "\(error)") }
     }

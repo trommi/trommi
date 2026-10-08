@@ -2,8 +2,9 @@
 """App Store Connect API steps of the TestFlight workflow (.github/workflows/ios-beta.yml). Standard library only; the
 JWT is signed with the openssl command line tool, so it runs on a stock macOS runner and on Linux alike.
 
-  asc.py prepare BUNDLE_ID          the bundle id (Push Notifications, App Groups) and BUNDLE_ID.share (App Groups)
-                                    are registered, their INVALID App Store profiles removed; the app record exists
+  asc.py prepare BUNDLE_ID          the bundle id (Push Notifications, App Groups, Associated Domains) and
+                                    BUNDLE_ID.share, .notify, .live (App Groups) are registered, their INVALID App Store
+                                    profiles removed; the app record exists
   asc.py wait VERSION BUILD         waits until App Store Connect has processed that build (VALID), then prints its id
   asc.py internal BUILD_ID GROUP [EMAIL]
                                     the internal TestFlight group GROUP exists (every build), holds BUILD_ID, and
@@ -115,14 +116,18 @@ def bundle_id(identifier, name, wanted):
 
 
 def prepare(bundle):
-    # The app (push, the App Group of its Share Extension) and the Share Extension (the App Group). The API turns the
-    # App Groups capability on but cannot create the group or assign it: group.com.trommi.ios is made and assigned to
-    # both ids once in the developer portal (ios/README.md "Share Extension").
-    bundle_id(bundle, "Trommi", ["PUSH_NOTIFICATIONS", "APP_GROUPS"])
-    bundle_id(f"{bundle}.share", "Trommi Share", ["APP_GROUPS"])
+    # The app (push, the App Group of its extensions, universal links of app.trommi.com) and its extensions: Share, the
+    # Notification Service Extension, the Live Activity widget (each the App Group). The API turns the App Groups
+    # capability on but cannot create the group or assign it: group.com.trommi.ios is made and assigned to every id once
+    # in the developer portal (ios/README.md "Share Extension"). Communication Notifications (the session's drawing on a
+    # push) is no capability type of the API: ticked once in the portal (ios/README.md "Push").
+    bundle_id(bundle, "Trommi", ["PUSH_NOTIFICATIONS", "APP_GROUPS", "ASSOCIATED_DOMAINS"])
+    extensions = [(f"{bundle}.share", "Trommi Share"), (f"{bundle}.notify", "Trommi Notify"), (f"{bundle}.live", "Trommi Live")]
+    for ident, name in extensions:
+        bundle_id(ident, name, ["APP_GROUPS"])
     # A capability change makes the profiles INVALID; their names stay taken, and omarchy-apple-dev's identity step
     # (which looks only at ACTIVE ones) could not make new ones under the same name (409). They go here.
-    for ident in (bundle, f"{bundle}.share"):
+    for ident in (bundle, *(i for i, _ in extensions)):
         for p in call("GET", f"/v1/profiles?filter[profileType]=IOS_APP_STORE&limit=200")["data"]:
             name, state = p["attributes"]["name"], p["attributes"]["profileState"]
             if name.startswith(f"omarchy-apple-dev {ident} ") and state != "ACTIVE":
