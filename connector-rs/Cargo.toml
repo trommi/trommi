@@ -1,0 +1,60 @@
+[package]
+name = "trommi-connector"
+version = "0.1.0"
+edition = "2021"
+description = "The Trommi connector as one static binary: an MCP server for Claude Code that is a member of a Trommi room"
+license-file = "../LICENSE.md"
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "trommi-connector"
+path = "src/main.rs"
+
+[lib]
+name = "trommi"
+path = "src/lib.rs"
+
+[dependencies]
+# crypto (RustCrypto + dalek, no C)
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+aes-gcm = "0.10"
+hkdf = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+getrandom = "0.2"
+zeroize = "1"
+# runtime, transport
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "io-std", "net", "process", "signal", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
+futures-util = "0.3"
+# data
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+regex = "1"
+fancy-regex = "0.14"
+flate2 = "1"
+libc = "0.2"
+url = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["async-secret-service", "crypto-rust", "tokio"], optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"], optional = true }
+
+[features]
+default = ["keychain"]
+keychain = ["dep:keyring"]
+
+[dev-dependencies]
+hex = "0.4"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
