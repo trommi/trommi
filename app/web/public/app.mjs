@@ -1149,7 +1149,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
   const parts = []
   if (sidebar) {
     if (model) parts.push({ key: 'phonebar', html: String(phoneBar(model, base, { view, current, title })) })
-    parts.push({ key: 'topbar', html: String(topbar(model, base, view === 'desk')) })
+    parts.push({ key: 'topbar', html: String(topbar(model, base, view === 'desk', view === 'session' ? current : null)) })
     parts.push({ key: 'agents', html: String(html`<nav id="agents" aria-label="Sessions" data-controller="folds">${sidebarRows(model, base, current)}</nav>`) })
     parts.push({ key: 'foot', html: String(SIDE_FOOT) })
     parts.push({ key: 'veil', html: String(DRAWER_VEIL) })

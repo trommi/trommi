@@ -396,23 +396,19 @@ function menuSessions(model, base) {
   return html`<div class="menu-sessions" id="menu-sessions">${rows.length ? html`<p class="menu-h">Sessions</p>` : ''}${rows.map(a => { const n = fresh.filter(c => c.agent === a.id).length; return html`<a role="menuitem" class="menu-session" data-nav draggable="false" href="${base}/s/${encodeURIComponent(a.id)}">${avatar(a, { crown: false, working: Boolean(a.working) })}<b>${a.name}</b>${n ? html`<i class="menu-n">${n}</i>` : ''}</a>` })}</div>`
 }
 
-/** The phone's tab bar (his choice "both"): the menu (left), the Desk (middle), what waits (right, the stack, with its
- *  number). On a session's or a card's own page it stands back: there the top line's arrow leads back. */
+/** The phone's bar (his word, 8 October: "Menu" is no tab; the menu is the pill at the top left, as on a wide screen):
+ *  a small glass capsule at the foot, centred: Scribble · Desk · Note. The Desk carries what waits as its number (red
+ *  while something knocks); Note opens the corner note to the crowned session. On a card's own page it stands back. */
 export function tabBar(model, base, view) {
   const fresh = model.allFresh ?? model.fresh
   const knocks = fresh.some(c => ['high', 'critical'].includes(c.urgency))
-  return html`<nav class="tabbar" id="tabbar" aria-label="Menu, Desk, waiting"${['session', 'card', 'picture', 'whiteboard'].includes(view) ? raw(' hidden') : ''}>
-<button type="button" class="tab" data-tab="menu" aria-controls="brand-doors" aria-expanded="false">${sk('grid')}<span>Menu</span></button>
-<a class="tab" data-tab="desk" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}><span class="desk-lamp">${deskLamp(model)}</span><span>Desk</span></a>
-<button type="button" class="tab" data-tab="waiting" aria-controls="waiting-sheet" aria-expanded="false">${sk('stack')}<span>Waiting</span>${waitingBadge(fresh.length, knocks)}</button>
-</nav>
-<section class="waiting-sheet" id="waiting-sheet" aria-label="Waiting for you" hidden>${waitingList(model, base)}</section>`
+  return html`<nav class="tabbar" id="tabbar" aria-label="Scribble Board, Desk, note"${['card', 'picture', 'whiteboard'].includes(view) ? raw(' hidden') : ''}>
+<a class="tab" data-tab="scribble" data-nav draggable="false" href="${base}/scribble-board">${sk('pen')}<span>Scribble</span></a>
+<a class="tab" data-tab="desk" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}><span class="desk-lamp">${deskLamp(model)}</span><span>Desk</span>${waitingBadge(fresh.length, knocks)}</a>
+<button type="button" class="tab" data-tab="note" aria-controls="corner-note-box" aria-expanded="false">${sk('letter')}<span>Note</span></button>
+</nav>`
 }
-const waitingBadge = (n, knocks) => html`<i class="tab-badge${knocks ? ' is-knock' : ''}" id="tab-badge"${n ? '' : raw(' hidden')}>${n}</i>`
-function waitingList(model, base) {
-  const fresh = [...(model.allFresh ?? model.fresh)].sort((a, b) => (['critical', 'high'].includes(b.urgency) ? 1 : 0) - (['critical', 'high'].includes(a.urgency) ? 1 : 0))
-  return html`<div id="waiting-list"><p class="menu-h">Waiting for you</p>${fresh.length ? fresh.slice(0, 30).map(c => { const a = model.byAgent.get(c.agent); return html`<a class="waiting-row${['high', 'critical'].includes(c.urgency) ? ' is-knock' : ''}" data-nav draggable="false" href="${cardPath(c, base)}">${a ? avatar(a, { crown: false }) : ''}<b>${c.title}</b></a>` }) : html`<p class="waiting-none">Nothing waits for you.</p>`}</div>`
-}
+const waitingBadge = (n, knocks) => html`<i class="tab-badge${knocks ? ' is-knock' : ''}" id="tab-badge"${n ? '' : raw(' hidden')}>${n > 99 ? '99+' : n}</i>`
 
 function menuDoors(model, base) {
   return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" data-owns-keys hidden>
@@ -453,13 +449,13 @@ const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? '
  *  a room's desks arrive after the page was drawn. */
 const placeName = model => String(model?.deskName ?? '').trim() || 'Desk'
 /** The pill's words (the menu's button on a wide screen): the desk's drawing and the place's name (#pill-place, live). */
-const pillPlace = model => html`<span class="pill-place" id="pill-place"><span class="desk-lamp">${deskLamp(model)}</span><b>${placeName(model)}</b></span>`
+const pillPlace = (model, current = null) => { const s = current ? model.byAgent.get(current) : null; return s ? html`<span class="pill-place" id="pill-place">${avatar(s, { crown: false })}<b>${s.name}</b></span>` : html`<span class="pill-place" id="pill-place"><span class="desk-lamp">${deskLamp(model)}</span><b>${placeName(model)}</b></span>` }
 const deskPlace = model => html`<span class="desk-place" id="desk-place"><span class="desk-name" data-size="${nameSize(placeName(model))}">${placeName(model)}</span></span>`
 const deskChevron = html`<button type="button" class="desk-switch-open" aria-haspopup="menu" aria-expanded="false" aria-controls="desk-switch" title="Desks" aria-label="Choose the desk">${sk('unfold')}</button>`
-export function topbar(model, base, current) {
+export function topbar(model, base, current, session = null) {
     return html`<header class="topbar"><div class="brand">
 <h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="${placeName(model)}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}${deskPlace(model)}</a>${deskChevron}
-<button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Where you are: ${placeName(model)}. Menu: desks, sessions, places, settings" title="Menu (Ctrl K)">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b>${pillPlace(model)}<span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button>${inDemo() ? html`<a class="pill-demo" href="${base}/screens?mock=1" target="_blank" rel="noopener" title="The demo: a made-up room. Every screen of the app">Demo · All screens</a>` : ''}</h1>
+<button type="button" class="brand-open" id="brand-menu"${session && model.byAgent.get(session) ? html` data-session="${session}"` : ''} aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Where you are: ${placeName(model)}. Menu: desks, sessions, places, settings" title="Menu (Ctrl K)">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b>${pillPlace(model, session)}<span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button>${inDemo() ? html`<a class="pill-demo" href="${base}/screens?mock=1" target="_blank" rel="noopener" title="The demo: a made-up room. Every screen of the app">Demo · All screens</a>` : ''}</h1>
 ${menuDoors(model, base)}
 ${deskSwitch(model, base)}
 <button type="button" class="rail-tag" aria-haspopup="menu" aria-controls="brand-doors" title="Desk ${model.deskName}: switch desks" aria-label="Desk ${model.deskName}: switch desks"><span class="rail-tag-string" aria-hidden="true"></span><span class="rail-tag-paper"><b>${tagLines(model.deskName).map(l => html`<span>${l}</span>`)}</b></span></button>
@@ -845,23 +841,19 @@ export function register(t) {
     if (sw && !sw.hidden && (!t.closest('#desk-switch') || t.closest('a[href]'))) { sw.hidden = true; for (const b of document.querySelectorAll('.desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', 'false') }
     const menu = t.closest('#brand-menu, .rail-tag') && $('#brand-menu'), doors = $('#brand-doors')   // (with one desk the rail's tag opens the menu, at its desks)
     if (menu && doors) { delete doors.dataset.from; doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); return }
-    if (doors && !doors.hidden && !t.closest('#brand-doors, .tab[data-tab="menu"]')) shut()
+    if (doors && !doors.hidden && !t.closest('#brand-doors')) shut()
     // the demo: a switch, never a desk; off takes the tab back to its own room for sure (app.mjs ?mock=0)
     if (t.closest('#demo-toggle')) { location.assign(inDemo() ? '/?mock=0' : '/?mock=1'); return }
     if (t.closest('#theme-toggle')) setThemeMode(nextThemeMode())   // Light → Dark → System
   })
-  // The tab bar: Menu opens the same menu as the pill, Waiting its sheet; a choice in either, or a tap beside, closes it.
-  const sheet = () => $('#waiting-sheet')
-  const shutSheet = () => { const w = sheet(); if (w && !w.hidden) { w.hidden = true; $('.tab[data-tab="waiting"]')?.setAttribute('aria-expanded', 'false') } }
-  const tabState = () => { const open = $('#brand-doors') && !$('#brand-doors').hidden; $('.tab[data-tab="menu"]')?.setAttribute('aria-expanded', String(Boolean(open))) }
+  // The phone's bar: Note opens the corner note (the sticky itself stands back on a phone with the bar).
   document.addEventListener('click', e => {
-    const t = e.target instanceof Element ? e.target : null
-    if (!t) return
-    const tab = t.closest('.tab[data-tab]')
-    if (tab?.dataset.tab === 'menu') { shutSheet(); $('#brand-menu')?.click(); requestAnimationFrame(tabState); return }
-    if (tab?.dataset.tab === 'waiting') { const w = sheet(), open = w?.hidden; shut(); tabState(); if (w) { w.hidden = !open; tab.setAttribute('aria-expanded', String(Boolean(open))) } return }
-    if (t.closest('#waiting-sheet a[href]') || !t.closest('#waiting-sheet')) shutSheet()
-    requestAnimationFrame(tabState)
+    const tab = e.target instanceof Element ? e.target.closest('.tab[data-tab="note"]') : null
+    if (!tab) return
+    const head = $('#corner-note-box .corner-note-head'), open = head?.getAttribute('aria-expanded') === 'true'
+    if (open) $('#corner-note-box [data-action~="corner-note#fold"], #corner-note-box .corner-note-fold')?.click()
+    else head?.click()
+    requestAnimationFrame(() => tab.setAttribute('aria-expanded', String($('#corner-note-box .corner-note-head')?.getAttribute('aria-expanded') === 'true')))
   })
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { shut(); const sw = $('#desk-switch'); if (sw && !sw.hidden) { sw.hidden = true; $('.desk-switch-open')?.focus() } } })
   drawer()
@@ -871,8 +863,8 @@ export function register(t) {
   narrow.addEventListener('change', rail)
   if (narrow.matches) rail()
   t.live('', {
-    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), place: deskPlace(m), pill: pillPlace(m), sessions: menuSessions(m, BASE), waiting: waitingList(m, BASE), badge: waitingBadge((m.allFresh ?? m.fresh).length, (m.allFresh ?? m.fresh).some(c => ['high', 'critical'].includes(c.urgency))), sw: deskSwitchList(m, BASE), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
-    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.place, now.place) ? stream('replace', 'desk-place', now.place) : ''}${t.differs(was.pill, now.pill) ? stream('replace', 'pill-place', now.pill) : ''}${t.differs(was.sessions, now.sessions) ? stream('replace', 'menu-sessions', now.sessions) : ''}${t.differs(was.waiting, now.waiting) ? stream('replace', 'waiting-list', now.waiting) : ''}${t.differs(was.badge, now.badge) ? stream('replace', 'tab-badge', now.badge) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
+    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), place: deskPlace(m), pill: pillPlace(m), sessions: menuSessions(m, BASE), badge: waitingBadge((m.allFresh ?? m.fresh).length, (m.allFresh ?? m.fresh).some(c => ['high', 'critical'].includes(c.urgency))), sw: deskSwitchList(m, BASE), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
+    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.place, now.place) ? stream('replace', 'desk-place', now.place) : ''}${t.differs(was.pill, now.pill) && !document.getElementById('brand-menu')?.dataset.session ? stream('replace', 'pill-place', now.pill) : ''}${t.differs(was.sessions, now.sessions) ? stream('replace', 'menu-sessions', now.sessions) : ''}${t.differs(was.badge, now.badge) ? stream('replace', 'tab-badge', now.badge) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
       : was.rows.shape !== now.rows.shape ? stream('update', 'agents', now.sidebar)
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })

@@ -812,6 +812,7 @@ html[data-rail="folded"] .desk-switch-open { display: none; }
 .demo-band a:hover { text-decoration-thickness: 2.5px; }
 /* (in the sidebar, above the Trommi row: clear of every page's head; folded, in the page's bottom-left corner; a phone: a slim strip over the top line) */
 :root:has(#brand-doors:not([hidden])) .demo-band { visibility: hidden; }
+@media (max-width: 860px) { :root:has(#brand-doors:not([hidden])) .demo-band { visibility: visible; } }
 html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14px; }
 /* (a phone with a notch: the band lies under it, its words below it; the phone bar then needs no room of its own for it) */
 @media (max-width: 860px) { :root.is-demo body { padding-top: calc(22px + env(safe-area-inset-top, 0px)); } :root.is-demo .phone-bar { height: 48px; padding-top: 0; } .demo-band { left: 0; right: 0; bottom: auto; top: 0; z-index: 6; height: calc(22px + env(safe-area-inset-top, 0px)); box-sizing: border-box; padding: calc(3px + env(safe-area-inset-top, 0px)) 0 0; border: 0; border-bottom: 1.4px solid var(--fg); border-radius: 0; rotate: none; text-align: center; font-size: .68rem; } }
@@ -889,7 +890,7 @@ html body .topbar #brand-doors .menu-session { display: flex; align-items: cente
 .menu-n { margin-left: auto; font: 700 var(--t-xs)/1 var(--font); color: var(--muted); }
 .pill-place { display: none; }
 .pill-demo { display: none; }
-.tabbar, .waiting-sheet { display: none; }
+.tabbar { display: none; }
 .phone-back { display: none; }
 
 @media (min-width: 861px) {
@@ -916,32 +917,43 @@ html body .topbar #brand-doors .menu-session { display: flex; align-items: cente
 }
 
 @media (max-width: 860px) {
-  html body :is(#agents, .drawer-veil, .drawer-open, .side-foot) { display: none !important; }
-  html body .topbar { visibility: hidden; position: fixed; width: 0; height: 0; padding: 0; overflow: visible; }
-  html body .topbar #brand-doors { visibility: visible; position: fixed; z-index: 60; left: 8px; right: 8px; top: auto; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px); translate: none; width: auto; max-height: 64dvh; overflow-y: auto; overscroll-behavior: contain; border: 1.5px solid color-mix(in srgb, var(--fg) 75%, transparent); border-radius: 18px 16px 19px 17px; background: var(--surface); box-shadow: 0 18px 40px -22px rgb(20 30 25 / .55); }
-  html body .phone-bar { padding-left: max(16px, env(safe-area-inset-left, 0px)); }
-  html body .phone-bar:has(.phone-back) { padding-left: max(4px, env(safe-area-inset-left, 0px)); }
-  .phone-back { display: grid; place-items: center; flex: none; width: 44px; height: 44px; color: var(--fg); }
-  .phone-back svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-  .tabbar { position: fixed; z-index: 50; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 6px); display: grid; grid-template-columns: repeat(3, 1fr); height: 62px; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent); border-radius: 31px; background: color-mix(in srgb, var(--surface) 80%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6); box-shadow: 0 10px 30px -16px rgb(20 30 25 / .5), inset 0 1px 0 rgb(255 255 255 / .5); }
+  html body :is(#agents, .drawer-veil, .drawer-open, .side-foot, .phone-back) { display: none !important; }
+  /* the pill at the top left, in the top line's place; the line keeps only its ground (and a session's own heading) */
+  html body .topbar { position: fixed; z-index: 45; left: max(10px, env(safe-area-inset-left, 0px)); top: calc(env(safe-area-inset-top, 0px) + 6px); right: auto; width: auto; height: auto; min-height: 0; margin: 0; padding: 0; translate: none; background: none !important; box-shadow: none !important; border-radius: 0; visibility: visible; }
+  :root.is-demo body .topbar { top: calc(env(safe-area-inset-top, 0px) + 28px); }
+  html body .topbar .brand, html body .topbar .deskpill { display: flex; align-items: center; gap: 8px; height: auto; padding: 0; margin: 0; background: none; }
+  html body .topbar :is(.desk-go, .desk-switch-open, .rail-tag, .desk-switch, .pill-demo) { display: none !important; }
+  html body .topbar, html body .topbar #brand-menu, html body .topbar #brand-doors { visibility: visible; transition: none; }
+  html body .topbar #brand-menu { position: static; display: flex; align-items: center; gap: 8px; width: auto; max-width: calc(100vw - 120px); height: 40px; min-height: 0; margin: 0; padding: 0 10px 0 10px; border: 1.5px solid color-mix(in srgb, var(--fg) 75%, transparent); border-radius: 20px 18px 21px 19px; background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3); color: var(--fg); box-shadow: 0 6px 18px -12px rgb(20 30 25 / .5); }
+  html body .topbar #brand-menu :is(.open-mark, .open-word) { display: none !important; }
+  html body .topbar #brand-menu .pill-place { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  html body .topbar #brand-menu .pill-place :is(.desk-lamp .sketch) { width: 22px; height: 22px; margin: 0; stroke-width: 1.6; }
+  html body .topbar #brand-menu .pill-place .agent-avatar { width: 24px; height: 24px; }
+  html body .topbar #brand-menu .pill-place b { font: 800 1rem/1 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  html body .topbar #brand-menu .open-conn { position: static; margin: 0; }
+  html body .topbar #brand-menu .brand-fold { display: grid !important; place-items: center; order: 0; margin: 0; rotate: 0deg !important; }
+  html body .topbar #brand-menu .brand-fold .sketch { width: 14px; height: 14px; stroke-width: 2.2; color: var(--muted); transition: rotate var(--d-fast); }
+  html body .topbar #brand-menu[aria-expanded="true"] .brand-fold .sketch { rotate: 180deg; }
+  html body .topbar #brand-doors { position: fixed; z-index: 60; left: 8px; right: 8px; top: calc(env(safe-area-inset-top, 0px) + 52px); bottom: auto; translate: none; width: auto; max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 160px); overflow-y: auto; overscroll-behavior: contain; border: 1.5px solid color-mix(in srgb, var(--fg) 75%, transparent); border-radius: 18px 16px 19px 17px; background: var(--surface); box-shadow: 0 18px 40px -22px rgb(20 30 25 / .55); }
+  :root.is-demo body .topbar #brand-doors { top: calc(env(safe-area-inset-top, 0px) + 74px); }
+  html body .phone-bar > .phone-place { visibility: hidden; }
+  /* a session's page: its own heading moves right of the pill */
+  body[data-t-view="session"] .topbar #brand-menu .pill-place b { max-width: 34vw; }
+  body[data-t-view="session"] #session .pane-who :is(.t-head-mark, .t-head-name) { visibility: hidden; }
+  /* the capsule at the foot */
+  .tabbar { position: fixed; z-index: 50; left: 50%; translate: -50% 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); display: flex; gap: 2px; height: 56px; padding: 4px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent); border-radius: 28px; background: color-mix(in srgb, var(--surface) 78%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6); box-shadow: 0 10px 30px -16px rgb(20 30 25 / .5), inset 0 1px 0 rgb(255 255 255 / .5); }
   .tabbar[hidden] { display: none; }
-  .tab { position: relative; display: grid; place-items: center; align-content: center; gap: 2px; margin: 5px 0; padding: 0; border: 0; border-radius: 26px; background: none; color: var(--muted); text-decoration: none; font: 600 11px/1 var(--font); -webkit-tap-highlight-color: transparent; }
-  .tab .sketch { width: 26px; height: 26px; stroke-width: 1.8; }
+  .tab { position: relative; display: grid; place-items: center; align-content: center; gap: 1px; width: 76px; padding: 0; border: 0; border-radius: 24px; background: none; color: var(--muted); text-decoration: none; font: 600 10.5px/1 var(--font); -webkit-tap-highlight-color: transparent; }
+  .tab .sketch { width: 24px; height: 24px; stroke-width: 1.8; }
   .tab .desk-lamp .sketch { margin: 0; }
-  .tab:is([aria-current], [aria-expanded="true"]) { color: var(--fg); background: color-mix(in srgb, var(--fg) 7%, transparent); }
-  .tab-badge { position: absolute; top: 4px; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px; background: var(--fg); color: var(--surface); font: 800 11px/18px var(--font); text-align: center; }
+  .tab:is([aria-current], [aria-expanded="true"]) { color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, transparent); }
+  .tab-badge { position: absolute; top: 2px; left: calc(50% + 7px); min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px; background: var(--fg); color: var(--surface); font: 800 11px/18px var(--font); font-style: normal; text-align: center; }
   .tab-badge.is-knock { background: var(--red, #c8372b); color: #fff; }
-  .waiting-sheet { display: block; position: fixed; z-index: 60; left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px); max-height: 62dvh; overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; padding: 8px; border: 1.5px solid color-mix(in srgb, var(--fg) 75%, transparent); border-radius: 18px 16px 19px 17px; background: var(--surface); box-shadow: 0 18px 40px -22px rgb(20 30 25 / .55); }
-  .waiting-sheet[hidden] { display: none; }
-  .waiting-row { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 10px; border-radius: 10px; color: var(--fg); text-decoration: none; }
-  .waiting-row b { font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-  .waiting-row .agent-avatar { width: 30px; height: 30px; flex: none; }
-  .waiting-row.is-knock b::after { content: " ·"; color: var(--red, #c8372b); }
-  .waiting-none { margin: 10px; color: var(--muted); }
-  /* (what stands at the foot of the page keeps clear of the tab bar) */
-  body:has(#tabbar:not([hidden])) #corner-note-box { bottom: calc(env(safe-area-inset-bottom, 0px) + 80px) !important; }
-  body:has(#tabbar:not([hidden])) .inbox-edge.is-down { bottom: calc(env(safe-area-inset-bottom, 0px) + 76px) !important; }
-  body:has(#tabbar:not([hidden])) > main { padding-bottom: 84px; }
+  /* the sticky stands back: Note in the capsule opens it; open, it rises above the capsule */
+  body:has(#tabbar:not([hidden])) #corner-note-box:not(:has(.corner-note-head[aria-expanded="true"])) { display: none; }
+  body:has(#tabbar:not([hidden])) #corner-note-box { bottom: calc(env(safe-area-inset-bottom, 0px) + 74px) !important; }
+  body:has(#tabbar:not([hidden])) .inbox-edge.is-down { bottom: calc(env(safe-area-inset-bottom, 0px) + 72px) !important; }
+  body:has(#tabbar:not([hidden])) > main { padding-bottom: 76px; }
 }
 html body .topbar #brand-doors .menu-session { box-sizing: border-box; width: 100%; min-width: 0; }
 html body .topbar #brand-doors .menu-session b { flex: 1 1 auto; }
