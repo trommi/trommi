@@ -9,18 +9,10 @@
 // Files drawer (session.mjs looseFiles). Pages (ui.mjs pageItems): published pages, pages sent as files, a page behind a
 // picture; no foreign websites; one per file.
 import { CLIENT, core, hubUrl } from './app.mjs'
-import { Controller, agoSpan, artifactItems, controller, html, mediaPreview, pageItems, raw, smallMark } from './ui.mjs'
-// One media tile per decision (his pick B, 4 October): its pictures as a small fanned stack (up to three sheets, the
-// first on top), the bold title under it; a published asset is one sheet with its kind.
+import { Controller, agoSpan, artifactItems, controller, html, mediaPreview, pageItems, raw, sk, smallMark } from './ui.mjs'
 const NOUN = { image: ['picture', 'pictures'], video: ['video', 'videos'], html: ['page', 'pages'], file: ['file', 'files'] }
 const countOf = i => { const n = i.more ?? 1, [one, many] = NOUN[i.type] ?? NOUN.file; return `${n} ${n === 1 ? one : many}` }
-const mediaTile = i => {
-  const n = Math.min(3, i.more ?? 1)
-  const sheet = k => html`<span class="gal-sheet" data-s="${k}">${k === 0 ? mediaPreview(i) : i.urls?.[k] ? mediaPreview({ ...i, url: i.urls[k] }) : ''}</span>`
-  return html`<li class="art-item" data-kind="media"><a class="gal-tile" data-nav href="${i.href}" title="${i.title} · ${i.agent.name} · ${countOf(i)}"><span class="gal-fan" aria-hidden="true">${[...Array(n).keys()].reverse().map(sheet)}</span><span class="gal-meta"><strong><span class="gal-who" title="${i.agent.name}">${smallMark(i.agent)}</span><span class="gal-t">${i.title}</span></strong></span></a></li>`
-}
-
-// Share (a page's ⋯): a switch that makes a share link in this browser (client.shareAttachment: the secret and the
+// Share (a page's link icon): a switch that makes a share link in this browser (client.shareAttachment: the secret and the
 // file key only after the #, the hub keeps the secret's hash), then the link to copy, until when it holds (7 days unless
 // chosen, 30 at most) and Stop sharing. The links this device made are kept in its storage (myShares); one made
 // elsewhere is not shown here.
@@ -46,27 +38,60 @@ function shareForm(i, base) {
 <span class="lk-copy" data-controller="copy" data-copy-text-value="${sh.link}"><input class="lk-url" type="text" readonly value="${sh.link}" aria-label="The link for people outside the room" data-action="focus->lkshare#pick"><button type="button" class="lk-btn" data-action="copy#copy"><span data-copy-target="label">Copy link</span></button></span>
 <button type="submit" class="lk-btn lk-stop" name="stop" value="${sh.share_id}">Stop sharing</button></form>`
 }
-// A page as a tile of the grid: its preview (the screenshot its agent sent with it; else the page itself, drawn small in
-// the sandboxed frame once it comes into view, ui.mjs assetthumb; else the drawn page), its title, the session's drawing
-// and when, Open; Share lies in the tile's small menu (the ⋯).
+// ---- a tile (his word, 8 October: compact, one object): the picture in a soft rounded frame, one line under it (the
+// session's small drawing, the title, when, small), the actions as small round icons on the picture: Open, and on a
+// page Share (a link for people outside the room, 1 to 30 days; its icon filled while a link holds). A question's
+// several pictures: the first, with their count on it. ----
 const pagePreview = i => (i.pic ? mediaPreview({ type: 'image', url: i.pic }) : mediaPreview({ type: 'html', url: i.url, name: i.title }))
+const tileLine = (i, title) => html`<div class="art-line"><span class="gal-who" title="${i.agent.name}">${smallMark(i.agent)}</span>${title}${agoSpan(i.ts, 'ago art-ago')}</div>`
+const openIcon = (go, title) => html`<a ${go('art-act')} title="Open" aria-label="Open ${title}">${sk('go')}</a>`
+function mediaTile(i) {
+  const go = cls => html`data-nav href="${i.href}" class="${cls}"`
+  return html`<li class="art-item art-card" data-kind="media"><a ${go('art-shot')} title="${i.title} · ${i.agent.name} · ${countOf(i)}">${mediaPreview(i)}${(i.more ?? 1) > 1 ? html`<b class="art-n" aria-label="${countOf(i)}">${i.more}</b>` : ''}</a>
+${tileLine(i, html`<a ${go('art-t')}>${i.title}</a>`)}<div class="art-acts">${openIcon(go, i.title)}</div></li>`
+}
 function pageTile(i, base) {
   const own = i.kind === 'page'
   const go = cls => (own ? html`data-nav href="${i.href}" class="${cls}"` : html`href="${i.href}" target="_blank" rel="noopener" class="${cls}"`)
-  return html`<li class="art-item pg-tile" id="${rowId(i.key)}" data-kind="pages"><a ${go('pg-shot')} aria-label="Open ${i.title}">${pagePreview(i)}</a>
-<div class="pg-meta"><a ${go('pg-title')}>${i.title}</a><span class="pg-from"><span class="gal-who" title="${i.agent.name}">${smallMark(i.agent)}</span>${i.agent.name}${agoSpan(i.ts, 'ago pg-ago')}</span></div>
-<div class="pg-acts"><a ${go('lk-btn pg-open')}>Open</a>${i.att ? html`<details class="pg-menu" data-controller="pops"><summary class="pg-more" title="Share" aria-label="Share ${i.title}">⋯</summary><div class="pg-menu-body">${shareForm(i, base)}</div></details>` : ''}</div></li>`
+  const on = Boolean(shareOf(i.att))
+  return html`<li class="art-item art-card" id="${rowId(i.key)}" data-kind="pages"><a ${go('art-shot')} aria-label="Open ${i.title}">${pagePreview(i)}</a>
+${tileLine(i, html`<a ${go('art-t')}>${i.title}</a>`)}<div class="art-acts">${openIcon(go, i.title)}${i.att ? html`<details class="art-share" data-controller="pops"><summary class="art-act${on ? ' is-on' : ''}" title="${on ? 'Shared: the link' : 'Share: a link for 1 to 30 days'}" aria-label="Share ${i.title}">${sk('link')}</summary><div class="art-share-body">${shareForm(i, base)}</div></details>` : ''}</div></li>`
 }
+// (a tile not made yet: the same size, filled when it comes near; controller "artmore")
+const placeholder = at => html`<li class="art-item art-card art-ph" data-at="${at}" aria-hidden="true"><span class="art-shot"></span><div class="art-line">&nbsp;</div></li>`
 
 /** The filter: All · Media · Pages, links (the page works without script). */
 const KINDS = [['', 'All'], ['media', 'Media'], ['pages', 'Pages']]
 const kindOf2 = k => (k === 'media' || k === 'pages' ? k : '')
 const filters = (kind, base) => html`<nav class="art-kinds" aria-label="Kind">${KINDS.map(([k, word]) => html`<a data-nav href="${base}/artifacts${k ? `?kind=${k}` : ''}"${kind === k ? raw(' aria-current="true"') : ''}>${word}</a>`)}</nav>`
+// The grid is made 25 tiles at a time (his word, 8 October): the first ones at once, the rest as empty tiles of the same
+// size that are filled as they come near (controller "artmore"), so nothing jumps. A new render keeps as many made as
+// were already (shown).
+const STEP = 25
+let shown = STEP, tileAt = () => ''
+const tileOf = (x, base) => (x.kind === 'media' ? mediaTile(x.item) : pageTile(x.item, base))
+const itemsOf = (model, base, kind) => artifactItems(model, base).filter(x => !kind || x.kind === kind)
 function artifactsList(model, base, kind) {
-  const items = artifactItems(model, base).filter(x => !kind || x.kind === kind)
-  if (!items.length) return html`<ol class="pg-grid art-grid" id="artifacts-list"><li class="gal-none">${kind === 'pages' ? 'No pages yet.' : kind === 'media' ? 'No pictures, videos or files yet.' : ''}</li></ol>`
-  return html`<ol class="pg-grid art-grid" id="artifacts-list">${items.map(x => (x.kind === 'media' ? mediaTile(x.item) : pageTile(x.item, base)))}</ol>`
+  const items = itemsOf(model, base, kind)
+  if (!items.length) return html`<ol class="art-grid" id="artifacts-list"><li class="gal-none">${kind === 'pages' ? 'No pages yet.' : kind === 'media' ? 'No pictures, videos or files yet.' : ''}</li></ol>`
+  return html`<ol class="art-grid" id="artifacts-list" data-controller="artmore">${items.map((x, i) => (i < shown ? tileOf(x, base) : placeholder(i)))}</ol>`
 }
+controller('artmore', class extends Controller {
+  connect() {
+    this.io = new IntersectionObserver(es => { const near = es.filter(e => e.isIntersecting).map(e => Number(e.target.dataset.at)); if (near.length) this.fill(Math.min(...near)) }, { rootMargin: '600px 0px' })
+    for (const ph of this.element.querySelectorAll('.art-ph')) this.io.observe(ph)
+  }
+  disconnect() { this.io?.disconnect() }
+  fill(from) {
+    const upTo = Math.max(from, shown) + STEP
+    for (const ph of [...this.element.querySelectorAll('.art-ph')].filter(p => Number(p.dataset.at) < upTo)) {
+      const markup = String(tileAt(Number(ph.dataset.at)))
+      this.io.unobserve(ph)
+      if (markup) ph.outerHTML = markup
+    }
+    shown = Math.max(shown, upTo)
+  }
+})
 function artifactsMain(model, base, kind) {
   const n = artifactItems(model, base).length
   return html`<main id="gallery" class="gal-page lk-page" aria-label="Artifacts"><div class="gal-column">
@@ -89,6 +114,7 @@ export function register(t) {
     await loadShares(t)
     for (const a of t.hub.state().agents) if (!asked.has(a.id)) { asked.add(a.id); Promise.resolve(t.hub.loadOlder?.(a.id)).catch(() => {}) }
     const m = t.model()
+    shown = STEP
     t.page(req, res, { model: m, title: 'Artifacts · Trommi', view: 'artifacts', stream: null, bodyAttrs: ' data-page="gallery"', main: artifactsMain(m, t.BASE, kindOf2(url.searchParams.get('kind'))) })
   })
   t.post(/^\/artifacts\/share$/, async ({ req, res, form }) => {
@@ -104,6 +130,7 @@ export function register(t) {
     const m = t.model(), i = pageItems(m, t.BASE).find(x => x.att === att)
     t.sendStream(req, res, `${i ? t.stream('replace', rowId(i.key), pageTile(i, t.BASE)) : ''}${said ? t.toast(said) : ''}`)
   })
+  tileAt = at => { const x = itemsOf(t.model(), t.BASE, kindHere())[at]; return x ? tileOf(x, t.BASE) : '' }
   t.live('artifacts', {
     take: m => ({ list: artifactsList(m, t.BASE, kindHere()) }),
     diff: (was, now) => (t.differs(was.list, now.list) ? t.stream('replace', 'artifacts-list', now.list) : ''),
