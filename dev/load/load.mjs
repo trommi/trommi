@@ -353,7 +353,7 @@ async function chatStrokesPhase() {
   await h.catchUp()
   const key = `chat:session/${a.session_id}`
   const tl = h.model.timelines.get(key)
-  const canvas = h.model.timelines.get(`canvas:session/${a.session_id}`)
+  const canvas = h.model.timelines.get(`scribble:session/${a.session_id}`)
   const times = []
   let items = 0, kinds = new Set()
   for (let i = 0; i < 5; i++) {

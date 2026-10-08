@@ -1020,7 +1020,7 @@ test('freshness: commands of the previous key epoch count for two minutes, chat 
   assert.equal(z.authoriseCommand(chat, { ...ctx, ownSeq: 1, seenOfMe: 1 }).late, false)
   assert.equal(z.authoriseCommand(chat, { ...ctx, ownSeq: 3, seenOfMe: 1 }).late, true)
   // Strokes are timeline items too, but not chat: they never reach the agent as a message.
-  const stroke = await recv(w.agent, await send(w, w.phone, { recipient: w.agent.device.id, timelineKind: z.TIMELINE.CANVAS }))
+  const stroke = await recv(w.agent, await send(w, w.phone, { recipient: w.agent.device.id, timelineKind: z.TIMELINE.SCRIBBLE }))
   await rejects(() => z.authoriseCommand(stroke, ctx), 'not-a-command')
 })
 test('live acceptance (R3): an old key epoch is refused two minutes after the change was learned', async () => {
@@ -1477,7 +1477,7 @@ async function buildVectors() {
   await z.openEnvelope(e3.bytes, { state, chains: chains.agent, secrets: sessKeys, self: agent.id })
   // One room-scope envelope (a desk stroke), from the phone under the room key.
   const deskId = fill(16, 0xd5)
-  const e5 = await z.sealEnvelope({ device: phone, state, chains: chains.phone, secret: room.secret, kind: KIND.TIMELINE_ITEM, timelineKind: z.TIMELINE.CANVAS, timelineId: `desk/${hex(deskId)}`, payload: utf8('{"content_type":"strokes"}'), time: T0 + 4, _rng: fixedRng(0x83) })
+  const e5 = await z.sealEnvelope({ device: phone, state, chains: chains.phone, secret: room.secret, kind: KIND.TIMELINE_ITEM, timelineKind: z.TIMELINE.SCRIBBLE, timelineId: `desk/${hex(deskId)}`, payload: utf8('{"content_type":"strokes"}'), time: T0 + 4, _rng: fixedRng(0x83) })
   const env = (e, more) => {
     const p = z.peekEnvelope(e.bytes), h = p.header
     return { ...more, epoch: h.epoch, seq: h.seq, prev: H(h.prev), logSeq: h.logSeq, logHash: H(h.logHash), seen: h.seen.map(x => ({ sender: who(x.sender), seq: x.seq, hash: H(x.hash) })),

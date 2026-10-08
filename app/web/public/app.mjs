@@ -46,7 +46,7 @@ export const core = () => import('./gen/vendor/index.mjs')
 export let checkEmoji = () => []
 import('./gen/vendor/check-emoji.mjs').then(m => { checkEmoji = m.checkEmoji }, () => {})
 export const account = () => import('./gen/vendor/account.mjs')
-export const canvasWire = () => import('./gen/vendor/canvas.mjs')
+export const scribbleWire = () => import('./gen/vendor/scribble.mjs')
 
 // Where the hub is (a tab session may override it: ?hub=, for development).
 export const ses = (k, v) => { try { if (v != null) sessionStorage.setItem(k, v); return sessionStorage.getItem(k) } catch { return v ?? null } }

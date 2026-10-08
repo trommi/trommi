@@ -99,7 +99,7 @@ export async function startTestHub({ port = 0, host = '127.0.0.1' } = {}) {
       }
       if (M === 'GET' && route === 'threads') {
         hub.authorise(token)
-        const kind = { chat: 1, canvas: 2 }[q('timeline_kind')], tid = q('timeline_id'), limit = Number(q('limit') ?? 50)
+        const kind = { chat: 1, scribble: 2 }[q('timeline_kind')], tid = q('timeline_id'), limit = Number(q('limit') ?? 50)
         let items = storage.envelopes(0, Infinity).filter(e => { const h = z.peekEnvelope(e.bytes).header; return h.timelineKind === kind && h.timelineId === tid })
         let has_more = false
         if (q('after_envelope_number') != null) { items = items.filter(e => e.n > Number(q('after_envelope_number'))); has_more = items.length > limit; items = items.slice(0, limit) }

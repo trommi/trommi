@@ -46,7 +46,7 @@ const STATUS = {
 }
 const CATCH_UP_SLICE = 64
 const CATCH_UP_HIGH_WATER = 256 << 10
-const TIMELINE_NAMES = { chat: z.TIMELINE.CHAT, canvas: z.TIMELINE.CANVAS }
+const TIMELINE_NAMES = { chat: z.TIMELINE.CHAT, scribble: z.TIMELINE.SCRIBBLE }
 const HEX64 = /^[0-9a-f]{64}$/, HEX32 = /^[0-9a-f]{32}$/
 const JSON_BODY_MS = 15000           // a JSON body arrives whole within this
 const IDLE_MS = 30000                // a request with no bytes moving for this long is closed (streams ping every 25 s)

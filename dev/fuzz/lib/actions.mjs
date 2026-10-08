@@ -552,7 +552,7 @@ export class Runner {
     const d = this.dev(a.dev); if (!d || !d.isHuman) return 'skip'
     const bytes = new TextEncoder().encode(this.txt('snapshot-bytes'))
     const ref = await d.client.uploadAttachment(bytes, { file_name: 'canvas.snapshot', media_type: 'application/octet-stream' })
-    const key = `canvas_snapshot/${a.tl.replace('desk/', 'desk/')}`
+    const key = `scribble_snapshot/${a.tl.replace('desk/', 'desk/')}`
     const value = { attachment: ref, last_envelope_number: d.client.model.room.last_envelope_number, frontier: {} }
     await d.client.setRegisters({ [key]: value })
     this.oracle(d.room.idx).setReg(key, value)

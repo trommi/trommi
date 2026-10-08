@@ -68,7 +68,7 @@ export function expectedSnap(runner, roomIdx, m, { agentName = null, mask = null
     s.stack = O.stack(snoozed, archived)
     if (mask) s.stack = s.stack.filter(r => !mask.has(r))
     for (const [tl, items] of O.chat) s.tl[`chat:${tl}`] = items.length
-    for (const [tl, items] of O.canvas) s.tl[`canvas:${tl}`] = items.length
+    for (const [tl, items] of O.canvas) s.tl[`scribble:${tl}`] = items.length
   }
   for (const [n, regs] of O.agentRegs) { if (agentName && n !== agentName) continue; const o = {}; for (const [k, v] of regs) if (v !== null) o[k] = v; if (Object.keys(o).length) s.agentRegs[n] = o }
   return s
@@ -242,7 +242,7 @@ export async function checkTimelines(runner, { against = true } = {}) {
         for (const [from, seq] of bySender) { const pos = seq.map(t => gotTexts.indexOf(t)); if (pos.some((p, i) => i && p < pos[i - 1])) out.push(`${dn} chat ${tl}: messages of ${from} out of order`) }
       }
       for (const [tl, items] of O.canvas) {
-        const got = s[`canvas:${tl}`] ?? []
+        const got = s[`scribble:${tl}`] ?? []
         const want = items.map(i => i.type === 'strokes' ? `s:${i.ids.join(',')}` : `${i.type}:${i.ids.join(',')}`)
         if (canon([...got].sort()) !== canon([...want].sort())) out.push(`${dn} canvas ${tl}: items differ: got ${got.length} want ${want.length}`)
       }

@@ -112,10 +112,10 @@ async function profile(name, { width, height, throttle }) {
     await visit('/')
     add('answer a card on the Desk (click -> row leaves)', await js(`const row = [...document.querySelectorAll('.inbox-row')].find(r => r.querySelector('button[name=key]')); if (!row) return null; const id = row.id; const t = performance.now(); row.querySelector('button[name=key]').click(); while (!(document.getElementById(id)?.inert || !document.getElementById(id)) && performance.now() - t < 10000) await new Promise(r => setTimeout(r, 1)); return performance.now() - t`))
     if (profiling) { const { profile: p } = await page.send('Profiler.stop'); fs.writeFileSync(`${PROF}-${name}.cpuprofile`, JSON.stringify(p)) }
-    add('a stroke through the core (sendStrokes -> echo in the model)', await js(`const c = trommi.client; const k = 'canvas:desk/${info.big_desk}'; const t = performance.now(); const p = c.sendStrokes({ timeline_id: 'desk/${info.big_desk}', strokes: [{ stroke_id: 'p' + Math.random(), points: 'AAgACAAIAAg', style: { tool: 'pen', color: '#222', size: 2 } }] }); const echo = performance.now() - t; await p; return echo`))
+    add('a stroke through the core (sendStrokes -> echo in the model)', await js(`const c = trommi.client; const k = 'scribble:desk/${info.big_desk}'; const t = performance.now(); const p = c.sendStrokes({ timeline_id: 'desk/${info.big_desk}', strokes: [{ stroke_id: 'p' + Math.random(), points: 'AAgACAAIAAg', style: { tool: 'pen', color: '#222', size: 2 } }] }); const echo = performance.now() - t; await p; return echo`))
     if (run === 0) {
       const tc = Date.now()
-      const n = await js(`const r = await trommi.client.loadTimelineAfter('canvas:desk/${info.big_desk}', 0).catch(e => ({ error: e.message })); return r.error ?? r.loaded`)
+      const n = await js(`const r = await trommi.client.loadTimelineAfter('scribble:desk/${info.big_desk}', 0).catch(e => ({ error: e.message })); return r.error ?? r.loaded`)
       out.canvas_tail = { what: 'loadTimelineAfter(canvas 20k, 0): first page of the canvas tail', ms: Date.now() - tc, result: n }
     }
     out.interaction_long_tasks = [...(out.interaction_long_tasks ?? []), ...(await longs())]

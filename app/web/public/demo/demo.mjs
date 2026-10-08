@@ -26,7 +26,7 @@ class MockClient {
       timelines: new Map(),
       human: {
         drafts: toMap(f.human.drafts), snoozes: toMap(f.human.snoozes), ducks: toMap(f.human.ducks), crown: f.human.crown ?? null,
-        desks: toMap(f.human.desks), session_settings: toMap(f.human.session_settings), canvas_snapshots: new Map(), raw: new Map(),
+        desks: toMap(f.human.desks), session_settings: toMap(f.human.session_settings), scribble_snapshots: new Map(), raw: new Map(),
       },
       invites: new Map(), alerts: [], outbox: [], stack: [], open_permission_ids: [],
     }

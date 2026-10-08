@@ -49,7 +49,7 @@ export async function forge(R, a) {
     case 'agent_desk': {
       if (d.isHuman) return 'skip'
       const desk = Object.keys({}).length ? '' : 'b'.repeat(32)
-      return send({ kind: codec.KIND.timeline_item, content: { content_type: 'strokes', strokes: [{ stroke_id: 'forged.0', points: 'AA', style: {} }] }, timeline: { timeline_kind: 'canvas', timeline_id: `desk/${desk}` } })
+      return send({ kind: codec.KIND.timeline_item, content: { content_type: 'strokes', strokes: [{ stroke_id: 'forged.0', points: 'AA', style: {} }] }, timeline: { timeline_kind: 'scribble', timeline_id: `desk/${desk}` } })
     }
     case 'foreign_answer': {
       const victim = pick(agents); if (!victim) return 'skip'

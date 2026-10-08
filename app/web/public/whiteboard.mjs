@@ -8,9 +8,9 @@
 // timeline is desk/ and 32 hex, the core's parseTimelineId, since protocol v1.1), so none of the paper's strokes
 // ever reached the hub or a second device: there is nothing to carry over, and the Whiteboard is where drawing is kept
 // from now on. The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
-// timeline, end-to-end encrypted (openCanvas, the wire format is the core's canvas.mjs).
+// timeline, end-to-end encrypted (openCanvas, the wire format is the core's scribble.mjs).
 import { Controller, controller, html, isTyping, letterKeysOn, markArt, nextThemeMode, raw, setThemeMode } from './ui.mjs'
-import { canvasWire } from './app.mjs'
+import { scribbleWire } from './app.mjs'
 /** The canvas timeline of a desk: desk/ and 32 hex. A desk id that is not 32 hex already ('main', a menu desk's 8 hex)
  *  is folded into 16 bytes (its UTF-8, XOR by position, the length last): the same desk is the same timeline on every
  *  device, two desks never share one. */
@@ -601,7 +601,7 @@ function renderRect(list, rect, env, { max = 2000 } = {}) {
 // their stroke id as the pad id. An own item is applied to the canvas state through the same reducer as everyone
 // else's, the moment it is sealed; when the hub's copy comes back, the frontier says it is applied already.
 //
-// Fresh load: the newest snapshot (register canvas_snapshot/<timeline_id> -> encrypted gzip attachment) + the tail
+// Fresh load: the newest snapshot (register scribble_snapshot/<timeline_id> -> encrypted gzip attachment) + the tail
 // after it. After SNAP_EVERY items applied, with the canvas idle and the outbox empty, this device writes a new one.
 // Without a core (the mock room) the canvas lives in this page only.
 
@@ -613,8 +613,8 @@ const SLICE = 2000          // shapes per slice when a big canvas is loaded
 const breath = () => (globalThis.scheduler?.yield ? scheduler.yield() : new Promise(r => setTimeout(r)))   // a strokes item stays under the core's 60 KB body limit
 
 export async function openCanvas({ client, timeline_id, onRemote, onState }) {
-  const { CanvasState, entryOf, encodePoints, packSnapshot, unpackSnapshot, chunks } = await canvasWire()
-  const key = `canvas:${timeline_id}`
+  const { CanvasState, entryOf, encodePoints, packSnapshot, unpackSnapshot, chunks } = await scribbleWire()
+  const key = `scribble:${timeline_id}`
   const st = new CanvasState()
   const real = typeof client.sendStrokes === 'function'
   const me = client.my_device_id ?? client.model?.room?.my_device_id ?? 'this-device'
@@ -797,7 +797,7 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     try {
       const snap = st.snapshot(), applied = st.applied
       const attachment = await client.uploadAttachment(await packSnapshot(snap), { file_name: 'canvas.json.gz', media_type: 'application/gzip' })
-      await client.setRegisters({ [`canvas_snapshot/${timeline_id}`]: { attachment, frontier: snap.frontier, last_envelope_number: snap.last_envelope_number, shapes: snap.shapes.length } })
+      await client.setRegisters({ [`scribble_snapshot/${timeline_id}`]: { attachment, frontier: snap.frontier, last_envelope_number: snap.last_envelope_number, shapes: snap.shapes.length } })
       st.applied -= applied
     } catch (e) { console.warn('canvas snapshot', e) }
   }
@@ -814,7 +814,7 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
   if (real) {
     // The snapshot register and the tail need the room caught up (a fresh page paints before that).
     for (const until = Date.now() + 8000; client.model.room.connection !== 'live' && Date.now() < until;) await new Promise(r => setTimeout(r, 100))
-    const snap = client.model.human?.canvas_snapshots?.get(timeline_id)
+    const snap = client.model.human?.scribble_snapshots?.get(timeline_id)
     if (snap?.attachment) {
       try {
         const got = await unpackSnapshot(await client.fetchAttachment(snap.attachment))
@@ -822,7 +822,7 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
         // in slices, so that a big canvas never holds the page for long (budget: no task over 200 ms on a slow phone)
         for (let i = 0; i < (got.shapes?.length ?? 0); i += SLICE) { st.addShapes(got.shapes.slice(i, i + SLICE)); await breath() }
       }
-      catch (e) { console.warn('canvas: the snapshot is not readable, the whole timeline is read', e); st.load(null) }
+      catch (e) { console.warn('scribble: the snapshot is not readable, the whole timeline is read', e); st.load(null) }
     }
     const t1 = performance.now()
     let items = []
