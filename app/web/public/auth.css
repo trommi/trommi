@@ -220,3 +220,18 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 /* (the board's edge stands inside the page's margin on every width) */
 #ledger .ledger-page, .room-paged .room-page { margin-inline: max(14px, auto); width: calc(100% - 28px); max-width: 1160px; }
 @media (max-width: 860px) { #ledger .ledger-page, .room-paged .room-page { width: calc(100% - 12px); margin-inline: auto; } }
+
+/* ---- Settings · Devices: Push on this device (Yes / Only knocking / No) and the other devices' push, read only ---- */
+.push-level { display: inline-flex; gap: 0; margin: var(--s-2) 0 var(--s-3); padding: 3px; border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 12px 10px 13px 11px; }
+.push-level legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.push-level label { position: relative; cursor: pointer; }
+.push-level input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.push-level span { display: block; padding: 9px 16px; border-radius: 9px; font: 600 var(--t-sm)/1 var(--font); color: var(--muted); }
+.push-level input:checked + span { background: var(--fg); color: var(--bg); }
+.push-level input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.push-level[disabled] { opacity: .6; }
+.push-level-note:empty { display: none; }
+.push-level-note { color: var(--red, #c8372b); font: 500 var(--t-sm)/1.4 var(--font); }
+.push-others { margin: var(--s-3) 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.push-others li { display: flex; gap: 10px; align-items: baseline; font: 400 var(--t-sm)/1.4 var(--font); }
+.push-others li span { color: var(--muted); }

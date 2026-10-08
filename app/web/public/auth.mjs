@@ -77,6 +77,13 @@ ${isHuman() ? html`<section class="room-section" aria-labelledby="add-head"><h3 
 <a href="/settings/account" data-nav class="room-way room-way-go" id="password-way">${art('key')}<b>Log in with email and password</b><span>On the new device open app.trommi.com and choose "Log in".</span></a>
 </div></section>` : ''}
 <section class="room-section" aria-labelledby="people-head"><h3 id="people-head">Your devices</h3>${raw(L.people)}</section>
+${isHuman() ? html`<section class="room-section push-section" aria-labelledby="push-head"><h3 id="push-head">Push</h3>
+<fieldset class="push-level" id="push-level"><legend>Push on this device</legend>
+<label><input type="radio" name="push-level" value="all"><span>Yes</span></label><label><input type="radio" name="push-level" value="knocking"><span>Only knocking</span></label><label><input type="radio" name="push-level" value="off" checked><span>No</span></label>
+</fieldset>
+<p class="room-meta">Only knocking: a card marked high or critical (the ones that knock on the Desk), and a session that lost its connection.</p>
+<p class="push-level-note" id="push-level-note" role="status"></p>
+<ul class="push-others" id="push-others" aria-label="Push on your other devices"></ul></section>` : ''}
 <section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agents</h3>${raw(L.agents)}${isHuman() && active.length && has(client, 'assignSession') ? handoverForm(active) : ''}
 ${isHuman() ? html`<form method="post" action="/pair" class="room-agent-form"><input type="hidden" name="role" value="agent"><label>Name of the session<input name="label" maxlength="40" placeholder="e.g. Website" autocomplete="off"></label>${has(client, 'assignSession') && m().sessions.size ? html`<label>Takes over<select name="session_id"><option value="">a new session</option>${sessionOptions()}</select></label>${historyAsk()}` : ''}<button type="submit" id="agent-invite">Invite an agent</button></form>` : ''}</section>
 ${raw(L.gone)}
