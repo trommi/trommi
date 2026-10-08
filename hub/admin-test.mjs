@@ -400,12 +400,74 @@ try {
       assert.match(detail, /<dt>sender<\/dt><dd><a class="id"/);
       assert.match(detail, /<dt>kind<\/dt>/);
       if (row.encrypted_body) assert.match(detail, new RegExp(`<dt>encrypted_body</dt><dd><span class="opaque">${row.encrypted_body.byteLength} B · ${Buffer.from(row.encrypted_body).subarray(0, 16).toString('hex')}…`));
+      // The test-account cleanup end to end: the hub's own action, a backup, the room gone.
+      hub.db.prepare('INSERT INTO accounts (room_id, email, created_at, updated_at, revision, auth_salt, auth_hash, key_wrapped, kdf) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(roomId, 'e2e@example.org', 1, 1, 1, Buffer.alloc(16), Buffer.alloc(32), Buffer.alloc(61), '{}');
+      const tests = await (await request('/test-accounts', { cookie }, server)).text();
+      assert.match(tests, /Delete these 1 test rooms/);
+      const gone = await (await request('/test-accounts/delete', { cookie, method: 'POST', form: { csrf: csrfOf(tests), confirm: '1' } }, server)).text();
+      assert.match(gone, /Deleted 1 test room</);
+      assert.equal(hub.db.prepare('SELECT COUNT(*) AS n FROM envelopes WHERE room_id = ?').get(roomId).n, 0);
+      assert.equal(hub.db.prepare('SELECT COUNT(*) AS n FROM rooms').get().n, 0);
+      assert.equal(fs.readdirSync(path.join(hubDir, 'backups')).filter((f) => f.endsWith('-before-delete.db.gz')).length, 1);
       assert.match(html, /Passwort ändern/);
       assert.match(html, /Abmelden/);
     } finally {
       await hub.close();
       for (const k of ['ADMIN_LOGINS', 'ADMIN_PASSWORD_HASH']) if (k in saved) process.env[k] = saved[k]; else delete process.env[k];
       fs.rmSync(hubDir, { recursive: true, force: true });
+    }
+  });
+
+  await test('test accounts: lists @example.org only, the delete needs the number typed and a form token, goes to the hub action', async () => {
+    const T1 = '1'.repeat(64), T2 = '2'.repeat(64);
+    const rw = new DatabaseSync(dbPath);
+    rw.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(T1, 'e2e-1@example.org', Buffer.alloc(32), 1791100000000);
+    rw.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(T2, 'e2e-2@example.org', Buffer.alloc(32), 1791100001000);
+    rw.close();
+    const calls = [];
+    const actions = { async deleteTestRooms(ids, opts) {
+      calls.push({ ids, opts });
+      return { backup: '/data/backups/hub-x-before-delete.db.gz', deleted: ids.map((room_id) => ({ room_id, rows: { accounts: 1 }, files: 0 })), refused: [], totals: { accounts: ids.length, envelopes: 7, files: 3 } };
+    } };
+    const own = await startAdmin({ dbPath, dataDir: fs.mkdtempSync(path.join(dir, 'own-')), port: 0, host: '127.0.0.1', env, actions, log: quiet });   // own password file (an earlier test changed the shared one)
+    const server = `http://127.0.0.1:${own.port}`;
+    try {
+      assert.equal((await request('/test-accounts', {}, server)).status, 403, 'behind the password');
+      const { cookie } = await signIn(PASSWORD, LOGIN, server);
+      const html = await (await request('/test-accounts', { cookie }, server)).text();
+      assert.match(html, /<h1>Test accounts<\/h1>/);
+      assert.match(html, /e2e-1@example\.org/);
+      assert.match(html, /e2e-2@example\.org/);
+      assert.doesNotMatch(html, /someone@example\.com/, 'real accounts are not listed');
+      assert.match(html, /111111111111…/);
+      assert.match(html, /Delete these 2 test rooms/);
+      assert.match(html, /Type 2 to confirm/);
+      const csrf = csrfOf(html);
+      // Without the form token, with the wrong number, or a stale one: nothing is deleted.
+      assert.equal((await request('/test-accounts/delete', { cookie, method: 'POST', form: { confirm: '2' } }, server)).status, 403);
+      for (const confirm of ['', '1', '3', 'two']) {
+        const res = await request('/test-accounts/delete', { cookie, method: 'POST', form: { csrf, confirm } }, server);
+        assert.equal(res.status, 400, confirm);
+        assert.match(await res.text(), /Type 2 to confirm; nothing was deleted/);
+      }
+      assert.equal(calls.length, 0);
+      const done = await request('/test-accounts/delete', { cookie, method: 'POST', form: { csrf, confirm: '2' } }, server);
+      assert.equal(done.status, 200);
+      const page = await done.text();
+      assert.deepEqual(calls, [{ ids: [T1, T2], opts: { by: LOGIN } }]);
+      assert.match(page, /Deleted 2 test rooms/);
+      assert.match(page, /hub-x-before-delete\.db\.gz/);
+      assert.match(page, /<dt>envelopes<\/dt><dd>7 rows<\/dd>/);
+      // Without the hub's action (the plain listener): listed, no button, a POST is refused.
+      const plain = await (await request('/test-accounts', { cookie: (await signIn(NEW_PASSWORD)).cookie })).text();
+      assert.doesNotMatch(plain, /Delete these/);
+      assert.match(plain, /needs the running hub/);
+    } finally {
+      await own.close();
+      const rw2 = new DatabaseSync(dbPath);
+      rw2.prepare('DELETE FROM accounts WHERE room_id IN (?, ?)').run(T1, T2);
+      rw2.close();
     }
   });
 
