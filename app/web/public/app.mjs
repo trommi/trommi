@@ -1296,6 +1296,18 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
   const between = part => { const out = []; for (let n = part.start; n; n = n.nextSibling) { out.push(n); if (n === part.end) break } return out }
   function paintBody(list) {
     const body = document.body
+    // (every new part is parsed off the page first, in one go, each with its two marks: the page is then changed in
+    //  one stretch of insertions and removals, nothing read in between)
+    const made = new Map()
+    for (const { key, html } of list) {
+      const part = parts.get(key)
+      if (part && (key === 'says' || part.html === html || (key === 'pad' && part.html !== html && padCanvas(part.html0) === padCanvas(html)))) continue
+      const t = document.createElement('template')
+      t.innerHTML = html
+      const start = document.createComment(`p:${key}`), end = document.createComment(`/p:${key}`)
+      t.content.prepend(start); t.content.append(end)
+      made.set(key, { frag: t.content, start, end })
+    }
     const keep = new Set(list.map(p => p.key))
     for (const [key, part] of parts) if (!keep.has(key)) { for (const n of between(part)) n.remove(); parts.delete(key) }
     let anchor = body.firstChild
@@ -1322,14 +1334,10 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
         anchor = part.end.nextSibling
         continue
       }
-      const t = document.createElement('template')
-      t.innerHTML = html
-      const start = document.createComment(`p:${key}`), end = document.createComment(`/p:${key}`)
+      const { frag, start, end } = made.get(key)
       if (part) { anchor = part.end.nextSibling; for (const n of between(part)) n.remove() }
       if (anchor && !anchor.isConnected) anchor = null
-      body.insertBefore(start, anchor)
-      body.insertBefore(t.content, anchor)
-      body.insertBefore(end, anchor)
+      body.insertBefore(frag, anchor)
       parts.set(key, { html, html0: html, start, end })
       anchor = end.nextSibling
     }

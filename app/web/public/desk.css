@@ -289,7 +289,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 }
 /* Rows that came in above the fold while he is further down (desk.mjs keepRow): said, not pushed. */
 .inbox-news-at { position: sticky; top: 8px; z-index: 6; height: 0; display: flex; justify-content: center; pointer-events: none; }
-.inbox-news-at:has(~ .inbox-edge.is-up > :not([hidden])) .inbox-news { translate: 0 26px; }
+body:has(.inbox-edge.is-up > :not([hidden])) .inbox-news { translate: 0 26px; }
 /* A knock out of sight (desk.mjs tellKnocks): a slim strip on the edge of the list it lies beyond, as wide as
    the list. It is the edge: rows pass under it, it floats over no tile. */
 .inbox-edge { position: fixed; z-index: 6; pointer-events: none; }
@@ -1397,3 +1397,9 @@ button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
 .df-all .off-count { color: var(--muted); font-weight: 500; }
 @media (max-width: 860px) { .df-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 html body #desk-stacks:has(> .df-cards) { display: block !important; width: auto !important; padding: 0 !important; } html body #desk-stacks > .df-cards { width: 100%; max-width: none; box-sizing: border-box; } html body #desk-stacks .df-row { width: 100%; } html body #desk-stacks .df-card { width: auto; }
+
+/* ---- the Desk's <main> is a layout boundary (its size comes from the frame): a change in the list lays out only the
+   list, not the sidebar and the rest of the page (README "The huge room") ---- */
+body > main#inbox { contain: strict; }
+.desk-layer { display: contents; }
+#inbox.is-choosing .inbox-row .row-mark { opacity: 1 !important; }

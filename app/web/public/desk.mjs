@@ -79,14 +79,17 @@ ${withAgents(model, base)}${endList(model, base)}${deskStacks(model, base, pile,
 /** The Desk's <main>. */
 // (Controller "desk": a card that arrives out of sight is said quietly, "1 new ↓"; a knock out of sight has a strip at
 //  the list's edge that leads to it.)
+// (the selection bar and the knock strips stand in a layer of their own beside <main>: fixed things inside it kept
+//  <main> from being a layout boundary, so every change in the list laid the whole page out)
 const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="Desk" data-controller="desk" data-action="turbo:before-stream-render@document->desk#changing">
 ${deskHead(model, base)}
 <div class="inbox-news-at"><button class="inbox-news" type="button" data-desk-target="news" data-action="desk#toNew" hidden></button></div>
 <div class="inbox-groups" id="desk-list" data-desk-target="list">${deskList(model, base, opts)}</div>
-<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span>${sideWays({ many: true, between: html`<button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button>` })}<button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
-<div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" data-desk-target="up" data-action="desk#toKnock" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>
-<div class="inbox-edge is-down"><button class="inbox-edge-knock" type="button" data-desk-target="down" data-action="desk#toKnock" data-dir="down" hidden>↓ ${sk('knock')}<span></span></button></div>
-</main>`
+</main>
+<div class="desk-layer" id="desk-layer"><form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span>${sideWays({ many: true, between: html`<button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button>` })}<button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
+<div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" id="knock-up" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>
+<div class="inbox-edge is-down"><button class="inbox-edge-knock" type="button" id="knock-down" data-dir="down" hidden>↓ ${sk('knock')}<span></span></button></div>
+</div>`
 
 // ---- the walk's button ----
 // A drawn button into the walk through every open question (his word, 6 October: "ein Button mit eigenem Design"):
@@ -524,7 +527,7 @@ function pullDown(root, rows, done) {
 const chosen = new Set()
 let lastPicked = null
 function selectWays(root) {
-  const bar = root.querySelector('#sel-bar')
+  const bar = document.getElementById('sel-bar')
   if (!bar) return () => {}
   const rows = () => [...root.querySelectorAll('.inbox-groups .inbox-row[data-id]')].filter(r => r.querySelector('[data-select]'))
   const paint = () => {
@@ -571,19 +574,22 @@ function selectWays(root) {
   }
   root.addEventListener('submit', onSubmit, true)
   root.addEventListener('click', onClick, true)
+  bar.addEventListener('submit', onSubmit, true)
+  bar.addEventListener('click', onClick, true)
   document.addEventListener('keydown', onKey)
   document.addEventListener('turbo:submit-start', onSent)
   const mo = new MutationObserver(() => paint())
   mo.observe(root.querySelector('#desk-list'), { childList: true, subtree: true })
   paint()
-  return () => { root.removeEventListener('submit', onSubmit, true); root.removeEventListener('click', onClick, true); document.removeEventListener('keydown', onKey); document.removeEventListener('turbo:submit-start', onSent); mo.disconnect() }
+  return () => { root.removeEventListener('submit', onSubmit, true); root.removeEventListener('click', onClick, true); bar.removeEventListener('submit', onSubmit, true); bar.removeEventListener('click', onClick, true); document.removeEventListener('keydown', onKey); document.removeEventListener('turbo:submit-start', onSent); mo.disconnect() }
 }
 
 controller('desk', class extends Controller {
-  static targets = ['list', 'news', 'up', 'down']
+  static targets = ['list', 'news']
   connect() {
     // (A target is looked up on every read; these elements stay for the page's life: kept once.)
-    this.list = this.listTarget; this.news = this.newsTarget; this.up = this.upTarget; this.down = this.downTarget
+    this.list = this.listTarget; this.news = this.newsTarget; this.up = document.getElementById('knock-up'); this.down = document.getElementById('knock-down')
+    this.knock = e => this.toKnock(e); this.up?.addEventListener('click', this.knock); this.down?.addEventListener('click', this.knock)
     this.unseen = new Set()      // ids of rows that arrived out of sight
     this.shown = new Set()       // rows in sight now
     this.listAt = 'in'           // the list as a whole: 'in' sight, 'up' (scrolled past) or 'down' (not reached)
@@ -616,7 +622,7 @@ controller('desk', class extends Controller {
     addEventListener('resize', this.moved)
     this.offSelect = selectWays(this.element)
   }
-  disconnect() { removeEventListener('resize', this.moved); this.io.disconnect(); this.mo.disconnect(); this.ro.disconnect(); cancelAnimationFrame(this.frame); this.offSelect?.() }
+  disconnect() { this.up?.removeEventListener('click', this.knock); this.down?.removeEventListener('click', this.knock); removeEventListener('resize', this.moved); this.io.disconnect(); this.mo.disconnect(); this.ro.disconnect(); cancelAnimationFrame(this.frame); this.offSelect?.() }
   forget(node) { for (const row of this.shown) if (row === node || node.contains(row)) this.shown.delete(row) }
 
   // A stream is about to put a row in: it is "new" until it has been in sight.
