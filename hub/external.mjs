@@ -136,8 +136,9 @@ export async function startHub(o = {}) {
       if (msg) log(msg)
     }
     child.stdout.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) >= 0) { line(buf.slice(0, i)); buf = buf.slice(i + 1) } })
-    child.stderr.on('data', d => { for (const l of String(d).split('\n')) if (l) log(l.replace(/^\[hub\] /, '')) })
-    exit.then(e => bad(new Error(`hub exited before it listened (${e.code ?? e.sig})`)))
+    let errText = ''
+    child.stderr.on('data', d => { errText += d; for (const l of String(d).split('\n')) if (l) log(l.replace(/^\[hub\] /, '')) })
+    exit.then(e => bad(Object.assign(new Error(`hub exited before it listened (${e.code ?? e.sig}): ${errText.trim().slice(-300)}`), /Address already in use|os error 98/.test(errText) ? { code: 'EADDRINUSE' } : {})))
     child.once('error', bad)
   })
   const { port, hubUrl } = await ready

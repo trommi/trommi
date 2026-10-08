@@ -15,7 +15,8 @@ export async function loadTarget(root = REPO_ROOT) {
   // A core module as .ts (moved to TypeScript) or .mjs (a pinned clone from before, or not moved yet).
   const core_ = base => imp(`${base}.ts`).catch(e => (e?.code === 'ERR_MODULE_NOT_FOUND' ? imp(`${base}.mjs`) : Promise.reject(e)))
   const [hubMod, core, mem, file, zc, zh, store] = await Promise.all([
-    imp('hub/server.mjs'), core_('shared/index'), core_('shared/storage-memory'),
+    // HUB_CMD=<a hub binary>: fuzz that hub instead (hub/external.mjs; the Rust hub: hub-rs/README.md)
+    imp(process.env.HUB_CMD ? 'hub/external.mjs' : 'hub/server.mjs'), core_('shared/index'), core_('shared/storage-memory'),
     core_('shared/storage-file').catch(() => null), imp('shared/crypto/zcrypto.mjs'), imp('shared/crypto/hub.mjs'), imp('hub/store.mjs'),
   ])
   const codec = await core_('shared/codec')
