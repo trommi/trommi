@@ -8,7 +8,12 @@ cd /srv/trommi
 mkdir -p backups
 if [ -f data/hub.db ] && [ -n "$(docker compose ps -q hub 2>/dev/null)" ]; then
   rm -f data/backup-tmp.db
-  docker compose exec -T hub node -e "new (require('node:sqlite').DatabaseSync)('/data/hub.db').exec(\"VACUUM INTO '/data/backup-tmp.db'\")"
+  # The Rust hub's image (hub-rs/Dockerfile) has no node: its binary makes the same VACUUM INTO copy.
+  if docker compose exec -T hub /trommi-hub --version >/dev/null 2>&1; then
+    docker compose exec -T hub /trommi-hub backup /data/backup-tmp.db
+  else
+    docker compose exec -T hub node -e "new (require('node:sqlite').DatabaseSync)('/data/hub.db').exec(\"VACUUM INTO '/data/backup-tmp.db'\")"
+  fi
   stamp=$(date -u +%Y%m%d-%H%M%S)
   gzip -1 -c data/backup-tmp.db > "backups/hub-$stamp.db.gz.part" && mv "backups/hub-$stamp.db.gz.part" "backups/hub-$stamp.db.gz"
   rm -f data/backup-tmp.db
