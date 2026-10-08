@@ -14,15 +14,18 @@ The wire contract is the README section "Hub v1: the wire protocol" of this repo
 | --- | --- |
 | `index.mjs` | re-exports everything below; import this |
 | `crypto/` | the pure crypto, no dependencies: `zcrypto.mjs` (the library; bytes: `FORMAT.md`, design: `CRYPTO.md`), `argon2.mjs`, `session-grants.mjs` (per-session keys), `hub.mjs` (what the hub checks), their tests and `vectors.json` |
-| `transport.mjs` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
+| `types.ts` | the protocol's and the model's shapes as TypeScript types (nothing at run time) |
+| `transport.ts` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
 | `room.mjs` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
 | `client.mjs` | the `Client`: sync engine (one cursor, verify every header, decrypt heads, lazy timelines), outbox, membership, sessions, human actions |
 | `snapshot.mjs` | room snapshots (fast first start) |
-| `codec.mjs` | body payloads (`schema_version` 1) for the seven kinds, attachment references |
-| `model.mjs` | the board model reducer and the projections |
+| `codec.ts` | body payloads (`schema_version` 1) for the seven kinds, attachment references |
+| `model.ts`, `model-shape.ts` | the board model reducer and the projections; an empty model and change |
 | `agent.mjs` | what an agent does: objects, messages, status, permission requests, `authoriseCommand` |
-| `storage-memory.mjs`, `storage-idb.mjs`, `storage-file.mjs` | storage adapters (memory for tests, IndexedDB for browsers, a directory for Node) |
-| `test.mjs` | `node shared/test.mjs` (Node, against `hub/server.mjs` in-process) |
+| `storage-memory.ts`, `storage-idb.ts`, `storage-file.mjs` | storage adapters (memory for tests, IndexedDB for browsers, a directory for Node) |
+| `core-worker.ts`, `remote.ts`, `mirror.ts`, `worker-protocol.ts` | the core in a Web Worker (browsers): the worker runs the client; the page holds an exact copy of its model, patched after every change, and calls the client's actions by name (below, "The core in a worker") |
+| `ink.ts`, `scribble.ts`, `palette.ts` | the Scribble Board's stroke format, its reducer and colours |
+| `test.mjs` | `node shared/test.mjs` (Node, against `hub/server.mjs` in-process); `mirror-test.mjs`: the worker's copy of the model stays equal to it |
 | `browser-test.mjs` | the same files in headless Chromium with IndexedDB |
 
 ## Opening a room
@@ -402,7 +405,8 @@ Plus `setMany([[key, value | undefined]...])` (one transaction; `undefined` dele
 
 ## Performance design
 
-- Verification runs in two phases: signatures and decryption for windows of 64 envelopes at once (WebCrypto works them in parallel, off the JavaScript thread), then the sender chains strictly in hub order. The loop yields every ~12 ms, so no long task. A Worker turned out unnecessary so far (measured below); if it becomes one, `_precheck` is the piece that moves.
+- Verification runs in two phases: signatures and decryption for windows of 64 envelopes at once (WebCrypto works them in parallel, off the JavaScript thread), then the sender chains strictly in hub order. The loop yields every ~12 ms, so no long task.
+- **The core in a worker** (the web app, since 8 October 2026): the whole client runs in a dedicated Web Worker (`core-worker.ts`), so the page's thread never verifies, decrypts, reduces or reads the room's storage; the page keeps an exact copy of the model (`mirror.ts`: after every `change` the worker posts the records the change names, `patchOf`; the page puts them in place, `applyPatch`, and fires the same `change`). `remote.ts` `openRemote()` gives the page a `RemoteClient` with the Client's interface: `model`, `on`/`off`, every action as a call by name (`worker-protocol.ts` `CALLS`), `hub.request` for the account routes. The worker opens the room with `openRoomInTabs` as the page did (Web Locks and BroadcastChannel work in workers). A page whose worker does not come up opens the room itself. `mirror-test.mjs` checks the copy against the model through cards, answers, registers, notes, timelines and an echo rolled back.
 - Measured (4 October 2026, this PC): Node catch-up 21,500 envelopes/s processing (17,000/s incl. HTTP to the local hub); Chromium headless catch-up of 20,000 envelopes in 1.4 s (14,000/s incl. HTTP, IndexedDB writes included), **0 long tasks**; warm start from IndexedDB 8 ms open + 9 ms start (delta 1 envelope); newest 50 items of a timeline fetched and decrypted in 15 ms. Local load (`dev/load/load.mjs`, 2 humans + 8 agents, mixed kinds, paced at 150/s): send -> verified on another device p50 2 ms, p95 5.5 ms, p99 12 ms. Unpaced the senders outrun the hub's 50/s per device limit and latency becomes outbox queueing. Tests: `node shared/test.mjs`, `node shared/browser-test.mjs --n=20000` (needs Chromium outside the sandbox).
 - Thread items are verified from their pruned header at sync time (one signature each, no decryption); bodies are fetched and decrypted only for opened timelines and items addressed to an agent.
 - Projections (`stack`, counts) are recomputed only for the sessions and cards a batch touched.

@@ -10,7 +10,7 @@
     "typecheck": "tsc -p .",
     "test:app": "node app/web/dev/check.mjs",
     "test:hub": "node shared/crypto/crypto-test.mjs --no-bench && node shared/crypto/hub-crypto-test.mjs && node shared/crypto/session-grants-test.mjs && node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node hub/admin-test.mjs",
-    "test:core": "node shared/test.mjs && node shared/scribble-test.mjs && node connector/test.mjs && node connector/test-e2e.mjs",
+    "test:core": "node shared/test.mjs && node shared/mirror-test.mjs && node shared/scribble-test.mjs && node connector/test.mjs && node connector/test-e2e.mjs",
     "fuzz": "node dev/fuzz/run.mjs --quick",
     "interop": "node dev/interop/run.mjs",
     "interop:parity": "node dev/interop/parity.mjs",

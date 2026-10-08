@@ -1,0 +1,41 @@
+// worker-protocol.ts: the messages between the page (remote.ts) and the client core in its worker (core-worker.ts).
+// Every message is structured-clone data. Calls are answered in order of their completion; changes come in the order
+// the core made them, and a call's own changes (an optimistic echo) always arrive before its answer.
+import type { ModelPatch, ModelSnapshot } from './mirror.ts'
+
+/** An error as it travels: name, message and its own fields (code, status, retry_after, …). */
+export interface WireError { name: string; message: string; [field: string]: unknown }
+
+/** What the page sends. */
+export type ToWorker =
+  | { t: 'open'; id: number; storage: { name: string; prefix: string }; client: string | null }
+  | { t: 'call'; id: number; method: string; args: unknown[] }
+
+/** What the worker sends. */
+export type FromWorker =
+  | { t: 'ready' }
+  | { t: 'opened'; id: number; model: ModelSnapshot | null; error?: WireError; extra: Extra }
+  | { t: 'result'; id: number; ok: true; value: unknown }
+  | { t: 'result'; id: number; ok: false; error: WireError }
+  | { t: 'change'; patch: ModelPatch }
+  | { t: 'snapshot'; model: ModelSnapshot; extra: Extra }
+  | { t: 'event'; event: 'alert' | 'error' | 'reset'; data: unknown }
+
+/** What travels beside the model: the client's counters and this tab's role (tabs.mjs). */
+export interface Extra { stats?: Record<string, number> | null; tabRole?: string | null; [k: string]: unknown }
+
+/** The client's methods the page may call (shared/README.md "Human actions", "Sessions and keys", timelines,
+ *  attachments, push), by name. Anything else is refused in the worker. */
+export const CALLS: readonly string[] = Object.freeze([
+  // life
+  'start', 'stop', 'flush', 'settle', 'catchUp',
+  // human actions (tabs.mjs FORWARDED)
+  'sendMessage', 'answer', 'trust', 'markRead', 'shred', 'decideAgain', 'verdict', 'setRegisters', 'setDraft', 'snooze',
+  'duck', 'setCrown', 'setDesk', 'saveNote', 'deleteNote', 'sendStrokes', 'createInvite', 'confirmInvite', 'removeDevices',
+  'createSession', 'assignSession', 'leaveRoom', 'writeSnapshot',
+  // timelines and attachments
+  'loadTimeline', 'timelineWindow', 'loadTimelineAfter', 'uploadAttachment', 'fetchAttachment', 'attachmentBlob',
+  'shareAttachment', 'myShares', 'revokeShare',
+  // push
+  'pushSubscribe', 'pushStates',
+])
