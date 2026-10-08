@@ -7,6 +7,11 @@ name: Trommi
 options:
   deploymentTarget:
     iOS: "18.0"
+# The store version, for the app and its extension alike (App Store processing wants them equal, ITMS-90473); the build
+# number is the workflow's run number (CURRENT_PROJECT_VERSION on the command line, which reaches both targets).
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
 packages:
   TrommiApp:
     path: ..
@@ -21,13 +26,13 @@ targets:
     dependencies:
       - package: TrommiApp
         product: TrommiApp
+      # The Share Extension, embedded in PlugIns/
+      - target: TrommiShareExtension
     scheme: {}
     settings:
       base:
         PRODUCT_NAME: Trommi
         PRODUCT_BUNDLE_IDENTIFIER: com.trommi.ios
-        # The store version; the build number is the workflow's run number (CURRENT_PROJECT_VERSION on the command line).
-        MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.0"
@@ -41,3 +46,27 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+  # The Share Extension (the package's TrommiShare library; Sources/TrommiShare): Trommi in the share sheet. It shares
+  # the App Group group.com.trommi.ios with the app (the encrypted inbox, ShareInbox), nothing else.
+  TrommiShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareLink.swift
+    dependencies:
+      - package: TrommiApp
+        product: TrommiShare
+    settings:
+      base:
+        PRODUCT_NAME: TrommiShare
+        # the package module is TrommiShare already; this target only links it
+        PRODUCT_MODULE_NAME: TrommiShareExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.trommi.ios.share
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TrommiShare.entitlements
+        INFOPLIST_FILE: ../Share/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        APPLICATION_EXTENSION_API_ONLY: YES

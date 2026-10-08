@@ -2,7 +2,8 @@
 """App Store Connect API steps of the TestFlight workflow (.github/workflows/ios-beta.yml). Standard library only; the
 JWT is signed with the openssl command line tool, so it runs on a stock macOS runner and on Linux alike.
 
-  asc.py prepare BUNDLE_ID          the bundle id is registered with Push Notifications on; the app record exists
+  asc.py prepare BUNDLE_ID          the bundle id (Push Notifications, App Groups) and BUNDLE_ID.share (App Groups)
+                                    are registered; the app record exists
   asc.py wait VERSION BUILD         waits until App Store Connect has processed that build (VALID), then prints its id
   asc.py internal BUILD_ID GROUP [EMAIL]
                                     the internal TestFlight group GROUP exists (every build), holds BUILD_ID, and
@@ -93,21 +94,32 @@ def app_id(bundle):
     return apps[0]["id"] if apps else None
 
 
-def prepare(bundle):
-    found = [b for b in call("GET", f"/v1/bundleIds?filter[identifier]={q(bundle)}&limit=200")["data"]
-             if b["attributes"]["identifier"] == bundle]
+def bundle_id(identifier, name, wanted):
+    """The bundle id registered, with every capability in `wanted` turned on."""
+    found = [b for b in call("GET", f"/v1/bundleIds?filter[identifier]={q(identifier)}&limit=200")["data"]
+             if b["attributes"]["identifier"] == identifier]
     if found:
         bid = found[0]["id"]
     else:
-        print(f"registering bundle id {bundle}")
+        print(f"registering bundle id {identifier}")
         bid = call("POST", "/v1/bundleIds", {"data": {"type": "bundleIds", "attributes": {
-            "identifier": bundle, "name": "Trommi", "platform": "IOS"}}})["data"]["id"]
+            "identifier": identifier, "name": name, "platform": "IOS"}}})["data"]["id"]
     caps = [c["attributes"]["capabilityType"] for c in call("GET", f"/v1/bundleIds/{bid}/bundleIdCapabilities")["data"]]
-    if "PUSH_NOTIFICATIONS" not in caps:
-        print("turning on Push Notifications for the bundle id")
-        call("POST", "/v1/bundleIdCapabilities", {"data": {"type": "bundleIdCapabilities",
-             "attributes": {"capabilityType": "PUSH_NOTIFICATIONS"}, "relationships": {"bundleId": rel("bundleIds", bid)}}})
-    print(f"bundle id {bundle}: {bid}, capabilities {sorted(set(caps) | {'PUSH_NOTIFICATIONS'})}")
+    for cap in wanted:
+        if cap not in caps:
+            print(f"turning on {cap} for {identifier}")
+            call("POST", "/v1/bundleIdCapabilities", {"data": {"type": "bundleIdCapabilities",
+                 "attributes": {"capabilityType": cap}, "relationships": {"bundleId": rel("bundleIds", bid)}}})
+    print(f"bundle id {identifier}: {bid}, capabilities {sorted(set(caps) | set(wanted))}")
+    return bid
+
+
+def prepare(bundle):
+    # The app (push, the App Group of its Share Extension) and the Share Extension (the App Group). The API turns the
+    # App Groups capability on but cannot create the group or assign it: group.com.trommi.ios is made and assigned to
+    # both ids once in the developer portal (ios/README.md "Share Extension").
+    bundle_id(bundle, "Trommi", ["PUSH_NOTIFICATIONS", "APP_GROUPS"])
+    bundle_id(f"{bundle}.share", "Trommi Share", ["APP_GROUPS"])
     aid = app_id(bundle)
     if not aid:
         die(f"no App Store Connect app record for {bundle}: create it once in App Store Connect (Apps > + > New App; "

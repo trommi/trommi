@@ -190,6 +190,39 @@ the board. No Notification Service Extension: the text says nothing, so nothing 
   bundle id (`XTL-70CB783D.com.trommi.ios` for xtool builds). Without it the hub refuses the registration, and the app
   tries again the next time it comes to the front.
 
+## Share Extension
+
+Trommi in the iOS share sheet (`Sources/TrommiShare`, bundle id `com.trommi.ios.share`, xtool.yml `extensions:`,
+AppStore/project.yml target `TrommiShareExtension`). Its sheet has two ways: **Add to Note** (the default: pictures,
+screenshots, files, links and text become attachments and lines of the one note; nothing is sent) and **Send to Agent…**
+(the sessions as a tree, desks → crowned session → helpers, an optional line, Send).
+
+- The extension holds no room, no device key, no board: it links only `ShareInbox` (TrommiCore), well inside an
+  extension's memory. It seals what was shared into the App Group container `group.com.trommi.ios` ("Trommi Share":
+  `items/<id>-<n>.sealed` first, the manifest `requests/<id>.sealed` last) and rings the app (Darwin notification
+  `com.trommi.ios.share-inbox`). Pictures are made JPEG of at most 2400 px through ImageIO thumbnails (never decoded
+  whole), other files are taken up to 32 MB, at most 20 things per share.
+- Every file is AES-256-GCM under the inbox key, 32 random bytes in the Keychain with the App Group as access group
+  (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; the app makes it, the extension only reads it). The additional
+  data binds each file to its role and name. Nothing lies in plaintext outside the app; the device keys stay in the
+  app's own Keychain group.
+- The app (`ShareImport.swift`) writes a sealed snapshot of desks and sessions (names, ids, desk, parent, crown) on each
+  change of the board, and imports on coming to the front (after the catch-up) and at once on the ring: files are
+  encrypted and uploaded as the note's own, then into the note (`saveNote`), or one message to the session
+  (`sendMessage`). A send is taken out of the inbox before it is sealed, so it is never repeated; if it fails, or the
+  session is gone, what was shared goes into the note instead.
+- Not sent from the extension: it would need the device key and the sync engine, and two processes sealing with one
+  device key fork its envelope chain (`chain-behind`). So "Send to Agent…" says "Sends as soon as Trommi opens".
+- The App Group id per build: `group.com.trommi.ios` in the entitlements. xtool signed in with the API key (this
+  machine) keeps it as written; signed in with an Apple ID it registers `group.XTL-<team>.com.trommi.ios` and rewrites
+  the entitlement. The code tries both (`ShareGroup`).
+- **Once, in the developer portal** (the App Store Connect API can turn the App Groups capability on, but cannot create a
+  group or assign one): Certificates, Identifiers & Profiles → Identifiers → App Groups → + → `group.com.trommi.ios`.
+  Then for each of `XTL-70CB783D.com.trommi.ios`, `XTL-70CB783D.com.trommi.ios.share` (xtool's development ids; xtool
+  registers the `.share` one on its first `xtool dev run`, or make it there with Identifiers → +) and `com.trommi.ios`, `com.trommi.ios.share` (TestFlight;
+  `asc.py prepare` registers them): App Groups → Configure → tick the group → Save. Until then an install fails with an
+  entitlements error, because the profile does not carry the group the app asks for.
+
 ## Not there yet
 
 - Device key in the Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`), not a file in Application Support.
