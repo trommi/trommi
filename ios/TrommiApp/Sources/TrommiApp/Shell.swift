@@ -191,8 +191,7 @@ struct BarPanel: View {
     heading("PLACES")
     row({ Image(systemName: "checklist").foregroundStyle(Ink.fg) }, "Off your mind") { go(.off) }
     row({ Image(systemName: "scribble.variable").foregroundStyle(Ink.fg) }, "Scribble Board") { withAnimation(.snappy) { model.menuOpen = false; model.panel = nil; model.tab = .scribble } }
-    row({ Image(systemName: "photo.on.rectangle").foregroundStyle(Ink.fg) }, "Media") { go(.media) }
-    row({ Image(systemName: "doc.richtext").foregroundStyle(Ink.fg) }, "Pages") { go(.pages) }
+    row({ Image(systemName: "photo.on.rectangle").foregroundStyle(Ink.fg) }, "Artifacts") { go(.media) }
     row({ PenMark("sketch:key", color: Ink.fg) }, "Settings") { go(.settings("agents")) }
     // the demo (DemoMode.swift): opens the made-up room; inside it, its list of screens
     row({ PenMark("sidebar:DEMO_MARK", color: Ink.fg) }, model.demo ? "Demo: All Screens" : "Demo") {
@@ -386,8 +385,7 @@ struct Sidebar: View {
       Button { model.drawer = false; if model.demo { model.demoScreens = true } else { model.startDemo() } } label: { Label(model.demo ? "Demo: All Screens" : "Demo", systemImage: "play.rectangle") }
       Button { go(.off) } label: { Label("Off your mind", systemImage: "checklist") }
       Button { go(.scribble) } label: { Label("Scribble Board", systemImage: "scribble.variable") }
-      Button { go(.media) } label: { Label("Media", systemImage: "photo.on.rectangle") }
-      Button { go(.pages) } label: { Label("Pages", systemImage: "doc.richtext") }
+      Button { go(.media) } label: { Label("Artifacts", systemImage: "photo.on.rectangle") }
       Picker("Theme", selection: $model.theme) { ForEach(ThemeMode.allCases) { Text($0.word).tag($0) } }
       Button { go(.settings("account")) } label: { Label("Log out…", systemImage: "rectangle.portrait.and.arrow.right") }
     } label: {

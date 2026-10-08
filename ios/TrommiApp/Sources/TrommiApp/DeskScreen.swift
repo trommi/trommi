@@ -39,8 +39,7 @@ struct DeskScreen: View {
             Text("Hold a card: Later, Reverse, Duck it, What??, Shred, Copy. Tap its title: text and pictures.")
               .font(Face.text(13, .medium)).foregroundStyle(Ink.faint).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 12)
           }
-          WithAgents(view: v)
-          EndList(view: v, full: false)
+          OffList(view: v, full: false)
         } else {
           ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
         }
