@@ -1356,3 +1356,12 @@ button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
 .off-page .endlist { margin-top: 0 !important; }
 .off-page .endlist .end-rows { border-top: 0; }
 .off-page .inbox-groups > .tail { margin-bottom: 0 !important; }
+
+/* ---- Off your mind as one list (his word, 8 October): the work first (a small green dot that breathes, no gear),
+   then the ticked ones; one line each, only the title (the rest on hover, or a tap opens the card). ---- */
+.end-row[data-g="works"] > .end-title { text-decoration: none; color: var(--fg); font-weight: 500; }
+.end-tick.is-working { display: grid; place-items: center; width: 28px; height: 28px; }
+.work-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok, #2f9e5b); box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok, #2f9e5b) 50%, transparent); animation: work-breathe 1.8s ease-in-out infinite; }
+@keyframes work-breathe { 50% { box-shadow: 0 0 0 5px transparent; opacity: .6; } }
+@media (prefers-reduced-motion: reduce) { .work-dot { animation: none; } }
+@media (max-width: 860px) { .end-row > :is(.end-said, .end-ago) { display: none !important; } }

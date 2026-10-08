@@ -1049,3 +1049,31 @@ html body .topbar #brand-doors .menu-icons .menu-ico { justify-content: center; 
   html body .topbar #brand-doors .menu-icons { order: 4; }
   html body .topbar #brand-doors .menu-push-note { order: 5; }
 }
+
+/* ---- a phone: no top strip (his word, 8 October): the pill (and a chat's ⋯) float in clear glass over the page,
+   which scrolls under them and starts below them ---- */
+@media (max-width: 860px) {
+  html body .phone-bar { position: fixed; z-index: 55; left: 0; right: 0; top: 0; height: auto; padding-top: calc(env(safe-area-inset-top, 0px) + 6px); padding-bottom: 0; background: none !important; border: 0 !important; box-shadow: none !important; pointer-events: none; }
+  :root.is-demo body .phone-bar { top: calc(env(safe-area-inset-top, 0px) + 22px); padding-top: 6px; }
+  html body .phone-bar > * { pointer-events: auto; }
+  html body .phone-bar .phone-place { display: none; }
+  html body :is(.phone-pill, .phone-back) { background: color-mix(in srgb, var(--surface) 42%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.8); backdrop-filter: blur(14px) saturate(1.8); }
+  html body .phone-back { border-radius: 50%; border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); width: 40px !important; }
+  body[data-t-view="session"] #session .t-pick-desk > summary.t-head-more { background: color-mix(in srgb, var(--surface) 42%, transparent); }
+  html body { grid-template-rows: 0 minmax(0, 1fr) !important; }
+  html body > main:not(#session), html body > #room, html body > .chats-page { padding-top: calc(env(safe-area-inset-top, 0px) + 54px) !important; }
+  :root.is-demo body > main:not(#session), :root.is-demo body > #room, :root.is-demo body > .chats-page { padding-top: 54px !important; }
+  /* a chat: its title line lies under the floating back, title and ⋯; no strip of its own */
+  body[data-t-view="session"] #session { padding-top: calc(env(safe-area-inset-top, 0px) + 50px) !important; }
+  :root.is-demo body[data-t-view="session"] #session { padding-top: 50px !important; }
+  body[data-t-view="session"] #session :is(.pane-title, .pane-now) { background: transparent !important; border: 0 !important; box-shadow: none !important; }
+  body[data-t-view="session"] #session .pane-who :is(.t-head-mark, .t-head-name, .t-blocked > .hand-mark, .t-blocked > svg) { display: none !important; }
+  body[data-t-view="session"] #session .pane-who { background: transparent !important; border: 0 !important; box-shadow: none !important; pointer-events: none; }
+  body[data-t-view="session"] #session .pane-who > * { pointer-events: auto; }
+  body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-blocked > span { top: calc(env(safe-area-inset-top, 0px) + 52px) !important; left: 12px !important; right: auto !important; max-width: calc(100vw - 24px); padding: 6px 12px !important; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--urg-critical) 30%, transparent); background: color-mix(in srgb, var(--surface) 55%, transparent) !important; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: none !important; }
+  :root.is-demo body[data-t-view="session"]:not([data-pair]) #session .pane-who .t-blocked > span { top: calc(env(safe-area-inset-top, 0px) + 74px) !important; }
+}
+@media (max-width: 860px) {
+  .inbox-edge.is-up { top: calc(env(safe-area-inset-top, 0px) + 52px) !important; }
+  :root.is-demo .inbox-edge.is-up { top: calc(env(safe-area-inset-top, 0px) + 74px) !important; }
+}

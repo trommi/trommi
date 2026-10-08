@@ -307,7 +307,7 @@ try {
   const td = Date.now(); while (!commands.some(c => c.command === 'answer' && c.object_id === pile.done) && Date.now() - td < 10000) await sleep(30)
   await agent.close(pile.done, 'erledigt')
   // closed by its session: it stands in the end list with an empty box; a tick archives it (struck, ticked), Undo takes it back
-  const endRow = (id, g) => `document.querySelector('#desk-end .end-row[data-id="${id}"]${g ? `[data-g=${g}]` : ''}')`
+  const endRow = (id, g) => `document.querySelector(':is(#desk-end, #off-end) .end-row[data-id="${id}"]${g ? `[data-g=${g}]` : ''}')`
   await A.until(`trommi.model().landed.some(c => c.id === '${pile.done}') && ${endRow(pile.done, 'open')}?.querySelector('button.end-tick')`, 'the finished card in the end list with its box').then(() => check(true, 'a card its session closed stands in the end list with an empty box to tick'), e => check(false, e.message))
   check(await A.js(`return !document.querySelector('#row-${pile.done}') && !document.querySelector('#desk-list .is-archive, #desk-list .is-done')`), 'no Done rows among the open questions any more')
   await A.js(`${endRow(pile.done)}.querySelector('button.end-tick').click()`)
@@ -333,17 +333,21 @@ try {
     await A.js(`document.querySelector('#cardpage button[formaction$="/${way}"]').click()`)
     await A.until("location.pathname === '/'", `back on the Desk after ${way}`).catch(() => A.js("trommi.router.visit('/')"))
   }
-  await A.until(`${endRow(pile.snooze, 'later')} && ${endRow(pile.shred)} && ${endRow(pile.done, 'done')} && document.querySelector('#desk-ip .tail-card[data-id="${pile.revise}"]')`, 'the end list, the asked one with the agents', 20000)
+  // (the Desk draws five rows, the work first: the whole list is on its page)
+  await A.js("trommi.router.visit('/stacks/off')")
+  await A.until(`${endRow(pile.snooze, 'later')} && ${endRow(pile.shred)} && ${endRow(pile.done, 'done')} && ${endRow(pile.revise, 'works')} && document.querySelector('#off-end .end-row[data-g=works] .work-dot') && !document.querySelector('#off-end .gear')`, 'one list: the asked one at the top, being worked on (a dot, no gear), five rows at most', 20000)
     .then(() => check(true, 'snoozed, shredded and done cards stand in the end list; the asked one (What??) stays on the Desk with the agents'), e => check(false, e.message))
-  check(await A.js("return !document.querySelector('#desk-stacks [data-pile=off], #desk-stacks [data-stack=off], .off-head') && !!document.querySelector('#desk-stacks #desk-media')"), 'no pile Off the desk at the foot any more; Media stays')
-  const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.done}'].map(id => [id, document.querySelector('#desk-end .end-row[data-id="' + id + '"]')?.dataset.g]))`)
+  const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.done}'].map(id => [id, document.querySelector('#off-end .end-row[data-id="' + id + '"]')?.dataset.g]))`)
   check(g[pile.snooze] === 'later' && g[pile.shred] !== 'later' && g[pile.shred] !== 'open' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
-  check(await A.js(`const o = [...document.querySelectorAll('#desk-end .end-row')].map(r => r.dataset.g), rank = g => (g === 'open' ? 0 : g === 'later' ? 1 : 2); return o.every((x, i) => !i || rank(o[i - 1]) <= rank(x))`), 'the end list: finished first, then Later, then ticked off')
+  check(await A.js(`const o = [...document.querySelectorAll('#off-end .end-row')].map(r => r.dataset.g), rank = g => (g === 'works' ? -1 : g === 'open' ? 0 : g === 'later' ? 1 : 2); return o.every((x, i) => !i || rank(o[i - 1]) <= rank(x))`), 'the end list: finished first, then Later, then ticked off')
   // a tick he made can be taken back on the list itself (while it is among the five drawn): the ticked box of the archived card unticks it
   await A.js(`${endRow(pile.done, 'done')}.querySelector('button.end-tick.is-ticked').click()`)
   await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick:not(.is-ticked)')`, 'unticked').then(() => check(true, 'a ticked box unticks: back to tick off'), e => check(false, e.message))
   await A.js(`${endRow(pile.done, 'open')}.querySelector('button.end-tick').click()`)
   await A.until(`${endRow(pile.done, 'done')}`, 'ticked off once more')
+  await A.js("trommi.router.visit('/')")
+  await A.until("document.querySelector('#desk-stacks')", 'the Desk again')
+  check(await A.js("return !document.querySelector('#desk-stacks [data-pile=off], #desk-stacks [data-stack=off], .off-head') && !!document.querySelector('#desk-stacks #desk-media')"), 'no pile Off the desk at the foot any more; Media stays')
   // more than five: four more questions their session withdraws
   for (let i = 1; i <= 4; i++) await agent.close(await agent.sendCard({ title: `Ende ${i}`, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] }), `zurückgezogen ${i}`)
   await A.until("document.querySelector('#desk-end .end-show')", 'more than five in the end list')
