@@ -32,7 +32,7 @@ jobs:
       - run: npm run test:app
       # The whole build as Cloudflare runs it, into the checkout: gen/ with the connector bundle and the plugin.
       - run: node app/web/dev/build.mjs --write
-      - run: test -s app/web/public/gen/connector.mjs && (cd app/web/public/gen && echo "$(cat connector.mjs.sha256)  connector.mjs" | sha256sum -c -) && ls app/web/public/gen/plugins/marketplace.json app/web/public/gen/plugins/trommi-*.zip
+      - run: test -s app/web/public/gen/connector.mjs && (cd app/web/public/gen && echo "$(cat connector.mjs.sha256)  connector.mjs" | sha256sum -c -) && ls app/web/public/gen/plugins/marketplace.json app/web/public/gen/plugins/trommi-*.zip && grep -q 'src="/gen/app/app-' app/web/public/index.html && ls app/web/public/gen/app/app-*.mjs
 
   hub:
     name: Hub and crypto suite
