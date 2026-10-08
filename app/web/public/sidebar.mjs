@@ -378,8 +378,8 @@ function menuDeskRows(model, base) {
   const desks = desksOf(model)
   const here = d => (model.all ? false : model.desk ? d.id === model.desk : d === desks[0])
   // (a row: the link to the desk, and beside it the pencil that renames it: menu#rename puts a field in the name's place)
-  const allRow = desks.length > 1 ? html`<span class="menu-desk-row is-all" data-desk="all"><a role="menuitemradio" class="menu-desk is-all" data-nav draggable="false" href="${base}/?desk=all" data-desk="all" aria-checked="${String(Boolean(model.all))}">${deskMark(model.allFresh?.length > 0)}<b>All desks</b></a></span>` : ''
-  return html`<span class="menu-desk-rows${desks.length > 1 ? ' has-all' : ''}" id="menu-desk-rows">${allRow}${desks.map((d, i) => html`<span class="menu-desk-row" data-desk="${d.id}"><a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a><button type="button" class="menu-desk-pen" data-action="click->menu#rename" data-menu-id-param="${d.id}" title="Rename ${d.name}" aria-label="Rename the desk ${d.name}">${sk('pen')}</button></span>`)}</span>`
+  const allRow = desks.length > 1 ? html`<span class="menu-desk-row is-all" data-desk="all"><a role="menuitemradio" class="menu-desk is-all" data-nav draggable="false" href="${base}/?desk=all" data-desk="all" aria-checked="${String(Boolean(model.all))}">${deskMark(model.allFresh?.length > 0)}<b>All Desks</b>${model.allFresh?.length ? html`<i class="menu-n">${model.allFresh.length}</i>` : ''}</a></span>` : ''
+  return html`<span class="menu-desk-rows${desks.length > 1 ? ' has-all' : ''}" id="menu-desk-rows">${allRow}${desks.map((d, i) => html`<span class="menu-desk-row" data-desk="${d.id}"><a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b>${d.open ? html`<i class="menu-n">${d.open}</i>` : ''}</a><button type="button" class="menu-desk-pen" data-action="click->menu#rename" data-menu-id-param="${d.id}" title="Rename ${d.name}" aria-label="Rename the desk ${d.name}">${sk('pen')}</button></span>`)}</span>`
 }
 
 /** The menu: <nav id="brand-doors">, hidden until its button (#brand-menu) is pressed (or Ctrl K).
@@ -413,18 +413,27 @@ export function tabBar(model, base, view) {
 }
 const waitingBadge = (n, knocks) => html`<i class="tab-badge${knocks ? ' is-knock' : ''}" id="tab-badge"${n ? '' : raw(' hidden')}>${n > 99 ? '99+' : n}</i>`
 
+// A gear in the pen's line (Settings).
+const GEAR = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M12 3.2L13.4 5.6L16.1 4.9L16.8 7.6L19.4 8.4L18.6 11.1L20.6 13L18.5 14.8L19.1 17.5L16.4 18.1L15.4 20.7L12.9 19.6L10.6 21.1L9.3 18.6L6.5 18.8L6.4 16L4 14.6L5.5 12.2L4.4 9.6L7 8.6L7.4 5.8L10.2 6.1Z"/><path d="M12.1 9.3Q14.7 9.6 14.8 12Q14.6 14.6 12 14.7Q9.4 14.5 9.3 12Q9.5 9.4 12.1 9.3Z"/></svg>')
+/** The Trommi menu (#brand-doors): the wide screen's (from the sidebar's foot) and the phone's (from the pill), one
+ *  component: the desks (each with its drawing and what waits, New Desk…), Settings, and one row of small buttons for
+ *  this device: Push (Off → All → Only knocking), Theme (Light → Dark → System), Keyboard Shortcuts, Demo. A phone
+ *  also has its places here (Scribble, Off your mind, Media, Pages). Log Out is in Settings · Account. */
 function menuDoors(model, base) {
-  return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" data-owns-keys hidden>
+  return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" data-owns-keys hidden>
 <div class="menu-desks" id="menu-desks">${menuDeskRows(model, base)}
 <button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New Desk…">${NEW_DESK}<span>New Desk…</span></button>
-<form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
+<form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Add</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
-${menuSessions(model, base)}
-<div class="menu-grid"><a role="menuitem" href="${base}/stacks/off" data-nav draggable="false" id="menu-off">${sk('archive')}<span>Off your mind</span></a><a role="menuitem" href="${base}/assets" data-nav draggable="false" id="menu-media">${sk('picture')}<span>Media</span></a><a role="menuitem" href="${base}/pages" data-nav draggable="false" id="menu-pages">${sk('page')}<span>Pages</span></a><a role="menuitem" href="${base}/settings/agents" data-nav draggable="false" id="menu-settings" title="Settings: your agents, your devices, your account">${sk('key')}<span>Settings</span></a>${inDemo() ? html`<a role="menuitem" href="${base}/screens?mock=1" target="_blank" rel="noopener" id="menu-screens" title="Every screen of the app in the demo, for review">${sk('page')}<span>All screens</span></a>` : ''}<button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
-<div class="menu-demo"><button role="menuitemcheckbox" type="button" id="demo-toggle" class="demo-toggle" aria-checked="${String(inDemo())}" title="${inDemo() ? 'Leave the demo: back to your desks' : 'The demo: a made-up room, nothing is kept'}">${DEMO_MARK}<span>Demo</span><i class="demo-switch" aria-hidden="true"><b></b></i></button></div>
-<div class="menu-look"><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme-row" aria-label="Theme: light, dark or the system's (T)" title="Theme: Light → Dark → System (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<span>Theme</span></button></div>
-<div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
-<div class="menu-leave"><a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log Out</span></a></div>
+<a role="menuitem" class="menu-settings" href="${base}/settings" data-nav draggable="false" id="menu-settings">${GEAR}<span>Settings</span></a>
+<div class="menu-places">${[['scribble-board', 'pen', 'Scribble'], ['stacks/off', 'archive', 'Off your mind'], ['assets', 'picture', 'Media'], ['pages', 'page', 'Pages']].map(([p, icon, word]) => html`<a role="menuitem" href="${base}/${p}" data-nav draggable="false">${sk(icon)}<span>${word}</span></a>`)}</div>
+<div class="menu-icons" role="group" aria-label="This device">
+<button role="menuitem" type="button" id="push-toggle" class="menu-ico" data-level="off" aria-label="Push on this device: No" title="Push on this device">${sk('bell')}</button>
+<button role="menuitem" type="button" id="theme-toggle" class="menu-ico menu-theme-row" aria-label="Theme: Light, Dark or System (T)" title="Theme: Light → Dark → System (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<i class="ico-auto" aria-hidden="true">A</i></button>
+<button role="menuitem" type="button" id="keys-open" class="menu-ico" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?" aria-label="Keyboard Shortcuts (?)" title="Keyboard Shortcuts (?)">${sk('question')}</button>
+<button role="menuitemcheckbox" type="button" id="demo-toggle" class="menu-ico demo-toggle" aria-checked="${String(inDemo())}" aria-label="${inDemo() ? 'Leave the Demo' : 'Demo'}" title="${inDemo() ? 'Leave the demo: back to your desks' : 'The demo: a made-up room, nothing is kept'}">${sk('play')}</button>
+</div>
+<p class="menu-push-note" id="menu-push-note" role="status" hidden></p>
 </nav>`
 }
 
@@ -496,6 +505,14 @@ controller('phone-menu', class extends Controller {
     } catch (x) { err.textContent = `Not made: ${x.message}` }
   }
 })
+// The phone's desk pill opens the Trommi menu (#brand-doors), the same as the sidebar's foot.
+if (typeof document !== 'undefined') document.addEventListener('click', e => {
+  const pill = e.target instanceof Element ? e.target.closest('#desk-pill') : null
+  if (!pill) return
+  e.stopImmediatePropagation()
+  document.getElementById('brand-menu')?.click()
+  requestAnimationFrame(() => pill.setAttribute('aria-expanded', String(document.getElementById('brand-doors')?.hidden === false)))
+})
 // The capsule stands back while the keyboard is up (a phone: a text field has the focus).
 if (typeof document !== 'undefined') {
   const field = n => n instanceof Element && n.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, [contenteditable=""], [contenteditable="true"]')
@@ -558,7 +575,7 @@ export function phoneBar(model, base, { view = '', current = null, title = '' } 
   if (view === 'session' && current) return html`<div class="phone-bar is-chat" id="phone-bar"><a class="phone-back" data-nav draggable="false" href="${base}/chats" aria-label="Chats">${raw('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.8 5.6Q11 9 7.6 12.1Q11 15.4 14.9 18.6"/></svg>')}</a>${chatSwitch(model, base, current)}</div>`
   const place = ['desk', 'card', 'picture', 'chats'].includes(view) ? ''
     : html`<span class="phone-place"><b>${PLACES[view] ?? String(title).replace(/^\(\d+\) /, '').replace(/ · Trommi$/, '')}</b></span>`
-  return html`<div class="phone-bar" id="phone-bar"><button type="button" class="phone-pill" id="phone-pill" aria-haspopup="menu" aria-controls="phone-menu" aria-expanded="false" aria-label="${placeName(model)}: desks and places" title="Desks and places"${waits ? raw(' data-waits') : ''}><span class="desk-lamp" id="phone-lamp">${deskMark(false)}</span><b>${placeName(model)}</b>${sk('unfold')}</button>${place}${phoneMenu(model, base)}</div>`
+  return html`<div class="phone-bar" id="phone-bar"><button type="button" class="phone-pill" id="desk-pill" data-opens="brand-doors" aria-haspopup="menu" aria-controls="brand-doors" aria-expanded="false" aria-label="${placeName(model)}: desks and places" title="Desks and places"${waits ? raw(' data-waits') : ''}><span class="desk-lamp" id="phone-lamp">${deskMark(false)}</span><b>${placeName(model)}</b>${sk('unfold')}</button>${place}</div>`
 }
 export const DRAWER_VEIL = raw('<div class="drawer-veil" id="drawer-veil" aria-hidden="true"></div>')
 
@@ -946,8 +963,8 @@ export function register(t) {
   narrow.addEventListener('change', rail)
   if (narrow.matches) rail()
   t.live('', {
-    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), place: deskPlace(m), pill: pillPlace(m), sessions: menuSessions(m, BASE), badge: waitingBadge((m.allFresh ?? m.fresh).length, (m.allFresh ?? m.fresh).some(c => ['high', 'critical'].includes(c.urgency))), sw: deskSwitchList(m, BASE), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
-    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.place, now.place) ? stream('replace', 'desk-place', now.place) : ''}${t.differs(was.pill, now.pill) && !document.getElementById('brand-menu')?.dataset.session ? stream('replace', 'pill-place', now.pill) : ''}${t.differs(was.sessions, now.sessions) ? stream('replace', 'menu-sessions', now.sessions) : ''}${t.differs(was.badge, now.badge) ? stream('replace', 'tab-badge', now.badge) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
+    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), place: deskPlace(m), pill: pillPlace(m), badge: waitingBadge((m.allFresh ?? m.fresh).length, (m.allFresh ?? m.fresh).some(c => ['high', 'critical'].includes(c.urgency))), sw: deskSwitchList(m, BASE), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
+    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.place, now.place) ? stream('replace', 'desk-place', now.place) : ''}${t.differs(was.pill, now.pill) && !document.getElementById('brand-menu')?.dataset.session ? stream('replace', 'pill-place', now.pill) : ''}${t.differs(was.badge, now.badge) ? stream('replace', 'tab-badge', now.badge) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
       : was.rows.shape !== now.rows.shape ? stream('update', 'agents', now.sidebar)
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })

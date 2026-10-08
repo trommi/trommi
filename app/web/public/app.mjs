@@ -15,7 +15,7 @@ import { rowSheet } from './desk.mjs'
 const VIEWS = [desk, sidebar, notes]
 const LAZY = {
   auth: { load: () => import('./auth.mjs'), paths: /^\/(?:settings\/(?:devices|account)|devices\/|pair|logout|join|login)(?:\/|$)/ },
-  agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings\/agents$|sessions\/)/ },
+  agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings(?:\/agents)?$|sessions\/)/ },
   card: { load: () => import('./card.mjs'), paths: /^(?:\/s\/[^/]+)?\/card\/|^\/cards\/[0-9a-f]+\// },
   session: { load: () => import('./session.mjs'), paths: /^\/s\// },
   media: { load: () => import('./media.mjs'), paths: /^\/(?:assets|pages)(?:\/|$)/ },
@@ -1443,28 +1443,27 @@ const obstacle = () => {
 const subscription = async () => (await navigator.serviceWorker?.getRegistration('/'))?.pushManager.getSubscription() ?? null
 
 function startPush(client) {
-  const wire = async () => {
-    const toggle = document.getElementById('push-toggle')
-    if (!toggle || toggle.dataset.push) return
-    toggle.dataset.push = '1'
-    toggle.classList.add('push-row')
-    if (!toggle.querySelector('.menu-word')) toggle.append(Object.assign(document.createElement('span'), { className: 'menu-word', textContent: 'Push on this device' }))
-    const note = Object.assign(document.createElement('p'), { className: 'push-note', role: 'status' })
-    toggle.after(note)
-    const paint = sub => { toggle.setAttribute('aria-checked', String(Boolean(sub))); toggle.title = `Push on this device: ${sub ? 'on' : 'off'}` }
-    paint(await subscription().catch(() => null))
-    toggle.addEventListener('click', async e => {
-      e.stopPropagation()
-      if (toggle.getAttribute('aria-busy') === 'true') return
-      toggle.setAttribute('aria-busy', 'true')
-      note.textContent = ''
-      try {
-        const had = await subscription()
-        if (had) {
-          await client.pushSubscribe(had.toJSON(), true).catch(() => {})
-          await had.unsubscribe()
-          paint(null)
-        } else {
+  // One level for this device (the hub's push level, README "Push level"): off (no registration), all, knocking.
+  // The menu's bell cycles Off → All → Only knocking; Settings · Push has the three as a switch.
+  const LEVEL_KEY = 'trommi-push-level'
+  const levelNow = () => { try { return localStorage.getItem(LEVEL_KEY) === 'knocking' ? 'knocking' : 'all' } catch { return 'all' } }
+  const words = { all: 'Yes', knocking: 'Only knocking', off: 'No' }
+  const shown = async () => ((await subscription().catch(() => null)) ? levelNow() : 'off')
+  const paintAll = v => {
+    const bell = document.getElementById('push-toggle')
+    if (bell) { bell.dataset.level = v; bell.setAttribute('aria-checked', String(v !== 'off')); const say = `Push on this device: ${words[v]}`; bell.title = `${say} (click: ${words[v === 'off' ? 'all' : v === 'all' ? 'knocking' : 'off']})`; bell.setAttribute('aria-label', say) }
+    for (const r of document.querySelectorAll('#push-level input')) r.checked = r.value === v
+  }
+  const say = text => { const n = document.getElementById('push-level-note'); if (n) n.textContent = text; const m = document.getElementById('menu-push-note'); if (m) { m.textContent = text; m.hidden = !text } }
+  async function applyLevel(v) {
+    say('')
+    try {
+      const had = await subscription()
+      if (v === 'off') {
+        if (had) { await client.pushSubscribe(had.toJSON(), true).catch(() => {}); await had.unsubscribe() }
+      } else {
+        let sub = had
+        if (!sub) {
           if (!client.hub?.pushKey) throw new Error('The demo has no push.')
           const why = obstacle()
           if (why) throw new Error(why)
@@ -1472,54 +1471,35 @@ function startPush(client) {
           const reg = await navigator.serviceWorker.register('/sw.js')
           await navigator.serviceWorker.ready
           const { vapid_public_key } = await client.hub.pushKey()
-          const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes(vapid_public_key) })
-          await client.pushSubscribe(sub.toJSON(), false, (() => { try { return localStorage.getItem('trommi-push-level') === 'knocking' ? 'knocking' : 'all' } catch { return 'all' } })())
-          paint(sub)
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes(vapid_public_key) })
         }
-      } catch (err) { note.textContent = err.message }
-      toggle.removeAttribute('aria-busy')
-    })
-  }
-  // Settings · Devices: Push on this device, Yes / Only knocking / No (the hub's level: all | knocking), and the other
-  // devices' push state, read only (the hub's GET push_subscriptions: per device its registrations and their level).
-  const LEVEL_KEY = 'trommi-push-level'
-  const levelNow = () => { try { return localStorage.getItem(LEVEL_KEY) === 'knocking' ? 'knocking' : 'all' } catch { return 'all' } }
-  const words = { all: 'Yes', knocking: 'Only knocking', off: 'No' }
-  const wireLevel = async () => {
-    const box = document.getElementById('push-level')
-    if (!box || box.dataset.push) return
-    box.dataset.push = '1'
-    const note = document.getElementById('push-level-note')
-    const show = v => { for (const r of box.querySelectorAll('input')) r.checked = r.value === v }
-    show((await subscription().catch(() => null)) ? levelNow() : 'off')
-    box.addEventListener('change', async e => {
-      const v = e.target.value
-      note.textContent = ''
-      box.disabled = true
-      try {
-        const had = await subscription()
-        if (v === 'off') {
-          if (had) { await client.pushSubscribe(had.toJSON(), true).catch(() => {}); await had.unsubscribe() }
-        } else {
-          let sub = had
-          if (!sub) {
-            if (!client.hub?.pushKey) throw new Error('The demo has no push.')
-            const why = obstacle()
-            if (why) throw new Error(why)
-            if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notifications were not allowed.')
-            const reg = await navigator.serviceWorker.register('/sw.js')
-            await navigator.serviceWorker.ready
-            const { vapid_public_key } = await client.hub.pushKey()
-            sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes(vapid_public_key) })
-          }
-          await client.pushSubscribe(sub.toJSON(), false, v)
-          try { localStorage.setItem(LEVEL_KEY, v) } catch {}
-        }
-      } catch (err) { note.textContent = err.message; show((await subscription().catch(() => null)) ? levelNow() : 'off') }
-      box.disabled = false
-      others()
-    })
+        await client.pushSubscribe(sub.toJSON(), false, v)
+        try { localStorage.setItem(LEVEL_KEY, v) } catch {}
+      }
+    } catch (err) { say(err.message) }
+    paintAll(await shown())
     others()
+  }
+  const wire = async () => {
+    const bell = document.getElementById('push-toggle')
+    if (bell && !bell.dataset.push) {
+      bell.dataset.push = '1'
+      bell.addEventListener('click', async e => {
+        e.stopPropagation()
+        if (bell.getAttribute('aria-busy') === 'true') return
+        bell.setAttribute('aria-busy', 'true')
+        const v = bell.dataset.level || 'off'
+        await applyLevel(v === 'off' ? 'all' : v === 'all' ? 'knocking' : 'off')
+        bell.removeAttribute('aria-busy')
+      })
+    }
+    const box = document.getElementById('push-level')
+    if (box && !box.dataset.push) {
+      box.dataset.push = '1'
+      box.addEventListener('change', async e => { box.disabled = true; await applyLevel(e.target.value); box.disabled = false })
+      others()
+    }
+    paintAll(await shown())
   }
   const others = async () => {
     const list = document.getElementById('push-others')
@@ -1537,10 +1517,7 @@ function startPush(client) {
   }
   document.addEventListener('turbo:load', wire)
   document.addEventListener('turbo:render', wire)
-  document.addEventListener('turbo:load', wireLevel)
-  document.addEventListener('turbo:render', wireLevel)
   wire()
-  wireLevel()
 }
 
 // ---- pwa ----
