@@ -3,11 +3,13 @@
   "name": "trommi-app",
   "main": "worker.js",
   "compatibility_date": "2026-10-01",
-  // The build step (dev/build.mjs): everything in public/gen/, sw.js and the preloads; the connector bundle and the
-  // plugin too, for which it runs npm ci at the repository root first. It installs and writes only in Cloudflare's
-  // build (WORKERS_CI=1).
+  // The build step (dev/build.mjs): everything in public/gen/, sw.js and the preloads; it runs npm ci at the repository
+  // root first. It installs and writes only in Cloudflare's build (WORKERS_CI=1).
   "build": { "command": "node dev/build.mjs" },
   // The app is static: every navigation that is not a file gets index.html (the app routes in the page).
-  // The worker runs first only to send http to https.
-  "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": true }
+  // The worker runs first: http to https, /connect, and the connector's release from R2.
+  "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": true },
+  // The connector's release (binaries, plugin, marketplace): built and uploaded by dev/deploy/connector.sh, served by
+  // worker.js at /connector/… and /plugins/…. Created once: npx wrangler r2 bucket create trommi-releases
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "trommi-releases" }]
 }

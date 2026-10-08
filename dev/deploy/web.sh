@@ -5,7 +5,7 @@
 #
 # Without --deploy: the steps of .github/workflows/web-app.yml. Cloudflare Workers Builds builds every push to main by
 # itself (no Actions minutes); this waits until https://app.trommi.com serves a build of the newest commit in the watch
-# paths and checks that the served connector matches its checksum and the plugin it names is served.
+# paths and checks that the connector's release (R2, dev/deploy/connector.sh) is still served.
 # With --deploy: first builds HEAD here as Cloudflare would (`git archive HEAD`, WORKERS_CI=1, which runs npm ci at the
 # root and writes public/) and uploads it with `wrangler deploy` (local auth: `npx wrangler login` once), then checks.
 # Use it when Cloudflare's own build is down or a commit must go out without a push.
@@ -48,7 +48,7 @@ if [ "$DEPLOY" = 1 ]; then
 fi
 
 # ---- wait for the build of the newest commit in Cloudflare's watch paths (web-app.yml, step 1) ----
-paths=(app/web shared connector package.json package-lock.json)
+paths=(app/web shared connector connector-rs/tools.json package.json package-lock.json)
 full=$(git -C "$REPO" log -1 --format=%H "$SHA" -- "${paths[@]}")
 want=${full:0:7}
 current() {
@@ -77,21 +77,18 @@ for i in $(seq 1 "$tries"); do
   sleep 10
 done
 
-# ---- the connector is served and matches its checksum (web-app.yml, step 2) ----
+# ---- the connector's release is served (web-app.yml, step 2) ----
 DL=$(mktemp -d "${TMPDIR:-/tmp}/trommi-web.XXXXXX")
 trap 'cleanup; rm -rf "$DL"' EXIT
 why=
 check() {
-  local q="ci=local-$$-$1" want got zip
-  curl -fsS --max-time 30 -o "$DL/connector.mjs" "https://app.trommi.com/connector.mjs?$q" || { why="app.trommi.com/connector.mjs is not served"; return 1; }
-  want=$(curl -fsS --max-time 10 "https://app.trommi.com/connector.mjs.sha256?$q" | cut -d ' ' -f 1 | tr -d '\r\n')
-  got=$(sha256sum "$DL/connector.mjs" | cut -d ' ' -f 1)
-  echo "connector.mjs sha256 $got, connector.mjs.sha256 says $want"
-  [ -n "$want" ] && [ "$got" = "$want" ] || { why="app.trommi.com/connector.mjs does not match connector.mjs.sha256"; return 1; }
-  zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?$q" | node -e 'let s = ""; process.stdin.on("data", d => { s += d }).on("end", () => console.log(JSON.parse(s).plugins[0].source.url))')
+  local q="ci=local-$$-$1" want zip
+  zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?$q" | node -e 'let s = ""; process.stdin.on("data", d => { s += d }).on("end", () => console.log(JSON.parse(s).plugins[0].source.url))') || { why="app.trommi.com/plugins/marketplace.json is not served"; return 1; }
   echo "plugin archive $zip"
-  case "$zip" in *"/trommi-${got:0:12}.zip") ;; *) why="the marketplace does not name the plugin of this connector"; return 1 ;; esac
   curl -fsS --max-time 30 -o /dev/null "$zip" || { why="the plugin archive $zip is not served"; return 1; }
+  want=$(curl -fsS --max-time 10 "https://app.trommi.com/connector/trommi-connector-x86_64-unknown-linux-musl.sha256?$q" | cut -d ' ' -f 1) || { why="the connector's .sha256 is not served"; return 1; }
+  curl -fsS --max-time 60 -o "$DL/c" "https://app.trommi.com/connector/$want/trommi-connector-x86_64-unknown-linux-musl" || { why="the connector $want is not served"; return 1; }
+  [ "$(sha256sum "$DL/c" | cut -d ' ' -f 1)" = "$want" ] || { why="the connector $want does not match its name"; return 1; }
 }
 tries=12
 [ "$DRY" = 1 ] && tries=1
@@ -102,4 +99,4 @@ for try in $(seq 1 "$tries"); do
   [ "$try" -lt "$tries" ] && sleep 10
 done
 [ "$ok" = 1 ] || refuse "$why"
-say "done: app.trommi.com serves a build of $want with a matching connector"
+say "done: app.trommi.com serves a build of $want and the connector release"

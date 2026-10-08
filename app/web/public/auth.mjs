@@ -172,8 +172,8 @@ ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${in
         : html`<p class="clip-note">The link works once · <span data-invite-clip-target="left">${leftWords(inv.expires_at)}</span></p>`
       return html`<main id="room" class="room room-clip" aria-label="${inv.takeover ? `Continue ${contName}` : 'Invite an agent'}"><div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">
 <section class="clip" data-controller="invite-clip" data-invite-clip-until-value="${open ? inv.expires_at : 0}">${CLAMP}
-${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link for this session: the connector that joins with it goes on as ${contName}. On a computer with Claude Code and Node 22+.</p>`
-        : html`<h2>Invite an agent</h2><p class="clip-sub">On a computer with Claude Code and Node 22+.</p>`}
+${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link for this session: the connector that joins with it goes on as ${contName}. On a Linux computer with Claude Code (no macOS build yet).</p>`
+        : html`<h2>Invite an agent</h2><p class="clip-sub">On a Linux computer with Claude Code (no macOS build yet).</p>`}
 <ol class="clip-list">
 ${step(done, html`<b>Copy this into a terminal in your project</b>${open ? copyLine(`curl -fsSL ${location.origin}/connect | sh -s '${inv.link}'`, 'Copy') : ''}`)}
 ${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : open ? '' : 'wait', last)}

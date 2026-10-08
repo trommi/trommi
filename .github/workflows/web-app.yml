@@ -1,8 +1,8 @@
 # Records the web app deployment: Cloudflare builds app/web on every push to main (watch paths app/web/*, shared/*,
-# connector/*, package.json, package-lock.json); its build step (app/web/dev/build.mjs) generates public/gen/ (with the
-# connector bundle, its checksum and the plugin, after npm ci at the repository root), sw.js and the preloads. This job
-# waits until https://app.trommi.com serves a build of the newest commit that touched those paths, so the "web-app"
-# environment shows which is live, and checks that the connector it serves matches the checksum it serves.
+# connector/*, connector-rs/tools.json, package.json, package-lock.json); its build step (app/web/dev/build.mjs, after
+# npm ci at the repository root) generates public/gen/, sw.js and the preloads. This job waits until
+# https://app.trommi.com serves a build of the newest commit that touched those paths, so the "web-app" environment
+# shows which is live, and checks that the worker still serves the connector's release (R2, dev/deploy/connector.sh).
 # Which commit that build names (gen/build.txt) depends on the push: Cloudflare builds the head of a push that changed
 # something in the watch paths, and never a push that changed nothing there (like one to this file alone). So the
 # served commit is the newest commit in the watch paths, or a later one up to this run's commit when the push carried
@@ -13,7 +13,7 @@ name: Web app deploy
 on:
   push:
     branches: [main]
-    paths: ['app/web/**', 'shared/**', 'connector/**', 'package.json', 'package-lock.json', '.github/workflows/web-app.yml']
+    paths: ['app/web/**', 'shared/**', 'connector/**', 'connector-rs/tools.json', 'package.json', 'package-lock.json', '.github/workflows/web-app.yml']
   workflow_dispatch:
 
 concurrency:
@@ -69,23 +69,18 @@ jobs:
             sleep 10
           done
 
-      # The connect script and the plugin install what these two addresses serve: both must be there (200) and agree.
-      # A rollout swaps the files one after another: for a moment connector.mjs is the new one while its checksum or the
-      # marketplace is still the old one. So the whole check is tried again, 12 times 10 s apart, before it fails.
-      - name: The connector is served and matches its checksum
+      # The connect script and the plugin install what the worker serves from R2 (dev/deploy/connector.sh uploads it):
+      # the marketplace, the plugin archive it names, and the Linux x86_64 binary its pointer names. Tried 12 times 10 s
+      # apart before it fails (a rollout swaps the worker for a moment).
+      - name: The connector release is served
         run: |
           check() {
-            local q="ci=${{ github.run_id }}-$1" want got zip
-            curl -fsS --max-time 30 -o connector.mjs "https://app.trommi.com/connector.mjs?$q" || { why="app.trommi.com/connector.mjs is not served"; return 1; }
-            want=$(curl -fsS --max-time 10 "https://app.trommi.com/connector.mjs.sha256?$q" | cut -d ' ' -f 1 | tr -d '\r\n')
-            got=$(sha256sum connector.mjs | cut -d ' ' -f 1)
-            echo "connector.mjs sha256 $got, connector.mjs.sha256 says $want"
-            [ -n "$want" ] && [ "$got" = "$want" ] || { why="app.trommi.com/connector.mjs does not match connector.mjs.sha256"; return 1; }
-            # The plugin's archive: plugins[0].source.url of the marketplace (the owner has a url too, so no grep for "url").
-            zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?$q" | node -e 'let s = ""; process.stdin.on("data", d => { s += d }).on("end", () => console.log(JSON.parse(s).plugins[0].source.url))')
+            local q="ci=${{ github.run_id }}-$1" want zip
+            zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?$q" | node -e 'let s = ""; process.stdin.on("data", d => { s += d }).on("end", () => console.log(JSON.parse(s).plugins[0].source.url))') || { why="app.trommi.com/plugins/marketplace.json is not served"; return 1; }
             echo "plugin archive $zip"
-            case "$zip" in *"/trommi-$(echo "$got" | cut -c1-12).zip") ;; *) why="the marketplace does not name the plugin of this connector"; return 1 ;; esac
             curl -fsS --max-time 30 -o /dev/null "$zip" || { why="the plugin archive $zip is not served"; return 1; }
+            want=$(curl -fsS --max-time 10 "https://app.trommi.com/connector/trommi-connector-x86_64-unknown-linux-musl.sha256?$q" | cut -d ' ' -f 1) || { why="the connector's .sha256 is not served"; return 1; }
+            curl -fsS --max-time 60 "https://app.trommi.com/connector/$want/trommi-connector-x86_64-unknown-linux-musl" | sha256sum | grep -q "^$want " || { why="the connector $want is not served or does not match"; return 1; }
           }
           why=
           for try in $(seq 1 12); do
