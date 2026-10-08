@@ -151,6 +151,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── admin-test.mjs
 ├── admin-view.mjs
 ├── admin.mjs
+├── apns.mjs
 ├── attachments.mjs
 ├── deploy-admin.sh
 ├── deploy-backup.sh
@@ -370,8 +371,8 @@ Any other `ZError` code is a 400.
 | `POST /v1/rooms/:room_id/agent_watch` | agent, under its lease | `{ working }` | `{ ok }`: a connector before the link report says only whether it has running work (the push for a loss while working, as below) |
 | `PUT /v1/rooms/:room_id/attachments/:attachment_id` | member | raw encrypted bytes, `application/octet-stream`, ≤ 64 MiB | `201 { attachment_id, total_size }`; written once, immutable |
 | `GET /v1/rooms/:room_id/attachments/:attachment_id` | member | `Range` supported | the encrypted bytes |
-| `POST /v1/rooms/:room_id/push_subscriptions` | human | `{ subscription }` (Web Push), or `{ subscription, remove: true }` | `{ ok }` |
-| `GET /v1/push_key` | anyone | | `{ vapid_public_key }` |
+| `POST /v1/rooms/:room_id/push_subscriptions` | human | `{ subscription }` (Web Push), or `{ subscription, remove: true }`; an iPhone: `{ apns: { token, environment: 'sandbox' \| 'production', topic, key } }` (below, "Push") | `{ ok }` |
+| `GET /v1/push_key` | anyone | | `{ vapid_public_key, apns }` (`apns`: whether this hub sends APNs pushes) |
 | `GET /v1/version` | anyone | | above, "Versions and upgrades" |
 | `GET /v1/rooms/:room_id/usage` | member | | `{ attachment_bytes, quota_bytes }` |
 | `POST /v1/rooms/:room_id/account` | human | `{ email, auth_key, key_wrapped, kdf }` (Accounts, below) | `201 { email, email_verified_at: null, revision: 1 }`, and a six-digit code is mailed. One account per room (`409 account-exists`). Never says whether the email is in use elsewhere |
@@ -458,6 +459,10 @@ Attachments are not in SQLite: encrypted client-side with `encryptAsset` (64 KiB
 **Retention.** 30 days after an object's newest head is answered or closed, every envelope of that object and of its chat timeline `card/<object_id>` is pruned to header, ciphertext hash and signature (`pruneEnvelope`) and its attachments are deleted; chains still verify. Envelopes without a card stay for now (whether chat goes after 30 days is a pending decision).
 
 **Push.** For an envelope with `send_push`, the hub sends a Web Push to every human device of the room except the sender, with `{ room_id, envelope_number, urgency }` and nothing else. The app's service worker shows "Trommi: neue Frage" or, when it can open the room locally, the title. The one other push is the loss watch (`agent_watch`): `{ room_id, kind: 'agent-lost', device_id, since }`, shown as "Trommi: connection lost".
+
+**APNs (the iOS app).** The same two pushes reach an iPhone through Apple (`hub/apns.mjs`, Node's `http2` and `crypto`). The app registers `{ apns: { token, environment, topic, key } }` on the same route: its device token (hex), `sandbox` for a development build or `production`, its bundle id (must be one of `APNS_TOPIC`), and a random 32-byte key it made (base64url). The row is a `push_subscriptions` row with endpoint `apns:<token>`, tied to the device and gone with it like a Web Push subscription. Apple gets a fixed text and nothing about the room or the card: `{ aps: { alert: { title: 'Trommi', body: 'Eine neue Frage.' | 'Dringend: eine neue Frage.' | 'Ein Agent hat die Verbindung verloren.' | 'Eine Sitzung ist abgeschnitten.' }, sound: 'default' }, e }`, where `e` is the Web Push message sealed for the app (AES-256-GCM under its key, AAD `trommi-apns-v1`, `nonce || ciphertext || tag`, base64url); the app opens it and refreshes that room. Token auth: an ES256 JWT (`kid` = key id, `iss` = team id) from the team's APNs key, renewed every 40 minutes; one HTTP/2 connection per Apple host. Apple's 410 (`Unregistered`) or 400 `BadDeviceToken` / `DeviceTokenNotForTopic` deletes the row.
+
+Config (env of the hub; any missing: APNs off, `apns: false`, APNs registrations refused): `APNS_KEY_FILE` (path of the `.p8`) or `APNS_KEY` (its PEM text), `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_TOPIC` (bundle ids, comma list: `com.trommi.ios` and, for development builds installed by xtool, `XTL-70CB783D.com.trommi.ios`).
 
 ### Limits
 

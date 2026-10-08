@@ -5,7 +5,7 @@
 //
 // Run: node hub/server.mjs    env: HUB_PORT (8790), HUB_HOST (0.0.0.0), HUB_DATA (/data), HUB_URL (the address
 // devices sign; https://hub.trommi.com in prod), COMMIT, HUB_ORIGINS (+ HUB_PREVIEW_ORIGINS, set by the deploy), HUB_FOUND_TOKEN, HUB_MAX_ROOMS (1000),
-// HUB_PUSH_HOSTS, HUB_PUSH_SUBJECT, HUB_TRUST_CF (1: trust cf-connecting-ip, only from a loopback or private peer,
+// HUB_PUSH_HOSTS, HUB_PUSH_SUBJECT, APNS_KEY_FILE or APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC (hub/apns.mjs), HUB_TRUST_CF (1: trust cf-connecting-ip, only from a loopback or private peer,
 // i.e. cloudflared on this machine or through Docker's port proxy; off by default).
 import http from 'node:http'
 import { pipeline } from 'node:stream/promises'
@@ -17,6 +17,7 @@ import { createHub } from '../shared/crypto/hub.mjs'
 import { openDb, roomStorage, envelopeBytes, chunkCount, rebuildDerived, vacuumStep } from './store.mjs'
 import { fileStore } from './attachments.mjs'
 import { pusher } from './push.mjs'
+import { apnsConfig, apnsSender } from './apns.mjs'
 import { createOps, limitsFromEnv } from './ops/index.mjs'
 import { createAccounts } from './accounts.mjs'
 import { createMailer } from './mail.mjs'
@@ -88,13 +89,17 @@ export async function startHub({
   dataDir = process.env.HUB_DATA || '/data', hubUrl = process.env.HUB_URL, commit = process.env.COMMIT || 'dev',
   origins = `${process.env.HUB_ORIGINS || ''},${process.env.HUB_PREVIEW_ORIGINS || ''}`.split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
-  trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
+  trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, apns: apnsOptions = apnsConfig(), apnsHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
   pingMs = 25000, retentionEveryMs = DAY, streamCapEveryMs = 1000, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT, lossMs = Number(process.env.HUB_LOSS_MS || 60000),
 } = {}) {
   const t0 = performance.now()
   const db = openDb(dataDir, { log })
   const files = fileStore(path.join(dataDir, 'attachments'))
   const push = pusher({ dir: dataDir, ...(pushHosts ? { hosts: pushHosts } : {}), log })
+  const apns = apnsSender(apnsOptions, { ...(apnsHosts ? { hosts: apnsHosts } : {}), log, now })
+  if (apns) log(`apns on for ${apns.topics.join(', ')}`)
+  /** One push to one registration: a browser's Web Push subscription, or an iPhone's APNs token ({ apns }). */
+  const pushTo = (sub, message, opts) => sub.apns ? (apns ? apns.send(sub.apns, message, opts) : Promise.resolve(0)) : push.send(sub, message, opts)
   const rooms = new Map()            // room_id -> Promise<{ hub, streams: Set }>
   const founded = new Map()          // ip -> [times]
   const envelopeLimit = buckets(LIMITS.envelopesPerSecond, LIMITS.envelopeBurst, now)
@@ -350,7 +355,7 @@ export async function startHub({
       WHERE p.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL`).all(r.id)
     const message = { room_id: r.id, kind: 'agent-lost', state, device_id: deviceId, since }
     await Promise.all(subs.map(async s => {
-      const status = await push.send(JSON.parse(s.subscription), message, { urgency: 'high' })
+      const status = await pushTo(JSON.parse(s.subscription), message, { urgency: 'high' })
       if (status === 404 || status === 410) db.q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?').run(r.id, s.device_id, s.endpoint)
     }))
   }
@@ -361,7 +366,7 @@ export async function startHub({
       WHERE p.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL AND p.device_id != ?`).all(r.id, senderId)
     const webUrgency = urgency >= z.URGENCY.HIGH ? 'high' : 'normal'
     await Promise.all(subs.map(async s => {
-      const status = await push.send(JSON.parse(s.subscription), { room_id: r.id, envelope_number: out.n, urgency }, { urgency: webUrgency })
+      const status = await pushTo(JSON.parse(s.subscription), { room_id: r.id, envelope_number: out.n, urgency }, { urgency: webUrgency })
       if (status === 404 || status === 410) db.q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?').run(r.id, s.device_id, s.endpoint)
     }))
   }
@@ -774,7 +779,11 @@ export async function startHub({
     if (m === 'POST' && a === 'push_subscriptions' && !b) {
       const me = hub.authorise(bearer(req), { human: true })
       const body = await readJson(req)
-      const sub = push.check(body.subscription)
+      // An iPhone registers { apns: { token, environment, topic, key } } (hub/apns.mjs); its row's endpoint is apns:<token>.
+      if (body.apns != null && !apns) fail('bad-argument', 'this hub sends no APNs push')
+      const a = body.apns != null ? apns.check(body.apns) : null
+      if (body.apns != null && !a) fail('bad-argument', 'not an APNs registration: { token, environment: sandbox | production, topic, key }')
+      const sub = a ? { endpoint: `apns:${a.token}`, apns: a } : push.check(body.subscription)
       if (!sub) fail('bad-argument', 'not a Web Push subscription of a browser push service')
       if (body.remove === true) db.q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?').run(r.id, me.id, sub.endpoint)
       else {
@@ -803,7 +812,7 @@ export async function startHub({
     if (await ops.handle(req, res, url)) return
     if (await accounts.handle(req, res, url)) return
     if (url.pathname === '/healthz' && req.method === 'GET') return send(res, 200, { ok: true, commit, protocol_version: PROTOCOL_VERSION })
-    if (url.pathname === '/v1/push_key' && req.method === 'GET') return send(res, 200, { vapid_public_key: push.publicKey })
+    if (url.pathname === '/v1/push_key' && req.method === 'GET') return send(res, 200, { vapid_public_key: push.publicKey, apns: !!apns })
     const share = /^\/v1\/shares\/([^/]+)$/.exec(url.pathname)
     if (share && (req.method === 'GET' || req.method === 'HEAD')) return getShare(req, res, share[1])
     if (url.pathname === '/v1/rooms' && req.method === 'POST') return found(req, res)
@@ -933,6 +942,7 @@ export async function startHub({
       for (const t of timers) clearInterval(t)
       await ops.close()
       accounts.close()
+      apns?.close()
       for (const p of rooms.values()) { const r = await p.catch(() => null); if (r) for (const s of r.streams) if (!s.res.writableEnded) s.res.end() }
       // Streams never finish on their own: they were ended above. Wait (at most 5 s) for the other requests.
       if (inFlight > 0) await Promise.race([new Promise(ok => { drained = ok }), new Promise(ok => setTimeout(ok, 5000).unref())])

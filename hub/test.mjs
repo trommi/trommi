@@ -4,12 +4,14 @@ import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
+import http2 from 'node:http2'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import * as z from '../shared/crypto/zcrypto.mjs'
 import { createSessionGrant } from '../shared/crypto/session-grants.mjs'
 import { startHub, LIMITS } from './server.mjs'
+import { open as openApns } from './apns.mjs'
 
 const { ROLE, KIND, hex, utf8, b64u, unb64u } = z
 const tests = []
@@ -795,6 +797,73 @@ test('push: a send_push envelope reaches every other human device as { room_id, 
   assert.equal(received.length, 1)
   await w.hub.close()
   fake.close()
+})
+
+test('apns: an iPhone token gets the same pushes, a fixed text and the message sealed for the app; a dead token is forgotten; off without a key', async () => {
+  const got = []
+  let answer = () => [200, '']
+  const fake = http2.createServer()
+  fake.on('stream', (stream, headers) => {
+    const parts = []
+    stream.on('data', c => parts.push(c))
+    stream.on('end', () => {
+      got.push({ headers, body: JSON.parse(Buffer.concat(parts).toString()) })
+      const [status, reason] = answer(headers)
+      stream.respond({ ':status': status })
+      stream.end(reason ? JSON.stringify({ reason }) : '')
+    })
+  })
+  await new Promise(ok2 => fake.listen(0, '127.0.0.1', ok2))
+  const origin = `http://127.0.0.1:${fake.address().port}`
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const config = { key: privateKey.export({ type: 'pkcs8', format: 'pem' }), keyId: 'KEY1234567', teamId: 'TEAM123456', topics: ['XTL-TEST.com.trommi.ios', 'com.trommi.ios'] }
+  const w = await world({ apns: config, apnsHosts: { sandbox: origin, production: origin }, lossMs: 300 })
+  assert.equal((await ok(w, 'GET', '/v1/push_key')).apns, true)
+  const key = crypto.randomBytes(32)
+  const token = 'ab'.repeat(32)
+  const reg = { token, environment: 'sandbox', topic: 'XTL-TEST.com.trommi.ios', key: key.toString('base64url') }
+  assert.deepEqual(await ok(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { apns: reg } }), { ok: true })
+  await refused(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.agent.token, body: { apns: reg } }, 403, 'forbidden')
+  for (const bad of [{ ...reg, topic: 'com.evil.app' }, { ...reg, environment: 'dev' }, { ...reg, token: 'xyz' }, { ...reg, key: 'short' }])
+    await refused(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { apns: bad } }, 400, 'bad-argument')
+  // A question: a fixed text for Apple, { room_id, envelope_number, urgency } only for the app.
+  const cardId = await z.objectIdOf(w.agent.device.id, 1)
+  const { n } = await posted(w, w.agent, { kind: KIND.PERMISSION_REQUEST, push: true, card: { id: cardId, state: 1, urgency: 3 } })
+  for (let i = 0; i < 50 && !got.length; i++) await sleep(20)
+  assert.equal(got.length, 1)
+  const h = got[0].headers
+  assert.equal(h[':path'], `/3/device/${token}`); assert.equal(h['apns-topic'], 'XTL-TEST.com.trommi.ios'); assert.equal(h['apns-push-type'], 'alert')
+  const [head, claims, sig] = h.authorization.replace(/^bearer /, '').split('.')
+  assert.deepEqual(JSON.parse(Buffer.from(head, 'base64url')), { alg: 'ES256', kid: 'KEY1234567' })
+  assert.equal(JSON.parse(Buffer.from(claims, 'base64url')).iss, 'TEAM123456')
+  assert.ok(crypto.verify('sha256', Buffer.from(`${head}.${claims}`), { key: publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(sig, 'base64url')))
+  const { aps, e, ...rest } = got[0].body
+  assert.deepEqual(rest, {})
+  assert.deepEqual(aps, { alert: { title: 'Trommi', body: 'Dringend: eine neue Frage.' }, sound: 'default' })
+  assert.deepEqual(openApns(e, key), { room_id: w.roomId, envelope_number: n, urgency: 3 })
+  assert.ok(!JSON.stringify(got[0].body).includes(w.roomId))
+  // The loss watch reaches it too.
+  const lease = await leaseHeader(w, w.agent)
+  await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: true }, headers: lease })
+  const s = await openStream(w, w.agent)
+  await sleep(50); s.close()
+  for (let i = 0; i < 100 && got.length < 2; i++) await sleep(20)
+  assert.equal(got.length, 2)
+  assert.equal(got[1].body.aps.alert.body, 'Ein Agent hat die Verbindung verloren.')
+  assert.equal(openApns(got[1].body.e, key).kind, 'agent-lost')
+  // Apple says the token is gone: the row goes.
+  answer = () => [410, 'Unregistered']
+  await posted(w, w.agent, { kind: KIND.PERMISSION_REQUEST, push: true, card: { id: await z.objectIdOf(w.agent.device.id, 2), state: 1, urgency: 1 } })
+  for (let i = 0; i < 50 && got.length < 3; i++) await sleep(20)
+  await sleep(50)
+  assert.equal(w.hub.db.q("SELECT COUNT(*) AS n FROM push_subscriptions WHERE endpoint LIKE 'apns:%'").get().n, 0)
+  await w.hub.close()
+  fake.close()
+  // Without a key: registrations are refused, push_key says so.
+  const w2 = await world({ apns: null })
+  assert.equal((await ok(w2, 'GET', '/v1/push_key')).apns, false)
+  await refused(w2, 'POST', `${R(w2)}/push_subscriptions`, { token: w2.laptop.token, body: { apns: reg } }, 400, 'bad-argument')
+  await w2.hub.close()
 })
 
 test('loss watch: an agent with running work whose stream stays gone gets ONE push to the humans; offline_since; a disarm or a return pushes nothing', async () => {
