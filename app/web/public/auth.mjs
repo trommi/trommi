@@ -1,12 +1,13 @@
 // ---- room ----
-// The room's own screens. Inside a room (pages of the board): /devices (who is in the room, the two ways to add a
-// device, inviting an agent, removing), /pair/:id (the QR code, then "Add a new device?" with four codes to tap),
-// /settings (the account: email, password, Emergency Kit; storage). Before a room (a screen of its own): Create
+// The room's own screens. Inside a room (pages of the board): /settings (one list, as iOS Settings: Invite a Device with
+// its code and the emoji check in place, Invite Agent…, then a row per page: Sessions (agents.mjs), Devices, Account,
+// Theme, Keyboard Shortcuts), /settings/devices (who is in the room, Push, inviting an agent,
+// removing), /pair/:id (an agent's clipboard; a device's code), /settings/account (email, password, Emergency Kit; storage). Before a room (a screen of its own): Create
 // account (email + password; this device founds the room), Log in (email + password, or scan a signed-in device's
 // code), Forgot password (Emergency Kit), and the old recovery code. The UI says "account", never "room".
 // Calm and sober: this is about keys; pen drawings only on the choice buttons.
 // Core features that may not be there yet (usage, session handover) are shown only when the core has them.
-import { BELL, Controller, avatar, controller, copyText, doodleSvg, errorLine, html, raw, roomPage, roomShell, sketchSvg } from './ui.mjs'
+import { BELL, Controller, PLUS, SET_CHEVRON, avatar, controller, copyText, doodleSvg, errorLine, html, keysList, raw, roomPage, roomShell, setRow, setThemeMode, settingsPage, sk, sketchSvg, themeMode } from './ui.mjs'
 import { CLIENT, account, checkEmoji, core, ses, stream } from './app.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
@@ -19,7 +20,8 @@ const has = (o, fn) => typeof o?.[fn] === 'function'
 // compares them; the function is the core's (shared/check-emoji.mjs), so app and connector cannot drift apart.
 const emojiRow = (code, id = '') => html`<ol class="check-emoji"${id ? raw(` id="${id}"`) : ''} data-code="${code}" aria-label="Check code: ${checkEmoji(code).map(e => e.word).join(', ')}">${checkEmoji(code).map(e => html`<li><span class="check-emoji-glyph" aria-hidden="true">${e.emoji}</span><span class="check-emoji-word">${e.word}</span></li>`)}</ol>`
 // The two answers to "the same six?": the only way to confirm (no typing, no picking), only on the device that made the link.
-const matchButtons = (inv, yesLabel = 'They match') => html`<div class="check-answer"><form method="post" action="/pair/${inv.invite_id}/confirm"><input type="hidden" name="match" value="yes"><button type="submit" class="room-primary check-yes">${yesLabel}</button></form><form method="post" action="/pair/${inv.invite_id}/confirm"><input type="hidden" name="match" value="no"><button type="submit" class="check-no">They don't match</button></form></div>`
+// (here: the page the answer comes back to; 'settings' is the Settings list, where the device's code stands in place)
+const matchButtons = (inv, yesLabel = 'They match', here = '') => { const back = here ? html`<input type="hidden" name="in" value="${here}">` : ''; return html`<div class="check-answer"><form method="post" action="/pair/${inv.invite_id}/confirm">${back}<input type="hidden" name="match" value="yes"><button type="submit" class="room-primary check-yes">${yesLabel}</button></form><form method="post" action="/pair/${inv.invite_id}/confirm">${back}<input type="hidden" name="match" value="no"><button type="submit" class="check-no">They don't match</button></form></div>` }
 // One place for agents and devices (the menu's "Agents & devices"): the Agents page carries the same tabs (agents.mjs).
 const copyBox = (value, label, cls = '') => html`<div class="room-link${cls ? ` ${cls}` : ''}" data-controller="room"><input readonly value="${value}" aria-label="${label}" data-room-target="field" data-action="focus->room#select"><button type="button" data-action="room#copy" data-room-text-param="${value}"><span data-room-target="label">Copy</span></button></div>`
 const sessionName = s => s.settings?.name || s.profile?.agent_name || s.agent_session_id || s.device_name || 'Session'
@@ -70,12 +72,7 @@ ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remo
     }
     const devicesMain = (error = '') => {
       const L = lists(), active = [...m().members.values()].filter(d => d.is_active && d.device_role !== 'human')
-      return roomPage('Devices', 'devices', html`${errorLine(error)}
-${isHuman() ? html`<section class="room-section" aria-labelledby="add-head"><h3 id="add-head">Add a device</h3>
-<div class="room-ways">
-<form method="post" action="/pair" class="room-way"><input type="hidden" name="role" value="human"><button type="submit" class="room-way-go" id="pair-start">${art('phone')}<b>Pair a device</b><span>A QR code appears here. The new device scans it, you tap a number. Done.</span></button></form>
-<a href="/settings/account" data-nav class="room-way room-way-go" id="password-way">${art('key')}<b>Log in with email and password</b><span>On the new device open app.trommi.com and choose "Log in".</span></a>
-</div></section>` : ''}
+      return roomPage('Devices', html`${errorLine(error)}
 <section class="room-section" aria-labelledby="people-head"><h3 id="people-head">Your devices</h3>${raw(L.people)}</section>
 ${isHuman() ? html`<section class="room-section push-section" aria-labelledby="push-head"><h3 id="push-head">Push</h3>
 <fieldset class="push-level" id="push-level"><legend>Push on this device</legend>
@@ -87,9 +84,9 @@ ${isHuman() ? html`<section class="room-section push-section" aria-labelledby="p
 <section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agents</h3>${raw(L.agents)}${isHuman() && active.length && has(client, 'assignSession') ? handoverForm(active) : ''}
 ${isHuman() ? html`<form method="post" action="/pair" class="room-agent-form"><input type="hidden" name="role" value="agent"><label>Name of the session<input name="label" maxlength="40" placeholder="e.g. Website" autocomplete="off"></label>${has(client, 'assignSession') && m().sessions.size ? html`<label>Takes over<select name="session_id"><option value="">a new session</option>${sessionOptions()}</select></label>${historyAsk()}` : ''}<button type="submit" id="agent-invite">Invite an agent</button></form>` : ''}</section>
 ${raw(L.gone)}
-<p class="room-meta">Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the signed member list: it must look the same on every device.</p>`)
+<p class="room-meta">A new device: <a href="/settings" data-nav>Invite a Device</a> in Settings, or open app.trommi.com on it and log in with email and password. Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the signed member list: it must look the same on every device.</p>`, 'The people and agents with keys to this account.')
     }
-    t.get(/^\/settings\/devices$/, ({ req, res }) => page(req, res, 'Settings · Devices', devicesMain(), { stream: '&room=devices' }))
+    t.get(/^\/settings\/devices$/, ({ req, res }) => page(req, res, 'Devices · Settings', devicesMain(), { stream: '&room=devices' }))
     t.post(/^\/devices\/remove$/, async ({ req, res, form }) => {
       try { await client.removeDevices([String(form.get('device_id'))]) } catch (err) { return page(req, res, 'Devices', devicesMain(`Not removed: ${err.message}`), {}, 422) }
       t.redirect(res, '/settings/devices')
@@ -118,8 +115,8 @@ ${raw(L.gone)}
         const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}), ...(cont ? { session_id: cont, takeover: true } : agent ? { desk: inviteDesk(req) } : {}) })
         const session_id = String(form.get('session_id') ?? '')
         if (agent && session_id) handovers.set(invite.invite_id, { session_id, with_history: form.get('with_history') === 'yes', done: false })
-        t.redirect(res, `/pair/${invite.invite_id}`)
-      } catch (err) { page(req, res, 'Devices', devicesMain(`No invite: ${err.message}`), {}, 422) }
+        t.redirect(res, !agent && form.get('in') === 'settings' ? `/settings?pair=${invite.invite_id}` : `/pair/${invite.invite_id}`)
+      } catch (err) { if (form.get('in') === 'settings') return home(req, res, '', `No code: ${err.message}`, 422); page(req, res, 'Devices', devicesMain(`No invite: ${err.message}`), {}, 422) }
     })
     t.live('room', {
       take: () => lists(),
@@ -217,17 +214,63 @@ ${errorLine(error)}<p class="room-meta">"They don't match" burns the invite: nob
       page(req, res, inv?.device_role === 'agent' ? 'Invite an agent' : 'Pair a device', inviteMain(inv), { view: 'invite', stream: `&invite=${match[1]}` })
     })
     t.post(/^\/pair\/([0-9a-f]+)\/confirm$/, async ({ req, res, match, form }) => {
+      const list = form.get('in') === 'settings'
       try { await client.confirmInvite(match[1], form.get('match') === 'yes') } catch (err) {
+        if (list) return home(req, res, match[1], err.code === 'code-mismatch' ? '' : err.message, 422)
         return page(req, res, 'Pair a device', inviteMain(m().invites.get(match[1]), err.code === 'code-mismatch' ? '' : err.message), { view: 'invite', stream: `&invite=${match[1]}` }, 422)
       }
-      t.redirect(res, `/pair/${match[1]}`)
+      t.redirect(res, list ? `/settings?pair=${match[1]}` : `/pair/${match[1]}`)
     })
     t.live('invite', {
       take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); handOver(inv); return [id, String(inviteMain(inv)).replace(/\d+ more min\.|less than a minute\.|no time left\./g, '').replace(/data-invite-clip-until-value="\d+"/, '')] })),
       diff: (was, now, c) => { const id = c.params.get('invite'); return was.get(id) !== now.get(id) ? String(t.stream('refresh')) : '' },
     })
 
-    // ---- /settings ----
+    // ---- /settings: the list ----
+    // At its top the two invites. A device's code is drawn blurred until it is asked for: only then is an invite made
+    // (POST /pair in=settings), never on the page's load; the code, the six emoji and "They match" then stand in place
+    // (/settings?pair=<invite>, kept current by the live piece "invite"). Under them a row per page.
+    const deviceInvite = (inv, error = '') => {
+      const state = inv ? (inv.expires_at <= Date.now() && inv.invite_state === 'open' ? 'expired' : inv.invite_state) : 'none'
+      const head = (words, line) => html`<div class="set-text"><b>${words}</b>${line ? html`<small>${line}</small>` : ''}</div>`
+      const fresh = (word = 'Show Code', line = 'A phone or another computer scans the code. It is made when you ask for it and works once.') => html`<form method="post" action="/pair" class="set-pair"><input type="hidden" name="role" value="human"><input type="hidden" name="in" value="settings"><button type="submit" class="set-qr" id="settings-pair" aria-label="${word}: the code to invite a device"><span class="set-qr-code">${FAKE_QR}</span><span class="set-qr-show">${word}</span></button>${head('Invite a Device', line)}</form>`
+      let inner
+      if (state === 'none') inner = fresh()
+      else if (state === 'open') inner = html`<div class="set-pair"><div class="set-qr is-real">${raw(qrSvg(inv.link, 'QR code to invite a device'))}</div><div class="set-text"><b>Invite a Device</b><small>On the new device, open the camera and scan the code. Both devices then show six emoji.</small><p class="room-wait">Waiting for the new device… The code works once, ${leftWords(inv.expires_at)}</p><details class="room-more"><summary>No scanner? Send the link</summary><p class="room-meta">Send it to yourself and open it on the new device. The secret is after the #; it never reaches a server.</p>${copyBox(inv.link, 'Invite link')}</details></div></div>`
+      else if (state === 'confirm_code') inner = html`${head('A device wants to join', 'Does it show these six emoji, in this order?')}${emojiRow(inv.check_code)}${matchButtons(inv, 'They match', 'settings')}${errorLine(error)}<small class="set-note">"They don't match" burns the code: nobody is added.</small>`
+      else if (state === 'adding') inner = html`${head('Invite a Device')}<p class="room-wait">Adding ${newcomerName(inv) || 'the device'}…</p>`
+      else if (state === 'joined') inner = html`<div class="set-pair"><span class="set-in">${sk('tick')}</span>${head(`${newcomerName(inv) || 'The new device'} is in now.`, 'It holds keys of its own; you see it under Devices.')}<a class="set-pill" href="/settings" data-nav id="settings-pair-done">Done</a></div>`
+      else inner = html`${errorLine(state === 'expired' ? 'The code has run out.' : inv.error === 'code-mismatch' ? 'They did not match. Nobody was added; the code is used up.' : `That did not work${inv.error ? ` (${inv.error})` : ''}.`)}${fresh('Show a New Code', '')}`
+      return html`<div class="set-device" id="set-device" data-state="${state}">${inner}</div>`
+    }
+    const SHOWN = { light: 'Light', dark: 'Dark', system: 'System' }
+    const homeMain = (inv, error = '') => {
+      const bm = t.model(), members = [...(m().members?.values() ?? [])].filter(d => d.is_active)
+      const people = members.filter(d => d.device_role === 'human').length
+      return settingsPage('Settings', html`${inv === undefined ? errorLine(error) : ''}
+${isHuman() ? html`<section class="set-group set-invites" aria-label="Invite">${deviceInvite(inv ?? null, error)}
+<form method="post" action="/pair" class="set-agent"><input type="hidden" name="role" value="agent"><button type="submit" class="set-row" id="settings-invite-agent"><span class="set-ico">${PLUS}</span><b>Invite Agent…</b><span class="set-detail">a command for Claude Code</span>${SET_CHEVRON}</button></form></section>` : ''}
+<nav class="set-group" aria-label="Settings">
+${setRow({ href: '/settings/sessions', icon: sk('heads'), word: 'Sessions', detail: `${bm.agents.filter(a => a.online).length} of ${bm.agents.length} connected`, id: 'settings-sessions' })}
+${setRow({ href: '/settings/devices', icon: art('phone'), word: 'Devices', detail: people ? `${people} ${people === 1 ? 'device' : 'devices'}` : '', id: 'settings-devices' })}
+${isHuman() ? setRow({ href: '/settings/account', icon: sk('key'), word: 'Account', detail: m().room.account?.email ?? '', id: 'settings-account' }) : ''}
+</nav>
+<nav class="set-group" aria-label="This device">
+${setRow({ href: '/settings/theme', icon: sk('moon'), word: 'Theme', detail: SHOWN[themeMode()] ?? 'System', id: 'settings-theme' })}
+${setRow({ href: '/settings/keys', icon: sk('keycap'), word: 'Keyboard Shortcuts', id: 'settings-keys' })}
+</nav>
+`, { back: false })
+    }
+    const home = (req, res, pairId = '', error = '', code = 200) => {
+      const inv = pairId ? m().invites.get(pairId) ?? null : undefined
+      page(req, res, 'Settings', homeMain(inv, error), pairId ? { view: 'invite', stream: `&invite=${pairId}` } : { view: 'settings' }, code)
+    }
+    t.get(/^\/settings$/, ({ req, res, url }) => { if (client.hub && isHuman() && m().room.account === undefined) loadAccount(); home(req, res, url.searchParams.get('pair') ?? '') })
+    t.get(/^\/settings\/theme$/, ({ req, res }) => page(req, res, 'Theme · Settings', settingsPage('Theme', html`<div class="set-group set-choice" role="radiogroup" aria-label="Theme" data-controller="set-theme">${['light', 'dark', 'system'].map(v => html`<label class="set-row"><input type="radio" name="theme" value="${v}" data-action="change->set-theme#pick"${themeMode() === v ? raw(' checked') : ''}><span class="set-ico">${sk(v === 'light' ? 'sun' : v === 'dark' ? 'moon' : 'grid')}</span><b>${SHOWN[v]}</b>${sk('tick')}</label>`)}</div>
+<p class="set-note">System follows this device's own setting. The key T switches anywhere.</p>`, { lead: 'On this device.' }), { view: 'settings-theme' }))
+    t.get(/^\/settings\/keys$/, ({ req, res }) => page(req, res, 'Keyboard Shortcuts · Settings', settingsPage('Keyboard Shortcuts', html`<div class="set-group set-keys-group">${keysList()}</div><p class="set-note">More keys later. Keys rest while you type in a field. <a href="/help.html#keys">On the help page</a></p>`), { view: 'settings-keys' }))
+
+    // ---- /settings/account ----
     // The account is read from the hub once per visit (client._setRoom: a change, so the page refreshes when it is in).
     const loadAccount = () => {
       if (!client.hub || m().room.account_loading) return
@@ -254,15 +297,15 @@ ${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere sa
 <h4 class="room-sub">Password</h4>
 <details class="room-more" id="pw-change"><summary>Change password</summary>${form('/settings/password', html`${pwField({ name: 'current', label: 'Current password', gen: false, autocomplete: 'current-password' })}${pwField({ label: 'New password' })}`, 'Change password', 'pw-form')}</details>
 <p class="room-meta">${NO_RECOVERY}</p>`
-      return roomPage('Account', 'settings', html`${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
+      return roomPage('Account', html`${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
 ${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="acct-head"><h3 id="acct-head">Your login</h3>${accountPart}<p class="room-logout-line"><a href="/logout" data-nav id="settings-logout">Log Out</a></p></section>` : ''}
 <section class="room-section" aria-labelledby="store-head"><h3 id="store-head">Storage</h3><dl class="room-usage" data-controller="room" data-room-usage-value="${has(client, 'usage') ? 'hub' : 'local'}"><div><dt>On this device</dt><dd data-room-target="local">…</dd></div>${has(client, 'usage') ? html`<div><dt>On the hub (encrypted)</dt><dd data-room-target="hub">…</dd></div>` : ''}</dl><p class="room-meta">The hub deletes envelopes after 30 days; your devices keep what they decrypted.</p></section>
 ${link ? html`<details class="room-section room-more" id="advanced"><summary>Advanced</summary><p class="room-lead">The address of this account, for the old recovery code (app.trommi.com/recover). On its own it opens nothing.</p>${copyBox(link, 'Address')}
-<p class="room-meta">${room.room_id.slice(0, 16)}… · key epoch ${room.key_epoch} · hub ${room.hub_url}</p></details>` : ''}`)
+<p class="room-meta">${room.room_id.slice(0, 16)}… · key epoch ${room.key_epoch} · hub ${room.hub_url}</p></details>` : ''}`, 'Your login, and what this device keeps.')
     }
     const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', sent: 'Code sent.', confirmed: 'Email confirmed.' }
     t.live('settings', { take: () => JSON.stringify([m().room.account ?? null, m().room.account_error ?? null]), diff: (was, now) => (was !== now ? String(t.stream('refresh')) : '') })
-    t.get(/^\/settings\/account$/, ({ req, res, url }) => { if (m().room.account === undefined) loadAccount(); page(req, res, 'Settings · Account', settingsMain('', DONE[url.searchParams.get('done')] ?? ''), { view: 'settings' }) })
+    t.get(/^\/settings\/account$/, ({ req, res, url }) => { if (m().room.account === undefined) loadAccount(); page(req, res, 'Account · Settings', settingsMain('', DONE[url.searchParams.get('done')] ?? ''), { view: 'settings' }) })
     const accountPost = (path, fn, done) => t.post(path, async ({ req, res, form }) => {
       let out
       try { out = await fn(form, await account()) } catch (err) {
@@ -300,7 +343,7 @@ ${note ? html`<p class="room-lead" id="logout-last">${note}</p>` : ''}<p class="
     t.post(/^\/logout$/, async () => { await logOut(client) })
 
     // A join link opened on a device that is in a room already.
-    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', roomShell('Already logged in', html`<p class="room-lead">This device is logged in already. Pair another device under <a href="/settings/devices" data-nav>Settings · Devices</a>.</p><p class="room-meta">Another account? <a href="/logout" data-nav id="login-logout-first">Log out of this device first</a>, then log in.</p><p class="room-meta"><a href="/" data-nav>Open your Desk</a></p>`)))
+    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', roomShell('Already logged in', html`<p class="room-lead">This device is logged in already. Invite another device under <a href="/settings" data-nav>Settings</a>.</p><p class="room-meta">Another account? <a href="/logout" data-nav id="login-logout-first">Log out of this device first</a>, then log in.</p><p class="room-meta"><a href="/" data-nav>Open your Desk</a></p>`)))
   }
 }
 
@@ -822,6 +865,23 @@ controller('invite-clip', class extends Controller {
     clearTimeout(this.said)
     this.said = setTimeout(() => { for (const w of this.element.querySelectorAll('.clip-copy-word')) w.textContent = w.dataset.word }, 1800)
   }
+})
+
+// ---- Settings: a stand-in for the code until it is asked for (drawn blurred; it encodes nothing), the Theme's three
+// choices ----
+const FAKE_QR = (() => {
+  const n = 25, cells = [], finder = (x, y) => (x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7)
+  let seed = 7
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const ring = finder(x, y) && (() => { const fx = x < 7 ? x : x - (n - 7), fy = y < 7 ? y : y - (n - 7); return fx === 0 || fx === 6 || fy === 0 || fy === 6 || (fx >= 2 && fx <= 4 && fy >= 2 && fy <= 4) })()
+    if (finder(x, y) ? ring : rnd() > 0.52) cells.push(`M${x} ${y}h1v1h-1z`)
+  }
+  return raw(`<svg viewBox="-2 -2 ${n + 4} ${n + 4}" aria-hidden="true"><rect x="-2" y="-2" width="${n + 4}" height="${n + 4}" fill="#fff"/><path d="${cells.join('')}" fill="#14181a"/></svg>`)
+})()
+controller('set-theme', class extends Controller {
+  connect() { for (const r of this.element.querySelectorAll('input[name="theme"]')) r.checked = r.value === themeMode() }
+  pick(e) { setThemeMode(e.target.value) }
 })
 
 controller('room', class extends Controller {
