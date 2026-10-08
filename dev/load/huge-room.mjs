@@ -6,7 +6,7 @@
 //   one session chat of 22,000 messages, every 6th with a picture (400 distinct encrypted PNGs), one card thread of
 //   2,000, 20,000 more messages over the other sessions and cards
 //   300 notes (a third edited), 120 published pages (agents), a Scribble Board of 20,000 strokes in the new stroke
-//   format (shared/ink.mjs packPoints, colour tokens) on the main desk, 5,000 more on other desks and sessions
+//   format (shared/ink.ts packPoints, colour tokens) on the main desk, 5,000 more on other desks and sessions
 //
 //   node dev/load/huge-room.mjs --hub=local|<url> --out=<dir> [--scale=1] [--keep-hub] [--seed=7]
 //

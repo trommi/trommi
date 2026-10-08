@@ -9,7 +9,7 @@
 import { launchChromium } from '../../../dev/cdp.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
-import { joinRoom, memoryStorage, checkEmoji } from '../../../shared/index.mjs'
+import { joinRoom, memoryStorage, checkEmoji } from '../../../shared/index.ts'
 import { execSync } from 'node:child_process'
 import { guard } from '../../../dev/guard.mjs'
 guard({ usage: 'node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR] [--email E] [--resolve RULES] [--hub-down CMD --hub-up CMD]', values: ['app', 'hub', 'shots', 'email', 'resolve', 'hub-down', 'hub-up'], targets: ['app', 'hub'], resolve: 'resolve' })
@@ -33,6 +33,8 @@ async function browser(name, width = 1440, height = 900) {
   page.on('Runtime.exceptionThrown', e => errors.push(`${name} exception: ${e.exceptionDetails?.exception?.description ?? e.exceptionDetails?.text}`))
   page.on('Runtime.consoleAPICalled', e => { if (e.type === 'warning' && process.env.E2E_WARN) console.log(name, 'warn:', e.args.map(a => a.value ?? a.description ?? '').join(' ')); if (e.type === 'error') errors.push(`${name} console: ${e.args.map(a => a.value ?? a.description ?? '').join(' ')}`) })
   await page.send('Runtime.enable'); await page.send('Page.enable')
+  // CSP violations (an inline style or script the policy refuses), counted per page and checked at the end
+  await page.send('Page.addScriptToEvaluateOnNewDocument', { source: "window.__csp=[];document.addEventListener('securitypolicyviolation',e=>window.__csp.push(e.violatedDirective+' '+(e.blockedURI||e.sample||'')))" })
   await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 600 })
   const js = async (code) => {
     const r = await page.send('Runtime.evaluate', { expression: `(async () => { ${code} })()`, awaitPromise: true, returnByValue: true })
@@ -79,6 +81,8 @@ try {
   await A.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'account live')
   check(await A.js("return document.title === 'Desk · Trommi' && !!document.querySelector('#inbox')"), 'empty Desk after creating the account')
   // shared/core-worker.ts: the room runs in the core worker; the page holds a copy of its model (shared/remote.ts)
+  // shared/account-remote.ts: creating the account ran in the core worker; the page never loaded the key derivation
+  check(await A.js("return !performance.getEntriesByType('resource').some(e => /\\/account(-[A-Z0-9]+)?\\.mjs/.test(e.name))"), 'the account was made in the core worker (no key derivation in the page)')
   await A.until("trommi.client.worker instanceof Worker && trommi.client.model.room.connection === 'live'", 'the room live in the core worker').then(() => check(true, 'the core runs in a worker, the room is live'), () => check(false, 'the core runs in a worker, the room is live'))
   await A.js("trommi.router.visit('/settings/account')")
   await A.until(`document.getElementById('account-email')?.textContent === '${EMAIL.toLowerCase()}'`, 'account in Settings').then(() => check(true, 'Settings shows the account email'), e => check(false, e.message))
@@ -600,6 +604,7 @@ try {
     results.push('diag agent: ' + JSON.stringify(st(agent)))
     results.push('diag A: ' + JSON.stringify(await A.js("const c = window.trommi?.client; if (!c) return 'no client yet (no account open)'; return { connection: c.model.room.connection, outbox: c.model.outbox.map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: c.model.room.outbox_blocked, alerts: c.model.alerts.slice(-6).map(a => [a.code, a.message?.slice(0, 120)]) }").catch(e => e.message)))
   }
+  for (const [name, X] of [['A', A], ['B', B], ['C', C], ['D', D]]) if (X) { const v = await X.js('return window.__csp ?? []').catch(() => []); check(!v.length, `${name}: no CSP violation on its last page${v.length ? ` (${v.slice(0, 3).join('; ')})` : ''}`) }
   for (const e of [...A.errors, ...(B?.errors ?? []), ...(C?.errors ?? []), ...(D?.errors ?? [])]) results.push(`err  ${e}`)
   agent?.stop?.()
   await A.close(); await B?.close(); await C?.close(); await D?.close()

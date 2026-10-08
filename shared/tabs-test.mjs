@@ -1,4 +1,4 @@
-// tabs-test.mjs: one room in several tabs of one Chromium profile (shared/tabs.mjs), against the real hub in-process,
+// tabs-test.mjs: one room in several tabs of one Chromium profile (shared/tabs.ts), against the real hub in-process,
 // with a Node agent that counts what arrives. Needs Chromium outside the command sandbox.
 //   node shared/tabs-test.mjs
 // Write in A (leader), in B (follower, forwarded), in A again: every message arrives once, no fork alert in any tab.
@@ -11,7 +11,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../hub/server.mjs'
 import { launchChromium } from '../dev/cdp.mjs'
-import { joinRoom, memoryStorage } from './index.mjs'
+import { joinRoom, memoryStorage } from './index.ts'
+import { toJs } from '../dev/ts.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -22,6 +23,7 @@ const hub = await startHub({ port: 0, host: '127.0.0.1', dataDir: path.join(scra
 const web = http.createServer((req, res) => {
   const p = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x').pathname))
   if (!p.startsWith(ROOT) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(200, { 'content-type': 'text/html' }); return res.end('<!doctype html><title>tabs</title>') }
+  if (p.endsWith('.ts')) { res.writeHead(200, { 'content-type': 'text/javascript' }); return res.end(toJs(fs.readFileSync(p, 'utf8'), path.relative(ROOT, p))) }   // (types erased)
   res.writeHead(200, { 'content-type': p.endsWith('.mjs') || p.endsWith('.js') ? 'text/javascript' : 'application/octet-stream' })
   fs.createReadStream(p).pipe(res)
 })
@@ -32,7 +34,7 @@ const PAGE = `${ORIGIN}/index.html`
 const browser = await launchChromium({ width: 800, height: 600 })
 let failed = 0
 const out = (ok, name, extra = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${extra ? ` ${extra}` : ''}`) }
-const imp = `const core = await import('${ORIGIN}/shared/index.mjs');`
+const imp = `const core = await import('${ORIGIN}/shared/index.ts');`
 const OPEN = `${imp}
   const st = () => core.idbStorage({ name: 'trommi-tabs', prefix: 'r/' })
   window.c = await core.openRoomInTabs({ storage: st(), makeStorage: st, client: 'tabs-test' })

@@ -161,13 +161,31 @@ async function bundle(pub, vendor) {
   const out = {}
   // The core's worker (shared/core-worker.ts): one file of its own, the whole core in it. The app learns its address
   // from __TROMMI_CORE_WORKER__ (without it, as on the dev server, it starts /gen/vendor/core-worker.mjs).
+  // What only the account screens need (the key derivation, the word list, founding and joining) is a file of its own,
+  // which the worker imports when one asks (core-worker-account-<hash>.mjs, with its own copy of the core it uses), so
+  // the worker of a stored room is one file and one round trip.
+  const acc = await esbuild.build({
+    entryPoints: [{ in: 'gen/vendor/account.mjs', out: 'core-worker-account' }], bundle: true, format: 'esm', minify: true, write: false,
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+  })
+  const accountFile = rel(acc.outputFiles[0].path)
+  out[accountFile] = acc.outputFiles[0].text
+  const accountExternal = { name: 'account-external', setup(b) { b.onResolve({ filter: /^\.\/account\.mjs$/, namespace: 'vendor' }, a => (a.importer === 'core-worker.mjs' ? { path: `./${path.posix.basename(accountFile)}`, external: true } : undefined)) } }
   const w = await esbuild.build({
     entryPoints: [{ in: 'gen/vendor/core-worker.mjs', out: 'core-worker' }], bundle: true, format: 'esm', minify: true, write: false, metafile: true,
-    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [accountExternal, fromVendor],
   })
   if (w.outputFiles.length !== 1) throw new Error('build: the core worker is not one file')
   const worker = rel(w.outputFiles[0].path)
   out[worker] = w.outputFiles[0].text
+  // core-start (shared/core-start.ts): the tiny module index.html runs before the entry, which starts that worker.
+  const st = await esbuild.build({
+    entryPoints: [{ in: 'gen/vendor/core-start.mjs', out: 'core-start' }], bundle: true, format: 'esm', minify: true, write: false,
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+    define: { __TROMMI_CORE_WORKER__: JSON.stringify(`/${worker}`) },
+  })
+  const start = rel(st.outputFiles[0].path)
+  out[start] = st.outputFiles[0].text
   const r = await esbuild.build({
     entryPoints: [path.join(pub, 'app.mjs')], bundle: true, splitting: true, format: 'esm', minify: true, write: false, metafile: true,
     outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', chunkNames: '[name]-[hash]', outExtension: { '.js': '.mjs' },
@@ -184,7 +202,7 @@ async function bundle(pub, vendor) {
   // the worker; the page loads its chunk only when it needs it (the account screens, the demo, a page without workers).
   const first = new Set(), queue = [entry, remoteOut]
   while (queue.length) { const o = queue.shift(); if (first.has(o)) continue; first.add(o); for (const i of r.metafile.outputs[o].imports) if (i.kind === 'import-statement') queue.push(i.path) }
-  return { out, entry: rel(entry), first: [...first].map(rel), worker }
+  return { out, entry: rel(entry), first: [...first].map(rel), worker, start }
 }
 
 /** Everything the build makes: { 'path under public/': content (text, or bytes for the plugin's zip) }. Nothing is
@@ -215,6 +233,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   let modules
   if (js) {
     html = html.replace(/<script type="module" src="\/app\.mjs"><\/script>/, `<script type="module" src="/${js.entry}"></script>`)
+      .replace('<script type="module" src="/gen/vendor/core-start.mjs"></script>', `<script type="module" src="/${js.start}"></script>`)
     modules = js.first.map(f => `/${f}`)
   } else {
     const read = f => { const rel = f.replace(/^\//, ''); return rel in out ? out[rel] : fs.existsSync(path.join(pub, rel)) ? fs.readFileSync(path.join(pub, rel), 'utf8') : null }
@@ -233,6 +252,23 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // (help.html stays as it is: its inline script is allowed by its hash in _headers; it imports /ui.mjs, which imports
   // nothing)
   if (!out['index.html'].includes(`<!-- preload ${version} -->`)) throw new Error('index.html: the <!-- preload --> block is missing')
+  // Subresource integrity (the bundle): the entry, core-start and every preload carry their sha384; an import map names
+  // the integrity of every module of the page, so a chunk imported later is checked too (browsers without import-map
+  // integrity ignore it). The import map is an inline script: its hash goes into the CSP of the generated _headers.
+  // (Workers take no integrity: the core worker comes from this origin under the same CSP.)
+  if (js) {
+    const sri = f => `sha384-${crypto.createHash('sha384').update(out[f]).digest('base64')}`
+    const pageModules = Object.keys(js.out).filter(f => f.endsWith('.mjs') && !/^gen\/app\/core-worker/.test(f)).sort()
+    const map = JSON.stringify({ integrity: Object.fromEntries(pageModules.map(f => [`/${f}`, sri(f)])) })
+    const importmap = `<script type="importmap">${map}</script>`
+    out['index.html'] = out['index.html']
+      .replace(`<!-- preload ${version} -->\n`, `<!-- preload ${version} -->\n${importmap}\n`)
+      .replace(/<(link rel="modulepreload"|script type="module") (href|src)="\/(gen\/app\/[^"?]+\.mjs)(\?v=\w+)?"/g, (all, tag, attr, f, q = '') => (f in out ? `<${tag} ${attr}="/${f}${q}" integrity="${sri(f)}"` : all))
+    const mapHash = `'sha256-${crypto.createHash('sha256').update(map).digest('base64')}'`
+    const headers = fs.readFileSync(path.join(pub, '_headers'), 'utf8')
+    out['_headers'] = headers.replace(/^(\/\*\n\s+Content-Security-Policy: .*?script-src [^;]*)/m, `$1 ${mapHash}`)
+    if (!out['_headers'].includes(mapHash)) throw new Error('_headers: no script-src in the CSP of /* for the import map')
+  }
 
   const sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
   out['sw.js'] = sw.replace(/^const VERSION = .*$/m, `const VERSION = ${JSON.stringify(version)}`).replace(/^const SHELL = .*$/m, `const SHELL = ${JSON.stringify(['/', ...files.map(f => `/${f}`)])}`)
@@ -240,7 +276,13 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // Not part of the shell: the app itself never loads them (Claude Code and the connect script do).
   const made = connectorFiles()
   for (const [f, c] of Object.entries(made ?? {})) out[`gen/${f}`] = c
-  const firstLoad = js ? [...js.first, js.worker].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null   // (the core worker too: boot starts it at once)
+  // The build's manifest: every file this build serves with its SHA-256, and its own hash, the build hash, in
+  // build.txt (README "Verifying the build": anyone can build the commit and compare).
+  const served = [...new Set([...walk(pub).filter(f => !f.startsWith('gen/') && !(bundled && BUNDLED.test(f))), ...Object.keys(out)])].filter(f => f !== 'gen/build.txt' && f !== 'gen/manifest.json').sort()
+  const manifest = { commit: commitOf(repo), files: Object.fromEntries(served.map(f => [f, crypto.createHash('sha256').update(content(f)).digest('hex')])) }
+  out['gen/manifest.json'] = `${JSON.stringify(manifest, null, 1)}\n`
+  out['gen/build.txt'] += `build: ${crypto.createHash('sha256').update(out['gen/manifest.json']).digest('hex')}\n`
+  const firstLoad = js ? [...js.first, js.worker, js.start].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null   // (the core worker too: boot starts it at once)
   return { out, version, sheets: links.length, files: files.length, connector: made ? made['connector.mjs.sha256'].slice(0, 12) : null, firstLoad, chunks: js ? Object.keys(js.out).length : 0 }
 }
 

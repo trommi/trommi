@@ -30,7 +30,7 @@ node dev/perf.mjs                       # the very big demo room (?mock=crazy), 
 
 ```
 worker.js              http -> https, /connect (the connect script), the generated files at their public addresses
-wrangler.jsonc  dev/   serve, build, check, e2e, look, cdp, perf, make-fixture
+wrangler.jsonc  dev/   serve, build, check, verify, e2e, look, cdp, perf, make-fixture
 public/
   index.html  sw.js  manifest.webmanifest  _headers  connect.sh  frame.html (the sandbox a published page runs in)
   help.html            help and "how it works", its own style and script inline
@@ -67,8 +67,10 @@ and an inline script whose hash is not in `_headers`.
 
 `dev/build.mjs` runs in Cloudflare's build (`WORKERS_CI=1`) and makes `public/gen/app/` (esbuild, minified and split:
 the entry `app-<hash>.mjs` with app, ui, desk, sidebar and notes, one chunk per lazy view, the core from the
-repository's `shared/` as chunks of its own, the demo, and `core-worker-<hash>.mjs`, the core's worker in one file
-(the app learns its address from `__TROMMI_CORE_WORKER__`; the dev server starts `/gen/vendor/core-worker.mjs`); every
+repository's `shared/` as chunks of its own, the demo, `core-worker-<hash>.mjs`, the core's worker in one file
+(the app learns its address from `__TROMMI_CORE_WORKER__`; the dev server starts `/gen/vendor/core-worker.mjs`), the
+account screens' part of it, `core-worker-account-<hash>.mjs` (loaded only by them), and `core-start-<hash>.mjs`, which
+`index.html` runs before the entry to start the worker; every
 name carries its content's hash, `_headers` keeps them immutable), `public/gen/vendor/tools-reference.mjs` (the connector's tools and events for the help page), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
 order: `app.css` first), `public/gen/build.txt` (the commit; the Web app deploy workflow waits until app.trommi.com
 serves it), the script and the modulepreload list of `index.html` (the entry with `?v=<build>`, the page's side of the
@@ -78,7 +80,25 @@ packages (esbuild, the MCP SDK, zod): in Cloudflare's build `dev/build.mjs` runs
 In the repository `index.html` and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`).
 `dev/serve.mjs` serves the build from memory: by default with the sources as modules of their own (no esbuild needed),
 `--bundle` as deployed. `node dev/build.mjs` checks only and prints the cold start's size; `--write` writes into
-`public/` (never commit that).
+`public/` (never commit that: it rewrites `index.html`, `sw.js` and `_headers` too).
+
+**Integrity.** The bundle's `index.html` carries `integrity` (sha384) on the entry, `core-start` and every modulepreload,
+and an import map with the integrity of every module of the page (chunks loaded later are checked too, where the
+browser knows import-map integrity); its hash is added to the CSP of the generated `_headers`. The core worker loads
+from this origin under the same CSP (workers take no integrity attribute).
+
+### Verifying the build
+
+`gen/manifest.json` lists every file the app serves with its SHA-256; `gen/build.txt` names the commit and the
+**build hash**, the SHA-256 of that manifest. The build is reproducible (content-named files, a zip with fixed dates,
+no time stamps), so anyone can check that app.trommi.com serves exactly this source:
+
+```bash
+curl -s https://app.trommi.com/gen/build.txt          # commit: <c>, build: <hash>
+git checkout <c> && npm ci
+node app/web/dev/verify.mjs                           # or --app <url>: builds here, compares the manifests file by
+                                                      # file, fetches every file and checks its bytes; exit 0 = verified
+```
 
 The service worker: a new deploy takes over at once and the page reloads (a field with unsent words: a quiet "Reload"
 instead); files come network first, the cache only offline. On the dev server (`VERSION "dev"`) there is none.
@@ -174,7 +194,7 @@ The core owns the schema (trommi-hub `shared/README.md`, "Storage adapter"): dat
 - **No framework, one stylesheet, a small first load**: one minified bundle; a cold start fetches the entry, the page's
   side of the core worker and their shared chunks (preloaded at once) and the core worker, every other view comes when it is first needed or once the page is idle;
   one stylesheet bundle.
-- **CSP**: `script-src 'self' 'wasm-unsafe-eval'` (WebAssembly for Argon2id only) plus the hashes of the two inline scripts (the theme before first paint, the help page), fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub.
+- **CSP**: `script-src 'self' 'wasm-unsafe-eval'` (WebAssembly for Argon2id only) plus the hashes of the two inline scripts (the theme before first paint, the help page) and of the bundle's import map; `style-src 'self'` plus the hash of the help page's style, no `'unsafe-inline'` for style elements (style attributes only, `style-src-attr`: the views set `--hue` and the like per element); fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub. `dev/check.mjs` checks the hashes; the e2e fails on any CSP violation.
 
 ### The demo room
 

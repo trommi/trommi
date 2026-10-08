@@ -13,7 +13,7 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const BIN = process.env.TROMMI_CONNECTOR_CMD || path.join(REPO, 'connector-rs/target/release/trommi-connector')
 if (!process.env.OUTER_DBUS || process.env.OUTER_DBUS === process.env.DBUS_SESSION_BUS_ADDRESS) { console.error('not in a D-Bus session of its own: run test-keychain.sh'); process.exit(2) }
 const { startHub, startConnector, confirmAgents } = await import(path.join(REPO, 'connector/test-e2e.mjs'))
-const core = await import(path.join(REPO, 'shared/index.mjs'))
+const core = await import(path.join(REPO, 'shared/index.ts'))
 
 const secrets = () => execFileSync('secret-tool', ['search', '--all', 'service', 'trommi-connector'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).split('\n').filter(l => l.startsWith('label')).length
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-keychain-'))
