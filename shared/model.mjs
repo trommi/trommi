@@ -795,14 +795,16 @@ const byCreated = model => (a, b) => (model.cards.get(a)?.created_at ?? 0) - (mo
  * Stack, per-session card lists, open permissions. Incremental (perf, 4 Oct): the open cards are kept sorted
  * (model._proj.sorted, with each card's sort key), and only the cards and sessions a change touched are looked at;
  * the first call after a bulk load (model._proj unset) builds everything once. The stack then filters snoozed cards
- * and archived sessions out of the sorted list: O(open cards), no sorting, per call.
+ * and archived sessions out of the sorted list (O(open cards), no sorting), and only when a change names a card, a
+ * session, a snooze or a session register, or the clock passed the end of a snooze: a chat message, a stroke or a
+ * status line costs nothing here.
  */
 export function project(model, change, now = Date.now()) {
   const before = model.stack, beforePerm = model.open_permission_ids
   let P = model._proj
   const touchedSessions = new Set()
   if (!P) {
-    P = model._proj = { keys: new Map(), sorted: [], nextPermExpiry: Infinity }
+    P = model._proj = { keys: new Map(), sorted: [], nextPermExpiry: Infinity, stackDirty: true, nextWake: Infinity }
     for (const s of model.sessions.values()) { s.card_ids.sort(byCreated(model)); touchedSessions.add(s.session_id) }
     for (const c of model.cards.values()) if (c.object_state === 'open') P.keys.set(c.object_id, stackKey(c))
     P.sorted = [...P.keys.keys()].sort((x, y) => cmpKey(P.keys.get(x), P.keys.get(y)))
@@ -823,21 +825,30 @@ export function project(model, change, now = Date.now()) {
       if (c && c.object_state === 'open') { const key = stackKey(c); P.sorted.splice(bisect(P.sorted, key, k => P.keys.get(k)), 0, id); P.keys.set(id, key) }
     }
     if (change.permissions.size || now > P.nextPermExpiry) P.permsDirty = true
+    // The stack is filtered again only when something it depends on changed: a card, a session (archived), a snooze, or
+    // the clock passed a snooze's end.
+    if (change.cards.size || change.sessions.size || now >= P.nextWake) P.stackDirty = true
+    else for (const k of change.registers) if (k.startsWith('snooze/') || k.startsWith('session/')) { P.stackDirty = true; break }
   }
   for (const sid of touchedSessions) {
     const s = model.sessions.get(sid)
     if (s) s.open_card_ids = s.card_ids.filter(id => model.cards.get(id)?.object_state === 'open')
   }
-  const snoozes = model.human.snoozes
-  const archived = new Set()
-  for (const s of model.sessions.values()) if (s.settings?.archived) archived.add(s.session_id)
-  const stack = []
-  for (const id of P.sorted) {
-    if (snoozes.size) { const v = snoozes.get(id); if (v && (v.until == null || v.until > now)) continue }
-    if (archived.size && archived.has(model.cards.get(id)?.session_id)) continue
-    stack.push(id)
+  if (P.stackDirty) {
+    P.stackDirty = false
+    const snoozes = model.human.snoozes
+    const archived = new Set()
+    for (const s of model.sessions.values()) if (s.settings?.archived) archived.add(s.session_id)
+    const stack = []
+    let wake = Infinity
+    for (const id of P.sorted) {
+      if (snoozes.size) { const v = snoozes.get(id); if (v && (v.until == null || v.until > now)) { if (v.until != null && v.until < wake) wake = v.until; continue } }
+      if (archived.size && archived.has(model.cards.get(id)?.session_id)) continue
+      stack.push(id)
+    }
+    model.stack = stack
+    P.nextWake = wake
   }
-  model.stack = stack
   if (P.permsDirty) {
     P.permsDirty = false
     const pending = [...model.permissions.values()].filter(p => p.permission_state === 'pending' && now <= p.expires_at)
