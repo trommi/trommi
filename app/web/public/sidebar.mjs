@@ -21,6 +21,30 @@ ${u.subs ? html`<button type="button" class="rail-subs" data-action="click->fold
 </div>`
 }
 
+// ---- the session in view, marked in the sidebar ----
+// The rows are the same markup on every page (so a page change keeps the sidebar's nodes as they are, app.mjs
+// paintBody); which one is the session in view is set on them here, after every page and whenever rows are put in
+// (the live stream's replacements): .is-active and aria-current on its row, .has-active on its main's.
+let inView = null
+function paintCurrent(root = document) {
+  for (const r of root.querySelectorAll('#agents .agent-row[data-unit]')) {
+    const on = r.dataset.unit === inView
+    r.classList.toggle('is-active', on)
+    r.querySelector(':scope > .agent-entry')?.toggleAttribute('aria-current', on)
+    if (on) r.querySelector(':scope > .agent-entry')?.setAttribute('aria-current', 'page')
+    r.classList.toggle('has-active', !r.dataset.parent && inView != null && !on && Boolean(document.querySelector(`#agents .agent-row[data-parent="${CSS.escape(r.dataset.unit)}"][data-unit="${CSS.escape(inView)}"]`)))
+  }
+}
+let watching = null
+/** The session in view (null: none): marked in the sidebar now and in every row put in later. */
+export function markCurrent(current) {
+  inView = current ?? null
+  paintCurrent()
+  watching ??= new MutationObserver(list => { if (list.some(ch => [...ch.addedNodes].some(n => n.nodeType === 1 && (n.matches('.agent-row, #agents') || n.querySelector?.('.agent-row'))))) paintCurrent() })
+  const agents = document.getElementById('agents')
+  if (agents && watching.target !== agents) { watching.disconnect(); watching.observe(agents, { childList: true, subtree: true }); watching.target = agents }
+}
+
 const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}<span class="agent-invite-label">New Agent…</span></button></form>`
 
 // ---- the note (his word, 4 October: "nur EINE Notiz"; 5 October: "wieder nach unten rechts") ----

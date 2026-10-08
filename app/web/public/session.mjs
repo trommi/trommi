@@ -17,9 +17,10 @@
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
 import { BASE, UNHEARD_MS, blockedOf, linkOf, quietOf } from './app.mjs'
-import { Controller, WORDS, advisedLabels, agoSpan, assetGlyph, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
+import { Controller, WORDS, advisedLabels, later, agoSpan, assetGlyph, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
 const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
+const IN_VIEW = 14            // of them, rendered with the page (a phone shows fewer); the rest of the window right after its first paint
 const GROUP_GAP = 5 * 60000          // messages of one side closer than this stand as one run
 const WORKING_WINDOW = 10 * 60000    // so long after the human's last word the session counts as answering
 const MAX_FILES = 12                 // as the hub takes them in one message
@@ -237,6 +238,9 @@ function logItems(s, base, from = 0, to = s.messages.length) {
   return out
 }
 
+/** A property worked out on its first read, then kept. */
+const lazy = (o, k, make) => Object.defineProperty(o, k, { configurable: true, enumerable: true, get() { const v = make(); Object.defineProperty(o, k, { value: v, enumerable: true }); return v } })
+
 // ---- the pieces of the page that change by themselves (each has an id; the live stream replaces it) ----
 /** The session's drawing and name: the page's heading, on its own line at the page's top (session.css). */
 /** A main session's small menu beside its name (his word, 6 October): three pen dots. "Move to other desk" lists the
@@ -325,11 +329,17 @@ function logWindow(s, base, before = null) {
   const at = before == null ? -1 : s.messages.findIndex(m => m.id === before)
   // (An earlier window asked for a message memory no longer holds: nothing, rather than the latest a second time.)
   const end = before != null && at < 0 ? 0 : at < 0 ? total : at, start = Math.max(0, end - PAGE)
-  const shown = logItems(s, base, start, end)   // only the window is rendered, however much memory holds
+  // Only the window is rendered, however much memory holds; of it, the newest IN_VIEW messages now (the log's end is
+  // what is in view), the older ones right after the first paint (ui.mjs later: their markup is made then), above
+  // them, where the reversed column does not move what is in view.
+  const shown = s.messages.slice(start, end).map(m => ({ id: m.id }))
+  const cut = Math.max(start, end - IN_VIEW)
+  const item = i => html`${i.day}${i.node}`
+  const older = cut > start ? later(`log-${s.id}-${shown[0].id}`, () => html`${logItems(s, base, start, cut).map(item)}`) : ''
   // An earlier window ends where the one below it begins: the day line between them, when the day changes there.
   const next = before != null && at >= 0 ? s.messages[at] : null, last = s.messages[end - 1]
   const joint = next && last && dayKey(last.ts) !== dayKey(next.ts) ? dayLine(next.ts) : ''
-  return { shown, start, end, total, body: html`${shown.length ? earlier(s, base, shown[0].id, start) : ''}${shown.map(i => html`${i.day}${i.node}`)}${joint}` }
+  return { shown, start, end, total, body: html`${shown.length ? earlier(s, base, shown[0].id, start) : ''}${older}${logItems(s, base, cut, end).map(item)}${joint}` }
 }
 
 // (The three starters are links: each brings the page again with its words in the field, ready to send or change.)
@@ -633,7 +643,17 @@ export function register(t) {
           p.modes[mode] = true
           if (mode === 'questions') p.questions = questionList(p.s, BASE)
           // The live part of the log: its newest LIVE messages (what "Earlier" brought further up stays as it was).
-          else { p.files = filesList(p.s, BASE); p.items = logItems(p.s, BASE, p.s.messages.length - LIVE); p.byId = new Map(p.items.map(i => [i.id, i])); p.all = new Set(p.s.messages.map(m => m.id)); p.status = sessionStatus(p.s, BASE); p.open = sessionOpen(p.s, BASE, new Set(p.items.slice(-PAGE).map(i => i.id))) }
+          // (made when a diff first asks for them: the take right after a page is painted then costs nothing, and the
+          //  session's state it is made from is the one of this take)
+          else {
+            const q = p
+            lazy(q, 'files', () => filesList(q.s, BASE))
+            lazy(q, 'items', () => logItems(q.s, BASE, q.s.messages.length - LIVE))
+            lazy(q, 'byId', () => new Map(q.items.map(i => [i.id, i])))
+            lazy(q, 'all', () => new Set(q.s.messages.map(m => m.id)))
+            lazy(q, 'status', () => sessionStatus(q.s, BASE))
+            lazy(q, 'open', () => sessionOpen(q.s, BASE, new Set(q.items.slice(-PAGE).map(i => i.id))))
+          }
         }
       }
       return out
