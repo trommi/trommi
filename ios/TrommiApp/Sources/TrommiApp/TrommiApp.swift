@@ -12,9 +12,16 @@ import TrommiCore
 @main
 struct TrommiApp: App {
   @StateObject private var model = BoardModel()
+  #if canImport(UIKit)
+  @UIApplicationDelegateAdaptor(PushDelegate.self) private var push   // Push.swift
+  #endif
   var body: some Scene {
     WindowGroup {
       RootView().environmentObject(model)
+      #if canImport(UIKit)
+        .onAppear { push.model = model; push.ask() }
+        .onChange(of: model.phase) { _, p in if p == .board { push.ask() } }
+      #endif
     }
   }
 }
