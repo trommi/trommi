@@ -38,6 +38,7 @@ fancy-regex = "0.14"
 flate2 = "1"
 libc = "0.2"
 url = "2"
+indexmap = { version = "2", features = ["serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["async-secret-service", "crypto-rust", "tokio"], optional = true }
