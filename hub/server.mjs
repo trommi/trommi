@@ -36,7 +36,7 @@ export const LIMITS = limitsFromEnv({
   retentionDays: 30,
 })
 const STATUS = {
-  'bad-format': 400, 'bad-argument': 400, 'bad-version': 400, 'bad-entry': 400, 'bad-signature': 400, 'bad-invite': 400, 'wrong-room': 400,
+  'bad-format': 400, 'bad-argument': 400, 'bad-version': 400, 'newer-version': 400, 'bad-entry': 400, 'bad-signature': 400, 'bad-invite': 400, 'wrong-room': 400,
   incomplete: 400, 'bad-grant': 400, 'chain-break': 400, 'log-behind': 400, 'log-fork': 400,
   unauthorised: 401, 'bad-challenge': 401,
   forbidden: 403, 'not-member': 403, 'removed-sender': 403, 'wrong-sender': 403,
@@ -269,7 +269,7 @@ export async function startHub({
     if (wait) fail('rate-limited', 'too many envelopes from this device', { retryAfter: wait })
     const body = await readJson(req)
     const bytes = b64(body.envelope, 'envelope')
-    const peek = z.peekEnvelope(bytes)
+    const peek = z.peekEnvelope(bytes, { strictKinds: true })
     if (peek.ciphertext && peek.ciphertext.length > LIMITS.ciphertext) fail('too-large', 'an envelope body is at most 64 KiB padded; put more into an attachment')
     const lease = req.headers['x-lease-generation']
     if (lease != null && !/^\d{1,16}$/.test(lease)) fail('bad-argument', 'x-lease-generation')

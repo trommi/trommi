@@ -596,12 +596,13 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
      */
     postEnvelope: (token, bytes, { leaseGeneration = null } = {}) => serial(async () => {
       const s = session(token, { member: true })
-      const head = z.peekEnvelope(bytes)
+      // strictKinds: the hub stores only kinds it knows (a newer client waits for a newer hub); readers accept more.
+      const head = z.peekEnvelope(bytes, { strictKinds: true })
       if (head.pruned) fail('bad-format', 'an envelope is posted with its ciphertext')
       if (id(head.header.sender) !== s.id) fail('wrong-sender', 'a device posts its own envelopes only')
       // R4 fencing: an agent posts only under the lease it holds; no lease, no generation or an older one is lease-lost.
       if (s.role === ROLE.AGENT && leaseGet(s.id)?.generation !== leaseGeneration) fail('lease-lost', 'this process does not hold the lease of this agent key: take it with agent_lease and post with its generation')
-      const v = await z.verifyEnvelope(bytes, { state: room(), chains, commit: false })
+      const v = await z.verifyEnvelope(bytes, { state: room(), chains, commit: false, strictKinds: true })
       const h = v.header
       let pushAllowed
       try {

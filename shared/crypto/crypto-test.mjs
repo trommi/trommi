@@ -578,7 +578,7 @@ test('a flipped bit anywhere (version, header, nonce, ciphertext, tag, signature
   const env = await send(w, w.phone, { kind: KIND.CARD, card: { id: fill(16, 1), state: 1 }, blobs: [fill(16, 2)] })
   const codes = new Set()
   for (let i = 0; i < env.bytes.length; i++) {
-    const e = await rejects(() => recv(w.laptop, flip(env.bytes, i, i % 8)), ['bad-signature', 'bad-format', 'bad-version', 'wrong-room', 'log-behind', 'log-fork', 'not-member', 'wrong-epoch'])
+    const e = await rejects(() => recv(w.laptop, flip(env.bytes, i, i % 8)), ['bad-signature', 'bad-format', 'bad-version', 'newer-version', 'wrong-room', 'log-behind', 'log-fork', 'not-member', 'wrong-epoch'])
     codes.add(e.code)
   }
   assert.ok(codes.has('bad-signature') && codes.has('wrong-room') && codes.has('bad-version'))
@@ -639,7 +639,9 @@ test('non-zero padding and unknown versions inside the ciphertext are refused', 
   const dirty = bodyOf('hi'); dirty[255] = 1
   await rejects(async () => recv(w.laptop, await craft(w, w.phone, p.headerBytes, w.phone.device.id, dirty), q), 'bad-format')
   const v2 = bodyOf('hi'); v2[0] = 2
-  await rejects(async () => recv(w.laptop, await craft(w, w.phone, p.headerBytes, w.phone.device.id, v2), q), 'bad-version')
+  await rejects(async () => recv(w.laptop, await craft(w, w.phone, p.headerBytes, w.phone.device.id, v2), q), 'newer-version')
+  const v0 = bodyOf('hi'); v0[0] = 0
+  await rejects(async () => recv(w.laptop, await craft(w, w.phone, p.headerBytes, w.phone.device.id, v0), q), 'bad-version')
   // Strict decoding (C18): the padded length must be exactly the bucket of the body, and no BOM leads the payload.
   const long = new Uint8Array(512); long.set(bodyOf('hi').slice(0, 9))
   await rejects(async () => recv(w.laptop, await craft(w, w.phone, p.headerBytes, w.phone.device.id, long), q), 'bad-format')
@@ -749,7 +751,7 @@ test('pruned envelopes (ciphertext deleted after 30 days) still verify and keep 
   await rejects(() => recv(w.laptop, pa), 'pruned')
   const v = await z.verifyEnvelope(pa, { state: w.laptop.state, chains: w.laptop.chains })
   assert.deepEqual(v.hash, a.hash); assert.equal(v.pruned, true)
-  for (let i = 0; i < pb.length; i++) await rejects(() => z.verifyEnvelope(flip(pb, i), { state: w.laptop.state, chains: w.laptop.chains }), ['bad-signature', 'bad-format', 'bad-version', 'wrong-room', 'log-behind', 'log-fork', 'not-member', 'wrong-epoch', 'gap', 'replay'])
+  for (let i = 0; i < pb.length; i++) await rejects(() => z.verifyEnvelope(flip(pb, i), { state: w.laptop.state, chains: w.laptop.chains }), ['bad-signature', 'bad-format', 'bad-version', 'newer-version', 'wrong-room', 'log-behind', 'log-fork', 'not-member', 'wrong-epoch', 'gap', 'replay'])
   await z.verifyEnvelope(pb, { state: w.laptop.state, chains: w.laptop.chains })
   assert.equal(txt((await recv(w.laptop, c)).payload), 'still here')
 })
@@ -768,7 +770,10 @@ test('kind, key scope and timeline are in the signed header; the grammar is stri
   const otherKind = head.bytes.slice(); otherKind[kindAt] = KIND.VERDICT
   await rejects(() => recv(w.laptop, otherKind), ['bad-format', 'bad-signature'])
   const status2 = head.bytes.slice(); status2[kindAt] = 8
-  await rejects(async () => z.peekEnvelope(status2), 'bad-format')
+  await rejects(async () => z.peekEnvelope(status2, { strictKinds: true }), 'bad-format')
+  assert.equal(z.peekEnvelope(status2).header.knownKind, false, 'a reader parses a kind it does not know')
+  const zero = head.bytes.slice(); zero[kindAt] = 0
+  await rejects(async () => z.peekEnvelope(zero), 'bad-format')
   // Grammar: a thread item needs a canonical timeline and no object block; heads have no timeline; objects need the block.
   await rejects(() => send(w, w.phone, { timelineKind: null, timelineId: null }), 'bad-argument')
   await rejects(() => send(w, w.phone, { kind: KIND.STATUS, timelineKind: 1, timelineId: `desk/${DESK}` }), 'bad-argument')
@@ -790,6 +795,32 @@ test('kind, key scope and timeline are in the signed header; the grammar is stri
   assert.equal(txt((await recv(w.laptop, desk)).payload), 'hello')
   // Only senders active at the named log state may appear in seen, at most 64 (R5).
   assert.ok(z.peekEnvelope((await send(w, w.laptop)).bytes).header.seen.length <= z.SEEN_MAX)
+})
+test('a kind from a newer format: readers verify it and keep the chain; the hub and writers refuse it', async () => {
+  const w = await makeWorld()
+  await fetchKey(w.laptop, w)
+  const head = await send(w, w.phone, { kind: KIND.STATUS, keyScope: 0 })
+  await recv(w.laptop, head)
+  // Envelope 2 of the phone: kind 9 (not defined in this version), with and without the object block, signed and in chain.
+  const next = await send(w, w.phone, { kind: KIND.STATUS, keyScope: 0, payload: utf8('{"x":1}') })
+  const p = z.peekEnvelope(next.bytes)
+  const kindAt = LOGSEQ_AT(0) + 4 + 32 + 32 + 8
+  assert.equal(p.headerBytes[kindAt], KIND.STATUS)
+  const hdr = p.headerBytes.slice(); hdr[kindAt] = 9
+  const newer = await craft(w, w.phone, hdr, w.phone.device.id, bodyOf('{"x":1}'), { room: true })
+  const got = await recv(w.laptop, newer)
+  assert.equal(got.kind, 9); assert.equal(got.header.knownKind, false); assert.equal(got.header.isHead, true); assert.equal(txt(got.payload), '{"x":1}')
+  assert.equal(w.laptop.chains.get(b64u(w.phone.device.id)).seq, 2, 'the unknown kind advanced the chain')
+  await rejects(() => z.verifyEnvelope(newer, { state: w.laptop.state, chains: z.newChains(), allowChainStart: true, strictKinds: true }), 'bad-format')
+  await rejects(() => send(w, w.phone, { kind: 9, keyScope: 0 }), 'bad-argument')
+  // A tampered unknown kind is still refused by its signature.
+  await rejects(() => recv(w.laptop, flip(newer, newer.length - 3)), ['bad-signature', 'replay'])
+  // A header of a newer format version cannot be read: newer-version (the client says "update"), never bad-format.
+  const v2 = p.headerBytes.slice(); v2[0] = 2
+  await rejects(async () => z.peekEnvelope(await craft(w, w.phone, v2, w.phone.device.id, bodyOf('x'), { room: true })), 'newer-version')
+  const e2 = next.bytes.slice(); e2[0] = 2
+  await rejects(async () => z.peekEnvelope(e2), 'newer-version')
+  await rejects(() => z.decodeBind(KIND.ANSWER, Uint8Array.of(2)), 'newer-version')
 })
 test('a thread item verified in its pruned form opens later only as exactly that envelope', async () => {
   const w = await makeWorld()

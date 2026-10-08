@@ -1159,6 +1159,13 @@ export const KIND = Object.freeze({
   CHAT: 1, CARD: 2, REDECIDE: 7,
 })
 const KIND_MAX = 7
+/**
+ * Kinds above KIND_MAX are reserved for later format versions. A READER accepts them (FORMAT.md section 9, "Kinds a
+ * reader does not know"): no timeline block, the object block iff flags bit 1, the bind opaque. Signature, chain and
+ * seen are checked as for any envelope, so a newer client's envelope never breaks its sender's chain on an older
+ * device; nothing of it is applied. Writers (encodeHeader) and the hub (`strictKinds`) refuse them until defined.
+ */
+export const isKnownKind = kind => Number.isInteger(kind) && kind >= 1 && kind <= KIND_MAX
 /** Kinds whose header carries the object block (object id, state, urgency, answer time). */
 const OBJECT_KINDS = new Set([KIND.OBJECT_VERSION, KIND.ANSWER, KIND.PERMISSION_REQUEST, KIND.VERDICT, KIND.DECIDE_AGAIN])
 /** The only thread kind: a timeline item. Every other kind is a head. */
@@ -1216,11 +1223,12 @@ async function senderKey(roomId, secret, senderId, scope) {
   return key
 }
 
-function checkGrammar(h, bad) {
-  if (!Number.isInteger(h.kind) || h.kind < 1 || h.kind > KIND_MAX) bad(`unknown envelope kind ${h.kind}`)
+function checkGrammar(h, bad, { strictKinds = true } = {}) {
+  const known = isKnownKind(h.kind)
+  if (!known && (strictKinds || !Number.isInteger(h.kind) || h.kind < 1 || h.kind > 255)) bad(`unknown envelope kind ${h.kind}`)
   if (h.keyScope !== KEY_SCOPE.ROOM && h.keyScope !== KEY_SCOPE.SESSION) bad('unknown key scope')
   const thread = isThreadKind(h.kind)
-  if (OBJECT_KINDS.has(h.kind) !== !!h.card) bad(OBJECT_KINDS.has(h.kind) ? 'this kind needs the object block' : 'this kind has no object block')
+  if (known && OBJECT_KINDS.has(h.kind) !== !!h.card) bad(OBJECT_KINDS.has(h.kind) ? 'this kind needs the object block' : 'this kind has no object block')
   if (thread !== (h.timelineId != null)) bad(thread ? 'a timeline item needs a timeline' : 'only timeline items have a timeline')
   if (thread) {
     if (!Number.isInteger(h.timelineKind) || h.timelineKind < 1 || h.timelineKind > 255) bad('timeline kind')
@@ -1257,10 +1265,11 @@ function encodeHeader(h) {
   for (const b of h.blobs) w.raw(b, 16, 'blob id')
   return w.done()
 }
-function decodeHeader(bytes) {
+/** A version byte above this format's: written by a newer client (`newer-version`, "update"), else `bad-version`. */
+const checkVersion = (v, what) => { if (v !== VERSION) fail(v > VERSION ? 'newer-version' : 'bad-version', `${what} version ${v}`) }
+function decodeHeader(bytes, { strictKinds = false } = {}) {
   const r = new R(bytes)
-  const v = r.u8()
-  if (v !== VERSION) fail('bad-version', `envelope header version ${v}`)
+  checkVersion(r.u8(), 'envelope header')
   const flags = r.u8()
   if (flags & ~(FLAG_PUSH | FLAG_OBJECT)) fail('bad-format', 'unknown header flags')
   const h = { push: !!(flags & FLAG_PUSH), roomId: r.take(32), epoch: r.u32(), keyScope: r.u8(), sessionId: null }
@@ -1285,8 +1294,9 @@ function decodeHeader(bytes) {
   for (let i = 0; i < blobs; i++) h.blobs.push(r.take(16))
   r.end()
   if (h.seq < 1) fail('bad-format', 'sequence numbers start at 1')
-  checkGrammar(h, what => fail('bad-format', what))
+  checkGrammar(h, what => fail('bad-format', what), { strictKinds })
   h.isHead = !isThreadKind(h.kind)
+  h.knownKind = isKnownKind(h.kind)
   return h
 }
 
@@ -1308,8 +1318,7 @@ function encodeBody(bind, payload) {
 }
 function decodeBody(bytes) {
   const r = new R(bytes)
-  const v = r.u8()
-  if (v !== VERSION) fail('bad-version', `envelope body version ${v}`)
+  checkVersion(r.u8(), 'envelope body')
   const body = { bind: r.var16(), payload: r.var32() }
   const used = bytes.length - r.left()
   if (paddedLength(used) !== bytes.length) fail('bad-format', 'wrong padding length')
@@ -1320,8 +1329,7 @@ function decodeBody(bytes) {
 
 function splitEnvelope(bytes) {
   const r = new R(bytes)
-  const v = r.u8()
-  if (v !== VERSION) fail('bad-version', `envelope version ${v}`)
+  checkVersion(r.u8(), 'envelope')
   const type = r.u8()
   if (type !== OBJ.ENVELOPE && type !== OBJ.ENVELOPE_PRUNED) fail('bad-format', 'not an envelope')
   const headerBytes = r.var16()
@@ -1343,9 +1351,9 @@ export async function pruneEnvelope(bytes) {
 }
 
 /** Read the cleartext header without verifying anything (what a hub does to route and expire). */
-export function peekEnvelope(bytes) {
+export function peekEnvelope(bytes, { strictKinds = false } = {}) {
   const e = splitEnvelope(bytes)
-  return { header: decodeHeader(e.headerBytes), headerBytes: e.headerBytes, nonce: e.nonce, ciphertext: e.ct, ciphertextHash: e.ctHash, signature: e.signature, pruned: e.pruned }
+  return { header: decodeHeader(e.headerBytes, { strictKinds }), headerBytes: e.headerBytes, nonce: e.nonce, ciphertext: e.ct, ciphertextHash: e.ctHash, signature: e.signature, pruned: e.pruned }
 }
 
 /** Per-sender chain state of one device: Map(sender id -> { seq, hash, hashes: Map(seq -> hash) }). Includes its own chain. */
@@ -1430,12 +1438,12 @@ async function sealLocked({ device, state, secret, chains, kind, keyScope = KEY_
  * than EPOCH_GRACE_MS ago. A removed sender is refused, or with `allowRemovedSender` (reading history)
  * accepted up to the cut its removal entry names.
  *
- * Throws: bad-format, bad-version, wrong-room, log-behind, log-fork, not-member, removed-sender,
+ * Throws: bad-format, bad-version, newer-version (a newer format: update), wrong-room, log-behind, log-fork, not-member, removed-sender,
  * wrong-epoch, forbidden, bad-signature, replay, equivocation, gap, chain-break.
  */
-export async function verifyEnvelope(bytes, { state, chains, allowChainStart = false, allowRemovedSender = false, commit = true, freshness = null }) {
+export async function verifyEnvelope(bytes, { state, chains, allowChainStart = false, allowRemovedSender = false, commit = true, freshness = null, strictKinds = false }) {
   const e = splitEnvelope(bytes)
-  const h = decodeHeader(e.headerBytes)
+  const h = decodeHeader(e.headerBytes, { strictKinds })
   if (!bytesEqual(h.roomId, state.roomId)) fail('wrong-room', 'envelope of another room')
 
   // The sender names the log head it knows. Same number with another hash means the server showed us different logs.
@@ -1497,7 +1505,7 @@ const pickSecret = (secrets, h) => {
   if (!secrets) return null
   return h.keyScope === KEY_SCOPE.ROOM ? secrets.get(h.epoch) : secrets.get(`${hex(h.sessionId)}:${h.epoch}`)
 }
-const QUARANTINE = new Set(['decrypt-failed', 'bad-format', 'bad-version'])
+const QUARANTINE = new Set(['decrypt-failed', 'bad-format', 'bad-version', 'newer-version'])
 
 /**
  * Verify, then decrypt. `secrets`: a function (epoch, header) -> secret, or a Map (room scope: epoch ->
@@ -1586,8 +1594,7 @@ export function encodeRequestBind({ requestId, expiresAt }) {
 }
 export function decodeBind(kind, bind) {
   const r = new R(bind)
-  const v = r.u8()
-  if (v !== VERSION) fail('bad-version', 'bind version')
+  checkVersion(r.u8(), 'bind')
   let out
   switch (kind) {
     case KIND.ANSWER: {
