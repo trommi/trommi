@@ -15,6 +15,7 @@ import { compareVersions, parseClient } from './versions.mjs'
 import { limitsFromEnv } from './env.mjs'
 import { signTestRequest } from './test-rooms.mjs'
 import { routeLabel } from './metrics.mjs'
+import { deleteRoom, deleteRooms, testAccounts, roomTables } from './delete-room.mjs'
 
 const testKey = crypto.generateKeyPairSync('ed25519')
 /** Headers of a signed test request (each signature works once). */
@@ -219,6 +220,100 @@ test('test rooms: founding needs a signed request; DELETE removes rows and attac
   clock += 2 * 3600000; await w.hub.ops.testRooms.expire()
   assert.ok(!w.hub.ops.testRooms.isTestRoom(expiring))
   assert.equal(w.hub.db.prepare('SELECT COUNT(*) AS n FROM rooms WHERE room_id IN (?, ?)').get(expiring, normal).n, 1)
+  await w.hub.close()
+})
+
+// ---- deleting test accounts' rooms (admin page) ------------------------------------------
+
+/** One row in every table with a room_id column (values by declared type), two envelopes, an account and files. */
+function seedRoom(db, dir, roomId, email) {
+  let k = 0
+  for (const t of roomTables(db)) {
+    const cols = db.prepare(`PRAGMA table_info("${t}")`).all()
+    const val = c => c.name === 'room_id' ? roomId : c.name === 'email' ? email : /INT/i.test(c.type) ? 1000 + (k++) : /BLOB/i.test(c.type) ? Buffer.from([k++, 1, 2]) : `${t}-${c.name}-${k++}-${roomId.slice(0, 4)}`
+    const rows = t === 'envelopes' ? 2 : 1
+    for (let i = 0; i < rows; i++) db.prepare(`INSERT INTO "${t}" (${cols.map(c => `"${c.name}"`).join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...cols.map(val))
+  }
+  const att = path.join(dir, 'attachments', roomId)
+  fs.mkdirSync(att, { recursive: true })
+  for (const f of ['1'.repeat(32), '2'.repeat(32)]) fs.writeFileSync(path.join(att, f), Buffer.alloc(10))
+}
+const roomRows = (db, roomId) => Object.fromEntries(roomTables(db).map(t => [t, db.prepare(`SELECT COUNT(*) AS n FROM "${t}" WHERE room_id = ?`).get(roomId).n]))
+
+test('delete room: only the @example.org room goes (every table, its files), counts right, a real room is refused, backup first', async () => {
+  const w = await newHub()
+  const db = w.hub.db
+  // An old escrows table (removed in v2, still in older databases) is covered too.
+  db.exec('CREATE TABLE IF NOT EXISTS escrows (room_id TEXT PRIMARY KEY, escrow_version INTEGER NOT NULL, key_escrow BLOB NOT NULL) WITHOUT ROWID')
+  const real = 'a'.repeat(64), fake = 'b'.repeat(64), other = 'c'.repeat(64)
+  seedRoom(db, w.dir, real, 'someone@example.com')
+  seedRoom(db, w.dir, fake, 'e2e-123@Example.org')
+  seedRoom(db, w.dir, other, 'x@example.org.evil.com')
+  for (const t of ['accounts', 'rooms', 'member_entries', 'devices', 'sealed_room_keys', 'key_back_links', 'session_grants', 'sealed_session_keys', 'session_key_back_links',
+    'invites', 'join_requests', 'envelopes', 'objects', 'timelines', 'attachments', 'push_subscriptions', 'shares', 'agent_leases', 'escrows', 'test_rooms']) {
+    assert.ok(roomTables(db).includes(t), `seeded ${t}`)
+  }
+  const listed = testAccounts(db)
+  assert.deepEqual(listed.map(r => r.room_id), [fake])
+  assert.equal(listed[0].envelopes, 2)
+  assert.equal(listed[0].attachments, 1)
+  assert.ok(listed[0].last_activity >= listed[0].created_at)
+
+  // Refused: a real account, a look-alike domain, a room without an account; nothing changes.
+  const before = roomRows(db, real)
+  assert.throws(() => deleteRoom(db, w.dir, real), /not a test room/)
+  assert.throws(() => deleteRoom(db, w.dir, other), /not a test room/)
+  assert.throws(() => deleteRoom(db, w.dir, 'd'.repeat(64)), /not a test room/)
+  assert.throws(() => deleteRoom(db, w.dir, 'nope'), /64 hex/)
+  assert.deepEqual(roomRows(db, real), before)
+
+  const logs = []
+  const out = await deleteRooms({ db, dataDir: w.dir, roomIds: [fake, real], by: 'admin@test', log: m => logs.push(m) })
+  assert.equal(out.deleted.length, 1)
+  assert.equal(out.refused.length, 1)
+  assert.equal(out.refused[0].room_id, real)
+  const counts = out.deleted[0].rows
+  for (const t of roomTables(db)) assert.equal(counts[t], t === 'envelopes' ? 2 : 1, t)
+  assert.equal(out.deleted[0].files, 2)
+  assert.equal(out.totals.files, 2)
+  assert.equal(out.totals.envelopes, 2)
+  for (const [t, n] of Object.entries(roomRows(db, fake))) assert.equal(n, 0, t)
+  assert.ok(!fs.existsSync(path.join(w.dir, 'attachments', fake)))
+  // The real room and the look-alike are untouched, files included.
+  assert.deepEqual(roomRows(db, real), before)
+  assert.equal(fs.readdirSync(path.join(w.dir, 'attachments', real)).length, 2)
+  assert.equal(roomRows(db, other).accounts, 1)
+  // The backup was taken before and still holds the test room.
+  assert.match(out.backup, /backups\/hub-\d{8}-\d{6}-before-delete\.db\.gz$/)
+  const restored = path.join(w.dir, 'restored.db')
+  fs.writeFileSync(restored, (await import('node:zlib')).gunzipSync(fs.readFileSync(out.backup)))
+  const { DatabaseSync } = await import('node:sqlite')
+  const copy = new DatabaseSync(restored, { readOnly: true })
+  assert.equal(copy.prepare('SELECT COUNT(*) AS n FROM envelopes WHERE room_id = ?').get(fake).n, 2)
+  copy.close()
+  // Logged, and written to deletions.log.
+  assert.ok(logs.some(l => l.includes(fake.slice(0, 12)) && /envelopes 2/.test(l)))
+  const line = JSON.parse(fs.readFileSync(path.join(w.dir, 'deletions.log'), 'utf8').trim())
+  assert.equal(line.room_id, fake); assert.equal(line.by, 'admin@test'); assert.equal(line.rows.envelopes, 2)
+  // allowNonTest is the explicit way past the check (the admin page never passes it).
+  assert.equal(deleteRoom(db, w.dir, other, { allowNonTest: true }).rows.accounts, 1)
+  await w.hub.close()
+})
+
+test('delete room through the hub: a live room is closed, then gone (404), a real one stays', async () => {
+  const w = await newHub()
+  await foundRoom(w)
+  const live = w.roomId, phone = w.phone
+  w.hub.db.prepare('INSERT INTO accounts (room_id, email, created_at, updated_at, revision, auth_salt, auth_hash, key_wrapped, kdf) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(live, 'e2e@example.org', 1, 1, 1, Buffer.alloc(16), Buffer.alloc(32), Buffer.alloc(61), '{}')
+  await expect(w, 'GET', `${R(w)}/devices`, { token: phone.token }, 200)
+  await foundRoom(w)
+  const kept = w.roomId
+  const out = await w.hub.ops.deleteTestRooms([live, kept], { by: 'test' })
+  assert.deepEqual(out.deleted.map(r => r.room_id), [live])
+  assert.equal(out.refused[0].room_id, kept)
+  await expect(w, 'GET', `/v1/rooms/${live}/devices`, { token: phone.token }, 404, 'no-room')
+  await expect(w, 'GET', `${R(w)}/devices`, { token: w.phone.token }, 200)
   await w.hub.close()
 })
 
