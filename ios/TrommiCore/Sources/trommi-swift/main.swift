@@ -202,6 +202,29 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     try await room.leaveRoom()
     openedRoom = nil
     print("Logged out. This device holds nothing of the room any more.")
+  case "account":
+    let room = try pickRoom()
+    if let st = try await room.accountStatus() { print("account \(st.email)\(st.emailVerifiedAt != nil ? " (confirmed)" : "")\(st.hasRecovery ? ", Emergency Kit made" : "")") } else { print("no account") }
+  case "kit":
+    // the account password from stdin; the twelve words are printed once (write them down)
+    let pw = readLine(strippingNewline: true) ?? ""
+    let room = try pickRoom()
+    let k = try await room.makeEmergencyKit(password: pw)
+    print("Emergency Kit for \(k.email): \(k.words)")
+  case "passwd":
+    // the current password, then the new one, each a line on stdin
+    let cur = readLine(strippingNewline: true) ?? "", next = readLine(strippingNewline: true) ?? ""
+    let room = try pickRoom()
+    try await room.changePassword(current: cur, next: next)
+    print("Password changed.")
+  case "forgot":
+    // trommi-swift forgot <email>: the kit's twelve words, then the new password, each a line on stdin
+    guard let email = rest.first else { die("usage: trommi-swift forgot <email>") }
+    let words = readLine(strippingNewline: true) ?? "", next = readLine(strippingNewline: true) ?? ""
+    let room = try await Room.resetPassword(hubURL: hubOption ?? "https://hub.trommi.com", email: email, words: words, newPassword: next, base: base)
+    openedRoom = room
+    try await room.sendDeviceRegister(name: deviceName ?? "trommi-swift", platform: "trommi-swift")
+    print("New password set. This device is a member of the room now.")
   case "rooms":
     for id in Store.rooms(base: base) {
       let r = try Room.open(base: base, roomId: id)

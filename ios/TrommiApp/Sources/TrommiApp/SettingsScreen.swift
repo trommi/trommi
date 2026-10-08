@@ -257,15 +257,84 @@ struct QRCode: View {
 struct AccountPane: View {
   @EnvironmentObject var model: BoardModel
   @State private var leave = false
+  @State private var status: AccountStatus?
+  @State private var loaded = false
+  @State private var code = ""
+  @State private var kitPassword = ""
+  @State private var kit: String?
+  @State private var current = ""
+  @State private var next = ""
+  @State private var said = ""
+  @State private var error = ""
+  @State private var working = false
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Your login").font(Face.display(22, .bold))
-      Text("Email, password and the Emergency Kit are managed at app.trommi.com → Settings → Account.").font(Face.text(15)).foregroundStyle(Ink.muted)
+      if !said.isEmpty { Text(said).font(Face.text(15, .medium)).foregroundStyle(Ink.accent) }
+      if !error.isEmpty { Text(error).font(Face.text(15)).foregroundStyle(Ink.urgCritical) }
+      if !loaded { ProgressView() }
+      else if let st = status {
+        HStack(spacing: 6) {
+          Text("Logged in as").font(Face.text(16)).foregroundStyle(Ink.muted)
+          Text(st.email).font(Face.text(16, .semibold))
+          if st.emailVerifiedAt != nil { Text("· confirmed").font(Face.text(15)).foregroundStyle(Ink.accent) }
+        }
+        if st.emailVerifiedAt == nil {
+          DisclosureGroup("Confirm your email") {
+            VStack(alignment: .leading, spacing: 10) {
+              Text("We send a six-digit code to \(st.email).").font(Face.text(14)).foregroundStyle(Ink.muted)
+              Button("Send code") { run { try await model.room?.resendEmailCode(); said = "Code sent." } }.buttonStyle(QuietWay())
+              HStack {
+                TextField("Code", text: $code).keyboardType(.numberPad).textContentType(.oneTimeCode).font(Face.mono(18)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
+                Button("Confirm") { run { try await model.room?.verifyEmail(code: code); said = "Email confirmed."; await load() } }.buttonStyle(QuietWay())
+              }
+            }.padding(.top, 8)
+          }.tint(Ink.fg).font(Face.text(16, .medium))
+        }
+        Text("Emergency Kit").font(Face.display(20, .bold)).padding(.top, 6)
+        if let k = kit {
+          Text("Write the twelve words down or keep them as a file somewhere safe. They are shown only now; the old kit no longer works.").font(Face.text(14)).foregroundStyle(Ink.muted)
+          VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) { PenMark("ui:BELL", color: Ink.accent).frame(width: 20, height: 20); Text("Trommi Emergency Kit").font(Face.text(15, .semibold)) }
+            Text("Email: \(st.email)").font(Face.text(14)).foregroundStyle(Ink.muted)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
+              ForEach(Array(k.split(separator: " ").enumerated()), id: \.offset) { i, w in Text("\(i + 1). \(w)").font(Face.mono(15, .medium)) }
+            }
+            Text("Forgot your password? app.trommi.com → Log in → “Forgot password?” → your email and these 12 words.").font(Face.text(12)).foregroundStyle(Ink.muted)
+          }.padding(14).background(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.fg, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3])))
+          ShareLink(item: "Trommi Emergency Kit\nEmail: \(st.email)\nWords: \(k)\n\nForgot your password? app.trommi.com → Log in → Forgot password? → your email and these 12 words.") {
+            Label("Keep it (Files, print, …)", systemImage: "square.and.arrow.down").font(Face.text(15, .semibold))
+          }
+        } else {
+          Text(st.hasRecovery ? "Made. With it you can set a new password if you forget yours." : "Not made yet. With it you can set a new password if you forget yours. Whenever you like.").font(Face.text(15)).foregroundStyle(Ink.muted)
+          DisclosureGroup(st.hasRecovery ? "Make a new kit" : "Make my Emergency Kit") {
+            HStack {
+              SecureField("Your password", text: $kitPassword).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
+              Button("Make the kit") { run { let r = try await model.room?.makeEmergencyKit(password: kitPassword); kit = r?.words; kitPassword = ""; await load() } }.buttonStyle(QuietWay())
+            }.padding(.top, 8)
+          }.tint(Ink.fg).font(Face.text(16, .medium))
+        }
+        Text("Password").font(Face.display(20, .bold)).padding(.top, 6)
+        DisclosureGroup("Change password") {
+          VStack(alignment: .leading, spacing: 8) {
+            SecureField("Current password", text: $current).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
+            HStack {
+              SecureField("New password (at least 12 characters)", text: $next).textContentType(.newPassword).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
+              Button { next = generatePassword() } label: { Image(systemName: "dice") }.accessibilityLabel("Suggest a password")
+            }
+            if !next.isEmpty && next.count >= 12 { Text(next).font(Face.mono(13)).foregroundStyle(Ink.muted).textSelection(.enabled) }
+            Button("Change password") { run { try await model.room?.changePassword(current: current, next: next); current = ""; next = ""; said = "Password changed." } }
+              .buttonStyle(QuietWay()).disabled(passwordProblem(next) != nil || current.isEmpty)
+          }.padding(.top, 8)
+        }.tint(Ink.fg).font(Face.text(16, .medium))
+      } else {
+        Text("This account was made before email and password: add a login at app.trommi.com → Settings → Account (it needs the recovery code shown when you started).").font(Face.text(15)).foregroundStyle(Ink.muted)
+      }
       Text("Look").font(Face.display(20, .bold)).padding(.top, 6)
       Picker("Theme", selection: $model.theme) { ForEach(ThemeMode.allCases) { Text($0.word).tag($0) } }.pickerStyle(.segmented)
       Text("This device").font(Face.display(20, .bold)).padding(.top, 6)
       if let r = model.room {
-        Text("Room \(String(r.record.roomId.prefix(16)))… · key epoch \(r.state.epoch) · hub \(r.record.hubURL)").font(Face.mono(12)).foregroundStyle(Ink.muted)
+        Text("Room \(String(r.record.roomId.prefix(16)))… · key epoch \(r.state.epoch) · hub \(r.record.hubURL) · Trommi \(HubClient.appVersion)").font(Face.mono(12)).foregroundStyle(Ink.muted)
       }
       Text("If you lose your password and your Emergency Kit, nobody (not even Trommi) can recover your data.").font(Face.text(13)).foregroundStyle(Ink.muted)
       Button(role: .destructive) { leave = true } label: {
@@ -275,6 +344,19 @@ struct AccountPane: View {
       .confirmationDialog("Log out of this device?", isPresented: $leave, titleVisibility: .visible) {
         Button("Log out", role: .destructive) { model.logOut() }
       } message: { Text("This device removes itself from the room and forgets its keys. Your other devices and your agents carry on; this phone logs in again with email and password or a pairing code.") }
+    }
+    .task { await load() }
+  }
+  private func load() async { status = try? await model.room?.accountStatus(); loaded = true }
+  private func run(_ op: @escaping () async throws -> Void) {
+    error = ""; said = ""
+    Task {
+      do { try await op() }
+      catch {
+        let code = (error as? ZError)?.code ?? (error as? HubError)?.code ?? ""
+        self.error = ["wrong-login": "That password is not right.", "weak-password": "The password needs at least 12 characters.", "wrong-code": "Wrong or expired code.",
+                      "account-changed": "Changed on another device meanwhile. Please try again.", "rate-limited": "Too many tries. Please wait a few minutes."][code] ?? model.describe(error)
+      }
     }
   }
 }

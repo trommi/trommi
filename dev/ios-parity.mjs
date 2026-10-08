@@ -189,6 +189,24 @@ try {
     console.log('     ' + r.stdout.trim().split('\n').join('\n     '))
   })
 
+  await test('account from Swift: status, a new password, the Emergency Kit; "Forgot password" with its words on a new Swift device', async () => {
+    const email = 'parity@example.org'
+    assert.match((await run(['account'], { home })).stdout, /account parity@example\.org/)
+    const kit = await run(['kit'], { home, stdin: 'correct horse battery staple' })
+    const words = kit.stdout.match(/Emergency Kit for parity@example\.org: ([a-z ]+)/)[1].trim()
+    assert.equal(words.split(' ').length, 12)
+    await run(['passwd'], { home, stdin: 'correct horse battery staple\nanother good password 2' })
+    const a = await A.loginWithPassword({ hub_url: hub.hub_url, email, password: 'another good password 2', storage: core.memoryStorage(), device_name: 'JS after Swift passwd' })
+    assert.ok(a.client.my_device_id, 'the JS core logs in with the password Swift set')
+    await a.client.stop?.().catch?.(() => {})
+    const fhome = path.join(tmp, 'swift-forgot')
+    const f = await run(['forgot', email, '--hub', hub.hub_url, '--name', 'Swift forgot'], { home: fhome, stdin: `${words}\nthe newest password 3` })
+    assert.match(f.stdout, /New password set/)
+    const b = await A.loginWithPassword({ hub_url: hub.hub_url, email, password: 'the newest password 3', storage: core.memoryStorage(), device_name: 'JS after Swift forgot' })
+    assert.ok(b.client.my_device_id)
+    await b.client.stop?.().catch?.(() => {})
+  })
+
   await test('board: what Swift\'s Desk reads (cards, status, stack, registers) is what the app\'s core holds', async () => {
     await human.setRegisters({ [`snooze/${[...human.model.cards.keys()][0]}`]: { until: Date.now() + 3600_000 } })
     await until('the snooze at the hub', () => human.model.human.raw.has(`snooze/${[...human.model.cards.keys()][0]}`) && !human.model.human.raw.get(`snooze/${[...human.model.cards.keys()][0]}`).pending)

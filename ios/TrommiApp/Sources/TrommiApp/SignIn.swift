@@ -147,10 +147,40 @@ struct EmailView: View {
         Button("Log in") { Task { await model.login(email: email, password: password, name: name.trimmingCharacters(in: .whitespaces)) } }
           .disabled(email.isEmpty || password.isEmpty || name.trimmingCharacters(in: .whitespaces).isEmpty)
       } footer: {
-        Text("Your password never leaves this device. Forgot it? Set a new one with your Emergency Kit at app.trommi.com.")
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Your password never leaves this device.")
+          Button("Forgot password?") { model.go(.forgot) }.font(Face.text(14, .semibold)).foregroundStyle(Ink.accent)
+        }
       }
     }
     .onAppear { if email.isEmpty { email = model.lastEmail } }
   }
 }
 
+
+
+/** Forgot password: email, the twelve words of the Emergency Kit, a new password (auth.mjs forgotFlow). */
+struct ForgotView: View {
+  @EnvironmentObject var model: BoardModel
+  @State private var email = ""
+  @State private var words = ""
+  @State private var password = ""
+  @State private var name = UIDeviceName.current
+  var body: some View {
+    Form {
+      Section { Text("With your Emergency Kit you set a new password. Your devices stay logged in.").foregroundStyle(.secondary) }
+      if let e = model.error { Section { Text(e).foregroundStyle(.red) } }
+      Section {
+        TextField("Email", text: $email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+        TextField("The 12 words of your Emergency Kit", text: $words, axis: .vertical).lineLimit(2...4).textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(.body, design: .monospaced))
+        SecureField("New password (at least 12 characters)", text: $password).textContentType(.newPassword)
+      }
+      Section("Name of this device") { TextField("Name of this device", text: $name) }
+      Section {
+        Button("Set new password") { Task { await model.forgot(email: email, words: words, password: password, name: name) } }
+          .disabled(email.isEmpty || words.isEmpty || password.count < 12)
+      } footer: { Text("No kit, but another device is logged in? Change the password there under Settings.") }
+    }
+    .onAppear { if email.isEmpty { email = model.lastEmail } }
+  }
+}
