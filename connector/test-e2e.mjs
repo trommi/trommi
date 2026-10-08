@@ -863,7 +863,7 @@ export async function integration({ test, tmp }) {
       const prefix = slot.replace(/key$/, '')
       // The other process: the same key, its own copy of the state (as a second Claude would have after a copy of the folder).
       const twin = fs.mkdtempSync(path.join(tmp, 'twin-'))
-      fs.copyFileSync(path.join(room, `${prefix}state.json`), path.join(twin, `${prefix}state.json`))
+      for (const f of ['state.json', 'state.log']) if (fs.existsSync(path.join(room, `${prefix}${f}`))) fs.copyFileSync(path.join(room, `${prefix}${f}`), path.join(twin, `${prefix}${f}`))
       const before = human.chains.get(core.z.b64u(core.z.unhex(agentId)))?.seq
       assert.ok(before > 0, 'the human knows the agent\'s chain')
       const other = await core.openRoom({ storage: await fileStorage({ dir: twin, key_file: path.join(room, slot), prefix }) })
