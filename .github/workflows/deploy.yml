@@ -1,4 +1,5 @@
-# Deploys the thin hub (hub/server.mjs, image hub/Dockerfile) to trommi-hub on every push to main:
+# Deploys the thin hub (image $DOCKERFILE below: hub/Dockerfile, the Node hub, or hub-rs/Dockerfile, the Rust hub)
+# to trommi-hub on every push to main:
 # test -> build on GitHub -> Tailscale (tag:trommi-ci) -> docker load on the server ->
 # stop, back up /srv/trommi/data, start -> https://hub.trommi.com/healthz reports this commit; if it never does, the
 # previous image (its id kept in /srv/trommi/previous-image) is started again and the job fails.
@@ -11,7 +12,7 @@ on:
   push:
     branches: [main]
     # Only what goes into the image restarts the hub (a restart drops every open stream).
-    paths: ['hub/**', 'shared/crypto/zcrypto.mjs', 'shared/crypto/hub.mjs', 'shared/crypto/session-grants.mjs', 'shared/codec.ts', 'shared/types.ts', '.github/workflows/deploy.yml']
+    paths: ['hub/**', 'shared/crypto/zcrypto.mjs', 'shared/crypto/hub.mjs', 'shared/crypto/session-grants.mjs', 'shared/codec.ts', 'shared/types.ts', 'hub-rs/**', '.github/workflows/deploy.yml']
   workflow_dispatch:
 
 concurrency:
@@ -34,6 +35,8 @@ jobs:
     env:
       HOST: root@trommi-hub.tail276436.ts.net
       IMAGE: trommi-hub:${{ github.sha }}
+      # The hub image, as DOCKERFILE in dev/deploy/hub.sh.
+      DOCKERFILE: hub/Dockerfile
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -50,12 +53,19 @@ jobs:
       - name: Fuzz (quick)
         run: npm run fuzz
 
+      # With the Rust image: its contract (crypto vectors, the hub suites against it, a differential run vs Node).
+      - name: hub-rs contract
+        if: env.DOCKERFILE == 'hub-rs/Dockerfile'
+        env:
+          CARGO: cargo
+        run: hub-rs/contract.sh --quick
+
       # PREVIEW_ORIGINS: the design preview served from the developer desktop over tailscale serve (tailnet only),
       # which talks to this hub; the repository variable HUB_PREVIEW_ORIGINS (comma list) replaces the default.
       - name: Build image
         env:
           PREVIEW_ORIGINS: ${{ vars.HUB_PREVIEW_ORIGINS || 'https://desktop.TAILNET.ts.net:8443' }}
-        run: docker build -f hub/Dockerfile --build-arg COMMIT=${{ github.sha }} --build-arg PREVIEW_ORIGINS="$PREVIEW_ORIGINS" -t "$IMAGE" .
+        run: docker build -f "$DOCKERFILE" --build-arg COMMIT=${{ github.sha }} --build-arg PREVIEW_ORIGINS="$PREVIEW_ORIGINS" -t "$IMAGE" .
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0

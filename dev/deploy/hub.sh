@@ -4,7 +4,7 @@
 #
 #   dev/deploy/hub.sh [--dry-run] [--allow-unpushed] [--skip-config]
 #
-# test:hub + quick fuzz -> docker build (COMMIT = HEAD, from `git archive HEAD`) -> docker save | ssh docker load ->
+# test:hub + quick fuzz (+ hub-rs/contract.sh with the Rust image) -> docker build of $DOCKERFILE (COMMIT = HEAD, from `git archive HEAD`) -> docker save | ssh docker load ->
 # apns.env and admin config -> online SQLite backup -> restart -> https://hub.trommi.com/healthz reports HEAD, else the
 # previous image is started again and the script fails -> admin page check.
 #
@@ -41,6 +41,8 @@ ENV_FILE=${TROMMI_DEPLOY_ENV:-$HOME/.config/trommi/deploy/hub.env}
 
 guard_tree
 IMAGE="trommi-hub:$SHA"
+# The hub image: hub/Dockerfile (Node) or hub-rs/Dockerfile (Rust, same port, volume, env, uid; hub-rs/README.md).
+DOCKERFILE=${HUB_DOCKERFILE:-hub-rs/Dockerfile}
 
 # ---- the secrets file ----
 PREVIEW_ORIGINS_DEFAULT='https://desktop.TAILNET.ts.net:8443'
@@ -75,6 +77,10 @@ say "test:hub"
 run npm --prefix "$REPO" run test:hub
 say "fuzz (quick)"
 run npm --prefix "$REPO" run fuzz
+if [ "$DOCKERFILE" = hub-rs/Dockerfile ]; then
+  say "hub-rs contract (cargo test, the hub suites against the Rust hub, differential run vs Node)"
+  run "$REPO/hub-rs/contract.sh" --quick
+fi
 
 # ---- build ----
 say "docker build $IMAGE"
@@ -84,11 +90,11 @@ trap cleanup EXIT
 if [ "$DRY" = 1 ]; then
   printf '[dry-run] git archive HEAD into a temp dir\n' >&2
   TREE='<tree>'
-  run docker build -f "$TREE/hub/Dockerfile" --build-arg "COMMIT=$SHA" --build-arg "PREVIEW_ORIGINS=$PREVIEW_ORIGINS" -t "$IMAGE" "$TREE"
+  run docker build -f "$TREE/$DOCKERFILE" --build-arg "COMMIT=$SHA" --build-arg "PREVIEW_ORIGINS=$PREVIEW_ORIGINS" -t "$IMAGE" "$TREE"
   TREE=
 else
   TREE=$(build_tree)
-  docker build -f "$TREE/hub/Dockerfile" --build-arg "COMMIT=$SHA" --build-arg "PREVIEW_ORIGINS=$PREVIEW_ORIGINS" -t "$IMAGE" "$TREE"
+  docker build -f "$TREE/$DOCKERFILE" --build-arg "COMMIT=$SHA" --build-arg "PREVIEW_ORIGINS=$PREVIEW_ORIGINS" -t "$IMAGE" "$TREE"
 fi
 
 # ---- ship ----
