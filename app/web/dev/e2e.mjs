@@ -155,13 +155,15 @@ try {
   t0 = Date.now()
   const picCard = await agent.sendCard({ title: 'Welcher Entwurf?', body: 'Bild anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }, { key: 'z', label: 'Später' }], attachments: [ref] })
   await A.until(`document.getElementById('row-${picCard}')`, 'picture card row')
-  await A.until(`[...document.querySelectorAll('#row-${picCard} img')].some(i => i.complete && i.naturalWidth > 0)`, 'decrypted picture shown', 15000).then(() => { check(true, 'encrypted picture decrypted and shown on the Desk'); timing('picture card sent -> picture visible', Date.now() - t0) }, e => check(false, e.message))
+  // (a Desk row is its title and its answers since 8 October: the picture shows on the card)
+  await A.js(`trommi.router.visit('/card/' + trommi.model().byCard.get('${picCard}').number)`)
+  await A.until(`[...document.querySelectorAll('#cardpage .tc-figure img')].some(i => i.complete && i.naturalWidth > 0)`, 'decrypted picture shown', 15000).then(() => { check(true, 'encrypted picture decrypted and shown on its card'); timing('picture card sent -> picture visible', Date.now() - t0) }, e => check(false, e.message))
 
   // ---- a card with a video: uploaded encrypted like a picture; on the card a <video> plays the decrypted blob ----
   const webm = fs.readFileSync(new URL('../public/demo/files/clip.webm', import.meta.url))
   const vref = await agent.uploadAttachment(webm, { file_name: 'ablauf.webm', media_type: 'video/webm' })
   const vidCard = await agent.sendCard({ title: 'Dieser Ablauf?', body: 'Video anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }], attachments: [vref] })
-  await A.until(`document.getElementById('row-${vidCard}')`, 'video card row')
+  await A.until(`trommi.model().byCard.get('${vidCard}')`, 'video card in the room')
   const vnr = await A.js(`return trommi.model().byCard.get('${vidCard}').number`)
   await A.js(`trommi.router.visit('/card/${vnr}')`)
   await A.until("document.querySelector('#cardpage .tc-video video[controls][playsinline]')", 'video player on the card').then(() => check(true, 'a video card shows a <video controls playsinline>'), e => check(false, e.message))

@@ -1362,3 +1362,19 @@ button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
 @keyframes work-breathe { 50% { box-shadow: 0 0 0 5px transparent; opacity: .6; } }
 @media (prefers-reduced-motion: reduce) { .work-dot { animation: none; } }
 @media (max-width: 860px) { .end-row > :is(.end-said, .end-ago) { display: none !important; } }
+
+/* ---- a Desk row is its title and its answer tiles (his word, 8 October: "too much text"): no session name, no
+   line under the title, no drawing, no tag; a wide screen shows the line and the tag while the pointer rests ---- */
+#inbox .inbox-row :is(.inbox-byline, .row-meta, .inbox-gutter, .inbox-fan, .inbox-who) { display: none !important; }
+#inbox .inbox-row .inbox-text.has-sender { padding-left: 0 !important; }
+#inbox .inbox-row .inbox-body { display: none !important; }
+#inbox .inbox-row .inbox-when { visibility: hidden; }
+@media (hover: hover) and (min-width: 861px) {
+  #inbox .inbox-row:is(:hover, :focus-within) .inbox-body { display: block !important; }
+  #inbox .inbox-row:is(:hover, :focus-within) .inbox-when { visibility: visible; }
+}
+@media (max-width: 860px) { #inbox .inbox-row .inbox-when { display: none !important; } }
+#inbox .inbox-row .row-mark { opacity: 0; }
+#inbox .inbox-row:is(:hover, :focus-within, [aria-selected="true"]) .row-mark, body[data-selecting] #inbox .inbox-row .row-mark { opacity: 1; }
+@media (max-width: 860px) { #inbox .inbox-row .row-mark { display: none; } }
+@media (max-width: 860px) { html body #inbox .inbox-row .inbox-text .inbox-body, html body #inbox .inbox-row .inbox-body-text { display: none !important; } html body #inbox .inbox-row .inbox-text.has-sender { padding-left: 0 !important; } }
