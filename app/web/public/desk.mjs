@@ -378,7 +378,11 @@ let openPile, offMore = false
 controller('piles', class extends Controller {
   static targets = ['pile']
   connect() {
-    if (openPile === undefined) openPile = this.pileTargets.find(p => p.classList.contains('is-open'))?.dataset.pile ?? null
+    // (A pile the page renders open, /stacks/off, the end list's "All N", stands open: before, a Desk seen earlier in
+    // this tab had set "none open" for good, and the link showed the page with the list folded away.)
+    const rendered = this.pileTargets.find(p => p.classList.contains('is-open'))?.dataset.pile
+    if (rendered) openPile = rendered
+    else if (openPile === undefined) openPile = null
     this.apply()
   }
   toggle({ currentTarget }) {
