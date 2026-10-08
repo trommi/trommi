@@ -1068,6 +1068,88 @@ public final class Room {
   }
   public func deleteNote(_ id: String) async throws { try await saveNote(objectId: id, fields: [:], close: true) }
 
+  // ---- pairing a device from here (client.mjs createInvite, _checkInvite, confirmInvite, _finalizeInvite) ------------
+
+  public struct Pairing {
+    public let inviteId: String
+    public let link: String
+    public let expiresAt: UInt64
+    let invite: InviteRecord
+    var request: Bytes? = nil
+    var requestHash: Bytes? = nil
+    var member: Member? = nil
+    var acceptedAt: UInt64 = 0
+    public var code: String? = nil
+    public var newcomerId: String? = nil
+  }
+  /** An invite link for a new human device (the QR code of "Pair a device"). */
+  public func createPairing(app: String = "https://app.trommi.com/join", ttlMs: UInt64 = 600_000) async throws -> Pairing {
+    try await serial { [self] in
+      if !self.synced { _ = try await self.catchUpInner() }
+      let made = try createInvite(state: self.state, inviter: self.device, hub: self.hub.hubURL, role: ROLE.HUMAN, app: app, ttlMs: ttlMs)
+      let r = try await self.noted { try await self.hub.postInvite(signedOffer: made.offer) }
+      return Pairing(inviteId: r["invite_id"] as? String ?? hex(made.invite.inviteId), link: made.link, expiresAt: made.invite.expiresAt, invite: made.invite)
+    }
+  }
+  /** Look for the newcomer's request; on one: reveal, and the check code to compare (as emoji). */
+  public func checkPairing(_ p: inout Pairing) async throws -> Bool {
+    if p.code != nil { return true }
+    let r = try await noted { try await hub.getRequests(p.inviteId) }
+    for q in r["signed_requests"] as? [String] ?? [] {
+      guard let bytes = try? unb64u(q) else { continue }
+      let accepted: (reveal: Bytes, code: String, requestHash: Bytes, member: Member)
+      do { accepted = try acceptJoinRequest(invite: p.invite, request: bytes, inviter: device) }
+      catch let e as ZError where e.code == "invite-expired" { throw e }
+      catch { continue }
+      _ = try await noted { try await hub.postReveal(p.inviteId, signedReveal: accepted.reveal) }
+      p.request = bytes; p.requestHash = accepted.requestHash; p.member = accepted.member; p.acceptedAt = nowMs()
+      p.code = accepted.code; p.newcomerId = hex(try deviceId(accepted.member.signPub, accepted.member.kexPub))
+      return true
+    }
+    if nowMs() > p.expiresAt { throw ZError("invite-expired", "the invite has expired") }
+    return false
+  }
+  /** The human compared the emoji: a match adds the device (and seals it the room key and every session key); no match burns the invite. */
+  public func confirmPairing(_ p: Pairing, matches: Bool) async throws {
+    if !matches {
+      try? await hub.deleteInvite(p.inviteId)
+      throw ZError("code-mismatch", "the check codes do not match: nobody was added, the invite is spent")
+    }
+    guard let member = p.member, let newId = p.newcomerId else { throw ZError("bad-invite", "this invite waits for no code") }
+    if nowMs() > p.acceptedAt + 10 * 60_000 { throw ZError("invite-expired", "the confirmation came too late") }
+    try await serial { [self] in
+      _ = try await self.refreshMembers()
+      if self.state.memberAt(try unhex(newId)) == nil {
+        guard let secret = self.roomSecrets[self.state.epoch] else { throw ZError("no-key", "no room key for the current epoch") }
+        let added = try addMember(self.state, signer: self.device, member: member, inviteId: p.invite.inviteId)
+        let wrap = try wrapEpochKey(added.state, secret, try unhex(newId))
+        _ = try await self.noted { try await self.hub.postMember(signedEntry: added.entry, sealedRoomKeys: [(try unhex(newId), wrap)]) }
+      }
+      _ = try await self.refreshMembers()
+      try await self.refreshSessions()
+      try await self.resealSessions()
+    }
+  }
+  /** Re-seal every session's current key for everyone who holds it now (a new human device): the same grant, posted together. */
+  func resealSessions() async throws {
+    var items: [JSON] = []
+    for (sid, ss) in sessionStates {
+      guard let cur = sessionSecrets["\(sid):\(ss.epoch)"] else { continue }
+      let agents = ss.agentIds.compactMap { try? unhex($0) }
+      let active = agents.filter { state.memberAt($0)?.role == ROLE.AGENT }
+      // the agents that were given the history keep it (register session_history/<sid>, room scope: humans only)
+      let entitled = (board.human.raw["session_history/\(sid)"]?.value["agents"].array ?? []).compactMap { $0.string }
+      let g = try createSessionGrant(state: state, signer: device, sessionState: ss, current: cur, agentIds: active,
+                                     withHistory: active.contains { entitled.contains(hex($0)) }, rotate: active.count != agents.count)
+      var item: JSON = ["session_id": sid, "signed_grant": b64u(g.grant), "sealed_session_keys": g.wraps.map { ["device_id": hex($0.id), "key_sealed": b64u($0.sealed)] }]
+      if let bl = g.backLink { item["key_back_link"] = b64u(bl) }
+      items.append(item)
+    }
+    var i = 0
+    while i < items.count { _ = try await noted { try await hub.postSessionGrants(Array(items[i..<min(i + 64, items.count)])) }; i += 64 }
+    if !items.isEmpty { try await refreshSessions() }
+  }
+
   // ---- the open cards (the spike's list; the app reads the board) -----------------------------------
 
   /** The open cards (decisions and infos) in stack order. */
