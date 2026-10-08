@@ -1683,8 +1683,35 @@ const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catc
 const write = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v) } catch {} }
 
 
+// The core runs in a Web Worker (shared/core-worker.ts): the room is verified, decrypted, reduced and stored there, and
+// the page holds an exact copy of the model (shared/remote.ts). A page whose worker does not come up opens the room
+// itself, as before. ?core=page (kept for the tab session) opens it in the page, for comparing.
+/* global __TROMMI_CORE_WORKER__ */
+const CORE_WORKER = typeof __TROMMI_CORE_WORKER__ === 'string' ? __TROMMI_CORE_WORKER__ : '/gen/vendor/core-worker.mjs'
+const inWorker = () => typeof Worker === 'function' && ses('trommi-core', new URLSearchParams(location.search).get('core')) !== 'page'
+/** The stored room in the core worker: a RemoteClient, null (no room stored), or undefined (no worker here: open it in the page). */
+async function openInWorker() {
+  if (!inWorker()) return undefined
+  try { return await (await import('./gen/vendor/remote.mjs')).openRemote({ url: CORE_WORKER, storage: { name: 'trommi', prefix: 'room/' }, client: CLIENT }) }
+  catch (err) { if (err?.code !== 'worker-failed' && err?.code !== 'worker-timeout') throw err; console.warn('core worker:', err.message, '(the room opens in the page)'); return undefined }
+}
+
+/** The core worker, started at the top of boot (not for the demo or a share page). */
+let early = null
+function startEarly() {
+  let demo = false
+  try { const q = new URLSearchParams(location.search); demo = q.has('mock') ? q.get('mock') !== '0' : Boolean(sessionStorage.getItem('trommi-mock')) } catch {}
+  if (demo || /^\/a\/[0-9a-f]{32}$/.test(location.pathname)) return null
+  const p = openInWorker()
+  p.catch(() => {})   // (awaited in openClient)
+  return p
+}
+
 async function openClient() {
   if (mock) return (await import('./demo/demo.mjs')).openRoom({ mock })
+  const remote = await (early ?? openInWorker())
+  early = null
+  if (remote !== undefined) return remote
   const c = await core()
   const storage = c.idbStorage({ name: 'trommi', prefix: 'room/' })
   // Several tabs of this browser: one writes (a Web Lock), the others read on their own and hand it their actions
@@ -1855,6 +1882,8 @@ async function start(client, { fresh = false } = {}) {
 /** The page starts here (index.html loads this module; importing it elsewhere, as the connector's tests do, does nothing). */
 async function boot() {
   T0 = performance.now()
+  // The core worker starts first, beside everything below: the room is being read while the page sets itself up.
+  early = startEarly()
   // The service worker: the app shell offline, attachments decrypted on demand, push (public/sw.js). Not on the dev
   // server (dev/serve.mjs, the preview: html[data-build="dev"]): there a worker installed before is taken away.
   if (document.documentElement.dataset.build === 'dev') navigator.serviceWorker?.getRegistrations().then(list => list.forEach(r => r.unregister())).catch(() => {})
@@ -1885,6 +1914,12 @@ if (typeof window !== 'undefined') boot()
 /** A room made in this tab (account created, device joined or logged in): this tab writes it; later tabs follow. */
 async function adopt(c) {
   if (mock) return c
+  // The core worker takes the room over from storage (this client stops first: it flushes and frees the room's lock).
+  if (inWorker()) {
+    await c.stop()
+    const remote = await openInWorker()
+    if (remote) return remote
+  }
   const k = await core()
   return k.adoptInTabs(c, { makeStorage: () => k.idbStorage({ name: 'trommi', prefix: 'room/' }), client: CLIENT })
 }

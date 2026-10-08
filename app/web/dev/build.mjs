@@ -157,23 +157,34 @@ async function bundle(pub, vendor) {
       b.onLoad({ filter: /.*/, namespace: 'vendor' }, a => { const f = a.path === 'core.mjs' ? 'index.mjs' : a.path; return f in vendor ? { contents: vendor[f], loader: 'js' } : { errors: [{ text: `gen/vendor/${f} is not in the core` }] } })
     },
   }
+  const rel = o => path.relative(pub, path.resolve(o)).split(path.sep).join('/')
+  const out = {}
+  // The core's worker (shared/core-worker.ts): one file of its own, the whole core in it. The app learns its address
+  // from __TROMMI_CORE_WORKER__ (without it, as on the dev server, it starts /gen/vendor/core-worker.mjs).
+  const w = await esbuild.build({
+    entryPoints: [{ in: 'gen/vendor/core-worker.mjs', out: 'core-worker' }], bundle: true, format: 'esm', minify: true, write: false, metafile: true,
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+  })
+  if (w.outputFiles.length !== 1) throw new Error('build: the core worker is not one file')
+  const worker = rel(w.outputFiles[0].path)
+  out[worker] = w.outputFiles[0].text
   const r = await esbuild.build({
     entryPoints: [path.join(pub, 'app.mjs')], bundle: true, splitting: true, format: 'esm', minify: true, write: false, metafile: true,
     outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', chunkNames: '[name]-[hash]', outExtension: { '.js': '.mjs' },
-    target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+    target: ['es2022'], logLevel: 'silent', plugins: [fromVendor], define: { __TROMMI_CORE_WORKER__: JSON.stringify(`/${worker}`) },
   })
-  const out = {}
-  for (const f of r.outputFiles) out[path.relative(pub, f.path).split(path.sep).join('/')] = f.text
+  for (const f of r.outputFiles) out[rel(f.path)] = f.text
   const outputs = Object.entries(r.metafile.outputs)
   const entry = outputs.find(([, o]) => /(^|\/)app\.mjs$/.test(o.entryPoint ?? ''))?.[0]
   const coreOut = outputs.find(([, o]) => o.entryPoint === 'vendor:core.mjs')?.[0]
-  if (!entry || !coreOut) throw new Error('build: the bundle has no app.mjs or no core')
-  const rel = o => path.relative(pub, path.resolve(o)).split(path.sep).join('/')
-  // What a cold start fetches: the entry, the core (boot opens the room with it at once) and every chunk they import
-  // statically (one round trip with modulepreload).
-  const first = new Set(), queue = [entry, coreOut]
+  const remoteOut = outputs.find(([, o]) => o.entryPoint === 'vendor:remote.mjs')?.[0]
+  if (!entry || !coreOut || !remoteOut) throw new Error('build: the bundle has no app.mjs, no core or no remote.mjs')
+  // What a cold start fetches: the entry, the page's side of the core worker (remote.mjs: boot opens the room through
+  // it at once) and every chunk they import statically (one round trip with modulepreload). The core itself runs in
+  // the worker; the page loads its chunk only when it needs it (the account screens, the demo, a page without workers).
+  const first = new Set(), queue = [entry, remoteOut]
   while (queue.length) { const o = queue.shift(); if (first.has(o)) continue; first.add(o); for (const i of r.metafile.outputs[o].imports) if (i.kind === 'import-statement') queue.push(i.path) }
-  return { out, entry: rel(entry), first: [...first].map(rel) }
+  return { out, entry: rel(entry), first: [...first].map(rel), worker }
 }
 
 /** Everything the build makes: { 'path under public/': content (text, or bytes for the plugin's zip) }. Nothing is
@@ -229,7 +240,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // Not part of the shell: the app itself never loads them (Claude Code and the connect script do).
   const made = connectorFiles()
   for (const [f, c] of Object.entries(made ?? {})) out[`gen/${f}`] = c
-  const firstLoad = js ? js.first.reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null
+  const firstLoad = js ? [...js.first, js.worker].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null   // (the core worker too: boot starts it at once)
   return { out, version, sheets: links.length, files: files.length, connector: made ? made['connector.mjs.sha256'].slice(0, 12) : null, firstLoad, chunks: js ? Object.keys(js.out).length : 0 }
 }
 
