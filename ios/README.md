@@ -1,14 +1,14 @@
-# Trommi for iOS (spike)
+# Trommi for iOS
 
-A native iOS app in pure Swift, no JavaScriptCore. This folder holds the spike that proves the hard part:
+A native iOS app in pure Swift and SwiftUI, no JavaScriptCore and no web view for the board: the same board as app.trommi.com, verified and decrypted on the phone.
 
 | Folder | What |
 | --- | --- |
 | `TrommiCore/Sources/TrommiCore` | The crypto core of `shared/crypto/` (FORMAT.md) in Swift: canonical encoding, labels, Ed25519, X25519, AES-256-GCM, HKDF, HMAC, SHA-256 (swift-crypto, which is CryptoKit on Apple platforms), the membership log with every verifier rule, room key epochs, wraps, back links, invites and the emoji check code, hub sign-in, envelopes (seal, verify, open, chains, `seen`, pruned forms, binds), session grants, assets, the account KDF (Argon2id, vendored C reference implementation in `Sources/CArgon2`). |
-| `TrommiCore/Sources/TrommiClient` | A human device on the hub: join by invite link, log in with email and password (account login, the recovery code unwrapped, the device adds itself with the recovery key and re-seals every session key), sign in, member list pinned to the room id, room and session keys (back links included), catch-up with full chain and signature verification, the open cards, answering a card, the device register. |
+| `TrommiCore/Sources/TrommiClient` | A human device on the hub. `Board.swift`: the board model, a port of `shared/model.mjs` with every refusal rule (members, sessions, cards with versions and answers, permissions, notes, published objects, timelines, human and agent registers, alerts, the stack; what a newer client wrote is counted and kept, never applied as something else). `Room.swift`: join by invite link, log in with email and password, the catch-up from a cursor (verification off the main thread), the live stream (`SSE.swift`), every human action (message, answer, duck, read, shred, decide again, verdict, registers, notes, attachments, older pages), pairing a device and inviting an agent from the phone, removing devices (re-keying every session), log out, share links, canvases. `Desk.swift`: what the screens read (the web's `BoardState` and `boardModel`). `AccountClient.swift`: the account (status, password, Emergency Kit, email code, Forgot password). `Canvas.swift`: the Scribble Board's wire format. `Pen.swift`: the seeded scribbles and hues of the web's pen. |
 | `TrommiCore/Sources/trommi-swift` | The same as a command-line client. |
 | `TrommiCore/Tests` | XCTest over every section of `shared/crypto/vectors.json` (byte for byte where the bytes are deterministic; Ed25519 signatures by verifying, CryptoKit signs with randomness), plus `Fixtures/extra-vectors.json` written by the JS core (`dev/ios-extra-vectors.mjs`: session grants, account KDF, the check emoji table) and RFC 9106 for Argon2id. |
-| `TrommiApp` | The SwiftUI app (an xtool project): sign in by scanning the QR code of "Pair a device" on a signed-in device (camera; or paste its link), the six emoji, or with email and password; the open cards, tap an option to answer. |
+| `TrommiApp` | The SwiftUI app (an xtool project). Sign in: scan the QR code of "Pair a device", email and password, Forgot password. The Desk (rows in their session's tones, answer tiles, long-press ways, the selection bar, Blitz, the duck for all, with the agents, the end list), a card's page, the conversation (the app's core screen), the sidebar (a drawer on the iPhone, a column on the iPad), Off your mind, Media and Pages, the Scribble Board, the corner note, Settings (agents, devices with pairing, account). The web's drawings come from `Resources/pen.json` (`dev/ios-pen.mjs` draws them with the web's own pen), its fonts are bundled as static TTF (OFL, `Resources/Fonts/LICENSES.txt`), Liquid Glass for the chrome on iOS 26+. |
 
 The JS core is the reference: `dev/ios-parity.mjs` runs `trommi-swift` against a local hub with the JS core as the human and an agent, both directions.
 
@@ -19,8 +19,10 @@ Swift 6.4.0 from swift.org (the `ubuntu26.04` build, signature checked) is unpac
 ```bash
 . ~/.local/share/swift/env.sh                       # puts that toolchain on PATH
 cd ios/TrommiCore
-swift test                                          # 18 tests: every vector, session grants, Argon2id, account KDF
-swift build && (cd ../.. && node dev/ios-parity.mjs)    # Swift <-> JS on a local hub, 8 checks (account login included)
+swift test                                          # the vectors, session grants, Argon2id, compat, the board and the pen
+swift build && (cd ../.. && node dev/ios-parity.mjs)    # Swift <-> JS on a local hub, 17 checks (see the file's head)
+node dev/ios-pen.mjs                                # (from the repo root) pen.json, the pen vectors, Wordlist.swift
+node dev/ios-reference-shots.mjs OUT                # the web's demo screens as reference pictures (a local dev server on :8900)
 node dev/ios-extra-vectors.mjs                      # (from the repo root) regenerate Fixtures/extra-vectors.json
 cp shared/crypto/vectors.json ios/TrommiCore/Tests/TrommiCoreTests/Fixtures/   # after vectors.json changed
 ```
@@ -119,14 +121,12 @@ the board. No Notification Service Extension: the text says nothing, so nothing 
   bundle id (`XTL-70CB783D.com.trommi.ios` for xtool builds). Without it the hub refuses the registration, and the app
   tries again the next time it comes to the front.
 
-## Not in the spike (the MVP's list)
+## Not there yet
 
 - Device key in the Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`), not a file in Application Support.
-- Incremental sync (cursor, stored chains and grants) and the live stream (`GET stream`, SSE); the spike reads from
-  envelope 0 on every refresh.
-- The rest of the model: timelines (chat), registers (status lines, session names, desks), permission requests,
-  decide again, notes, attachments, snapshots, alerts; freshness (R3) on live envelopes.
-- Creating an account, the Emergency Kit and "Forgot password",
-  recovery. The email + password login is here (`Room.signInWithPassword`); a later hub step ("check your email") goes
-  into `Room.loginAnswer` and `LoginOutcome`.
+- Stored state between launches (chains, cursor, the board): every launch catches up from envelope 0 (headers only for
+  thread items, the bodies page in), and the snapshot boot of `snapshot.mjs`.
+- Creating an account (founding a room) and the old recovery-code recovery: on the web.
+- Freshness (R3) on envelopes of an older key epoch; drawing on a card (the web's pen tool), card versions as they were.
 - A re-seal that fails after the device added itself is not retried (the JS core keeps `reseal_pending`).
+- Screenshots of the phone from Linux need the RSD tunnel, which needs root (`sudo pymobiledevice3 remote tunneld`).
