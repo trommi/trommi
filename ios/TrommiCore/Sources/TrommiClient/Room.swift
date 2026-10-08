@@ -5,6 +5,9 @@
 // confirms the six emoji in the app.
 import Foundation
 import TrommiCore
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 // ---- storage -----------------------------------------------------------------------------
 
@@ -110,6 +113,7 @@ public final class Room {
   private var queueTail: Task<Void, Never>?
   private var synced = false
   private var echoSeq = 0
+  private var token401 = false
 
   init(store: Store, record: RoomRecord, device: Device) throws {
     self.store = store; self.record = record; self.device = device
@@ -665,14 +669,15 @@ public final class Room {
     }
   }
 
-  #if canImport(Darwin)
   /**
    * The live stream (GET stream, server-sent events) while the app is in front: every envelope as it is posted, presence,
-   * member entries and grants. Returns when the task is cancelled; reconnects with a growing pause after a drop.
+   * member entries and grants, applied at once. Returns when the task is cancelled; reconnects with a growing pause after
+   * a drop, and when nothing (not even a ping) came for 70 s; catches up from GET envelopes before each new stream.
    */
   public func runLive() async {
     var pause: UInt64 = 1_000_000_000
     while !Task.isCancelled {
+      let reader = SSEReader()
       do {
         if !synced { _ = try await sync() }
         let token = try await hub.accessToken()
@@ -683,32 +688,26 @@ public final class Room {
         req.setValue(HubClient.clientName, forHTTPHeaderField: "trommi-client")
         req.setValue("1", forHTTPHeaderField: "trommi-protocol")
         req.setValue("text/event-stream", forHTTPHeaderField: "accept")
-        req.timeoutInterval = 90
-        let (bytes, res) = try await URLSession.shared.bytes(for: req)
-        let status = (res as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 426 { upgrade = UpgradeNotice(minimumVersion: nil, message: "Please update Trommi."); var ch = Change(); ch.room = true; emit(ch); return }
-        if status == 401 { _ = try? await hub.signIn(); continue }
-        if status != 200 { throw HubError(status: status, code: "http-\(status)", message: "stream") }
-        live = true; board.connection = "live"
-        var ch = Change(); ch.room = true; emit(ch)
-        pause = 1_000_000_000
-        var event = "message", data = ""
-        for try await line in bytes.lines {
+        req.timeoutInterval = 3600
+        let events = reader.start(req)
+        for await ev in events {
           if Task.isCancelled { break }
-          if line.isEmpty {
-            if !data.isEmpty, let v = JV.parse(Array(data.utf8)) { await handleStreamEvent(event, v) }
-            event = "message"; data = ""
-            continue
+          switch ev {
+          case .status(let status):
+            if status == 426 { upgrade = UpgradeNotice(minimumVersion: nil, message: "Please update Trommi."); var ch = Change(); ch.room = true; emit(ch); reader.stop(); return }
+            if status == 401 { token401 = true; reader.stop(); break }
+            if status != 200 { reader.stop(); break }
+            live = true; board.connection = "live"
+            var ch = Change(); ch.room = true; emit(ch)
+            pause = 1_000_000_000
+          case .event(let name, let data):
+            if let v = JV.parse(Array(data.utf8)) { await handleStreamEvent(name, v) }
           }
-          if line.hasPrefix(":") { continue }
-          if line.hasPrefix("event:") { event = line.dropFirst(6).trimmingCharacters(in: .whitespaces) }
-          else if line.hasPrefix("data:") { data += (data.isEmpty ? "" : "\n") + line.dropFirst(5).trimmingCharacters(in: .whitespaces) }
         }
-        // (bytes.lines drops the empty lines on some systems: an event may be pending)
-        if !data.isEmpty, let v = JV.parse(Array(data.utf8)) { await handleStreamEvent(event, v) }
-      } catch {
-        if Task.isCancelled { break }
-      }
+      } catch {}
+      reader.stop()
+      if Task.isCancelled { break }
+      if token401 { token401 = false; _ = try? await hub.signIn() }
       live = false; board.connection = "offline"
       var ch = Change(); ch.room = true; emit(ch)
       if upgrade != nil { return }
@@ -719,7 +718,6 @@ public final class Room {
     }
     live = false
   }
-  #endif
 
   // ---- reading older items -------------------------------------------------------------------------
 
@@ -933,6 +931,7 @@ public final class Room {
                      marks: [JV] = [], trusted: Bool = false, action: String = "answer") async throws {
     guard let card = board.cards[cardId] else { throw ZError("not-found", "no such card") }
     if card.objectState != "open" { throw ZError("card-closed", "the card is not open") }
+    if card.unsupported { throw ZError("needs-update", Compat.UPDATE_MESSAGE) }
     if card.contentState != "ok" { throw ZError("card-pruned", "this device holds only the header of this card (retention); answer it on a device that shows it") }
     guard let vh = card.versionHash else { throw ZError("card-pruned", "no version") }
     if action == "answer" && !trusted {

@@ -52,12 +52,7 @@ struct DeskScreen: View {
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .topBarLeading) { DrawerButton() }
-      ToolbarItem(placement: .principal) {
-        HStack(spacing: 8) {
-          PenMark("sketch:desk").frame(width: 24, height: 24)
-          Text(v?.deskName ?? "Desk").font(Face.display(19, .bold)).foregroundStyle(Ink.fg)
-        }
-      }
+      ToolbarItem(placement: .principal) { DeskTitle() }
       ToolbarItem(placement: .topBarTrailing) { NoteButton() }
     }
     .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }
@@ -555,5 +550,19 @@ struct SelectionBar: View {
   private func way<V: View>(_ name: String, _ icon: V, _ word: String) -> some View {
     Button { model.batch(name) } label: { VStack(spacing: 2) { icon; Text(word).font(Face.text(11, .medium)) }.frame(minWidth: 54, minHeight: 44) }
       .buttonStyle(.plain)
+  }
+}
+
+
+/** The desk's name in the top bar: its own view, read again on every change of the board (a toolbar keeps what it built). */
+struct DeskTitle: View {
+  @EnvironmentObject var model: BoardModel
+  var body: some View {
+    let _ = model.version
+    HStack(spacing: 8) {
+      PenMark("sketch:desk").frame(width: 24, height: 24)
+      Text(model.view?.deskName ?? "Desk").font(Face.display(19, .bold)).foregroundStyle(Ink.fg)
+    }
+    .id(model.version)
   }
 }

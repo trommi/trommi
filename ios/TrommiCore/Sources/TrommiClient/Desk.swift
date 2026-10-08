@@ -364,7 +364,7 @@ public final class DeskModel {
     }
     d.mergedInto = c.mergedIntoObjectId
     d.mergedFrom = c.mergedFromObjectIds
-    if !["decision", "info"].contains(c.cardType) || c.contentState == "newer_schema" { d.unsupported = true }
+    if c.unsupported || c.contentState == "newer_schema" { d.unsupported = true }
     return d
   }
   private func permissionCard(_ p: Permission, _ number: Int, now: UInt64) -> DeskCard {

@@ -229,6 +229,8 @@ public final class Card {
   public var timelineKey: String
   public var contentState = "ok"
   public var refusedHead: Int?
+  /** A card of a newer Trommi (an unknown card_type, a newer schema): a placeholder, never answered from here. */
+  public var unsupported = false
   init(_ id: String, agent: String, rec: Rec) {
     objectId = id; agentDeviceId = agent; envelopeNumber = rec.envelopeNumber; firstEnvelopeNumber = rec.envelopeNumber
     createdAt = rec.sentAt; sessionId = rec.sessionId; updatedAt = rec.sentAt; timelineKey = timelineKeyOf("chat", "card/\(id)")
@@ -722,6 +724,10 @@ public final class Board {
       card2.fields = f
       card2.objectVersion = c["object_version"].int ?? card2.objectVersion + 1
       card2.contentState = "ok"
+      if case .unsupported(let kind) = Item.of(envelopeKind: KIND.OBJECT_VERSION, objectType: "card", cardType: f["card_type"]?.string ?? "decision") {
+        card2.unsupported = true
+        _ = noteNewer(kind, rec, &change)
+      } else { card2.unsupported = false }
     } else {
       card2.objectVersion += 1
       card2.contentState = rec.contentState
