@@ -204,6 +204,7 @@ struct ChatsScreen: View {
     }
     .listStyle(.plain)
     .scrollContentBackground(.hidden)
+    .barEdge()
     .background(Ink.bg)
     .navigationTitle("Chats")
     .navigationBarTitleDisplayMode(.inline)

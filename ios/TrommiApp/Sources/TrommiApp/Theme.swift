@@ -184,3 +184,11 @@ extension View {
     }
   }
 }
+
+extension View {
+  /** Under the tab bar: content does not show through the glass (iOS 26's hard scroll edge; in dark the clear glass let
+   *  a card's words read through it). */
+  @ViewBuilder func barEdge() -> some View {
+    if #available(iOS 26.0, *) { self.scrollEdgeEffectStyle(.hard, for: .bottom) } else { self }
+  }
+}

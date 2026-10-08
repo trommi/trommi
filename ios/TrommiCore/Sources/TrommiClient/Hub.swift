@@ -26,7 +26,16 @@ public final class HubClient {
   public var signer: Device?
   private var token: String?
   private var tokenExpiresAt: UInt64 = 0
-  private let session: URLSession
+  private var sessionNow: URLSession
+  private let sessionLock = NSLock()
+  private var session: URLSession { sessionLock.lock(); defer { sessionLock.unlock() }; return sessionNow }
+  /** A fresh connection pool (after a transport failure: the hub restarted and closed the pooled connections). */
+  private func renewSession() {
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = 30
+    sessionLock.lock(); let old = sessionNow; sessionNow = URLSession(configuration: cfg); sessionLock.unlock()
+    old.finishTasksAndInvalidate()
+  }
 
   public init(hubURL: String, roomId: String, signer: Device? = nil) throws {
     self.hubURL = try checkHubAddress(hubURL)
@@ -35,7 +44,7 @@ public final class HubClient {
     self.signer = signer
     let cfg = URLSessionConfiguration.ephemeral
     cfg.timeoutIntervalForRequest = 30
-    session = URLSession(configuration: cfg)
+    sessionNow = URLSession(configuration: cfg)
   }
 
   /** A handle for the anonymous routes outside a room (POST accounts/login). */
@@ -44,7 +53,7 @@ public final class HubClient {
     roomId = ""
     let cfg = URLSessionConfiguration.ephemeral
     cfg.timeoutIntervalForRequest = 30
-    session = URLSession(configuration: cfg)
+    sessionNow = URLSession(configuration: cfg)
   }
 
   private func roomPath(_ p: String) -> String { "/rooms/\(roomId)\(p)" }
@@ -83,10 +92,38 @@ public final class HubClient {
     return json
   }
 
+  /** A transport failure (no HTTP answer): with what URLSession said, to judge whether the request reached the hub. */
+  struct TransportFailure: Error { let code: Int; let message: String }
+
+  /**
+   * One HTTP exchange, tried once more on a transport failure where that is safe (a restarted hub closes the pooled
+   * connections; the next request on one fails): a GET, PUT or DELETE always (they are idempotent here: a PUT stores
+   * an attachment under its own id); a POST only when it provably did not reach the hub (the connection was refused,
+   * or not a byte of its body went out) or when the hub de-duplicates it (an envelope: the same one again is a replay;
+   * a challenge). The pool is renewed before the second try.
+   */
   private func send(_ req: URLRequest) async throws -> (Data, Int) {
+    do { return try await sendOnce(req) }
+    catch let f as TransportFailure {
+      guard HubClient.retryable(method: req.httpMethod ?? "GET", path: req.url?.path ?? "", failure: f) else { throw HubError(status: 0, code: "offline", message: "hub not reachable: \(f.message)") }
+      renewSession()
+      try? await Task.sleep(nanoseconds: 250_000_000)
+      do { return try await sendOnce(req) }
+      catch let g as TransportFailure { throw HubError(status: 0, code: "offline", message: "hub not reachable: \(g.message)") }
+    }
+  }
+  static func retryable(method: String, path: String, failure f: TransportFailure) -> Bool {
+    if ["GET", "HEAD", "PUT", "DELETE"].contains(method.uppercased()) { return true }
+    // never reached the hub: refused, no host, or not one byte of the body sent (curl: "only 0/N of needed bytes")
+    let unsent: Set<Int> = [URLError.cannotConnectToHost.rawValue, URLError.cannotFindHost.rawValue, URLError.dnsLookupFailed.rawValue, URLError.notConnectedToInternet.rawValue]
+    if unsent.contains(f.code) || f.message.contains("only 0/") { return true }
+    // the hub takes the same again without effect
+    return path.hasSuffix("/envelopes") || path.hasSuffix("/challenge")
+  }
+  private func sendOnce(_ req: URLRequest) async throws -> (Data, Int) {
     try await withCheckedThrowingContinuation { cont in
       session.dataTask(with: req) { data, res, err in
-        if let err = err { cont.resume(throwing: HubError(status: 0, code: "offline", message: "hub not reachable: \(err.localizedDescription)")); return }
+        if let err = err { cont.resume(throwing: TransportFailure(code: (err as? URLError)?.code.rawValue ?? (err as NSError).code, message: err.localizedDescription)); return }
         cont.resume(returning: (data ?? Data(), (res as? HTTPURLResponse)?.statusCode ?? 0))
       }.resume()
     }

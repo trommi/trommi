@@ -59,6 +59,7 @@ struct DeskScreen: View {
       }
     }
     .scrollDismissesKeyboard(.interactively)
+    .barEdge()
     .refreshable { await model.refresh() }
     }
     .background(Ink.bg)
@@ -264,6 +265,8 @@ struct DeskRow: View {
         Button { model.path.append(.card(card.id)) } label: {
           HStack(alignment: .firstTextBaseline, spacing: 6) {
             if model.selected.contains(card.id) { Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).foregroundStyle(Tone.color(hue: hue, .pen)) }
+            // the asking session's drawing in its colour, a stamp before the title (his pick "mark", 8 October)
+            else if let a = agent { AgentMark(agent: a, size: 22, crown: false).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }.accessibilityLabel(a.name) }
             if card.isKnock {
               if card.urgency == "critical" { PenMark("hand", color: Ink.surface, blocked: true).frame(width: 24, height: 24).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 } }
               else { Sketch("knock", color: Ink.urgHigh).frame(width: 20, height: 20).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 } }
@@ -289,7 +292,7 @@ struct DeskRow: View {
     }
     .padding(14)
     .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Ink.surface))
-    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(model.selected.contains(card.id) ? Tone.color(hue: hue, .pen) : Ink.line, lineWidth: model.selected.contains(card.id) ? 2 : 1))
+    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(model.selected.contains(card.id) ? Tone.color(hue: hue, .pen) : Ink.lineStrong, lineWidth: model.selected.contains(card.id) ? 2 : 1))
     .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
     .contextMenu { RowMenu(card: card) }
   }
@@ -401,7 +404,16 @@ struct TileStyle: ButtonStyle {
   let lead: Bool
   let hue: Int
   var urgency = "normal"
-  func makeBody(configuration: Configuration) -> some View {
+  func makeBody(configuration: Configuration) -> some View { TileBody(configuration: configuration, lead: lead, urgency: urgency) }
+}
+/** A tile as the web's desk rows draw it (desk.css .inbox-actions): the lead in the bell's green (a knock in its colour),
+ *  the others a light green wash; in dark the quiet ones also get the card line (web: inset 1px --card-line). */
+private struct TileBody: View {
+  let configuration: ButtonStyleConfiguration
+  let lead: Bool
+  let urgency: String
+  @Environment(\.colorScheme) private var scheme
+  var body: some View {
     let knock = urgency == "high" || urgency == "critical"
     // as the web's desk rows (desk.css .inbox-actions): one colour for every session, the bell's green; a knock its own
     let fill = lead ? (knock ? Ink.urgency(urgency) : Ink.accent) : Ink.accent.opacity(0.09)
@@ -409,6 +421,7 @@ struct TileStyle: ButtonStyle {
       .foregroundStyle(lead ? (knock ? Ink.surface : Ink.accentFg) : Ink.fg)
       .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(fill))
       .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Ink.surface))
+      .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(!lead && scheme == .dark ? Ink.lineStrong : .clear, lineWidth: 1))
       .scaleEffect(configuration.isPressed ? 0.96 : 1)
       .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
   }
@@ -444,7 +457,7 @@ struct WithAgents: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 12).fill(Ink.surface))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.line))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.lineStrong))
           }.buttonStyle(.plain)
         }
       }.padding(.top, 10)

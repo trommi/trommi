@@ -508,6 +508,12 @@ final class BoardModel: ObservableObject {
       }
     } catch { fail("Not loaded", error) }
   }
+  /** Messages that came as headers above what the chat shows (a catch-up after the app was away): their bodies. */
+  func loadNewer(agent: String) async {
+    guard let room = room, let key = desk?.sessionKey(of: agent) else { return }
+    _ = try? await room.loadNewer(timelineKeyOf("chat", "session/\(key)"))
+    for id in room.board.sessions[key]?.openCardIds ?? [] { _ = try? await room.loadNewer(timelineKeyOf("chat", "card/\(id)")) }
+  }
   func loadOlder(card id: String) async {
     guard let room = acting() else { return }
     do { try await room.loadOlder(timelineKeyOf("chat", "card/\(id)"), limit: 50) } catch { fail("Not loaded", error) }
