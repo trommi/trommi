@@ -603,7 +603,11 @@ public final class DeskModel {
       msg.details = c["details"].string
       msg.html = c["html"].string
       if let p = c["published_object_id"].string { if board.published[p]?.objectState == "closed" { continue }; msg.published = p }
-      if c["note"].object != nil { msg.noteWritten = .some(c["note"]["written_at"].int.map { UInt64($0) }) }
+      if c["note"].object != nil {
+        msg.noteWritten = .some(c["note"]["written_at"].int.map { UInt64($0) })
+        // a note's pictures and files: those the message names, else the note object's own (the web shows these too)
+        if msg.attachments.isEmpty, let id = c["note"]["object_id"].string, let n = board.notes[id] { msg.attachments = n.extra["attachments"]?.array ?? [] }
+      }
       msg.handback = c["hand_back"].truthy
       msg.explain = c["explain"].truthy
       msg.present = c["present_card"].truthy

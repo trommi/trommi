@@ -192,3 +192,24 @@ extension View {
     if #available(iOS 26.0, *) { self.scrollEdgeEffectStyle(.hard, for: .bottom) } else { self }
   }
 }
+
+extension View {
+  /** The bar at the bottom of a scrolling page (a composer, its pencil): iOS 26's safeAreaBar (the system reserves its
+   *  height and gives the content a scroll edge under it), else a safe area inset. */
+  @ViewBuilder func bottomBar<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+    if #available(iOS 26.0, *) { self.safeAreaBar(edge: .bottom, spacing: 0, content: content) } else { self.safeAreaInset(edge: .bottom, spacing: 0, content: content) }
+  }
+}
+/** Put the keyboard away (a tap in the content, as Messages does). */
+@MainActor func hideKeyboard() {
+  #if canImport(UIKit)
+  UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+  #endif
+}
+extension View {
+  /** A glass capsule for a control in the navigation bar: on iOS 26 the bar gives its items their own glass (a second
+   *  one would show as a ring), before that a material capsule. */
+  @ViewBuilder func barGlass() -> some View {
+    if #available(iOS 26.0, *) { self } else { self.background(.ultraThinMaterial, in: Capsule()) }
+  }
+}

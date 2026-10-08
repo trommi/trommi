@@ -211,7 +211,7 @@ struct AttachmentImage: View {
       #if canImport(UIKit)
       if let i = image { Image(uiImage: i).resizable().aspectRatio(contentMode: contentMode) }
       else if failed { Sketch("picture", color: Ink.faint).frame(width: 28, height: 28) }
-      else { Rectangle().fill(Ink.sunken).overlay(ProgressView()) }
+      else { Rectangle().fill(Ink.sunken).overlay(ProgressView().tint(Ink.muted)) }
       #endif
     }
     .task(id: ref["attachment_id"].string) { await load() }
@@ -224,7 +224,12 @@ struct AttachmentImage: View {
       let d = try await model.attachment(ref)
       guard let i = UIImage(data: d) else { failed = true; return }
       // decoded off the main thread at display size
-      let shown = await Task.detached(priority: .userInitiated) { i.preparingForDisplay() ?? i }.value
+      // a bounded, standard-range copy (an HDR photo drawn small came out black, 8 October)
+      let shown = await Task.detached(priority: .userInitiated) { () -> UIImage in
+        let side = max(i.size.width, i.size.height)
+        let target = side > 1600 ? CGSize(width: i.size.width * 1600 / side, height: i.size.height * 1600 / side) : i.size
+        return i.preparingThumbnail(of: target) ?? i.preparingForDisplay() ?? i
+      }.value
       PictureCache.shared.put(id, shown)
       image = shown
     } catch { failed = true }
