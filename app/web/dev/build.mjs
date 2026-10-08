@@ -114,7 +114,6 @@ function connectorFiles() {
 
 // ---- the stylesheets ----
 const SHEET_LINK = /^<link rel="stylesheet" href="(\/[^"]+\.css)"[^>]*>\n/gm
-const FONT_PRELOAD = /^<link rel="preload" href="\/fonts\/fonts\.css" as="style">\n/m
 /** Throws unless the braces of a sheet balance (outside comments and strings): in the bundle a stray brace would
  *  spill into the next sheet. */
 function checkSheet(css, file) {
@@ -247,7 +246,7 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   const sheet = `gen/bundle.${sha(css)}.css`
   out[sheet] = css
   let first = true
-  html = html.replace(FONT_PRELOAD, '').replace(SHEET_LINK, () => (first ? ((first = false), `<link rel="stylesheet" href="/${sheet}">\n`) : ''))
+  html = html.replace(SHEET_LINK, () => (first ? ((first = false), `<link rel="stylesheet" href="/${sheet}">\n`) : ''))
 
   const files = [...walk(pub).filter(f => !NOT_SHELL.test(f) && !(bundled && BUNDLED.test(f))), ...Object.keys(out).filter(f => f !== 'gen/build.txt')].sort()
   const content = f => out[f] ?? fs.readFileSync(path.join(pub, f))

@@ -74,9 +74,9 @@
   --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px;
 
   /* type */
-  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
-  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --display: "Bricolage Grotesque", "Trommi Display Fallback", "Avenir Next", "Segoe UI", sans-serif;
+  --font: "IBM Plex Sans", "Trommi Sans Fallback", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", "Trommi Mono Fallback", ui-monospace, "SF Mono", Menlo, monospace;
   --t-xs: .72rem; --t-sm: .84rem; --t-md: .95rem; --t-lg: 1.1rem; --t-xl: 1.35rem; --t-2xl: 1.7rem;
 
   /* motion */

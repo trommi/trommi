@@ -77,6 +77,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   │   ├── f5.woff2
 │   │   ├── f6.woff2
 │   │   ├── f7.woff2
+│   │   ├── fallback.css
 │   │   └── fonts.css
 │   ├── icons/
 │   │   ├── trommi-180.png
