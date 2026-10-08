@@ -46,6 +46,10 @@ import { connectorFiles } from './build.mjs'
 import { assetPath } from '../app/web/worker.js'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
+// TROMMI_CONNECTOR_CMD: the scenarios against another connector (e.g. connector-rs/target/debug/trommi-connector): every
+// process this file starts as `node connector.mjs <args>` is that command with the same args.
+export const CONNECTOR_CMD = process.env.TROMMI_CONNECTOR_CMD || null
+export const connectorProcess = (args, script = path.join(here, 'connector.mjs')) => (CONNECTOR_CMD ? [CONNECTOR_CMD, args] : [process.execPath, [script, ...args]])
 // Run inside Claude Code, this process has its session id; every connector and join here gets its own, or none.
 delete process.env.CLAUDE_CODE_SESSION_ID
 /** The check code a connector printed ("check code 🐶 🎂 … (dog, cake, …)"), read back from its words, as the core writes it. */
@@ -95,7 +99,8 @@ export async function startConnector({ env, cwd, script = path.join(here, 'conne
   const events = [], said = []
   const { TROMMI_SESSION_KEY: _, ...base } = process.env
   // The folder watch is off unless a test asks for it: every connector here has this process as its "Claude Code", which outlives them all.
-  const transport = new StdioClientTransport({ command: process.execPath, args: [script], env: { ...base, TROMMI_FOLDER_WATCH: '0', ...(session ? { TROMMI_SESSION_KEY: session } : {}), ...env }, cwd, stderr: 'pipe' })
+  const [command, args] = connectorProcess([], script)
+  const transport = new StdioClientTransport({ command, args, env: { ...base, TROMMI_FOLDER_WATCH: '0', ...(session ? { TROMMI_SESSION_KEY: session } : {}), ...env }, cwd, stderr: 'pipe' })
   let err = ''
   const client = new Client({ name: 'connector-test', version: '1' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { events.push(n) }
@@ -311,11 +316,11 @@ export async function integration({ test, tmp }) {
         await until('needs its own invite', async () => { try { await second.call('list_cards'); return false } catch (e) { return /invite of its own/.test(e.message) } })
         // Joining is the human's act: the model has no join tool, the human runs the CLI in the folder (review 2).
         assert.ok(!(await second.client.listTools()).tools.some(t => t.name === 'join'), 'a model-callable join tool exists')
-        assert.match((await second.call('list_cards').catch(e => e.message)), /connector\.mjs join '<link>'/)
+        assert.match((await second.call('list_cards').catch(e => e.message)), /(connector\.mjs|trommi-connector) join '<link>'/)
         await second.close()
         const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
         const { execFile } = await import('node:child_process')
-        const out = await new Promise((res, rej) => execFile(process.execPath, [path.join(here, 'connector.mjs'), 'join', invite.link], { env: { ...process.env, ...env, TROMMI_JOIN_OTHER: '1' }, cwd: project }, (e, so, se) => (e ? rej(new Error(`${e.message}\n${se}`)) : res(so))))
+        const out = await new Promise((res, rej) => execFile(...connectorProcess(['join', invite.link]), { env: { ...process.env, ...env, TROMMI_JOIN_OTHER: '1' }, cwd: project }, (e, so, se) => (e ? rej(new Error(`${e.message}\n${se}`)) : res(so))))
         assert.match(out, /joined room/)
         await until('two agents', () => [...human.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).length === 2)
         const room = path.join(keys, human.model.room.room_id)
@@ -352,11 +357,11 @@ export async function integration({ test, tmp }) {
         assert.match(err, new RegExp(`kill ${connector.pid}`))
         await connector.close()
         await until('the key taken on a tool call', async () => { try { await keyless.call('list_cards'); return true } catch { return false } }, 15000)
-      } catch (e) { await keyless.close().catch(() => {}); throw e } finally { await second.close().catch(() => {}) }
+      } catch (e) { await keyless.close().catch(() => {}); throw new Error(`${e.message}\nkeyless: ${keyless.stderr().slice(-1500)}`) } finally { await second.close().catch(() => {}) }
       connector = keyless
     })
 
-    const say = (args, extra = {}) => new Promise(res => execFile(process.execPath, [path.join(here, 'connector.mjs'), 'say', ...args], { env: { ...process.env, ...env, TROMMI_SAY_MS: '20000', ...extra }, cwd: project }, (e, so, se) => res({ code: e?.code ?? 0, out: so, err: se })))
+    const say = (args, extra = {}) => new Promise(res => execFile(...connectorProcess(['say', ...args]), { env: { ...process.env, ...env, TROMMI_SAY_MS: '20000', ...extra }, cwd: project }, (e, so, se) => res({ code: e?.code ?? 0, out: so, err: se })))
     const inMain = async text => {
       const sid = human.sessionOfAgent(agentId)
       await until(`"${text}" at the human`, async () => {
@@ -711,7 +716,7 @@ export async function integration({ test, tmp }) {
       // The join runs in this folder's Claude Code session (its session id), in a shell of its own (its own session key).
       const claudeSession = crypto.randomUUID()
       const joinCli = (link, onCode = null) => new Promise(resolve => {
-        const child = spawn(process.execPath, [path.join(here, 'connector.mjs'), 'join'], { env: { ...process.env, ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: link, TROMMI_FOLDER_WATCH: '0', TROMMI_SESSION_KEY: `cli-${Math.random().toString(36).slice(2)}`, CLAUDE_CODE_SESSION_ID: claudeSession }, cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] })
+        const child = spawn(...connectorProcess(['join']), { env: { ...process.env, ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: link, TROMMI_FOLDER_WATCH: '0', TROMMI_SESSION_KEY: `cli-${Math.random().toString(36).slice(2)}`, CLAUDE_CODE_SESSION_ID: claudeSession }, cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] })
         let err = '', told = false
         child.stderr.on('data', d => {
           err += d
@@ -809,7 +814,7 @@ export async function integration({ test, tmp }) {
       const join = async claude => {
         const invite = await human.createInvite({ device_role: 'agent' })
         const out = await new Promise(resolve => {
-          const child = spawn(process.execPath, [path.join(here, 'connector.mjs'), 'join'], { env: { ...process.env, ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: invite.link, TROMMI_FOLDER_WATCH: '0', TROMMI_SESSION_KEY: `cli-${claude}`, CLAUDE_CODE_SESSION_ID: claude }, cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
+          const child = spawn(...connectorProcess(['join']), { env: { ...process.env, ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: invite.link, TROMMI_FOLDER_WATCH: '0', TROMMI_SESSION_KEY: `cli-${claude}`, CLAUDE_CODE_SESSION_ID: claude }, cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] })
           let text = ''
           child.stdout.on('data', d => { text += d }); child.stderr.on('data', d => { text += d })
           child.on('exit', code => resolve({ code, text }))
@@ -1054,7 +1059,7 @@ function hook(kind, input, env, cwd) {
   let p
   const done = new Promise(resolve => {
     const t = Date.now()
-    p = spawn(process.execPath, [path.join(here, 'connector.mjs'), kind], { env: { ...process.env, ...env }, cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    p = spawn(...connectorProcess([kind]), { env: { ...process.env, ...env }, cwd, stdio: ['pipe', 'pipe', 'pipe'] })
     let out = '', err = ''
     p.stdout.on('data', d => { out += d })
     p.stderr.on('data', d => { err += d })
@@ -1197,7 +1202,7 @@ export async function monitor({ test, tmp: root }) {
   // The connector's Claude Code process is this test process (its parent); the monitor is told so by CLAUDE_PID.
   const env = { TROMMI_KEYS_DIR: path.join(tmp, 'keys'), TROMMI_FOLDER: project, TROMMI_HUB: hub.hub_url, TROMMI_CHANNEL_EVENTS: 'off', XDG_RUNTIME_DIR: run, CLAUDE_PLUGIN_ROOT: '/plugin' }
   const monitor = (claudePid, extra = {}) => {
-    const p = spawn(process.execPath, [path.join(here, 'connector.mjs'), 'monitor'], { env: { ...process.env, ...env, CLAUDE_PID: String(claudePid), ...extra }, stdio: ['ignore', 'pipe', 'pipe'] })
+    const p = spawn(...connectorProcess(['monitor']), { env: { ...process.env, ...env, CLAUDE_PID: String(claudePid), ...extra }, stdio: ['ignore', 'pipe', 'pipe'] })
     p.lines = []
     p.stdout.setEncoding('utf8').on('data', d => p.lines.push(...d.split('\n').filter(Boolean)))
     p.ended = new Promise(r => p.on('exit', r))
