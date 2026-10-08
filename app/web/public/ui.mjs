@@ -1686,38 +1686,9 @@ function tokens() {
   return { css: `:root{${vars.join(';')};font-size:${root.fontSize};color-scheme:${dark ? 'dark' : 'light'}}`, scheme: dark ? 'dark' : 'light' }
 }
 
-// The board's fonts, for the frames. A frame fetches nothing, so this page fetches them once (the same
-// files it shows its own text with, from the stylesheet in its head) and hands them in as data: the
-// Latin cut of the text face in two weights, the display face and the mono face. Until they are here, and
-// where they cannot be had, a frame stands in the system's face.
-const FACES = [['IBM Plex Sans', '400'], ['IBM Plex Sans', '600'], ['IBM Plex Mono', '400'], ['Bricolage Grotesque', null]]
-let fontCss = ''
-const fontsReady = typeof document === 'undefined' ? Promise.resolve() : (async () => {
-  const sheet = document.querySelector('link[href*="fonts.googleapis.com/css"]')
-  if (!sheet) return
-  const css = await (await fetch(sheet.href, { credentials: 'omit' })).text()
-  const faces = new Map()   // file -> { family, style, weights }
-  for (const block of css.split('/*').filter(b => /^\s*latin\s*\*\//.test(b))) {
-    const family = /font-family:\s*['"]([^'"]+)['"]/.exec(block)?.[1], weight = /font-weight:\s*(\d+)/.exec(block)?.[1]
-    const style = /font-style:\s*(\w+)/.exec(block)?.[1] ?? 'normal', url = /url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.woff2)\)/.exec(block)?.[1]
-    if (!family || !url || style !== 'normal' || !FACES.some(([f, w]) => f === family && (w == null || w === weight))) continue
-    const face = faces.get(url) ?? { family, weights: [] }
-    face.weights.push(Number(weight))
-    faces.set(url, face)
-  }
-  const rules = await Promise.all([...faces].map(async ([url, face]) => {
-    const bytes = new Uint8Array(await (await fetch(url, { credentials: 'omit' })).arrayBuffer())
-    let binary = ''
-    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-    const weights = [Math.min(...face.weights), Math.max(...face.weights)]
-    return `@font-face{font-family:"${face.family}";font-style:normal;font-weight:${weights[0] === weights[1] ? weights[0] : weights.join(' ')};font-display:swap;src:url(data:font/woff2;base64,${btoa(binary)}) format("woff2")}`
-  }))
-  fontCss = rules.join('')
-  for (const ref of live.values()) ref.deref()?.contentWindow?.postMessage({ trommiFonts: fontCss }, '*')
-})().catch(() => {})
 
 // The one script in a frame. It reports the height of the content (and whether it is wider than the
-// frame), takes new tokens when the theme changes and the fonts when they are here, and hands a clicked link to the page around it.
+// frame), takes new tokens when the theme changes, and hands a clicked link to the page around it.
 const inside = id => `(()=>{
 const id=${JSON.stringify(id)},root=document.documentElement
 let last=''
@@ -1726,7 +1697,7 @@ new ResizeObserver(tell).observe(root)
 addEventListener('load',tell)
 addEventListener('toggle',()=>requestAnimationFrame(tell),true)
 tell()
-addEventListener('message',e=>{if(e.source!==parent||!e.data)return;for(const k of ['trommiTokens','trommiFonts'])if(typeof e.data[k]==='string')document.getElementById(k==='trommiTokens'?'trommi-tokens':'trommi-fonts').textContent=e.data[k];last='';tell()})
+addEventListener('message',e=>{if(e.source!==parent||!e.data)return;if(typeof e.data.trommiTokens==='string')document.getElementById('trommi-tokens').textContent=e.data.trommiTokens;last='';tell()})
 addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href],area[href]');if(!a)return;e.preventDefault();const href=a.getAttribute('href');if(href.charAt(0)==='#'){const to=href.length>1&&document.getElementById(href.slice(1));if(to)to.scrollIntoView();return}parent.postMessage({trommiRich:id,open:a.href},'*')},true)
 })()`
 
@@ -1734,7 +1705,7 @@ const POLICY = nonce => `default-src 'none'; style-src 'unsafe-inline'; img-src 
 
 function documentOf(body, id, large) {
   const nonce = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('')
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${POLICY(nonce)}"><meta name="referrer" content="no-referrer"><style id="trommi-fonts">${fontCss}</style><style id="trommi-tokens">${tokens().css}</style><style>${HOUSE}${large ? 'body{padding:20px 24px}' : ''}</style></head><body>${body}<script nonce="${nonce}">${inside(id)}</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${POLICY(nonce)}"><meta name="referrer" content="no-referrer"><style id="trommi-tokens">${tokens().css}</style><style>${HOUSE}${large ? 'body{padding:20px 24px}' : ''}</style></head><body>${body}<script nonce="${nonce}">${inside(id)}</script></body></html>`
 }
 
 // The frames that stand in the page, by the name their script signs with.
@@ -2876,6 +2847,6 @@ const ROOM_LINES = { devices: 'The people and agents with keys to this room.', s
 const SETTINGS_CLAMP = raw('<svg class="clip-clamp set-clamp" viewBox="0 0 120 44" aria-hidden="true"><path class="clamp-plate" d="M22 40 Q21 25 26 22 L43 21 Q46 9 60 8 Q74 9 77 21 L94 22 Q99 25 98 40 Z"/><path d="M52 21 Q53 15 60 14.6 Q67 15 68 21"/><path d="M30 31 Q60 29.4 90 31"/></svg>')
 export const roomPage = (title, on, inner, line = ROOM_LINES[on] ?? '') => html`<main id="room" class="room room-paged" aria-label="${title}"><div class="room-page">${roomTabs(on)}<header class="room-head page-head"><h2>${title}</h2>${line ? html`<p>${line}</p>` : ''}</header><div class="room-col">${inner}</div></div></main>`
 /** Settings (his word, 8 October: one page, drawn as a big clipboard): the clamp, then the tabs on the sheet: Agents,
- *  Devices, Account. Its three parts are agents.mjs and auth.mjs; /agents, /devices and /settings lead here. */
+ *  Devices, Account. Its three parts are agents.mjs and auth.mjs. */
 export const roomTabs = (on, cls = '') => html`${SETTINGS_CLAMP}<nav class="room-tabs${cls ? ` ${cls}` : ''}" aria-label="Settings: agents, devices and account">${[['agents', 'Agents'], ['devices', 'Devices'], ['settings', 'Account', 'account']].map(([p, word, path = p]) => html`<a href="/settings/${path}" data-nav${on === p ? raw(' aria-current="page"') : ''}>${word}</a>`)}</nav>`
 export const errorLine = e => (e ? html`<p class="room-error" role="alert">${e}</p>` : '')

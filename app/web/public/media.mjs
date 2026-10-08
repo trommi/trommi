@@ -44,7 +44,7 @@ ${items.length ? html`<div class="gal-grid">${items.map(tile)}</div>` : all.leng
 // The page the Desk's pile "Pages N" opens: every page the agents made in this room (ui.mjs pageItems: published pages,
 // pages sent as files, a page behind a picture; no foreign websites), one per file, the newest first: what it is,
 // which session made it and when, Open.
-//   GET  /pages          the list (/links, its old address, is moved here)
+//   GET  /pages          the list
 //   POST /pages/share    att=<attachment_id> days=1..30: a link for people outside the room; stop=<share_id>: end it
 // Each page gets Share: a switch that makes a share link in this browser (client.shareAttachment: the secret and the
 // file key only after the #, the hub keeps the secret's hash), then the link to copy, until when it holds (7 days unless
@@ -105,7 +105,6 @@ export function register(t) {
   })
   // (the sessions' conversations are read as far as they are loaded: opening the list loads each one's newest page once)
   const asked = new Set()
-  t.get(/^\/links$/, ({ res }) => t.redirect(res, `${t.BASE}/pages`))
   t.get(/^\/pages$/, async ({ req, res }) => {
     await loadShares(t)
     for (const a of t.hub.state().agents) if (!asked.has(a.id)) { asked.add(a.id); Promise.resolve(t.hub.loadOlder?.(a.id)).catch(() => {}) }

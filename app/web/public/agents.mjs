@@ -223,8 +223,6 @@ export function register(t) {
     t.page(req, res, { model: m, title: 'Settings · Agents · Trommi', view: 'agents', css: 'agents', bodyAttrs: ' data-page="roster"', stream: VAL[q.get('sort')] ? `&sort=${q.get('sort')}` : '', main: agentsMain(m, BASE, { find: q.get('find') ?? '', sort: q.get('sort') ?? 'order', down: q.has('down'), errors }) }, code)
   }
   t.get(/^\/settings\/agents$/, ({ req, res, url }) => show(req, res, url))
-  // (the old addresses: Settings holds the agents now, and /settings opens on them)
-  t.get(/^\/(?:agents|settings)$/, ({ res, url }) => t.redirect(res, `${BASE}/settings/agents${url.search}`))
   // The drawings of one session's picker: a frame, fetched when the picker is opened.
   t.get(/^\/sessions\/([^/]+)\/marks$/, ({ req, res, url, match }) => {
     const a = t.model().byAgent.get(decodeURIComponent(match[1]))

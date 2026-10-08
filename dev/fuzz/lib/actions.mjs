@@ -67,7 +67,7 @@ export class Gen {
       if (liveA.length) add(9, () => ({ t: 'msg_h', dev: H(), ref: null, agent: A(), text: this.text('hm'), mode: 'plain' }))
       if (r.perms.length) add(6, () => ({ t: 'verdict', dev: H(), ref: rng.pick(r.perms).ref, allow: rng.chance(0.5) }))
       add(5, () => ({ t: 'reg_h', dev: H(), key: rng.pick(['crown', `desk/${rng.pick(r.desks)}`, `desk/${rng.pick(r.desks)}`]), value: rng.chance(0.2) ? null : { name: this.text('n'), n: rng.int(1000) } }))
-      if (liveA.length) add(3, () => { const a = A(); return { t: 'reg_h', dev: H(), key: rng.pick([`session/@${a}`, `read_up_to/@${a}`]), value: rng.chance(0.2) ? null : rng.chance(0.5) ? { name: this.text('sn'), archived: rng.chance(0.3) } : rng.int(100) } })
+      if (liveA.length) add(3, () => { const a = A(); return { t: 'reg_h', dev: H(), key: `session/@${a}`, value: rng.chance(0.2) ? null : rng.chance(0.5) ? { name: this.text('sn'), archived: rng.chance(0.3) } : rng.int(100) } })
       add(4, () => { const ref = r.notes.length && rng.chance(0.5) ? rng.pick(r.notes) : `#m${this.c.note++}`; if (!r.notes.includes(ref)) r.notes.push(ref); return { t: 'note', dev: H(), ref, text: this.text('note') } })
       if (r.notes.length) add(1, () => ({ t: 'note_del', dev: H(), ref: rng.pick(r.notes) }))
       add(8, () => ({ t: 'stroke', dev: H(), tl: `desk/${rng.pick(r.desks)}`, n: rng.range(1, 4), sid: `S${this.c.stroke++}` }))
@@ -143,7 +143,7 @@ export class Runner {
   res(s) {
     if (typeof s !== 'string') return s
     // v1.1 (R6): a session is its own id; before, the agent's device id
-    s = s.replace(/(session|read_up_to)\/@([A-Za-z0-9:_]+)/g, (m, k, n) => { const d = this.w.devs.get(n); return d ? `${k}/${d.client?.session_id ?? d.sessionId ?? d.id}` : m })
+    s = s.replace(/(session)\/@([A-Za-z0-9:_]+)/g, (m, k, n) => { const d = this.w.devs.get(n); return d ? `${k}/${d.client?.session_id ?? d.sessionId ?? d.id}` : m })
     return s.replace(/@([A-Za-z0-9:_]+)/g, (m, n) => this.w.devs.get(n)?.id ?? m).replace(/#([cmpf]\d+)/g, (m, n) => this.refs.get('#' + n)?.attachment_id ?? this.refs.get('#' + n) ?? m)
   }
   txt(s) { return `FZMARK b${this.w.batch} ${s}` }

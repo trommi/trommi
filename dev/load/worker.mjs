@@ -26,7 +26,7 @@ let mode = { type: 'pause' }
 // Humans: answers, chat to a session or a card, strokes on the desk and on session canvases, read markers, drafts.
 const MIX = {
   agent: { chat: 40, card: 6, revise: 4, card_chat: 10, status: 14, attachment: 1, strokes: 5 },
-  human: { answer: 6, chat: 14, card_chat: 6, strokes: 60, read_up_to: 8, draft: 6 },
+  human: { answer: 6, chat: 14, card_chat: 6, strokes: 60, draft: 6 },
 }
 function choose(weights) {
   let total = 0
@@ -85,7 +85,6 @@ async function act(m) {
         const onDesk = rng() < 0.6
         return [action, c.sendStrokes({ timeline_id: onDesk ? `desk/${spec.desk_id}` : `session/${pick(m.sessions).session_id}`, strokes: [stroke(rng)] })]
       }
-      case 'read_up_to': return [action, c.markReadUpTo(pick(m.sessions).session_id, c.model.room.last_envelope_number)]
       case 'draft': if (open.length) return [action, c.setDraft(pick(open), { keys: ['a'], note: text(rng, 2, 8) })]; return [action, null]
     }
   }

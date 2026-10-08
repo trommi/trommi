@@ -14,7 +14,7 @@ class MockClient {
     this.simulate = simulate
     this.store = new Map()          // timeline_key -> every item, oldest first (stands in for storage + hub)
     const f = fixture
-    const sessions = new Map(f.sessions.map(s => [s.agent_device_id, { ...s, agent_alerts: [], registers: new Map(), read_up_to: 0, card_ids: [], open_card_ids: [], timeline_key: `chat:session/${s.agent_device_id}`, unread_count: 0, last_activity_at: 0 }]))
+    const sessions = new Map(f.sessions.map(s => [s.agent_device_id, { ...s, agent_alerts: [], registers: new Map(), card_ids: [], open_card_ids: [], timeline_key: `chat:session/${s.agent_device_id}`, last_activity_at: 0 }]))
     this.model = {
       room: { ...f.room },
       members: new Map(f.members.map(m => [m.device_id, { ...m }])),
@@ -26,7 +26,7 @@ class MockClient {
       timelines: new Map(),
       human: {
         drafts: toMap(f.human.drafts), snoozes: toMap(f.human.snoozes), ducks: toMap(f.human.ducks), crown: f.human.crown ?? null,
-        desks: toMap(f.human.desks), session_settings: toMap(f.human.session_settings), read_up_to: toMap(f.human.read_up_to), canvas_snapshots: new Map(), raw: new Map(),
+        desks: toMap(f.human.desks), session_settings: toMap(f.human.session_settings), canvas_snapshots: new Map(), raw: new Map(),
       },
       invites: new Map(), alerts: [], outbox: [], stack: [], open_permission_ids: [],
     }
@@ -80,9 +80,6 @@ class MockClient {
     if (!older.length && t.loaded_down_to === Infinity) t.loaded_down_to = 0
     this.changed(c => c.timelines.add(key))
     return { loaded: older.length, has_more: t.has_more }
-  }
-  async timelineWindow(key, { before_envelope_number = Infinity, limit = 50 } = {}) {
-    return (this.store.get(key) ?? []).filter(i => i.envelope_number < before_envelope_number).slice(-limit)
   }
   addItem(key, item, change) {
     this.ensureStore(key)
@@ -147,7 +144,7 @@ class MockClient {
   }
   async setRegisters(values) {
     const h = this.model.human
-    const MAPS = { draft: h.drafts, snooze: h.snoozes, duck: h.ducks, desk: h.desks, session: h.session_settings, read_up_to: h.read_up_to }
+    const MAPS = { draft: h.drafts, snooze: h.snoozes, duck: h.ducks, desk: h.desks, session: h.session_settings }
     this.changed(c => {
       for (const [key, value] of Object.entries(values)) {
         c.registers.add(key)
@@ -167,8 +164,6 @@ class MockClient {
   duck(id, v) { return this.setRegisters({ [`duck/${id}`]: v }) }
   setCrown(v) { return this.setRegisters({ crown: v }) }
   setDesk(id, v) { return this.setRegisters({ [`desk/${id}`]: v }) }
-  setSessionSettings(id, v) { return this.setRegisters({ [`session/${id}`]: v }) }
-  markReadUpTo(id, n) { return this.setRegisters({ [`read_up_to/${id}`]: n }) }
   async saveNote({ object_id = hex(32), ...fields }) {
     const had = this.model.notes.get(object_id)
     const note = { object_id, by_device_id: this.model.room.my_device_id, text: '', ...had, ...fields, object_version: (had?.object_version ?? 0) + 1, version_hash: hex(64), envelope_number: this.next(), object_state: fields.object_state ?? had?.object_state ?? 'open' }
@@ -802,7 +797,7 @@ function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 5
   return {
     made_at: now, room: { room_id: hex(64, 2), hub_url: 'mock:', my_device_id: me, my_role: 'human', key_epoch: 1, last_entry_number: members.length - 1, last_envelope_number: n, connection: 'live' },
     members, sessions: ss, cards, permissions: [], notes: [], published: [], timelines,
-    human: { drafts: {}, snoozes: {}, ducks: {}, crown: { agent_device_id: ss[0].agent_device_id }, desks: {}, session_settings: Object.fromEntries(ss.map(s => [s.agent_device_id, s.settings])), read_up_to: {} },
+    human: { drafts: {}, snoozes: {}, ducks: {}, crown: { agent_device_id: ss[0].agent_device_id }, desks: {}, session_settings: Object.fromEntries(ss.map(s => [s.agent_device_id, s.settings])) },
   }
 }
 

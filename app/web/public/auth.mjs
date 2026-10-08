@@ -83,7 +83,6 @@ ${raw(L.gone)}
 <p class="room-meta">Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the signed member list: it must look the same on every device.</p>`)
     }
     t.get(/^\/settings\/devices$/, ({ req, res }) => page(req, res, 'Settings · Devices', devicesMain(), { stream: '&room=devices' }))
-    t.get(/^\/devices$/, ({ res }) => t.redirect(res, '/settings/devices'))
     t.post(/^\/devices\/remove$/, async ({ req, res, form }) => {
       try { await client.removeDevices([String(form.get('device_id'))]) } catch (err) { return page(req, res, 'Devices', devicesMain(`Not removed: ${err.message}`), {}, 422) }
       t.redirect(res, '/settings/devices')

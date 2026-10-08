@@ -561,7 +561,7 @@ There is no kind 8: the hub refuses it (`bad-format`); drawings are timeline ite
 
 - **Every device's own key** counts only from that device: `device/<device_id>` (`device_name`, `platform`, `folder`, `host`), written right after joining, e.g. `device_name` "valiido", `folder` "~/git/valiido", `host` "desktop". The hub never sees a name.
 - **An agent's keys** count only from that agent: `profile` (`model`, `task`, `icon`, `agent_name`, `parent_session`, `is_main`), `status_line/<id>` (`label`, `state`, `detail`, `object_id`), `alert/<envelope_hash>` (a command the agent refused: `code`, `message`, `sender_device_id`, `envelope_number`).
-- **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `read_up_to/<session_id>`, `canvas_snapshot/<timeline_id>` (for `timeline_kind` canvas; `attachment` reference + the signed sender **frontier** it includes, R2), `room_snapshot` (a whole-room snapshot for a fresh device's first load: `shared/snapshot.mjs`).
+- **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `canvas_snapshot/<timeline_id>` (for `timeline_kind` canvas; `attachment` reference + the signed sender **frontier** it includes, R2), `room_snapshot` (a whole-room snapshot for a fresh device's first load: `shared/snapshot.mjs`).
 
 **Canvases.** Strokes are an append-only set: concurrent edits from two devices merge without conflict (set semantics, ordered by `envelope_number`; erase and move are tombstones referencing `stroke_ids`). Every few hundred strokes or when idle, one device writes the whole canvas as an encrypted snapshot attachment and points `canvas_snapshot/<timeline_id>` at it; a fresh client loads snapshot + `GET threads?timeline_kind=canvas&timeline_id=…&after_envelope_number=` instead of replaying everything. Live strokes from others render from the stream as they arrive.
 
@@ -604,7 +604,7 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
 | `timeline_item` canvas on `desk/<D>` | human devices |
 | `timeline_item` canvas on `session/<S>` | human devices and the agent assigned to S |
 | `status` key `device/<X>`, `profile`, `status_line/*`, `alert/<envelope_hash>` | X itself / an agent the session's grants gave that session key epoch (session scope) |
-| `status` human keys (`draft/`, `snooze/`, `duck/`, `crown`, `desk/`, `session/`, `read_up_to/`, `canvas_snapshot/`, `room_snapshot`) | human devices only |
+| `status` human keys (`draft/`, `snooze/`, `duck/`, `crown`, `desk/`, `session/`, `canvas_snapshot/`, `room_snapshot`) | human devices only |
 | session grant | a human device (signed, chained per session); the first grant of an agent's own child session: that agent (R6) |
 | `send_push` | honoured only on `object_version` and `permission_request` from the creator, rate-limited |
 

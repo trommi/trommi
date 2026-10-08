@@ -100,7 +100,7 @@ model = {
 
 ```js
 Session = {
-  session_id,                            // 32 hex; timelines 'chat:session/<session_id>', registers session/<session_id>, read_up_to/<session_id>
+  session_id,                            // 32 hex; timelines 'chat:session/<session_id>', registers session/<session_id>
   agent_device_ids,                      // assigned now (latest grant); agent_device_id = the first of them
   ever_agent_ids,                        // every agent ever assigned (their envelopes in this session stay valid history)
   agent_device_id, agent_session_id,     // agent_session_id = agent_device_id.slice(0, 16) (v1.1)
@@ -113,11 +113,9 @@ Session = {
   agent_alerts: [{ key, value, envelope_number }],    // agent registers 'alert/<n>' (refused commands)
   registers: Map<key, { value, envelope_number }>,   // all of this agent's registers, raw
   settings: { name, desk, archived, group, icon } | null,   // human register 'session/<agent_device_id>'
-  read_up_to: envelope_number | 0,                    // human register 'read_up_to/<agent_device_id>'
   card_ids: [object_id],          // all cards of this agent, by first_envelope_number
   open_card_ids: [object_id],     // the ones with object_state 'open'
   timeline_key,                   // 'chat:session/<agent_device_id>'
-  unread_count,                   // items from the agent in its session timeline and its cards' timelines with envelope_number > read_up_to
   last_activity_at,               // sent_at of the newest envelope from or to this agent
 }
 ```
@@ -221,7 +219,6 @@ HumanRegisters = {
   crown: value | null,                      // 'crown'
   desks: Map<desk_id, value>,               // 'desk/<desk_id>'
   session_settings: Map<agent_device_id, value>,   // 'session/<agent_device_id>'
-  read_up_to: Map<agent_device_id, envelope_number>,
   canvas_snapshots: Map<timeline_id, value>,       // 'canvas_snapshot/<timeline_id>' { attachment, last_envelope_number }
   raw: Map<key, { value, envelope_number, by_device_id }>,   // every human key, including unknown ones
 }
@@ -292,7 +289,7 @@ await client.decideAgain({ object_id })
 await client.verdict({ object_id, allow })            // to a permission request
 await client.setRegisters({ 'draft/<object_id>': { keys, note, notes, marks } | null, ... })   // human keys only
 // shorthands: setDraft(object_id, draft|null), snooze(object_id, until|null), duck(object_id, value|null), setCrown(value),
-//             setDesk(desk_id, value|null), setSessionSettings(agent_device_id, value|null), markReadUpTo(agent_device_id, envelope_number)
+//             setDesk(desk_id, value|null)
 const note_id = await client.saveNote({ object_id?, text, ...app fields (place, session, to, attachments, held, …) })
         // new note or new version; optimistic (model.notes at once, pending: true; a new note first under its local_id, then its object_id);
         // quick edits chain on the version THIS client sealed last

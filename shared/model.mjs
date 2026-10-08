@@ -48,7 +48,7 @@ export function emptyModel() {
   }
 }
 function emptyHuman() {
-  return { drafts: new Map(), snoozes: new Map(), ducks: new Map(), crown: null, desks: new Map(), session_settings: new Map(), read_up_to: new Map(), canvas_snapshots: new Map(), raw: new Map() }
+  return { drafts: new Map(), snoozes: new Map(), ducks: new Map(), crown: null, desks: new Map(), session_settings: new Map(), canvas_snapshots: new Map(), raw: new Map() }
 }
 
 /** A change record: what a batch touched. Every field always present. */
@@ -172,7 +172,7 @@ export function sessionOf(model, session_id) {
   if (!s) {
     s = { session_id, agent_device_ids: [], ever_agent_ids: [], epoch_agent_ids: {}, agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false, offline_since: null, link: null, heard_up_to: null, heard_at: null,
       session_key_epoch: 0, with_history: false, profile: null, status_lines: [], agent_alerts: [], registers: new Map(),
-      settings: null, read_up_to: 0, card_ids: [], open_card_ids: [], timeline_key: timelineKey('chat', `session/${session_id}`), unread_count: 0, unread_numbers: [], last_activity_at: 0 }
+      settings: null, card_ids: [], open_card_ids: [], timeline_key: timelineKey('chat', `session/${session_id}`), last_activity_at: 0 }
     model.sessions.set(session_id, s)
   }
   return s
@@ -355,10 +355,6 @@ function applyTimelineItem(model, rec, change) {
   }
   change.timelines.add(key)
   const p = parseTimelineKey(key)
-  if (p.timeline_kind === 'chat' && rec.sender_role === 'agent' && rec.session_id) {
-    const s = sessionOf(model, rec.session_id)
-    if (rec.envelope_number > s.read_up_to) { s.unread_numbers.push(rec.envelope_number); s.unread_count = s.unread_numbers.length }
-  }
   if (p.timeline_kind === 'chat' && p.scope === 'card') {
     const card = model.cards.get(p.scope_id)
     if (card) {
@@ -690,7 +686,7 @@ export const isExpired = (p, now = Date.now()) => p.permission_state === 'pendin
 
 // ---- registers ------------------------------------------------------------------------------
 
-const HUMAN_PREFIXES = ['draft/', 'snooze/', 'duck/', 'desk/', 'session/', 'session_history/', 'read_up_to/', 'canvas_snapshot/']
+const HUMAN_PREFIXES = ['draft/', 'snooze/', 'duck/', 'desk/', 'session/', 'session_history/', 'canvas_snapshot/']
 const isHumanKey = k => k === 'crown' || k === 'room_snapshot' || HUMAN_PREFIXES.some(p => k.startsWith(p))
 const isAgentKey = k => k === 'profile' || k === 'heard' || k.startsWith('status_line/') || k.startsWith('alert/')
 
@@ -748,12 +744,6 @@ export function setHumanRegister(model, key, value, rec, change) {
     case 'session': {
       put(h.session_settings, value)
       const s = sessionOf(model, id); s.settings = value ?? null; change.sessions.add(id); change.stack = true; break
-    }
-    case 'read_up_to': {
-      put(h.read_up_to, value)
-      const s = sessionOf(model, id); s.read_up_to = Number(value) || 0
-      s.unread_numbers = s.unread_numbers.filter(n => n > s.read_up_to); s.unread_count = s.unread_numbers.length
-      change.sessions.add(id); break
     }
     case 'canvas_snapshot': put(h.canvas_snapshots, value); change.timelines.add(timelineKey('canvas', id)); break
   }
@@ -859,7 +849,7 @@ export function project(model, change, now = Date.now()) {
   if (!same(before, model.stack) || !same(beforePerm, model.open_permission_ids)) change.stack = true
 }
 
-/** Unread items: from the agent, in its session timeline and its cards' timelines, newer than read_up_to. Needs the unread index kept by the sync engine. */
+/** The stack of one desk (desk_id), or of all (none). */
 export function stackOf(model, { desk_id } = {}) {
   if (desk_id == null) return model.stack
   return model.stack.filter(id => (model.sessions.get(model.cards.get(id)?.session_id)?.settings?.desk ?? null) === desk_id)

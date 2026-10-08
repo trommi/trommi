@@ -1704,9 +1704,6 @@ export class Client {
   duck(object_id, value) { return this.setRegisters({ [`duck/${object_id}`]: value ?? null }) }
   setCrown(value) { return this.setRegisters({ crown: value ?? null }) }
   setDesk(desk_id, value) { return this.setRegisters({ [`desk/${desk_id}`]: value ?? null }) }
-  setSessionSettings(agent_device_id, value) { return this.setRegisters({ [`session/${agent_device_id}`]: value ?? null }) }
-  markReadUpTo(agent_device_id, envelope_number) { return this.setRegisters({ [`read_up_to/${agent_device_id}`]: envelope_number }) }
-  setDeviceInfo(info) { return this.setRegisters({ [`device/${this.my_device_id}`]: info }) }
 
   /** A note's newest version as THIS client sealed it (may be ahead of the model while versions are in flight). */
   _noteHead(object_id) {
@@ -2303,7 +2300,7 @@ function itemFromStored(r) {
     item_state: r.c ? (r.cs === 'ok' ? 'loaded' : r.cs) : (r.cs === 'pruned' || r.cs === 'undecryptable' ? r.cs : 'header'), content_type: r.c?.content_type ?? null, content: r.c ?? null }
 }
 
-const HUMAN_KEY = /^(crown$|room_snapshot$|draft\/|snooze\/|duck\/|desk\/|session\/|read_up_to\/|canvas_snapshot\/)/
+const HUMAN_KEY = /^(crown$|room_snapshot$|draft\/|snooze\/|duck\/|desk\/|session\/|canvas_snapshot\/)/
 const AGENT_KEY = /^(profile$|heard$|status_line\/|alert\/)/
 export const isHumanRegisterKey = k => HUMAN_KEY.test(k)
 export const isAgentRegisterKey = k => AGENT_KEY.test(k)
