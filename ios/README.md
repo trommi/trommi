@@ -49,21 +49,22 @@ The steps use [omarchy-apple-dev](https://github.com/joshuaswarren/omarchy-apple
 verified there with Swift 6.4, xtool 1.20 and Xcode 27). Nothing of it is installed yet. Steps 1–3 need you (sudo, your
 Apple ID, the phone in your hand); after that, building and shipping are commands an agent can run.
 
-1. **Toolchain (sudo).** Omarchy menu → Install → Development → iOS (Swift + xtool), or in a terminal:
+1. **Toolchain (sudo).** Omarchy's own `omarchy-install-dev-env` has no iOS entry on this machine, so clone the project and run its installer:
 
    ```bash
-   omarchy-install-dev-env ios
+   git clone https://github.com/joshuaswarren/omarchy-apple-dev ~/.local/share/omarchy-apple-dev
+   cd ~/.local/share/omarchy-apple-dev && ./install-toolchain.sh
    ```
 
    It installs `usbmuxd zip base-devel git libimobiledevice openssl poppler libheif` with pacman, `swift-bin` (Swift 6.4)
    from the AUR, builds xtool from source (about 7 minutes), installs rcodesign, ipsw and pymobiledevice3 in user paths,
-   then stops at the SDK step. (The swift.org toolchain in `~/.local/share/swift` stays; the iOS builds use `swift-bin`.)
+   then stops at the SDK step and names the matching Xcode. (The swift.org toolchain in `~/.local/share/swift` stays; the iOS builds use `swift-bin`.)
 
 2. **iOS SDK (Apple ID, one download).** Sign in at https://developer.apple.com/download/all/?q=Xcode and download
    **Xcode 27** (`.xip`, matches Swift 6.4; no Mac needed). Then:
 
    ```bash
-   XCODE_XIP=~/Downloads/Xcode_27.0.xip ~/.local/share/omarchy-apple-dev/install-toolchain.sh
+   cd ~/.local/share/omarchy-apple-dev && XCODE_XIP=~/Downloads/<the Xcode .xip> ./install-toolchain.sh
    swift sdk list                                    # must print: darwin
    xtool auth                                        # sign in with your Apple ID (stored in ~/.local/share/xtool)
    ```
