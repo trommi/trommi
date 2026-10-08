@@ -270,7 +270,7 @@ public final class ShareInbox: @unchecked Sendable {
   /** A payload's bytes. */
   public func payload(_ item: ShareItem) throws -> Data {
     guard let f = item.file, !f.contains("/") else { throw ShareError.damaged(item.name) }
-    let d = try Data(contentsOf: itemsDir.appendingPathComponent(f))
+    guard let d = try? Data(contentsOf: itemsDir.appendingPathComponent(f), options: .mappedIfSafe) else { throw ShareError.damaged(item.name) }
     return try open(d, role: "item", name: f)
   }
   /**
