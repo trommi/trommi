@@ -1,0 +1,1413 @@
+{
+  "tools": [
+    {
+      "_meta": {
+        "anthropic/alwaysLoad": true
+      },
+      "name": "reply",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The message to show in the chat"
+          },
+          "html": {
+            "type": "string",
+            "description": "Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most 200 KB. For a plain comparison a markdown table in the text is enough. Needs text beside it: the gist in plain words, which is what is read aloud and what clients without HTML show."
+          },
+          "details": {
+            "type": "string",
+            "description": "Optional longer material shown collapsed under the message: your reasoning, what you tried, command output, a diff. Markdown. The human opens it only if they want to."
+          },
+          "attachments": {
+            "type": "array",
+            "description": "Absolute paths of files to show with the message; images, videos (mp4, webm, mov) and audio play inline, anything else is a download link. Each is an absolute path or { path, page, title, mark }: a picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "Absolute path of the file"
+                    },
+                    "page": {
+                      "type": "string",
+                      "description": "The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short caption"
+                    },
+                    "mark": {
+                      "type": "object",
+                      "description": "For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "w": {
+                          "type": "number"
+                        },
+                        "h": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "A word or two beside the circle, at most 24 characters"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "w",
+                        "h"
+                      ]
+                    },
+                    "marks": {
+                      "type": "array",
+                      "maxItems": 4,
+                      "description": "Several such regions on one picture, at most four",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              ]
+            }
+          },
+          "card_id": {
+            "type": "string",
+            "description": "One of your cards this message belongs to; the board shows it under that card. Use it to answer a question the human asked back about the card (a chat message that carried card_id), and to give the details of a card you just filed (background, reasoning, measurements, links), which do not belong in its body. On an open card it changes nothing about the card: not its place, not its state."
+          },
+          "present": {
+            "type": "boolean",
+            "description": "Only with card_id, for a card the human handed back to you. true: your work on it is done without rewording it, put the card before the human again. Left out: the reply is only a message on the card (an acknowledgement, a progress note) and the card stays with you. The answer to \"Explain\" presents the card by itself."
+          },
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "_meta": {
+        "anthropic/alwaysLoad": true
+      },
+      "name": "create_decision",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "The question, one line, at most about 70 characters"
+          },
+          "teaser": {
+            "type": "string",
+            "description": "Two short lines of plain text (at most 160 characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body."
+          },
+          "body": {
+            "type": "string",
+            "description": "Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context."
+          },
+          "html": {
+            "type": "string",
+            "description": "Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most 200 KB. For a plain comparison a markdown table in the text is enough. Needs body beside it, the same in plain words; not together with sections or text, where a block carries its own html."
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "description": "The choices offered. Give options (with body), or sections, or text: one of the three.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "Stable identifier returned to you, e.g. \"sqlite\""
+                },
+                "label": {
+                  "type": "string",
+                  "description": "What the human sees on the button, at most about four words"
+                },
+                "detail": {
+                  "type": "string",
+                  "description": "Optional consequence of this choice: one short line of about six words, never a paragraph, never what leaving it unticked means"
+                },
+                "short": {
+                  "type": "string",
+                  "description": "Optional: the option in two or three words (at most 18 characters), for the answer tile on the Desk row of a two-option question whose labels are not a plain yes or no, e.g. \"Delete\" and \"Keep\". Without it such a row shows one \"Choose\" tile."
+                },
+                "final": {
+                  "type": "boolean",
+                  "description": "true: choosing this leaves nothing for you to do or to report (\"Done\", \"Leave it\", \"No\"). The card then closes itself with the answer: it never waits \"with the agent\", and you need no close_card. Its tile shows the human a small sign that this choice ends the matter. Leave it out when you will act on the choice."
+                }
+              },
+              "required": [
+                "key",
+                "label"
+              ]
+            }
+          },
+          "sections": {
+            "type": "array",
+            "description": "Instead of body and options: the whole question as one structured text, an ordered list of blocks. A block without key is plain text (introduction, context). A block with key is a flagged paragraph and becomes an option: the board shows the paragraph tied to its option, and options, body and recommended are derived from the blocks. At least two blocks need a key.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "The paragraph, markdown; for a flagged block what this option means, at most about 400 characters"
+                },
+                "key": {
+                  "type": "string",
+                  "description": "Flags the block as an option: the stable identifier returned to you"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Required with key: the short name of the option on its tile, at most about four words"
+                },
+                "short": {
+                  "type": "string",
+                  "description": "With key, optional: the option in two or three words (at most 18 characters) for the answer tile on the Desk row; see options"
+                },
+                "html": {
+                  "type": "string",
+                  "description": "A rich layout shown under this paragraph (see html); the text beside it says the same in plain words"
+                },
+                "recommended": {
+                  "type": "boolean",
+                  "description": "true: you would pick this one; several only with multiple: true"
+                },
+                "final": {
+                  "type": "boolean",
+                  "description": "With key: choosing this option ends the matter and closes the card; see options"
+                },
+                "picture": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "description": "An attachment of this card that belongs to this option: its file name, or its position in attachments counted from 0"
+                }
+              },
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "The same as sections, written as one text block. Paragraphs are separated by a blank line. A paragraph that starts with [key] is an option: \"[key] Label: explanation\"; without a colon the first line is the label and the following lines explain. [key*], or (recommended) after the label, marks your advice; [key!] marks an option as final (choosing it ends the matter and closes the card, see options; both: [key*!]). A last line \"picture: file.png\" ties an attachment to the option. Every other paragraph is plain context. Example:\nThe export times out for large accounts. Tick what I may build.\n\n[limit*] Raise the limit: 60 instead of 30 seconds. Done in five minutes, but only moves the wall.\n\n[async] Export in the background: The file arrives by mail when it is ready. About two days.\n\n[page] Paginate the export\nSmaller files, but every consumer of the API has to follow."
+          },
+          "attachments": {
+            "type": "array",
+            "description": "Files to show on the card, each an absolute path or { path, page, title, mark }; images render inline, videos (mp4, webm, mov; up to 64 MB, end-to-end encrypted like every file) play on the card. A picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "Absolute path of the file"
+                    },
+                    "page": {
+                      "type": "string",
+                      "description": "The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short caption"
+                    },
+                    "mark": {
+                      "type": "object",
+                      "description": "For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "w": {
+                          "type": "number"
+                        },
+                        "h": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "A word or two beside the circle, at most 24 characters"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "w",
+                        "h"
+                      ]
+                    },
+                    "marks": {
+                      "type": "array",
+                      "maxItems": 4,
+                      "description": "Several such regions on one picture, at most four",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              ]
+            }
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "critical"
+            ],
+            "description": "Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know"
+          },
+          "urgency_reason": {
+            "type": "string",
+            "description": "What is waiting on this, one short phrase; expected for high and critical"
+          },
+          "multiple": {
+            "type": "boolean",
+            "description": "true: the human may tick several options and sends them together; the decision then also carries choices, all chosen keys comma-separated. Default false: one tap on one option decides."
+          },
+          "recommended": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "The key of the option you would pick yourself; for a card with multiple: true it may be a list of keys. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference."
+          },
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    {
+      "_meta": {
+        "anthropic/alwaysLoad": true
+      },
+      "name": "create_info",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "What it is about, one line, at most about 70 characters"
+          },
+          "teaser": {
+            "type": "string",
+            "description": "Two short lines of plain text (at most 160 characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body."
+          },
+          "body": {
+            "type": "string",
+            "description": "The text, markdown. Or give sections or text."
+          },
+          "sections": {
+            "type": "array",
+            "description": "Instead of body: the text as an ordered list of blocks, each a paragraph or a short passage of its own. No block has a key: an info has no options.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "The paragraph, markdown"
+                },
+                "html": {
+                  "type": "string",
+                  "description": "A rich layout shown under this paragraph (see html); the text beside it says the same in plain words"
+                }
+              },
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "The same as sections, written as one text block: paragraphs separated by a blank line."
+          },
+          "html": {
+            "type": "string",
+            "description": "Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most 200 KB. For a plain comparison a markdown table in the text is enough. Needs body beside it, the same in plain words; not together with sections or text, where a block carries its own html."
+          },
+          "attachments": {
+            "type": "array",
+            "description": "Files to show on the card, each an absolute path or { path, page, title, mark }; images render inline, videos (mp4, webm, mov; up to 64 MB, end-to-end encrypted like every file) play on the card. A picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "Absolute path of the file"
+                    },
+                    "page": {
+                      "type": "string",
+                      "description": "The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short caption"
+                    },
+                    "mark": {
+                      "type": "object",
+                      "description": "For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "w": {
+                          "type": "number"
+                        },
+                        "h": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "A word or two beside the circle, at most 24 characters"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "w",
+                        "h"
+                      ]
+                    },
+                    "marks": {
+                      "type": "array",
+                      "maxItems": 4,
+                      "description": "Several such regions on one picture, at most four",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              ]
+            }
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "critical"
+            ],
+            "description": "Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know"
+          },
+          "urgency_reason": {
+            "type": "string",
+            "description": "What is waiting on this, one short phrase; expected for high and critical"
+          },
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        },
+        "required": [
+          "title"
+        ]
+      }
+    },
+    {
+      "name": "revise_card",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "The question, one line, at most about 70 characters"
+          },
+          "teaser": {
+            "type": "string",
+            "description": "Two short lines of plain text (at most 160 characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body."
+          },
+          "body": {
+            "type": "string",
+            "description": "Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context."
+          },
+          "html": {
+            "type": "string",
+            "description": "Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most 200 KB. For a plain comparison a markdown table in the text is enough. Needs body beside it, the same in plain words; not together with sections or text, where a block carries its own html."
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "description": "The choices offered. Give options (with body), or sections, or text: one of the three.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "Stable identifier returned to you, e.g. \"sqlite\""
+                },
+                "label": {
+                  "type": "string",
+                  "description": "What the human sees on the button, at most about four words"
+                },
+                "detail": {
+                  "type": "string",
+                  "description": "Optional consequence of this choice: one short line of about six words, never a paragraph, never what leaving it unticked means"
+                },
+                "short": {
+                  "type": "string",
+                  "description": "Optional: the option in two or three words (at most 18 characters), for the answer tile on the Desk row of a two-option question whose labels are not a plain yes or no, e.g. \"Delete\" and \"Keep\". Without it such a row shows one \"Choose\" tile."
+                },
+                "final": {
+                  "type": "boolean",
+                  "description": "true: choosing this leaves nothing for you to do or to report (\"Done\", \"Leave it\", \"No\"). The card then closes itself with the answer: it never waits \"with the agent\", and you need no close_card. Its tile shows the human a small sign that this choice ends the matter. Leave it out when you will act on the choice."
+                }
+              },
+              "required": [
+                "key",
+                "label"
+              ]
+            }
+          },
+          "sections": {
+            "type": "array",
+            "description": "Instead of body and options: the whole question as one structured text, an ordered list of blocks. A block without key is plain text (introduction, context). A block with key is a flagged paragraph and becomes an option: the board shows the paragraph tied to its option, and options, body and recommended are derived from the blocks. At least two blocks need a key.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "The paragraph, markdown; for a flagged block what this option means, at most about 400 characters"
+                },
+                "key": {
+                  "type": "string",
+                  "description": "Flags the block as an option: the stable identifier returned to you"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Required with key: the short name of the option on its tile, at most about four words"
+                },
+                "short": {
+                  "type": "string",
+                  "description": "With key, optional: the option in two or three words (at most 18 characters) for the answer tile on the Desk row; see options"
+                },
+                "html": {
+                  "type": "string",
+                  "description": "A rich layout shown under this paragraph (see html); the text beside it says the same in plain words"
+                },
+                "recommended": {
+                  "type": "boolean",
+                  "description": "true: you would pick this one; several only with multiple: true"
+                },
+                "final": {
+                  "type": "boolean",
+                  "description": "With key: choosing this option ends the matter and closes the card; see options"
+                },
+                "picture": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "description": "An attachment of this card that belongs to this option: its file name, or its position in attachments counted from 0"
+                }
+              },
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "The same as sections, written as one text block. Paragraphs are separated by a blank line. A paragraph that starts with [key] is an option: \"[key] Label: explanation\"; without a colon the first line is the label and the following lines explain. [key*], or (recommended) after the label, marks your advice; [key!] marks an option as final (choosing it ends the matter and closes the card, see options; both: [key*!]). A last line \"picture: file.png\" ties an attachment to the option. Every other paragraph is plain context. Example:\nThe export times out for large accounts. Tick what I may build.\n\n[limit*] Raise the limit: 60 instead of 30 seconds. Done in five minutes, but only moves the wall.\n\n[async] Export in the background: The file arrives by mail when it is ready. About two days.\n\n[page] Paginate the export\nSmaller files, but every consumer of the API has to follow."
+          },
+          "attachments": {
+            "type": "array",
+            "description": "Files to show on the card, each an absolute path or { path, page, title, mark }; images render inline, videos (mp4, webm, mov; up to 64 MB, end-to-end encrypted like every file) play on the card. A picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "Absolute path of the file"
+                    },
+                    "page": {
+                      "type": "string",
+                      "description": "The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short caption"
+                    },
+                    "mark": {
+                      "type": "object",
+                      "description": "For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "w": {
+                          "type": "number"
+                        },
+                        "h": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "A word or two beside the circle, at most 24 characters"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "w",
+                        "h"
+                      ]
+                    },
+                    "marks": {
+                      "type": "array",
+                      "maxItems": 4,
+                      "description": "Several such regions on one picture, at most four",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              ]
+            }
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "critical"
+            ],
+            "description": "Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know"
+          },
+          "urgency_reason": {
+            "type": "string",
+            "description": "What is waiting on this, one short phrase; expected for high and critical"
+          },
+          "multiple": {
+            "type": "boolean",
+            "description": "true: the human may tick several options and sends them together; the decision then also carries choices, all chosen keys comma-separated. Default false: one tap on one option decides."
+          },
+          "recommended": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "The key of the option you would pick yourself; for a card with multiple: true it may be a list of keys. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference."
+          },
+          "note": {
+            "type": "string",
+            "description": "One short line telling the human what changed, shown in the conversation; without it the new title is shown"
+          }
+        },
+        "required": [
+          "card_id"
+        ]
+      }
+    },
+    {
+      "name": "merge_cards",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card_ids": {
+            "type": "array",
+            "minItems": 2,
+            "items": {
+              "type": "string"
+            },
+            "description": "The open cards this one replaces, at least two"
+          },
+          "title": {
+            "type": "string",
+            "description": "The one question, one line, at most about 70 characters"
+          },
+          "teaser": {
+            "type": "string",
+            "description": "Two short lines of plain text (at most 160 characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body."
+          },
+          "body": {
+            "type": "string",
+            "description": "Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context."
+          },
+          "html": {
+            "type": "string",
+            "description": "Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most 200 KB. For a plain comparison a markdown table in the text is enough. Needs body beside it, the same in plain words; not together with sections or text, where a block carries its own html."
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "description": "The choices offered. Give options (with body), or sections, or text: one of the three.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "description": "Stable identifier returned to you, e.g. \"sqlite\""
+                },
+                "label": {
+                  "type": "string",
+                  "description": "What the human sees on the button, at most about four words"
+                },
+                "detail": {
+                  "type": "string",
+                  "description": "Optional consequence of this choice: one short line of about six words, never a paragraph, never what leaving it unticked means"
+                },
+                "short": {
+                  "type": "string",
+                  "description": "Optional: the option in two or three words (at most 18 characters), for the answer tile on the Desk row of a two-option question whose labels are not a plain yes or no, e.g. \"Delete\" and \"Keep\". Without it such a row shows one \"Choose\" tile."
+                },
+                "final": {
+                  "type": "boolean",
+                  "description": "true: choosing this leaves nothing for you to do or to report (\"Done\", \"Leave it\", \"No\"). The card then closes itself with the answer: it never waits \"with the agent\", and you need no close_card. Its tile shows the human a small sign that this choice ends the matter. Leave it out when you will act on the choice."
+                }
+              },
+              "required": [
+                "key",
+                "label"
+              ]
+            }
+          },
+          "sections": {
+            "type": "array",
+            "description": "Instead of body and options: the whole question as one structured text, an ordered list of blocks. A block without key is plain text (introduction, context). A block with key is a flagged paragraph and becomes an option: the board shows the paragraph tied to its option, and options, body and recommended are derived from the blocks. At least two blocks need a key.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "The paragraph, markdown; for a flagged block what this option means, at most about 400 characters"
+                },
+                "key": {
+                  "type": "string",
+                  "description": "Flags the block as an option: the stable identifier returned to you"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Required with key: the short name of the option on its tile, at most about four words"
+                },
+                "short": {
+                  "type": "string",
+                  "description": "With key, optional: the option in two or three words (at most 18 characters) for the answer tile on the Desk row; see options"
+                },
+                "html": {
+                  "type": "string",
+                  "description": "A rich layout shown under this paragraph (see html); the text beside it says the same in plain words"
+                },
+                "recommended": {
+                  "type": "boolean",
+                  "description": "true: you would pick this one; several only with multiple: true"
+                },
+                "final": {
+                  "type": "boolean",
+                  "description": "With key: choosing this option ends the matter and closes the card; see options"
+                },
+                "picture": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ],
+                  "description": "An attachment of this card that belongs to this option: its file name, or its position in attachments counted from 0"
+                }
+              },
+              "required": [
+                "text"
+              ]
+            }
+          },
+          "text": {
+            "type": "string",
+            "description": "The same as sections, written as one text block. Paragraphs are separated by a blank line. A paragraph that starts with [key] is an option: \"[key] Label: explanation\"; without a colon the first line is the label and the following lines explain. [key*], or (recommended) after the label, marks your advice; [key!] marks an option as final (choosing it ends the matter and closes the card, see options; both: [key*!]). A last line \"picture: file.png\" ties an attachment to the option. Every other paragraph is plain context. Example:\nThe export times out for large accounts. Tick what I may build.\n\n[limit*] Raise the limit: 60 instead of 30 seconds. Done in five minutes, but only moves the wall.\n\n[async] Export in the background: The file arrives by mail when it is ready. About two days.\n\n[page] Paginate the export\nSmaller files, but every consumer of the API has to follow."
+          },
+          "attachments": {
+            "type": "array",
+            "description": "Files to show on the card, each an absolute path or { path, page, title, mark }; images render inline, videos (mp4, webm, mov; up to 64 MB, end-to-end encrypted like every file) play on the card. A picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "description": "Absolute path of the file"
+                    },
+                    "page": {
+                      "type": "string",
+                      "description": "The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL"
+                    },
+                    "title": {
+                      "type": "string",
+                      "description": "A short caption"
+                    },
+                    "mark": {
+                      "type": "object",
+                      "description": "For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.",
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "w": {
+                          "type": "number"
+                        },
+                        "h": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string",
+                          "description": "A word or two beside the circle, at most 24 characters"
+                        }
+                      },
+                      "required": [
+                        "x",
+                        "y",
+                        "w",
+                        "h"
+                      ]
+                    },
+                    "marks": {
+                      "type": "array",
+                      "maxItems": 4,
+                      "description": "Several such regions on one picture, at most four",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "required": [
+                    "path"
+                  ]
+                }
+              ]
+            }
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "critical"
+            ],
+            "description": "Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know"
+          },
+          "urgency_reason": {
+            "type": "string",
+            "description": "What is waiting on this, one short phrase; expected for high and critical"
+          },
+          "multiple": {
+            "type": "boolean",
+            "description": "true: the human may tick several options and sends them together; the decision then also carries choices, all chosen keys comma-separated. Default false: one tap on one option decides."
+          },
+          "recommended": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "The key of the option you would pick yourself; for a card with multiple: true it may be a list of keys. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference."
+          },
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        },
+        "required": [
+          "card_ids",
+          "title"
+        ]
+      }
+    },
+    {
+      "name": "set_urgency",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card_id": {
+            "type": "string"
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "critical"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the urgency changed, one short phrase shown to the human"
+          }
+        },
+        "required": [
+          "card_id",
+          "urgency"
+        ]
+      }
+    },
+    {
+      "name": "withdraw_card",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "One line on why the answer is no longer needed"
+          }
+        },
+        "required": [
+          "card_id"
+        ]
+      }
+    },
+    {
+      "_meta": {
+        "anthropic/alwaysLoad": true
+      },
+      "name": "close_card",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card_id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string",
+            "description": "One line on what you did"
+          }
+        },
+        "required": [
+          "card_id"
+        ]
+      }
+    },
+    {
+      "_meta": {
+        "anthropic/alwaysLoad": true
+      },
+      "name": "set_status",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable identifier of the work stream, e.g. \"server\" or \"tests\""
+          },
+          "label": {
+            "type": "string",
+            "description": "Short name the human sees, two or three words"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "decision",
+              "working",
+              "done"
+            ],
+            "description": "decision = red, waiting on the human; working = yellow, in progress; done = green, finished"
+          },
+          "detail": {
+            "type": "string",
+            "description": "One line on where it stands"
+          },
+          "card_id": {
+            "type": "string",
+            "description": "For state \"decision\": the card that holds the question. The line turns yellow by itself once the human answers it."
+          },
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        },
+        "required": [
+          "id",
+          "state"
+        ]
+      }
+    },
+    {
+      "name": "clear_status",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        }
+      }
+    },
+    {
+      "name": "introduce",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "The model you are running as, e.g. \"Claude Opus 5.5\""
+          },
+          "task": {
+            "type": "string",
+            "description": "What you are working on in this session, one line"
+          },
+          "icon": {
+            "type": "string",
+            "description": "The name of the drawing that fits your task; it becomes the symbol of your session. A symbol the human picked by hand is kept."
+          },
+          "parent": {
+            "type": "string",
+            "description": "If you are a helper of another session: the id or the name of your main session. The board then shows you under it. Pass an empty string to stand alone again."
+          },
+          "main": {
+            "type": "boolean",
+            "description": "true: you are a main agent that leads helper sessions; the board shows your helpers under you. A session that has helpers under it is a main without saying so."
+          },
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        },
+        "required": [
+          "model"
+        ]
+      }
+    },
+    {
+      "name": "list_cards",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        }
+      }
+    },
+    {
+      "name": "publish_asset",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute path of the file to publish. Give this or content."
+          },
+          "content": {
+            "type": "string",
+            "description": "The asset itself as a string, e.g. the HTML of a page. Give this or path."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "html",
+              "image",
+              "video",
+              "audio",
+              "file"
+            ],
+            "description": "How the viewer shows it. html: a page in a sandboxed frame, which must be self-contained (inline CSS and scripts, data: images), because nothing is loaded from the network; image, video, audio: shown or played; file: offered as a download. Left out: inferred from the file extension, html for content."
+          },
+          "title": {
+            "type": "string",
+            "description": "Shown above the asset and on the board; defaults to the file name"
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional line shown with the link on the board, e.g. what the page is for"
+          },
+          "session": {
+            "type": "string",
+            "description": "Optional: the name of a child session (a helper of yours, e.g. \"Design\"); opened on first use. Left out: your own session."
+          }
+        }
+      }
+    },
+    {
+      "name": "list_assets",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "revoke_asset",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The asset id returned by publish_asset"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "_meta": {
+        "anthropic/alwaysLoad": true
+      },
+      "name": "open_session",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The helper's short name, shown on the board, e.g. \"Design\""
+          },
+          "task": {
+            "type": "string",
+            "description": "What the helper works on, one line"
+          },
+          "icon": {
+            "type": "string",
+            "description": "The name of the drawing that fits the helper's task (as in introduce)"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model the helper runs as"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "_meta": {
+        "anthropic/alwaysLoad": true
+      },
+      "name": "close_session",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The helper's short name, as given to open_session"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Optional: the helper's result in a few lines, posted into the child session before it is closed"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "share_asset",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The asset id returned by publish_asset"
+          },
+          "release": {
+            "type": "boolean",
+            "description": "true (default): release it. false: take the release back; the link stops working at once, the asset itself stays."
+          },
+          "expires_hours": {
+            "type": "number",
+            "description": "The release ends by itself after this many hours. 0 or left out: the longest, 30 days."
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  ],
+  "reload": {
+    "name": "reload_connector",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  "inbox": {
+    "name": "inbox",
+    "_meta": {
+      "anthropic/alwaysLoad": true
+    },
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  "session_tools": [
+    "reply",
+    "create_decision",
+    "create_info",
+    "merge_cards",
+    "set_status",
+    "clear_status",
+    "introduce",
+    "list_cards",
+    "publish_asset"
+  ],
+  "examples": {
+    "reply": {
+      "text": "Three ways to run the migration. **Tonight at 2** is the cheapest: 40 seconds of lock while hardly anyone is online.",
+      "html": "<table><thead><tr><th>Way</th><th>Lock</th><th>Work for me</th></tr></thead><tbody><tr><td>Now</td><td>40 s</td><td>none</td></tr><tr><td><mark>Tonight at 2</mark></td><td>40 s</td><td>none</td></tr><tr><td>In batches</td><td>0 s</td><td>2 h</td></tr></tbody></table>",
+      "details": "Ran `npm test`: 48 of 48 pass.\nThe slow one was the index on `orders`.",
+      "attachments": [
+        "/home/me/project/out/before-after.png"
+      ]
+    },
+    "create_decision": {
+      "title": "Run the migration on production now?",
+      "teaser": "Locks orders for about 40 seconds; now, or tonight when nobody orders?",
+      "body": "It locks `orders` for about 40 seconds.",
+      "urgency": "high",
+      "urgency_reason": "the deploy waits on it",
+      "recommended": "tonight",
+      "options": [
+        {
+          "key": "tonight",
+          "label": "Tonight at 2",
+          "detail": "Hardly anyone is online"
+        },
+        {
+          "key": "now",
+          "label": "Now",
+          "detail": "Short outage for whoever is online"
+        }
+      ]
+    },
+    "create_info": {
+      "title": "How the nightly migration works",
+      "attachments": [
+        {
+          "path": "/home/me/project/out/migration.png",
+          "page": "/home/me/project/out/migration.html",
+          "title": "The three steps"
+        }
+      ],
+      "urgency": "low",
+      "sections": [
+        {
+          "text": "You asked why the deploy waits until 2. In short: the migration locks `orders`, and at 2 nobody is writing to it."
+        },
+        {
+          "text": "**Order of events.** Backup at midnight, migration at 2, deploy right after. The picture shows the three steps."
+        },
+        {
+          "text": "**If it fails,** the deploy does not start and you find a question from me in the morning."
+        }
+      ]
+    },
+    "revise_card": {
+      "card_id": "a1b2c3d4",
+      "title": "Run the migration tonight at 2?",
+      "options": [
+        {
+          "key": "tonight",
+          "label": "Tonight at 2"
+        },
+        {
+          "key": "weekend",
+          "label": "At the weekend"
+        }
+      ],
+      "recommended": "tonight",
+      "note": "Running it now is off the table: the backup takes until midnight"
+    },
+    "merge_cards": {
+      "card_ids": [
+        "a1b2c3d4",
+        "e5f6a7b8",
+        "c9d0e1f2"
+      ],
+      "title": "Which parts of the storage plan do you agree to?",
+      "multiple": true,
+      "attachments": [
+        "/home/me/project/out/sync.png"
+      ],
+      "sections": [
+        {
+          "text": "Three parts, each stands on its own. Tick what I may build."
+        },
+        {
+          "key": "sqlite",
+          "label": "SQLite for cards",
+          "recommended": true,
+          "text": "One file, no server to run. Cards survive a restart and can be searched."
+        },
+        {
+          "key": "files",
+          "label": "Attachments as files",
+          "recommended": true,
+          "text": "Pictures stay next to the database as plain files, so backups are a copy."
+        },
+        {
+          "key": "sync",
+          "label": "Sync between hubs",
+          "picture": "sync.png",
+          "text": "Two machines show the same board. About two days more, and conflicts need a rule."
+        }
+      ]
+    },
+    "set_urgency": {
+      "card_id": "a1b2c3d4",
+      "urgency": "critical",
+      "reason": "nothing else is left to do"
+    },
+    "withdraw_card": {
+      "card_id": "a1b2c3d4",
+      "reason": "the staging run answered it"
+    },
+    "close_card": {
+      "card_id": "a1b2c3d4",
+      "summary": "Migration ran at 02:00, 38 seconds"
+    },
+    "set_status": {
+      "id": "migration",
+      "label": "Migration",
+      "state": "decision",
+      "detail": "waiting for the go-ahead",
+      "card_id": "a1b2c3d4"
+    },
+    "clear_status": {
+      "id": "migration"
+    },
+    "introduce": {
+      "model": "Claude Opus 5.5",
+      "task": "Prepare migration and deploy",
+      "icon": "database"
+    },
+    "list_cards": {},
+    "publish_asset": {
+      "path": "/home/me/project/out/report.html",
+      "title": "Load test, 2 October",
+      "note": "Charts for the three variants"
+    },
+    "list_assets": {},
+    "revoke_asset": {
+      "id": "q3n0XWb1kq0lYb6m3v8K2A"
+    },
+    "share_asset": {
+      "id": "q3n0XWb1kq0lYb6m3v8K2A",
+      "expires_hours": 72
+    },
+    "open_session": {
+      "name": "Design",
+      "task": "Pictures for the landing page",
+      "icon": "brush"
+    },
+    "close_session": {
+      "name": "Design",
+      "summary": "Three landing page pictures are in out/landing/, the blue one recommended"
+    }
+  }
+}
