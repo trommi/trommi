@@ -1,0 +1,27 @@
+/* screens.css: the demo's review page of every screen (demo.mjs "All screens"). A file of its own, not a <style> in
+   the page: the CSP allows no inline style elements. */
+.scr-page{grid-column:1/-1;overflow-y:auto;height:100%;padding:24px 32px 80px;background:var(--bg);color:var(--fg)}
+.scr-head{display:flex;align-items:center;gap:16px;margin-bottom:8px}.scr-head h1{font:800 2rem/1.1 var(--display);margin:0}
+.scr-head p{margin:0;color:var(--muted)}.scr-theme.is-tour{margin-left:auto;background:var(--fg);color:var(--bg)}.scr-theme{min-height:36px;padding:0 14px;border:1.6px solid var(--fg);border-radius:9px 12px 8px 13px/12px 8px 13px 9px;background:var(--surface);color:var(--fg);font:700 var(--t-sm)/1 var(--font);cursor:pointer}
+.scr-page h2{font:800 1.4rem/1.2 var(--display);margin:32px 0 12px;padding-top:12px;border-top:1px dashed var(--line-strong)}
+.scr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(840px,1fr));gap:24px 28px}
+.scr-row{display:flex;gap:16px;align-items:flex-start}
+.scr-item{margin:0}.scr-item figcaption{display:flex;gap:10px;align-items:baseline;margin-bottom:6px;font:600 var(--t-sm)/1.3 var(--font)}
+.scr-item figcaption a{color:var(--fg)}.scr-item code{font:500 var(--t-xs)/1 var(--mono);color:var(--muted)}
+.scr-states{display:flex;flex-direction:column;align-items:stretch;gap:4px;width:190px;margin:0}.scr-state{min-height:26px;padding:0 9px;border:0;border-radius:8px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line-strong);color:var(--muted);font:600 var(--t-xs)/1 var(--font);cursor:pointer}.scr-state[aria-pressed="true"]{background:var(--fg);color:var(--bg);box-shadow:none}
+.scr-item{padding-top:14px;border-top:1px dashed var(--line-strong)}.scr-item .scr-title{font:800 1.2rem/1.2 var(--display)}
+.scr-pair{display:flex;gap:12px;align-items:flex-start}
+.scr-box{position:relative;flex:none;overflow:hidden;border:1.5px solid var(--fg);border-radius:8px;background:var(--surface);box-shadow:0 8px 18px -12px rgb(20 30 25/.4)}
+.scr-box.is-wide{width:480px;height:300px}.scr-box.is-phone{width:130px;height:281px;border-radius:14px}
+.scr-box iframe{position:absolute;left:0;top:0;border:0;transform-origin:0 0;pointer-events:none}
+.scr-box.is-wide iframe{transform:scale(.3333)}.scr-box.is-phone iframe{transform:scale(.3333)}
+.tour{position:fixed;inset:0;z-index:200;display:grid;grid-template-rows:minmax(0,1fr) auto;background:var(--sunken)}
+.tour-stage{position:relative;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 392px;gap:16px;padding:12px;align-items:start}
+.tour-stage iframe{display:block;border:1.5px solid var(--fg);background:var(--surface);box-shadow:0 18px 40px -20px rgb(20 30 25/.5)}
+.tour-stage .is-wide{width:100%;height:100%;border-radius:10px}
+.tour-stage .is-phone{width:390px;height:min(844px,100%);border-radius:22px;justify-self:end}
+.tour-bar{display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 12px;border-top:1.5px solid var(--fg);background:var(--surface);color:var(--fg);font:600 var(--t-sm)/1.2 var(--font)}
+.tour-bar button,.tour-bar select{min-height:34px;padding:0 12px;border:0;border-radius:10px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line-strong);color:var(--fg);font:600 var(--t-sm)/1 var(--font);cursor:pointer}
+.tour-bar .tour-play{background:var(--fg);color:var(--bg);box-shadow:none;min-width:84px}
+.tour-where{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}.tour-where b{color:var(--fg)}
+.tour-wait{font:500 var(--t-xs)/1 var(--font);color:var(--muted)}

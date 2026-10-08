@@ -33,6 +33,8 @@ async function browser(name, width = 1440, height = 900) {
   page.on('Runtime.exceptionThrown', e => errors.push(`${name} exception: ${e.exceptionDetails?.exception?.description ?? e.exceptionDetails?.text}`))
   page.on('Runtime.consoleAPICalled', e => { if (e.type === 'warning' && process.env.E2E_WARN) console.log(name, 'warn:', e.args.map(a => a.value ?? a.description ?? '').join(' ')); if (e.type === 'error') errors.push(`${name} console: ${e.args.map(a => a.value ?? a.description ?? '').join(' ')}`) })
   await page.send('Runtime.enable'); await page.send('Page.enable')
+  // CSP violations (an inline style or script the policy refuses), counted per page and checked at the end
+  await page.send('Page.addScriptToEvaluateOnNewDocument', { source: "window.__csp=[];document.addEventListener('securitypolicyviolation',e=>window.__csp.push(e.violatedDirective+' '+(e.blockedURI||e.sample||'')))" })
   await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 600 })
   const js = async (code) => {
     const r = await page.send('Runtime.evaluate', { expression: `(async () => { ${code} })()`, awaitPromise: true, returnByValue: true })
@@ -602,6 +604,7 @@ try {
     results.push('diag agent: ' + JSON.stringify(st(agent)))
     results.push('diag A: ' + JSON.stringify(await A.js("const c = window.trommi?.client; if (!c) return 'no client yet (no account open)'; return { connection: c.model.room.connection, outbox: c.model.outbox.map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: c.model.room.outbox_blocked, alerts: c.model.alerts.slice(-6).map(a => [a.code, a.message?.slice(0, 120)]) }").catch(e => e.message)))
   }
+  for (const [name, X] of [['A', A], ['B', B], ['C', C], ['D', D]]) if (X) { const v = await X.js('return window.__csp ?? []').catch(() => []); check(!v.length, `${name}: no CSP violation on its last page${v.length ? ` (${v.slice(0, 3).join('; ')})` : ''}`) }
   for (const e of [...A.errors, ...(B?.errors ?? []), ...(C?.errors ?? []), ...(D?.errors ?? [])]) results.push(`err  ${e}`)
   agent?.stop?.()
   await A.close(); await B?.close(); await C?.close(); await D?.close()
