@@ -1994,6 +1994,9 @@ async function boot() {
   if (/^\/a\/[0-9a-f]{32}$/.test(location.pathname)) return (await view('media')).showShare()
   // A room that is stored but does not open is never shown as "not logged in": the start page would offer Log in, which
   // this storage refuses (it holds a room). The room screen says what failed and offers Retry and Log out of this device.
+  // (the demo's account screens, /screens: ?mock=1&onboard=<state> draws one of them; no account, nothing sent)
+  const onboard = mock && params.get('onboard')
+  if (onboard) { fontsAfterPaint(); return (await view('auth')).roomScreen({ start: async () => {}, hub: 'mock:', demo: onboard }) }
   let openError = null
   const client = await openClient().catch(err => { console.error('open', err); openError = err; return null })
   OPEN_MS = performance.now() - T0   // the room from storage (or the demo's fixture) in memory

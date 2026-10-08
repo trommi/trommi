@@ -430,7 +430,7 @@ const accountError = err => ({
 }[err.code] ?? err.message)
 
 // ---- before a room: a screen of its own, before the board exists ----
-export async function roomScreen({ start, hub, openError = null }) {
+export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   document.title = 'Trommi'
   const root = document.createElement('div')
   root.id = 'room-screen'
@@ -440,6 +440,11 @@ export async function roomScreen({ start, hub, openError = null }) {
     stopScan?.(); stopScan = null
     root.innerHTML = String(markup)
     if (focus) root.querySelector(focus)?.focus({ preventScroll: true })
+  }
+  // (the demo, ?mock=1&onboard=<state>, /screens: the same screens, drawn only; nothing is sent, made or wiped here)
+  if (demo) {
+    root.addEventListener('submit', e => { e.preventDefault(); e.stopImmediatePropagation() }, true)
+    root.addEventListener('click', e => { if (e.target.closest('#kit-make, #kit-later, #kit-done, #broken-logout, #broken-retry, #scan-again, #join-cancel, #recovery-copy, #kit-download, #kit-print')) { e.preventDefault(); e.stopImmediatePropagation() } }, true)
   }
   // Buttons that work without Stimulus on this screen: Generate, Download, Print.
   root.addEventListener('click', e => {
@@ -460,11 +465,15 @@ export async function roomScreen({ start, hub, openError = null }) {
   const c = await core().catch(() => ({}))
   let lastEmail = ''
 
+  // (an older account's address, /recover#r1…: defined before the first flow runs, recoverFlow reads them)
+  const addressInBar = () => (location.hash.startsWith('#r1.') ? location.href : '')
+  const parseAddress = text => { if (!c.parseRoomLink) throw new Error('this version knows no account addresses'); return c.parseRoomLink(String(text).trim()) }
   // After a log out (logOut): said once on the start page, then the address is plain again.
-  const loggedOut = new URLSearchParams(location.search).get('logged_out')
+  const loggedOut = demo === 'logged-out' ? '1' : new URLSearchParams(location.search).get('logged_out')
   const wayLogin = new URLSearchParams(location.search).get('way') === 'login'
   if (loggedOut) history.replaceState(null, '', '/')
   // This browser holds an account that did not open: never the start page (Log in would refuse: "signed in already").
+  if (demo) return demoFlow(demo)
   if (openError) return brokenFlow(openError)
   if (location.pathname === '/join' && location.hash.length > 1) return joinFlow()
   if (location.pathname === '/recover') recoverFlow()
@@ -542,11 +551,15 @@ ${errorLine(error)}${loggedOut ? html`<p class="room-lead" id="logged-out" role=
       try {
         const { words } = await (await account()).makeEmergencyKit(client, { recovery_code: code })
         code = null
-        show(roomShell('Your Emergency Kit', html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now; you can make a new one in Settings.</p>
-${kitBox(email, words)}<div class="room-actions"><button type="button" class="room-primary" id="kit-done">Done</button></div>`), '#kit-download')
+        kitShown(email, words)
         on('#kit-done', 'click', () => done(client))
       } catch (err) { console.warn(err); kitOffer(client, code, email, `Not made: ${accountError(err)}`) }
     })
+  }
+
+  function kitShown(email, words) {
+    show(roomShell('Your Emergency Kit', html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now; you can make a new one in Settings.</p>
+${kitBox(email, words)}<div class="room-actions"><button type="button" class="room-primary" id="kit-done">Done</button></div>`), '#kit-download')
   }
 
   function loginFlow(error = '') {
@@ -594,7 +607,7 @@ ${pwField({ label: 'New password' })}${nameField}
 
   // Pair: scan the other device's QR code (BarcodeDetector) or paste its link.
   async function scanFlow(error = '') {
-    const camera = await canScan()
+    const camera = !demo && await canScan()
     show(roomShell('Scan from a signed-in device', html`<ol class="room-steps"><li>On the device that is logged in: menu → Devices → "Pair a device".</li><li>${camera ? 'Hold its QR code in front of this camera.' : 'Scan its QR code with this device\'s camera app.'}</li></ol>
 ${camera ? html`<div class="room-scan"><video id="scan-video" muted playsinline aria-label="Camera"></video></div>` : ''}
 ${errorLine(error)}
@@ -625,8 +638,7 @@ ${errorLine(error)}
         const join = c.joinRoom({ link, device_name: name, storage: await storage(), client: CLIENT })
         history.replaceState(null, '', '/join')   // the secret leaves the address bar
         join.check_code.then(code => {
-          show(roomShell('Log in with a signed-in device', html`<p class="room-lead">The other device shows six emoji too. If they are these, in this order, tap "They match" there:</p>${emojiRow(code, 'check-code')}<p class="room-wait">Waiting until it adds this device…</p>
-<p class="room-meta">They don't match? Tap "They don't match" there; the code is then used up. <a href="/" id="join-cancel">Cancel and scan again</a></p>`), null)
+          joinEmoji(code)
           on('#join-cancel', 'click', ev => { ev.preventDefault(); join.cancel(); history.replaceState(null, '', '/'); scanFlow() })
         })
         await done(await join.client)
@@ -635,15 +647,39 @@ ${errorLine(error)}
         console.error(err)
         if (err.code === 'room-exists') return roomExists()
         const why = { 'invite-used': 'The code was used already.', 'invite-expired': 'The code has expired.', 'invite-burned': 'The other device said the emoji did not match; the code is used up.' }[err.code] ?? err.message
-        show(roomShell('Log in with a signed-in device', html`<p class="room-error" role="alert">Not logged in: ${why}</p><p class="room-lead">Show a new code on the other device.</p><button type="button" class="room-primary" id="scan-again">Scan again</button>${backLink}`), '#scan-again')
+        joinFailed(why)
         on('#scan-again', 'click', () => scanFlow()); wireBack()
       }
     })
   }
 
+  function joinEmoji(code) {
+    show(roomShell('Log in with a signed-in device', html`<p class="room-lead">The other device shows six emoji too. If they are these, in this order, tap "They match" there:</p>${emojiRow(code, 'check-code')}<p class="room-wait">Waiting until it adds this device…</p>
+<p class="room-meta">They don't match? Tap "They don't match" there; the code is then used up. <a href="/" id="join-cancel">Cancel and scan again</a></p>`), null)
+  }
+  function joinFailed(why) {
+    show(roomShell('Log in with a signed-in device', html`<p class="room-error" role="alert">Not logged in: ${why}</p><p class="room-lead">Show a new code on the other device.</p><button type="button" class="room-primary" id="scan-again">Scan again</button>${backLink}`), '#scan-again')
+  }
+
+  // ---- the demo (/screens): every state of these screens, drawn with made-up words and no account ----
+  function demoFlow(state) {
+    lastEmail = 'ada@example.org'
+    const words = 'orbit lantern maple quiet saddle copper violin harbor ember thistle canyon pepper'
+    const flows = {
+      welcome: () => welcome(), 'logged-out': () => welcome(),
+      create: () => createFlow(), 'create-error': () => createFlow('The password needs at least 12 characters.'),
+      'kit-offer': () => kitOffer(null, null, lastEmail), kit: () => kitShown(lastEmail, words),
+      login: () => loginFlow(), 'login-error': () => loginFlow('Email or password is wrong.'),
+      forgot: () => forgotFlow(), scan: () => scanFlow(),
+      join: () => joinFlow(), 'join-emoji': () => joinEmoji('03-17-08-42-25-11'),
+      'join-expired': () => joinFailed('The code has expired.'), 'join-burned': () => joinFailed('The other device said the emoji did not match; the code is used up.'),
+      recover: () => recoverFlow(), 'recovery-code': () => recovery(null, 'TRMI-4K7Q-9XWD-2HBN-6PLZ-8RCV'),
+      broken: () => brokenFlow(Object.assign(new Error('the device keys are not in this browser'), { code: 'no-device' })),
+    }
+    ;(flows[state] ?? welcome)()
+  }
+
   // Accounts from before email + password: the address (/recover#r1…) and the recovery code shown back then.
-  const addressInBar = () => (location.hash.startsWith('#r1.') ? location.href : '')
-  const parseAddress = text => { if (!c.parseRoomLink) throw new Error('this version knows no account addresses'); return c.parseRoomLink(String(text).trim()) }
 
   function recoverFlow(error = '') {
     history.replaceState(null, '', `/recover${location.hash.startsWith('#r1.') ? location.hash : ''}`)

@@ -10,6 +10,9 @@ node dev/serve.mjs 8900 --bundle        # the same as deployed: the minified bun
 open http://127.0.0.1:8900/             # not logged in on this device: Create account or Log in
 open http://127.0.0.1:8900/?mock=1      # the demo room: fixture cards of every kind, simulated agents, no hub
 open http://127.0.0.1:8900/?mock=side   # the same room with a full sidebar: long names, every kind of count
+open http://127.0.0.1:8900/screens?mock=1   # every screen and state of the demo, the account screens (Onboarding) and the first run too
+open http://127.0.0.1:8900/?mock=fresh  # a new account's Desk before any agent (?mock=first: after its first question)
+open http://127.0.0.1:8900/?mock=1&onboard=kit   # one account screen drawn by the demo (auth.mjs demoFlow: welcome, create, kit, login, join-emoji, broken …); nothing is sent
 ```
 
 A design change: edit the view's `.mjs` and `.css`, reload, push. Nothing to build or release; nothing generated is

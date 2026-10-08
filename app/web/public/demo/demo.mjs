@@ -661,11 +661,36 @@ function fullFoot(f) {
   return f
 }
 
+// The first run (?mock=fresh, ?mock=first): a new account's Desk before any agent (the invite note), and the same Desk
+// a moment after the first agent came in and asked its first question.
+function firstRun(f, withCard) {
+  const main = f.sessions.find(s => s.device_name === 'Claude') ?? f.sessions[0]
+  const first = f.cards.find(c => c.agent_device_id === main.agent_device_id && c.object_state === 'open' && c.versions.at(-1)?.content?.options?.length === 2)
+  f.cards = []; f.permissions = []; f.published = []; f.notes = []; f.timelines = {}
+  f.human.drafts = {}; f.human.snoozes = {}; f.human.ducks = {}; f.human.crown = null; f.human.desks = {}
+  if (!withCard || !first) {
+    f.sessions = []
+    f.members = f.members.filter(m => m.device_role !== 'agent')
+    f.human.session_settings = {}
+    return f
+  }
+  f.sessions = [main]
+  f.members = f.members.filter(m => m.device_role !== 'agent' || m.device_id === main.agent_device_id)
+  f.human.session_settings = Object.fromEntries(Object.entries(f.human.session_settings ?? {}).filter(([k]) => k === main.agent_device_id))
+  const v = first.versions.at(-1)
+  first.content = v.content = { ...(first.content ?? v.content), teaser: null, title: 'Hello! Where should I keep the notes: SQLite or plain files?', body: 'My first question from this project. Both work; SQLite searches faster, plain files are easier to read by hand.', options: [{ key: 'sqlite', label: 'SQLite', detail: '' }, { key: 'files', label: 'Plain files', detail: '' }] }
+  for (const k of ['title', 'body', 'options', 'teaser']) if (k in first) first[k] = first.content[k]
+  first.created_at = v.sent_at = Date.now() - 40e3
+  f.cards = [first]
+  return f
+}
+
 let fixtureCache
 async function loadFixture(kind) {
   if (kind === 'crazy') return crazyFixture()
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
   if (kind === 'quiet') return quietDesk(structuredClone(fixtureCache))
+  if (kind === 'fresh' || kind === 'first') return firstRun(quietDesk(structuredClone(fixtureCache)), kind === 'first')
   const f = (overloaded(filler(putAway(structuredClone(fixtureCache)))))
   if (kind === 'many') return manyHelpers(crowded(f))
   if (kind === 'foot') return fullFoot(f)
@@ -808,6 +833,10 @@ function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 5
 // open, the selection, a toast, empty…) that switch the same pair of frames in place. [title, path, states], a state
 // [label, path?, state?, mock?] (path: another address of the same screen; state: demoState's click; mock: a demo room).
 const SCREENS = [
+  // (before an account: the account screens drawn by the demo, ?onboard=<state>, auth.mjs demoFlow; nothing is sent)
+  ['Onboarding', '/?onboard=welcome', [['Logged out', '/?onboard=logged-out'], ['Create account', '/?onboard=create'], ['Create: password too short', '/?onboard=create-error'], ['Emergency Kit: the offer', '/?onboard=kit-offer'], ['Emergency Kit: the words', '/?onboard=kit'], ['Log in', '/?onboard=login'], ['Log in: wrong password', '/?onboard=login-error'], ['Forgot password', '/?onboard=forgot'], ['Scan from a signed-in device', '/?onboard=scan'], ['Join: name this device', '/?onboard=join'], ['Join: the six emoji', '/?onboard=join-emoji'], ['Join: code expired', '/?onboard=join-expired'], ['Join: the emoji did not match', '/?onboard=join-burned'], ['Older account: recovery code', '/?onboard=recover'], ['Older account: the new code', '/?onboard=recovery-code'], ['The account did not open', '/?onboard=broken']]],
+  // (the first run: a new account's Desk before any agent, ?mock=fresh, and after the first question, ?mock=first)
+  ['First run', '/', [['Invite an agent from the Desk', '', 'desk-invite', 'fresh'], ['The first agent asks', '', '', 'first'], ['Settings, a new account', '/settings', '', 'fresh'], ['Account, a new account', '/settings/account', '', 'fresh']], '', 'fresh'],
   ['Desk', '/', [['With the selection bar', '', 'select'], ['Duck for all: the confirm', '', 'duck'], ['A toast with Undo', '', 'toast'], ['The end list and the piles', '', 'bottom'], ['Trommi menu open', '', 'menu'], ['A desk alone (filter)', '/?desk=test'], ['Note from the phone bar', '', 'phone-note'], ['Keys sheet', '', 'keys'], ['Corner note open', '', 'note'], ['Empty, full piles', '', '', 'foot'], ['Quiet desk', '', '', 'quiet']]],
   ['Card page', '/card/30', [['Long card', '/card/31'], ['Long card, scrolled inside', '/card/31', 'inside'], ['The strip (card scrolled away)', '/card/31', 'strip'], ['Yes or no', '/card/46'], ['Several answers', '/card/11'], ['Info card', '/card/19'], ['Answered', '/card/1'], ['With the agent', '/card/1', 'with-agent'], ['Finished by its agent', '/card/34'], ['More menu open', '', 'more']]],
   ['Full screen', '/card/31/picture/1', [['A video', '/card/31/picture/9']]],
@@ -822,9 +851,9 @@ const SCREENS = [
 const frameSrc = (path, state, mock = '1') => `${path}${path.includes('?') ? '&' : '?'}mock=${mock || '1'}${state ? `&state=${state}` : ''}`
 export function screensMain() {
   // One screen: its title (opens it alone), its states as small buttons; the pair of frames shows the chosen one.
-  const screen = ([title, path, states, first = '']) => {
-    const all = [['As it is', path, first], ...states.map(([label, p, st, mock]) => [label, p || path, st ?? '', mock])]
-    const src = frameSrc(path, first)
+  const screen = ([title, path, states, first = '', base = '']) => {
+    const all = [['As it is', path, first, base], ...states.map(([label, p, st, mock]) => [label, p || path, st ?? '', mock])]
+    const src = frameSrc(path, first, base)
     const list = states.length ? `<div class="scr-states" role="group" aria-label="${title}: states">${all.map(([label], i) => `<button type="button" class="scr-state" data-action="screens#state" data-at="${i}"${i ? '' : ' aria-pressed="true"'}>${label}</button>`).join('')}</div>` : ''
     return `<figure class="scr-item" data-states='${JSON.stringify(all.map(([label, p, st, mock]) => ({ label, src: frameSrc(p, st, mock) }))).replace(/'/g, '&#39;')}'><figcaption><a href="${src}" target="_blank" rel="noopener" class="scr-title">${title}</a> <code>${path}</code></figcaption><div class="scr-row"><div class="scr-pair"><div class="scr-box is-wide"><iframe data-src="${src}" title="${title}, desktop" loading="lazy" width="1440" height="900"></iframe></div><div class="scr-box is-phone"><iframe data-src="${src}" title="${title}, phone" loading="lazy" width="390" height="844"></iframe></div></div>${list}</div></figure>`
   }
@@ -979,6 +1008,7 @@ export async function demoState(name, { now = false } = {}) {
     'desk-open': () => click('#ledger-list details.set-desk > summary'),
     'session-dots': async () => { click('#ledger-list details.set-desk > summary'); await wait(150); click('#ledger-list .ledger-menu') },
     invite: () => click('#settings-invite-agent'),
+    'desk-invite': () => click('#desk-invite-go'),
     'invite-emoji': async () => { click('.t-head-more'); await wait(200); [...document.querySelectorAll('.desk-move button')].find(b => /invite link/.test(b.textContent))?.click() },
     'invite-ended': async () => { click('#settings-invite-agent'); await wait(900); const inv = [...window.trommi.client.model.invites.values()].at(-1); if (inv) { inv.expires_at = Date.now() - 1000; window.trommi.client.changed(c => c.invites.add(inv.invite_id)) } },
     share: () => { const d = $('.art-share'); if (d) d.open = true; const s = $('.lk-share .lk-switch input'); if (s) { s.checked = true; s.dispatchEvent(new Event('change', { bubbles: true })) } },
