@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { startHub } from '../../hub/server.mjs'
+import { startHub, LIMITS } from '../../hub/server.mjs'
 import * as z from '../../shared/crypto/zcrypto.mjs'
 import { startDriver, swiftAvailable, SWIFT_BIN, rustAvailable, RUST_BIN } from './protocol.mjs'
 
@@ -49,6 +49,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-interop-'))
 const hubLog = []
 const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' })
 const APNS_TOPIC = 'com.trommi.interop'
+// the snapshot scenario posts 2,100 messages in a burst: the envelope rate limit (a public hub's protection) lifted here
+LIMITS.envelopesPerSecond = 5000; LIMITS.envelopeBurst = 10000
 const hub = await startHub({
   port: 0, host: '127.0.0.1', dataDir: path.join(tmp, 'hub'), commit: 'interop', log: m => hubLog.push(m),
   apns: { key: privateKey.export({ type: 'pkcs8', format: 'pem' }), keyId: 'INTEROP01', teamId: 'INTEROPTM', topics: [APNS_TOPIC] },
@@ -410,6 +412,58 @@ for (const pair of pairs) {
       await until('gone at the founder', async () => (await F.call('members')).find(m => m.device_id === ctx.lId)?.active === false)
     })
   }
+}
+
+// ---- the room snapshot (shared/snapshot.ts): a new device boots from a human device's snapshot and reads only the tail ----
+if (swiftAvailable() && (!only || 'snapshot'.includes(only) || only.includes('snapshot'))) {
+  const S = (n, fn) => test('snapshot', n, fn)
+  const sx = {}
+  await S('snapshot: a room past 2,000 envelopes, a JS human writes its snapshot, the tail goes on after it', async () => {
+    sx.F = await driver('js', 'snap:F')
+    await sx.F.call('found_room', { hub_url: HUB, name: 'Founder (JS)' })
+    const g = await addDevice(sx.F, 'js', { role: 'agent', name: 'Agent' })
+    sx.G = g.driver; sx.agentId = g.id
+    sx.sid = await until('the agent\'s session', async () => (await sx.F.call('sessions')).find(s => s.agent_device_ids.includes(sx.agentId))?.session_id)
+    sx.c1 = (await sx.G.call('agent_card', { title: 'Before the snapshot', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })).id
+    sx.c2 = (await sx.G.call('agent_card', { title: 'Still open', options: [{ key: 'x', label: 'X' }] })).id
+    await until('the cards at F', async () => (await sx.F.call('list_cards')).length >= 2)
+    await sx.F.call('answer', { card: sx.c1, choices: ['b'] })
+    await sx.F.call('set_register', { key: 'desk/main', value: { name: 'Desk' } })
+    await sx.F.call('note_save', { text: 'a note before' })
+    await sx.G.call('chat_burst', { n: 2100, text: 'before' })
+    await until('the burst at F', async () => (await sx.F.call('hub_envelopes', { after: 2000, limit: 10 })).length > 0, 120_000)
+    sx.snap = await sx.F.call('write_snapshot')
+    assert.ok(sx.snap.envelope_number > 2000, 'the snapshot names its cursor')
+    await sx.G.call('chat_burst', { n: 5, text: 'after' })
+    sx.c3 = (await sx.G.call('agent_card', { title: 'After the snapshot', options: [{ key: 'y', label: 'Y' }] })).id
+    await until('the tail at F', async () => (await sx.F.call('list_cards', { all: true })).length >= 3)
+  })
+  await S('snapshot: a Swift device joins and boots from it (only the tail is read), the same board as a JS device that boots from it', async () => {
+    const s = await addDevice(sx.F, 'swift', { name: 'S (swift)' }); sx.S = s.driver
+    const j = await addDevice(sx.F, 'js', { name: 'J (js)' }); sx.J = j.driver
+    const [si, ji] = [await sx.S.call('snapshot_info'), await sx.J.call('snapshot_info')]
+    assert.equal(si.snapshot_cursor, sx.snap.envelope_number, `Swift booted from the snapshot (JS: ${ji.snapshot_cursor}; ${sx.S.stderr().split('\n').filter(l => l.includes('[snapshot]')).join(' | ')})`)
+    assert.equal(ji.snapshot_cursor, sx.snap.envelope_number, 'JS booted from the snapshot')
+    await sameCards('all cards on the Swift and the JS device', sx.S, sx.J)
+    const c1 = await cardAt(sx.S, sx.c1)
+    assert.deepEqual(c1.choices, ['b']); assert.equal(c1.state, 'answered')
+    assert.ok(await cardAt(sx.S, sx.c3), 'the card after the snapshot (the tail)')
+    const [rs, rj] = [await sx.S.call('registers'), await sx.J.call('registers')]
+    assert.deepEqual(rs.keys, rj.keys, 'the same human registers'); assert.deepEqual(rs.desks, rj.desks)
+    assert.deepEqual((await sx.S.call('notes')).map(n => n.text), (await sx.J.call('notes')).map(n => n.text), 'the same notes')
+  })
+  await S('snapshot: older messages from before the snapshot are read on demand (checked on their own) and match the JS device', async () => {
+    const [ls, lj] = [await sx.S.call('chat_list', { session: sx.sid }), await sx.J.call('chat_list', { session: sx.sid })]
+    const tail = l => l.filter(i => i.text != null).slice(-400).map(i => `${i.envelope_number}:${i.text}`)
+    assert.ok(ls.some(i => i.text === 'after 4'), 'the tail is there'); assert.ok(ls.some(i => i.text === 'before 1800'), 'an item from before the snapshot')
+    assert.deepEqual(tail(ls), tail(lj), 'the newest 400 messages, the same on both')
+  })
+  await S('snapshot: one written before a removal is refused (D5/D6): a new Swift device replays instead and has the same cards', async () => {
+    await sx.F.call('remove_member', { device_id: (await sx.J.call('whoami')).device_id })
+    const r = await addDevice(sx.F, 'swift', { name: 'R (swift)' })
+    assert.equal((await r.driver.call('snapshot_info')).snapshot_cursor, null, 'no boot from a snapshot older than the removal')
+    await sameCards('all cards on the replaying and the booted Swift device', r.driver, sx.S)
+  })
 }
 
 for (const d of drivers) await d.stop().catch(() => {})

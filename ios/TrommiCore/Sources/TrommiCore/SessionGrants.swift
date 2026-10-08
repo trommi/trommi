@@ -112,6 +112,8 @@ public func decodeGrant(_ bytes: Bytes) throws -> Grant {
 }
 
 private func memberChanges(_ s: RoomState) -> [Int] { s.entries.filter { $0.type == ENTRY.REMOVE || $0.type == ENTRY.RECOVER }.map { $0.seq } }
+/** The newest removal or recovery entry the room state knows, or -1 (session-grants.mjs lastMemberChange). */
+public func lastMemberChange(_ s: RoomState) -> Int { memberChanges(s).last ?? -1 }
 private func changeBetween(_ s: RoomState, _ a: Int, _ b: Int) -> Bool { memberChanges(s).contains { $0 > a && $0 <= b } }
 public func grantIsStale(_ ss: SessionState?, _ s: RoomState) -> Bool { ss.map { changeBetween(s, $0.logSeq, s.head.seq) } ?? false }
 private func recoveryIdAt(_ s: RoomState, _ logSeq: Int) throws -> PublicDevice? {

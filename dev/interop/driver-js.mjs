@@ -195,7 +195,12 @@ const H = {
     }
     return out
   },
+  // ---- the room snapshot (snapshot.ts) ----
+  async write_snapshot() { const v = await need().writeSnapshot(); return { envelope_number: v.envelope_number } },
+  async snapshot_info() { return { snapshot_cursor: need().snapshotCursor ?? null } },
   // ---- the agent (the connector's core) ----
+  /** Many messages at once (a room past the snapshot threshold of 2,000 envelopes). */
+  async chat_burst({ n = 100, text = 'burst' }) { const c = need(); for (let i = 0; i < n; i++) await c.sendMessage({ text: `${text} ${i}` }); await c.flush?.(); await c.settle?.({ timeout_ms: 120_000 }); return {} },
   async agent_card({ newer_schema, ...fields }) {
     const c = need()
     if (newer_schema) { newer.card = true; patchEncoder(c) }
