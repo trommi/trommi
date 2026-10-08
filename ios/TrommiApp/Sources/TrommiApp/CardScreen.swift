@@ -56,6 +56,7 @@ struct CardScreen: View {
         }
       }
       .onAppear { if !loadedDraft { loadDraft(c); loadedDraft = true } }
+      .background { CardKeys(card: c) }
       .fullScreenCover(item: Binding(get: { picture.map { PicAt(at: $0) } }, set: { picture = $0?.at })) { p in PictureScreen(cardId: c.id, start: p.at) }
     } else {
       VStack(spacing: 10) { Text("This question is not on the board any more.").font(Face.text(16)).foregroundStyle(Ink.muted) }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -331,5 +332,28 @@ struct CardThread: View {
       }
     }
     .task(id: card.id) { if older { await model.loadOlder(card: card.id) } }
+  }
+}
+
+/** The keys of a card's page on an iPad with a keyboard (ui.mjs SHORT): 1–9 an option, R duck, E What??, L Later, B reverse. */
+struct CardKeys: View {
+  @EnvironmentObject var model: BoardModel
+  let card: DeskCard
+  var body: some View {
+    ZStack {
+      if card.status == "open" && card.kind == "decision" && !card.multiple {
+        ForEach(Array(card.options.prefix(9).enumerated()), id: \.offset) { i, o in
+          Button("") { model.decide(card, keys: [o.key]) }.keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: [])
+        }
+        Button("") { model.trust(card) }.keyboardShortcut("r", modifiers: [])
+      }
+      if card.status == "open" && card.kind != "permission" {
+        Button("") { model.what(card) }.keyboardShortcut("e", modifiers: [])
+        Button("") { model.snooze(card) }.keyboardShortcut("l", modifiers: [])
+        Button("") { model.handBack(card) }.keyboardShortcut("b", modifiers: [])
+      }
+      if card.status == "open" && card.kind == "info" { Button("") { model.closeInfo(card) }.keyboardShortcut(.return, modifiers: []) }
+    }
+    .opacity(0).accessibilityHidden(true)
   }
 }

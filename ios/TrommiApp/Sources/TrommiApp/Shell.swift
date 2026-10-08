@@ -214,6 +214,7 @@ struct Sidebar: View {
       Button { go(.scribble) } label: { Label("Scribble Board", systemImage: "scribble.variable") }
       Button { go(.media) } label: { Label("Media", systemImage: "photo.on.rectangle") }
       Button { go(.pages) } label: { Label("Pages", systemImage: "doc.richtext") }
+      Link(destination: URL(string: "https://app.trommi.com/help.html")!) { Label("Help", systemImage: "questionmark.circle") }
       Picker("Theme", selection: $model.theme) { ForEach(ThemeMode.allCases) { Text($0.word).tag($0) } }
       Button { go(.settings("account")) } label: { Label("Log out…", systemImage: "rectangle.portrait.and.arrow.right") }
     } label: {

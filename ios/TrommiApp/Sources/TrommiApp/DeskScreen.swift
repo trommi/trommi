@@ -49,6 +49,14 @@ struct DeskScreen: View {
     .scrollDismissesKeyboard(.interactively)
     .refreshable { await model.refresh() }
     .background(Ink.bg)
+    .background {
+      // the Desk's keys on an iPad with a keyboard: B Blitz, O Off your mind, S settings
+      ZStack {
+        Button("") { model.path.append(.blitz) }.keyboardShortcut("b", modifiers: [])
+        Button("") { model.path.append(.off) }.keyboardShortcut("o", modifiers: [])
+        Button("") { model.path.append(.settings("agents")) }.keyboardShortcut(",", modifiers: .command)
+      }.opacity(0).accessibilityHidden(true)
+    }
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
       ToolbarItem(placement: .topBarLeading) { DrawerButton() }
