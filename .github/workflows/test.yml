@@ -3,10 +3,9 @@
 # Needs Node with node:sqlite; no browser (the browser tests stay local).
 name: Test
 
+# Manual only for now: the account's Actions minutes are nearly used up (2026-10-08). The hub deploy still runs
+# test:hub and the quick fuzz before every hub deploy; run the full suite locally with `npm test`.
 on:
-  push:
-    paths: ['shared/**', 'hub/**', 'connector/**', 'dev/**', 'app/web/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
-  pull_request:
   workflow_dispatch:
 
 concurrency:
