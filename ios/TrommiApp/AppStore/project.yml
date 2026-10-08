@@ -1,0 +1,43 @@
+# The App Store build of TrommiApp for Xcode: .github/workflows/ios-beta.yml generates Trommi.xcodeproj from this with
+# XcodeGen (`xcodegen generate --spec project.yml`; the project is not checked in) and archives it with the official
+# Xcode. The app itself is the SwiftPM package one folder up (the same one `xtool dev` builds on Linux); this target
+# only links its library product and adds what a store build needs: the app icon, the production push entitlement and
+# the Info.plist keys xtool writes for its own builds. ios/README.md "TestFlight from CI".
+name: Trommi
+options:
+  deploymentTarget:
+    iOS: "18.0"
+packages:
+  TrommiApp:
+    path: ..
+targets:
+  # Named Trommi, not TrommiApp: the package's module is TrommiApp.
+  Trommi:
+    type: application
+    platform: iOS
+    sources:
+      - path: Link.swift
+      - path: Assets.xcassets
+    dependencies:
+      - package: TrommiApp
+        product: TrommiApp
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_NAME: Trommi
+        PRODUCT_BUNDLE_IDENTIFIER: com.trommi.ios
+        # The store version; the build number is the workflow's run number (CURRENT_PROJECT_VERSION on the command line).
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TrommiApp.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # The package's Info.plist (display name, camera text) plus the keys xtool adds to its builds.
+        INFOPLIST_FILE: ../Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSRequiresIPhoneOS: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight

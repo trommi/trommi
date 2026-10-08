@@ -1,5 +1,6 @@
 version: 1
-# Change before the first upload: the bundle id the App Store Connect app record is created with (ios/README.md).
+# The App Store bundle id (the app record's); xtool prefixes it with XTL-<team> for its development builds.
+# AppStore/project.yml names it again for the TestFlight builds (.github/workflows/ios-beta.yml).
 bundleID: com.trommi.ios
 product: TrommiApp
 infoPath: Info.plist
