@@ -816,19 +816,32 @@ function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 5
 // ---- All screens (demo only): /screens, a review page of every screen and state as live frames ----
 // The Trommi menu shows "All screens" while the demo is on (sidebar.mjs); app.mjs adds this view only in the demo. A
 // state that needs a click is driven by ?state=<name> on the frame's address (demoState, run once after the page is in).
+// The screens that really exist (his word, 8 October): one per page of the app, each with its states beside it (a menu
+// open, the selection, a toast, empty…) that switch the same pair of frames in place. [title, path, states], a state
+// [label, path?, state?, mock?] (path: another address of the same screen; state: demoState's click; mock: a demo room).
 const SCREENS = [
-  ['Desk', [['All desks', '/'], ['With the selection bar', '/', 'select'], ['Duck for all: the confirm', '/', 'duck'], ['A toast with Undo', '/', 'toast'], ['The foot: Off the desk and Media', '/', 'bottom'], ['Off the desk, open', '/stacks/off'], ['Trommi menu', '/', 'menu'], ['Desk switcher', '/', 'switch'], ['Sidebar folded to the rail', '/', 'rail'], ['Phone drawer', '/', 'drawer'], ['Keys sheet', '/', 'keys'], ['Corner note, open', '/', 'note']]],
-  ['Card page', [['Short card', '/card/30'], ['Long card, top', '/card/31'], ['Long card, scrolled inside', '/card/31', 'inside'], ['The strip (card scrolled away)', '/card/31', 'strip'], ['Yes or no', '/card/46'], ['Several answers', '/card/11'], ['Info card', '/card/19'], ['Answered', '/card/1'], ['With the agent', '/card/1', 'with-agent'], ['More menu', '/card/30', 'more'], ['Focus mode (Full screen)', '/card/31/picture/1'], ['Blitz', '/blitz']]],
-  ['Session', [['Conversation', '/s/trommi'], ['Three-dot menu', '/s/trommi', 'session-more'], ['Questions only', '/s/trommi?only=questions'], ['Files', '/s/trommi/files'], ['A helper', '/s/trommi-ui']]],
-  ['Settings', [['Settings: agents', '/settings/agents'], ['Settings: devices', '/settings/devices'], ['Pairing a device', '/settings/devices', 'pair'], ['Settings: account', '/settings/account'], ['Log out', '/logout']]],
-  ['Invite clipboard', [['Fresh link', '/', 'invite'], ['Emoji compare', '/s/trommi', 'invite-emoji'], ['Link run out', '/', 'invite-ended']]],
-  ['Media and pages', [['Media', '/assets'], ['Pages', '/pages'], ['Pages: share open', '/pages', 'share']]],
-  ['Scribble Board', [['Board', '/scribble-board'], ['Its keys', '/scribble-board', 'board-help']]],
-  ['Help', [['Help page', '/help.html']]],
+  ['Desk', '/', [['With the selection bar', '', 'select'], ['Duck for all: the confirm', '', 'duck'], ['A toast with Undo', '', 'toast'], ['The end list and the piles', '', 'bottom'], ['Trommi menu open', '', 'menu'], ['Desk switcher open', '', 'switch'], ['Sidebar folded to the rail', '', 'rail'], ['Phone drawer open', '', 'drawer'], ['Keys sheet', '', 'keys'], ['Corner note open', '', 'note'], ['Empty, full piles', '', '', 'foot'], ['Quiet desk', '', '', 'quiet']]],
+  ['Card page', '/card/30', [['Long card', '/card/31'], ['Long card, scrolled inside', '/card/31', 'inside'], ['The strip (card scrolled away)', '/card/31', 'strip'], ['Yes or no', '/card/46'], ['Several answers', '/card/11'], ['Info card', '/card/19'], ['Answered', '/card/1'], ['With the agent', '/card/1', 'with-agent'], ['Finished by its agent', '/card/34'], ['More menu open', '', 'more']]],
+  ['Full screen', '/card/31/picture/1', [['A video', '/card/31/picture/9']]],
+  ['Blitz', '/blitz', []],
+  ['Session', '/s/trommi', [['Three-dot menu open', '', 'session-more'], ['Questions only', '/s/trommi?only=questions'], ['Files', '/s/trommi/files'], ['A helper', '/s/trommi-ui']]],
+  ['Settings', '/settings/agents', [['Devices', '/settings/devices'], ['Pairing a device', '/settings/devices', 'pair'], ['Account', '/settings/account']]],
+  ['Invite clipboard', '/', [['Emoji compare', '/s/trommi', 'invite-emoji'], ['Link run out', '', 'invite-ended']], 'invite'],
+  ['Media', '/assets', []],
+  ['Pages', '/pages', [['Share open', '', 'share']]],
+  ['Off the desk', '/stacks/off', []],
+  ['Scribble Board', '/scribble-board', [['Its keys', '', 'board-help']]],
+  ['Log out', '/logout', []],
+  ['Help page', '/help.html', []],
 ]
-const frameSrc = (path, state) => `${path}${path.includes('?') ? '&' : '?'}mock=1${state ? `&state=${state}` : ''}`
+const frameSrc = (path, state, mock = '1') => `${path}${path.includes('?') ? '&' : '?'}mock=${mock || '1'}${state ? `&state=${state}` : ''}`
 export function screensMain() {
-  const frame = (title, path, state) => { const src = frameSrc(path, state); return `<figure class="scr-item"><figcaption><a href="${src}" target="_blank" rel="noopener">${title}</a> <code>${path}${state ? ` · ${state}` : ''}</code></figcaption><div class="scr-pair"><div class="scr-box is-wide"><iframe data-src="${src}" title="${title}, desktop" loading="lazy" width="1440" height="900"></iframe></div><div class="scr-box is-phone"><iframe data-src="${src}" title="${title}, phone" loading="lazy" width="390" height="844"></iframe></div></div></figure>` }
+  // One screen: its title (opens it alone), its states as small buttons; the pair of frames shows the chosen one.
+  const screen = ([title, path, states, first = '']) => {
+    const all = [['As it is', path, first], ...states.map(([label, p, st, mock]) => [label, p || path, st ?? '', mock])]
+    const src = frameSrc(path, first)
+    return `<figure class="scr-item" data-states='${JSON.stringify(all.map(([label, p, st, mock]) => ({ label, src: frameSrc(p, st, mock) }))).replace(/'/g, '&#39;')}'><figcaption><a href="${src}" target="_blank" rel="noopener" class="scr-title">${title}</a> <code>${path}</code></figcaption>${states.length ? `<div class="scr-states" role="group" aria-label="${title}: states">${all.map(([label], i) => `<button type="button" class="scr-state" data-action="screens#state" data-at="${i}"${i ? '' : ' aria-pressed="true"'}>${label}</button>`).join('')}</div>` : ''}<div class="scr-pair"><div class="scr-box is-wide"><iframe data-src="${src}" title="${title}, desktop" loading="lazy" width="1440" height="900"></iframe></div><div class="scr-box is-phone"><iframe data-src="${src}" title="${title}, phone" loading="lazy" width="390" height="844"></iframe></div></div></figure>`
+  }
   return `<main id="screens" class="scr-page" data-controller="screens"><style>
 .scr-page{grid-column:1/-1;overflow-y:auto;height:100%;padding:24px 32px 80px;background:var(--bg);color:var(--fg)}
 .scr-head{display:flex;align-items:center;gap:16px;margin-bottom:8px}.scr-head h1{font:800 2rem/1.1 var(--display);margin:0}
@@ -837,6 +850,8 @@ export function screensMain() {
 .scr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(620px,1fr));gap:24px 28px}
 .scr-item{margin:0}.scr-item figcaption{display:flex;gap:10px;align-items:baseline;margin-bottom:6px;font:600 var(--t-sm)/1.3 var(--font)}
 .scr-item figcaption a{color:var(--fg)}.scr-item code{font:500 var(--t-xs)/1 var(--mono);color:var(--muted)}
+.scr-states{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}.scr-state{min-height:26px;padding:0 9px;border:0;border-radius:8px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line-strong);color:var(--muted);font:600 var(--t-xs)/1 var(--font);cursor:pointer}.scr-state[aria-pressed="true"]{background:var(--fg);color:var(--bg);box-shadow:none}
+.scr-item{padding-top:14px;border-top:1px dashed var(--line-strong)}.scr-item .scr-title{font:800 1.2rem/1.2 var(--display)}
 .scr-pair{display:flex;gap:12px;align-items:flex-start}
 .scr-box{position:relative;flex:none;overflow:hidden;border:1.5px solid var(--fg);border-radius:8px;background:var(--surface);box-shadow:0 8px 18px -12px rgb(20 30 25/.4)}
 .scr-box.is-wide{width:480px;height:300px}.scr-box.is-phone{width:130px;height:281px;border-radius:14px}
@@ -852,8 +867,8 @@ export function screensMain() {
 .tour-bar .tour-play{background:var(--fg);color:var(--bg);box-shadow:none;min-width:84px}
 .tour-where{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}.tour-where b{color:var(--fg)}
 .tour-wait{font:500 var(--t-xs)/1 var(--font);color:var(--muted)}
-</style><header class="scr-head"><h1>All screens</h1><p>The demo room, every screen and state; a title opens it alone.</p><button type="button" class="scr-theme is-tour" data-action="screens#tour">▶ Play tour</button><button type="button" class="scr-theme" data-action="screens#eager" title="Load every frame now, for scrolling through all of them">Load all</button><button type="button" class="scr-theme" data-action="screens#theme">Light / dark</button></header>
-${SCREENS.map(([group, list]) => `<h2>${group}</h2><div class="scr-grid">${list.map(([t, p, s]) => frame(t, p, s)).join('')}</div>`).join('')}</main>`
+</style><header class="scr-head"><h1>All screens</h1><p>The demo room: every screen once, its states beside it; a title opens it alone.</p><button type="button" class="scr-theme is-tour" data-action="screens#tour">▶ Play tour</button><button type="button" class="scr-theme" data-action="screens#eager" title="Load every frame now, for scrolling through all of them">Load all</button><button type="button" class="scr-theme" data-action="screens#theme">Light / dark</button></header>
+<div class="scr-grid">${SCREENS.map(screen).join('')}</div></main>`
 }
 export const screensView = { register(t) { t.get(/^\/screens$/, ({ req, res }) => t.page(req, res, { title: 'All screens · Trommi', view: 'screens', sidebar: false, stream: null, main: screensMain() })) } }
 
@@ -867,16 +882,22 @@ export function screensController({ Controller, controller }) {
       if (new URLSearchParams(location.search).get('tour') === '1') requestAnimationFrame(() => this.tour())
     }
     disconnect() { this.io?.disconnect(); this.endTour() }
+    // A state of a screen: the same pair of frames shows it
+    state(e) {
+      const b = e.currentTarget, item = b.closest('.scr-item'), st = JSON.parse(item.dataset.states)[Number(b.dataset.at)]
+      for (const x of item.querySelectorAll('.scr-state')) x.setAttribute('aria-pressed', String(x === b))
+      for (const f of item.querySelectorAll('iframe')) { this.io.unobserve(f); f.dataset.src = st.src; f.src = st.src; f.addEventListener('load', () => this.paint(f), { once: true }) }
+      item.querySelector('.scr-title').href = st.src
+    }
     // Load every frame now (for scrolling through all of them)
     eager() { for (const f of this.element.querySelectorAll('iframe[data-src]:not([src])')) { this.io.unobserve(f); f.src = f.dataset.src; f.addEventListener('load', () => this.paint(f)) } }
     // ---- the tour: one screen at a time at its real size, desktop then phone, held a while once it is in ----
     stops() {
+      // every screen, and within it each of its states
       const out = []
-      let group = ''
-      for (const el of this.element.querySelectorAll('h2, .scr-item')) {
-        if (el.tagName === 'H2') { group = el.textContent; continue }
-        const name = el.querySelector('figcaption a').textContent, src = el.querySelector('iframe').dataset.src
-        out.push({ group, name, src })
+      for (const el of this.element.querySelectorAll('.scr-item')) {
+        const group = el.querySelector('.scr-title').textContent
+        for (const st of JSON.parse(el.dataset.states)) out.push({ group, name: st.label, src: st.src })
       }
       return out
     }
