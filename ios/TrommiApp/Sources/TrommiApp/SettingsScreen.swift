@@ -97,12 +97,12 @@ struct AgentsPane: View {
       }.buttonStyle(.plain)
       if open > 0 { Text("\(open)").font(Face.text(14, .semibold)).foregroundStyle(Ink.muted).frame(width: 30, height: 30).overlay(Circle().strokeBorder(Ink.lineStrong)) }
       Menu {
-        Button { name = a.label.isEmpty ? a.name : a.label; renaming = a } label: { Label("Rename", systemImage: "pencil") }
-        Button { drawingFor = a } label: { Label("Its drawing", systemImage: "scribble") }
-        Button { model.star(a, !a.starred) } label: { Label(a.starred ? "Take the crown off" : "Give it the crown", systemImage: "crown") }
+        Button { name = a.label.isEmpty ? a.name : a.label; renaming = a } label: { Label("Rename…", systemImage: "pencil") }
+        Button { drawingFor = a } label: { Label("Change Icon…", systemImage: "scribble") }
+        Button { model.star(a, !a.starred) } label: { Label(a.starred ? "Remove Main Session" : "Make Main Session", systemImage: "crown") }
         let others = (model.desk?.desks ?? []).filter { $0.id != model.desk?.deskOf(a) }
-        if !others.isEmpty && a.parent == nil { Menu("Move to other desk") { ForEach(others) { d in Button(d.name) { model.editSession(a, ["desk": .str(d.id)]) } } } }
-        Button { model.editSession(a, ["archived": .bool(!a.archived)]) } label: { Label(a.archived ? "Back from the archive" : "Archive", systemImage: "archivebox") }.disabled(a.online && !a.archived)
+        if !others.isEmpty && a.parent == nil { Menu("Move to Desk…") { ForEach(others) { d in Button(d.name) { model.editSession(a, ["desk": .str(d.id)]) } } } }
+        Button { model.editSession(a, ["archived": .bool(!a.archived)]) } label: { Label(a.archived ? "Unarchive" : "Archive", systemImage: "archivebox") }.disabled(a.online && !a.archived)
       } label: { Image(systemName: "ellipsis").font(.system(size: 18, weight: .semibold)).foregroundStyle(Ink.muted).frame(width: 36, height: 36) }
     }
     .padding(.vertical, 8)
@@ -188,7 +188,7 @@ struct PairSheet: View {
               Text("1. On the new device, open the camera and scan the code. Or open app.trommi.com there and choose “Pair a device”.")
               Text("2. Both devices then show six emoji. If they are the same, tap “They match” here.")
             }.font(Face.text(16)).foregroundStyle(Ink.fg)
-            ShareLink(item: link) { Label("No scanner? Send the link", systemImage: "square.and.arrow.up").font(Face.text(15, .medium)) }
+            ShareLink(item: link) { Label("Send Link Instead", systemImage: "square.and.arrow.up").font(Face.text(15, .medium)) }
             Text("Waiting for the new device… The code works once, until \(clockOf(until)).").font(Face.text(14)).foregroundStyle(Ink.muted)
           case .confirm(let code):
             Text("A device wants to join. Does it show these six emoji, in this order?").font(Face.text(17, .medium)).multilineTextAlignment(.center)
@@ -204,12 +204,12 @@ struct PairSheet: View {
             Button("Done") { dismiss() }.buttonStyle(QuietWay())
           case .failed(let why):
             Text(why).font(Face.text(16)).foregroundStyle(Ink.urgCritical).multilineTextAlignment(.center)
-            Button("Pair again") { pairing.start(model.room) }.buttonStyle(QuietWay())
+            Button("Pair Again") { pairing.start(model.room) }.buttonStyle(QuietWay())
           }
         }
         .padding(24).frame(maxWidth: .infinity)
       }
-      .navigationTitle("Pair a device").navigationBarTitleDisplayMode(.inline)
+      .navigationTitle("Pair Device").navigationBarTitleDisplayMode(.inline)
       .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Close") { pairing.cancel(); dismiss() } } }
     }
     .onAppear { pairing.start(model.room) }
@@ -277,7 +277,7 @@ struct AccountPane: View {
           DisclosureGroup("Confirm your email") {
             VStack(alignment: .leading, spacing: 10) {
               Text("We send a six-digit code to \(st.email).").font(Face.text(14)).foregroundStyle(Ink.muted)
-              Button("Send code") { run { try await model.room?.resendEmailCode(); said = "Code sent." } }.buttonStyle(QuietWay())
+              Button("Send Code") { run { try await model.room?.resendEmailCode(); said = "Code sent." } }.buttonStyle(QuietWay())
               HStack {
                 TextField("Code", text: $code).keyboardType(.numberPad).textContentType(.oneTimeCode).font(Face.mono(18)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
                 Button("Confirm") { run { try await model.room?.verifyEmail(code: code); said = "Email confirmed."; await load() } }.buttonStyle(QuietWay())
@@ -297,14 +297,14 @@ struct AccountPane: View {
             Text("Forgot your password? app.trommi.com → Log in → “Forgot password?” → your email and these 12 words.").font(Face.text(12)).foregroundStyle(Ink.muted)
           }.padding(14).background(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.fg, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3])))
           ShareLink(item: "Trommi Emergency Kit\nEmail: \(st.email)\nWords: \(k)\n\nForgot your password? app.trommi.com → Log in → Forgot password? → your email and these 12 words.") {
-            Label("Keep it (Files, print, …)", systemImage: "square.and.arrow.down").font(Face.text(15, .semibold))
+            Label("Save Kit…", systemImage: "square.and.arrow.down").font(Face.text(15, .semibold))
           }
         } else {
           Text(st.hasRecovery ? "Made. With it you can set a new password if you forget yours." : "Not made yet. With it you can set a new password if you forget yours. Whenever you like.").font(Face.text(15)).foregroundStyle(Ink.muted)
           DisclosureGroup(st.hasRecovery ? "Make a new kit" : "Make my Emergency Kit") {
             HStack {
               SecureField("Your password", text: $kitPassword).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
-              Button("Make the kit") { run { let r = try await model.room?.makeEmergencyKit(password: kitPassword); kit = r?.words; kitPassword = ""; await load() } }.buttonStyle(QuietWay())
+              Button("Create Kit") { run { let r = try await model.room?.makeEmergencyKit(password: kitPassword); kit = r?.words; kitPassword = ""; await load() } }.buttonStyle(QuietWay())
             }.padding(.top, 8)
           }.tint(Ink.fg).font(Face.text(16, .medium))
         }
@@ -314,10 +314,10 @@ struct AccountPane: View {
             SecureField("Current password", text: $current).textContentType(.password).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
             HStack {
               SecureField("New password (at least 12 characters)", text: $next).textContentType(.newPassword).font(Face.text(16)).padding(10).background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
-              Button { next = generatePassword() } label: { Image(systemName: "dice") }.accessibilityLabel("Suggest a password")
+              Button { next = generatePassword() } label: { Image(systemName: "dice") }.accessibilityLabel("Suggest Password")
             }
             if !next.isEmpty && next.count >= 12 { Text(next).font(Face.mono(13)).foregroundStyle(Ink.muted).textSelection(.enabled) }
-            Button("Change password") { run { try await model.room?.changePassword(current: current, next: next); current = ""; next = ""; said = "Password changed." } }
+            Button("Change Password") { run { try await model.room?.changePassword(current: current, next: next); current = ""; next = ""; said = "Password changed." } }
               .buttonStyle(QuietWay()).disabled(passwordProblem(next) != nil || current.isEmpty)
           }.padding(.top, 8)
         }.tint(Ink.fg).font(Face.text(16, .medium))
@@ -335,8 +335,8 @@ struct AccountPane: View {
         HStack { PenMark("sidebar:LEAVE", color: Ink.urgCritical).frame(width: 22, height: 22); Text("Log out of this device").font(Face.text(16, .semibold)) }.foregroundStyle(Ink.urgCritical)
       }
       .padding(.top, 10)
-      .confirmationDialog("Log out of this device?", isPresented: $leave, titleVisibility: .visible) {
-        Button("Log out", role: .destructive) { model.logOut() }
+      .confirmationDialog("Log Out of This Device?", isPresented: $leave, titleVisibility: .visible) {
+        Button("Log Out", role: .destructive) { model.logOut() }
       } message: { Text("This device removes itself from the room and forgets its keys. Your other devices and your agents carry on; this phone logs in again with email and password or a pairing code.") }
     }
     .task { await load() }
@@ -491,7 +491,7 @@ struct InviteSection: View {
         case .open(let link, let until) where revealed:
           QRCode(text: link).frame(width: 220, height: 220).padding(10).background(RoundedRectangle(cornerRadius: 14).fill(.white))
           HStack(spacing: 14) {
-            ShareLink(item: link) { Label("Send the link", systemImage: "square.and.arrow.up").font(Face.text(14, .medium)) }
+            ShareLink(item: link) { Label("Send Link", systemImage: "square.and.arrow.up").font(Face.text(14, .medium)) }
             Button("Hide") { revealed = false; pairing.cancel() }.font(Face.text(14, .medium))
           }
           Text("Waiting for the new device… works once, until \(clockOf(until)).").font(Face.text(13)).foregroundStyle(Ink.muted)
@@ -505,10 +505,10 @@ struct InviteSection: View {
         case .adding: ProgressView("Adding the device…").padding(20)
         case .joined(let name):
           Text("✓ \(name.isEmpty ? "The new device" : name) is in now.").font(Face.display(20, .bold)).foregroundStyle(Ink.accent)
-          Button("Invite another") { revealed = false; pairing.state = .making }.buttonStyle(QuietWay())
+          Button("Invite Another") { revealed = false; pairing.state = .making }.buttonStyle(QuietWay())
         case .failed(let why):
           Text(why).font(Face.text(15)).foregroundStyle(Ink.urgCritical).multilineTextAlignment(.center)
-          Button("Try again") { reveal() }.buttonStyle(QuietWay())
+          Button("Try Again") { reveal() }.buttonStyle(QuietWay())
         default:
           // the code, blurred: a drawn QR stand-in until he reveals the real one
           Button(action: reveal) {
@@ -516,11 +516,11 @@ struct InviteSection: View {
               QRCode(text: "https://app.trommi.com/join#v1.stand-in-for-the-blur").frame(width: 220, height: 220).padding(10)
                 .background(RoundedRectangle(cornerRadius: 14).fill(.white)).blur(radius: 9).opacity(0.75)
               if revealed { ProgressView() } else {
-                Label("Show the code", systemImage: "eye").font(Face.text(16, .semibold)).foregroundStyle(Ink.fg)
+                Label("Show Code", systemImage: "eye").font(Face.text(16, .semibold)).foregroundStyle(Ink.fg)
                   .padding(.horizontal, 16).padding(.vertical, 10).glass(Capsule(), interactive: true)
               }
             }
-          }.buttonStyle(.plain).accessibilityLabel("Show the pairing code")
+          }.buttonStyle(.plain).accessibilityLabel("Show Pairing Code")
         }
       }.frame(maxWidth: .infinity)
       HStack(spacing: 10) {

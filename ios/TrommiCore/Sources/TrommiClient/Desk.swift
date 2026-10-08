@@ -247,7 +247,14 @@ public final class DeskModel {
   public init(board: Board) { self.board = board; update() }
 
   /** After a change of the board: everything again (the board is small enough; the views diff). */
+  /** What the screens asked for since the last update: computed once per change of the board, not once per view. */
+  private var viewCache: [String: View] = [:]
+  private var messageCache: [String: [Message]] = [:]
+  private var cardMessageCache: [String: [Message]] = [:]
+  /** Bumped by every update: a view keyed on it re-reads, others keep what they built. */
+  public private(set) var revision = 0
   public func update(now: UInt64 = nowMs()) {
+    viewCache = [:]; messageCache = [:]; cardMessageCache = [:]; revision &+= 1
     let m = board
     devToAgent = [:]; agentToDev = [:]
     let sessions = m.sessions.values.sorted { $0.sessionId < $1.sessionId }
@@ -416,7 +423,15 @@ public final class DeskModel {
   }
 
   /** The Desk in view (desk: its id, ALL_DESKS for all, nil: the first). */
-  public func view(desk: String?, now: UInt64 = nowMs()) -> View {
+  public func view(desk: String?) -> View {
+    let k = desk ?? ""
+    if let v = viewCache[k] { return v }
+    let v = makeView(desk: desk, now: nowMs())
+    viewCache[k] = v
+    return v
+  }
+  public func view(desk: String?, now: UInt64) -> View { makeView(desk: desk, now: now) }
+  private func makeView(desk: String?, now: UInt64) -> View {
     let hasDesks = !desks.isEmpty
     let all = hasDesks && desks.count > 1 && desk == ALL_DESKS
     let deskId: String? = all ? ALL_DESKS : hasDesks ? (desks.contains { $0.id == desk } ? desk : desks[0].id) : nil
@@ -525,6 +540,12 @@ public final class DeskModel {
 
   /** One session's conversation: its cards' events, its chat and its cards' chats, in hub order. */
   public func messagesOf(agent: String) -> [Message] {
+    if let m = messageCache[agent] { return m }
+    let m = makeMessages(agent: agent)
+    messageCache[agent] = m
+    return m
+  }
+  private func makeMessages(agent: String) -> [Message] {
     guard let dev = agentToDev[agent] else { return [] }
     var out = [Message]()
     for id in board.sessions[dev]?.cardIds ?? [] {
@@ -537,6 +558,12 @@ public final class DeskModel {
   }
   /** One card's conversation: its events and its chat. */
   public func messagesOfCard(_ id: String) -> [Message] {
+    if let m = cardMessageCache[id] { return m }
+    let m = makeCardMessages(id)
+    cardMessageCache[id] = m
+    return m
+  }
+  private func makeCardMessages(_ id: String) -> [Message] {
     guard let card = byCard[id], card.kind != "permission", let c = board.cards[id] else { return [] }
     var out = eventsOf(c, card)
     itemsOf(board.timelines[timelineKeyOf("chat", "card/\(id)")], agent: card.agent, cardId: id, into: &out)
@@ -557,7 +584,7 @@ public final class DeskModel {
       let kind = i.contentType ?? "message"
       // a content type of a newer Trommi: a placeholder in its place; strokes and the like belong to a canvas
       let newer = !Compat.CONTENT_TYPES.contains(kind) || i.itemState == "newer_schema"
-      if i.itemState == "loaded" && !newer && kind != "message" && kind != "selection_sent" && kind != "clip_request" { continue }
+      if i.itemState == "loaded" && !newer && kind != "message" && kind != "selection_sent" { continue }
       let human = i.senderDeviceId == me || humans.contains(i.senderDeviceId)
       let c = i.content ?? .obj([:])
       let text: String

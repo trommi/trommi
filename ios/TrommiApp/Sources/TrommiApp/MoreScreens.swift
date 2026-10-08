@@ -34,7 +34,7 @@ struct BlitzScreen: View {
           PenMark("desk:BOLT").frame(width: 48, height: 48)
           Text("All done.").font(Face.display(30, .heavy))
           Text("Nothing waits for you.").font(Face.text(16)).foregroundStyle(Ink.muted)
-          Button("Back to the Desk") { model.path = [] }.buttonStyle(QuietWay())
+          Button("Back to Desk") { model.path = [] }.buttonStyle(QuietWay())
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Ink.bg)
       }
     }
@@ -73,7 +73,10 @@ struct OffScreen: View {
 
 struct MediaScreen: View {
   @EnvironmentObject var model: BoardModel
+  @Environment(\.horizontalSizeClass) private var hSize
   let pages: Bool
+  /** The iPhone's Media page (the capsule's tab): the place pill at the top left. */
+  var root = false
   var body: some View {
     let _ = model.version
     let pubs = (model.room?.board.published.values.filter { $0.objectState != "closed" } ?? []).sorted { $0.envelopeNumber > $1.envelopeNumber }
@@ -91,11 +94,12 @@ struct MediaScreen: View {
           }
         }
       }
-      .padding(.horizontal, 16).padding(.bottom, 40)
+      .padding(.horizontal, 16).padding(.bottom, root ? 100 : 40)
       .frame(maxWidth: 760).frame(maxWidth: .infinity)
     }
     .background(Ink.bg)
     .navigationBarTitleDisplayMode(.inline)
+    .toolbar { if root && hSize != .regular { ToolbarItem(placement: .topBarLeading) { MenuPill() } } }
   }
 }
 
@@ -151,14 +155,14 @@ struct NoteButton: View {
     let _ = model.version
     let has = !(model.desk?.notes.filter { $0.held.isNull }.isEmpty ?? true)
     Button { open = true } label: { PenMark("sidebar:NOTE_ICON").frame(width: 30, height: 30).opacity(has ? 1 : 0.85) }
-      .accessibilityLabel("The note")
+      .accessibilityLabel("Note")
       .sheet(isPresented: $open) { NoteSheet().presentationDetents([.medium, .large]) }
   }
 }
 /** The note as a sheet (the iPad's corner button). */
 struct NoteSheet: View {
   @Environment(\.dismiss) private var dismiss
-  var body: some View { NoteScreen(onDone: { dismiss() }) }
+  var body: some View { NavigationStack { NoteScreen(onDone: { dismiss() }) } }
 }
 
 /**
@@ -168,7 +172,10 @@ struct NoteSheet: View {
  */
 struct NoteScreen: View {
   @EnvironmentObject var model: BoardModel
+  @Environment(\.horizontalSizeClass) private var hSize
   var onDone: (() -> Void)? = nil
+  /** The capsule shows below it: the paper runs on under the glass, the last line stays above it. */
+  var barShown = false
   @State private var text = ""
   @State private var noteId: String?
   @State private var files: [JV] = []          // uploaded attachment references
@@ -177,20 +184,24 @@ struct NoteScreen: View {
   @State private var pickingPhotos = false
   @State private var importing = false
   @State private var camera = false
+  /** Another session than the crowned one, picked with the "To" chip. */
+  @State private var to: String? = nil
   @FocusState private var focused: Bool
   var body: some View {
+    let _ = model.version
     let crown = model.desk?.crownOf(desk: model.deskId)
-    VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        Text("Note").font(Face.display(26, .heavy)).foregroundStyle(Ink.noteInk)
-        Spacer()
-        if let c = crown { HStack(spacing: 6) { Text("to").font(Face.text(14)).foregroundStyle(Ink.noteInk.opacity(0.7)); AgentMark(agent: c, size: 20); Text(c.name).font(Face.text(14, .semibold)).foregroundStyle(Ink.noteInk) } }
-      }
+    let target = to.flatMap { id in model.desk?.agents.first { $0.id == id } } ?? crown
+    let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty
+    VStack(alignment: .leading, spacing: 10) {
       TextEditor(text: $text)
         .font(Face.text(18)).foregroundStyle(Ink.noteInk)
         .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .focused($focused)
         .frame(minHeight: 140)
+        .overlay(alignment: .topLeading) {
+          if text.isEmpty { Text("Write a note…").font(Face.text(18)).foregroundStyle(Ink.noteInk.opacity(0.45)).padding(.top, 8).padding(.leading, 5).allowsHitTesting(false) }
+        }
       if !files.isEmpty || uploading {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 8) {
@@ -199,31 +210,45 @@ struct NoteScreen: View {
                 if kindOf(f) == "image" { AttachmentImage(ref: f).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 8)) }
                 else { VStack { Sketch("clip", color: Ink.noteInk).frame(width: 18, height: 18); Text(f["file_name"].string ?? "file").font(Face.text(11)).lineLimit(2) }.frame(width: 72, height: 72).background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.5))) }
                 Button { files.remove(at: i); keepSoon() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Ink.noteInk) }.offset(x: 6, y: -6)
+                  .accessibilityLabel("Remove")
               }
             }
             if uploading { ProgressView().frame(width: 72, height: 72) }
           }.padding(.top, 6)
         }
       }
-      HStack(spacing: 14) {
+      HStack(spacing: 6) {
         Menu {
-          Button { camera = true } label: { Label("Camera", systemImage: "camera") }
-          Button { pickingPhotos = true } label: { Label("Pictures and videos", systemImage: "photo.on.rectangle") }
-          Button { importing = true } label: { Label("A file", systemImage: "doc") }
-        } label: { Sketch("clip", color: Ink.noteInk).frame(width: 24, height: 24).frame(width: 44, height: 44) }
+          Button { camera = true } label: { Label("Take Photo", systemImage: "camera") }
+          Button { pickingPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
+          Button { importing = true } label: { Label("Choose File", systemImage: "doc") }
+        } label: { Image(systemName: "paperclip").font(.system(size: 19, weight: .medium)).frame(width: 44, height: 44) }
         .accessibilityLabel("Attach")
-        Button { bin() } label: { Image(systemName: "trash").font(.system(size: 17)).frame(width: 44, height: 44) }.foregroundStyle(Ink.noteInk.opacity(0.8)).accessibilityLabel("Throw away")
+        Button { bin() } label: { Image(systemName: "trash").font(.system(size: 17)).frame(width: 44, height: 44) }
+          .accessibilityLabel("Delete Note").disabled(empty)
         Spacer()
-        Button { send(crown) } label: {
-          HStack(spacing: 6) { PenMark("crown").frame(width: 20, height: 15); Text(crown == nil ? "No crown yet" : "Send to \(crown!.name)").font(Face.text(16, .semibold)) }
-            .foregroundStyle(Ink.noteInk).padding(.horizontal, 14).padding(.vertical, 11).background(Capsule().fill(Color.white.opacity(0.5)))
-        }.disabled(crown == nil || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty) || uploading)
+        Button { send(target) } label: {
+          Image(systemName: "paperplane.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Ink.noteYellow)
+            .frame(width: 46, height: 46).background(Circle().fill(Ink.noteInk))
+        }
+        .disabled(target == nil || empty || uploading)
+        .opacity(target == nil || empty || uploading ? 0.35 : 1)
+        .accessibilityLabel(target.map { "Send to \($0.name)" } ?? "Send")
       }
-      if crown == nil { Text("Give a session the crown (its menu: Give it the crown): a note goes to it.").font(Face.text(13)).foregroundStyle(Ink.noteInk.opacity(0.7)) }
-      Spacer(minLength: 0)
+      .foregroundStyle(Ink.noteInk)
+      if target == nil { Text("Make a session the main session (its ⋯ menu): notes go to it.").font(Face.text(13)).foregroundStyle(Ink.noteInk.opacity(0.7)) }
     }
-    .padding(20)
+    .padding(.horizontal, 20).padding(.top, 6)
+    .padding(.bottom, barShown ? 76 : 12)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .background(Ink.noteYellow.ignoresSafeArea())
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbarBackground(.hidden, for: .navigationBar)
+    .toolbar {
+      if hSize != .regular && onDone == nil { ToolbarItem(placement: .topBarLeading) { MenuPill() } }
+      ToolbarItem(placement: .topBarTrailing) { recipient(target) }
+      ToolbarItemGroup(placement: .keyboard) { Spacer(); Button { focused = false } label: { Image(systemName: "keyboard.chevron.compact.down") }.accessibilityLabel("Hide Keyboard") }
+    }
     .onAppear {
       if !loaded, let n = model.desk?.notes.filter({ $0.held.isNull }).sorted(by: { $0.updated > $1.updated }).first { text = n.text; noteId = n.id; files = n.attachments }
       loaded = true
@@ -239,6 +264,23 @@ struct NoteScreen: View {
         Task { await add(got, names: urls.map { $0.lastPathComponent }) }
       }
     }
+  }
+  /** "To: Claude ▾": the recipient, once; the crowned session unless he picks another. */
+  private func recipient(_ target: Agent?) -> some View {
+    let sessions = (model.view?.units ?? []).map { $0.agent }
+    return Menu {
+      ForEach(sessions) { a in
+        Button { to = a.id } label: { if a.id == target?.id { Label(a.name, systemImage: "checkmark") } else { Text(a.name) } }
+      }
+    } label: {
+      HStack(spacing: 4) {
+        Text("To:").foregroundStyle(Ink.noteInk.opacity(0.7))
+        Text(target?.name ?? "No Session").fontWeight(.semibold).foregroundStyle(Ink.noteInk).lineLimit(1)
+        Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.noteInk.opacity(0.7))
+      }
+      .font(Face.text(15)).padding(.horizontal, 4)
+    }
+    .accessibilityLabel("Recipient: \(target?.name ?? "none")")
   }
   /** Files onto the note: encrypted and uploaded as the composer does (pictures as JPEG, at most 2400 px). */
   private func add(_ items: [(data: Data, type: UTType?)], names: [String] = []) async {
@@ -358,7 +400,7 @@ struct DrawingPicker: View {
           }
         }.padding(16)
       }
-      .navigationTitle("Its drawing").navigationBarTitleDisplayMode(.inline)
+      .navigationTitle("Change Icon").navigationBarTitleDisplayMode(.inline)
       .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
     }
   }
