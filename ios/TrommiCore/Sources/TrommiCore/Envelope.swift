@@ -6,6 +6,12 @@ public enum KIND {
   public static let TIMELINE_ITEM = 1, OBJECT_VERSION = 2, ANSWER = 3, PERMISSION_REQUEST = 4, VERDICT = 5, STATUS = 6, DECIDE_AGAIN = 7
   static let MAX = 7
   static let OBJECT_KINDS: Set<Int> = [2, 3, 4, 5, 7]
+  /**
+   * A kind of this format version. Kinds 8-255 are reserved for later versions: a READER accepts them (FORMAT.md section 9,
+   * "Kinds a reader does not know": no timeline block, the object block iff flags bit 1, the bind opaque), checks
+   * signature, chain and seen as for any envelope, and applies nothing. Writers and the hub refuse them (strictKinds).
+   */
+  public static func isKnown(_ kind: Int) -> Bool { kind >= 1 && kind <= MAX }
 }
 public enum KEY_SCOPE { public static let ROOM = 0, SESSION = 1 }
 public enum TIMELINE { public static let CHAT = 1, CANVAS = 2 }
@@ -43,6 +49,13 @@ public struct Header: Equatable {
   public var timelineId: String? = nil
   public var blobs: [Bytes] = []
   public var isHead: Bool { kind != KIND.TIMELINE_ITEM }
+  /** false: a kind of a newer format version (verified, never applied; the app shows "needs a newer Trommi"). */
+  public var knownKind: Bool { KIND.isKnown(kind) }
+}
+
+/** A version byte above this format's is `newer-version` (this device is too old, the data is fine), anything else `bad-version`. */
+private func checkVersion(_ v: Int, _ what: String) throws {
+  if v != Int(VERSION) { throw fail(v > Int(VERSION) ? "newer-version" : "bad-version", "\(what) version \(v)") }
 }
 
 /** `card/<32 hex>`, `session/…`, `desk/…`; anything else is refused. */
@@ -54,11 +67,12 @@ public func parseTimelineId(_ text: String) throws -> (scope: Int, ref: Bytes) {
 }
 public func timelineIdOf(_ scope: Int, _ ref: Bytes) -> String { "\(SCOPE_NAMES[scope]!)/\(hex(ref))" }
 
-private func checkGrammar(_ h: Header, _ bad: (String) -> ZError) throws {
-  if h.kind < 1 || h.kind > KIND.MAX { throw bad("unknown envelope kind \(h.kind)") }
+private func checkGrammar(_ h: Header, strictKinds: Bool = true, _ bad: (String) -> ZError) throws {
+  let known = KIND.isKnown(h.kind)
+  if !known && (strictKinds || h.kind < 1 || h.kind > 255) { throw bad("unknown envelope kind \(h.kind)") }
   if h.keyScope != KEY_SCOPE.ROOM && h.keyScope != KEY_SCOPE.SESSION { throw bad("unknown key scope") }
   let thread = h.kind == KIND.TIMELINE_ITEM
-  if KIND.OBJECT_KINDS.contains(h.kind) != (h.card != nil) { throw bad(KIND.OBJECT_KINDS.contains(h.kind) ? "this kind needs the object block" : "this kind has no object block") }
+  if known && KIND.OBJECT_KINDS.contains(h.kind) != (h.card != nil) { throw bad(KIND.OBJECT_KINDS.contains(h.kind) ? "this kind needs the object block" : "this kind has no object block") }
   if thread != (h.timelineId != nil) { throw bad(thread ? "a timeline item needs a timeline" : "only timeline items have a timeline") }
   if thread {
     guard let tk = h.timelineKind, tk >= 1, tk <= 255 else { throw bad("timeline kind") }
@@ -98,10 +112,9 @@ public func encodeHeader(_ h0: Header) throws -> Bytes {
   return w.out
 }
 
-public func decodeHeader(_ bytes: Bytes) throws -> Header {
+public func decodeHeader(_ bytes: Bytes, strictKinds: Bool = false) throws -> Header {
   var r = R(bytes)
-  let v = try r.u8()
-  if v != Int(VERSION) { throw fail("bad-version", "envelope header version \(v)") }
+  try checkVersion(try r.u8(), "envelope header")
   let flags = try r.u8()
   if flags & ~(FLAG_PUSH | FLAG_OBJECT) != 0 { throw fail("bad-format", "unknown header flags") }
   let roomId = try r.take(32), epoch = try r.u32(), keyScope = try r.u8()
@@ -132,7 +145,7 @@ public func decodeHeader(_ bytes: Bytes) throws -> Header {
   for _ in 0..<blobs { h.blobs.append(try r.take(16)) }
   try r.end()
   if h.seq < 1 { throw fail("bad-format", "sequence numbers start at 1") }
-  try checkGrammar(h) { fail("bad-format", $0) }
+  try checkGrammar(h, strictKinds: strictKinds) { fail("bad-format", $0) }
   return h
 }
 
@@ -154,8 +167,7 @@ public func encodeBody(bind: Bytes, payload: Bytes) throws -> Bytes {
 }
 public func decodeBody(_ bytes: Bytes) throws -> (bind: Bytes, payload: Bytes) {
   var r = R(bytes)
-  let v = try r.u8()
-  if v != Int(VERSION) { throw fail("bad-version", "envelope body version \(v)") }
+  try checkVersion(try r.u8(), "envelope body")
   let bind = try r.var16(), payload = try r.var32()
   if paddedLength(bytes.count - r.left) != bytes.count { throw fail("bad-format", "wrong padding length") }
   if !isZero(try r.take(r.left)) { throw fail("bad-format", "padding is not zero") }
@@ -168,8 +180,7 @@ public func decodeBody(_ bytes: Bytes) throws -> (bind: Bytes, payload: Bytes) {
 public struct SplitEnvelope { public let headerBytes: Bytes, nonce: Bytes, ciphertext: Bytes?, ciphertextHash: Bytes?, signature: Bytes; public var pruned: Bool { ciphertext == nil } }
 public func splitEnvelope(_ bytes: Bytes) throws -> SplitEnvelope {
   var r = R(bytes)
-  let v = try r.u8()
-  if v != Int(VERSION) { throw fail("bad-version", "envelope version \(v)") }
+  try checkVersion(try r.u8(), "envelope")
   let type = try r.u8()
   if type != Int(OBJ.ENVELOPE) && type != Int(OBJ.ENVELOPE_PRUNED) { throw fail("bad-format", "not an envelope") }
   let headerBytes = try r.var16(), nonce = try r.take(NONCE_LEN)
@@ -192,9 +203,9 @@ public func pruneEnvelope(_ bytes: Bytes) throws -> Bytes {
   if e.pruned { return bytes }
   return try joinEnvelope(headerBytes: e.headerBytes, nonce: e.nonce, ciphertext: nil, ciphertextHash: sha256(e.ciphertext!), signature: e.signature)
 }
-public func peekEnvelope(_ bytes: Bytes) throws -> (header: Header, split: SplitEnvelope) {
+public func peekEnvelope(_ bytes: Bytes, strictKinds: Bool = false) throws -> (header: Header, split: SplitEnvelope) {
   let e = try splitEnvelope(bytes)
-  return (try decodeHeader(e.headerBytes), e)
+  return (try decodeHeader(e.headerBytes, strictKinds: strictKinds), e)
 }
 
 // ---- keys ----------------------------------------------------------------------------------
@@ -289,9 +300,9 @@ public struct Verified {
 }
 
 /** Everything about an envelope that needs no key (format, room, log view, membership, signature, chain, seen). */
-public func verifyEnvelope(_ bytes: Bytes, state: RoomState, chains: inout Chains, allowChainStart: Bool = false, allowRemovedSender: Bool = false, commit: Bool = true, freshness: Freshness? = nil) throws -> Verified {
+public func verifyEnvelope(_ bytes: Bytes, state: RoomState, chains: inout Chains, allowChainStart: Bool = false, allowRemovedSender: Bool = false, commit: Bool = true, freshness: Freshness? = nil, strictKinds: Bool = false) throws -> Verified {
   let e = try splitEnvelope(bytes)
-  let h = try decodeHeader(e.headerBytes)
+  let h = try decodeHeader(e.headerBytes, strictKinds: strictKinds)
   if !bytesEqual(h.roomId, state.roomId) { throw fail("wrong-room", "envelope of another room") }
   if h.logSeq > state.head.seq { throw fail("log-behind", "the sender knows log entry \(h.logSeq), this device only \(state.head.seq)") }
   if !bytesEqual(state.hashes[h.logSeq], h.logHash) { throw fail("log-fork", "the sender has a different log entry \(h.logSeq)") }
@@ -364,7 +375,7 @@ public func openEnvelope(_ bytes: Bytes, state: RoomState, chains: inout Chains,
   do {
     let key = try deriveSenderKey(roomId: state.roomId, secret: secret, senderId: v.header.sender, keyScope: v.header.keyScope, sessionId: v.header.sessionId)
     body = try decodeBody(try gcmOpen(key: key, nonce: v.split.nonce, aad: v.split.headerBytes, v.split.ciphertext!))
-  } catch let err as ZError where quarantine && ["decrypt-failed", "bad-format", "bad-version"].contains(err.code) {
+  } catch let err as ZError where quarantine && ["decrypt-failed", "bad-format", "bad-version", "newer-version"].contains(err.code) {
     quarantined = err.code
   }
   if commit { advance(&chains, v.header.sender, v.header.seq, v.hash) }
@@ -415,8 +426,7 @@ public enum Bind: Equatable {
 }
 public func decodeBind(kind: Int, _ bind: Bytes) throws -> Bind {
   var r = R(bind)
-  let v = try r.u8()
-  if v != Int(VERSION) { throw fail("bad-version", "bind version") }
+  try checkVersion(try r.u8(), "bind")
   let out: Bind
   switch kind {
   case KIND.ANSWER:
