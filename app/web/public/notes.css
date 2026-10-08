@@ -10,9 +10,7 @@
 .note-send:disabled { opacity: .5; cursor: default; }
 .note-send[data-name]::after { content: "to " attr(data-name); position: absolute; right: 0; bottom: calc(100% + 2px); padding: 3px 7px; background: var(--fg); color: var(--paper); font: 600 var(--t-xs)/1.2 var(--font); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 120ms; }
 .note-send[data-name]:is(:hover, :focus-visible)::after { opacity: 1; }
-.note-send.is-none .crown-mark { --gold-pen: var(--muted); }
-.note-send.is-none .crown-wash { display: none; }
-.note-send.is-none .crown-jewel { fill: none; }
+
 .note-send:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 a.note-send { text-decoration: none; box-sizing: border-box; }
 

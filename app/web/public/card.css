@@ -15,11 +15,11 @@
 button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
 .inbox-revising-open:hover strong, .inbox-revising-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
 .inbox-tab-act:focus-visible { outline: 0; }
-:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) { max-width: 150px; z-index: 1; filter: drop-shadow(0 3px 6px rgb(20 30 25 / .16)); }
-:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) .inbox-later-flap { background: var(--tone-wash); }
-:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) .sketch { opacity: 1; }
+:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible) { max-width: 150px; z-index: 1; filter: drop-shadow(0 3px 6px rgb(20 30 25 / .16)); }
+:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible) .inbox-later-flap { background: var(--tone-wash); }
+:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible) .sketch { opacity: 1; }
 .inbox-tab-act:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
-.inbox-shred:is(:hover, :focus-visible, .is-unfolded) { color: var(--urg-critical); }
+.inbox-shred:is(:hover, :focus-visible) { color: var(--urg-critical); }
 .inbox-when .inbox-later-flap, .inbox-when .inbox-tab-act:is(:hover, :focus-visible) .inbox-later-flap { justify-content: center; padding: 0; background: none; box-shadow: inset 0 0 0 1px var(--line-strong); }
 .inbox-when .inbox-tab-act:is(:hover, :focus-visible) .inbox-later-flap { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
 .inbox-when .inbox-tab-act:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
@@ -33,7 +33,7 @@ button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
 @media (min-width: 861px) {
   .rail-fold:hover, .rail-fold:focus-visible { color: var(--fg); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
 }
-.topbar #brand-doors .menu-foot button:hover, .topbar #brand-doors .menu-foot button:focus-visible { background: var(--sunken); }
+
 .crown-fold.is-plain:focus-visible { opacity: 1; outline: 2px solid var(--focus-ring); outline-offset: -4px; }
 .crown-fold:hover, .crown-fold:focus-visible { scale: 1.15; }
 /* the pointer on the stack, or on the crown (the keys too): the edges fan out a little, like cards being thumbed. Transforms only:
@@ -209,7 +209,7 @@ turbo-frame.tc-media { flex: none; display: flex; flex-direction: column; gap: v
 .tc-opt.is-picked { box-shadow: inset 0 0 0 2px var(--accent); }
 .tc-opt.is-picked .tc-opt-label { color: var(--accent); }
 .tc-opt[data-match] { box-shadow: inset 0 0 0 2px var(--fg); }
-.tc-opt.is-picked-now { opacity: .6; }
+
 .tc-opt-words { display: grid; gap: 2px; min-width: 0; }
 .tc-opt-label { font: 700 var(--t-md)/1.25 var(--display); overflow-wrap: anywhere; }
 .tc-opt-detail { color: var(--muted); font: 400 var(--t-xs)/1.35 var(--font); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -558,7 +558,6 @@ a.focus-stage-step { display: grid; place-items: center; }
 /* The way back from a large picture: shown in the bar, for a session's picture and a card's alike. */
 #session .pane-who:hover .crown-toggle[aria-pressed="false"], #session .pane-who .crown-toggle:focus-visible { opacity: .5; }
 .topbar #brand-doors button.menu-desk-add:is(:hover, :focus-visible) { color: var(--fg); }
-.media-pile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 6px; border-radius: 6px; }
 
 /* ---- the gallery of one question (/card/<n>/picture/<i>): one slim row above (the way back, where one stands, the page behind
    the picture), the picture, the small pictures under it, the answer beside ---- */
