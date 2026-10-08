@@ -1921,6 +1921,7 @@ async function start(client, { fresh = false } = {}) {
   window.trommi.openMs = OPEN_MS
   window.trommi.readyAt = performance.now()   // since navigation start: cold or warm load to the painted page
   document.documentElement.dataset.ready = ''
+  fontsAfterPaint()
   // The other views, once the page is idle: the next navigation (a card, a session, the board) finds them in memory.
   const idle = globalThis.requestIdleCallback ?? (f => setTimeout(f, 300))
   idle(() => { for (const name of Object.keys(LAZY)) view(name).catch(err => console.warn('view', name, err)) }, { timeout: 3000 })
@@ -1936,9 +1937,26 @@ async function start(client, { fresh = false } = {}) {
   return router
 }
 
+// ---- fonts ----
+// The web fonts come after the first paint (a cold start on a slow line spends its bandwidth on the app first): the page
+// paints in the metric-matched fallbacks of fonts/fallback.css, then fonts/fonts.css is added (its fonts swap in,
+// font-display: swap; the service worker keeps them for later starts). At the latest FONTS_MS after boot.
+const FONTS_MS = 3000
+let fontsLoaded = false
+function loadFonts() {
+  if (fontsLoaded) return
+  fontsLoaded = true
+  const link = document.createElement('link')
+  link.rel = 'stylesheet'
+  link.href = '/fonts/fonts.css'
+  document.head.append(link)
+}
+const fontsAfterPaint = () => requestAnimationFrame(() => setTimeout(loadFonts, 0))
+
 /** The page starts here (index.html loads this module; importing it elsewhere, as the connector's tests do, does nothing). */
 async function boot() {
   T0 = performance.now()
+  setTimeout(loadFonts, FONTS_MS)
   // The core worker starts first, beside everything below: the room is being read while the page sets itself up.
   early = startEarly()
   // The service worker: the app shell offline, attachments decrypted on demand, push (public/sw.js). Not on the dev
@@ -1964,7 +1982,7 @@ async function boot() {
   const client = await openClient().catch(err => { console.error('open', err); openError = err; return null })
   OPEN_MS = performance.now() - T0   // the room from storage (or the demo's fixture) in memory
   if (client) { keepStorage(); await start(client) }
-  else await (await view('auth')).roomScreen({ start: async (c, o) => { keepStorage(); return start(await adopt(c), o) }, hub: hubUrl(), openError })
+  else { fontsAfterPaint(); await (await view('auth')).roomScreen({ start: async (c, o) => { keepStorage(); return start(await adopt(c), o) }, hub: hubUrl(), openError }) }
 }
 if (typeof window !== 'undefined') boot()
 
