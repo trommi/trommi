@@ -165,12 +165,16 @@ async fn run() -> Result<(), String> {
             stop.notify_one();
         });
     }
+    // Every connection watches `shutdown`: on close an idle keep-alive connection goes at once and a busy one after
+    // its answer (Node's server.close() + closeAllConnections()), so clients see a closed socket, never a late 503.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     loop {
         tokio::select! {
             accepted = listener.accept() => {
                 let Ok((sock, peer)) = accepted else { continue };
                 let _ = sock.set_nodelay(true);
                 let hub = hub.clone();
+                let mut shutdown = shutdown_rx.clone();
                 tokio::spawn(async move {
                     let conn = Conn { peer, cut: Arc::new(Notify::new()) };
                     let cut = conn.cut.clone();
@@ -179,14 +183,26 @@ async fn run() -> Result<(), String> {
                         async move { Ok::<_, std::convert::Infallible>(hub.serve(req, conn).await) }
                     });
                     let fut = http1::Builder::new().timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(30)).keep_alive(true).serve_connection(TokioIo::new(sock), svc);
-                    tokio::select! { _ = fut => {}, _ = cut.notified() => {} }
+                    tokio::pin!(fut);
+                    let mut graceful = false;
+                    loop {
+                        tokio::select! {
+                            _ = &mut fut => break,
+                            _ = cut.notified() => break,
+                            r = shutdown.changed(), if !graceful => {
+                                if r.is_err() || *shutdown.borrow() { fut.as_mut().graceful_shutdown(); graceful = true; }
+                            }
+                        }
+                    }
                 });
             }
             _ = stop.notified() => break,
         }
     }
-    // close(): refuse new requests, end the streams, wait (at most 5 s) for the requests in flight.
+    // close(): no new connections, refuse new requests, end the streams, wait (at most 5 s) for the requests in flight.
+    drop(listener);
     hub.closing.store(true, Ordering::Release);
+    let _ = shutdown_tx.send(true);
     hub.end_all_streams();
     let wait = async {
         while hub.in_flight.load(Ordering::Acquire) > 0 {
@@ -200,7 +216,8 @@ async fn run() -> Result<(), String> {
     let _ = tokio::time::timeout(Duration::from_secs(5), wait).await;
     hub.metrics.flush();
     let _ = hub.db.w().execute_batch("PRAGMA wal_checkpoint(PASSIVE)");
-    Ok(())
+    // Leave at once: the runtime would wait for timer tasks.
+    std::process::exit(0)
 }
 
 fn spawn_timers(hub: &Arc<Hub>) {
