@@ -370,7 +370,7 @@ function pagesPile(model, base) {
   const all = pageItems(model, base)
   if (!all.length) return ''
   const name = `Pages, ${all.length === 1 ? '1 page' : `${all.length} pages`}: open the list`
-  return html`<a class="media-pile pages-pile" id="desk-pages" data-nav href="${base}/pages" aria-label="${name}" title="Every page your agents made in this room"><span class="desk-obj pg-pile" aria-hidden="true">${all.slice(0, 3).reverse().map((i, at) => html`<span class="pg-sheet" style="--i:${at}"><span class="pg-t">${i.title}</span><span class="pg-lines"></span></span>`)}</span><span class="off-label">Pages <span class="off-count">${all.length}</span></span></a>`
+  return html`<a class="media-pile pages-pile" id="desk-pages" data-nav href="${base}/pages" aria-label="${name}" title="Every page your agents made in this room"><span class="desk-obj pg-pile" aria-hidden="true">${all.slice(0, 3).reverse().map((i, at) => html`<span class="pg-sheet${i.pic ? ' has-pic' : ''}" style="--i:${at}${i.pic ? `;background-image:url('${i.pic}')` : ''}"><span class="pg-t">${i.title}</span><span class="pg-lines"></span></span>`)}</span><span class="off-label">Pages <span class="off-count">${all.length}</span></span></a>`
 }
 
 // The stacks at the foot of the Desk: a click fans one out, a click gathers it. A stream may replace the stacks;

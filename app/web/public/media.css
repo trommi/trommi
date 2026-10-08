@@ -139,3 +139,37 @@ body[data-page="gallery"] #gallery {
 #inbox .inbox-stacks.stack-tabs:not(:has(> #desk-media)) > .media-pile.pages-pile { grid-column: 3; }
 #inbox .inbox-stacks.stack-tabs .pg-pile { rotate: -.5deg; }
 @container rows (max-width: 600px) { :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs:has(> .pages-pile) { column-gap: 14px; } }
+
+/* ---- the page /pages as a grid (his word, 8 October: "like Media, with a mini preview per page"): the rhythm of
+   .gal-grid; each tile the preview (4:3), the title, who and when, Open and the ⋯ that holds Share. ---- */
+.pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 48px var(--s-8); margin: 0; padding: 0; list-style: none; }
+.pg-tile { position: relative; display: grid; gap: 10px; min-width: 0; align-content: start; }
+.pg-shot { display: block; color: var(--fg); text-decoration: none; }
+.pg-shot .asset-preview { width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 10px; }
+.pg-shot:hover .asset-preview::after { box-shadow: inset 0 0 0 1.5px var(--fg); }
+.pg-meta { display: grid; gap: 3px; min-width: 0; }
+.pg-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font: 600 15px/1.3 var(--font); text-decoration: none; }
+.pg-title:hover { text-decoration: underline; }
+.pg-from { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font: 500 var(--t-xs)/1.2 var(--font); }
+.pg-from .ago { margin-left: auto; color: var(--faint); }
+.pg-acts { display: flex; align-items: center; gap: var(--s-2); }
+.pg-menu { position: relative; margin-left: auto; }
+.pg-more { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; color: var(--muted); font: 700 1.1rem/1 var(--font); cursor: pointer; list-style: none; }
+.pg-more::-webkit-details-marker { display: none; }
+.pg-more:hover, .pg-menu[open] > .pg-more { background: var(--sunken); color: var(--fg); }
+.pg-menu-body { position: absolute; z-index: var(--z-pop); right: 0; bottom: calc(100% + 6px); width: min(300px, 80vw); padding: var(--s-3); border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
+.pg-menu-body .lk-share { margin: 0; flex-wrap: wrap; }
+@media (max-width: 860px) {
+  .pg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-5) var(--s-3); }
+  .pg-title { font-size: var(--t-sm); }
+  .pg-more { width: 44px; height: 44px; }
+  .pg-menu-body { right: -4px; }
+}
+.pg-tile, .pg-meta, .pg-title { text-align: left; justify-items: stretch; }
+.pg-sheet.has-pic { padding: 0; background-size: cover; background-position: top center; }
+.pg-sheet.has-pic > :is(.pg-t, .pg-lines) { display: none; }
+/* (Share opens over its own tile, as wide as the tile) */
+.pg-menu { position: static; }
+.pg-menu-body { left: 0; right: 0; width: auto; bottom: 48px; }
+.pg-menu-body .lk-share { margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); grid-column: auto; }
+@media (max-width: 860px) { .pg-menu-body { left: -4px; right: -4px; bottom: 54px; } }
