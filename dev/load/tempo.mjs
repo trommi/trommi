@@ -16,7 +16,7 @@ import { joinRoom, openRoom, z } from '../../shared/index.mjs'
 import { fileStorage } from '../../shared/storage-file.mjs'
 import { startDriver, swiftAvailable, SWIFT_BIN } from '../interop/protocol.mjs'
 import { guard } from '../guard.mjs'
-guard({ usage: 'node dev/load/tempo.mjs --room=<dir with huge.json> [--impl=js,swift] [--pages=20] [--out=<file.json>]', values: ['room', 'impl', 'pages', 'out'] })
+guard({ usage: 'node dev/load/tempo.mjs --room=<dir with huge.json> [--impl=js,swift] [--pages=20] [--out=<file.json>] [--agent=agent-1]', values: ['room', 'impl', 'pages', 'out', 'agent'] })
 
 const ROOM = path.resolve(arg('room', '.'))
 const IMPLS = arg('impl', 'js,swift').split(',')
@@ -35,7 +35,8 @@ const JS = 'tempo-js', SWIFT = 'ios/0.1.0'
 const { client: phone } = await reopen(info.phone_dir)
 await phone.start()
 await phone.catchUp()
-const agentDir = path.join(path.dirname(info.phone_dir), 'agent-1')
+// the big session's agent (agent-1); --agent=agent-N picks another one (a member directory whose chain halted)
+const agentDir = path.join(path.dirname(info.phone_dir), arg('agent', 'agent-1'))
 const { client: agent } = await reopen(agentDir)
 await agent.start({ stream: false })
 log(`room ${info.envelopes} envelopes; counting hub ${info.hub_url}`)
@@ -161,7 +162,16 @@ async function measureSwift() {
   await sleep(1500)
   // one new message, live: what the stream brings (bytes), then the cache rewrite it causes
   m = await proxy.mark()
-  const cache = () => { try { return fs.statSync(fs.readdirSync(home).map(x => path.join(home, x, 'cache.bin')).find(f => fs.existsSync(f))) } catch { return null } }
+  // what the store holds: every file under the room's folder (records/*.seg append-only, head.bin, grants.bin), size and mtime
+  const files = () => {
+    const out = new Map()
+    const walk = d => { for (const x of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, x.name); if (x.isDirectory()) walk(f); else { const st = fs.statSync(f); out.set(f, { size: st.size, mtime: st.mtimeMs }) } } }
+    try { walk(home) } catch {}
+    return out
+  }
+  // bytes written between two looks: an append-only segment by what it grew, any other changed file whole
+  const written = (a, b) => { let n = 0; for (const [f, x] of b) { const y = a.get(f); if (!y) n += x.size; else if (x.mtime > y.mtime) n += f.endsWith('.seg') ? Math.max(0, x.size - y.size) : x.size }; return n }
+  const cache = () => { const m = files(); return m.size ? { size: [...m.values()].reduce((s, x) => s + x.size, 0), mtimeMs: Math.max(...[...m.values()].map(x => x.mtime)), files: m } : null }
   await sleep(2500)
   const c0 = cache()
   t = performance.now()
@@ -170,7 +180,7 @@ async function measureSwift() {
   out.one_message_live = { ms_to_bytes: Math.round(performance.now() - t), ...(await proxy.since(m, SWIFT)) }
   await until(() => { const c1 = cache(); return c1 && c0 && c1.mtimeMs > c0.mtimeMs }, 'cache rewritten', 20_000).catch(() => {})
   const c1 = cache()
-  out.one_message_live.cache_rewrite_mb = c1 ? +(c1.size / 1048576).toFixed(1) : null
+  out.one_message_live.cache_written_kb = c0 && c1 ? +(written(c0.files, c1.files) / 1024).toFixed(1) : null
   log('swift one message live', JSON.stringify(out.one_message_live))
   await d.stop()
   out.cache_mb = c1 ? +(c1.size / 1048576).toFixed(1) : null

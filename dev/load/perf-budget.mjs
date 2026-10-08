@@ -64,7 +64,10 @@ const counters = await countingHub(info, ROOM)
 // ---- the engines: dev/load/tempo.mjs, read back ----
 function tempo(impl) {
   const out = path.join(ROOM, `budget-tempo-${impl}.json`)
-  const r = spawnSync(process.execPath, [path.join(REPO, 'dev/load/tempo.mjs'), `--room=${ROOM}`, `--impl=${impl}`, '--pages=5', `--out=${out}`], { stdio: 'inherit' })
+  // the Swift core measured as the phone runs it: the release build when there is one (swift build -c release)
+  const release = path.join(REPO, 'ios/TrommiCore/.build/release/trommi-swift')
+  const env = { ...process.env, ...(!process.env.TROMMI_SWIFT_BIN && fs.existsSync(release) ? { TROMMI_SWIFT_BIN: release } : {}) }
+  const r = spawnSync(process.execPath, [path.join(REPO, 'dev/load/tempo.mjs'), `--room=${ROOM}`, `--impl=${impl}`, '--pages=5', `--out=${out}`], { stdio: 'inherit', env })
   if (r.status !== 0) results.notes.push(`tempo ${impl} exited ${r.status}`)
   return JSON.parse(fs.readFileSync(out, 'utf8'))[impl] ?? {}
 }
@@ -85,7 +88,7 @@ if (ONLY.includes('engine')) {
 if (ONLY.includes('ios')) {
   console.log('\n== engine (Swift core, trommi-swift)')
   const s = tempo('swift')
-  got('engine ios: one new message: cache bytes written', s.one_message_live?.cache_rewrite_mb != null ? s.one_message_live.cache_rewrite_mb * 1024 : null)
+  got('engine ios: one new message: cache bytes written', s.one_message_live?.cache_written_kb)
   got('engine ios: warm start, nothing new', s.warm_nothing_new?.ms)
   results.engine_ios = s
 }

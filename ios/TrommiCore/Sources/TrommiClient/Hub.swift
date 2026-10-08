@@ -129,7 +129,12 @@ public final class HubClient {
   public func members(after: Int = -1) async throws -> JSON { try await request("GET", roomPath("/members"), query: ["after_entry_number": String(after)]) }
   public func sealedRoomKeys(after: Int = 0) async throws -> JSON { try await request("GET", roomPath("/sealed_room_keys"), query: ["after_key_epoch": String(after)]) }
   public func keyBackLinks() async throws -> JSON { try await request("GET", roomPath("/key_back_links")) }
-  public func sessionBundle() async throws -> JSON { try await request("GET", roomPath("/session_grants")) }
+  /** Grants, sealed keys and back links of these sessions (nil or empty: every session). */
+  public func sessionBundle(ids: [String]? = nil) async throws -> JSON {
+    try await request("GET", roomPath("/session_grants"), query: (ids?.isEmpty ?? true) ? [:] : ["session_ids": ids!.joined(separator: ",")])
+  }
+  /** Every session with its newest grant number (GET sessions). */
+  public func sessions() async throws -> JSON { try await request("GET", roomPath("/sessions")) }
   public func envelopes(after: Int, limit: Int = 1000) async throws -> JSON {
     try await request("GET", roomPath("/envelopes"), query: ["after_envelope_number": String(after), "limit": String(limit)])
   }

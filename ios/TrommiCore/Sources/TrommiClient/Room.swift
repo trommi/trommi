@@ -144,8 +144,6 @@ public final class Room {
   public private(set) var roomSecrets: [Int: EpochSecret] = [:]
   public private(set) var sessionStates: [String: SessionState] = [:]
   private var sessionGrants: [String: [Bytes]] = [:]
-  private var sessionKeyTexts: [String: [String]] = [:]
-  private var grantsCheckedAt = -1
   public private(set) var sessionSecrets: [String: EpochSecret] = [:]          // "<sid>:<epoch>"
   public private(set) var chains = Chains()
   /** The board: cards, sessions, conversations, registers, notes: the same rules as the web app (Board.swift). */
@@ -165,7 +163,10 @@ public final class Room {
   private var echoSeq = 0
   private var token401 = false
   /** Every record this device verified, by envelope number: what the cache keeps (and replays at the next launch). */
+  /** The records this device verified since launch (appended to the store at the next save); the restored ones stay
+   *  in the store only (a room of 80,000 envelopes is not kept twice in memory). */
   private var log: [Int: Rec] = [:]
+  private var restoredCount = 0
   private var cacheDirty = false
   private var cacheTask: Task<Void, Never>?
   /** Whether the board came from the cache (shown before the first catch-up). */
@@ -431,17 +432,23 @@ public final class Room {
 
   /** Every session's grant chain, verified; this device's session keys (a human holds every session key), older epochs by back links. */
   public func refreshSessions() async throws {
-    let r = try await noted { try await hub.sessionBundle() }
+    // as client.mjs _refreshSessions: the session list names each session's newest grant number; only the sessions with
+    // a grant this device has not verified are fetched (GET session_grants for those), so a launch reads a few bytes
+    var todo: [String]? = nil
+    if let list = try? await noted({ try await hub.sessions() })["sessions"] as? [JSON] {
+      todo = list.compactMap { x -> String? in
+        guard let sid = x["session_id"] as? String, sid.utf8.count == 32, (try? unhex(sid)) != nil else { return nil }
+        if let known = sessionStates[sid], let n = (x["last_grant_number"] as? NSNumber)?.intValue, n <= known.grantNumber { return nil }
+        return sid
+      }
+      if PerfLog.on { PerfLog.line("sessions: \(list.count) listed, \(todo!.count) moved") }
+      if todo!.isEmpty { return }
+    }
+    let r = try await noted { try await hub.sessionBundle(ids: todo.map { $0.count > 256 ? [] : $0 } ?? nil) }
     var ch = Change()
-    // a new member list (an add, a removal) can change what a grant chain means: everything verified again
-    if grantsCheckedAt != state.head.seq { sessionKeyTexts = [:]; grantsCheckedAt = state.head.seq }
     for s in r["sessions"] as? [JSON] ?? [] {
       guard let sid = s["session_id"] as? String, sid.utf8.count == 32, let grants = s["signed_grants"] as? [String], !grants.isEmpty else { continue }
       let raw = try grants.map { try unb64u($0) }
-      let keyTexts = (s["sealed_session_keys"] as? [JSON] ?? []).compactMap { $0["key_sealed"] as? String } + (s["key_back_links"] as? [JSON] ?? []).compactMap { $0["key_back_link"] as? String }
-      // the same grants and keys as at the last refresh: verified and applied already
-      if let old = sessionGrants[sid], old.count == raw.count, zip(old, raw).allSatisfy({ bytesEqual($0, $1) }), sessionKeyTexts[sid] == keyTexts, sessionStates[sid] != nil { continue }
-      sessionKeyTexts[sid] = keyTexts
       let st = state
       guard let ss = try await Task.detached(priority: .userInitiated) { try verifyGrants(raw, st) }.value else { continue }
       sessionStates[sid] = ss
@@ -464,6 +471,8 @@ public final class Room {
       board.applySessionGrant(ss, everAgentIds: ever, epochAgentIds: byEpoch, change: &ch)
     }
     if !ch.isEmpty { board.project(); emit(ch) }
+    // new grants or keys: into the store at the next save (else the next launch fetches them again)
+    if grantsHash() != grantsWritten { cacheSoon() }
   }
 
   nonisolated private static func secretLookup(room: [Int: EpochSecret], sessions: [String: EpochSecret]) -> SecretLookup {
@@ -521,11 +530,15 @@ public final class Room {
 
   private var restoreTried = false
   private func catchUp() async throws -> SyncReport {
-    if cursor == 0 { await restore() }
+    // the store is read (off the main thread) while the hub is asked who is in the room and for the room keys
+    let restoring: Task<Bool, Never>? = cursor == 0 ? Task { @MainActor in await self.restore() } : nil
     var report = SyncReport()
-    try await PerfLog.time("signIn") { try await noted { try await hub.signIn() } }
-    report.warnings += try await PerfLog.time("refreshMembers") { try await refreshMembers() }
-    try await PerfLog.time("refreshRoomKeys") { try await refreshRoomKeys() }
+    do {
+      try await PerfLog.time("signIn") { try await noted { try await hub.signIn() } }
+      report.warnings += try await PerfLog.time("refreshMembers") { try await refreshMembers() }
+      try await PerfLog.time("refreshRoomKeys") { try await refreshRoomKeys() }
+    } catch { _ = await restoring?.value; throw error }
+    _ = await restoring?.value
     try await PerfLog.time("refreshSessions") { try await refreshSessions() }
     Task { await self.refreshDevices() }
     var change = Change()
@@ -613,7 +626,7 @@ public final class Room {
     var kept = rec
     kept.localId = nil
     log[p.number] = kept
-    cacheSoon()
+    cacheSoon(p.number)
   }
 
   /** The record of an envelope (client.mjs _record): header values by name, the body decoded, the bind to hex. */
@@ -712,7 +725,7 @@ public final class Room {
           if n <= self.cursor { self.board.project(); self.emit(change); return }
         }
         try await self.process([(n, bytes, data["void"].truthy)], report: &report, change: &change)
-        self.board.project()
+        PerfLog.time("live project") { self.board.project(change) }
         self.emit(change)
       }
     case "member_entry":
@@ -819,7 +832,7 @@ public final class Room {
         let d = Room.decodePayload(o.payload, header: o.header)
         item.content = d.content; item.contentType = d.content?["content_type"].string
         item.itemState = d.content == nil ? "undecryptable" : d.state == "ok" ? "loaded" : d.state
-        if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon() }
+        if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon(n) }
         loaded += 1
       } catch let e as ZError {
         item.itemState = e.code == "pruned" ? "pruned" : "undecryptable"
@@ -1399,7 +1412,7 @@ public final class Room {
           let d = Room.decodePayload(o.payload, header: o.header)
           item.content = d.content; item.contentType = d.content?["content_type"].string
           item.itemState = d.content == nil ? "undecryptable" : d.state == "ok" ? "loaded" : d.state
-          if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon() }
+          if var r = log[n] { r.content = d.content; r.contentState = d.content == nil ? "undecryptable" : d.state; log[n] = r; cacheSoon(n) }
         } catch let e as ZError { item.itemState = e.code == "pruned" ? "pruned" : "undecryptable" }
         t.items[n] = item
       }
@@ -1471,15 +1484,15 @@ public final class Room {
   // chain, the cursor, the lamport, the session grants (verified again at load) and keys. Sealed with AES-256-GCM under a
   // key of this device (the Keychain on the phone) and written with the phone's file protection.
 
-  struct Cache: Codable {
-    var v = 1
+  /** The store's small head (RecordStore head.bin): where the records stop and what verifying them left. */
+  struct Head: Codable {
+    var v = 3
+    /** How many records the store held when this head was written: fewer on reading means a store damaged beyond its tail. */
+    var records: Int
     var cursor: Int
     var lamport: Int
     var chains: Chains
-    var grants: [String: [String]]
     var sessionSecrets: [String: SecretJSON]
-    var recs: [Rec]
-    var devices: JV?
   }
   private var cacheURL: URL { store.dir.appendingPathComponent("cache.bin") }
   /** The cache key, read from the Keychain once (a Keychain read can take tens of ms: never once per save). */
@@ -1491,8 +1504,27 @@ public final class Room {
     return k
   }
 
-  /** Write the cache a moment after the last change (a catch-up brings thousands at once). */
-  private func cacheSoon() {
+  /** The encrypted record store (RecordStore.swift), opened with the cache key on first use. */
+  private var recordStoreMemo: RecordStore?
+  private func recordStore() throws -> RecordStore {
+    if let r = recordStoreMemo { return r }
+    let r = RecordStore(dir: store.dir, key: try cacheKey())
+    recordStoreMemo = r
+    return r
+  }
+  /** The records changed since the last save (appended at the next one), and the grants as last written. */
+  private var dirtyRecs = Set<Int>()
+  private var grantsWritten = 0
+  private var saveTail: Task<Void, Never>?
+  private func grantsHash() -> Int {
+    var gh = Hasher()
+    for k in sessionGrants.keys.sorted() { gh.combine(k); for g in sessionGrants[k]! { gh.combine(g.count); gh.combine(g.suffix(16)) } }
+    return gh.finalize()
+  }
+
+  /** Write a moment after the last change (a catch-up brings thousands at once). */
+  private func cacheSoon(_ n: Int? = nil) {
+    if let n = n { dirtyRecs.insert(n) }
     cacheDirty = true
     if cacheTask != nil { return }
     cacheTask = Task { @MainActor [weak self] in
@@ -1503,25 +1535,34 @@ public final class Room {
   }
   /** Write it now (the app going to the background). */
   public func saveCache() { Task { await saveCacheAndWait() } }
+  /**
+   * Append the changed records and write the small head; the grants only when they changed. Off the main thread, one
+   * save after the other (the segments are append-only).
+   */
   public func saveCacheAndWait() async {
-    guard cacheDirty else { return }
+    guard cacheDirty, let rs = try? recordStore() else { return }
     cacheDirty = false
     let t0 = DispatchTime.now().uptimeNanoseconds
-    defer { if PerfLog.on { PerfLog.line(String(format: "saveCache main %.1f ms", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)) } }
-    let c = Cache(cursor: cursor, lamport: lamport, chains: chains, grants: sessionGrants.mapValues { $0.map(b64u) },
-                  sessionSecrets: sessionSecrets.mapValues(SecretJSON.init), recs: log.keys.sorted().compactMap { log[$0] }, devices: nil)
-    guard let key = try? cacheKey() else { return }
-    let url = cacheURL
-    await Task.detached(priority: .utility) {
-      guard let json = try? JSONEncoder().encode(c) else { return }
-      let nonce = systemRandom(12)
-      guard let sealed = try? gcmSeal(key: key, nonce: nonce, aad: utf8("trommi/v1/ios-cache"), Array(json)) else { return }
-      var opts: Data.WritingOptions = [.atomic]
-      #if os(iOS)
-      opts.insert(.completeFileProtectionUntilFirstUserAuthentication)
-      #endif
-      try? Data([1] + nonce + sealed).write(to: url, options: opts)
-    }.value
+    let recs = dirtyRecs.sorted().compactMap { log[$0] }
+    dirtyRecs = []
+    // the chain heads without their kept hashes: those are the records' own (rebuilt from them at the next launch)
+    let head = Head(records: restoredCount + log.count, cursor: cursor, lamport: lamport, chains: chains.mapValues { var c = $0; c.hashes = [:]; return c }, sessionSecrets: sessionSecrets.mapValues(SecretJSON.init))
+    let gHash = grantsHash()
+    let grants: [String: [String]]? = gHash == grantsWritten ? nil : sessionGrants.mapValues { $0.map(b64u) }
+    grantsWritten = gHash
+    if PerfLog.on { PerfLog.line(String(format: "saveCache main %.1f ms, %d records", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6, recs.count)) }
+    let prev = saveTail
+    let t = Task.detached(priority: .utility) {
+      _ = await prev?.value
+      do {
+        // the grants and records first, the head last: a head never points past what is on disk
+        if let g = grants { try rs.writeSmall(g, to: rs.grantsURL, aad: "trommi/v1/ios-grants") }
+        try rs.append(recs)
+        try rs.writeSmall(head, to: rs.headURL, aad: "trommi/v1/ios-head")
+      } catch {}
+    }
+    saveTail = t
+    await t.value
   }
   /**
    * The board from the cache, before any network: decrypted and decoded off the main thread, then replayed. Returns
@@ -1536,29 +1577,85 @@ public final class Room {
   }
   private var restoring: Task<Bool, Never>?
   private func restoreOnce() async -> Bool {
-    guard let key = try? cacheKey(), let data = try? Data(contentsOf: cacheURL) else { return false }
-    let c: Cache? = await Task.detached(priority: .userInitiated) {
-      let b = Array(data)
-      guard b.count > 13, b[0] == 1, let plain = try? gcmOpen(key: key, nonce: Array(b[1..<13]), aad: utf8("trommi/v1/ios-cache"), Array(b[13...])) else { return nil }
-      return try? JSONDecoder().decode(Cache.self, from: Data(plain))
+    // the single blob of the first iOS builds: gone (one catch-up from 0 rebuilds the store)
+    try? FileManager.default.removeItem(at: store.dir.appendingPathComponent("cache.bin"))
+    guard let rs = try? recordStore() else { return false }
+    let t0 = DispatchTime.now().uptimeNanoseconds
+    // the grant chains are verified on one thread while the records are read on the others
+    let st0 = state
+    let grantsTask = Task.detached(priority: .userInitiated) { () -> [(sid: String, bytes: [Bytes], state: SessionState)] in
+      let g = rs.readSmall([String: [String]].self, from: rs.grantsURL, aad: "trommi/v1/ios-grants") ?? [:]
+      if PerfLog.on { PerfLog.line("restore: \(g.count) grant chains stored") }
+      return g.compactMap { sid, raw in
+        let bytes = raw.compactMap { try? unb64u($0) }
+        guard let ss = (try? verifyGrants(bytes, st0)) ?? nil else { return nil }
+        return (sid, bytes, ss)
+      }
+    }
+    // the head and where every record lies, then the records opened in slices on all cores while this thread replays
+    // them in envelope order as they come (reading and replaying overlap)
+    let found: (head: Head, ix: RecordStore.Index)? = await Task.detached(priority: .userInitiated) {
+      guard let h = rs.readSmall(Head.self, from: rs.headURL, aad: "trommi/v1/ios-head"), h.v == 3, let ix = rs.index() else { return nil }
+      return (h, ix)
     }.value
-    guard let c = c, c.v == 1 else { try? FileManager.default.removeItem(at: cacheURL); return false }
+    guard let f = found else { rs.wipe(); return false }
+    // the records the head covers (one past the cursor came after the last head: it is read again from the hub)
+    let upto = f.ix.entries.firstIndex { $0.n > f.head.cursor } ?? f.ix.entries.count
+    guard upto >= f.head.records else { rs.wipe(); return false }
+    let slice = 2048
+    let ix = f.ix
+    // each slice also lists its senders' (sequence, hash) for the chain heads' kept hashes
+    let parts = stride(from: 0, to: upto, by: slice).map { lo in
+      Task.detached(priority: .userInitiated) { () -> (recs: [Rec], senders: [String: [(UInt64, String)]])? in
+        guard let recs = rs.decode(ix, lo..<min(lo + slice, upto)) else { return nil }
+        var senders = [String: [(UInt64, String)]]()
+        for r in recs { senders[r.senderDeviceId, default: []].append((r.senderSequence, r.envelopeHash)) }
+        return (recs, senders)
+      }
+    }
+    if PerfLog.on { PerfLog.line(String(format: "restore indexed %.1f ms, %d records", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6, upto)) }
     var ch = Change()
-    for (sid, raw) in c.grants {
-      let bytes = raw.compactMap { try? unb64u($0) }
-      guard let st = (try? verifyGrants(bytes, state)) ?? nil else { continue }
+    for (sid, bytes, st) in await grantsTask.value {
       sessionStates[sid] = st
       sessionGrants[sid] = bytes
       var byEpoch = [Int: [String]](), ever = [String]()
       for g in bytes { if let d = try? decodeGrant(g) { for id in d.agentIds.map(hex) { if !(byEpoch[d.epoch] ?? []).contains(id) { byEpoch[d.epoch, default: []].append(id) }; if !ever.contains(id) { ever.append(id) } } } }
       board.applySessionGrant(st, everAgentIds: ever, epochAgentIds: byEpoch, change: &ch)
     }
-    for (k, v) in c.sessionSecrets { sessionSecrets[k] = v.secret }
-    for r in c.recs {
-      board.apply(r, change: &ch)
-      log[r.envelopeNumber] = r
+    for (k, v) in f.head.sessionSecrets { sessionSecrets[k] = v.secret }
+    grantsWritten = grantsHash()
+    if PerfLog.on { PerfLog.line(String(format: "restore grants %.1f ms", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)) }
+    var perSender = [String: [(UInt64, String)]]()
+    var waitNs: UInt64 = 0, applyNs: UInt64 = 0, boardNs: UInt64 = 0
+    for p in parts {
+      let w0 = DispatchTime.now().uptimeNanoseconds
+      let got = await p.value
+      waitNs += DispatchTime.now().uptimeNanoseconds - w0
+      guard let (recs, senders) = got else {
+        // a seal that does not open: start over from the hub (nothing of this store is trusted)
+        for q in parts { q.cancel() }
+        rs.wipe(); board.reset(); sessionStates = [:]; sessionGrants = [:]; sessionSecrets = [:]
+        return false
+      }
+      let a0 = DispatchTime.now().uptimeNanoseconds
+      for r in recs { board.apply(r, change: &ch) }
+      boardNs += DispatchTime.now().uptimeNanoseconds - a0
+      for (k, v) in senders { perSender[k, default: []] += v }
+      applyNs += DispatchTime.now().uptimeNanoseconds - a0
     }
-    chains = c.chains
+    if PerfLog.on { PerfLog.line(String(format: "restore: waited %.1f ms, applied %.1f ms (board %.1f)", Double(waitNs) / 1e6, Double(applyNs) / 1e6, Double(boardNs) / 1e6)) }
+    restoredCount = upto
+    let c = (cursor: f.head.cursor, lamport: f.head.lamport, chains: f.head.chains)
+    if PerfLog.on { PerfLog.line(String(format: "restore replayed %.1f ms", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)) }
+    // each sender's newest kept envelope hashes again, from the records (the head keeps only seq, hash and told)
+    var rebuilt = c.chains
+    for (k, list) in perSender {
+      guard var ch = rebuilt[k] else { continue }
+      for (seq, h) in list.suffix(CHAIN_HASHES_KEPT) { if let b = try? unhex(h) { ch.hashes[seq] = b } }
+      ch.hashes[ch.seq] = ch.hash
+      rebuilt[k] = ch
+    }
+    chains = rebuilt
     cursor = c.cursor
     lamport = max(lamport, c.lamport)
     board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, cursor)
@@ -1569,7 +1666,7 @@ public final class Room {
     return true
   }
   /** Throw the cache away (a resync from envelope 0 follows). */
-  public func dropCache() { try? FileManager.default.removeItem(at: cacheURL); log = [:] }
+  public func dropCache() { (try? recordStore())?.wipe(); log = [:]; restoredCount = 0; dirtyRecs = []; grantsWritten = 0 }
 
   // ---- the open cards (the spike's list; the app reads the board) -----------------------------------
 
