@@ -315,11 +315,11 @@ function endList(model, base, { full = false, q = '' } = {}) {
       : s.g === 'later' ? html`<span class="end-tick is-later" title="Put off: Later" role="img" aria-label="Later">${sk('snooze')}</span>`
         : c.archived ? tickForm(c, 'unarchive', 'Untick: back to tick off', BOX_TICK, ' is-ticked')
           : html`<span class="end-tick is-ticked" title="${s.g === 'trash' ? 'Thrown away' : 'Done'}" role="img" aria-label="${s.g === 'trash' ? 'Thrown away' : 'Done'}">${BOX_TICK}</span>`
-    return html`<li class="end-row" data-g="${s.g}" data-id="${c.id}"${!full && i >= END_STEP ? raw(' hidden') : ''}>${box}<a class="end-title" data-nav href="${href}">${c.title}</a><span class="end-said">${s.said}</span>${agoSpan(s.at, 'ago end-ago')}</li>`
+    return html`<li class="end-row" data-g="${s.g}" data-id="${c.id}">${box}<a class="end-title" data-nav href="${href}">${c.title}</a><span class="end-said">${s.said}</span>${agoSpan(s.at, 'ago end-ago')}</li>`
   }
   return html`<section id="${id}" class="endlist${full ? ' is-full' : ''}" aria-label="Off your mind">
 <div class="end-divider" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span>Off your mind</span></div>
-<ol class="end-rows">${items.map(row)}</ol>${full && !items.length ? html`<p class="end-none">${terms.length ? 'Nothing here has these words.' : 'Nothing yet.'}</p>` : ''}
+<ol class="end-rows">${(full ? items : items.slice(0, END_STEP)).map(row)}</ol>${full && !items.length ? html`<p class="end-none">${terms.length ? 'Nothing here has these words.' : 'Nothing yet.'}</p>` : ''}
 ${!full && items.length > END_STEP ? html`<div class="end-foot"><a class="end-show" data-nav href="${base}/stacks/off">Show more</a></div>` : ''}
 </section>`
 }
