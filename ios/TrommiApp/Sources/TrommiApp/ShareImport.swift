@@ -1,9 +1,11 @@
 // ShareImport: the app's half of the Share Extension (Sources/TrommiShare). It writes the small sealed snapshot the
-// extension shows (desks, sessions, crowns: names and ids only) whenever they change, and imports what was shared from
-// the App Group's inbox (ShareInbox): into the one note ("Add to Note"), or as a message to the picked session ("Send to
-// Agent…") through the room's normal encrypted path. It runs when the app comes to the front and at once when the
-// extension rings (a Darwin notification) while the app runs. Files are encrypted and uploaded as the note's own are.
+// extension shows (each desk with its crowned session: names, ids, drawings) whenever they change, and imports what was
+// shared from the App Group's inbox (ShareInbox): into the one note ("Keep in Note"), or as a message to the picked
+// desk's crowned session ("Send") through the room's normal encrypted path. It runs when the app comes to the front
+// and at once when the extension rings (a Darwin notification) while the app runs. Files are encrypted and uploaded as
+// the note's own are.
 import Foundation
+import SwiftUI
 import ShareInbox
 import TrommiClient
 import TrommiCore
@@ -34,21 +36,34 @@ final class ShareImport {
     #endif
   }
 
-  /** After a change of the board: the snapshot again when desks or sessions changed (names, crowns, order). */
+  /** After a change of the board: the snapshot again when desks or their crowns changed (names, order, drawings). */
   func boardChanged() {
-    guard let m = model, !m.demo, let desk = m.desk, let room = m.room, let inbox = inbox else { return }
-    let d = desk
-    var crowns = [String: String]()
-    for x in d.desks { if let c = d.crownOf(desk: x.id) { crowns[x.id] = c.id } }
-    let desks = d.desks.map { ShareSnapshot.Desk(id: $0.id, name: $0.name, crown: crowns[$0.id]) }
-    let sessions = d.agents.filter { !$0.archived && !$0.removed }.map {
-      ShareSnapshot.Session(id: $0.id, name: $0.name, desk: d.deskOf($0) ?? $0.desk, parent: $0.parent, hue: $0.hue, online: $0.online)
+    guard let m = model, !m.demo, let d = m.desk, let room = m.room, let inbox = inbox else { return }
+    let desks = d.desks.map { x -> ShareSnapshot.Desk in
+      let c = d.crownOf(desk: x.id).map { a in ShareSnapshot.Crown(id: a.id, name: a.name, hue: a.hue, mark: Self.png("\(a.mark)|\(a.hue)") { AgentMark(agent: a, size: 26, crown: false) }) }
+      return ShareSnapshot.Desk(id: x.id, name: x.name, crown: c)
     }
-    var snap = ShareSnapshot(room: room.record.roomId, desks: desks, sessions: sessions)
+    var snap = ShareSnapshot(room: room.record.roomId, desks: desks, deskMark: Self.png("sketch:desk") { PenMark("sketch:desk", color: Ink.noteInk).frame(width: 22, height: 22) },
+                             lastDesk: UserDefaults.standard.string(forKey: "trommi-note-desk"))
     if let last = lastSnapshot { snap.written = last.written; if last == snap { return } }
     snap.written = ShareInbox.nowMs()
     lastSnapshot = snap
     try? inbox.writeSnapshot(snap)
+  }
+
+  /** A drawing as a small PNG for the extension (it has no pen of its own), drawn once per key. */
+  private static var pngs: [String: Data] = [:]
+  private static func png<V: View>(_ key: String, _ view: () -> V) -> Data? {
+    if let d = pngs[key] { return d }
+    #if canImport(UIKit)
+    let r = ImageRenderer(content: view().environment(\.colorScheme, .light))
+    r.scale = 3
+    guard let d = r.uiImage?.pngData() else { return nil }
+    pngs[key] = d
+    return d
+    #else
+    return nil
+    #endif
   }
 
   /** Signed out: the extension shows nothing of the room any more. */
@@ -85,9 +100,12 @@ final class ShareImport {
       catch { inbox.release(r.id); m.fail("Not imported yet", error); return }
     }
     let words = r.words
-    if r.action == .send, let to = r.to, r.room == nil || r.room == room.record.roomId, let key = m.desk?.sessionKey(of: to) {
+    // the desk's crown now (it may have moved since the sheet's snapshot), else the session picked in the sheet
+    let to = r.desk.flatMap { m.desk?.crownOf(desk: $0)?.id } ?? r.to
+    if r.action == .send, let to = to, r.room == nil || r.room == room.record.roomId, let key = m.desk?.sessionKey(of: to) {
       // taken out of the inbox before it is sealed: a send is never repeated (if it fails, it goes into the note)
       inbox.finish(r.id)
+      if let d = r.desk { UserDefaults.standard.set(d, forKey: "trommi-note-desk") }
       do {
         var fields: [String: JV] = [:]
         if !atts.isEmpty { fields["attachments"] = .arr(atts) }
