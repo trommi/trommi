@@ -637,7 +637,7 @@ a.focus-stage-step { display: grid; place-items: center; }
 /* the card: white, question side too, a firm ink outline with the pen's thickness at its foot, a real drop shadow */
 .tc-pad .tc-card { background: var(--surface); box-shadow: 0 0 0 1.8px var(--fg), 0 3px 0 0 var(--fg), 0 18px 30px -16px rgb(20 40 60 / .28); }
 .tc-pad .tc-card > .tc-left, .tc-pad .tc-card .tc-lead { background: var(--surface); }
-:root[data-theme="dark"] .tc-pad .tc-card { box-shadow: 0 0 0 1.8px var(--fg), 0 3px 0 0 var(--fg), 0 18px 30px -16px rgb(0 0 0 / .6); }
+:root[data-theme="dark"] .tc-pad .tc-card { --card-ink: color-mix(in srgb, var(--fg) 30%, var(--surface)); box-shadow: 0 0 0 1.5px var(--card-ink), 0 3px 0 0 var(--card-ink), 0 18px 30px -16px rgb(0 0 0 / .6); }
 .tc-pad .tc-rail { background: var(--surface); }
 .tc-pad :is(.tc-did, .tc-deed) { color: var(--tone-pen); }
 .tc-pad .tc-feed .msg-time { color: color-mix(in srgb, var(--tone-pen) 70%, var(--tone-wash)); }
