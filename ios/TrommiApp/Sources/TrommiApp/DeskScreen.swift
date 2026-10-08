@@ -47,7 +47,7 @@ struct DeskScreen: View {
           ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
         }
       }
-      .padding(.horizontal, 16).padding(.bottom, 110)
+      .padding(.horizontal, 16).padding(.bottom, 24)
       .frame(maxWidth: 760).frame(maxWidth: .infinity)
       Color.clear.frame(height: 0).id("desk-end")
     }

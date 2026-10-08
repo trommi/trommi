@@ -1,6 +1,6 @@
-// Shell.swift: the frame around every board screen (sidebar.mjs, app.mjs): on the iPhone the pages Note · Desk · Media
-// in a glass capsule at the bottom and the place pill (the menu) at the top left; on the iPad the sessions as a sidebar
-// column beside the stack. The passing toast with its Undo, the calm line when the hub asks for a newer app.
+// Shell.swift: the frame around every board screen (sidebar.mjs, app.mjs): on the iPhone the system tab bar (Chat ·
+// Desk · Note as icons, Note as a sheet) and the place pill (the menu) at the top left; on the iPad the sessions as a
+// sidebar column beside the stack. The passing toast with its Undo, the calm line when the hub asks for a newer app.
 import SwiftUI
 import TrommiClient
 import TrommiCore
@@ -9,8 +9,13 @@ struct BoardShell: View {
   @EnvironmentObject var model: BoardModel
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var columns = NavigationSplitViewVisibility.all
-  @State private var keyboard = false
-  private var showBar: Bool { !keyboard && model.selected.isEmpty && (model.tab == .note || model.path.isEmpty) }
+  @State private var noteOpen = false
+  private var hasNote: Bool { !(model.desk?.notes.filter { $0.held.isNull && (!$0.text.isEmpty || !$0.attachments.isEmpty) }.isEmpty ?? true) }
+  /** Chat opens into the chat he used last (the crowned one first). */
+  private func openTab(_ t: BoardModel.Tab) {
+    if t == .chat, model.chatPath.isEmpty, let id = model.lastChat.flatMap({ model.agent($0)?.id }) ?? model.desk?.crownOf(desk: model.deskId)?.id { model.chatPath = [.session(id)] }
+    model.tab = t
+  }
 
   var body: some View {
     let _ = RenderCount.body("BoardShell")
@@ -24,26 +29,27 @@ struct BoardShell: View {
           stack
         }
       } else {
-        // iPhone (his pick, 8 October): the pages Note · Desk · Media in a compact glass capsule at the bottom, shown on
-        // those three only (a pushed screen with a composer hides it, as Messages does; so does the keyboard). The place
-        // pill at the top left is the menu (Settings, desks, sessions, places); the ⋯ at the top right the screen's actions.
-        ZStack(alignment: .bottom) {
-          ZStack {
-            stack.opacity(model.tab == .desk ? 1 : 0).allowsHitTesting(model.tab == .desk)
-            if model.tab == .chat { chats }
-            if model.tab == .note { NavigationStack { NoteScreen(barShown: showBar) } }
-          }
-          if showBar {
-            BottomBar().padding(.bottom, 2)
-              .transition(.move(edge: .bottom).combined(with: .opacity))
-          }
+        // iPhone (his picks, 8 October): the system tab bar (Liquid Glass on iOS 26; insets, keyboard, Dynamic Type and
+        // VoiceOver as every app): Chat · Desk · Note as icons. Note does not switch the page: it opens the note as a
+        // sheet over the page (medium, the tab bar stays reachable). A pushed screen hides the bar where it has its own
+        // controls at the bottom; the place pill at the top left is the menu, the ⋯ at the top right the screen's actions.
+        TabView(selection: Binding(get: { model.tab }, set: { t in
+          if t == .note { noteOpen = true } else { noteOpen = false; if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) } }
+        })) {
+          Tab(value: BoardModel.Tab.chat) { chats } label: { Image(systemName: "bubble.left.and.bubble.right").accessibilityLabel("Chat") }
+          Tab(value: BoardModel.Tab.desk) {
+            stack.toolbar(model.selected.isEmpty ? .automatic : .hidden, for: .tabBar)
+          } label: { PenImage.of("sketch:desk", size: 24).accessibilityLabel("Desk") }
+          .badge(model.view?.fresh.count ?? 0)
+          Tab(value: BoardModel.Tab.note) { Color.clear } label: { Image(systemName: hasNote ? "note.text" : "note").accessibilityLabel(hasNote ? "Note, written" : "Note") }
         }
-        .ignoresSafeArea(.keyboard, edges: showBar ? .bottom : [])
-        .animation(.snappy(duration: 0.25), value: showBar)
-        #if canImport(UIKit)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboard = true }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboard = false }
-        #endif
+        .modifier(TabBarLook())
+        .sheet(isPresented: $noteOpen) {
+          NavigationStack { NoteScreen(onDone: { noteOpen = false }) }
+            .presentationDetents([.medium, .large])
+            .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+            .presentationDragIndicator(.visible)
+        }
       }
     }
     .overlay(alignment: hSize == .regular ? .bottom : .top) { ToastHost(top: hSize != .regular).ignoresSafeArea(edges: hSize == .regular ? [] : .top) }
@@ -53,12 +59,12 @@ struct BoardShell: View {
   }
   private var stack: some View {
     NavigationStack(path: $model.deskPath) {
-      DeskScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar) }
+      DeskScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar).modifier(BarFor(route: r)) }
     }
   }
   private var chats: some View {
     NavigationStack(path: $model.chatPath) {
-      ChatsScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar) }
+      ChatsScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar).modifier(BarFor(route: r)) }
     }
   }
   @ViewBuilder static func destination(_ r: Route) -> some View {
@@ -76,56 +82,18 @@ struct BoardShell: View {
   }
 }
 
-/** The compact capsule at the bottom of the iPhone: Note, Desk (what waits as a badge, red when one knocks), Media.
- *  Glyphs in one ink, tinted by the system (no coloured icon in the glass). */
-struct BottomBar: View {
-  @EnvironmentObject var model: BoardModel
-  var body: some View {
-    let _ = RenderCount.body("BottomBar")
-    let _ = model.version
-    let v = model.view
-    let n = v?.fresh.count ?? 0
-    let knocks = (v?.knocking ?? 0) > 0
-    HStack(spacing: 4) {
-      item("Chat", on: model.tab == .chat) {
-        Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 18, weight: .regular))
-      } action: {
-        // the Chat page opens into the chat he used last (the crowned one first); a second tap: the list
-        if model.tab == .chat { withAnimation(.snappy) { model.chatPath = [] } }
-        else {
-          if model.chatPath.isEmpty, let id = model.lastChat.flatMap({ model.agent($0)?.id }) ?? model.desk?.crownOf(desk: model.deskId)?.id { model.chatPath = [.session(id)] }
-          model.tab = .chat
-        }
-      }
-      item("Desk", on: model.tab == .desk) {
-        PenMark("sketch:desk", color: Ink.fg).frame(width: 24, height: 24)
-          .overlay(alignment: .topTrailing) {
-            if n > 0 {
-              Text("\(n)").font(Face.text(11, .bold)).foregroundStyle(.white).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18)
-                .background(Capsule().fill(knocks ? Ink.urgCritical : Ink.fg)).offset(x: 13, y: -8)
-            }
-          }
-      } action: { if model.tab == .desk { withAnimation(.snappy) { model.deskPath = [] } }; model.tab = .desk }
-      .accessibilityLabel(n > 0 ? "Desk, \(n) waiting" : "Desk")
-      item("Note", on: model.tab == .note) { Image(systemName: "note.text").font(.system(size: 20, weight: .regular)) } action: { model.tab = .note }
-    }
-    .padding(5)
-    .glass(Capsule(), interactive: true)
-    .fixedSize()
-    .accessibilityElement(children: .contain)
+/** The tab bar's look: it shrinks while he scrolls down (iOS 26). */
+struct TabBarLook: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) { content.tabBarMinimizeBehavior(.onScrollDown).tint(Ink.fg) } else { content.tint(Ink.fg) }
   }
-  private func item<I: View>(_ word: String, on: Bool, @ViewBuilder icon: () -> I, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      // icons only (his word): the word is for VoiceOver
-      icon().frame(width: 28, height: 26)
-        .foregroundStyle(Ink.fg)
-        .frame(width: 60, height: 46)
-        .background(Capsule().fill(on ? Ink.fg.opacity(0.08) : .clear))
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel(word)
-    .accessibilityAddTraits(on ? .isSelected : [])
+}
+/** A pushed screen hides the tab bar (its own controls at the bottom), except a chat: there it stays beside the pencil
+ *  until he writes (SessionScreen hides it while the composer is open). */
+struct BarFor: ViewModifier {
+  let route: Route
+  func body(content: Content) -> some View {
+    if case .session = route { content } else { content.toolbar(.hidden, for: .tabBar) }
   }
 }
 
@@ -212,7 +180,6 @@ struct ChatsScreen: View {
           .listRowBackground(Color.clear)
           .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
       }
-      Color.clear.frame(height: 70).listRowBackground(Color.clear).listRowSeparator(.hidden)
     }
     .listStyle(.plain)
     .scrollContentBackground(.hidden)

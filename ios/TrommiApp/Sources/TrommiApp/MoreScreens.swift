@@ -255,7 +255,6 @@ struct NoteScreen: View {
   @Environment(\.horizontalSizeClass) private var hSize
   var onDone: (() -> Void)? = nil
   /** The capsule shows below it: the paper runs on under the glass, the last line stays above it. */
-  var barShown = false
   @State private var text = ""
   @State private var noteId: String?
   @State private var files: [JV] = []          // uploaded attachment references
@@ -269,7 +268,10 @@ struct NoteScreen: View {
   @FocusState private var focused: Bool
   var body: some View {
     let _ = model.version
-    let crown = model.desk?.crownOf(desk: model.deskId)
+    // on All Desks the note goes to one desk's crowned session: the one he used last, or he picks (his decision, 8 October)
+    let all = model.view?.all == true
+    let crowns = deskCrowns
+    let crown = all ? (crowns.first { $0.desk.id == lastNoteDesk } ?? crowns.first)?.agent : model.desk?.crownOf(desk: model.deskId)
     let target = to.flatMap { id in model.desk?.agents.first { $0.id == id } } ?? crown
     let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty
     VStack(alignment: .leading, spacing: 10) {
@@ -307,9 +309,18 @@ struct NoteScreen: View {
         Button { bin() } label: { Image(systemName: "trash").font(.system(size: 17)).frame(width: 44, height: 44) }
           .accessibilityLabel("Delete Note").disabled(empty)
         Spacer()
-        Button { send(target) } label: {
-          Image(systemName: "paperplane.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Ink.noteYellow)
-            .frame(width: 46, height: 46).background(Circle().fill(Ink.noteInk))
+        Group {
+          if all && to == nil && crowns.count > 1 {
+            Menu {
+              ForEach(crowns, id: \.desk.id) { c in
+                Button { lastNoteDesk = c.desk.id; send(c.agent) } label: {
+                  Label { Text("\(c.desk.name) · \(c.agent.name)") } icon: { c.desk.id == lastNoteDesk ? Image(systemName: "checkmark") : PenImage.desk(waiting: false) }
+                }
+              }
+            } label: { sendFace }
+          } else {
+            Button { send(target) } label: { sendFace }
+          }
         }
         .disabled(target == nil || empty || uploading)
         .opacity(target == nil || empty || uploading ? 0.35 : 1)
@@ -319,7 +330,7 @@ struct NoteScreen: View {
       if target == nil { Text("Make a session the main session (its ⋯ menu): notes go to it.").font(Face.text(13)).foregroundStyle(Ink.noteInk.opacity(0.7)) }
     }
     .padding(.horizontal, 20).padding(.top, 6)
-    .padding(.bottom, barShown ? 76 : 12)
+    .padding(.bottom, 12)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .background(Ink.noteYellow.ignoresSafeArea())
     .navigationBarTitleDisplayMode(.inline)
@@ -345,12 +356,36 @@ struct NoteScreen: View {
       }
     }
   }
+  private var sendFace: some View {
+    Image(systemName: "paperplane.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Ink.noteYellow)
+      .frame(width: 46, height: 46).background(Circle().fill(Ink.noteInk))
+  }
+  /** Every desk with a crowned session, in the desks' order. */
+  private var deskCrowns: [(desk: DeskDesc, agent: Agent)] {
+    (model.desk?.desks ?? []).compactMap { d in model.desk?.crownOf(desk: d.id).map { (d, $0) } }
+  }
+  private var lastNoteDesk: String? {
+    get { UserDefaults.standard.string(forKey: "trommi-note-desk") }
+    nonmutating set { UserDefaults.standard.set(newValue, forKey: "trommi-note-desk") }
+  }
   /** "To: Claude ▾": the recipient, once; the crowned session unless he picks another. */
   private func recipient(_ target: Agent?) -> some View {
     let sessions = (model.view?.units ?? []).map { $0.agent }
+    let all = model.view?.all == true
     return Menu {
-      ForEach(sessions) { a in
-        Button { to = a.id } label: { if a.id == target?.id { Label(a.name, systemImage: "checkmark") } else { Text(a.name) } }
+      if all {
+        Section("Main Session of a Desk") {
+          ForEach(deskCrowns, id: \.desk.id) { c in
+            Button { to = nil; lastNoteDesk = c.desk.id } label: {
+              if to == nil && c.agent.id == target?.id { Label("\(c.desk.name) · \(c.agent.name)", systemImage: "checkmark") } else { Text("\(c.desk.name) · \(c.agent.name)") }
+            }
+          }
+        }
+      }
+      Section(all ? "Another Session" : "") {
+        ForEach(sessions) { a in
+          Button { to = a.id } label: { if to == a.id || (!all && a.id == target?.id) { Label(a.name, systemImage: "checkmark") } else { Text(a.name) } }
+        }
       }
     } label: {
       HStack(spacing: 4) {
