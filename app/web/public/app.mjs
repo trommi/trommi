@@ -695,12 +695,14 @@ export class BoardState {
     if (all || !change || change.members || change.published?.size) { this.msgByAgent.clear(); this.msgByCard.clear(); this.filesByAgent.clear(); this.allMsgs = null; return }
     const agentOfSession = sid => this.devToAgent.get(sid)
     const agentOfCard = id => { const c = m.cards.get(id); return c ? this.devToAgent.get(keyOf(c)) : undefined }
-    const drop = agent => { if (agent === undefined) return; this.filesByAgent.delete(agent); if (this.msgByAgent.delete(agent)) this.allMsgs = null }
+    // (what a session sent with attachments comes from its conversations' items only: a card or session change
+    //  leaves that list as it was, only a timeline of the session's makes it again)
+    const drop = (agent, files = false) => { if (agent === undefined) return; if (files) this.filesByAgent.delete(agent); if (this.msgByAgent.delete(agent)) this.allMsgs = null }
     for (const id of change.cards) { drop(agentOfCard(id)); this.msgByCard.delete(id) }
     for (const sid of change.sessions ?? []) drop(agentOfSession(sid))
     for (const key of change.timelines) {
-      if (key.startsWith('chat:session/')) drop(agentOfSession(key.slice(13)))
-      else if (key.startsWith('chat:card/')) { const id = key.slice(10); drop(agentOfCard(id)); this.msgByCard.delete(id) }
+      if (key.startsWith('chat:session/')) drop(agentOfSession(key.slice(13)), true)
+      else if (key.startsWith('chat:card/')) { const id = key.slice(10); drop(agentOfCard(id), true); this.msgByCard.delete(id) }
     }
   }
   timeOf(key, n) {

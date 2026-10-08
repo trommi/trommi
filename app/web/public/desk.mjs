@@ -289,12 +289,24 @@ function offParts(model) {
   // Off the desk: Snoozed, Done and Trash, each the newest first (what is being worked on stands on the Desk: withAgents).
   // The closed cards' sheets are made once per list of them (stackCards keeps that list while nothing changed).
   const later = cards.later.map(c => Object.assign(sheet(c, 'later', () => until(c)), { g: 'later' })).sort((a, b) => b.at - a.at)
+  // Done and Trash are each sorted the newest first already (stackCards): merged sheet by sheet, and only as far as
+  // asked (the Desk wants five; a sheet is made when it is reached), kept with that pair of lists.
   let closed = closedSheets.get(cards.done)
   if (!closed || closed.trash !== cards.trash) {
-    closed = { trash: cards.trash, list: [...cards.done.map(c => Object.assign(answered(c), { g: 'done' })), ...cards.trash.map(c => Object.assign(thrown(c), { g: 'trash' }))].sort((a, b) => b.at - a.at) }
+    const atD = c => atOf(c, 'answered'), atT = c => atOf(c, c.status === 'shredded' ? 'shredded' : 'withdrawn')
+    const made = [], d = cards.done, tr = [...cards.trash].sort((a, b) => atT(b) - atT(a))
+    let i = 0, j = 0
+    const upTo = n => {
+      while (made.length < n && (i < d.length || j < tr.length)) {
+        if (j >= tr.length || (i < d.length && atD(d[i]) >= atT(tr[j]))) made.push(Object.assign(answered(d[i++]), { g: 'done' }))
+        else made.push(Object.assign(thrown(tr[j++]), { g: 'trash' }))
+      }
+      return made.slice(0, n)
+    }
+    closed = { trash: cards.trash, upTo, size: d.length + tr.length }
     closedSheets.set(cards.done, closed)
   }
-  return { later, closed: closed.list }
+  return { later, get closed() { return closed.upTo(Infinity) }, closedTop: n => closed.upTo(n), closedSize: closed.size }
 }
 const closedSheets = new WeakMap()
 /** Everything off the desk in one list, the newest first (the page /stacks/off, its search). */
@@ -325,14 +337,14 @@ const BOX_TICK = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true
 /** The end list. On the Desk the first five rows and "Show more"; full (the page /stacks/off): every row, with its search. */
 function endList(model, base, { full = false, q = '' } = {}) {
   const open = (model.landed ?? []).map(card => ({ card, g: 'open', at: card.finished ?? 0, said: card.summary ? plain(card.summary, model.state.assets) : 'Done' }))
-  const { later, closed } = offParts(model)
+  const { later, closedTop, closedSize } = offParts(model)
   const works = workItems(model).map(i => ({ card: i.card, g: 'works', at: i.line?.updated ?? i.at, said: `${i.sender.name}${i.line?.label ? ` · ${i.line.label}` : ' is on it'}` }))
   const id = full ? 'off-end' : 'desk-end'
   const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   // (the Desk shows the first END_STEP: only so many of the thousands closed are taken, the count says the rest)
   const whole = full || terms.length
-  let items = [...works, ...open, ...later, ...(whole ? closed : closed.slice(0, END_STEP))]
-  const total = whole ? items.length : works.length + open.length + later.length + closed.length
+  let items = [...works, ...open, ...later, ...closedTop(whole ? Infinity : END_STEP)]
+  const total = whole ? items.length : works.length + open.length + later.length + closedSize
   if (terms.length) items = items.filter(s => terms.every(w => `${s.card.title} ${model.byAgent.get(s.card.agent)?.name ?? ''} ${s.said}`.toLowerCase().includes(w)))
   if (!items.length && !full) return html`<section id="${id}" class="endlist" hidden></section>`
   // (a box he ticked himself can be unticked: Archive taken back; a card closed by his answer stays ticked)
