@@ -187,6 +187,14 @@ function askWords(card, model, asker) {
   if (link?.state === 'asleep' || link?.state === 'oncall') return `Reaches ${asker || 'the agent'} on its next step…`
   return asker ? `Ask ${asker} something, or say what is missing…` : 'Ask something, or say what is missing…'
 }
+/** The options' own paragraphs (a card written as sections), folded under the options. Only when one says more than its
+ *  label: an option with nothing beyond its label (a card of body and options) brings no fold. */
+const beyond = s => s.html || String(s.text ?? '').replace(/[\s*_.:,;!?\-–—]+/g, ' ').trim().toLowerCase().replace(String(s.label ?? '').replace(/[\s*_.:,;!?\-–—]+/g, ' ').trim().toLowerCase(), '').trim()
+function optionsSaid(card, assets) {
+  const secs = (card.sections ?? []).filter(s => s.key != null)
+  if (!secs.some(beyond)) return ''
+  return html`<details class="tc-fold tc-options-said"><summary>Options in detail</summary>${secs.map(s => html`<section class="tc-sec"><h3>${s.label}${s.recommended ? html` <span class="tc-advised-word">recommended</span>` : ''}</h3>${beyond(s) ? rich(s.text ?? '', { assets, extra: s.html ?? '', hand: false }) : ''}</section>`)}</details>`
+}
 /** The right column's answers (#card-answer-<id>): every option a button of the card's form, with its line for a note;
  *  then "or" Whatever. Or, once answered or handed back, what was said and the way back. */
 function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } = {}) {
@@ -231,7 +239,7 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
     return card.kind === 'decision' ? html`${tile}<label class="tc-opt-note" data-note="${o.key}"${noted ? '' : raw(' hidden')}>${sk('pen')}<input type="text" name="note-${o.key}" form="${form}" value="${noted}" maxlength="2000" placeholder="A note on ${o.label}" aria-label="A note on ${o.label}" autocomplete="off" data-action="input->card#keep blur->card#noteLeft keydown->card#noteKey"></label>` : tile
   }
   const trustTip = `I don’t give a duck: your call (R)${advisedLabels(card) ? ` · agent takes ${advisedLabels(card)}` : ''}`
-  return box(html`<div class="tc-opts" data-action="pointerover->card#preview focusin->card#preview pointerleave->card#unpreview focusout->card#unpreview" role="group" aria-label="${card.multiple ? 'Your answer. Tick what applies, then send.' : 'Your answer. One tap answers.'}">${card.options.map(option)}${card.multiple ? html`<button class="tc-opt tc-send-many" type="submit" form="${form}" formaction="${act(card, base, 'decide')}"><span class="tc-opt-words"><span class="tc-opt-label">Send the answer</span></span></button>` : ''}</div>
+  return box(html`<div class="tc-opts" data-action="pointerover->card#preview focusin->card#preview pointerleave->card#unpreview focusout->card#unpreview" role="group" aria-label="${card.multiple ? 'Your answer. Tick what applies, then send.' : 'Your answer. One tap answers.'}">${card.options.map(option)}${card.multiple ? html`<button class="tc-opt tc-send-many" type="submit" form="${form}" formaction="${act(card, base, 'decide')}"><span class="tc-opt-words"><span class="tc-opt-label">Send the answer</span></span></button>` : ''}</div>${optionsSaid(card, model.state.assets)}
 ${card.kind === 'decision' ? html`<div class="tc-or"><i>or</i><button class="tc-opt tc-whatever" type="submit" form="${form}" formaction="${act(card, base, 'trust')}" title="${trustTip}" aria-label="${trustTip}">${sk('duck')}<span class="tc-opt-words"><span class="tc-opt-label">I don’t give a duck</span></span></button><div class="tc-or-pair"><button class="tc-tile tc-wtf" type="submit" form="${form}" formaction="${act(card, base, 'what')}" title="What?? — explain this to me (E)" aria-label="What?? Explain this to me: the session explains it, and it comes back explained">${sk('what')}</button>${reviseTile(card, model, base)}</div></div>` : ''}`)
 }
 
@@ -293,8 +301,6 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const whole = textOf(card)
   if (fitText(whole).more) lead.push(html`<article class="msg msg-agent tc-c tc-whole" id="card-whole-${card.id}">${mark}<div class="tc-c-in">${head('The whole text')}${rich(whole, { assets, extra: card.html ?? '', hand: false })}</div></article>`)
   else if (card.html) lead.push(html`<article class="msg msg-agent tc-c tc-whole" id="card-whole-${card.id}">${mark}<div class="tc-c-in">${head('With the text')}${rich('', { assets, extra: card.html })}</div></article>`)
-  const secs = (card.sections ?? []).filter(s => s.key != null && (s.text || s.html))
-  if (secs.length) lead.push(html`<details class="tc-fold tc-options-said"><summary>Options in detail</summary>${secs.map(s => html`<section class="tc-sec"><h3>${s.label}${s.recommended ? html` <span class="tc-advised-word">recommended</span>` : ''}</h3>${s.text ? rich(s.text, { assets, extra: s.html ?? '', hand: false }) : ''}</section>`)}</details>`)
   const links = optionLinks(card)
   if (String(links)) lead.push(links)
   if (card.status === 'open' && card.snoozed_until) lead.push(deed(LATER_TAG, `You put it off: it waits on “${WORDS.later}”`, card.snoozed_at, { cls: 'is-later' }))
