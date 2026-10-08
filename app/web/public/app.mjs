@@ -1446,12 +1446,12 @@ function startPush(client) {
   // One level for this device (the hub's push level, README "Push level"): off (no registration), all, knocking.
   // The menu's bell cycles Off → All → Only knocking; Settings · Push has the three as a switch.
   const LEVEL_KEY = 'trommi-push-level'
-  const levelNow = () => { try { return localStorage.getItem(LEVEL_KEY) === 'knocking' ? 'knocking' : 'all' } catch { return 'all' } }
+  const levelNow = () => { try { return localStorage.getItem(LEVEL_KEY) === 'all' ? 'all' : 'knocking' } catch { return 'knocking' } }   // (a fresh device: Only knocking)
   const words = { all: 'Yes', knocking: 'Only knocking', off: 'No' }
   const shown = async () => ((await subscription().catch(() => null)) ? levelNow() : 'off')
   const paintAll = v => {
     const bell = document.getElementById('push-toggle')
-    if (bell) { bell.dataset.level = v; bell.setAttribute('aria-checked', String(v !== 'off')); const say = `Push on this device: ${words[v]}`; bell.title = `${say} (click: ${words[v === 'off' ? 'all' : v === 'all' ? 'knocking' : 'off']})`; bell.setAttribute('aria-label', say) }
+    if (bell) { bell.dataset.level = v; bell.setAttribute('aria-checked', String(v !== 'off')); const say = `Push on this device: ${words[v]}`; bell.title = `${say} (click: ${words[v === 'off' ? 'knocking' : v === 'knocking' ? 'all' : 'off']})`; bell.setAttribute('aria-label', say) }
     for (const r of document.querySelectorAll('#push-level input')) r.checked = r.value === v
   }
   const say = text => { const n = document.getElementById('push-level-note'); if (n) n.textContent = text; const m = document.getElementById('menu-push-note'); if (m) { m.textContent = text; m.hidden = !text } }
@@ -1489,7 +1489,7 @@ function startPush(client) {
         if (bell.getAttribute('aria-busy') === 'true') return
         bell.setAttribute('aria-busy', 'true')
         const v = bell.dataset.level || 'off'
-        await applyLevel(v === 'off' ? 'all' : v === 'all' ? 'knocking' : 'off')
+        await applyLevel(v === 'off' ? 'knocking' : v === 'knocking' ? 'all' : 'off')   // Off → Only knocking → All
         bell.removeAttribute('aria-busy')
       })
     }
