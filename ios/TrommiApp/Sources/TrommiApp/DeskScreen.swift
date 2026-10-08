@@ -343,7 +343,7 @@ struct Tiles: View {
       if quick && (bare || size != "none" || short) {
         let thumbs = bare || card.kind == "permission"
         let isYes: (Option) -> Bool = { o in card.kind == "permission" ? o.key == "allow" : thumbs ? o.key == card.options.first?.key : card.recommended.contains(o.key) }
-        let ordered = thumbs ? card.options.sorted { (isYes($0) ? 1 : 0) < (isYes($1) ? 1 : 0) } : card.options
+        let ordered = card.options.sorted { (isYes($0) ? 1 : 0) < (isYes($1) ? 1 : 0) }   // the advised one on the right (Apple's alert order)
         let worded = !bare && size == "none"
         LazyVGrid(columns: cols, spacing: 8) {
           ForEach(ordered, id: \.key) { o in

@@ -10,7 +10,7 @@ struct BoardShell: View {
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var columns = NavigationSplitViewVisibility.all
   @State private var keyboard = false
-  private var showBar: Bool { !keyboard && (model.tab == .note || model.path.isEmpty) }
+  private var showBar: Bool { !keyboard && model.selected.isEmpty && (model.tab == .note || model.path.isEmpty) }
 
   var body: some View {
     let _ = RenderCount.body("BoardShell")
@@ -46,8 +46,8 @@ struct BoardShell: View {
         #endif
       }
     }
-    .overlay(alignment: hSize == .regular ? .bottom : .topTrailing) { ToastHost(top: hSize != .regular) }
-    .overlay(alignment: .top) { UpdateBanner() }
+    .overlay(alignment: hSize == .regular ? .bottom : .top) { ToastHost(top: hSize != .regular).ignoresSafeArea(edges: hSize == .regular ? [] : .top) }
+    .safeAreaInset(edge: .top, spacing: 0) { UpdateBanner() }
     .overlay { UpdateRequired() }
     .background(Ink.bg.ignoresSafeArea())
   }
@@ -461,7 +461,8 @@ struct ToastHost: View {
           #if canImport(UIKit)
           AccessibilityNotification.Announcement(t.undo != nil ? "\(t.head). Undo available." : [t.head, t.line].filter { !$0.isEmpty }.joined(separator: ". ")).post()
           #endif
-          let secs = t.undo != nil ? Self.undoSeconds : 3.5
+          // (a demo screen keeps its toast a minute: the screenshot of the state)
+          let secs = ProcessInfo.processInfo.environment["TROMMI_SCREEN"] != nil ? 60 : t.undo != nil ? Self.undoSeconds : 3.5
           progress = 1
           withAnimation(.linear(duration: secs)) { progress = 0 }
           try? await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000))
@@ -487,22 +488,26 @@ struct ToastHost: View {
   @ViewBuilder private func phone(_ t: Toast) -> some View {
     Group {
       if let undo = t.undo {
+        // the Dynamic Island's pill: it grows out of the island, black, the undo arrow in its 5 s ring; a tap undoes
         Button { model.toast = nil; count = 1; Task { await undo() } } label: {
-          ZStack {
-            Circle().stroke(Ink.fg.opacity(0.12), lineWidth: 2.5)
-            Circle().trim(from: 0, to: progress).stroke(Ink.fg, style: StrokeStyle(lineWidth: 2.5, lineCap: .round)).rotationEffect(.degrees(-90))
-            Image(systemName: "arrow.uturn.backward").font(.system(size: 17, weight: .semibold)).foregroundStyle(Ink.fg)
+          HStack(spacing: 10) {
+            ZStack {
+              Circle().stroke(Color.white.opacity(0.22), lineWidth: 2.5)
+              Circle().trim(from: 0, to: progress).stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round)).rotationEffect(.degrees(-90))
+              Image(systemName: "arrow.uturn.backward").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+            }.frame(width: 28, height: 28)
+            Text(count > 1 ? "Undo \(count)" : "Undo").font(Face.text(15, .semibold)).foregroundStyle(.white)
+            Text(t.head).font(Face.text(13)).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
           }
-          .frame(width: 36, height: 36).padding(7)
-          .glass(Circle(), interactive: true)
-          .overlay(alignment: .topTrailing) {
-            if count > 1 {
-              Text("\(count)").font(Face.text(12, .bold)).foregroundStyle(Ink.bg).frame(minWidth: 20, minHeight: 20).background(Circle().fill(Ink.fg)).offset(x: 4, y: -4)
-            }
-          }
+          .padding(.leading, 8).padding(.trailing, 16).frame(height: 40)
+          .frame(maxWidth: 300)
+          .background(Capsule().fill(.black))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Undo: \(t.head)")
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .transition(.scale(scale: 0.35, anchor: .top).combined(with: .opacity))
       } else {
         HStack(spacing: 8) {
           if t.alert { Image(systemName: "exclamationmark.circle").foregroundStyle(Ink.urgCritical) }
@@ -517,7 +522,8 @@ struct ToastHost: View {
         .onTapGesture { withAnimation { model.toast = nil } }
       }
     }
-    .padding(.trailing, 14).padding(.top, 52)
+    .padding(.trailing, t.undo == nil ? 14 : 0).padding(.top, t.undo == nil ? 100 : 0)
+    .frame(maxWidth: .infinity, alignment: t.undo == nil ? .trailing : .center)
     .offset(x: drag.width, y: min(0, drag.height))
     .gesture(dismissGesture())
     .transition(.move(edge: .top).combined(with: .opacity))
@@ -566,7 +572,7 @@ struct UpdateBanner: View {
         .background(Capsule().fill(Ink.yellow))
       }
       .buttonStyle(.plain)
-      .padding(.top, 50)
+      .padding(.vertical, 4)
     }
   }
 }
