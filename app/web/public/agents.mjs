@@ -1,21 +1,18 @@
-// The Agents page (<base>/agents): the ledger of all sessions, one line each, and the forms that change a
-// session. The markup is the one agents.css styles.
-//   - a line: mark (opens the drawings; the crown at its corner gives or takes the desk's one crown), name (renames), state,
-//     what it asks (a link to the card's own page) or does, model, machine, last seen, and what can be done with it
-//   - a main stands with its subs under it; disconnected sessions and the archive are groups of their own
-//   - the head of a column sorts (a link), the field finds (a GET form); in his own order a line moves up or down (two small forms)
+// Settings · Sessions (<base>/settings/sessions): every session, grouped by desk, and the forms that change a session.
+// The markup is the one agents.css styles (his word, 8 October: a list as in iOS Settings).
+//   - a desk is a group, folded by default: its drawing, its name, how many sessions; a tap unfolds it (which desks
+//     are open is kept for the tab: controller "set-desks"). The crowned session stands first, a main's helpers under it.
+//   - a line: mark (Change Icon…), crown (Make Main Session), name (Rename…), state, and "…" with the rest in Apple's
+//     words: Open, Rename…, Change Icon…, Make Main Session, Move to Desk…, Move Up/Down, Archive, Delete…
+//     (a menu at the "…" on a wide screen, a sheet at the lower edge on a phone)
+//   - the field at the top finds as you type (controller "set-find"; without script the GET form does it)
 //   - every change is a form to <base>/sessions/<id>/…, handed to the hub's own rules (t.hub.editSession,
-//     t.hub.starSession); what the hub refuses is said in the line, quietly
-//   - live: a line that changed is replaced; when lines come, go or change places (also in the column the page is
-//     sorted by) the page fetches itself anew
+//     t.hub.starSession); what the hub refuses is said under the line, quietly
+//   - live: a line that changed is replaced; when lines come, go or change desks the page fetches itself anew
 //   - hooks for the keys: a line is .ledger-line[data-id][data-state], id="ledger-<id>"; its controls carry
-//     data-ledger="rename|mark|crown|main|desk|open|walk|question|pair|unpair|archive|fetch|up|down|more"
-// On a phone a line is mark, name, state and "…": a tap opens the session, "…" a sheet at the lower edge (there also
-// "Copy invite link again": a link for this very session, auth.mjs /pair continue=<session>; a phone's session page has no head).
+//     data-ledger="rename|mark|crown|more"; a.ledger-open opens the session
 import { BASE } from './app.mjs'
-import { LATER, PLUS, agoSpan, answerFields, avatar, badge, cardPath, crownSvg, html, markControl, marksFrame, marksHolder, raw, renameControl, roomTabs, sessionForms, sk } from './ui.mjs'
-const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
-const SEP = raw('<i class="ledger-sep"> · </i>')
+import { Controller, LATER, agoSpan, answerFields, avatar, badge, controller, crownSvg, html, markControl, marksFrame, marksHolder, raw, renameControl, sessionForms, settingsPage, sk } from './ui.mjs'
 const STAY = { stay: true }
 const lineId = id => `ledger-${id}`
 
@@ -43,11 +40,7 @@ function around(m, base) {
   const groups = new Map()
   for (const a of m.agents) if (a.group) groups.set(a.group, [...(groups.get(a.group) ?? []), a])
   for (const [id, members] of groups) if (members.length < 2) groups.delete(id)
-  // Whose sub a session may become: a session of its desk that is no sub itself. One level (the hub checks the rest).
-  const mainsFor = u => (u.subs ? [] : m.agents.filter(x => x.id !== u.id && !x.parent && (desks.length < 2 || x.desk === u.agent.desk)))
-  const doing = new Map()
-  for (const t of m.state.tasks ?? []) if (t.state === 'working' && !doing.has(t.agent)) doing.set(t.agent, t)
-  return { m, base, desks, groups, mainsFor, doing, apart: tellApart(m.agents), unitOf: new Map(m.units.map(u => [u.id, u])) }
+  return { m, base, desks, groups, apart: tellApart(m.agents), unitOf: new Map(m.units.map(u => [u.id, u])) }
 }
 
 // hand: the session is stopped (u.blocked, server/blocked.mjs): that comes first, also for one that is disconnected.
@@ -58,96 +51,58 @@ const post = (action, fields, button) => html`<form method="post" action="${acti
 // would otherwise carry every session's name in every line's lists.
 const later = inner => html`<template>${inner}</template>`
 
-// A choice that drops down from a small control: its options are the buttons of one form.
-function pick({ cls, hook, mark = '', title, label, action, name, options, set = false }) {
-  return html`<details class="t-pick ledger-pick"${LATER}><summary class="${cls}" data-ledger="${hook}" title="${title}" aria-label="${title}"${set ? raw(' data-set') : ''}>${mark}<span>${label}</span></summary>
-<form class="t-pop t-menu" method="post" action="${action}">${answerFields(STAY)}${later(options.map(o => html`<button type="submit" name="${name}" value="${o.value}"${o.current ? raw(' aria-current="true"') : ''}>${o.label}</button>`))}</form></details>`
-}
-
-// The phone's sheet for one line: everything the wide line offers beside it. No veil: it lies at the lower edge.
-function sheet(u, ctx, { group, others }) {
+/** "…" of one line: everything that can be done with the session, in Apple's words. */
+function moreMenu(u, ctx, { group }) {
   const a = u.agent, { base, m, desks } = ctx, forms = sessionForms(a, base)
-  const item = (action, name, value, words) => post(action, '', html`<button class="ledger-sheet-item" type="submit" name="${name}" value="${value}">${words}</button>`)
-  return html`<details class="t-pick ledger-dots"${LATER}><summary class="ledger-ib ledger-menu" data-ledger="more" title="More: ${a.name}" aria-label="More for ${a.name}: rename, drawing, crown, group, archive">…</summary>
-${later(html`<div class="ledger-sheet t-sheet" role="group" aria-label="Actions for ${a.name}"><h3>${a.name}</h3>
+  const item = (action, name, value, words, cls = '') => post(action, '', html`<button class="ledger-sheet-item${cls}" type="submit" name="${name}" value="${value}">${words}</button>`)
+  const sub = (words, inner, cls = '') => html`<details class="set-sub${cls}"${LATER}><summary class="ledger-sheet-item">${words}</summary>${inner}</details>`
+  return html`<details class="t-pick ledger-dots"${LATER}><summary class="ledger-ib ledger-menu" data-ledger="more" title="More: ${a.name}" aria-label="More for ${a.name}: Rename, Change Icon, Make Main Session, Move to Desk, Archive, Delete">…</summary>
+${later(html`<div class="ledger-sheet t-sheet set-menu" role="group" aria-label="Actions for ${a.name}"><h3>${a.name}</h3>
 <a class="ledger-sheet-item" data-nav href="${base}/s/${encodeURIComponent(a.id)}">Open</a>
-${post(`${forms}/edit`, html`<input type="text" name="label" value="${a.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session">`, html`<button class="ledger-sheet-item" type="submit">Rename</button>`)}
-<details class="t-sheet-marks"${LATER}><summary class="ledger-sheet-item">Change Icon…</summary>${marksHolder(a, base, { stay: true, where: 's' })}</details>
+${sub('Rename…', post(`${forms}/edit`, html`<input type="text" name="label" value="${a.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session">`, html`<button class="set-sub-go" type="submit">Rename</button>`))}
+${sub('Change Icon…', marksHolder(a, base, { stay: true, where: 's' }), ' t-sheet-marks')}
 ${item(`${forms}/star`, 'starred', a.starred ? '0' : '1', a.starred ? 'Remove as Main Session' : 'Make Main Session')}
+${desks.length > 1 ? sub('Move to Desk…', html`<div class="set-sub-list">${desks.filter(d => d.id !== a.desk).map(d => item(`${forms}/edit`, 'desk', d.id, d.name || 'Desk'))}</div>`) : ''}
 ${a.parent ? item(`${forms}/edit`, 'parent', '', `Detach from ${m.byAgent.get(a.parent)?.name ?? a.parent}`) : ''}
 ${group ? item(`${forms}/unpair`, 'out', '1', 'Remove from Group') : ''}
 ${item(`${forms}/move`, 'dir', 'up', 'Move Up')}${item(`${forms}/move`, 'dir', 'down', 'Move Down')}
-${desks.length > 1 ? desks.filter(d => d.id !== a.desk).map(d => item(`${forms}/edit`, 'desk', d.id, `Move to ${d.name}`)) : ''}
 ${a.parent ? '' : html`<form method="post" action="/pair"><input type="hidden" name="role" value="agent"><input type="hidden" name="continue" value="${a.device_id}"><button class="ledger-sheet-item" type="submit">Copy Invite Link</button></form>`}
 ${!a.online ? item(`${forms}/edit`, 'archived', '1', 'Archive') : ''}
+${a.own ? '' : sub('Delete…', html`<form class="session-delete-ask set-sub-ask" method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/delete"><input type="hidden" name="stay" value="1"><p><b>Delete ${a.name}?</b> Its connector is removed from the room and ${u.subs ? 'the session with its helpers moves' : 'the session moves'} to the archive. Open questions are shredded.</p><button type="submit" class="session-delete-yes">${sk('bin')}<span>Delete</span></button></form>`, ' is-danger')}
 <button class="ledger-sheet-item is-close" type="button" data-pop-close>Done</button></div>`)}</details>`
 }
 
 /** One session's line. error: what the hub refused, said under the line. */
 function ledgerLine(u, ctx, { error = '' } = {}) {
-  const a = u.agent, { m, base, desks, groups, apart } = ctx, forms = sessionForms(a, base), to = `${base}/s/${encodeURIComponent(a.id)}`
-  const cards = m.fresh.filter(c => c.agent === a.id)
+  const a = u.agent, { m, base, groups, apart } = ctx, forms = sessionForms(a, base), to = `${base}/s/${encodeURIComponent(a.id)}`
   const hand = Boolean(u.blocked), word = stateWord(u, hand)
-  const top = cards.length ? Math.max(...cards.map(c => RANK[c.urgency] ?? 1)) : -1
   const group = groups.get(a.group), others = group ? group.filter(x => x.id !== a.id).map(x => x.name).join(' + ') : ''
-  const mains = ctx.mainsFor(u), main = a.parent ? m.byAgent.get(a.parent) : null
   const ring = badge(u, u, base)
-
-  // Stopped: the hand and the word; why it stopped is the cell's tooltip (the column is narrow: the words would run into the next one).
-  const state = html`<span class="ledger-state"${hand ? html` title="Stopped: ${u.blocked.text}"` : ''}>${ring}${ring && !hand && u.open ? SEP : ''}<span class="ledger-word">${word === 'asking' ? 'asks' : word}</span>${hand ? html`<span class="offscreen">: ${u.blocked.text}</span>${u.open ? html`${SEP}<b>${u.open}</b>` : ''}` : ''}</span>`
-  // What it asks (its first question: a link to the card's own page) or what it does (its status line, else what it named).
-  const card = cards[0], task = ctx.doing.get(a.id)
-  const doing = task ? [task.label, task.detail].filter(Boolean).join(': ') : a.task || (a.online ? 'nothing named' : '')
-  const does = card
-    ? html`<a class="ledger-q" data-ledger="question" data-nav href="${cardPath(card, base)}" title="${card.title}: open the question">${card.title}</a>${cards.length > 1 ? html`<a class="ledger-more" data-nav href="${to}" title="Its ${cards.length} questions">+${cards.length - 1}</a>` : ''}<a class="ledger-ans is-lead is-choose" data-nav href="${cardPath(card, base)}">Choose</a>`
-    : html`<span class="ledger-task" title="${doing}">${doing}</span>`
-
-  const chip = group ? html`<span class="ledger-with" title="with ${others}"><span class="ledger-with-names">with ${others}</span>${post(`${forms}/unpair`, '', html`<button type="submit" data-ledger="unpair" title="Take ${a.name} out" aria-label="Take ${a.name} out of its group with ${others}">${sk('snip')}</button>`)}</span>` : ''
-  const together = !group && m.agents.length > 1
-    ? html`<details class="t-pick ledger-pick"${LATER}><summary class="ledger-ib" data-ledger="pair" title="Lay together with…" aria-label="${a.name}: lay together with…">${sk('heads')}</summary>
-<form class="t-pop t-menu" method="post" action="${forms}/pair">${answerFields(STAY)}${later(m.agents.filter(x => x.id !== a.id).map(x => html`<button type="submit" name="with" value="${x.id}">${x.name}</button>`))}</form></details>` : ''
-
-  // (a line without one of the small buttons keeps its place empty: the buttons stand in columns down the page)
-  const NONE = raw('<i class="ledger-ib is-none" aria-hidden="true"></i>')
-  const acts = html`<span class="ledger-acts">
-${mains.length ? pick({ cls: 'ledger-desk ledger-main', hook: 'main', mark: sk('under'), title: `Main agent of ${a.name}: the session this one works for`, label: main ? main.name : 'No main', action: `${forms}/edit`, name: 'parent', set: Boolean(main), options: [{ value: '', label: 'No main', current: !main }, ...mains.map(x => ({ value: x.id, label: `↳ ${x.name}`, current: x.id === a.parent }))] }) : ''}
-${desks.length > 1 ? pick({ cls: 'ledger-desk', hook: 'desk', mark: sk('desk'), title: `Desk of ${a.name}: move to another desk`, label: desks.find(d => d.id === a.desk)?.name ?? 'Desk', action: `${forms}/edit`, name: 'desk', options: desks.map(d => ({ value: d.id, label: d.name, current: d.id === a.desk })) }) : ''}
-<a class="ledger-ib" data-ledger="open" data-nav href="${to}" title="Open the conversation" aria-label="${a.name}: open the conversation">${sk('go')}</a>
-${u.open ? html`<a class="ledger-ib" data-ledger="walk" data-nav href="${cardPath(card, base)}?walk=1" title="Its questions, one after the other" aria-label="${a.name}: its questions, one after the other">${sk('tray')}</a>` : NONE}
-${together}
-${!a.online ? post(`${forms}/edit`, '', html`<button class="ledger-ib" data-ledger="archive" type="submit" name="archived" value="1" title="Archive: put this session away" aria-label="Archive ${a.name}">${sk('archive')}</button>`) : m.agents.some(x => !x.online) ? NONE : ''}
-${delPick(a, base, Boolean(u.subs))}
-${sheet(u, ctx, { group, others })}</span>`
-
+  const card = m.fresh.find(c => c.agent === a.id), task = !card && a.online ? a.task : ''
+  // the small line under the name: what tells it apart, the machine, the model, when it was seen
+  const about = [apart.get(a.id), others && `with ${others}`, a.host, a.model].filter(Boolean)
+  const seen = a.online ? '' : agoSpan(a.seen ?? a.joined ?? Date.now(), 'ledger-ago')
+  const state = html`<span class="ledger-state"${hand ? html` title="Stopped: ${u.blocked.text}"` : ''}>${ring}<span class="ledger-word">${word === 'asking' ? 'asks' : word}</span>${hand ? html`<span class="offscreen">: ${u.blocked.text}</span>` : ''}</span>`
   // The crown: one per desk, given by his hand (the hub takes it from whoever wore it on this desk).
-  const star = post(`${forms}/star`, '', html`<button class="crown-toggle ledger-crown" data-ledger="crown" type="submit" name="starred" value="${a.starred ? '0' : '1'}" aria-pressed="${String(Boolean(a.starred))}" title="${a.starred ? 'Wears the crown of its desk. Click to take it off' : 'Give the crown'}" aria-label="${a.name}: ${a.starred ? 'wears the crown of its desk, take it off' : 'give the crown; quick memos go to it, its questions come first'}">${raw(crownSvg())}</button>`)
+  const star = post(`${forms}/star`, '', html`<button class="crown-toggle ledger-crown" data-ledger="crown" type="submit" name="starred" value="${a.starred ? '0' : '1'}" aria-pressed="${String(Boolean(a.starred))}" title="${a.starred ? 'Main Session of its desk. Click: Remove as Main Session' : 'Make Main Session'}" aria-label="${a.name}: ${a.starred ? 'Main Session of its desk, remove' : 'Make Main Session; quick notes go to it, its questions come first'}">${raw(crownSvg())}</button>`)
   const cls = ['ledger-line', u.parent && 'is-sub', (a.main || u.subs) && 'is-main'].filter(Boolean).join(' ')
-  return html`<div class="${cls}" role="row" id="${lineId(a.id)}" data-id="${a.id}" data-state="${word}"${top >= 0 ? html` data-urgency="${Object.keys(RANK).find(k => RANK[k] === top)}"` : ''}>
-<span class="ledger-grip">${post(`${forms}/move`, '', html`<button type="submit" data-ledger="up" name="dir" value="up" title="Move up" aria-label="Move ${a.name} up">${sk('unfold')}</button><button type="submit" data-ledger="down" name="dir" value="down" title="Move down" aria-label="Move ${a.name} down">${sk('unfold')}</button>`)}</span>
+  const find = [a.name, a.given, a.host, a.model, a.task, a.cwd].filter(Boolean).join(' ').toLowerCase()
+  return html`<div class="${cls}" id="${lineId(a.id)}" data-id="${a.id}" data-state="${word}" data-find="${find}">
 <span class="ledger-face">${markControl(a, base, STAY)}${star}</span>
-<span class="ledger-name">${renameControl(a, base, STAY)}${apart.get(a.id) ? html`<small>${apart.get(a.id)}</small>` : ''}${chip}</span>
+<span class="ledger-name">${renameControl(a, base, STAY)}<small>${about.join(' · ')}${about.length && seen ? ' · ' : ''}${seen}${task ? html`${about.length || seen ? ' · ' : ''}${task}` : ''}${card ? html`${about.length || seen ? ' · ' : ''}asks: ${card.title}` : ''}</small></span>
 ${state}
-<span class="ledger-does">${does}</span>
-<span class="ledger-cell">${a.model ?? ''}</span><span class="ledger-cell">${a.host ?? ''}</span><span class="ledger-cell">${a.online ? 'now' : agoSpan(a.seen ?? a.joined ?? Date.now(), 'ledger-ago')}</span>
-${acts}
+<span class="ledger-acts">${moreMenu(u, ctx, { group })}</span>
 <a class="ledger-open" data-nav href="${to}" tabindex="-1" aria-hidden="true"></a>
 ${error ? html`<p class="ledger-err" role="alert">${error}</p>` : ''}
 </div>`
 }
 
-/** Delete session, among a line's small buttons: the same confirm as in the session's More menu (agents.mjs /delete). */
-function delPick(a, base, subs) {
-  if (a.own) return ''
-  return html`<details class="t-pick ledger-pick ledger-del"><summary class="ledger-ib" data-ledger="delete" title="Delete…" aria-label="Delete ${a.name}…">${sk('bin')}</summary><div class="desk-move t-pop"><form class="session-delete-ask" method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/delete"><input type="hidden" name="stay" value="1"><p><b>Delete ${a.name}?</b> Its connector is removed from the room and ${subs ? 'the session with its helpers moves' : 'the session moves'} to the archive. Open questions are shredded.</p><div class="desk-duck-ways"><button type="submit" class="session-delete-yes">${sk('bin')}<span>Delete</span></button><button type="button" class="desk-duck-no" data-pop-close>Cancel</button></div></form></div></details>`
-}
-
 /** A session that was put away. */
 function archivedLine(a, ctx, { error = '' } = {}) {
-  return html`<div class="ledger-line is-archived" role="row" id="${lineId(a.id)}" data-id="${a.id}">
-<span class="ledger-grip"></span><span class="ledger-face">${avatar(a, { crown: false })}</span><span class="ledger-name"><strong>${a.name}</strong></span>
-<span class="ledger-state"><span>put away</span></span><span class="ledger-does"></span>
-<span class="ledger-cell">${a.model ?? ''}</span><span class="ledger-cell">${a.host ?? ''}</span><span class="ledger-cell">${agoSpan(a.seen ?? a.joined ?? Date.now(), 'ledger-ago')}</span>
-<span class="ledger-acts">${post(`${sessionForms(a, ctx.base)}/edit`, '', html`<button class="ledger-link" data-ledger="fetch" type="submit" name="archived" value="0">Fetch back</button>`)}</span>
+  return html`<div class="ledger-line is-archived" id="${lineId(a.id)}" data-id="${a.id}" data-find="${[a.name, a.host, a.model].filter(Boolean).join(' ').toLowerCase()}">
+<span class="ledger-face">${avatar(a, { crown: false })}</span><span class="ledger-name"><strong>${a.name}</strong><small>${[a.host, a.model].filter(Boolean).join(' · ')}${a.host || a.model ? ' · ' : ''}${agoSpan(a.seen ?? a.joined ?? Date.now(), 'ledger-ago')}</small></span>
+<span class="ledger-state"></span>
+<span class="ledger-acts">${post(`${sessionForms(a, ctx.base)}/edit`, '', html`<button class="set-pill" data-ledger="fetch" type="submit" name="archived" value="0">Fetch Back</button>`)}</span>
 ${error ? html`<p class="ledger-err" role="alert">${error}</p>` : ''}
 </div>`
 }
@@ -159,93 +114,90 @@ function parts(m) {
   const live = u => u.online || Boolean(u.subs?.some(s => s.online))
   return { on: top.filter(live).flatMap(family), off: top.filter(u => !live(u)).flatMap(family), archived: m.everyone.filter(a => a.archived) }
 }
-const COLS = [['name', 'Session'], ['state', 'State'], ['model', 'Model'], ['host', 'Machine'], ['seen', 'Last seen']]
-// How much a session needs the human, for sorting by state: stopped first, away last.
-const need = u => (u.blocked ? 0 : !u.online ? 9 : u.open ? 1 : u.running ? 7 : 8)
-const VAL = {
-  name: u => u.agent.name.toLowerCase(), state: need, model: u => (u.agent.model ?? '').toLowerCase(), host: u => (u.agent.host ?? '').toLowerCase(),
-  seen: u => (u.agent.online ? 0 : -(u.agent.seen ?? u.agent.joined ?? 0)),
-}
 const leadWords = m => `${m.agents.filter(a => a.online).length} of ${m.agents.length} sessions are connected.`
+const DESK_KEY = 'trommi-settings-desks'
 
-/** The whole page. find: words to look for; sort: a column's key, or 'order'; down: the other way round; errors: session id -> what was refused. */
-// ---- Invite, at the top of Settings (his word, 8 October): an agent by a command, a device by a code it scans. The
-// code is drawn blurred until it is asked for: only then is an invite made (POST /pair), never on the page's load. ----
-const FAKE_QR = (() => {
-  const n = 25, cells = [], finder = (x, y) => (x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7)
-  let seed = 7
-  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
-  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-    const ring = finder(x, y) && (() => { const fx = x < 7 ? x : x - (n - 7), fy = y < 7 ? y : y - (n - 7); return fx === 0 || fx === 6 || fy === 0 || fy === 6 || (fx >= 2 && fx <= 4 && fy >= 2 && fy <= 4) })()
-    if (finder(x, y) ? ring : rnd() > 0.52) cells.push(`M${x} ${y}h1v1h-1z`)
-  }
-  return raw(`<svg viewBox="-2 -2 ${n + 4} ${n + 4}" aria-hidden="true"><rect x="-2" y="-2" width="${n + 4}" height="${n + 4}" fill="#fff"/><path d="${cells.join('')}" fill="#14181a"/></svg>`)
-})()
-const inviteSection = base => html`<section class="set-invite" aria-labelledby="set-invite-h">
-<h2 id="set-invite-h">Invite</h2>
-<div class="set-invite-ways">
-<form method="post" action="${base}/pair" class="set-way"><input type="hidden" name="role" value="agent"><button type="submit" class="set-way-go" id="settings-invite-agent">${PLUS}<span>Invite Agent…</span></button><small>A line to paste into a terminal where Claude Code runs. The agent shows up in the room once you compare six emoji.</small></form>
-<form method="post" action="${base}/pair" class="set-way is-device"><input type="hidden" name="role" value="human"><button type="submit" class="set-qr" id="settings-pair" aria-label="Show the code to pair a device"><span class="set-qr-code">${FAKE_QR}</span><span class="set-qr-show">Show Code</span></button><div><b>Pair a device</b><small>A phone or another computer scans the code. It is made when you ask for it and works once.</small></div></form>
-</div>
-<p class="set-demo"><button type="button" id="demo-toggle" class="set-demo-go" role="switch" aria-checked="${String((() => { try { return Boolean(sessionStorage.getItem('trommi-mock')) } catch { return false } })())}">${sk('play')}<span>Demo</span><small>A made-up room to look around in; nothing is kept</small></button></p>
-</section>`
-
-function agentsMain(m, base, { find = '', sort = 'order', down = false, errors = new Map() } = {}) {
+/** The whole page. find: words to look for (then every desk with a match stands open); errors: session id -> what was refused. */
+function sessionsMain(m, base, { find = '', errors = new Map() } = {}) {
   const ctx = around(m, base)
   let { on, off, archived } = parts(m)
   const words = find.trim().toLowerCase()
   const found = u => !words || [u.agent.name, u.agent.given, u.agent.host, u.agent.model, u.agent.task, u.agent.cwd].filter(Boolean).join(' ').toLowerCase().includes(words)
-  if (!VAL[sort]) sort = 'order'
-  if (sort !== 'order') {
-    // Sorted by a column, a line stands for itself: by whether it is connected, then by the column.
-    const all = m.units, val = VAL[sort]
-    const sorted = list => { const out = [...list].sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : all.indexOf(a) - all.indexOf(b))); return down ? out.reverse() : out }
-    on = sorted(all.filter(u => u.online)); off = sorted(all.filter(u => !u.online))
-  }
   on = on.filter(found); off = off.filter(found)
-  const query = fields => { const q = new URLSearchParams(Object.entries({ find: words ? find : '', ...fields }).filter(([, v]) => v)).toString(); return `${base}/agents${q ? `?${q}` : ''}` }
-  const th = ([key, label]) => html`<a class="ledger-th th-${key}" data-nav role="columnheader" aria-sort="${sort === key ? (down ? 'descending' : 'ascending') : 'none'}" href="${query({ sort: key, down: sort === key && !down ? '1' : '' })}">${label}${sort === key ? html`<i>${down ? '↓' : '↑'}</i>` : ''}</a>`
   const line = u => ledgerLine(u, ctx, { error: errors.get(u.id) })
-  const anyMain = m.units.some(u => ctx.mainsFor(u).length)
-  // In the board's own order (his pick "tree", 7 October): one tree per main, its helpers under it on the sidebar's pen
-  // bracket; the desk is the heading over its trees (no column says the desk or the main again); connected trees first.
-  const tree = sort === 'order'
   const shown = new Set([...on, ...off])
   const deskList = ctx.desks.length ? ctx.desks : [{ id: null, name: m.deskName || 'Desk' }]
   const deskOf = u => (ctx.desks.some(d => d.id === u.agent.desk) ? u.agent.desk : deskList[0].id)
-  const tops = [...on, ...off].filter(u => !u.parent)
+  // (the crowned session of a desk first, then the board's own order: connected trees first)
+  const tops = [...on, ...off].filter(u => !u.parent).sort((x, y) => Number(Boolean(y.agent.starred)) - Number(Boolean(x.agent.starred)))
   const treeOf = u => html`<div class="ledger-tree">${line(u)}${u.subs?.some(s => shown.has(s)) ? html`<div class="ledger-kids">${u.subs.filter(s => shown.has(s)).map(line)}</div>` : ''}</div>`
   const loose = [...on, ...off].filter(u => u.parent && !shown.has(u.parent))
-  const trees = deskList.map(d => { const mine = tops.filter(u => deskOf(u) === d.id); const kids = loose.filter(u => deskOf(u) === d.id); return mine.length || kids.length ? html`<h3 class="ledger-deskhead">${sk('desk')}<span>${d.name || 'Desk'}</span></h3>${mine.map(treeOf)}${kids.map(line)}` : '' })
-  return html`<main id="ledger" aria-label="Agents"><div class="ledger-page">
-${roomTabs('agents', 'ledger-tabs')}
-${inviteSection(base)}
-<header class="ledger-head page-head"><h2>Sessions</h2><p id="ledger-lead">${leadWords(m)}</p></header>
-<div class="ledger-tools"><form method="get" action="${base}/settings/agents" role="search">${sort !== 'order' ? html`<input type="hidden" name="sort" value="${sort}">${down ? raw('<input type="hidden" name="down" value="1">') : ''}` : ''}<label class="ledger-find"><input type="search" name="find" value="${find}" autocomplete="off" placeholder="Find a session, a machine, a model" aria-label="Find a session"><kbd>/</kbd></label></form>${sort !== 'order' || words ? html`<a class="ledger-link" data-nav href="${base}/agents">${words ? 'Show all, in your order' : 'Back to your order'}</a>` : ''}</div>
-<div class="ledger${tree ? ' is-tree' : ''}" role="table" id="ledger-list" data-controller="pops"${sort !== 'order' || words ? raw(' data-sorted') : ''}${ctx.desks.length > 1 ? raw(' data-desks') : ''}${anyMain ? raw(' data-mains') : ''}>
-<div class="ledger-line is-head" role="row"><span></span><span></span>${th(COLS[0])}${th(COLS[1])}<span class="ledger-th">Asks or does</span>${COLS.slice(2).map(th)}<span></span></div>
-${tree ? trees : html`${on.map(line)}
-${off.length ? html`<h3 class="ledger-sub">Disconnected</h3>${off.map(line)}` : ''}`}
-${!on.length && !off.length && m.agents.length ? html`<p class="ledger-none">No session fits. <a class="ledger-link" data-nav href="${base}/settings/agents">Show all</a></p>` : ''}
-${!m.agents.length ? raw('<p class="ledger-none">No session is connected yet.</p>') : ''}
-${archived.length ? html`<h3 class="ledger-sub">Archive</h3>${archived.map(a => archivedLine(a, ctx, { error: errors.get(a.id) }))}` : ''}
-</div></div></main>`
+  const group = (key, mark, name, count, inner) => html`<details class="set-desk" data-desk="${key}"${words ? raw(' open') : ''}><summary class="set-desk-head"><span class="set-desk-mark">${mark}</span><b>${name}</b><span class="set-desk-n">${count}</span>${sk('unfold')}</summary><div class="set-desk-body">${inner}</div></details>`
+  const desks = deskList.map(d => {
+    const mine = tops.filter(u => deskOf(u) === d.id), kids = loose.filter(u => deskOf(u) === d.id)
+    const n = mine.reduce((k, u) => k + 1 + (u.subs?.filter(s => shown.has(s)).length ?? 0), 0) + kids.length
+    return n ? group(d.id ?? 'desk', sk('desk'), d.name || 'Desk', n, html`${mine.map(treeOf)}${kids.map(line)}`) : ''
+  })
+  const shownArchived = archived.filter(a => !words || [a.name, a.host, a.model].filter(Boolean).join(' ').toLowerCase().includes(words))
+  return settingsPage('Sessions', html`
+<form class="ledger-tools" method="get" action="${base}/settings/sessions" role="search" data-controller="set-find"><label class="ledger-find">${sk('search')}<input type="search" name="find" value="${find}" autocomplete="off" placeholder="Search" aria-label="Find a session, a machine, a model" data-action="input->set-find#find"><kbd>/</kbd></label></form>
+<p class="set-lead" id="ledger-lead">${leadWords(m)}</p>
+<div class="ledger set-desks" id="ledger-list" data-controller="pops set-desks"${words ? raw(' data-found') : ''}>
+${desks}
+${shownArchived.length ? group('archive', sk('archive'), 'Archive', shownArchived.length, shownArchived.map(a => archivedLine(a, ctx, { error: errors.get(a.id) }))) : ''}
+${!shown.size && !shownArchived.length && m.agents.length ? html`<p class="ledger-none">No session fits. <a class="ledger-link" data-nav href="${base}/settings/sessions">Show all</a></p>` : ''}
+${!m.agents.length && !archived.length ? raw('<p class="ledger-none">No session is connected yet.</p>') : ''}
+<p class="ledger-none" data-set-find-none hidden>No session fits.</p>
+</div>`, { id: 'ledger', cls: 'ledger-root' })
 }
 
-/** One line again, as it is now (for a form's answer); null when the session is gone. */
-function lineNow(m, base, id, error) {
-  const ctx = around(m, base), u = ctx.unitOf.get(id), a = m.byAgent.get(id)
-  return u ? ledgerLine(u, ctx, { error }) : a ? archivedLine(a, ctx, { error }) : null
-}
+// Which desks stand open: kept for the tab, so the live stream's fresh page and a way back keep them.
+controller('set-desks', class extends Controller {
+  connect() {
+    if (!this.element.hasAttribute('data-found')) {
+      let open = []
+      try { open = JSON.parse(sessionStorage.getItem(DESK_KEY) || '[]') } catch {}
+      for (const d of this.element.querySelectorAll(':scope > details.set-desk')) if (open.includes(d.dataset.desk)) d.open = true
+    }
+    this.onToggle = e => {
+      if (!e.target.matches?.('details.set-desk') || this.element.hasAttribute('data-found') || this.element.hasAttribute('data-finding')) return
+      try { sessionStorage.setItem(DESK_KEY, JSON.stringify([...this.element.querySelectorAll(':scope > details.set-desk[open]')].map(d => d.dataset.desk))) } catch {}
+    }
+    this.element.addEventListener('toggle', this.onToggle, true)
+  }
+  disconnect() { this.element.removeEventListener('toggle', this.onToggle, true) }
+})
+// Finds as you type: lines that do not fit step aside, a desk with a line that fits opens; an empty field gives the
+// folded list back. (Enter sends the GET form: the same, rendered.)
+controller('set-find', class extends Controller {
+  find(e) {
+    const words = e.target.value.trim().toLowerCase(), list = document.getElementById('ledger-list')
+    if (!list) return
+    let any = false
+    if (words) list.dataset.finding = ''; else delete list.dataset.finding
+    for (const d of list.querySelectorAll(':scope > details.set-desk')) {
+      if (!d.dataset.was) d.dataset.was = d.open ? '1' : '0'
+      let hits = 0
+      for (const l of d.querySelectorAll('.ledger-line[data-id]')) { const fits = !words || (l.dataset.find ?? '').includes(words); l.hidden = !fits; if (fits) hits++ }
+      for (const t of d.querySelectorAll('.ledger-tree')) t.hidden = Boolean(words) && ![...t.querySelectorAll('.ledger-line')].some(l => !l.hidden)
+      d.hidden = Boolean(words) && !hits
+      d.open = words ? hits > 0 : d.dataset.was === '1'
+      if (!words) delete d.dataset.was
+      any ||= hits > 0
+    }
+    const none = list.querySelector('[data-set-find-none]')
+    if (none) none.hidden = !words || any
+  }
+})
 
 export function register(t) {
   const { BASE, hub } = t
   const show = (req, res, url, errors, code = 200) => {
-    const q = url.searchParams, m = t.model()
-    t.page(req, res, { model: m, title: 'Settings · Agents · Trommi', view: 'agents', css: 'agents', bodyAttrs: ' data-page="roster"', stream: VAL[q.get('sort')] ? `&sort=${q.get('sort')}` : '', main: agentsMain(m, BASE, { find: q.get('find') ?? '', sort: q.get('sort') ?? 'order', down: q.has('down'), errors }) }, code)
+    const m = t.model()
+    t.page(req, res, { model: m, title: 'Sessions · Settings · Trommi', view: 'agents', css: 'agents', bodyAttrs: ' data-page="roster"', main: sessionsMain(m, BASE, { find: url.searchParams.get('find') ?? '', errors }) }, code)
   }
-  t.get(/^\/settings\/agents$/, ({ req, res, url }) => show(req, res, url))
-  t.get(/^\/settings$/, ({ res }) => t.redirect(res, `${BASE}/settings/agents`))
+  t.get(/^\/settings\/sessions$/, ({ req, res, url }) => show(req, res, url))
+  t.get(/^\/settings\/agents$/, ({ res }) => t.redirect(res, `${BASE}/settings/sessions`))
   // The drawings of one session's picker: a frame, fetched when the picker is opened.
   t.get(/^\/sessions\/([^/]+)\/marks$/, ({ req, res, url, match }) => {
     const a = t.model().byAgent.get(decodeURIComponent(match[1]))
@@ -317,7 +269,7 @@ export function register(t) {
         return t.sendStream(req, res, html`${on}${t.toast({ head: `Moved to ${to?.name || 'Desk'}`, line: nameOf(t.model(), id).replace(/ · [^·]*$/, ''), undo: was ? { action: `${sessionForms({ id }, BASE)}/edit`, fields: { desk: was, moved: '1' } } : null })}`)
       }
       if (stay) return t.sendStream(req, res, match[2] === 'edit' && form.get('archived') === '1' && !form.has('quiet') ? t.toast({ head: 'Archived', line: nameOf(t.model(), id), undo: { action: `${sessionForms({ id }, BASE)}/edit`, fields: { archived: '0' } } }) : '')
-      return t.redirect(res, backOf(form.get('back')) || `${BASE}/settings/agents`)
+      return t.redirect(res, backOf(form.get('back')) || `${BASE}/settings/sessions`)
     }
     if (stay) {
       const line = lineNow(t.model(), BASE, id, error)
@@ -354,16 +306,13 @@ export function register(t) {
       const ctx = around(m, BASE), { on, off, archived } = parts(m)
       return {
         // Which lines stand where; when that changes, the page fetches itself anew (it keeps its own sorting and finding).
-        shape: JSON.stringify([on.map(u => `${u.id}:${u.agent.desk}`), off.map(u => `${u.id}:${u.agent.desk}`), archived.map(a => a.id), ctx.desks.length > 1, m.units.some(u => ctx.mainsFor(u).length)]),
-        // By each column: a page that is sorted by one fetches itself anew when that order changes.
-        orders: Object.fromEntries(Object.entries(VAL).map(([key, val]) => [key, JSON.stringify([...m.units].sort((a, b) => (val(a) > val(b) ? 1 : val(a) < val(b) ? -1 : 0)).map(u => [u.id, u.online]))])),
+        shape: JSON.stringify([on.map(u => `${u.id}:${u.agent.desk}:${Boolean(u.agent.starred)}`), off.map(u => `${u.id}:${u.agent.desk}`), archived.map(a => a.id), ctx.desks.map(d => `${d.id}:${d.name}`)]),
         lead: leadWords(m),
         rows: new Map([...m.units.map(u => [u.id, ledgerLine(u, ctx)]), ...archived.map(a => [a.id, archivedLine(a, ctx)])]),
       }
     },
-    diff(was, now, client) {
-      const sort = client?.params?.get('sort')
-      if (was.shape !== now.shape || (sort && was.orders[sort] !== now.orders[sort])) return String(t.stream('refresh'))
+    diff(was, now) {
+      if (was.shape !== now.shape) return String(t.stream('refresh'))
       const out = was.lead !== now.lead ? [t.stream('update', 'ledger-lead', now.lead)] : []
       for (const [id, row] of now.rows) if (t.differs(was.rows.get(id), row)) out.push(t.stream('replace', lineId(id), row))
       return out.join('')
