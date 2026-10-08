@@ -28,21 +28,21 @@ public struct Causal: Equatable, Codable {
   public var noBody = false
 }
 
-public enum DecodedBind: Equatable {
+public enum DecodedBind: Equatable, Codable {
   case answer(cardId: String, versionHash: String, choices: [String])
   case decideAgain(cardId: String, previousHash: String, versionHash: String)
   case permissionRequest(requestId: String, expiresAt: UInt64)
   case verdict(requestId: String, requestHash: String, expiresAt: UInt64, allow: Bool)
 }
 
-public struct ObjectHead: Equatable {
+public struct ObjectHead: Equatable, Codable {
   public var objectId: String
   public var objectState: Int
   public var urgency: Int
   public var answeredAt: UInt64
 }
 
-public struct Rec {
+public struct Rec: Codable {
   public var envelopeNumber: Int
   public var envelopeHash: String
   public var senderDeviceId: String

@@ -118,6 +118,7 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     let room = try pickRoom()
     let report = try await room.sync()
     for w in report.warnings { FileHandle.standardError.write(Data("warning: \(w)\n".utf8)) }
+    if !asJSON && room.restored { print("restored from the cache, then caught up from envelope \(room.cursor - report.envelopes)") }
     if !asJSON { print("caught up: \(report.envelopes) envelopes verified (\(report.opened) opened, \(report.headerOnly) header only, \(report.undecryptable) without key, \(report.voids) void\(report.refused > 0 ? ", \(report.refused) REFUSED" : ""))") }
     printCards(room)
   case "answer":
@@ -266,6 +267,9 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     }
     let st = try await room.loadCanvas(tl)
     for s in st.shapes.values.sorted(by: { $0.id < $1.id }) { print("\(s.id) \(s.tool) \(s.pts.count / 2) points") }
+  case "driver":
+    // The interop driver (Driver.swift): JSON lines on stdin and stdout, one device per process.
+    await runDriver(base: base)
   case "rooms":
     for id in Store.rooms(base: base) {
       let r = try Room.open(base: base, roomId: id)
@@ -286,7 +290,7 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
   }
 }
 
-do { try await run(); if let r = openedRoom { try await r.flush() } }
+do { try await run(); if let r = openedRoom { try await r.flush(); await r.saveCacheAndWait() } }
 catch let e as ZError { die(e.description) }
 catch let e as HubError { die("hub: \(e.description)") }
 catch { die("\(error)") }

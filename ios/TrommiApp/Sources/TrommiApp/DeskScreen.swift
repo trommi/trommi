@@ -21,7 +21,8 @@ struct DeskScreen: View {
     let v = model.view
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 12) {
-        if let v = v, let d = model.desk {
+        if let v = v, let d = model.desk, !v.units.isEmpty || model.room?.cursor ?? 0 > 0 {
+          let _ = StartClock.desk(cards: v.fresh.count, restored: model.room?.restored ?? false)
           head(v)
           if !v.cut.isEmpty { CutSlip(units: v.cut) }
           let cards = v.deskCards()

@@ -9,6 +9,21 @@ import UIKit
 #endif
 import TrommiClient
 import TrommiCore
+import os
+
+/** Cold start to the first rendered Desk (os log "trommi", category "timing"). */
+enum StartClock {
+  static let t0 = ProcessInfo.processInfo.systemUptime
+  static var said = false
+  static let log = Logger(subsystem: "com.trommi.ios", category: "timing")
+  @MainActor static func desk(cards: Int, restored: Bool) {
+    if said { return }
+    said = true
+    let ms = Int((ProcessInfo.processInfo.systemUptime - t0) * 1000)
+    log.notice("trommi cold start: first desk in \(ms, privacy: .public) ms, \(cards, privacy: .public) cards, \(restored ? "from the cache" : "from the network", privacy: .public)")
+    NSLog("trommi cold start: first desk in %d ms, %d cards, %@", ms, cards, restored ? "from the cache" : "from the network")
+  }
+}
 
 @main
 struct TrommiApp: App {
@@ -17,7 +32,7 @@ struct TrommiApp: App {
   #if canImport(UIKit)
   @UIApplicationDelegateAdaptor(PushDelegate.self) private var push   // Push.swift
   #endif
-  init() { Face.registerFonts() }
+  init() { _ = StartClock.t0; Face.registerFonts() }
   var body: some Scene {
     WindowGroup {
       RootView().environmentObject(model)
@@ -104,7 +119,11 @@ final class BoardModel: ObservableObject {
     room = r
     desk = DeskModel(board: r.board)
     r.onChange = { [weak self] _ in self?.changed() }
-    startLive()
+    // the board from the encrypted cache first (no network), then live: the catch-up starts where the cache stopped
+    Task { @MainActor in
+      if await r.restore() { desk?.update(); version &+= 1 }
+      startLive()
+    }
   }
   /** A change of the board: the projection again, at most every 80 ms (a catch-up brings thousands). */
   private func changed() {
@@ -142,7 +161,8 @@ final class BoardModel: ObservableObject {
   }
   func scene(active: Bool) {
     self.active = active
-    if active { startLive(); Task { await refresh() } } else { liveTask?.cancel(); liveTask = nil; live = false }
+    if active { startLive(); Task { await refresh() } }
+    else { liveTask?.cancel(); liveTask = nil; live = false; room?.saveCache() }
   }
   private func startLive() {
     #if canImport(Darwin)
