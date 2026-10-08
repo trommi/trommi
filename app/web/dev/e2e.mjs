@@ -88,7 +88,8 @@ try {
   await A.until("document.querySelector('#agent-invite')", 'devices page with Invite an agent')
   await A.js("trommi.router.visit('/')")
   await A.until("document.querySelector('#desk-invite-go')", 'Invite your first agent on the empty Desk')
-  // (no sidebar since the pill, 8 October: inviting an agent sits at the top of Settings)
+  check(await A.js("return document.querySelector('#agents #sidebar-invite[aria-label=\"Invite an agent\"]')?.textContent.trim() === 'New agent' && getComputedStyle(document.getElementById('agents')).display !== 'none'"), 'sidebar has the row + New agent')
+  // (Settings starts with Invite too, 8 October)
   await A.js("trommi.router.visit('/settings/agents')")
   await A.until("document.querySelector('#settings-invite-agent') && document.querySelector('#settings-pair .set-qr-code')", 'Settings starts with Invite (agent, and the device code blurred)')
   check(true, 'Settings: Invite at the top, the device code blurred until asked for')
@@ -133,13 +134,11 @@ try {
   const cardId = await agent.sendCard({ title: 'Welche Variante bauen?', body: 'Zwei Wege, beide getestet.', options: [{ key: 'a', label: 'Variante A' }, { key: 'b', label: 'Variante B' }], recommended: 'b' })
   await A.until(`document.getElementById('row-${cardId}')`, 'card row on the Desk')
   timing('card sent by agent -> row visible on A', Date.now() - t0)
-  await A.js("document.getElementById('brand-menu').click()")
-  await A.until("document.querySelector('#brand-doors:not([hidden]) #menu-sessions .menu-session')", 'the session in the pill\'s menu').then(() => check(true, 'the pill opens the menu with the session in it'), e => check(false, e.message))
-  await A.js("document.getElementById('brand-menu').click()")
-  check(await A.js("return !document.querySelector('#desk-invite')"), 'Invite your first agent gone once a session is in')
+  check(await A.js("return !!document.querySelector('#agents .agent-row[data-unit]')"), 'session in the sidebar')
+  check(await A.js("return !document.querySelector('#desk-invite') && !!document.querySelector('#agents #sidebar-invite') && getComputedStyle(document.querySelector('#sidebar-invite')).backgroundColor === 'rgba(0, 0, 0, 0)'"), 'Invite your first agent gone once a session is in; the sidebar row is quiet again')
 
   // ---- the Desk row: the desk drawing (lamp lit while something waits) and the desk's own name; no switcher there ----
-  check(await A.js("return document.querySelector('#brand-menu .pill-place b')?.textContent === 'Desk' && !!document.querySelector('#brand-menu .pill-place .lamp-light') && getComputedStyle(document.getElementById('brand-menu')).display !== 'none'"), 'the pill: the desk\'s name, the lamp lit (a question waits)')
+  check(await A.js("return document.querySelector('.desk-go .desk-name')?.textContent === 'Desk' && !!document.querySelector('#desk-lamp .lamp-light') && getComputedStyle(document.querySelector('.desk-go .desk-name')).display !== 'none' && !document.querySelector('.deskpill .desk-next, .deskpill .desk-blocked')"), 'Desk row: the name, the lamp lit (a question waits), no caret, no count or hand')
   await A.shot('e2e-4-desk-card.png')
 
   // ---- a card with a picture: uploaded encrypted, decrypted in A's page only when shown ----
@@ -256,7 +255,7 @@ try {
   await A.js(`const now = Date.now(); await trommi.client.saveNote({ text: '${noteText}', created_at: now, updated_at: now })`)
   await A.js("trommi.router.visit('/')")
   await A.until(`document.querySelector('#corner-note-box.has-words .corner-note-field')?.value.startsWith('Notiz e2e')`, 'the note at the bottom-right').then(() => check(true, 'the note waits at the bottom-right, the sticky shows it holds words'), e => check(false, e.message))
-  check(await A.js("return !document.querySelector('.topbar #corner-note-box')"), 'the note is not in the pill')
+  check(await A.js("return !document.querySelector('#agents #corner-note-box')"), 'the note is not in the sidebar')
   await A.js("document.querySelector('#corner-note-box .corner-note-head').click()")
   await A.until("!document.querySelector('#corner-note-box .corner-note-body').hidden", 'the note unfolds')
   await A.js(`window.__bubbled = false; new MutationObserver(() => { if ([...document.querySelectorAll('.msg-user .bubble')].some(b => b.textContent.includes('${noteText}'))) window.__bubbled = true }).observe(document.documentElement, { childList: true, subtree: true }); document.querySelector('#corner-note-box .corner-note-send').click()`)
@@ -372,7 +371,7 @@ try {
     const before = await A.js(`return ${count}`)
     const move = to => A.js(`await fetch('/sessions/${sid}/edit', { method: 'POST', headers: { Accept: 'text/vnd.turbo-stream.html' }, body: new URLSearchParams({ stay: '1', moved: '1', desk: '${'${to}'}' }) })`.replace('${to}', to))
     await move(made)
-    await A.until(`${count} === 0 && !document.querySelector('#menu-sessions a[href="/s/${sid}"]') && !document.querySelector('#desk-list .inbox-row[data-from="${sid}"]') && !document.querySelector('#desk-end .end-row')`, 'the moved session and its cards left this desk', 10000).then(() => check(before > 0, `a session moved to another desk takes its cards along (${before} cards)`), e => check(false, e.message))
+    await A.until(`${count} === 0 && !document.querySelector('#agents [data-unit="${sid}"]') && !document.querySelector('#desk-list .inbox-row[data-from="${sid}"]') && !document.querySelector('#desk-end .end-row')`, 'the moved session and its cards left this desk', 10000).then(() => check(before > 0, `a session moved to another desk takes its cards along (${before} cards)`), e => check(false, e.message))
     await move(home)
     await A.until(`${count} === ${before}`, 'the cards are back with the session', 10000).then(() => check(true, 'moved back: its cards are on this desk again'), e => check(false, e.message))
   }
