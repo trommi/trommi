@@ -559,6 +559,12 @@ a.agent-badge { text-decoration: none; }
 .corner-note-head:hover .corner-note-ico { rotate: -1deg; translate: 0 -2px; }
 .corner-note-ico .note-fill { fill: var(--note-yellow); } .corner-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; opacity: .8; }
 .corner-note-box:not(.has-words) .note-lines { display: none; }   /* (an empty note: a blank sticky) */
+/* Its tip: our own, not the browser's (a native tooltip can be cut at the window's edge): above the sticky, its right
+   end on the sticky's, so it always stays inside the window. */
+.corner-note-head { position: relative; }
+.corner-note-head[data-tip]::after { content: attr(data-tip); position: absolute; right: 0; bottom: calc(100% + 4px); max-width: calc(100vw - 32px); padding: 5px 9px; border-radius: var(--r-sm); background: var(--fg); color: var(--surface); font: 500 var(--t-xs)/1.2 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; pointer-events: none; transition: opacity var(--d-fast) 0s; }
+.corner-note-head[data-tip]:hover::after { opacity: 1; transition-delay: .4s; }
+.corner-note-head[data-tip]:focus-visible::after { opacity: 1; }
 /* On the Scribble Board the sticky can be dragged out of its corner onto the board (sidebar.mjs park): while it is
    carried, a small sticky with its words follows the pointer and the corner's one fades. */
 body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cursor: grab; touch-action: none; }
@@ -567,11 +573,11 @@ body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cu
 .corner-note-ghost p { max-height: 170px; overflow: hidden; overflow-wrap: anywhere; }
 .corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: var(--s-3) var(--s-3) var(--s-2); }
 .corner-note-field { max-height: 50vh; }
-/* In a conversation the note never lies on the composer or its buttons: it stands above the composer's line, only
-   the sticky (a dot says it holds words), so the least of the conversation is under it. */
-body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-area-inset-bottom, 0px)); }
-/* a card on a narrow window: the field to write in reaches under the note's corner; the note stands above it */
-@media (min-width: 861px) and (max-width: 1120px) { body[data-t-view="card"] .corner-note-box { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); } }
+/* In a conversation on a wide window the note keeps its corner too: the composer's line (the composer and the filter)
+   ends before it, however narrow the window (session.css .session-compose). */
+/* a card on a narrow window: the field to write in (which stays at the window's foot once the page scrolls, card.css
+   .foot-passed) ends at least 96px before the window's right edge, so the note keeps its corner */
+@media (min-width: 861px) and (max-width: 1120px) { body[data-t-view="card"] .tc-notes > .tc-chat { margin-right: 72px; } }
 /* the phone: above the composer of a conversation and the pens of the Scribble Board */
 @media (max-width: 860px) {
   body[data-t-view="session"] .corner-note-box { bottom: calc(146px + env(safe-area-inset-bottom, 0px)); }   /* (over the composer and the jump to the open questions; the conversation ends above it: session.css) */

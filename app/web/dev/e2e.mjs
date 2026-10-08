@@ -271,6 +271,9 @@ try {
   await A.until("[...document.querySelectorAll('#session .msg-agent')].some(m => m.textContent.includes('Hallo aus der Session'))", 'agent message in the session chat', 15000).catch(e => check(false, e.message))
   const who = await A.js("const m = [...document.querySelectorAll('#session .msg-agent')].findLast(m => m.textContent.includes('Hallo aus der Session')); return { name: m?.querySelector('.msg-head .msg-name')?.textContent ?? '', drawing: !!m?.querySelector('.msg-head .agent-avatar .doodle'), head: document.querySelector('#session .pane-name')?.textContent ?? '' }")
   check(who.name === 'night-agent' && who.name === who.head && who.drawing, `an agent message shows its session's name and drawing ("${who.name}", heading "${who.head}", drawing ${who.drawing})`)
+  // ---- the corner note keeps the window's bottom-right corner in a conversation too, clear of the composer and the filter ----
+  const corner = await A.js("const n = document.querySelector('#corner-note-box')?.getBoundingClientRect(), f = document.querySelector('#session .session-filter')?.getBoundingClientRect(), c = document.querySelector('#session form.composer')?.getBoundingClientRect(); return n && f && c ? { right: Math.round(innerWidth - n.right), bottom: Math.round(innerHeight - n.bottom), clear: n.left >= Math.max(f.right, c.right) } : null")
+  check(corner?.right === 16 && corner?.bottom === 16 && corner?.clear, `the note sits at the window's bottom-right in a conversation, beside the composer and the filter (${JSON.stringify(corner)})`)
 
   // ---- the note: it waits at the window's bottom-right; sent from there (to the crown) it reaches the agent marked as a note and stands in
   //      the session's chat taped on, from the optimistic echo on, never as a bubble ----

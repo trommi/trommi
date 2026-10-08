@@ -602,6 +602,9 @@ a.open-jump { text-decoration: none; }
    opens upward, the one in view ticked; a dot on the icon while a filter is on. */
 #session .session-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--s-2); align-items: end; }
 #session .session-compose > :not(.composer, .session-filter) { grid-column: 1 / -1; }
+/* (a wide window: the line ends at least 96px before the window's right edge, where the corner note lies, sidebar.css;
+   the free room beside the 47.5rem column counts, so on a wide window nothing moves) */
+@media (min-width: 861px) { #session .session-compose { padding-right: clamp(var(--gutter), calc(96px - (100vw - var(--side) - 47.5rem) / 2), 96px); } }
 .session-filter { margin-bottom: 7px; }
 /* (session.css keeps a row free under the composer for the old pills; on a wide screen nothing stands there now.
    A phone keeps it: the memo button sits in it.) */
