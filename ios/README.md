@@ -111,10 +111,10 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
 
 - **All screens:** the keyboard goes away by dragging the content down (`.scrollDismissesKeyboard(.interactively)`)
   or by a tap in the content. The system tab bar hides while the keyboard is up and comes back after.
-- **Chat:** the composer is a bottom bar (`safeAreaBar`, a safe area inset before iOS 26). It rides on the keyboard
-  and reserves its height, so the last message scrolls clear of it. Folded, it is a round glass pencil beside the
-  tab bar; a tap opens the field with the keyboard. With nothing written it folds back once the keyboard is gone, but
-  never while the photo picker, the camera or the file importer is open. A tap in the conversation hides the keyboard.
+- **Chat:** no tab bar inside a chat (Messages, WhatsApp); it returns on the list. The composer (attach, send) is
+  always at the bottom, a bottom bar (`safeAreaBar`, a safe area inset before iOS 26): a tap in it brings the keyboard,
+  it rides on the keyboard and reserves its height, so the last message scrolls clear of it. A tap in the
+  conversation hides the keyboard.
 - **Note:** a panel inside the page, above the tab bar, not a sheet (a sheet covered the bar). The page stays
   visible behind it, dimmed. The keyboard lifts the panel as it lifts the page. Drag the handle down or tap beside the
   panel to close it; the draft stays on the note.
