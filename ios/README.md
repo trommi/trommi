@@ -105,6 +105,28 @@ Apple ID, the phone in your hand); after that, building and shipping are command
    `ship.sh` builds a release, signs (creates the distribution certificate and profile on its first run), validates
    offline, uploads; it never submits for review. Without `--upload` it proves the pipeline with a local test identity.
 
+## TestFlight from CI
+
+`.github/workflows/ios-beta.yml` builds every push to main that changes `ios/` (not the Markdown, not the tests) with the
+official Xcode 27 on a GitHub macOS runner (`runs-on: xcode-27`, a GitHub preview image), uploads it to App Store
+Connect and hands it to the internal TestFlight group **Intern**; the deployment shows as the environment `ios-beta`.
+
+- `TrommiApp/AppStore/project.yml`: the Xcode project, generated in CI with XcodeGen (not checked in): an app target
+  `Trommi` that links the package's `TrommiApp` library (as xtool's stub does), with the app icon
+  (`Assets.xcassets`, the web's maskable bell at 1024 px), `aps-environment: production`
+  (`AppStore/TrommiApp.entitlements`) and the Info.plist keys xtool adds. Version: `MARKETING_VERSION` there; build
+  number: the workflow's run number. Linux builds (`xtool dev`, `ship.sh`) do not use this folder.
+- `TrommiApp/AppStore/asc.py`: the App Store Connect API steps (standard library and `openssl`): the bundle id with
+  Push Notifications, the app record check, waiting for the processed build, the group and its tester.
+- Signing: automatic, through the API key (`-allowProvisioningUpdates -authenticationKey…`); export
+  `app-store-connect`, `destination: upload`, `testFlightInternalTestingOnly`.
+- Environment `ios-beta`: secret `ASC_KEY` (the `.p8`), variables `ASC_KEY_ID`, `ASC_ISSUER_ID`, `APPLE_TEAM_ID`;
+  optional `ITS_NON_EXEMPT_ENCRYPTION` (`YES` or `NO`, written into every build as `ITSAppUsesNonExemptEncryption`;
+  unset, each build shows "Missing Compliance" until it is answered in App Store Connect) and `TESTFLIGHT_TESTER`.
+- Once, by a person: the app record (App Store Connect → Apps → + → New App: iOS, name Trommi, bundle id
+  `com.trommi.ios`, SKU `trommi-ios`); the export compliance answer (the app encrypts end to end with AES-256-GCM,
+  X25519 and Ed25519 through CryptoKit; whether that is exempt is a legal answer, not a build setting).
+
 ## Push (APNs)
 
 `Sources/TrommiApp/Push.swift`: on the first start with a room the app asks for notifications, registers with Apple
@@ -113,10 +135,10 @@ with a 32-byte key of its own (`push.key` next to the rooms). Apple sees a fixed
 message rides along sealed under that key. A push in the foreground shows as a banner; arriving or tapped, it refreshes
 the board. No Notification Service Extension: the text says nothing, so nothing has to be decrypted before it shows.
 
-- `TrommiApp.entitlements` (`entitlementsPath` in `xtool.yml`) says `aps-environment: development`. xtool reads it from
+- `TrommiApp.entitlements` (`entitlementsPath` in `xtool.yml`) says `aps-environment: development` (the TestFlight builds use `AppStore/TrommiApp.entitlements`, `production`). xtool reads it from
   the signed binary and turns on Push Notifications for the App ID (`XTL-70CB783D.com.trommi.ios` on the paid team)
   before it fetches the development profile; the app then gets sandbox tokens and says `environment: sandbox`
-  (read from `embedded.mobileprovision`). A store build needs `production` there.
+  (read from `embedded.mobileprovision`).
 - The hub sends only when it has the team's APNs key (`APNS_*`, README "Push"); `APNS_TOPIC` must list the installed
   bundle id (`XTL-70CB783D.com.trommi.ios` for xtool builds). Without it the hub refuses the registration, and the app
   tries again the next time it comes to the front.
