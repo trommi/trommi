@@ -1,7 +1,7 @@
 {
   "name": "trommi",
   "version": "1.0.0",
-  "description": "Chat and decision cards between a person and their Claude Code sessions, end-to-end encrypted: app, connector, shared core and hub",
+  "description": "Chat and decision cards between a person and their Claude Code sessions, end-to-end encrypted: app, shared core, hub and connector (Rust)",
   "license": "SEE LICENSE IN LICENSE.md",
   "private": true,
   "type": "module",
@@ -19,13 +19,11 @@
     "interop:parity": "node dev/interop/parity.mjs",
     "interop:screens": "node dev/interop/screens.mjs"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0",
-    "zod": "^4.6.5"
-  },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@types/node": "^26.6.4",
     "esbuild": "0.28.2",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5"
   }
 }

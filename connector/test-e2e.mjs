@@ -1,10 +1,11 @@
 // test-e2e.mjs: the connector against a real local hub.   node connector/test-e2e.mjs
 //
 // Each part starts its own hub (hub/server.mjs on a free port 8891-8899, throwaway data dir), a scripted human device
-// from shared/, and connector.mjs as a real MCP stdio child:
+// from shared/, and the connector (connector-rs: TROMMI_CONNECTOR_CMD, default connector-rs/target/release/
+// trommi-connector, built when missing) as a real MCP stdio child:
 //   integration   join via agent invite, introduce, decision round trips, hand back, explain, decide again, shred,
 //                 info read, permission round trip, sessions, say, loss watch, forged commands rejected, restart
-//   updates       hot reload of tools.mjs + prompt.md, the hub's recommended version, a changed shell file
+//   updates       the hub's recommended version, a new binary in place of the running one
 //   hooks         the plugin's permission hook: the human's verdict on the board is the hook's decision
 //   monitor       a session without channel events: the monitor's pointer line, the inbox tool
 //   keyclaim      several connectors in one folder (a Claude Code spare, two sessions): the key follows use
@@ -12,17 +13,17 @@
 //                 folder watch (two sessions, one key), answers that wait for the agent's next tool call
 //   second machine  the connect script (app/web/public/connect.sh) run as a person runs it,
 //                     curl -fsSL <app>/connect | sh -s '<invite link>'
-//                 in a fresh HOME and project folder against the files connector/build.mjs makes; then the installed
-//                 single-file connector is started as Claude Code starts it and must be in the room.
+//                 in a fresh HOME and project folder against the release connector-rs/build-plugin.mjs makes (this
+//                 machine's binary); then the installed connector is started as Claude Code starts it and must be in
+//                 the room.
 //
-//   node connector/test-e2e.mjs [--only connect] [--shell sh|dash|bash] [--docker IMAGE] [--real-claude] [--answer y] [--no-plugin]
+//   node connector/test-e2e.mjs [--only connect] [--shell sh|dash|bash] [--docker IMAGE] [--real-claude] [--no-plugin]
 //
 // The flags are the second machine's. The script installs the Trommi plugin (claude plugin marketplace add + install
 // --scope local) and starts plain `claude`; --no-plugin: a Claude Code without plugin support, the script falls back
 // to .mcp.json + the channel flag. With --real-claude, TROMMI_MARKETPLACE may name a local marketplace directory (an
-// https archive cannot be loopback). Without Node (--docker debian:stable-slim --answer y, as root): the script offers
-// to install Node 22 (NodeSource) and goes on after the yes; --answer n: it stops with the hint. --docker runs the
-// script inside a container (host network): node:26-slim has dash as /bin/sh, node:26-alpine busybox ash. Without
+// https archive cannot be loopback). --docker runs the script inside a container (host network): node:26-slim has
+// dash as /bin/sh, node:26-alpine busybox ash (the binary is static). Without
 // --real-claude a stub `claude` on PATH stands in for Claude Code's `mcp add/remove` and `plugin` (it writes
 // .mcp.json the same way), so the test needs no Claude Code login.
 
@@ -40,16 +41,32 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fileStorage } from '../shared/storage-file.ts'
 import { CHECK_EMOJI } from '../shared/check-emoji.ts'
-import { knock, socketPath } from './connector.mjs'
-import { INSTRUCTIONS, DESCRIPTIONS } from './tools.mjs'
-import { connectorFiles } from './build.mjs'
-import { assetPath } from '../app/web/worker.js'
+import { releaseKey } from '../app/web/worker.js'
+import { connectorCmd, parsePrompt } from './binary.mjs'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
-// TROMMI_CONNECTOR_CMD: the scenarios against another connector (e.g. connector-rs/target/debug/trommi-connector): every
-// process this file starts as `node connector.mjs <args>` is that command with the same args.
-export const CONNECTOR_CMD = process.env.TROMMI_CONNECTOR_CMD || null
-export const connectorProcess = (args, script = path.join(here, 'connector.mjs')) => (CONNECTOR_CMD ? [CONNECTOR_CMD, args] : [process.execPath, [script, ...args]])
+// TROMMI_CONNECTOR_CMD: the connector binary (default: connector-rs/target/release/trommi-connector, built when missing).
+export const CONNECTOR_CMD = connectorCmd()
+export const connectorProcess = args => [CONNECTOR_CMD, args]
+const PROMPT = parsePrompt(fs.readFileSync(path.join(here, 'prompt.md'), 'utf8'))
+const INSTRUCTIONS = PROMPT['# Instructions']
+// A slot's door (connector-rs src/connector/door.rs): <runtime dir>/trommi-<uid>/<sha256(key file) prefix>.sock, one
+// JSON line in, one out.
+function knock(p, request, timeout_ms = 30000) {
+  const file = path.join(process.env.XDG_RUNTIME_DIR || os.tmpdir(), `trommi-${process.getuid()}`, `${crypto.createHash('sha256').update(path.resolve(p.key_file)).digest('hex').slice(0, 20)}.sock`)
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(file)
+    let buf = ''
+    const timer = setTimeout(() => { sock.destroy(); reject(new Error('no answer')) }, timeout_ms)
+    sock.setEncoding('utf8')
+    sock.on('connect', () => sock.write(JSON.stringify(request) + '\n'))
+    sock.on('data', d => { buf += d })
+    sock.on('end', () => { clearTimeout(timer); try { resolve(JSON.parse(buf)) } catch { reject(new Error('no answer')) } })
+    sock.on('error', err => { clearTimeout(timer); reject(err) })
+  })
+}
+/** The monitor's socket of one Claude Code process: <runtime dir>/trommi-<uid>/mon-<pid>.sock. */
+const socketPath = (claudePid, env = process.env) => path.join(env.XDG_RUNTIME_DIR && fs.existsSync(env.XDG_RUNTIME_DIR) ? env.XDG_RUNTIME_DIR : os.tmpdir(), `trommi-${process.getuid()}`, `mon-${Number(claudePid) || 0}.sock`)
 // Run inside Claude Code, this process has its session id; every connector and join here gets its own, or none.
 delete process.env.CLAUDE_CODE_SESSION_ID
 /** The check code a connector printed ("check code 🐶 🎂 … (dog, cake, …)"), read back from its words, as the core writes it. */
@@ -94,15 +111,14 @@ export async function startHub(tmp, extraEnv = {}) {
   return { hub_url, data, stop: () => child.kill(), stderr: () => err }
 }
 
-/** connector.mjs as Claude Code starts it; collects every notification. */
+/** The connector as Claude Code starts it; collects every notification. */
 // Every connector the tests start is its own Claude Code session (TROMMI_SESSION_KEY), although all share this process
 // as parent; session: null leaves the default (the parent pid), as a Claude Code session has it.
-export async function startConnector({ env, cwd, script = path.join(here, 'connector.mjs'), command: binary = null, session = `test-${Math.random().toString(36).slice(2)}` }) {
+export async function startConnector({ env, cwd, command: binary = CONNECTOR_CMD, session = `test-${Math.random().toString(36).slice(2)}` }) {
   const events = [], said = []
   const { TROMMI_SESSION_KEY: _, ...base } = process.env
   // The folder watch is off unless a test asks for it: every connector here has this process as its "Claude Code", which outlives them all.
-  const [command, args] = binary ? [binary, []] : connectorProcess([], script)
-  const transport = new StdioClientTransport({ command, args, env: { ...base, TROMMI_FOLDER_WATCH: '0', ...(session ? { TROMMI_SESSION_KEY: session } : {}), ...env }, cwd, stderr: 'pipe' })
+  const transport = new StdioClientTransport({ command: binary, args: [], env: { ...base, TROMMI_FOLDER_WATCH: '0', ...(session ? { TROMMI_SESSION_KEY: session } : {}), ...env }, cwd, stderr: 'pipe' })
   let err = ''
   const client = new Client({ name: 'connector-test', version: '1' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { events.push(n) }
@@ -531,11 +547,6 @@ export async function integration({ test, tmp }) {
     })
 
     await test('e2e: a Claude Code session started without the channels flag drops events: they come with the next tool result instead', async () => {
-      const { channelsHeard } = await import('./connector.mjs')
-      assert.equal(channelsHeard({ env: {}, args: ['claude', '--resume', 'abc'] }), false)
-      assert.equal(channelsHeard({ env: {}, args: ['claude', '--resume', 'abc', '--dangerously-load-development-channels', 'server:trommi'] }), true)
-      assert.equal(channelsHeard({ env: {}, args: ['node', '/x/@anthropic-ai/claude-code/cli.js', '--channels=server:trommi'] }), true)
-      assert.equal(channelsHeard({ env: {}, args: ['node', 'some-other-client.mjs'] }), true, 'not Claude Code: assumed to listen')
       const id = (await connector.call('create_decision', { title: 'Deaf?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })).match(/card ([0-9a-f]{32})/)[1]
       await until('the card at the human', () => human.model.cards.get(id))
       await connector.close()
@@ -714,7 +725,7 @@ export async function integration({ test, tmp }) {
       const mine = () => fs.readdirSync(room).filter(f => f.includes('heir-own')).sort()
       const keyed = () => mine().filter(f => /-\d+\.key$/.test(f) && !f.startsWith('replaced-'))
       const agentsNow = () => new Set([...human.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).map(m => m.device_id))
-      /** `connector.mjs join` as the connect script runs it; `onCode(code)` is the human with the app. */
+      /** `trommi-connector join` as the connect script runs it; `onCode(code)` is the human with the app. */
       // The join runs in this folder's Claude Code session (its session id), in a shell of its own (its own session key).
       const claudeSession = crypto.randomUUID()
       const joinCli = (link, onCode = null) => new Promise(resolve => {
@@ -894,17 +905,12 @@ export async function integration({ test, tmp }) {
 }
 
 /**
- * Connector updates, in a joined room: a changed code file is hot-reloaded on reload_connector (same process, lease and
- * stream: the human's answer to a card filed by the new code arrives), the hub's recommended version and a changed shell
- * file ask for a restart, and the update is hinted once on the next tool result.
+ * Connector updates, in a joined room: the hub's recommended version and a new binary in place of the running one ask
+ * for a restart (one file is code and shell: no hot reload), announced once and hinted once on the next tool result.
  */
 export async function updates({ test, tmp }) {
   const core = await import('../shared/index.ts')
   const hub = await startHub(tmp, { HUB_RECOMMENDED_CONNECTOR: '9.0.0' })
-  // A copy of connector/ and shared/ beside node_modules, so the test can change files without touching the repository.
-  const repo = path.join(tmp, 'update-repo')
-  for (const d of ['connector', 'shared']) fs.cpSync(path.join(here, '..', d), path.join(repo, d), { recursive: true })
-  fs.symlinkSync(path.join(here, '../node_modules'), path.join(repo, 'node_modules'))
   const project = path.join(tmp, 'update-project')
   fs.mkdirSync(project, { recursive: true })
   const update = e => e.method === 'notifications/claude/channel' && e.params.meta?.kind === 'update'
@@ -915,13 +921,11 @@ export async function updates({ test, tmp }) {
     confirmAgents(human)
     const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
     const env = { TROMMI_KEYS_DIR: path.join(tmp, 'update-keys'), TROMMI_FOLDER: project, TROMMI_HUB: hub.hub_url, TROMMI_INVITE: invite.link, TROMMI_UPDATE_POLL_MS: '300', TROMMI_VERSION_CHECK_MS: '400' }
-    // Another connector (a binary): a copy of it beside the test, so a new version can be put in its place.
-    const binary = CONNECTOR_CMD && path.join(tmp, 'update-bin', 'trommi-connector')
-    if (binary) { fs.mkdirSync(path.dirname(binary), { recursive: true }); fs.copyFileSync(CONNECTOR_CMD, binary); fs.chmodSync(binary, 0o755) }
-    ch = binary ? await startConnector({ env, cwd: project, command: binary }) : await startConnector({ env, cwd: project, script: path.join(repo, 'connector/connector.mjs') })
+    // A copy of the binary beside the test, so a new version can be put in its place.
+    const binary = path.join(tmp, 'update-bin', 'trommi-connector')
+    fs.mkdirSync(path.dirname(binary), { recursive: true }); fs.copyFileSync(CONNECTOR_CMD, binary); fs.chmodSync(binary, 0o755)
+    ch = await startConnector({ env, cwd: project, command: binary })
     await ch.ready()
-    const agents = () => [...human.model.members.values()].filter(m => m.device_role === 'agent').map(m => m.device_id)
-    const agentId = agents()[0]
 
     await test('update: the hub recommends a newer connector: announced once with restart_required, hinted once on the next tool result', async () => {
       const ev = await ch.next(e => update(e) && e.params.meta.version === '9.0.0', 'the hub update event')
@@ -934,63 +938,18 @@ export async function updates({ test, tmp }) {
       assert.equal(ch.events.filter(e => update(e) && e.params.meta.version === '9.0.0').length, 1, 'the same hub version announced twice')
     })
 
-    if (binary) {
-      // One file is code and shell: a new binary in its place always needs a restart; the running one goes on.
-      await test('update: a new binary in place of the running one is announced with restart_required and reload_connector asks for /mcp Reconnect', async () => {
-        assert.match(await ch.call('reload_connector'), /is current/)
-        const next = `${binary}.new`
-        fs.copyFileSync(binary, next); fs.appendFileSync(next, Buffer.from('\n# a newer build\n')); fs.chmodSync(next, 0o755)
-        fs.renameSync(next, binary)
-        const ev = await ch.next(e => update(e) && e.params.meta.restart_required === '1' && e.params.meta.version !== '9.0.0', 'the restart event')
-        assert.match(ev.params.content, /\/mcp/)
-        assert.match(ev.params.content, /Neue Connector-Version .* jetzt neu laden\?/)
-        assert.match(await ch.call('reload_connector'), /\/mcp, then trommi, then Reconnect/)
-        assert.match(await ch.call('list_cards'), /^\[/, 'the old code keeps running until the restart')
-        assert.equal(ch.events.filter(e => update(e) && e.params.meta.version === ev.params.meta.version).length, 1, 'announced once')
-      })
-      return
-    }
-
-    await test('update: changed tool files are announced, and reload_connector loads it without a restart (tool list changed)', async () => {
-      const before = (await ch.client.listTools()).tools
-      assert.ok(before.some(t => t.name === 'reload_connector'))
-      // A new tool name in the schema, in the bridge and in prompt.md (its section and new words): one version.
-      const file = path.join(repo, 'connector/tools.mjs'), prompt = path.join(repo, 'connector/prompt.md')
-      fs.writeFileSync(prompt, fs.readFileSync(prompt, 'utf8').replace('## list_cards\n\n', '## list_cards_v2\n\nReworded in prompt.md. '))
-      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace("case 'list_cards': {", "case 'list_cards_v2': {").replace("name: 'list_cards',", "name: 'list_cards_v2',"))
-      const ev = await ch.next(update, 'the update event')
-      assert.equal(ev.params.meta.update_available, '1')
-      assert.equal(ev.params.meta.restart_required, '0')
-      assert.match(ev.params.content, /Neue Connector-Version .* jetzt neu laden\?/)
-      assert.match(await ch.call('reload_connector'), /^Reloaded: connector version/)
-      await ch.next(e => e.method === 'notifications/tools/list_changed', 'tools/list_changed')
-      const listed = (await ch.client.listTools()).tools, after = listed.map(t => t.name)
-      assert.match(listed.find(t => t.name === 'list_cards_v2').description, /^Reworded in prompt\.md\. List all your cards/, 'prompt.md was read again')
-      assert.ok(after.includes('list_cards_v2') && !after.includes('list_cards'), after.join(','))
-      assert.ok(after.includes('reload_connector'))
+    // One file is code and shell: a new binary in its place always needs a restart; the running one goes on.
+    await test('update: a new binary in place of the running one is announced with restart_required and reload_connector asks for /mcp Reconnect', async () => {
       assert.match(await ch.call('reload_connector'), /is current/)
-    })
-
-    await test('update: the reload keeps process, lease and stream: same member, a card of the new code is answered live', async () => {
-      assert.equal(ch.exited, false)
-      assert.match(await ch.call('list_cards_v2'), /^\[/)
-      const out = await ch.call('create_decision', { title: 'After the reload?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })
-      const card = out.match(/card ([0-9a-f]{32})/)[1]
-      await until('the card at the human', () => human.model.cards.get(card)?.title === 'After the reload?')
-      await human.answer({ object_id: card, choices: ['y'] })
-      const ev = await ch.next(e => e.method === 'notifications/claude/channel' && e.params.meta?.kind === 'decision' && e.params.meta.card_id === card, 'the decision after the reload')
-      assert.equal(ev.params.meta.choice, 'y')
-      assert.deepEqual(agents(), [agentId], 'the reload made a new member')
-      assert.equal(ch.stderr().match(/\] in room /g)?.length, 1, 'the room was opened again')
-      assert.doesNotMatch(ch.stderr(), /lease|another process/)
-    })
-
-    await test('update: a changed core file (shell) is announced with restart_required and reload_connector asks for /mcp Reconnect', async () => {
-      fs.appendFileSync(path.join(repo, 'shared/transport.ts'), '\n// changed by the update test\n')
-      const ev = await ch.next(e => update(e) && e.params.meta.restart_required === '1', 'the restart event')
+      const next = `${binary}.new`
+      fs.copyFileSync(binary, next); fs.appendFileSync(next, Buffer.from('\n# a newer build\n')); fs.chmodSync(next, 0o755)
+      fs.renameSync(next, binary)
+      const ev = await ch.next(e => update(e) && e.params.meta.restart_required === '1' && e.params.meta.version !== '9.0.0', 'the restart event')
       assert.match(ev.params.content, /\/mcp/)
+      assert.match(ev.params.content, /Neue Connector-Version .* jetzt neu laden\?/)
       assert.match(await ch.call('reload_connector'), /\/mcp, then trommi, then Reconnect/)
-      assert.match(await ch.call('list_cards_v2'), /^\[/, 'the old code keeps running until the restart')
+      assert.match(await ch.call('list_cards'), /^\[/, 'the old code keeps running until the restart')
+      assert.equal(ch.events.filter(e => update(e) && e.params.meta.version === ev.params.meta.version).length, 1, 'announced once')
     })
   } finally {
     try { await ch?.close() } catch {}
@@ -1209,7 +1168,7 @@ export async function hooks({ test, tmp }) {
 }
 
 // ---- the monitor: a session without channel events ---------------------------------------------------------------
-// The connector as an MCP child without channel events (as in a plain `claude`) and `connector.mjs monitor` beside
+// The connector as an MCP child without channel events (as in a plain `claude`) and `trommi-connector monitor` beside
 // it: the human's message wakes the monitor with a pointer line, the inbox tool returns the message; a monitor of
 // another Claude Code process does not hear it; the monitor ends with its Claude Code process.
 
@@ -1292,7 +1251,7 @@ export async function monitor({ test, tmp: root }) {
 export async function connect({ test, tmp: root, argv = [] }) {
   const pub = path.join(here, '../app/web/public')
   const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt }
-  const SHELL = arg('--shell', 'sh'), IMAGE = arg('--docker', null), REAL = argv.includes('--real-claude'), ANSWER = arg('--answer', null), NOPLUGIN = argv.includes('--no-plugin')
+  const SHELL = arg('--shell', 'sh'), IMAGE = arg('--docker', null), REAL = argv.includes('--real-claude'), NOPLUGIN = argv.includes('--no-plugin')
   const tmp = fs.mkdtempSync(path.join(root, 'connect-'))
   const home = path.join(tmp, 'home'), project = path.join(tmp, 'my project'), bin = path.join(tmp, 'bin')
   for (const d of [home, project, bin]) fs.mkdirSync(d, { recursive: true })
@@ -1314,16 +1273,15 @@ export async function connect({ test, tmp: root, argv = [] }) {
   fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + '\\n')
   `, { mode: 0o755 })
   // An earlier install's .mcp.json entry: the plugin install takes it away (two connectors would be two members).
-  fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { trommi: { type: 'stdio', command: 'node', args: ['/old/connector.mjs'], env: {} } } }))
+  fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { trommi: { type: 'stdio', command: '/old/trommi-connector', args: [], env: {} } } }))
 
-  // The files the app's build makes (connector/build.mjs), at the addresses app/web/worker.js serves them.
-  // Another connector (a binary, TROMMI_CONNECTOR_CMD): served as connector-rs/build-plugin.mjs lays it out, for this machine.
-  const BINARY = !!CONNECTOR_CMD
-  const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-${process.platform === 'darwin' ? 'apple-darwin' : 'unknown-linux-musl'}`
-  const built = BINARY ? (await import('../connector-rs/build-plugin.mjs')).binaryFiles({ [target]: fs.readFileSync(CONNECTOR_CMD) }) : connectorFiles()
+  // The release connector-rs/build-plugin.mjs makes (this machine's binary), at the addresses app/web/worker.js serves
+  // it from R2.
+  const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-musl`
+  const built = (await import('../connector-rs/build-plugin.mjs')).releaseFiles({ [target]: fs.readFileSync(CONNECTOR_CMD) })
   const app = http.createServer((req, res) => {
     const p = new URL(req.url, 'http://x').pathname
-    const body = p === '/connect' ? fs.readFileSync(path.join(pub, 'connect.sh')) : built[assetPath(p).replace(/^\/gen\//, '')]
+    const body = p === '/connect' ? fs.readFileSync(path.join(pub, 'connect.sh')) : built[releaseKey(p)]
     if (body == null) { res.writeHead(404); return res.end() }
     res.writeHead(200, { 'content-type': 'text/plain' }); res.end(body)
   })
@@ -1347,11 +1305,9 @@ export async function connect({ test, tmp: root, argv = [] }) {
       const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
       // The link is a secret: given by environment to the outer shell, never on a command line we print.
       let line = `curl -fsSL "$APP/connect" | ${IMAGE ? 'sh' : SHELL} -s "$LINK"`
-      // --answer y: a terminal (script(1)) that types the answer to the script's question (install Node?) into /dev/tty.
-      if (ANSWER) line = `printf '%s\\n' '${ANSWER}' | script -qec '${line}' /dev/null`
-      const env = { PATH: `${REAL ? `${path.dirname(execFileSync('sh', ['-c', 'command -v claude'], { encoding: 'utf8' }).trim())}` : bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, APP, LINK: invite.link, TROMMI_APP: APP, ...(BINARY ? { TROMMI_CONNECTOR: 'binary' } : {}), ...(process.env.TROMMI_KEYSTORE ? { TROMMI_KEYSTORE: process.env.TROMMI_KEYSTORE } : {}), ...(NOPLUGIN ? { STUB_NO_PLUGIN: '1' } : {}), ...(process.env.TROMMI_MARKETPLACE ? { TROMMI_MARKETPLACE: process.env.TROMMI_MARKETPLACE } : {}) }
+      const env = { PATH: `${REAL ? `${path.dirname(execFileSync('sh', ['-c', 'command -v claude'], { encoding: 'utf8' }).trim())}` : bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, APP, LINK: invite.link, TROMMI_APP: APP, ...(process.env.TROMMI_KEYSTORE ? { TROMMI_KEYSTORE: process.env.TROMMI_KEYSTORE } : {}), ...(NOPLUGIN ? { STUB_NO_PLUGIN: '1' } : {}), ...(process.env.TROMMI_MARKETPLACE ? { TROMMI_MARKETPLACE: process.env.TROMMI_MARKETPLACE } : {}) }
       const r = IMAGE
-        ? await run('docker', ['run', '--rm', '--network', 'host', '-e', 'APP', '-e', 'LINK', '-e', 'TROMMI_APP', ...(BINARY ? ['-e', 'TROMMI_CONNECTOR=binary'] : []), '-e', `HOME=${home}`, ...(NOPLUGIN ? ['-e', 'STUB_NO_PLUGIN=1'] : []), '-v', `${tmp}:${tmp}`, '-w', project,
+        ? await run('docker', ['run', '--rm', '--network', 'host', '-e', 'APP', '-e', 'LINK', '-e', 'TROMMI_APP', '-e', `HOME=${home}`, ...(NOPLUGIN ? ['-e', 'STUB_NO_PLUGIN=1'] : []), '-v', `${tmp}:${tmp}`, '-w', project,
           '-e', `PATH=${bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, IMAGE, 'sh', '-c', `command -v curl >/dev/null || (apk add -q curl 2>/dev/null || (apt-get -qq update && apt-get -qq install -y curl >/dev/null)) >/dev/null 2>&1; echo "/bin/sh is $(readlink -f /bin/sh)"; ${line}; rc=$?; chown -R ${process.getuid()}:${process.getgid()} '${tmp}'; exit $rc`], { env: { ...process.env, APP, LINK: invite.link, TROMMI_APP: APP } })
         : await run('/bin/sh', ['-c', line], { cwd: project, env })
       process.stdout.write(r.out.replace(invite.link, '<link>'))
@@ -1362,29 +1318,29 @@ export async function connect({ test, tmp: root, argv = [] }) {
       else {
         assert.match(r.out, /\n  claude\n/, 'the start command is plain claude')
         assert.match(r.out, /plugin:trommi@trommi/)
-        if (!REAL) assert.deepEqual(fs.readFileSync(path.join(home, 'plugin.log'), 'utf8').trim().split('\n'), [`plugin marketplace add ${APP}/plugins/${BINARY ? 'rs/' : ''}marketplace.json`, 'plugin marketplace update trommi', 'plugin install trommi@trommi --scope local', 'plugin update trommi@trommi'])
+        if (!REAL) assert.deepEqual(fs.readFileSync(path.join(home, 'plugin.log'), 'utf8').trim().split('\n'), [`plugin marketplace add ${APP}/plugins/marketplace.json`, 'plugin marketplace update trommi', 'plugin install trommi@trommi --scope local', 'plugin update trommi@trommi'])
         const local = JSON.parse(fs.readFileSync(path.join(project, '.claude/settings.local.json'), 'utf8'))
         assert.equal(local.enabledPlugins['trommi@trommi'], true)
         assert.deepEqual(local.permissions.allow, ['mcp__plugin_trommi_trommi'], 'the plugin\'s board tools are allowed in this folder')
         assert.equal(JSON.parse(fs.readFileSync(path.join(project, '.mcp.json'), 'utf8')).mcpServers.trommi, undefined, 'the old .mcp.json entry is gone')
       }
-      const installed = path.join(home, '.local/share/trommi/connector', BINARY ? 'trommi-connector' : 'connector.mjs')
+      const installed = path.join(home, '.local/share/trommi/connector', 'trommi-connector')
       assert.ok(fs.existsSync(installed), 'the connector is installed')
-      assert.equal(fs.readFileSync(`${installed}.sha256`, 'utf8').split(' ')[0], built[BINARY ? `connector/trommi-connector-${target}.sha256` : 'connector.mjs.sha256'].split(' ')[0].trim())
+      assert.equal(fs.readFileSync(`${installed}.sha256`, 'utf8').split(' ')[0], built[`connector/trommi-connector-${target}.sha256`].split(' ')[0].trim())
       if (NOPLUGIN) {
         const mcp = JSON.parse(fs.readFileSync(path.join(project, '.mcp.json'), 'utf8')).mcpServers.trommi
-        assert.deepEqual([mcp.command, ...mcp.args], BINARY ? [installed] : ['node', installed], '.mcp.json in the project runs the installed connector')
+        assert.deepEqual([mcp.command, ...mcp.args], [installed], '.mcp.json in the project runs the installed connector')
       }
       const keys = fs.readdirSync(path.join(home, '.local/share/trommi/keys', human.model.room.room_id))
       assert.ok(keys.some(f => /^[\w-]*my-project-1\.key$/.test(f)), `a key slot named after the folder (${keys.join(', ')})`)
       // As Claude Code starts it: in the project folder, with nothing but HOME.
-      connector = await startConnector({ ...(BINARY ? { command: installed } : { script: installed }), cwd: project, env: { HOME: home, TROMMI_KEYS_DIR: '', TROMMI_FOLDER: '', TROMMI_HUB: '' } })
+      connector = await startConnector({ command: installed, cwd: project, env: { HOME: home, TROMMI_KEYS_DIR: '', TROMMI_FOLDER: '', TROMMI_HUB: '' } })
       await connector.ready()
       const listed = (await connector.client.listTools()).tools, tools = listed.map(t => t.name)
       assert.ok(tools.includes('reply') && tools.includes('reload_connector'))
-      // The single file carries prompt.md: the handshake hands out its instructions, the tools its descriptions.
-      assert.equal(connector.client.getInstructions(), BINARY ? INSTRUCTIONS.replace('node <connector>', installed) : INSTRUCTIONS.replace('<connector>', installed))
-      assert.equal(listed.find(t => t.name === 'reply').description, DESCRIPTIONS.reply)
+      // The binary carries prompt.md: the handshake hands out its instructions, the tools its descriptions.
+      assert.equal(connector.client.getInstructions(), INSTRUCTIONS.replace('node <connector>', installed))
+      assert.equal(listed.find(t => t.name === 'reply').description, PROMPT['## reply'])
       await connector.call('reply', { text: 'hello from the second machine' })
     })
   } finally {
@@ -1749,6 +1705,8 @@ export async function link({ test, tmp: root }) {
 // ---- run ----------------------------------------------------------------------------------------------------------
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  // The scenarios read key files directly, and never touch this machine's keychain (connector-rs/test-keychain.sh does).
+  process.env.TROMMI_KEYSTORE ??= 'file'
   const argv = process.argv.slice(2)
   const only = argv.includes('--only') ? argv[argv.indexOf('--only') + 1] : null
   const parts = { integration, updates, hooks, monitor, keyclaim, link, connect }
