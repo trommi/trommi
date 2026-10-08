@@ -474,7 +474,11 @@ function applyNote(model, rec, change) {
   if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   // Any human device may write a version; two versions naming the same predecessor are settled by causal order (R2).
   if (old && rec.content && !old.version_hashes.includes(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'note previous_version_hash names no known version')
-  if (old && !causallyAfter(rec.causal, old.causal)) {
+  // Retention: a version whose body is gone (pruned, or held as header only) lost its lamport, which is signed inside
+  // the body; counted as 0 it lost to the older version this device still held with its body, and a deleted note came
+  // back open (fuzz night-srv-w7-98). Where either side has no body, the hub's order decides (the same on every device).
+  const after = old && (!rec.content || old.causal?.no_body) ? rec.envelope_number > (old.envelope_number ?? 0) : causallyAfter(rec.causal, old?.causal)
+  if (old && !after) {
     old.version_hashes.push(rec.envelope_hash)
     // Our own echo lost to a concurrent version: show the winner.
     if (cur?.pending && rec.local_id && rec.local_id === cur.local_id) { model.notes.set(object_id, old); change.notes.add(object_id) }
@@ -494,7 +498,7 @@ function noteOf(object_id, rec, c, old) {
   const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, lamport: _l, ...extra } = c
   return { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '',
     object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
-    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.causal, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false }
+    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.content ? rec.causal : { ...rec.causal, no_body: true }, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false }
 }
 
 function applyPublished(model, rec, change) {
