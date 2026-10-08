@@ -2,7 +2,7 @@
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
-import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, pageItems, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
+import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, act, galleryItems, html, isKnock, pageItems, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -12,10 +12,8 @@ import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm,
 // the hub's order holds within each.
 const urgRank = c => (c.urgency === 'critical' ? 2 : isKnock(c) ? 1 : 0)
 const byUrgency = cards => cards.map((c, i) => [c, i]).sort(([a, i], [b, j]) => urgRank(b) - urgRank(a) || i - j).map(([c]) => c)
-// Below the open questions (and above the cards out with the agents): the Done rows, what the agents finished, the
-// newest first, until he archives them (app.mjs boardCard landed).
-function deskCards(model) { return [...openCards(model), ...(model.landed ?? [])] }
-function openCards(model) {
+// (What the agents finished stands in the end list, endList below, not among these rows.)
+function deskCards(model) {
   const r = model.reads ?? []
   if (!r.length) return byUrgency(model.fresh)
   const out = [...model.fresh]
@@ -63,9 +61,8 @@ function runs(model) {
   for (const card of deskCards(model)) {
     const sender = model.byAgent.get(card.agent)
     if (!sender) continue
-    // (a Done row never joins a run of open questions: it stands as its own)
-    if (groups.at(-1)?.sender === sender && groups.at(-1).done === Boolean(card.landed)) groups.at(-1).cards.push(card)
-    else groups.push({ sender, cards: [card], done: Boolean(card.landed) })
+    if (groups.at(-1)?.sender === sender) groups.at(-1).cards.push(card)
+    else groups.push({ sender, cards: [card] })
   }
   return groups
 }
@@ -74,8 +71,8 @@ function runs(model) {
 function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(card, model, base) } = {}) {
   // (The slip for the sessions that are cut off stands above the questions: #link-slip, hidden while there is none.)
   return html`${linkSlip(model.cut ?? [], base)}${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
-${withAgents(model, base)}${deskStacks(model, base, pile, q)}
-${model.open.length || (model.reads ?? []).length || model.landed?.length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon as an agent has a question, it shows up here.</p></div>`}`
+${model.open.length || (model.reads ?? []).length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon as an agent has a question, it shows up here.</p></div>`}
+${withAgents(model, base)}${endList(model, base)}${deskStacks(model, base, pile, q)}`
 }
 
 /** The Desk's <main>. */
@@ -85,7 +82,7 @@ const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="D
 ${deskHead(model, base)}
 <div class="inbox-news-at"><button class="inbox-news" type="button" data-desk-target="news" data-action="desk#toNew" hidden></button></div>
 <div class="inbox-groups" id="desk-list" data-desk-target="list">${deskList(model, base, opts)}</div>
-<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span>${sideWays({ many: true, between: html`<button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button><button type="submit" name="way" value="archive" class="sel-archive" hidden>${sk('archive')}<span>Archive</span></button>` })}<button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
+<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span>${sideWays({ many: true, between: html`<button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button>` })}<button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
 <div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" data-desk-target="up" data-action="desk#toKnock" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>
 <div class="inbox-edge is-down"><button class="inbox-edge-knock" type="button" data-desk-target="down" data-action="desk#toKnock" data-dir="down" hidden>↓ ${sk('knock')}<span></span></button></div>
 </main>`
@@ -131,8 +128,9 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 }
 
 // ---- stacks ----
-// The foot of the Desk: one pile, "Off the desk", for every card that left the open rows (Later, Done, Trash; what is
-// with the agents stands on the Desk as the tail, withAgents), beside it Media and Links.
+// Every card that left the open rows (Later, Done, Trash; what is with the agents stands on the Desk as the tail,
+// withAgents) stands in the end list (endList below); its whole list with the search is the page /stacks/off. The foot
+// of the Desk holds Media and Pages.
 //
 // Which card lies where (stackOf below; the hub's card fields decide, nothing else):
 //   later   status "open" and snoozed_until set: he put it off; "Wake up" fetches it back
@@ -143,13 +141,13 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 //   done    status "decided" but older than ACTING_MS or its session is offline (its line says "not closed by the
 //           agent"), and status "done" with an answer of his (choice, or trusted; one that was a final option settled
 //           the card at once, it was never "decided": its line says "settled by your answer"), or an info he read; "Take back"
-//           (one its agent finished, close_card, first lies on the Desk as a Done row until he archives it: landed)
+//           (one its agent finished, close_card, first stands unticked in the end list until he ticks it off: landed)
 //   trash   status "shredded" (he threw it away; "Take back" fishes it out), or status "done" without an answer
 //           of his (its session withdrew it; the hub takes nothing back there, so the line has no way back)
 // A permission card is never listed (the hub closes it by itself). The newest lies on top of each.
 //
-// The look (his pick "A", 4 October, and "a ticked, struck-through shopping list"): ONE pile, "Off the desk N": a
-// slip with the newest five lines, each with the sign of its place (three Z, the tick, the bin). A click unfolds the
+// The page /stacks/off (his pick "A", 4 October, and "a ticked, struck-through shopping list"): the pile "Off the desk N",
+// unfolded: a slip with the newest five lines, each with the sign of its place (three Z, the tick, the bin). A click unfolds the
 // pile (controller "piles"): the search, the newest ten lines and "N more"; a line opens its card, where Wake up and
 // Take back are. Markup:
 //   <section class="inbox-stack inbox-pile off-pile" data-stack="off" data-pile="off">
@@ -197,7 +195,7 @@ function stackCards(model) {
 // An answered card whose session is still at it (stackCards: acting), or one handed back (revising), stays on the Desk
 // below the open questions as one slim line (his word: "Agent refines … bla"): the session's drawing, "<session> is
 // working on: <title>" (or "is reworking"), when. A dashed rule "With the agents · N" parts them from what is to decide. They leave when the session closes them.
-// "Off the desk" then keeps only Snoozed, Done and Trash. Its id stays for the stream: #desk-ip.
+// The end list then keeps only Snoozed, Done and Trash. Its id stays for the stream: #desk-ip.
 /** Who has the card, at the end of a tail card: whether the session has his answer (the receipt), and if not, whether it can hear. */
 function tailWho(i) {
   const name = i.sender.name, doing = i.card.status === 'open' ? 'is reworking it' : 'is on it'
@@ -248,7 +246,7 @@ ${shopMark(g)}<a class="inbox-revising-open off-open" data-nav href="${cardPath(
 /** The places at the foot of the Desk (#desk-stacks). open: the one that stands fanned out with all its sheets
  *  ('later' | 'works' | 'done' | 'trash'), from ?pile=. q: words searched for in the open one (title, session's name,
  *  the grey line: answer, last word, why). All four always stand, an empty one faint: nothing shifts when a card arrives. */
-function deskStacks(model, base, open = null, q = '') {
+function offSheets(model) {
   const { state } = model
   const cards = stackCards(model)
   const ctx = { now: Date.now(), online: id => Boolean(model.byAgent.get(id)?.online) }
@@ -275,13 +273,58 @@ function deskStacks(model, base, open = null, q = '') {
     { kind: 'done', also: 'answered', word: 'Done', sheets: cards.done.map(answered) },
     { kind: 'trash', word: 'Trash', bin: true, sheets: cards.trash.map(thrown) },
   ]
+  // Off the desk: Snoozed, Done and Trash in one list, the newest first (what is being worked on stands on the Desk: withAgents).
+  return piles.filter(p => p.kind !== 'works').flatMap(p => p.sheets.map(s => Object.assign(s, { g: p.kind }))).sort((a, b) => b.at - a.at)
+}
+/** The foot of the Desk: Media and Pages; on its own page (/stacks/off, the end list's "All") the whole list of what
+ *  left the Desk, with its search. */
+function deskStacks(model, base, open = null, q = '') {
+  const all = open === 'off' ? offSheets(model) : null
   const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const found = sheet => { const text = `${sheet.card.title} ${model.byAgent.get(sheet.card.agent)?.name ?? ''} ${sheet.said}`.toLowerCase(); return terms.every(w => text.includes(w)) }
-  // Off the desk: Snoozed, Done and Trash in one pile, the newest first (what is being worked on stands on the Desk: withAgents).
-  const all = piles.filter(p => p.kind !== 'works').flatMap(p => p.sheets.map(s => Object.assign(s, { g: p.kind }))).sort((a, b) => b.at - a.at)
-  // (the notes are in the sidebar now, his word 4 October: the foot holds Off the desk and Media)
-  return html`<div class="inbox-stacks stack-tabs is-straight" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${offPile(all, model, base, open === 'off', terms.length ? all.filter(found) : null, q)}${mediaPile(model, base)}${pagesPile(model, base)}</div>`
+  return html`<div class="inbox-stacks stack-tabs is-straight${all ? '' : ' is-two'}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${all ? offPile(all, model, base, true, terms.length ? all.filter(found) : null, q) : ''}${mediaPile(model, base)}${pagesPile(model, base)}</div>`
 }
+
+// ---- the end of the Desk's list (his word, 8 October: "much slimmer at the end of the list, a checkbox to tick off,
+// max 5, then load more; ticked ones stay visible; the pile Off the desk goes into it") ----
+// After the open questions and the cards out with the agents: one slim list. First what the agents finished and he has
+// not ticked off yet (app.mjs landed: a drawn empty box, the title, the agent's closing line in grey); a tick is Archive
+// (the toast's Undo takes it back). Then what is put off (Later: the three Z), then what is ticked off already (answered,
+// done, shredded, withdrawn: a ticked box, struck through). Five rows, "Load more" five more; "All" opens the whole
+// list with its search (/stacks/off). A title opens its card.
+const END_STEP = 5
+let endShown = END_STEP   // (this page's own: how many rows the end list shows; Load more raises it)
+const BOX = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/></svg>')
+const BOX_TICK = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/><path class="end-check" d="M7.4 12.6 Q9.4 14.8 10.8 16.8 Q14.6 10.4 21.6 3.2"/></svg>')
+function endList(model, base) {
+  const open = (model.landed ?? []).map(card => ({ card, g: 'open', at: card.finished ?? 0, said: card.summary ? plain(card.summary, model.state.assets) : 'Done' }))
+  const rest = offSheets(model)
+  const items = [...open, ...rest.filter(s => s.g === 'later'), ...rest.filter(s => s.g !== 'later')]
+  if (!items.length) return html`<section id="desk-end" class="endlist" hidden></section>`
+  const shown = Math.max(END_STEP, endShown)
+  const row = (s, i) => {
+    const c = s.card, href = cardPath(c, base)
+    const box = s.g === 'open'
+      ? html`<form class="end-form" method="post" action="${act(c, base, 'archive')}"><input type="hidden" name="stay" value="1"><button class="end-tick" type="submit" title="Tick it off: archive" aria-label="Tick off: ${c.title}">${BOX}</button></form>`
+      : s.g === 'later' ? html`<span class="end-tick is-later" title="Put off: Later" role="img" aria-label="Later">${sk('snooze')}</span>`
+        : html`<span class="end-tick is-ticked" title="${s.g === 'trash' ? 'Thrown away' : 'Ticked off'}" role="img" aria-label="${s.g === 'trash' ? 'Thrown away' : 'Ticked off'}">${BOX_TICK}</span>`
+    return html`<li class="end-row" data-g="${s.g}" data-id="${c.id}"${i >= shown ? raw(' hidden') : ''}>${box}<a class="end-title" data-nav href="${href}">${c.title}</a><span class="end-said">${s.said}</span>${agoSpan(s.at, 'ago end-ago')}</li>`
+  }
+  const more = items.length - shown
+  return html`<section id="desk-end" class="endlist" aria-label="Done and put away" data-controller="endlist">
+<ol class="end-rows">${items.map(row)}</ol>
+<div class="end-foot">${more > 0 ? html`<button type="button" class="end-more" data-action="endlist#more">Load more <span>${Math.min(END_STEP, more)} of ${more}</span></button>` : ''}<a class="end-all" data-nav href="${base}/stacks/off">All ${items.length}</a></div>
+</section>`
+}
+controller('endlist', class extends Controller {
+  more() {
+    endShown = Math.max(END_STEP, endShown) + END_STEP
+    const rows = [...this.element.querySelectorAll('.end-row')]
+    rows.forEach((r, i) => { r.hidden = i >= endShown })
+    const left = rows.length - endShown, b = this.element.querySelector('.end-more')
+    if (left <= 0) b?.remove(); else b.querySelector('span').textContent = `${Math.min(END_STEP, left)} of ${left}`
+  }
+})
 
 const SHOWN = 10     // the unfolded pile shows so many lines, then "N more"
 /** The one pile "Off the desk" (his pick A). stands: it stands unfolded (?pile=off). hits: the sheets found by q, or null. */
@@ -455,9 +498,7 @@ function selectWays(root) {
     bar.elements.ids.value = [...chosen].join(',')
     const kinds = [...chosen].map(id => root.querySelector(`#row-${CSS.escape(id)}`)?.dataset.kind ?? '')
     bar.querySelector('.sel-read').hidden = !kinds.includes('info')
-    bar.querySelector('.sel-archive').hidden = !kinds.includes('done')
-    bar.querySelector('.sel-duck').hidden = kinds.every(k => k === 'info' || k === 'done')
-    for (const way of ['.sel-later', '.sel-shred']) { const b = bar.querySelector(way); if (b) b.hidden = kinds.every(k => k === 'done') }
+    bar.querySelector('.sel-duck').hidden = kinds.every(k => k === 'info')
   }
   const onClick = e => {
     const mark = e.target.closest?.('[data-select]')
@@ -806,7 +847,7 @@ export function register(t) {
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
     t.live('desk', {
-      take: m => { const all = deskCards(m); return { order: all.map(c => c.id), agents: new Map(all.map(c => [c.id, c.landed ? `${c.agent}|done` : c.agent])), rows: new Map(all.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), slip: linkSlip(m.cut ?? [], BASE), ip: withAgents(m, BASE), stacks: deskStacks(m, BASE) } },
+      take: m => { const all = deskCards(m); return { order: all.map(c => c.id), agents: new Map(all.map(c => [c.id, c.agent])), rows: new Map(all.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), slip: linkSlip(m.cut ?? [], BASE), ip: withAgents(m, BASE), end: endList(m, BASE), stacks: deskStacks(m, BASE) } },
       diff(was, now, client, m) {
         const out = []
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
@@ -819,8 +860,7 @@ export function register(t) {
         const keptSet = new Set(kept), wasRuns = []
         for (const id of was.order) { if (!wasRuns.length || was.agents.get(wasRuns.at(-1).at(-1)) !== was.agents.get(id)) wasRuns.push([]); wasRuns.at(-1).push(id) }
         const merges = runsOf(kept, id => was.agents.get(id)) < wasRuns.filter(r => r.some(id => keptSet.has(id))).length
-        if (!sameOrder || merges || added.some(id => m.byCard.get(id)?.landed)) {   // (a Done row that lands: drawn again, in its place among the others)
-        const w = windowed(m); out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => (w(c) === now.rows.get(c.id) ? now.rows.get(c.id) : w(c)) }))) }
+        if (!sameOrder || merges) { const w = windowed(m); out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => (w(c) === now.rows.get(c.id) ? now.rows.get(c.id) : w(c)) }))) }
         else {
           for (const id of was.order) if (!now.rows.has(id)) out.push(stream('remove', `row-${id}`))
           for (const id of kept) if (was.rows.get(id) !== now.rows.get(id) && t.differs(was.rows.get(id), now.rows.get(id))) out.push(stream('replace', `row-${id}`, now.rows.get(id)))
@@ -828,11 +868,12 @@ export function register(t) {
           for (const id of added) {
             const card = m.byCard.get(id), sender = m.byAgent.get(card.agent); if (!sender) continue
             const prev = now.order[now.order.indexOf(id) - 1]
-            if (prev && now.agents.get(prev) === now.agents.get(id)) out.push(stream('after', `row-${prev}`, now.rows.get(id)))
+            if (prev && now.agents.get(prev) === card.agent) out.push(stream('after', `row-${prev}`, now.rows.get(id)))
             else out.push(stream('before', 'desk-ip', runSection(sender, now.rows.get(id), 1)))
           }
         }
         if (t.differs(was.ip, now.ip)) out.push(stream('replace', 'desk-ip', now.ip))
+        if (t.differs(was.end, now.end)) out.push(stream('replace', 'desk-end', now.end))
         if (t.differs(was.stacks, now.stacks)) out.push(stream('replace', 'desk-stacks', now.stacks))
         return out.join('')
       },

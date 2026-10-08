@@ -1212,9 +1212,48 @@ html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { padding-r
 /* (a phone: the advised pair a little taller, the stroke clear under the words) */
 @media (max-width: 860px) { html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-advised::after { bottom: 3px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer { height: 60px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take { padding-bottom: 14px; } }
 
-/* ---- a Done row (ui.mjs doneRow; his word, 7 October): what an agent finished lies on the Desk until he archives it.
-   Quiet: the tick in the done ink before the title, the summary in the grey line, the row a shade paler. ---- */
-.row-urg.is-done { color: var(--stamp-ink-done); }
-.row-urg.is-done > svg { stroke-width: 2.4; }
-.inbox-body-about.is-done { color: var(--stamp-ink-done); font-weight: 600; }
-.inbox-row.is-done .inbox-question { color: color-mix(in srgb, var(--fg) 82%, var(--surface)); }
+/* ---- the end of the Desk's list (desk.mjs endList): slim rows, a drawn box to tick off, ticked ones struck through.
+   The box in the pen's line; a ticked box in the done ink; Later's three Z in its ink. Max five, then Load more. ---- */
+.endlist { display: grid; gap: 2px; margin: var(--s-6) 0 0; }
+.endlist[hidden] { display: none; }
+.end-rows { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+.end-row { text-align: left; display: grid; grid-template-columns: 30px minmax(0, max-content) minmax(0, 1fr) auto; align-items: center; column-gap: var(--s-2); min-height: 40px; padding: 2px var(--s-2) 2px 2px; border-bottom: 1px solid var(--line); }
+.end-row[hidden] { display: none; }
+.end-form { margin: 0; display: contents; }
+.end-tick { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--fg); }
+button.end-tick { cursor: pointer; }
+button.end-tick:hover { background: var(--sunken); }
+button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
+.end-box { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.end-tick.is-ticked { color: var(--faint); }
+.end-tick.is-ticked .end-check { stroke: var(--stamp-ink-done); stroke-width: 2.2; }
+.end-tick.is-later { color: var(--stamp-ink-later); }
+.end-tick.is-later .sketch { width: 20px; height: 20px; }
+.end-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font: 600 var(--t-sm)/1.3 var(--font); text-decoration: none; }
+.end-title:hover { text-decoration: underline; }
+.end-said { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 400 var(--t-sm)/1.3 var(--font); }
+.end-ago { color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
+.end-row:not([data-g="open"]) :is(.end-title, .end-said) { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--fg) 45%, transparent); color: var(--muted); }
+.end-row[data-g="later"] :is(.end-title, .end-said) { text-decoration: none; }
+.end-row[data-g="trash"] :is(.end-title, .end-said) { opacity: .7; }
+.end-foot { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-2) 2px 0; }
+.end-more { min-height: 36px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.end-more span { color: var(--muted); font-weight: 400; margin-left: 4px; }
+.end-more:hover { border-color: var(--fg); }
+.end-all { margin-left: auto; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); }
+.end-all:hover { color: var(--fg); }
+/* a phone: the title and its line one above the other */
+@media (max-width: 860px) {
+  .end-row { grid-template-columns: 30px minmax(0, 1fr) auto; grid-template-areas: "b t w" "b s s"; row-gap: 0; padding-block: 5px; }
+  .end-row > .end-tick, .end-row > .end-form { grid-area: b; }
+  .end-row > .end-form > .end-tick { grid-area: b; }
+  .end-title { grid-area: t; } .end-said { grid-area: s; font-size: var(--t-xs); } .end-ago { grid-area: w; }
+}
+
+/* (the foot holds two piles now, Media and Pages, centred; on its own page /stacks/off the list of everything stands
+   above them) */
+:is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs.is-two { grid-template-columns: minmax(0, 1fr) max-content max-content minmax(0, 1fr) !important; }
+#inbox .inbox-stacks.stack-tabs.is-two > #desk-media { grid-column: 2; grid-row: 1; }
+#inbox .inbox-stacks.stack-tabs.is-two > #desk-pages { grid-column: 3; grid-row: 1; }
+#inbox .inbox-stacks.stack-tabs.is-two:not(:has(> #desk-media)) > #desk-pages { grid-column: 2; }
+.end-row > :is(.end-title, .end-said) { justify-self: stretch; text-align: left; } .end-row > .end-ago { justify-self: end; }
