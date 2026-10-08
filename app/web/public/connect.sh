@@ -4,8 +4,8 @@
 #   cd <your project> && curl -fsSL https://app.trommi.com/connect | sh -s '<invite link>'
 #
 # Needs Claude Code (claude) and curl; the connector is one static binary (connector-rs), no Node. What it does:
-#   1. downloads the connector of this machine (Linux x86_64 or aarch64) to ~/.local/share/trommi/connector/ and checks
-#      its SHA-256: connector/trommi-connector-<target>.sha256 names the newest binary, which is served at
+#   1. downloads the connector of this machine (Linux or macOS, x86_64 or arm64) to ~/.local/share/trommi/connector/
+#      and checks its SHA-256: connector/trommi-connector-<target>.sha256 names the newest binary, which is served at
 #      connector/<sha256>/trommi-connector-<target>,
 #   2. installs the Trommi plugin for this folder from Trommi's own marketplace:
 #        claude plugin marketplace add https://app.trommi.com/plugins/marketplace.json
@@ -15,7 +15,6 @@
 #      A Claude Code without plugin support gets the connector as before: claude mcp add trommi --scope project.
 #   3. joins your account with the invite link (the link is passed by environment, never printed),
 #   4. tells you how to start Claude Code.
-# macOS has no connector build yet: there the script stops and says so.
 # POSIX sh: runs on Linux and macOS (dash, bash, zsh as sh).
 set -eu
 
@@ -36,8 +35,9 @@ esac
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64|Linux/amd64) TARGET=x86_64-unknown-linux-musl ;;
   Linux/aarch64|Linux/arm64) TARGET=aarch64-unknown-linux-musl ;;
-  Darwin/*) fail "there is no Trommi connector for macOS yet (only Linux, x86_64 and aarch64, for now)." ;;
-  *) fail "there is no Trommi connector for $(uname -s)/$(uname -m) (only Linux, x86_64 and aarch64, for now)." ;;
+  Darwin/arm64|Darwin/aarch64) TARGET=aarch64-apple-darwin ;;
+  Darwin/x86_64) TARGET=x86_64-apple-darwin ;;
+  *) fail "there is no Trommi connector for $(uname -s)/$(uname -m) (only Linux and macOS, x86_64 and arm64)." ;;
 esac
 command -v claude >/dev/null 2>&1 || fail "Claude Code (claude) is missing. Install it (https://claude.com/claude-code), then run this again."
 command -v curl >/dev/null 2>&1 || fail "curl is missing."
