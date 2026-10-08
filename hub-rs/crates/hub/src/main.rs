@@ -188,7 +188,7 @@ async fn run() -> Result<(), String> {
                         let (hub, conn) = (hub.clone(), conn.clone());
                         async move { Ok::<_, std::convert::Infallible>(hub.serve(req, conn).await) }
                     });
-                    let fut = http1::Builder::new().timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(30)).keep_alive(true).serve_connection(TokioIo::new(sock), svc);
+                    let fut = http1::Builder::new().timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(65)).keep_alive(true).serve_connection(TokioIo::new(sock), svc);
                     tokio::pin!(fut);
                     let mut graceful = false;
                     loop {

@@ -139,7 +139,9 @@ Status: **done** = the same behaviour, checked by the named suite against hub-rs
 | Rate limits (`HUB_LIMIT_*`), `cf-connecting-ip` only from a private peer with `HUB_TRUST_CF=1` | done | hub/test.mjs |
 | Test rooms (`x-test-signature`, `DELETE`, 24 h expiry, limits lifted) | done | ops/test.mjs |
 | Retention (30 days after the answer, card chat, attachments), derived tables rebuild | done | hub/test.mjs |
-| Slow requests: 15 s JSON body, upload 60 s + size/16 KiB/s, 30 s headers | done | hub/test.mjs C03 |
+| Slow requests: 15 s JSON body, upload 60 s + size/16 KiB/s, no upload bytes for 30 s | done | hub/test.mjs C03 |
+| Idle connections: keep-alive kept 65 s (`keepAliveTimeout`), a connection that never sends closed after 65 s (Node: 60 s) | done | probe (scratch script) |
+| A download whose client takes no bytes for 30 s | differs | cut after 30 s, as the README's Limits say ("any request with no bytes moving for 30 s is closed"); the Node hub serves it to the end however long the client pauses (its socket timeout does not see a blocked pipe) |
 | `hub.db` schema, migrations (`referenced_at`, `void_code`, `level`, schema 2 moved aside), WAL, incremental vacuum, leases kept across restarts | done | hub/test.mjs restart, switchover |
 | WAL keeper, metrics port (`/metrics`, `/metrics/history`), `metrics.db` minutes | done (Node-only figures see below) | ops/test.mjs, admin-test |
 | Admin page: Tailscale login + password, sessions, CSRF, rate limits, password change, overview, data browser, row detail with decoded header | done | admin-test |
