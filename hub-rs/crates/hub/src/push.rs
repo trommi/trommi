@@ -1,5 +1,6 @@
 //! Web Push (hub/push.mjs: RFC 8291 aes128gcm, RFC 8292 VAPID) and APNs (hub/apns.mjs: HTTP/2, ES256 provider token).
-//! The payload is { room_id, envelope_number, urgency } or the agent-lost word, and nothing else.
+//! The payload is { room_id, envelope_number, urgency } or the agent-lost word, and nothing else; an iPhone's also
+//! carries a ticket for that one envelope (PushTickets, GET push_envelope). Live Activities: send_live.
 
 use crate::config::Config;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
@@ -78,6 +79,64 @@ pub fn encrypt(plain: &[u8], p256dh: &str, auth: &str) -> Option<Vec<u8>> {
     out.extend_from_slice(&sender);
     out.extend_from_slice(&ct);
     Some(out)
+}
+
+/// Push tickets (hub/apns.mjs pushTickets): t = b64u(expires (u64 BE, ms) || mac16), mac = HMAC-SHA256(key, label 0
+/// room_id 0 device_id 0 n 0 expires); the key is HUB_DATA/push-ticket.key (32 bytes, 0600), shared with the Node hub.
+pub struct PushTickets {
+    key: [u8; 32],
+}
+pub const TICKET_MS: i64 = 86_400_000;
+impl PushTickets {
+    pub fn new(dir: &Path) -> PushTickets {
+        let file = dir.join("push-ticket.key");
+        let read = || std::fs::read(&file).ok().filter(|k| k.len() == 32);
+        let key = match read() {
+            Some(k) => k,
+            None => {
+                let k = crate::util::random_bytes(32);
+                let mut o = std::fs::OpenOptions::new();
+                o.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    o.mode(0o600);
+                }
+                use std::io::Write;
+                match o.open(&file).and_then(|mut f| f.write_all(&k)) {
+                    Ok(()) => k,
+                    Err(_) => read().unwrap_or(k),
+                }
+            }
+        };
+        PushTickets { key: key.try_into().unwrap() }
+    }
+    fn mac(&self, room: &str, dev: &str, n: i64, exp: i64) -> [u8; 16] {
+        use hmac::Mac;
+        let mut m = <hmac::Hmac<Sha256> as Mac>::new_from_slice(&self.key).unwrap();
+        m.update(b"trommi-push-ticket-v1");
+        m.update(format!("\0{room}\0{dev}\0{n}\0{exp}").as_bytes());
+        m.finalize().into_bytes()[..16].try_into().unwrap()
+    }
+    pub fn issue(&self, room: &str, dev: &str, n: i64, now: i64) -> String {
+        let exp = now + TICKET_MS;
+        let mut b = (exp as u64).to_be_bytes().to_vec();
+        b.extend_from_slice(&self.mac(room, dev, n, exp));
+        b64u(&b)
+    }
+    pub fn check(&self, room: &str, dev: &str, n: i64, ticket: Option<&str>, now: i64) -> bool {
+        let Some(t) = ticket.filter(|t| t.len() <= 64) else { return false };
+        let b = b64_lenient(t);
+        if b.len() != 24 {
+            return false;
+        }
+        let exp = u64::from_be_bytes(b[..8].try_into().unwrap()) as i64;
+        if exp < now || exp > now + TICKET_MS {
+            return false;
+        }
+        let want = self.mac(room, dev, n, exp);
+        want.iter().zip(&b[8..]).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    }
 }
 
 fn jwt(key: &SigningKey, header: &Value, claims: &Value) -> String {
@@ -287,15 +346,23 @@ impl Apns {
         }
         Some(json!({ "token": tok, "environment": env, "topic": topic_s, "key": key }))
     }
-    async fn post(&self, origin: &str, path: &str, token: &str, a: &Value, body: &str) -> (u16, String) {
+    /// A Live Activity token: { token (hex), environment, topic }; normalised or None.
+    pub fn check_live(&self, a: &Value) -> Option<Value> {
+        let mut with_key = a.as_object()?.clone();
+        with_key.insert("key".into(), json!(b64u(&[0u8; 32])));
+        let mut v = self.check(&Value::Object(with_key))?;
+        v.as_object_mut()?.remove("key");
+        Some(v)
+    }
+    async fn post(&self, origin: &str, path: &str, token: &str, h: (&str, &str, &str), body: &str) -> (u16, String) {
         let client = if origin.starts_with("http://") { &self.h2c } else { &self.tls };
         let r = client
             .post(format!("{origin}{path}"))
             .header("content-type", "application/json")
             .header("authorization", format!("bearer {token}"))
-            .header("apns-topic", a["topic"].as_str().unwrap_or(""))
-            .header("apns-push-type", "alert")
-            .header("apns-priority", "10")
+            .header("apns-topic", h.0)
+            .header("apns-push-type", h.1)
+            .header("apns-priority", h.2)
             .header("apns-expiration", (crate::util::now() / 1000 + 86400).to_string())
             .body(body.to_string())
             .send()
@@ -313,12 +380,33 @@ impl Apns {
     /// One message; a token Apple no longer takes comes back as 410: forget it.
     pub async fn send(&self, a: &Value, message: &Value, log: &(dyn Fn(&str) + Sync)) -> u16 {
         let key = b64_lenient(a["key"].as_str().unwrap_or(""));
-        let payload = serde_json::to_string(&json!({ "aps": { "alert": { "title": "Trommi", "body": alert_of(message) }, "sound": "default" }, "e": apns_seal(message, &key) })).unwrap();
+        let payload = serde_json::to_string(&json!({ "aps": { "alert": { "title": "Trommi", "body": alert_of(message) }, "sound": "default", "mutable-content": 1 }, "e": apns_seal(message, &key) })).unwrap();
+        self.deliver(a, a["topic"].as_str().unwrap_or(""), "alert", "10", &payload, log).await
+    }
+    /// One Live Activity push (apns.mjs sendLive): start (with the attributes { tag }), update or end; two counts only.
+    pub async fn send_live(&self, a: &Value, event: &str, working: i64, waiting: i64, tag: &str, urgent: bool, log: &(dyn Fn(&str) + Sync)) -> u16 {
+        let t = crate::util::now() / 1000;
+        let mut aps = json!({ "timestamp": t, "event": event, "content-state": { "working": working, "waiting": waiting } });
+        let o = aps.as_object_mut().unwrap();
+        if event == "start" {
+            o.insert("attributes-type".into(), json!("TrommiActivityAttributes"));
+            o.insert("attributes".into(), json!({ "tag": tag }));
+            o.insert("alert".into(), json!({ "title": "Trommi", "body": "Agenten arbeiten." }));
+        }
+        if event == "end" {
+            o.insert("dismissal-date".into(), json!(t + 900));
+        }
+        let topic = format!("{}.push-type.liveactivity", a["topic"].as_str().unwrap_or(""));
+        let priority = if event == "update" && !urgent { "5" } else { "10" };
+        self.deliver(a, &topic, "liveactivity", priority, &serde_json::to_string(&json!({ "aps": aps })).unwrap(), log).await
+    }
+    async fn deliver(&self, a: &Value, topic: &str, kind: &str, priority: &str, payload: &str, log: &(dyn Fn(&str) + Sync)) -> u16 {
         let Some(origin) = self.hosts.get(a["environment"].as_str().unwrap_or("")) else { return 0 };
         let path = format!("/3/device/{}", a["token"].as_str().unwrap_or(""));
-        let mut r = self.post(origin, &path, &self.token(false), a, &payload).await;
+        let h = (topic, kind, priority);
+        let mut r = self.post(origin, &path, &self.token(false), h, payload).await;
         if r.0 == 403 && r.1 == "ExpiredProviderToken" {
-            r = self.post(origin, &path, &self.token(true), a, &payload).await;
+            r = self.post(origin, &path, &self.token(true), h, payload).await;
         }
         if r.0 == 0 {
             log(&format!("apns: {}", r.1));

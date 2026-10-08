@@ -28,7 +28,7 @@ const TZ = process.env.ADMIN_TZ || 'Europe/Berlin';
 
 // Columns whose content is ciphertext, signed blobs or secrets: never shown in full.
 // escrow_id, key_escrow: the removed password escrow's table, left in databases from before (the id was a passphrase verifier).
-export const OPAQUE_COLUMN = /^(encrypted_body|key_sealed|key_back_link|envelope_header|envelope_nonce|envelope_signature|subscription|endpoint|access_token.*|signed_.*|.*_signature|escrow_id|key_escrow|.*_secret.*|.*_hash|.*_salt|.*_wrapped|email)$/;
+export const OPAQUE_COLUMN = /^(encrypted_body|key_sealed|key_back_link|envelope_header|envelope_nonce|envelope_signature|subscription|endpoint|access_token.*|signed_.*|.*_signature|escrow_id|key_escrow|.*_secret.*|.*_hash|.*_salt|.*_wrapped|.*_token|email)$/;
 // Device ids are public (the member list names them); as BLOBs they are shown in full hex so they can be linked.
 const DEVICE_COLUMN = /(^|_)device_id$/;
 

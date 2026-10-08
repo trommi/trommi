@@ -97,6 +97,7 @@ impl<'a> Store<'a> {
         }
         for d in removed {
             self.c.prepare_cached("DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ?")?.execute(params![self.room, d])?;
+            self.c.prepare_cached("DELETE FROM live_activities WHERE room_id = ? AND device_id = ?")?.execute(params![self.room, d])?;
         }
         Ok(())
     }

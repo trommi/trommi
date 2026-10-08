@@ -96,6 +96,11 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   room_id TEXT NOT NULL, device_id TEXT NOT NULL, endpoint TEXT NOT NULL, subscription TEXT NOT NULL, created_at INTEGER NOT NULL, level TEXT NOT NULL DEFAULT 'all',
   PRIMARY KEY (room_id, device_id, endpoint)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS live_activities (
+  room_id TEXT NOT NULL, device_id TEXT NOT NULL, environment TEXT NOT NULL, topic TEXT NOT NULL, tag TEXT NOT NULL DEFAULT '',
+  start_token TEXT, activity_token TEXT, started_at INTEGER, sent TEXT, created_at INTEGER NOT NULL,
+  PRIMARY KEY (room_id, device_id)
+) WITHOUT ROWID;
 `
 
 // What each column of hub.db holds, as the admin page marks it (hub/admin-view.mjs; hub-rs gets the same table
@@ -296,6 +301,7 @@ export function roomStorage(db, roomId) {
       }
       // A removed device's push subscriptions go in the same transaction (R6).
       for (const d of info.removed ?? []) q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ?').run(roomId, d)
+      for (const d of info.removed ?? []) q('DELETE FROM live_activities WHERE room_id = ? AND device_id = ?').run(roomId, d)
     },
     // R4 leases survive a hub restart (a deploy must not stop every running agent).
     getLease(id) { const r = q('SELECT process_instance, lease_generation, expires_at FROM agent_leases WHERE room_id = ? AND device_id = ?').get(roomId, id); return r ? { instance: r.process_instance, generation: r.lease_generation, expiresAt: r.expires_at } : null },

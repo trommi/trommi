@@ -3,18 +3,25 @@
 // into a Web Push ({ room_id, envelope_number, urgency } or the agent-lost word) rides along as `e`, sealed with
 // AES-256-GCM under a key the app made and registered with its token, so Apple sees a token, a time and a fixed text.
 // Token auth: an ES256 JWT from the team's APNs key (.p8), renewed every 40 minutes (Apple wants 20 to 60).
+// `mutable-content: 1` lets the app's Notification Service Extension replace the fixed text with the card's title,
+// decrypted on the phone: for a card, `e` also carries a ticket (`t`, pushTickets below) with which the extension may
+// fetch exactly that one envelope (GET push_envelope), without the device key. Live Activities (sendLive): the
+// Dynamic Island's "n agents working · m questions waiting", pushed as two counts and nothing else.
 //
 // env: APNS_KEY_FILE (path of the .p8) or APNS_KEY (its PEM text), APNS_KEY_ID, APNS_TEAM_ID, APNS_TOPIC (bundle ids,
 // comma list; the first is the default). Missing any of them: no APNs, and the hub refuses APNs registrations.
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http2 from 'node:http2'
+import path from 'node:path'
 
 const b64 = b => Buffer.from(b).toString('base64url')
 const unb64 = t => Buffer.from(String(t ?? ''), 'base64url')
 export const HOSTS = { production: 'https://api.push.apple.com', sandbox: 'https://api.sandbox.push.apple.com' }
 const AAD = Buffer.from('trommi-apns-v1')
 const TOKEN = /^[0-9a-f]{64,200}$/
+const TICKET_LABEL = Buffer.from('trommi-push-ticket-v1')
+export const TICKET_MS = 86400000
 const BUNDLE = /^[A-Za-z0-9.-]{1,155}$/
 
 /** The configuration from the environment, or null when APNs is not set up. */
@@ -45,6 +52,37 @@ export function open(e, key) {
   d.setAAD(AAD)
   d.setAuthTag(b.subarray(b.length - 16))
   return JSON.parse(Buffer.concat([d.update(b.subarray(12, b.length - 16)), d.final()]).toString())
+}
+
+/**
+ * Push tickets: a capability for one envelope, sealed into `e` for one device. t = b64u(expires (u64 BE, ms) || mac),
+ * mac = HMAC-SHA256(key, label 0 room_id 0 device_id 0 envelope_number 0 expires)[0..16]; the key is 32 random bytes
+ * in HUB_DATA/push-ticket.key (0600; the Rust hub reads the same file). It opens nothing: the envelope is ciphertext,
+ * and only that device's Notification Service Extension can read the ticket.
+ */
+export function pushTickets(dir) {
+  const file = dir ? path.join(dir, 'push-ticket.key') : null
+  let key = null
+  if (file) { try { const k = fs.readFileSync(file); if (k.length === 32) key = k } catch {} }
+  if (!key) {
+    key = crypto.randomBytes(32)
+    if (file) { try { fs.writeFileSync(file, key, { mode: 0o600, flag: 'wx' }) } catch { try { const k = fs.readFileSync(file); if (k.length === 32) key = k } catch {} } }
+  }
+  const mac = (roomId, deviceId, n, exp) => crypto.createHmac('sha256', key)
+    .update(Buffer.concat([TICKET_LABEL, Buffer.from(`\0${roomId}\0${deviceId}\0${n}\0${exp}`)])).digest().subarray(0, 16)
+  return {
+    issue(roomId, deviceId, n, now = Date.now()) {
+      const exp = now + TICKET_MS, b = Buffer.alloc(8)
+      b.writeBigUInt64BE(BigInt(exp))
+      return b64(Buffer.concat([b, mac(roomId, deviceId, n, exp)]))
+    },
+    check(roomId, deviceId, n, ticket, now = Date.now()) {
+      const b = typeof ticket === 'string' && ticket.length <= 64 ? unb64(ticket) : Buffer.alloc(0)
+      if (b.length !== 24) return false
+      const exp = Number(b.readBigUInt64BE(0))
+      return exp >= now && exp <= now + TICKET_MS && crypto.timingSafeEqual(b.subarray(8), mac(roomId, deviceId, n, exp))
+    },
+  }
 }
 
 /** The fixed text a push shows: no title, no room, no card, only what kind of push it is. */
@@ -112,11 +150,10 @@ export function apnsSender(config, { hosts = HOSTS, log = () => {}, now = Date.n
    * Send one message; resolves with an HTTP status like push.mjs (0 on a network error). A token Apple no longer
    * takes (410 Unregistered, 400 BadDeviceToken or DeviceTokenNotForTopic) comes back as 410: forget it.
    */
-  async function send(a, message) {
-    const payload = JSON.stringify({ aps: { alert: { title: 'Trommi', body: alertOf(message) }, sound: 'default' }, e: seal(message, unb64(a.key)) })
+  async function deliver(a, topic, type, priority, payload) {
     const headers = token => ({
-      authorization: `bearer ${token}`, 'apns-topic': a.topic, 'apns-push-type': 'alert',
-      'apns-priority': '10', 'apns-expiration': String(Math.floor(now() / 1000) + 86400),
+      authorization: `bearer ${token}`, 'apns-topic': topic, 'apns-push-type': type,
+      'apns-priority': priority, 'apns-expiration': String(Math.floor(now() / 1000) + 86400),
     })
     let r = await post(hosts[a.environment], `/3/device/${a.token}`, headers(token()), payload)
     if (r.status === 403 && r.reason === 'ExpiredProviderToken') r = await post(hosts[a.environment], `/3/device/${a.token}`, headers(token(true)), payload)
@@ -124,6 +161,30 @@ export function apnsSender(config, { hosts = HOSTS, log = () => {}, now = Date.n
     if (r.status === 410 || (r.status === 400 && (r.reason === 'BadDeviceToken' || r.reason === 'DeviceTokenNotForTopic'))) return 410
     return r.status
   }
+  async function send(a, message) {
+    const payload = JSON.stringify({ aps: { alert: { title: 'Trommi', body: alertOf(message) }, sound: 'default', 'mutable-content': 1 }, e: seal(message, unb64(a.key)) })
+    return deliver(a, a.topic, 'alert', '10', payload)
+  }
+  /** A Live Activity token the app registers: { token (hex), environment, topic }; normalised or null. */
+  const checkLive = a => {
+    if (!a || typeof a !== 'object') return null
+    const tok = typeof a.token === 'string' ? a.token.toLowerCase() : ''
+    const topic = a.topic ?? config.topics[0]
+    if (!TOKEN.test(tok) || !(a.environment in hosts) || typeof topic !== 'string' || !BUNDLE.test(topic) || !config.topics.includes(topic)) return null
+    return { token: tok, environment: a.environment, topic }
+  }
+  /**
+   * One Live Activity push (README "Live Activity"): event start (to the push-to-start token, with the attributes
+   * { tag } the app chose), update, or end (dismissed after 15 minutes). The content state is two counts, nothing else.
+   * Priority 10 for start, end and a new question; 5 otherwise (Apple budgets the 10s).
+   */
+  async function sendLive(a, { event, state, tag, urgent = false }) {
+    const t = Math.floor(now() / 1000)
+    const aps = { timestamp: t, event, 'content-state': { working: state.working, waiting: state.waiting } }
+    if (event === 'start') Object.assign(aps, { 'attributes-type': 'TrommiActivityAttributes', attributes: { tag }, alert: { title: 'Trommi', body: 'Agenten arbeiten.' } })
+    if (event === 'end') aps['dismissal-date'] = t + 900
+    return deliver(a, `${a.topic}.push-type.liveactivity`, 'liveactivity', event === 'update' && !urgent ? '5' : '10', JSON.stringify({ aps }))
+  }
   function close() { for (const s of sessions.values()) s.close(); sessions.clear() }
-  return { topics: config.topics, check, send, close }
+  return { topics: config.topics, check, checkLive, send, sendLive, close }
 }

@@ -17,7 +17,7 @@ import { createHub } from '../shared/crypto/hub.mjs'
 import { openDb, roomStorage, envelopeBytes, chunkCount, rebuildDerived, vacuumStep } from './store.mjs'
 import { fileStore } from './attachments.mjs'
 import { pusher } from './push.mjs'
-import { apnsConfig, apnsSender } from './apns.mjs'
+import { apnsConfig, apnsSender, pushTickets } from './apns.mjs'
 import { createOps, limitsFromEnv } from './ops/index.mjs'
 import { createAccounts } from './accounts.mjs'
 import { createMailer } from './mail.mjs'
@@ -92,7 +92,7 @@ export async function startHub({
   origins = `${process.env.HUB_ORIGINS || ''},${process.env.HUB_PREVIEW_ORIGINS || ''}`.split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
   trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, apns: apnsOptions = apnsConfig(), apnsHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
-  pingMs = 25000, retentionEveryMs = DAY, streamCapEveryMs = 1000, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT, lossMs = Number(process.env.HUB_LOSS_MS || 60000),
+  pingMs = 25000, retentionEveryMs = DAY, streamCapEveryMs = 1000, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT, lossMs = Number(process.env.HUB_LOSS_MS || 60000), liveMs = Number(process.env.HUB_LIVE_MS || 2000),
 } = {}) {
   const t0 = performance.now()
   const db = openDb(dataDir, { log })
@@ -102,6 +102,8 @@ export async function startHub({
   if (apns) log(`apns on for ${apns.topics.join(', ')}`)
   /** One push to one registration: a browser's Web Push subscription, or an iPhone's APNs token ({ apns }). */
   const pushTo = (sub, message, opts) => sub.apns ? (apns ? apns.send(sub.apns, message, opts) : Promise.resolve(0)) : push.send(sub, message, opts)
+  /** Tickets for one envelope each, sealed into an iPhone's push (apns.mjs pushTickets; GET push_envelope). */
+  const tickets = pushTickets(dataDir)
   const rooms = new Map()            // room_id -> Promise<{ hub, streams: Set }>
   const founded = new Map()          // ip -> [times]
   const envelopeLimit = buckets(LIMITS.envelopesPerSecond, LIMITS.envelopeBurst, now)
@@ -288,6 +290,7 @@ export async function startHub({
     send(res, 200, { envelope_number: out.n })
     // send_push is honoured only on an object's own versions and requests (shared/crypto/hub.mjs), and rate-limited per sender.
     if (out.push && !pushLimit.take(`${r.id}:${me.id}`)) sendPushes(r, me.id, out).catch(err => log(`push: ${err.message}`))
+    if (out.card) liveSoon(r)
   }
 
   /**
@@ -348,6 +351,7 @@ export async function startHub({
       if (!cut && !e.working) return
       e.lost_pushed = true
       e.working = false
+      liveSoon(r)
       sendLinkPush(r, deviceId, cut ? 'cut' : 'gone', r.offlineSince.get(deviceId) ?? null).catch(err => log(`push: ${err.message}`))
     }, lossMs)
     e.timer.unref?.()
@@ -369,8 +373,56 @@ export async function startHub({
       WHERE p.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL AND p.device_id != ? AND (p.level = 'all' OR ?)`).all(r.id, senderId, knocks ? 1 : 0)
     const webUrgency = urgency >= z.URGENCY.HIGH ? 'high' : 'normal'
     await Promise.all(subs.map(async s => {
-      const status = await pushTo(JSON.parse(s.subscription), { room_id: r.id, envelope_number: out.n, urgency }, { urgency: webUrgency })
+      const sub = JSON.parse(s.subscription), message = { room_id: r.id, envelope_number: out.n, urgency }
+      // an iPhone also gets a ticket for this one envelope: its Notification Service Extension shows the card's title
+      if (sub.apns) message.t = tickets.issue(r.id, s.device_id, out.n, now())
+      const status = await pushTo(sub, message, { urgency: webUrgency })
       if (status === 404 || status === 410) db.q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?').run(r.id, s.device_id, s.endpoint)
+    }))
+  }
+
+  /**
+   * Live Activity (README "Live Activity"): per human iPhone one row, its push-to-start token and the token of its
+   * running activity. The counts are what the hub sees anyway: agents whose link says `working`, open objects owned by
+   * an agent (cards and permission requests). A change goes out at most every liveMs (HUB_LIVE_MS, 2 s): start when agents begin to work
+   * (once, until it ended), update, end when none works any more.
+   */
+  function liveSoon(r) {
+    if (!apns || r.liveTimer) return
+    r.liveTimer = setTimeout(() => { r.liveTimer = null; liveNow(r).catch(err => log(`live: ${err.message}`)) }, liveMs)
+    r.liveTimer.unref?.()
+  }
+  function liveCounts(r) {
+    const agents = new Set(db.q("SELECT device_id FROM devices WHERE room_id = ? AND device_role = 'agent' AND removed_entry_number IS NULL").all(r.id).map(d => d.device_id))
+    let working = 0
+    for (const [id, e] of r.link) if (e.working && agents.has(id)) working++
+    const waiting = db.q(`SELECT COUNT(*) AS n FROM objects o JOIN devices d ON d.room_id = o.room_id AND d.device_id = o.owner_device_id
+      WHERE o.room_id = ? AND o.object_state = 1 AND d.device_role = 'agent'`).get(r.id).n
+    return { working, waiting }
+  }
+  async function liveNow(r) {
+    const rows = db.q(`SELECT l.* FROM live_activities l JOIN devices d ON d.room_id = l.room_id AND d.device_id = l.device_id
+      WHERE l.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL`).all(r.id)
+    if (!rows.length) return
+    const state = liveCounts(r), key = `${state.working}:${state.waiting}`
+    const set = (row, cols) => db.q(`UPDATE live_activities SET ${Object.keys(cols).map(c => `${c} = ?`).join(', ')} WHERE room_id = ? AND device_id = ?`).run(...Object.values(cols), r.id, row.device_id)
+    await Promise.all(rows.map(async row => {
+      const reg = { environment: row.environment, topic: row.topic }
+      if (row.activity_token) {
+        if (!state.working) {
+          await apns.sendLive({ ...reg, token: row.activity_token }, { event: 'end', state })
+          return set(row, { activity_token: null, started_at: null, sent: null })
+        }
+        if (row.sent === key) return
+        const before = Number(String(row.sent ?? '0:0').split(':')[1])
+        const status = await apns.sendLive({ ...reg, token: row.activity_token }, { event: 'update', state, urgent: state.waiting > before })
+        return set(row, status === 410 ? { activity_token: null, started_at: null, sent: null } : { sent: key })
+      }
+      if (!state.working) return row.started_at != null ? set(row, { started_at: null, sent: null }) : undefined
+      // started and its token not here yet (the app registers it when iOS wakes it): no second start
+      if (!row.start_token || (row.started_at != null && now() - row.started_at < 8 * 3600000)) return
+      const status = await apns.sendLive({ ...reg, token: row.start_token }, { event: 'start', state, tag: row.tag })
+      set(row, status === 410 ? { start_token: null } : status === 200 ? { started_at: now(), sent: key } : {})
     }))
   }
 
@@ -694,6 +746,7 @@ export async function startHub({
       const report = linkReport(await readJson(req))
       const e = linkOf(r, me.id)
       e.report = report
+      if (e.working !== report.working) liveSoon(r)
       e.working = report.working
       announce(r, me.id)
       if (!report.cut_since) e.cut_pushed = null
@@ -710,6 +763,7 @@ export async function startHub({
       fenced(r, req, me)
       const body = await readJson(req)
       if (typeof body.working !== 'boolean') fail('bad-argument', 'working')
+      if (linkOf(r, me.id).working !== body.working) liveSoon(r)
       linkOf(r, me.id).working = body.working
       return send(res, 200, { ok: true })
     }
@@ -812,6 +866,40 @@ export async function startHub({
           .run(r.id, me.id, sub.endpoint, JSON.stringify(sub), now(), body.level ?? 'all')
       }
       return send(res, 200, { ok: true })
+    }
+    // One envelope for an iPhone's Notification Service Extension, against the ticket its push carried (apns.mjs
+    // pushTickets): no access token, no device key; the envelope is ciphertext, the extension opens it on the phone.
+    if (m === 'GET' && a === 'push_envelope' && !b) {
+      openRoute(req, r.id)
+      const n = intParam(url, 'envelope_number', 0, 1, Number.MAX_SAFE_INTEGER)
+      const deviceId = hexParam(url.searchParams.get('device_id'), HEX64, 'device_id')
+      if (!tickets.check(r.id, deviceId, n, url.searchParams.get('ticket'), now())) fail('forbidden', 'no valid ticket for this envelope')
+      if (!db.q("SELECT 1 FROM devices WHERE room_id = ? AND device_id = ? AND device_role = 'human' AND removed_entry_number IS NULL").get(r.id, deviceId)) fail('forbidden', 'not an active human device')
+      const row = envelopeRows(r.id, n - 1, 1)[0]
+      if (!row || row.envelope_number !== n) fail('not-found', 'no such envelope')
+      return send(res, 200, record(row))
+    }
+    // An iPhone's Live Activity tokens (README "Live Activity"): kind start (its push-to-start token, with the tag the
+    // activity's attributes carry) or activity (the token of the activity that runs); remove: true forgets it.
+    if (m === 'POST' && a === 'live_activity' && !b) {
+      const me = hub.authorise(bearer(req), { human: true })
+      const body = await readJson(req)
+      if (!apns) fail('bad-argument', 'this hub sends no APNs push')
+      const reg = apns.checkLive(body.apns)
+      if (!reg) fail('bad-argument', 'not an APNs token: { token, environment: sandbox | production, topic }')
+      if (body.kind !== 'start' && body.kind !== 'activity') fail('bad-argument', 'kind is start or activity')
+      const col = body.kind === 'start' ? 'start_token' : 'activity_token'
+      if (body.remove === true) {
+        db.q(`UPDATE live_activities SET ${col} = NULL WHERE room_id = ? AND device_id = ? AND ${col} = ?`).run(r.id, me.id, reg.token)
+        db.q('DELETE FROM live_activities WHERE room_id = ? AND device_id = ? AND start_token IS NULL AND activity_token IS NULL').run(r.id, me.id)
+      } else {
+        if (body.kind === 'start' && (typeof body.tag !== 'string' || !/^[0-9a-f]{8,32}$/.test(body.tag))) fail('bad-argument', 'tag: 8 to 32 lowercase hex')
+        db.q(`INSERT INTO live_activities (room_id, device_id, environment, topic, tag, ${col}, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (room_id, device_id) DO UPDATE SET environment = excluded.environment, topic = excluded.topic, ${col} = excluded.${col}${body.kind === 'start' ? ', tag = excluded.tag' : ''}`)
+          .run(r.id, me.id, reg.environment, reg.topic, body.kind === 'start' ? body.tag : '', reg.token, now())
+        liveSoon(r)
+      }
+      return send(res, 200, { ok: true, ...liveCounts(r) })
     }
     fail('not-found', 'no such route')
   }
