@@ -468,6 +468,14 @@ public final class Board {
 
   public init() {}
 
+  /** Forget everything the records built (a store that could not be read to its end): the member list stays. */
+  public func reset() {
+    lastEnvelopeNumber = 0
+    sessions = [:]; cards = [:]; permissions = [:]; notes = [:]; published = [:]; timelines = [:]
+    human = HumanRegisters(); alerts = []; stack = []; openPermissionIds = []
+    newerCount = 0; newerWhat = []; newerEnvelope = 0; deviceRegisters = [:]; alertSeq = 0; answerEchoes = [:]
+  }
+
   /**
    * A cheap fingerprint of everything a screen shows: equal before and after a batch means the batch changed nothing
    * visible (a refresh with no news), and the app skips the render.
@@ -645,7 +653,9 @@ public final class Board {
   }
   /** R1: who may write into which timeline: nil if allowed, else a refusal code. */
   public func timelineRefusal(_ rec: Rec) -> String? {
-    let p = parseTimelineKey(timelineKeyOf(rec.timelineKind ?? "", rec.timelineId ?? ""))
+    timelineRefusal(rec, parseTimelineKey(timelineKeyOf(rec.timelineKind ?? "", rec.timelineId ?? "")))
+  }
+  func timelineRefusal(_ rec: Rec, _ p: (kind: String, timelineId: String, scope: String, scopeId: String)) -> String? {
     let human = rec.senderRole == "human"
     if p.kind == "chat" {
       if p.scope == "session" {
@@ -667,8 +677,10 @@ public final class Board {
     return nil
   }
   private func applyTimelineItem(_ rec: Rec, _ change: inout Change) -> (applied: Bool, refused: String?) {
-    if let why = timelineRefusal(rec) { return refuse(&change, rec, why, "not allowed in \(rec.timelineId ?? "")") }
+    // the key and its parts once per record (a replay applies tens of thousands)
     let key = timelineKeyOf(rec.timelineKind ?? "", rec.timelineId ?? "")
+    let p = parseTimelineKey(key)
+    if let why = timelineRefusal(rec, p) { return refuse(&change, rec, why, "not allowed in \(rec.timelineId ?? "")") }
     let t = timelineOf(key)
     t.itemCount += 1
     t.newestEnvelopeNumber = max(t.newestEnvelopeNumber, rec.envelopeNumber)
@@ -680,7 +692,6 @@ public final class Board {
       t.items[rec.envelopeNumber] = Board.itemOf(rec)
     }
     change.timelines.insert(key)
-    let p = parseTimelineKey(key)
     if p.kind == "chat" && p.scope == "card" {
       if let card = cards[p.scopeId] {
         let c = rec.content
@@ -1072,11 +1083,27 @@ public final class Board {
 
   static let urgencyRank = ["critical": 3, "high": 2, "normal": 1, "low": 0]
   /** The stack (open cards, the most urgent first, then the oldest), per-session open lists, open permissions. */
+  /**
+   * The projection again for what one batch touched (a live envelope): only those sessions' card lists are sorted, and
+   * the open stack only when cards, registers or permissions changed (a chat message touches neither: O(1) work).
+   */
+  public func project(_ change: Change, now: UInt64 = nowMs()) {
+    if change.stack || change.room || change.members { project(now: now); return }
+    for sid in change.sessions {
+      guard let s = sessions[sid] else { continue }
+      s.cardIds.sort { (cards[$0]?.createdAt ?? 0, $0) < (cards[$1]?.createdAt ?? 0, $1) }
+      s.openCardIds = s.cardIds.filter { cards[$0]?.objectState == "open" }
+    }
+    if !change.cards.isEmpty || !change.registers.isEmpty || !change.permissions.isEmpty { projectStack(now: now) }
+  }
   public func project(now: UInt64 = nowMs()) {
     for s in sessions.values {
       s.cardIds.sort { (cards[$0]?.createdAt ?? 0, $0) < (cards[$1]?.createdAt ?? 0, $1) }
       s.openCardIds = s.cardIds.filter { cards[$0]?.objectState == "open" }
     }
+    projectStack(now: now)
+  }
+  private func projectStack(now: UInt64) {
     let archived = Set(sessions.values.filter { $0.settings["archived"].truthy }.map { $0.sessionId })
     let open = cards.values.filter { $0.objectState == "open" }.sorted { a, b in
       let ra = Board.urgencyRank[a.urgency] ?? 1, rb = Board.urgencyRank[b.urgency] ?? 1

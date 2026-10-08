@@ -229,11 +229,14 @@ public struct Chain: Codable, Equatable {
   public var told: [String: UInt64] = [:]
   public init() {}
 }
-public typealias Chains = [String: Chain]          // hex sender id -> chain
+public typealias Chains = [String: Chain]
+public let CHAIN_HASHES_KEPT = 256          // hex sender id -> chain
 
 func advance(_ chains: inout Chains, _ sender: Bytes, _ seq: UInt64, _ h: Bytes, told: [Seen]? = nil) {
   var c = chains[hex(sender)] ?? Chain()
   c.seq = seq; c.hash = h; c.hashes[seq] = h
+  // the newest CHAIN_HASHES_KEPT envelope hashes per sender (equivocation checks), as client.mjs trimChain
+  if c.hashes.count > CHAIN_HASHES_KEPT * 2 { let keep = Set(c.hashes.keys.sorted().suffix(CHAIN_HASHES_KEPT)); c.hashes = c.hashes.filter { keep.contains($0.key) } }
   if let told = told { for s in told { c.told[hex(s.sender)] = s.seq } }
   chains[hex(sender)] = c
 }

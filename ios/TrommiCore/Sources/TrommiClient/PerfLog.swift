@@ -6,7 +6,8 @@ public enum PerfLog {
   private static let lock = NSLock()
   nonisolated(unsafe) private static var handle: FileHandle? = nil
   nonisolated(unsafe) private static var checked = false
-  nonisolated(unsafe) public private(set) static var on = false
+  nonisolated(unsafe) private static var isOn = false
+  public static var on: Bool { setUp(); return isOn }
   public static var file: URL {
     (FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory())).appendingPathComponent("perf.log")
   }
@@ -14,15 +15,14 @@ public enum PerfLog {
     lock.lock(); defer { lock.unlock() }
     guard !checked else { return }
     checked = true
-    on = ProcessInfo.processInfo.environment["TROMMI_PERF"] == "1"
-    guard on else { return }
+    isOn = ProcessInfo.processInfo.environment["TROMMI_PERF"] == "1"
+    guard isOn else { return }
     try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     if !FileManager.default.fileExists(atPath: file.path) { FileManager.default.createFile(atPath: file.path, contents: nil) }
     handle = try? FileHandle(forWritingTo: file)
     _ = try? handle?.seekToEnd()
   }
   public static func line(_ s: String) {
-    setUp()
     guard on else { return }
     let t = String(format: "%.3f", Date().timeIntervalSince1970)
     lock.lock(); defer { lock.unlock() }
@@ -30,7 +30,6 @@ public enum PerfLog {
   }
   /** Time a piece of work; logged when it took at least `min` ms. */
   @discardableResult public static func time<T>(_ what: String, min: Double = 0, _ op: () throws -> T) rethrows -> T {
-    setUp()
     guard on else { return try op() }
     let t0 = DispatchTime.now().uptimeNanoseconds
     let r = try op()
@@ -39,7 +38,6 @@ public enum PerfLog {
     return r
   }
   public static func time<T>(_ what: String, min: Double = 0, _ op: () async throws -> T) async rethrows -> T {
-    setUp()
     guard on else { return try await op() }
     let t0 = DispatchTime.now().uptimeNanoseconds
     let r = try await op()
