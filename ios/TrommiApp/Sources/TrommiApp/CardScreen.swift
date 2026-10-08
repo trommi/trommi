@@ -27,6 +27,7 @@ struct CardScreen: View {
             lead(c, a, d)
             if !c.attachments.isEmpty { Attachments(list: c.attachments, onPicture: { picture = $0 }) }
             answers(c, a)
+            if !c.versions.isEmpty { versions(c) }
             CardLink(card: c)
             CardThread(card: c)
           }
@@ -63,6 +64,28 @@ struct CardScreen: View {
     }
   }
   struct PicAt: Identifiable { let at: Int; var id: Int { at } }
+
+  /** The question as it was before the agent revised it (card.mjs: "version n, as it was"). */
+  private func versions(_ c: DeskCard) -> some View {
+    DisclosureGroup("Earlier versions (\(c.versions.count))") {
+      VStack(alignment: .leading, spacing: 14) {
+        ForEach(c.versions.reversed(), id: \.objectVersion) { v in
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Version \(v.objectVersion) · \(agoText(v.sentAt))").font(Face.text(12, .semibold)).foregroundStyle(Ink.faint)
+            Text(v.content?["title"].string ?? "").font(Face.display(18, .bold))
+            if let b = v.content?["body"].string, !b.isEmpty { RichText(text: b, size: 15, color: Ink.muted) }
+            ForEach(Array((v.content?["options"].array ?? []).map(Option.init).enumerated()), id: \.offset) { _, o in
+              Text("· \(o.label)").font(Face.text(15)).foregroundStyle(Ink.muted)
+            }
+            if let n = v.content?["change_note"].string, !n.isEmpty { Text(n).font(Face.text(14)).italic().foregroundStyle(Ink.muted) }
+          }
+          .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+          .background(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.lineStrong, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        }
+      }.padding(.top, 8)
+    }
+    .font(Face.text(15, .medium)).tint(Ink.fg)
+  }
 
   private func loadDraft(_ c: DeskCard) {
     guard let d = c.draft else { return }
