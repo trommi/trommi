@@ -1,0 +1,4 @@
+version: 1
+# Change before the first upload: the bundle id the App Store Connect app record is created with (ios/README.md).
+bundleID: com.trommi.ios
+product: TrommiApp
