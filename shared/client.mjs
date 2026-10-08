@@ -1794,7 +1794,7 @@ export class Client {
   /** Canvas items: strokes, erase, move, send_away, selection_sent; timeline_id e.g. 'desk/<desk_id>'. */
   async sendStrokes({ timeline_id, content_type = 'strokes', recipient_device_id = null, ...fields }) {
     const content = { content_type, ...fields }
-    const timeline = { timeline_kind: content_type === 'selection_sent' && recipient_device_id ? 'chat' : 'canvas', timeline_id }
+    const timeline = { timeline_kind: content_type === 'selection_sent' && recipient_device_id ? 'chat' : 'scribble', timeline_id }
     const p = M.parseTimelineKey(`x:${timeline_id}`)
     const sid = p.scope === 'session' ? p.scope_id : p.scope === 'card' ? this.model.cards.get(p.scope_id)?.session_id ?? null : (this.is_human ? null : this.session_id)
     return this._send({ kind: codec.KIND.timeline_item, content, recipient: recipient_device_id, timeline, session_id: sid, echo: this._echoTimelineItem(timeline, content, recipient_device_id, null) })
@@ -2309,7 +2309,7 @@ function itemFromStored(r) {
     item_state: M.itemStateOf(r.c, r.cs), content_type: r.c?.content_type ?? null, content: r.c ?? null }
 }
 
-const HUMAN_KEY = /^(crown$|room_snapshot$|draft\/|snooze\/|duck\/|desk\/|session\/|canvas_snapshot\/)/
+const HUMAN_KEY = /^(crown$|room_snapshot$|draft\/|snooze\/|duck\/|desk\/|session\/|scribble_snapshot\/)/
 const AGENT_KEY = /^(profile$|heard$|status_line\/|alert\/)/
 export const isHumanRegisterKey = k => HUMAN_KEY.test(k)
 export const isAgentRegisterKey = k => AGENT_KEY.test(k)

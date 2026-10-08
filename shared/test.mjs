@@ -521,12 +521,12 @@ await test('timelines: lazy, newest first, paged; live items decrypted at once',
   // canvas: strokes on a desk, tail after a snapshot point, change.items, sender_sequence on the echo
   const desk = 'd'.repeat(32)
   const batches = []
-  fresh.on('change', c => { const l = c.items.get(`canvas:desk/${desk}`); if (l) batches.push(...l) })
+  fresh.on('change', c => { const l = c.items.get(`scribble:desk/${desk}`); if (l) batches.push(...l) })
   for (let i = 0; i < 5; i++) await fresh.sendStrokes({ timeline_id: `desk/${desk}`, strokes: [{ points: 'AAAA', style: { tool: 'pen', color: '#000', size: 2 } }] })
   await settleAll(fresh)
   assert(batches.some(i => i.pending && Number.isInteger(i.sender_sequence)), 'echo gets its sequence once sealed')
   assert(batches.some(i => !i.pending && i.envelope_number), 'confirmed items in change.items')
-  const tail = await fresh.loadTimelineAfter(`canvas:desk/${desk}`, 0)
+  const tail = await fresh.loadTimelineAfter(`scribble:desk/${desk}`, 0)
   eq(tail.items.length, 5, 'tail after 0')
   eq(fresh.model.timelines.get(`chat:session/${agent.session_id}`).item_count, 121, 'strokes never counted as chat')
 })

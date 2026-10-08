@@ -69,7 +69,7 @@ const needsUpdate = (model, change, rec, what) => { noteNewer(model, change, wha
 /** Whether this version can show and act on a card (false: a placeholder, no answer from here). */
 export const cardSupported = card => !card?.unsupported
 function emptyHuman() {
-  return { drafts: new Map(), snoozes: new Map(), ducks: new Map(), crown: null, desks: new Map(), session_settings: new Map(), canvas_snapshots: new Map(), raw: new Map() }
+  return { drafts: new Map(), snoozes: new Map(), ducks: new Map(), crown: null, desks: new Map(), session_settings: new Map(), scribble_snapshots: new Map(), raw: new Map() }
 }
 
 /** A change record: what a batch touched. Every field always present. */
@@ -363,7 +363,7 @@ export function timelineRefusal(model, rec) {
     }
     return 'not-allowed'
   }
-  if (p.timeline_kind === 'canvas') {
+  if (p.timeline_kind === 'scribble') {
     if (p.scope === 'desk') return human ? null : 'not-allowed'
     if (p.scope === 'session') return human || agentAt(model, p.scope_id, rec.sender_device_id, rec) ? null : 'not-allowed'
     if (p.scope === 'card') return human || holdsAt(model, model.cards.get(p.scope_id), rec.sender_device_id, rec) ? null : 'not-allowed'
@@ -376,7 +376,7 @@ function applyTimelineItem(model, rec, change) {
   const why = timelineRefusal(model, rec)
   if (why) return refuse(model, change, rec, why, `not allowed in ${rec.timeline_id}`)
   const key = timelineKey(rec.timeline_kind, rec.timeline_id)
-  if (rec.timeline_kind !== 'chat' && rec.timeline_kind !== 'canvas') noteNewer(model, change, `timeline kind ${rec.timeline_kind}`, rec)
+  if (rec.timeline_kind !== 'chat' && rec.timeline_kind !== 'scribble') noteNewer(model, change, `timeline kind ${rec.timeline_kind}`, rec)
   else if (rec.content && rec.content_state === 'ok' && !contentTypeKnown(rec.content)) noteNewer(model, change, `content_type ${rec.content.content_type}`, rec)
   const t = timelineOf(model, key)
   t.item_count++
@@ -730,7 +730,7 @@ function applyVerdict(model, rec, change) {
 
 // ---- registers ------------------------------------------------------------------------------
 
-const HUMAN_PREFIXES = ['draft/', 'snooze/', 'duck/', 'desk/', 'session/', 'session_history/', 'canvas_snapshot/']
+const HUMAN_PREFIXES = ['draft/', 'snooze/', 'duck/', 'desk/', 'session/', 'session_history/', 'scribble_snapshot/']
 const isHumanKey = k => k === 'crown' || k === 'room_snapshot' || HUMAN_PREFIXES.some(p => k.startsWith(p))
 const isAgentKey = k => k === 'profile' || k === 'heard' || k.startsWith('status_line/') || k.startsWith('alert/')
 
@@ -789,7 +789,7 @@ export function setHumanRegister(model, key, value, rec, change) {
       put(h.session_settings, value)
       const s = sessionOf(model, id); s.settings = value ?? null; change.sessions.add(id); change.stack = true; break
     }
-    case 'canvas_snapshot': put(h.canvas_snapshots, value); change.timelines.add(timelineKey('canvas', id)); break
+    case 'scribble_snapshot': put(h.scribble_snapshots, value); change.timelines.add(timelineKey('scribble', id)); break
   }
   change.registers.add(key)
 }

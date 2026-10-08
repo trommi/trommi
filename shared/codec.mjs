@@ -12,8 +12,8 @@ export const OBJECT_STATE = Object.freeze({ open: 1, answered: 2, closed: 3 })
 export const OBJECT_STATE_NAME = Object.freeze({ 1: 'open', 2: 'answered', 3: 'closed' })
 export const URGENCY = Object.freeze({ low: 0, normal: 1, high: 2, critical: 3 })
 export const URGENCY_NAME = Object.freeze({ 0: 'low', 1: 'normal', 2: 'high', 3: 'critical' })
-export const TIMELINE_KIND = Object.freeze({ chat: 1, canvas: 2 })
-export const TIMELINE_KIND_NAME = Object.freeze({ 1: 'chat', 2: 'canvas' })
+export const TIMELINE_KIND = Object.freeze({ chat: 1, scribble: 2 })
+export const TIMELINE_KIND_NAME = Object.freeze({ 1: 'chat', 2: 'scribble' })
 
 /** Body fields per kind (besides schema_version), exactly the README names. Unknown fields are dropped on encode, kept on decode. */
 export const FIELDS = Object.freeze({

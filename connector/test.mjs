@@ -351,7 +351,7 @@ await test('a newer Trommi wrote it: the agent hears it arrived and that the con
   assert.deepEqual(events.at(-1).meta, { kind: 'unsupported', update_required: '1' })
   // On a canvas it stays quiet, as strokes do.
   const n = events.length
-  await bridge.command({ command: 'message', timeline_key: 'canvas:desk/' + 'a'.repeat(32), unsupported: 'content_type sticker', content: { content_type: 'sticker' } })
+  await bridge.command({ command: 'message', timeline_key: 'scribble:desk/' + 'a'.repeat(32), unsupported: 'content_type sticker', content: { content_type: 'sticker' } })
   assert.equal(events.length, n)
 })
 

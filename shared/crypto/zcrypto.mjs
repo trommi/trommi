@@ -1171,7 +1171,7 @@ const OBJECT_KINDS = new Set([KIND.OBJECT_VERSION, KIND.ANSWER, KIND.PERMISSION_
 /** The only thread kind: a timeline item. Every other kind is a head. */
 export const isThreadKind = kind => kind === KIND.TIMELINE_ITEM
 /** timeline_kind values known today; others (1 to 255) are accepted so a new timeline kind needs no hub change. */
-export const TIMELINE = Object.freeze({ CHAT: 1, CANVAS: 2 })
+export const TIMELINE = Object.freeze({ CHAT: 1, SCRIBBLE: 2 })
 /** timeline scope byte and its text prefix: card/<object_id>, session/<session_id>, desk/<desk_id>, each 16 bytes as 32 hex. */
 export const TIMELINE_SCOPE = Object.freeze({ CARD: 1, SESSION: 2, DESK: 3 })
 const SCOPE_NAMES = { 1: 'card', 2: 'session', 3: 'desk' }

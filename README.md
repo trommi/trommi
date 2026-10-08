@@ -184,7 +184,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── account.mjs
 ├── agent.mjs
 ├── browser-test.mjs
-├── canvas.mjs
+├── scribble.mjs
 ├── check-emoji.mjs
 ├── client.mjs
 ├── codec.mjs

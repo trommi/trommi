@@ -382,7 +382,7 @@ test('envelopes: heads in full, thread items pruned; threads paged newest first 
   const card = await posted(w, w.agent, { kind: KIND.OBJECT_VERSION, card: { id: cardId, state: z.CARD_STATE.OPEN, urgency: z.URGENCY.HIGH }, payload: utf8('{"title":"Deploy?"}') })
   const chat = []
   for (let i = 0; i < 7; i++) chat.push(await posted(w, i % 2 ? w.agent : w.phone, { timelineKind: z.TIMELINE.CHAT, timelineId: `card/${hex(cardId)}`, payload: utf8(`msg ${i}`) }))
-  for (let i = 0; i < 3; i++) await posted(w, w.phone, { keyScope: 0, timelineKind: z.TIMELINE.CANVAS, timelineId: `desk/${DESK}`, payload: utf8(`stroke ${i}`) })
+  for (let i = 0; i < 3; i++) await posted(w, w.phone, { keyScope: 0, timelineKind: z.TIMELINE.SCRIBBLE, timelineId: `desk/${DESK}`, payload: utf8(`stroke ${i}`) })
   const status = await posted(w, w.agent, { kind: KIND.STATUS, payload: utf8('{"values":{"status_line/x":{"label":"Tests"}}}') })
   const all = await ok(w, 'GET', `${R(w)}/envelopes?after_envelope_number=0`, { token: w.laptop.token })
   assert.equal(all.last_envelope_number, 12)
@@ -405,7 +405,7 @@ test('envelopes: heads in full, thread items pruned; threads paged newest first 
   // A full envelope served for another number does not open.
   await assert.rejects(z.openVerifiedEnvelope(unb64u(t1.envelopes[0].envelope), { state: w.laptop.state, secrets: secretsOf(w.laptop), envelopeHash: w.laptop.verified.get(7) }), e => e.code === 'hash-mismatch')
   // The canvas, oldest first after a number; strokes never mix into the chat.
-  const canvas = await ok(w, 'GET', `${R(w)}/threads?timeline_kind=canvas&timeline_id=desk/${DESK}&after_envelope_number=9`, { token: w.laptop.token })
+  const canvas = await ok(w, 'GET', `${R(w)}/threads?timeline_kind=scribble&timeline_id=desk/${DESK}&after_envelope_number=9`, { token: w.laptop.token })
   assert.deepEqual(canvas.envelopes.map(e => e.envelope_number), [10, 11])
   assert.equal((await ok(w, 'GET', `${R(w)}/threads?timeline_kind=2&timeline_id=desk/${DESK}`, { token: w.laptop.token })).envelopes.length, 3)
   await refused(w, 'GET', `${R(w)}/threads?timeline_kind=video&timeline_id=x`, { token: w.agent.token }, 400, 'bad-argument')

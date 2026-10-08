@@ -115,7 +115,7 @@ the pad (`whiteboard.mjs` mountPad) as large as the main area; select or frame s
 One drawing on it is a scribble.
 
 What is drawn is the desk's canvas timeline `desk/<32 hex>` (`whiteboard.mjs` `deskCanvas`; the wire format is the
-core's `canvas.mjs`: a desk id that is not 32 hex, such as `main`, is folded into 16 bytes, the same on every device).
+core's `scribble.mjs`: a desk id that is not 32 hex, such as `main`, is folded into 16 bytes, the same on every device).
 
 ## The account (what a person sees)
 
