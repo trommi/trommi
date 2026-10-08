@@ -831,3 +831,9 @@ export function register(t) {
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })
 }
+
+// (the desk words line scrolls sideways when the desks are many: the chosen word is brought into view)
+if (typeof document !== 'undefined') document.addEventListener('turbo:load', () => {
+  const on = document.querySelector('#agent-desk-words .desk-word[aria-current]'), line = on?.parentElement
+  if (on && line.scrollWidth > line.clientWidth) line.scrollLeft = Math.max(0, on.offsetLeft - line.clientWidth + on.offsetWidth + 40)
+})
