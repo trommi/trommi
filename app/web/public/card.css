@@ -817,3 +817,4 @@ body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .to
 .tc-tile.is-archive { background: var(--accent); color: var(--accent-fg); font-size: var(--t-md); }
 .tc-done-ways .tc-tile.is-what { min-width: 96px; }
 .tc-done-ways .tc-tile.is-what .sketch-what { width: 72px; height: 26px; }
+.tc-answer > .tc-options-said { margin: 0 0 var(--s-3); }
