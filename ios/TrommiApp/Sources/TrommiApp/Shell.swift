@@ -551,7 +551,8 @@ struct UpdateBanner: View {
   var body: some View {
     let line: String? = {
       if case .updateAvailable = model.verdict { return "Update available" }
-      if model.newer > 0 { return "Some things here need a newer Trommi" }
+      // (the retired memo objects of the old Scribble Board are no news of a newer Trommi: no line for them alone)
+      if model.newer > 0, (model.room?.board.newerWhat ?? []).contains(where: { $0 != "object_type memo" }) { return "Some things here need a newer Trommi" }
       return nil
     }()
     if let l = line, !hidden {
