@@ -901,11 +901,15 @@ export function register(t) {
           for (const id of was.order) if (!now.rows.has(id)) out.push(stream('remove', `row-${id}`))
           for (const id of kept) if (was.rows.get(id) !== now.rows.get(id) && t.differs(was.rows.get(id), now.rows.get(id))) out.push(stream('replace', `row-${id}`, now.rows.get(id)))
           // A card that arrives after a card of its own session joins that run (no second drawing); else it starts one.
+          // One that lands beyond the window's first rows comes as an empty row, filled when it comes near (startDeskWindow):
+          // a new question far below the fold costs no rendering of a row.
+          const w = added.length ? windowed(m) : null
           for (const id of added) {
             const card = m.byCard.get(id), sender = m.byAgent.get(card.agent); if (!sender) continue
+            const row = w(card) === now.rows.get(id) ? now.rows.get(id) : w(card)
             const prev = now.order[now.order.indexOf(id) - 1]
-            if (prev && now.agents.get(prev) === card.agent) out.push(stream('after', `row-${prev}`, now.rows.get(id)))
-            else out.push(stream('before', 'desk-ip', runSection(sender, now.rows.get(id), 1)))
+            if (prev && now.agents.get(prev) === card.agent) out.push(stream('after', `row-${prev}`, row))
+            else out.push(stream('before', 'desk-ip', runSection(sender, row, 1)))
           }
         }
         if (t.differs(was.ip, now.ip)) out.push(stream('replace', 'desk-ip', now.ip))
