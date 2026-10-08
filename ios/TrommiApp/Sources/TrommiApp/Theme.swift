@@ -31,7 +31,7 @@ extension UIColor {
 #endif
 
 enum Ink {
-  static let bg = Color.dyn(0xf5f6f2, 0x0e1311)
+  static let bg = Color.dyn(0xffffff, 0x0e1311)
   static let surface = Color.dyn(0xffffff, 0x171d1a)
   static let surface2 = Color.dyn(0xfafbf8, 0x1c2420)
   static let sunken = Color.dyn(0xeceee8, 0x111715)

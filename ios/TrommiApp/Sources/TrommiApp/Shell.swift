@@ -53,12 +53,12 @@ struct BoardShell: View {
   }
   private var stack: some View {
     NavigationStack(path: $model.deskPath) {
-      DeskScreen().navigationDestination(for: Route.self) { r in Self.destination(r) }
+      DeskScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar) }
     }
   }
   private var chats: some View {
     NavigationStack(path: $model.chatPath) {
-      ChatsScreen().navigationDestination(for: Route.self) { r in Self.destination(r) }
+      ChatsScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar) }
     }
   }
   @ViewBuilder static func destination(_ r: Route) -> some View {
@@ -149,10 +149,11 @@ struct MenuPill: View {
     let _ = model.version
     let d = model.desk, v = model.view
     Menu {
-      Button { go(.settings("agents")) } label: { Label("Settings", systemImage: "gearshape") }
       Section("Desks") {
         if (d?.desks.count ?? 0) > 1 {
-          deskItem(ALL_DESKS, "All Desks", on: v?.all == true, waiting: v?.allFreshCount ?? 0)
+          Button { model.deskId = ALL_DESKS; model.deskPath = []; model.tab = .desk } label: {
+            Label { Text((v?.allFreshCount ?? 0) > 0 ? "All Desks · \(v!.allFreshCount)" : "All Desks") } icon: { Image(systemName: v?.all == true ? "checkmark" : "square.stack") }
+          }
         }
         ForEach(d?.desks ?? []) { desk in
           deskItem(desk.id, desk.name, on: v?.all != true && v?.deskId == desk.id, waiting: d?.view(desk: desk.id).fresh.count ?? 0)
@@ -161,9 +162,18 @@ struct MenuPill: View {
       }
       Section {
         Button { go(.scribble) } label: { Label("Scribble", systemImage: "scribble.variable") }
-        Button { go(.off) } label: { Label("Off Your Mind", systemImage: "checklist") }
-        Button { go(.media) } label: { Label("Media", systemImage: "photo.on.rectangle") }
-        Button { go(.pages) } label: { Label("Pages", systemImage: "doc.richtext") }
+        Button { go(.media) } label: { Label("Artifacts", systemImage: "photo.on.rectangle") }
+      }
+      Section {
+        // the push bell (Settings · Devices keeps the same): everything, only knocking, off
+        Picker(selection: Binding(get: { Push.level }, set: { l in Task { await Push.setLevel(l) } })) {
+          Label("Everything", systemImage: "bell").tag("all")
+          Label("Only Knocking", systemImage: "bell.badge").tag("knocking")
+          Label("Off", systemImage: "bell.slash").tag("off")
+        } label: { Label("Notifications", systemImage: Push.level == "off" ? "bell.slash" : Push.level == "knocking" ? "bell.badge" : "bell") }
+        .pickerStyle(.menu)
+        Button { go(.settings("agents")) } label: { Label("Settings", systemImage: "gearshape") }
+        Button { if model.demo { model.demoScreens = true } else { model.startDemo() } } label: { Label(model.demo ? "Demo: All Screens" : "Demo", systemImage: "play.rectangle") }
       }
     } label: {
       HStack(spacing: 7) {
@@ -185,8 +195,7 @@ struct MenuPill: View {
   private func deskItem(_ id: String, _ name: String, on: Bool, waiting: Int) -> some View {
     Button { model.deskId = id; model.deskPath = []; model.tab = .desk } label: {
       // the desk's drawing as on the web (a menu takes pictures only: drawn once into an image); the tick on the current one
-      Label { Text(waiting > 0 ? "\(name) · \(waiting)" : name) } icon: { PenImage.desk(waiting: waiting > 0) }
-      if on { Image(systemName: "checkmark") }
+      Label { Text(waiting > 0 ? "    \(name) · \(waiting)" : "    \(name)") } icon: { if on { Image(systemName: "checkmark") } else { PenImage.desk(waiting: waiting > 0) } }
     }
   }
   private func go(_ r: Route) { model.tab = .desk; model.deskPath = [r] }

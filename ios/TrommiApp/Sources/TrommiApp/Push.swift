@@ -93,7 +93,7 @@ enum Push {
 
   /** The push level of this phone (Settings · Devices): all, knocking, or off. */
   static var level: String {
-    get { UserDefaults.standard.string(forKey: "trommi-push-level") ?? "all" }
+    get { UserDefaults.standard.string(forKey: "trommi-push-level") ?? "knocking" }
     set { UserDefaults.standard.set(newValue, forKey: "trommi-push-level") }
   }
   /** A new level: told to the hub of every room at once (off removes the registration). */

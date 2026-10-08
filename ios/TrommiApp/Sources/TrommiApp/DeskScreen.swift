@@ -275,47 +275,28 @@ struct DeskRow: View {
   var body: some View {
     let _ = RenderCount.body("DeskRow")
     let hue = agent?.hue ?? 162
-    VStack(alignment: .leading, spacing: 8) {
-      // who asks, the knock
-      HStack(spacing: 7) {
-        if let a = agent {
-          Button { if model.selected.contains(card.id) { model.selected.remove(card.id) } else { model.selected.insert(card.id) } } label: {
-            ZStack {
-              AgentMark(agent: a, size: 20).opacity(model.selected.contains(card.id) ? 0 : 1)
-              if model.selected.contains(card.id) { Image(systemName: "checkmark.circle.fill").font(.system(size: 20)).foregroundStyle(Tone.color(hue: hue, .pen)) }
+    // the row is the title and its answer tiles (his decision, 8 October): no session line, no teaser, no paper icon
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .top, spacing: 6) {
+        Button { model.path.append(.card(card.id)) } label: {
+          HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if model.selected.contains(card.id) { Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).foregroundStyle(Tone.color(hue: hue, .pen)) }
+            if card.isKnock {
+              if card.urgency == "critical" { PenMark("hand", color: Ink.surface, blocked: true).frame(width: 24, height: 24).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 } }
+              else { Sketch("knock", color: Ink.urgHigh).frame(width: 20, height: 20).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 } }
             }
+            Text(card.title.isEmpty ? "(no title)" : card.title).font(Face.display(20, .bold)).foregroundStyle(Ink.fg).lineLimit(3).multilineTextAlignment(.leading)
           }
-          .buttonStyle(.plain)
-          .accessibilityLabel(model.selected.contains(card.id) ? "Selected: \(card.title)" : "Select: \(card.title)")
-          Text(a.name).font(Face.text(14, .medium)).foregroundStyle(Tone.color(hue: hue, .pen)).lineLimit(1)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
         }
-        if card.kind == "info" && !card.isKnock { Sketch("page", color: Ink.muted).frame(width: 16, height: 16) }
-        else if card.urgency == "low" { Sketch("whenever", color: Ink.muted).frame(width: 16, height: 16) }
-        Spacer(minLength: 4)
+        .buttonStyle(.plain)
+        .accessibilityHint(card.knockWord ?? "")
         if !card.isKnock || card.urgency != "critical" {
-          Button { model.snooze(card) } label: { PenMark("ui:LATER_TAG", color: Tone.color(hue: hue, .pen)).frame(width: 18, height: 36) }
+          Button { model.snooze(card) } label: { PenMark("ui:LATER_TAG", color: Tone.color(hue: hue, .pen)).frame(width: 16, height: 32) }
+            .buttonStyle(.plain)
             .accessibilityLabel("\(Words.later): put this question off")
         }
-      }
-      Button { model.path.append(.card(card.id)) } label: {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-          if card.isKnock {
-            if card.urgency == "critical" { PenMark("hand", color: Ink.surface, blocked: true).frame(width: 24, height: 24).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 } }
-            else { Sketch("knock", color: Ink.urgHigh).frame(width: 20, height: 20).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 } }
-          }
-          Text(card.title.isEmpty ? "(no title)" : card.title).font(Face.display(21, .bold)).foregroundStyle(Ink.fg).lineLimit(3).multilineTextAlignment(.leading)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .accessibilityHint(card.knockWord ?? "")
-      // under the title as the web's deskRow: what is new about it, then the teaser (else the start of the body), two lines
-      let about = [card.mergedFrom.isEmpty ? "" : "replaces \(card.mergedFrom.count) questions", card.revised != nil ? "revised" : "",
-                   card.unsnoozed != nil && card.snoozedUntil == nil ? "Back from Later" : "", card.teaser.isEmpty ? card.urgencyReason : ""].filter { !$0.isEmpty }.joined(separator: " · ")
-      let words = card.teaser.isEmpty ? plainText(card.body) : card.teaser
-      if !about.isEmpty || !words.isEmpty {
-        Text([about, words].filter { !$0.isEmpty }.joined(separator: " · ")).font(Face.text(15)).foregroundStyle(Ink.muted).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
       }
       if card.unsupported {
         UnsupportedLine(what: "card")
@@ -324,8 +305,9 @@ struct DeskRow: View {
       }
     }
     .padding(14)
-    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Tone.color(hue: hue, .wash)))
-    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(model.selected.contains(card.id) ? Tone.color(hue: hue, .pen) : .clear, lineWidth: 2))
+    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Ink.surface))
+    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(model.selected.contains(card.id) ? Tone.color(hue: hue, .pen) : Ink.line, lineWidth: model.selected.contains(card.id) ? 2 : 1))
+    .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
     .contextMenu { RowMenu(card: card) }
   }
 }
@@ -474,11 +456,11 @@ struct WithAgents: View {
                 TailWho(card: item.0, agent: item.1)
               }
               Spacer(minLength: 6)
-              Text(agoText(item.3)).font(Face.text(12)).foregroundStyle(Ink.faint)
-              PenMark("desk:GEAR", color: Ink.muted).frame(width: 20, height: 20).rotationEffect(.degrees(0))
+              PulseDot()
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Tone.color(hue: item.1.hue, .wash).opacity(0.7)))
+            .background(RoundedRectangle(cornerRadius: 12).fill(Ink.surface))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.line))
           }.buttonStyle(.plain)
         }
       }.padding(.top, 10)
