@@ -21,7 +21,7 @@ let DRIVER_COMMANDS = [
   "version_info", "join", "join_wait", "login", "forgot", "whoami", "sync", "members", "sessions", "list_cards", "card",
   "answer", "shred", "mark_read", "decide_again", "chat_send", "chat_list", "set_register", "registers", "note_save", "notes",
   "invite", "invite_status", "invite_confirm", "remove_member", "leave", "register_push", "check_envelope", "alerts",
-  "account_status", "make_kit", "change_password", "scribble_draw", "scribble_shapes", "set_live", "snapshot_info",
+  "account_status", "make_kit", "change_password", "scribble_draw", "scribble_shapes", "set_live", "snapshot_info", "presence",
 ]
 
 @MainActor final class Driver {
@@ -144,6 +144,12 @@ let DRIVER_COMMANDS = [
       let r = try need()
       return .arr(r.board.members.values.sorted { $0.deviceId < $1.deviceId }.map { m in
         .obj(["device_id": .str(m.deviceId), "role": .str(m.deviceRole), "active": .bool(m.isActive), "name": .str(m.deviceName)])
+      })
+    case "presence":
+      // who is online and an agent's link as GET devices and the stream said (booleans from the hub, kept as booleans)
+      let r = try need()
+      return .arr(r.board.members.values.sorted { $0.deviceId < $1.deviceId }.map { m in
+        .obj(["device_id": .str(m.deviceId), "online": .bool(m.isOnline), "attached": m.link.map { .bool($0.attached) } ?? .null, "hears": m.link.map { .str($0.hears) } ?? .null])
       })
     case "sessions":
       let r = try need()

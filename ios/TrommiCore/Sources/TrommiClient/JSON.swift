@@ -14,11 +14,17 @@ public enum JV: Equatable, Hashable, Codable, CustomStringConvertible {
   // ---- from and to Foundation's JSON ----------------------------------------------------------
 
   public init(any v: Any?) {
+    // A Swift Bool first, by its dynamic type (`as? Bool` would also take an NSNumber 1 on Apple systems); an NSNumber
+    // that holds a boolean is a boolean too: CFBoolean on Apple systems, objCType "c" in swift-corelibs-foundation (Linux),
+    // where JSONSerialization's true/false came out as numbers before.
+    if let b = v as? Bool, let x = v, type(of: x) == Bool.self { self = .bool(b); return }
     switch v {
     case nil, is NSNull: self = .null
     case let n as NSNumber:
       #if canImport(Darwin)
       if CFGetTypeID(n) == CFBooleanGetTypeID() { self = .bool(n.boolValue); return }
+      #else
+      if String(cString: n.objCType) == "c" { self = .bool(n.boolValue); return }
       #endif
       self = .num(n.doubleValue)
     case let b as Bool: self = .bool(b)

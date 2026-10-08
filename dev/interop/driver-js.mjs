@@ -114,6 +114,7 @@ const H = {
   async whoami() { const c = need(); return { device_id: c.my_device_id, room_id: c.model.room.room_id, role: c.is_human ? 'human' : 'agent', live: c.model.room.connection === 'live', key_epoch: c.model.room.key_epoch } },
   async sync() { await need().catchUp(); return {} },
   async set_live() { return {} },
+  async presence() { return [...need().model.members.values()].sort((a, b) => a.device_id.localeCompare(b.device_id)).map(m => ({ device_id: m.device_id, online: !!m.is_online, attached: m.link ? m.link.attached !== false : null, hears: m.link?.hears ?? null })) },
   async members() { return [...need().model.members.values()].sort((a, b) => a.device_id.localeCompare(b.device_id)).map(m => ({ device_id: m.device_id, role: m.device_role, active: m.is_active, name: m.device_name ?? '' })) },
   async sessions() { return [...need().model.sessions.values()].sort((a, b) => a.session_id.localeCompare(b.session_id)).map(s => ({ session_id: s.session_id, agent_device_ids: s.agent_device_ids, active: s.is_active, name: s.settings?.name ?? null })) },
   async list_cards({ all = false } = {}) { return [...need().model.cards.values()].filter(c => all || c.object_state === 'open').sort((a, b) => a.object_id.localeCompare(b.object_id)).map(cardJSON) },
