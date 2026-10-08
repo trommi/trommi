@@ -157,6 +157,9 @@ struct EmailView: View {
       }
     }
     .onAppear { if email.isEmpty { email = model.lastEmail } }
+    .onChange(of: email) { old, new in
+      if name == UIDeviceName.named(UIDeviceName.firstName(email: old) ?? UIDeviceName.person) || name == UIDeviceName.model { name = UIDeviceName.named(UIDeviceName.firstName(email: new)) }
+    }
   }
 }
 
@@ -185,5 +188,8 @@ struct ForgotView: View {
       } footer: { Text("No kit, but another device is logged in? Change the password there under Settings.") }
     }
     .onAppear { if email.isEmpty { email = model.lastEmail } }
+    .onChange(of: email) { old, new in
+      if name == UIDeviceName.named(UIDeviceName.firstName(email: old) ?? UIDeviceName.person) || name == UIDeviceName.model { name = UIDeviceName.named(UIDeviceName.firstName(email: new)) }
+    }
   }
 }
