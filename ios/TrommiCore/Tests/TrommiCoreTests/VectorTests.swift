@@ -48,7 +48,6 @@ final class VectorTests: XCTestCase {
     for name in ["phone", "laptop", "agent", "tablet", "helper"] {
       let d = v[j: "devices"][j: name], x = try dev(name)
       XCTAssertEqual(x.signPub, d.h("signPub")); XCTAssertEqual(x.kexPub, d.h("kexPub")); XCTAssertEqual(x.id, d.h("id"))
-      if d["public"] != nil { XCTAssertEqual(x.encodePublic(), d.h("public")); XCTAssertEqual(try decodeDevicePublic(d.h("public")).id, x.id) }
       if d["secretFile"] != nil { XCTAssertEqual(x.exportSecret(), d.h("secretFile")); XCTAssertEqual(try Device.importSecret(d.h("secretFile")).id, x.id) }
     }
   }
@@ -343,13 +342,6 @@ final class VectorTests: XCTestCase {
     XCTAssertEqual(try decryptAsset(big.blob, key: big.key), data)
     XCTAssertThrowsCode("bad-format", try decryptAsset(Array(big.blob.prefix(22 + 65536 + 16 + 5)), key: big.key))      // cut inside the last chunk
     XCTAssertThrowsCode("decrypt-failed", try decryptAsset(Array(big.blob.prefix(22 + 65536 + 16)), key: big.key))     // cut at a chunk boundary
-    let rs = v[j: "room"][j: "secret"]
-    let s1 = EpochSecret(epoch: 1, key: rs.h("key"), hist: rs.h("hist"))
-    let w = a[j: "wrap"]
-    XCTAssertEqual(try wrapAssetKey(roomId: v[j: "room"].h("roomId"), secret: s1, blobId: small.h("blobId"), assetKey: small.h("key"), rng: seededRNG(w.i("rngSeed"))), w.h("wrapped"))
-    XCTAssertEqual(try unwrapAssetKey(roomId: v[j: "room"].h("roomId"), secrets: { $0 == 1 ? s1 : nil }, w.h("wrapped")).key, small.h("key"))
-    XCTAssertEqual(assetLink(url: "https://hub.example/blob/1", blobId: small.h("blobId"), key: small.h("key")), a.s("link"))
-    XCTAssertEqual(try parseAssetLink(a.s("link")).key, small.h("key"))
   }
 
   func testPadding() throws {

@@ -36,8 +36,6 @@ public struct Device {
   /** Ed25519 over label ‖ 0x00 ‖ message. */
   public func sign(_ label: String, _ message: Bytes) throws -> Bytes { try signRaw(seed: signSeed, labelBytes(label) + message) }
 
-  /** 0x01 0x0b signPub kexPub */
-  public func encodePublic() -> Bytes { [VERSION, OBJ.DEVICE_PUBLIC] + signPub + kexPub }
   /** 0x01 0x0c signSeed kexPrivate: the key file. */
   public func exportSecret() -> Bytes { [VERSION, OBJ.DEVICE_SECRET] + signSeed + kexPriv }
   public static func importSecret(_ bytes: Bytes) throws -> Device {
@@ -47,14 +45,6 @@ public struct Device {
     try r.end()
     return try Device(signSeed: s, kexPriv: k)
   }
-}
-
-public func decodeDevicePublic(_ bytes: Bytes) throws -> PublicDevice {
-  var r = R(bytes)
-  try header(&r, OBJ.DEVICE_PUBLIC)
-  let s = try r.take(32), k = try r.take(32)
-  try r.end()
-  return try PublicDevice(signPub: s, kexPub: k)
 }
 
 // ---- sealed box: X25519 + HKDF-SHA-256 + AES-256-GCM (HPKE pattern, not RFC 9180 wire format) ----

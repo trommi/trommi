@@ -39,7 +39,7 @@ import * as z from './zcrypto.mjs'
 const phone = await z.generateDevice()                    // non-extractable Ed25519 + X25519 keys
 const sig = await z.sign(phone, 'my/label', z.utf8('hi'))
 await z.verify(phone.signPub, 'my/label', z.utf8('hi'), sig)       // true
-z.encodeDevicePublic(phone)                               // 66 bytes; exportDeviceSecret() for an agent key file
+// z.exportDeviceSecret(device): 66 bytes, an agent's key file (needs an extractable device)
 
 // Sealed box to a member's X25519 key (X25519 + HKDF + AES-256-GCM, HPKE-style)
 const box = await z.seal(phone.kexPub, z.utf8('secret'), z.utf8('context'))
@@ -84,14 +84,12 @@ const r = await z.removeMembers(state, phone, { ids: [agent.id], previous: secre
 // Assets
 const a = await z.encryptAsset(fileBytes)                 // { blob, key, blobId, sha256, size }
 await z.decryptAsset(a.blob, a.key, a.sha256)
-await z.wrapAssetKey(state.roomId, secret, a.blobId, a.key)
-z.assetLink('https://hub.example/blob/1', a.blobId, a.key)
 
 // All devices lost: the code enrols the new device, removes every human device and keeps the agents
 await z.recoverRoom({ state, code, newCode: z.generateRecoveryCode(), newDevice, recoveryWrap })
 ```
 
-Also exported: `verifyLog`, `applyEntry`, `addMember`, `signHubAuth`, `verifyHubAuth`, `verifyInviteOffer`, `verifyInviteRequest`, `verifyInviteReveal` (what a hub checks), `CARD_STATE`, `URGENCY`, `activeMembers`, `memberAt`, `epochAt`, `wrapEpochKey`, `unwrapEpochKey`, `wrapForAll`, `makeBackLink`, `openBackLink`, `deriveSenderKey`, `verifyEnvelope` (no key needed; also for pruned envelopes), `pruneEnvelope`, `peekEnvelope` (what a hub reads), `decodeBind`, `decryptAssetChunk`, `unwrapAssetKey`, `parseInviteLink`, `parseAssetLink`, `parseRecoveryCode`, `b64u` / `unb64u`, `hex` / `unhex`.
+Also exported: `verifyLog`, `applyEntry`, `addMember`, `signHubAuth`, `verifyHubAuth`, `verifyInviteOffer`, `verifyInviteRequest`, `verifyInviteReveal` (what a hub checks), `CARD_STATE`, `URGENCY`, `activeMembers`, `memberAt`, `epochAt`, `wrapEpochKey`, `unwrapEpochKey`, `wrapForAll`, `makeBackLink`, `openBackLink`, `deriveSenderKey`, `verifyEnvelope` (no key needed; also for pruned envelopes), `pruneEnvelope`, `peekEnvelope` (what a hub reads), `decodeBind`, `decryptAssetChunk`, `parseInviteLink`, `parseRecoveryCode`, `b64u` / `unb64u`, `hex` / `unhex`.
 
 ## What the caller must do
 

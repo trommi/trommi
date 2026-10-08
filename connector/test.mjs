@@ -93,7 +93,7 @@ function bridgeWith() {
 
 await test('every tool has a schema and an example; the copied set is complete', async () => {
   const names = TOOLS.map(t => t.name)
-  for (const n of ['reply', 'create_decision', 'create_info', 'revise_card', 'merge_cards', 'set_urgency', 'withdraw_card', 'close_card', 'set_status', 'clear_status', 'introduce', 'list_cards', 'publish_asset', 'list_assets', 'revoke_asset', 'share_asset', 'adopt_session', 'create_voiceover']) assert.ok(names.includes(n), n)
+  for (const n of ['reply', 'create_decision', 'create_info', 'revise_card', 'merge_cards', 'set_urgency', 'withdraw_card', 'close_card', 'set_status', 'clear_status', 'introduce', 'list_cards', 'publish_asset', 'list_assets', 'revoke_asset', 'share_asset']) assert.ok(names.includes(n), n)
   for (const t of TOOLS) assert.ok(TOOL_EXAMPLES[t.name], `example for ${t.name}`)
 })
 
@@ -302,8 +302,6 @@ await test('list_cards, publish_asset, list_assets, revoke_asset; the unported t
   await bridge.callTool('revoke_asset', { id })
   assert.deepEqual(client.calls.slice(-2).map(c => c[0]), ['unshare', 'unpublish'])
   assert.deepEqual(JSON.parse(await bridge.callTool('list_assets', {})), [], 'a revoked asset is gone from the list')
-  await assert.rejects(bridge.callTool('create_voiceover', { text: 'x' }), /not available/)
-  await assert.rejects(bridge.callTool('adopt_session', { id: 'x' }), /introduce with parent/)
 })
 
 await test('commands become the same channel events as today', async () => {

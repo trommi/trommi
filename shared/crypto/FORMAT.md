@@ -39,8 +39,8 @@ Every top-level object starts with the version byte `0x01` and an object type by
 | --- | --- | --- | --- |
 | `0x01` | log entry | `0x08` | back link (room) |
 | `0x02` | envelope | `0x09` | asset blob |
-| `0x03` | pruned envelope | `0x0a` | wrapped asset key |
-| `0x04` | sealed box | `0x0b` | device public keys |
+| `0x03` | pruned envelope | `0x0a` | (retired: wrapped asset key) |
+| `0x04` | sealed box | `0x0b` | (retired: device public keys) |
 | `0x05` | invite offer | `0x0c` | device secret file |
 | `0x06` | invite request | `0x0d` | hub sign-in |
 | `0x07` | invite reveal | `0x0e` | session grant (section 19) |
@@ -82,7 +82,6 @@ A label is the ASCII string below followed by one `0x00` byte. No label contains
 | `trommi/v1/invite-request-sig` | Sign: request |
 | `trommi/v1/invite-reveal-sig` | Sign: reveal |
 | `trommi/v1/invite-code` | H: check code |
-| `trommi/v1/asset-wrap` | KDF: asset key wrap key (the nonce is random, section 11) |
 | `trommi/v1/recovery/sign` | KDF: recovery Ed25519 seed |
 | `trommi/v1/recovery/kex` | KDF: recovery X25519 private key |
 | `trommi/v1/hub-auth` | Sign: sign-in to the hub |
@@ -106,7 +105,6 @@ A device (human device or agent) has an Ed25519 key pair and an X25519 key pair.
 
 ```
 deviceId       = H("trommi/v1/device-id", signPub(32) ‖ kexPub(32))            32 bytes
-device public  = 0x01 0x0b ‖ signPub(32) ‖ kexPub(32)                          66 bytes
 device secret  = 0x01 0x0c ‖ signSeed(32) ‖ kexPrivate(32)                     66 bytes, agent key file only
 ```
 
@@ -361,19 +359,6 @@ nonce_i = 0x00 0x00 0x00 ‖ i u64 ‖ last u8                                  
 
 `assetKey` is 32 fresh random bytes per asset and is used for nothing else, so counter nonces are safe (STREAM construction, as in age and Tink). An empty asset has one empty chunk. Every chunk but the last is full. A blob cut at a chunk boundary fails because its last chunk does not carry the final mark. `assetKey`, SHA-256 of the blob, name and type belong in the encrypted message payload; the header only lists `blobId`.
 
-**Asset key under the room key** (for blobs that live outside a message, such as the canvas):
-
-```
-wrapKey = KDF(roomKey, salt = roomId, "trommi/v1/asset-wrap", context = epoch u32 ‖ blobId(16), 32)
-nonce   = 12 RANDOM bytes, fresh per wrap
-wrapped = 0x01 0x0a ‖ epoch u32 ‖ blobId(16) ‖ nonce(12) ‖ AES-256-GCM(wrapKey, nonce, aad, assetKey(32))      82 bytes
-aad     = 0x01 0x0a ‖ roomId(32) ‖ epoch u32 ‖ blobId(16)
-```
-
-> **The wrap nonce is random and travels in the wrap. It is not derived.** The wrap key depends only on room key, epoch and blob id, so wrapping the same blob twice (a re-wrap, a retry, two devices) uses the same key. A nonce derived from the same inputs would then repeat under that key and break AES-GCM. Never derive this nonce from the KDF (v1.1, R9, C12). The derived nonces elsewhere (sealed box, back links) are safe only because their key encrypts exactly one message.
-
-Link form: `<blob url> "#a1." b64u(blobId) "." b64u(assetKey)`. Whoever has the link reads the asset.
-
 ## 12. Recovery code
 
 32 random bytes, shown as 52 Crockford base32 characters (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`) in thirteen groups of four, joined by `-`. The bits are read most significant first; the last character holds one data bit followed by four zero bits. Input is accepted in any case, with spaces or hyphens, with `O` read as `0` and `I`, `L` as `1`; a last character with non-zero padding bits is refused. There is no checksum: a mistyped code yields a key pair that the log does not know.
@@ -421,7 +406,7 @@ Choices (relative to the first concept, which is gone from the repository):
 9. **Sealed box nonce** is derived by HKDF together with the key instead of being transmitted; the key is single-use.
 10. **Device ids are 32 bytes** (hash of both public keys). The concept does not fix a size.
 11. **Recovery removes every human device** and may remove agents (v1.1); agents not removed stay members.
-12. **Wrapped asset key and asset link** are additions. In the concept an asset key only travels inside a message.
+12. **An asset key only travels inside a message**, as in the concept (the wrapped asset key `0x0a` and the asset link were removed on 8 October 2026: nothing used them).
 13. **Kind and timeline are in the cleartext header** (4 October 2026), and the body has no kind (v1.1). The hub sees whether an envelope is a head, its kind, and for thread items which timeline it belongs to, so it can page timelines and keep chat apart from strokes without reading content.
 14. **Agents hold no room key** (v1.1, R6). Each agent session has its own key in a signed grant chain (section 19); agents read only the sessions assigned to them.
 15. **No names in signed structures** (v1.1, R8). Member entries and join requests carry none.
@@ -494,7 +479,7 @@ The hub hands out `challenge` (32 random bytes, two minutes, one use). `deviceId
 | `epochChanges.remove` | the laptop removes the helper: entry (with an empty cut), epoch 2 secret, wraps for phone, laptop and the recovery key, back link |
 | `epochChanges.recover` | the recovery: phone and laptop out, tablet in, agent kept; the wrap the code opened, epoch 3 secret, wraps for the tablet and the new recovery key, back link, the new code |
 | `log` | all six entries with body, signature and hash; three entries that must be refused (retired type 4, an entry signed by an agent, a replay) |
-| `assets` | a small and a two-chunk asset, a wrapped asset key (random nonce from the seeded generator), an asset link |
+| `assets` | a small and a two-chunk asset |
 
 Session grants, session wraps and session back links (section 19) have no vectors in `vectors.json`; they are covered by `shared/crypto/session-grants-test.mjs`.
 
