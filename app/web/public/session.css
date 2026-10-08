@@ -425,9 +425,6 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
      selectors outweigh the lines in app.css that once took the old split back.) */
   body:not([data-pair]):not([data-scope="all"]) .pane-title { grid-template-columns: minmax(0, 1fr) auto auto; }
 
-  /* ---- sessions laid together: one wide column with the questions of all of them, the conversations
-     narrow beside it, one above the other, each with its own name and composer ---- */
-
 }
 /* The two round buttons (memo, Scratchpad) stand at the top right of a session: the joined title's
    controls end before them. */
@@ -692,8 +689,6 @@ a.files-where:hover span { text-decoration: underline; }
 }
 /* Long Desk lists: rows out of sight are not laid out or painted until they come near. */
 #desk-list .inbox-row, .log .msg { content-visibility: auto; contain-intrinsic-size: auto 172px; overflow-clip-margin: 80px; }
-
-/* ---- the pile "Media N" in #desk-stacks, beside Notes and "Off the desk": prints fanned, the newest on top ---- */
 
 /* ---- A main session's way to another desk (session.mjs deskMove): small and quiet beside the name ---- */
 #session .pane-who > .t-pick-desk { flex: none; margin-left: 6px; }

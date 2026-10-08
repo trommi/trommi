@@ -127,12 +127,6 @@
 .agent-text strong[data-member] { cursor: grab; }
 /* Let go here and the two are laid together: the loop drawn round the row is open and runs. */
 .agent-row.is-drop { background: var(--surface); }
-/* Let go here and it is moved to this place: a thin line between the rows. */
-
-/* Cutting a group apart: scribbled scissors that show only while the pointer is on the row (or the
-   keyboard on them), in the gap before the badge, so nothing in the row gives way to them and the
-   row is no taller than its names. Under the pointer they darken and the loop round the
-   group opens up, which says what they do without a tooltip. */
 
 /* ---- a session's state: no ground anywhere, colour and stroke carry it ----
    At work, the session's own mark redraws itself: the whole drawing stays as a trace at half strength
@@ -325,13 +319,6 @@ html body .topbar .deskpill .desk-go > .sketch { display: none; }
   /* the rail: the drawing alone, the way to the Desk */
   [data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { margin: 0; width: 26px; height: 26px; }
 
-/* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
-   One crown per desk (card Nr. 172): only the session the human gave it to wears it; a main without it keeps its
-   stack and bracket. Folded, its subs lie as coloured card edges behind its row; unfolded, they stand
-   indented under it, held by a bracket drawn in the main's colour. The rows stay flat children of #agents
-   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, a phone's drawer and the keys treat them as rows
-   (sidebar.mjs row()). */
-
 /* ---- the main's row: a card, the top of its stack ---- */
 .agent-row.is-main[data-fold] { --ghue: 162; margin-top: 6px; }
 .agent-row.is-main[data-fold] .agent-entry { position: relative; z-index: 1; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
@@ -340,6 +327,12 @@ html body .topbar .deskpill .desk-go > .sketch { display: none; }
 .agent-row.is-main[data-fold] > .agent-badge { z-index: 2; }
 .agent-row.is-main .agent-text strong { font-weight: 700; }
 
+/* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
+   One crown per desk (card Nr. 172): only the session the human gave it to wears it; a main without it keeps its
+   stack and bracket. Folded, its subs lie as coloured card edges behind its row; unfolded, they stand
+   indented under it, held by a bracket drawn in the main's colour. The rows stay flat children of #agents
+   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, a phone's drawer and the keys treat them as rows
+   (sidebar.mjs row()). */
 /* ---- the crown as the switch that folds and unfolds ---- */
 /* (It sits on the drawing like the crown of a single session, app.css #agents .agent-avatar .crown-mark: over its middle, its base on the drawing's top.) */
 .crown-fold { position: absolute; z-index: 3; left: 13px; top: -7px; width: 32px; height: 26px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; cursor: pointer; transition: scale var(--d-fast); }
@@ -867,10 +860,7 @@ html[data-rail="folded"] .topbar .desk-switch-open { display: none; }
    at the top (the desk's drawing and the place's name; pressed, the menu: desks, sessions, places, settings); a phone
    has a tab bar at its foot (Menu · Desk · Waiting) and the slim top line with the place's name. ==== */
 .menu-h { margin: 10px 10px 4px; font: 700 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.menu-sessions { display: grid; gap: 1px; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
-html body .topbar #brand-doors .menu-session { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 9px; color: var(--fg); text-decoration: none; font: 600 var(--t-sm)/1.2 var(--font); }
-.menu-session .agent-avatar { width: 28px; height: 28px; }
-.menu-session b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+
 .menu-n, .tab-badge { font-style: normal; }
 .menu-n { margin-left: auto; font: 700 var(--t-xs)/1 var(--font); color: var(--muted); }
 .pill-place { display: none; }
@@ -881,7 +871,7 @@ html body .topbar #brand-doors .menu-session { display: flex; align-items: cente
 /* (a wide screen keeps its sidebar, his word 8 October: "the sidebar on desktop should never have gone"; the pill, the
    menu's sessions and places and the capsule are a phone's) */
 @media (min-width: 861px) {
-  html body .topbar #brand-menu .pill-place, html body .topbar .pill-demo, html body .topbar #brand-doors :is(.menu-sessions, #menu-off, #menu-media, #menu-pages) { display: none !important; }
+  html body .topbar #brand-menu .pill-place, html body .topbar .pill-demo { display: none !important; }
   html body .demo-band { display: none; }
 }
 /* the demo's tag, larger, right after the sessions in the sidebar (his word, 8 October: "lost under empty space") */
@@ -892,10 +882,6 @@ html body .topbar #brand-doors .menu-session { display: flex; align-items: cente
   html[data-rail="folded"] #agents .side-demo { display: none; }
   html[data-rail="folded"] body .demo-band { display: block; }
 }
-
-html body .topbar #brand-doors .menu-session { box-sizing: border-box; width: 100%; min-width: 0; }
-html body .topbar #brand-doors .menu-session b { flex: 1 1 auto; }
-html body .topbar #brand-doors .menu-session .menu-n { flex: none; }
 
 /* ==== A phone (his word, 8 October): one pill at the top left (the desk's drawing and name, ▾) opens the sidebar as
    the drawer, Settings at its top, the places under the sessions; a small glass capsule at the foot: Note · Desk ·

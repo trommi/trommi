@@ -547,10 +547,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 @media (prefers-reduced-motion: reduce) { ::view-transition-old(tc-card), ::view-transition-new(tc-card) { animation: none; }
 }
 
-/* ---- Read aloud: the small speaker beside every message ----
-   Quiet at rest: it shows when the message is under the pointer or it has the focus, and stays
-   while it reads. Where nothing hovers (touch) it is always there, small and pale. */
-
 /* ---- toast: ONE slot, never a stack (his word, 7 October: "it is always placed oddly"). It stands where content never
    is: the bottom-left corner of the main area, in the page's margin beside the sidebar, small: "<what happened> ·
    ↶ Undo" over the title of what. The same action again merges into it ("Archived · 3", Undo takes back the last, the
@@ -642,9 +638,6 @@ button.t-chip-drop { background: none; color: var(--muted); text-decoration: und
   body * { visibility: hidden !important; }
 }
 
-/* Everything the agents made or sent (media.mjs): the pile "Artifacts N" at the foot of the Desk and the page
-   /artifacts it opens. The pile is paper like its neighbours (desk.css .off-pile); the page is sober. */
-
 /* ---- the page /artifacts ---- */
 #gallery { display: none; }
 
@@ -681,13 +674,7 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
 .link-cap[data-link="cut"] { color: var(--urg-critical); font-weight: 600; }
 .link-cap[data-link="gone"] { color: var(--faint); }
 .agent-row:has(.link-cap) .agent-entry { min-height: 54px; }
-.tail-who .sketch { width: 18px; height: 18px; stroke-width: 1.9; color: var(--muted); }
-.tail-who[data-link="heard"] .sketch { color: var(--accent); }
-.tail-who[data-link="asleep"], .tail-who[data-link="unheard"] { color: var(--urg-high); }
-.tail-who[data-link="asleep"] .sketch, .tail-who[data-link="unheard"] .sketch { color: var(--urg-high); }
-.tail-who[data-link="cut"] { color: var(--urg-critical); font-weight: 600; }
-.tail-who[data-link="cut"] .sketch { color: var(--urg-critical); }
-.tail-who[data-link="gone"], .tail-who[data-link="gone"] .sketch { color: var(--faint); }
+
 .link-note { display: flex; align-items: flex-start; gap: 10px; margin-top: var(--s-2); padding: 10px var(--s-3); border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); font: 400 var(--t-sm)/1.4 var(--font); }
 .link-note[hidden] { display: none; }
 .link-note > .sketch { flex: none; width: 22px; height: 22px; margin-top: 1px; }

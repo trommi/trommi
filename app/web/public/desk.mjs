@@ -1,9 +1,9 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
-import { BASE, GOALS_LINES, cleanGoals, closedMemo, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
+import { BASE, GOALS_LINES, cleanGoals, closedMemo, linkOf, stream, flipOut, walkOf } from './app.mjs'
 import { lastUndo, undoLast } from './ui.mjs'
-import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, artifactItems, avatar, calm, cardNr, controller, deskRow, el, act, html, isKnock, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
+import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, artifactItems, calm, controller, deskRow, el, act, html, isKnock, linkSlip, mediaPreview, mq, plain, raw, runSection, sideWays, sk } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -79,11 +79,11 @@ function runs(model) {
 }
 
 /** Everything inside .inbox-groups (#desk-list). rowOf(card): the row's markup (the stream keeps what it rendered). */
-function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(card, model, base, { slim: true }) } = {}) {
+function deskList(model, base, { rowOf = card => deskRow(card, model, base, { slim: true }) } = {}) {
   // (The slip for the sessions that are cut off stands above the questions: #link-slip, hidden while there is none.)
   return html`${linkSlip(model.cut ?? [], base)}${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
 ${model.open.length || (model.reads ?? []).length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>Questions land here.</p></div>`}
-${withAgents(model, base)}${endList(model, base)}${deskStacks(model, base, pile, q)}`
+${withAgents(model, base)}${endList(model, base)}${deskStacks(model, base)}`
 }
 
 /** The Desk's <main>. */
@@ -143,9 +143,8 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 }
 
 // ---- stacks ----
-// Every card that left the open rows (Later, Done, Trash; what is with the agents stands on the Desk as the tail,
-// withAgents) stands in the end list (endList below); its whole list with the search is the page /stacks/off. The foot
-// of the Desk holds Artifacts.
+// Every card that left the open rows (Later, Done, Trash, and what is with the agents) stands in the end list (endList
+// below); its whole list with the search is the page /stacks/off. The foot of the Desk holds Artifacts.
 //
 // Which card lies where (stackOf below; the hub's card fields decide, nothing else):
 //   later   status "open" and snoozed_until set: he put it off; "Wake up" fetches it back
@@ -160,19 +159,6 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 //   trash   status "shredded" (he threw it away; "Take back" fishes it out), or status "done" without an answer
 //           of his (its session withdrew it; the hub takes nothing back there, so the line has no way back)
 // A permission card is never listed (the hub closes it by itself). The newest lies on top of each.
-//
-// The page /stacks/off (his pick "A", 4 October, and "a ticked, struck-through shopping list"): the pile "Off the desk N",
-// unfolded: a slip with the newest five lines, each with the sign of its place (three Z, the tick, the bin). A click unfolds the
-// pile (controller "piles"): the search, the newest ten lines and "N more"; a line opens its card, where Wake up and
-// Take back are. Markup:
-//   <section class="inbox-stack inbox-pile off-pile" data-stack="off" data-pile="off">
-//     <h3 class="inbox-stack-title"><button class="inbox-stack-head inbox-pile-head off-head" aria-label="Off the desk, 51 cards">
-//       <span class="off-label">Off the desk <b class="off-count">51</b></span><span class="desk-obj shop-slip"> the newest five lines </span></button></h3>
-//     <div class="inbox-pile-sheets off-body"> chips, the search, the lines in <turbo-frame id="stack-list-off"> </div></section>
-// An empty pile is a faint label over one dashed sheet that cannot be pressed. Look: desk.css.
-
-const OPEN_MAX = 200   // an open stack (?pile=) or a search shows at most so many; the rest are found by searching
-const STACKS = ['off']
 const cardPath = (card, base) => `${base}/card/${encodeURIComponent(card.number ?? card.id)}`
 const answeredBy = c => (c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && Boolean(c.read))
 
@@ -225,28 +211,9 @@ function stackCards(model) {
   return out
 }
 
-// ---- with the agents: the cards being worked on stay in the stack (his pick B, 4 October) ----
-// An answered card whose session is still at it (stackCards: acting), or one handed back (revising), stays on the Desk
-// below the open questions as one slim line (his word: "Agent refines … bla"): the session's drawing, "<session> is
-// working on: <title>" (or "is reworking"), when. A dashed rule "With the agents · N" parts them from what is to decide. They leave when the session closes them.
-// The end list then keeps only Snoozed, Done and Trash. Its id stays for the stream: #desk-ip.
-/** Who has the card, at the end of a tail card: whether the session has his answer (the receipt), and if not, whether it can hear. */
-function tailWho(i) {
-  const name = i.sender.name, doing = i.card.status === 'open' ? 'is reworking it' : 'is on it'
-  const who = (sign, words, state = '') => html`<span class="tail-who"${state ? html` data-link="${state}"` : ''}>${sign}<span><b>${name}</b> ${words}</span></span>`
-  // (answered with an option that settles it: nothing is being worked on; the card is simply with its session)
-  const final = i.card.settled || i.card.options?.some(o => o.final === true && (i.card.choices ?? []).includes(o.key))
-  if (final) return html`<span class="tail-who">${raw(ringSvg())}<span>with <b>${name}</b></span></span>`
-  const link = linkOf(i.sender), h = heardOf(i.card)
-  if (!link || !h) return who(raw(ringSvg()), doing)
-  if (h.heard) return link.state === 'cut' ? who(sk('ear-off'), 'has it, but is cut off', 'cut') : link.state === 'gone' ? who(sk('plug'), 'had it, and is gone', 'gone') : who(sk('tick'), `has it, ${doing}`, 'heard')
-  if (link.state === 'cut') return who(sk('ear-off'), 'cannot hear you', 'cut')
-  if (link.state === 'gone') return who(sk('plug'), h.heard === false ? 'is gone, has not picked it up' : 'is gone', 'gone')
-  if (link.state === 'asleep') return who(sk('ear-later'), 'is not listening', 'asleep')
-  if (h.heard == null) return link.state === 'oncall' ? who(sk('ear-later'), 'hears it on its next step', 'oncall') : who(raw(ringSvg()), doing)   // a connector without receipts
-  if (h.late) return who(sk('letter'), 'has not picked it up', 'unheard')
-  return link.state === 'oncall' ? who(sk('ear-later'), 'hears it on its next step', 'oncall') : who(sk('letter'), 'gets it', 'sent')
-}
+// ---- with the agents ----
+// An answered card whose session is still at it (stackCards: acting), or one handed back (revising): one line at the
+// top of Off your mind (endList), "<session> is on it" or its status line. #desk-ip stays as the stream's place.
 function workItems(model) {
   const cards = stackCards(model)
   const working = (model.state.tasks ?? []).filter(t => t.state === 'working')
@@ -261,23 +228,9 @@ function withAgents() {
   return html`<section id="desk-ip" class="tail" hidden></section>`
 }
 
-// ---- a line of the pile: one card that left the open rows ----
-/** A line's mark on the shopping list: a pen tick (done), the three z (snoozed), the bin (shredded, struck too). */
-const shopMark = g => html`<span class="shop-mark" data-g="${g}" aria-hidden="true">${g === 'done' ? sk('tick') : g === 'later' ? sk('snooze') : g === 'trash' ? sk('bin') : ''}</span>`
-const PLACE = { later: WORDS.later, works: 'Working', done: 'Done', trash: 'Trash' }
-function line(sheet, model, base, rest = false) {
-  // (one line of a shopping list, his word 4 October: the place's mark at its start and the title; a click opens the
-  //  card, where Wake up and Take back are)
-  const { card, kind, g } = sheet
-  return html`<article class="inbox-done off-line${rest ? ' is-rest' : ''}" tabindex="-1" data-id="${card.id}" data-kind="${kind}" data-g="${g}"${kind === 'later' ? raw(' data-later') : ''}>
-${shopMark(g)}<a class="inbox-revising-open off-open" data-nav href="${cardPath(card, base)}" aria-label="${PLACE[g]}: ${card.title}"><strong>${card.title}</strong>${sheet.why ? html`<span class="off-why">${sheet.why}</span>` : ''}</a>
-</article>`
-}
 
-
-/** The places at the foot of the Desk (#desk-stacks). open: the one that stands fanned out with all its sheets
- *  ('later' | 'works' | 'done' | 'trash'), from ?pile=. q: words searched for in the open one (title, session's name,
- *  the grey line: answer, last word, why). All four always stand, an empty one faint: nothing shifts when a card arrives. */
+/** What lies off the desk, for the end list: the snoozed cards and the closed ones (Done and Trash merged, the newest
+ *  first, made only as far as asked). */
 function offParts(model) {
   const { state } = model
   const cards = stackCards(model)
@@ -322,19 +275,8 @@ function offParts(model) {
   return { later, get closed() { return closed.upTo(Infinity) }, closedTop: n => closed.upTo(n), closedSize: closed.size }
 }
 const closedSheets = new WeakMap()
-/** Everything off the desk in one list, the newest first (the page /stacks/off, its search). */
-function offSheets(model) {
-  const { later, closed } = offParts(model)
-  return [...later, ...closed].sort((a, b) => b.at - a.at)
-}
-/** The foot of the Desk: Artifacts; on its own page (/stacks/off, the end list's "All") the whole list of what
- *  left the Desk, with its search. */
-function deskStacks(model, base, open = null, q = '') {
-  const all = open === 'off' ? offSheets(model) : null
-  const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
-  const found = sheet => { const text = `${sheet.card.title} ${model.byAgent.get(sheet.card.agent)?.name ?? ''} ${sheet.said}`.toLowerCase(); return terms.every(w => text.includes(w)) }
-  return html`<div class="inbox-stacks stack-tabs is-straight${all ? '' : ' is-two'}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${all ? offPile(all, model, base, true, terms.length ? all.filter(found) : null, q) : ''}${artifactsPile(model, base)}</div>`
-}
+/** The foot of the Desk (#desk-stacks): Artifacts. */
+const deskStacks = (model, base) => html`<div class="inbox-stacks stack-tabs is-straight is-two" id="desk-stacks">${artifactsPile(model, base)}</div>`
 
 // ---- the end of the Desk's list (his word, 8 October: "much slimmer at the end of the list, a checkbox to tick off,
 // max 5, then load more; ticked ones stay visible; the pile Off the desk goes into it") ----
@@ -384,27 +326,6 @@ ${divider('Off your mind', !full && (terms.length ? items.length : total) > END_
 const offMain = (model, base, q) => html`<main id="inbox" class="off-page" aria-label="Off your mind"><header class="inbox-head desk-top"><h2 class="desk-hello"><a class="off-back" data-nav href="${base}/" aria-label="Back to the Desk">←</a> Off your <em>mind</em></h2><form class="end-search" method="get" action="${base}/stacks/off" role="search"><label><span class="offscreen">Search</span><input type="search" name="q" value="${q}" placeholder="Search the list" autocomplete="off"></label></form></header>
 <div class="inbox-groups" id="off-list">${withAgents(model, base)}${endList(model, base, { full: true, q })}</div></main>`
 
-const SHOWN = 10     // the unfolded pile shows so many lines, then "N more"
-/** The one pile "Off the desk" (his pick A). stands: it stands unfolded (?pile=off). hits: the sheets found by q, or null. */
-function offPile(all, model, base, stands, hits, q) {
-  const n = all.length
-  const name = `Off the desk, ${n === 1 ? '1 card' : `${n} cards`}`
-  // (an out-tray: a slip per place peeking out, its sign only, the newest place first; the newest title on the tray)
-  // (a shopping list on a slip, his word 4 October: "abgehakte, durchgestrichene Einkaufsliste": the newest lines, done
-  // ticked and struck through, shredded struck and faded, snoozed greyed with its zz)
-  const fan = html`<span class="desk-obj shop-slip${n ? '' : ' is-blank'}" aria-hidden="true">${n ? all.slice(0, 5).map(s => html`<span class="shop-line" data-g="${s.g}">${shopMark(s.g)}<span class="shop-t">${s.card.title}</span></span>`) : html`<span class="shop-line is-blank">Nothing put away yet</span>`}</span>`
-  const head = html`<h3 class="inbox-stack-title"><button class="${n ? 'inbox-stack-head inbox-pile-head off-head' : 'inbox-stack-head off-head'}" type="button" aria-label="${name}"${n ? html` aria-expanded="${String(stands)}" title="Unfold the pile" data-action="click->piles#toggle"` : raw(' disabled')}><span class="off-label">Off the desk <span class="off-count">${n}</span><span class="off-fold">Fold up ${sk('unfold')}</span></span>${fan}</button></h3>`
-  if (!n) return html`<section class="inbox-stack is-empty off-pile" data-stack="off" data-pile-empty="off">${head}</section>`
-  const search = html`<details class="off-find"${q ? raw(' open') : ''}><summary aria-label="Search everything off the desk" title="Search">${sk('search')}</summary><form class="stack-search off-search" method="get" action="${base}/stacks/off" role="search" data-turbo-frame="stack-list-off" data-controller="stack-search" data-stack-search-kind-value="off" data-action="input->stack-search#typed keydown.esc->stack-search#clear"><label>${sk('search')}<input type="search" name="q" value="${q}" placeholder="Search everything off the desk" aria-label="Search everything off the desk" autocomplete="off" spellcheck="false" data-stack-search-target="field"></label></form></details>`
-  const list = hits ? hits : all
-  const shown = list.slice(0, OPEN_MAX)
-  const beyond = list.length - shown.length
-  const rest = hits ? 0 : Math.max(0, shown.length - SHOWN)
-  const lines = hits && !hits.length ? html`<p class="stack-search-none">Nothing here has these words.</p>`
-    : html`${shown.map((s, i) => line(s, model, base, !hits && i >= SHOWN))}${rest ? html`<label class="off-more"><input type="checkbox" data-off-more><span class="off-more-open">${rest} more</span><span class="off-more-shut">Less</span></label>` : ''}${beyond > 0 ? html`<p class="stack-search-none">${beyond.toLocaleString('en-GB')} more: search to find them.</p>` : ''}`
-  return html`<section class="inbox-stack inbox-group inbox-pile off-pile${stands ? ' is-open' : ''}" data-stack="off" data-pile="off" data-piles-target="pile">${head}
-<div class="inbox-pile-sheets off-body">${search}<turbo-frame id="stack-list-off" class="stack-list off-list" data-stack-search-frame="off">${lines}</turbo-frame></div></section>`
-}
 
 
 /** The pile "Artifacts N" at the foot of the Desk (in #desk-stacks): everything the agents made or sent, Media and
@@ -421,9 +342,6 @@ function artifactsPile(model, base) {
 <div class="df-row">${four.map(x => html`<a class="df-card" data-nav href="${x.item.href ?? `${base}/artifacts`}" title="${x.item.title || x.item.name}"><span class="df-thumb">${thumb(x)}</span><span class="df-title">${x.item.title || x.item.name}</span></a>`)}</div></section>`
 }
 
-// The stacks at the foot of the Desk: a click fans one out, a click gathers it. A stream may replace the stacks;
-// the one that stood open stands open again, with the filter and "N more" of the pile "Off the desk" as they were.
-let openPile, offMore = false
 // ---- controller "goals" ----
 // The goals under the greeting written in place: a click turns the line into a field of up to GOALS_LINES lines
 // (Enter a new line, none past the last; Ctrl/⌘+Enter or a click beside keeps; Esc leaves it as it was). While he
@@ -479,46 +397,6 @@ controller('goals', class extends Controller {
   }
 })
 
-controller('piles', class extends Controller {
-  static targets = ['pile']
-  connect() {
-    // (A pile the page renders open, /stacks/off, the end list's "All N", stands open: before, a Desk seen earlier in
-    // this tab had set "none open" for good, and the link showed the page with the list folded away.)
-    const rendered = this.pileTargets.find(p => p.classList.contains('is-open'))?.dataset.pile
-    if (rendered) openPile = rendered
-    else if (openPile === undefined) openPile = null
-    this.apply()
-  }
-  toggle({ currentTarget }) {
-    const pile = currentTarget.closest('[data-pile]')
-    openPile = openPile === pile.dataset.pile ? null : pile.dataset.pile
-    this.apply()
-    if (openPile) pile.querySelector('.inbox-pile-sheets')?.scrollIntoView({ block: 'nearest', behavior: calm() ? 'instant' : 'smooth' })
-  }
-  // Escape inside the stacks (a tab or a line of the open list) closes the open one; the keyboard goes back to its tab.
-  shut(event) {
-    if (!openPile || event.defaultPrevented) return
-    const head = this.pileTargets.find(p => p.dataset.pile === openPile)?.querySelector('.inbox-pile-head')
-    openPile = null
-    this.apply()
-    event.preventDefault()
-    event.stopPropagation()
-    head?.focus({ preventScroll: true })
-  }
-  // A filter chip of "Off the desk" (radio buttons; CSS shows the lines of the checked one), or its "N more".
-  filter({ target }) {
-    if (target.matches('[data-off-more]')) offMore = target.checked
-  }
-  apply() {
-    for (const box of this.element.querySelectorAll('[data-off-more]')) box.checked = offMore
-    for (const pile of this.pileTargets) {
-      const is = pile.dataset.pile === openPile
-      pile.classList.toggle('is-open', is)
-      pile.querySelector('.inbox-pile-head')?.setAttribute('aria-expanded', String(is))
-    }
-  }
-})
-
 // ---- desk window ----
 // The Desk's window: rows beyond the first ones are rendered empty (register: windowed) and filled in here when they come
 // within a screen or two of the viewport, a few per frame. A row once filled stays filled.
@@ -566,7 +444,7 @@ const before = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_PO
 function pullDown(root, rows, done) {
   if (!rows.length) return done()
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) { flipOut(rows); return done() }
-  const pile = root.querySelector('#desk-stacks [data-stack="off"] .desk-obj') ?? root.querySelector('#desk-stacks')
+  const pile = root.querySelector('#desk-end') ?? root.querySelector('#desk-stacks')
   const to = pile?.getBoundingClientRect(), seen = to && to.top < innerHeight
   rows.forEach((row, n) => {
     const r = row.getBoundingClientRect()
@@ -734,46 +612,6 @@ controller('desk', class extends Controller {
   toKnock({ currentTarget }) { const list = this.beyond?.[currentTarget.dataset.dir] ?? []; const row = currentTarget.dataset.dir === 'up' ? list.at(-1) : list[0]; if (row) this.go(row) }
 })
 
-// ---- controller "stack-search" ----
-// The search field over a fanned stack at the foot of the Desk (desk.mjs). Typing sends the form a
-// moment later: a GET into the stack's Turbo Frame, which the hub answers with the sheets that have the words.
-// Escape empties it. The live stream replaces the stacks when a card moves: the words, the keyboard and the caret are
-// put back into the new field and the search is sent again, so typing is never lost.
-
-let kept = null   // { kind, q, focus, caret }: the search as it stood when its field left the page
-
-controller('stack-search', class extends Controller {
-  static targets = ['field']
-  static values = { kind: String }
-
-  connect() {
-    const was = kept
-    if (!was || was.kind !== this.kindValue || !was.q || this.fieldTarget.value) return
-    this.fieldTarget.value = was.q
-    if (was.focus) { this.fieldTarget.focus({ preventScroll: true }); try { this.fieldTarget.setSelectionRange(was.caret, was.caret) } catch {} }
-    this.send()
-  }
-  disconnect() {
-    clearTimeout(this.timer)
-    const field = this.hasFieldTarget ? this.fieldTarget : null
-    if (field?.value) kept = { kind: this.kindValue, q: field.value, focus: document.activeElement === field, caret: field.selectionStart ?? field.value.length }
-  }
-  typed() {
-    kept = this.fieldTarget.value ? { kind: this.kindValue, q: this.fieldTarget.value, focus: true, caret: this.fieldTarget.selectionStart } : null
-    clearTimeout(this.timer)
-    this.timer = setTimeout(() => this.send(), 220)
-  }
-  clear(event) {
-    if (!this.fieldTarget.value) return   // (an empty field leaves Escape to the stack: it gathers)
-    event.preventDefault()
-    event.stopPropagation()
-    this.fieldTarget.value = ''
-    kept = null
-    this.send()
-  }
-  send() { if (this.element.isConnected) this.element.requestSubmit() }
-})
-
 // ---- controller "sheet" ----
 // A phone: the ways out of a Desk row behind a long press (desk.css). The row shows who asks, the
 // title and the answers; Snooze, Revise, the duck, What??, Shred and Open come up as a sheet after a long press
@@ -918,10 +756,9 @@ export function register(t) {
   const windowed = m => { const first = new Set(deskCards(m).slice(0, WINDOW).map(c => c.id)); return c => (first.has(c.id) ? rowOf(c, m) : later(c)) }
     t.get(/^\/$/, ({ req, res, url }) => {
       const m = model()
-      const pile = STACKS.includes(url.searchParams.get('pile')) ? url.searchParams.get('pile') : null
       const [saidId, saidWhat] = String(url.searchParams.get('said') ?? '').split(':')
       const n = m.fresh.length
-      t.page(req, res, { model: m, title: n ? `(${n}) ${m.deskName} · Trommi` : `${m.deskName} · Trommi`, view: 'desk', main: deskMain(m, BASE, { pile, rowOf: windowed(m) }), says: says(m.byCard.get(saidId), saidWhat) })
+      t.page(req, res, { model: m, title: n ? `(${n}) ${m.deskName} · Trommi` : `${m.deskName} · Trommi`, view: 'desk', main: deskMain(m, BASE, { rowOf: windowed(m) }), says: says(m.byCard.get(saidId), saidWhat) })
     })
     // Several cards at once (the selection bar): each through the same way as one card's own button; one toast whose
     // Undo takes all of them back (later -> wake, the others -> reopen).
