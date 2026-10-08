@@ -17,7 +17,7 @@
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
 import { BASE, UNHEARD_MS, blockedOf, linkOf, quietOf } from './app.mjs'
-import { Controller, WORDS, advisedLabels, later, agoSpan, assetGlyph, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
+import { Controller, WORDS, advisedLabels, later, agoSpan, assetGlyph, avatar, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
 const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const IN_VIEW = 14            // of them, rendered with the page (a phone shows fewer); the rest of the window right after its first paint
@@ -46,7 +46,8 @@ const ICONS = {
 }
 const made = new Map()
 const ico = (name, cls = 'ico') => raw(made.get(`${name} ${cls}`) ?? made.set(`${name} ${cls}`, `<svg viewBox="0 0 24 24" class="${cls}" aria-hidden="true">${(ICONS[name] ?? ICONS.asked).map(d => `<path d="${d}"/>`).join('')}</svg>`).get(`${name} ${cls}`))
-const AGENT_MARK = html`<span class="agent-mark">${ico('spark')}</span>`
+// The session's own drawing (and its crown) beside its words, as in its heading; never shown greyed when it is offline.
+const agentMark = a => avatar({ ...a, online: true })
 
 const two = n => String(n).padStart(2, '0')
 const clock = ts => { const d = new Date(ts); return `${two(d.getHours())}:${two(d.getMinutes())}` }
@@ -199,7 +200,7 @@ function message(m, prev, s, base) {
   const cont = Boolean(prev && prev.from === m.from && dayKey(prev.ts) === dayKey(m.ts) && (m.from === 'event' || m.ts - prev.ts < GROUP_GAP))
   const about = m.card_id ? s.model.byCard.get(m.card_id) : null
   const firstPic = (m.attachments ?? []).find(isPicture)
-  const key = `${m.note ? 'n' : ''}${m.pending ? 'p' : ''}|${m.text?.length ?? 0}|${m.attachments?.length ?? 0}|${m.ts}|${base}|${cont}|${about?.title ?? ''}|${about?.number ?? ''}|${m.published ? Boolean(s.model.state.assets.find(a => a.id === m.published)) : ''}|${firstPic ? s.nr.get(firstPic.url) : ''}|${m.from === 'event' && s.askAt.has(m.card_id)}`
+  const key = `${m.note ? 'n' : ''}${m.pending ? 'p' : ''}|${m.text?.length ?? 0}|${m.attachments?.length ?? 0}|${m.ts}|${base}|${cont}|${about?.title ?? ''}|${about?.number ?? ''}|${m.published ? Boolean(s.model.state.assets.find(a => a.id === m.published)) : ''}|${firstPic ? s.nr.get(firstPic.url) : ''}|${m.from === 'event' && s.askAt.has(m.card_id)}|${m.from === 'agent' ? `${s.agent.name}|${s.agent.mark ?? ''}|${s.agent.starred ? 1 : ''}|${s.agent.hue}` : ''}`
   const k = `${s.id} ${m.id}`, had = kept.get(k)
   if (had?.key === key) return had.out
   const out = build(m, cont, about, s, base)
@@ -221,7 +222,7 @@ function build(m, cont, about, s, base) {
   }
   // The agent's words (the light markdown; a layout fenced as html goes into the sandboxed frame, ui.mjs), with what it attached.
   const text = m.published ? assetCard(assetOf(m, s), s, base) : raw(String(words(m.text ?? '', { assets, extra: m.html ?? '' })).replace(/<\/div>$/, () => `${attachments(m.attachments, s, base, m.id)}</div>`))
-  return html`<article class="msg msg-agent${cont ? ' cont' : ''}" id="msg-${m.id}"${cont ? html` title="${FULL.format(m.ts)}"` : ''}>${cont ? '' : html`<header class="msg-head">${AGENT_MARK}<span class="msg-name">Agent</span>${timeNode(m.ts, 'msg-time')}</header>`}${aboutNode}${text}${m.details ? html`<details class="msg-details"><summary>Details</summary>${words(m.details, { assets })}</details>` : ''}</article>`
+  return html`<article class="msg msg-agent${cont ? ' cont' : ''}" id="msg-${m.id}"${cont ? html` title="${FULL.format(m.ts)}"` : ''}>${cont ? '' : html`<header class="msg-head">${agentMark(s.agent)}<span class="msg-name">${s.agent.name}</span>${timeNode(m.ts, 'msg-time')}</header>`}${aboutNode}${text}${m.details ? html`<details class="msg-details"><summary>Details</summary>${words(m.details, { assets })}</details>` : ''}</article>`
 }
 const dayLine = ts => html`<div class="day" data-day="${ts}"><span>${dayLabel(ts)}</span></div>`
 
@@ -302,7 +303,7 @@ function sessionStatus(s, base, now = Date.now()) {
   const last = s.messages.findLast(m => m.from !== 'event')
   const answering = last?.from === 'user' && now - last.ts < WORKING_WINDOW
   const lines = s.tasks.filter(t => t.state !== 'done' || now - (t.updated ?? 0) < WORKING_WINDOW)
-  return html`<div class="session-status" id="session-status-${s.id}"${lines.length || answering ? '' : raw(' hidden')}>${answering ? html`<div class="working">${AGENT_MARK}<span>Agent is working</span><span class="dots"><i></i><i></i><i></i></span></div>` : ''}${lines.map(t => {
+  return html`<div class="session-status" id="session-status-${s.id}"${lines.length || answering ? '' : raw(' hidden')}>${answering ? html`<div class="working">${agentMark(s.agent)}<span>${s.agent.name} is working</span><span class="dots"><i></i><i></i><i></i></span></div>` : ''}${lines.map(t => {
     const card = t.card_id ? s.model.byCard.get(t.card_id) : null
     const inner = html`<span class="status-mark">${t.state === 'working' ? raw(ringSvg({ drop: true })) : t.state === 'decision' ? sk('knock') : sk('tick')}</span><b>${t.label}</b>${t.detail ? html`<span class="status-detail">${t.detail}</span>` : ''}${t.updated ? agoSpan(t.updated, 'status-ago') : ''}`
     return card ? html`<a class="status-line" data-state="${t.state}" data-nav href="${questionPath(card, base)}">${inner}</a>` : html`<p class="status-line" data-state="${t.state}">${inner}</p>`
@@ -454,7 +455,7 @@ function filesList(s, base) {
   const jump = g => (g.next ? `${here}?before=${encodeURIComponent(g.next)}#msg-${g.msg}` : `${here}#msg-${g.msg}`)
   return html`<div class="files-list" id="session-files-${s.id}"><p class="files-sum">${n === 1 ? '1 file' : `${n} files`}<span> · the questions keep their own pictures</span></p>${groups.length ? groups.map(g => html`<section class="files-group"><div class="files-group-head">${g.card
     ? html`<a class="files-where" data-nav href="${questionPath(g.card, base)}"><b>Nr. ${g.card.number}</b><span>${g.card.title}</span></a>`
-    : html`<span class="files-where"><b>${g.from === 'user' ? 'You' : 'Agent'} · ${timeNode(g.ts, 'files-time')}</b><span>${g.items.length === 1 ? g.items[0].name : `${g.items.length} files`}</span></span>`}<a class="files-jump" data-nav href="${jump(g)}" data-action="files#jump" data-files-msg-param="${g.msg}">Jump to${ico('next')}</a></div><div class="files-thumbs">${g.items.slice(0, 4).map(item => fileThumb(item, s, base, g.msg))}${g.items.length > 4 ? html`<span class="files-more">+${g.items.length - 4}</span>` : ''}</div></section>`) : html`<p class="files-empty">Nothing was sent here yet, besides the questions' own pictures.</p>`}</div>`
+    : html`<span class="files-where"><b>${g.from === 'user' ? 'You' : s.agent.name} · ${timeNode(g.ts, 'files-time')}</b><span>${g.items.length === 1 ? g.items[0].name : `${g.items.length} files`}</span></span>`}<a class="files-jump" data-nav href="${jump(g)}" data-action="files#jump" data-files-msg-param="${g.msg}">Jump to${ico('next')}</a></div><div class="files-thumbs">${g.items.slice(0, 4).map(item => fileThumb(item, s, base, g.msg))}${g.items.length > 4 ? html`<span class="files-more">+${g.items.length - 4}</span>` : ''}</div></section>`) : html`<p class="files-empty">Nothing was sent here yet, besides the questions' own pictures.</p>`}</div>`
 }
 
 /** The drawer from the right (a sheet from below on a phone): its list is a lazy frame, loaded when it opens. */

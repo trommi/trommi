@@ -266,6 +266,12 @@ try {
   const bytes = fileCmd ? await agent.fetchAttachment(fileCmd.content.attachments[0]).catch(() => null) : null
   check(bytes?.length === 4096 && bytes[0] === 7, `a composer file reaches the agent whole (${bytes?.length ?? 'none'} bytes)`)
 
+  // ---- the agent's words in its chat stand under the session's name and drawing, as in the heading (never "Agent") ----
+  await agent.sendMessage({ text: 'Hallo aus der Session' })
+  await A.until("[...document.querySelectorAll('#session .msg-agent')].some(m => m.textContent.includes('Hallo aus der Session'))", 'agent message in the session chat', 15000).catch(e => check(false, e.message))
+  const who = await A.js("const m = [...document.querySelectorAll('#session .msg-agent')].findLast(m => m.textContent.includes('Hallo aus der Session')); return { name: m?.querySelector('.msg-head .msg-name')?.textContent ?? '', drawing: !!m?.querySelector('.msg-head .agent-avatar .doodle'), head: document.querySelector('#session .pane-name')?.textContent ?? '' }")
+  check(who.name === 'night-agent' && who.name === who.head && who.drawing, `an agent message shows its session's name and drawing ("${who.name}", heading "${who.head}", drawing ${who.drawing})`)
+
   // ---- the note: it waits at the window's bottom-right; sent from there (to the crown) it reaches the agent marked as a note and stands in
   //      the session's chat taped on, from the optimistic echo on, never as a bubble ----
   const noteText = 'Notiz e2e: Backup vor der Migration'
