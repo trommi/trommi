@@ -121,23 +121,27 @@ instead); files come network first, the cache only offline. On the dev server (`
   only a faint "Goals…", nothing on All desks. Kept in the desk's register (`desk/<id>`, `goals`), so every device of
   his sees it; agents do not yet (they ignore human registers).
 - **Rows:** every open card is one row in the hub's order, blocking first, then knocks; infos stand among them (What?? and
-  ✓ instead of answers). A row: the session's drawing (a click selects it; Shift: a range), the urgency sign, the title,
-  two lines of teaser (`card.teaser`, else the body), the pictures as a small fan, square answer tiles. A row that
-  leaves glides out while the rows below move up (`app.mjs` `flipOut`, transform only).
-- **Selection bar:** while rows are selected, Later (the pull-tag: the rows go down into Off the desk), Egal, Read (with
+  ✓ instead of answers). A row: the session's drawing as a stamp before the title, the urgency sign, the title, square
+  answer tiles; under the pointer the teaser and, at the left, a ring that selects it (Shift: a range). Rows of one session
+  that follow each other stand in one run, held by a pen curly bracket at the far left (two or more). A row that leaves
+  glides out while the rows below move up (`app.mjs` `flipOut`, transform only).
+- **Selection bar:** while rows are selected, Later (the pull-tag: the rows go down into Off your mind), Egal, Read (with
   infos), Shred; one POST `/cards/batch`, one toast with Undo.
 - **With the agents:** answered cards whose session is still at it, one line each, below the open ones. A card answered
   with a final option (a small pen tick on its tile) never lies here: the answer settles it, it goes to "Off the desk"
   at once ("settled by your answer"), and Take back opens it again.
-- **Foot:** "Off the desk" (a list of snoozed, done, shredded cards; a line opens its card, where Wake up and Take back
-  are), Artifacts (one pile with the count: the newest pictures, else the newest pages; the page `/artifacts`: Media and
-  Pages together, the newest first, the filter All · Media · Pages, a page's ⋯ with Share).
+- **Foot:** Off your mind (the end list: what is with the agents, then snoozed, done, shredded cards, five lines; "Show
+  more" at the right end of its heading opens `/stacks/off`, the whole list with a search), Artifacts (the newest four;
+  "All Artifacts N" at its heading's right opens `/artifacts`: Media and Pages together, the newest first, the filter
+  All · Media · Pages, compact tiles in a soft frame with Open and, on a page, Share as small icons; 25 tiles made at once,
+  the rest as they come near).
 - **Note:** one drawn yellow note at the window's bottom-right; it unfolds there to write, takes attachments, sends to the crown (`sidebar.mjs` `cornerNote`).
 - **Sidebar:** the Desk box, the sessions (a main with its helpers on a pen bracket, tallies, the red hand), "New agent" and
   the Trommi menu at its foot. One sidebar, two presentations (`sidebar.css` "A phone"): beside the page on a wide
-  screen (foldable to a rail), a drawer up to 860px. There a slim top line holds the handle (three pen lines, a red dot
-  while something knocks) and the name of the place in view (`sidebar.mjs` `phoneBar`); the handle or a finger from the
-  left edge slides the drawer in over the dimmed page, a tap beside it, a push back, Esc or a choice closes it.
+  screen (foldable to a rail), a drawer up to 860px that a finger from the left edge slides in over the dimmed page (a
+  tap beside it, a push back, Esc or a choice closes it). A phone's top line is the pill (the desk's drawing and name;
+  it opens the menu, `sidebar.mjs` `phoneBar`), in a chat the way back to the chats; at its foot a glass capsule Chat ·
+  Desk · Note (`tabBar`).
 
 ## The Scribble Board
 
