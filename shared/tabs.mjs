@@ -14,7 +14,7 @@
 // Without Web Locks or BroadcastChannel (Node, old browsers) it is openRoom: one client, its own lock.
 import { openRoom } from './room.mjs'
 import { rangeOf } from './storage-memory.mjs'
-import * as M from './model.mjs'
+import * as M from './model.ts'
 import * as z from './crypto/zcrypto.mjs'
 
 const { ZError, hex } = z

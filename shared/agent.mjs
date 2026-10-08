@@ -2,8 +2,8 @@
 // messages, status registers, and the gate on everything a human sends it (authoriseCommand) before it becomes a
 // `command`. Mixed into Client (see index.mjs). Contract: shared/README.md "Agent API".
 import * as z from './crypto/zcrypto.mjs'
-import * as codec from './codec.mjs'
-import * as M from './model.mjs'
+import * as codec from './codec.ts'
+import * as M from './model.ts'
 import * as G from './crypto/session-grants.mjs'
 import { Client, randomHex, objectIdOf, ZERO_HASH } from './client.mjs'
 

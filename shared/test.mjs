@@ -10,8 +10,8 @@ import { startHub, LIMITS } from '../hub/server.mjs'
 import { startTestHub } from './test-hub.mjs'
 import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, joinWithRecoveryCode, roomLink, memoryStorage, checkEmoji, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
-import * as codec from './codec.mjs'
-import * as M from './model.mjs'
+import * as codec from './codec.ts'
+import * as M from './model.ts'
 import * as G from './crypto/session-grants.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
