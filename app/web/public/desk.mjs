@@ -525,7 +525,9 @@ controller('desk', class extends Controller {
     })
     this.mo.observe(this.list, { childList: true, subtree: true })
     // Where the list stands across, for the strips: read when its box changes (layout is fresh then), never per frame.
-    this.ro = new ResizeObserver(() => { this.across = this.list.getBoundingClientRect(); this.look() })
+    // (read in the next frame, not in the observer: measuring there made WebKit report "ResizeObserver loop completed
+    // with undelivered notifications" as a page error when the Desk is scrolled)
+    this.ro = new ResizeObserver(() => { this.remeasure = true; this.look() })
     this.ro.observe(this.list)
     // (folding the sidebar moves the list without resizing it: the window's resize, which the fold sends, measures again)
     this.moved = () => { this.across = this.list.getBoundingClientRect(); this.look() }
@@ -553,6 +555,7 @@ controller('desk', class extends Controller {
     if (this.frame) return
     this.frame = requestAnimationFrame(() => {
       this.frame = 0
+      if (this.remeasure) { this.remeasure = false; this.across = this.list.getBoundingClientRect() }
       for (const row of this.shown) if (!row.isConnected) this.shown.delete(row)
       const fresh = [...this.unseen].map(id => document.getElementById(id)).filter(row => row && !this.shown.has(row))
       this.news.hidden = !fresh.length
