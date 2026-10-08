@@ -78,3 +78,53 @@ final class BoardTests: XCTestCase {
     XCTAssertEqual(b.human.desks["x"]?["name"], "Second", "the causally later write wins, even when it came first")
   }
 }
+
+/** The Scribble Board's stroke format against the shared fixture (dev/interop/fixtures/strokes.json). */
+final class InkTests: XCTestCase {
+  func fixture() throws -> JV {
+    let url = Bundle.module.url(forResource: "Fixtures/strokes.json", withExtension: nil) ?? Bundle.module.resourceURL!.appendingPathComponent("Fixtures/strokes.json")
+    return try XCTUnwrap(JV.parse(Array(try Data(contentsOf: url))))
+  }
+  func testStrokesDecodeAndPackByteForByte() throws {
+    let f = try fixture()
+    for s in f["strokes"].array ?? [] {
+      let name = s["name"].string ?? "?"
+      let packed = try XCTUnwrap(s["entry"]["points"].string)
+      let ink = try XCTUnwrap(InkWire.unpack(packed), name)
+      let dec = s["decoded"].array ?? []
+      XCTAssertEqual(ink.count, dec.count, name)
+      for (i, p) in dec.enumerated() {
+        XCTAssertEqual(ink.pts[2 * i], p["x"].double!, accuracy: 1e-9, "\(name) x")
+        XCTAssertEqual(ink.pts[2 * i + 1], p["y"].double!, accuracy: 1e-9, "\(name) y")
+        XCTAssertEqual(ink.t[i], p["t"].double!, accuracy: 1e-9, "\(name) t")
+        XCTAssertEqual(ink.f[i], p["force"].double!, accuracy: 1e-3, "\(name) force")
+        if let az = p["azimuth"].double { XCTAssertEqual(ink.az![i], az, accuracy: 1e-5, "\(name) azimuth") }
+        if let al = p["altitude"].double { XCTAssertEqual(ink.al![i], al, accuracy: 1e-5, "\(name) altitude") }
+      }
+      XCTAssertEqual(ink.sim, s["simulated"].bool ?? false, name)
+      XCTAssertEqual(InkWire.pack(ink), packed, "\(name): packed again byte for byte")
+    }
+  }
+  func testItemThroughTheReducer() throws {
+    let f = try fixture()
+    let st = CanvasState()
+    let sender = String(repeating: "a", count: 64)
+    let changed = st.apply(sender: sender, seq: 1, hash: nil, envelopeNumber: 1, content: f["item"]["body"])
+    XCTAssertEqual(changed?.count, f["item"]["body"]["strokes"].array?.count)
+    // a piece continues the first stroke
+    let piece = f["piece"]["entry"].with("continues", .str("\(sender)/1/0"))
+    let before = st.shapes["\(sender)/1/0"]!.ink!.count
+    st.apply(sender: sender, seq: 2, hash: nil, envelopeNumber: 2, content: ["content_type": "strokes", "strokes": [piece]])
+    XCTAssertGreaterThan(st.shapes["\(sender)/1/0"]!.ink!.count, before)
+    // snapshot v2 round trip
+    let snap = st.snapshot()
+    let back = CanvasState(); back.load(snapshot: snap)
+    XCTAssertEqual(Set(back.shapes.keys), Set(st.shapes.keys))
+  }
+  func testPalette() {
+    XCTAssertEqual(Palette.color("ink"), 0x1b1f23)
+    XCTAssertEqual(Palette.color("ink", dark: true), 0xe9eeea)
+    XCTAssertEqual(Palette.color("nope", tool: "marker"), 0xffd43b)
+    XCTAssertEqual(Palette.nearest(r: 0.1, g: 0.44, b: 0.76, tool: "pen"), "blue")
+  }
+}

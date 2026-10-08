@@ -1015,6 +1015,7 @@ public final class Room {
                    boundObjectVersion: card.objectVersion, envelopeNumber: nil, envelopeHash: lid, byDeviceId: hex(device.id), answeredAt: at)
     a.pending = true
     let was = (card.objectState, card.closedHow, card.answer)
+    board.answerEchoes[lid] = (was.0, was.1, was.2)
     card.answer = a; card.answers.append(a)
     card.objectState = st == CARD_STATE.ANSWERED ? "answered" : "closed"
     card.closedHow = action == "read" ? "read" : action == "shred" ? "shredded" : settles ? "settled" : "answered"
@@ -1024,6 +1025,7 @@ public final class Room {
       try await send(kind: KIND.ANSWER, content: .obj(content), bind: bind, recipient: board.holderOf(card), object: ObjectBlock(id: try unhex(cardId), state: st, urgency: URGENCY_CODE[card.urgency] ?? 1, answeredAt: at),
                      sessionId: card.sessionId, localId: lid)
     } catch {
+      board.answerEchoes.removeValue(forKey: lid)
       card.objectState = was.0; card.closedHow = was.1; card.answer = was.2; card.answers.removeAll { $0.pending }
       board.project(); var c = Change(); c.cards.insert(cardId); c.stack = true; emit(c)
       throw error
@@ -1374,12 +1376,12 @@ public final class Room {
     emit(ch)
   }
 
-  /** A canvas as it stands: the newest snapshot (register canvas_snapshot/<timeline>), then every item after it. */
+  /** A canvas as it stands: the newest snapshot (register scribble_snapshot/<timeline>), then every item after it. */
   public func loadCanvas(_ timelineId: String) async throws -> CanvasState {
     let st = CanvasState()
-    let key = timelineKeyOf("canvas", timelineId)
+    let key = timelineKeyOf("scribble", timelineId)
     var after = 0
-    if let snap = board.human.canvasSnapshots[timelineId], !snap["attachment"].isNull,
+    if let snap = board.human.scribbleSnapshots[timelineId], !snap["attachment"].isNull,
        let bytes = try? await fetchAttachment(snap["attachment"]), let json = gunzip(bytes).flatMap({ JV.parse($0) }) {
       st.load(snapshot: json)
       after = st.lastEnvelopeNumber
@@ -1403,12 +1405,12 @@ public final class Room {
   public func sendCanvas(_ timelineId: String, _ content: JV) async throws {
     let p = parseTimelineKey("x:\(timelineId)")
     let sid: String? = p.scope == "session" ? p.scopeId : p.scope == "card" ? board.cards[p.scopeId]?.sessionId : nil
-    try await send(kind: KIND.TIMELINE_ITEM, content: content, timeline: (kind: "canvas", id: timelineId), sessionId: sid)
+    try await send(kind: KIND.TIMELINE_ITEM, content: content, timeline: (kind: "scribble", id: timelineId), sessionId: sid)
   }
   /** A selection of the board to a session: its picture and words as selection_sent; what was sent leaves the canvas. */
   public func sendSelection(sessionId: String, canvas timelineId: String, text: String, picture: JV, strokeIds: [String]) async throws {
     guard let to = sessionStates[sessionId]?.agentIds.first ?? board.sessions[sessionId]?.agentDeviceId else { throw ZError("bad-argument", "this session has no agent") }
-    var c: [String: JV] = ["content_type": "selection_sent", "attachments": [picture], "stroke_ids": .arr(strokeIds.map { .str($0) })]
+    var c: [String: JV] = ["content_type": "selection_sent", "attachments": [picture], "stroke_ids": .arr(strokeIds.map { .str($0) }), "board": .str(timelineId)]
     if !text.isEmpty { c["text"] = .str(text) }
     try await send(kind: KIND.TIMELINE_ITEM, content: .obj(c), recipient: to, timeline: (kind: "chat", id: "session/\(sessionId)"), sessionId: sessionId)
     if !strokeIds.isEmpty { try await sendCanvas(timelineId, .obj(["content_type": "send_away", "stroke_ids": .arr(strokeIds.map { .str($0) })])) }
