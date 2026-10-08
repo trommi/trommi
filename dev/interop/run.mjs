@@ -152,6 +152,16 @@ for (const pair of pairs) {
   const { F, G, A, B, agentId, sid } = ctx
   const inbox = async pred => until('the agent\'s inbox', async () => (await G.call('agent_inbox')).find(pred))
 
+  await P('presence: booleans from the hub (online, a link where there is one) read the same on A and B', async () => {
+    let pa, pb
+    await until('the same presence on A and B', async () => {
+      pa = await A.call('presence'); pb = await B.call('presence')
+      return canon(pa) === canon(pb) && pa.find(m => m.device_id === agentId)?.online === true
+    }).catch(() => assert.fail(`presence differs: ${canon(pa)}\n      vs ${canon(pb)}`))
+    for (const m of pa) assert.equal(typeof m.online, 'boolean', 'online is a boolean')
+    assert.ok(pa.some(m => m.online === false) || pa.every(m => m.online === true), 'online read as true/false, not as numbers')
+  })
+
   await P('version_info: both speak driver protocol 1, protocol 1, schema 1 and know the same kinds', async () => {
     const [va, vb] = [await A.call('version_info'), await B.call('version_info')]
     for (const v of [va, vb]) { assert.equal(v.driver_protocol, 1); assert.equal(v.protocol_version, 1); assert.equal(v.schema_version, 1) }

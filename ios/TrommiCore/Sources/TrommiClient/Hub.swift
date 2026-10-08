@@ -53,6 +53,12 @@ public final class HubClient {
     return v
   }
 
+  /**
+   * A hub answer's JSON: read by FastJSON on every platform (true and false stay booleans: Foundation's JSONSerialization
+   * gave numbers for them on Linux), then as Foundation values (Bool, Int, Double, String, arrays, dictionaries).
+   */
+  static func json(_ data: Data) -> JSON? { FastJSON.parse([UInt8](data))?.any as? JSON }
+
   // ---- one request ----------------------------------------------------------------------
 
   public func request(_ method: String, _ path: String, query: [String: String] = [:], body: JSON? = nil, auth: Bool = true, retried: Bool = false) async throws -> JSON {
@@ -69,7 +75,7 @@ public final class HubClient {
     }
     let (data, status) = try await send(req)
     if status == 401 && auth && !retried { token = nil; return try await request(method, path, query: query, body: body, auth: auth, retried: true) }
-    let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
+    let json = HubClient.json(data) ?? [:]
     if status >= 400 || status < 200 {
       if ProcessInfo.processInfo.environment["TROMMI_DEBUG"] != nil { FileHandle.standardError.write(Data("[hub] \(method) \(comps.url!.absoluteString) -> \(status)\n".utf8)) }
       throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
@@ -161,7 +167,7 @@ public final class HubClient {
     req.setValue("1", forHTTPHeaderField: "trommi-protocol")
     let (data, status) = try await send(req)
     if status == 426 {
-      let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
+      let json = HubClient.json(data) ?? [:]
       return HubVersionInfo(minimumClientVersions: ["ios": json["minimum_version"] as? String ?? "999.0.0"], message: json["message"] as? String)
     }
     return HubVersionInfo.parse(data)
@@ -191,7 +197,7 @@ public final class HubClient {
     req.setValue("Bearer \(try await accessToken())", forHTTPHeaderField: "authorization")
     let (data, status) = try await send(req)
     if status != 200 {
-      let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
+      let json = HubClient.json(data) ?? [:]
       throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
     }
     return Array(data)
@@ -207,7 +213,7 @@ public final class HubClient {
     req.httpBody = Data(blob)
     let (data, status) = try await send(req)
     if status >= 300 {
-      let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
+      let json = HubClient.json(data) ?? [:]
       throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
     }
   }
