@@ -76,7 +76,13 @@ struct DeskScreen: View {
 
       if hSize == .regular { ToolbarItem(placement: .principal) { DeskTitle() } }
       else { ToolbarItem(placement: .principal) { MenuPill() } }
-      ToolbarItem(placement: .topBarTrailing) { if hSize == .regular { NoteButton() } else { DeskWays() } }
+      // the duck for all and Blitz: two glass buttons, not one shared pill (his word, 8 October)
+      if hSize == .regular { ToolbarItem(placement: .topBarTrailing) { NoteButton() } }
+      else {
+        ToolbarItem(placement: .topBarTrailing) { DeskWays(part: .duck) }
+        if #available(iOS 26.0, *) { ToolbarSpacer(.fixed, placement: .topBarTrailing) }
+        ToolbarItem(placement: .topBarTrailing) { DeskWays(part: .blitz) }
+      }
     }
     .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }
   }
@@ -616,6 +622,8 @@ struct DeskTitle: View {
 
 /** The Desk's two ways at the top right of the iPhone (beside the floating pill): the duck for all and Blitz with its count. */
 struct DeskWays: View {
+  enum Part { case duck, blitz }
+  let part: Part
   @EnvironmentObject var model: BoardModel
   @State private var duckAsk = false
   var body: some View {
@@ -624,8 +632,8 @@ struct DeskWays: View {
     let decisions = fresh.filter { $0.kind == "decision" }.map { $0.id }
     let n = fresh.count
     if n > 0 {
-      HStack(spacing: 6) {
-        if !decisions.isEmpty {
+      Group {
+        if part == .duck && !decisions.isEmpty {
           Button { duckAsk = true } label: { PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 24, height: 20).frame(width: 44, height: 44).contentShape(Rectangle()) }
             .accessibilityLabel("I don’t give a duck: for all \(decisions.count) open decisions")
             .popover(isPresented: $duckAsk, arrowEdge: .top) {
@@ -645,6 +653,7 @@ struct DeskWays: View {
               .presentationCompactAdaptation(.popover)
             }
         }
+        if part == .blitz {
         Button { model.path.append(.blitz) } label: {
           PenMark("desk:BOLT").frame(width: 20, height: 20).frame(width: 44, height: 44).contentShape(Rectangle())
             .overlay(alignment: .topTrailing) {
@@ -652,6 +661,7 @@ struct DeskWays: View {
             }
         }
         .accessibilityLabel("\(Words.walk): \(n) open questions")
+        }
       }
     }
   }
