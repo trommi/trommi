@@ -72,7 +72,7 @@ function runs(model) {
 function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(card, model, base) } = {}) {
   // (The slip for the sessions that are cut off stands above the questions: #link-slip, hidden while there is none.)
   return html`${linkSlip(model.cut ?? [], base)}${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
-${model.open.length || (model.reads ?? []).length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon as an agent has a question, it shows up here.</p></div>`}
+${model.open.length || (model.reads ?? []).length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>Questions land here.</p></div>`}
 ${withAgents(model, base)}${endList(model, base)}${deskStacks(model, base, pile, q)}`
 }
 
