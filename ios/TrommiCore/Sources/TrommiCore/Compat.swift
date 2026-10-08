@@ -79,23 +79,28 @@ public struct HubVersionInfo: Decodable, Equatable {
   public var protocolVersionsSupported: [Int]
   public var minimumClientVersions: [String: String]
   public var recommendedClientVersions: [String: String]
+  /** The highest versions a client may WRITE here ("envelope", "schema"; 1 when the hub says nothing): write min(own, this). */
+  public var writeFormatVersions: [String: Int]
   public var message: String?
 
   enum CodingKeys: String, CodingKey {
     case protocolVersionsSupported = "protocol_versions_supported", minimumClientVersions = "minimum_client_versions"
-    case recommendedClientVersions = "recommended_client_versions", message
+    case recommendedClientVersions = "recommended_client_versions", writeFormatVersions = "write_format_versions", message
   }
-  public init(protocolVersionsSupported: [Int] = [Compat.PROTOCOL_VERSION], minimumClientVersions: [String: String] = [:], recommendedClientVersions: [String: String] = [:], message: String? = nil) {
+  public init(protocolVersionsSupported: [Int] = [Compat.PROTOCOL_VERSION], minimumClientVersions: [String: String] = [:], recommendedClientVersions: [String: String] = [:], writeFormatVersions: [String: Int] = [:], message: String? = nil) {
     self.protocolVersionsSupported = protocolVersionsSupported; self.minimumClientVersions = minimumClientVersions
-    self.recommendedClientVersions = recommendedClientVersions; self.message = message
+    self.recommendedClientVersions = recommendedClientVersions; self.writeFormatVersions = writeFormatVersions; self.message = message
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     protocolVersionsSupported = (try? c.decodeIfPresent([Int].self, forKey: .protocolVersionsSupported)) ?? [Compat.PROTOCOL_VERSION]
     minimumClientVersions = (try? c.decodeIfPresent([String: String].self, forKey: .minimumClientVersions)) ?? [:]
     recommendedClientVersions = (try? c.decodeIfPresent([String: String].self, forKey: .recommendedClientVersions)) ?? [:]
+    writeFormatVersions = (try? c.decodeIfPresent([String: Int].self, forKey: .writeFormatVersions)) ?? [:]
     message = try? c.decodeIfPresent(String.self, forKey: .message)
   }
+  /** The schema_version to write: the lower of this version's and the hub's level. */
+  public var writeSchemaVersion: Int { min(Compat.SCHEMA_VERSION, max(1, writeFormatVersions["schema"] ?? 1)) }
   /** From the response body; nil when it is not JSON of this shape. */
   public static func parse(_ data: Data) -> HubVersionInfo? { try? JSONDecoder().decode(HubVersionInfo.self, from: data) }
 

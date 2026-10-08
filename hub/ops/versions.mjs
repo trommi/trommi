@@ -4,6 +4,13 @@
 import { refuse } from './http.mjs'
 
 export const PROTOCOL_VERSIONS = [1]
+/**
+ * The highest data format versions clients may WRITE in rooms on this hub (README "Versioning and compatibility"):
+ * `envelope` (the zcrypto version byte) and `schema` (the body's schema_version). Readers accept every version up to
+ * their own; a writer writes min(its own, this). Raise it (HUB_WRITE_ENVELOPE_VERSION, HUB_WRITE_SCHEMA_VERSION) only
+ * after HUB_MIN_* made every client one that reads the new version.
+ */
+const writeLevel = (env, name) => (/^[1-9]\d{0,2}$/.test(env[name] ?? '') ? Number(env[name]) : 1)
 const KINDS = ['app', 'connector', 'ios']
 const SEMVER = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?:[-+][0-9A-Za-z.-]*)?$/
 
@@ -26,6 +33,7 @@ export function clientVersions({ env = process.env, log = () => {}, now = Date.n
   let minimum = fromEnv(env, 'HUB_MIN_')
   let recommended = fromEnv(env, 'HUB_RECOMMENDED_')
   let message = env.HUB_UPGRADE_MESSAGE || ''
+  const formats = { envelope: writeLevel(env, 'HUB_WRITE_ENVELOPE_VERSION'), schema: writeLevel(env, 'HUB_WRITE_SCHEMA_VERSION') }
   let unnamedSince = 0, unnamed = 0
 
   const tooOld = c => !!c && !!minimum[c.kind] && compareVersions(c.version, minimum[c.kind]) < 0
@@ -35,6 +43,7 @@ export function clientVersions({ env = process.env, log = () => {}, now = Date.n
     /** The public answer of GET /v1/version. */
     info: () => ({
       protocol_versions_supported: PROTOCOL_VERSIONS, minimum_client_versions: minimum, recommended_client_versions: recommended,
+      write_format_versions: formats,
       ...(message ? { message } : {}),
     }),
     /** Refuses an outdated client or an unknown protocol; returns the parsed client (or null: allowed for now, logged once a minute). */
