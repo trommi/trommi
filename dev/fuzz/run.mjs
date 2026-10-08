@@ -8,6 +8,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FUZZ_DIR } from './lib/env.mjs'
+import { guard } from '../guard.mjs'
+guard({ usage: 'node dev/fuzz/run.mjs [--quick] [--workers N] [--minutes M] [--seed S] [--hub URL] [--mode strict|chaos] [--steps N] [--root DIR] [--lead FILE] [--noshrink]', values: ['hub', 'lead', 'minutes', 'mode', 'root', 'seed', 'steps', 'workers'], flags: ['quick', 'noshrink'], targets: ['hub'] })
 
 const args = {}
 for (let i = 2; i < process.argv.length; i++) { const a = process.argv[i]; if (a.startsWith('--')) { const [k, v] = a.slice(2).split('='); args[k] = v ?? (process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[++i] : true) } }

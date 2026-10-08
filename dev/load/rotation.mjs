@@ -9,6 +9,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { z } from '../../shared/index.mjs'
 import { arg, until, pct, found, addAgent, addHuman, startLocalHub, useTestKey, deleteTestRoom, writeJson } from './lib.mjs'
+import { guard } from '../guard.mjs'
+guard({ usage: 'node dev/load/rotation.mjs --hub=local|URL --agents=N --humans=N --removals=N [--test-key=FILE] [--out=FILE]', values: ['agents', 'hub', 'humans', 'out', 'removals', 'test-key'], targets: ['hub'] })
 
 const HUB = arg('hub', 'local')
 const AGENTS = Number(arg('agents', 24)), HUMANS = Number(arg('humans', 3)), REMOVALS = Number(arg('removals', 3))

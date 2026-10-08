@@ -12,6 +12,8 @@ import path from 'node:path'
 import net from 'node:net'
 import { monitorEventLoopDelay } from 'node:perf_hooks'
 import { startHub, LIMITS } from '../../hub/server.mjs'
+import { guard } from '../guard.mjs'
+guard({ usage: 'node dev/load/hub-local.mjs --data=DIR --metrics=FILE [--port=8891] [--every=5000] [--keep-limits]', values: ['data', 'every', 'metrics', 'port'], flags: ['keep-limits'] })
 
 const arg = (name, def) => { const a = process.argv.find(x => x.startsWith(`--${name}=`)); return a ? a.slice(name.length + 3) : def }
 const dataDir = path.resolve(arg('data', `/tmp/trommi-e2e-hub-${process.pid}`))

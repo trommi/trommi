@@ -2,7 +2,7 @@
 // says log in, and Log in says signed in already" (4 Oct 2026: WebKit reads a stored X25519 CryptoKey back as null, the
 // device was lost at the next start; the core now stores the device keys wrapped, and the app never shows the start
 // page for a stored account that does not open).
-//   node dev/e2e-mobile.mjs [--app https://app.trommi.com] [--hub URL] [--email E]
+//   node dev/e2e-mobile.mjs [--app URL (default the local dev app)] [--hub URL] [--email E] [--i-mean-production]
 // 1. Create account, close the tab, open a new one: the Desk at once, the device record wrapped (no plain CryptoKeys).
 // 2. Device B logs in with email + password; reload, hard reload after a service worker update, localStorage and
 //    sessionStorage cleared (IndexedDB is the only truth): always the Desk.
@@ -11,9 +11,11 @@
 // 4. /login on a logged-in device offers "Log out of this device first" (another account), never a dead end.
 // Exits 1 on a failure. WebKit itself: see the commit (the same flow passed in WebKitGTK 2.52).
 import { launchChromium } from '../../../dev/cdp.mjs'
+import { guard } from '../../../dev/guard.mjs'
+guard({ usage: 'node dev/e2e-mobile.mjs [--app URL] [--hub URL] [--email E]', values: ['app', 'hub', 'email'], targets: ['app', 'hub'] })
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : fallback }
-const APP = arg('--app', 'https://app.trommi.com'), HUB = arg('--hub', null)
+const APP = arg('--app', 'http://127.0.0.1:8900'), HUB = arg('--hub', null)
 const EMAIL = arg('--email', `e2e+bug-${Date.now().toString(36)}@example.org`)
 const Q = HUB ? `?hub=${encodeURIComponent(HUB)}` : ''
 const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'

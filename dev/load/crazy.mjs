@@ -9,6 +9,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { rememberOwnCard, arg, flag, sleep, until, found, addAgent, addHuman, leanSender, trimWindows, startLocalHub, writeJson, text, rngOf, stroke, hex16 } from './lib.mjs'
+import { guard } from '../guard.mjs'
+guard({ usage: 'node dev/load/crazy.mjs --hub=local|URL --out=DIR [--scale=1] [--keep-hub]', values: ['hub', 'out', 'scale'], flags: ['keep-hub'], targets: ['hub'] })
 
 const HUB = arg('hub', 'local')
 const OUT = path.resolve(arg('out', `/tmp/trommi-crazy-${Date.now()}`))
