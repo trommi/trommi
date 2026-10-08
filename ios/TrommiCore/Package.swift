@@ -10,6 +10,8 @@ let package = Package(
   products: [
     .library(name: "TrommiCore", targets: ["TrommiCore"]),
     .library(name: "TrommiClient", targets: ["TrommiClient"]),
+    // The Share Extension's encrypted inbox (App Group); small on purpose: the extension links only this.
+    .library(name: "ShareInbox", targets: ["ShareInbox"]),
     .executable(name: "trommi-swift", targets: ["trommi-swift"]),
   ],
   dependencies: [
@@ -30,6 +32,10 @@ let package = Package(
       name: "TrommiClient",
       dependencies: ["TrommiCore"]
     ),
+    .target(
+      name: "ShareInbox",
+      dependencies: [.product(name: "Crypto", package: "swift-crypto")]
+    ),
     .executableTarget(
       name: "trommi-swift",
       dependencies: ["TrommiClient", "TrommiCore"]
@@ -43,6 +49,10 @@ let package = Package(
       name: "TrommiClientTests",
       dependencies: ["TrommiClient", "TrommiCore"],
       resources: [.copy("Fixtures")]
+    ),
+    .testTarget(
+      name: "ShareInboxTests",
+      dependencies: ["ShareInbox"]
     ),
   ],
   swiftLanguageModes: [.v5]
