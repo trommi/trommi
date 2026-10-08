@@ -52,7 +52,7 @@ public/
 1. A view imports only from `app.mjs` and `ui.mjs` (the core through `app.mjs`), never from another view. What two views
    need goes to `ui.mjs` (markup, controllers) or `app.mjs` (data, the room). `ui.mjs` imports nothing.
 2. No crypto in the app: everything crypto, account and keys comes from the core (`gen/vendor`, via `app.mjs` `core()`,
-   `account()`, `canvasWire()`).
+   `account()`, `scribbleWire()`).
 3. `gen/` is never edited by hand and never committed: the build makes it at deploy time.
 4. A file is split only when it passes ~3000 lines.
 5. JavaScript is `.mjs` only. Importing a module does nothing; `app.mjs` boots the page (so Node tests can import it).
@@ -114,7 +114,7 @@ approached and kept under the Desk (`app.mjs` `keepPad`); the Desk under the boa
 the pad (`whiteboard.mjs` mountPad) as large as the main area; select or frame something and **Send to…** a session.
 One drawing on it is a scribble.
 
-What is drawn is the desk's canvas timeline `desk/<32 hex>` (`whiteboard.mjs` `deskCanvas`; the wire format is the
+What is drawn is the desk's scribble timeline `desk/<32 hex>` (`whiteboard.mjs` `deskCanvas`; the wire format is the
 core's `scribble.mjs`: a desk id that is not 32 hex, such as `main`, is folded into 16 bytes, the same on every device).
 
 ## The account (what a person sees)

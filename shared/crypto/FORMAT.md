@@ -286,7 +286,7 @@ signature      = Sign(sender, "trommi/v1/envelope-sig", envelopeHash)
 - `kind` (`KIND`): 1 timeline item, 2 object version, 3 answer, 4 permission request, 5 verdict, 6 status, 7 decide again. **Kind 0 is refused.** Kinds 8 to 255 are reserved for later versions (`KIND_MAX` = 7; the former kind 8 "scribble" no longer exists): writers and the hub refuse them (`bad-format`, `strictKinds`), a reader accepts them (see "Kinds a reader does not know" below). Kind 1 is the only thread kind; every other kind is a head.
 - `seen` lists, sorted by sender id, the newest envelope of each other sender the author had accepted, bounded (v1.1, R5): only senders active at `logSeq` whose head changed since the author's own previous envelope, **at most 64**. Receivers carry earlier values forward. A sender never lists itself.
 - Object block, iff `kind` is 2, 3, 4, 5 or 7 (flags bit 1 must say exactly that; status and timeline items have none): `objectId`; `objectState` 1 open, 2 answered, 3 closed (withdrawn, expired or closed without an answer); `urgency` 0 low, 1 normal, 2 high, 3 critical; `answeredAt` milliseconds, 0 while open (display only, see section 20). Other values are refused. For a verdict, the request id is the `objectId`.
-- Timeline, iff `kind` = 1, **binary** (v1.1): `timelineKind` 1 chat, 2 canvas (any value 1 to 255 is accepted, so a new timeline kind needs no hub change; 0 is refused); `timelineScope` 1 card, 2 session, 3 desk (others refused); `timelineRef` the 16-byte object id, session id or desk id. The JSON and SQLite text form is `card/<32 hex>`, `session/<32 hex>`, `desk/<32 hex>`, lowercase, nothing else accepted (`parseTimelineId`). A session timeline must be sent under key scope 1 with `sessionId` = `timelineRef`; a desk timeline under key scope 0.
+- Timeline, iff `kind` = 1, **binary** (v1.1): `timelineKind` 1 chat, 2 scribble (the Scribble Board) (any value 1 to 255 is accepted, so a new timeline kind needs no hub change; 0 is refused); `timelineScope` 1 card, 2 session, 3 desk (others refused); `timelineRef` the 16-byte object id, session id or desk id. The JSON and SQLite text form is `card/<32 hex>`, `session/<32 hex>`, `desk/<32 hex>`, lowercase, nothing else accepted (`parseTimelineId`). A session timeline must be sent under key scope 1 with `sessionId` = `timelineRef`; a desk timeline under key scope 0.
 - `blobCount` at most 255; each `blobId` is an attachment id.
 
 Sizes: the fixed part from the version byte to `seenCount` is 190 bytes with key scope 0 and 206 with scope 1; each `seen` entry 72, the object block 26, the timeline 18, then `blobCount` 1 and 16 per blob.
@@ -425,7 +425,7 @@ Choices where the concept was open or ambiguous:
 - The recovery key signs recover entries and the add of a human device without an invite. Changing the recovery code without a recovery is not expressible in version 1.
 - The genesis entry is not countersigned by the recovery key.
 
-Not covered by version 1: the canvas version counter, encrypted snapshots as a format, a streaming interface for assets (there is whole-buffer encryption and per-chunk decryption), any ratchet (decided against).
+Not covered by version 1: the Scribble Board version counter, encrypted snapshots as a format, a streaming interface for assets (there is whole-buffer encryption and per-chunk decryption), any ratchet (decided against).
 
 ## 15. Assumptions and limits
 
@@ -477,7 +477,7 @@ The hub hands out `challenge` (32 random bytes, two minutes, one use). `deviceId
 | `sealedBox` | a sealed box with a fixed ephemeral key |
 | `room` | genesis entry, room id, epoch 1 secret and commitments, one wrap for the phone and one for the recovery key |
 | `invites` | three invites: laptop (human, check code compared, with wrap and the room key it opens), agent (no check code, no wrap), helper (agent, invited by the laptop, no wrap). Each with link, secret, invite id, offer, offer hash, request, request hash, reveal, check code, add entry |
-| `envelopes` | a fixed session id and session key; sender keys (phone room scope, phone and agent session scope); chat (phone 1, session scope, timeline `session/5e…5e`), card (agent 1, session scope, object block, urgency high, one blob, push), answer (phone 2, session scope, chained to phone 1), desk (phone 3, room scope, canvas timeline `desk/d5…d5`); each with header, nonce, ciphertext, ciphertext hash, signature, hash, bytes and `hubSees`; two pruned forms; `afterRecovery`: the tablet's first envelope, session scope, opened by the agent |
+| `envelopes` | a fixed session id and session key; sender keys (phone room scope, phone and agent session scope); chat (phone 1, session scope, timeline `session/5e…5e`), card (agent 1, session scope, object block, urgency high, one blob, push), answer (phone 2, session scope, chained to phone 1), desk (phone 3, room scope, scribble timeline `desk/d5…d5`); each with header, nonce, ciphertext, ciphertext hash, signature, hash, bytes and `hubSees`; two pruned forms; `afterRecovery`: the tablet's first envelope, session scope, opened by the agent |
 | `binds` | answer, verdict, decide again, permission request |
 | `hubAuth` | a signed hub sign-in by the agent |
 | `epochChanges.remove` | the laptop removes the helper: entry (with an empty cut), epoch 2 secret, wraps for phone, laptop and the recovery key, back link |

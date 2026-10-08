@@ -179,13 +179,13 @@ Note = { object_id, by_device_id, text, object_version, version_hash, envelope_n
 Published = { object_id, agent_device_id, attachments, title, note, released_until, object_version, version_hash, envelope_number, object_state }
 ```
 
-### Timeline (conversations and canvases, loaded lazily)
+### Timeline (conversations and Scribble Boards, loaded lazily)
 
 The sync engine sees every timeline item's header (pruned form) and counts it; bodies are fetched when the timeline is opened.
 
 ```js
 Timeline = {
-  timeline_key, timeline_kind,             // 'chat' | 'canvas'
+  timeline_key, timeline_kind,             // 'chat' | 'scribble'
   timeline_id,                             // 'card/<object_id>' | 'session/<agent_device_id>' | 'desk/<desk_id>'
   object_id,                               // for card/…; agent_device_id for session/…; desk_id for desk/…
   item_count,                              // all items known from headers
@@ -218,7 +218,7 @@ HumanRegisters = {
   crown: value | null,                      // 'crown'
   desks: Map<desk_id, value>,               // 'desk/<desk_id>'
   session_settings: Map<agent_device_id, value>,   // 'session/<agent_device_id>'
-  canvas_snapshots: Map<timeline_id, value>,       // 'canvas_snapshot/<timeline_id>' { attachment, last_envelope_number }
+  scribble_snapshots: Map<timeline_id, value>,     // 'scribble_snapshot/<timeline_id>' { attachment, last_envelope_number }
   raw: Map<key, { value, envelope_number, by_device_id }>,   // every human key, including unknown ones
 }
 ```
@@ -293,7 +293,7 @@ const note_id = await client.saveNote({ object_id?, text, ...app fields (place, 
         // new note or new version; optimistic (model.notes at once, pending: true; a new note first under its local_id, then its object_id);
         // quick edits chain on the version THIS client sealed last
 await client.deleteNote(object_id)                     // a closed version (object_state 'closed'), optimistic too
-await client.sendStrokes({ timeline_id, content_type, strokes?, stroke_ids?, offset?, text?, attachments? })  // canvas items
+await client.sendStrokes({ timeline_id, content_type, strokes?, stroke_ids?, offset?, text?, attachments? })  // Scribble Board items (README "Scribble strokes")
 const ref = await client.uploadAttachment(bytes, { file_name, media_type, width?, height?, caption?, page?, object_id? })  // encryptAsset + PUT; returns the README reference
 const bytes = await client.fetchAttachment(ref)        // GET + decrypt + sha256 check; cached in memory
 const { share_id, link, expires_at } = await client.shareAttachment(ref, { expires_at?, app_url? })   // uploader only; link for outsiders, ≤ 30 days
@@ -302,7 +302,7 @@ const bytes = await openShared(new Hub({ hub_url }), link)   // the viewer page:
 const blob = await client.attachmentBlob(ref)          // browsers: a Blob with ref.media_type
 await client.loadTimeline(timeline_key, { limit: 50 }) // next older page into the window, newest first: from storage if cached, else GET threads; returns { loaded, has_more }
 await client.timelineWindow(timeline_key, { before_envelope_number, limit })   // windowed read for scrolling, does not grow the in-memory window; [TimelineItem] oldest first
-await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail after a snapshot: { items (oldest first), loaded }, all pages
+await client.loadTimelineAfter(timeline_key, envelope_number)   // Scribble Board tail after a snapshot: { items (oldest first), loaded }, all pages
 roomLink(hub_url, room_id) / parseRoomLink(text)       // '<app>#r1.<b64u hub>.<b64u room>': what a fresh device needs for recovery
 ```
 

@@ -167,7 +167,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>shared/</code> · 33 files</summary>
+<details><summary><code>shared/</code> · 36 files</summary>
 
 ```
 ├── crypto/
@@ -189,9 +189,12 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── client.mjs
 ├── codec.mjs
 ├── index.mjs
+├── ink.mjs
 ├── model.mjs
+├── palette.mjs
 ├── README.md
 ├── room.mjs
+├── scribble-test.mjs
 ├── scribble.mjs
 ├── snapshot.mjs
 ├── storage-file.mjs
@@ -208,7 +211,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>dev/</code> · 41 files</summary>
+<details><summary><code>dev/</code> · 42 files</summary>
 
 ```
 ├── fuzz/
@@ -238,7 +241,8 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   └── worker.mjs
 ├── interop/
 │   ├── fixtures/
-│   │   └── screens.json
+│   │   ├── screens.json
+│   │   └── strokes.json
 │   ├── .gitignore
 │   ├── driver-js.mjs
 │   ├── parity-baseline.json
@@ -331,7 +335,7 @@ npm run interop:screens              # node dev/interop/screens.mjs: web screens
 1. **Everyone is a member.** A phone, a laptop, a Claude Code session: each has its own Ed25519 + X25519 keys and an entry in the room's signed member list. There are no client-specific routes; an agent uses exactly the routes a browser uses.
 2. **One envelope format** (`shared/crypto/FORMAT.md` §9) for everything said in a room: messages, cards, answers, status lines, shared board state. Signed by the sender, chained per sender, encrypted with the sender's key of the key epoch.
 3. **One sync mechanism, two depths.** Every client keeps one number: the `envelope_number` (the hub's arrival number) of the last envelope it processed. `GET envelopes?after_envelope_number=` and `GET stream?after_envelope_number=` deliver the same records in the same order to every client, app and agent alike. Every record carries the **signed header in full** (small; every client verifies every sender's whole chain) and the **encrypted body only for heads**. Threads are fetched when opened, newest first, in pages. Clients build all state locally; the hub never sends "state".
-4. **Heads and threads.** The signed `envelope_kind` says whether an envelope belongs to the overview (every kind except `timeline_item` is a head: object versions, answers, registers). Messages and strokes are thread items: each carries a signed plaintext `timeline_kind` (`chat`, `canvas`; later `media` …) and `timeline_id` (`card/<object_id>`, `session/<session_id>`, `desk/<desk_id>`), so the hub pages one timeline with one index hit and never mixes chat with strokes. New timeline kinds need no hub change. The `envelope_kind` is in the signed header and is checked before anything else. A revision is a new object version that names the previous one; no envelope ever holds a whole conversation. Long text, HTML pages and pictures are attachments, fetched only when shown.
+4. **Heads and threads.** The signed `envelope_kind` says whether an envelope belongs to the overview (every kind except `timeline_item` is a head: object versions, answers, registers). Messages and strokes are thread items: each carries a signed plaintext `timeline_kind` (`chat`, `scribble`; later `media` …) and `timeline_id` (`card/<object_id>`, `session/<session_id>`, `desk/<desk_id>`), so the hub pages one timeline with one index hit and never mixes chat with strokes. New timeline kinds need no hub change. The `envelope_kind` is in the signed header and is checked before anything else. A revision is a new object version that names the previous one; no envelope ever holds a whole conversation. Long text, HTML pages and pictures are attachments, fetched only when shown.
 5. **The hub reads the signed header only.** It never parses a body. The body carries its own `schema_version`; new app features need no hub change.
 6. **Plaintext is what the concept allows and nothing more** (concept §7): room, key epoch, sender, recipient, numbers, hashes, time, padded size; for objects id, state, urgency, answer time; attachment ids; `send_push`; `envelope_kind`; for thread items `timeline_kind` and `timeline_id`. Device roles (human, agent) in the member list; device names are not plaintext (decided 4 October 2026: member entries, offers and join requests carry no name field, R8; names live in the encrypted register `device/<device_id>`). (Also decided 4 October 2026: the kind and the timeline are visible to the hub so it can page timelines and keep chat apart from strokes; the hub learned most of it from the object state anyway.)
 7. **Clear names, one scheme.** The same snake_case names in SQLite columns, JSON fields and this text, no abbreviations. Bytes travel as base64url without padding, ids as lowercase hex. Families, told apart by their names:
@@ -445,7 +449,7 @@ Any other `ZError` code is a 400.
 | `GET /v1/rooms/:room_id/sessions/:session_id/key_back_links` | human, recovery; an assigned agent for epochs granted `with_history` | | `{ key_back_links: [{ session_key_epoch, key_back_link }] }` |
 | `POST /v1/rooms/:room_id/envelopes` | member | `{ envelope }` | `{ envelope_number }` |
 | `GET /v1/rooms/:room_id/envelopes?after_envelope_number=0&limit=1000` (`&newest=1`: the newest `limit` after the cursor) | member; the recovery key gets every envelope in the pruned form (for the cuts of a recovery) | | `{ last_envelope_number, envelopes: [{ envelope_number, envelope }] }` in hub order: the full envelope for heads, the pruned form (header, ciphertext hash, signature) for thread items and pruned cards |
-| `GET /v1/rooms/:room_id/threads?timeline_kind=chat&timeline_id=card/<object_id>&before_envelope_number=&limit=50` (newest first) or `&after_envelope_number=` (oldest first, for a canvas tail after a snapshot) | member | | `{ envelopes: [{ envelope_number, envelope }], has_more }`: full items of exactly that timeline (index `room_id, timeline_kind, timeline_id, envelope_number`) |
+| `GET /v1/rooms/:room_id/threads?timeline_kind=chat&timeline_id=card/<object_id>&before_envelope_number=&limit=50` (newest first) or `&after_envelope_number=` (oldest first, for a Scribble Board's tail after a snapshot) | member | | `{ envelopes: [{ envelope_number, envelope }], has_more }`: full items of exactly that timeline (index `room_id, timeline_kind, timeline_id, envelope_number`) |
 | `GET /v1/rooms/:room_id/stream?after_envelope_number=` | member | `fetch` with the Bearer header (not `EventSource`) | `text/event-stream`, below |
 | `POST /v1/rooms/:room_id/agent_lease` | agent | `{ process_instance }` | `{ lease_generation, expires_at }`: one running process per key. A new sign-in with a new `process_instance` takes the lease over and closes the old process's streams; the lease also ends when its stream closes or after 60 s without a stream. Posts carry the `lease_generation` (header `x-lease-generation`); an older generation gets `409 lease-lost`. The board id of an agent is `hex(device_id)[0..16]`; its readable name is in encrypted registers |
 | `POST /v1/rooms/:room_id/agent_link` | agent, under its lease | `{ hears: 'live' \| 'oncall', attached?, last_call_at?, working?, since?, cut_since?, exit?: { reason, claude: 'alive' \| 'gone' \| 'checking' } }` | `{ ok }`: the link report ("The link" below). Kept in memory per device (a hub restart forgets it; connectors repeat it every 60 s), served with `GET devices`, announced as `presence`. Unknown fields are dropped, wrong types are `bad-argument`. The hub reads three fields for its push, `working`, `exit.claude` and `cut_since`, and nothing else of it |
@@ -610,8 +614,8 @@ Everything in a room is one of three things, and the board is a fourth thing com
 | | What | Examples | How it travels |
 | --- | --- | --- | --- |
 | **Objects** | things placed into the room, with versions | a card (decision, info), a permission request, a note, a published page | envelope kind `object_version`, a head. Each version is a new envelope naming the previous one (`previous_version_hash`). The newest version is the object. An object has an `object_id` (16 bytes) in the header |
-| **Timelines** | append-only, small items, paged | the conversation under a card, a session's chat, the strokes on a canvas | envelope kind `timeline_item`, a thread item, carrying `timeline_kind` (`chat`, `canvas`) and `timeline_id` (`card/<object_id>`, `session/<session_id>`, `desk/<desk_id>`) |
-| **Registers** | "the current value of something" | status lines, an agent's profile, an agent's receipt (`heard`), drafts, snooze, duck, crown, desks, session settings, read markers, a canvas snapshot pointer | envelope kind `status`, a head: `{ values: { "<key>": value \| null } }`, last writer wins |
+| **Timelines** | append-only, small items, paged | the conversation under a card, a session's chat, the strokes on a Scribble Board | envelope kind `timeline_item`, a thread item, carrying `timeline_kind` (`chat`, `scribble`) and `timeline_id` (`card/<object_id>`, `session/<session_id>`, `desk/<desk_id>`) |
+| **Registers** | "the current value of something" | status lines, an agent's profile, an agent's receipt (`heard`), drafts, snooze, duck, crown, desks, session settings, read markers, a Scribble Board snapshot pointer | envelope kind `status`, a head: `{ values: { "<key>": value \| null } }`, last writer wins |
 | **Projections** | computed on every client, never stored or sent | the Desk, stacks, crowns, the Next line, counters, "in revision", queue order | — |
 
 Four command kinds bind a human's decision to exactly the object version it answers (the crypto layer checks the bind, concept §6): `answer`, `decide_again`, `verdict` (to a permission request), and the agent's `permission_request` itself, which is an object with an expiry. That is all: **seven kinds, and none of them knows a content type.** A new content type (video, a new card type, a poll) is a new `object_type` or `content_type` inside the encrypted body, with big media as attachments (STREAM chunks, Range, thumbnails or posters as separate small attachments). The hub never needs a new kind.
@@ -632,7 +636,7 @@ A **session** on the board is an agent member. A human's envelope for a session 
 
 | `envelope_kind` (crypto `KIND`) | From | Header | Body (besides `schema_version`) |
 | --- | --- | --- | --- |
-| `timeline_item` (1), thread | anyone | `timeline_kind`, `timeline_id` | `content_type`: `message` (`text`, `details?`, `html?`, `attachments?`, `hand_back?`, `explain?`, `present_card?`, `copied_cards?`, `marks?`, `published_object_id?`, `note?`: `{ object_id, written_at }` when a human sent one of their notes (the note object's id, 32 hex, and when it was written, ms or null; nothing else in it: a bad one is refused on seal and dropped on open, the message stays; the app shows the message as the note, taped on)), `strokes` (`strokes: [{ stroke_id, points (quantised, delta-encoded), style }]`, sent every ~150 ms while drawing), `erase` / `move` / `send_away` (`stroke_ids`, `offset?`), `selection_sent` (`text?`, `attachments`: the picture of the selection, `stroke_ids`) |
+| `timeline_item` (1), thread | anyone | `timeline_kind`, `timeline_id` | `content_type`: `message` (`text`, `details?`, `html?`, `attachments?`, `hand_back?`, `explain?`, `present_card?`, `copied_cards?`, `marks?`, `published_object_id?`, `note?`: `{ object_id, written_at }` when a human sent one of their notes (the note object's id, 32 hex, and when it was written, ms or null; nothing else in it: a bad one is refused on seal and dropped on open, the message stays; the app shows the message as the note, taped on)), `strokes` (`strokes: [Entry]`: strokes, pieces of a stroke being drawn (~ every 150 ms), notes and pictures; see "Scribble strokes"), `erase` / `move` / `send_away` (`stroke_ids`, `offset?`), `selection_sent` (`text?`, `attachments`: the picture of the selection, `stroke_ids`, `board`) |
 | `object_version` (2), head | creator | `object_id`, `object_state`, `urgency` | `object_type`: `card` (`card_type` `decision` \| `info`, `title`, `teaser?`, `body?`, `options?`, `sections?`, `html?`, `allows_multiple?`, `recommended?`, `urgency_reason?`, `attachments?`, `change_note?`, `close_summary?`, `withdraw_reason?`, `merged_into_object_id?`, `merged_from_object_ids?`), `note` (`text`, plus app-defined fields that pass through), `published` (`attachments`, `title`, `note?`, `released_until?`); always `object_version` (1, 2, …) and `previous_version_hash` |
 | `answer` (3), head | human → owning agent | `object_id`, `object_state` answered (closed for read and shred, and for an answer that settles the card: every choice a `final` option), `answered_at` | `answer_action` (`answer`, `read`, `shred`), `choices?`, `note?`, `option_notes?`, `attachments?`, `marks?`, `trusted?`; signed bind: object id, hash of the version answered, every choice (R7) |
 | `permission_request` (4), head | agent | `object_id`, `send_push` | `tool_name`, `description`, `input_preview`; bind: request id, expiry. A second head of the same object from the same agent with `object_state` closed withdraws a pending request (`withdraw_reason?`, same bind) |
@@ -646,9 +650,66 @@ There is no kind 8: the hub refuses it (`bad-format`); drawings are timeline ite
 
 - **Every device's own key** counts only from that device: `device/<device_id>` (`device_name`, `platform`, `folder`, `host`), written right after joining, e.g. `device_name` "valiido", `folder` "~/git/valiido", `host` "desktop". The hub never sees a name.
 - **An agent's keys** count only from that agent: `profile` (`model`, `task`, `icon`, `agent_name`, `parent_session`, `is_main`), `status_line/<id>` (`label`, `state`, `detail`, `object_id`), `alert/<envelope_hash>` (a command the agent refused: `code`, `message`, `sender_device_id`, `envelope_number`).
-- **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `canvas_snapshot/<timeline_id>` (for `timeline_kind` canvas; `attachment` reference + the signed sender **frontier** it includes, R2), `room_snapshot` (a whole-room snapshot for a fresh device's first load: `shared/snapshot.mjs`).
+- **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `scribble_snapshot/<timeline_id>` (for `timeline_kind` scribble; `attachment` reference + the signed sender **frontier** it includes, R2), `room_snapshot` (a whole-room snapshot for a fresh device's first load: `shared/snapshot.mjs`).
 
-**Canvases.** Strokes are an append-only set: concurrent edits from two devices merge without conflict (set semantics, ordered by `envelope_number`; erase and move are tombstones referencing `stroke_ids`). Every few hundred strokes or when idle, one device writes the whole canvas as an encrypted snapshot attachment and points `canvas_snapshot/<timeline_id>` at it; a fresh client loads snapshot + `GET threads?timeline_kind=canvas&timeline_id=…&after_envelope_number=` instead of replaying everything. Live strokes from others render from the stream as they arrive.
+**Scribble Boards.** Strokes are an append-only set: concurrent edits from two devices merge without conflict (set semantics; erase and move are tombstones referencing `stroke_ids`, and adding, erasing and moving commute). Every few hundred items or when idle, one device writes the whole board as an encrypted snapshot attachment (`{ v: 2, shapes, frontier, last_envelope_number }`, gzip'd JSON) and points `scribble_snapshot/<timeline_id>` at it; a fresh client loads snapshot + `GET threads?timeline_kind=scribble&timeline_id=…&after_envelope_number=` instead of replaying everything. Live strokes from others render from the stream as they arrive. The format of a stroke is below.
+
+### Scribble strokes
+
+One stroke format for every client, modelled on PencilKit so that the iOS app maps a `PKStroke` 1:1 and the web app draws the same line (code: `shared/ink.mjs` points and shape, `shared/scribble.mjs` entries and reducer, `shared/palette.mjs` colours; samples: `dev/interop/fixtures/strokes.json`, checked by `shared/scribble-test.mjs`).
+
+**Board units.** A Scribble Board has one fixed coordinate space, independent of screen, zoom and device: one unit is one CSS pixel at 100 % zoom on the web and one point at zoom scale 1 in `PKCanvasView`; x grows to the right, y down; the board is endless (any finite number). On the wire coordinates are quantised to 1/16 unit, times to whole milliseconds.
+
+**A `strokes` item** carries `strokes: [Entry]`. The receiver derives each shape's id as `<sender_device_id>/<sender_sequence>/<index>` (R1); no id is read from a body. Entries by tool:
+
+| Entry | Fields |
+| --- | --- |
+| stroke | `tool` `pen` \| `marker`, `color` (a palette token), `width` (board units, the tool's base width), `points` (packed, below), `transform?` (`[a, b, c, d, tx, ty]`, as `CGAffineTransform`: x' = a·x + c·y + tx, y' = b·x + d·y + ty; absent = identity), `z?`, `group?` |
+| piece | `continues` (the id of a stroke this sender is still drawing), `points`: more points of it, sent every ~150 ms while drawing; the times go on from the stroke's start |
+| note | `tool` `text` \| `voice` \| `sticky`, `at: [x, y]` (top left), `text`, `size`, `color` (token), `wrap?`, `z?`, `group?` |
+| picture | `tool` `image`, `rect: [x0, y0, x1, y1]`, `attachment` (README attachment reference), `nw?`, `nh?`, `mime?`, `name?`, `z?`, `group?` |
+
+There is no eraser stroke: the eraser is PencilKit's vector eraser (`PKEraserTool(.vector)`) and removes whole strokes, as an `erase` item naming them. A `move` item's `offset: [dx, dy]` adds to a stroke's `tx, ty` (to a note's `at`, a picture's `rect`). A change that is not a move (resize, recolour, edited text, z) is an `erase` of the old shape and a new one. A receiver bakes a `transform` into the points (the width times √|ad − bc|, the azimuth turned by atan2(b, a)); the web app sends identity transforms and scales by sending the scaled points.
+
+**Packed points** (`points`, base64url, `ink.mjs` `packPoints`): a flags byte, then per point until the bytes end:
+
+| Bytes | Value |
+| --- | --- |
+| u8 flags (once) | bit 0: every point carries azimuth and altitude (a pencil); bit 1: the force is simulated (mouse or finger, from speed); any other bit: a newer format, the stroke is not readable here |
+| zigzag LEB128 | x in 1/16 unit: the first point absolute, then the difference to the point before |
+| zigzag LEB128 | y, the same |
+| LEB128 | t in ms: the first point since the stroke began, then the time since the point before (never negative) |
+| u8 | force, 0..255 = 0..1 |
+| u8, u8 (flag bit 0) | azimuth 0..255 = 0..2π (·2π/256), altitude 0..255 = 0..π/2 |
+
+A 240 Hz pencil point is about 5–7 bytes, a mouse point 4–6. Malformed bytes or more than 50 000 points in one piece: the entry is dropped whole.
+
+**The line.** The points are the control points of a uniform cubic B-spline, as `PKStrokePath`'s are, with the ends clamped (the first and the last point repeated three times), so the line begins and ends exactly on them; force follows the same spline. The pen's ink at a point is `width · (0.3 + 1.4 · √force)` wide (force 0.25, a light hand, is the base width); the web draws it as the union of discs of that width along the spline, every ~1 unit, filled once (round ends and joins, no notches, a translucent ink laid once). The marker is `width` wide everywhere, translucent (`MARKER_OPACITY`: 0.5 multiplied on light paper, 0.38 on dark). Input without pressure gets a force from its speed (`forceFromSpeed`: slow heavier, fast lighter, eased) and sets flag bit 1; a pen's pressure is Pointer Events `pressure` (WebKit: force ÷ maximum force), its angles `azimuthAngle` / `altitudeAngle` or, where missing, `tiltX` / `tiltY` converted (`anglesOfTilt`). Points are kept raw (no smoothing at capture); the spline smooths when drawn.
+
+**Colours** are tokens (`shared/palette.mjs`), each with a light and a dark value per tool: `ink` (pen only; dark on light paper, light on dark), `red`, `orange`, `yellow`, `green`, `blue`, `violet`, `pink`. The pen offers ink, red, orange, green, blue, violet; the marker yellow, green, pink, blue, orange. An unknown token paints as the tool's first colour. Notes use the pen values.
+
+**What an agent gets.** Select-and-send (or cut out an area) seals a `selection_sent` into the session's conversation: `attachments` = a PNG of exactly the selection, rendered from the strokes at send time on white, `text?` = the words of its notes, `stroke_ids`, `board` (the timeline id). The connector hands it on as `<channel kind="scribble" board message_id elements image_path>`. What was sent leaves the board (`send_away`; with a cut-out, strokes crossing its edge are cut there and the parts outside stay, keeping their times, forces and angles).
+
+**PencilKit mapping** (the iOS app; `PK_MAX_FORCE` = 4.1666667, an Apple Pencil's `UITouch.maximumPossibleForce`):
+
+| Protocol | PencilKit | To the wire | From the wire |
+| --- | --- | --- | --- |
+| `tool` `pen` / `marker` | `PKInk.InkType` `.pen` / `.marker` (`PKInkingTool`) | other ink types (`.pencil`, `.monoline`, …) go as `pen` | |
+| eraser (no stroke) | `PKEraserTool(.vector)` | `erase` with the removed strokes' ids | remove those `PKStroke`s |
+| `color` token | `PKInk.color` | the nearest palette token of the tool | `UIColor(light:dark:)` of the token's values |
+| `width` | `PKInkingTool.width` | the tool's width when drawn | `PKInkingTool(ink, width:)`; point size below |
+| `transform` | `PKStroke.transform` | as is (identity may be left out) | as is |
+| point `x`, `y` | `PKStrokePoint.location` | ÷ 1 (points = units), quantised to 1/16 | as is |
+| point `t` (ms since start) | `PKStrokePoint.timeOffset` (s) + `PKStrokePath.creationDate` | `timeOffset · 1000`, rounded | `t / 1000`; `creationDate` = when the item arrived |
+| point `force` 0..1 | `PKStrokePoint.force` | `min(1, force / PK_MAX_FORCE)`; flag bit 1 when the input had none (finger) | `force · PK_MAX_FORCE` |
+| point azimuth | `PKStrokePoint.azimuth` (rad, 0 along +x, towards +y) | as is, when a pencil drew it (flag bit 0) | as is; no tilt: 0 |
+| point altitude | `PKStrokePoint.altitude` (rad, π/2 upright) | as is (flag bit 0) | as is; no tilt: π/2 |
+| (derived) | `PKStrokePoint.size` | not sent | pen: `width · (0.3 + 1.4 · √force)` both ways; marker: `width` |
+| (derived) | `PKStrokePoint.opacity` | not sent | 1 (the marker's ink is translucent itself) |
+| (derived) | `PKStrokePoint.secondaryScale` | not sent | 1 |
+| points (control points) | `PKStrokePath(controlPoints:creationDate:)` | `path` (the control points, not `interpolatedPoints`) | as is |
+| `z` | order in `PKDrawing.strokes` | | sort by `z`, then id |
+| `group`, `mask`, `randomSeed` | | not sent (`PKStroke.mask` is never set: the vector eraser leaves none) | |
 
 **Projections, computed on the client:** a card's place in the stack (oldest first by `sent_at` of version 1, R2), "in revision" (a human message with `hand_back` or `explain` newer than the card's newest version, until the agent's next version or a message with `present_card`), the Desk and stacks, crowns, the Next line, unread counts.
 
@@ -686,10 +747,10 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
 | `verdict` | a human device, `recipient_device_id` = the request's creator; request id = `object_id` |
 | `timeline_item` chat on `session/<S>` | the agent assigned to S, or a human with `recipient_device_id` = that agent |
 | `timeline_item` chat on `card/<X>` | X's creator or holder, or a human with `recipient_device_id` = X's creator or holder |
-| `timeline_item` canvas on `desk/<D>` | human devices |
-| `timeline_item` canvas on `session/<S>` | human devices and the agent assigned to S |
+| `timeline_item` scribble on `desk/<D>` | human devices |
+| `timeline_item` scribble on `session/<S>` | human devices and the agent assigned to S |
 | `status` key `device/<X>`, `profile`, `status_line/*`, `alert/<envelope_hash>` | X itself / an agent the session's grants gave that session key epoch (session scope) |
-| `status` human keys (`draft/`, `snooze/`, `duck/`, `crown`, `desk/`, `session/`, `canvas_snapshot/`, `room_snapshot`) | human devices only |
+| `status` human keys (`draft/`, `snooze/`, `duck/`, `crown`, `desk/`, `session/`, `scribble_snapshot/`, `room_snapshot`) | human devices only |
 | session grant | a human device (signed, chained per session); the first grant of an agent's own child session: that agent (R6) |
 | `send_push` | honoured only on `object_version` and `permission_request` from the creator, rate-limited |
 
