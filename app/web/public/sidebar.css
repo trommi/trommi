@@ -352,6 +352,10 @@ html body .topbar .deskpill .desk-go > .sketch { display: none; }
 .crown-edges svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .crown-edges path { fill: var(--tone-edge); stroke: var(--tone-pen); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .crown-edges .e-n { display: none; }
+/* dark (his word, 8 October: "dark mode just inverts too much"): the papers under a main keep its colour, but their
+   edges are a soft line in it, not a bright one; the card's own frame stays a quiet line, also where it is the page in view */
+:root[data-theme="dark"] .crown-edges path { fill: color-mix(in srgb, var(--tone-pen) 12%, var(--surface)); stroke: color-mix(in srgb, var(--tone-pen) 45%, var(--surface)); }
+:root[data-theme="dark"] .agent-row.is-main[data-fold] .agent-entry[aria-current="page"], html[data-theme="dark"][data-rail="folded"] #agents .agent-row.is-main.has-active .agent-entry { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--fg) 22%, var(--line-strong)), var(--shadow-sm); }
 .crown-edges i.is-knock { height: 19px; }
 .crown-edges i.is-knock path { fill: var(--urg-critical); stroke: color-mix(in srgb, var(--urg-critical) 72%, var(--fg)); }
 
@@ -524,7 +528,7 @@ a.agent-badge { text-decoration: none; }
 .corner-note-head { display: flex; flex-direction: row-reverse; align-items: center; gap: var(--s-2); min-height: 64px; padding: 0; border: 0; background: none; color: var(--note-ink); cursor: pointer; }
 .corner-note-ico { flex: none; width: 63px; height: 63px; overflow: visible; rotate: -4deg; transition: rotate 140ms, translate 140ms; }
 .corner-note-head:hover .corner-note-ico { rotate: -1deg; translate: 0 -2px; }
-.corner-note-ico .note-fill { fill: var(--note-yellow); } .corner-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.55; stroke-linecap: round; opacity: .8; }
+.corner-note-ico .note-fill { fill: var(--note-yellow); } .corner-note-ico .note-ink { fill: none; stroke: var(--note-ink); stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--note-ink); stroke-width: 1.55; stroke-linecap: round; opacity: .8; }
 .corner-note-box:not(.has-words) .note-lines { display: none; }   /* (an empty note: a blank sticky) */
 /* Its tip: our own, not the browser's (a native tooltip can be cut at the window's edge): above the sticky, its right
    end on the sticky's, so it always stays inside the window. */
@@ -789,7 +793,7 @@ html[data-rail="folded"] .desk-switch-open { display: none; }
 .demo-switch b { position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--fg); transition: translate var(--d-fast); }
 .demo-toggle[aria-checked="true"] .demo-switch { background: var(--yellow); }
 .demo-toggle[aria-checked="true"] .demo-switch b { translate: 14px 0; }
-.demo-band { position: fixed; z-index: var(--z-band); left: 16px; bottom: 70px; padding: var(--s-1) var(--s-3) 5px; border: 1.6px solid var(--fg); border-radius: 10px 12px 9px 13px / 12px 9px 13px 10px; background: var(--yellow); color: #2d2406; font: 700 var(--t-xs)/1.2 var(--font); text-decoration: none; white-space: nowrap; rotate: -1deg; }
+.demo-band { position: fixed; z-index: var(--z-band); left: 16px; bottom: 70px; padding: var(--s-1) var(--s-3) 5px; border: 1.6px solid var(--note-ink); border-radius: 10px 12px 9px 13px / 12px 9px 13px 10px; background: var(--yellow); color: #2d2406; font: 700 var(--t-xs)/1.2 var(--font); text-decoration: none; white-space: nowrap; rotate: -1deg; }
 .demo-band a { color: inherit; text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
 .demo-band a:hover { text-decoration-thickness: 2.5px; }
 /* (in the sidebar, above the Trommi row: clear of every page's head; folded, in the page's bottom-left corner; a phone: a slim strip over the top line) */

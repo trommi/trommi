@@ -1217,3 +1217,4 @@ body > main#inbox { contain: strict; }
 .row-stamp { position: relative; display: inline-block; vertical-align: -.22em; width: 22px; height: 22px; margin-right: 7px; color: var(--tone-pen); }
 .row-stamp > svg { width: 100%; height: 100%; display: block; }
 .row-stamp .crown-mark { display: none; }
+:root[data-theme="dark"] .desk-blitz .blitz-bolt { stroke: var(--note-ink); }   /* (a yellow thing keeps dark ink in the dark too) */
