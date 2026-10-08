@@ -34,14 +34,23 @@ struct BoardShell: View {
         // sheet over the page (medium, the tab bar stays reachable). A pushed screen hides the bar where it has its own
         // controls at the bottom; the place pill at the top left is the menu, the ⋯ at the top right the screen's actions.
         TabView(selection: Binding(get: { model.tab }, set: { t in
-          if t == .note { noteOpen = true } else { noteOpen = false; if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) } }
+          // Note is no page: the system tab bar has already switched to it, so the selection goes there and straight
+          // back (a set that leaves the value as it was is not seen, and the bar stayed on an empty page, build 18)
+          if t == .note {
+            let back = model.tab == .note ? .desk : model.tab
+            model.tab = .note
+            DispatchQueue.main.async { model.tab = back; noteOpen = true }
+          } else { noteOpen = false; if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) } }
         })) {
           Tab(value: BoardModel.Tab.chat) { chats.modifier(NotePanel(open: $noteOpen)) } label: { PenImage.of("sketch:bubble", size: 24).accessibilityLabel("Chat") }
           Tab(value: BoardModel.Tab.desk) {
             stack.toolbar(model.selected.isEmpty ? .automatic : .hidden, for: .tabBar).modifier(NotePanel(open: $noteOpen))
           } label: { PenImage.of("sketch:desk", size: 24).accessibilityLabel("Desk") }
           .badge(model.view?.fresh.count ?? 0)
-          Tab(value: BoardModel.Tab.note) { Color.clear } label: { PenImage.of("sketch:page", size: 24, dot: hasNote).accessibilityLabel(hasNote ? "Note, written" : "Note") }
+          Tab(value: BoardModel.Tab.note) {
+            // shown only for the moment before the selection goes back (or if it does not): the note itself, not black
+            NavigationStack { NoteScreen(onDone: { model.tab = .desk }) }
+          } label: { PenImage.of("sketch:page", size: 24, dot: hasNote).accessibilityLabel(hasNote ? "Note, written" : "Note") }
         }
         .modifier(TabBarLook())
       }
