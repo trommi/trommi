@@ -1,6 +1,7 @@
 # Deploys the thin hub (hub/server.mjs, image hub/Dockerfile) to trommi-hub on every push to main:
 # test -> build on GitHub -> Tailscale (tag:trommi-ci) -> docker load on the server ->
-# stop, back up /srv/trommi/data, start -> https://hub.trommi.com/healthz reports this commit.
+# stop, back up /srv/trommi/data, start -> https://hub.trommi.com/healthz reports this commit; if it never does, the
+# previous image (its id kept in /srv/trommi/previous-image) is started again and the job fails.
 # Admin page: hub/deploy-admin.sh writes admin.env + compose.override.yaml (127.0.0.1:8791 only) from the repository
 # variable ADMIN_LOGINS and the hub environment secret ADMIN_PASSWORD_HASH; reached over the tailnet at
 # https://trommi-hub.tail276436.ts.net:8443 (tailscale serve on the server).
@@ -78,11 +79,14 @@ jobs:
           ssh -o StrictHostKeyChecking=no "$HOST" 'bash -s' < hub/deploy-backup.sh
           ssh -o StrictHostKeyChecking=no "$HOST" "set -e
             cd /srv/trommi
+            # The image running before this deploy, for the rollback below (empty on the very first deploy).
+            docker image inspect -f '{{.Id}}' trommi-hub:current > previous-image 2>/dev/null || : > previous-image
             docker tag $IMAGE trommi-hub:current
             docker compose up -d hub
             docker image prune -f >/dev/null"
 
       - name: Verify
+        id: verify
         run: |
           for i in $(seq 1 30); do
             got=$(curl -fsS --max-time 5 https://hub.trommi.com/healthz | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p' || true)
@@ -90,7 +94,22 @@ jobs:
             [ "$got" = "${{ github.sha }}" ] && exit 0
             sleep 3
           done
-          echo "hub.trommi.com never reported ${{ github.sha }}"
+          echo "::error::hub.trommi.com never reported ${{ github.sha }}"
+          exit 1
+
+      # Verify failed: the image that ran before goes back up, and the job stays red (the rollback never makes it green).
+      - name: Roll back to the previous image
+        if: failure() && steps.verify.outcome == 'failure'
+        run: |
+          ssh -o StrictHostKeyChecking=no "$HOST" "set -e
+            cd /srv/trommi
+            prev=\$(cat previous-image 2>/dev/null || true)
+            [ -n \"\$prev\" ] || { echo 'no previous image recorded: nothing to roll back to'; exit 1; }
+            docker tag \"\$prev\" trommi-hub:current
+            docker compose up -d hub
+            echo \"rolled back to \$prev\""
+          for i in $(seq 1 30); do curl -fsS --max-time 5 https://hub.trommi.com/healthz && break; sleep 3; done
+          echo "::error::deploy of ${{ github.sha }} failed its check; the hub was rolled back to the previous image"
           exit 1
 
       # The admin listener answers on the host's loopback only: no header -> 403, an allowed login -> the login form.
