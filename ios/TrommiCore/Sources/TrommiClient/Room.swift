@@ -1824,18 +1824,27 @@ extension Room {
       let after = max(0, before - 1000)
       let list = page == 0 && newestPage ? firstRows : rows(try await noted { try await hub.envelopes(after: after, limit: 1000) })
       for (n, bytes) in list.reversed() where n > after && n <= before {
-        guard let (h, split) = try? peekEnvelope(bytes), h.kind == KIND.STATUS, !split.pruned, h.keyScope == KEY_SCOPE.ROOM else { continue }
-        var scratch = Chains()
-        guard let o = try? openEnvelope(bytes, state: state, chains: &scratch, secrets: secrets, selfId: device.id, quarantine: true, allowChainStart: true, allowRemovedSender: true, commit: false),
-              o.quarantined == nil, let payload = o.payload else { continue }
-        // D5/D6: only from a human device that is still a member now (not one removed since)
-        guard let m = state.member(h.sender), m.role == ROLE.HUMAN, m.removedSeq == nil else { continue }
-        let v = Room.decodePayload(payload, header: o.header).content?["values"]["room_snapshot"] ?? .null
-        if v["attachment"].object != nil, let at = v["envelope_number"].int, at <= n { return FoundSnapshot(value: v, envelopeNumber: n, sender: hex(h.sender)) }
+        if let p = Room.snapshotPointer(bytes, number: n, state: state, secrets: secrets, me: device.id) { return FoundSnapshot(value: p.value, envelopeNumber: n, sender: p.sender) }
       }
       before = after
     }
     return nil
+  }
+
+  /**
+   * One envelope as a room_snapshot pointer, or nil: a status head under the room key (never a session key: agents write
+   * there), verified and opened, signed by a human device that is a member now (not an agent, not one removed since,
+   * D5/D6), whose values name room_snapshot with an attachment at or before the envelope's own number.
+   */
+  nonisolated static func snapshotPointer(_ bytes: Bytes, number n: Int, state: RoomState, secrets: SecretLookup, me: Bytes) -> (value: JV, sender: String)? {
+    guard let (h, split) = try? peekEnvelope(bytes), h.kind == KIND.STATUS, !split.pruned, h.keyScope == KEY_SCOPE.ROOM else { return nil }
+    var scratch = Chains()
+    guard let o = try? openEnvelope(bytes, state: state, chains: &scratch, secrets: secrets, selfId: me, quarantine: true, allowChainStart: true, allowRemovedSender: true, commit: false),
+          o.quarantined == nil, let payload = o.payload else { return nil }
+    guard let m = state.member(h.sender), m.role == ROLE.HUMAN, m.removedSeq == nil else { return nil }
+    let v = Room.decodePayload(payload, header: o.header).content?["values"]["room_snapshot"] ?? .null
+    guard v["attachment"].object != nil, let at = v["envelope_number"].int, at <= n else { return nil }
+    return (v, hex(h.sender))
   }
 
   /**

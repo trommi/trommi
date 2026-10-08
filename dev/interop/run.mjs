@@ -437,12 +437,15 @@ if (swiftAvailable() && (!only || 'snapshot'.includes(only) || only.includes('sn
     await sx.G.call('chat_burst', { n: 5, text: 'after' })
     sx.c3 = (await sx.G.call('agent_card', { title: 'After the snapshot', options: [{ key: 'y', label: 'Y' }] })).id
     await until('the tail at F', async () => (await sx.F.call('list_cards', { all: true })).length >= 3)
+    // a forged pointer from the agent, newer than the human's: a new device must not take it (D5: only human devices)
+    const env = await sx.F.call('hub_envelopes', { after: sx.snap.envelope_number, limit: 1000 })
+    await sx.G.call('forge_status', { values: { room_snapshot: { attachment: { attachment_id: 'ab'.repeat(16), file_key: 'AA', sha256: '00' }, encoding: 'gzip', envelope_number: env.at(-1).envelope_number, log_seq: 0, log_hash: '00', written_at: Date.now() } } })
   })
   await S('snapshot: a Swift device joins and boots from it (only the tail is read), the same board as a JS device that boots from it', async () => {
     const s = await addDevice(sx.F, 'swift', { name: 'S (swift)' }); sx.S = s.driver
     const j = await addDevice(sx.F, 'js', { name: 'J (js)' }); sx.J = j.driver
     const [si, ji] = [await sx.S.call('snapshot_info'), await sx.J.call('snapshot_info')]
-    assert.equal(si.snapshot_cursor, sx.snap.envelope_number, `Swift booted from the snapshot (JS: ${ji.snapshot_cursor}; ${sx.S.stderr().split('\n').filter(l => l.includes('[snapshot]')).join(' | ')})`)
+    assert.equal(si.snapshot_cursor, sx.snap.envelope_number, `Swift booted from the human's snapshot, not the agent's forged pointer (JS: ${ji.snapshot_cursor}; ${sx.S.stderr().split('\n').filter(l => l.includes('[snapshot]')).join(' | ')})`)
     assert.equal(ji.snapshot_cursor, sx.snap.envelope_number, 'JS booted from the snapshot')
     await sameCards('all cards on the Swift and the JS device', sx.S, sx.J)
     const c1 = await cardAt(sx.S, sx.c1)
