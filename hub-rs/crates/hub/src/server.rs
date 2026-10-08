@@ -1111,7 +1111,24 @@ impl Hub {
             let mut f = f;
             f.seek(std::io::SeekFrom::Start(start)).await?;
             let reader = tokio_util::io::ReaderStream::with_capacity(f.take(len), 65536);
-            let stream = futures_util::StreamExt::map(reader, |c| c.map(http_body::Frame::data));
+            // C03 for answers: a client that takes no bytes for 30 s loses the connection (Node's request idle timeout).
+            let moved = Arc::new(AtomicU64::new(crate::util::wall() as u64));
+            let (m2, conn) = (moved.clone(), ctx.conn.clone());
+            let watch = tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    if crate::util::wall() as u64 - m2.load(Ordering::Relaxed) > IDLE_MS {
+                        conn.destroy();
+                        break;
+                    }
+                }
+            });
+            let guard = AbortOnDrop(watch);
+            let stream = futures_util::StreamExt::map(reader, move |c| {
+                let _ = &guard;
+                moved.store(crate::util::wall() as u64, Ordering::Relaxed);
+                c.map(http_body::Frame::data)
+            });
             Body::from_box(http_body_util::StreamBody::new(stream).boxed_unsync())
         };
         let mut r = Response::new(body);
@@ -1900,6 +1917,12 @@ impl Hub {
             s.end(None);
         }
     }
+}
+
+/** Ends a watchdog task when the answer it watches is gone. */
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) { self.0.abort() }
 }
 
 struct InFlight(Arc<Hub>);
