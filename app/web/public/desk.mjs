@@ -225,8 +225,8 @@ function withAgents(model, base) {
   // The stack's tail: each card that is out with an agent is a stack card pressed flat (the same outline, drawing and
   // title face, one line high, a shade paler), tucked under the last card; where the answers would be: who is on it.
   return html`<section id="desk-ip" class="tail" aria-label="With the agents: ${items.length}">
-<div class="end-divider is-work" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.2 Q70 5.4 140 3.8 T298 4.6"/></svg><span>With the agents</span></div>
-${items.map(i => html`<a class="tail-card" data-id="${i.card.id}" data-nav href="${cardPath(i.card, base)}" title="${cardNr(i.card)}: ${i.card.title}" style="--hue:${i.sender.hue}"><span class="tail-mark">${markArt({ ...i.sender, starred: false })}</span><strong class="tail-title">${i.card.title}</strong>${tailWho(i)}${i.at ? agoSpan(i.at) : html`<span class="ago"></span>`}</a>`)}
+<div class="end-divider is-work" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.2 Q70 5.4 140 3.8 T298 4.6"/></svg><span>Off your mind</span></div>
+${items.map(i => html`<a class="tail-card" data-id="${i.card.id}" data-nav href="${cardPath(i.card, base)}" title="${cardNr(i.card)}: ${i.card.title}" style="--hue:${i.sender.hue}"><span class="tail-mark">${markArt({ ...i.sender, starred: false })}</span><strong class="tail-title">${i.card.title}</strong>${tailWho(i)}${i.at ? agoSpan(i.at) : html`<span class="ago"></span>`}<span class="tail-gear" role="img" title="With ${i.sender.name}" aria-label="With the agent">${GEAR}</span></a>`)}
 </section>`
 }
 
@@ -294,39 +294,39 @@ function deskStacks(model, base, open = null, q = '') {
 // done, shredded, withdrawn: a ticked box, struck through). Five rows, "Load more" five more; "All" opens the whole
 // list with its search (/stacks/off). A title opens its card.
 const END_STEP = 5
-let endShown = END_STEP   // (this page's own: how many rows the end list shows; Load more raises it)
+// The gear that turns while a card is with its agent (desk.css: slowly; still where motion is reduced)
+const GEAR = raw('<svg viewBox="0 0 24 24" class="gear" aria-hidden="true"><path d="M21.4 12.0 L21.3 13.9 L18.9 14.9 L18.3 16.2 L18.7 18.7 L17.3 20.0 L14.9 19.0 L13.4 19.1 L12.0 21.5 L10.1 21.5 L9.1 19.0 L8.0 18.0 L5.2 18.8 L3.9 17.4 L5.4 14.8 L4.8 13.4 L2.3 12.0 L2.4 10.1 L5.3 9.2 L5.8 7.9 L5.1 5.1 L6.8 4.2 L9.2 5.2 L10.5 4.7 L12.0 2.2 L13.8 2.7 L14.8 5.2 L16.2 5.7 L18.6 5.4 L19.9 6.7 L18.9 9.1 L19.5 10.5 Z"/><path d="M14.6 12 Q14.5 14.5 12 14.6 Q9.5 14.5 9.4 12 Q9.5 9.5 12 9.4 Q14.5 9.5 14.6 12 Z"/></svg>')
 const BOX = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/></svg>')
 const BOX_TICK = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/><path class="end-check" d="M7.4 12.6 Q9.4 14.8 10.8 16.8 Q14.6 10.4 21.6 3.2"/></svg>')
-function endList(model, base) {
+/** The end list. On the Desk the first five rows and "Show more"; full (the page /stacks/off): every row, with its search. */
+function endList(model, base, { full = false, q = '' } = {}) {
   const open = (model.landed ?? []).map(card => ({ card, g: 'open', at: card.finished ?? 0, said: card.summary ? plain(card.summary, model.state.assets) : 'Done' }))
   const rest = offSheets(model)
-  const items = [...open, ...rest.filter(s => s.g === 'later'), ...rest.filter(s => s.g !== 'later')]
-  if (!items.length) return html`<section id="desk-end" class="endlist" hidden></section>`
-  const shown = Math.max(END_STEP, endShown)
+  let items = [...open, ...rest.filter(s => s.g === 'later'), ...rest.filter(s => s.g !== 'later')]
+  const id = full ? 'off-end' : 'desk-end'
+  const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  if (terms.length) items = items.filter(s => terms.every(w => `${s.card.title} ${model.byAgent.get(s.card.agent)?.name ?? ''} ${s.said}`.toLowerCase().includes(w)))
+  if (!items.length && !full) return html`<section id="${id}" class="endlist" hidden></section>`
+  // (a box he ticked himself can be unticked: Archive taken back; a card closed by his answer stays ticked)
+  const tickForm = (c, way, label, inner, cls = '') => html`<form class="end-form" method="post" action="${act(c, base, way)}"><input type="hidden" name="stay" value="1"><button class="end-tick${cls}" type="submit" title="${label}" aria-label="${label}: ${c.title}">${inner}</button></form>`
   const row = (s, i) => {
     const c = s.card, href = cardPath(c, base)
-    const box = s.g === 'open'
-      ? html`<form class="end-form" method="post" action="${act(c, base, 'archive')}"><input type="hidden" name="stay" value="1"><button class="end-tick" type="submit" title="Tick it off: archive" aria-label="Tick off: ${c.title}">${BOX}</button></form>`
+    const box = s.g === 'open' ? tickForm(c, 'archive', 'Tick it off', BOX)
       : s.g === 'later' ? html`<span class="end-tick is-later" title="Put off: Later" role="img" aria-label="Later">${sk('snooze')}</span>`
-        : html`<span class="end-tick is-ticked" title="${s.g === 'trash' ? 'Thrown away' : 'Ticked off'}" role="img" aria-label="${s.g === 'trash' ? 'Thrown away' : 'Ticked off'}">${BOX_TICK}</span>`
-    return html`<li class="end-row" data-g="${s.g}" data-id="${c.id}"${i >= shown ? raw(' hidden') : ''}>${box}<a class="end-title" data-nav href="${href}">${c.title}</a><span class="end-said">${s.said}</span>${agoSpan(s.at, 'ago end-ago')}</li>`
+        : c.archived ? tickForm(c, 'unarchive', 'Untick: back to tick off', BOX_TICK, ' is-ticked')
+          : html`<span class="end-tick is-ticked" title="${s.g === 'trash' ? 'Thrown away' : 'Done'}" role="img" aria-label="${s.g === 'trash' ? 'Thrown away' : 'Done'}">${BOX_TICK}</span>`
+    return html`<li class="end-row" data-g="${s.g}" data-id="${c.id}"${!full && i >= END_STEP ? raw(' hidden') : ''}>${box}<a class="end-title" data-nav href="${href}">${c.title}</a><span class="end-said">${s.said}</span>${agoSpan(s.at, 'ago end-ago')}</li>`
   }
-  const more = items.length - shown
-  return html`<section id="desk-end" class="endlist" aria-label="Done and put away" data-controller="endlist">
+  return html`<section id="${id}" class="endlist${full ? ' is-full' : ''}" aria-label="Off your mind">
 <div class="end-divider" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span>Off your mind</span></div>
-<ol class="end-rows">${items.map(row)}</ol>
-<div class="end-foot">${more > 0 ? html`<button type="button" class="end-more" data-action="endlist#more">Load more <span>${Math.min(END_STEP, more)} of ${more}</span></button>` : ''}<a class="end-all" data-nav href="${base}/stacks/off">All ${items.length}</a></div>
+<ol class="end-rows">${items.map(row)}</ol>${full && !items.length ? html`<p class="end-none">${terms.length ? 'Nothing here has these words.' : 'Nothing yet.'}</p>` : ''}
+${!full && items.length > END_STEP ? html`<div class="end-foot"><a class="end-show" data-nav href="${base}/stacks/off">Show more</a></div>` : ''}
 </section>`
 }
-controller('endlist', class extends Controller {
-  more() {
-    endShown = Math.max(END_STEP, endShown) + END_STEP
-    const rows = [...this.element.querySelectorAll('.end-row')]
-    rows.forEach((r, i) => { r.hidden = i >= endShown })
-    const left = rows.length - endShown, b = this.element.querySelector('.end-more')
-    if (left <= 0) b?.remove(); else b.querySelector('span').textContent = `${Math.min(END_STEP, left)} of ${left}`
-  }
-})
+
+/** The page /stacks/off: the whole list, the work with the agents first, then every row of the end list, with a search. */
+const offMain = (model, base, q) => html`<main id="inbox" class="off-page" aria-label="Off your mind"><header class="inbox-head desk-top"><h2 class="desk-hello"><a class="off-back" data-nav href="${base}/" aria-label="Back to the Desk">←</a> Off your <em>mind</em></h2><form class="end-search" method="get" action="${base}/stacks/off" role="search"><label><span class="offscreen">Search</span><input type="search" name="q" value="${q}" placeholder="Search the list" autocomplete="off"></label></form></header>
+<div class="inbox-groups" id="off-list">${withAgents(model, base)}${endList(model, base, { full: true, q })}</div></main>`
 
 const SHOWN = 10     // the unfolded pile shows so many lines, then "N more"
 /** The one pile "Off the desk" (his pick A). stands: it stands unfolded (?pile=off). hits: the sheets found by q, or null. */
@@ -782,7 +782,12 @@ export function register(t) {
   t.get(/^\/stacks\/(off)$/, ({ req, res, url, match }) => {
     const m = t.model(), q = String(url.searchParams.get('q') ?? '').trim().slice(0, 120)
     const n = m.fresh.length
-    t.page(req, res, { model: m, title: n ? `(${n}) ${m.deskName} · Trommi` : `${m.deskName} · Trommi`, view: 'desk', main: deskMain(m, t.BASE, { pile: match[1], q }) })
+    t.page(req, res, { model: m, title: `Off your mind · ${m.deskName} · Trommi`, view: 'off', main: offMain(m, t.BASE, q) })
+  })
+  // (the whole list stays current: a tick, an untick, a card that comes or goes)
+  t.live('off', {
+    take: m => ({ list: String(html`${withAgents(m, BASE)}${endList(m, BASE, { full: true, q: new URLSearchParams(location.search).get('q') ?? '' })}`) }),
+    diff: (was, now) => (was.list !== now.list ? stream('update', 'off-list', raw(now.list)) : ''),
   })
   // ---- the Desk ----
   // The row cache: a row is rendered again only when its card (a new object after any change of it), its session or

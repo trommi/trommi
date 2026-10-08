@@ -266,7 +266,7 @@ try {
 
   // ---- the end list at the foot of the Desk's list (#desk-end): what the agents finished (an empty box: a tick archives
   //      it, Undo takes it back), what is put off (Later), what is ticked off (answered, done, shredded: struck); five
-  //      rows, Load more, "All N" opens the whole list with its search (/stacks/off); the way back is on the card ----
+  //      rows, then "Show more", which opens the whole list with its search (/stacks/off); the way back is on the card ----
   const pile = {}
   for (const [k, title] of [['snooze', 'Stapel: später'], ['shred', 'Stapel: weg'], ['revise', 'Stapel: erklären'], ['done', 'Stapel: erledigt'], ['acting', 'Stapel: beantwortet']]) pile[k] = await agent.sendCard({ title, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
   await A.js("trommi.router.visit('/')")
@@ -323,17 +323,19 @@ try {
   // more than five: four more questions their session withdraws
   for (let i = 1; i <= 4; i++) await agent.close(await agent.sendCard({ title: `Ende ${i}`, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] }), `zurückgezogen ${i}`)
   await A.until("document.querySelectorAll('#desk-end .end-row').length >= 7", 'seven or more in the end list')
-  const ends = await A.js("const r = [...document.querySelectorAll('#desk-end .end-row')]; return { all: r.length, shown: r.filter(x => !x.hidden && x.getClientRects().length).length, more: document.querySelector('#desk-end .end-more')?.textContent.trim() ?? null, label: document.querySelector('#desk-end .end-all')?.textContent.trim() }")
-  check(ends.shown === 5 && /^Load more/.test(ends.more ?? '') && ends.label === `All ${ends.all}`, `five rows shown, Load more, All N (${JSON.stringify(ends)})`)
-  await A.js("document.querySelector('#desk-end .end-more').click()")
-  const shown2 = await A.js("return [...document.querySelectorAll('#desk-end .end-row')].filter(x => !x.hidden).length")
-  check(shown2 === Math.min(10, ends.all), `Load more shows five more (${shown2} of ${ends.all})`)
-  await A.js("document.querySelector('#desk-end .end-all').click()")
-  await A.until(`location.pathname === '/stacks/off' && document.querySelector('[data-stack=off].is-open .off-list .off-line[data-id="${pile.snooze}"]')`, 'All N opens the whole list').then(() => check(true, '"All N" opens the whole list at /stacks/off'), e => check(false, e.message))
-  check(await A.js("const l = [...document.querySelectorAll('[data-stack=off] .off-list .off-line')]; return l.length > 0 && l.every(x => x.querySelector('.shop-mark') && x.querySelector('a.off-open')) && !!document.querySelector('[data-stack=off] .off-find')"), 'the whole list: each line its mark and title, with its search')
-  // the way back is on the card: a line opens it, its Wake up brings it back to the Desk
-  await A.js(`document.querySelector('.off-line[data-id="${pile.snooze}"] a.off-open').click()`)
-  await A.until(`document.querySelector('#cardpage button[formaction$="/wake"]')`, 'the snoozed card with Wake up').then(() => check(true, 'a line opens its card, with its way back'), e => check(false, e.message))
+  const ends = await A.js("const r = [...document.querySelectorAll('#desk-end .end-row')]; return { all: r.length, shown: r.filter(x => !x.hidden && x.getClientRects().length).length, more: document.querySelector('#desk-end .end-show')?.textContent.trim() ?? null }")
+  check(ends.shown === 5 && ends.more === 'Show more', `five rows shown, then Show more (${JSON.stringify(ends)})`)
+  // a tick he made can be taken back on the list itself: the ticked box of the archived card unticks it
+  await A.js(`${endRow(pile.done, 'done')}.querySelector('button.end-tick.is-ticked').click()`)
+  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick:not(.is-ticked)')`, 'unticked').then(() => check(true, 'a ticked box unticks: back to tick off'), e => check(false, e.message))
+  await A.js(`${endRow(pile.done, 'open')}.querySelector('button.end-tick').click()`)
+  await A.until(`${endRow(pile.done, 'done')}`, 'ticked off once more')
+  await A.js("document.querySelector('#desk-end .end-show').click()")
+  await A.until(`location.pathname === '/stacks/off' && document.querySelector('#off-end .end-row[data-id="${pile.snooze}"]')`, 'Show more opens the whole list').then(() => check(true, '"Show more" opens the whole list at /stacks/off'), e => check(false, e.message))
+  check(await A.js("const l = [...document.querySelectorAll('#off-end .end-row')]; return l.length > 0 && l.every(x => x.querySelector('.end-tick') && x.querySelector('a.end-title')) && l.every(x => !x.hidden) && !!document.querySelector('.off-page .end-search input')"), 'the whole list: each row its mark and title, all shown, with its search')
+  // the way back is on the card: a row opens it, its Wake up brings it back to the Desk
+  await A.js(`document.querySelector('#off-end .end-row[data-id="${pile.snooze}"] a.end-title').click()`)
+  await A.until(`document.querySelector('#cardpage button[formaction$="/wake"]')`, 'the snoozed card with Wake up').then(() => check(true, 'a row opens its card, with its way back'), e => check(false, e.message))
   await A.js(`document.querySelector('#cardpage button[formaction$="/wake"]').click()`)
   // (Wake up answers with the card's page again, the card awake on it; then to the Desk)
   await A.until(`!trommi.model().byCard.get('${pile.snooze}').snoozed_until && document.querySelector('#cardpage') && !document.querySelector('#cardpage button[formaction$="/wake"]')`, 'the card page, awake').then(() => check(true, 'Wake up: the card stays open on its page, awake'), e => check(false, e.message))
