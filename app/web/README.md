@@ -30,7 +30,7 @@ node dev/perf.mjs                       # the very big demo room (?mock=crazy), 
 
 ```
 worker.js              http -> https, /connect (the connect script), the generated files at their public addresses
-wrangler.jsonc  dev/   serve, build, check, verify, e2e, look, cdp, perf, make-fixture
+wrangler.jsonc  dev/   serve, build, check, verify, e2e, e2e-mobile, look, perf, make-fixture (cdp: the repository's dev/cdp.mjs)
 public/
   index.html  sw.js  manifest.webmanifest  _headers  connect.sh  frame.html (the sandbox a published page runs in)
   help.html            help and "how it works", its own style and script inline
