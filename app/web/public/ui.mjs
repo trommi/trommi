@@ -1369,6 +1369,31 @@ export function startUi() {
 // DOM helpers the controllers import: el (a node, never an HTML string, so text from an agent cannot inject markup),
 // sketch (a pen icon as a node) and adviceLoop (the highlighter behind the advised option). The drawings are pen.js's.
 
+// ---- typing: no shortcut while someone writes (his iPhone, 8 October: "some keys get hijacked") ----
+// One rule for every key handler of the app: a key is writing, never a shortcut, while it is composed (an IME, the soft
+// keyboard's suggestions: isComposing, keyCode 229), while a field, a text area or anything editable has the focus or
+// sent it, and while a view says it is taking text (data-typing on <html>: the Scribble Board's text, the tracing
+// sheet's words). On a touch-only device single letters are no shortcuts at all, until a real keyboard shows itself
+// (a key pressed outside any field: a soft keyboard only types into one).
+const EDITABLE = 'input:not([type=checkbox], [type=radio], [type=button], [type=submit], [type=range], [type=file]), textarea, select, [contenteditable]:not([contenteditable="false"])'
+let hardKeys = false
+const touchOnly = () => globalThis.matchMedia?.('(hover: none) and (pointer: coarse)').matches ?? false
+/** True while the key is someone writing. */
+export function isTyping(e) {
+  if (e.isComposing || e.keyCode === 229 || e.key === 'Unidentified' || e.key === 'Process') return true
+  const at = [e.target, document.activeElement].find(n => n instanceof Element && n.closest(EDITABLE))
+  return Boolean(at) || document.documentElement.hasAttribute('data-typing')
+}
+/** Whether a single letter or digit may be a shortcut now (never while typing; on a touch-only device only once a
+ *  hardware keyboard pressed a key outside any field). */
+export function letterKeysOn(e) {
+  if (isTyping(e)) return false
+  if (!touchOnly() || hardKeys) return true
+  if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey) hardKeys = true   // (only a real keyboard types outside a field)
+  return hardKeys
+}
+const singleChar = e => typeof e.key === 'string' && e.key.length === 1
+
 export const el = (tag, cls, text) => {
   const node = document.createElement(tag)
   if (cls) node.className = cls
@@ -2257,7 +2282,7 @@ function start(signal) {
   const base = () => document.body.dataset.tBase ?? ''
   const view = () => document.body.dataset.tView ?? ''
   const shown = node => Boolean(node && !node.closest('[hidden], [inert]') && node.getClientRects().length)
-  const typingIn = node => Boolean(node?.closest?.('input:not([type=checkbox], [type=radio], [type=button], [type=submit]), textarea, select, [contenteditable]:not([contenteditable="false"])'))
+  const typingIn = node => Boolean(node?.closest?.(EDITABLE)) || document.documentElement.hasAttribute('data-typing') || Boolean(document.activeElement?.closest?.(EDITABLE))
   /** A character typed on a question's page outside any field: into the card's field, at its end. */
   function typeToField(e) {
     if (view() !== 'card' || e.key.length !== 1 || e.key === ' ' || e.key === '?') return false
@@ -2512,6 +2537,8 @@ function start(signal) {
   on(document, 'keydown', e => {
     if (e.defaultPrevented || e.altKey || e.isComposing || e.keyCode === 229) return
     const taken = () => { e.preventDefault(); e.stopPropagation() }
+    // (a letter on a touch-only device without a keyboard, or anything composed, is never a shortcut)
+    if (singleChar(e) && !e.ctrlKey && !e.metaKey && !letterKeysOn(e) && !typingIn(e.target)) return
     // With Ctrl or Cmd nothing is taken, except the one the table names: the jump field.
     if (e.ctrlKey || e.metaKey) {
       if (e.key.toLowerCase() === 'k' && !e.shiftKey && !document.querySelector('dialog[open]')) { taken(); openJump() }
