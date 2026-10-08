@@ -15,6 +15,10 @@
 //                 (Argon2id, auth key, the recovery code unwrapped), adds itself with the recovery key and re-seals every
 //                 session key; the app's core sees the new human device and Swift reads the app's open cards. A wrong
 //                 password: "wrong-login", nobody added.
+//   board         what Swift's Desk model reads (cards, numbers, status, answers, the stack, the registers) is the JS model's;
+//                 a Swift message reaches the agent, a Swift note and register reach the app's core.
+//   pairing       Swift makes the invite ("Pair a device" on the iPhone), a JS device joins, both show the same six emoji,
+//                 Swift confirms, adds it and re-seals every session key: the new device reads the room's cards.
 //   refusals      "They don't match" in the app: the Swift join stops, nobody is added.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -181,6 +185,51 @@ try {
     const cards = JSON.parse((await run(['cards', '--json'], { home: lhome })).stdout).map(c => ({ id: c.id, title: c.title, options: c.options })).sort((a, b) => a.id.localeCompare(b.id))
     assert.deepEqual(cards, jsOpen(), 'the open cards (session keys re-sealed for the new device, older epochs by back links)')
     console.log('     ' + r.stdout.trim().split('\n').join('\n     '))
+  })
+
+  await test('board: what Swift\'s Desk reads (cards, status, stack, registers) is what the app\'s core holds', async () => {
+    await human.setRegisters({ [`snooze/${[...human.model.cards.keys()][0]}`]: { until: Date.now() + 3600_000 } })
+    await until('the snooze at the hub', () => human.model.human.raw.has(`snooze/${[...human.model.cards.keys()][0]}`) && !human.model.human.raw.get(`snooze/${[...human.model.cards.keys()][0]}`).pending)
+    await human.settle?.().catch?.(() => {})
+    const d = JSON.parse((await run(['dump'], { home })).stdout)
+    const status = c => (c.object_state === 'open' ? 'open' : c.closed_how === 'shredded' ? 'shredded' : c.closed_how === 'answered' && c.object_state === 'answered' ? 'decided' : 'done')
+    const js = [...human.model.cards.values()].sort((a, b) => a.first_envelope_number - b.first_envelope_number).map((c, i) => ({ id: c.object_id, number: i + 1, status: status(c), title: c.title, choices: c.answer?.choices ?? [] }))
+    const sw = d.cards.filter(c => c.kind !== 'permission').map(c => ({ id: c.id, number: c.number, status: c.status, title: c.title, choices: c.choices }))
+    assert.deepEqual(sw, js, 'every card, its number, status and answer')
+    assert.deepEqual(d.stack, human.model.stack, 'the stack (urgency, age, snoozes)')
+    assert.deepEqual(d.registers, [...human.model.human.raw.keys()].sort(), 'the human registers')
+  })
+
+  await test('Swift writes: a message reaches the agent, a note and a register reach the app\'s core', async () => {
+    const before = commands.length
+    const to = JSON.parse((await run(['dump'], { home })).stdout).agents.find(a => a.name === 'Agent')
+    const r = await run(['say', to.id], { home, stdin: 'Hello from the iPhone engine' })
+    assert.match(r.stdout, /sent/)
+    const cmd = await until('the message at the agent', () => commands.slice(before).find(c => c.command === 'message' && c.content?.text === 'Hello from the iPhone engine'))
+    assert.equal(cmd.sender_device_id, swiftId)
+    const n = await run(['note'], { home, stdin: 'a note from Swift' })
+    const id = n.stdout.match(/note ([0-9a-f]{32})/)[1]
+    await until('the note in the app', () => human.model.notes.get(id)?.text === 'a note from Swift')
+    await run(['register', 'desk/parity', '{"name":"Parity","created_at":1}'], { home })
+    await until('the desk register in the app', () => human.model.human.desks.get('parity')?.name === 'Parity')
+  })
+
+  await test('pairing from Swift: a new JS device joins with the link, the six emoji match, it gets the room and every session key', async () => {
+    const linkFile = path.join(tmp, 'pair-link')
+    const p = swift(['pair', '--link-out', linkFile, '--yes'], { home })
+    const link = await until('the link file', () => { try { return fs.readFileSync(linkFile, 'utf8') } catch { return null } })
+    const j = core.joinRoom({ link: link.replace('http://127.0.0.1/join', 'http://127.0.0.1/join'), storage: core.memoryStorage(), device_name: 'Laptop via Swift', poll_ms: 50 })
+    const code = await j.check_code
+    const swiftCode = await until('the check code in Swift', () => codeIn(p.stdout))
+    assert.equal(swiftCode, code, 'both show the same six emoji')
+    const c = await j.client
+    const r = await p.done
+    assert.equal(r.code, 0, r.stderr)
+    assert.ok(!r.stdout.includes(link.split('#')[1]), 'the link is never printed')
+    await c.start()
+    await until('the new device holds the session keys', () => [...c.sessionKeys.values()].some(k => k.secrets.has(k.state.epoch)))
+    await until('it reads the open cards', () => [...c.model.cards.values()].some(x => x.title === 'After the removal'))
+    await c.stop()
   })
 
   await test('"They don\'t match" in the app: the Swift join stops, nobody is added', async () => {

@@ -35,6 +35,8 @@ let base = option("--home").map { URL(fileURLWithPath: $0, isDirectory: true) } 
 let roomPrefix = option("--room")
 let deviceName = option("--name")
 let hubOption = option("--hub")
+let linkOut = option("--link-out")
+let confirmYes = flag("--yes")
 let asJSON = flag("--json")
 let command = args.first ?? "help"
 let rest = Array(args.dropFirst())
@@ -124,6 +126,59 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     try await room.answer(cardId: id, choices: Array(rest.dropFirst()))
     let r = try await room.flush()
     print(asJSON ? "{\"envelope_number\":\(r.number),\"envelope_hash\":\"\(r.hash)\"}" : "answered (envelope \(r.number))")
+  case "dump":
+    // The board as the app reads it (Desk.swift), for the parity check against the JS core's model.
+    let room = try pickRoom()
+    try await room.sync()
+    let d = DeskModel(board: room.board)
+    let cards: [[String: Any]] = d.cards.map { c in
+      ["id": c.id, "number": c.number, "kind": c.kind, "status": c.status, "title": c.title, "choices": c.choices, "agent": c.agent, "urgency": c.urgency]
+    }
+    let agents: [[String: Any]] = d.agents.map { a in ["id": a.id, "name": a.name, "archived": a.archived, "starred": a.starred, "hue": a.hue] }
+    let notes: [[String: Any]] = d.notes.map { ["id": $0.id, "text": $0.text] }
+    var messages: [String: Int] = [:]
+    for a in d.agents { messages[a.id] = d.messagesOf(agent: a.id).filter { $0.from != "event" }.count }
+    let out: [String: Any] = ["cards": cards, "agents": agents, "notes": notes, "stack": room.board.stack, "messages": messages,
+                              "registers": room.board.human.raw.keys.sorted()]
+    print(String(data: try JSONSerialization.data(withJSONObject: out, options: [.sortedKeys]), encoding: .utf8)!)
+  case "say":
+    // A message to a session (the first, or --to <board id>); the text from stdin.
+    guard let text = readLine(strippingNewline: true), !text.isEmpty else { die("no text") }
+    let room = try pickRoom()
+    try await room.sync()
+    let d = DeskModel(board: room.board)
+    guard let a = (rest.first.flatMap { id in d.agents.first { $0.id == id } }) ?? d.agents.first, let key = d.sessionKey(of: a.id) else { die("no session") }
+    try await room.sendMessage(sessionId: key, text: text)
+    let r = try await room.flush()
+    print("sent (envelope \(r.number))")
+  case "note":
+    guard let text = readLine(strippingNewline: true), !text.isEmpty else { die("no text") }
+    let room = try pickRoom()
+    try await room.sync()
+    let id = try await room.saveNote(fields: ["text": .str(text), "created_at": .n(nowMs())])
+    try await room.flush()
+    print("note \(id)")
+  case "register":
+    // trommi-swift register <key> <json value>
+    guard rest.count >= 2, let v = JV.parse(Array(rest[1].utf8)) else { die("usage: trommi-swift register <key> <json>") }
+    let room = try pickRoom()
+    try await room.sync()
+    try await room.setRegisters([rest[0]: v])
+    try await room.flush()
+    print("set \(rest[0])")
+  case "pair":
+    // Pair a device from here: the link goes to the file named by --link-out (never to stdout), the check code is printed,
+    // and --yes confirms it once it is there (tests; a person compares the emoji in the app).
+    guard let out = linkOut else { die("usage: trommi-swift pair --link-out <file> [--yes]") }
+    let room = try pickRoom()
+    try await room.sync()
+    var p = try await room.createPairing(app: "http://127.0.0.1/join")
+    try Data(p.link.utf8).write(to: URL(fileURLWithPath: out))
+    while !(try await room.checkPairing(&p)) { try await Task.sleep(nanoseconds: 200_000_000) }
+    let e = checkEmoji(p.code ?? "")
+    print("check code \(e.map { $0.emoji }.joined(separator: " ")) (\(e.map { $0.word }.joined(separator: ", ")))")
+    try await room.confirmPairing(p, matches: confirmYes)
+    print("Added. The new device is a member now.")
   case "rooms":
     for id in Store.rooms(base: base) {
       let r = try Room.open(base: base, roomId: id)
