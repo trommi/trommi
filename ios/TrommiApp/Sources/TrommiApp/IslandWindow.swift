@@ -36,6 +36,9 @@ final class IslandUIWindow: UIWindow {}
       w.backgroundColor = .clear
       let h = UIHostingController(rootView: view)
       h.view.backgroundColor = .clear
+      // the window lies in the status bar's area: its safe area would push the pill down below the island (build 18:
+      // a black capsule over the header). Screen coordinates, no safe area: the pill's top is the island's top.
+      h.safeAreaRegions = []
       w.rootViewController = h
       window = w; host = h
     }
@@ -100,6 +103,7 @@ struct IslandPillView: View {
       withAnimation(.linear(duration: ToastHost.undoSeconds)) { progress = 0 }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .ignoresSafeArea()
   }
 }
 #endif
