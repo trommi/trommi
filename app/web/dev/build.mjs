@@ -30,7 +30,7 @@ const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..',
 const sha = data => crypto.createHash('sha256').update(data).digest('hex').slice(0, 12)
 
 // ---- the core ----
-const NOT_VENDORED = /(^test|-test\.mjs$|^test-|^load\.mjs$|^storage-file\.mjs$|^hub\.mjs$)/   // tests, Node-only, the hub's side
+const NOT_VENDORED = /(^test|-test\.mjs$|^test-|^storage-file\.mjs$|^hub\.mjs$)/   // tests, Node-only, the hub's side
 function vendorFiles(repo) {
   const core = path.join(repo, 'shared')
   if (!fs.existsSync(path.join(core, 'index.mjs'))) throw new Error(`build: the core is missing (${core}/index.mjs)`)

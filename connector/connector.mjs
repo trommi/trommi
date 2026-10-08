@@ -694,7 +694,7 @@ const SELF = fileURLToPath(import.meta.url)
 const CORE = path.join(HERE, '../shared')
 export const CODE_FILES = ['tools.mjs', 'prompt.md']
 const SHELL_FILES = ['connector.mjs']
-const isTest = f => /(^test|-test|test-)[\w-]*\.mjs$/.test(f) || f === 'load.mjs'
+const isTest = f => /(^test|-test|test-)[\w-]*\.mjs$/.test(f)
 
 const hashOf = files => {
   const h = crypto.createHash('sha256')

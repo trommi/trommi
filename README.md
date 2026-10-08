@@ -165,7 +165,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>shared/</code> · 34 files</summary>
+<details><summary><code>shared/</code> · 33 files</summary>
 
 ```
 ├── crypto/
@@ -188,7 +188,6 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 ├── client.mjs
 ├── codec.mjs
 ├── index.mjs
-├── load.mjs
 ├── model.mjs
 ├── README.md
 ├── room.mjs
