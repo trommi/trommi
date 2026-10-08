@@ -89,10 +89,17 @@ try {
   await A.js("trommi.router.visit('/')")
   await A.until("document.querySelector('#desk-invite-go')", 'Invite your first agent on the empty Desk')
   check(await A.js("return document.querySelector('#agents #sidebar-invite[aria-label=\"Invite an agent\"]')?.textContent.trim() === 'New Agent…' && getComputedStyle(document.getElementById('agents')).display !== 'none'"), 'sidebar has the row + New agent')
-  // (Settings starts with Invite too, 8 October)
-  await A.js("trommi.router.visit('/settings/agents')")
+  // (Settings, 8 October: one list, no tabs; the two invites at the top, then a row per page)
+  await A.js("trommi.router.visit('/settings')")
   await A.until("document.querySelector('#settings-invite-agent') && document.querySelector('#settings-pair .set-qr-code')", 'Settings starts with Invite (agent, and the device code blurred)')
   check(true, 'Settings: Invite at the top, the device code blurred until asked for')
+  check(await A.js("return ['sessions', 'devices', 'account', 'theme', 'keys'].every(k => document.getElementById('settings-' + k)?.getAttribute('href') === '/settings/' + k) && !document.querySelector('.room-tabs, [role=tablist]')"), 'Settings: one list of rows (Sessions, Devices, Account, Theme, Keyboard Shortcuts), no tabs')
+  for (const [k, sel, what] of [['theme', '.set-choice input[value=system]', 'Theme: Light, Dark, System'], ['keys', '.set-keys kbd', 'Keyboard Shortcuts: the keys'], ['devices', '#push-level', 'Devices: the push level']]) {
+    await A.js(`document.getElementById('settings-${k}').click()`)
+    await A.until(`location.pathname === '/settings/${k}' && document.querySelector('${sel}') && document.querySelector('.set-back[href="/settings"]')`, what).then(() => check(true, `Settings · ${what}, with the way back`), e => check(false, e.message))
+    await A.js("document.querySelector('.set-back').click()")
+    await A.until("location.pathname === '/settings' && document.querySelector('#settings-pair')", 'back on the Settings list')
+  }
   check(await A.js("return ![...trommi.client.model.invites.values()].some(i => i.invite_state === 'open' && i.device_role === 'human')"), 'Settings makes no device invite before "Show the code"')
   await A.shot('e2e-3a-desk-invite.png')
   await A.js("document.querySelector('#settings-invite-agent').click()")
@@ -148,13 +155,15 @@ try {
   t0 = Date.now()
   const picCard = await agent.sendCard({ title: 'Welcher Entwurf?', body: 'Bild anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }, { key: 'z', label: 'Später' }], attachments: [ref] })
   await A.until(`document.getElementById('row-${picCard}')`, 'picture card row')
-  await A.until(`[...document.querySelectorAll('#row-${picCard} img')].some(i => i.complete && i.naturalWidth > 0)`, 'decrypted picture shown', 15000).then(() => { check(true, 'encrypted picture decrypted and shown on the Desk'); timing('picture card sent -> picture visible', Date.now() - t0) }, e => check(false, e.message))
+  // (a Desk row is its title and its answers since 8 October: the picture shows on the card)
+  await A.js(`trommi.router.visit('/card/' + trommi.model().byCard.get('${picCard}').number)`)
+  await A.until(`[...document.querySelectorAll('#cardpage .tc-figure img')].some(i => i.complete && i.naturalWidth > 0)`, 'decrypted picture shown', 15000).then(() => { check(true, 'encrypted picture decrypted and shown on its card'); timing('picture card sent -> picture visible', Date.now() - t0) }, e => check(false, e.message))
 
   // ---- a card with a video: uploaded encrypted like a picture; on the card a <video> plays the decrypted blob ----
   const webm = fs.readFileSync(new URL('../public/demo/files/clip.webm', import.meta.url))
   const vref = await agent.uploadAttachment(webm, { file_name: 'ablauf.webm', media_type: 'video/webm' })
   const vidCard = await agent.sendCard({ title: 'Dieser Ablauf?', body: 'Video anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }], attachments: [vref] })
-  await A.until(`document.getElementById('row-${vidCard}')`, 'video card row')
+  await A.until(`trommi.model().byCard.get('${vidCard}')`, 'video card in the room')
   const vnr = await A.js(`return trommi.model().byCard.get('${vidCard}').number`)
   await A.js(`trommi.router.visit('/card/${vnr}')`)
   await A.until("document.querySelector('#cardpage .tc-video video[controls][playsinline]')", 'video player on the card').then(() => check(true, 'a video card shows a <video controls playsinline>'), e => check(false, e.message))
@@ -166,10 +175,10 @@ try {
 
   // ---- the pile "Artifacts N" at the Desk's foot (Media and Pages in one; the newest pictures and videos fanned); a
   //      click opens /artifacts: both kinds together, the newest first, the filter All · Media · Pages ----
-  await A.until("document.querySelector('#desk-stacks > #desk-artifacts .photo video') && document.querySelector('#desk-artifacts .photo img')", 'artifacts pile with a picture and a video').then(() => check(true, 'Artifacts pile: in the Desk foot, thumbnails of a picture and a video'), e => check(false, e.message))
-  check(await A.js("return !document.querySelector('#desk-media, #desk-pages') && /^Artifacts\\s*2$/.test(document.querySelector('#desk-artifacts .off-label').textContent.trim())"), 'one pile, no Media or Pages pile; it says Artifacts 2')
+  await A.until("document.querySelector('#desk-stacks > #desk-artifacts .df-card video') && document.querySelector('#desk-artifacts .df-card img')", 'artifacts pile with a picture and a video').then(() => check(true, 'Artifacts pile: in the Desk foot, thumbnails of a picture and a video'), e => check(false, e.message))
+  check(await A.js("return !document.querySelector('#desk-media, #desk-pages') && /^All Artifacts\\s*2/.test(document.querySelector('#desk-artifacts .df-all').textContent.trim()) && document.querySelectorAll('#desk-artifacts .df-card').length === 2"), 'one pile, no Media or Pages pile; it says Artifacts 2')
   await A.until("[...document.querySelectorAll('#desk-artifacts img')].some(i => i.complete && i.naturalWidth > 0)", 'the fanned picture decrypted', 15000).then(() => check(true, 'the fanned picture is decrypted and shown'), e => check(false, e.message))
-  await A.js("document.getElementById('desk-artifacts').click()")
+  await A.js("document.querySelector('#desk-artifacts .df-all').click()")
   await A.until("location.pathname === '/artifacts' && document.body.dataset.page === 'gallery' && document.querySelectorAll('#artifacts-list .gal-tile').length === 2", 'artifacts with two tiles').then(() => check(true, 'clicking the pile opens /artifacts'), e => check(false, e.message))
   check(await A.js("return [...document.querySelectorAll('#artifacts-list .gal-tile .asset-preview')].every(p => p.querySelector('img, video, svg.asset-glyph'))"), 'artifacts: no empty tile (each has its picture, video or drawn kind)')
   check(await A.js("return [...document.querySelectorAll('#gallery .art-kinds a')].map(a => a.textContent.trim()).join(' · ') === 'All · Media · Pages' && document.querySelector('#gallery .art-kinds a[aria-current]')?.textContent.trim() === 'All' && !!document.querySelector('#artifacts-list .gal-video video') && !!document.querySelector('#artifacts-list .gal-video .gal-play')"), 'artifacts: the filter All · Media · Pages; the video tile has its frame and a play mark')
@@ -255,9 +264,12 @@ try {
   //      the session's chat taped on, from the optimistic echo on, never as a bubble ----
   const noteText = 'Notiz e2e: Backup vor der Migration'
   // (a note goes to the session that wears the crown: given on the Agents page, by his hand)
-  await A.js("trommi.router.visit('/settings/agents')")
-  await A.until("document.querySelector('.ledger-crown[aria-pressed=false]')", 'Agents page with the crown to give')
-  await A.js("document.querySelector('.ledger-crown[aria-pressed=false]').click()")
+  await A.js("trommi.router.visit('/settings/sessions')")
+  await A.until("document.querySelector('#ledger-list details.set-desk .ledger-crown[aria-pressed=false]')", 'Sessions with the crown to give')
+  check(await A.js("return [...document.querySelectorAll('#ledger-list details.set-desk')].every(d => !d.open) && !!document.querySelector('.ledger-find input')"), 'Settings · Sessions: the desks folded, the search on top')
+  await A.js("document.querySelector('#ledger-list details.set-desk > summary').click()")
+  await A.until("document.querySelector('#ledger-list details.set-desk[open] .ledger-crown[aria-pressed=false]')?.getClientRects().length", 'a desk unfolded')
+  await A.js("document.querySelector('#ledger-list details.set-desk[open] .ledger-crown[aria-pressed=false]').click()")
   await A.until("trommi.model().agents.some(a => a.starred) && document.querySelector('.ledger-crown[aria-pressed=true]')", 'crown given').then(() => check(true, 'Agents page: the crown is given with one click'), e => check(false, e.message))
   await A.js(`const now = Date.now(); await trommi.client.saveNote({ text: '${noteText}', created_at: now, updated_at: now })`)
   await A.js("trommi.router.visit('/')")
@@ -379,7 +391,7 @@ try {
     await A.js(`trommi.router.visit('/?desk=${home}')`)
     await A.until(`!trommi.model().all && trommi.model().desk === '${home}' && document.querySelector('#inbox')`, 'the first desk in view')
     // (the desk lists: All Desks is the parent row, bold, with its own drawing; the desks set in under it)
-    check(await A.js("const rows = [...document.querySelectorAll('#menu-desk-rows .menu-desk')], pad = a => parseFloat(getComputedStyle(a).paddingLeft); return rows.length === 3 && rows[0].matches('.is-all') && !!rows[0].querySelector('.menu-all-mark') && Number(getComputedStyle(rows[0].querySelector('b')).fontWeight) >= 700 && rows.slice(1).every(a => pad(a) > pad(rows[0]) && !a.querySelector('.menu-all-mark'))"), 'menu: All Desks the parent row (bold, its own drawing), the desks indented under it')
+    check(await A.js("const rows = [...document.querySelectorAll('#menu-desk-rows .menu-desk')], pad = a => parseFloat(getComputedStyle(a).paddingLeft); return rows.length === 3 && rows[0].matches('.is-all') && !!rows[0].querySelector('.menu-all-mark') && Number(getComputedStyle(rows[0].querySelector('b')).fontWeight) >= 700 && rows.slice(1).every(a => pad(a) <= pad(rows[0]) + 1 && !a.querySelector('.menu-all-mark') && Number(getComputedStyle(a.querySelector('b')).fontWeight) < 700 || a.getAttribute('aria-checked') === 'true') && !!document.querySelector('#menu-desk-rows ~ .menu-desk-add.is-plus, .menu-desks .menu-desk-add.is-plus')"), 'menu: All Desks bold with its own drawing, the desks flat under it in regular weight, New Desk a + on its row')
     const count = `(() => { const m = trommi.model(), of = l => l.filter(c => c.agent === '${sid}' || m.byAgent.get(c.agent)?.parent === '${sid}').length; return of(m.fresh) + of(m.reads) + of(m.revising) + of(m.snoozed) + of(m.done) })()`
     const before = await A.js(`return ${count}`)
     const move = to => A.js(`await fetch('/sessions/${sid}/edit', { method: 'POST', headers: { Accept: 'text/vnd.turbo-stream.html' }, body: new URLSearchParams({ stay: '1', moved: '1', desk: '${'${to}'}' }) })`.replace('${to}', to))
@@ -425,11 +437,12 @@ try {
   await A.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }))")
   await A.until("location.pathname === '/scribble-board'", 'P leads to the Whiteboard', 5000).then(() => check(true, 'P on the Desk opens the Whiteboard'), e => check(false, e.message))
 
-  // ---- a second human device joins ----
-  await A.js("trommi.router.visit('/settings/devices')")
-  await A.until("document.querySelector('form[action=\"/pair\"] input[value=human]')", 'devices')
-  await A.js("document.querySelector('form[action=\"/pair\"] input[value=human]').form.requestSubmit()")
-  await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open]')", 'human invite page')
+  // ---- a second human device joins: Settings, Invite a Device, Show Code; the code and the emoji in place ----
+  await A.js("trommi.router.visit('/settings')")
+  await A.until("document.querySelector('#settings-pair')", 'Settings with Invite a Device')
+  await A.js("document.querySelector('#settings-pair').click()")
+  await A.until("location.pathname === '/settings' && /pair=/.test(location.search) && document.querySelector('#set-device[data-state=open] .set-qr.is-real svg')", 'the code in place on the Settings list')
+  check(true, 'Settings: Show Code makes the invite and shows the code in place')
   const humanLink = await A.js("return [...trommi.client.model.invites.values()].at(-1).link")
   B = await browser('B', 390, 844)
   await B.go(humanLink.replace(/^https?:\/\/[^/]+/, APP))
@@ -446,6 +459,7 @@ try {
   const shownA = await A.js("return [...document.querySelectorAll('[data-state=confirm_code] .check-emoji-glyph')].map(e => e.textContent).join(' ')")
   check(shownA === shownB && await A.js("return document.querySelectorAll('[data-state=confirm_code] .check-yes, [data-state=confirm_code] .check-no').length === 2"), 'A shows the same six emoji as B, with "They match" and "They don\'t match"')
   await A.js("document.querySelector('[data-state=confirm_code] .check-yes').click()")
+  await A.until("location.pathname === '/settings' && document.querySelector('#set-device[data-state=joined]')", 'A: the new device is in, in place').then(() => check(true, 'Settings: "They match" in place, then the new device is in'), e => check(false, e.message))
   await B.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'B in the room', 20000)
   check(true, 'B joined with the check code')
   await B.until(`document.getElementById('row-${cardId}')`, 'B sees the card', 15000).then(() => check(true, 'B sees the same open card'), e => check(false, e.message))

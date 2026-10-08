@@ -1031,8 +1031,6 @@ html body .topbar #brand-doors .menu-icons .menu-ico { flex: 1; width: auto; min
 html body .topbar #brand-doors .menu-icons .menu-ico .sketch { width: 20px; height: 20px; margin: 0; }
 html body .topbar #brand-doors .menu-icons .menu-ico:hover { background: var(--sunken); color: var(--fg); }
 html body .topbar #brand-doors .menu-ico:is([aria-checked="true"]) { color: var(--fg); background: var(--sunken); }
-#push-toggle[data-level="knocking"]::after { content: "!"; position: absolute; right: 8px; top: 5px; font: 800 10px/1 var(--font); color: var(--urg-critical); }
-#push-toggle[data-level="off"] .sketch { opacity: .55; }
 .menu-theme-row .ico-auto { display: none; position: absolute; right: 7px; bottom: 5px; font: 800 9px/1 var(--font); font-style: normal; }
 :root[data-theme-mode="system"] .menu-theme-row .ico-auto, :root:not([data-theme-mode]) .menu-theme-row .ico-auto { display: block; }
 .menu-push-note { margin: 4px 8px 2px; color: var(--urg-critical); font-size: var(--t-xs); }
@@ -1068,6 +1066,9 @@ html body .topbar #brand-doors .menu-icons .menu-ico { justify-content: center; 
   html body .phone-back { border-radius: 50%; border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); width: 40px !important; }
   body[data-t-view="session"] #session .t-pick-desk > summary.t-head-more { background: color-mix(in srgb, var(--surface) 42%, transparent); }
   html body { grid-template-rows: 0 minmax(0, 1fr) !important; }
+  /* (the first row is no height now: a page that names no row of its own (the account screens: Log out, an invite's
+     clipboard; the chats) stands in the second, or the empty first row would cut it to its content) */
+  html body > :is(main#room, .chats-page) { grid-column: 1; grid-row: 2; }
   html body > main:not(#session), html body > #room, html body > .chats-page { padding-top: calc(env(safe-area-inset-top, 0px) + 54px) !important; }
   :root.is-demo body > main:not(#session), :root.is-demo body > #room, :root.is-demo body > .chats-page { padding-top: 54px !important; }
   /* a chat: its title line lies under the floating back, title and ⋯; no strip of its own */
@@ -1121,3 +1122,43 @@ html body .topbar #brand-doors .menu-icons .menu-ico { justify-content: center; 
   :root[data-compose] body[data-t-view="session"] :is(.compose-fab, .tabbar) { display: none; }
   :root:not([data-compose]) body[data-t-view="session"] #session .dock { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 70px); }
 }
+
+/* ---- no foot strip on a wide screen (his word, 8 October): the fold button stands at the head beside the desk
+   chevron; on the folded rail the unfold is at its top ---- */
+@media (min-width: 861px) {
+  html body .side-foot { position: fixed; z-index: 9; left: calc(var(--side) - 50px); top: 22px; bottom: auto; width: 32px; height: 32px; background: none !important; border: 0 !important; box-shadow: none !important; }
+  html body .side-foot .rail-fold { position: static; width: 32px; height: 32px; }
+  html:not([data-rail="folded"]) body .topbar .deskpill { padding-right: 36px; box-sizing: border-box; }
+  html[data-rail="folded"] body .side-foot { left: 22px; top: 8px; }
+  html[data-rail="folded"] body .topbar { top: 46px; }
+  html body #agents { padding-bottom: var(--s-6); }
+  :root, :root[data-rail] { --foot: 0px; }
+}
+html body .topbar #brand-doors .menu-demo-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+html body .topbar #brand-doors .menu-demo-row .demo-switch { margin-left: auto; }
+@media (max-width: 860px) { html body .topbar #brand-doors .menu-demo-row { order: 3; min-height: 44px; } }
+
+/* the menu's bell, three clear states (as on iOS): crossed out (off), with "!" (only knocking), full (all) */
+#push-toggle { position: relative; }
+#push-toggle .push-mark { display: none; position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; translate: -50% -50%; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+#push-toggle[data-level="off"] .push-off, #push-toggle[data-level="knocking"] .push-knock { display: block; }
+#push-toggle[data-level="knocking"] .push-knock { width: 14px; height: 14px; top: 47%; stroke-width: 2.6; }
+#push-toggle[data-level="all"] .sketch path { fill: currentColor; }
+#push-toggle[data-level="all"] { color: var(--fg) !important; }
+html body .topbar #brand-doors .menu-theme-row .ico-auto { padding: 0; margin: 0; width: auto; } html body .topbar #brand-doors .menu-theme-row .ico-auto::after, html body .topbar #brand-doors .menu-theme-row .ico-auto::before { content: none !important; }
+
+/* ---- the menu's desks, calm (his word, 8 October: "ugly"): no indent, no lines; All Desks bold, the desks regular,
+   the one in view highlighted; counts at the right; New Desk… a small + at the right end of All Desks ---- */
+html body .topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all)::before { display: none !important; }
+html body .topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all) .menu-desk { padding-left: var(--s-2) !important; }
+html body .topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all) .menu-desk .sketch.menu-lamp { width: 20px; height: 20px; }
+html body .topbar #brand-doors .menu-desk:not(.is-all) b { font-weight: 500 !important; }
+html body .topbar #brand-doors .menu-desk[aria-checked="true"] { background: var(--sunken); }
+html body .topbar #brand-doors .menu-desk[aria-checked="true"] b { font-weight: 700 !important; }
+html body .topbar #brand-doors .menu-desks { position: relative; }
+html body .topbar #brand-doors .menu-desk-row.is-all .menu-desk { padding-right: 44px; }
+html body .topbar #brand-doors .menu-desk-add.is-plus { position: absolute; z-index: 2; right: 4px; top: 4px; width: 32px !important; min-height: 32px !important; height: 32px; padding: 0 !important; justify-content: center; border-radius: 8px; color: var(--muted); }
+html body .topbar #brand-doors .menu-desk-add.is-plus:hover { background: var(--surface); color: var(--fg); }
+html body .topbar #brand-doors .menu-desk-add.is-plus svg { width: 18px; height: 18px; margin: 0; }
+html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-add.is-plus { top: 4px; }
+@media (max-width: 860px) { html body .topbar #brand-doors .menu-desk-add.is-plus { width: 40px !important; height: 40px; top: 5px; } html body .topbar #brand-doors .menu-desk.is-all b { font-weight: 800 !important; } }

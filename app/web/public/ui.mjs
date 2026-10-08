@@ -2206,18 +2206,13 @@ const LAYOUT = [
     { id: 'pic.prev', keys: ['ArrowLeft', 'k'], does: 'previous picture', repeat: true },
     { id: 'pic.leave', keys: ['Escape'], does: 'back to the question' },
   ] },
-  { scope: 'agents', title: 'On the Agents page', keys: [
+  { scope: 'agents', title: 'In Settings · Sessions', keys: [
     { id: 'ledger.next', keys: ['ArrowDown', 'j'], does: 'next session', repeat: true },
     { id: 'ledger.prev', keys: ['ArrowUp', 'k'], does: 'previous session', repeat: true },
     { id: 'ledger.open', keys: ['Enter'], does: 'open its conversation' },
-    { id: 'ledger.walk', keys: ['q'], does: 'its questions, one after the other' },
     { id: 'ledger.rename', keys: ['r'], does: 'rename' },
     { id: 'ledger.mark', keys: ['d'], does: 'another drawing' },
-    { id: 'ledger.crown', keys: ['c'], does: 'crown: its questions come first' },
-    { id: 'ledger.pair', keys: ['+'], does: 'lay together with another' },
-    { id: 'ledger.archive', keys: ['a'], does: 'archive a disconnected one; fetch an archived one back' },
-    { id: 'ledger.down', keys: ['Shift+ArrowDown'], does: 'move it down' },
-    { id: 'ledger.up', keys: ['Shift+ArrowUp'], does: 'move it up' },
+    { id: 'ledger.crown', keys: ['c'], does: 'Make Main Session: its questions come first' },
     { id: 'ledger.find', keys: ['/'], does: 'find a session', native: true },
     { id: 'ledger.leave', keys: ['Escape'], does: 'close what is open, then drop the mark' },
   ] },
@@ -2225,7 +2220,7 @@ const LAYOUT = [
     { id: 'help', keys: ['?'], does: 'this list' },
     { id: 'note.new', keys: ['n'], does: 'a new note' },
     { id: 'go.desk', keys: ['g d', 'g i'], does: 'Desk', verb: 'go to the Desk' },
-    { id: 'go.agents', keys: ['g a'], does: 'Agents', verb: 'go to the Agents page' },
+    { id: 'go.agents', keys: ['g a'], does: 'Sessions', verb: 'go to Settings · Sessions' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'menu', verb: 'open the Trommi menu: desks and places' },
     { id: 'go.walk', keys: ['g b'], does: 'Blitz', verb: 'Blitz: every open question, one after the other' },
     { id: 'go.artifacts', keys: ['g m', 'g p'], does: 'Artifacts', verb: 'go to the Artifacts: every picture, video, file and page your agents made' },
@@ -2496,7 +2491,7 @@ function start(signal) {
     'help': () => toggleSheet(),
     'note.new': () => document.dispatchEvent(new CustomEvent('trommi:note')),
     'go.desk': () => go(`${base()}/`),
-    'go.agents': () => go(`${base()}/settings/agents`),
+    'go.agents': () => go(`${base()}/settings/sessions`),
     'go.walk': () => go(`${base()}/blitz`),
     'go.artifacts': () => go(`${base()}/artifacts`),
     'go.jump': () => openJump(),
@@ -2666,7 +2661,7 @@ ${tile('is-thumb is-lead is-ack', 'tick', WORDS.ack, { title: `${WORDS.ack}: rea
     const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : thumbs ? o === card.options[0] : advice.includes(o.key))
     const worded = !bare && size === 'none'
     return html`<form class="inbox-actions" method="post" action="${act(card, base, 'decide')}">${stay}${seen}
-${(thumbs ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options).map(o => {
+${[...card.options].sort((a, b) => isYes(a) - isYes(b)).map(o => {   // (the lead, the advised one, always at the right: Apple's alert order)
       const lead = isYes(o), advised = advisedKeys(card).includes(o.key)
       const cls = `is-thumb${thumbs ? '' : ' is-named'}${lead ? ' is-lead' : ''}${size === 'small' ? ' is-small' : ''}${worded ? ' is-short' : ''}${advised ? ' is-advised' : ''}`
       const final = o.final === true
@@ -2901,16 +2896,19 @@ export const mediaPreview = (i, extra = '') => i.type === 'image' && i.url
       : html`<span class="asset-preview gal-file" data-kind="${i.type === 'video' ? 'video' : 'file'}">${assetGlyph(i.type === 'video' ? 'video' : i.type === 'html' ? 'html' : 'file')}<b class="gal-ext">${ext(i.name) || (i.type === 'video' ? 'VIDEO' : i.type === 'html' ? 'PAGE' : 'FILE')}</b>${extra}</span>`
 
 
-// ---- the room's pages: their frame and tabs (Devices, Settings, the account screens) ----
+// ---- the room's pages: their frame (the account screens) ----
 export const BELL = raw(`<svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.1 19Q12.3 18.6 16.7 19L21 19.3"/><path d="M4.8 18.9Q5.2 15.1 5.7 13.7Q6.2 12.3 7.5 11.3Q8.7 10.3 10.3 9.5Q12 8.8 13.7 9.3Q15.3 9.8 16.4 11Q17.5 12.2 18.1 13.7Q18.6 15.2 18.8 17L18.9 18.8"/><path d="M11.8 8.6L12.2 6.9"/><path d="M10 6.6Q11.8 6 12.8 6.4L13.8 6.8"/><path class="brand-mark-ring" d="M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5"/><path class="brand-mark-ring" d="M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5"/></svg>`)
 export const roomShell = (title, inner, cls = '') => html`<main id="room" class="room${cls ? ` ${cls}` : ''}" aria-label="${title}"><header class="room-head"><span class="room-bell">${BELL}</span><h2>${title}</h2></header>${inner}</main>`
-/** One of the three tabbed pages (Agents is agents.mjs; Devices and Settings here): the tabs first, at the same place on
- *  all three, then the heading in the display face, then the page in one reading column (auth.css .room-paged). */
-const ROOM_LINES = { devices: 'The people and agents with keys to this room.', settings: 'Your account, and what this device keeps.' }
-// The clamp of Settings' clipboard (the invite's clipboard, auth.mjs: board, clamp, sheet)
-const SETTINGS_CLAMP = raw('<svg class="clip-clamp set-clamp" viewBox="0 0 120 44" aria-hidden="true"><path class="clamp-plate" d="M22 40 Q21 25 26 22 L43 21 Q46 9 60 8 Q74 9 77 21 L94 22 Q99 25 98 40 Z"/><path d="M52 21 Q53 15 60 14.6 Q67 15 68 21"/><path d="M30 31 Q60 29.4 90 31"/></svg>')
-export const roomPage = (title, on, inner, line = ROOM_LINES[on] ?? '') => html`<main id="room" class="room room-paged" aria-label="${title}"><div class="room-page">${roomTabs(on)}<header class="room-head page-head"><h2>${title}</h2>${line ? html`<p>${line}</p>` : ''}</header><div class="room-col">${inner}</div></div></main>`
-/** Settings (his word, 8 October: one page, drawn as a big clipboard): the clamp, then the tabs on the sheet: Agents,
- *  Devices, Account. Its three parts are agents.mjs and auth.mjs. */
-export const roomTabs = (on, cls = '') => html`${SETTINGS_CLAMP}<nav class="room-tabs${cls ? ` ${cls}` : ''}" aria-label="Settings: agents, devices and account">${[['agents', 'Invite & sessions'], ['devices', 'Devices'], ['settings', 'Account', 'account']].map(([p, word, path = p]) => html`<a href="/settings/${path}" data-nav${on === p ? raw(' aria-current="page"') : ''}>${word}</a>`)}</nav>`
+// ---- Settings (his word, 8 October): one page of list entries, as iOS Settings; each row opens a page of its own with
+// the way back. The list and most pages are auth.mjs (/settings), Sessions is agents.mjs; their frame is this. ----
+export const SET_CHEVRON = raw('<svg class="set-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.2 5.4Q12.6 8.8 15.4 12.1Q12.4 15.3 9.4 18.7"/></svg>')
+const BACK_CHEVRON = raw('<svg class="set-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.8 5.4Q11.4 8.8 8.6 12.1Q11.6 15.3 14.6 18.7"/></svg>')
+/** One row of a Settings list: a link with its drawing, its word, what it says now (detail) and the chevron. */
+export const setRow = ({ href, icon = '', word, detail = '', id = '' }) => html`<a class="set-row" href="${href}" data-nav${id ? raw(` id="${id}"`) : ''}><span class="set-ico">${icon}</span><b>${word}</b><span class="set-detail">${detail}</span>${SET_CHEVRON}</a>`
+/** A page under Settings: the way back, its title (and a line under it), then its parts. id/cls: of the main element. */
+export const settingsPage = (title, inner, { id = 'room', cls = 'room', lead = '', back = true } = {}) => html`<main id="${id}" class="${cls} set-page" aria-label="${title}"><div class="set-col">${back ? html`<a class="set-back" href="/settings" data-nav>${BACK_CHEVRON}<span>Settings</span></a>` : ''}<header class="set-head"><h2>${title}</h2>${lead ? html`<p>${lead}</p>` : ''}</header>${inner}</div></main>`
+/** Devices and Account (auth.mjs): a page under Settings in the account screens' own main (#room). */
+export const roomPage = (title, inner, lead = '') => settingsPage(title, inner, { lead })
+/** The short list of keys (the "?" sheet's), for Settings · Keyboard Shortcuts. */
+export const keysList = () => html`<dl class="set-keys">${SHORT.map(k => html`<div><dt>${k.keys.map((spec, i) => html`${i ? html`<i>or</i>` : ''}${caps(spec)}`)}</dt><dd>${k.does}</dd></div>`)}</dl>`
 export const errorLine = e => (e ? html`<p class="room-error" role="alert">${e}</p>` : '')

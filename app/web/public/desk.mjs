@@ -384,15 +384,15 @@ function offPile(all, model, base, stands, hits, q) {
  *  Pages in one (ui.mjs artifactItems). The newest three pictures or videos lie fanned like prints; with none, the
  *  newest pages as sheets of paper with a folded corner. A click opens /artifacts (media.mjs). Without any it is not there. */
 function artifactsPile(model, base) {
+  // (his pick "row", 8 October: the last four as small cards in a row, picture or page, a one-line title; then all of them)
   const all = artifactItems(model, base)
   if (!all.length) return ''
-  const name = `Artifacts, ${all.length === 1 ? '1 thing' : `${all.length} things`}: open them`
-  const photos = all.filter(x => x.kind === 'media' && (x.item.type === 'image' || x.item.type === 'video') && x.item.url).slice(0, 3).map(x => x.item)
-  const pages = all.filter(x => x.kind === 'pages').slice(0, 3).map(x => x.item)
-  const obj = photos.length
-    ? html`<span class="desk-obj photo-pile" aria-hidden="true">${photos.reverse().map((i, at) => html`<span class="photo" style="--i:${at}">${mediaPreview(i)}</span>`)}</span>`
-    : html`<span class="desk-obj pg-pile" aria-hidden="true">${pages.reverse().map((i, at) => html`<span class="pg-sheet${i.pic ? ' has-pic' : ''}" style="--i:${at}${i.pic ? `;background-image:url('${i.pic}')` : ''}"><span class="pg-t">${i.title}</span><span class="pg-lines"></span></span>`)}</span>`
-  return html`<a class="media-pile" id="desk-artifacts" data-nav href="${base}/artifacts" aria-label="${name}" title="Every picture, video, file and page your agents made">${obj}<span class="off-label">Artifacts <span class="off-count">${all.length}</span></span></a>`
+  const seen = new Set(), four = []
+  for (const x of all) { const k = x.item.url || x.item.pic || x.item.title; if (seen.has(k)) continue; seen.add(k); four.push(x); if (four.length === 4) break }
+  const thumb = x => x.kind === 'media' ? mediaPreview(x.item) : html`<span class="df-page"${x.item.pic ? raw(` style="background-image:url('${x.item.pic}')"`) : ''}>${x.item.pic ? '' : html`<b>${x.item.title}</b><i></i><i></i><i></i>`}</span>`
+  return html`<section class="df-cards" id="desk-artifacts" aria-label="Artifacts, ${all.length}"><div class="end-divider" aria-hidden="true"><svg viewBox="0 0 300 8" preserveAspectRatio="none"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span>Artifacts</span></div>
+<div class="df-row">${four.map(x => html`<a class="df-card" data-nav href="${x.item.href ?? `${base}/artifacts`}" title="${x.item.title || x.item.name}"><span class="df-thumb">${thumb(x)}</span><span class="df-title">${x.item.title || x.item.name}</span></a>`)}</div>
+<a class="df-all" data-nav href="${base}/artifacts">All Artifacts <span class="off-count">${all.length}</span> →</a></section>`
 }
 
 // The stacks at the foot of the Desk: a click fans one out, a click gathers it. A stream may replace the stacks;

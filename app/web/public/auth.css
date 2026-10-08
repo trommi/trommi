@@ -25,24 +25,6 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .room-error { color: var(--deny); font-weight: 500; }
 .room-ok { color: var(--accent); font-weight: 600; }
 
-/* tabs: Devices | Settings */
-.room-tabs { display: flex; gap: var(--s-1); margin: -4px 0 var(--s-2); border-bottom: 1px solid var(--line); }
-.room-tabs a { padding: var(--s-2) var(--s-3); color: var(--muted); text-decoration: none; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; }
-.room-tabs a:hover { color: var(--fg); }
-.room-tabs a[aria-current] { color: var(--fg); border-bottom-color: var(--accent); }
-
-/* The three tabbed pages are one place (Agents: agents.css .ledger-page; Devices and Settings: ui.mjs roomPage): the tabs
-   stand first and at the same spot on all three, the heading under them in the display face, the page on the same
-   left edge; Devices and Settings keep one reading column. */
-.room.room-paged { max-width: none; margin: 0; padding: var(--s-4) var(--gutter) var(--s-10); }
-.room-page { max-width: 1160px; margin-inline: auto; }
-.room-paged .room-tabs { margin: -4px 0 var(--s-6); }
-.room-paged .room-head { margin-bottom: var(--s-6); }
-.room-paged .room-head h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
-.room-col { max-width: 680px; }
-.room-col > .room-section:first-child { margin-top: 0; }
-@media (max-width: 860px) { .room.room-paged { padding: var(--s-5) var(--gutter) 96px; } .room-paged .room-tabs { margin-bottom: var(--s-5); } }
-
 /* forms and buttons */
 .room-form { display: grid; gap: 14px; margin: 18px 0; }
 .room-form label, .room-agent-form label, .room-handover label { display: grid; gap: 6px; font-size: 14px; font-weight: 500; }
@@ -202,25 +184,6 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .room .clip .clip-done { justify-self: start; margin: 6px 0 0 42px; text-decoration: none; }
 @media (max-width: 600px) { .room.room-clip { padding: 64px 22px 96px; } .clip { padding: 46px 18px var(--s-5); } .clip h2 { font-size: 1.55rem; } .clip-note, .clip-again, .room .clip .clip-done { margin-left: 0; } }
 
-/* ---- Settings as one clipboard (his word, 8 October): Agents, Devices and Account are tabs on one sheet clipped to a
-   board, the same language as the invite's clipboard (.clip above): kraft board with an ink edge, a paper sheet, the
-   clamp at the top. The page's own parts (the agents' tree, the devices, the account) stand on the sheet. ---- */
-:is(.room-paged .room-page, #ledger .ledger-page) { position: relative; box-sizing: border-box; margin-top: 46px; padding: 58px clamp(18px, 3vw, 40px) 34px; border: 1.6px solid var(--fg); border-radius: 5px 7px 4px 8px / 7px 4px 8px 5px; background: var(--surface); box-shadow: 0 0 0 12px #cdb68a, 0 0 0 13.6px var(--fg), 6px 9px 0 13.6px color-mix(in srgb, var(--fg) 22%, transparent); }
-:root[data-theme="dark"] :is(.room-paged .room-page, #ledger .ledger-page) { box-shadow: 0 0 0 12px #6f5f3f, 0 0 0 13.6px var(--fg), 6px 9px 0 13.6px rgb(0 0 0 / .4); }
-.set-clamp { top: -40px; width: 168px; height: 60px; }
-:is(.room-paged .room-page, #ledger .ledger-page) > .room-tabs { margin-top: 0; }
-.room.room-paged { padding-top: var(--s-8); }
-@media (max-width: 860px) {
-  /* a phone: a calm full-width sheet, the clamp at its top, the board only a thin edge */
-  :is(.room-paged .room-page, #ledger .ledger-page) { margin-top: 34px; padding: 44px 14px 24px; border-radius: 4px; box-shadow: 0 0 0 5px #cdb68a, 0 0 0 6.4px var(--fg); }
-  :root[data-theme="dark"] :is(.room-paged .room-page, #ledger .ledger-page) { box-shadow: 0 0 0 5px #6f5f3f, 0 0 0 6.4px var(--fg); }
-  .set-clamp { top: -30px; width: 128px; height: 46px; }
-  .room.room-paged { padding: var(--s-5) 12px 96px; }
-}
-/* (the board's edge stands inside the page's margin on every width) */
-#ledger .ledger-page, .room-paged .room-page { margin-inline: max(14px, auto); width: calc(100% - 28px); max-width: 1160px; }
-@media (max-width: 860px) { #ledger .ledger-page, .room-paged .room-page { width: calc(100% - 12px); margin-inline: auto; } }
-
 /* ---- Settings · Devices: Push on this device (Yes / Only knocking / No) and the other devices' push, read only ---- */
 .push-level { display: inline-flex; gap: 0; margin: var(--s-2) 0 var(--s-3); padding: 3px; border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 12px 10px 13px 11px; }
 .push-level legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -235,3 +198,85 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .push-others { margin: var(--s-3) 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
 .push-others li { display: flex; gap: 10px; align-items: baseline; font: 400 var(--t-sm)/1.4 var(--font); }
 .push-others li span { color: var(--muted); }
+
+/* ---- Settings (ui.mjs settingsPage, auth.mjs /settings, agents.mjs Sessions): one reading column of list groups, as
+   iOS Settings, drawn in ink on paper: a group is a sheet with an ink edge, its rows parted by a dashed pen line, each
+   row a drawing, a word, what it says now and a chevron. Calm: no colour but the ink and the paper. ---- */
+body > main.set-page { max-width: none; margin: 0; padding: var(--s-8) var(--gutter) var(--s-10); background: var(--bg); }
+.set-col { box-sizing: border-box; width: 100%; max-width: 640px; margin-inline: auto; }
+.set-back { display: inline-flex; align-items: center; gap: 2px; min-height: 36px; margin: 0 0 var(--s-1) -8px; padding: 0 8px 0 2px; border-radius: var(--r-sm); color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-decoration: none; }
+.set-back:hover { color: var(--fg); background: var(--sunken); }
+.set-back .set-chev { width: 20px; height: 20px; }
+.set-head { margin: 0 0 var(--s-5); }
+.set-head h2 { margin: 0; font: 800 clamp(2rem, 4vw, 2.6rem)/1.05 var(--display); letter-spacing: -.025em; }
+.set-head p { margin: var(--s-1) 0 0; color: var(--muted); font-size: var(--t-md); }
+.set-lead { margin: 0 0 var(--s-3); color: var(--muted); font-size: var(--t-sm); }
+.set-note { display: block; margin: calc(-1 * var(--s-3)) 2px var(--s-5); color: var(--muted); font: 400 var(--t-sm)/1.45 var(--font); }
+.set-note a { color: var(--fg); }
+.set-group { display: grid; margin: 0 0 var(--s-5); border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 14px 12px 15px 13px; background: var(--surface); }
+.set-group > * + *, .set-group > .set-agent + *, .set-invites > .set-agent { border-top: 1.2px dashed color-mix(in srgb, var(--fg) 26%, transparent); }
+.set-group > form { margin: 0; }
+.set-page .set-row { display: grid; grid-template-columns: 30px auto minmax(0, 1fr) 18px; align-items: center; gap: var(--s-3); box-sizing: border-box; width: 100%; min-height: 54px; margin: 0; padding: 0 var(--s-3) 0 var(--s-4); border: 0; border-radius: 0; background: none; color: var(--fg); font: 400 var(--t-md)/1.25 var(--font); text-align: left; text-decoration: none; cursor: pointer; }
+.set-group > .set-row:first-child, .set-group > :first-child .set-row { border-top-left-radius: 12px; border-top-right-radius: 11px; }
+.set-group > .set-row:last-child, .set-group > :last-child .set-row { border-bottom-left-radius: 12px; border-bottom-right-radius: 13px; }
+.set-page .set-row:hover { background: var(--sunken); border-color: transparent; }
+.set-page .set-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -3px; }
+.set-row > b { font-weight: 600; white-space: nowrap; }
+.set-ico { display: grid; place-items: center; width: 30px; height: 30px; }
+.set-ico svg { width: 26px; height: 26px; fill: none; stroke: var(--fg); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.set-ico svg.sketch { stroke: currentColor; }
+.set-detail { min-width: 0; justify-self: end; color: var(--muted); font-size: var(--t-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-chev { width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Invite a Device: the code blurred until "Show Code"; then the code, the emoji and "They match" in place */
+.set-device { display: grid; gap: var(--s-3); padding: var(--s-4); }
+.set-pair { display: flex; align-items: center; gap: var(--s-5); margin: 0; }
+.set-text { display: grid; gap: 4px; min-width: 0; }
+.set-text b { font: 700 var(--t-md)/1.25 var(--font); }
+.set-text small, .set-device small { color: var(--muted); font: 400 var(--t-sm)/1.45 var(--font); }
+.set-text .room-wait { margin: 6px 0 0; font-size: var(--t-sm); }
+.set-text .room-more { margin-top: 4px; }
+.room button.set-qr, .set-qr { position: relative; flex: none; display: block; width: 112px; height: 112px; padding: 0; border: 1.5px solid var(--fg); border-radius: 12px 10px 13px 11px; overflow: hidden; background: #fff; cursor: pointer; }
+.set-qr-code { position: absolute; inset: 0; display: block; filter: blur(5px); opacity: .75; transition: filter var(--d-fast), opacity var(--d-fast); }
+.set-qr-code svg { width: 100%; height: 100%; display: block; }
+.set-qr-show { position: absolute; left: 50%; top: 50%; translate: -50% -50%; padding: 7px 11px; border-radius: 9px; background: var(--fg); color: var(--bg); font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; }
+.set-qr:is(:hover, :focus-visible) .set-qr-code { filter: blur(3px); opacity: .9; }
+.set-qr.is-real { width: 196px; height: auto; padding: 8px; cursor: default; }
+.set-qr.is-real .qr { display: block; width: 100%; height: auto; }
+.set-device .check-emoji { margin: 0; max-width: none; }
+.set-device .check-answer { margin: 0; }
+.set-device .room-error { margin: 0; }
+.set-in { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border: 1.5px solid var(--fg); border-radius: 50%; }
+.set-in .sketch { width: 26px; height: 26px; color: var(--accent); stroke-width: 2.4; }
+.set-pair > .set-pill { margin-left: auto; }
+.room .set-pill { padding: 0 14px; font-size: var(--t-sm); }
+/* Theme: three rows, the one in use ticked */
+.set-choice .set-row { grid-template-columns: 30px minmax(0, 1fr) 22px; }
+.set-choice input { position: absolute; opacity: 0; pointer-events: none; }
+.set-choice .set-row > .sketch:last-child { width: 22px; height: 22px; color: var(--fg); stroke-width: 2.2; visibility: hidden; }
+.set-choice .set-row:has(input:checked) > .sketch:last-child { visibility: visible; }
+.set-choice .set-row:has(input:checked) > b { font-weight: 700; }
+.set-choice .set-row:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: -3px; }
+/* Keyboard Shortcuts */
+.set-keys { margin: 0; padding: 6px 0; }
+.set-keys > div { display: grid; grid-template-columns: minmax(0, 13rem) minmax(0, 1fr); gap: var(--s-4); align-items: baseline; padding: 10px var(--s-4); }
+.set-keys > div + div { border-top: 1px dashed color-mix(in srgb, var(--fg) 14%, transparent); }
+.set-keys dt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.set-keys dt i, .set-keys .keys-caps i { font-style: normal; color: var(--muted); font-size: var(--t-xs); }
+.set-keys kbd { font: 600 .78rem/1 var(--mono); padding: 4px 6px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); }
+.set-keys dd { margin: 0; color: var(--fg); font-size: var(--t-sm); line-height: 1.45; }
+/* Devices and Account under Settings: their sections in the same column */
+.set-page .room-section:first-of-type { margin-top: 0; }
+@media (max-width: 860px) {
+  /* a phone: the pill floats at the top left over the page, which begins under it (sidebar.css) */
+  body > main.set-page { grid-column: 1; grid-row: 2; padding: 54px 16px 112px; }
+  .set-head { margin-bottom: var(--s-4); }
+  .set-head h2 { font-size: 2rem; }
+  .set-pair { align-items: flex-start; gap: var(--s-4); }
+  .set-qr.is-real { width: min(220px, 60vw); }
+  .set-pair:has(.set-qr.is-real) { flex-direction: column; }
+  .set-device .check-emoji { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .set-detail { max-width: 9.5rem; }
+  .set-agent .set-detail { visibility: hidden; }
+  .set-keys > div { grid-template-columns: 1fr; gap: 6px; }
+}
