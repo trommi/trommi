@@ -859,7 +859,6 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
 .desk-word-add:hover { background: var(--sunken); color: var(--fg); }
 .desk-word-add svg { width: 15px; height: 15px; }
 .desk-divider { display: grid !important; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 8px; margin: var(--s-4) 0 6px; padding: 0 6px; }
-.desk-words + .desk-divider { margin-top: 2px; }
 .desk-divider-name { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: 600 var(--t-sm)/1.2 var(--font); text-decoration: none; }
 .desk-divider-name:hover { color: var(--fg); }
 .desk-divider-mark { width: 18px; height: 18px; flex: none; stroke-width: 1.7; }
@@ -876,3 +875,21 @@ html[data-rail="folded"] .desk-divider .desk-rule { order: -1; width: 40px; }
 html[data-rail="folded"] .desk-divider-n { display: none; }
 /* the rail's tag opens the same words as a small list */
 .desk-switch .desk-words { flex-direction: column; align-items: flex-start; gap: 6px; margin: 0; padding: 6px 8px; }
+
+/* ---- the sidebar's head with several desks (his word, 8 October: "cluttered"): the desk drawing and the line of words
+   are the head, one line beside each other, no big title; the line never wraps (it scrolls sideways under a fade when
+   the desks are many), "+" a quiet sign at its end; air before the first divider, which is lighter. ---- */
+:root:has(#agent-desk-words:not([hidden])) .topbar .desk-name { display: none; }
+:root:has(#agent-desk-words:not([hidden])):not([data-rail="folded"]) .topbar { width: 56px; }
+:root:not([data-rail="folded"]) #agents > .desk-words { position: sticky; top: 8px; z-index: 4; flex-wrap: nowrap; align-items: center; gap: 10px; height: 56px; margin: -78px -8px 18px 48px; padding: 0 6px 0 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+#agents > .desk-words::-webkit-scrollbar { display: none; }
+#agents > .desk-words .desk-word { flex: none; font-size: var(--t-sm); padding: 4px 0 6px; }
+/* ("+" stays at the line's right end; the words that do not fit go under its fade and scroll) */
+#agents > .desk-words .desk-word-add { flex: none; position: sticky; right: 0; width: 34px; height: 30px; margin-left: auto; padding-left: 10px; border-radius: 0; background: linear-gradient(90deg, transparent, var(--bg) 12px); color: color-mix(in srgb, var(--muted) 70%, transparent); }
+#agents > .desk-words .desk-word-add:hover { background: linear-gradient(90deg, transparent, var(--bg) 12px); color: var(--fg); }
+#agents > .desk-words + .desk-divider { margin-top: 6px; }
+#agents > .desk-words + .desk-divider .desk-rule { opacity: .55; }
+@media (max-width: 860px) {
+  :root:has(#agent-desk-words:not([hidden])) .topbar { width: 56px !important; }
+  #agents > .desk-words { top: calc(8px + env(safe-area-inset-top, 0px)); }
+}
