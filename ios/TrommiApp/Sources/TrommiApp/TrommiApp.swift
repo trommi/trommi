@@ -1,5 +1,5 @@
 // TrommiApp: Trommi for iOS. The same board as the web app (app.trommi.com), native: the Desk with the open questions,
-// a card's page, the conversation with each session, the sessions in the sidebar (a drawer on the iPhone), Blitz, Off
+// a card's page, the conversation with each session, the sessions in the sidebar (the place pill's menu on the iPhone), Blitz, Off
 // your mind, notes, files, settings with the devices and pairing. Sign in as on the web: scan the QR code of "Pair a
 // device", or email and password. Everything below the views is TrommiClient (Board.swift is the web's model, Room the
 // sync engine with the live stream), the same code `trommi-swift` runs and the parity checks hold against the JS core.
@@ -22,6 +22,7 @@ enum StartClock {
     let ms = Int((ProcessInfo.processInfo.systemUptime - t0) * 1000)
     log.notice("trommi cold start: first desk in \(ms, privacy: .public) ms, \(cards, privacy: .public) cards, \(restored ? "from the cache" : "from the network", privacy: .public)")
     NSLog("trommi cold start: first desk in %d ms, %d cards, %@", ms, cards, restored ? "from the cache" : "from the network")
+    PerfLog.line("cold start: first desk in \(ms) ms, \(cards) cards, \(restored ? "cache" : "network")")
   }
 }
 
@@ -43,6 +44,7 @@ struct TrommiApp: App {
         .onChange(of: model.phase) { _, p in if p == .board { push.ask() } }
       #endif
         .onChange(of: scenePhase) { _, p in model.scene(active: p == .active) }
+        .onAppear { PerfScript.runIfAsked(model) }
     }
   }
 }
@@ -79,20 +81,54 @@ final class BoardModel: ObservableObject {
 
   @Published var phase: Phase = .start
   @Published var error: String?
-  @Published var busy = false
+  var busy = false
   @Published var lastEmail = ""
   /** Bumps after every change of the board (the views read `desk` again). */
   @Published private(set) var version = 0
   @Published var toast: Toast?
-  @Published var path: [Route] = []
-  @Published var drawer = false
-  /** The panel over the iPhone's bottom bar. */
-  enum Panel { case menu, waiting }
-  enum Tab { case scribble, desk, note }
+  /** The Desk page's stack and the Chat page's stack (the iPhone's pages keep their own; the iPad uses the desk's). */
+  @Published var deskPath: [Route] = []
+  @Published var chatPath: [Route] = []
+  /** The stack of the page in front. */
+  var path: [Route] {
+    get { tab == .chat ? chatPath : deskPath }
+    set { if tab == .chat { chatPath = newValue } else { deskPath = newValue } }
+  }
+  /** The chat he used last (the Chat page opens into it; the crowned session at first). */
+  var lastChat: String? {
+    get { UserDefaults.standard.string(forKey: "trommi-last-chat") }
+    set { UserDefaults.standard.set(newValue, forKey: "trommi-last-chat") }
+  }
+  /** What he read of each session: the newest agent envelope he saw there (kept on this device). */
+  private var readMarks: [String: Int] = (UserDefaults.standard.dictionary(forKey: "trommi-read") as? [String: Int]) ?? [:]
+  func newestFromAgent(_ a: Agent) -> Int {
+    guard let b = board, let s = b.sessions[a.deviceId] else { return 0 }
+    return b.timelines[s.timelineKey]?.newestAgentEnvelopeNumber ?? 0
+  }
+  func unread(_ a: Agent) -> Bool { let n = newestFromAgent(a); return n > 0 && n > (readMarks[a.id] ?? 0) }
+  /** The first time: everything up to now counts as read (no badge of 37 old chats). */
+  private func baselineReads() {
+    guard UserDefaults.standard.dictionary(forKey: "trommi-read") == nil, let d = desk, !d.agents.isEmpty else { return }
+    for a in d.agents { readMarks[a.id] = newestFromAgent(a) }
+    UserDefaults.standard.set(readMarks, forKey: "trommi-read")
+  }
+  func markRead(_ a: Agent) {
+    let n = newestFromAgent(a)
+    if n > (readMarks[a.id] ?? 0) { readMarks[a.id] = n; UserDefaults.standard.set(readMarks, forKey: "trommi-read") }
+  }
+  /** Open a session's chat: on the iPhone in the Chat page, on the iPad in the stack. */
+  func openChat(_ id: String) {
+    #if canImport(UIKit)
+    if UIDevice.current.userInterfaceIdiom == .phone { tab = .chat; chatPath = [.session(id)]; return }
+    #endif
+    deskPath = [.session(id)]
+  }
+  /** The iPhone's pages (the capsule at the bottom). */
+  enum Tab { case chat, desk, note }
   @Published var tab: Tab = .desk
-  /** The jump menu (the pill at the top left, the left edge). */
-  @Published var menuOpen = false
-  @Published var panel: Panel?
+  /** TROMMI_PERF: bumps to scroll the Desk down and up (Perf.swift). */
+  @Published var perfScroll = 0
+
   /** Cards chosen on the Desk (the selection bar: Later, Duck it, Read, Shred for all of them). */
   @Published var selected = Set<String>()
   @Published var live = false
@@ -110,9 +146,12 @@ final class BoardModel: ObservableObject {
   }
   private(set) var room: Room?
   private(set) var desk: DeskModel?
+  /** Demo mode: the demo room's board, no room, no network (Demo.swift). */
+  var demoBoard: Board?
   private var joinTask: Task<Void, Never>?
   private var liveTask: Task<Void, Never>?
   private var pendingUpdate = false
+  private var lastFingerprint = 0
   private var active = true
 
   init() {
@@ -139,13 +178,26 @@ final class BoardModel: ObservableObject {
     Task { @MainActor in
       try? await Task.sleep(nanoseconds: 80_000_000)
       pendingUpdate = false
-      desk?.update()
+      // a batch that changed nothing visible (a refresh with no news): no render at all
       if let r = room {
-        live = r.live
-        if upgrade == nil, let u = r.upgrade { upgrade = u; verdict = .updateRequired(minimum: u.minimumVersion, message: u.message) }
-        newer = r.board.newerCount
+        let f = r.board.fingerprint
+        if f == lastFingerprint && r.live == live && r.board.newerCount == newer { PerfLog.line("skip: nothing visible changed"); return }
+        lastFingerprint = f
       }
+      PerfLog.time("desk.update") { desk?.update() }
+      if let r = room {
+        if live != r.live { live = r.live }
+        if upgrade == nil, let u = r.upgrade { upgrade = u; verdict = .updateRequired(minimum: u.minimumVersion, message: u.message) }
+        if r.board.newerCount != newer {
+          PerfLog.line("newer: \(r.board.newerCount) \(r.board.newerWhat.joined(separator: ", "))")
+          NSLog("trommi newer: %d %@", r.board.newerCount, r.board.newerWhat.joined(separator: ", "))
+          newer = r.board.newerCount
+        }
+        baselineReads()
+      }
+      let t0 = DispatchTime.now().uptimeNanoseconds
       version &+= 1
+      if PerfLog.on { DispatchQueue.main.async { PerfLog.line(String(format: "render after version bump ≈ %.1f ms", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)); RenderCount.flush("render") } }
     }
   }
 
@@ -161,7 +213,7 @@ final class BoardModel: ObservableObject {
       verdict = info.verdict(kind: "ios", version: HubClient.appVersion)
     }
     do {
-      let report = try await room.sync()
+      let report = try await PerfLog.time("refresh sync") { try await room.sync() }
       if let w = report.warnings.first { error = w }
       if liveTask == nil && active { startLive() }
     } catch { self.error = describe(error) }
@@ -263,6 +315,8 @@ final class BoardModel: ObservableObject {
   // ---- what the views read ---------------------------------------------------------------------------------
 
   var view: DeskModel.View? { desk?.view(desk: deskId) }
+  /** The board the screens read: the room's (or the demo's). */
+  var board: Board? { room?.board ?? demoBoard }
   func card(_ id: String) -> DeskCard? { desk?.byCard[id] }
   func agent(_ id: String) -> Agent? { desk?.byAgent[id] }
   func say(_ head: String, _ line: String = "", undo: (() async -> Void)? = nil) { toast = Toast(head: head, line: line, undo: undo) }

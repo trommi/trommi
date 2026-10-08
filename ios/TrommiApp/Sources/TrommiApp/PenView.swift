@@ -257,6 +257,8 @@ enum PenDraw {
     return 1.7
   }
   static func draw(_ d: SVGDoc, in ctx: inout GraphicsContext, size: CGSize, inks: PenInks) {
+    let t0 = PerfLog.on ? DispatchTime.now().uptimeNanoseconds : 0
+    defer { if PerfLog.on { RenderCount.penDraws += 1; RenderCount.penNs += DispatchTime.now().uptimeNanoseconds - t0 } }
     let vb = d.viewBox
     let sx = size.width / vb.width, sy = size.height / vb.height
     let s = d.stretch ? 1 : min(sx, sy)
@@ -403,4 +405,24 @@ struct WorkingRing: View {
       }
     }
   }
+}
+
+/** A drawn mark as a picture, for places that take only images (a system menu): drawn once per ink and size. */
+@MainActor enum PenImage {
+  private static var cache: [String: Image] = [:]
+  static func of(_ key: String, size: CGFloat = 22, dot: Bool = false) -> Image {
+    let k = "\(key)|\(size)|\(dot)"
+    if let i = cache[k] { return i }
+    let r = ImageRenderer(content: PenMark(key, color: .black).frame(width: size, height: size)
+      .overlay(alignment: .topLeading) { if dot { Circle().fill(.black).frame(width: 6, height: 6) } })
+    r.scale = 3
+    #if canImport(UIKit)
+    let img = r.uiImage.map { Image(uiImage: $0.withRenderingMode(.alwaysTemplate)) } ?? Image(systemName: "square")
+    #else
+    let img = Image(systemName: "square")
+    #endif
+    cache[k] = img
+    return img
+  }
+  static func desk(waiting: Bool) -> Image { of("sketch:desk", dot: waiting) }
 }

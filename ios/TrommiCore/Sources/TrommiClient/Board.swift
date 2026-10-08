@@ -468,6 +468,28 @@ public final class Board {
 
   public init() {}
 
+  /**
+   * A cheap fingerprint of everything a screen shows: equal before and after a batch means the batch changed nothing
+   * visible (a refresh with no news), and the app skips the render.
+   */
+  public var fingerprint: Int {
+    var h = Hasher()
+    h.combine(lastEnvelopeNumber); h.combine(newerCount); h.combine(alerts.count); h.combine(connection); h.combine(keyEpoch)
+    for m in members.values.sorted(by: { $0.deviceId < $1.deviceId }) {
+      h.combine(m.deviceId); h.combine(m.isActive); h.combine(m.isOnline); h.combine(m.deviceName); h.combine(m.link?.hears); h.combine(m.link?.working); h.combine(m.link?.cutSince)
+    }
+    for s in sessions.values.sorted(by: { $0.sessionId < $1.sessionId }) {
+      h.combine(s.sessionId); h.combine(s.isOnline); h.combine(s.isActive); h.combine(s.link?.hears); h.combine(s.link?.working); h.combine(s.link?.attached)
+      h.combine(s.statusLines.count); h.combine(s.statusLines.map { $0.updatedAt }.max() ?? 0); h.combine(s.lastActivityAt); h.combine(s.heardUpTo)
+      h.combine(s.agentDeviceIds.count)
+    }
+    for t in timelines.values { h.combine(t.echoes.count); h.combine(t.items.count) }
+    for c in cards.values where c.answer?.pending == true || c.inRevision != nil { h.combine(c.objectId); h.combine(c.objectState) }
+    for n in notes.values where n.pending { h.combine(n.objectId); h.combine(n.text) }
+    h.combine(human.raw.values.filter { $0.pending }.count)
+    return h.finalize()
+  }
+
   // ---- members and sessions ----------------------------------------------------------------
 
   /** From the verified member list: (device id, role, active, added, removed). */

@@ -18,16 +18,16 @@ struct StartView: View {
         .foregroundStyle(.secondary)
       Spacer()
       Button { model.go(.scan) } label: {
-        Label("Scan QR code", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
+        Label("Scan QR Code", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
       }
       .buttonStyle(.borderedProminent).controlSize(.large)
       Text("On a device that is logged in: menu → Devices → \u{201C}Pair a device\u{201D}. Then scan its code here.")
         .font(.footnote).foregroundStyle(.secondary)
       Button { model.go(.email) } label: {
-        Label("Sign in with email", systemImage: "envelope").frame(maxWidth: .infinity)
+        Label("Sign In with Email", systemImage: "envelope").frame(maxWidth: .infinity)
       }
       .buttonStyle(.bordered).controlSize(.large)
-      Button("Paste link") { model.go(.paste) }
+      Button("Paste Link") { model.go(.paste) }
         .font(.footnote).frame(maxWidth: .infinity)
         .padding(.top, 4)
     }
@@ -52,7 +52,7 @@ struct ScanView: View {
       }
       if wrongCode { Text("That is no pairing link.").foregroundStyle(.red).font(.footnote) }
       Spacer()
-      Button("Paste the link instead") { model.go(.paste) }.font(.footnote).frame(maxWidth: .infinity)
+      Button("Paste Link Instead") { model.go(.paste) }.font(.footnote).frame(maxWidth: .infinity)
     }
     .padding()
   }
@@ -84,7 +84,7 @@ struct DeviceNameView: View {
   var body: some View {
     Form {
       Section { Text("This device now makes its own keys. Then both devices show six emoji; on the other device you confirm that they match.").foregroundStyle(.secondary) }
-      Section("Name of this device") { TextField("Name of this device", text: $name).onChange(of: name) { _, v in if v.count > 40 { name = String(v.prefix(40)) } } }
+      Section("Device Name") { TextField("Name of this device", text: $name).onChange(of: name) { _, v in if v.count > 40 { name = String(v.prefix(40)) } } }
       Section { Button("Next") { model.pair(link: link, name: name.trimmingCharacters(in: .whitespaces)) }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty) }
     }
   }
@@ -107,7 +107,7 @@ struct CheckCodeView: View {
       HStack(spacing: 8) { ProgressView(); Text("Waiting until it adds this device…").foregroundStyle(.secondary) }
       Text("They don\u{2019}t match? Tap \u{201C}They don\u{2019}t match\u{201D} there; the code is then used up.")
         .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
-      Button("Cancel and scan again") { model.cancelPairing() }.font(.footnote)
+      Button("Scan Again") { model.cancelPairing() }.font(.footnote)
     }
     .padding()
   }
@@ -120,7 +120,7 @@ struct PairFailedView: View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Not logged in: \(why)").foregroundStyle(.red)
       Text("Show a new code on the other device.").foregroundStyle(.secondary)
-      Button("Scan again") { model.go(.scan) }.buttonStyle(.borderedProminent)
+      Button("Scan Again") { model.go(.scan) }.buttonStyle(.borderedProminent)
       Button("Back") { model.go(.start) }
       Spacer()
     }
@@ -142,14 +142,14 @@ struct EmailView: View {
           .textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
         SecureField("Password", text: $password).textContentType(.password)
       }
-      Section("Name of this device") { TextField("Name of this device", text: $name) }
+      Section("Device Name") { TextField("Name of this device", text: $name) }
       Section {
-        Button("Log in") { Task { await model.login(email: email, password: password, name: name.trimmingCharacters(in: .whitespaces)) } }
+        Button("Log In") { Task { await model.login(email: email, password: password, name: name.trimmingCharacters(in: .whitespaces)) } }
           .disabled(email.isEmpty || password.isEmpty || name.trimmingCharacters(in: .whitespaces).isEmpty)
       } footer: {
         VStack(alignment: .leading, spacing: 8) {
           Text("Your password never leaves this device.")
-          Button("Forgot password?") { model.go(.forgot) }.font(Face.text(14, .semibold)).foregroundStyle(Ink.accent)
+          Button("Forgot Password?") { model.go(.forgot) }.font(Face.text(14, .semibold)).foregroundStyle(Ink.accent)
         }
       }
     }
@@ -175,9 +175,9 @@ struct ForgotView: View {
         TextField("The 12 words of your Emergency Kit", text: $words, axis: .vertical).lineLimit(2...4).textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(.body, design: .monospaced))
         SecureField("New password (at least 12 characters)", text: $password).textContentType(.newPassword)
       }
-      Section("Name of this device") { TextField("Name of this device", text: $name) }
+      Section("Device Name") { TextField("Name of this device", text: $name) }
       Section {
-        Button("Set new password") { Task { await model.forgot(email: email, words: words, password: password, name: name) } }
+        Button("Set New Password") { Task { await model.forgot(email: email, words: words, password: password, name: name) } }
           .disabled(email.isEmpty || words.isEmpty || password.count < 12)
       } footer: { Text("No kit, but another device is logged in? Change the password there under Settings.") }
     }

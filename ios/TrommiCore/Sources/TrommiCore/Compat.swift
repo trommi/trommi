@@ -15,7 +15,7 @@ public enum Compat {
   public static let SCHEMA_VERSION = 1
   /** The hub protocol this version speaks (Trommi-Protocol header). */
   public static let PROTOCOL_VERSION = 1
-  public static let CONTENT_TYPES: Set<String> = ["message", "strokes", "erase", "move", "send_away", "selection_sent", "clip_request"]
+  public static let CONTENT_TYPES: Set<String> = ["message", "strokes", "erase", "move", "send_away", "selection_sent"]
   public static let OBJECT_TYPES: Set<String> = ["card", "note", "published"]
   public static let CARD_TYPES: Set<String> = ["decision", "info"]
   public static let ANSWER_ACTIONS: Set<String> = ["answer", "read", "shred"]

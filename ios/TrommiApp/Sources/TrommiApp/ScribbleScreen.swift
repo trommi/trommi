@@ -210,12 +210,12 @@ struct ScribbleScreen: View {
       }
       .padding(.bottom, 70)
     }
-    .navigationTitle("Scribble Board").navigationBarTitleDisplayMode(.inline)
+    .navigationTitle("Scribble").navigationBarTitleDisplayMode(.inline)
     .task(id: timeline) { await load() }
     .onChange(of: model.version) { _, _ in takeNew() }
-    .alert("A sticky", isPresented: Binding(get: { stickyAt != nil }, set: { if !$0 { stickyAt = nil } })) {
+    .alert("New Sticky Note", isPresented: Binding(get: { stickyAt != nil }, set: { if !$0 { stickyAt = nil } })) {
       TextField("Write on it", text: $stickyText)
-      Button("Stick it") { if let p = stickyAt { addSticky(at: p) } }
+      Button("Add") { if let p = stickyAt { addSticky(at: p) } }
       Button("Cancel", role: .cancel) {}
     }
     .alert("Not sent", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") {} } message: { Text(error ?? "") }

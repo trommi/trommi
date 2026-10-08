@@ -18,10 +18,13 @@ struct DeskScreen: View {
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var duckAsk = false
   var body: some View {
+    let _ = RenderCount.body("DeskScreen")
     let _ = model.version
     let v = model.view
+    ScrollViewReader { scroller in
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 12) {
+        Color.clear.frame(height: 0).id("desk-top")
         if let v = v, let d = model.desk, !v.units.isEmpty || model.room?.cursor ?? 0 > 0 {
           let _ = StartClock.desk(cards: v.fresh.count, restored: model.room?.restored ?? false)
           head(v)
@@ -45,11 +48,20 @@ struct DeskScreen: View {
           ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
         }
       }
-      .padding(.horizontal, 16).padding(.bottom, 90)
+      .padding(.horizontal, 16).padding(.bottom, 110)
       .frame(maxWidth: 760).frame(maxWidth: .infinity)
+      Color.clear.frame(height: 0).id("desk-end")
+    }
+    .onChange(of: model.perfScroll) { _, _ in
+      Task { @MainActor in
+        withAnimation(.easeInOut(duration: 1.2)) { scroller.scrollTo("desk-end", anchor: .bottom) }
+        try? await Task.sleep(nanoseconds: 1_400_000_000)
+        withAnimation(.easeInOut(duration: 1.2)) { scroller.scrollTo("desk-top", anchor: .top) }
+      }
     }
     .scrollDismissesKeyboard(.interactively)
     .refreshable { await model.refresh() }
+    }
     .background(Ink.bg)
     .background {
       // the Desk's keys on an iPad with a keyboard: B Blitz, O Off your mind, S settings
@@ -78,12 +90,40 @@ struct DeskScreen: View {
         : !v.landed.isEmpty ? (v.landed.count == 1 ? "Something got done." : "Things got done.") : ""
       let set = n == 0 ? CALM : GREETINGS
       let line = n == 0 && !unquiet.isEmpty ? unquiet : set[Int(DICE * Double(set.count))]
+      let decisions = v.fresh.filter { $0.kind == "decision" }.map { $0.id }
+      if hSize != .regular {
+        // iPhone: the greeting wraps beside two small round glass buttons (the duck for all, Blitz with its count)
+        HStack(alignment: .top, spacing: 10) {
+          Greeting(text: line).layoutPriority(1)
+          Spacer(minLength: 4)
+          if n > 0 {
+            if !decisions.isEmpty {
+              Button { duckAsk = true } label: {
+                PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 26, height: 22).frame(width: 46, height: 46).glass(Circle(), interactive: true)
+              }
+              .buttonStyle(.plain)
+              .accessibilityLabel(decisions.count == 1 ? "I don’t give a duck: for the one open decision" : "I don’t give a duck: for all \(decisions.count) open decisions")
+            }
+            Button { model.path.append(.blitz) } label: {
+              PenMark("desk:BOLT").frame(width: 22, height: 22).frame(width: 46, height: 46).glass(Circle(), interactive: true)
+                .overlay(alignment: .topTrailing) {
+                  Text("\(n)").font(Face.text(11, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 5).frame(minWidth: 19, minHeight: 19).background(Capsule().fill(Ink.fg)).offset(x: 4, y: -3)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(Words.walk): \(n == 1 ? "1 open question" : "\(n) open questions")")
+          }
+        }
+        .padding(.top, 18).padding(.bottom, 6)
+        .confirmationDialog(decisions.count == 1 ? "Answer it with “I don’t give a duck”?" : "Answer all \(decisions.count) with “I don’t give a duck”?", isPresented: $duckAsk, titleVisibility: .visible) {
+          Button(decisions.count == 1 ? "Duck It" : "Duck All") { model.duckAll(decisions) }
+        }
+      } else {
       VStack(alignment: .leading, spacing: 14) {
         Greeting(text: line).padding(.top, 18)
         if n > 0 {
           HStack(spacing: 12) {
             Spacer()
-            let decisions = v.fresh.filter { $0.kind == "decision" }.map { $0.id }
             if !decisions.isEmpty {
               Button { duckAsk = true } label: {
                 PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 34, height: 28).padding(.horizontal, 14).padding(.vertical, 12)
@@ -91,7 +131,7 @@ struct DeskScreen: View {
               .buttonStyle(PaperButton())
               .accessibilityLabel(decisions.count == 1 ? "I don’t give a duck: for the one open decision" : "I don’t give a duck: for all \(decisions.count) open decisions")
               .confirmationDialog(decisions.count == 1 ? "Answer it with “I don’t give a duck”?" : "Answer all \(decisions.count) with “I don’t give a duck”?", isPresented: $duckAsk, titleVisibility: .visible) {
-                Button(decisions.count == 1 ? "Yes, duck it" : "Yes, duck them all") { model.duckAll(decisions) }
+                Button(decisions.count == 1 ? "Duck It" : "Duck All") { model.duckAll(decisions) }
               }
             }
             Button { model.path.append(.blitz) } label: {
@@ -106,6 +146,7 @@ struct DeskScreen: View {
           }
         }
       }.padding(.bottom, 6)
+      }
     }
   }
   struct Run: Identifiable { var id: String; var cards: [DeskCard] }
@@ -225,6 +266,7 @@ struct DeskRow: View {
   let agent: Agent?
   var inSession = false
   var body: some View {
+    let _ = RenderCount.body("DeskRow")
     let hue = agent?.hue ?? 162
     VStack(alignment: .leading, spacing: 8) {
       // who asks, the knock
@@ -283,7 +325,7 @@ struct RowMenu: View {
     Button { model.snooze(card) } label: { Label(Words.later, systemImage: "zzz") }
     if card.kind != "permission" { Button { model.handBack(card) } label: { Label(Words.revise, systemImage: "arrow.uturn.backward") } }
     if card.kind == "decision" { Button { model.trust(card) } label: { Label(Words.duck, systemImage: "hand.wave") } }
-    if card.kind != "permission" { Button { model.what(card) } label: { Label("What?? — explain this to me", systemImage: "questionmark.bubble") } }
+    if card.kind != "permission" { Button { model.what(card) } label: { Label("What??", systemImage: "questionmark.bubble") } }
     Button { copyText("Nr. \(card.number) · \(card.title)") } label: { Label("Copy", systemImage: "doc.on.doc") }
     if card.kind != "permission" { Button(role: .destructive) { model.shred(card) } label: { Label(Words.shred, systemImage: "trash") } }
   }
@@ -311,7 +353,7 @@ struct Tiles: View {
     let cols = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
     if card.kind == "info" {
       LazyVGrid(columns: cols, spacing: 8) {
-        tile(lead: false, label: nil, drawing: "what", wide: true) { model.what(card) }.accessibilityLabel("What?? — explain this to me")
+        tile(lead: false, label: nil, drawing: "what", wide: true) { model.what(card) }.accessibilityLabel("What??")
         tile(lead: true, label: Words.ack, drawing: "tick") { model.closeInfo(card) }
       }
     } else {
@@ -490,7 +532,7 @@ struct EndList: View {
         ForEach(full ? shown : Array(shown.prefix(5)), id: \.card.id) { s in endRow(s) }
         if full && shown.isEmpty { Text(terms.isEmpty ? "Nothing yet." : "Nothing here has these words.").font(Face.text(15)).foregroundStyle(Ink.muted).padding(.vertical, 20) }
         if !full && shown.count > 5 {
-          Button("Show more") { model.path.append(.off) }.font(Face.text(15, .semibold)).foregroundStyle(Ink.accent).frame(maxWidth: .infinity).padding(.vertical, 12)
+          Button("Show More") { model.path.append(.off) }.font(Face.text(15, .semibold)).foregroundStyle(Ink.accent).frame(maxWidth: .infinity).padding(.vertical, 12)
         }
       }.padding(.top, 8)
     }
@@ -519,9 +561,9 @@ struct EndList: View {
   @ViewBuilder private func endRow(_ s: Item) -> some View {
     HStack(spacing: 12) {
       Group {
-        if s.g == "open" { Button { model.archive(s.card.id) } label: { PenMark("desk:BOX", color: Ink.fg).frame(width: 24, height: 24) }.accessibilityLabel("Tick it off: \(s.card.title)") }
+        if s.g == "open" { Button { model.archive(s.card.id) } label: { PenMark("desk:BOX", color: Ink.fg).frame(width: 24, height: 24) }.accessibilityLabel("Check Off: \(s.card.title)") }
         else if s.g == "later" { Sketch("snooze", color: Ink.stampLater).frame(width: 22, height: 22) }
-        else if s.card.archived { Button { model.archive(s.card.id, false) } label: { PenMark("desk:BOX_TICK", color: Ink.fg).frame(width: 24, height: 24) }.accessibilityLabel("Untick: back to tick off") }
+        else if s.card.archived { Button { model.archive(s.card.id, false) } label: { PenMark("desk:BOX_TICK", color: Ink.fg).frame(width: 24, height: 24) }.accessibilityLabel("Uncheck") }
         else { PenMark("desk:BOX_TICK", color: Ink.faint).frame(width: 24, height: 24) }
       }.frame(width: 28)
       Button { model.path.append(.card(s.card.id)) } label: {
@@ -550,7 +592,7 @@ struct SelectionBar: View {
       if chosen.contains(where: { $0.kind == "info" }) { way("read", Sketch("tick").frame(width: 20, height: 20), "Read") }
       way("shred", Sketch("bin").frame(width: 20, height: 20), Words.shred)
       Button { model.selected = [] } label: { Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).frame(width: 36, height: 36) }
-        .accessibilityLabel("Clear the selection")
+        .accessibilityLabel("Clear Selection")
     }
     .foregroundStyle(Ink.fg)
     .padding(.horizontal, 10).padding(.vertical, 6)

@@ -47,16 +47,13 @@ struct CardScreen: View {
         ToolbarItem(placement: .principal) { Text(c.nr).font(Face.text(15, .semibold)).foregroundStyle(Ink.muted) }
         ToolbarItem(placement: .topBarTrailing) {
           Menu {
-            if let a = a { Button { model.path.append(.session(a.id)) } label: { Label("Open \(a.name)", systemImage: "bubble.left.and.bubble.right") } }
-            if c.kind != "permission" && !c.unsupported {
-              Button { model.act { try await model.room?.requestClip(cardId: c.id); model.say("Asked for a clip", c.title) } } label: { Label("▶ Explain as a clip", systemImage: "play.rectangle") }
-            }
-            Button { copyText("Nr. \(c.number) · \(c.title)\(c.choices.isEmpty ? "" : " → \(c.options.filter { c.choices.contains($0.key) }.map { $0.label }.joined(separator: ", "))")") } label: { Label("Copy to paste into another agent", systemImage: "doc.on.doc") }
+            if let a = a { Button { model.path.append(.session(a.id)) } label: { Label("Open Session", systemImage: "bubble.left.and.bubble.right") } }
+            Button { copyText("Nr. \(c.number) · \(c.title)\(c.choices.isEmpty ? "" : " → \(c.options.filter { c.choices.contains($0.key) }.map { $0.label }.joined(separator: ", "))")") } label: { Label("Copy", systemImage: "doc.on.doc") }
             if c.status == "open" && c.kind != "permission" {
               Button { model.snooze(c) } label: { Label(Words.later, systemImage: "zzz") }
               Button(role: .destructive) { model.shred(c, note: note) } label: { Label(Words.shred, systemImage: "trash") }
             }
-          } label: { Image(systemName: "ellipsis.circle") }
+          } label: { Image(systemName: "ellipsis").accessibilityLabel("More") }
         }
       }
       .onAppear { if !loadedDraft { loadDraft(c); loadedDraft = true } }
@@ -192,7 +189,7 @@ struct CardScreen: View {
   private func otherWays(_ c: DeskCard, _ hue: Int) -> some View {
     HStack(spacing: 10) {
       Button { model.what(c) } label: { PenMark("sketch:what", color: Ink.fg, width: 2.2).frame(width: 90, height: 32).frame(maxWidth: .infinity, minHeight: 64) }
-        .buttonStyle(TileStyle(lead: false, hue: hue)).accessibilityLabel("What?? Explain this to me")
+        .buttonStyle(TileStyle(lead: false, hue: hue)).accessibilityLabel("What??")
       Button { model.handBack(c, text: note) } label: { Sketch("reverse", color: Ink.fg).frame(width: 34, height: 34).frame(maxWidth: .infinity, minHeight: 64) }
         .buttonStyle(TileStyle(lead: false, hue: hue)).accessibilityLabel("Reverse: back to the agent for rework, with the comments")
     }
@@ -268,7 +265,7 @@ struct CardScreen: View {
         }
       } else {
         Text("Archived: it lies in Off your mind.").font(Face.text(14)).foregroundStyle(Ink.muted)
-        Button("Back on the Desk") { model.archive(c.id, false) }.buttonStyle(QuietWay())
+        Button("Back to Desk") { model.archive(c.id, false) }.buttonStyle(QuietWay())
       }
     } else {
       let said = c.status == "shredded" ? "Shredded" : c.kind == "info" ? "Read" : c.trusted ? "\(Words.trust)\(c.advisedLabels.isEmpty ? "" : ": \(c.advisedLabels)")" : pickedLabels.isEmpty ? "Withdrawn by the agent" : pickedLabels
@@ -352,7 +349,7 @@ struct CardThread: View {
       if !msgs.isEmpty || older {
         EndDivider(title: "The talk")
         if older {
-          Button("Earlier messages") { Task { await model.loadOlder(card: card.id) } }.font(Face.text(14, .semibold)).foregroundStyle(Ink.accent)
+          Button("Show Earlier Messages") { Task { await model.loadOlder(card: card.id) } }.font(Face.text(14, .semibold)).foregroundStyle(Ink.accent)
         }
         ForEach(msgs) { m in MessageView(message: m, inCard: true) }
       }

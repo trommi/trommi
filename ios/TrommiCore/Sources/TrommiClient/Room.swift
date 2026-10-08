@@ -144,6 +144,8 @@ public final class Room {
   public private(set) var roomSecrets: [Int: EpochSecret] = [:]
   public private(set) var sessionStates: [String: SessionState] = [:]
   private var sessionGrants: [String: [Bytes]] = [:]
+  private var sessionKeyTexts: [String: [String]] = [:]
+  private var grantsCheckedAt = -1
   public private(set) var sessionSecrets: [String: EpochSecret] = [:]          // "<sid>:<epoch>"
   public private(set) var chains = Chains()
   /** The board: cards, sessions, conversations, registers, notes: the same rules as the web app (Board.swift). */
@@ -374,8 +376,12 @@ public final class Room {
   @discardableResult public func refreshMembers() async throws -> [String] {
     var warnings = [String]()
     let m = try await noted { try await hub.members(after: -1) }
-    let entries = try (m["signed_entries"] as? [String] ?? []).map { try unb64u($0) }
-    let next = try verifyLog(entries, roomId: try unhex(record.roomId))
+    let texts = m["signed_entries"] as? [String] ?? []
+    // the same log as before (the usual refresh): verified already, nothing to do on any thread
+    if texts == record.entries { return warnings }
+    let entries = try texts.map { try unb64u($0) }
+    let rid = try unhex(record.roomId)
+    let next = try await Task.detached(priority: .userInitiated) { try verifyLog(entries, roomId: rid) }.value
     switch try checkLogAgainstPin(next, record.pin) {
     case .recoveryOverride(let at): warnings.append("the room was recovered with its recovery code (entry \(at)): check with the human that this was them")
     default: break
@@ -397,13 +403,14 @@ public final class Room {
   public func refreshDevices() async {
     guard let d = try? await hub.devices() else { return }
     var ch = Change()
-    board.applyDevices((d["devices"] as? [Any] ?? []).map { JV(any: $0) }, change: &ch)
-    emit(ch)
+    PerfLog.time("applyDevices") { board.applyDevices((d["devices"] as? [Any] ?? []).map { JV(any: $0) }, change: &ch) }
+    PerfLog.time("devices emit") { emit(ch) }
   }
 
   /** This device's room keys (every epoch it was sealed one), the older ones through the back links. */
   public func refreshRoomKeys() async throws {
     let r = try await noted { try await hub.sealedRoomKeys(after: 0) }
+    let before = roomSecrets.count
     for w in r["sealed_room_keys"] as? [JSON] ?? [] {
       guard let e = (w["key_epoch"] as? NSNumber)?.intValue, roomSecrets[e] == nil, let sealed = w["key_sealed"] as? String else { continue }
       if let s = try? unwrapEpochKey(state, device, try unb64u(sealed), epoch: e) { roomSecrets[e] = s }
@@ -416,18 +423,27 @@ public final class Room {
       if roomSecrets[e - 1] == nil, let s = roomSecrets[e], let link = byEpoch[e], let prev = try? openBackLink(state, s, link) { roomSecrets[e - 1] = prev }
       e -= 1
     }
-    record.roomSecrets = roomSecrets.values.sorted { $0.epoch < $1.epoch }.map(SecretJSON.init)
-    saveRecord()
+    if roomSecrets.count != before {
+      record.roomSecrets = roomSecrets.values.sorted { $0.epoch < $1.epoch }.map(SecretJSON.init)
+      saveRecord()
+    }
   }
 
   /** Every session's grant chain, verified; this device's session keys (a human holds every session key), older epochs by back links. */
   public func refreshSessions() async throws {
     let r = try await noted { try await hub.sessionBundle() }
     var ch = Change()
+    // a new member list (an add, a removal) can change what a grant chain means: everything verified again
+    if grantsCheckedAt != state.head.seq { sessionKeyTexts = [:]; grantsCheckedAt = state.head.seq }
     for s in r["sessions"] as? [JSON] ?? [] {
       guard let sid = s["session_id"] as? String, sid.utf8.count == 32, let grants = s["signed_grants"] as? [String], !grants.isEmpty else { continue }
       let raw = try grants.map { try unb64u($0) }
-      guard let ss = try verifyGrants(raw, state) else { continue }
+      let keyTexts = (s["sealed_session_keys"] as? [JSON] ?? []).compactMap { $0["key_sealed"] as? String } + (s["key_back_links"] as? [JSON] ?? []).compactMap { $0["key_back_link"] as? String }
+      // the same grants and keys as at the last refresh: verified and applied already
+      if let old = sessionGrants[sid], old.count == raw.count, zip(old, raw).allSatisfy({ bytesEqual($0, $1) }), sessionKeyTexts[sid] == keyTexts, sessionStates[sid] != nil { continue }
+      sessionKeyTexts[sid] = keyTexts
+      let st = state
+      guard let ss = try await Task.detached(priority: .userInitiated) { try verifyGrants(raw, st) }.value else { continue }
       sessionStates[sid] = ss
       sessionGrants[sid] = raw
       for w in s["sealed_session_keys"] as? [JSON] ?? [] {
@@ -447,8 +463,7 @@ public final class Room {
       for g in raw { if let d = try? decodeGrant(g) { for id in d.agentIds.map(hex) { if !(byEpoch[d.epoch] ?? []).contains(id) { byEpoch[d.epoch, default: []].append(id) }; if !ever.contains(id) { ever.append(id) } } } }
       board.applySessionGrant(ss, everAgentIds: ever, epochAgentIds: byEpoch, change: &ch)
     }
-    board.project()
-    emit(ch)
+    if !ch.isEmpty { board.project(); emit(ch) }
   }
 
   nonisolated private static func secretLookup(room: [Int: EpochSecret], sessions: [String: EpochSecret]) -> SecretLookup {
@@ -508,14 +523,14 @@ public final class Room {
   private func catchUp() async throws -> SyncReport {
     if cursor == 0 { await restore() }
     var report = SyncReport()
-    try await noted { try await hub.signIn() }
-    report.warnings += try await refreshMembers()
-    try await refreshRoomKeys()
-    try await refreshSessions()
+    try await PerfLog.time("signIn") { try await noted { try await hub.signIn() } }
+    report.warnings += try await PerfLog.time("refreshMembers") { try await refreshMembers() }
+    try await PerfLog.time("refreshRoomKeys") { try await refreshRoomKeys() }
+    try await PerfLog.time("refreshSessions") { try await refreshSessions() }
     Task { await self.refreshDevices() }
     var change = Change()
     while true {
-      let page = try await noted { try await hub.envelopes(after: cursor) }
+      let page = try await PerfLog.time("envelopes page") { try await noted { try await hub.envelopes(after: cursor) } }
       let list = (page["envelopes"] as? [JSON] ?? []).compactMap { rec -> (n: Int, bytes: Bytes, isVoid: Bool)? in
         guard let n = (rec["envelope_number"] as? NSNumber)?.intValue, let b = rec["envelope"] as? String, let bytes = try? unb64u(b) else { return nil }
         return (n, bytes, rec["void"] as? Bool ?? false)
@@ -528,9 +543,9 @@ public final class Room {
       report.warnings.append("the hub shows fewer of this device's envelopes (\(chains[hex(device.id)]?.seq ?? 0)) than it sent (\(own.seq))")
     }
     synced = true
-    board.project()
+    PerfLog.time("project") { board.project() }
     change.stack = true
-    emit(change)
+    PerfLog.time("emit") { emit(change) }
     pumpOutbox()
     return report
   }
@@ -551,7 +566,7 @@ public final class Room {
         if report.refused <= 5 { report.warnings.append("envelope \(n) refused: \(why)") }
         cursor = max(cursor, n)
       }
-      for p in out.pres { applyPre(p, report: &report, change: &change) }
+      PerfLog.time("apply \(out.pres.count) records") { for p in out.pres { applyPre(p, report: &report, change: &change) } }
       guard let stop = out.stop else { break }
       let at = rest.startIndex + stop.index
       let n = rest[at].n
@@ -718,7 +733,7 @@ public final class Room {
   }
   private func catchUpQuietly(_ report: inout SyncReport, _ change: inout Change) async throws -> Int {
     while true {
-      let page = try await noted { try await hub.envelopes(after: cursor) }
+      let page = try await PerfLog.time("envelopes page") { try await noted { try await hub.envelopes(after: cursor) } }
       let list = (page["envelopes"] as? [JSON] ?? []).compactMap { rec -> (n: Int, bytes: Bytes, isVoid: Bool)? in
         guard let n = (rec["envelope_number"] as? NSNumber)?.intValue, let b = rec["envelope"] as? String, let bytes = try? unb64u(b) else { return nil }
         return (n, bytes, rec["void"] as? Bool ?? false)
@@ -1003,20 +1018,6 @@ public final class Room {
     var ch = Change(); ch.timelines.insert(key); ch.sessions.insert(sid); emit(ch)
     do { try await send(kind: KIND.TIMELINE_ITEM, content: .obj(content), recipient: recipient, timeline: timeline, sessionId: sid, localId: lid) }
     catch { var c = Change(); t.echoes.removeValue(forKey: lid); c.timelines.insert(key); emit(c); throw error }
-  }
-
-  /** "▶ Explain": ask the card's agent for a short narrated explainer clip (content_type clip_request). */
-  public func requestClip(cardId: String) async throws {
-    guard let card = board.cards[cardId] else { throw ZError("not-found", "no card \(cardId)") }
-    if card.unsupported { throw ZError("needs-update", Compat.UPDATE_MESSAGE) }
-    guard let sid = card.sessionId else { throw ZError("bad-argument", "the card has no agent to ask") }
-    let recipient = board.holderOf(card)
-    let lid = newLocalId(), key = timelineKeyOf("chat", "card/\(cardId)")
-    let t = board.timelineOf(key)
-    t.echoes[lid] = TimelineItem(envelopeNumber: nil, localId: lid, pending: true, senderDeviceId: hex(device.id), recipientDeviceId: recipient, sentAt: nowMs(),
-                                 itemState: "loaded", contentType: "clip_request", content: ["content_type": "clip_request"])
-    var ch = Change(); ch.timelines.insert(key); emit(ch)
-    try await send(kind: KIND.TIMELINE_ITEM, content: ["content_type": "clip_request"], recipient: recipient, timeline: (kind: "chat", id: "card/\(cardId)"), sessionId: sid, localId: lid)
   }
 
   /** Answer an open card (README "answer"): choices, a note, notes per option, files; read (an info) and shred are answers too. */
@@ -1481,7 +1482,14 @@ public final class Room {
     var devices: JV?
   }
   private var cacheURL: URL { store.dir.appendingPathComponent("cache.bin") }
-  private func cacheKey() throws -> Bytes { try store.cacheKey() }
+  /** The cache key, read from the Keychain once (a Keychain read can take tens of ms: never once per save). */
+  private var cacheKeyMemo: Bytes?
+  private func cacheKey() throws -> Bytes {
+    if let k = cacheKeyMemo { return k }
+    let k = try store.cacheKey()
+    cacheKeyMemo = k
+    return k
+  }
 
   /** Write the cache a moment after the last change (a catch-up brings thousands at once). */
   private func cacheSoon() {
@@ -1498,6 +1506,8 @@ public final class Room {
   public func saveCacheAndWait() async {
     guard cacheDirty else { return }
     cacheDirty = false
+    let t0 = DispatchTime.now().uptimeNanoseconds
+    defer { if PerfLog.on { PerfLog.line(String(format: "saveCache main %.1f ms", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)) } }
     let c = Cache(cursor: cursor, lamport: lamport, chains: chains, grants: sessionGrants.mapValues { $0.map(b64u) },
                   sessionSecrets: sessionSecrets.mapValues(SecretJSON.init), recs: log.keys.sorted().compactMap { log[$0] }, devices: nil)
     guard let key = try? cacheKey() else { return }

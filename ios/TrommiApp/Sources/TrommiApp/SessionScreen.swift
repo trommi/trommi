@@ -32,6 +32,7 @@ struct SessionScreen: View {
   @State private var deleteAsk = false
   @State private var filesOpen = false
   var body: some View {
+    let _ = RenderCount.body("SessionScreen")
     let _ = model.version
     if let d = model.desk, let a = d.byAgent[agentId] {
       let all = d.messagesOf(agent: agentId)
@@ -93,7 +94,8 @@ struct SessionScreen: View {
           }
           .background(.bar)
         }
-        .onAppear { lastCount = all.count; proxy.scrollTo("bottom", anchor: .bottom) }
+        .onAppear { lastCount = all.count; proxy.scrollTo("bottom", anchor: .bottom); model.lastChat = a.id; model.markRead(a) }
+        .onChange(of: model.version) { _, _ in model.markRead(a) }
       }
       .background(Ink.bg.ignoresSafeArea())
       .navigationBarTitleDisplayMode(.inline)
@@ -101,7 +103,7 @@ struct SessionScreen: View {
         ToolbarItem(placement: .principal) { header(a, d) }
         ToolbarItem(placement: .topBarTrailing) { more(a, d, freshCount: fresh.count) }
       }
-      .alert("Rename \(a.name)", isPresented: $renaming) {
+      .alert("Rename Session", isPresented: $renaming) {
         TextField("Name", text: $name)
         Button("Save") { model.editSession(a, ["name": .str(String(name.prefix(60)))]) }
         Button("Cancel", role: .cancel) {}
@@ -155,10 +157,26 @@ struct SessionScreen: View {
     return "Message to the agent"
   }
 
+  /** The title: the session's drawing and name ▾; a glass menu of the desk's other sessions to switch to (the crowned first, then by activity). */
   private func header(_ a: Agent, _ d: DeskModel) -> some View {
     let stopped = d.blockedOf(a), quiet = stopped == nil ? d.quietOf(a) : nil
     let working = a.online && d.tasks.contains { $0.agent == a.id && $0.state == "working" }
-    return Button { drawings = true } label: {
+    let crown = d.crownOf(desk: model.deskId)
+    let others = (model.view?.units ?? []).map { $0.agent }.sorted { x, y in
+      if (x.id == crown?.id) != (y.id == crown?.id) { return x.id == crown?.id }
+      return x.active > y.active
+    }
+    return Menu {
+      ForEach(others) { o in
+        Button {
+          var p = model.path
+          if !p.isEmpty { p[p.count - 1] = .session(o.id) } else { p = [.session(o.id)] }
+          model.path = p
+        } label: {
+          Label { Text(model.unread(o) ? "\(o.name) ·" : o.name) } icon: { if o.id == a.id { Image(systemName: "checkmark") } else if o.id == crown?.id { Image(systemName: "crown") } }
+        }
+      }
+    } label: {
       HStack(spacing: 8) {
         ZStack { if working { WorkingRing(working: true, color: Tone.color(hue: a.hue, .mid)).frame(width: 34, height: 34) }; AgentMark(agent: a, size: 24) }
         VStack(alignment: .leading, spacing: 0) {
@@ -168,25 +186,25 @@ struct SessionScreen: View {
           else if let l = linkOf(a), l.state != "live" { Text(l.word).font(Face.text(12)).foregroundStyle(Ink.urgHigh) }
           else { Text(a.online ? (a.task.isEmpty ? "connected" : a.task) : "disconnected").font(Face.text(12)).foregroundStyle(Ink.muted).lineLimit(1) }
         }
+        Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.muted)
       }
     }
-    .buttonStyle(.plain)
-    .accessibilityLabel("\(a.name): change its drawing")
+    .accessibilityLabel("\(a.name): switch chat")
   }
   private func more(_ a: Agent, _ d: DeskModel, freshCount: Int) -> some View {
     Menu {
-      Toggle(isOn: $onlyQuestions) { Label(freshCount > 0 ? "Questions only (\(freshCount))" : "Questions only", systemImage: "questionmark.circle") }
+      Toggle(isOn: $onlyQuestions) { Label(freshCount > 0 ? "Questions Only (\(freshCount))" : "Questions Only", systemImage: "questionmark.circle") }
       Button { filesOpen = true } label: { Label("Files", systemImage: "paperclip") }
-      Button { name = a.label.isEmpty ? a.name : a.label; renaming = true } label: { Label("Rename", systemImage: "pencil") }
-      Button { drawings = true } label: { Label("Change its drawing", systemImage: "scribble") }
-      Button { model.star(a, !a.starred) } label: { Label(a.starred ? "Take the crown off" : "Give it the crown", systemImage: "crown") }
+      Button { name = a.label.isEmpty ? a.name : a.label; renaming = true } label: { Label("Rename…", systemImage: "pencil") }
+      Button { drawings = true } label: { Label("Change Icon…", systemImage: "scribble") }
+      Button { model.star(a, !a.starred) } label: { Label(a.starred ? "Remove Main Session" : "Make Main Session", systemImage: "crown") }
       let others = d.desks.filter { $0.id != d.deskOf(a) }
       if a.parent == nil && !others.isEmpty {
-        Menu { ForEach(others) { desk in Button(desk.name) { model.editSession(a, ["desk": .str(desk.id)]) } } } label: { Label("Move to other desk", systemImage: "rectangle.stack") }
+        Menu { ForEach(others) { desk in Button(desk.name) { model.editSession(a, ["desk": .str(desk.id)]) } } } label: { Label("Move to Desk…", systemImage: "rectangle.stack") }
       }
-      Button { model.editSession(a, ["archived": .bool(!a.archived)]) } label: { Label(a.archived ? "Back from the archive" : "Archive", systemImage: "archivebox") }.disabled(a.online && !a.archived)
-      if !a.own { Divider(); Button(role: .destructive) { deleteAsk = true } label: { Label("Delete session", systemImage: "trash") } }
-    } label: { Image(systemName: "ellipsis.circle") }
+      Button { model.editSession(a, ["archived": .bool(!a.archived)]) } label: { Label(a.archived ? "Unarchive" : "Archive", systemImage: "archivebox") }.disabled(a.online && !a.archived)
+      if !a.own { Divider(); Button(role: .destructive) { deleteAsk = true } label: { Label("Delete…", systemImage: "trash") } }
+    } label: { Image(systemName: "ellipsis").accessibilityLabel("More") }
   }
 }
 
@@ -280,13 +298,12 @@ struct MessageView: View {
   var inCard = false
   @State private var picture: Int? = nil
   var body: some View {
+    let _ = RenderCount.body("MessageView")
     let m = message
     Group {
       if m.from == "event" {
         let c = m.cardId.flatMap { model.card($0) }
         EventRow(kind: m.kind ?? "asked", about: c?.title ?? m.text, text: eventText(m, c), ts: m.ts, number: c?.number, open: inCard || c == nil ? nil : { model.path.append(.card(c!.id)) })
-      } else if m.contentType == "clip_request" {
-        HStack { Spacer(minLength: 40); Label("Asked for an explainer clip", systemImage: "play.rectangle").font(Face.text(13, .medium)).foregroundStyle(Ink.muted) }
       } else if m.itemState != "loaded" && m.itemState != "pruned" {
         HStack { if m.from == "user" { Spacer(minLength: 40) }; UnsupportedLine(what: "message").frame(maxWidth: 420); if m.from != "user" { Spacer(minLength: 40) } }
       } else if m.from == "user" {
@@ -399,8 +416,8 @@ struct PublishedCard: View {
     }
     .buttonStyle(.plain)
     .contextMenu {
-      Menu("Share a link (outside the room)") {
-        ForEach([1, 7, 30], id: \.self) { d in Button(d == 1 ? "For a day" : "For \(d) days") { share(a, days: d) } }
+      Menu("Share Link") {
+        ForEach([1, 7, 30], id: \.self) { d in Button(d == 1 ? "For 1 Day" : "For \(d) Days") { share(a, days: d) } }
       }
     }
     .sheet(item: $opened) { f in FileSheet(file: f) }
@@ -528,12 +545,12 @@ struct Composer: View {
       }
       HStack(alignment: .bottom, spacing: 8) {
         Menu {
-          Button { pickingPhotos = true } label: { Label("Pictures and videos", systemImage: "photo.on.rectangle") }
-          Button { importing = true } label: { Label("A file", systemImage: "doc") }
+          Button { pickingPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
+          Button { importing = true } label: { Label("Choose File", systemImage: "doc") }
         } label: {
           Sketch("clip", color: Ink.muted).frame(width: 22, height: 22).frame(width: 40, height: 40)
         }
-        .accessibilityLabel("Attach pictures or files")
+        .accessibilityLabel("Attach")
         TextField(placeholder, text: $text, axis: .vertical)
           .font(Face.text(17))
           .lineLimit(1...7)
@@ -665,7 +682,7 @@ struct ShareLinkSheet: View {
         Spacer()
       }
       .padding(20)
-      .navigationTitle("Share link").navigationBarTitleDisplayMode(.inline)
+      .navigationTitle("Share Link").navigationBarTitleDisplayMode(.inline)
       .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
     }
     .presentationDetents([.medium])
