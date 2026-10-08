@@ -51,8 +51,11 @@ public struct Store {
   public func saveDevice(_ d: Device) throws {
     try ensure()
     #if os(iOS)
-    // On the phone the key lives in the Keychain, on this device only, readable once it was unlocked after a restart.
-    try Keychain.put(account: dir.lastPathComponent, Data(d.exportSecret()))
+    // On the phone the key lives in the Keychain, on this device only, readable once it was unlocked after a restart
+    // (a Keychain that refuses: the protected file, as before).
+    if (try? Keychain.put(account: dir.lastPathComponent, Data(d.exportSecret()))) != nil { return }
+    let url = dir.appendingPathComponent("device.key")
+    try Data(d.exportSecret()).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     #else
     let url = dir.appendingPathComponent("device.key")
     FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
@@ -66,8 +69,10 @@ public struct Store {
     if let k = Keychain.get(account: dir.lastPathComponent) { return try Device.importSecret(Array(k)) }
     // a key from an earlier version (a file): into the Keychain, the file goes
     let d = try Device.importSecret(Array(try Data(contentsOf: file)))
-    try Keychain.put(account: dir.lastPathComponent, Data(d.exportSecret()))
-    try? FileManager.default.removeItem(at: file)
+    // the file goes only once the Keychain holds the key and gives it back
+    if (try? Keychain.put(account: dir.lastPathComponent, Data(d.exportSecret()))) != nil, Keychain.get(account: dir.lastPathComponent) == Data(d.exportSecret()) {
+      try? FileManager.default.removeItem(at: file)
+    }
     return d
     #else
     return try Device.importSecret(Array(try Data(contentsOf: dir.appendingPathComponent("device.key"))))
@@ -80,6 +85,7 @@ public struct Store {
     if let k = Keychain.get(account: acct), k.count == 32 { return Array(k) }
     let k = systemRandom(32)
     try Keychain.put(account: acct, Data(k))
+    guard Keychain.get(account: acct) == Data(k) else { throw ZError("keychain", "the cache key is not kept") }
     return k
     #else
     try ensure()
