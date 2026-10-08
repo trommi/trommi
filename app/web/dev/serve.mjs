@@ -40,7 +40,8 @@ function serve(req, res) {
   if (rel === '' || rel.endsWith('/')) rel += 'index.html'
   // Like Cloudflare's html_handling: /a/frame serves /a/frame.html.
   if (!isFile(rel) && isFile(`${rel}.html`)) rel += '.html'
-  const gen = rel === 'index.html' || rel === 'sw.js' || rel.startsWith('gen/') ? built() : {}
+  // (the modules too: the build gives their module addresses the build's version, ?v=…)
+  const gen = rel === 'index.html' || rel === 'sw.js' || rel.endsWith('.mjs') || rel.startsWith('gen/') ? built() : {}
   if (!(rel in gen) && !isFile(rel)) {
     // Like Cloudflare's single-page-application handling: navigations get the app, anything else a 404.
     if (req.headers['sec-fetch-mode'] !== 'navigate' && /\.\w+$/.test(rel)) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found') }

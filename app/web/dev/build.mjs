@@ -124,6 +124,13 @@ function preloads(read, entries) {
   return [...seen]
 }
 
+/** Every module address in a script made versioned: './ui.mjs' becomes './ui.mjs?v=<version>', in static imports and
+ *  exports, bare imports and import('…') of a literal. A new index.html thus loads only modules of its own build: no
+ *  cache (the browser's, a proxy's, the service worker's) can hand it yesterday's ui.mjs beside today's stylesheet. */
+const versioned = (src, version) => String(src)
+  .replace(/^(\s*(?:import|export)\s+(?:[^'"]*?from\s+)?)(['"])((?:\.{1,2}\/|\/)[^'"?]+\.mjs)\2/gm, (_, head, q, spec) => `${head}${q}${spec}?v=${version}${q}`)
+  .replace(/\bimport\((['"])((?:\.{1,2}\/|\/)[^'"?]+\.mjs)\1\)/g, (_, q, spec) => `import(${q}${spec}?v=${version}${q})`)
+
 /** Everything the build makes: { 'path under public/': content (text, or bytes for the plugin's zip) }. Nothing is written. */
 export function generate({ pub = PUBLIC, repo = REPO } = {}) {
   const out = {}
@@ -144,7 +151,12 @@ export function generate({ pub = PUBLIC, repo = REPO } = {}) {
   const read = f => { const rel = f.replace(/^\//, ''); return rel in out ? out[rel] : fs.existsSync(path.join(pub, rel)) ? fs.readFileSync(path.join(pub, rel), 'utf8') : null }
   const block = [`<!-- preload ${version} -->`, ...preloads(read, ['/app.mjs', '/gen/vendor/index.mjs']).map(f => `<link rel="modulepreload" href="${f}">`), '<!-- /preload -->'].join('\n')
   out['index.html'] = html.replace(/<!-- preload[^>]*-->[\s\S]*?<!-- \/preload -->/, block).replace('data-build="dev"', `data-build="${version}"`)
-  if (!out['index.html'].includes(block)) throw new Error('index.html: the <!-- preload --> block is missing')
+    .replace(/(<link rel="modulepreload" href="[^"?]+\.mjs)"/g, `$1?v=${version}"`).replace(/(<script type="module" src="\/[^"?]+\.mjs)"/g, `$1?v=${version}"`)
+  // (the modules themselves, the core's and the help page's script, with the same versioned addresses)
+  for (const f of files) if (f.endsWith('.mjs') && !f.startsWith('gen/connector') && !f.startsWith('gen/plugins/')) out[f] = versioned(content(f), version)
+  // (help.html stays as it is: its inline script is allowed by its hash in _headers; it imports /ui.mjs, whose own imports
+  // carry the version)
+  if (!out['index.html'].includes(`<!-- preload ${version} -->`)) throw new Error('index.html: the <!-- preload --> block is missing')
 
   const sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
   out['sw.js'] = sw.replace(/^const VERSION = .*$/m, `const VERSION = ${JSON.stringify(version)}`).replace(/^const SHELL = .*$/m, `const SHELL = ${JSON.stringify(['/', ...files.map(f => `/${f}`)])}`)
