@@ -763,7 +763,7 @@ a.focus-stage-step { display: grid; place-items: center; }
    well (card#fullscreen); Esc or the button leave both. A phone: the pictures the whole width, the answers a bar at the
    foot. ---- */
 @keyframes focus-in { from { opacity: 0; scale: .985; } }
-body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .topbar, .side-foot, #drawer-veil, .demo-band) { visibility: hidden; }
+body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .topbar, .side-foot, #drawer-veil, .demo-band, .tabbar) { visibility: hidden; }
 /* (no container here: the focus mode is placed against the window, not the page's column) */
 #cardpage.tc-page.is-full { overflow: hidden; container-type: normal; }
 .tc-page.is-full .tc-card { position: fixed; z-index: var(--z-full); inset: 0; max-width: none; max-height: none; min-height: 0; margin: 0; border-radius: 0; background: var(--bg); box-shadow: none; grid-template-rows: minmax(0, 1fr); animation: focus-in 180ms var(--ease-out); }
