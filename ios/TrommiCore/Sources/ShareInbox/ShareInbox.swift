@@ -1,8 +1,9 @@
 // ShareInbox: the encrypted inbox the Share Extension (TrommiApp/Sources/TrommiShare) and the app share through their App
 // Group container. The extension never holds a room, a device key or the board: it reads a small sealed snapshot of the
-// sessions (written by the app on each change of the board), and writes what was shared as sealed files plus one sealed
-// manifest per share. The app imports them into the note, or sends them to the chosen session through the room's normal
-// encrypted path, on its next start to the front, and at once while it runs (a Darwin notification).
+// desks and their crowned sessions (written by the app on each change of the board), and writes what was shared as
+// sealed files plus one sealed manifest per share. The app keeps them in the note, or sends them to the chosen desk's
+// crowned session through the room's normal encrypted path, on its next start to the front, and at once while it runs
+// (a Darwin notification).
 //
 // Every file is AES-256-GCM under one 32-byte key (the inbox key) that lives in the Keychain under the App Group as its
 // access group (ShareKeychain), readable after the first unlock, on this device only. The additional data binds each
@@ -15,7 +16,7 @@ import Crypto
 public enum ShareAction: String, Codable, Sendable {
   /** Into the note (the default): nothing is sent. */
   case note
-  /** To one session, as a message. */
+  /** To a desk's crowned session, as a message. */
   case send
 }
 
@@ -46,13 +47,15 @@ public struct ShareRequest: Codable, Equatable, Identifiable, Sendable {
   /** The session (board id) for .send. */
   public var to: String?
   public var toName: String?
+  /** The desk whose crown it goes to (.send). */
+  public var desk: String?
   /** The room of the snapshot the session was picked from. */
   public var room: String?
   public var text: String
   public var items: [ShareItem]
   public init(id: String = ShareInbox.newId(), created: UInt64 = ShareInbox.nowMs(), action: ShareAction, to: String? = nil, toName: String? = nil,
-              room: String? = nil, text: String = "", items: [ShareItem] = []) {
-    self.id = id; self.created = created; self.action = action; self.to = to; self.toName = toName; self.room = room; self.text = text; self.items = items
+              desk: String? = nil, room: String? = nil, text: String = "", items: [ShareItem] = []) {
+    self.id = id; self.created = created; self.action = action; self.to = to; self.toName = toName; self.desk = desk; self.room = room; self.text = text; self.items = items
   }
   /** The words of the share for a note or a message: the typed text, then every link and text item, one per line. */
   public var words: String {
@@ -66,64 +69,43 @@ public struct ShareRequest: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
-/** What the extension may show: desks and sessions by name, the crowns. No keys, no cards, no messages. */
+/**
+ * What the extension may show: each desk with its crowned session (the note's recipients), by name, with their
+ * drawings as small template pictures the app rendered. No keys, no cards, no messages, no other sessions.
+ */
 public struct ShareSnapshot: Codable, Equatable, Sendable {
-  public struct Desk: Codable, Equatable, Sendable {
+  /** A desk's crowned session: who gets the note on that desk. */
+  public struct Crown: Codable, Equatable, Sendable {
+    public var id: String; public var name: String; public var hue: Int
+    /** The session's drawing, a PNG (alpha only matters: shown as a template in its hue). */
+    public var mark: Data?
+    public init(id: String, name: String, hue: Int = 162, mark: Data? = nil) { self.id = id; self.name = name; self.hue = hue; self.mark = mark }
+  }
+  public struct Desk: Codable, Equatable, Sendable, Identifiable {
     public var id: String; public var name: String
-    /** The crowned session (board id): who gets the note on this desk. */
-    public var crown: String?
-    public init(id: String, name: String, crown: String?) { self.id = id; self.name = name; self.crown = crown }
+    public var crown: Crown?
+    public init(id: String, name: String, crown: Crown?) { self.id = id; self.name = name; self.crown = crown }
   }
-  public struct Session: Codable, Equatable, Sendable {
-    public var id: String; public var name: String; public var desk: String?; public var parent: String?
-    public var hue: Int; public var online: Bool
-    public init(id: String, name: String, desk: String?, parent: String?, hue: Int = 162, online: Bool = false) {
-      self.id = id; self.name = name; self.desk = desk; self.parent = parent; self.hue = hue; self.online = online
-    }
-  }
-  public var v: Int = 1
+  public var v: Int = 2
   public var room: String
   public var written: UInt64
+  /** Desks in their order. */
   public var desks: [Desk]
-  /** Sessions in their order, archived and removed ones left out. */
-  public var sessions: [Session]
-  public init(room: String, written: UInt64 = ShareInbox.nowMs(), desks: [Desk], sessions: [Session]) {
-    self.room = room; self.written = written; self.desks = desks; self.sessions = sessions
+  /** The desk drawing (the web's sketch:desk), a PNG shown as a template. */
+  public var deskMark: Data?
+  /** The desk whose crown the app's note went to last. */
+  public var lastDesk: String?
+  public init(room: String, written: UInt64 = ShareInbox.nowMs(), desks: [Desk], deskMark: Data? = nil, lastDesk: String? = nil) {
+    self.room = room; self.written = written; self.desks = desks; self.deskMark = deskMark; self.lastDesk = lastDesk
   }
 
-  /** One row of the tree: a session, how deep (0 a top session, 1 a helper), crowned on its desk. */
-  public struct Row: Equatable, Sendable, Identifiable {
-    public var session: Session; public var depth: Int; public var crowned: Bool
-    public var id: String { session.id }
-  }
-  public struct DeskRows: Equatable, Sendable, Identifiable {
-    public var desk: Desk; public var rows: [Row]
-    public var id: String { desk.id }
-  }
-  /**
-   * The tree as the sidebar shows it: desks in their order; on each the crowned session first, then the other top
-   * sessions, every one followed by its helpers. A session on no known desk goes to the first desk; with no desks, one.
-   */
-  public func tree() -> [DeskRows] {
-    let deskList = desks.isEmpty ? [Desk(id: "main", name: "Desk", crown: nil)] : desks
-    let known = Set(deskList.map { $0.id })
-    let ids = Set(sessions.map { $0.id })
-    func deskOf(_ s: Session) -> String {
-      if let p = s.parent, ids.contains(p), let ps = sessions.first(where: { $0.id == p }) { return deskOf(ps) }
-      if let d = s.desk, known.contains(d) { return d }
-      return deskList[0].id
-    }
-    return deskList.compactMap { d in
-      let here = sessions.filter { deskOf($0) == d.id }
-      let tops = here.filter { $0.parent == nil || !ids.contains($0.parent!) }
-      let ordered = tops.filter { $0.id == d.crown } + tops.filter { $0.id != d.crown }
-      var rows = [Row]()
-      for t in ordered {
-        rows.append(Row(session: t, depth: 0, crowned: t.id == d.crown))
-        for h in here where h.parent == t.id { rows.append(Row(session: h, depth: 1, crowned: false)) }
-      }
-      return rows.isEmpty && desks.count > 1 ? nil : DeskRows(desk: d, rows: rows)
-    }
+  /** The desks that have a crowned session: the choices of the "To" chip, in the desks' order. */
+  public var crowned: [Desk] { desks.filter { $0.crown != nil } }
+
+  /** The desk to preselect: the one picked last in the share sheet, else the app's last, else the first crowned. */
+  public func preselect(last: String?) -> Desk? {
+    let c = crowned
+    return c.first { $0.id == last } ?? c.first { $0.id == lastDesk } ?? c.first
   }
 }
 
@@ -257,6 +239,8 @@ public final class ShareInbox: @unchecked Sendable {
     }
     return out.sorted { ($0.created, $0.id) < ($1.created, $1.id) }
   }
+  /** Still waiting in the inbox (not yet claimed by the app)? The extension asks this to tell "sent" from "queued". */
+  public func isWaiting(_ id: String) -> Bool { fm.fileExists(atPath: requestsDir.appendingPathComponent("\(id).sealed").path) }
   /** Take a share before working on it (a second import does not see it). */
   @discardableResult public func claim(_ id: String) -> Bool {
     (try? fm.moveItem(at: requestsDir.appendingPathComponent("\(id).sealed"), to: requestsDir.appendingPathComponent("\(id).taken"))) != nil
