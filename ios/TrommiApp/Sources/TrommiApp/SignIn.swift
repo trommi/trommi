@@ -30,6 +30,9 @@ struct StartView: View {
       Button("Paste link") { model.go(.paste) }
         .font(.footnote).frame(maxWidth: .infinity)
         .padding(.top, 4)
+      Button { model.startDemo() } label: { Label("Demo", systemImage: "play.rectangle") }
+        .font(.footnote).frame(maxWidth: .infinity)
+        .accessibilityHint("A made-up room on this phone: look around, nothing is sent")
     }
     .padding()
   }

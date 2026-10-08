@@ -194,6 +194,11 @@ struct BarPanel: View {
     row({ Image(systemName: "photo.on.rectangle").foregroundStyle(Ink.fg) }, "Media") { go(.media) }
     row({ Image(systemName: "doc.richtext").foregroundStyle(Ink.fg) }, "Pages") { go(.pages) }
     row({ PenMark("sketch:key", color: Ink.fg) }, "Settings") { go(.settings("agents")) }
+    // the demo (DemoMode.swift): opens the made-up room; inside it, its list of screens
+    row({ PenMark("sidebar:DEMO_MARK", color: Ink.fg) }, model.demo ? "Demo: All Screens" : "Demo") {
+      withAnimation(.snappy) { model.menuOpen = false; model.panel = nil }
+      if model.demo { model.demoScreens = true } else { model.startDemo() }
+    }
   }
   private func make() {
     let n = newDesk.trimmingCharacters(in: .whitespaces)
@@ -378,6 +383,7 @@ struct Sidebar: View {
   private var trommiMenu: some View {
     Menu {
       Button { go(.settings("agents")) } label: { Label("Settings", systemImage: "key") }
+      Button { model.drawer = false; if model.demo { model.demoScreens = true } else { model.startDemo() } } label: { Label(model.demo ? "Demo: All Screens" : "Demo", systemImage: "play.rectangle") }
       Button { go(.off) } label: { Label("Off your mind", systemImage: "checklist") }
       Button { go(.scribble) } label: { Label("Scribble Board", systemImage: "scribble.variable") }
       Button { go(.media) } label: { Label("Media", systemImage: "photo.on.rectangle") }

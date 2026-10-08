@@ -354,7 +354,7 @@ struct MessageView: View {
         }
       }
       about(m)
-      if let p = m.published, let pub = model.room?.board.published[p] {
+      if let p = m.published, let pub = model.board?.published[p] {
         PublishedCard(published: pub)
       } else if m.itemState == "pruned" {
         Text(m.text).font(Face.text(15)).italic().foregroundStyle(Ink.faint)

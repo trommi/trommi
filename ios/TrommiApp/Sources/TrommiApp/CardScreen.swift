@@ -347,7 +347,7 @@ struct CardThread: View {
   let card: DeskCard
   var body: some View {
     let msgs = model.desk?.messagesOfCard(card.id) ?? []
-    let older = model.room?.board.timelines[timelineKeyOf("chat", "card/\(card.id)")]?.items.values.contains { $0.itemState == "header" } ?? false
+    let older = model.board?.timelines[timelineKeyOf("chat", "card/\(card.id)")]?.items.values.contains { $0.itemState == "header" } ?? false
     VStack(alignment: .leading, spacing: 10) {
       if !msgs.isEmpty || older {
         EndDivider(title: "The talk")

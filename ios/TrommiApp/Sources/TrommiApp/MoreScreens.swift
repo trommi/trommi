@@ -76,7 +76,7 @@ struct MediaScreen: View {
   let pages: Bool
   var body: some View {
     let _ = model.version
-    let pubs = (model.room?.board.published.values.filter { $0.objectState != "closed" } ?? []).sorted { $0.envelopeNumber > $1.envelopeNumber }
+    let pubs = (model.board?.published.values.filter { $0.objectState != "closed" } ?? []).sorted { $0.envelopeNumber > $1.envelopeNumber }
     let items = pubs.filter { p in let k = kindOf(p.attachments.first ?? .null); return pages ? k == "html" || k == "file" : k == "image" || k == "video" || k == "audio" }
     // pictures the agents sent in their talk (Media) as well
     let sent: [JV] = pages ? [] : (model.desk?.agents ?? []).flatMap { a in (model.desk?.messagesOf(agent: a.id) ?? []).filter { $0.from == "agent" }.flatMap { $0.attachments.filter { kindOf($0) == "image" } } }
