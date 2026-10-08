@@ -41,10 +41,9 @@ struct CardScreen: View {
           }
         }
       }
-      .background(Tone.color(hue: a?.hue ?? 162, .wash).opacity(0.35).ignoresSafeArea())
+      .background(Ink.bg.ignoresSafeArea())
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
-        ToolbarItem(placement: .principal) { Text(c.nr).font(Face.text(15, .semibold)).foregroundStyle(Ink.muted) }
         ToolbarItem(placement: .topBarTrailing) {
           Menu {
             if let a = a { Button { model.path.append(.session(a.id)) } label: { Label("Open Session", systemImage: "bubble.left.and.bubble.right") } }
@@ -231,7 +230,7 @@ struct CardScreen: View {
           }
         }
         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Tone.color(hue: hue, .wash)))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Ink.surface))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(advised || on ? Ink.fg : Tone.color(hue: hue, .edge), lineWidth: advised || on ? 2 : 1))
       }
       .buttonStyle(PressStyle())
