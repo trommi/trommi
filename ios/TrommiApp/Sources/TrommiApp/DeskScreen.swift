@@ -276,7 +276,7 @@ struct DeskRow: View {
         .buttonStyle(.plain)
         .accessibilityHint(card.knockWord ?? "")
         if !card.isKnock || card.urgency != "critical" {
-          Button { model.snooze(card) } label: { PenMark("ui:LATER_TAG", color: Tone.color(hue: hue, .pen)).frame(width: 16, height: 32) }
+          Button { model.snooze(card) } label: { PenMark("ui:LATER_TAG", color: Tone.color(hue: hue, .pen)).frame(width: 16, height: 32).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle()) }
             .buttonStyle(.plain)
             .accessibilityLabel("\(Words.later): put this question off")
         }

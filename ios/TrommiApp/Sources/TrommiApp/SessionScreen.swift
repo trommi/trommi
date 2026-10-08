@@ -600,7 +600,7 @@ struct Composer: View {
             HStack(spacing: 6) { Image(systemName: "plus").font(.system(size: 11, weight: .bold)); Text("Attach Nr. \(c.number) · \(c.title)").font(Face.text(13, .medium)).lineLimit(1) }
               .foregroundStyle(Ink.accent).padding(.horizontal, 10).padding(.vertical, 6).background(Capsule().strokeBorder(Ink.accent.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
           }.buttonStyle(.plain)
-          Button { model.copiedCard = nil } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Ink.muted) }.buttonStyle(.plain).accessibilityLabel("Forget the copied card")
+          Button { model.copiedCard = nil } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Ink.muted).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel("Forget the copied card")
         }.padding(.horizontal, 6)
       }
       if !cards.isEmpty {
@@ -610,7 +610,7 @@ struct Composer: View {
               HStack(spacing: 6) {
                 Text("Nr. \(model.card(id)?.number ?? 0)").font(Face.text(13, .bold))
                 Text(model.card(id)?.title ?? id).font(Face.text(13)).lineLimit(1).frame(maxWidth: 160)
-                Button { cards.removeAll { $0 == id } } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }.buttonStyle(.plain)
+                Button { cards.removeAll { $0 == id } } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).frame(minWidth: 32, minHeight: 44).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel("Remove")
               }
               .padding(.horizontal, 10).padding(.vertical, 6).background(Capsule().fill(Ink.sunken))
             }
@@ -624,7 +624,7 @@ struct Composer: View {
               HStack(spacing: 6) {
                 Sketch(f.type.hasPrefix("image/") ? "picture" : "clip", color: Ink.fg).frame(width: 14, height: 14)
                 Text(f.name).font(Face.text(13)).lineLimit(1).frame(maxWidth: 140)
-                Button { files.removeAll { $0.id == f.id } } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }.buttonStyle(.plain)
+                Button { files.removeAll { $0.id == f.id } } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).frame(minWidth: 32, minHeight: 44).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel("Remove")
               }
               .padding(.horizontal, 10).padding(.vertical, 6).background(Capsule().fill(Ink.sunken))
             }
