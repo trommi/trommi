@@ -107,7 +107,9 @@ final class ShareImport {
       inbox.finish(r.id)
       if let d = r.desk { UserDefaults.standard.set(d, forKey: "trommi-note-desk") }
       do {
-        var fields: [String: JV] = [:]
+        // as a note, the way the note's own Send goes (content.note): web and iOS show it taped on as the yellow note.
+        // The share's id (32 hex) stands for the note object; written when it was shared.
+        var fields: [String: JV] = ["note": .obj(["object_id": .str(r.id), "written_at": .n(r.created)])]
         if !atts.isEmpty { fields["attachments"] = .arr(atts) }
         try await room.sendMessage(sessionId: key, text: words, fields: fields)
         m.say("Sent to \(m.agent(to)?.name ?? r.toName ?? "the session")", "From the share sheet")
