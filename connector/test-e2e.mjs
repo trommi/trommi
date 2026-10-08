@@ -18,6 +18,7 @@
 //                 the room.
 //
 //   node connector/test-e2e.mjs [--only connect] [--shell sh|dash|bash] [--docker IMAGE] [--real-claude] [--no-plugin]
+//                                [--as-mac]
 //
 // The flags are the second machine's. The script installs the Trommi plugin (claude plugin marketplace add + install
 // --scope local) and starts plain `claude`; --no-plugin: a Claude Code without plugin support, the script falls back
@@ -25,7 +26,9 @@
 // https archive cannot be loopback). --docker runs the script inside a container (host network): node:26-slim has
 // dash as /bin/sh, node:26-alpine busybox ash (the binary is static). Without
 // --real-claude a stub `claude` on PATH stands in for Claude Code's `mcp add/remove` and `plugin` (it writes
-// .mcp.json the same way), so the test needs no Claude Code login.
+// .mcp.json the same way), so the test needs no Claude Code login. --as-mac: a stub `uname` says Darwin (arm64 or
+// x86_64 as this machine), and the release serves this machine's binary as the macOS target: the script's macOS path
+// (target, download, checksum) without a Mac.
 
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -1252,9 +1255,11 @@ export async function connect({ test, tmp: root, argv = [] }) {
   const pub = path.join(here, '../app/web/public')
   const arg = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : dflt }
   const SHELL = arg('--shell', 'sh'), IMAGE = arg('--docker', null), REAL = argv.includes('--real-claude'), NOPLUGIN = argv.includes('--no-plugin')
+  const MAC = argv.includes('--as-mac')
   const tmp = fs.mkdtempSync(path.join(root, 'connect-'))
   const home = path.join(tmp, 'home'), project = path.join(tmp, 'my project'), bin = path.join(tmp, 'bin')
   for (const d of [home, project, bin]) fs.mkdirSync(d, { recursive: true })
+  if (MAC) fs.writeFileSync(path.join(bin, 'uname'), `#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo ${process.arch === 'arm64' ? 'arm64' : 'x86_64'} ;; *) exec /usr/bin/uname "$@" ;; esac\n`, { mode: 0o755 })
 
   // The stub Claude Code: `claude mcp add NAME --scope project -- CMD ARGS...`, `claude mcp remove NAME --scope project`,
   // and `claude plugin ...` (logged to $HOME/plugin.log; install writes enabledPlugins; fails with STUB_NO_PLUGIN=1).
@@ -1277,7 +1282,7 @@ export async function connect({ test, tmp: root, argv = [] }) {
 
   // The release connector-rs/build-plugin.mjs makes (this machine's binary), at the addresses app/web/worker.js serves
   // it from R2.
-  const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-unknown-linux-musl`
+  const target = `${process.arch === 'arm64' ? 'aarch64' : 'x86_64'}-${MAC ? 'apple-darwin' : 'unknown-linux-musl'}`
   const built = (await import('../connector-rs/build-plugin.mjs')).releaseFiles({ [target]: fs.readFileSync(CONNECTOR_CMD) })
   const app = http.createServer((req, res) => {
     const p = new URL(req.url, 'http://x').pathname
@@ -1298,7 +1303,7 @@ export async function connect({ test, tmp: root, argv = [] }) {
     p.on('close', code => resolve({ code, out, err }))
   })
   try {
-    await test(`second machine: the connect script via ${IMAGE ?? SHELL}${NOPLUGIN ? ' (no plugin support)' : ' (plugin)'} installs the built connector; started as Claude Code starts it, it is in the room`, async () => {
+    await test(`second machine: the connect script via ${IMAGE ?? SHELL}${NOPLUGIN ? ' (no plugin support)' : ' (plugin)'}${MAC ? ' as a Mac' : ''} installs the built connector; started as Claude Code starts it, it is in the room`, async () => {
       ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
       await human.start()
       confirmAgents(human)
