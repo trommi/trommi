@@ -1935,7 +1935,7 @@ export class Client {
         }
         inv.code = accepted.code
         if (accepted.requestHash) inv.requestHash = accepted.requestHash
-        // check_code: the same code the newcomer shows (as emoji, shared/check-emoji.mjs); the human compares the two.
+        // check_code: the same code the newcomer shows (as emoji, shared/check-emoji.ts); the human compares the two.
         this._setInvite(invite_id, { check_code: accepted.code, newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: 'confirm_code' })
         return
       }

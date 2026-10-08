@@ -97,7 +97,7 @@ export async function openRoom({ storage, client: client_name = null, fetch = nu
 
 /**
  * Join with an invite link. Returns { check_code: Promise<string>, client: Promise<Client>, cancel() }.
- * check_code is six numbers 0–63 ("07-33-12-05-60-01"); show it as emoji (checkEmoji, check-emoji.mjs). The device that
+ * check_code is six numbers 0–63 ("07-33-12-05-60-01"); show it as emoji (checkEmoji, check-emoji.ts). The device that
  * made the link shows the same; the human compares the two there. An agent logs it (checkEmojiLine). client resolves once the inviter added this device.
  */
 export function joinRoom({ link, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, poll_ms = 800, timeout_ms = 15 * 60_000 }) {

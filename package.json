@@ -6,7 +6,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:app && npm run test:hub && npm run test:core",
+    "test": "npm run typecheck && npm run test:app && npm run test:hub && npm run test:core",
+    "typecheck": "tsc -p .",
     "test:app": "node app/web/dev/check.mjs",
     "test:hub": "node shared/crypto/crypto-test.mjs --no-bench && node shared/crypto/hub-crypto-test.mjs && node shared/crypto/session-grants-test.mjs && node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node hub/admin-test.mjs",
     "test:core": "node shared/test.mjs && node shared/scribble-test.mjs && node connector/test.mjs && node connector/test-e2e.mjs",
@@ -20,6 +21,8 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "esbuild": "0.28.2"
+    "@types/node": "^26.6.4",
+    "esbuild": "0.28.2",
+    "typescript": "^7.0.2"
   }
 }

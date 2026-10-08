@@ -1,6 +1,8 @@
 # shared/: the Trommi client library
 
-One plain-ES-module library that every Trommi client uses: the app (`app/web`, copied into `public/vendor/` by its build, `app/web/dev/build.mjs`) and the agent connector (`connector/connector.mjs`). WebCrypto and `fetch` only; runs unchanged in browsers and Node 26. The only client-specific parts are the **storage adapter** (which also keeps the device keys).
+One ES-module library that every Trommi client uses: the app (`app/web`, copied into `public/gen/vendor/` by its build, `app/web/dev/build.mjs`) and the agent connector (`connector/connector.mjs`). WebCrypto and `fetch` only; runs unchanged in browsers and Node 26. The only client-specific parts are the **storage adapter** (which also keeps the device keys).
+
+**TypeScript.** The library moves to strict TypeScript one file at a time (`tsconfig.json` at the repository root; `npm run typecheck`, part of `npm test`). A converted file is `x.ts` beside the `.mjs` files that are not yet; it is imported with its real extension (`'./codec.ts'`). Nothing is compiled ahead: Node 26 runs `.ts` itself (type stripping, hence `erasableSyntaxOnly`: no `enum`, `namespace` or parameter properties), the app's build erases the types for the browser (esbuild; `dev/ts.mjs` for single files), the connector's build bundles it as it is.
 
 The wire contract is the README section "Hub v1: the wire protocol" of this repository. This file is the contract **between the core and its users**: the model the app renders from (stream C) and the API the connector drives (stream D). Names follow the README: snake_case, ids as lowercase hex, times in ms.
 
