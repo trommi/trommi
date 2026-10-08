@@ -45,6 +45,7 @@ struct BoardShell: View {
           case .media: MediaScreen(pages: false)
           case .pages: MediaScreen(pages: true)
           case .picture(let id, let at): PictureScreen(cardId: id, start: at)
+          case .scribble: ScribbleScreen()
           }
         }
     }
@@ -210,6 +211,7 @@ struct Sidebar: View {
     Menu {
       Button { go(.settings("agents")) } label: { Label("Settings", systemImage: "key") }
       Button { go(.off) } label: { Label("Off your mind", systemImage: "checklist") }
+      Button { go(.scribble) } label: { Label("Scribble Board", systemImage: "scribble.variable") }
       Button { go(.media) } label: { Label("Media", systemImage: "photo.on.rectangle") }
       Button { go(.pages) } label: { Label("Pages", systemImage: "doc.richtext") }
       Picker("Theme", selection: $model.theme) { ForEach(ThemeMode.allCases) { Text($0.word).tag($0) } }

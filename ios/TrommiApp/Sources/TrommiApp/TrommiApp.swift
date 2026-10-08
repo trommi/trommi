@@ -52,6 +52,7 @@ enum Route: Hashable {
   case media
   case pages
   case picture(String, Int)         // card id, picture index
+  case scribble
 }
 
 @MainActor
