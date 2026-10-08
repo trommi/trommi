@@ -727,6 +727,24 @@ a.focus-stage-step { display: grid; place-items: center; }
 .tc-send.is-reverse > .sketch { display: none; }
 .tc-send.is-reverse > .tc-send-uno { display: grid; place-items: center; }
 .tc-send.is-reverse .tc-send-uno .sketch { width: 22px; height: 22px; stroke-width: 2.2; }
+/* the split: Send and, glued to its right, a slim chevron; its small menu opens above with "Send and Reverse" (the reverse
+   card's colours on a small tile, the words beside it) */
+.tc-send-split { position: relative; margin-left: auto; flex: none; display: inline-flex; align-items: stretch; }
+.tc-send-split > .tc-send { margin-left: 0; border-radius: var(--r-md) 0 0 var(--r-md); }
+.tc-send-menu { position: static; display: flex; }
+.tc-send-more { display: grid; place-items: center; width: 22px; height: 38px; box-sizing: border-box; border-left: 1px solid color-mix(in srgb, var(--accent-fg) 30%, var(--accent)); border-radius: 0 var(--r-md) var(--r-md) 0; background: var(--accent); color: var(--accent-fg); cursor: pointer; list-style: none; }
+.tc-send-more::-webkit-details-marker { display: none; }
+.tc-send-more:hover, .tc-send-menu[open] > .tc-send-more { filter: brightness(1.08); }
+.tc-send-more .sketch { width: 16px; height: 16px; stroke-width: 2.2; transition: rotate 120ms; }
+.tc-send-menu[open] > .tc-send-more .sketch { rotate: 180deg; }
+.tc-send-more:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.tc-send-pop { position: absolute; z-index: var(--z-pop); right: 0; bottom: calc(100% + 6px); width: max-content; padding: 4px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
+.tc-send-rev { display: grid; grid-template-columns: 30px auto; grid-template-rows: auto auto; align-items: center; column-gap: 10px; min-height: 44px; padding: 5px 12px 5px 6px; border: 0; border-radius: 9px; background: none; color: var(--fg); font: 600 var(--t-sm)/1.2 var(--font); text-align: left; cursor: pointer; }
+.tc-send-rev:hover, .tc-send-rev:focus-visible { background: var(--sunken); outline: none; }
+.tc-send-rev-uno { grid-row: 1 / 3; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: radial-gradient(ellipse 10px 12px at 50% 50%, var(--uno-ink) 0 94%, transparent 100%), conic-gradient(from 7deg at 53% 47%, var(--uno-red) 0 25%, var(--uno-yellow) 0 50%, var(--uno-green) 0 75%, var(--uno-blue) 0); color: #fff; rotate: -6deg; }
+.tc-send-rev-uno .sketch { width: 18px; height: 18px; stroke-width: 2.2; }
+.tc-send-rev small { color: var(--muted); font: 500 var(--t-xs)/1.2 var(--font); }
+@media (pointer: coarse) { .tc-send-more { width: 30px; } }
 
 /* ---- What?? and the reverse card at the column's foot (his pick B, 7 October): the right column is as tall as the card,
    its foot the same inset as its top and right, the pair flush in its bottom-right corner, as high as an option (the
@@ -833,3 +851,4 @@ body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .to
 .tc-vids { display: grid; gap: var(--s-2); width: 100%; }
 .tc-vid { margin: 0; }
 .tc-vid video { display: block; width: auto; max-width: min(100%, 520px); max-height: min(70vh, 640px); border-radius: 10px; background: #000; box-shadow: 0 0 0 1.5px var(--fg); }
+.tc-notes:has(.tc-send-menu[open]), .tc-page .tc-notes > .tc-chat:has(.tc-send-menu[open]) { z-index: var(--z-menu); }   /* (the menu above Send lies over the card) */
