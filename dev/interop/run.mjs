@@ -7,12 +7,15 @@
 //   node dev/interop/run.mjs --pairs js-swift --only answer                   one pair, scenarios whose name has "answer"
 //   --require-swift: fail instead of skipping when trommi-swift is not built.  Results: dev/interop/out/run.json
 //   --agent rust: the agents (G and the helper) are the Rust connector's core (connector-rs, `cargo build` first)
+//   --hub-cmd '<binary>': the same against another hub implementation, started by this script like the Node hub
+//     (hub/external.mjs; e.g. --hub-cmd hub-rs/target/release/trommi-hub)
+//   --hub-url <url> [--hub-data <dir>]: against a hub that already runs (its HUB_URL); with --hub-data (its HUB_DATA)
+//     the push scenario also reads its hub.db; that hub needs APNs and Web Push set up as below (HUB_PUSH_HOSTS=push.invalid)
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { startHub, LIMITS } from '../../hub/server.mjs'
 import * as z from '../../shared/crypto/zcrypto.mjs'
 import { startDriver, swiftAvailable, SWIFT_BIN, rustAvailable, RUST_BIN } from './protocol.mjs'
 
@@ -50,13 +53,27 @@ const hubLog = []
 const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' })
 const APNS_TOPIC = 'com.trommi.interop'
 // the snapshot scenario posts 2,100 messages in a burst: the envelope rate limit (a public hub's protection) lifted here
-LIMITS.envelopesPerSecond = 5000; LIMITS.envelopeBurst = 10000
-const hub = await startHub({
-  port: 0, host: '127.0.0.1', dataDir: path.join(tmp, 'hub'), commit: 'interop', log: m => hubLog.push(m),
-  apns: { key: privateKey.export({ type: 'pkcs8', format: 'pem' }), keyId: 'INTEROP01', teamId: 'INTEROPTM', topics: [APNS_TOPIC] },
-  apnsHosts: { sandbox: 'https://127.0.0.1:9', production: 'https://127.0.0.1:9' }, pushHosts: ['push.invalid'],
-})
+// (in this process for hub/server.mjs, through the environment for a hub binary)
+Object.assign(process.env, { HUB_LIMIT_ENVELOPES_PER_SECOND: '5000', HUB_LIMIT_ENVELOPE_BURST: '10000' })
+const hubCmd = opt('--hub-cmd'), hubUrl = opt('--hub-url'), hubData = opt('--hub-data')
+if (hubCmd) process.env.HUB_CMD = hubCmd
+let hub
+if (hubUrl) {
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = hubData ? new DatabaseSync(path.join(hubData, 'hub.db'), { readOnly: true }) : null
+  if (db) db.q = sql => db.prepare(sql)
+  hub = { hubUrl: hubUrl.replace(/\/$/, ''), db, close: async () => { db?.close() } }
+} else {
+  const { startHub, LIMITS } = hubCmd ? await import('../../hub/external.mjs') : await import('../../hub/server.mjs')
+  if (!hubCmd) { LIMITS.envelopesPerSecond = 5000; LIMITS.envelopeBurst = 10000 }
+  hub = await startHub({
+    port: 0, host: '127.0.0.1', dataDir: path.join(tmp, 'hub'), commit: 'interop', log: m => hubLog.push(m),
+    apns: { key: privateKey.export({ type: 'pkcs8', format: 'pem' }), keyId: 'INTEROP01', teamId: 'INTEROPTM', topics: [APNS_TOPIC] },
+    apnsHosts: { sandbox: 'https://127.0.0.1:9', production: 'https://127.0.0.1:9' }, pushHosts: ['push.invalid'],
+  })
+}
 const HUB = hub.hubUrl
+console.log(`hub: ${hubUrl ? `${HUB} (running)` : hubCmd ? `${hubCmd} at ${HUB}` : `hub/server.mjs at ${HUB}`}`)
 
 const results = []
 const drivers = []
@@ -356,9 +373,9 @@ for (const pair of pairs) {
     assert.equal(bad?.code, 'bad-argument', 'a malformed registration is refused')
     await G.call('agent_card', { title: 'Push me', options: [{ key: 'y', label: 'Yes' }], urgency: 'high' })
     // the hub keeps A's registration (its row in hub.db), and tries to push (an APNs error in its log: the host points nowhere)
-    const rows = hub.db.q('SELECT endpoint FROM push_subscriptions WHERE device_id = ?').all(ctx.aId).map(r => r.endpoint)
-    assert.ok(rows.some(e => (ia === 'swift' ? /^apns:/ : /^https:\/\/push\.invalid\//).test(e)), `A's registration kept: ${rows}`)
-    if (ia === 'swift') {
+    const rows = hub.db ? hub.db.q('SELECT endpoint FROM push_subscriptions WHERE device_id = ?').all(ctx.aId).map(r => r.endpoint) : null
+    if (rows) assert.ok(rows.some(e => (ia === 'swift' ? /^apns:/ : /^https:\/\/push\.invalid\//).test(e)), `A's registration kept: ${rows}`)
+    if (ia === 'swift' && !hubUrl) {
       const tried = await until('an APNs attempt in the hub log', () => hubLog.slice(before).some(l => /apns/.test(l)), 5_000).catch(() => false)
       if (!tried) console.log('      (no APNs attempt logged within 5 s)')
     }
@@ -484,6 +501,6 @@ await hub.close().catch(() => {})
 fs.rmSync(tmp, { recursive: true, force: true })
 const passed = results.filter(r => r.ok).length, failed = results.length - passed
 fs.mkdirSync(path.join(here, 'out'), { recursive: true })
-fs.writeFileSync(path.join(here, 'out/run.json'), JSON.stringify({ at: new Date().toISOString(), pairs: pairRooms, skipped, passed, failed, results }, null, 2))
+fs.writeFileSync(path.join(here, 'out/run.json'), JSON.stringify({ at: new Date().toISOString(), hub: hubUrl ? { url: HUB } : hubCmd ? { cmd: hubCmd } : { impl: 'hub/server.mjs' }, pairs: pairRooms, skipped, passed, failed, results }, null, 2))
 console.log(`\n${passed} passed, ${failed} failed${skipped.length ? `; skipped: ${skipped.join(', ')}` : ''}  (dev/interop/out/run.json)`)
 process.exit(failed ? 1 : 0)

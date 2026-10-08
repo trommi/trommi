@@ -307,7 +307,7 @@ impl Apns {
                 let reason = serde_json::from_str::<Value>(if text.is_empty() { "{}" } else { &text }).ok().and_then(|v| v.get("reason").and_then(|r| r.as_str()).map(String::from)).unwrap_or_default();
                 (s, reason)
             }
-            Err(_) => (0, String::new()),
+            Err(e) => (0, format!("{e}")),
         }
     }
     /// One message; a token Apple no longer takes comes back as 410: forget it.
@@ -320,7 +320,9 @@ impl Apns {
         if r.0 == 403 && r.1 == "ExpiredProviderToken" {
             r = self.post(origin, &path, &self.token(true), a, &payload).await;
         }
-        if r.0 != 200 && r.0 != 0 {
+        if r.0 == 0 {
+            log(&format!("apns: {}", r.1));
+        } else if r.0 != 200 {
             log(&format!("apns {} {}", r.0, r.1));
         }
         if r.0 == 410 || (r.0 == 400 && (r.1 == "BadDeviceToken" || r.1 == "DeviceTokenNotForTopic")) {

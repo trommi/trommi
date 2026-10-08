@@ -82,7 +82,9 @@ export async function startHub(tmp, extraEnv = {}) {
   const port = await freePort()
   const data = fs.mkdtempSync(path.join(tmp, 'hub-'))
   const hub_url = `http://127.0.0.1:${port}`
-  const child = spawn(process.execPath, [path.join(here, '../hub/server.mjs')], {
+  // HUB_CMD=<a hub binary>: the same against another hub implementation (the Rust hub: hub-rs/README.md).
+  const [cmd, ...args] = process.env.HUB_CMD ? process.env.HUB_CMD.split(' ') : [process.execPath, path.join(here, '../hub/server.mjs')]
+  const child = spawn(cmd, args, {
     env: { ...process.env, HUB_PORT: String(port), PORT: String(port), HUB_HOST: '127.0.0.1', HUB_DATA: data, DATA_DIR: data, HUB_URL: hub_url, HUB_DB: path.join(data, 'hub.db'), ...extraEnv },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
