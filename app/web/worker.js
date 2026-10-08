@@ -2,15 +2,25 @@
 //   - plain http goes to https (WebCrypto only exists on https pages);
 //   - /connect is the connect script for Claude Code (curl -fsSL https://app.trommi.com/connect | sh -s '<invite link>',
 //     public/connect.sh), as plain text;
-//   - the generated files keep their public addresses: the connect script, every installed connector (its update check)
-//     and the Trommi plugin's marketplace fetch /connector.mjs, /connector.mjs.sha256 and /plugins/…, which live in
-//     public/gen/ (assetPath);
+//   - the connector's release (connector-rs/build-plugin.mjs: the binaries, the Trommi plugin and its marketplace) comes
+//     from the R2 bucket bound as RELEASES, which dev/deploy/connector.sh fills: Cloudflare's build of this app has no
+//     Rust toolchain, so the binaries are built on a developer's machine and uploaded apart from the app;
 //   - everything else is the static app.
-// dev/serve.mjs answers through the same assetPath().
+// dev/serve.mjs answers the release addresses from connector-rs/dist/ (build-plugin.mjs's default output).
 
-/** The file of public/ that answers a public address (the same address for every file but the generated ones). */
-// (connector/trommi-connector-<target> and plugins/rs/: the binary connector of connector-rs/build-plugin.mjs)
-export const assetPath = pathname => (/^\/(connector\.mjs(\.sha256)?|connector\/(trommi-connector-[\w-]+(\.sha256|\.sig)?|release-key\.pub)|plugins\/(rs\/)?[\w.-]+)$/.test(pathname) ? `/gen${pathname}` : pathname)
+/**
+ * The R2 key of a release address, or null. Named by content (never change, cached for good):
+ * connector/<sha256>/trommi-connector-<target>(.sig) and plugins/trommi-<version>.zip. Pointers at the newest (no-cache):
+ * connector/trommi-connector-<target>.sha256, connector/release-key.pub and plugins/marketplace.json.
+ */
+export const releaseKey = pathname => (/^\/(connector\/([0-9a-f]{64}\/trommi-connector-[\w-]+(\.sig)?|trommi-connector-[\w-]+\.sha256|release-key\.pub)|plugins\/(marketplace\.json|trommi-[0-9a-f]{12}\.zip))$/.test(pathname) ? pathname.slice(1) : null)
+
+/** The headers of a release file. */
+export function releaseHeaders(key) {
+  const type = key.endsWith('.json') ? 'application/json; charset=utf-8' : key.endsWith('.zip') ? 'application/zip' : /\.(sha256|sig|pub)$/.test(key) ? 'text/plain; charset=utf-8' : 'application/octet-stream'
+  const named = /^connector\/[0-9a-f]{64}\/|^plugins\/trommi-[0-9a-f]{12}\.zip$/.test(key)
+  return { 'Content-Type': type, 'Cache-Control': named ? 'public, max-age=31536000, immutable' : 'no-cache', 'X-Content-Type-Options': 'nosniff' }
+}
 
 export default {
   async fetch(request, env) {
@@ -24,8 +34,12 @@ export default {
       if (!r.ok) return r
       return new Response(r.body, { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff' } })
     }
-    const path = assetPath(url.pathname)
-    if (path !== url.pathname) { url.pathname = path; return env.ASSETS.fetch(new Request(url, request)) }
+    const key = releaseKey(url.pathname)
+    if (key) {
+      const object = await env.RELEASES?.get(key)
+      if (!object) return new Response('not found\n', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' } })
+      return new Response(request.method === 'HEAD' ? null : object.body, { headers: { ...releaseHeaders(key), 'Content-Length': String(object.size), ETag: object.httpEtag } })
+    }
     return env.ASSETS.fetch(request)
   }
 }

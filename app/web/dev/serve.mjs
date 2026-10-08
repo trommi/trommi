@@ -10,8 +10,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { generate } from './build.mjs'
-import { assetPath } from '../worker.js'
+import { releaseKey, releaseHeaders } from '../worker.js'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
+// The connector's release (worker.js: from R2), here from connector-rs/build-plugin.mjs's output when it was run.
+const RELEASE = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../connector-rs/dist')
 const port = Number(process.argv.slice(2).find(a => /^\d+$/.test(a)) || 8900)
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.txt': 'text/plain', '.sh': 'text/plain; charset=utf-8', '.sha256': 'text/plain', '.webm': 'video/webm', '.zip': 'application/zip' }
 // Read on every request: a dev server left running must not serve an old CSP (it once blocked the Argon2 WASM).
@@ -51,7 +53,12 @@ async function serve(req, res) {
   const url = new URL(req.url, 'http://x')
   // The connect script (curl -fsSL <app>/connect | sh -s '<link>'), as worker.js serves it.
   if (url.pathname === '/connect' || url.pathname === '/connect/') { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, 'connect.sh'))) }
-  url.pathname = assetPath(url.pathname)
+  const key = releaseKey(url.pathname)
+  if (key) {
+    const f = path.join(RELEASE, key)
+    if (!fs.existsSync(f)) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found (node connector-rs/build-plugin.mjs makes it)\n') }
+    res.writeHead(200, releaseHeaders(key)); return res.end(fs.readFileSync(f))
+  }
   let rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
   if (rel.split('/').includes('..')) { res.writeHead(403); return res.end() }
   const isFile = f => fs.existsSync(path.join(root, f)) && fs.statSync(path.join(root, f)).isFile()

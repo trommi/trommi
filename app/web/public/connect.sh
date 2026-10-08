@@ -3,8 +3,10 @@
 #
 #   cd <your project> && curl -fsSL https://app.trommi.com/connect | sh -s '<invite link>'
 #
-# Needs Node 22 or newer and Claude Code (claude). What it does:
-#   1. downloads the Trommi connector (one file) to ~/.local/share/trommi/connector/ and checks its SHA-256,
+# Needs Claude Code (claude) and curl; the connector is one static binary (connector-rs), no Node. What it does:
+#   1. downloads the connector of this machine (Linux x86_64 or aarch64) to ~/.local/share/trommi/connector/ and checks
+#      its SHA-256: connector/trommi-connector-<target>.sha256 names the newest binary, which is served at
+#      connector/<sha256>/trommi-connector-<target>,
 #   2. installs the Trommi plugin for this folder from Trommi's own marketplace:
 #        claude plugin marketplace add https://app.trommi.com/plugins/marketplace.json
 #        claude plugin install trommi@trommi --scope local     (.claude/settings.local.json here)
@@ -13,10 +15,7 @@
 #      A Claude Code without plugin support gets the connector as before: claude mcp add trommi --scope project.
 #   3. joins your account with the invite link (the link is passed by environment, never printed),
 #   4. tells you how to start Claude Code.
-# Without Node 22+ it offers to install it (Debian/Ubuntu: NodeSource + apt, macOS: Homebrew) and asks first.
-# TROMMI_CONNECTOR=binary: the connector as one binary instead (connector-rs; no Node needed): it downloads
-# connector/trommi-connector-<target> for this machine (Linux x86_64/aarch64, macOS arm64), checks its SHA-256, and
-# installs the plugin from plugins/rs/marketplace.json.
+# macOS has no connector build yet: there the script stops and says so.
 # POSIX sh: runs on Linux and macOS (dash, bash, zsh as sh).
 set -eu
 
@@ -25,9 +24,6 @@ set -eu
 main() {
 APP="${TROMMI_APP:-https://app.trommi.com}"
 DIR="${TROMMI_CONNECTOR_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/trommi/connector}"
-KIND="${TROMMI_CONNECTOR:-node}"
-case "$KIND" in node|binary) ;; *) fail "TROMMI_CONNECTOR is node or binary (now: $KIND)." ;; esac
-
 
 LINK="${1:-${TROMMI_INVITE:-}}"
 [ -n "$LINK" ] || fail "no invite link. In the Trommi app choose \"Invite an agent\" and copy the command shown there."
@@ -37,33 +33,29 @@ case "$LINK" in
 esac
 
 # ---- what this machine needs --------------------------------------------------------------------------------------
-[ "$KIND" = binary ] || node_ok || install_node
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64|Linux/amd64) TARGET=x86_64-unknown-linux-musl ;;
+  Linux/aarch64|Linux/arm64) TARGET=aarch64-unknown-linux-musl ;;
+  Darwin/*) fail "there is no Trommi connector for macOS yet (only Linux, x86_64 and aarch64, for now)." ;;
+  *) fail "there is no Trommi connector for $(uname -s)/$(uname -m) (only Linux, x86_64 and aarch64, for now)." ;;
+esac
 command -v claude >/dev/null 2>&1 || fail "Claude Code (claude) is missing. Install it (https://claude.com/claude-code), then run this again."
 command -v curl >/dev/null 2>&1 || fail "curl is missing."
 
 # ---- 1. the connector ---------------------------------------------------------------------------------------------
+NAME=trommi-connector
 mkdir -p "$DIR"
 TMP="$DIR/.download.$$"
 trap 'rm -f "$TMP" "$TMP.sha256"' EXIT INT TERM
-if [ "$KIND" = binary ]; then
-  case "$(uname -s)/$(uname -m)" in
-    Linux/x86_64|Linux/amd64) TARGET=x86_64-unknown-linux-musl ;;
-    Linux/aarch64|Linux/arm64) TARGET=aarch64-unknown-linux-musl ;;
-    Darwin/arm64|Darwin/aarch64) TARGET=aarch64-apple-darwin ;;
-    *) fail "there is no Trommi connector binary for $(uname -s)/$(uname -m); run this again without TROMMI_CONNECTOR=binary (needs Node 22)." ;;
-  esac
-  FROM="connector/trommi-connector-$TARGET"; NAME=trommi-connector
-else
-  FROM="connector.mjs"; NAME=connector.mjs
-fi
 say "Downloading the Trommi connector…"
-curl -fsSL "$APP/$FROM" -o "$TMP" || fail "could not download $APP/$FROM"
-curl -fsSL "$APP/$FROM.sha256" -o "$TMP.sha256" || fail "could not download $APP/$FROM.sha256"
+curl -fsSL "$APP/connector/$NAME-$TARGET.sha256" -o "$TMP.sha256" || fail "could not download $APP/connector/$NAME-$TARGET.sha256"
 WANT=$(cut -d ' ' -f 1 < "$TMP.sha256" | tr -d '\r\n')
+case "$WANT" in ''|*[!0-9a-f]*) fail "$APP/connector/$NAME-$TARGET.sha256 names no connector." ;; esac
+curl -fsSL "$APP/connector/$WANT/$NAME-$TARGET" -o "$TMP" || fail "could not download $APP/connector/$WANT/$NAME-$TARGET"
 GOT=$(sha256 "$TMP")
-[ -n "$WANT" ] && [ "$WANT" = "$GOT" ] || fail "the downloaded connector does not match its checksum; nothing was changed. Try again."
+[ "$WANT" = "$GOT" ] || fail "the downloaded connector does not match its checksum; nothing was changed. Try again."
 CONNECTOR="$DIR/$NAME"
-[ "$KIND" = binary ] && chmod 755 "$TMP"
+chmod 755 "$TMP"
 mv -f "$TMP" "$CONNECTOR"
 printf '%s  %s\n' "$GOT" "$NAME" > "$DIR/$NAME.sha256"
 say "Connector $(printf '%s' "$GOT" | cut -c 1-12) in $DIR"
@@ -71,7 +63,7 @@ say "Connector $(printf '%s' "$GOT" | cut -c 1-12) in $DIR"
 # ---- 2. the plugin, for this folder ---------------------------------------------------------------------------------
 # Local scope: enabled only in this folder (every project folder has its own key), in .claude/settings.local.json.
 # Claude Code starts the connector in this folder, which names the key slot.
-if [ "$KIND" = binary ]; then MARKET="${TROMMI_MARKETPLACE:-$APP/plugins/rs/marketplace.json}"; else MARKET="${TROMMI_MARKETPLACE:-$APP/plugins/marketplace.json}"; fi
+MARKET="${TROMMI_MARKETPLACE:-$APP/plugins/marketplace.json}"
 PLUGIN=""
 if claude plugin marketplace add "$MARKET" </dev/null >/dev/null 2>&1 || claude plugin marketplace update trommi </dev/null >/dev/null 2>&1; then
   claude plugin marketplace update trommi </dev/null >/dev/null 2>&1 || true
@@ -83,20 +75,21 @@ fi
 if [ -n "$PLUGIN" ]; then
   # An older install registered the connector in .mcp.json: two of them in one session would be two members.
   claude mcp remove trommi --scope project </dev/null >/dev/null 2>&1 || true
-  allow_tools
+  # The plugin's tools (reply, cards, inbox ...) only talk to the human's board: allowed in this folder, so a board
+  # message never waits for a yes in a terminal nobody watches (.claude/settings.local.json, not committed).
+  mkdir -p .claude
+  "$CONNECTOR" allow-tools </dev/null || say "(could not allow the Trommi tools in .claude/settings.local.json; Claude Code will ask once per tool)"
   say "Trommi plugin installed for $(pwd)"
 else
   say "This Claude Code has no plugin support (update it: claude update); registering the connector directly."
   claude mcp remove trommi --scope project </dev/null >/dev/null 2>&1 || true
-  if [ "$KIND" = binary ]; then set -- "$CONNECTOR"; else set -- node "$CONNECTOR"; fi
-  claude mcp add trommi --scope project -- "$@" </dev/null >/dev/null || fail "claude mcp add failed (run this in your project folder)"
+  claude mcp add trommi --scope project -- "$CONNECTOR" </dev/null >/dev/null || fail "claude mcp add failed (run this in your project folder)"
   say "Registered for $(pwd) (.mcp.json)"
 fi
 
 # ---- 3. join ------------------------------------------------------------------------------------------------------
 say "Joining your Trommi account… (keep the app open: it shows six emoji; compare them with the ones shown below and tap \"They match\" there)"
-if [ "$KIND" = binary ]; then set -- "$CONNECTOR"; else set -- node "$CONNECTOR"; fi
-TROMMI_INVITE="$LINK" "$@" join </dev/null >/dev/null || fail "joining did not work (the line above says why)"
+TROMMI_INVITE="$LINK" "$CONNECTOR" join </dev/null >/dev/null || fail "joining did not work (the line above says why)"
 say "Joined."
 
 # ---- 4. next step -------------------------------------------------------------------------------------------------
@@ -117,69 +110,12 @@ else
 fi
 }
 
-# The plugin's tools (reply, cards, inbox ...) only talk to the human's board: allowed in this folder, so a board message
-# never waits for a yes in a terminal nobody watches. Merged into .claude/settings.local.json (Claude Code's per-folder,
-# not committed settings).
-allow_tools() {
-  mkdir -p .claude
-  if [ "$KIND" = binary ]; then
-    "$CONNECTOR" allow-tools </dev/null || say "(could not allow the Trommi tools in .claude/settings.local.json; Claude Code will ask once per tool)"
-    return
-  fi
-  node -e '
-    const fs = require("fs"), f = ".claude/settings.local.json", rule = "mcp__plugin_trommi_trommi"
-    let j = {}; try { j = JSON.parse(fs.readFileSync(f, "utf8")) } catch {}
-    j.permissions = j.permissions || {}; const a = j.permissions.allow = j.permissions.allow || []
-    if (!a.includes(rule)) a.push(rule)
-    fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n")' </dev/null || say "(could not allow the Trommi tools in .claude/settings.local.json; Claude Code will ask once per tool)"
-}
-
-node_major() { node -p 'process.versions.node.split(".")[0]' </dev/null 2>/dev/null || echo 0; }
-node_ok() { command -v node >/dev/null 2>&1 && [ "$(node_major)" -ge 22 ] 2>/dev/null; }
-
-# Offers to install Node 22 when it is missing or too old. Asks first: stdin is the piped script, so the answer is read
-# from the terminal (/dev/tty). Without a terminal it stops with the hint (TROMMI_INSTALL_NODE=yes answers yes).
-install_node() {
-  HAVE="missing"; command -v node >/dev/null 2>&1 && HAVE="$(node -v 2>/dev/null) (too old)"
-  HINT="Trommi needs Node 22 or newer (now: $HAVE). Install it (https://nodejs.org), then run this again."
-  AS=""; [ "$(id -u)" = 0 ] || { command -v sudo >/dev/null 2>&1 && AS="sudo"; }
-  if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1; then
-    HOW="brew install node"
-  elif command -v apt-get >/dev/null 2>&1 && { [ "$(id -u)" = 0 ] || [ -n "$AS" ]; }; then
-    HOW="Node 22 from NodeSource (deb.nodesource.com) with apt-get${AS:+ (with sudo)}"
-  else
-    fail "$HINT"
-  fi
-  ANSWER="${TROMMI_INSTALL_NODE:-}"
-  if [ -z "$ANSWER" ]; then
-    # In a subshell: a failed redirection of a special builtin would end the whole script (dash).
-    ( : </dev/tty ) 2>/dev/null || fail "$HINT"
-    printf 'Node.js 22 or newer is needed (now: %s). Install %s now? [y/N] ' "$HAVE" "$HOW" >/dev/tty
-    read -r ANSWER </dev/tty || ANSWER=""
-  fi
-  case "$ANSWER" in y|Y|yes|Yes|YES|j|J|ja|Ja) ;; *) fail "$HINT" ;; esac
-  if [ "$HOW" = "brew install node" ]; then
-    brew install node </dev/null || fail "brew install node failed. $HINT"
-  else
-    say "Installing Node 22…"
-    command -v curl >/dev/null 2>&1 || $AS apt-get install -y -qq curl </dev/null >/dev/null || fail "curl is missing."
-    NS="${TMPDIR:-/tmp}/trommi-nodesource.$$"
-    curl -fsSL https://deb.nodesource.com/setup_22.x -o "$NS" || fail "could not download the NodeSource setup. $HINT"
-    $AS bash "$NS" </dev/null >/dev/null 2>&1 || { rm -f "$NS"; fail "the NodeSource setup failed. $HINT"; }
-    rm -f "$NS"
-    $AS apt-get install -y -qq nodejs </dev/null >/dev/null 2>&1 || fail "apt-get install nodejs failed. $HINT"
-  fi
-  hash -r 2>/dev/null || true
-  node_ok || fail "Node is still not 22 or newer after the install. $HINT"
-  say "Node $(node -v) installed."
-}
-
 say() { printf '%s\n' "$*"; }
 fail() { printf 'trommi: %s\n' "$*" >&2; exit 1; }
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1
   elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d ' ' -f 1
-  else node -e 'process.stdout.write(require("crypto").createHash("sha256").update(require("fs").readFileSync(process.argv[1])).digest("hex"))' "$1" </dev/null
+  else fail "sha256sum (or shasum) is missing."
   fi
 }
 

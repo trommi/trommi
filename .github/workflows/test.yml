@@ -31,9 +31,9 @@ jobs:
       - run: npm ci
       # app/web/README.md "Rules": the file set, who imports whom, no crypto outside the core, inline script hashes.
       - run: npm run test:app
-      # The whole build as Cloudflare runs it, into the checkout: gen/ with the connector bundle and the plugin.
+      # The whole build as Cloudflare runs it, into the checkout.
       - run: node app/web/dev/build.mjs --write
-      - run: test -s app/web/public/gen/connector.mjs && (cd app/web/public/gen && echo "$(cat connector.mjs.sha256)  connector.mjs" | sha256sum -c -) && ls app/web/public/gen/plugins/marketplace.json app/web/public/gen/plugins/trommi-*.zip && grep -q 'src="/gen/app/app-' app/web/public/index.html && ls app/web/public/gen/app/app-*.mjs
+      - run: test -s app/web/public/gen/vendor/tools-reference.mjs && grep -q 'src="/gen/app/app-' app/web/public/index.html && ls app/web/public/gen/app/app-*.mjs
 
   hub:
     name: Hub and crypto suite
@@ -61,6 +61,6 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
-      # shared/test.mjs, connector/test.mjs (fast) and connector/test-e2e.mjs (a local hub; its last part builds the
-      # connector bundle and installs it with the connect script).
+      # shared/test.mjs, connector/test.mjs (fast) and connector/test-e2e.mjs (a local hub; its last part installs the
+      # connector with the connect script). Both build connector-rs first (cargo of the runner image).
       - run: npm run test:core

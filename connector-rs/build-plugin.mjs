@@ -1,44 +1,49 @@
 #!/usr/bin/env node
-// build-plugin.mjs: the Rust connector as the Trommi plugin for Claude Code, beside connector/build.mjs (which makes
-// the JS single-file connector's plugin). Nothing of this is committed.
+// build-plugin.mjs: the connector's release: the static binaries, the Trommi plugin for Claude Code and its
+// marketplace, as the app serves them (app/web/worker.js, from the R2 bucket that dev/deploy/connector.sh fills).
+// Nothing of this is committed.
 //
-//   node connector-rs/build-plugin.mjs [dir] [--targets x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,aarch64-apple-darwin]
+//   node connector-rs/build-plugin.mjs [dir] [--targets x86_64-unknown-linux-musl,aarch64-unknown-linux-musl]
 //                                            [--no-build] [--app https://app.trommi.com]
 //
-// For every target: `cargo build --release --target <t>` (static: musl on Linux), then
+// For every target: `cargo build --release --target <t>` (static: musl on Linux), then into dir (default
+// connector-rs/dist), each file at its address under the app:
 //
-//   connector/trommi-connector-<target>             the binary (what connect.sh downloads with TROMMI_CONNECTOR=binary)
-//   connector/trommi-connector-<target>.sha256      its SHA-256
-//   connector/trommi-connector-<target>.sig         its signature (Ed25519 over "trommi-release/v1" 0x00 sha256), when TROMMI_RELEASE_KEY
-//                                         names a file with the 32-byte seed (hex or base64url); the public key goes to
-//                                         release-key.pub.
-//   plugins/rs/marketplace.json, plugins/rs/trommi-rs-<version>.zip
+//   connector/<sha256>/trommi-connector-<target>    the binary, named by its content (what connect.sh downloads)
+//   connector/<sha256>/trommi-connector-<target>.sig
+//                                         its signature (Ed25519 over "trommi-release/v1" 0x00 sha256), when
+//                                         TROMMI_RELEASE_KEY names a file with the 32-byte seed (hex or base64url); the
+//                                         public key goes to connector/release-key.pub
+//   connector/trommi-connector-<target>.sha256      "<sha256>  trommi-connector-<target>": the newest binary
+//   plugins/trommi-<version>.zip, plugins/marketplace.json
 //       the plugin: .claude-plugin/plugin.json, bin/trommi-connector (a POSIX sh launcher that picks the binary of the
-//       machine by `uname -s`/`uname -m`) and bin/<target>/trommi-connector for every target built. The manifest is
-//       connector/build.mjs's, with `${CLAUDE_PLUGIN_ROOT}/bin/trommi-connector …` for `node connector.mjs …`.
-//       Version: the first 12 hex of the SHA-256 over all binaries. The zip is deterministic and keeps the mode
-//       (0755) of the launcher and the binaries.
+//       machine by `uname -s`/`uname -m`) and bin/<target>/trommi-connector for every target built. Version: the first
+//       12 hex of the SHA-256 over all binaries. The zip is deterministic and keeps the mode (0755) of the launcher
+//       and the binaries.
 //
-// A target whose toolchain is missing is skipped with a note (macOS needs the Apple SDK: build it on a Mac with
-// `cargo build --release --target aarch64-apple-darwin`, or with cargo-zigbuild; see connector-rs/README.md).
+// The files named by their content never change; the .sha256 files and marketplace.json point at the newest.
+// macOS: no build here (the keychain crate needs Apple's SDK). On a Mac, `cargo build --release --target
+// aarch64-apple-darwin`, then --targets with it and --no-build; see connector-rs/README.md.
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { HOOK_TIMEOUT_S, NOTICE_TYPES } from '../connector/connector.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const argv = process.argv.slice(2)
 const opt = name => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : null }
 const out = path.resolve(argv.find((a, i) => !a.startsWith('--') && !argv[i - 1]?.startsWith('--')) ?? path.join(here, 'dist'))
-const TARGETS = (opt('--targets') ?? 'x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,aarch64-apple-darwin').split(',')
+const TARGETS = (opt('--targets') ?? 'x86_64-unknown-linux-musl,aarch64-unknown-linux-musl').split(',')
 const APP = opt('--app') ?? 'https://app.trommi.com'
 const CARGO = process.env.CARGO ?? path.join(process.env.HOME, '.cargo/bin/cargo')
 export const sha256 = b => crypto.createHash('sha256').update(b).digest('hex')
+// As connector-rs/src/connector/hooks.rs: the permission hook waits up to an hour for the human; the notices it relays.
+const HOOK_TIMEOUT_S = 3700
+const NOTICE_TYPES = ['permission_prompt', 'elicitation_dialog']
 
-/** The plugin manifest: connector/build.mjs's, with the binary for `node connector.mjs`. */
+/** The plugin manifest: the connector as MCP server "trommi" (and its channel), the hooks and the monitor. */
 export function pluginManifest(version) {
   const bin = '"${CLAUDE_PLUGIN_ROOT}/bin/trommi-connector"'
   return {
@@ -134,18 +139,16 @@ function build(target) {
 }
 
 /**
- * The files the app serves for the binary connector, by path under the app (as connector/build.mjs's connectorFiles):
- * connector/trommi-connector-<target> (+ .sha256, + .sig when signed) for the connect script, and the plugin under
- * plugins/rs/ (marketplace.json and the zip). `built` is { target: Buffer }.
+ * The release: { 'path under the app': Buffer or text } (see the top of this file). `built` is { target: Buffer }.
  */
-export function binaryFiles(built, { app = 'https://app.trommi.com', seed = null } = {}) {
+export function releaseFiles(built, { app = 'https://app.trommi.com', seed = null } = {}) {
   const files = {}
   let publicKey = null
   for (const [t, data] of Object.entries(built)) {
-    const name = `trommi-connector-${t}`
-    files[`connector/${name}`] = data
-    files[`connector/${name}.sha256`] = `${sha256(data)}  ${name}\n`
-    if (seed) { const s = signRelease(seed, data); files[`connector/${name}.sig`] = s.signature.toString('base64url') + '\n'; publicKey = s.publicKey }
+    const name = `trommi-connector-${t}`, hash = sha256(data)
+    files[`connector/${hash}/${name}`] = data
+    files[`connector/${name}.sha256`] = `${hash}  ${name}\n`
+    if (seed) { const s = signRelease(seed, data); files[`connector/${hash}/${name}.sig`] = s.signature.toString('base64url') + '\n'; publicKey = s.publicKey }
   }
   if (publicKey) files['connector/release-key.pub'] = publicKey.toString('base64url') + '\n'
   const version = sha256(Buffer.concat(Object.keys(built).sort().map(t => built[t]))).slice(0, 12)
@@ -154,10 +157,10 @@ export function binaryFiles(built, { app = 'https://app.trommi.com', seed = null
     'bin/trommi-connector': { data: Buffer.from(LAUNCHER), mode: 0o755 },
     ...Object.fromEntries(Object.entries(built).map(([t, data]) => [`bin/${t}/trommi-connector`, { data, mode: 0o755 }])),
   })
-  const zipName = `trommi-rs-${version}.zip`
-  files[`plugins/rs/${zipName}`] = archive
-  files['plugins/rs/marketplace.json'] = JSON.stringify({ name: 'trommi', owner: { name: 'Trommi', url: 'https://trommi.com' }, description: 'Trommi for Claude Code',
-    plugins: [{ name: 'trommi', displayName: 'Trommi', version, description: pluginManifest(version).description, source: { source: 'archive', url: `${app}/plugins/rs/${zipName}`, sha256: sha256(archive) } }] }, null, 2) + '\n'
+  const zipName = `trommi-${version}.zip`
+  files[`plugins/${zipName}`] = archive
+  files['plugins/marketplace.json'] = JSON.stringify({ name: 'trommi', owner: { name: 'Trommi', url: 'https://trommi.com' }, description: 'Trommi for Claude Code',
+    plugins: [{ name: 'trommi', displayName: 'Trommi', version, description: pluginManifest(version).description, source: { source: 'archive', url: `${app}/plugins/${zipName}`, sha256: sha256(archive) } }] }, null, 2) + '\n'
   return files
 }
 
@@ -172,11 +175,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     console.log(`trommi-connector-${t}: ${(built[t].length / 1048576).toFixed(1)} MiB, sha256 ${sha256(built[t]).slice(0, 12)}${seed ? ', signed' : ''}`)
   }
   if (!Object.keys(built).length) { console.error('nothing built'); process.exit(1) }
-  const files = binaryFiles(built, { app: APP, seed })
-  fs.rmSync(path.join(out, 'plugins/rs'), { recursive: true, force: true })
+  const files = releaseFiles(built, { app: APP, seed })
+  for (const d of ['connector', 'plugins']) fs.rmSync(path.join(out, d), { recursive: true, force: true })
   for (const [f, data] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(out, f)), { recursive: true })
-    fs.writeFileSync(path.join(out, f), data, { mode: /trommi-connector-[^.]*$/.test(f) ? 0o755 : 0o644 })
+    fs.writeFileSync(path.join(out, f), data, { mode: /trommi-connector-[\w-]+$/.test(f) ? 0o755 : 0o644 })
   }
   console.log(`wrote ${Object.keys(files).join(', ')} into ${path.relative(process.cwd(), out) || '.'}`)
 }
