@@ -648,6 +648,8 @@ impl Member {
         let _ = self.storage_for(&room_id, false).await?;
         let mut old: Option<SlotPaths> = None;
         let cur = self.paths().unwrap();
+        // Where the new key goes; TROMMI_KEYSTORE=keychain and no keychain answers: no join rather than a key file.
+        let keychain = crate::keychain::use_keychain_in(&cur.dir)?;
         let held = if cur.has_key || !replace_held { None } else { own_held_slot(&self.cfg, &room_id).await };
         let rec = if cur.has_key && !self.cfg.owner.is_empty() { owner_of(&cur) } else { None };
         if rec.as_ref().and_then(|r| r["owner"].as_str()).is_some_and(|o| !o.is_empty() && o != self.cfg.owner) {
@@ -675,16 +677,6 @@ impl Member {
             me.joining = true;
         }
         let storage = self.me.lock().unwrap().storage.clone().unwrap();
-        let keychain = {
-            let dir = self.paths().map(|p| p.dir.clone()).unwrap_or_default();
-            match crate::keychain::use_keychain_in(&dir) {
-                Ok(k) => k,
-                Err(e) => {
-                    eprintln!("[trommi] {}; the key goes into its key file", e.text());
-                    false
-                }
-            }
-        };
         let res = room::join_room(link.trim(), storage, self.device_info.clone(), client_name(), keychain, 800, 15 * 60_000, |code| {
             let e = crate::connector::check_emoji(&code);
             eprintln!("[trommi] invite answered: check code {}  ({})", e.iter().map(|x| x.0).collect::<Vec<_>>().join("  "), e.iter().map(|x| x.1).collect::<Vec<_>>().join(", "));

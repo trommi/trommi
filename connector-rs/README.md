@@ -12,6 +12,7 @@ trommi-connector permission|notice|denied|resolved    the plugin's hooks (JSON o
 trommi-connector monitor             the plugin's monitor (pointer lines)
 trommi-connector witness <session>   (spawned by the connector itself: the folder watch's last word)
 trommi-connector whoami
+trommi-connector allow-tools         the plugin's board tools allowed in .claude/settings.local.json (connect.sh)
 trommi-connector driver --home <dir> the interop driver (dev/interop)
 trommi-connector --version
 ```
@@ -23,38 +24,60 @@ trommi-connector --version
 says whether it is current. The binary embeds both: tool names, descriptions and schemas are byte for byte the JS ones.
 
 ```
-cargo build                                   # debug, for the tests below
-node connector-rs/build-plugin.mjs [dir]      # release binaries, sha256, optional signature, plugin zip, marketplace.json
+cargo build --release                         # the binary the tests below run
+node connector-rs/build-plugin.mjs [dir]      # release binaries, sha256, optional signature, plugin, marketplace
 ```
 
 `build-plugin.mjs` builds `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` with `rust-lld` as linker and
 `clang --target=…` for ring's C code (no cross gcc needed): static, 7.6 MiB and 6.3 MiB. `aarch64-apple-darwin` needs
 the Apple SDK: build it on a Mac (`cargo build --release --target aarch64-apple-darwin`) or with cargo-zigbuild and a
-macOS SDK, then run `build-plugin.mjs --no-build`; without it the target is skipped with a note. The plugin carries a
-POSIX `sh` launcher (`bin/trommi-connector`) that picks `bin/<target>/trommi-connector` by `uname`. With
-`TROMMI_RELEASE_KEY=<file with a 32-byte Ed25519 seed>` every binary gets a `.sig` (Ed25519 over
-`"trommi-release/v1\0" ‖ sha256(binary)`) and `release-key.pub`.
+macOS SDK, then run `build-plugin.mjs --no-build`; without it the target is skipped with a note.
+
+It writes what the app serves (`binaryFiles()`, the counterpart of `connector/build.mjs`'s `connectorFiles()`;
+`app/web/worker.js` maps these paths to `gen/`):
+
+- `connector/trommi-connector-<target>` with `.sha256` (and `.sig` plus `connector/release-key.pub` when
+  `TROMMI_RELEASE_KEY` names a file with a 32-byte Ed25519 seed: the signature is over
+  `"trommi-release/v1\0" ‖ sha256(binary)`);
+- `plugins/rs/marketplace.json` and `plugins/rs/trommi-rs-<version>.zip`: the plugin, whose `bin/trommi-connector` is a
+  POSIX `sh` launcher picking `bin/<target>/trommi-connector` by `uname`; hooks and monitor run the binary.
+
+`connect.sh` with `TROMMI_CONNECTOR=binary` installs this instead of `connector.mjs` (no Node needed): it downloads
+the binary of the machine, checks its SHA-256, installs the plugin from `plugins/rs/marketplace.json` (or registers
+the binary in `.mcp.json` where Claude Code has no plugins) and joins with it. Without the variable nothing changes.
+
+## Updates
+
+One file is code and shell, so there is no hot reload: a new binary in place of the running one (polled,
+`TROMMI_UPDATE_POLL_MS`) and a newer version the hub recommends (`TROMMI_VERSION_CHECK_MS`) are announced once as
+`kind="update"` with `restart_required="1"`, hinted once on the next tool result, and `reload_connector` answers
+with the restart line (/mcp, then trommi, then Reconnect). The running process goes on until then.
 
 ## Device keys
 
 `TROMMI_KEYSTORE=auto|file|keychain` (default `auto`). With the keychain (Secret Service on Linux, Keychain on macOS)
 the device secret goes there and the slot's key file holds only `trommi-keychain v1 <account>`; without one, or with
-`file`, the key file is the JS connector's format. Existing JS slots (file keys) are opened as they are and stay file
-keys. A slot written with a keychain key cannot be opened by the JS connector: use `TROMMI_KEYSTORE=file` while both
-connectors may share a folder. Build without the `keychain` feature for a file-only binary.
+`file`, the key file is the JS connector's format. Existing JS slots (file keys) are opened as they are.
+
+`auto` takes the keychain only when it answers a probe and the room's slot folder has no key file with a secret in
+it: a folder shared with a JS connector (which cannot read the keychain) keeps key files, so either connector can open
+every slot. `keychain` fails the join when no keychain answers. Build without the `keychain` feature for a file-only
+binary.
 
 ## Tests
 
 ```
 cargo test                                                     # crypto vectors (shared/crypto/vectors.json), session grants
 node dev/interop/run.mjs --pairs js-js --agent rust            # the interop scenarios with the Rust agent device
-TROMMI_KEYSTORE=file TROMMI_CONNECTOR_CMD=$PWD/connector-rs/target/debug/trommi-connector \
-  node connector/test-e2e.mjs --only integration|hooks|monitor|keyclaim|link
+TROMMI_KEYSTORE=file TROMMI_CONNECTOR_CMD=$PWD/connector-rs/target/release/trommi-connector \
+  node connector/test-e2e.mjs --only integration|updates|hooks|monitor|keyclaim|link|connect
+sh connector-rs/test-keychain.sh                               # the keychain, in a throwaway D-Bus session and keyring
 ```
 
-`TROMMI_CONNECTOR_CMD` makes `connector/test-e2e.mjs` start that command wherever it starts `node connector.mjs …`.
-Set `TROMMI_KEYSTORE=file`: the scenarios read key files directly (and keychain entries of test rooms would otherwise
-land in the real keychain).
+`TROMMI_CONNECTOR_CMD` makes `connector/test-e2e.mjs` start that command wherever it starts `node connector.mjs …`;
+`updates` and `connect` then run their binary variants. Set `TROMMI_KEYSTORE=file` for the e2e scenarios: they read
+key files directly. `test-keychain.sh` starts a D-Bus session and a gnome-keyring of its own and refuses to run on the
+real session bus. Run the e2e parts one at a time on a busy machine (each starts a hub and several connectors).
 
 ## Parity
 
@@ -62,19 +85,12 @@ land in the real keychain).
 | --- | --- | --- |
 | zcrypto v1 (log, epochs, wraps, invites, envelopes, binds, assets, grants) | done | `cargo test`: vectors rebuilt byte for byte, opened from bytes |
 | Client core (sync, chains, outbox, lease, resync, ledger, receipts, history) | done | interop 19/19 with `--agent rust` (JS baseline 19/19) |
-| Persisted state (`state.json`/`state.log`, all record shapes) | done | slots opened by JS after Rust and back in the e2e restarts |
+| Persisted state (`state.json`/`state.log`, all record shapes) | done | JS opens Rust slots and back (integration, test-keychain) |
 | MCP server: initialize, instructions, tools/list | done | tools/list identical to JS; instructions differ only in the `say` command's path |
-| All 18 tools + reload_connector + inbox (no channels) | done | e2e integration |
-| Channel notifications (`notifications/claude/channel`, meta keys, permission relay) | done | e2e integration, link |
-| Key slots, owner records, take-over, spare, dead keys, retire, folder watch | done (see below) | e2e keyclaim 7/7, integration |
-| `join`, `say`, hooks, `monitor`, `witness`, `whoami` | done | e2e hooks 7/7, integration (say, join) |
-| Versioning (`Trommi-Client: connector/0.1.0`, 426 too-old, update watch) | done | `updates` part is JS-only (hot reload of .mjs files) |
-| `reload_connector` | a new binary on disk: asks for a restart (no in-process hot reload as the JS code file reload) | — |
-| Keychain (Secret Service / Keychain), file fallback | done | manual; e2e runs with `file` |
-| Plugin build (linux x86_64/aarch64 musl, launcher, zip, marketplace, sha256, signature) | done; macOS needs a Mac | `build-plugin.mjs` |
-| `connect` script (installs connector.mjs) | JS only: the script installs the JS file | not ported |
-
-Last e2e run against the Rust binary: hooks 7/7, keyclaim 7/7, monitor 2/3, link 8/9, integration 29/31 (two fixes
-made after it: the "put aside as …" line of a join under a retired connector, and a call on a removed key going again
-on the next key; not yet re-run). Open: monitor "reconnects after a connector restart" (the pointer after the restart
-does not bring the event through `inbox`), link "a reconnect within the grace is no loss" (one push too many).
+| All 18 tools + reload_connector + inbox (no channels) | done | e2e integration 31/31, monitor 3/3 |
+| Channel notifications (meta keys, permission relay, missed events, receipts) | done | e2e integration, link 9/9 |
+| Key slots, owner records, take-over, spare, dead keys, retire, folder watch, witness | done | e2e keyclaim 7/7, link 9/9, integration |
+| `join`, `say`, hooks, `monitor`, `witness`, `whoami` | done | e2e hooks 7/7, integration, monitor |
+| Versioning (`Trommi-Client: connector/0.1.0`, 426 too-old) and update notices | done; restart instead of hot reload | e2e updates 2/2 (binary variant) |
+| Keychain (Secret Service / Keychain), file fallback, shared-folder rule | done (Linux; macOS Keychain untested) | `test-keychain.sh` 5/5 |
+| Plugin build, connect script | done (Linux targets; macOS needs a Mac) | e2e connect (plugin and `--no-plugin`) |
