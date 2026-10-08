@@ -447,6 +447,12 @@ struct DashedRule: View {
  * ring that runs down in 5 s (a second Undo while it runs counts up: "3"), any other word a short line; swipe it away;
  * it never covers more than itself; VoiceOver reads it out. iPad: the bar at the bottom.
  */
+/** The pill's growth out of the island: only sideways, from the island's width to its own. */
+struct IslandGrow: ViewModifier {
+  let x: CGFloat
+  func body(content: Content) -> some View { content.scaleEffect(x: x, y: 1, anchor: .center) }
+}
+
 struct ToastHost: View {
   @EnvironmentObject var model: BoardModel
   var top = false
@@ -455,6 +461,13 @@ struct ToastHost: View {
   @State private var lastUndoAt: Date? = nil
   @State private var progress: CGFloat = 1
   static let undoSeconds: Double = 5
+  private var safeTop: CGFloat {
+    #if canImport(UIKit)
+    return UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 47
+    #else
+    return 20
+    #endif
+  }
   var body: some View {
     VStack {
       if let t = model.toast {
@@ -487,29 +500,63 @@ struct ToastHost: View {
       }
     }
   }
+  /** The island's pill on this phone (nil without a Dynamic Island): IslandPill.of with the window's width and safe area. */
+  private var island: IslandPill? {
+    #if canImport(UIKit)
+    let w = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+    guard let win = w else { return nil }
+    return IslandPill.of(width: win.bounds.width, safeTop: win.safeAreaInsets.top)
+    #else
+    return nil
+    #endif
+  }
+  private func ring(_ white: Bool, size: CGFloat) -> some View {
+    let ink: Color = white ? .white : Ink.fg
+    return ZStack {
+      Circle().stroke(ink.opacity(0.25), lineWidth: 2.2)
+      Circle().trim(from: 0, to: progress).stroke(ink, style: StrokeStyle(lineWidth: 2.2, lineCap: .round)).rotationEffect(.degrees(-90))
+      Image(systemName: "arrow.uturn.backward").font(.system(size: size * 0.46, weight: .bold)).foregroundStyle(ink)
+    }.frame(width: size, height: size)
+  }
   @ViewBuilder private func phone(_ t: Toast) -> some View {
+    if let undo = t.undo, let ip = island {
+      // the island grows: a pure black capsule laid over the Dynamic Island, a wing wider on each side; the count in the
+      // left wing, the arrow in its 5 s ring in the right one; a tap anywhere on it undoes, a swipe up lets it go
+      Button { model.toast = nil; count = 1; Task { await undo() } } label: {
+        ZStack {
+          Capsule().fill(.black)
+          HStack(spacing: 0) {
+            Group { if count > 1 { Text("\(count)").font(.system(size: 14, weight: .bold, design: .rounded)).foregroundStyle(.white) } }
+              .frame(width: ip.leftWing.width)
+            Spacer(minLength: 0)
+            ring(true, size: 22).frame(width: ip.rightWing.width)
+          }
+        }
+        .frame(width: ip.pill.width, height: ip.pill.height)
+        .contentShape(Capsule())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(count > 1 ? "Undo: \(t.head), \(count) actions" : "Undo: \(t.head)")
+      .offset(x: ip.pill.minX, y: ip.pill.minY + min(0, drag.height))
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .gesture(dismissGesture())
+      .transition(.modifier(active: IslandGrow(x: IslandPill.islandSize.width / ip.pill.width), identity: IslandGrow(x: 1)))
+    } else {
+      phoneFallback(t)
+    }
+  }
+  @ViewBuilder private func phoneFallback(_ t: Toast) -> some View {
     Group {
       if let undo = t.undo {
-        // the Dynamic Island's pill: it grows out of the island, black, the undo arrow in its 5 s ring; a tap undoes
+        // no island: a round glass pill at the top right, the arrow in its ring, the count beside
         Button { model.toast = nil; count = 1; Task { await undo() } } label: {
-          HStack(spacing: 10) {
-            ZStack {
-              Circle().stroke(Color.white.opacity(0.22), lineWidth: 2.5)
-              Circle().trim(from: 0, to: progress).stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round)).rotationEffect(.degrees(-90))
-              Image(systemName: "arrow.uturn.backward").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
-            }.frame(width: 28, height: 28)
-            Text(count > 1 ? "Undo \(count)" : "Undo").font(Face.text(15, .semibold)).foregroundStyle(.white)
-            Text(t.head).font(Face.text(13)).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
-          }
-          .padding(.leading, 8).padding(.trailing, 16).frame(height: 40)
-          .frame(maxWidth: 300)
-          .background(Capsule().fill(.black))
+          ring(false, size: 30).padding(8).glass(Circle(), interactive: true)
+            .overlay(alignment: .topTrailing) {
+              if count > 1 { Text("\(count)").font(Face.text(12, .bold)).foregroundStyle(Ink.bg).frame(minWidth: 20, minHeight: 20).background(Circle().fill(Ink.fg)).offset(x: 4, y: -4) }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Undo: \(t.head)")
-        .frame(maxWidth: .infinity)
-        .padding(.top, 8)
-        .transition(.scale(scale: 0.35, anchor: .top).combined(with: .opacity))
       } else {
         HStack(spacing: 8) {
           if t.alert { Image(systemName: "exclamationmark.circle").foregroundStyle(Ink.urgCritical) }
@@ -524,8 +571,8 @@ struct ToastHost: View {
         .onTapGesture { withAnimation { model.toast = nil } }
       }
     }
-    .padding(.trailing, t.undo == nil ? 14 : 0).padding(.top, t.undo == nil ? 100 : 0)
-    .frame(maxWidth: .infinity, alignment: t.undo == nil ? .trailing : .center)
+    .padding(.trailing, 14).padding(.top, safeTop + (t.undo == nil ? 50 : 4))
+    .frame(maxWidth: .infinity, alignment: .trailing)
     .offset(x: drag.width, y: min(0, drag.height))
     .gesture(dismissGesture())
     .transition(.move(edge: .top).combined(with: .opacity))

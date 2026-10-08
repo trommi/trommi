@@ -36,7 +36,7 @@ struct DeskScreen: View {
           if v.fresh.isEmpty && v.reads.isEmpty && !v.units.isEmpty {
             VStack(spacing: 10) {
               Sketch("desk", color: Ink.faint).frame(width: 64, height: 64)
-              Text("As soon as an agent has a question, it shows up here.").font(Face.text(15)).foregroundStyle(Ink.muted).multilineTextAlignment(.center)
+              Text("Questions land here.").font(Face.text(15)).foregroundStyle(Ink.muted).multilineTextAlignment(.center)
             }.frame(maxWidth: .infinity).padding(.vertical, 28)
           } else if !cards.isEmpty {
             Text("Hold a card: Later, Reverse, Duck it, What??, Shred, Copy. Tap its title: text and pictures.")
