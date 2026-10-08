@@ -116,9 +116,10 @@ struct BottomBar: View {
   }
   private func item<I: View>(_ word: String, on: Bool, @ViewBuilder icon: () -> I, action: @escaping () -> Void) -> some View {
     Button(action: action) {
-      VStack(spacing: 1) { icon().frame(width: 26, height: 24); Text(word).font(Face.text(11, .medium)) }
+      // icons only (his word): the word is for VoiceOver
+      icon().frame(width: 28, height: 26)
         .foregroundStyle(Ink.fg)
-        .frame(width: 68, height: 50)
+        .frame(width: 60, height: 46)
         .background(Capsule().fill(on ? Ink.fg.opacity(0.08) : .clear))
         .contentShape(Rectangle())
     }

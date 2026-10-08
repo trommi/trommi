@@ -381,8 +381,8 @@ struct Tiles: View {
     Button(action: action) {
       VStack(spacing: 4) {
         if let d = drawing {
-          if d == "what" { PenMark("sketch:what", color: lead ? Ink.surface : Ink.fg, width: 2.2).frame(width: 64, height: 22) }
-          else { Sketch(d, color: lead ? Ink.surface : Tone.color(hue: hue, .pen)).frame(width: 24, height: 24) }
+          if d == "what" { PenMark("sketch:what", color: lead ? Ink.accentFg : Ink.fg, width: 2.2).frame(width: 64, height: 22) }
+          else { Sketch(d, color: lead ? Ink.accentFg : Ink.accent).frame(width: 24, height: 24) }
         }
         if let l = label {
           Text(l).font(Face.text(15, .semibold)).multilineTextAlignment(.center).lineLimit(3).minimumScaleFactor(0.85)
@@ -403,11 +403,12 @@ struct TileStyle: ButtonStyle {
   var urgency = "normal"
   func makeBody(configuration: Configuration) -> some View {
     let knock = urgency == "high" || urgency == "critical"
-    let fill = lead ? (knock ? Ink.urgency(urgency) : Tone.color(hue: hue, .pen)) : Ink.surface
+    // as the web's desk rows (desk.css .inbox-actions): one colour for every session, the bell's green; a knock its own
+    let fill = lead ? (knock ? Ink.urgency(urgency) : Ink.accent) : Ink.accent.opacity(0.09)
     configuration.label
-      .foregroundStyle(lead ? Ink.surface : Ink.fg)
+      .foregroundStyle(lead ? (knock ? Ink.surface : Ink.accentFg) : Ink.fg)
       .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(fill))
-      .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(lead ? .clear : Tone.color(hue: hue, .edge), lineWidth: 1))
+      .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Ink.surface))
       .scaleEffect(configuration.isPressed ? 0.96 : 1)
       .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
   }
