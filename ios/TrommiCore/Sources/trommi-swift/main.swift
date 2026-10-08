@@ -151,7 +151,8 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     let room = try pickRoom()
     try await room.sync()
     let d = DeskModel(board: room.board)
-    guard let a = (rest.first.flatMap { id in d.agents.first { $0.id == id } }) ?? d.agents.first, let key = d.sessionKey(of: a.id) else { die("no session") }
+    // (an agent's board id or its session id)
+    guard let a = (rest.first.flatMap { id in d.agents.first { $0.id == id || d.sessionKey(of: $0.id) == id } }) ?? d.agents.first, let key = d.sessionKey(of: a.id) else { die("no session") }
     try await room.sendMessage(sessionId: key, text: text)
     let r = try await room.flush()
     print("sent (envelope \(r.number))")
@@ -250,9 +251,10 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     let room = try pickRoom()
     try await room.sync()
     let d = DeskModel(board: room.board)
-    guard let a = (rest.first.flatMap { id in d.agents.first { $0.id == id } }) ?? d.agents.first, let key = d.sessionKey(of: a.id) else { die("no session") }
+    // (an agent's board id or its session id)
+    guard let a = (rest.first.flatMap { id in d.agents.first { $0.id == id || d.sessionKey(of: $0.id) == id } }) ?? d.agents.first, let key = d.sessionKey(of: a.id) else { die("no session") }
     var pages = 0
-    while d.hasOlder(agent: a.id) && pages < 50 { try await room.loadOlder(timelineKeyOf("chat", "session/\(key)")); d.update(); pages += 1 }
+    while d.hasOlder(agent: a.id) && pages < 50 { try await PerfLog.time("history page") { try await room.loadOlder(timelineKeyOf("chat", "session/\(key)")) }; d.update(); pages += 1 }
     for m in d.messagesOf(agent: a.id) where m.from != "event" { print("\(m.from): \(m.text)") }
   case "canvas":
     // trommi-swift canvas [<desk>] [--draw]: the desk's Scribble Board (its shapes), --draw adds one stroke first
@@ -290,7 +292,7 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
   }
 }
 
-do { try await run(); if let r = openedRoom { try await r.flush(); await r.saveCacheAndWait() } }
+do { try await run(); if let r = openedRoom { try await r.flush(); await r.saveCacheAndWait(snapshot: true) } }
 catch let e as ZError { die(e.description) }
 catch let e as HubError { die("hub: \(e.description)") }
 catch { die("\(error)") }

@@ -243,7 +243,7 @@ final class BoardModel: ObservableObject {
   func scene(active: Bool) {
     self.active = active
     if active { startLive(); Task { await refresh() } }
-    else { liveTask?.cancel(); liveTask = nil; live = false; room?.saveCache() }
+    else { liveTask?.cancel(); liveTask = nil; live = false; room?.saveCache(snapshot: true) }
   }
   private func startLive() {
     #if canImport(Darwin)

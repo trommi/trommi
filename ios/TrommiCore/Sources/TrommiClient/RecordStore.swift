@@ -23,6 +23,14 @@ public final class RecordStore: @unchecked Sendable {
   var recordsDir: URL { dir.appendingPathComponent("records", isDirectory: true) }
   var headURL: URL { dir.appendingPathComponent("head.bin") }
   var grantsURL: URL { dir.appendingPathComponent("grants.bin") }
+  var boardURL: URL { dir.appendingPathComponent("board.bin") }
+
+  /** The board snapshot (BoardCodec bytes and what goes with them), sealed as a whole. */
+  public func writeBoard(_ plain: [UInt8]) throws { try Data(try seal(plain, aad: "trommi/v1/ios-board")).write(to: boardURL, options: Self.writeOptions) }
+  public func readBoard() -> [UInt8]? {
+    guard let d = try? Data(contentsOf: boardURL) else { return nil }
+    return open(Array(d), aad: "trommi/v1/ios-board")
+  }
 
   // ---- sealing ----
   private func seal(_ plain: Bytes, aad: String) throws -> Bytes {
@@ -97,16 +105,20 @@ public final class RecordStore: @unchecked Sendable {
   /** Where each record lies: found from the clear frames alone (no opening), the last copy of a number winning. */
   public struct Index: @unchecked Sendable {
     public let files: [[UInt8]]
+    public let urls: [URL]
     /** (number, file, offset of the sealed bytes, their length), in envelope order. */
     public let entries: [(n: Int, file: Int, at: Int, len: Int)]
   }
-  public func index() -> Index? {
-    let segs = segments()
-    var files = [[UInt8]](), last = [Int: (Int, Int, Int)]()
+  public func index(after: Int? = nil, keepBytes: Bool = true) -> Index? {
+    var segs = segments()
+    // after a board snapshot at envelope `after`: only the segments that can hold a later record (a segment is named by
+    // the first number appended to it; the numbers after it grow, an older record appended again is older still)
+    if let a = after, let k = segs.lastIndex(where: { $0.first <= a }) { segs = Array(segs[k...]) }
+    var files = [[UInt8]](), urls = [URL](), last = [Int: (Int, Int, Int)]()
     for (i, seg) in segs.enumerated() {
       guard let d = try? Data(contentsOf: seg.url) else { return nil }
       let b = [UInt8](d)
-      files.append(b)
+      files.append(keepBytes ? b : []); urls.append(seg.url)
       var at = 0
       while at + 4 <= b.count {
         let len = Int(b[at]) << 24 | Int(b[at + 1]) << 16 | Int(b[at + 2]) << 8 | Int(b[at + 3])
@@ -119,7 +131,32 @@ public final class RecordStore: @unchecked Sendable {
       // a torn tail (a crash mid-write) is cut off
       if at < b.count, let h = try? FileHandle(forWritingTo: seg.url) { try? h.truncate(atOffset: UInt64(at)); try? h.close() }
     }
-    return Index(files: files, entries: last.keys.sorted().map { n in let x = last[n]!; return (n, x.0, x.1, x.2) })
+    return Index(files: files, urls: urls, entries: last.keys.sorted().map { n in let x = last[n]!; return (n, x.0, x.1, x.2) })
+  }
+  /** The entries for these numbers (binary search). */
+  public func entries(_ ix: Index, _ numbers: [Int]) -> [Int] {
+    numbers.compactMap { n in
+      var lo = 0, hi = ix.entries.count - 1
+      while lo <= hi { let m = (lo + hi) / 2; if ix.entries[m].n == n { return m }; if ix.entries[m].n < n { lo = m + 1 } else { hi = m - 1 } }
+      return nil
+    }
+  }
+  /** Open and decode single entries (positions in the index); read from disk when the index kept no bytes. */
+  public func decode(_ ix: Index, at positions: [Int]) -> [Rec] {
+    var handles = [Int: FileHandle]()
+    defer { for h in handles.values { try? h.close() } }
+    return positions.compactMap { p in
+      let e = ix.entries[p]
+      let sealed: [UInt8]
+      if !ix.files[e.file].isEmpty { sealed = Array(ix.files[e.file][e.at..<(e.at + e.len)]) }
+      else {
+        if handles[e.file] == nil { handles[e.file] = try? FileHandle(forReadingFrom: ix.urls[e.file]) }
+        guard let h = handles[e.file], (try? h.seek(toOffset: UInt64(e.at))) != nil, let d = try? h.read(upToCount: e.len), d.count == e.len else { return nil }
+        sealed = [UInt8](d)
+      }
+      guard let plain = open(sealed, aad: "trommi/v1/ios-rec/\(e.n)") else { return nil }
+      return plain.withUnsafeBufferPointer { try? RecCodec.decode($0) }
+    }
   }
   /** Open and decode a run of the index's entries; nil when one seal does not open (the store is not to be trusted). */
   public func decode(_ ix: Index, _ range: Range<Int>) -> [Rec]? {
@@ -169,6 +206,7 @@ public final class RecordStore: @unchecked Sendable {
     try? FileManager.default.removeItem(at: recordsDir)
     try? FileManager.default.removeItem(at: headURL)
     try? FileManager.default.removeItem(at: grantsURL)
+    try? FileManager.default.removeItem(at: boardURL)
   }
 
   /** Total bytes of the segments (for the compaction rule and the measurements). */

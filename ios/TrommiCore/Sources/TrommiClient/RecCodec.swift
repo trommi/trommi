@@ -32,7 +32,7 @@ enum RecCodec {
         else { b.append(4); let bits = d.bitPattern; for k in 0..<8 { b.append(UInt8(bits >> (UInt64(k) * 8) & 0xff)) } }
       case .str(let x): b.append(5); let u8 = Array(x.utf8); u(UInt64(u8.count)); b += u8
       case .arr(let a): b.append(6); u(UInt64(a.count)); for x in a { jv(x) }
-      case .obj(let o): b.append(7); u(UInt64(o.count)); for (k, x) in o { let u8 = Array(k.utf8); u(UInt64(u8.count)); b += u8; jv(x) }
+      case .obj(let o): b.append(7); u(UInt64(o.count)); for k in o.keys.sorted() { let u8 = Array(k.utf8); u(UInt64(u8.count)); b += u8; jv(o[k]!) }   // sorted: the same bytes for the same value
       }
     }
   }
@@ -120,7 +120,8 @@ enum RecCodec {
     let tk = try r.os(), tid = try r.os(), sid = try r.os()
     var atts = [String]()
     for _ in 0..<Int(try r.u()) { atts.append(try r.s()) }
-    let content: JV? = try r.byte() == 1 ? try r.jv() : nil
+    var content: JV? = Optional<JV>.none
+    if try r.byte() == 1 { content = try r.jv() }
     let cs = try r.s()
     var bind: DecodedBind? = nil
     switch try r.byte() {

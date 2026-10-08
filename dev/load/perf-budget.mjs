@@ -18,7 +18,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { launchChromium } from '../cdp.mjs'
 import { arg, flag, sleep, until, pct, reopen, writeJson, countingHub, REPO } from './lib.mjs'
 import { guard } from '../guard.mjs'
-guard({ usage: 'node dev/load/perf-budget.mjs [--room=DIR] [--only=engine,web,ios] [--parts=start,interact,scroll,live,one] [--runs=3] [--app=URL] [--cpu-prof=PREFIX] [--keep-browser]', values: ['room', 'only', 'parts', 'runs', 'app', 'cpu-prof'], flags: ['keep-browser'], targets: ['app'] })
+guard({ usage: 'node dev/load/perf-budget.mjs [--room=DIR] [--only=engine,web,ios] [--parts=start,interact,scroll,live,one] [--runs=3] [--app=URL] [--cpu-prof=PREFIX] [--keep-browser]', values: ['room', 'only', 'parts', 'runs', 'app', 'cpu-prof', 'swift-agent'], flags: ['keep-browser'], targets: ['app'] })
 
 // ---- the budgets ----
 // Phone = 390x844, CPU 4x slower, slow 4G. "warm": the app and the room on the device (service worker + IndexedDB);
@@ -67,7 +67,10 @@ function tempo(impl) {
   // the Swift core measured as the phone runs it: the release build when there is one (swift build -c release)
   const release = path.join(REPO, 'ios/TrommiCore/.build/release/trommi-swift')
   const env = { ...process.env, ...(!process.env.TROMMI_SWIFT_BIN && fs.existsSync(release) ? { TROMMI_SWIFT_BIN: release } : {}) }
-  const r = spawnSync(process.execPath, [path.join(REPO, 'dev/load/tempo.mjs'), `--room=${ROOM}`, `--impl=${impl}`, '--pages=5', `--out=${out}`], { stdio: 'inherit', env })
+  // the Swift part needs any agent that can send (agent-1's chain halted in this room: an equivocation left by an
+  // interrupted run, README "The huge room"); the JS part keeps agent-1, the huge session's own
+  const agent = impl === 'swift' ? [`--agent=${arg('swift-agent', 'agent-2')}`] : []
+  const r = spawnSync(process.execPath, [path.join(REPO, 'dev/load/tempo.mjs'), `--room=${ROOM}`, `--impl=${impl}`, '--pages=5', `--out=${out}`, ...agent], { stdio: 'inherit', env })
   if (r.status !== 0) results.notes.push(`tempo ${impl} exited ${r.status}`)
   return JSON.parse(fs.readFileSync(out, 'utf8'))[impl] ?? {}
 }
