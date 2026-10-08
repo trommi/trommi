@@ -201,7 +201,7 @@ TimelineItem = {
   local_id, pending,                       // own sends: shown at once (< 50 ms), replaced in place when the hub confirms
   envelope_hash, sender_device_id, recipient_device_id, sent_at,
   item_state: 'header' | 'loading' | 'loaded' | 'pruned' | 'undecryptable' | 'newer_schema',
-  content_type,                            // when loaded: 'message' | 'strokes' | 'erase' | 'move' | 'send_away' | 'selection_sent' | 'clip_request'
+  content_type,                            // when loaded: 'message' | 'strokes' | 'erase' | 'move' | 'send_away' | 'selection_sent'
   content,                                 // the decoded body (README fields: text, details, html, attachments, hand_back, explain, present_card, copied_cards, marks, published_object_id, note, strokes, stroke_ids, offset)
 }
 ```
@@ -281,7 +281,6 @@ All return a Promise that resolves once the envelope is sealed and in the (persi
 ```js
 await client.sendMessage({ agent_device_id, object_id?, text, details?, html?, attachments?, hand_back?, explain?, present_card?, copied_cards?, marks? })
 await client.answer({ object_id, choices, note?, option_notes?, attachments?, marks? })
-await client.requestClip({ object_id })              // ▶ Explain: content_type clip_request in the card's conversation (README "Explainer clips")
 await client.trust({ object_id, note? })              // answer_action 'answer', trusted: true, choices = the recommendation
 await client.markRead({ object_id })                  // info cards: answer_action 'read'
 await client.shred({ object_id, note? })              // answer_action 'shred'
@@ -363,7 +362,7 @@ await client.publish({ attachments, title, note?, released_until? })   // a publ
 
 client.on('command', command => { ... })
 command = {
-  command: 'message' | 'answer' | 'read' | 'shred' | 'trust' | 'decide_again' | 'verdict' | 'selection_sent' | 'clip_request',
+  command: 'message' | 'answer' | 'read' | 'shred' | 'trust' | 'decide_again' | 'verdict' | 'selection_sent',
   envelope_number, sender_device_id, object_id, timeline_key,
   content,                 // the decoded body
   choices, previous_choices, allow,   // as fitting

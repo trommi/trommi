@@ -23,9 +23,6 @@ export const FIELDS = Object.freeze({
   move: ['content_type', 'stroke_ids', 'offset'],
   send_away: ['content_type', 'stroke_ids', 'offset'],
   selection_sent: ['content_type', 'text', 'attachments', 'stroke_ids', 'board'],
-  // "▶ Explain" on a decision card (human -> the card's agent, in the card's conversation): make a short narrated
-  // explainer clip of this card and attach it with a reply. Nothing else in it; older clients show the placeholder.
-  clip_request: ['content_type'],
   card: ['object_type', 'object_version', 'previous_version_hash', 'card_type', 'title', 'teaser', 'body', 'options', 'sections', 'html', 'allows_multiple',
     'recommended', 'urgency_reason', 'attachments', 'change_note', 'close_summary', 'withdraw_reason', 'merged_into_object_id', 'merged_from_object_ids'],
   note: ['object_type', 'object_version', 'previous_version_hash', 'text'],

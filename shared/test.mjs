@@ -285,29 +285,6 @@ await test('forward compatibility: what a newer client writes is verified and ke
   eq(late.model.alerts.filter(a => !['recovery-add'].includes(a.code)).map(a => a.code), [], 'no alerts: nothing was refused')
 })
 
-await test('▶ Explain: a clip_request on a card reaches its agent as its own command, never hands the card back', async () => {
-  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
-  const commands = []
-  agent.on('command', c => commands.push(c))
-  eq(codec.CONTENT_TYPES.includes('clip_request'), true, 'a content type this version knows')
-  eq(JSON.parse(new TextDecoder().decode(codec.encodePayload(codec.KIND.timeline_item, { content_type: 'clip_request', text: 'dropped' }))), { schema_version: 1, content_type: 'clip_request' }, 'nothing else in it')
-  const q = await agent.sendCard({ title: 'Which font?', options: [{ key: 'a', label: 'Serif' }, { key: 'b', label: 'Sans' }] })
-  await settleAll(agent)
-  await until(() => phone.model.cards.get(q), 'card on phone')
-  await phone.requestClip({ object_id: q })
-  await settleAll(phone)
-  const cmd = await until(() => commands.find(c => c.command === 'clip_request'), 'agent: clip_request')
-  eq([cmd.object_id, cmd.content.content_type, cmd.unsupported ?? null], [q, 'clip_request', null], 'about the card')
-  const item = await until(() => [...(laptop.model.timelines.get(`chat:card/${q}`)?.items.values() ?? [])].find(i => i.content_type === 'clip_request'), 'the laptop sees the request')
-  eq([item.item_state, M.itemNeedsUpdate(item)], ['loaded', false], 'shown, not a placeholder')
-  eq([phone.model.cards.get(q).in_revision, laptop.model.cards.get(q).in_revision], [null, null], 'the card stays with the human')
-  const err = await agent.requestClip({ object_id: q }).catch(e => e)
-  eq(err?.code, 'forbidden', 'only a human asks for a clip')
-  const late = await addHuman(phone, 'Late')
-  await until(() => late.model.cards.get(q), 'late device has the card')
-  eq(late.model.cards.get(q).in_revision ?? null, null, 'a device that joins later agrees')
-})
-
 await test('forward compatibility (model): an envelope kind, object type or timeline kind of a newer version is counted, never applied or alerted', async () => {
   const m = M.emptyModel(), ch = M.emptyChange()
   m.room.my_role = 'human'; m.room.my_device_id = 'f'.repeat(64)
