@@ -51,7 +51,7 @@ struct CardScreen: View {
             if c.kind != "permission" && !c.unsupported {
               Button { model.act { try await model.room?.requestClip(cardId: c.id); model.say("Asked for a clip", c.title) } } label: { Label("▶ Explain as a clip", systemImage: "play.rectangle") }
             }
-            Button { copyText("Nr. \(c.number) · \(c.title)\(c.choices.isEmpty ? "" : " → \(c.options.filter { c.choices.contains($0.key) }.map { $0.label }.joined(separator: ", "))")") } label: { Label("Copy to paste into another agent", systemImage: "doc.on.doc") }
+            Button { model.copyCard(c) } label: { Label("Copy", systemImage: "doc.on.doc") }
             if c.status == "open" && c.kind != "permission" {
               Button { model.snooze(c) } label: { Label(Words.later, systemImage: "zzz") }
               Button(role: .destructive) { model.shred(c, note: note) } label: { Label(Words.shred, systemImage: "trash") }
@@ -126,6 +126,18 @@ struct CardScreen: View {
           Text("\(at + 1) of \(v.fresh.count)").font(Face.text(14)).foregroundStyle(Ink.muted)
         }
         if c.revised != nil { Text("· revised").font(Face.text(14)).foregroundStyle(Ink.muted) }
+      }
+      // merged by the agent (merge_cards): this one went into another, or replaces others
+      if let into = c.mergedInto, let other = d.byCard[into] {
+        Button { model.path.append(.card(into)) } label: { Text("Merged into Nr. \(other.number): \(other.title)").font(Face.text(15, .medium)).foregroundStyle(Ink.accent).multilineTextAlignment(.leading) }.buttonStyle(.plain)
+      }
+      if !c.mergedFrom.isEmpty {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(c.mergedFrom.count == 1 ? "Replaces 1 question" : "Replaces \(c.mergedFrom.count) questions").font(Face.text(13, .semibold)).foregroundStyle(Ink.muted)
+          ForEach(c.mergedFrom, id: \.self) { id in
+            if let o = d.byCard[id] { Button { model.path.append(.card(id)) } label: { Text("Nr. \(o.number) · \(o.title)").font(Face.text(14)).foregroundStyle(Ink.accent).lineLimit(1) }.buttonStyle(.plain) }
+          }
+        }
       }
       if !c.urgencyReason.isEmpty && c.status == "open" { Text(c.urgencyReason).font(Face.text(15, .medium)).foregroundStyle(Ink.urgency(c.urgency)) }
       let text = c.sections.map { $0.filter { $0["key"].isNull }.compactMap { $0["text"].string }.joined(separator: "\n\n") } ?? c.body
@@ -274,8 +286,10 @@ struct CardScreen: View {
       let said = c.status == "shredded" ? "Shredded" : c.kind == "info" ? "Read" : c.trusted ? "\(Words.trust)\(c.advisedLabels.isEmpty ? "" : ": \(c.advisedLabels)")" : pickedLabels.isEmpty ? "Withdrawn by the agent" : pickedLabels
       still(said, c.note.isEmpty ? "" : "Your note: \(c.note)", picked: true)
       ForEach(c.options.filter { c.optionNotes[$0.key]?.isEmpty == false }, id: \.key) { o in still(o.label, "Your note: \(c.optionNotes[o.key]!)") }
+      MarksLine(marks: model.board?.cards[c.id]?.answer?.marks ?? [])
       if c.settled { still("✓ \(Words.settled)", "\(a?.name ?? "The agent") marked this answer as final: nothing follows from it.") }
-      if !c.summary.isEmpty { still("Done by the agent", c.summary) }
+      if let w = model.board?.cards[c.id]?.withdrawReason, !w.isEmpty { still("Why it was withdrawn", w) }
+      else if !c.summary.isEmpty { still("Done by the agent", c.summary) }
       if c.status == "shredded" || !c.choices.isEmpty || c.trusted || (c.kind == "info" && c.read != nil) {
         Button(Words.takeBack) { model.reopen(c.id) }.buttonStyle(QuietWay())
       }

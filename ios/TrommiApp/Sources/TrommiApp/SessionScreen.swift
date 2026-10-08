@@ -318,6 +318,8 @@ struct MessageView: View {
       VStack(alignment: .trailing, spacing: 4) {
         about(m)
         if !m.attachments.isEmpty { Attachments(list: m.attachments, onPicture: { picture = $0 }) }
+        CopiedCards(ids: m.copiedCards)
+        MarksLine(marks: m.marks)
         if m.noteWritten != nil {
           VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) { Sketch("page", color: Ink.noteInk).frame(width: 14, height: 14); Text("Note").font(Face.text(12, .bold)); if let w = m.noteWritten!, w > 0 { Text("written \(clockOf(w))").font(Face.text(12)) } }
@@ -362,6 +364,8 @@ struct MessageView: View {
         RichText(text: m.text + (m.html.map { "\n\n```html\n\($0)\n```" } ?? ""))
       }
       if !m.attachments.isEmpty { Attachments(list: m.attachments, onPicture: { picture = $0 }) }
+      CopiedCards(ids: m.copiedCards)
+      MarksLine(marks: m.marks)
       if let det = m.details, !det.isEmpty {
         DisclosureGroup { RichText(text: det, size: 15, color: Ink.muted).padding(.top, 4) } label: { Text("Details").font(Face.text(14, .semibold)).foregroundStyle(Ink.muted) }.tint(Ink.muted)
       }
@@ -373,6 +377,44 @@ struct MessageView: View {
   }
 }
 struct PicIndex: Identifiable { let at: Int; var id: Int { at } }
+
+/** The cards a message carries (copied_cards): a chip each, Nr. and title; a tap opens the card. */
+struct CopiedCards: View {
+  @EnvironmentObject var model: BoardModel
+  let ids: [String]
+  var body: some View {
+    if !ids.isEmpty {
+      VStack(alignment: .trailing, spacing: 4) {
+        ForEach(ids, id: \.self) { id in
+          let c = model.card(id)
+          Button { if c != nil { model.path.append(.card(id)) } } label: {
+            HStack(spacing: 6) {
+              Text(c.map { "Nr. \($0.number)" } ?? "Card").font(Face.text(13, .bold))
+              Text(c?.title ?? "not on the board any more").font(Face.text(13)).lineLimit(1)
+            }
+            .foregroundStyle(Ink.fg).padding(.horizontal, 10).padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Ink.surface)).overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Ink.lineStrong))
+          }.buttonStyle(.plain).disabled(c == nil)
+        }
+      }
+    }
+  }
+}
+
+/** Marks pinned to places on pictures (a message's or an answer's `marks`): how many, and their words. */
+struct MarksLine: View {
+  let marks: [JV]
+  var body: some View {
+    if !marks.isEmpty {
+      let words = marks.compactMap { $0["label"].string ?? $0["text"].string }.filter { !$0.isEmpty }
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        Sketch("pen", color: Ink.muted).frame(width: 14, height: 14)
+        Text(marks.count == 1 ? "1 mark on the picture" : "\(marks.count) marks on the pictures").font(Face.text(13, .medium)).foregroundStyle(Ink.muted)
+        if !words.isEmpty { Text("· " + words.joined(separator: " · ")).font(Face.text(13)).foregroundStyle(Ink.fg).lineLimit(3) }
+      }
+    }
+  }
+}
 
 /** Something the session published: its picture or sign, what it is, Open. */
 struct PublishedCard: View {
@@ -404,11 +446,11 @@ struct PublishedCard: View {
       }
     }
     .sheet(item: $opened) { f in FileSheet(file: f) }
-    .sheet(item: $shared) { l in ShareLinkSheet(link: l.link, title: published.title) }
+    .sheet(item: $shared) { l in ShareLinkSheet(link: l.link, title: published.title, attachmentId: l.attachmentId, shareId: l.shareId) }
   }
   @State private var shared: SharedLink?
   private func share(_ a: JV, days: Int) {
-    Task { do { if let r = try await model.room?.shareAttachment(a, days: days) { shared = SharedLink(link: r.link) } } catch { model.fail("No link", error) } }
+    Task { do { if let r = try await model.room?.shareAttachment(a, days: days) { shared = SharedLink(link: r.link, attachmentId: a["attachment_id"].string ?? "", shareId: r.shareId) } } catch { model.fail("No link", error) } }
   }
   private func open(_ a: JV) {
     Task { do { let d = try await model.attachment(a); opened = OpenedFile(name: a["file_name"].string ?? published.title, type: a["media_type"].string ?? "", data: d) } catch { model.fail("Not opened", error) } }
@@ -508,10 +550,36 @@ struct Composer: View {
   @State private var pickingPhotos = false
   @State private var sending = false
   @State private var error: String?
+  /** Cards attached to this message (copied_cards). */
+  @State private var cards: [String] = []
   @FocusState private var focused: Bool
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       if let e = error { Text(e).font(Face.text(13)).foregroundStyle(Ink.urgCritical).padding(.horizontal, 6) }
+      // a card copied elsewhere and not attached yet: offered, one tap attaches it (session.mjs composer)
+      if let id = model.copiedCard, id != cardId, !cards.contains(id), let c = model.card(id) {
+        HStack(spacing: 8) {
+          Button { cards.append(id) } label: {
+            HStack(spacing: 6) { Image(systemName: "plus").font(.system(size: 11, weight: .bold)); Text("Attach Nr. \(c.number) · \(c.title)").font(Face.text(13, .medium)).lineLimit(1) }
+              .foregroundStyle(Ink.accent).padding(.horizontal, 10).padding(.vertical, 6).background(Capsule().strokeBorder(Ink.accent.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+          }.buttonStyle(.plain)
+          Button { model.copiedCard = nil } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Ink.muted) }.buttonStyle(.plain).accessibilityLabel("Forget the copied card")
+        }.padding(.horizontal, 6)
+      }
+      if !cards.isEmpty {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 6) {
+            ForEach(cards, id: \.self) { id in
+              HStack(spacing: 6) {
+                Text("Nr. \(model.card(id)?.number ?? 0)").font(Face.text(13, .bold))
+                Text(model.card(id)?.title ?? id).font(Face.text(13)).lineLimit(1).frame(maxWidth: 160)
+                Button { cards.removeAll { $0 == id } } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }.buttonStyle(.plain)
+              }
+              .padding(.horizontal, 10).padding(.vertical, 6).background(Capsule().fill(Ink.sunken))
+            }
+          }
+        }
+      }
       if !files.isEmpty {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 6) {
@@ -565,7 +633,7 @@ struct Composer: View {
       }
     }
   }
-  private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty }
+  private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || !cards.isEmpty }
   private func take(_ items: [(data: Data, type: UTType?)]) async {
     for (d, type) in items.prefix(MAX_FILES - files.count) {
       var name = "file-\(files.count + 1)"
@@ -589,19 +657,19 @@ struct Composer: View {
   }
   private func send() {
     let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    let chosen = files
-    guard !words.isEmpty || !chosen.isEmpty else { return }
+    let chosen = files, attached = cards
+    guard !words.isEmpty || !chosen.isEmpty || !attached.isEmpty else { return }
     sending = true; error = nil
-    text = ""; files = []
+    text = ""; files = []; cards = []
     Task {
       do {
         var refs = [JV]()
         for f in chosen { refs.append(try await model.upload(f.data, name: f.name, type: f.type, width: f.width, height: f.height)) }
-        try await model.send(agent: agent, text: words, cardId: cardId, attachments: refs)
-        onSent?()
+        try await model.send(agent: agent, text: words, cardId: cardId, attachments: refs, cards: attached)
+        if attached.contains(model.copiedCard ?? "") { model.copiedCard = nil }; onSent?()
       } catch {
         // nothing is lost: the words come back into the field
-        text = words; files = chosen
+        text = words; files = chosen; cards = attached
         self.error = "Not sent: \(model.describe(error))"
       }
       sending = false
@@ -647,20 +715,36 @@ struct PhotoPicker: UIViewControllerRepresentable {
 }
 #endif
 
-struct SharedLink: Identifiable { let link: String; var id: String { link } }
+struct SharedLink: Identifiable { let link: String; var attachmentId = ""; var shareId = ""; var id: String { link } }
 /** A link for someone outside the room: the secret after # never reaches a server. */
 struct ShareLinkSheet: View {
   let link: String
   let title: String
+  var attachmentId = ""
+  var shareId = ""
+  @EnvironmentObject var model: BoardModel
   @Environment(\.dismiss) private var dismiss
+  @State private var revoked = false
+  @State private var asking = false
   var body: some View {
     NavigationStack {
       VStack(alignment: .leading, spacing: 16) {
-        Text("Anyone with this link can open \(title.isEmpty ? "this file" : "“\(title)”") until it runs out. The secret is after the #; the hub never sees it.").font(Face.text(15)).foregroundStyle(Ink.muted)
-        Text(link).font(Face.mono(12)).textSelection(.enabled).padding(12).background(RoundedRectangle(cornerRadius: 10).fill(Ink.sunken))
-        HStack {
-          Button { copyText(link) } label: { Label("Copy", systemImage: "doc.on.doc") }.buttonStyle(QuietWay())
-          ShareLink(item: link) { Label("Send", systemImage: "square.and.arrow.up") }.buttonStyle(QuietWay())
+        Text(revoked ? "Revoked: the link opens nothing any more." : "Anyone with this link can open \(title.isEmpty ? "this file" : "“\(title)”") until it runs out. The secret is after the #; the hub never sees it.")
+          .font(Face.text(15)).foregroundStyle(revoked ? Ink.urgCritical : Ink.muted)
+        Text(link).font(Face.mono(12)).textSelection(.enabled).padding(12).background(RoundedRectangle(cornerRadius: 10).fill(Ink.sunken)).strikethrough(revoked)
+        if !revoked {
+          HStack {
+            Button { copyText(link) } label: { Label("Copy", systemImage: "doc.on.doc") }.buttonStyle(QuietWay())
+            ShareLink(item: link) { Label("Send", systemImage: "square.and.arrow.up") }.buttonStyle(QuietWay())
+          }
+          // the hub forgets the share (README "Share links": DELETE attachments/:id/shares/:share_id)
+          if !attachmentId.isEmpty && !shareId.isEmpty {
+            Button(role: .destructive) { asking = true } label: { Label("Revoke Link…", systemImage: "xmark.circle").font(Face.text(15, .semibold)) }
+              .foregroundStyle(Ink.urgCritical)
+              .confirmationDialog("Revoke This Link?", isPresented: $asking, titleVisibility: .visible) {
+                Button("Revoke Link", role: .destructive) { revoke() }
+              } message: { Text("Whoever has it can no longer open the file. The file stays in the room.") }
+          }
         }
         Spacer()
       }
@@ -669,6 +753,13 @@ struct ShareLinkSheet: View {
       .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
     }
     .presentationDetents([.medium])
+  }
+  private func revoke() {
+    guard let room = model.acting() else { return }
+    Task {
+      do { try await room.revokeShare(attachmentId: attachmentId, shareId: shareId); revoked = true; model.say("Link revoked", title) }
+      catch { model.fail("Not revoked", error) }
+    }
   }
 }
 

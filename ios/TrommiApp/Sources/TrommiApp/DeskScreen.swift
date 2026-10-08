@@ -216,6 +216,14 @@ func fits(_ label: String, _ width: Int, _ lines: Int) -> Bool {
   }
   return n <= lines
 }
+/** A card's body as one plain line (ui.mjs plain): no code blocks, no marks of emphasis, the spaces folded. */
+func plainText(_ s: String) -> String {
+  s.replacingOccurrences(of: "```[\\s\\S]*?```", with: " ", options: .regularExpression)
+    .replacingOccurrences(of: "__([^_\\n]+?)__", with: "$1", options: .regularExpression)
+    .replacingOccurrences(of: "[*`#]", with: "", options: .regularExpression)
+    .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    .trimmingCharacters(in: .whitespaces)
+}
 let BARE: Set<String> = ["yes", "no", "ok", "okay", "allow", "deny", "ja", "nein"]
 
 struct DeskRow: View {
@@ -260,6 +268,13 @@ struct DeskRow: View {
       }
       .buttonStyle(.plain)
       .accessibilityHint(card.knockWord ?? "")
+      // under the title as the web's deskRow: what is new about it, then the teaser (else the start of the body), two lines
+      let about = [card.mergedFrom.isEmpty ? "" : "replaces \(card.mergedFrom.count) questions", card.revised != nil ? "revised" : "",
+                   card.unsnoozed != nil && card.snoozedUntil == nil ? "Back from Later" : "", card.teaser.isEmpty ? card.urgencyReason : ""].filter { !$0.isEmpty }.joined(separator: " · ")
+      let words = card.teaser.isEmpty ? plainText(card.body) : card.teaser
+      if !about.isEmpty || !words.isEmpty {
+        Text([about, words].filter { !$0.isEmpty }.joined(separator: " · ")).font(Face.text(15)).foregroundStyle(Ink.muted).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+      }
       if card.unsupported {
         UnsupportedLine(what: "card")
       } else {
@@ -283,7 +298,7 @@ struct RowMenu: View {
     if card.kind != "permission" { Button { model.handBack(card) } label: { Label(Words.revise, systemImage: "arrow.uturn.backward") } }
     if card.kind == "decision" { Button { model.trust(card) } label: { Label(Words.duck, systemImage: "hand.wave") } }
     if card.kind != "permission" { Button { model.what(card) } label: { Label("What?? — explain this to me", systemImage: "questionmark.bubble") } }
-    Button { copyText("Nr. \(card.number) · \(card.title)") } label: { Label("Copy", systemImage: "doc.on.doc") }
+    Button { model.copyCard(card) } label: { Label("Copy", systemImage: "doc.on.doc") }
     if card.kind != "permission" { Button(role: .destructive) { model.shred(card) } label: { Label(Words.shred, systemImage: "trash") } }
   }
 }

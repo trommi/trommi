@@ -105,6 +105,16 @@ final class BoardModel: ObservableObject {
   /** The demo (DemoMode.swift): the web demo's made-up room on this phone, no room, nothing sent; the list of its screens. */
   @Published var demo = false
   @Published var demoScreens = false
+  /** The card he copied last ("Copy" on a card): the composer offers to attach it to a message (copied_cards). */
+  @Published var copiedCard: String?
+  func copyCard(_ c: DeskCard) {
+    copiedCard = c.id
+    let picked = c.options.filter { c.choices.contains($0.key) }.map { $0.label }.joined(separator: ", ")
+    #if canImport(UIKit)
+    UIPasteboard.general.string = "Nr. \(c.number) · \(c.title)\(picked.isEmpty ? "" : " → \(picked)")"
+    #endif
+    say("Copied", "Nr. \(c.number) · \(c.title): attach it in any conversation")
+  }
   /** His own room and desk while the demo runs (back when he leaves it). */
   private var beforeDemo: (room: Room?, deskId: String?)?
   @Published var deskId: String? = UserDefaults.standard.string(forKey: "trommi-desk") {
@@ -420,10 +430,13 @@ final class BoardModel: ObservableObject {
     Task { try? await room.setDraft(cardId: c.id, empty ? nil : .obj(["keys": .arr(keys.map { .str($0) }), "note": .str(note), "notes": .obj(notes.mapValues { .str($0) }), "ts": .n(nowMs())])) }
   }
   /** A message to a session (or about a card), with files. */
-  func send(agent: String, text: String, cardId: String? = nil, attachments: [JV] = []) async throws {
+  func send(agent: String, text: String, cardId: String? = nil, attachments: [JV] = [], cards: [String] = []) async throws {
+    if demo { throw ZError("demo", "nothing is sent from the demo") }
     guard let room = room, let key = desk?.sessionKey(of: agent) else { throw ZError("not-found", "unknown session") }
     var fields: [String: JV] = [:]
     if !attachments.isEmpty { fields["attachments"] = .arr(attachments) }
+    // cards he copied elsewhere ("Copy" on a card) ride along by their ids (README: copied_cards)
+    if !cards.isEmpty { fields["copied_cards"] = .arr(cards.map { .str($0) }) }
     try await room.sendMessage(sessionId: key, cardId: cardId, text: text, fields: fields)
   }
   func upload(_ data: Data, name: String, type: String, width: Int? = nil, height: Int? = nil) async throws -> JV {
