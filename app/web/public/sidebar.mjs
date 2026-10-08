@@ -419,7 +419,9 @@ export function tabBar(model, base, view) {
   const chat = lastChat(model), unread = unreadChats(model)
   // (monochrome pen drawings; Chat opens the last chat, Desk carries what waits, Note opens the note; inside a chat or
   // a card the capsule stands back)
-  return html`<nav class="tabbar" id="tabbar" aria-label="Chat, Desk, Note"${['card', 'picture', 'whiteboard', 'session'].includes(view) ? raw(' hidden') : ''}>
+  // (in a chat the capsule stays; the composer waits folded into a round glass pen beside it)
+  const pen = view === 'session' ? html`<button type="button" class="compose-fab" id="compose-fab" aria-label="Write a message" title="Write a message">${sk('pen')}</button>` : ''
+  return html`${pen}<nav class="tabbar" id="tabbar" aria-label="Chat, Desk, Note"${['card', 'picture', 'whiteboard'].includes(view) ? raw(' hidden') : ''}>
 <a class="tab" data-tab="chat" data-nav draggable="false" href="${chat ? `${base}/s/${encodeURIComponent(chat)}` : `${base}/chats`}"${view === 'chats' ? raw(' aria-current="page"') : ''}>${sk('bubble')}<span>Chat</span><i class="tab-badge" id="chat-badge"${unread ? '' : raw(' hidden')}>${unread}</i></a>
 <a class="tab" data-tab="desk" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}>${sk('desk')}<span>Desk</span>${waitingBadge(fresh.length, knocks)}</a>
 <button type="button" class="tab" data-tab="note" aria-controls="corner-note-box" aria-expanded="false">${noteGlyph(model)}<span>Note</span></button>
@@ -534,6 +536,24 @@ if (typeof document !== 'undefined') document.addEventListener('click', e => {
   document.getElementById('brand-menu')?.click()
   requestAnimationFrame(() => pill.setAttribute('aria-expanded', String(document.getElementById('brand-doors')?.hidden === false)))
 })
+// A phone's chat: the pen opens the composer and gives it the keyboard; leaving it folds it again (a draft marks the pen).
+if (typeof document !== 'undefined') {
+  const root = document.documentElement, field = () => document.querySelector('#session .session-compose textarea')
+  document.addEventListener('click', e => {
+    if (!(e.target instanceof Element) || !e.target.closest('#compose-fab')) return
+    root.dataset.compose = ''
+    requestAnimationFrame(() => field()?.focus())
+  })
+  document.addEventListener('focusout', e => {
+    if (!(e.target instanceof Element) || !e.target.closest('#session .session-compose')) return
+    setTimeout(() => {
+      if (document.activeElement?.closest?.('#session .session-compose')) return
+      delete root.dataset.compose
+      document.getElementById('compose-fab')?.toggleAttribute('data-draft', Boolean(field()?.value.trim()))
+    }, 120)
+  })
+  document.addEventListener('turbo:load', () => { delete root.dataset.compose; document.getElementById('compose-fab')?.toggleAttribute('data-draft', Boolean(field()?.value.trim())) })
+}
 // The capsule stands back while the keyboard is up (a phone: a text field has the focus).
 if (typeof document !== 'undefined') {
   const field = n => n instanceof Element && n.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, [contenteditable=""], [contenteditable="true"]')
