@@ -5,7 +5,6 @@ import * as z from './crypto/zcrypto.mjs'
 import { Hub } from './transport.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
-import { sealEscrowV2 } from './crypto/escrow.mjs'
 import * as G from './crypto/session-grants.mjs'
 import { bootFromSnapshot, writeSnapshot, SNAPSHOT_EVERY } from './snapshot.mjs'
 
@@ -552,8 +551,6 @@ export class Client {
       this._queueSessionRefresh()
     } else if (event === 'join_request') {
       if (data.invite_id) this._checkInvite(data.invite_id).catch(e => this._localAlert('invite', e))
-    } else if (event === 'escrow_changed') {
-      if (this.is_human) this._onEscrowChanged(data)
     }
   }
 
@@ -673,10 +670,10 @@ export class Client {
     try {
       for (const e of r.signed_entries) {
         state = await z.applyEntry(state, unb64u(e))
-        // A device added by the recovery key (a passphrase sign-in, or someone holding the code): every human device says so.
+        // A device added by the recovery key (an account login, or someone holding the code): every human device says so.
         const last = state.entries.at(-1)
         if (this.is_human && last?.signerKind === z.SIGNER?.RECOVERY && last.type === z.ENTRY.ADD) {
-          M.pushAlert(this.model, change, { code: 'recovery-add', message: 'a device was added with the recovery code or the passphrase: if that was not you, remove it and make a new recovery code' })
+          M.pushAlert(this.model, change, { code: 'recovery-add', message: 'a device was added with the recovery code: if that was not you, remove it and make a new recovery code' })
         }
       }
       const verdict = z.checkLogAgainstPin(state, pinFromJson(this.roomRecord.pin))
@@ -2234,54 +2231,6 @@ export class Client {
     M.applySessionGrant(this.model, k.state, ch, everAgents(k), epochAgents(k))
   }
 
-  // ---- password escrow (optional; escrow.mjs) ----------------------------------------------------
-
-  /**
-   * Seal the recovery code under a passphrase (escrow v2) and store it on the hub. The code is needed once (the device
-   * never keeps it). Only a generated passphrase (generatePassphrase, escrow.mjs) is accepted. Replaces any earlier
-   * escrow of the room by compare-and-swap: if another device changed it in between, ZError 'escrow-changed'.
-   */
-  async setPassphrase(passphrase, { recovery_code } = {}) {
-    this._needHuman()
-    if (!recovery_code) throw new ZError('bad-argument', 'setting a passphrase needs the recovery code once')
-    const rec = await z.recoveryDevice(recovery_code)
-    if (!z.bytesEqual(rec.id, this.state.recovery.id)) throw new ZError('bad-recovery-code', 'this code does not belong to the room')
-    const sealed = await sealEscrowV2({ room_id: this.model.room.room_id, recovery_code, passphrase })
-    const { revision } = await this.hub.escrowStatus()
-    const out = await this.hub.putEscrow({ ...sealed, replaces: revision })
-    this.roomRecord.has_passphrase = true
-    this.roomRecord.escrow_revision = out.revision
-    await this._saveRoom()
-    this._setRoom({ has_passphrase: true })
-  }
-  async removePassphrase() {
-    this._needHuman()
-    const { revision } = await this.hub.escrowStatus()
-    const out = await this.hub.deleteEscrow(revision)
-    this.roomRecord.has_passphrase = false
-    this.roomRecord.escrow_revision = out.revision
-    await this._saveRoom()
-    this._setRoom({ has_passphrase: false })
-  }
-  /** Whether this room has an escrow (asked as a signed-in human; anonymous reads never tell). */
-  async checkPassphrase() {
-    if (!this.is_human) return this.model.room.has_passphrase
-    const st = await this.hub.escrowStatus()
-    this._setRoom({ has_passphrase: !!st.has_escrow })
-    return this.model.room.has_passphrase
-  }
-  /** escrow_changed from the hub: another human device set or removed the escrow. Shown, so nobody swaps it silently. */
-  _onEscrowChanged(data) {
-    if (data?.revision != null && data.revision === this.roomRecord.escrow_revision) return
-    this.roomRecord.escrow_revision = data?.revision ?? null
-    if (data?.updater_device_id === this.my_device_id) return
-    const ch = M.emptyChange()
-    M.pushAlert(this.model, ch, { code: 'escrow-changed', sender_device_id: data?.updater_device_id ?? null, message: data?.escrow_version ? 'another device set a new sign-in passphrase' : 'another device turned the sign-in passphrase off' })
-    this.model.room.has_passphrase = !!data?.escrow_version
-    ch.room = true
-    this._emitChange(ch)
-    this._saveRoom().catch(() => {})
-  }
   _setRoom(fields) { Object.assign(this.model.room, fields); const ch = M.emptyChange(); ch.room = true; this._emitChange(ch) }
 
   async pushSubscribe(subscription, remove = false) { return this.hub.pushSubscription(subscription, remove) }

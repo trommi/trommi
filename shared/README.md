@@ -11,7 +11,7 @@ The wire contract is the README section "Hub v1: the wire protocol" of this repo
 | File | What |
 | --- | --- |
 | `index.mjs` | re-exports everything below; import this |
-| `crypto/` | the pure crypto, no dependencies: `zcrypto.mjs` (the library; bytes: `FORMAT.md`, design: `CRYPTO.md`), `argon2.mjs`, `escrow.mjs` (password escrow, version 2), `session-grants.mjs` (per-session keys), `hub.mjs` (what the hub checks), their tests and `vectors.json` |
+| `crypto/` | the pure crypto, no dependencies: `zcrypto.mjs` (the library; bytes: `FORMAT.md`, design: `CRYPTO.md`), `argon2.mjs`, `session-grants.mjs` (per-session keys), `hub.mjs` (what the hub checks), their tests and `vectors.json` |
 | `transport.mjs` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
 | `room.mjs` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
 | `client.mjs` | the `Client`: sync engine (one cursor, verify every header, decrypt heads, lazy timelines), outbox, membership, sessions, human actions |
@@ -307,20 +307,10 @@ const blob = await client.attachmentBlob(ref)          // browsers: a Blob with 
 await client.loadTimeline(timeline_key, { limit: 50 }) // next older page into the window, newest first: from storage if cached, else GET threads; returns { loaded, has_more }
 await client.timelineWindow(timeline_key, { before_envelope_number, limit })   // windowed read for scrolling, does not grow the in-memory window; [TimelineItem] oldest first
 await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail after a snapshot: { items (oldest first), loaded }, all pages
-roomLink(hub_url, room_id) / parseRoomLink(text)       // '<app>#r1.<b64u hub>.<b64u room>': what a fresh device needs for passphrase sign-in or recovery
+roomLink(hub_url, room_id) / parseRoomLink(text)       // '<app>#r1.<b64u hub>.<b64u room>': what a fresh device needs for recovery
 ```
 
-Password escrow (optional, `escrow.mjs`, v2): the blob is addressed by an id derived from the passphrase (PBKDF2-SHA-256, 2,000,000 iterations -> key + id), so the room id alone fetches nothing and every guess costs a slow derivation plus a rate-limited request. Whoever holds the hub's database can still guess offline (PBKDF2 is not memory-hard; WebCrypto has no Argon2), so only a generated passphrase is accepted (review 3); the paper code stays the root. Replacing or removing the escrow is compare-and-swap on the hub's revision:
-
-```js
-generatePassphrase()                                   // 'k7m2-x9qp-…' six groups of four (120 bits): offer this, show it once
-passphraseProblem(text)                                // null for a generated passphrase, else 'only a generated passphrase'
-await client.setPassphrase(passphrase, { recovery_code })   // the code once; writes escrow v2; 'weak-passphrase', 'bad-recovery-code', 'escrow-changed'
-await client.removePassphrase()
-await client.checkPassphrase()                         // -> model.room.has_passphrase (asked as a signed-in human)
-const { client } = await loginWithPassphrase({ room_link, passphrase, storage, device_name, client: 'app/x' })   // fresh device; v2 only; 'wrong-passphrase'
-// every human device gets the alert 'recovery-add' when the recovery key adds a device (passphrase sign-in or someone with the code)
-```
+Every human device gets the alert `recovery-add` when the recovery key adds a device (an account login or someone with the code).
 
 ## Sessions and keys (R6, v1.1)
 
@@ -338,7 +328,7 @@ await client.confirmInvite(invite_id, matches)        // the human compared the 
         // invite (code-mismatch, nobody added). Only on the device that made the link; anything but a boolean is refused
 client.sessionOfAgent(agent_device_id)                // the session an agent is assigned to now
 // removeDevices() also rotates every session key (without the removed agents); a new human device gets every
-// session key re-sealed by its inviter; recovery and passphrase login re-key the sessions too.
+// session key re-sealed by its inviter; recovery and account login re-key the sessions too.
 await client.leaveRoom()                              // log out: this human device removes itself (signed by itself, new room key for
         // the humans who stay and the recovery key), then stops; -> { key_epoch, humans_left }. The sessions are re-keyed
         // by the next start of a human that stays, or by the next login. The caller wipes the storage.

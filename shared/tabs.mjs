@@ -22,7 +22,7 @@ const { ZError, hex } = z
 /** The Client's write actions: in a follower they run in the leader tab. */
 export const FORWARDED = ['sendMessage', 'answer', 'trust', 'markRead', 'shred', 'decideAgain', 'verdict', 'setRegisters', 'setDraft', 'snooze',
   'duck', 'setCrown', 'setDesk', 'setSessionSettings', 'markReadUpTo', 'setDeviceInfo', 'saveNote', 'deleteNote', 'sendStrokes', 'createInvite',
-  'confirmInvite', 'removeDevices', 'createSession', 'assignSession', 'setPassphrase', 'removePassphrase', 'leaveRoom', 'writeSnapshot']
+  'confirmInvite', 'removeDevices', 'createSession', 'assignSession', 'leaveRoom', 'writeSnapshot']
 
 const RETRY_MS = 2500           // a forwarded call not answered by then is sent again (same id)
 const GIVE_UP_MS = 120_000      // ... until it is given up

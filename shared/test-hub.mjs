@@ -7,7 +7,7 @@ import { createHub } from './crypto/hub.mjs'
 
 const { b64u, unb64u, hex, unhex } = z
 const STATUS = { unauthorised: 401, 'bad-challenge': 401, forbidden: 403, 'not-member': 403, 'removed-sender': 403, 'wrong-sender': 403, 'not-found': 404, 'no-room': 404,
-  replay: 409, gap: 409, equivocation: 409, 'room-exists': 409, 'invite-used': 409, 'escrow-changed': 409, 'instance-conflict': 409, 'lease-lost': 409, 'wrong-epoch': 409, 'invite-expired': 410, 'invite-burned': 410, 'too-many': 429 }
+  replay: 409, gap: 409, equivocation: 409, 'room-exists': 409, 'invite-used': 409, 'instance-conflict': 409, 'lease-lost': 409, 'wrong-epoch': 409, 'invite-expired': 410, 'invite-burned': 410, 'too-many': 429 }
 
 export async function startTestHub({ port = 0, host = '127.0.0.1' } = {}) {
   const rooms = new Map()      // room_id -> { hub, streams: Set, storage }
@@ -136,16 +136,6 @@ export async function startTestHub({ port = 0, host = '127.0.0.1' } = {}) {
         room.files ??= new Map()
         if (M === 'PUT') { hub.authorise(token); room.files.set(parts[4], body); return send(201, { attachment_id: parts[4], total_size: body.length }) }
         if (M === 'GET') { hub.authorise(token); const b = room.files.get(parts[4]); if (!b) return send(404, { error: 'not-found' }); res.writeHead(200, { 'content-type': 'application/octet-stream' }); return res.end(b) }
-      }
-      if (parts[3] === 'escrow') {
-        // Stand-in for hub/ops/escrow.mjs: v2 only, compare-and-swap by revision, status for a signed-in human.
-        room.escrowRevision ??= 0
-        const swap = r => { if (r !== room.escrowRevision) throw Object.assign(new Error('escrow changed'), { code: 'escrow-changed' }) }
-        if (M === 'PUT') { hub.authorise(token, { human: true }); if (body.escrow_version !== 2) return send(400, { error: 'bad-argument' }); swap(body.replaces); room.escrow = { escrow_version: 2, escrow_id: body.escrow_id, key_escrow: body.key_escrow, updated_at: Date.now() }; return send(200, { escrow_version: 2, updated_at: room.escrow.updated_at, revision: ++room.escrowRevision }) }
-        if (M === 'GET' && parts[4]) return room.escrow?.escrow_id === parts[4] ? send(200, room.escrow) : send(404, { error: 'not-found' })
-        if (M === 'GET' && token) { hub.authorise(token, { human: true }); return send(200, { has_escrow: !!room.escrow, revision: room.escrowRevision, escrow_version: room.escrow?.escrow_version ?? null }) }
-        if (M === 'GET') return send(404, { error: 'not-found' })
-        if (M === 'DELETE') { hub.authorise(token, { human: true }); swap(Number(q('revision'))); room.escrow = null; return send(200, { ok: true, revision: ++room.escrowRevision }) }
       }
       return send(404, { error: 'not-found', message: `${M} ${route}` })
     } catch (e) {

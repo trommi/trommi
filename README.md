@@ -9,7 +9,7 @@ envelopes and can read none of them. Formerly "Trommi". License: O'Saasy (`LICEN
 
 | Path | What | Deployed |
 | --- | --- | --- |
-| `shared/` | what app, connector and hub share: the client core (room model, sync, codec, transport, storage; `shared/README.md`) and `shared/crypto/`, the pure crypto (`zcrypto.mjs`, `argon2.mjs`, `escrow.mjs`, `session-grants.mjs`, `hub.mjs` = the hub's checks; bytes: `FORMAT.md`, design: `CRYPTO.md`) | imported by the hub and the connector; copied into the app by its build |
+| `shared/` | what app, connector and hub share: the client core (room model, sync, codec, transport, storage; `shared/README.md`) and `shared/crypto/`, the pure crypto (`zcrypto.mjs`, `argon2.mjs`, `session-grants.mjs`, `hub.mjs` = the hub's checks; bytes: `FORMAT.md`, design: `CRYPTO.md`) | imported by the hub and the connector; copied into the app by its build |
 | `app/web/` | the app, static, no framework (`app/web/README.md`); `dev/build.mjs` makes everything in `public/gen/` at deploy time (nothing generated is in git): `shared/` and `shared/crypto/` flat in `vendor/`, the stylesheets as one bundle, and, after `npm ci` at the repository root, the connector's single file, its checksum and the plugin (`connector/build.mjs`) | Cloudflare Workers Builds on every push to `main` (watch paths `app/web/*`, `shared/*`, `connector/*`, `package.json`, `package-lock.json`) |
 | `connector/` | the agent connector, six files: `connector.mjs` (start and everything long-running: MCP stdio server `trommi`, sign-in, stream, slot lock, hot reload, the plugin's hook commands, the monitor, `say`), `tools.mjs` (the tools' schemas and what each does in the room), `prompt.md` (every text the agent reads: the instructions and each tool's description), `build.mjs` (the single-file bundle, its checksum and the plugin zip), `test.mjs` (fast), `test-e2e.mjs` (against a real local hub) | runs on the agent's machine from this checkout, or as one file installed by `curl -fsSL https://app.trommi.com/connect \| sh -s '<link>'` |
 | `hub/` | the hub server (`server.mjs`, `store.mjs`, `accounts.mjs`, `ops/`, `Dockerfile`) | GitHub Action "Hub deploy" on every push to `main` touching `hub/**` or the hub's four `shared/` files |
@@ -132,12 +132,11 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>hub/</code> · 26 files</summary>
+<details><summary><code>hub/</code> · 25 files</summary>
 
 ```
 ├── ops/
 │   ├── env.mjs
-│   ├── escrow.mjs
 │   ├── flow.mjs
 │   ├── http.mjs
 │   ├── index.mjs
@@ -166,7 +165,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>shared/</code> · 35 files</summary>
+<details><summary><code>shared/</code> · 34 files</summary>
 
 ```
 ├── crypto/
@@ -174,7 +173,6 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── crypto-test.mjs
 │   ├── CRYPTO.md
 │   ├── demo.html
-│   ├── escrow.mjs
 │   ├── FORMAT.md
 │   ├── hub-crypto-test.mjs
 │   ├── hub.mjs
@@ -209,7 +207,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>dev/</code> · 30 files</summary>
+<details><summary><code>dev/</code> · 32 files</summary>
 
 ```
 ├── fuzz/
@@ -246,6 +244,8 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── rotation.mjs
 │   └── worker.mjs
 ├── cdp.mjs
+├── ios-extra-vectors.mjs
+├── ios-parity.mjs
 └── readme-trees.mjs
 ```
 
@@ -376,10 +376,6 @@ Any other `ZError` code is a 400.
 | `GET /v1/push_key` | anyone | | `{ vapid_public_key }` |
 | `GET /v1/version` | anyone | | above, "Versions and upgrades" |
 | `GET /v1/rooms/:room_id/usage` | member | | `{ attachment_bytes, quota_bytes }` |
-| `PUT /v1/rooms/:room_id/escrow` | human | `{ escrow_version: 2, escrow_id, key_escrow, replaces }`: `escrow_id` 32 hex, derived by the client from the slow passphrase KDF; the password escrow, opaque (format: `shared/`), ≤ 4 KiB; `replaces` = the revision it replaces (0 when there is none; absent: `409 escrow-changed`). Any other `escrow_version` than 2: `400 bad-argument` | `{ escrow_version, updated_at, revision }`; compare-and-swap: another revision → `409 escrow-changed`. One escrow per room. Announced as `event: escrow_changed` `{ escrow_version, revision, updater_device_id }`; other human devices show the alert `escrow-changed` |
-| `GET /v1/rooms/:room_id/escrow/:escrow_id` | anyone; 10 per hour per address; the room's 10 per hour count misses only | | the v2 escrow with that id, else `404 not-found`: every passphrase guess costs a slow derivation and an online, rate-limited request; a read with the right id is never refused for the room's budget, so nobody can lock the owner out |
-| `GET /v1/rooms/:room_id/escrow` | human (token) | | `{ has_escrow, revision, escrow_version, updated_at, updater_device_id }`, never the blob. Without a token: always `404 not-found` (no blob is served by room id any more) |
-| `DELETE /v1/rooms/:room_id/escrow?revision=` | human | | `{ ok, revision }`; compare-and-swap like PUT; announced as `escrow_changed` with `escrow_version: null` |
 | `POST /v1/rooms/:room_id/account` | human | `{ email, auth_key, key_wrapped, kdf }` (Accounts, below) | `201 { email, email_verified_at: null, revision: 1 }`, and a six-digit code is mailed. One account per room (`409 account-exists`). Never says whether the email is in use elsewhere |
 | `GET /v1/rooms/:room_id/account` | human | | `{ email, email_verified_at, created_at, updated_at, revision, key_wrapped, kdf, has_recovery, claim_expires_at? }`, else `404` |
 | `PUT /v1/rooms/:room_id/account/password` | human | `{ auth_key, key_wrapped, kdf, revision }` | `{ revision }`; compare-and-swap (`409 account-changed`) |
@@ -477,9 +473,8 @@ Attachments are not in SQLite: encrypted client-side with `encryptAsset` (64 KiB
 | Streams | 8 per device |
 | Invites | 16 open per room, 4 requests each, 10 minutes |
 | Attachments per room | `ROOM_ATTACHMENT_QUOTA_BYTES` (1 GiB), below |
-| Password escrow reads | 10 per hour per address (`HUB_LIMIT_ESCROW_READS_PER_HOUR`); per room the same number of misses (wrong escrow ids); a hit is never refused for the room's budget; "no room" and "no escrow" are one `404 not-found` |
 | Writes in flight | `HUB_WRITE_QUEUE` (512) POST/PUT/DELETE at once, at most `HUB_WRITE_PER_IP` (16) from one address; beyond: `503 overloaded`, `retry-after: 1`. Member entries, session grants and the batch re-key (`POST session_grants`) may also use a reserved pool of `HUB_WRITE_QUEUE_MEMBERSHIP` (32), so a full queue never blocks a removal or its re-key |
-| Slow requests | A JSON body arrives whole within 15 s; an upload within 60 s + size / 16 KiB/s; any request with no bytes moving for 30 s is closed (streams live on their pings). Routes with a token check it before reading the body; uploads, ephemeral posts, share and escrow writes check it again after the body (a device removed meanwhile stores nothing) |
+| Slow requests | A JSON body arrives whole within 15 s; an upload within 60 s + size / 16 KiB/s; any request with no bytes moving for 30 s is closed (streams live on their pings). Routes with a token check it before reading the body; uploads, ephemeral posts and share writes check it again after the body (a device removed meanwhile stores nothing) |
 | Client address | The socket address. `cf-connecting-ip` counts only with `HUB_TRUST_CF=1` (set in `hub/Dockerfile`) **and** a loopback or private peer (cloudflared on the host, through Docker's port proxy); never from the tailnet or the internet |
 | Pending uploads | An attachment no envelope of its uploader names within an hour is deleted. Only the uploader's own envelopes bind an attachment to an object (deleted with it) |
 | Stream send buffer | `HUB_STREAM_BUFFER_BYTES` (4 MiB) per stream; beyond: dropped, resume by cursor |
@@ -493,7 +488,7 @@ Every rate limit of the table is configurable: `HUB_LIMIT_<NAME>` for each key o
 
 **Metrics** are never served on the public port. With `METRICS_PORT` set (server: 8792, mapped to the host's 127.0.0.1 only; `METRICS_HOST` 0.0.0.0 inside the container), `GET /metrics` gives Prometheus text: requests and latency histograms per route, envelopes ingested, write queue depth and refusals, open streams, bytes waiting per stream (sum and fullest), dropped streams, SQLite and WAL size and checkpoint lag, heap, RSS, event-loop lag, GC pauses, open files, host load, memory and data-disk space (`/proc/loadavg`, `/proc/meminfo`, `statfs`); `GET /metrics/history` the last hour in 10-second samples (with host CPU % from `/proc/stat` and request latency p95 per sample). Every minute the samples are folded into one row of `/data/metrics.db` (its own small SQLite file, not hub.db; 7 days kept, about 10,000 rows), so the admin graphs for 24 h and 7 d survive a restart. The WAL is checkpointed every 10 s (passive; truncating above `HUB_WAL_TRUNCATE_BYTES`, 64 MiB).
 
-**Admin page** (`hub/admin.mjs`, read-only): https://trommi-hub.tail276436.ts.net:8443, tailnet only, no Cloudflare. With `ADMIN_PORT` the hub starts a second listener; on the server it binds 0.0.0.0:8791 inside the container (`ADMIN_HOST`, `ADMIN_PUBLISHED_LOOPBACK=1`), published on the host's 127.0.0.1:8791 only, and `tailscale serve --https=8443 http://localhost:8791` puts it on the tailnet. Two checks on every request: the `Tailscale-User-Login` header that tailscale serve sets must be in `ADMIN_LOGINS` (no default), and a 12 h session from the admin password (scrypt; `node hub/admin.mjs hash` prints a hash). The initial hash comes from `ADMIN_PASSWORD_HASH`; "Passwort ändern" writes `/data/admin-password-hash`, which wins from then on and ends every session. Login attempts are rate limited (5 per login, 20 overall per 15 min), forms carry a CSRF token. Two pages. **Übersicht** (`/`): tiles with the current value and a sparkline (CPU, RAM, free disk, open streams, ingest in envelopes/min, latency p95, database size), then a chart each, last hour by default, `?range=24h` or `7d` from `metrics.db`; inline SVG drawn on the server, hover shows the value. **Daten** (`/data`): a tree on the left (all tables with counts; rooms, and in the open room its members and devices, envelopes by `envelope_kind`, by `timeline_kind` and the newest timelines, objects by state, attachments, keys, invites, account), on the right the selected rows, 50 per page from the server, sortable by column, with a prefix search over plain columns; a row opens every column, the decoded cleartext envelope header and links to related rows (object → its versions and card timeline, device → its envelopes and keys). Ciphertext and secrets are shown as size + first 16 bytes hex and can neither be searched, filtered nor sorted by (no oracle on e-mail addresses or escrow ids); the encrypted body is never decoded. One stylesheet and one small script, pinned by hash in the CSP; no external assets, light and dark, usable on a phone. The deploy writes `/srv/trommi/admin.env` (0600) and `compose.override.yaml` with `hub/deploy-admin.sh` from the repository variable `ADMIN_LOGINS` and the `hub` environment secret `ADMIN_PASSWORD_HASH`, and checks the listener after the restart.
+**Admin page** (`hub/admin.mjs`, read-only): https://trommi-hub.tail276436.ts.net:8443, tailnet only, no Cloudflare. With `ADMIN_PORT` the hub starts a second listener; on the server it binds 0.0.0.0:8791 inside the container (`ADMIN_HOST`, `ADMIN_PUBLISHED_LOOPBACK=1`), published on the host's 127.0.0.1:8791 only, and `tailscale serve --https=8443 http://localhost:8791` puts it on the tailnet. Two checks on every request: the `Tailscale-User-Login` header that tailscale serve sets must be in `ADMIN_LOGINS` (no default), and a 12 h session from the admin password (scrypt; `node hub/admin.mjs hash` prints a hash). The initial hash comes from `ADMIN_PASSWORD_HASH`; "Passwort ändern" writes `/data/admin-password-hash`, which wins from then on and ends every session. Login attempts are rate limited (5 per login, 20 overall per 15 min), forms carry a CSRF token. Two pages. **Übersicht** (`/`): tiles with the current value and a sparkline (CPU, RAM, free disk, open streams, ingest in envelopes/min, latency p95, database size), then a chart each, last hour by default, `?range=24h` or `7d` from `metrics.db`; inline SVG drawn on the server, hover shows the value. **Daten** (`/data`): a tree on the left (all tables with counts; rooms, and in the open room its members and devices, envelopes by `envelope_kind`, by `timeline_kind` and the newest timelines, objects by state, attachments, keys, invites, account), on the right the selected rows, 50 per page from the server, sortable by column, with a prefix search over plain columns; a row opens every column, the decoded cleartext envelope header and links to related rows (object → its versions and card timeline, device → its envelopes and keys). Ciphertext and secrets are shown as size + first 16 bytes hex and can neither be searched, filtered nor sorted by (no oracle on e-mail addresses); the encrypted body is never decoded. One stylesheet and one small script, pinned by hash in the CSP; no external assets, light and dark, usable on a phone. The deploy writes `/srv/trommi/admin.env` (0600) and `compose.override.yaml` with `hub/deploy-admin.sh` from the repository variable `ADMIN_LOGINS` and the `hub` environment secret `ADMIN_PASSWORD_HASH`, and checks the listener after the restart.
 
 ### The link: whether a session hears the human, and the receipt
 
@@ -649,7 +644,7 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
   stand. The only rule is 12 characters (owner's decision: no blocklist, no strength gate). Online guessing is limited per
   address and per email. A password opens the whole room, like the recovery code. The login endpoints give one answer
   for unknown emails and wrong passwords; registering never reveals whether an email is taken.
-- **Still open (v1.1.1):** attachment lengths are not padded to buckets (C22: the hub sees an attachment's exact size; padding needs a format change in the encrypted reference); a leaked recovery code can only be revoked by a full recovery, there is no cheaper `recovery_key_changed` entry (M6); the password escrow uses PBKDF2 (v2: 2,000,000 iterations, addressed by a passphrase-derived id, so guesses are online unless someone holds the hub's database), not a memory-hard KDF: WebCrypto has no Argon2 and no small vetted pure-JS Argon2id is in the tree. Therefore only a generated passphrase (`generatePassphrase`, 120 bits) is accepted (review 3: a human's own phrase, a lyric or quote, falls offline to the database holder and unlocks the whole room); every human device shows `recovery-add` when the recovery key adds a device. Clients apply the epoch cutoff too (review 2 B03, completed in review 3): a device whose stream was open since before it learned of a key change refuses a live envelope in the older epoch 2 minutes after that; otherwise (after sleep or offline, in a resync, reading history) the signed times decide: the sender's header `time` must lie within 2 minutes plus 3 minutes of clock skew of the signed time of the entry or grant that began the next epoch. A refused stale envelope still moves its sender's chain on (no gap, so no resync that would apply it), and its hash is kept, so a resync refuses it again (alert `wrong-epoch`). Residual: a removed sender with a colluding hub can still backdate envelopes into that window for devices that were not live then. Agent writes into a session are authorised by the agents the grants gave that session key epoch.
+- **Still open (v1.1.1):** attachment lengths are not padded to buckets (C22: the hub sees an attachment's exact size; padding needs a format change in the encrypted reference); a leaked recovery code can only be revoked by a full recovery, there is no cheaper `recovery_key_changed` entry (M6); every human device shows `recovery-add` when the recovery key adds a device. Clients apply the epoch cutoff too (review 2 B03, completed in review 3): a device whose stream was open since before it learned of a key change refuses a live envelope in the older epoch 2 minutes after that; otherwise (after sleep or offline, in a resync, reading history) the signed times decide: the sender's header `time` must lie within 2 minutes plus 3 minutes of clock skew of the signed time of the entry or grant that began the next epoch. A refused stale envelope still moves its sender's chain on (no gap, so no resync that would apply it), and its hash is kept, so a resync refuses it again (alert `wrong-epoch`). Residual: a removed sender with a colluding hub can still backdate envelopes into that window for devices that were not live then. Agent writes into a session are authorised by the agents the grants gave that session key epoch.
 
 **R7. Binds.** `answer` binds object id, the hash of the version answered and the full list of choices (each must be an option; with a closed header each must be a `final` option). `decide_again` binds the answer taken back **and** the current version's hash. `verdict`: request id = `object_id`. `trusted` widens nothing: the agent picks its own recommendation and says so.
 

@@ -110,4 +110,4 @@ Apple ID, the phone in your hand); after that, building and shipping are command
 - The rest of the model: timelines (chat), registers (status lines, session names, desks), permission requests,
   decide again, notes, attachments, snapshots, alerts; freshness (R3) on live envelopes.
 - Push (APNs: the hub sends Web Push only today), the account login (email + password: the KDF is here and tested,
-  the flow `joinWithRecoveryCode` is not), recovery, the passphrase escrow (PBKDF2, not in swift-crypto's API).
+  the flow `joinWithRecoveryCode` is not), recovery.

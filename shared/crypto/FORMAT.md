@@ -158,7 +158,7 @@ Each removed device carries its **cut** (v1.1, R3): `cutSeq` and `cutHash` are t
 | Type | Payload | Signed by |
 | --- | --- | --- |
 | 1 genesis | `roomNonce(16) ‖ member ‖ recSignPub(32) ‖ recKexPub(32) ‖ epoch` | the founding device, which is `member` (role human); epoch is 1 |
-| 2 add | `member ‖ inviteId(16)` (zeros if not by invite) | an active human device; or the recovery key, for a human device with `inviteId` zeros (the passphrase sign-in) |
+| 2 add | `member ‖ inviteId(16)` (zeros if not by invite) | an active human device; or the recovery key, for a human device with `inviteId` zeros (a login with the recovery code: account login, Emergency Kit) |
 | 3 remove | `removed ‖ epoch` (at least one device) | an active human device |
 | 4 | retired, refused | (was: a new epoch on a schedule) |
 | 5 recover | `member ‖ removed ‖ epoch ‖ newRecSignPub(32) ‖ newRecKexPub(32)` | the current recovery key |
