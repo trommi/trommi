@@ -20,7 +20,7 @@ let package = Package(
         .product(name: "TrommiCore", package: "TrommiCore"),
         .product(name: "TrommiClient", package: "TrommiCore"),
       ],
-      resources: [.copy("Resources/pen.json"), .copy("Resources/Fonts")]
+      resources: [.copy("Resources/pen.json"), .copy("Resources/Fonts"), .copy("Resources/Demo")]
     ),
   ],
   swiftLanguageModes: [.v5]

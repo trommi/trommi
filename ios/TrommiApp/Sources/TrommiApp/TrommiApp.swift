@@ -102,6 +102,11 @@ final class BoardModel: ObservableObject {
   /** How many things of a newer Trommi this version met (shown as placeholders; one quiet line says it). */
   @Published var newer = 0
   private var versionChecked = false
+  /** The demo (DemoMode.swift): the web demo's made-up room on this phone, no room, nothing sent; the list of its screens. */
+  @Published var demo = false
+  @Published var demoScreens = false
+  /** His own room and desk while the demo runs (back when he leaves it). */
+  private var beforeDemo: (room: Room?, deskId: String?)?
   @Published var deskId: String? = UserDefaults.standard.string(forKey: "trommi-desk") {
     didSet { UserDefaults.standard.set(deskId, forKey: "trommi-desk") }
   }
@@ -116,6 +121,15 @@ final class BoardModel: ObservableObject {
   private var active = true
 
   init() {
+    // TROMMI_SCREEN=<id> (dev/interop/fixtures/screens.json): the demo on that screen, no room, no network, nothing stored
+    let env = ProcessInfo.processInfo.environment
+    if let screen = env["TROMMI_SCREEN"], !screen.isEmpty {
+      if let t = env["TROMMI_THEME"].flatMap(ThemeMode.init(rawValue:)) { _theme = Published(initialValue: t) }
+      _deskId = Published(initialValue: nil)
+      startDemo(keep: false)
+      openDemoScreen(screen)
+      return
+    }
     if let id = Store.rooms(base: Store.defaultBase()).first, let r = try? Room.open(roomId: id) {
       attach(r)
       phase = .board
@@ -263,6 +277,55 @@ final class BoardModel: ObservableObject {
   // ---- what the views read ---------------------------------------------------------------------------------
 
   var view: DeskModel.View? { desk?.view(desk: deskId) }
+  /** The board on screen: the room's, or the demo's. */
+  var board: Board? { desk?.board }
+  /** The room for an action of his; in the demo nothing is sent, a toast says so. */
+  func acting() -> Room? {
+    if demo { say("Demo", "Nothing is sent from the demo.") }
+    return room
+  }
+
+  // ---- the demo ------------------------------------------------------------------------------------------
+
+  /** The web demo's room (Resources/Demo/fixture.json, its times moved to now): his own room rests meanwhile. */
+  func startDemo(keep: Bool = true) {
+    guard let data = try? Data(contentsOf: DemoData.url("fixture.json")), let b = try? DemoFixture.board(data) else { error = "The demo is missing in this build."; return }
+    if keep && !demo { beforeDemo = (room, deskId) }
+    liveTask?.cancel(); liveTask = nil
+    room?.saveCache()
+    room = nil
+    desk = DeskModel(board: b)
+    demo = true; live = true
+    path = []; selected = []; tab = .desk; menuOpen = false; panel = nil; toast = nil
+    if keep { deskId = nil }
+    phase = .board
+    version &+= 1
+  }
+  /** Back to his own room (or to the sign-in when there is none). */
+  func leaveDemo() {
+    guard demo else { return }
+    demo = false; demoScreens = false
+    path = []; selected = []; tab = .desk; menuOpen = false; panel = nil; toast = nil
+    let was = beforeDemo
+    beforeDemo = nil
+    deskId = was?.deskId
+    if let r = was?.room {
+      room = r
+      desk = DeskModel(board: r.board)
+      live = r.live
+      phase = .board
+      startLive()
+      Task { await refresh() }
+    } else if let id = Store.rooms(base: Store.defaultBase()).first, let r = try? Room.open(roomId: id) {
+      desk = nil
+      attach(r)
+      phase = .board
+    } else {
+      desk = nil
+      phase = .start
+    }
+    version &+= 1
+  }
   func card(_ id: String) -> DeskCard? { desk?.byCard[id] }
   func agent(_ id: String) -> Agent? { desk?.byAgent[id] }
   func say(_ head: String, _ line: String = "", undo: (() async -> Void)? = nil) { toast = Toast(head: head, line: line, undo: undo) }
@@ -283,7 +346,7 @@ final class BoardModel: ObservableObject {
   }
 
   func decide(_ c: DeskCard, keys: [String], note: String = "", notes: [String: String] = [:], attachments: [JV] = []) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act {
       if c.kind == "permission" { try await room.verdict(requestId: c.id, allow: keys.first == "allow"); return }
       try await room.answer(cardId: c.id, choices: c.options.filter { keys.contains($0.key) }.map { $0.key }, note: note.isEmpty ? nil : note,
@@ -295,26 +358,26 @@ final class BoardModel: ObservableObject {
     }
   }
   func trust(_ c: DeskCard, note: String = "") {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act {
       try await room.trust(cardId: c.id, note: note.isEmpty ? nil : note)
       self.say(Words.trust, c.title, undo: { [weak self] in self?.reopen(c.id) })
     }
   }
   func closeInfo(_ c: DeskCard) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { try await room.markRead(cardId: c.id); self.say("Read", c.title, undo: { [weak self] in self?.reopen(c.id) }) }
   }
   func shred(_ c: DeskCard, note: String = "") {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { try await room.shred(cardId: c.id, note: note.isEmpty ? nil : String(note.prefix(2000))); self.say("Shredded", c.title, undo: { [weak self] in self?.reopen(c.id) }) }
   }
   func snooze(_ c: DeskCard) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { try await room.snooze(cardId: c.id, until: BoardModel.nextMorning()); self.say(Words.later, c.title, undo: { [weak self] in self?.wake(c.id) }) }
   }
   func wake(_ id: String) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { try await room.snooze(cardId: id, until: nowMs()) }
   }
   /** Take an answer back; what was taken back becomes the draft again. */
@@ -330,25 +393,25 @@ final class BoardModel: ObservableObject {
     }
   }
   func takeBack(_ c: DeskCard) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { try await room.sendMessage(cardId: c.id, text: "The human took the card back; no need to rework or explain it.", fields: ["present_card": true]) }
   }
   func handBack(_ c: DeskCard, text: String = "") {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act {
       try await room.sendMessage(cardId: c.id, text: text.isEmpty ? "Back to you: please rework this question and present it again. Take the comments under the card into account." : text, fields: ["hand_back": true])
       self.say("Handed back", c.title, undo: { [weak self] in if let c = self?.card(c.id) { self?.takeBack(c) } })
     }
   }
   func what(_ c: DeskCard) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act {
       try await room.sendMessage(cardId: c.id, text: Words.explainText, fields: ["explain": true])
       self.say("Asked: \(Words.what)", c.title, undo: { [weak self] in if let c = self?.card(c.id) { self?.takeBack(c) } })
     }
   }
   func archive(_ id: String, _ on: Bool = true) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { try await room.setRegisters(["archived/\(id)": on ? .obj(["at": .n(nowMs())]) : .null]); if on { self.say("Archived", self.card(id)?.title ?? "", undo: { [weak self] in self?.archive(id, false) }) } }
   }
   func setDraft(_ c: DeskCard, keys: [String], note: String, notes: [String: String]) {
@@ -368,6 +431,7 @@ final class BoardModel: ObservableObject {
     return try await room.uploadAttachment(Array(data), fileName: name, mediaType: type, width: width, height: height)
   }
   func attachment(_ ref: JV) async throws -> Data {
+    if demo { return try DemoData.file(ref) }
     guard let room = room else { throw ZError("offline", "no room") }
     return Data(try await room.fetchAttachment(ref))
   }
@@ -381,17 +445,17 @@ final class BoardModel: ObservableObject {
     } catch { fail("Not loaded", error) }
   }
   func loadOlder(card id: String) async {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     do { try await room.loadOlder(timelineKeyOf("chat", "card/\(id)"), limit: 50) } catch { fail("Not loaded", error) }
   }
   /** A session's settings (name, icon, desk, archived, parent, position). */
   func editSession(_ a: Agent, _ fields: [String: JV]) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { try await room.editSession(a.deviceId, fields) }
   }
   /** The crown of the session's desk (one per desk; the room's single crown without desks). */
   func star(_ a: Agent, _ on: Bool) {
-    guard let room = room, let d = desk else { return }
+    guard let room = acting(), let d = desk else { return }
     act {
       let crown: JV = on ? .obj(["session_id": .s(a.sessionId), "agent_device_id": .s(a.agentDeviceId)]) : .null
       guard let deskId = d.deskOf(a) else { try await room.setCrown(crown); return }
@@ -401,7 +465,7 @@ final class BoardModel: ObservableObject {
     }
   }
   func duckAll(_ ids: [String]) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act {
       for id in ids { try await room.trust(cardId: id) }
       self.say("Left to the agents", ids.count == 1 ? "1 question" : "\(ids.count) questions", undo: { [weak self] in for id in ids { self?.reopen(id) } })
@@ -412,7 +476,7 @@ final class BoardModel: ObservableObject {
    * questions are shredded and it goes to the archive.
    */
   func deleteSession(_ a: Agent) {
-    guard let room = room, let d = desk else { return }
+    guard let room = acting(), let d = desk else { return }
     act {
       for c in d.cards where c.agent == a.id && c.status == "open" && c.kind != "permission" { try? await room.shred(cardId: c.id) }
       try await room.editSession(a.deviceId, ["archived": true])
@@ -423,12 +487,12 @@ final class BoardModel: ObservableObject {
   }
   /** Remove a device of the room (Devices): a new room key, every session re-keyed. */
   func removeDevice(_ id: String, name: String) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act("Not removed") { try await room.removeDevices([id]); self.say("Removed", name) }
   }
   /** Log out of this device: it removes itself from the room; nothing of Trommi is left here. */
   func logOut() {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act("Not logged out") {
       do { try await room.leaveRoom() } catch let e as HubError where e.status == 0 { room.forgetHere() }
       self.liveTask?.cancel(); self.liveTask = nil
@@ -438,7 +502,7 @@ final class BoardModel: ObservableObject {
   }
   /** One way for every selected card (desk.mjs POST /cards/batch): one toast, its Undo takes all back. */
   func batch(_ way: String) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     let ids = Array(selected)
     selected = []
     act {
@@ -459,7 +523,7 @@ final class BoardModel: ObservableObject {
   }
   /** Desks: register desk/<id>. */
   func newDesk(name: String) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act {
       if room.board.human.desks.isEmpty { try await room.setDesk("main", .obj(["name": "Desk", "created_at": .n(nowMs() - 1)])) }
       let id = (0..<4).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
@@ -468,11 +532,11 @@ final class BoardModel: ObservableObject {
     }
   }
   func renameDesk(_ id: String, _ name: String) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { var v = room.board.human.desks[id]?.object ?? [:]; v["name"] = .str(String(name.prefix(40))); try await room.setDesk(id, .obj(v)) }
   }
   func removeDesk(_ id: String) {
-    guard let room = room else { return }
+    guard let room = acting() else { return }
     act { try await room.setDesk(id, nil); if self.deskId == id { self.deskId = nil } }
   }
 
@@ -542,6 +606,8 @@ struct RootView: View {
       }
     }
     .background(Ink.bg)
+    .overlay(alignment: .bottomLeading) { if model.demo && model.phase == .board { DemoTag() } }
+    .sheet(isPresented: $model.demoScreens) { AllScreensSheet() }
   }
   private var title: String {
     switch model.phase {
