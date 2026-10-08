@@ -5,7 +5,7 @@
 //   "trommi-test-request/v1\n<METHOD>\n<path?query>\n<timestamp>\n<nonce>" (nonce: 16 random base64url characters).
 // Valid for 60 s and once. Such a request may found a room with `test_room: true` (without the founding token and
 // the per-address founding limit) and may DELETE a test room. Rate limits are lifted only for the routes of a room in
-// the test-room set; never for a real room and never for the escrow. A test room expires after 24 hours.
+// the test-room set; never for a real room. A test room expires after 24 hours.
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'

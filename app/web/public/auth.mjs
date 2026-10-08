@@ -5,7 +5,7 @@
 // account (email + password; this device founds the room), Log in (email + password, or scan a signed-in device's
 // code), Forgot password (Emergency Kit), and the old recovery code. The UI says "account", never "room".
 // Calm and sober: this is about keys; pen drawings only on the choice buttons.
-// Core features that may not be there yet (escrow, usage, session handover) are shown only when the core has them.
+// Core features that may not be there yet (usage, session handover) are shown only when the core has them.
 import { BELL, Controller, avatar, controller, copyText, doodleSvg, errorLine, html, raw, roomPage, roomShell, sketchSvg } from './ui.mjs'
 import { CLIENT, account, checkEmoji, core, ses, stream } from './app.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }

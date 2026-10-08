@@ -8,7 +8,7 @@
 //
 // What never leaves this module in full: ciphertext, signed blobs and secrets (OPAQUE_COLUMN and every BLOB that
 // is not a device id) are shown as size + first 16 bytes hex. Opaque columns can neither be filtered, sorted nor
-// searched (no oracle on e-mail addresses or escrow ids). The encrypted body is never decoded; the envelope
+// searched (no oracle on e-mail addresses). The encrypted body is never decoded; the envelope
 // header is cleartext by design (the hub routes by it) and is decoded without any key.
 // No external assets, no framework: one stylesheet and one small script, both pinned by hash in the CSP.
 import crypto from 'node:crypto';
@@ -24,7 +24,7 @@ const COUNT_CAP = 10000;
 const TZ = process.env.ADMIN_TZ || 'Europe/Berlin';
 
 // Columns whose content is ciphertext, signed blobs or secrets: never shown in full.
-// escrow_id: with the room id it fetches the escrow blob and is itself a passphrase-derived verifier (review 3).
+// escrow_id, key_escrow: the removed password escrow's table, left in databases from before (the id was a passphrase verifier).
 export const OPAQUE_COLUMN = /^(encrypted_body|key_sealed|key_back_link|envelope_header|envelope_nonce|envelope_signature|subscription|endpoint|access_token.*|signed_.*|.*_signature|escrow_id|key_escrow|.*_secret.*|.*_hash|.*_salt|.*_wrapped|email)$/;
 // Device ids are public (the member list names them); as BLOBs they are shown in full hex so they can be linked.
 const DEVICE_COLUMN = /(^|_)device_id$/;

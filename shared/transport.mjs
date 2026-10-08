@@ -23,7 +23,7 @@ export function normaliseHubUrl(url) {
 }
 
 /** Every id that goes into a URL path is lowercase hex of its exact length (never raw text from a body or the hub). */
-const HEX = { room_id: 64, attachment_id: 32, invite_id: 32, session_id: 32, share_id: 32, escrow_id: 32 }
+const HEX = { room_id: 64, attachment_id: 32, invite_id: 32, session_id: 32, share_id: 32 }
 export function checkId(what, v) {
   const n = HEX[what]
   if (typeof v !== 'string' || v.length !== n || !/^[0-9a-f]+$/.test(v)) throw new ZError('bad-argument', `${what} must be ${n} lowercase hex characters`)
@@ -238,13 +238,6 @@ export class Hub {
   getShared(share_id, share_secret) { return this.request('GET', `/shares/${checkId('share_id', share_id)}`, { auth: false, binary: true, headers: { 'x-share-secret': share_secret } }) }
   getAttachment(attachment_id) { return this.request('GET', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { binary: true }) }
   pushSubscription(subscription, remove = false) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription } }) }
-  /** Anonymous: GET /escrow/:escrow_id (the id comes from the passphrase). The room-id route serves nothing any more. */
-  getEscrow(escrow_id) { return this.request('GET', this.roomPath(`/escrow/${checkId('escrow_id', escrow_id)}`), { auth: false }) }
-  /** A signed-in human: { has_escrow, revision, escrow_version, ... } (never the blob). */
-  escrowStatus() { return this.request('GET', this.roomPath('/escrow')) }
-  /** Compare-and-swap: `replaces` is the revision from escrowStatus (0 when there is none); 409 escrow-changed otherwise. */
-  putEscrow({ escrow_version, escrow_id, key_escrow, replaces }) { if (this.readOnly) return this._refused(); return this.request('PUT', this.roomPath('/escrow'), { body: { escrow_version, escrow_id, key_escrow, replaces } }) }
-  deleteEscrow(revision) { if (this.readOnly) return this._refused(); return this.request('DELETE', this.roomPath('/escrow'), { query: { revision } }) }
   pushKey() { return this.request('GET', '/push_key', { auth: false }) }
 
   /**

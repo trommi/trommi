@@ -4,7 +4,6 @@ import * as z from './crypto/zcrypto.mjs'
 import { Hub, normaliseHubUrl } from './transport.mjs'
 import { Client, secretToJson, secretFromJson, verifiedHeads } from './client.mjs'
 import './agent.mjs'
-import { escrowKeyAndId, openEscrowV2 } from './crypto/escrow.mjs'
 import * as G from './crypto/session-grants.mjs'
 import { prefetchSnapshot } from './snapshot.mjs'
 
@@ -202,7 +201,7 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
 
 export { secretToJson }
 
-/** The link a fresh device types or scans to sign in with a passphrase or to recover: `<app>#r1.<b64u hub>.<b64u room>`. Not secret. */
+/** The link a fresh device types or scans to recover: `<app>#r1.<b64u hub>.<b64u room>`. Not secret. */
 export function roomLink(hub_url, room_id, app = 'https://app.trommi.com/login') {
   return `${app}#r1.${b64u(new TextEncoder().encode(normaliseHubUrl(hub_url)))}.${b64u(unhex(room_id))}`
 }
@@ -217,26 +216,7 @@ export function parseRoomLink(text) {
 }
 
 /**
- * "Mit Passwort anmelden": a fresh device with the room link and the passphrase. Opens the escrow, signs in as the
- * recovery key, adds ITSELF as a human device (entry signed by the recovery key; nobody is removed), seals the room
- * key for itself. Returns { client }.
- */
-export async function loginWithPassphrase({ room_link, passphrase, storage, client: client_name = null, device_name = '', device_info = null, fetch = null }) {
-  const { hub_url, room_id } = parseRoomLink(room_link)
-  if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
-  const pub = new Hub({ hub_url, room_id, fetch, client: client_name })
-  // The escrow id comes from the passphrase (a wrong passphrase finds nothing).
-  const { key, escrow_id } = await escrowKeyAndId(passphrase, room_id)
-  let code
-  try { code = await openEscrowV2({ room_id, key_escrow: (await pub.getEscrow(escrow_id)).key_escrow, key, escrow_id }) }
-  catch (e) { if (e.code === 'not-found') throw new ZError('wrong-passphrase', 'this passphrase does not open an escrow of this room'); throw e }
-  const { client } = await joinWithRecoveryCode({ hub_url, room_id, code, storage, client: client_name, device_name, device_info, fetch })
-  client.model.room.has_passphrase = true
-  return { client }
-}
-
-/**
- * A fresh device that holds the room's recovery code (from the passphrase escrow or an account login, account.mjs):
+ * A fresh device that holds the room's recovery code (from an account login, account.mjs, or the Emergency Kit):
  * sign in as the recovery key, add ITSELF as a human device (entry signed by the recovery key; nobody is removed),
  * seal the room key and every session key for itself. Every human device then shows the alert 'recovery-add'.
  */

@@ -30,7 +30,6 @@ class MockClient {
       },
       invites: new Map(), alerts: [], outbox: [], stack: [], open_permission_ids: [],
     }
-    this.model.room.has_passphrase ??= false
     for (const m of this.model.members.values()) m.fingerprint ??= m.device_id.slice(0, 16).match(/.{4}/g).join(' ')
     for (const [key, items] of Object.entries(f.timelines ?? {})) this.store.set(key, items)
     for (const c of this.model.cards.values()) { this.timeline(c.timeline_key); this.ensureStore(c.timeline_key) }
@@ -220,13 +219,7 @@ class MockClient {
       this.model.members.set(m.device_id, m); c.members = true
     })
   }
-  // Password sign-in (escrow), storage use, handing a session to an agent: shaped like the core, nothing behind them.
-  async setPassphrase(p) {
-    if (String(p).length < 14) throw Object.assign(new Error('weak passphrase'), { code: 'weak-passphrase' })
-    await new Promise(r => setTimeout(r, 600))
-    this.changed(c => { this.model.room.has_passphrase = true; c.room = true })
-  }
-  async removePassphrase() { await new Promise(r => setTimeout(r, 300)); this.changed(c => { this.model.room.has_passphrase = false; c.room = true }) }
+  // Storage use, handing a session to an agent: shaped like the core, nothing behind them.
   async usage() { return { bytes: 48_300_000, limit_bytes: 1_000_000_000 } }
   async assignSession() {}
   async removeDevices(ids) {

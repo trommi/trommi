@@ -8,7 +8,7 @@ import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../hub/server.mjs'
 import { startTestHub } from './test-hub.mjs'
-import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, joinWithRecoveryCode, roomLink, passphraseProblem, generatePassphrase, sealEscrowV2, memoryStorage, timelineEvents, checkEmoji, z } from './index.mjs'
+import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, joinWithRecoveryCode, roomLink, memoryStorage, timelineEvents, checkEmoji, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
@@ -728,61 +728,16 @@ await test('v1.1 R4: commands delivered once per (sender, sequence); ledger surv
   assert(again.ledger.has(seen[0].envelope_hash), 'ledger persisted')
 })
 
-await test('password escrow v2: generated passphrase, blob addressed by a passphrase-derived id, recovery-add alert', async () => {
+await test('recovery code login: a fresh device adds itself, every human device gets the recovery-add alert', async () => {
   const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
-  const pass = generatePassphrase()
-  assert(/^([a-z2-9]{4}-){5}[a-z2-9]{4}$/.test(pass) && !passphraseProblem(pass), 'generated passphrase passes')
-  // Review 3: only generated passphrases; a self-chosen one (a lyric passes any word count) falls offline to the hub's DB.
-  for (const own of ['pferd batterie heftklammer korrekt', 'kurz', 'pferd batterie heftklammer korrekt sonne mond', 'never gonna give you up never gonna let you down'])
-    assert(passphraseProblem(own), `own passphrase refused: ${own}`)
-  let err = null
-  try { await phone.setPassphrase('never gonna give you up never gonna let you down', { recovery_code }) } catch (e) { err = e }
-  eq(err?.code, 'weak-passphrase', 'self-chosen refused')
-  const t0 = performance.now()
-  await phone.setPassphrase(pass, { recovery_code })
-  const sealMs = performance.now() - t0
-  eq(phone.model.room.has_passphrase, true, 'flag')
-  // the room id alone fetches nothing any more
-  const anon = new Hub({ hub_url: HUB, room_id: phone.model.room.room_id })
-  err = null
-  try { await anon.request('GET', anon.roomPath('/escrow'), { auth: false }) } catch (e) { err = e }
-  eq(err?.code, 'not-found', 'no blob by room id')
-  eq(await phone.checkPassphrase(), true, 'a member sees that there is one')
-  const link = roomLink(HUB, phone.model.room.room_id)
-  err = null
-  try { await loginWithPassphrase({ room_link: link, passphrase: generatePassphrase(), storage: memoryStorage() }) } catch (e) { err = e }
-  eq(err?.code, 'wrong-passphrase', 'wrong passphrase')
   const id = await agent.sendCard({ title: 'before login', options: [{ key: 'a', label: 'A' }] })
   await settleAll(agent)
-  const fresh = track((await loginWithPassphrase({ room_link: link, passphrase: pass.toUpperCase(), storage: memoryStorage(), device_name: 'Fresh' })).client)
+  const fresh = track((await joinWithRecoveryCode({ hub_url: HUB, room_id: phone.model.room.room_id, code: recovery_code, storage: memoryStorage(), device_name: 'Fresh' })).client)
   await fresh.start()
   await until(() => fresh.model.cards.get(id)?.title === 'before login', 'reads the room')
   await until(() => phone.model.members.get(fresh.my_device_id)?.device_role === 'human', 'phone sees the new human device')
   await until(() => phone.model.alerts.some(a => a.code === 'recovery-add'), 'every human device is told')
   assert(phone.model.members.get(phone.my_device_id).is_active, 'phone stays')
-  console.log(`     PBKDF2 2M seal ${sealMs.toFixed(0)} ms`)
-})
-
-if (!useTestHub) await test('escrow review 3: compare-and-swap between two devices, escrow-changed alert, version 2 only', async () => {
-  const { phone, laptop, recovery_code } = await room({ laptop: true })
-  await phone.setPassphrase(generatePassphrase(), { recovery_code })
-  await until(() => laptop.model.alerts.some(a => a.code === 'escrow-changed'), 'the other human device is told')
-  assert(!phone.model.alerts.some(a => a.code === 'escrow-changed'), 'not the writer itself')
-  // A stale writer (it read revision 0 before the phone wrote) is refused instead of overwriting silently.
-  const sealed = await sealEscrowV2({ room_id: phone.model.room.room_id, recovery_code, passphrase: generatePassphrase() })
-  let err = null
-  try { await laptop.hub.putEscrow({ ...sealed, replaces: 0 }) } catch (e) { err = e }
-  eq(err?.code, 'escrow-changed', 'stale replace refused')
-  err = null
-  try { await laptop.hub.deleteEscrow(0) } catch (e) { err = e }
-  eq(err?.code, 'escrow-changed', 'stale delete refused')
-  err = null
-  try { await laptop.hub.putEscrow({ escrow_version: 1, escrow_id: sealed.escrow_id, key_escrow: z.b64u(new Uint8Array(80)), replaces: 1 }) } catch (e) { err = e }
-  eq(err?.code, 'bad-argument', 'only escrow version 2')
-  err = null
-  const anon = new Hub({ hub_url: HUB, room_id: phone.model.room.room_id })
-  try { await anon.request('GET', anon.roomPath('/escrow'), { auth: false }) } catch (e) { err = e }
-  eq(err?.code, 'not-found', 'nothing served by room id')
 })
 
 if (z.KEY_SCOPE) await test('R6 session keys: agent A cannot read session B; handover with and without history', async () => {
