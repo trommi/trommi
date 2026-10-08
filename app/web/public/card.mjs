@@ -14,7 +14,7 @@
 // "card" (controller "card") adds the pencil for a note on one option, the draft kept while typing,
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
-import { BASE, SAID, heardOf, linkOf, stream, walkOf } from './app.mjs'
+import { BASE, NEEDS_NEWER, SAID, heardOf, linkOf, stream, walkOf } from './app.mjs'
 import { Controller, EXPLAIN_TEXT, isTyping, letterKeysOn, FINAL_TIP, LATER_TAG, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
@@ -219,6 +219,8 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
     const can = card.status === 'shredded' || card.choice != null || card.trusted || (card.kind === 'info' && card.read)
     return box(html`<div class="tc-opts">${still(said, card.note ? `Your note: ${card.note}` : '', 'is-picked')}${card.options.filter(o => card.option_notes?.[o.key]).map(o => still(o.label, `Your note: ${card.option_notes[o.key]}`))}${card.settled ? still(html`${sk('tick')}${SETTLED}`, `${model.byAgent.get(card.agent)?.name ?? 'The agent'} marked this answer as final: nothing follows from it.`, 'is-settled') : ''}${card.summary ? still('Done by the agent', card.summary) : ''}</div>${can ? back(card, base, 'reopen') : ''}`)
   }
+  // A card of a newer Trommi: nothing to answer from here; the room's notice offers the reload.
+  if (card.unsupported) return box(html`<p class="tc-quiet">${NEEDS_NEWER}</p>`)
   if (card.with_agent) return box(html`<div class="tc-opts">${still(WORDS.revising, 'It is with its session and comes back reworked.')}</div>${back(card, base, 'takeback')}`)
   // Something to read: two clear tiles, What?? (it comes back explained) and Got it (read, closed).
   // An info: Got it is its answer; at the column's foot What?? and the reverse card, as on a decision (the reverse

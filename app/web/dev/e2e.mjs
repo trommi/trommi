@@ -264,6 +264,16 @@ try {
   check(await A.js("return !trommi.model().state.notes.some(m => m.text.startsWith('Notiz e2e'))"), 'the sent note left the sidebar')
   await A.shot('e2e-note-taped.png')
 
+  // ---- a card of a newer Trommi (a card_type this app does not know): a placeholder on its page, nothing to answer,
+  //      and once a calm line with Reload (README "Versioning and compatibility") ----
+  const newerCard = await agent.sendCard({ card_type: 'poll', title: 'Mittag?', options: [{ key: 'a', label: 'Pizza' }] })
+  await A.until(`trommi.client.model.cards.has('${newerCard}')`, 'the newer card arrives')
+  await A.js(`trommi.router.visit('/card/${newerCard}')`)
+  await A.until(`document.querySelector('#card-answer-${newerCard}')?.textContent.includes('needs a newer version of Trommi')`, 'placeholder on the card').then(() => check(true, 'a card of a newer Trommi shows the update line, no options to answer'), e => check(false, e.message))
+  check(await A.js(`return !document.querySelector('#card-answer-${newerCard} button[formaction]') && document.querySelector('#card-title-${newerCard}')?.textContent.includes('Mittag?')`), 'its title stands, no answer buttons')
+  await A.until("document.querySelector('.room-notice[data-why=newer] .room-notice-go')", 'the newer notice').then(() => check(true, 'a calm notice offers Reload once something needs a newer Trommi'), e => check(false, e.message))
+  await A.js("document.querySelector('.room-notice[data-why=newer]')?.remove()")
+
   // ---- the end list at the foot of the Desk's list (#desk-end): what the agents finished (an empty box: a tick archives
   //      it, Undo takes it back), what is put off (Later), what is ticked off (answered, done, shredded: struck); five
   //      rows, then "Show more", which opens the whole list with its search (/stacks/off); the way back is on the card ----
