@@ -1,7 +1,7 @@
 // account.ts: the Trommi account. An email and a password the person chooses (like a password manager), and an
 // optional Emergency Kit (recovery words) for "Forgot password". The account is a way into the ROOM the first
 // device founded: what the password and the kit open is the room's recovery code, from which a new device adds itself
-// (room.mjs joinWithRecoveryCode). The hub never sees the password, the recovery words or the code.
+// (room.ts joinWithRecoveryCode). The hub never sees the password, the recovery words or the code.
 //
 // account v1 (bytes):
 //   email     = trim, lowercase (NFC)
@@ -23,9 +23,9 @@ import { argon2id } from './crypto/argon2.mjs'
 import { WORDS } from './wordlist.ts'
 import type { Storage } from './types.ts'
 import { Hub, normaliseHubUrl } from './transport.ts'
-import * as room from './room.mjs'
+import * as room from './room.ts'
 
-// room.mjs is not typed yet: what this file calls of it.
+// room.ts is not typed yet: what this file calls of it.
 type Opened = { client: any; recovery_code: string }
 const { foundRoom, joinWithRecoveryCode } = room as unknown as { foundRoom(o: Record<string, unknown>): Promise<Opened>; joinWithRecoveryCode(o: Record<string, unknown>): Promise<{ client: any }> }
 
@@ -36,7 +36,7 @@ export interface AccountClient { model: { room: { room_id: string | null } }; hu
 /** The account as the hub keeps it (GET …/account). */
 export interface AccountStatus { email: string; email_verified_at?: number | null; has_recovery?: boolean; revision: number; kdf?: Kdf; key_wrapped: string; [field: string]: unknown }
 export interface Kdf { alg: string; v: number; m: number; t: number; p: number }
-/** What opening a room takes besides the account (room.mjs). */
+/** What opening a room takes besides the account (room.ts). */
 interface DeviceOptions { storage: Storage; device_name?: string; device_info?: Record<string, unknown> | null; fetch?: typeof globalThis.fetch | null; client?: string | null }
 const te = new TextEncoder()
 export const ACCOUNT_KDF: Readonly<Kdf> = Object.freeze({ alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 })

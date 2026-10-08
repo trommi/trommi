@@ -18,7 +18,7 @@ export interface StreamOptions {
   onState?: (state: 'connecting' | 'open' | 'closed', error?: unknown) => void
   stale_ms?: number
 }
-export interface HubOptions { hub_url: string; room_id?: string | null; signer?: ((challenge: Uint8Array) => Promise<Uint8Array>) | null; fetch?: Fetch | null; found_token?: string | null; client?: string | null }
+export interface HubOptions { hub_url: string; room_id?: string | null | undefined; signer?: ((challenge: Uint8Array) => Promise<Uint8Array>) | null | undefined; fetch?: Fetch | null | undefined; found_token?: string | null | undefined; client?: string | null | undefined }
 const REFRESH_BEFORE_MS = 60_000
 const REQUEST_TIMEOUT_MS = 30_000          // a JSON route (a page of 1000 envelopes takes about a second on a phone line)
 const ATTACHMENT_TIMEOUT_MS = 120_000      // attachment bytes up and down on a slow phone line
@@ -70,7 +70,7 @@ export class Hub {
   _signing: Promise<Json> | null = null
   /** R4: an agent's lease generation, named on every write and stream (none for humans). */
   lease_generation?: number | null
-  /** A follower tab's hub (tabs.mjs): moves nothing. */
+  /** A follower tab's hub (tabs.ts): moves nothing. */
   readOnly?: boolean
 
   constructor({ hub_url, room_id = null, signer = null, fetch: f = null, found_token = null, client = null }: HubOptions) {
@@ -82,7 +82,7 @@ export class Hub {
     this.found_token = found_token
   }
 
-  /** A follower tab (tabs.mjs) reads only: anything that moves the room's log, keys or invites is refused here. */
+  /** A follower tab (tabs.ts) reads only: anything that moves the room's log, keys or invites is refused here. */
   _refused(): Promise<never> { return Promise.reject(new ZError('follower', 'this tab reads only: the writer tab sends')) }
   url(path: string): string { return `${this.hub_url}/v1${path}` }
   roomPath(path = ''): string { return `/rooms/${checkId('room_id', this.room_id)}${path}` }

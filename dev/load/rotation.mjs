@@ -7,7 +7,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { z } from '../../shared/index.mjs'
+import { z } from '../../shared/index.ts'
 import { arg, until, pct, found, addAgent, addHuman, startLocalHub, useTestKey, deleteTestRoom, writeJson } from './lib.mjs'
 import { guard } from '../guard.mjs'
 guard({ usage: 'node dev/load/rotation.mjs --hub=local|URL --agents=N --humans=N --removals=N [--test-key=FILE] [--out=FILE]', values: ['agents', 'hub', 'humans', 'out', 'removals', 'test-key'], targets: ['hub'] })

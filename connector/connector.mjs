@@ -42,7 +42,7 @@
 //   TROMMI_LINK_MS   the link report repeats a moved last tool call at most this often, default 30000
 //   TROMMI_LINK_TICK_MS  how often the folder is looked at and the report checked, default 5000
 //
-// Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json and .state.log (cursor, chains, model: shared/storage-file.mjs), .lock and
+// Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json and .state.log (cursor, chains, model: shared/storage-file.ts), .lock and
 // .files/ (the human's attachments, decrypted for Claude). A restarted session reuses its slot (pathsOf, pickSlot).
 // Which process gets the key: the one whose Claude Code session is used ("who gets the key", below the lock).
 
@@ -948,9 +948,9 @@ async function ownHeldSlot(cfg, room_id) {
  * Returns { me, open(), join(link), stop() }; `onCommand(cmd)` gets every authorised command.
  */
 async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {}, onRetired = () => {}, onDropped = () => {} } = {}) {
-  const core = await import('../shared/index.mjs')
+  const core = await import('../shared/index.ts')
   const z_ = core.z
-  const { fileStorage } = await import('../shared/storage-file.mjs')
+  const { fileStorage } = await import('../shared/storage-file.ts')
   // Phases: asleep (the key not asked for yet, or given back), starting, then as before.
   const me = { phase: 'asleep', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
   const process_instance = crypto.randomBytes(8).toString('hex')
@@ -1377,8 +1377,8 @@ async function lastWord(cfg, room_id, t) {
   const p = pathsOf(cfg, room_id, t.slot)
   if (!fs.existsSync(p.key_file) || !lockSlot(p, `witness:${process.pid}`)) return false
   try {
-    const core = await import('../shared/index.mjs')
-    const { fileStorage } = await import('../shared/storage-file.mjs')
+    const core = await import('../shared/index.ts')
+    const { fileStorage } = await import('../shared/storage-file.ts')
     const storage = await fileStorage({ dir: p.dir, key_file: p.key_file, prefix: p.prefix })
     const room = await storage.get('room'), device = await storage.loadDevice()
     if (!room || !device) return false

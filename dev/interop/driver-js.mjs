@@ -3,7 +3,7 @@
 // invite, login) or an agent (join with an agent invite: agent_card, close_card, agent_inbox, …).
 import fs from 'node:fs'
 import readline from 'node:readline'
-import * as core from '../../shared/index.mjs'
+import * as core from '../../shared/index.ts'
 import * as A from '../../shared/account.ts'
 import * as codec from '../../shared/codec.ts'
 import { COMMANDS, DRIVER_PROTOCOL } from './protocol.mjs'

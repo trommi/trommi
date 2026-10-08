@@ -7,7 +7,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { startHub, LIMITS } from '../hub/server.mjs'
-import { foundRoom, joinRoom, memoryStorage } from './index.mjs'
+import { foundRoom, joinRoom, memoryStorage } from './index.ts'
 import { snapshotOf, patchOf, mirrorOf, applyPatch } from './mirror.ts'
 
 LIMITS.foundPerIpHour = 10_000
