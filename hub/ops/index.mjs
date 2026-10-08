@@ -6,6 +6,7 @@
 //   ops.send(s, chunk)          every chunk for a live stream (bounded buffer)    ops.track(s, req)  a new stream
 //   ops.unlimited(req, roomId)  rate limits lifted (a signed test request, or a test room)
 //   ops.testRooms.wanted/mark   founding with test_room: true                      ops.quota.check/make  uploads
+//   ops.deleteTestRooms(ids)    the admin page's test-account cleanup (delete-room.mjs: backup, then one transaction per room)
 //
 // Routes: GET /v1/version · DELETE /v1/rooms/:room_id (test rooms) · GET /v1/rooms/:room_id/usage. Metrics: METRICS_PORT (+ METRICS_HOST, default 127.0.0.1) only.
 import http from 'node:http'
@@ -17,6 +18,7 @@ import { testRooms } from './test-rooms.mjs'
 import { attachmentQuota } from './quota.mjs'
 import { walKeeper } from './wal.mjs'
 import { hubMetrics } from './metrics.mjs'
+import { deleteRooms } from './delete-room.mjs'
 
 export { limitsFromEnv } from './env.mjs'
 
@@ -62,6 +64,8 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
 
   return {
     flow, versions, metrics, wal, quota, testRooms: tests, unlimited,
+    /** The admin page's "Delete these N test rooms": backup, then each room (only @example.org accounts). */
+    deleteTestRooms: (roomIds, { by } = {}) => deleteRooms({ db, dataDir, roomIds, closeRoom, by, now, log }),
     metricsPort: () => metricsServer?.address().port ?? null,
     async handle(req, res, url) {
       metrics.request(req, res, url.pathname)

@@ -936,14 +936,15 @@ export async function startHub({
 
   const ops = await createOps({ db, dataDir, files, room, bearer, ipOf, now, log, closeRoom, announce: (id, event, data) => rooms.get(id)?.then(r => deliver(r, { text: sse(event, data) }), () => {}) })
   const accounts = createAccounts({ db, room, bearer, ipOf, mailer: createMailer({ log }), now, log })
-  // The read-only admin page (hub/admin.mjs) on its own listener, only with ADMIN_PORT. It never takes the hub down:
+  // The admin page (hub/admin.mjs, read-only but for the test-account cleanup it hands back to ops) on its own listener, only with ADMIN_PORT. It never takes the hub down:
   // a missing ADMIN_LOGINS or a busy port is logged and the hub runs without it.
   let admin = null
   if (adminPort) {
     try {
       const { startAdmin } = await import('./admin.mjs')
       admin = await startAdmin({ dbPath: path.join(dataDir, 'hub.db'), dataDir, port: Number(adminPort), host: process.env.ADMIN_HOST || '127.0.0.1',
-        allowPublishedLoopback: process.env.ADMIN_PUBLISHED_LOOPBACK === '1', metrics: ops.metrics, log: { warn: m => log(m), error: (...a) => log(a.join(' ')) } })
+        allowPublishedLoopback: process.env.ADMIN_PUBLISHED_LOOPBACK === '1', metrics: ops.metrics,
+        actions: { deleteTestRooms: (ids, o) => ops.deleteTestRooms(ids, o) }, log: { warn: m => log(m), error: (...a) => log(a.join(' ')) } })
       log(`admin on ${process.env.ADMIN_HOST || '127.0.0.1'}:${admin.port}`)
     } catch (err) { log(`admin not started: ${err.message}`) }
   }
