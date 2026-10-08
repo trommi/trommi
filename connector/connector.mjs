@@ -694,7 +694,7 @@ const SELF = fileURLToPath(import.meta.url)
 const CORE = path.join(HERE, '../shared')
 export const CODE_FILES = ['tools.mjs', 'prompt.md']
 const SHELL_FILES = ['connector.mjs']
-const isTest = f => /(^test|-test|test-)[\w-]*\.mjs$/.test(f)
+const isTest = f => /(^test|-test|test-)[\w-]*\.(mjs|ts)$/.test(f)
 
 const hashOf = files => {
   const h = crypto.createHash('sha256')
@@ -702,7 +702,7 @@ const hashOf = files => {
   return h.digest('hex').slice(0, 12)
 }
 const CORE_DIRS = [CORE, path.join(CORE, 'crypto')]
-const coreFiles = () => CORE_DIRS.flatMap(dir => { try { return fs.readdirSync(dir).filter(f => f.endsWith('.mjs') && !isTest(f)).sort().map(f => path.join(dir, f)) } catch { return [] } })
+const coreFiles = () => CORE_DIRS.flatMap(dir => { try { return fs.readdirSync(dir).filter(f => /\.(mjs|ts)$/.test(f) && !isTest(f)).sort().map(f => path.join(dir, f)) } catch { return [] } })
 /** Hashes of the two parts as they are on disk now. */
 export const diskVersion = () => (BUNDLED ? { code: hashOf([SELF]), shell: hashOf([SELF]) } : {
   code: hashOf(CODE_FILES.map(f => path.join(HERE, f))),

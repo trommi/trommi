@@ -11,7 +11,7 @@ import path from 'node:path'
 import * as z from '../shared/crypto/zcrypto.mjs'
 import * as G from '../shared/crypto/session-grants.mjs'
 import { masterKey, passwordKeys, wrapCode, ACCOUNT_KDF } from '../shared/account.mjs'
-import { CHECK_EMOJI } from '../shared/check-emoji.mjs'
+import { CHECK_EMOJI } from '../shared/check-emoji.ts'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const vectors = JSON.parse(fs.readFileSync(path.join(here, '../shared/crypto/vectors.json'), 'utf8'))

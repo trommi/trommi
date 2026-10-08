@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../hub/server.mjs'
 import { launchChromium } from '../dev/cdp.mjs'
 import { joinRoom, memoryStorage } from './index.mjs'
+import { toJs } from '../dev/ts.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const N = Number(process.argv.find(a => a.startsWith('--n='))?.slice(4) ?? 2000)
@@ -32,6 +33,7 @@ const types = { '.mjs': 'text/javascript', '.js': 'text/javascript', '.html': 't
 const web = http.createServer((req, res) => {
   const p = path.join(ROOT, decodeURIComponent(new URL(req.url, 'http://x').pathname))
   if (!p.startsWith(ROOT) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) { res.writeHead(200, { 'content-type': 'text/html' }); return res.end('<!doctype html><title>core</title>') }
+  if (p.endsWith('.ts')) { res.writeHead(200, { 'content-type': 'text/javascript' }); return res.end(toJs(fs.readFileSync(p, 'utf8'), path.relative(ROOT, p))) }   // (types erased; the browser follows './x.ts' as it is)
   res.writeHead(200, { 'content-type': types[path.extname(p)] ?? 'application/octet-stream' })
   fs.createReadStream(p).pipe(res)
 })

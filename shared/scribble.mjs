@@ -24,7 +24,7 @@
 
 import { packPoints, unpackPoints, bake, STROKE_TOOLS } from './ink.mjs'
 export * from './ink.mjs'       // one import for the app: the format, the shape and the palette
-export * from './palette.mjs'
+export * from './palette.ts'
 
 // ---- shapes ----
 // A shape is the board's own form of one element: { id, by, tool, pts (board units), z, group, … }.

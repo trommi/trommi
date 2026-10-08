@@ -55,7 +55,7 @@ public/
    `account()`, `scribbleWire()`).
 3. `gen/` is never edited by hand and never committed: the build makes it at deploy time.
 4. A file is split only when it passes ~3000 lines.
-5. JavaScript is `.mjs` only. Importing a module does nothing; `app.mjs` boots the page (so Node tests can import it).
+5. Code is `.mjs` or strict TypeScript `.ts` (the core moves to `.ts` first, `tsconfig.json` at the repository root). Importing a module does nothing; `app.mjs` boots the page (so Node tests can import it).
 6. A view other than the Desk's (desk, sidebar, notes) is loaded on demand: `app.mjs` `LAZY` names the addresses each
    answers; the router loads it before the first such address, and all of them once the first page is idle. A view
    that adds a page adds its addresses there.

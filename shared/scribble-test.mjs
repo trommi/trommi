@@ -1,10 +1,10 @@
-// The Scribble Board's stroke format and reducer (shared/ink.mjs, shared/scribble.mjs, shared/palette.mjs) against
+// The Scribble Board's stroke format and reducer (shared/ink.mjs, shared/scribble.mjs, shared/palette.ts) against
 // the fixture the iOS app and dev/interop use (dev/interop/fixtures/strokes.json). node shared/scribble-test.mjs
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { packPoints, unpackPoints, bake, sampleStroke, anglesOfTilt, forceFromSpeed, thickness, Q } from './ink.mjs'
 import { CanvasState, entryOf, shapeOf } from './scribble.mjs'
-import { PALETTE, PEN_COLORS, MARKER_COLORS, colorOf, isToken } from './palette.mjs'
+import { PALETTE, PEN_COLORS, MARKER_COLORS, colorOf, isToken } from './palette.ts'
 import { b64u } from './crypto/zcrypto.mjs'
 
 let passed = 0, failed = 0

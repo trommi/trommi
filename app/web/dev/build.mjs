@@ -27,22 +27,27 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import { toJs, renameTs } from '../../../dev/ts.mjs'
 
 export const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const sha = data => crypto.createHash('sha256').update(data).digest('hex').slice(0, 12)
 
 // ---- the core ----
-const NOT_VENDORED = /(^test|-test\.mjs$|^test-|^storage-file\.mjs$|^hub\.mjs$)/   // tests, Node-only, the hub's side
-function vendorFiles(repo) {
+const NOT_VENDORED = /(^test|-test\.(mjs|ts)$|^test-|^storage-file\.(mjs|ts)$|^hub\.(mjs|ts)$|\.d\.m?ts$)/   // tests, Node-only, the hub's side, declarations
+function vendorFiles(repo, { sourcemap = false } = {}) {
   const core = path.join(repo, 'shared')
-  if (!fs.existsSync(path.join(core, 'index.mjs'))) throw new Error(`build: the core is missing (${core}/index.mjs)`)
+  if (!['index.mjs', 'index.ts'].some(f => fs.existsSync(path.join(core, f)))) throw new Error(`build: the core is missing (${core}/index.mjs)`)
   const out = {}
   // gen/vendor/ is flat: shared/crypto/ lands beside the rest, so an import of './crypto/x.mjs' becomes './x.mjs'.
+  // A TypeScript module (x.ts) lands as x.mjs, its types erased (dev/ts.mjs), its imports of './y.ts' as './y.mjs'.
   for (const dir of [core, path.join(core, 'crypto')]) for (const f of fs.readdirSync(dir).sort()) {
-    if (!f.endsWith('.mjs') || NOT_VENDORED.test(f)) continue
-    if (out[f] != null) throw new Error(`build: ${f} is in shared/ and in shared/crypto/`)
-    out[f] = fs.readFileSync(path.join(dir, f), 'utf8').replace(/(['"])\.\/crypto\//g, '$1./')
+    if (!/\.(mjs|ts)$/.test(f) || NOT_VENDORED.test(f)) continue
+    const name = f.replace(/\.ts$/, '.mjs')
+    if (out[name] != null) throw new Error(`build: ${name} twice (shared/ and shared/crypto/, or .mjs and .ts)`)
+    let text = fs.readFileSync(path.join(dir, f), 'utf8')
+    if (f.endsWith('.ts')) text = toJs(text, path.relative(repo, path.join(dir, f)), { sourcemap })
+    out[name] = renameTs(text, '.mjs').replace(/(['"])\.\/crypto\//g, '$1./')
   }
   out['tools-reference.mjs'] = toolsReference(repo)
   out['core-version.mjs'] = `// Written by app/web/dev/build.mjs from the repository's shared/. Do not edit: edit shared/.\nexport const CORE_COMMIT = ${JSON.stringify(commitOf(repo))}\n`
@@ -175,7 +180,7 @@ async function bundle(pub, vendor) {
  *  written. bundle: false (the dev server) serves the sources as modules of their own, with versioned addresses. */
 export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = true } = {}) {
   const out = {}
-  const vendor = vendorFiles(repo)
+  const vendor = vendorFiles(repo, { sourcemap: !bundled })
   if (bundled) out['gen/vendor/tools-reference.mjs'] = vendor['tools-reference.mjs']   // (the help page reads it)
   else for (const [f, c] of Object.entries(vendor)) out[`gen/vendor/${f}`] = c
   out['gen/build.txt'] = `source: trommi/trommi app/web\ncommit: ${commitOf(repo)}\n`
