@@ -436,9 +436,6 @@ await test('timelines: lazy, newest first, paged; live items decrypted at once',
   await until(() => [...t.items.values()].some(i => i.content?.text === 'live one'), 'live item with body')
   const win = await fresh.timelineWindow(key, { before_envelope_number: [...t.items.keys()].sort((a, b) => a - b)[10], limit: 5 })
   eq(win.map(i => i.content.text), ['m5', 'm6', 'm7', 'm8', 'm9'], 'windowed read')
-  eq(fresh.model.sessions.get(agent.session_id).unread_count, 121, 'unread')
-  await fresh.markReadUpTo(agent.session_id, fresh.model.room.last_envelope_number)
-  eq(fresh.model.sessions.get(agent.session_id).unread_count, 0, 'read')
   // canvas: strokes on a desk, tail after a snapshot point, change.items, sender_sequence on the echo
   const desk = 'd'.repeat(32)
   const batches = []
@@ -1099,7 +1096,7 @@ async function takeOver(phone, session_id, name) {
 if (z.KEY_SCOPE) await test('continue a session: the new connector is the same session (cards, helper sessions, chat, name); the old device is retired, at the hub and for every member', async () => {
   const { phone, laptop, agents: [a1, a2] } = await room({ laptop: true, agents: 2 })
   const S = a1.session_id, B = a2.session_id
-  await phone.setSessionSettings(S, { name: 'Website', icon: 'kite' })
+  await phone.setRegisters({ [`session/${S}`]: { name: 'Website', icon: 'kite' } })
   const open = await a1.sendCard({ title: 'open question', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
   const answered = await a1.sendCard({ title: 'answered question', options: [{ key: 'a', label: 'A' }] })
   await a1.sendMessage({ text: 'said before the takeover' })
@@ -2142,7 +2139,6 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   eq(fresh.model.cards.size, phone.model.cards.size, 'same cards')
   eq(fresh.model.cards.get(cards[3]).title, 'card 300', 'old card from the snapshot')
   await until(() => fresh.model.cards.get(after)?.title === 'after the snapshot', 'tail card')
-  eq(fresh.model.sessions.get(agent.session_id).unread_count, phone.model.sessions.get(agent.session_id).unread_count, 'same unread count')
   const key = `chat:session/${agent.session_id}`
   await fresh.loadTimeline(key, { limit: 50 })
   const p2 = await fresh.loadTimeline(key, { limit: 50 })

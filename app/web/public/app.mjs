@@ -14,11 +14,11 @@ import { rowSheet } from './desk.mjs'
 // so a later navigation finds them in memory.
 const VIEWS = [desk, sidebar, notes]
 const LAZY = {
-  auth: { load: () => import('./auth.mjs'), paths: /^\/(?:settings\/(?:devices|account)|devices|pair|logout|join|login)(?:\/|$)/ },
-  agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings|agents|sessions\/)/ },
-  card: { load: () => import('./card.mjs'), paths: /^(?:\/s\/[^/]+)?\/(?:card|q|c)\/|^\/cards\/[0-9a-f]+\// },
+  auth: { load: () => import('./auth.mjs'), paths: /^\/(?:settings\/(?:devices|account)|devices\/|pair|logout|join|login)(?:\/|$)/ },
+  agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings\/agents$|sessions\/)/ },
+  card: { load: () => import('./card.mjs'), paths: /^(?:\/s\/[^/]+)?\/card\/|^\/cards\/[0-9a-f]+\// },
   session: { load: () => import('./session.mjs'), paths: /^\/s\// },
-  media: { load: () => import('./media.mjs'), paths: /^\/(?:assets|links|pages)(?:\/|$)/ },
+  media: { load: () => import('./media.mjs'), paths: /^\/(?:assets|pages)(?:\/|$)/ },
   whiteboard: { load: () => import('./whiteboard.mjs'), paths: /^\/scribble-board$/ },
 }
 const loaded = {}   // name -> the view's module, once loaded
@@ -1619,13 +1619,13 @@ async function start(client, { fresh = false } = {}) {
   const load = (key, limit) => { if (opened.has(key)) return; opened.add(key); client.loadTimeline(key, { limit }).catch(err => console.warn('timeline', err)) }
   const loadOpen = () => {
     const path = location.pathname
-    const q = /^\/(?:s\/[^/]+\/)?(?:card|q|c)\/([\w-]+)/.exec(path)
+    const q = /^\/(?:s\/[^/]+\/)?card\/([\w-]+)/.exec(path)
     if (q) { const card = model().cardByRef(decodeURIComponent(q[1])); if (card) load(`chat:card/${card.id}`, 50) }
     if (path === '/') for (const c of model().revising ?? []) load(`chat:card/${c.id}`, 5)
   }
   document.addEventListener('turbo:load', loadOpen)
 
-  await router.visit((location.pathname.replace(/^\/t(?=\/|$)/, '') || '/') + location.search + location.hash, { action: 'replace' })   // old /t/… addresses of the board
+  await router.visit(location.pathname + location.search + location.hash, { action: 'replace' })
   window.trommi.firstPaintMs = performance.now() - T0
   window.trommi.openMs = OPEN_MS
   window.trommi.readyAt = performance.now()   // since navigation start: cold or warm load to the painted page

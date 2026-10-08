@@ -100,7 +100,7 @@ async function profile(name, { width, height, throttle }) {
     add('switch session', await visit(`/s/${otherAgents[run % otherAgents.length]}`))
     add('switch session (2)', await visit(`/s/${otherAgents[(run + 1) % otherAgents.length]}`))
     if (bigCardNr) {
-      add('open the huge card thread', await visit(`/q/${bigCardNr}`))
+      add('open the huge card thread', await visit(`/card/${bigCardNr}`))
       const tc = Date.now()
       await waitFor(`document.querySelectorAll('#cardpage .msg, #cardpage .tc-msg, #cardpage li').length >= 10`, 'card thread loaded', 30_000).catch(() => out.notes.push('card thread did not show 10 items'))
       add('huge card thread: open -> 10+ items shown', Date.now() - tc)

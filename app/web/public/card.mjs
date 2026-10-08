@@ -1413,8 +1413,6 @@ export function register(t) {
     // The comments are a timeline loaded newest page first; ?older=1 loads the page before, then the card is shown.
     const threadOf = card => `chat:card/${card.id}`
     const moreOf = card => card.kind !== 'permission' && Boolean(hub.hasMore?.(threadOf(card)))
-    // Old addresses (/q/<n>, /c/<n>, …/p/<m>) still open: they are moved to /card/<n>(/picture/<m>).
-    t.get(/^(\/s\/[^/]+)?\/[qc]\/([\w-]+)(?:\/p\/(\d+))?$/, ({ res, url, match: [, s, ref, at] }) => redirect(res, `${BASE}${s ?? ''}/card/${ref}${at ? `/picture/${at}` : ''}${url.search}`))
     t.get(/^\/(?:s\/([^/]+)\/)?card\/([\w-]+)$/, async ({ req, res, url, match }) => {
       let m = model(), card = m.cardByRef(match[2])
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')

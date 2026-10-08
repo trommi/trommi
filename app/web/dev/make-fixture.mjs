@@ -114,7 +114,7 @@ const perm = { object_id: oid('perm-1'), agent_device_id: dev('trommi-ui'), tool
 const human = {
   drafts: {}, snoozes: {}, ducks: {}, crown: { agent_device_id: dev('trommi') },
   desks: { main: { name: 'Desk', created_at: now - 864e5 }, test: { name: 'Test', created_at: now - 3600e3 } },
-  session_settings: Object.fromEntries(sessions.map(x => [x.agent_device_id, x.settings])), read_up_to: {},
+  session_settings: Object.fromEntries(sessions.map(x => [x.agent_device_id, x.settings])),
 }
 for (const x of sessions) if (x.settings.desk === '0defcecc') x.settings.desk = 'test'
 for (const c of s.cards) if (c.snoozed_until) human.snoozes[oid(c.id)] = { until: now + 6 * 3600e3, at: now - 600000 }
