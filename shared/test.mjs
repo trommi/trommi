@@ -8,7 +8,7 @@ import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../hub/server.mjs'
 import { startTestHub } from './test-hub.mjs'
-import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, joinWithRecoveryCode, roomLink, memoryStorage, timelineEvents, checkEmoji, z } from './index.mjs'
+import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, joinWithRecoveryCode, roomLink, memoryStorage, checkEmoji, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
@@ -215,8 +215,8 @@ await test('cards round trip: create, revise, answer, decide again, hand back, c
     assert(Number.isInteger(was.taken_back_at) && was.taken_back_sent_at >= was.answered_at && was.taken_back_sent_at <= now.answered_at, 'the answer taken back says when: after it was given, before the next one')
     eq([now.taken_back_at, now.taken_back_sent_at], [null, null], 'the answer in force was not taken back')
   }
-  const evs = timelineEvents(phone.model, phone.model.cards.get(id).timeline_key).map(e => e.event)
-  assert(evs.includes('card_created') && evs.includes('decide_again'), 'timeline events')
+  const card = phone.model.cards.get(id)
+  assert(card.versions.some(v => v.object_version === 1) && card.answers.some(a => a.taken_back_at), 'the card keeps its first version and the answer taken back')
 })
 
 await test('final options: an answer whose every choice is final settles the card itself; take back reopens it; a note, a mixed choice or a trusted answer leave it with the agent', async () => {

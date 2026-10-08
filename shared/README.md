@@ -191,7 +191,7 @@ Timeline = {
   item_count,                              // all items known from headers
   newest_envelope_number,
   items: Map<envelope_number | local_id, TimelineItem>,   // ONLY the window in memory (newest page(s) opened, live items, own pending echoes);
-                                           // iterate sorted via timelineItems(timeline). Older pages: client.timelineWindow()
+                                           // keyed by envelope_number, not sorted. Older pages: client.timelineWindow()
   loaded_down_to,                          // oldest envelope_number whose body is loaded (Infinity = none yet)
   has_more,                                // older items exist that are not in memory (in storage or still on the hub)
 }
@@ -206,7 +206,7 @@ TimelineItem = {
 }
 ```
 
-Live items that arrive over the stream come in full and are decrypted at once (`item_state: 'loaded'`). For a card's conversation the app merges `card.versions` and `card.answers` into the items by `envelope_number` ("question revised", "decided"); `timelineEvents(model, timeline_key)` returns that merged, sorted list.
+Live items that arrive over the stream come in full and are decrypted at once (`item_state: 'loaded'`). For a card's conversation the app merges `card.versions` and `card.answers` into the items by `envelope_number` ("question revised", "decided").
 
 ### Human registers
 
