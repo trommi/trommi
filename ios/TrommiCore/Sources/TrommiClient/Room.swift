@@ -861,7 +861,7 @@ public final class Room {
                     sessionId: String? = nil, localId: String? = nil,
                     build: ((UInt64) throws -> (JV, ObjectBlock))? = nil) async throws -> (localId: String, hash: String, seq: UInt64) {
     if let u = upgrade { throw ZError("client-too-old", u.message) }
-    return try await serial { [self] in
+    let r = try await serial { [self] in
       if !self.synced { _ = try await self.catchUpInner() }
       if let own = self.record.ownSent, (self.chains[hex(self.device.id)]?.seq ?? 0) < own.seq, self.outbox.isEmpty {
         throw ZError("chain-behind", "catch up first: this device's chain is not where it left it")
@@ -903,10 +903,26 @@ public final class Room {
       self.pumpOutbox()
       return (lid, hex(sealed.hash), sealed.seq)
     }
+    try await awaitOutcome(r.1)
+    return r
   }
   private func catchUpInner() async throws -> SyncReport { try await catchUp() }
 
   private var pumping = false
+  /** What the hub said to an envelope this device sealed: taken (true), or refused for good (the error). */
+  private var outcome: [String: Result<Void, HubError>] = [:]
+  /**
+   * Wait a moment for the hub's word on what was just sealed: a refusal for good (a removed device, a write it forbids)
+   * is thrown here, as the JS core does; a network delay is not waited out (the outbox keeps it and posts it later).
+   */
+  private func awaitOutcome(_ hash: String, ms: UInt64 = 8_000) async throws {
+    let until = nowMs() + ms
+    while nowMs() < until {
+      if let o = outcome.removeValue(forKey: hash) { if case .failure(let e) = o { throw e }; return }
+      if !outbox.contains(where: { $0.hash == hash }) && outcome[hash] == nil { return }
+      try? await Task.sleep(nanoseconds: 40_000_000)
+    }
+  }
   private var lastPosted: (number: Int, hash: String) = (0, "")
   /** Wait until the hub has taken everything sealed so far; the last one's number and hash. */
   @discardableResult public func flush(timeoutMs: UInt64 = 30_000) async throws -> (number: Int, hash: String) {
@@ -929,10 +945,11 @@ public final class Room {
         do {
           let r = try await noted { try await hub.postEnvelope(try unb64u(item.bytes)) }
           lastPosted = ((r["envelope_number"] as? NSNumber)?.intValue ?? 0, item.hash)
+          outcome[item.hash] = .success(())
           acked(item)
           backoff = 300_000_000
         } catch let e as HubError {
-          if e.code == "replay" { acked(item); continue }
+          if e.code == "replay" { outcome[item.hash] = .success(()); acked(item); continue }
           if e.status == 0 || e.status >= 500 || e.status == 429 || e.code == "unauthorised" || e.code == "stale-session-key" || e.code == "gap" {
             try? await Task.sleep(nanoseconds: backoff); backoff = min(backoff * 2, 10_000_000_000); continue
           }
@@ -941,7 +958,8 @@ public final class Room {
           var ch = Change()
           board.pushAlert(&ch, code: e.code, message: "the hub refused an envelope: \(e.message)")
           dropEcho(item.localId, &ch)
-          if e.extra["voided"] as? Bool == true { acked(item) } else { acked(item) }
+          outcome[item.hash] = .failure(e)
+          acked(item)
           emit(ch)
         } catch {
           try? await Task.sleep(nanoseconds: backoff); backoff = min(backoff * 2, 10_000_000_000)
@@ -985,6 +1003,20 @@ public final class Room {
     var ch = Change(); ch.timelines.insert(key); ch.sessions.insert(sid); emit(ch)
     do { try await send(kind: KIND.TIMELINE_ITEM, content: .obj(content), recipient: recipient, timeline: timeline, sessionId: sid, localId: lid) }
     catch { var c = Change(); t.echoes.removeValue(forKey: lid); c.timelines.insert(key); emit(c); throw error }
+  }
+
+  /** "▶ Explain": ask the card's agent for a short narrated explainer clip (content_type clip_request). */
+  public func requestClip(cardId: String) async throws {
+    guard let card = board.cards[cardId] else { throw ZError("not-found", "no card \(cardId)") }
+    if card.unsupported { throw ZError("needs-update", Compat.UPDATE_MESSAGE) }
+    guard let sid = card.sessionId else { throw ZError("bad-argument", "the card has no agent to ask") }
+    let recipient = board.holderOf(card)
+    let lid = newLocalId(), key = timelineKeyOf("chat", "card/\(cardId)")
+    let t = board.timelineOf(key)
+    t.echoes[lid] = TimelineItem(envelopeNumber: nil, localId: lid, pending: true, senderDeviceId: hex(device.id), recipientDeviceId: recipient, sentAt: nowMs(),
+                                 itemState: "loaded", contentType: "clip_request", content: ["content_type": "clip_request"])
+    var ch = Change(); ch.timelines.insert(key); emit(ch)
+    try await send(kind: KIND.TIMELINE_ITEM, content: ["content_type": "clip_request"], recipient: recipient, timeline: (kind: "chat", id: "card/\(cardId)"), sessionId: sid, localId: lid)
   }
 
   /** Answer an open card (README "answer"): choices, a note, notes per option, files; read (an info) and shred are answers too. */
@@ -1534,3 +1566,4 @@ public final class Room {
   /** The open cards (decisions and infos) in stack order. */
   public var openCards: [Card] { board.stack.compactMap { board.cards[$0] } }
 }
+

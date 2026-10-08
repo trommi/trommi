@@ -48,6 +48,9 @@ struct CardScreen: View {
         ToolbarItem(placement: .topBarTrailing) {
           Menu {
             if let a = a { Button { model.path.append(.session(a.id)) } label: { Label("Open \(a.name)", systemImage: "bubble.left.and.bubble.right") } }
+            if c.kind != "permission" && !c.unsupported {
+              Button { model.act { try await model.room?.requestClip(cardId: c.id); model.say("Asked for a clip", c.title) } } label: { Label("▶ Explain as a clip", systemImage: "play.rectangle") }
+            }
             Button { copyText("Nr. \(c.number) · \(c.title)\(c.choices.isEmpty ? "" : " → \(c.options.filter { c.choices.contains($0.key) }.map { $0.label }.joined(separator: ", "))")") } label: { Label("Copy to paste into another agent", systemImage: "doc.on.doc") }
             if c.status == "open" && c.kind != "permission" {
               Button { model.snooze(c) } label: { Label(Words.later, systemImage: "zzz") }
