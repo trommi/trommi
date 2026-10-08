@@ -201,3 +201,22 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .room .clip .clip-again button { padding: 6px 0; border: 0; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; }
 .room .clip .clip-done { justify-self: start; margin: 6px 0 0 42px; text-decoration: none; }
 @media (max-width: 600px) { .room.room-clip { padding: 64px 22px 96px; } .clip { padding: 46px 18px var(--s-5); } .clip h2 { font-size: 1.55rem; } .clip-note, .clip-again, .room .clip .clip-done { margin-left: 0; } }
+
+/* ---- Settings as one clipboard (his word, 8 October): Agents, Devices and Account are tabs on one sheet clipped to a
+   board, the same language as the invite's clipboard (.clip above): kraft board with an ink edge, a paper sheet, the
+   clamp at the top. The page's own parts (the agents' tree, the devices, the account) stand on the sheet. ---- */
+:is(.room-paged .room-page, #ledger .ledger-page) { position: relative; box-sizing: border-box; margin-top: 46px; padding: 58px clamp(18px, 3vw, 40px) 34px; border: 1.6px solid var(--fg); border-radius: 5px 7px 4px 8px / 7px 4px 8px 5px; background: var(--surface); box-shadow: 0 0 0 12px #cdb68a, 0 0 0 13.6px var(--fg), 6px 9px 0 13.6px color-mix(in srgb, var(--fg) 22%, transparent); }
+:root[data-theme="dark"] :is(.room-paged .room-page, #ledger .ledger-page) { box-shadow: 0 0 0 12px #6f5f3f, 0 0 0 13.6px var(--fg), 6px 9px 0 13.6px rgb(0 0 0 / .4); }
+.set-clamp { top: -40px; width: 168px; height: 60px; }
+:is(.room-paged .room-page, #ledger .ledger-page) > .room-tabs { margin-top: 0; }
+.room.room-paged { padding-top: var(--s-8); }
+@media (max-width: 860px) {
+  /* a phone: a calm full-width sheet, the clamp at its top, the board only a thin edge */
+  :is(.room-paged .room-page, #ledger .ledger-page) { margin-top: 34px; padding: 44px 14px 24px; border-radius: 4px; box-shadow: 0 0 0 5px #cdb68a, 0 0 0 6.4px var(--fg); }
+  :root[data-theme="dark"] :is(.room-paged .room-page, #ledger .ledger-page) { box-shadow: 0 0 0 5px #6f5f3f, 0 0 0 6.4px var(--fg); }
+  .set-clamp { top: -30px; width: 128px; height: 46px; }
+  .room.room-paged { padding: var(--s-5) 12px 96px; }
+}
+/* (the board's edge stands inside the page's margin on every width) */
+#ledger .ledger-page, .room-paged .room-page { margin-inline: max(14px, auto); width: calc(100% - 28px); max-width: 1160px; }
+@media (max-width: 860px) { #ledger .ledger-page, .room-paged .room-page { width: calc(100% - 12px); margin-inline: auto; } }

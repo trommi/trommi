@@ -199,12 +199,12 @@ function agentsMain(m, base, { find = '', sort = 'order', down = false, errors =
   return html`<main id="ledger" aria-label="Agents"><div class="ledger-page">
 ${roomTabs('agents', 'ledger-tabs')}
 <header class="ledger-head page-head"><h2>Agents</h2><p id="ledger-lead">${leadWords(m)}</p></header>
-<div class="ledger-tools"><form method="get" action="${base}/agents" role="search">${sort !== 'order' ? html`<input type="hidden" name="sort" value="${sort}">${down ? raw('<input type="hidden" name="down" value="1">') : ''}` : ''}<label class="ledger-find"><input type="search" name="find" value="${find}" autocomplete="off" placeholder="Find a session, a machine, a model" aria-label="Find a session"><kbd>/</kbd></label></form>${sort !== 'order' || words ? html`<a class="ledger-link" data-nav href="${base}/agents">${words ? 'Show all, in your order' : 'Back to your order'}</a>` : ''}</div>
+<div class="ledger-tools"><form method="get" action="${base}/settings/agents" role="search">${sort !== 'order' ? html`<input type="hidden" name="sort" value="${sort}">${down ? raw('<input type="hidden" name="down" value="1">') : ''}` : ''}<label class="ledger-find"><input type="search" name="find" value="${find}" autocomplete="off" placeholder="Find a session, a machine, a model" aria-label="Find a session"><kbd>/</kbd></label></form>${sort !== 'order' || words ? html`<a class="ledger-link" data-nav href="${base}/agents">${words ? 'Show all, in your order' : 'Back to your order'}</a>` : ''}</div>
 <div class="ledger${tree ? ' is-tree' : ''}" role="table" id="ledger-list" data-controller="pops"${sort !== 'order' || words ? raw(' data-sorted') : ''}${ctx.desks.length > 1 ? raw(' data-desks') : ''}${anyMain ? raw(' data-mains') : ''}>
 <div class="ledger-line is-head" role="row"><span></span><span></span>${th(COLS[0])}${th(COLS[1])}<span class="ledger-th">Asks or does</span>${COLS.slice(2).map(th)}<span></span></div>
 ${tree ? trees : html`${on.map(line)}
 ${off.length ? html`<h3 class="ledger-sub">Disconnected</h3>${off.map(line)}` : ''}`}
-${!on.length && !off.length && m.agents.length ? html`<p class="ledger-none">No session fits. <a class="ledger-link" data-nav href="${base}/agents">Show all</a></p>` : ''}
+${!on.length && !off.length && m.agents.length ? html`<p class="ledger-none">No session fits. <a class="ledger-link" data-nav href="${base}/settings/agents">Show all</a></p>` : ''}
 ${!m.agents.length ? raw('<p class="ledger-none">No session is connected yet.</p>') : ''}
 ${archived.length ? html`<h3 class="ledger-sub">Archive</h3>${archived.map(a => archivedLine(a, ctx, { error: errors.get(a.id) }))}` : ''}
 </div></div></main>`
@@ -220,9 +220,11 @@ export function register(t) {
   const { BASE, hub } = t
   const show = (req, res, url, errors, code = 200) => {
     const q = url.searchParams, m = t.model()
-    t.page(req, res, { model: m, title: 'Agents · Trommi', view: 'agents', css: 'agents', bodyAttrs: ' data-page="roster"', stream: VAL[q.get('sort')] ? `&sort=${q.get('sort')}` : '', main: agentsMain(m, BASE, { find: q.get('find') ?? '', sort: q.get('sort') ?? 'order', down: q.has('down'), errors }) }, code)
+    t.page(req, res, { model: m, title: 'Settings · Agents · Trommi', view: 'agents', css: 'agents', bodyAttrs: ' data-page="roster"', stream: VAL[q.get('sort')] ? `&sort=${q.get('sort')}` : '', main: agentsMain(m, BASE, { find: q.get('find') ?? '', sort: q.get('sort') ?? 'order', down: q.has('down'), errors }) }, code)
   }
-  t.get(/^\/agents$/, ({ req, res, url }) => show(req, res, url))
+  t.get(/^\/settings\/agents$/, ({ req, res, url }) => show(req, res, url))
+  // (the old addresses: Settings holds the agents now, and /settings opens on them)
+  t.get(/^\/(?:agents|settings)$/, ({ res, url }) => t.redirect(res, `${BASE}/settings/agents${url.search}`))
   // The drawings of one session's picker: a frame, fetched when the picker is opened.
   t.get(/^\/sessions\/([^/]+)\/marks$/, ({ req, res, url, match }) => {
     const a = t.model().byAgent.get(decodeURIComponent(match[1]))
@@ -294,7 +296,7 @@ export function register(t) {
         return t.sendStream(req, res, html`${on}${t.toast({ head: `Moved to ${to?.name || 'Desk'}`, line: nameOf(t.model(), id).replace(/ · [^·]*$/, ''), undo: was ? { action: `${sessionForms({ id }, BASE)}/edit`, fields: { desk: was, moved: '1' } } : null })}`)
       }
       if (stay) return t.sendStream(req, res, match[2] === 'edit' && form.get('archived') === '1' && !form.has('quiet') ? t.toast({ head: 'Archived', line: nameOf(t.model(), id), undo: { action: `${sessionForms({ id }, BASE)}/edit`, fields: { archived: '0' } } }) : '')
-      return t.redirect(res, backOf(form.get('back')) || `${BASE}/agents`)
+      return t.redirect(res, backOf(form.get('back')) || `${BASE}/settings/agents`)
     }
     if (stay) {
       const line = lineNow(t.model(), BASE, id, error)

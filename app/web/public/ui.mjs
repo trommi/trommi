@@ -2456,7 +2456,7 @@ function start(signal) {
     'help': () => toggleSheet(),
     'note.new': () => document.dispatchEvent(new CustomEvent('trommi:note')),
     'go.desk': () => go(`${base()}/`),
-    'go.agents': () => go(`${base()}/agents`),
+    'go.agents': () => go(`${base()}/settings/agents`),
     'go.walk': () => go(`${base()}/blitz`),
     'go.media': () => go(`${base()}/assets`),
     'go.pages': () => go(`${base()}/pages`),
@@ -2855,6 +2855,10 @@ export const roomShell = (title, inner, cls = '') => html`<main id="room" class=
 /** One of the three tabbed pages (Agents is agents.mjs; Devices and Settings here): the tabs first, at the same place on
  *  all three, then the heading in the display face, then the page in one reading column (auth.css .room-paged). */
 const ROOM_LINES = { devices: 'The people and agents with keys to this room.', settings: 'Your account, and what this device keeps.' }
+// The clamp of Settings' clipboard (the invite's clipboard, auth.mjs: board, clamp, sheet)
+const SETTINGS_CLAMP = raw('<svg class="clip-clamp set-clamp" viewBox="0 0 120 44" aria-hidden="true"><path class="clamp-plate" d="M22 40 Q21 25 26 22 L43 21 Q46 9 60 8 Q74 9 77 21 L94 22 Q99 25 98 40 Z"/><path d="M52 21 Q53 15 60 14.6 Q67 15 68 21"/><path d="M30 31 Q60 29.4 90 31"/></svg>')
 export const roomPage = (title, on, inner, line = ROOM_LINES[on] ?? '') => html`<main id="room" class="room room-paged" aria-label="${title}"><div class="room-page">${roomTabs(on)}<header class="room-head page-head"><h2>${title}</h2>${line ? html`<p>${line}</p>` : ''}</header><div class="room-col">${inner}</div></div></main>`
-export const roomTabs = (on, cls = '') => html`<nav class="room-tabs${cls ? ` ${cls}` : ''}" aria-label="Agents, devices and settings">${[['agents', 'Agents'], ['devices', 'Devices'], ['settings', 'Settings']].map(([p, word]) => html`<a href="/${p}" data-nav${on === p ? raw(' aria-current="page"') : ''}>${word}</a>`)}</nav>`
+/** Settings (his word, 8 October: one page, drawn as a big clipboard): the clamp, then the tabs on the sheet: Agents,
+ *  Devices, Account. Its three parts are agents.mjs and auth.mjs; /agents, /devices and /settings lead here. */
+export const roomTabs = (on, cls = '') => html`${SETTINGS_CLAMP}<nav class="room-tabs${cls ? ` ${cls}` : ''}" aria-label="Settings: agents, devices and account">${[['agents', 'Agents'], ['devices', 'Devices'], ['settings', 'Account', 'account']].map(([p, word, path = p]) => html`<a href="/settings/${path}" data-nav${on === p ? raw(' aria-current="page"') : ''}>${word}</a>`)}</nav>`
 export const errorLine = e => (e ? html`<p class="room-error" role="alert">${e}</p>` : '')
