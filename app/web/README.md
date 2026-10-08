@@ -133,7 +133,7 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
   the same six emoji, the signed-in one asks "They match" / "They don't match"). The recovery words are never needed to log in. A wrong password and an unknown email give the
   same "Email or password is wrong."
 - **Forgot password:** email + the kit's twelve words + a new password; the device logs in and the old password stops
-  working. Without a kit: change the password on a device that is still logged in (Settings → Password).
+  working. Without a kit: change the password on a device that is still logged in (Settings → Account).
 - **Settings → Account:** the email (and "Confirm your email" with a six-digit code: the hub has no mail provider yet,
   the code goes to its log), Emergency Kit, Change password. Accounts from before email + password get "Add login"
   (needs the old recovery code); their recovery code still works at `/recover` (Forgot password → "An older account
@@ -158,7 +158,7 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 
 ### Addresses
 
-`/` the Desk · `/desk/:id` switch desk · `/blitz` Blitz · `/artifacts` Artifacts (`?kind=media`, `?kind=pages`) · `/scribble-board` the Scribble Board · `/card/:nr` a card (`?v=n` an older version, `/picture/:n` a picture) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/card/:nr` a card from its session · `/settings/agents` the agents · `/settings/devices` the room's devices · `/settings/account` the account · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
+`/` the Desk · `/desk/:id` switch desk · `/blitz` Blitz · `/artifacts` Artifacts (`?kind=media`, `?kind=pages`) · `/scribble-board` the Scribble Board · `/card/:nr` a card (`?v=n` an older version, `/picture/:n` a picture) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/card/:nr` a card from its session · `/settings` Settings: one list (Invite a Device with its code in place, `?pair=<invite>`; Invite Agent…; a row per page) · `/settings/sessions` the sessions by desk · `/settings/devices` the devices and Push · `/settings/account` the account · `/settings/theme` · `/settings/keys` · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
 
 ### IndexedDB
 
