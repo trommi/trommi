@@ -1,6 +1,8 @@
-// core-start.ts: start the core worker as early as the page can. index.html loads this tiny module before the app's
-// entry (both are module scripts, run in document order; this one does not wait for the entry's graph), so the worker's
-// file is fetched and the stored room read from IndexedDB while the page still loads its own modules. What the worker
+// core-start.ts: start the core worker as early as the page can. index.html loads this tiny module async, before its
+// style sheets (an async module waits neither for the sheets nor for the entry's graph), so the worker's file is
+// fetched beside the sheets and the entry, and the stored room read from IndexedDB while the page still loads. Run
+// after the entry (it never is in practice, it is tiny), it starts nothing: the entry has taken the place
+// (app.mjs sets globalThis.__trommiCore to null). What the worker
 // says meanwhile is kept until the page takes it over (remote.ts openRemote({ early })): a Worker drops messages
 // nobody listens to.
 //
