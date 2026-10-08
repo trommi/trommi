@@ -444,6 +444,7 @@ function menuDoors(model, base) {
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Add</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 <a role="menuitem" class="menu-settings" href="${base}/settings" data-nav draggable="false" id="menu-settings">${GEAR}<span>Settings</span></a>
+<button role="menuitemcheckbox" type="button" id="demo-toggle" class="menu-demo-row demo-toggle" aria-checked="${String(inDemo())}" title="${inDemo() ? 'Leave the demo: back to your desks' : 'The demo: a made-up room, nothing is kept'}">${sk('play')}<span>Demo</span><i class="demo-switch" aria-hidden="true"><b></b></i></button>
 <div class="menu-places">${[['scribble-board', 'pen', 'Scribble'], ['artifacts', 'picture', 'Artifacts']].map(([p, icon, word]) => html`<a role="menuitem" href="${base}/${p}" data-nav draggable="false">${sk(icon)}<span>${word}</span></a>`)}</div>
 <div class="menu-icons" role="group" aria-label="This device">
 <button role="menuitem" type="button" id="push-toggle" class="menu-ico" data-level="off" aria-label="Push on this device: No" title="Push on this device">${sk('bell')}</button>

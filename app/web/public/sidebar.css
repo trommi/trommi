@@ -1124,3 +1124,18 @@ html body .topbar #brand-doors .menu-icons .menu-ico { justify-content: center; 
   :root[data-compose] body[data-t-view="session"] :is(.compose-fab, .tabbar) { display: none; }
   :root:not([data-compose]) body[data-t-view="session"] #session .dock { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 70px); }
 }
+
+/* ---- no foot strip on a wide screen (his word, 8 October): the fold button stands at the head beside the desk
+   chevron; on the folded rail the unfold is at its top ---- */
+@media (min-width: 861px) {
+  html body .side-foot { position: fixed; z-index: 9; left: calc(var(--side) - 50px); top: 22px; bottom: auto; width: 32px; height: 32px; background: none !important; border: 0 !important; box-shadow: none !important; }
+  html body .side-foot .rail-fold { position: static; width: 32px; height: 32px; }
+  html:not([data-rail="folded"]) body .topbar .deskpill { padding-right: 36px; box-sizing: border-box; }
+  html[data-rail="folded"] body .side-foot { left: 22px; top: 8px; }
+  html[data-rail="folded"] body .topbar { top: 46px; }
+  html body #agents { padding-bottom: var(--s-6); }
+  :root, :root[data-rail] { --foot: 0px; }
+}
+html body .topbar #brand-doors .menu-demo-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+html body .topbar #brand-doors .menu-demo-row .demo-switch { margin-left: auto; }
+@media (max-width: 860px) { html body .topbar #brand-doors .menu-demo-row { order: 3; min-height: 44px; } }
