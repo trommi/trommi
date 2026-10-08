@@ -1473,16 +1473,74 @@ function startPush(client) {
           await navigator.serviceWorker.ready
           const { vapid_public_key } = await client.hub.pushKey()
           const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes(vapid_public_key) })
-          await client.pushSubscribe(sub.toJSON())
+          await client.pushSubscribe(sub.toJSON(), false, (() => { try { return localStorage.getItem('trommi-push-level') === 'knocking' ? 'knocking' : 'all' } catch { return 'all' } })())
           paint(sub)
         }
       } catch (err) { note.textContent = err.message }
       toggle.removeAttribute('aria-busy')
     })
   }
+  // Settings · Devices: Push on this device, Yes / Only knocking / No (the hub's level: all | knocking), and the other
+  // devices' push state, read only (the hub's GET push_subscriptions: per device its registrations and their level).
+  const LEVEL_KEY = 'trommi-push-level'
+  const levelNow = () => { try { return localStorage.getItem(LEVEL_KEY) === 'knocking' ? 'knocking' : 'all' } catch { return 'all' } }
+  const words = { all: 'Yes', knocking: 'Only knocking', off: 'No' }
+  const wireLevel = async () => {
+    const box = document.getElementById('push-level')
+    if (!box || box.dataset.push) return
+    box.dataset.push = '1'
+    const note = document.getElementById('push-level-note')
+    const show = v => { for (const r of box.querySelectorAll('input')) r.checked = r.value === v }
+    show((await subscription().catch(() => null)) ? levelNow() : 'off')
+    box.addEventListener('change', async e => {
+      const v = e.target.value
+      note.textContent = ''
+      box.disabled = true
+      try {
+        const had = await subscription()
+        if (v === 'off') {
+          if (had) { await client.pushSubscribe(had.toJSON(), true).catch(() => {}); await had.unsubscribe() }
+        } else {
+          let sub = had
+          if (!sub) {
+            if (!client.hub?.pushKey) throw new Error('The demo has no push.')
+            const why = obstacle()
+            if (why) throw new Error(why)
+            if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notifications were not allowed.')
+            const reg = await navigator.serviceWorker.register('/sw.js')
+            await navigator.serviceWorker.ready
+            const { vapid_public_key } = await client.hub.pushKey()
+            sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes(vapid_public_key) })
+          }
+          await client.pushSubscribe(sub.toJSON(), false, v)
+          try { localStorage.setItem(LEVEL_KEY, v) } catch {}
+        }
+      } catch (err) { note.textContent = err.message; show((await subscription().catch(() => null)) ? levelNow() : 'off') }
+      box.disabled = false
+      others()
+    })
+    others()
+  }
+  const others = async () => {
+    const list = document.getElementById('push-others')
+    if (!list) return
+    let devices = {}
+    try { devices = (await client.pushStates()).devices ?? {} } catch {}
+    const me = client.model?.room?.my_device_id
+    const humans = [...(client.model?.members?.values() ?? [])].filter(d => d.is_active && d.device_role === 'human' && d.device_id !== me)
+    list.replaceChildren(...humans.map(d => {
+      const st = devices[d.device_id], v = st ? st.level : 'off'
+      const li = document.createElement('li')
+      li.append(Object.assign(document.createElement('b'), { textContent: d.device_name || 'A device' }), Object.assign(document.createElement('span'), { textContent: `Push: ${words[v] ?? v}${st?.apns ? ' · iPhone app' : ''}` }))
+      return li
+    }))
+  }
   document.addEventListener('turbo:load', wire)
   document.addEventListener('turbo:render', wire)
+  document.addEventListener('turbo:load', wireLevel)
+  document.addEventListener('turbo:render', wireLevel)
   wire()
+  wireLevel()
 }
 
 // ---- pwa ----
