@@ -36,6 +36,15 @@ public final class HubClient {
     session = URLSession(configuration: cfg)
   }
 
+  /** A handle for the anonymous routes outside a room (POST accounts/login). */
+  public init(hubURL: String) throws {
+    self.hubURL = try checkHubAddress(hubURL)
+    roomId = ""
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = 30
+    session = URLSession(configuration: cfg)
+  }
+
   private func roomPath(_ p: String) -> String { "/rooms/\(roomId)\(p)" }
   private static func checkHex(_ v: String, _ n: Int, _ what: String) throws -> String {
     if v.utf8.count != n || (try? unhex(v)) == nil { throw ZError("bad-argument", "\(what) must be \(n) lowercase hex characters") }
@@ -81,10 +90,21 @@ public final class HubClient {
     try await signIn()
     return token!
   }
-  @discardableResult public func signIn() async throws -> JSON {
-    guard let signer = signer else { throw ZError("unauthorised", "no signer for this hub client") }
+  /**
+   * given: a challenge the hub handed out already (the login answer carries one), so the sign-in costs one round trip;
+   * a refused one (expired, a restarted hub) is asked anew.
+   */
+  @discardableResult public func signIn(challenge given: String? = nil) async throws -> JSON {
+    if let given = given {
+      do { return try await takeToken(given) }
+      catch let e as HubError where e.status == 401 || e.status == 400 {}
+    }
     let ch = try await request("POST", roomPath("/challenge"), auth: false)
-    let challenge = try unb64u(ch["challenge"] as? String ?? "")
+    return try await takeToken(ch["challenge"] as? String ?? "")
+  }
+  private func takeToken(_ b64: String) async throws -> JSON {
+    guard let signer = signer else { throw ZError("unauthorised", "no signer for this hub client") }
+    let challenge = try unb64u(b64)
     let signed = try signHubAuth(device: signer, roomId: try unhex(roomId), hub: hubURL, challenge: challenge)
     let r = try await request("POST", roomPath("/access_tokens"), body: ["signed_challenge": b64u(signed)], auth: false)
     token = r["access_token"] as? String
@@ -111,5 +131,17 @@ public final class HubClient {
     try await request("GET", roomPath("/envelopes"), query: ["after_envelope_number": String(after), "limit": String(limit)])
   }
   public func postEnvelope(_ bytes: Bytes) async throws -> JSON { try await request("POST", roomPath("/envelopes"), body: ["envelope": b64u(bytes)]) }
+  /** A member entry (here: a device adding itself with the recovery key) and the room key sealed for it. */
+  public func postMember(signedEntry: Bytes, sealedRoomKeys: [(deviceId: Bytes, sealed: Bytes)]) async throws -> JSON {
+    try await request("POST", roomPath("/members"), body: ["signed_entry": b64u(signedEntry), "sealed_room_keys": sealedRoomKeys.map { ["device_id": hex($0.deviceId), "key_sealed": b64u($0.sealed)] }], auth: false)
+  }
+  /** Several session grants in one atomic post: [{ session_id, signed_grant, sealed_session_keys, key_back_link? }]. */
+  public func postSessionGrants(_ grants: [JSON]) async throws -> JSON {
+    try await request("POST", roomPath("/session_grants"), body: ["grants": grants], auth: false)
+  }
+  /** Email + password sign-in (anonymous): { room_id, key_wrapped, kdf, challenge }, or 401 wrong-login. */
+  public func accountLogin(email: String, authKey: String) async throws -> JSON {
+    try await request("POST", "/accounts/login", body: ["email": email, "auth_key": authKey], auth: false)
+  }
   public func devices() async throws -> JSON { try await request("GET", roomPath("/devices")) }
 }

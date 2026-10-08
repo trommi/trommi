@@ -11,6 +11,10 @@
 //   Swift -> JS   join request (MAC, signature), hub sign-in, the device register (room key), an answer (session key,
 //                 bind): the app's core and the agent open and verify them, the agent gets the decision; the Ed25519
 //                 signature of the Swift envelope checked once more by hand with zcrypto.verify.
+//   account       email + password: the JS core adds a login to the room (account.mjs), `trommi-swift login` signs in
+//                 (Argon2id, auth key, the recovery code unwrapped), adds itself with the recovery key and re-seals every
+//                 session key; the app's core sees the new human device and Swift reads the app's open cards. A wrong
+//                 password: "wrong-login", nobody added.
 //   refusals      "They don't match" in the app: the Swift join stops, nobody is added.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -21,6 +25,7 @@ import { startHub } from '../connector/test-e2e.mjs'
 import * as core from '../shared/index.mjs'
 import * as z from '../shared/crypto/zcrypto.mjs'
 import { CHECK_EMOJI } from '../shared/check-emoji.mjs'
+import * as A from '../shared/account.mjs'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const BIN = process.env.TROMMI_SWIFT_BIN ?? path.join(here, '../ios/TrommiCore/.build/debug/trommi-swift')
@@ -60,11 +65,11 @@ const test = async (name, fn) => {
 
 const hub = await startHub(tmp)
 const home = path.join(tmp, 'swift-home')
-let human, agent, agent2, swiftId
+let human, agent, agent2, swiftId, recoveryCode
 const commands = []
 try {
   await test('JS: the human founds a room on a local hub, an agent joins (check code confirmed) and files cards', async () => {
-    ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, storage: core.memoryStorage(), device_name: 'Phone' }))
+    ;({ client: human, recovery_code: recoveryCode } = await core.foundRoom({ hub_url: hub.hub_url, storage: core.memoryStorage(), device_name: 'Phone' }))
     await human.start()
     const addAgent = async name => {
       const inv = await human.createInvite({ device_role: 'agent' })
@@ -157,6 +162,25 @@ try {
     const mine = await swiftOpen()
     assert.deepEqual(mine, jsOpen())
     assert.ok(mine.some(c => c.title === 'After the removal') && mine.some(c => c.title === 'How the cache works'), 'cards of both session key epochs')
+  })
+
+  await test('account: JS adds email + password, `trommi-swift login` adds itself and re-seals the session keys; wrong password refused', async () => {
+    const email = 'parity@example.org', password = 'correct horse battery staple'
+    await A.addAccount(human, { email, password, recovery_code: recoveryCode })
+    const lhome = path.join(tmp, 'swift-login')
+    const before = human.model.members.size
+    const bad = await swift(['login', email, '--hub', hub.hub_url], { home: lhome, stdin: 'a wrong password 1' }).done
+    assert.notEqual(bad.code, 0)
+    assert.match(bad.stderr, /wrong-login/)
+    assert.equal(human.model.members.size, before, 'nobody added with a wrong password')
+    const r = await run(['login', email, '--hub', hub.hub_url, '--name', 'Swift login'], { home: lhome, stdin: password })
+    assert.match(r.stdout, /Logged in\. This device is a member/)
+    assert.ok(!r.stdout.includes(password) && !r.stderr.includes(password), 'the password is never printed')
+    const id = (await run(['whoami'], { home: lhome })).stdout.match(/device ([0-9a-f]{64})/)[1]
+    await until('the logged-in Swift device in the app', () => human.model.members.get(id)?.device_role === 'human' && human.model.members.get(id)?.device_name === 'Swift login')
+    const cards = JSON.parse((await run(['cards', '--json'], { home: lhome })).stdout).map(c => ({ id: c.id, title: c.title, options: c.options })).sort((a, b) => a.id.localeCompare(b.id))
+    assert.deepEqual(cards, jsOpen(), 'the open cards (session keys re-sealed for the new device, older epochs by back links)')
+    console.log('     ' + r.stdout.trim().split('\n').join('\n     '))
   })
 
   await test('"They don\'t match" in the app: the Swift join stops, nobody is added', async () => {
