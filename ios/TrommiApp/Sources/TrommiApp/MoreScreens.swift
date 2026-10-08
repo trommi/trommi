@@ -198,10 +198,21 @@ struct PictureScreen: View {
     PicturesView(list: (model.card(cardId)?.attachments ?? []).filter { kindOf($0) == "image" }, start: start)
   }
 }
+/** Under a picture that belongs to an option (a card's page): the option's label and a glass button that chooses it. */
+struct PictureOption {
+  var label: String
+  var on: Bool
+  var multiple: Bool
+  var choose: () -> Void
+}
 struct PicturesView: View {
   let list: [JV]
   let start: Int
+  /** Per picture its option, where it has one (same order as `list`). */
+  var options: [PictureOption?] = []
   @State private var at = 0
+  /** Ticks flipped here (several answers allowed): the button shows them at once. */
+  @State private var flipped = Set<Int>()
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     ZStack(alignment: .topTrailing) {
@@ -214,6 +225,29 @@ struct PicturesView: View {
       .tabViewStyle(.page(indexDisplayMode: list.count > 1 ? .automatic : .never))
       Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 16, weight: .bold)).foregroundStyle(.white).frame(width: 44, height: 44).glass(Circle(), interactive: true) }
         .padding(16)
+    }
+    .overlay(alignment: .bottom) {
+      if at < options.count, let o = options[at] {
+        // the option this picture belongs to, and choosing it right here
+        let on = o.on != flipped.contains(at)
+        Button {
+          o.choose()
+          if o.multiple { if flipped.contains(at) { flipped.remove(at) } else { flipped.insert(at) } } else { dismiss() }
+        } label: {
+          HStack(spacing: 10) {
+            if o.multiple { Image(systemName: on ? "checkmark.square.fill" : "square").font(.system(size: 18, weight: .semibold)) }
+            Text(o.label).font(Face.text(17, .semibold)).lineLimit(2).multilineTextAlignment(.leading)
+            Spacer(minLength: 8)
+            if !o.multiple { Text("Choose").font(Face.text(15, .semibold)).padding(.horizontal, 14).padding(.vertical, 8).background(Capsule().fill(Ink.accent)).foregroundStyle(Ink.accentFg) }
+          }
+          .foregroundStyle(.white)
+          .padding(.leading, 18).padding(.trailing, 8).frame(minHeight: 56)
+          .glass(Capsule(), interactive: true)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16).padding(.bottom, 40)
+        .accessibilityLabel(o.multiple ? "\(o.label), \(on ? "ticked" : "not ticked")" : "Choose \(o.label)")
+      }
     }
     .onAppear { at = start }
   }

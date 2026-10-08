@@ -25,7 +25,9 @@ struct CardScreen: View {
         ScrollView {
           VStack(alignment: .leading, spacing: 18) {
             lead(c, a, d)
-            if !c.attachments.isEmpty { Attachments(list: c.attachments, onPicture: { picture = $0 }) }
+            // the pictures that belong to no option stay in the strip; an option's own picture is on its tile
+            let loose = looseAttachments(c)
+            if !loose.isEmpty { Attachments(list: loose, onPicture: { i in picture = gallery(c).firstIndex { $0.key == nil && $0.nth == i } }) }
             answers(c, a)
             if !c.versions.isEmpty { versions(c) }
             CardLink(card: c)
@@ -57,12 +59,42 @@ struct CardScreen: View {
       }
       .onAppear { if !loadedDraft { loadDraft(c); loadedDraft = true } }
       .background { CardKeys(card: c) }
-      .fullScreenCover(item: Binding(get: { picture.map { PicAt(at: $0) } }, set: { picture = $0?.at })) { p in PictureScreen(cardId: c.id, start: p.at) }
+      .fullScreenCover(item: Binding(get: { picture.map { PicAt(at: $0) } }, set: { picture = $0?.at })) { p in
+        let g = gallery(c)
+        PicturesView(list: g.map { $0.ref }, start: p.at, options: g.map { e in e.key.flatMap { k in c.options.first { $0.key == k } }.map { o in pictureOption(c, o) } })
+      }
     } else {
       VStack(spacing: 10) { Text("This question is not on the board any more.").font(Face.text(16)).foregroundStyle(Ink.muted) }.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
   struct PicAt: Identifiable { let at: Int; var id: Int { at } }
+
+  /** Option key -> its picture (OptionPictures: a section names it, file names, or one each), while the card is open. */
+  private func optionPictures(_ c: DeskCard) -> [String: Int] {
+    c.status == "open" && c.withAgent == nil ? OptionPictures.of(attachments: c.attachments, options: c.options, sections: c.sections) : [:]
+  }
+  /** The attachments without the pictures that sit on an option's tile. */
+  private func looseAttachments(_ c: DeskCard) -> [JV] {
+    let imgs = OptionPictures.images(c.attachments)
+    let taken = Set(optionPictures(c).values.map { imgs[$0] })
+    return c.attachments.filter { !taken.contains($0) }
+  }
+  /** The pictures large, in this order: each option's picture (the options' order), then the loose ones. `nth`: the
+   *  loose picture's place in the strip. */
+  private struct GalleryItem { var ref: JV; var key: String?; var nth: Int }
+  private func gallery(_ c: DeskCard) -> [GalleryItem] {
+    let imgs = OptionPictures.images(c.attachments), pics = optionPictures(c)
+    var out = c.options.compactMap { o in pics[o.key].map { GalleryItem(ref: imgs[$0], key: o.key, nth: -1) } }
+    let loose = looseAttachments(c).filter { kindOf($0) == "image" }
+    out += loose.enumerated().map { GalleryItem(ref: $1, key: nil, nth: $0) }
+    return out
+  }
+  private func pictureOption(_ c: DeskCard, _ o: Option) -> PictureOption {
+    PictureOption(label: o.label, on: picked.contains(o.key), multiple: c.multiple) {
+      if c.multiple { if picked.contains(o.key) { picked.remove(o.key) } else { picked.insert(o.key) }; saveDraft(c) }
+      else { model.decide(c, keys: [o.key], note: note, notes: notes) }
+    }
+  }
 
   /** The question as it was before the agent revised it (card.mjs: "version n, as it was"). */
   private func versions(_ c: DeskCard) -> some View {
@@ -208,7 +240,19 @@ struct CardScreen: View {
   @ViewBuilder private func option(_ c: DeskCard, _ o: Option, _ hue: Int) -> some View {
     let advised = c.recommended.contains(o.key)
     let on = picked.contains(o.key)
+    let pic = optionPictures(c)[o.key].map { OptionPictures.images(c.attachments)[$0] }
     VStack(alignment: .leading, spacing: 6) {
+     VStack(spacing: 0) {
+      // the option's own picture, on its tile: picture and answer are one (a tap: large, with Choose under it)
+      if let pic = pic {
+        Button { picture = gallery(c).firstIndex { $0.key == o.key } } label: {
+          AttachmentImage(ref: pic, contentMode: .fit).frame(maxWidth: .infinity, maxHeight: 220)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding([.horizontal, .top], 10)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Picture of \(o.label), open it large")
+      }
       Button {
         if c.multiple { if on { picked.remove(o.key) } else { picked.insert(o.key) }; saveDraft(c) }
         else { model.decide(c, keys: [o.key], note: note, notes: notes) }
@@ -230,11 +274,13 @@ struct CardScreen: View {
           }
         }
         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Ink.surface))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(advised || on ? Ink.fg : Tone.color(hue: hue, .edge), lineWidth: advised || on ? 2 : 1))
+        .contentShape(Rectangle())
       }
       .buttonStyle(PressStyle())
       .accessibilityLabel("\(o.label)\(advised ? ", recommended by the agent" : "")\(o.final ? " (settles it)" : "")")
+     }
+     .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Ink.surface))
+     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(advised || on ? Ink.fg : Tone.color(hue: hue, .edge), lineWidth: advised || on ? 2 : 1))
       if noting == o.key || notes[o.key]?.isEmpty == false {
         HStack(spacing: 8) {
           Sketch("pen", color: Ink.muted).frame(width: 16, height: 16)
