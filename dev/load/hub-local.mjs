@@ -11,12 +11,16 @@
 // Prints one JSON line {"ready":true,"port":..,"hub_url":..} on stdout once listening. Metrics, one JSON line every
 // --every ms: time, process CPU % (of one core), RSS, heap, external, event-loop delay p50/p99/max, open sockets,
 // bytes queued in socket buffers (slow consumers), hub.db + WAL size, envelope count.
+// HUB_CMD=<a hub binary> (the Rust hub: hub-rs/README.md): that hub instead, in its own process (hub/external.mjs);
+// CPU and RSS are then read from /proc/<pid> of the hub process, open sockets from its fds, and the event loop and
+// socket queue figures are the hub's own (nodejs_eventloop_lag_ms, trommi_stream_outbound_bytes) where it has them.
 import fs from 'node:fs'
 import path from 'node:path'
 import net from 'node:net'
 import http from 'node:http'
 import { monitorEventLoopDelay } from 'node:perf_hooks'
-import { startHub, LIMITS } from '../../hub/server.mjs'
+const EXTERNAL = !!process.env.HUB_CMD
+const { startHub, LIMITS } = EXTERNAL ? await import('../../hub/external.mjs') : await import('../../hub/server.mjs')
 import { guard } from '../guard.mjs'
 guard({ usage: 'node dev/load/hub-local.mjs --data=DIR --metrics=FILE [--port=8891] [--every=5000] [--keep-limits] [--count]', values: ['data', 'every', 'metrics', 'port'], flags: ['keep-limits', 'count'] })
 
@@ -33,7 +37,10 @@ async function freePort() {
   throw new Error('no free port in 8891-8899')
 }
 
-if (!process.argv.includes('--keep-limits')) {
+if (!process.argv.includes('--keep-limits') && EXTERNAL) {
+  Object.assign(process.env, { HUB_LIMIT_FOUND_PER_IP_HOUR: '1000000000', HUB_LIMIT_STREAMS_PER_DEVICE: '1000000', HUB_LIMIT_ENVELOPES_PER_SECOND: '1000000',
+    HUB_LIMIT_ENVELOPE_BURST: '1000000', HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE: '1000000000' })
+} else if (!process.argv.includes('--keep-limits')) {
   LIMITS.foundPerIpHour = 1e9
   LIMITS.streamsPerDevice = 1e6
   LIMITS.envelopesPerSecond = 1e6
@@ -74,13 +81,34 @@ function countingFront(publicPort, innerPort) {
 }
 
 const sockets = new Set()
-hub.server.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)) })
+if (!EXTERNAL) hub.server.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)) })
 const loop = monitorEventLoopDelay({ resolution: 10 }); loop.enable()
 const out = fs.createWriteStream(metricsFile, { flags: 'a' })
 let lastCpu = process.cpuUsage(), lastAt = performance.now()
 const size = f => { try { return fs.statSync(f).size } catch { return 0 } }
 const countQ = hub.db.q("SELECT COALESCE(SUM(last_envelope_number), 0) AS n FROM rooms")
+// The external hub's process, from /proc (Linux): CPU ticks (100 per second), RSS pages, socket fds.
+const pid = EXTERNAL ? hub.process.pid : null
+const proc = f => { try { return fs.readFileSync(`/proc/${pid}/${f}`, 'utf8') } catch { return '' } }
+const ticks = () => { const v = proc('stat').split(') ')[1]?.split(' ') ?? []; return Number(v[11] ?? 0) + Number(v[12] ?? 0) }
+let lastTicks = EXTERNAL ? ticks() : 0
+const sockFds = () => { try { return fs.readdirSync(`/proc/${pid}/fd`).filter(f => { try { return fs.readlinkSync(`/proc/${pid}/fd/${f}`).startsWith('socket:') } catch { return false } }).length } catch { return null } }
+function sampleExternal() {
+  const t = performance.now(), now = ticks()
+  const rss = Number(proc('statm').split(' ')[1] ?? 0) * 4096
+  const rec = {
+    at: Date.now(), cpu_percent: +(((now - lastTicks) * 10) / (t - lastAt) * 100).toFixed(1),
+    rss_mb: +(rss / 1048576).toFixed(1), heap_used_mb: null, heap_total_mb: null, external_mb: null, array_buffers_mb: null,
+    loop_p50_ms: null, loop_p99_ms: null, loop_max_ms: null,
+    sockets: sockFds(), socket_queued_mb: null,
+    db_mb: +((size(path.join(dataDir, 'hub.db')) + size(path.join(dataDir, 'hub.db-wal'))) / 1048576).toFixed(1),
+    envelopes: countQ ? Number(countQ.get().n) : null,
+  }
+  lastTicks = now; lastAt = t
+  out.write(JSON.stringify(rec) + '\n')
+}
 function sample() {
+  if (EXTERNAL) return sampleExternal()
   const cpu = process.cpuUsage(lastCpu), t = performance.now()
   const m = process.memoryUsage()
   let queued = 0
@@ -98,7 +126,7 @@ function sample() {
   out.write(JSON.stringify(rec) + '\n')
 }
 setInterval(sample, every)
-process.stdout.write(JSON.stringify({ ready: true, port: counting ? port : hub.port, hub_url: hub.hubUrl, counting, data: dataDir, metrics: metricsFile, pid: process.pid }) + '\n')
+process.stdout.write(JSON.stringify({ ready: true, port: counting ? port : hub.port, hub_url: hub.hubUrl, counting, data: dataDir, metrics: metricsFile, pid: process.pid, hub_pid: EXTERNAL ? hub.process.pid : process.pid, hub: EXTERNAL ? process.env.HUB_CMD : 'hub/server.mjs' }) + '\n')
 const stop = () => { sample(); hub.close().finally(() => process.exit(0)) }
 process.on('SIGTERM', stop)
 process.on('SIGINT', stop)

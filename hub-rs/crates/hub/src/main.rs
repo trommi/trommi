@@ -23,6 +23,10 @@ mod store;
 mod stream;
 mod util;
 
+/// mimalloc: steadier memory than glibc's per-thread arenas under a multi-threaded runtime, and fast on musl.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use crate::http::Conn;
 use crate::server::Hub;
 use hyper::server::conn::http1;
