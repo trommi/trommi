@@ -5,7 +5,7 @@
 import * as desk from './desk.mjs'
 import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
-import { DRAWER_VEIL, SIDE_FOOT, cornerNote, phoneBar, sidebarRows, tabBar, topbar } from './sidebar.mjs'
+import { DRAWER_VEIL, SIDE_FOOT, cornerNote, markCurrent, phoneBar, sidebarRows, tabBar, topbar } from './sidebar.mjs'
 import { Controller, WORDS, calm, readAttachmentsWith, controller, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { rowSheet } from './desk.mjs'
@@ -1256,7 +1256,8 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
   if (sidebar) {
     if (model) parts.push({ key: 'phonebar', html: String(phoneBar(model, base, { view, current, title })) })
     parts.push({ key: 'topbar', html: String(topbar(model, base, view === 'desk', view === 'session' ? current : null)) })
-    parts.push({ key: 'agents', html: String(html`<nav id="agents" aria-label="Sessions" data-controller="folds">${sidebarRows(model, base, current)}</nav>`) })
+    // (the same rows on every page: the session in view is marked after the paint, sidebar.mjs markCurrent)
+    parts.push({ key: 'agents', html: String(html`<nav id="agents" aria-label="Sessions" data-controller="folds">${sidebarRows(model, base)}</nav>`) })
     parts.push({ key: 'foot', html: String(SIDE_FOOT) })
     parts.push({ key: 'veil', html: String(DRAWER_VEIL) })
     if (model) parts.push({ key: 'note', html: String(cornerNote(model, base)) })
@@ -1337,12 +1338,54 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
         continue
       }
       const { frag, start, end } = made.get(key)
+      // A part painted before whose markup changed a little (the session in view marked in the sidebar, a count): the
+      // nodes it painted then stay, and only what differs is changed in them (morph). A row keeps its node, its
+      // controller and its layout; the browser styles and lays out only what changed.
+      const pristine = MORPHED.has(key) ? frag.cloneNode(true) : null
+      if (part?.pristine && part.html != null && MORPHED.has(key) && morphPart(part, frag)) {
+        part.html = html; part.html0 = html; part.pristine = pristine
+        anchor = part.end.nextSibling
+        continue
+      }
       if (part) { anchor = part.end.nextSibling; for (const n of between(part)) n.remove() }
       if (anchor && !anchor.isConnected) anchor = null
       body.insertBefore(frag, anchor)
-      parts.set(key, { html, html0: html, start, end })
+      parts.set(key, { html, html0: html, start, end, pristine })
       anchor = end.nextSibling
     }
+  }
+  // ---- morphing a part: keep the painted nodes, change what the new markup changes ----
+  // The frame's parts that stay from page to page (the sidebar, the bars); a page's <main> is painted anew (its
+  // controllers start from the top, its scroll too).
+  const MORPHED = new Set(['agents', 'topbar', 'phonebar', 'tabbar', 'sheets'])
+  // old: the live nodes between the part's marks; was: the markup they were painted from (parsed, untouched since);
+  // now: the new markup, parsed. Where now equals was, the live node stays as it is (whatever controllers did to it).
+  // Where only attributes differ, those attributes change and the children are compared the same way. Anything else
+  // (another element, a node that controllers added or took away) is replaced by the new node. false: not morphed
+  // (the part is painted anew).
+  function morphNode(live, was, now) {
+    if (now.isEqualNode(was)) return true
+    if (live.nodeType !== now.nodeType || was.nodeType !== now.nodeType) return false
+    if (now.nodeType === Node.TEXT_NODE || now.nodeType === Node.COMMENT_NODE) { if (live.data === was.data) live.data = now.data; else live.replaceWith(now); return true }
+    if (now.nodeType !== Node.ELEMENT_NODE || live.tagName !== now.tagName || was.tagName !== now.tagName) return false
+    // (a template's content, a form field's value, a frame: replaced whole)
+    if (now.tagName === 'TEMPLATE' || now.tagName === 'TEXTAREA' || now.tagName === 'INPUT' || now.tagName === 'SELECT' || now.tagName.includes('-')) { live.replaceWith(now); return true }
+    const lk = live.childNodes, wk = was.childNodes, nk = now.childNodes
+    if (lk.length !== wk.length || wk.length !== nk.length) { live.replaceWith(now); return true }
+    for (const a of new Set([...was.getAttributeNames(), ...now.getAttributeNames()])) {
+      const w = was.getAttribute(a), n = now.getAttribute(a)
+      if (w === n) continue
+      if (n == null) live.removeAttribute(a); else live.setAttribute(a, n)
+    }
+    const kids = [...lk], was2 = [...wk], now2 = [...nk]
+    for (let i = 0; i < now2.length; i++) if (!morphNode(kids[i], was2[i], now2[i])) kids[i].replaceWith(now2[i])
+    return true
+  }
+  function morphPart(part, frag) {
+    const live = between(part).slice(1, -1), was = [...part.pristine.childNodes].slice(1, -1), now = [...frag.childNodes].slice(1, -1)
+    if (live.length !== was.length || was.length !== now.length) return false
+    for (let i = 0; i < now.length; i++) if (!morphNode(live[i], was[i], now[i])) live[i].replaceWith(now[i])
+    return true
   }
   // A part a stream changed no longer holds the markup it was painted with.
   const forget = streams => {
@@ -1365,6 +1408,7 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     if (FRONT.has(opts.view)) padFrom = path
     padKept = opts.view === 'whiteboard' || (FRONT.has(opts.view) && padKept)
     paintBody(bodyParts({ ...opts, base: '' }))
+    if (opts.sidebar !== false) markCurrent(opts.current ?? null)
     const params = new URLSearchParams(`view=${opts.view}${opts.sidebar === false ? '' : '&bar=1'}${opts.stream ?? ''}`)
     page = { path, client: { view: opts.view, params }, opts }
     board.live(page.client, { reset: true })
