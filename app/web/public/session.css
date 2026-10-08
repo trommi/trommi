@@ -694,10 +694,6 @@ a.files-where:hover span { text-decoration: underline; }
 #desk-list .inbox-row, .log .msg { content-visibility: auto; contain-intrinsic-size: auto 172px; overflow-clip-margin: 80px; }
 
 /* ---- the pile "Media N" in #desk-stacks, beside Notes and "Off the desk": prints fanned, the newest on top ---- */
-.inbox-stacks.stack-tabs > .media-pile { --w: 104px; --h: 74px; --step: 27px; flex: none; display: grid; gap: 10px; align-self: flex-start; color: var(--fg); text-decoration: none; }
-@container rows (max-width: 600px) {
-  .inbox-stacks.stack-tabs > .media-pile { order: -1; --w: 92px; --h: 64px; --step: 24px; }
-}
 
 /* ---- A main session's way to another desk (session.mjs deskMove): small and quiet beside the name ---- */
 #session .pane-who > .t-pick-desk { flex: none; margin-left: 6px; }

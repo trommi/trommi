@@ -273,11 +273,7 @@ a.asset-preview:hover::after { box-shadow: inset 0 0 0 1px var(--line-strong); }
 .send:hover { background: var(--accent-hover); }
 .send:active { transform: scale(.94); }
 .send:disabled { background: var(--sunken); color: var(--faint); cursor: default; transform: none; }
-.is-sending .send .ico { opacity: 0; }
-.is-sending .send::after {
-  content: ""; position: absolute; width: 18px; height: 18px; border-radius: 50%;
-  border: 2px solid currentColor; border-top-color: transparent; animation: spin .7s linear infinite;
-}
+
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fade { from { opacity: 0; } }
 @keyframes zoom { from { opacity: 0; transform: scale(.96); } }
@@ -287,7 +283,7 @@ a.asset-preview:hover::after { box-shadow: inset 0 0 0 1px var(--line-strong); }
 /* ---- marks drawn by hand: each session's scribble, and the icons of the same family ---- */
 .doodle { width: 100%; height: 100%; display: block; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
 .sketch { display: block; width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
-body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
+
 .is-drawing .mark-trace { opacity: .5; }
 @keyframes mark-travel { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
 .ring-loop { stroke: currentColor; stroke-width: 1.25; }
@@ -721,7 +717,7 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
    ones keep their look and an unseen area around them takes the tap (as the list in session.css does). ---- */
 @media (max-width: 860px) {
   :is(.desk-duck-yes, .desk-duck-no, .tc-more-item, .tc-more .tc-more-list > .cardclip-copy, .t-picture-back, .session-buttons button, .session-filter-menu a, .t-menu button) { min-height: 44px; }
-  .room-tabs a { display: inline-flex; align-items: center; min-height: 44px; }
+  
   .ledger-find { height: 44px; }
   :is(.row-mark, .tc-from, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .art-kinds a, #settings-logout) { position: relative; }
   :is(.row-mark, .tc-from, .tc-step, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .art-kinds a, #settings-logout)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
@@ -730,8 +726,8 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
 /* ---- A phone names the page once: the top line says it (Agents, Devices, Settings, Media, Links), so the page's own
    big heading is left out there; the tabs and the line under the heading stay ---- */
 @media (max-width: 860px) {
-  #ledger .ledger-head h2, .room-paged .room-head h2, .gal-head > h2 { display: none; }
-  #ledger .ledger-head { margin-top: 0; }
+  .gal-head > h2 { display: none; }
+  
 }
 
 /* ---- One calm page head (his pick "plain", 7 October): Media, Links, Agents, Devices, Settings, Log out and the invite
@@ -758,12 +754,12 @@ html body .clip-copy.is-small .clip-copy-word { min-height: 30px; padding: 0 10p
    tile or option, centred a little above its bottom edge (on a card's option at the bottom right); white on a filled
    tile, the advice ink on a pale one. It marks the tile, not the words: the label stays clean. ---- */
 :root { --advice-stroke: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 6'%3E%3Cpath d='M1.5 3.6Q8 1.8 15 3.1T28.5 2.4' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'/%3E%3C/svg%3E"); }
-html body :is(.inbox-answer, .tc-opt, .tc-chip, .ledger-ans).is-advised::after { content: ""; position: absolute; z-index: 1; left: calc(50% - 15px); bottom: 7px; width: 30px; height: 6px; background: var(--urg-high); -webkit-mask: var(--advice-stroke) center / 100% 100% no-repeat; mask: var(--advice-stroke) center / 100% 100% no-repeat; pointer-events: none; }
+html body :is(.inbox-answer, .tc-opt, .tc-chip).is-advised::after { content: ""; position: absolute; z-index: 1; left: calc(50% - 15px); bottom: 7px; width: 30px; height: 6px; background: var(--urg-high); -webkit-mask: var(--advice-stroke) center / 100% 100% no-repeat; mask: var(--advice-stroke) center / 100% 100% no-repeat; pointer-events: none; }
 html body :is(.inbox-answer, .tc-chip).is-advised.is-lead::after, html body .inbox-row[data-from] .inbox-answer.is-lead.is-advised::after { background: rgb(255 255 255 / .92); }
 html body .tc-opt.is-advised::after { left: auto; right: 14px; bottom: 8px; }
 html body .tc-chip.is-advised::after { bottom: 2px; width: 22px; left: calc(50% - 11px); }
 .advice-loop { display: none !important; }
-.ledger-ans.is-advised { box-shadow: none !important; }
+
 html body .inbox-answer.is-take.is-advised { padding-bottom: var(--s-3); }
 
 /* ---- a phone is an app, not a page (his word, 8 October): nothing moves sideways. The window never scrolls (html and
