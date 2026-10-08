@@ -4,7 +4,7 @@ export { foundRoom, openRoom, joinRoom, recoverRoom, roomLink, parseRoomLink, jo
 // Accounts (email + password, Emergency Kit): import './account.mjs' directly (it carries Argon2 and the word list).
 export { Client, shareLink, parseShareLink, openShared, membersOf, isHumanRegisterKey, isAgentRegisterKey } from './client.mjs'
 export { agentMethods } from './agent.mjs'
-export { Hub, normaliseHubUrl } from './transport.mjs'
+export { Hub, normaliseHubUrl } from './transport.ts'
 export * as codec from './codec.ts'
 export { emptyModel, emptyChange, timelineKey, parseTimelineKey, stackOf, answerRefusal, choicesFinal, linkState, cleanLink, heardBy, cardHeard, cardWaitsOn, ASLEEP_MS } from './model.ts'
 export { memoryStorage } from './storage-memory.ts'

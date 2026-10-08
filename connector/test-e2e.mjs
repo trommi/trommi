@@ -959,7 +959,7 @@ export async function updates({ test, tmp }) {
     })
 
     await test('update: a changed core file (shell) is announced with restart_required and reload_connector asks for /mcp Reconnect', async () => {
-      fs.appendFileSync(path.join(repo, 'shared/transport.mjs'), '\n// changed by the update test\n')
+      fs.appendFileSync(path.join(repo, 'shared/transport.ts'), '\n// changed by the update test\n')
       const ev = await ch.next(e => update(e) && e.params.meta.restart_required === '1', 'the restart event')
       assert.match(ev.params.content, /\/mcp/)
       assert.match(await ch.call('reload_connector'), /\/mcp, then trommi, then Reconnect/)

@@ -2,7 +2,7 @@
 // lazy timelines), the outbox, persistence, membership changes, and the human actions. The agent actions are in
 // agent.mjs (mixed into the same class). Contract: shared/README.md.
 import * as z from './crypto/zcrypto.mjs'
-import { Hub } from './transport.mjs'
+import { Hub } from './transport.ts'
 import * as codec from './codec.ts'
 import * as M from './model.ts'
 import * as G from './crypto/session-grants.mjs'
