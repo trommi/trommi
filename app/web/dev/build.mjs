@@ -252,6 +252,23 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // (help.html stays as it is: its inline script is allowed by its hash in _headers; it imports /ui.mjs, which imports
   // nothing)
   if (!out['index.html'].includes(`<!-- preload ${version} -->`)) throw new Error('index.html: the <!-- preload --> block is missing')
+  // Subresource integrity (the bundle): the entry, core-start and every preload carry their sha384; an import map names
+  // the integrity of every module of the page, so a chunk imported later is checked too (browsers without import-map
+  // integrity ignore it). The import map is an inline script: its hash goes into the CSP of the generated _headers.
+  // (Workers take no integrity: the core worker comes from this origin under the same CSP.)
+  if (js) {
+    const sri = f => `sha384-${crypto.createHash('sha384').update(out[f]).digest('base64')}`
+    const pageModules = Object.keys(js.out).filter(f => f.endsWith('.mjs') && !/^gen\/app\/core-worker/.test(f)).sort()
+    const map = JSON.stringify({ integrity: Object.fromEntries(pageModules.map(f => [`/${f}`, sri(f)])) })
+    const importmap = `<script type="importmap">${map}</script>`
+    out['index.html'] = out['index.html']
+      .replace(`<!-- preload ${version} -->\n`, `<!-- preload ${version} -->\n${importmap}\n`)
+      .replace(/<(link rel="modulepreload"|script type="module") (href|src)="\/(gen\/app\/[^"?]+\.mjs)(\?v=\w+)?"/g, (all, tag, attr, f, q = '') => (f in out ? `<${tag} ${attr}="/${f}${q}" integrity="${sri(f)}"` : all))
+    const mapHash = `'sha256-${crypto.createHash('sha256').update(map).digest('base64')}'`
+    const headers = fs.readFileSync(path.join(pub, '_headers'), 'utf8')
+    out['_headers'] = headers.replace(/^(\/\*\n\s+Content-Security-Policy: .*?script-src [^;]*)/m, `$1 ${mapHash}`)
+    if (!out['_headers'].includes(mapHash)) throw new Error('_headers: no script-src in the CSP of /* for the import map')
+  }
 
   const sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
   out['sw.js'] = sw.replace(/^const VERSION = .*$/m, `const VERSION = ${JSON.stringify(version)}`).replace(/^const SHELL = .*$/m, `const SHELL = ${JSON.stringify(['/', ...files.map(f => `/${f}`)])}`)
@@ -259,6 +276,12 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // Not part of the shell: the app itself never loads them (Claude Code and the connect script do).
   const made = connectorFiles()
   for (const [f, c] of Object.entries(made ?? {})) out[`gen/${f}`] = c
+  // The build's manifest: every file this build serves with its SHA-256, and its own hash, the build hash, in
+  // build.txt (README "Verifying the build": anyone can build the commit and compare).
+  const served = [...new Set([...walk(pub).filter(f => !f.startsWith('gen/') && !(bundled && BUNDLED.test(f))), ...Object.keys(out)])].filter(f => f !== 'gen/build.txt' && f !== 'gen/manifest.json').sort()
+  const manifest = { commit: commitOf(repo), files: Object.fromEntries(served.map(f => [f, crypto.createHash('sha256').update(content(f)).digest('hex')])) }
+  out['gen/manifest.json'] = `${JSON.stringify(manifest, null, 1)}\n`
+  out['gen/build.txt'] += `build: ${crypto.createHash('sha256').update(out['gen/manifest.json']).digest('hex')}\n`
   const firstLoad = js ? [...js.first, js.worker, js.start].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null   // (the core worker too: boot starts it at once)
   return { out, version, sheets: links.length, files: files.length, connector: made ? made['connector.mjs.sha256'].slice(0, 12) : null, firstLoad, chunks: js ? Object.keys(js.out).length : 0 }
 }

@@ -1,7 +1,8 @@
 # Cloudflare static assets headers (also read by dev/serve.mjs). Strict CSP: scripts, styles, fonts only from this
-# origin; data only to the hub. Style attributes are allowed (the views set --hue etc. per element).
+# origin; data only to the hub. No inline script or style element but the hashed ones (index.html's theme script, the
+# help page's script and style); style attributes are allowed (style-src-attr: the views set --hue etc. per element).
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-9xvXDCjvw7LwmLUiQWHPJbFHCwbhGsXzaZRDBYWBfS8=' 'sha256-TTiI2F4imaAUorT3Pm4tRJeyZVfUw8qlcK7efdyaCok='; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://hub.trommi.com; frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-9xvXDCjvw7LwmLUiQWHPJbFHCwbhGsXzaZRDBYWBfS8=' 'sha256-TTiI2F4imaAUorT3Pm4tRJeyZVfUw8qlcK7efdyaCok='; style-src 'self' 'sha256-T0EnS/b94A0PILq6eLQmSmNtMhlApDYDco07H7ACERI='; style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://hub.trommi.com; frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(self), geolocation=(), microphone=(self)

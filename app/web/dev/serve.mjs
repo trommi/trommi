@@ -15,8 +15,9 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'publ
 const port = Number(process.argv.slice(2).find(a => /^\d+$/.test(a)) || 8900)
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.txt': 'text/plain', '.sh': 'text/plain; charset=utf-8', '.sha256': 'text/plain', '.webm': 'video/webm', '.zip': 'application/zip' }
 // Read on every request: a dev server left running must not serve an old CSP (it once blocked the Argon2 WASM).
+// (the build's _headers when it made one: the bundle's CSP names its import map)
 const readHeaders = () => { const headers = {}
-try { let cur = null; for (const line of fs.readFileSync(path.join(root, '_headers'), 'utf8').split('\n')) { if (!line.trim() || line.startsWith('#')) continue; if (!/^\s/.test(line)) { cur = line.trim(); headers[cur] = {} } else if (line.trim().startsWith('!')) headers[cur][line.trim().slice(1).trim()] = null; else { const [k, ...v] = line.trim().split(':'); headers[cur][k.trim()] = v.join(':').trim() } } } catch {}
+try { let cur = null; for (const line of (made?.out?.['_headers'] ?? fs.readFileSync(path.join(root, '_headers'), 'utf8')).split('\n')) { if (!line.trim() || line.startsWith('#')) continue; if (!/^\s/.test(line)) { cur = line.trim(); headers[cur] = {} } else if (line.trim().startsWith('!')) headers[cur][line.trim().slice(1).trim()] = null; else { const [k, ...v] = line.trim().split(':'); headers[cur][k.trim()] = v.join(':').trim() } } } catch {}
   return headers }
 // The build, made again when it is older than a moment (a page load asks for index.html, sw.js and the bundle at once).
 // By default the sources are served as they are (one module per file, unminified); --bundle serves the deployed
