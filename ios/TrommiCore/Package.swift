@@ -39,6 +39,11 @@ let package = Package(
       dependencies: ["TrommiCore"],
       resources: [.copy("Fixtures")]
     ),
+    .testTarget(
+      name: "TrommiClientTests",
+      dependencies: ["TrommiClient", "TrommiCore"],
+      resources: [.copy("Fixtures")]
+    ),
   ],
   swiftLanguageModes: [.v5]
 )

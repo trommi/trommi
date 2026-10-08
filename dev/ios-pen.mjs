@@ -1,6 +1,6 @@
 // ios-pen.mjs: the web app's hand-drawn marks as SVG strings for the iOS app (ios/TrommiApp/Sources/TrommiApp/Resources/pen.json),
 // drawn by the same code (app/web/public/ui.mjs), and a fixture of seeded scribbles for the Swift port of the pen
-// (ios/TrommiCore/Tests/TrommiCoreTests/Fixtures/pen-vectors.json).
+// (ios/TrommiCore/Tests/TrommiClientTests/Fixtures/pen-vectors.json).
 //   node dev/ios-pen.mjs
 import fs from 'node:fs'
 import path from 'node:path'
@@ -33,5 +33,5 @@ fs.writeFileSync(path.join(here, '../ios/TrommiApp/Sources/TrommiApp/Resources/p
 // Seeded scribbles for the Swift pen's test.
 const seeds = ['abc123def456', 'trommi', '0f3a9c2e11b7', 'Web App 3', 'session-x', '5b1e', 'deadbeefcafe', 'helper-ui', 'draw:spiral', 'draw:hatch', 'draw:burst', 'draw:knot']
 const vec = seeds.map(s => ({ seed: s, svg: ui.doodleSvg(s), hue: ui.hueFor({ id: s, mark: s }) }))
-fs.writeFileSync(path.join(here, '../ios/TrommiCore/Tests/TrommiCoreTests/Fixtures/pen-vectors.json'), JSON.stringify(vec, null, 1) + '\n')
+fs.writeFileSync(path.join(here, '../ios/TrommiCore/Tests/TrommiClientTests/Fixtures/pen-vectors.json'), JSON.stringify(vec, null, 1) + '\n')
 console.log(`${Object.keys(sorted).length} marks, ${vec.length} vectors`)
