@@ -187,6 +187,7 @@ const inviteSection = base => html`<section class="set-invite" aria-labelledby="
 <form method="post" action="${base}/pair" class="set-way"><input type="hidden" name="role" value="agent"><button type="submit" class="set-way-go" id="settings-invite-agent">${PLUS}<span>Invite Agent…</span></button><small>A line to paste into a terminal where Claude Code runs. The agent shows up in the room once you compare six emoji.</small></form>
 <form method="post" action="${base}/pair" class="set-way is-device"><input type="hidden" name="role" value="human"><button type="submit" class="set-qr" id="settings-pair" aria-label="Show the code to pair a device"><span class="set-qr-code">${FAKE_QR}</span><span class="set-qr-show">Show Code</span></button><div><b>Pair a device</b><small>A phone or another computer scans the code. It is made when you ask for it and works once.</small></div></form>
 </div>
+<p class="set-demo"><button type="button" id="demo-toggle" class="set-demo-go" role="switch" aria-checked="${String((() => { try { return Boolean(sessionStorage.getItem('trommi-mock')) } catch { return false } })())}">${sk('play')}<span>Demo</span><small>A made-up room to look around in; nothing is kept</small></button></p>
 </section>`
 
 function agentsMain(m, base, { find = '', sort = 'order', down = false, errors = new Map() } = {}) {

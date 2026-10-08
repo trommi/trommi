@@ -431,7 +431,7 @@ function menuDoors(model, base) {
 <button role="menuitem" type="button" id="push-toggle" class="menu-ico" data-level="off" aria-label="Push on this device: No" title="Push on this device">${sk('bell')}</button>
 <button role="menuitem" type="button" id="theme-toggle" class="menu-ico menu-theme-row" aria-label="Theme: Light, Dark or System (T)" title="Theme: Light → Dark → System (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<i class="ico-auto" aria-hidden="true">A</i></button>
 <button role="menuitem" type="button" id="keys-open" class="menu-ico" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?" aria-label="Keyboard Shortcuts (?)" title="Keyboard Shortcuts (?)">${sk('question')}</button>
-<button role="menuitemcheckbox" type="button" id="demo-toggle" class="menu-ico demo-toggle" aria-checked="${String(inDemo())}" aria-label="${inDemo() ? 'Leave the Demo' : 'Demo'}" title="${inDemo() ? 'Leave the demo: back to your desks' : 'The demo: a made-up room, nothing is kept'}">${sk('play')}</button>
+
 </div>
 <p class="menu-push-note" id="menu-push-note" role="status" hidden></p>
 </nav>`
@@ -463,7 +463,7 @@ const placeName = model => String(model?.deskName ?? '').trim() || 'Desk'
 /** The pill's words (the menu's button on a wide screen): the desk's drawing and the place's name (#pill-place, live). */
 const pillPlace = (model, current = null) => { const s = current ? model.byAgent.get(current) : null; return s ? html`<span class="pill-place" id="pill-place">${avatar(s, { crown: false })}<b>${s.name}</b></span>` : html`<span class="pill-place" id="pill-place"><span class="desk-lamp">${deskLamp(model)}</span><b>${placeName(model)}</b></span>` }
 const deskPlace = model => html`<span class="desk-place" id="desk-place"><span class="desk-name" data-size="${nameSize(placeName(model))}">${placeName(model)}</span></span>`
-const deskChevron = html`<button type="button" class="desk-switch-open" aria-haspopup="menu" aria-expanded="false" aria-controls="desk-switch" title="Desks" aria-label="Choose the desk">${sk('unfold')}</button>`
+const deskChevron = html`<button type="button" class="desk-switch-open" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" title="Desks and settings" aria-label="Desks and settings">${sk('unfold')}</button>`
 export function topbar(model, base, current, session = null) {
     return html`<header class="topbar"><div class="brand">
 <h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="${placeName(model)}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}${deskPlace(model)}</a>${deskChevron}
@@ -504,6 +504,13 @@ controller('phone-menu', class extends Controller {
       window.trommi?.router?.visit(`/?desk=${encodeURIComponent(out.desk.id)}`)
     } catch (x) { err.textContent = `Not made: ${x.message}` }
   }
+})
+// After a desk picked in the menu the page is drawn anew: the menu opens again where it was.
+if (typeof document !== 'undefined') document.addEventListener('turbo:load', () => {
+  let keep = null
+  try { keep = sessionStorage.getItem('trommi-menu-keep'); sessionStorage.removeItem('trommi-menu-keep') } catch {}
+  if (!keep) return
+  requestAnimationFrame(() => { const doors = document.getElementById('brand-doors'); if (!doors) return; doors.hidden = false; for (const b of document.querySelectorAll('#brand-menu, .desk-switch-open, #desk-pill')) if (b.offsetParent || b.id === 'brand-menu') b.setAttribute('aria-expanded', 'true') })
 })
 // The phone's desk pill opens the Trommi menu (#brand-doors), the same as the sidebar's foot.
 if (typeof document !== 'undefined') document.addEventListener('click', e => {
@@ -770,7 +777,14 @@ controller('menu', class extends Controller {
   // ---- entries ----
   // A choice closes the menu; a switch (theme, push) leaves it open.
   // ("New desk" opens its line and leaves the menu open.)
-  chosen(event) { if (event.target.closest('[role="menuitem"]:not([data-menu-body-param]):not(#desk-add), [role="menuitemradio"], [role="option"]')) this.close() }
+  // (his word, 8 October: Push and Theme and picking a desk keep the menu open, the board behind changes live; what
+  // goes to another page closes it; Esc and a click beside it close it too)
+  chosen(event) {
+    const t = event.target
+    if (t.closest('#push-toggle, #theme-toggle, #desk-add, .menu-desk-pen, .menu-desk-form')) return
+    if (t.closest('.menu-desk[data-desk]')) { try { sessionStorage.setItem('trommi-menu-keep', '1') } catch {} return }
+    if (t.closest('[role="menuitem"]:not([data-menu-body-param]), [role="menuitemradio"], [role="option"]')) this.close()
+  }
 
   // ---- a new desk: "+" opens a line for its name; Enter makes it (POST /desk, the hub's desks) and goes there ----
   newDesk() {
@@ -936,6 +950,8 @@ export function register(t) {
     if (!t) return
     // the desk switcher: the chevron beside the desk's name and the rail's tag (with one desk the tag opens the menu)
     if (t.closest('.desk-word-add')) { shut(); const sw0 = $('#desk-switch'); if (sw0) sw0.hidden = true; $('#brand-menu')?.click(); requestAnimationFrame(() => $('#desk-add')?.click()); return }
+    // (his word, 8 October: the whole Trommi menu opens from the desk head's chevron, and from the folded rail's tag)
+    if (t.closest('.desk-switch-open, .rail-tag') && !t.closest('#desk-pill')) { const doors = $('#brand-doors'), b = $('#brand-menu'); if (doors && b) { doors.dataset.from = 'head'; doors.hidden = !doors.hidden; b.setAttribute('aria-expanded', String(!doors.hidden)); for (const o of document.querySelectorAll('.desk-switch-open, .rail-tag')) o.setAttribute('aria-expanded', String(!doors.hidden)) } return }
     const sw = $('#desk-switch'), opener = t.closest('.desk-switch-open, .rail-tag')
     if (sw && opener) { const open = sw.hidden; sw.hidden = !open; for (const b of document.querySelectorAll('.desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', String(open)); shut(); return }
     if (sw && !sw.hidden && (!t.closest('#desk-switch') || t.closest('a[href]'))) { sw.hidden = true; for (const b of document.querySelectorAll('.desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', 'false') }
