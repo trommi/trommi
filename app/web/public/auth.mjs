@@ -294,7 +294,7 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
             : 'This is your only device. After this, your email and password (or your Emergency Kit) open your account.'
       return roomShell('Log out', html`${errorLine(error)}<p class="room-lead" id="logout-ask">Log out of this device? You can log in again with email and password.</p>
 ${note ? html`<p class="room-lead" id="logout-last">${note}</p>` : ''}<p class="room-meta">Everything Trommi keeps on this device is deleted here; your account and your other devices stay as they are.</p>
-<form method="post" action="/logout" class="room-inline room-logout" id="logout-form"><button type="submit" class="room-danger" id="logout-go">Log out</button><a href="/" data-nav class="room-back" id="logout-cancel">Cancel</a></form>`)
+<form method="post" action="/logout" class="room-inline room-logout" id="logout-form"><button type="submit" class="room-danger" id="logout-go">Log Out</button><a href="/" data-nav class="room-back" id="logout-cancel">Cancel</a></form>`)
     }
     t.get(/^\/logout$/, ({ req, res }) => { if (client.hub && isHuman() && m().room.account === undefined) loadAccount(); page(req, res, 'Log out', logoutMain(), { view: 'logout' }) })
     t.post(/^\/logout$/, async () => { await logOut(client) })
@@ -437,7 +437,7 @@ export async function roomScreen({ start, hub, openError = null }) {
     show(roomShell('Your account on this device', html`<p class="room-error" role="alert" id="broken-why">${fromLogin ? 'This browser holds an account already, and it does not open.' : 'This device is logged in, but your account did not open.'}</p>
 <p class="room-lead">${why}</p>
 <p class="room-lead">Log out of this device, then log in again with your email and password. Your account, your cards and your other devices stay as they are.</p>
-<div class="room-actions"><button type="button" class="room-primary" id="broken-logout">Log out of this device</button><button type="button" id="broken-retry">Retry</button></div>
+<div class="room-actions"><button type="button" class="room-primary" id="broken-logout">Log Out</button><button type="button" id="broken-retry">Retry</button></div>
 <p class="room-meta" id="broken-detail">${err?.code ? `${err.code}: ` : ''}${err?.message ?? ''}</p>`), '#broken-retry')
     on('#broken-retry', 'click', () => location.reload())
     on('#broken-logout', 'click', async e => {

@@ -248,7 +248,7 @@ const DOTS = raw('<svg class="t-head-dots" viewBox="0 0 24 24" aria-hidden="true
 /** Delete in the session's More menu: a small confirm in the menu itself (agents.mjs /sessions/:id/delete does it). */
 function deleteEntry(a, base, subs) {
   const what = subs ? 'the session with its helpers moves' : 'the session moves'
-  return html`<details class="desk-move-sub desk-move-delete"><summary role="menuitem">${sk('bin')}<span>Delete session</span></summary>
+  return html`<details class="desk-move-sub desk-move-delete"><summary role="menuitem">${sk('bin')}<span>Delete…</span></summary>
 <form class="session-delete-ask" method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/delete"><input type="hidden" name="stay" value="1"><p><b>Delete ${a.name}?</b> Its connector is removed from the room and ${what} to the archive. Open questions are shredded.</p>
 <div class="desk-duck-ways"><button type="submit" class="session-delete-yes">${sk('bin')}<span>Delete</span></button><button type="button" class="desk-duck-no" data-pop-close>Cancel</button></div></form></details>`
 }
@@ -260,8 +260,8 @@ function sessionMore(s, base) {
   const others = desks.length < 2 ? [] : desks.filter(d => d.id !== a.desk)
   const move = d => html`<form method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/edit"><input type="hidden" name="stay" value="1"><input type="hidden" name="moved" value="1"><input type="hidden" name="leave" value="1"><button type="submit" role="menuitem" name="desk" value="${d.id}">${sk('desk')}<span>${d.name || 'Desk'}</span></button></form>`
   return html`<details class="t-pick t-pick-desk"><summary class="t-head-desk t-head-more" title="More" aria-label="${a.name}: more">${DOTS}</summary>
-<div class="desk-move t-pop" role="menu" aria-label="More for ${a.name}">${others.length ? html`<details class="desk-move-sub"><summary role="menuitem">${sk('desk')}<span>Move to other desk</span></summary>${others.map(move)}</details>` : ''}
-<form method="post" action="/pair" data-turbo-frame="_top"><input type="hidden" name="role" value="agent"><input type="hidden" name="continue" value="${a.device_id}"><button type="submit" role="menuitem">${sk('key')}<span>Copy invite link again</span></button></form>${del ? html`<hr class="desk-move-rule">${del}` : ''}</div></details>`
+<div class="desk-move t-pop" role="menu" aria-label="More for ${a.name}">${others.length ? html`<details class="desk-move-sub"><summary role="menuitem">${sk('desk')}<span>Move to Desk…</span></summary>${others.map(move)}</details>` : ''}
+<form method="post" action="/pair" data-turbo-frame="_top"><input type="hidden" name="role" value="agent"><input type="hidden" name="continue" value="${a.device_id}"><button type="submit" role="menuitem">${sk('key')}<span>Copy Invite Link</span></button></form>${del ? html`<hr class="desk-move-rule">${del}` : ''}</div></details>`
 }
 function sessionWho(s, base) {
   const a = s.agent

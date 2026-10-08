@@ -1,7 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
 // The markup is the one app.css and sidebar.css style.
 import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
-import { BELL, Controller, PLUS, cardPath, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
+import { BELL, Controller, PLUS, agoSpan, cardPath, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -21,7 +21,7 @@ ${u.subs ? html`<button type="button" class="rail-subs" data-action="click->fold
 </div>`
 }
 
-const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}<span class="agent-invite-label">New agent</span></button></form>`
+const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}<span class="agent-invite-label">New Agent…</span></button></form>`
 
 // ---- the note (his word, 4 October: "nur EINE Notiz"; 5 October: "wieder nach unten rechts") ----
 // One drawn yellow sticky at the window's bottom-right, a part of the frame beside the sidebar (app.mjs bodyParts).
@@ -47,7 +47,7 @@ export function cornerNote(model, base) {
   const text = note?.text ?? '', files = note?.attachments ?? []
   return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
 <button type="button" class="corner-note-head" data-action="corner-note#open" title="${text || files.length ? 'Your note: open it (N)' : 'New note (N)'}" aria-label="${text || files.length ? 'Your note: open it' : 'New note'}" aria-expanded="false">${NOTE_ICON}</button>
-<div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop keydown->corner-note#key"><textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" aria-keyshortcuts="${SEND_KEYS}" data-action="input->corner-note#typed">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
+<div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop keydown->corner-note#key">${crown ? html`<span class="corner-note-to">${avatar(crown, { crown: false })}<b>${crown.name}</b></span>` : ''}<textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" aria-keyshortcuts="${SEND_KEYS}" data-action="input->corner-note#typed">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
 <footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<span class="corner-note-sending"><button type="button" class="note-send corner-note-send" data-action="corner-note#send" data-name="${crown.name}" aria-label="Send to ${crown.name}" aria-keyshortcuts="${SEND_KEYS}">${raw(crownSvg())}</button><kbd class="corner-note-keys" aria-hidden="true">${SEND_WORD}</kbd></span>` : html`<a class="corner-note-nocrown" data-nav href="${base}/settings/agents">Give a session the crown to send</a>`}</footer></div>
 </section>`
 }
@@ -256,7 +256,7 @@ export function sidebarRows(model, base, current = null) {
 // sidebar shows every session, a hand-drawn divider over each desk's; a desk shows only its own.
 function deskSwitchList(model, base) {
   const item = (href, name, on, waits) => html`<a role="menuitemradio" class="desk-switch-item" data-nav draggable="false" href="${href}" aria-checked="${String(on)}">${deskMark(waits)}<b>${name}</b>${waits ? raw('<i class="desk-switch-dot" aria-label="something waits"></i>') : ''}</a>`
-  return html`<span class="desk-switch-list" id="desk-switch-list">${item(`${base}/?desk=all`, 'All desks', model.all, false)}${desksOf(model).map(d => item(`${base}/?desk=${d.id}`, d.name, !model.all && d.id === model.desk, d.open > 0))}<button type="button" role="menuitem" class="desk-switch-add desk-word-add">${PLUS}<span>New desk</span></button></span>`
+  return html`<span class="desk-switch-list" id="desk-switch-list">${item(`${base}/?desk=all`, 'All Desks', model.all, false)}${desksOf(model).map(d => item(`${base}/?desk=${d.id}`, d.name, !model.all && d.id === model.desk, d.open > 0))}<button type="button" role="menuitem" class="desk-switch-add desk-word-add">${PLUS}<span>New Desk…</span></button></span>`
 }
 const RULE = raw('<svg class="desk-rule" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M1 3.4 Q40 2.2 90 3.1 T199 2.6"/></svg>')
 /** On All: the divider over one desk's sessions: its drawing, its name (a press shows that desk alone), a pen rule, the count. */
@@ -402,9 +402,12 @@ function menuSessions(model, base) {
 export function tabBar(model, base, view) {
   const fresh = model.allFresh ?? model.fresh
   const knocks = fresh.some(c => ['high', 'critical'].includes(c.urgency))
-  return html`<nav class="tabbar" id="tabbar" aria-label="Scribble Board, Desk, note"${['card', 'picture', 'whiteboard'].includes(view) ? raw(' hidden') : ''}>
-<a class="tab" data-tab="scribble" data-nav draggable="false" href="${base}/scribble-board">${sk('pen')}<span>Scribble</span></a>
-<a class="tab" data-tab="desk" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}><span class="desk-lamp">${deskLamp(model)}</span><span>Desk</span>${waitingBadge(fresh.length, knocks)}</a>
+  const chat = lastChat(model), unread = unreadChats(model)
+  // (monochrome pen drawings; Chat opens the last chat, Desk carries what waits, Note opens the note; inside a chat or
+  // a card the capsule stands back)
+  return html`<nav class="tabbar" id="tabbar" aria-label="Chat, Desk, Note"${['card', 'picture', 'whiteboard', 'session'].includes(view) ? raw(' hidden') : ''}>
+<a class="tab" data-tab="chat" data-nav draggable="false" href="${chat ? `${base}/s/${encodeURIComponent(chat)}` : `${base}/chats`}"${view === 'chats' ? raw(' aria-current="page"') : ''}>${sk('bubble')}<span>Chat</span><i class="tab-badge" id="chat-badge"${unread ? '' : raw(' hidden')}>${unread}</i></a>
+<a class="tab" data-tab="desk" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}>${sk('desk')}<span>Desk</span>${waitingBadge(fresh.length, knocks)}</a>
 <button type="button" class="tab" data-tab="note" aria-controls="corner-note-box" aria-expanded="false">${sk('letter')}<span>Note</span></button>
 </nav>`
 }
@@ -413,7 +416,7 @@ const waitingBadge = (n, knocks) => html`<i class="tab-badge${knocks ? ' is-knoc
 function menuDoors(model, base) {
   return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" data-owns-keys hidden>
 <div class="menu-desks" id="menu-desks">${menuDeskRows(model, base)}
-<button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${NEW_DESK}<span>New desk</span></button>
+<button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New Desk…">${NEW_DESK}<span>New Desk…</span></button>
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 ${menuSessions(model, base)}
@@ -421,7 +424,7 @@ ${menuSessions(model, base)}
 <div class="menu-demo"><button role="menuitemcheckbox" type="button" id="demo-toggle" class="demo-toggle" aria-checked="${String(inDemo())}" title="${inDemo() ? 'Leave the demo: back to your desks' : 'The demo: a made-up room, nothing is kept'}">${DEMO_MARK}<span>Demo</span><i class="demo-switch" aria-hidden="true"><b></b></i></button></div>
 <div class="menu-look"><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme-row" aria-label="Theme: light, dark or the system's (T)" title="Theme: Light → Dark → System (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<span>Theme</span></button></div>
 <div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
-<div class="menu-leave"><a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log out</span></a></div>
+<div class="menu-leave"><a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log Out</span></a></div>
 </nav>`
 }
 
@@ -462,6 +465,44 @@ ${deskSwitch(model, base)}
 </div></header>`
 }
 
+// The phone's menu: the pill opens it, a choice or a tap beside closes it; New Desk… makes a desk (POST /desk, as the
+// wide screen's menu); All Sessions… the whole list as a sheet from below.
+controller('phone-menu', class extends Controller {
+  connect() {
+    this.pill = document.getElementById('phone-pill')
+    this.onPill = e => { e.stopPropagation(); this.toggle() }
+    this.pill?.addEventListener('click', this.onPill)
+    this.beside = e => { if (!this.element.hidden && !this.element.contains(e.target) && e.target !== this.pill && !this.pill?.contains(e.target)) this.close() }
+    document.addEventListener('click', this.beside, true)
+    this.keys = e => { if (e.key === 'Escape' && !this.element.hidden) this.close() }
+    document.addEventListener('keydown', this.keys)
+    this.element.addEventListener('click', e => { if (e.target.closest('a[href]')) this.close() })
+  }
+  disconnect() { this.pill?.removeEventListener('click', this.onPill); document.removeEventListener('click', this.beside, true); document.removeEventListener('keydown', this.keys) }
+  toggle() { if (this.element.hidden) this.open(); else this.close() }
+  open() { this.element.hidden = false; this.pill?.setAttribute('aria-expanded', 'true'); requestAnimationFrame(() => this.element.classList.add('is-open')) }
+  close() { this.element.classList.remove('is-open'); this.pill?.setAttribute('aria-expanded', 'false'); this.element.hidden = true; const f = this.element.querySelector('.pm-desk-form'); if (f) f.hidden = true }
+  newDesk() { const f = this.element.querySelector('.pm-desk-form'); f.hidden = false; f.querySelector('input').focus() }
+  async makeDesk(e) {
+    e.preventDefault()
+    const f = e.currentTarget, name = f.querySelector('input').value.trim(), err = f.querySelector('.pm-error')
+    if (!name) return
+    try {
+      const res = await fetch('/desk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+      const out = await res.json().catch(() => ({}))
+      if (!res.ok || !out.desk?.id) { err.textContent = `Not made: ${out.error || res.statusText}`; return }
+      this.close()
+      window.trommi?.router?.visit(`/?desk=${encodeURIComponent(out.desk.id)}`)
+    } catch (x) { err.textContent = `Not made: ${x.message}` }
+  }
+})
+// The capsule stands back while the keyboard is up (a phone: a text field has the focus).
+if (typeof document !== 'undefined') {
+  const field = n => n instanceof Element && n.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, [contenteditable=""], [contenteditable="true"]')
+  document.addEventListener('focusin', e => { if (field(e.target)) document.documentElement.dataset.keyboard = '' })
+  document.addEventListener('focusout', e => { if (field(e.target)) delete document.documentElement.dataset.keyboard })
+}
+
 // ---- a phone's top line and the drawer (sidebar.css "A phone") ----
 // A phone has no room for the sidebar beside the page: the same sidebar (the Desk box, the sessions, the foot with the
 // Trommi menu) is a drawer that slides in from the left over the page. The slim line at the top holds its handle (three
@@ -469,15 +510,55 @@ ${deskSwitch(model, base)}
 // the session with its drawing. Wide screens show neither.
 const HANDLE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M4.2 6.9Q12 6.1 19.9 6.8"/><path d="M4.1 12.3Q11 11.6 19.6 12.2"/><path d="M4.4 17.3Q12.4 18 19.8 17.1"/></svg>')
 const PLACES = { off: 'Off your mind', agents: 'Settings', room: 'Settings', gallery: 'Media', pages: 'Pages', whiteboard: 'Scribble Board' }
+/** The phone's menu (his word, 8 October): a glass sheet that grows out of the pill: Settings; the desks (the one in
+ *  view checked, New Desk…); the sessions (the first eight by what waits and activity, then All Sessions… as a sheet
+ *  from below); then Scribble, Off your mind, Media, Pages. */
+function phoneMenu(model, base) {
+  const fresh = model.allFresh ?? model.fresh
+  const desks = desksOf(model), here = d => !model.all && (model.desk ? d.id === model.desk : d === desks[0])
+  const row = (href, icon, word, { on = false, n = 0, cls = '' } = {}) => html`<a role="menuitem" class="pm-row${cls ? ` ${cls}` : ''}" data-nav draggable="false" href="${href}"${on ? raw(' aria-current="true"') : ''}>${icon}<b>${word}</b>${n ? html`<i class="pm-n">${n}</i>` : ''}${on ? html`<span class="pm-check">${sk('tick')}</span>` : ''}</a>`
+  return html`<div class="phone-menu" id="phone-menu" role="menu" aria-label="Desks and places" data-controller="phone-menu" hidden>
+${row(`${base}/settings/agents`, sk('key'), 'Settings', { cls: 'is-settings' })}
+<p class="pm-h">Desks</p>
+${desks.length > 1 ? row(`${base}/?desk=all`, deskMark(false), 'All Desks', { on: Boolean(model.all), n: fresh.length }) : ''}${desks.map(d => row(`${base}/?desk=${d.id}`, deskMark(false), d.name, { on: here(d) }))}
+<button type="button" class="pm-row pm-add" data-action="phone-menu#newDesk">${PLUS}<b>New Desk…</b></button>
+<form class="pm-desk-form" data-action="submit->phone-menu#makeDesk" hidden><input name="name" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Add</button><p class="pm-error" role="alert"></p></form>
+<div class="pm-places">${row(`${base}/scribble-board`, sk('pen'), 'Scribble')}${row(`${base}/stacks/off`, sk('archive'), 'Off your mind')}${row(`${base}/assets`, sk('picture'), 'Media')}${row(`${base}/pages`, sk('page'), 'Pages')}</div>
+</div>`
+}
+
+/** In a chat (a phone): its title, the drawing and the name with ▾, opens the agents of the desk in view to switch to. */
+function chatSwitch(model, base, current) {
+  const s = model.byAgent.get(current)
+  if (!s) return ''
+  const fresh = model.allFresh ?? model.fresh
+  const deskId = model.deskOf?.(s)
+  const mates = model.agents.filter(a => !a.archived && (model.deskOf?.(a) ?? null) === (deskId ?? null))
+  return html`<button type="button" class="phone-pill chat-title" id="phone-pill" aria-haspopup="menu" aria-controls="phone-menu" aria-expanded="false" aria-label="${s.name}: switch to another agent">${avatar(s, { crown: false })}<b>${s.name}</b>${sk('unfold')}</button>
+<div class="phone-menu" id="phone-menu" role="menu" aria-label="Agents of this desk" data-controller="phone-menu" hidden><p class="pm-h">${model.desks?.find(d => d.id === deskId)?.name ?? 'This desk'}</p>${mates.map(a => { const n = fresh.filter(c => c.agent === a.id).length; return html`<a role="menuitem" class="pm-row" data-nav draggable="false" href="${base}/s/${encodeURIComponent(a.id)}"${a.id === s.id ? raw(' aria-current="true"') : ''}>${avatar(a, { crown: false })}<b>${a.name}</b>${n ? html`<i class="pm-n">${n}</i>` : ''}${a.id === s.id ? html`<span class="pm-check">${sk('tick')}</span>` : ''}</a>` })}</div>`
+}
+
+// The chats (a phone's Chat tab): the last chat opened (the crowned session's at first); what is new since.
+const CHAT_KEY = 'trommi-last-chat', READ_KEY = 'trommi-chat-read'
+const readMap = () => { try { return JSON.parse(localStorage.getItem(READ_KEY) || '{}') } catch { return {} } }
+export function chatOpened(id) { try { localStorage.setItem(CHAT_KEY, id); const m = readMap(); m[id] = Date.now(); localStorage.setItem(READ_KEY, JSON.stringify(m)) } catch {} }
+const lastChat = model => { let id = null; try { id = localStorage.getItem(CHAT_KEY) } catch {} ; return (id && model.byAgent.get(id) && !model.byAgent.get(id).archived ? id : null) ?? crownOf(model)?.id ?? model.agents.find(a => !a.archived)?.id ?? null }
+/** Sessions with something new since he last opened their chat (their last activity after that). */
+const unreadChats = model => { const m = readMap(); return model.agents.filter(a => !a.archived && Number(a.seen) > (m[a.id] ?? 0)).length }
+export function chatsMain(model, base) {
+  const fresh = model.allFresh ?? model.fresh, m = readMap()
+  const list = [...model.agents.filter(a => !a.archived)].sort((x, y) => (Number(y.seen) || 0) - (Number(x.seen) || 0))
+  return html`<main id="chats" class="chats-page" aria-label="Chats"><h1 class="chats-h">Chats</h1><ul class="chats-list">${list.map(a => { const n = fresh.filter(c => c.agent === a.id).length, nw = Number(a.seen) > (m[a.id] ?? 0); return html`<li><a class="chats-row${nw ? ' is-new' : ''}" data-nav draggable="false" href="${base}/s/${encodeURIComponent(a.id)}">${avatar(a, { crown: false })}<span class="chats-words"><b>${a.name}</b><small>${a.task || a.model || ''}</small></span><span class="chats-side">${a.seen ? agoSpan(Number(a.seen), 'ago') : ''}${n ? html`<i class="pm-n">${n}</i>` : ''}</span></a></li>` })}</ul></main>`
+}
+
 export function phoneBar(model, base, { view = '', current = null, title = '' } = {}) {
-  const session = current ? model.byAgent.get(current) : null
   const waits = (model.blocked ?? 0) + (model.knocking ?? 0) > 0
-  // (a session's own page: its heading stands in this line itself, with the rename, the drawings and More: session.css)
-  const place = view === 'session' ? '' : session ? html`<a class="phone-place" data-nav draggable="false" href="${base}/s/${encodeURIComponent(session.id)}">${avatar(session, { crown: false })}<b>${session.name}</b></a>`
-    : view === 'desk' || view === 'card' ? html`<a class="phone-place" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}><span class="desk-lamp" id="phone-lamp">${deskLamp(model)}</span><b>${model.deskName}</b></a>`
-      : html`<span class="phone-place"><b>${PLACES[view] ?? String(title).replace(/^\(\d+\) /, '').replace(/ · Trommi$/, '')}</b></span>`
-  const up = view === 'session' || view === 'card' || view === 'picture' ? html`<a class="phone-back" data-nav draggable="false" href="${base}/" aria-label="Back to the Desk">${raw('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.2 12.3Q12 11.7 5.2 12.1"/><path d="M10.8 6.3Q7.6 9.4 5 12.1Q7.9 15 10.9 17.8"/></svg>')}</a>` : ''
-  return html`<div class="phone-bar" id="phone-bar">${up}<button type="button" class="drawer-open" id="drawer-open" aria-controls="agents" aria-expanded="false" aria-label="Sessions and menu" title="Sessions and menu"${waits ? raw(' data-waits') : ''}>${HANDLE}</button>${place}</div>`
+  // In a chat: back to the chats, its title switches the agent. Elsewhere the pill: the desk's drawing and name with
+  // ▾; it opens the phone's menu (phoneMenu).
+  if (view === 'session' && current) return html`<div class="phone-bar is-chat" id="phone-bar"><a class="phone-back" data-nav draggable="false" href="${base}/chats" aria-label="Chats">${raw('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.8 5.6Q11 9 7.6 12.1Q11 15.4 14.9 18.6"/></svg>')}</a>${chatSwitch(model, base, current)}</div>`
+  const place = ['desk', 'card', 'picture', 'chats'].includes(view) ? ''
+    : html`<span class="phone-place"><b>${PLACES[view] ?? String(title).replace(/^\(\d+\) /, '').replace(/ · Trommi$/, '')}</b></span>`
+  return html`<div class="phone-bar" id="phone-bar"><button type="button" class="phone-pill" id="phone-pill" aria-haspopup="menu" aria-controls="phone-menu" aria-expanded="false" aria-label="${placeName(model)}: desks and places" title="Desks and places"${waits ? raw(' data-waits') : ''}><span class="desk-lamp" id="phone-lamp">${deskMark(false)}</span><b>${placeName(model)}</b>${sk('unfold')}</button>${place}${phoneMenu(model, base)}</div>`
 }
 export const DRAWER_VEIL = raw('<div class="drawer-veil" id="drawer-veil" aria-hidden="true"></div>')
 
@@ -829,6 +910,8 @@ controller('lean', class extends Controller {
 // ---- the sidebar's live piece, on every page that has it ----
 export function register(t) {
   const { BASE, stream } = t
+  t.get(/^\/chats$/, ({ req, res }) => { const m = t.model(); t.page(req, res, { model: m, title: 'Chats · Trommi', view: 'chats', main: chatsMain(m, BASE) }) })
+  document.addEventListener('turbo:load', () => { const m = /^\/s\/([^/?#]+)$/.exec(location.pathname); if (m) chatOpened(decodeURIComponent(m[1])) })
   // The Trommi menu opens and closes (its button, a click beside it, Escape); the theme switch.
   const shut = () => { const doors = $('#brand-doors'); if (doors && !doors.hidden) { doors.hidden = true; $('#brand-menu')?.setAttribute('aria-expanded', 'false'); delete doors.dataset.from } }
   document.addEventListener('click', e => {

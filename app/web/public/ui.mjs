@@ -811,11 +811,31 @@ export const pageChip = (page, always = false, view = '') => (page || always ? h
 const UNDO = raw('<svg class="back-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg>')
 // The time left runs out along a scribbled line (app.css .back-line).
 const CLOCK = raw('<svg class="back-line" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><path d="M0 3 Q12 1 25 3 T50 3 T75 3 T100 3" pathLength="100"/></svg>')
+// The time left as a ring that runs down around the undo arrow (the glass pill, his word 8 October).
+const RING_TIME = raw('<svg class="ring-time" viewBox="0 0 36 36" aria-hidden="true"><circle class="ring-track" cx="18" cy="18" r="16"/><circle class="ring-run" cx="18" cy="18" r="16" pathLength="100"/></svg>')
+// The last Undo whose toast went by itself (or was swiped away): kept, so the Desk's row menu can still take it back.
+let keptUndo = null
+const keepUndo = node => { const f = node?.querySelector?.('form'); if (!f) return; keptUndo = { head: node.dataset.head || node.querySelector('.says-words b')?.textContent || 'the last', action: f.getAttribute('action'), fields: [...new FormData(f)] } }
+/** The undo kept from a toast that is gone, or null: { head }. */
+export const lastUndo = () => (keptUndo ? { head: keptUndo.head } : null)
+/** Takes the kept undo back (posts its form as the toast's Undo would have). */
+export function undoLast() {
+  const k = keptUndo
+  if (!k) return false
+  keptUndo = null
+  const f = document.createElement('form')
+  f.method = 'post'; f.action = k.action; f.hidden = true
+  for (const [n, v] of k.fields) f.append(Object.assign(document.createElement('input'), { type: 'hidden', name: n, value: String(v) }))
+  document.body.append(f)
+  f.requestSubmit()
+  setTimeout(() => f.remove(), 4000)
+  return true
+}
 const ACTION = 'pointerenter->says#pause pointerleave->says#run turbo:submit-start->says#leave turbo:submit-end->says#gone'
 
 // (Without an action the Undo is a plain button: showToast hangs the function on it.)
 function undoForm({ action, label = 'Undo', fields = {} }) {
-  const button = html`<button class="says-back" type="${action ? 'submit' : 'button'}" title="${label} (U)" aria-keyshortcuts="u">${UNDO}${label}<kbd>U</kbd></button>`
+  const button = html`<button class="says-back" type="${action ? 'submit' : 'button'}" title="${label} (U)" aria-keyshortcuts="u"><span class="says-ring">${RING_TIME}${UNDO}<i class="says-n" hidden></i></span><span class="says-label">${label}</span><kbd>U</kbd></button>`
   if (!action) return button
   return html`<form method="post" action="${action}"><input type="hidden" name="stay" value="1"><input type="hidden" name="quiet" value="1"><input type="hidden" name="undo" value="1">${Object.entries(fields).map(([k, v]) => html`<input type="hidden" name="${k}" value="${v}">`)}${button}</form>`
 }
@@ -1141,6 +1161,17 @@ controller('says', class extends Controller {
     const url = new URL(location.href)
     if (url.searchParams.has('said')) { url.searchParams.delete('said'); history.replaceState(history.state, '', url) }
     this.left = this.msValue; this.element.style.setProperty('--back-ms', `${this.left}ms`); this.run()
+    this.swipe()
+  }
+  // A finger flicks it away (sideways, or up on a phone where it stands at the top); its undo stays in the row menu.
+  swipe() {
+    const me = this.element
+    let x0 = null, y0 = 0
+    me.addEventListener('pointerdown', e => { if (e.target.closest('button, a')) return; x0 = e.clientX; y0 = e.clientY; me.setPointerCapture?.(e.pointerId) })
+    me.addEventListener('pointermove', e => { if (x0 == null) return; const dx = e.clientX - x0, dy = Math.min(0, e.clientY - y0); me.style.translate = `${dx}px ${dy}px`; me.style.opacity = String(Math.max(.2, 1 - Math.hypot(dx, dy) / 160)) })
+    const up = e => { if (x0 == null) return; const far = Math.abs(e.clientX - x0) > 48 || y0 - e.clientY > 32; x0 = null; if (far) { keepUndo(me); me.remove() } else { me.style.translate = ''; me.style.opacity = '' } }
+    me.addEventListener('pointerup', up); me.addEventListener('pointercancel', up)
+    me.querySelector('.says-back')?.addEventListener('click', () => { keptUndo = null })
   }
   // One slot: the same action again merges into this toast ("Archived · 3", its Undo takes back the last; the titles
   // in its tooltip); another replaces it. (A toast whose Undo was pressed stays, hidden, for its form's answer; a device
@@ -1157,12 +1188,13 @@ controller('says', class extends Controller {
       words.replaceChildren(Object.assign(document.createElement('b'), { textContent: `${head} · ${titles.length}` }), Object.assign(document.createElement('span'), { textContent: `Last: ${line}` }))
       me.title = titles.join('\n')
       const back = me.querySelector('.says-back'); if (back) back.title = 'Undo the last (U)'
+      const n = me.querySelector('.says-n'); if (n) { n.textContent = String(titles.length); n.hidden = false }
     }
     for (const old of shown) old.remove()
     document.body.dataset.says = ''
   }
   disconnect() { clearTimeout(this.timer); if (!document.querySelector('#says-host .says:not([hidden])')) delete document.body.dataset.says }
-  run() { if (this.element.hidden) return; this.since = Date.now(); this.element.dataset.born = this.since + this.left; delete this.element.dataset.paused; clearTimeout(this.timer); this.timer = setTimeout(() => this.element.remove(), Math.max(this.left, 800)) }
+  run() { if (this.element.hidden) return; this.since = Date.now(); this.element.dataset.born = this.since + this.left; delete this.element.dataset.paused; clearTimeout(this.timer); this.timer = setTimeout(() => { keepUndo(this.element); this.element.remove() }, Math.max(this.left, 800)) }
   pause() { clearTimeout(this.timer); this.left -= Date.now() - this.since; this.element.dataset.paused = '' }
   leave() { clearTimeout(this.timer); this.element.hidden = true }
   gone() { this.element.remove() }
@@ -2085,8 +2117,8 @@ export const answerFields = ({ stay = false, back = '' } = {}) => html`${stay ? 
 /** The name as the control that renames. label: what stands in the control (default: the name, strong). */
 export function renameControl(agent, base, { stay = false, back = '', cls = 'ledger-rename', label = null } = {}) {
   const field = `session-name-${agent.id}`
-  return html`<details class="t-pick t-pick-name"><summary class="${cls}" data-ledger="rename" title="Rename" aria-label="${agent.name}: rename">${label ?? html`<strong>${agent.name}</strong>`}</summary>
-<div class="session-editor t-pop"><form method="post" action="${sessionForms(agent, base)}/edit" data-turbo-frame="_top">${answerFields({ stay, back })}<label class="caps" for="${field}">Rename the session</label><input type="text" id="${field}" name="label" value="${agent.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session"><div class="session-buttons"><button type="button" data-pop-close>Cancel</button><button type="submit" class="is-lead">Save</button></div></form></div></details>`
+  return html`<details class="t-pick t-pick-name"><summary class="${cls}" data-ledger="rename" title="Rename…" aria-label="${agent.name}: Rename…">${label ?? html`<strong>${agent.name}</strong>`}</summary>
+<div class="session-editor t-pop"><form method="post" action="${sessionForms(agent, base)}/edit" data-turbo-frame="_top">${answerFields({ stay, back })}<label class="caps" for="${field}">Name</label><input type="text" id="${field}" name="label" value="${agent.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session"><div class="session-buttons"><button type="button" data-pop-close>Cancel</button><button type="submit" class="is-lead">Save</button></div></form></div></details>`
 }
 
 const framed = (agent, where) => `marks-${where ? `${where}-` : ''}${agent.id}`
@@ -2104,7 +2136,7 @@ export const LATER = raw(' data-controller="later" data-action="toggle->later#fi
 
 /** The mark as the control that opens the drawings. (Without a crown: where the crown is shown, it is a control of its own.) */
 export function markControl(agent, base, { stay = false, back = '', cls = 'ledger-mark' } = {}) {
-  return html`<details class="t-pick t-pick-mark"${LATER}><summary class="${cls}" data-ledger="mark" title="Choose a drawing" aria-label="${agent.name}: choose a drawing">${avatar(agent, { crown: false })}</summary>
+  return html`<details class="t-pick t-pick-mark"${LATER}><summary class="${cls}" data-ledger="mark" title="Change Icon…" aria-label="${agent.name}: Change Icon…">${avatar(agent, { crown: false })}</summary>
 <div class="mark-picker t-pop">${marksHolder(agent, base, { stay, back })}</div></details>`
 }
 
@@ -2596,7 +2628,7 @@ const COPY_ICON = raw('<svg viewBox="0 0 24 24" class="sketch cardclip-ico" aria
 export function copyButton(card) {
   const picked = card.choices?.length ? card.options.filter(o => card.choices.includes(o.key)).map(o => o.label).join(', ') : ''
   const text = `Nr. ${card.number} · ${card.title}${picked ? ` → ${picked}` : ''}`
-  return html`<button class="cardclip-copy" type="button" data-controller="clip" data-action="clip#copy" data-clip-text-value="${text}" data-clip-card-value="${JSON.stringify({ id: card.id, number: card.number, title: card.title, choice_label: picked })}" title="Copy to paste into another agent" aria-label="Copy to paste into another agent">${COPY_ICON}</button>`
+  return html`<button class="cardclip-copy" type="button" data-controller="clip" data-action="clip#copy" data-clip-text-value="${text}" data-clip-card-value="${JSON.stringify({ id: card.id, number: card.number, title: card.title, choice_label: picked })}" title="Copy" aria-label="Copy">${COPY_ICON}</button>`
 }
 export const act = (card, base, what) => `${base}/cards/${card.id}/${what}`
 
