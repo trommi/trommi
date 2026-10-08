@@ -383,7 +383,7 @@ function menuDeskRows(model, base) {
 /** The menu: <nav id="brand-doors">, hidden until its button (#brand-menu) is pressed (or Ctrl K).
  *  Three calm groups: the desks, each a row with the desk drawing (lamp lit while something waits there; the desk in
  *  view is the marked row), the Demo as one more desk, and a quiet "New desk" (a line to name it, Enter makes it);
- *  places (Agents & devices, Help, Keys; Media is the pile on the Desk); this device (Push, Log out, and the theme as a small sun/moon beside Log out).
+ *  places (Settings: agents, devices, account; Keys); this device (the theme, Push under it, Log out).
  *  The connection is not said here: a lost one is a dot on the menu's button (app.mjs). While it is open the keys are
  *  its own (data-owns-keys: the page's keys in ui.mjs stand back, so the arrows walk the menu and not the Desk's rows). */
 function menuDoors(model, base) {
@@ -392,10 +392,10 @@ function menuDoors(model, base) {
 <button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${NEW_DESK}<span>New desk</span></button>
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
-<div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents and devices: the sessions, and who is in the room">${sk('heads')}<span>Agents &amp; devices</span></a><a role="menuitem" href="${base}/settings" data-nav draggable="false" id="menu-settings" title="Settings: your account, this device's storage">${sk('key')}<span>Settings</span></a>${inDemo() ? html`<a role="menuitem" href="${base}/screens?mock=1" target="_blank" rel="noopener" id="menu-screens" title="Every screen of the app in the demo, for review">${sk('page')}<span>All screens</span></a>` : ''}<a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
-<div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
+<div class="menu-grid"><a role="menuitem" href="${base}/settings/agents" data-nav draggable="false" id="menu-settings" title="Settings: your agents, your devices, your account">${sk('key')}<span>Settings</span></a>${inDemo() ? html`<a role="menuitem" href="${base}/screens?mock=1" target="_blank" rel="noopener" id="menu-screens" title="Every screen of the app in the demo, for review">${sk('page')}<span>All screens</span></a>` : ''}<button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
 <div class="menu-demo"><button role="menuitemcheckbox" type="button" id="demo-toggle" class="demo-toggle" aria-checked="${String(inDemo())}" title="${inDemo() ? 'Leave the demo: back to your desks' : 'The demo: a made-up room, nothing is kept'}">${DEMO_MARK}<span>Demo</span><i class="demo-switch" aria-hidden="true"><b></b></i></button></div>
 <div class="menu-look"><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme-row" aria-label="Theme: light, dark or the system's (T)" title="Theme: Light → Dark → System (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<span>Theme</span></button></div>
+<div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
 <div class="menu-leave"><a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log out</span></a></div>
 </nav>`
 }
@@ -438,7 +438,7 @@ ${model.desks.length > 1 ? deskSwitch(model, base) : ''}
 // pen lines; a red dot while a session is stopped or a card knocks) and the name of the place in view: the desk, or
 // the session with its drawing. Wide screens show neither.
 const HANDLE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M4.2 6.9Q12 6.1 19.9 6.8"/><path d="M4.1 12.3Q11 11.6 19.6 12.2"/><path d="M4.4 17.3Q12.4 18 19.8 17.1"/></svg>')
-const PLACES = { agents: 'Agents', gallery: 'Media', whiteboard: 'Scribble Board' }
+const PLACES = { agents: 'Settings', room: 'Settings', gallery: 'Media', pages: 'Pages', whiteboard: 'Scribble Board' }
 export function phoneBar(model, base, { view = '', current = null, title = '' } = {}) {
   const session = current ? model.byAgent.get(current) : null
   const waits = (model.blocked ?? 0) + (model.knocking ?? 0) > 0

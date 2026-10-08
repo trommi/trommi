@@ -74,7 +74,7 @@ ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remo
 ${isHuman() ? html`<section class="room-section" aria-labelledby="add-head"><h3 id="add-head">Add a device</h3>
 <div class="room-ways">
 <form method="post" action="/pair" class="room-way"><input type="hidden" name="role" value="human"><button type="submit" class="room-way-go" id="pair-start">${art('phone')}<b>Pair a device</b><span>A QR code appears here. The new device scans it, you tap a number. Done.</span></button></form>
-<a href="/settings#account" data-nav class="room-way room-way-go" id="password-way">${art('key')}<b>Log in with email and password</b><span>On the new device open app.trommi.com and choose "Log in".</span></a>
+<a href="/settings/account" data-nav class="room-way room-way-go" id="password-way">${art('key')}<b>Log in with email and password</b><span>On the new device open app.trommi.com and choose "Log in".</span></a>
 </div></section>` : ''}
 <section class="room-section" aria-labelledby="people-head"><h3 id="people-head">Your devices</h3>${raw(L.people)}</section>
 <section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agents</h3>${raw(L.agents)}${isHuman() && active.length && has(client, 'assignSession') ? handoverForm(active) : ''}
@@ -82,14 +82,15 @@ ${isHuman() ? html`<form method="post" action="/pair" class="room-agent-form"><i
 ${raw(L.gone)}
 <p class="room-meta">Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the signed member list: it must look the same on every device.</p>`)
     }
-    t.get(/^\/devices$/, ({ req, res }) => page(req, res, 'Devices', devicesMain(), { stream: '&room=devices' }))
+    t.get(/^\/settings\/devices$/, ({ req, res }) => page(req, res, 'Settings · Devices', devicesMain(), { stream: '&room=devices' }))
+    t.get(/^\/devices$/, ({ res }) => t.redirect(res, '/settings/devices'))
     t.post(/^\/devices\/remove$/, async ({ req, res, form }) => {
       try { await client.removeDevices([String(form.get('device_id'))]) } catch (err) { return page(req, res, 'Devices', devicesMain(`Not removed: ${err.message}`), {}, 422) }
-      t.redirect(res, '/devices')
+      t.redirect(res, '/settings/devices')
     })
     t.post(/^\/devices\/handover$/, async ({ req, res, form }) => {
       try { await client.assignSession({ session_id: String(form.get('session_id')), agent_device_id: String(form.get('agent_device_id')), with_history: form.get('with_history') === 'yes' }) } catch (err) { return page(req, res, 'Devices', devicesMain(`Not handed over: ${err.message}`), {}, 422) }
-      t.redirect(res, '/devices')
+      t.redirect(res, '/settings/devices')
     })
     // The desk a new agent's session goes on: the desk in view; on "All desks" the desk of the session open there (the
     // page the invite was made from), else the first desk. Kept with the invite on this device (createInvite desk).
@@ -122,7 +123,7 @@ ${raw(L.gone)}
     // ---- /pair/:id ----
     const newcomerName = inv => (inv.newcomer && m().members.get(inv.newcomer.device_id)?.device_name) || inv.newcomer?.device_name || ''
     const again = (agent, word = 'Pair again') => html`<form method="post" action="/pair" class="room-inline"><input type="hidden" name="role" value="${agent ? 'agent' : 'human'}"><button type="submit" class="room-primary">${word}</button></form>`
-    const back = html`<a href="/devices" data-nav class="room-back">Back to the devices</a>`
+    const back = html`<a href="/settings/devices" data-nav class="room-back">Back to the devices</a>`
     // ---- inviting an agent: a clipboard with a short checklist (his word, 6 October: "eine Art Zettel oder Klemmbrett") ----
     // 1 the command, one big thing to press (it copies; the link goes to the connector by the human's hands only, never
     // into the model's prompt), 2 start claude, 3 waiting: the line ticks itself when the agent is in, and shows who came.
@@ -191,7 +192,7 @@ ${errorLine(error)}<p class="room-meta">"They don't match" burns the invite: nob
       else if (state === 'adding') body = html`<p class="room-wait">Adding ${newcomerName(inv) || (agent ? 'the agent' : 'the device')}…</p>`
       else if (state === 'joined') {
         const h = handovers.get(inv.invite_id)
-        body = html`<p class="room-lead room-ok">✓ ${newcomerName(inv) || (agent ? 'The agent' : 'The new device')} is in now.</p>${h && !h.done ? html`<p class="room-wait">Handing over the session…</p>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}<a href="/devices" data-nav class="room-done">Done</a>`
+        body = html`<p class="room-lead room-ok">✓ ${newcomerName(inv) || (agent ? 'The agent' : 'The new device')} is in now.</p>${h && !h.done ? html`<p class="room-wait">Handing over the session…</p>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}<a href="/settings/devices" data-nav class="room-done">Done</a>`
       } else if (inv.error === 'code-mismatch') body = html`<p class="room-error" role="alert">They did not match. Nobody was added; the invite is used up.</p>${again(agent)}${back}`
       else body = html`<p class="room-error" role="alert">${state === 'expired' ? 'The invite has expired.' : `That did not work${inv.error ? ` (${inv.error})` : ''}.`}</p>${errorLine(error)}${again(agent)}${back}`
       return roomShell(agent ? 'Invite an agent' : state === 'confirm_code' ? 'Add a new device?' : 'Pair a device', html`<div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">${body}</div>`)
@@ -247,15 +248,15 @@ ${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere sa
 <h4 class="room-sub">Password</h4>
 <details class="room-more" id="pw-change"><summary>Change password</summary>${form('/settings/password', html`${pwField({ name: 'current', label: 'Current password', gen: false, autocomplete: 'current-password' })}${pwField({ label: 'New password' })}`, 'Change password', 'pw-form')}</details>
 <p class="room-meta">${NO_RECOVERY}</p>`
-      return roomPage('Settings', 'settings', html`${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
-${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="acct-head"><h3 id="acct-head">Account</h3>${accountPart}<p class="room-logout-line"><a href="/logout" data-nav id="settings-logout">Log out of this device</a></p></section>` : ''}
+      return roomPage('Account', 'settings', html`${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
+${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="acct-head"><h3 id="acct-head">Your login</h3>${accountPart}<p class="room-logout-line"><a href="/logout" data-nav id="settings-logout">Log out of this device</a></p></section>` : ''}
 <section class="room-section" aria-labelledby="store-head"><h3 id="store-head">Storage</h3><dl class="room-usage" data-controller="room" data-room-usage-value="${has(client, 'usage') ? 'hub' : 'local'}"><div><dt>On this device</dt><dd data-room-target="local">…</dd></div>${has(client, 'usage') ? html`<div><dt>On the hub (encrypted)</dt><dd data-room-target="hub">…</dd></div>` : ''}</dl><p class="room-meta">The hub deletes envelopes after 30 days; your devices keep what they decrypted.</p></section>
 ${link ? html`<details class="room-section room-more" id="advanced"><summary>Advanced</summary><p class="room-lead">The address of this account, for the old recovery code (app.trommi.com/recover). On its own it opens nothing.</p>${copyBox(link, 'Address')}
 <p class="room-meta">${room.room_id.slice(0, 16)}… · key epoch ${room.key_epoch} · hub ${room.hub_url}</p></details>` : ''}`)
     }
     const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', sent: 'Code sent.', confirmed: 'Email confirmed.' }
     t.live('settings', { take: () => JSON.stringify([m().room.account ?? null, m().room.account_error ?? null]), diff: (was, now) => (was !== now ? String(t.stream('refresh')) : '') })
-    t.get(/^\/settings$/, ({ req, res, url }) => { if (m().room.account === undefined) loadAccount(); page(req, res, 'Settings', settingsMain('', DONE[url.searchParams.get('done')] ?? ''), { view: 'settings' }) })
+    t.get(/^\/settings\/account$/, ({ req, res, url }) => { if (m().room.account === undefined) loadAccount(); page(req, res, 'Settings · Account', settingsMain('', DONE[url.searchParams.get('done')] ?? ''), { view: 'settings' }) })
     const accountPost = (path, fn, done) => t.post(path, async ({ req, res, form }) => {
       let out
       try { out = await fn(form, await account()) } catch (err) {
@@ -264,7 +265,7 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
       }
       if (out?.kit) return page(req, res, 'Settings', settingsMain('', 'Your new Emergency Kit:', out.kit), { view: 'settings' })
       client._setRoom({ account: undefined }); loadAccount()
-      t.redirect(res, `/settings?done=${done}`)
+      t.redirect(res, `/settings/account?done=${done}`)
     })
     accountPost(/^\/settings\/account$/, (f, A) => A.addAccount(client, { email: String(f.get('email')), password: String(f.get('password')), recovery_code: String(f.get('recovery_code')).trim() }), 'added')
     accountPost(/^\/settings\/password$/, (f, A) => A.changePassword(client, { current: String(f.get('current')), next: String(f.get('password')) }), 'changed')
@@ -293,7 +294,7 @@ ${note ? html`<p class="room-lead" id="logout-last">${note}</p>` : ''}<p class="
     t.post(/^\/logout$/, async () => { await logOut(client) })
 
     // A join link opened on a device that is in a room already.
-    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', roomShell('Already logged in', html`<p class="room-lead">This device is logged in already. Pair another device under <a href="/devices" data-nav>Devices</a>.</p><p class="room-meta">Another account? <a href="/logout" data-nav id="login-logout-first">Log out of this device first</a>, then log in.</p><p class="room-meta"><a href="/" data-nav>Open your Desk</a></p>`)))
+    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', roomShell('Already logged in', html`<p class="room-lead">This device is logged in already. Pair another device under <a href="/settings/devices" data-nav>Settings · Devices</a>.</p><p class="room-meta">Another account? <a href="/logout" data-nav id="login-logout-first">Log out of this device first</a>, then log in.</p><p class="room-meta"><a href="/" data-nav>Open your Desk</a></p>`)))
   }
 }
 
