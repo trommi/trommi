@@ -82,7 +82,7 @@ try {
   await A.shot('e2e-2b-settings.png')
 
   // ---- A invites an agent from the empty Desk ("Invite your first agent"); the agent joins after the emoji are compared ----
-  await A.js("trommi.router.visit('/devices')")
+  await A.js("trommi.router.visit('/settings/devices')")
   await A.until("document.querySelector('#agent-invite')", 'devices page with Invite an agent')
   await A.js("trommi.router.visit('/')")
   await A.until("document.querySelector('#desk-invite-go')", 'Invite your first agent on the empty Desk')
@@ -242,7 +242,7 @@ try {
   //      the session's chat taped on, from the optimistic echo on, never as a bubble ----
   const noteText = 'Notiz e2e: Backup vor der Migration'
   // (a note goes to the session that wears the crown: given on the Agents page, by his hand)
-  await A.js("trommi.router.visit('/agents')")
+  await A.js("trommi.router.visit('/settings/agents')")
   await A.until("document.querySelector('.ledger-crown[aria-pressed=false]')", 'Agents page with the crown to give')
   await A.js("document.querySelector('.ledger-crown[aria-pressed=false]').click()")
   await A.until("trommi.model().agents.some(a => a.starred) && document.querySelector('.ledger-crown[aria-pressed=true]')", 'crown given').then(() => check(true, 'Agents page: the crown is given with one click'), e => check(false, e.message))
@@ -367,7 +367,7 @@ try {
   check(await A.js("return !document.querySelector('#deskpad, #deskpad-pen, #deskpad-clear, #paper-island, .clear-btn')"), 'the Desk has no paper under it, no pen and no wipe button')
   check(await A.js("return !!document.querySelector('.curl-grab') && !document.querySelector('#whiteboard-row, #desk-pad')"), 'the Scribble Board is the back of the Desk: its corner')
   // A stroke on the desk's canvas, sealed through the Whiteboard's openCanvas before it opens (as another device would).
-  await A.js(`const { openCanvas, strokeFromWorld, deskCanvas } = await import('/whiteboard.mjs')
+  await A.js(`const { openCanvas, strokeFromWorld, deskCanvas } = await trommi.view('whiteboard')
     const tl = deskCanvas(trommi.model().desk)
     const c = await openCanvas({ client: trommi.client, timeline_id: tl })
     const k = strokeFromWorld([120, 140, 220, 190, 340, 160], null, { tool: 'pen', color: 'ink', size: 4 })
@@ -397,7 +397,7 @@ try {
   await A.until("location.pathname === '/scribble-board'", 'P leads to the Whiteboard', 5000).then(() => check(true, 'P on the Desk opens the Whiteboard'), e => check(false, e.message))
 
   // ---- a second human device joins ----
-  await A.js("trommi.router.visit('/devices')")
+  await A.js("trommi.router.visit('/settings/devices')")
   await A.until("document.querySelector('form[action=\"/pair\"] input[value=human]')", 'devices')
   await A.js("document.querySelector('form[action=\"/pair\"] input[value=human]').form.requestSubmit()")
   await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open]')", 'human invite page')
@@ -499,7 +499,7 @@ try {
   await A.until(`trommi.client.model.cards.has('${afterReload}')`, 'card after the reload', 2000).then(() => { check(true, 'a card sent after the warm reload arrives live within 2 s'); timing('card after the warm reload -> on A', Date.now() - t0) }, e => check(false, e.message))
 
   // ---- devices: B removes nobody; A sees both humans and the agent ----
-  await A.js("trommi.router.visit('/devices')")
+  await A.js("trommi.router.visit('/settings/devices')")
   await A.until("document.querySelectorAll('.room-device').length >= 5", 'five devices listed')
   check(true, 'devices page lists laptop, phone, desktop, phone (kit), agent')
   await A.shot('e2e-10-devices.png')

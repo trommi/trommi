@@ -1527,7 +1527,7 @@ async function start(client, { fresh = false } = {}) {
   const b = createBoard({ hub, model, views: [desks, ...(demo ? [demo.screensView] : []), ...VIEWS] })
   const router = createRouter({ board: b, flush: () => apply() })
   startPush(client)
-  window.trommi = { client, board, router, model, mock: Boolean(mock) }
+  window.trommi = { client, board, router, model, mock: Boolean(mock), view }   // (view: a lazy view's module, for the dev tools)
 
   // Changes come in batches; one frame patches the page for all that came meanwhile. A navigation or the end of a
   // form takes what is pending at once (flush), so a page never renders a state older than the action that led to it.
