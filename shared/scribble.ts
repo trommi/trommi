@@ -25,8 +25,78 @@
 import { packPoints, unpackPoints, bake, STROKE_TOOLS } from './ink.ts'
 import type { Ink } from './ink.ts'
 import type { AttachmentRef } from './types.ts'
+import { unb64u } from './crypto/zcrypto.mjs'
+import { PALETTE } from './palette.ts'
 export * from './ink.ts'       // one import for the app: the format, the shape and the palette
 export * from './palette.ts'
+
+// ---- the first format (before 8 October 2026, cdaaa64) ----
+// Boards drawn before the PencilKit format are timeline items that stay on the hub for good; this reads them, so
+// such a board is never shown empty. A first-format entry is { points, pressure?, style: { tool, color?, size? }, z?,
+// group?, text?, wrap?, attachment?, nw?, nh?, mime?, name? }: points base64url in 1/8 unit, the first point as two
+// int32 BE, then int16 BE deltas; pressure one byte per point; tool 'pen' | 'hl' | 'text' | 'voice' | 'sticky' |
+// 'image'; colours were hex values. A piece of a first-format stroke ({ continues, points, pressure? }) carries the
+// same encoding: it is read so when the stroke it continues was (Shape.legacy).
+const LEGACY_Q = 8
+/** The first format's points -> board units ([] when malformed). */
+export function legacyPoints(text: unknown): number[] {
+  let b: Uint8Array
+  try { b = unb64u(typeof text === 'string' ? text : '') } catch { return [] }
+  if (b.length < 8 || (b.length - 8) % 4) return []
+  const v = new DataView(b.buffer, b.byteOffset, b.byteLength)
+  let x = v.getInt32(0), y = v.getInt32(4)
+  const out = [x / LEGACY_Q, y / LEGACY_Q]
+  for (let o = 8; o < b.length; o += 4) { x += v.getInt16(o); y += v.getInt16(o + 2); out.push(x / LEGACY_Q, y / LEGACY_Q) }
+  return out
+}
+function legacyPressure(text: unknown, n: number): number[] | null {
+  if (typeof text !== 'string' || !text) return null
+  let b: Uint8Array
+  try { b = unb64u(text) } catch { return null }
+  return b.length === n ? Array.from(b, v => v / 255) : null
+}
+/** The first format's ink: no times (8 ms apart), the pressure as the force that draws the same width (the old pen was
+ *  half · (0.35 + 1.3 p) wide, the new one half · thickness(f)); without pressure 0.25, the pen's plain width. */
+function legacyInk(e: Entry, t0 = 0): Ink | null {
+  const pts = legacyPoints(e['points']), n = pts.length >> 1
+  if (!n) return null
+  const pr = legacyPressure(e['pressure'], n)
+  return { pts, t: Array.from({ length: n }, (_, i) => t0 + i * 8), f: pr ? pr.map(p => Math.min(1, ((0.05 + 1.3 * p) / 1.4) ** 2)) : new Array(n).fill(0.25), az: null, al: null, sim: !pr }
+}
+const LEGACY_COLORS: Readonly<Record<string, string>> = Object.freeze({
+  '#e03131': 'red', '#f08c00': 'orange', '#2f9e44': 'green', '#1971c2': 'blue', '#9c36b5': 'violet',
+  '#ffd43b': 'yellow', '#69db7c': 'green', '#ff8cc6': 'pink', '#66c2ff': 'blue', '#ffa94d': 'orange',
+})
+function legacyColor(c: unknown, tool: string): string | null {
+  if (typeof c !== 'string') return null
+  const k = c.toLowerCase()
+  if (Object.hasOwn(PALETTE, k)) return k
+  if (LEGACY_COLORS[k]) return LEGACY_COLORS[k]!
+  const set = tool === 'marker' ? 'marker' : 'pen'
+  return Object.keys(PALETTE).find(t => PALETTE[t]![set]?.includes(k)) ?? null
+}
+/** Is this an entry of the first format? */
+export const isLegacyEntry = (e: Entry | null | undefined): boolean => Boolean(e && e['tool'] == null && e['style'] && typeof e['style'] === 'object')
+/** A first-format entry -> the shape it was (null when it is not one). */
+function legacyShape(e: Entry, id: string, by: string): Shape | null {
+  const style = e['style'] as Record<string, unknown>
+  const tool = style['tool'] === 'hl' ? 'marker' : style['tool']
+  if (typeof tool !== 'string' || !TOOLS.has(tool)) return null
+  const s: Shape = { id, by, tool, z: num(e['z']), group: str(e['group'], 80), pts: [] }
+  if (STROKES.has(tool)) {
+    const ink = legacyInk(e)
+    if (!ink) return null
+    const w = num(style['size'], WIDTH[tool])
+    return Object.assign(s, ink, { color: legacyColor(style['color'], tool), width: w > 0 && w <= 1000 ? w : WIDTH[tool], legacy: true })
+  }
+  const pts = legacyPoints(e['points'])
+  if (WORDS.has(tool)) {
+    if (pts.length < 2) return null
+    return Object.assign(s, { pts: pts.slice(0, 2), text: String(e['text'] ?? '').slice(0, 20000), size: num(style['size'], 20), color: legacyColor(style['color'], 'pen'), wrap: Number.isFinite(e['wrap']) ? e['wrap'] : null })
+  }
+  if (pts.length < 4 || !e['attachment']?.attachment_id) return null
+  return Object.assign(s, { pts: pts.slice(0, 4), attachment: e['attachment'], nw: num(e['nw'], 0), nh: num(e['nh'], 0), mime: str(e['mime'], 80), name: str(e['name']) })
+}
 
 // ---- shapes ----
 // A shape is the board's own form of one element: { id, by, tool, pts (board units), z, group, … }.
@@ -77,6 +147,7 @@ export function entryOf(s: Shape): Entry {
 }
 /** An Entry -> a shape (null when it is not one this app can show). */
 export function shapeOf(e: Entry | null | undefined, id: string, by: string): Shape | null {
+  if (isLegacyEntry(e)) return legacyShape(e!, id, by)
   const tool = e?.['tool']
   if (!e || !TOOLS.has(tool)) return null
   const s: Shape = { id, by, tool, z: num(e['z']), group: str(e['group'], 80), pts: [] }
@@ -98,6 +169,12 @@ export function shapeOf(e: Entry | null | undefined, id: string, by: string): Sh
 }
 
 // ---- the reducer ----
+/** The snapshot's version. 3: written by a reader of the first format. A v2 snapshot may have been written while
+ *  first-format items were dropped (8 October 2026, cdaaa64 until this fix): its frontier covers them, so they would
+ *  never be read again. A client ignores a snapshot older than this and reads the whole timeline. */
+export const SNAPSHOT_V = 3
+export const snapshotUsable = (snap: { v?: unknown } | null | undefined): boolean => typeof snap?.v === 'number' && snap.v >= SNAPSHOT_V
+
 export class CanvasState {
   shapes = new Map<string, Shape>()      // id -> shape
   erased = new Set<string>()             // ids that are gone for good (also ones not seen yet)
@@ -124,7 +201,7 @@ export class CanvasState {
         if (e?.continues != null) {
           const head = this.shapes.get(e.continues)
           if (!own(e.continues) || !head || !isStroke(head)) return
-          const more = unpackPoints(e.points)
+          const more = head.legacy ? legacyInk(e, (head.t!.at(-1) ?? 0) + 8) : unpackPoints(e.points)
           if (!more) return
           head.pts.push(...more.pts); head.t!.push(...more.t); head.f!.push(...more.f)
           if (head.az && more.az) { head.az.push(...more.az); head.al!.push(...more.al!) } else head.az = head.al = null
@@ -156,7 +233,7 @@ export class CanvasState {
 
   /** The snapshot's content (JSON-able): every shape, the frontier, the newest envelope number. */
   snapshot(): CanvasSnapshot {
-    return { v: 2, shapes: [...this.shapes.values()].map(s => ({ id: s.id, by: s.by, ...entryOf(s) })), frontier: Object.fromEntries(this.frontier), last_envelope_number: this.last_envelope_number }
+    return { v: SNAPSHOT_V, shapes: [...this.shapes.values()].map(s => ({ id: s.id, by: s.by, ...entryOf(s) })), frontier: Object.fromEntries(this.frontier), last_envelope_number: this.last_envelope_number }
   }
   /** Shapes of a snapshot (in slices, for a big one: load(snap, { shapes: false }) first). */
   addShapes(entries: Iterable<Entry | null | undefined>): void {

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { packPoints, unpackPoints, bake, sampleStroke, anglesOfTilt, forceFromSpeed, thickness, Q } from './ink.ts'
-import { CanvasState, entryOf, shapeOf } from './scribble.ts'
+import { CanvasState, entryOf, shapeOf, isLegacyEntry, snapshotUsable, SNAPSHOT_V } from './scribble.ts'
 import { PALETTE, PEN_COLORS, MARKER_COLORS, colorOf, isToken } from './palette.ts'
 import { b64u } from './crypto/zcrypto.mjs'
 
@@ -105,7 +105,7 @@ await test('reducer: pieces continue a stroke, moves add up, erase wins, agents 
   assert.equal(st.apply(item('H', 5, { content_type: 'erase', stroke_ids: ['H/1/0'] })), null, 'an item is applied once')
   // snapshot round trip
   const snap = JSON.parse(JSON.stringify(st.snapshot()))
-  assert.equal(snap.v, 2)
+  assert.equal(snap.v, SNAPSHOT_V)
   const again = new CanvasState(); again.load(snap)
   const a = again.shapes.get('H/1/0'), b = st.shapes.get('H/1/0')
   assert.equal(a.t.length, b.t.length); a.pts.forEach((v, i) => near(v, b.pts[i], 0.5 / Q, 'snapshot point'))
@@ -135,6 +135,60 @@ await test('palette: tokens for light and dark, unknown tokens fall back to the 
   assert.notEqual(colorOf('ink', 'pen', false), colorOf('ink', 'pen', true))
   assert.equal(colorOf('#ff0000', 'pen', true), colorOf('ink', 'pen', true))
   assert.equal(colorOf('nope', 'marker'), colorOf('yellow', 'marker'))
+})
+
+// A board drawn before 8 October 2026 (cdaaa64) is first-format items on the hub; the new reducer dropped every one of
+// them and still moved the frontier, so the board showed empty (and a snapshot written then covered them for good).
+// Entries made by the old encoder (shared/scribble.mjs at 0e50a99).
+const FIRST = [
+  { points: 'AAAAUAAAAFABQAGQAUD_YA', pressure: 'TYCZ', style: { tool: 'pen', color: '#e03131', size: 4 }, z: 1 },
+  { points: 'AAAGQAAABkAApABR', style: { tool: 'pen', color: 'ink', size: 7 }, z: 2 },
+  { points: '__9jwAAACWAAUAAo', style: { tool: 'hl', color: '#ffd43b', size: 18 }, z: 3 },
+  { points: 'AAADIAAAA8A', style: { tool: 'text', color: 'ink', size: 20 }, z: 4, text: 'hallo' },
+  { points: 'AAAJYAAAAUA', style: { tool: 'sticky', color: 'ink', size: 20 }, z: 5, text: 'merken', wrap: 180 },
+  { points: 'AAAMgAAADIAHgAWg', style: { tool: 'image' }, z: 6, attachment: { attachment_id: 'a'.repeat(32) }, nw: 1200, nh: 900, mime: 'image/png' },
+]
+const FIRST_PIECE = { continues: 'dev-a/1/1', points: 'AAAHgAAABzAAoACg' }
+
+await test('first format: a board drawn before the PencilKit format is read whole (regression: empty board)', () => {
+  const st = new CanvasState()
+  st.apply({ sender_device_id: 'dev-a', sender_sequence: 1, envelope_hash: 'h1', envelope_number: 7, content: { content_type: 'strokes', strokes: FIRST } })
+  st.apply({ sender_device_id: 'dev-a', sender_sequence: 2, envelope_hash: 'h2', envelope_number: 8, content: { content_type: 'strokes', strokes: [FIRST_PIECE] } })
+  assert.equal(st.shapes.size, 6)
+  const pen = st.shapes.get('dev-a/1/0')
+  assert.equal(pen.tool, 'pen'); assert.equal(pen.color, 'red'); assert.equal(pen.width, 4)
+  assert.deepEqual(pen.pts, [10, 10, 50, 60, 90, 40])
+  // the old pen was half · (0.35 + 1.3 p) wide: the force draws the same width
+  near(thickness(pen.f[1]), 0.35 + 1.3 * (128 / 255), 1e-9, 'pressure as force')
+  const plain = st.shapes.get('dev-a/1/1')
+  assert.deepEqual(plain.pts, [200, 200, 220.5, 210.125, 240, 230, 260, 250], 'the piece continues the first-format stroke')
+  assert.equal(plain.width, 7); assert.equal(plain.sim, true); near(thickness(plain.f[0]), 1, 1e-9, 'no pressure: plain width')
+  assert.ok(plain.t.every((v, i) => !i || v > plain.t[i - 1]), 'times never run backwards')
+  const hl = st.shapes.get('dev-a/1/2')
+  assert.equal(hl.tool, 'marker'); assert.equal(hl.color, 'yellow'); assert.equal(hl.width, 18); assert.deepEqual(hl.pts, [-5000, 300, -4990, 305])
+  assert.deepEqual(st.shapes.get('dev-a/1/3'), { id: 'dev-a/1/3', by: 'dev-a', tool: 'text', z: 4, group: null, pts: [100, 120], text: 'hallo', size: 20, color: 'ink', wrap: null })
+  assert.equal(st.shapes.get('dev-a/1/4').wrap, 180)
+  assert.deepEqual(st.shapes.get('dev-a/1/5').pts, [400, 400, 640, 580])
+  // the board's snapshot carries them in the new format, and reads back the same
+  const snap = st.snapshot()
+  assert.equal(snap.v, SNAPSHOT_V); assert.ok(snapshotUsable(snap))
+  assert.ok(snap.shapes.every(e => typeof e.tool === 'string' && !e.style))
+  const back = new CanvasState(); back.load(JSON.parse(JSON.stringify(snap)))
+  assert.equal(back.shapes.size, 6)
+  for (const [id, s] of st.shapes) near(back.shapes.get(id).pts[0], s.pts[0], 1 / 16, id)
+})
+
+await test('first format: a snapshot older than v3 is not used (its frontier may cover dropped first-format items)', () => {
+  assert.equal(snapshotUsable({ v: 2, shapes: [], frontier: { 'dev-a': [9, 'h'] }, last_envelope_number: 9 }), false)
+  assert.equal(snapshotUsable(null), false)
+  assert.equal(snapshotUsable({ v: SNAPSHOT_V }), true)
+})
+
+await test('first format: an entry of the new format is never read as the old one', () => {
+  for (const s of fixture.strokes ?? []) if (s.entry) assert.equal(isLegacyEntry(s.entry), false)
+  assert.equal(isLegacyEntry({ tool: 'pen', points: 'AA', style: {} }), false)
+  assert.equal(shapeOf({ style: { tool: 'nope' }, points: 'AAAAUAAAAFA' }, 'x', 'y'), null)
+  assert.equal(shapeOf({ style: { tool: 'pen' }, points: '!!' }, 'x', 'y'), null)
 })
 
 console.log(`\n${passed} passed, ${failed} failed`)

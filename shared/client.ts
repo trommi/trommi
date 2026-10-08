@@ -1679,22 +1679,8 @@ export class Client {
       for (const { envelope_number, envelope } of res.envelopes as EnvelopeRow[]) {
         let r: StoredItem | undefined = byN.get(envelope_number) ?? (await this.storage.get(prefix + pad(envelope_number)))
         if (!r && this.snapshotCursor && envelope_number <= this.snapshotCursor) {
-          // Before the snapshot this device never saw the header: check the sender's signature and membership on its own.
-          try {
-            const v = await z.verifyEnvelope(unb64u(envelope), { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false })
-            const vh = v.header
-            // D5: the signed header must name this very timeline, as a thread item, from a sender allowed to write there,
-            // at most as far as the snapshot's frontier for that sender; one (sender, sequence) is one item whatever its number.
-            const sender = hex(vh.sender)
-            const tk = vh.timelineKind ? (codec.TIMELINE_KIND_NAME[vh.timelineKind] ?? String(vh.timelineKind)) : null
-            if (vh.kind !== codec.KIND.timeline_item || tk !== timeline_kind || vh.timelineId !== timeline_id) continue
-            const head = this._snapshotChains?.get(sender)
-            if (head != null && vh.seq > head) continue
-            const role = this.state.members.get(b64u(vh.sender))?.role === ROLE.HUMAN ? 'human' : 'agent'
-            if (M.timelineRefusal(this.model, { timeline_kind: tk, timeline_id: vh.timelineId, sender_role: role, sender_device_id: sender, recipient_device_id: vh.recipient.every((b: number) => b === 0) ? null : hex(vh.recipient), session_id: vh.keyScope === 1 && vh.sessionId ? hex(vh.sessionId) : null, _epoch: vh.epoch } as unknown as Rec)) continue
-            if ([...byN.values()].some(x => x.s === sender && x.q === vh.seq)) continue
-            r = { n: envelope_number, h: hex(v.hash), s: sender, q: vh.seq, r: vh.recipient.every((b: number) => b === 0) ? null : hex(vh.recipient), t: vh.time, c: null, cs: 'header' }
-          } catch { continue }
+          r = (await this._headerBeforeSnapshot(envelope, envelope_number, timeline_kind, timeline_id, byN.values())) ?? undefined
+          if (!r) continue
         }
         if (!r) continue                                   // not verified by sync yet: the stream brings it
         if (r.c) { byN.set(envelope_number, r); continue }
@@ -1714,6 +1700,26 @@ export class Client {
       recs = [...byN.values()].sort((a, b) => b.n - a.n).slice(0, limit)
     }
     return recs.sort((a, b) => a.n - b.n).map(r => itemFromStored(r))
+  }
+
+  /** A timeline item before the room snapshot this device started from: it never saw the header, so the sender's
+   *  signature and membership are checked on their own. null when it is not one of this timeline's items. */
+  async _headerBeforeSnapshot(envelope: string, envelope_number: number, timeline_kind: string, timeline_id: string, known: Iterable<StoredItem>): Promise<StoredItem | null> {
+    try {
+      const v = await z.verifyEnvelope(unb64u(envelope), { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false })
+      const vh = v.header
+      // D5: the signed header must name this very timeline, as a thread item, from a sender allowed to write there,
+      // at most as far as the snapshot's frontier for that sender; one (sender, sequence) is one item whatever its number.
+      const sender = hex(vh.sender)
+      const tk = vh.timelineKind ? (codec.TIMELINE_KIND_NAME[vh.timelineKind] ?? String(vh.timelineKind)) : null
+      if (vh.kind !== codec.KIND.timeline_item || tk !== timeline_kind || vh.timelineId !== timeline_id) return null
+      const head = this._snapshotChains?.get(sender)
+      if (head != null && vh.seq > head) return null
+      const role = this.state.members.get(b64u(vh.sender))?.role === ROLE.HUMAN ? 'human' : 'agent'
+      if (M.timelineRefusal(this.model, { timeline_kind: tk, timeline_id: vh.timelineId, sender_role: role, sender_device_id: sender, recipient_device_id: vh.recipient.every((b: number) => b === 0) ? null : hex(vh.recipient), session_id: vh.keyScope === 1 && vh.sessionId ? hex(vh.sessionId) : null, _epoch: vh.epoch } as unknown as Rec)) return null
+      for (const x of known) if (x.s === sender && x.q === vh.seq) return null
+      return { n: envelope_number, h: hex(v.hash), s: sender, q: vh.seq, r: vh.recipient.every((b: number) => b === 0) ? null : hex(vh.recipient), t: vh.time, c: null, cs: 'header' }
+    } catch { return null }
   }
 
   // ---- attachments ------------------------------------------------------------------------------
@@ -1942,6 +1948,10 @@ export class Client {
     const t = M.timelineOf(this.model, timeline_key)
     t.window_open = true
     const prefix = `tl/${timeline_key}/`
+    // Until 8 October 2026 (0e50a99) a scribble timeline was stored as canvas:<timeline_id>: items this device verified
+    // then are kept under that key, and the stream never brings them again.
+    const legacy = timeline_kind === 'scribble' ? `tl/canvas:${timeline_id}/` : null
+    const seen = new Map<number, StoredItem>()
     const out: TimelineItem[] = []
     let after = after_envelope_number
     for (;;) {
@@ -1949,10 +1959,16 @@ export class Client {
       const writes: [string, StoredItem][] = []
       for (const { envelope_number, envelope } of res.envelopes as EnvelopeRow[]) {
         after = Math.max(after, envelope_number)
-        const r: StoredItem | undefined = await this.storage.get(prefix + pad(envelope_number))
+        let r: StoredItem | undefined = await this.storage.get(prefix + pad(envelope_number))
+        let moved = false
+        if (!r && legacy) { r = await this.storage.get(legacy + pad(envelope_number)); moved = Boolean(r) }
+        // A device started from a room snapshot never stored the items before it (checked on their own, as _readTimeline does).
+        if (!r && this.snapshotCursor && envelope_number <= this.snapshotCursor) { r = (await this._headerBeforeSnapshot(envelope, envelope_number, timeline_kind, timeline_id, seen.values())) ?? undefined; moved = Boolean(r) }
         if (!r) continue            // beyond this client's verified cursor: the stream brings it
+        seen.set(envelope_number, r)
         try {
           let stored = r
+          if (moved) writes.push([prefix + pad(envelope_number), stored])
           if (!r.c) {
             const o = await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.openKeys, envelopeHash: unhex(r.h), self: this.device.id })
             const d = decodeOpened(o)
