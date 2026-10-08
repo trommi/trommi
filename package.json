@@ -5,6 +5,9 @@
   "license": "SEE LICENSE IN LICENSE.md",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "26.8.2"
+  },
   "scripts": {
     "test": "npm run typecheck && npm run test:app && npm run test:hub && npm run test:core",
     "typecheck": "tsc -p .",

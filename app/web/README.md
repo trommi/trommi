@@ -55,13 +55,17 @@ public/
    `account()`, `scribbleWire()`).
 3. `gen/` is never edited by hand and never committed: the build makes it at deploy time.
 4. A file is split only when it passes ~3000 lines.
-5. Code is `.mjs` or strict TypeScript `.ts` (the core moves to `.ts` first, `tsconfig.json` at the repository root). Importing a module does nothing; `app.mjs` boots the page (so Node tests can import it).
+5. Code is `.mjs` or strict TypeScript `.ts` (the core is `.ts`, `tsconfig.json` at the repository root). Importing a module does nothing; `app.mjs` boots the page (so Node tests can import it).
 6. A view other than the Desk's (desk, sidebar, notes) is loaded on demand: `app.mjs` `LAZY` names the addresses each
    answers; the router loads it before the first such address, and all of them once the first page is idle. A view
    that adds a page adds its addresses there.
+7. **No `<style>` elements and no inline scripts** in what a view renders: the CSP refuses them (`style-src 'self'`,
+   no `'unsafe-inline'`). Styles go into the view's `.css` file (or a file of its own under `public/`, named in
+   `dev/check.mjs`); a `style="…"` attribute is fine (`style-src-attr`: the views set `--hue` and the like per element).
+   An inline `<style>` or `<script>` in `index.html` or `help.html` needs its hash in `_headers` (`dev/check.mjs` says which).
 
 `dev/check.mjs` (CI) fails on a file outside this layout, a view that imports another view, crypto outside the core,
-and an inline script whose hash is not in `_headers`.
+and an inline script or style whose hash is not in `_headers`; the e2e fails on any CSP violation.
 
 ### The build
 
@@ -88,6 +92,14 @@ browser knows import-map integrity); its hash is added to the CSP of the generat
 from this origin under the same CSP (workers take no integrity attribute).
 
 ### Verifying the build
+
+**Cloudflare's build settings** (the Workers project `trommi-app`, Settings → Build): root directory `app/web`, build
+command `node dev/build.mjs` (from `wrangler.jsonc`), deploy command `npx wrangler deploy`, Node from `.node-version`
+(`26.8.2`; the same file at the repository root, and `engines` in `package.json`), watch paths `app/web/*`, `shared/*`,
+`connector/*`, `package.json`, `package-lock.json`. The build runs `npm ci` at the repository root (so esbuild is the
+exact version of `package-lock.json`), refuses to build with another Node or esbuild than the pinned ones, and names
+both in `gen/manifest.json`. Its output does not depend on the directory it runs in (esbuild's `absWorkingDir` is the
+repository) or on the time; the plugin's zip has fixed dates and order.
 
 `gen/manifest.json` lists every file the app serves with its SHA-256; `gen/build.txt` names the commit and the
 **build hash**, the SHA-256 of that manifest. The build is reproducible (content-named files, a zip with fixed dates,
