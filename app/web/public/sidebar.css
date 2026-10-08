@@ -874,5 +874,5 @@ html[data-rail="folded"] .desk-divider-n { display: none; }
 @media (max-width: 860px) { html body .topbar { background: transparent; box-shadow: none; } }
 /* (the place's name stands whenever the sidebar is open: no other rule may take it away) */
 .desk-place { display: contents; }
-html:not([data-rail="folded"]) .topbar .deskpill .desk-name { display: block; visibility: visible; min-width: 2ch; }
+html:not([data-rail="folded"]) .topbar .deskpill .desk-name { display: block; min-width: 2ch; }
 html[data-rail="folded"] .topbar .desk-switch-open { display: none; }

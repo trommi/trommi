@@ -875,6 +875,16 @@ const clamp = (n, lo, hi) => Math.min(Math.max(n, lo), hi)
 let turn = 0
 const GROWS = globalThis.CSS?.supports?.('field-sizing', 'content') ?? false
 
+// A picture opened large (Full screen, /card/<n>/picture/<m>): a click shows it at its own size to scroll, the next fits it again.
+if (typeof window !== 'undefined') window.addEventListener('click', e => {
+  const fig = e.target instanceof Element ? e.target.closest('.tc-page.is-full .tc-stage:not(.is-video) .tc-figure') : null
+  if (!fig || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return
+  e.preventDefault(); e.stopPropagation()
+  const stage = fig.closest('.tc-stage'), on = stage.classList.toggle('is-zoomed')
+  fig.title = on ? 'Fit it into the window' : 'Show it at its own size'
+  if (!on) stage.scrollTop = 0
+}, true)
+
 controller('card', class extends Controller {
   static targets = ['form', 'field', 'files', 'chips', 'saved', 'figure', 'marks', 'where', 'page', 'gallery']
   static values = { draft: String, pictures: Array }
