@@ -1,7 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
 // The markup is the one app.css and sidebar.css style.
 import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
-import { BELL, Controller, PLUS, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
+import { BELL, Controller, PLUS, cardPath, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -388,13 +388,40 @@ function menuDeskRows(model, base) {
  *  places (Settings: agents, devices, account; Keys); this device (the theme, Push under it, Log out).
  *  The connection is not said here: a lost one is a dot on the menu's button (app.mjs). While it is open the keys are
  *  its own (data-owns-keys: the page's keys in ui.mjs stand back, so the arrows walk the menu and not the Desk's rows). */
+/** The sessions in the menu (#menu-sessions, kept current by the live stream): each with its drawing and what waits
+ *  on it. The pill and the tab bar (8 October, his choice "both") have no sidebar: this is the way to a session. */
+function menuSessions(model, base) {
+  const fresh = model.allFresh ?? model.fresh
+  const rows = model.agents.filter(a => !a.archived)
+  return html`<div class="menu-sessions" id="menu-sessions">${rows.length ? html`<p class="menu-h">Sessions</p>` : ''}${rows.map(a => { const n = fresh.filter(c => c.agent === a.id).length; return html`<a role="menuitem" class="menu-session" data-nav draggable="false" href="${base}/s/${encodeURIComponent(a.id)}">${avatar(a, { crown: false, working: Boolean(a.working) })}<b>${a.name}</b>${n ? html`<i class="menu-n">${n}</i>` : ''}</a>` })}</div>`
+}
+
+/** The phone's tab bar (his choice "both"): the menu (left), the Desk (middle), what waits (right, the stack, with its
+ *  number). On a session's or a card's own page it stands back: there the top line's arrow leads back. */
+export function tabBar(model, base, view) {
+  const fresh = model.allFresh ?? model.fresh
+  const knocks = fresh.some(c => ['high', 'critical'].includes(c.urgency))
+  return html`<nav class="tabbar" id="tabbar" aria-label="Menu, Desk, waiting"${['session', 'card', 'picture', 'whiteboard'].includes(view) ? raw(' hidden') : ''}>
+<button type="button" class="tab" data-tab="menu" aria-controls="brand-doors" aria-expanded="false">${sk('grid')}<span>Menu</span></button>
+<a class="tab" data-tab="desk" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}><span class="desk-lamp">${deskLamp(model)}</span><span>Desk</span></a>
+<button type="button" class="tab" data-tab="waiting" aria-controls="waiting-sheet" aria-expanded="false">${sk('stack')}<span>Waiting</span>${waitingBadge(fresh.length, knocks)}</button>
+</nav>
+<section class="waiting-sheet" id="waiting-sheet" aria-label="Waiting for you" hidden>${waitingList(model, base)}</section>`
+}
+const waitingBadge = (n, knocks) => html`<i class="tab-badge${knocks ? ' is-knock' : ''}" id="tab-badge"${n ? '' : raw(' hidden')}>${n}</i>`
+function waitingList(model, base) {
+  const fresh = [...(model.allFresh ?? model.fresh)].sort((a, b) => (['critical', 'high'].includes(b.urgency) ? 1 : 0) - (['critical', 'high'].includes(a.urgency) ? 1 : 0))
+  return html`<div id="waiting-list"><p class="menu-h">Waiting for you</p>${fresh.length ? fresh.slice(0, 30).map(c => { const a = model.byAgent.get(c.agent); return html`<a class="waiting-row${['high', 'critical'].includes(c.urgency) ? ' is-knock' : ''}" data-nav draggable="false" href="${cardPath(c, base)}">${a ? avatar(a, { crown: false }) : ''}<b>${c.title}</b></a>` }) : html`<p class="waiting-none">Nothing waits for you.</p>`}</div>`
+}
+
 function menuDoors(model, base) {
   return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" data-owns-keys hidden>
 <div class="menu-desks" id="menu-desks">${menuDeskRows(model, base)}
 <button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${NEW_DESK}<span>New desk</span></button>
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
-<div class="menu-grid"><a role="menuitem" href="${base}/settings/agents" data-nav draggable="false" id="menu-settings" title="Settings: your agents, your devices, your account">${sk('key')}<span>Settings</span></a>${inDemo() ? html`<a role="menuitem" href="${base}/screens?mock=1" target="_blank" rel="noopener" id="menu-screens" title="Every screen of the app in the demo, for review">${sk('page')}<span>All screens</span></a>` : ''}<button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
+${menuSessions(model, base)}
+<div class="menu-grid"><a role="menuitem" href="${base}/stacks/off" data-nav draggable="false" id="menu-off">${sk('archive')}<span>Off your mind</span></a><a role="menuitem" href="${base}/assets" data-nav draggable="false" id="menu-media">${sk('picture')}<span>Media</span></a><a role="menuitem" href="${base}/pages" data-nav draggable="false" id="menu-pages">${sk('page')}<span>Pages</span></a><a role="menuitem" href="${base}/settings/agents" data-nav draggable="false" id="menu-settings" title="Settings: your agents, your devices, your account">${sk('key')}<span>Settings</span></a>${inDemo() ? html`<a role="menuitem" href="${base}/screens?mock=1" target="_blank" rel="noopener" id="menu-screens" title="Every screen of the app in the demo, for review">${sk('page')}<span>All screens</span></a>` : ''}<button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
 <div class="menu-demo"><button role="menuitemcheckbox" type="button" id="demo-toggle" class="demo-toggle" aria-checked="${String(inDemo())}" title="${inDemo() ? 'Leave the demo: back to your desks' : 'The demo: a made-up room, nothing is kept'}">${DEMO_MARK}<span>Demo</span><i class="demo-switch" aria-hidden="true"><b></b></i></button></div>
 <div class="menu-look"><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme-row" aria-label="Theme: light, dark or the system's (T)" title="Theme: Light → Dark → System (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}<span>Theme</span></button></div>
 <div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
@@ -425,12 +452,14 @@ const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? '
  *  list (always there, so New desk is reachable with one desk too). Kept current by the live stream (#desk-place):
  *  a room's desks arrive after the page was drawn. */
 const placeName = model => String(model?.deskName ?? '').trim() || 'Desk'
+/** The pill's words (the menu's button on a wide screen): the desk's drawing and the place's name (#pill-place, live). */
+const pillPlace = model => html`<span class="pill-place" id="pill-place"><span class="desk-lamp">${deskLamp(model)}</span><b>${placeName(model)}</b></span>`
 const deskPlace = model => html`<span class="desk-place" id="desk-place"><span class="desk-name" data-size="${nameSize(placeName(model))}">${placeName(model)}</span></span>`
 const deskChevron = html`<button type="button" class="desk-switch-open" aria-haspopup="menu" aria-expanded="false" aria-controls="desk-switch" title="Desks" aria-label="Choose the desk">${sk('unfold')}</button>`
 export function topbar(model, base, current) {
     return html`<header class="topbar"><div class="brand">
 <h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="${placeName(model)}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}${deskPlace(model)}</a>${deskChevron}
-<button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings" title="Menu">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b><span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
+<button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Where you are: ${placeName(model)}. Menu: desks, sessions, places, settings" title="Menu (Ctrl K)">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b>${pillPlace(model)}<span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button>${inDemo() ? html`<a class="pill-demo" href="${base}/screens?mock=1" target="_blank" rel="noopener" title="The demo: a made-up room. Every screen of the app">Demo · All screens</a>` : ''}</h1>
 ${menuDoors(model, base)}
 ${deskSwitch(model, base)}
 <button type="button" class="rail-tag" aria-haspopup="menu" aria-controls="brand-doors" title="Desk ${model.deskName}: switch desks" aria-label="Desk ${model.deskName}: switch desks"><span class="rail-tag-string" aria-hidden="true"></span><span class="rail-tag-paper"><b>${tagLines(model.deskName).map(l => html`<span>${l}</span>`)}</b></span></button>
@@ -451,7 +480,8 @@ export function phoneBar(model, base, { view = '', current = null, title = '' } 
   const place = view === 'session' ? '' : session ? html`<a class="phone-place" data-nav draggable="false" href="${base}/s/${encodeURIComponent(session.id)}">${avatar(session, { crown: false })}<b>${session.name}</b></a>`
     : view === 'desk' || view === 'card' ? html`<a class="phone-place" data-nav draggable="false" href="${base}/"${view === 'desk' ? raw(' aria-current="page"') : ''}><span class="desk-lamp" id="phone-lamp">${deskLamp(model)}</span><b>${model.deskName}</b></a>`
       : html`<span class="phone-place"><b>${PLACES[view] ?? String(title).replace(/^\(\d+\) /, '').replace(/ · Trommi$/, '')}</b></span>`
-  return html`<div class="phone-bar" id="phone-bar"><button type="button" class="drawer-open" id="drawer-open" aria-controls="agents" aria-expanded="false" aria-label="Sessions and menu" title="Sessions and menu"${waits ? raw(' data-waits') : ''}>${HANDLE}</button>${place}</div>`
+  const up = view === 'session' || view === 'card' || view === 'picture' ? html`<a class="phone-back" data-nav draggable="false" href="${base}/" aria-label="Back to the Desk">${raw('<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.2 12.3Q12 11.7 5.2 12.1"/><path d="M10.8 6.3Q7.6 9.4 5 12.1Q7.9 15 10.9 17.8"/></svg>')}</a>` : ''
+  return html`<div class="phone-bar" id="phone-bar">${up}<button type="button" class="drawer-open" id="drawer-open" aria-controls="agents" aria-expanded="false" aria-label="Sessions and menu" title="Sessions and menu"${waits ? raw(' data-waits') : ''}>${HANDLE}</button>${place}</div>`
 }
 export const DRAWER_VEIL = raw('<div class="drawer-veil" id="drawer-veil" aria-hidden="true"></div>')
 
@@ -815,10 +845,23 @@ export function register(t) {
     if (sw && !sw.hidden && (!t.closest('#desk-switch') || t.closest('a[href]'))) { sw.hidden = true; for (const b of document.querySelectorAll('.desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', 'false') }
     const menu = t.closest('#brand-menu, .rail-tag') && $('#brand-menu'), doors = $('#brand-doors')   // (with one desk the rail's tag opens the menu, at its desks)
     if (menu && doors) { delete doors.dataset.from; doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); return }
-    if (doors && !doors.hidden && !t.closest('#brand-doors')) shut()
+    if (doors && !doors.hidden && !t.closest('#brand-doors, .tab[data-tab="menu"]')) shut()
     // the demo: a switch, never a desk; off takes the tab back to its own room for sure (app.mjs ?mock=0)
     if (t.closest('#demo-toggle')) { location.assign(inDemo() ? '/?mock=0' : '/?mock=1'); return }
     if (t.closest('#theme-toggle')) setThemeMode(nextThemeMode())   // Light → Dark → System
+  })
+  // The tab bar: Menu opens the same menu as the pill, Waiting its sheet; a choice in either, or a tap beside, closes it.
+  const sheet = () => $('#waiting-sheet')
+  const shutSheet = () => { const w = sheet(); if (w && !w.hidden) { w.hidden = true; $('.tab[data-tab="waiting"]')?.setAttribute('aria-expanded', 'false') } }
+  const tabState = () => { const open = $('#brand-doors') && !$('#brand-doors').hidden; $('.tab[data-tab="menu"]')?.setAttribute('aria-expanded', String(Boolean(open))) }
+  document.addEventListener('click', e => {
+    const t = e.target instanceof Element ? e.target : null
+    if (!t) return
+    const tab = t.closest('.tab[data-tab]')
+    if (tab?.dataset.tab === 'menu') { shutSheet(); $('#brand-menu')?.click(); requestAnimationFrame(tabState); return }
+    if (tab?.dataset.tab === 'waiting') { const w = sheet(), open = w?.hidden; shut(); tabState(); if (w) { w.hidden = !open; tab.setAttribute('aria-expanded', String(Boolean(open))) } return }
+    if (t.closest('#waiting-sheet a[href]') || !t.closest('#waiting-sheet')) shutSheet()
+    requestAnimationFrame(tabState)
   })
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { shut(); const sw = $('#desk-switch'); if (sw && !sw.hidden) { sw.hidden = true; $('.desk-switch-open')?.focus() } } })
   drawer()
@@ -828,8 +871,8 @@ export function register(t) {
   narrow.addEventListener('change', rail)
   if (narrow.matches) rail()
   t.live('', {
-    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), place: deskPlace(m), sw: deskSwitchList(m, BASE), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
-    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.place, now.place) ? stream('replace', 'desk-place', now.place) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
+    take: m => ({ waits: (m.blocked ?? 0) + (m.knocking ?? 0) > 0, sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), place: deskPlace(m), pill: pillPlace(m), sessions: menuSessions(m, BASE), waiting: waitingList(m, BASE), badge: waitingBadge((m.allFresh ?? m.fresh).length, (m.allFresh ?? m.fresh).some(c => ['high', 'critical'].includes(c.urgency))), sw: deskSwitchList(m, BASE), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
+    diff: (was, now) => `${was.waits !== now.waits ? (document.getElementById('drawer-open')?.toggleAttribute('data-waits', now.waits), '') : ''}${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.sw, now.sw) && now.sw ? stream('replace', 'desk-switch-list', now.sw) : ''}${t.differs(was.place, now.place) ? stream('replace', 'desk-place', now.place) : ''}${t.differs(was.pill, now.pill) ? stream('replace', 'pill-place', now.pill) : ''}${t.differs(was.sessions, now.sessions) ? stream('replace', 'menu-sessions', now.sessions) : ''}${t.differs(was.waiting, now.waiting) ? stream('replace', 'waiting-list', now.waiting) : ''}${t.differs(was.badge, now.badge) ? stream('replace', 'tab-badge', now.badge) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) + stream('update', 'phone-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
       : was.rows.shape !== now.rows.shape ? stream('update', 'agents', now.sidebar)
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })

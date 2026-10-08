@@ -5,7 +5,7 @@
 import * as desk from './desk.mjs'
 import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
-import { DRAWER_VEIL, SIDE_FOOT, cornerNote, phoneBar, sidebarRows, topbar } from './sidebar.mjs'
+import { DRAWER_VEIL, SIDE_FOOT, cornerNote, phoneBar, sidebarRows, tabBar, topbar } from './sidebar.mjs'
 import { Controller, WORDS, calm, readAttachmentsWith, controller, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { rowSheet } from './desk.mjs'
@@ -1154,6 +1154,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
     parts.push({ key: 'foot', html: String(SIDE_FOOT) })
     parts.push({ key: 'veil', html: String(DRAWER_VEIL) })
     if (model) parts.push({ key: 'note', html: String(cornerNote(model, base)) })
+    if (model) parts.push({ key: 'tabbar', html: String(tabBar(model, base, view)) })
   }
   // The Desk and the Scribble Board are two sides of one sheet (ui.mjs, controller "curl"): the board is a part of
   // its own ("pad"), which the Desk keeps under its sheet once its corner was touched (padKept), so turning the
