@@ -8,7 +8,7 @@
 //   boardNotes(model)              the board state's notes (app.mjs shape), from the core's model
 //   noteStore(client, board)       -> act(body): what the forms and the attachments (POST /note, JSON) do
 import { toast } from './ui.mjs'
-import { addressOf, crownOf, rememberRef, uploadFile } from './app.mjs'
+import { crownOf, rememberRef, uploadFile } from './app.mjs'
 
 const holds = (text, files) => Boolean(String(text).trim() || files?.length)
 

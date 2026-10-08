@@ -1,7 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
 // The markup is the one app.css and sidebar.css style.
 import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
-import { BELL, Controller, PLUS, agoSpan, cardPath, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
+import { BELL, Controller, PLUS, agoSpan, paintTopStrip, nextThemeMode, setThemeMode, avatar, badge, controller, crownSvg, edgeQuirk, el, html, linkCap, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -398,10 +398,7 @@ function desksOf(model) {
 
 /** Whether this tab shows the demo room (app.mjs: ?mock=1, remembered for the tab; ?mock=0 ends it). */
 const inDemo = () => { try { return Boolean(globalThis.sessionStorage?.getItem('trommi-mock')) } catch { return false } }
-const DEMO_MARK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5 6.2Q12 5.6 19.2 6.1Q19.6 12 19 17.8Q12 18.4 4.8 17.9Q4.4 12 5 6.2Z"/><path d="M10 9.4Q13.6 11.6 15.4 12Q13.4 13 10.2 14.8Q9.8 12 10 9.4Z"/></svg>')
-// Small drawings of the menu's own, in the pen's line: Log out, the plus of "New desk", and the light of the desk lamp.
-// Log out: a door frame, open to the right, and an arrow walking out of it.
-const LEAVE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:-1deg"><path d="M10.2 4.3Q7.4 4.1 5.2 4.4Q4.9 12.1 5.2 19.7Q7.7 19.9 10.1 19.8"/><path d="M9.4 12.2Q14.5 11.8 19.5 12.1"/><path d="M16.3 8.7Q18.2 10.4 19.6 12.1Q18 13.8 16.2 15.3"/></svg>')
+// Small drawings of the menu's own, in the pen's line: the plus of "New desk", and the light of the desk lamp.
 const NEW_DESK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:3deg"><path d="M12.2 5.2Q11.8 12 12 18.8"/><path d="M5.3 12.3Q12 11.7 18.7 12.1"/></svg>')
 // The lamp switched on, drawn under the desk's lines: the shade glowing, a soft cone of light down onto the top, three short rays.
 const LIGHT = '<g class="lamp-light"><path class="lamp-glow" d="M14.9 2.4Q11.7 3.7 10.7 4.7Q9.6 5.7 9 6.6Q8.5 7.4 9 7.6Q9.5 7.9 12.4 7Q15.2 6.1 15.6 6.1Q15.9 6.1 15.8 4.7Q15.7 3.4 14.9 2.4Z"/><path class="lamp-cone" d="M9.2 7.9Q12.4 7.1 15.6 6.3L17.3 11.9Q12 12.1 6.4 12.2Z"/><path d="M7.6 9Q5.9 10.1 4.3 11.2"/><path d="M7.1 7.2Q5.3 7.3 3.5 7.5"/><path d="M7.9 5Q6.4 4.2 4.9 3.5"/></g>'
@@ -418,20 +415,6 @@ function menuDeskRows(model, base) {
   // (a row: the link to the desk, and beside it the pencil that renames it: menu#rename puts a field in the name's place)
   const allRow = desks.length > 1 ? html`<span class="menu-desk-row is-all" data-desk="all"><a role="menuitemradio" class="menu-desk is-all" data-nav draggable="false" href="${base}/?desk=all" data-desk="all" aria-checked="${String(Boolean(model.all))}">${ALL_MARK}<b>All Desks</b>${model.allFresh?.length ? html`<i class="menu-n">${model.allFresh.length}</i>` : ''}</a></span>` : ''
   return html`<span class="menu-desk-rows${desks.length > 1 ? ' has-all' : ''}" id="menu-desk-rows">${allRow}${desks.map((d, i) => html`<span class="menu-desk-row" data-desk="${d.id}"><a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b>${d.open ? html`<i class="menu-n">${d.open}</i>` : ''}</a><button type="button" class="menu-desk-pen" data-action="click->menu#rename" data-menu-id-param="${d.id}" title="Rename ${d.name}" aria-label="Rename the desk ${d.name}">${sk('pen')}</button></span>`)}</span>`
-}
-
-/** The menu: <nav id="brand-doors">, hidden until its button (#brand-menu) is pressed (or Ctrl K).
- *  Three calm groups: the desks, each a row with the desk drawing (lamp lit while something waits there; the desk in
- *  view is the marked row), the Demo as one more desk, and a quiet "New desk" (a line to name it, Enter makes it);
- *  places (Settings: agents, devices, account; Keys); this device (the theme, Push under it, Log out).
- *  The connection is not said here: a lost one is a dot on the menu's button (app.mjs). While it is open the keys are
- *  its own (data-owns-keys: the page's keys in ui.mjs stand back, so the arrows walk the menu and not the Desk's rows). */
-/** The sessions in the menu (#menu-sessions, kept current by the live stream): each with its drawing and what waits
- *  on it. The pill and the tab bar (8 October, his choice "both") have no sidebar: this is the way to a session. */
-function menuSessions(model, base) {
-  const fresh = model.allFresh ?? model.fresh
-  const rows = model.agents.filter(a => !a.archived)
-  return html`<div class="menu-sessions" id="menu-sessions">${rows.length ? html`<p class="menu-h">Sessions</p>` : ''}${rows.map(a => { const n = fresh.filter(c => c.agent === a.id).length; return html`<a role="menuitem" class="menu-session" data-nav draggable="false" href="${base}/s/${encodeURIComponent(a.id)}">${avatar(a, { crown: false, working: Boolean(a.working) })}<b>${a.name}</b>${n ? html`<i class="menu-n">${n}</i>` : ''}</a>` })}</div>`
 }
 
 const NOTE_EMPTY = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5.4 4.6Q12 4.2 18.8 4.7Q19.3 10 19.1 14.6L14.4 19.4Q9.8 19.7 5.2 19.3Q4.8 12 5.4 4.6Z"/><path d="M19.1 14.6Q15.6 14.3 14.6 15Q14.3 17 14.4 19.4"/></svg>'), NOTE_WRITTEN = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5.4 4.6Q12 4.2 18.8 4.7Q19.3 10 19.1 14.6L14.4 19.4Q9.8 19.7 5.2 19.3Q4.8 12 5.4 4.6Z"/><path d="M19.1 14.6Q15.6 14.3 14.6 15Q14.3 17 14.4 19.4"/><path d="M8 8.6Q12 8.2 15.8 8.5"/><path d="M8 11.7Q11.6 11.4 15.6 11.6"/><path d="M8 14.8Q10 14.6 11.8 14.8"/></svg>')
@@ -593,7 +576,6 @@ if (typeof document !== 'undefined') {
 // Trommi menu) is a drawer that slides in from the left over the page. The slim line at the top holds its handle (three
 // pen lines; a red dot while a session is stopped or a card knocks) and the name of the place in view: the desk, or
 // the session with its drawing. Wide screens show neither.
-const HANDLE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M4.2 6.9Q12 6.1 19.9 6.8"/><path d="M4.1 12.3Q11 11.6 19.6 12.2"/><path d="M4.4 17.3Q12.4 18 19.8 17.1"/></svg>')
 const PLACES = { off: 'Off your mind', agents: 'Settings', room: 'Settings', artifacts: 'Artifacts', whiteboard: 'Scribble Board' }
 /** The phone's menu (his word, 8 October): a glass sheet that grows out of the pill: Settings; the desks (the one in
  *  view checked, New Desk…); the sessions (the first eight by what waits and activity, then All Sessions… as a sheet
