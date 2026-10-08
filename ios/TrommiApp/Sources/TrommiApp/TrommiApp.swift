@@ -121,12 +121,12 @@ final class BoardModel: ObservableObject {
     } catch { self.error = describe(error) }
   }
 
-  func answer(_ card: Card, _ option: CardOption) async {
+  func answer(_ card: Card, _ option: Option) async {
     guard let room = room else { return }
     busy = true
     defer { busy = false }
     do {
-      _ = try await room.answer(cardId: card.id, choices: [option.key])
+      try await room.answer(cardId: card.objectId, choices: [option.key])
       await refresh()
     } catch { self.error = describe(error) }
   }
@@ -355,10 +355,10 @@ struct BoardView: View {
     List {
       if let e = model.error { Text(e).font(.footnote).foregroundStyle(.red) }
       if model.cards.isEmpty && !model.busy { Text("No open questions.").foregroundStyle(.secondary) }
-      ForEach(model.cards, id: \.id) { card in
+      ForEach(model.cards, id: \.objectId) { card in
         VStack(alignment: .leading, spacing: 8) {
           HStack(alignment: .firstTextBaseline) {
-            if card.urgency >= 2 { Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange) }
+            if card.urgency == "high" || card.urgency == "critical" { Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange) }
             Text(card.title.isEmpty ? "(no title)" : card.title).font(.headline)
           }
           if let body = card.body, !body.isEmpty { Text(body).font(.subheadline).foregroundStyle(.secondary).lineLimit(4) }
