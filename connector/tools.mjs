@@ -178,7 +178,7 @@ export function shortOf(value) {
   return (cut.includes(' ') ? cut.slice(0, cut.lastIndexOf(' ')) : said.slice(0, SHORT_MAX)).trim()
 }
 
-// A card's teaser: the two short lines the Desk row shows under the title (the same limit as shared/codec.mjs TEASER_MAX).
+// A card's teaser: the two short lines the Desk row shows under the title (the same limit as shared/codec.ts TEASER_MAX).
 export const TEASER_MAX = 160
 const TEASER_PROP = { type: 'string', description: `Two short lines of plain text (at most ${TEASER_MAX} characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body.` }
 const TITLE_ONE_LINE = 'one line, at most about 70 characters'
@@ -822,7 +822,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     await client.setStatus({ profile: rest }, { session_id: sid })
   }
   const into = sid => (sid ? { session_id: sid } : {})
-  // An object is this agent's when it holds it: it created it, or it continues the session it belongs to (shared/model.mjs holderOf).
+  // An object is this agent's when it holds it: it created it, or it continues the session it belongs to (shared/model.ts holderOf).
   const mine = o => !!o && (client.holds ? client.holds(o) : o.agent_device_id === me())
   const myCards = () => [...model().cards.values()].filter(c => mine(c)).sort((a, b) => a.first_envelope_number - b.first_envelope_number)
 

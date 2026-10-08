@@ -1,6 +1,6 @@
 // accounts.mjs: email + password logins (README "Accounts"). An account maps an email to ONE room and keeps what a
 // new device needs to get into it, all opaque to the hub: a scrypt hash of the client's auth key (from Argon2id of
-// the password, shared/account.mjs), the room's recovery code wrapped under the password, and optionally the
+// the password, shared/account.ts), the room's recovery code wrapped under the password, and optionally the
 // same code wrapped under the Emergency Kit's words (with a scrypt hash of their auth key). The hub never sees the
 // password, the words or the code. Plaintext here: the email, the room id, when the email was confirmed.
 //

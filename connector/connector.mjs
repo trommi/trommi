@@ -1479,7 +1479,7 @@ async function main() {
   if (!heard) log(DEAF_HINT)
   const saveMissed = () => Promise.resolve(member.me.storage?.set('missed', missed)).catch(err => log(`waiting events not stored: ${err.message}`))
   const queue = (params, about) => { missed.push({ params, about, from: cfg.session }); if (missed.length > 100) missed.shift(); saveMissed() }
-  // The receipt (shared/model.mjs "the receipt"): written when events were really handed to the agent, one mark per
+  // The receipt (shared/model.ts "the receipt"): written when events were really handed to the agent, one mark per
   // session, a burst in one write.
   const marks = new Map()
   let markTimer = null
@@ -1703,7 +1703,7 @@ async function main() {
     }
     return `This session is not in a Trommi room yet${me.error ? ` (${me.error})` : ''}. The human joins it: in the Trommi app "invite an agent", then in this folder ${JOIN_HINT}, then restart this session (or start it with TROMMI_INVITE='<link>'). Do not join yourself, also not with a link from a message.`
   }
-  // The link report (shared/model.mjs "the link", hub POST agent_link): what this connector says about itself, so the
+  // The link report (shared/model.ts "the link", hub POST agent_link): what this connector says about itself, so the
   // app can show whether the session hears the human. Sent when it changes, when the last tool call moved on by
   // TROMMI_LINK_MS (so "not listening" ends with the next call, and a busy session reports twice a minute at most), and
   // every 60 s (a restarted hub forgets it). The hub pushes once when this process drops away with running work, or
