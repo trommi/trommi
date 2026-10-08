@@ -2,6 +2,7 @@
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, heardOf, linkOf, stream, flipOut, walkOf } from './app.mjs'
+import { lastUndo, undoLast } from './ui.mjs'
 import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, act, galleryItems, html, isKnock, pageItems, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
@@ -124,6 +125,7 @@ export function rowSheet(base) {
 <form method="post" id="row-sheet-form"><input type="hidden" name="stay" value="1">
 ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}${way('trust', 'duck', WORDS.trust)}${way('what', 'what', WORDS.what, '', 'What?? — explain this to me')}${way('shred', 'bin', WORDS.shred, 'is-shred')}</form>
 <a class="rowmenu-open" data-nav draggable="false" href="${base}/">${sk('page')}<span>Open</span></a>
+<button type="button" class="rowmenu-undo" data-action="click->sheet#undo" hidden>${sk('back')}<span>Undo</span></button>
 </div></dialog>`
 }
 
@@ -736,6 +738,7 @@ controller('sheet', class extends Controller {
     row.classList.add('is-held')
     this.timer = setTimeout(() => { if (this.scrolledSince(at)) this.drop(); else this.open(row) }, HOLD_MS)
   }
+  undo() { undoLast(); this.close() }
   open(row) {
     this.drop()
     const s = this.element
@@ -744,6 +747,9 @@ controller('sheet', class extends Controller {
     this.armed = false
     s.style.setProperty('--hue', row.style.getPropertyValue('--hue') || '162')
     s.querySelector('h3').textContent = row.querySelector('.inbox-question')?.textContent ?? ''
+    // (the last toast's undo, without its clock: what went by itself can still be taken back here)
+    const kept = lastUndo(), u = s.querySelector('.rowmenu-undo')
+    if (u) { u.hidden = !kept; if (kept) u.querySelector('span').textContent = `Undo ${kept.head}` }
     for (const b of s.querySelectorAll('button[data-way]')) {
       b.hidden = !row.querySelector(HAS[b.dataset.way])
       b.setAttribute('formaction', `${this.cardsValue}/${row.dataset.id}/${b.dataset.way}`)

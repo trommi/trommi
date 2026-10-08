@@ -88,7 +88,7 @@ try {
   await A.until("document.querySelector('#agent-invite')", 'devices page with Invite an agent')
   await A.js("trommi.router.visit('/')")
   await A.until("document.querySelector('#desk-invite-go')", 'Invite your first agent on the empty Desk')
-  check(await A.js("return document.querySelector('#agents #sidebar-invite[aria-label=\"Invite an agent\"]')?.textContent.trim() === 'New agent' && getComputedStyle(document.getElementById('agents')).display !== 'none'"), 'sidebar has the row + New agent')
+  check(await A.js("return document.querySelector('#agents #sidebar-invite[aria-label=\"Invite an agent\"]')?.textContent.trim() === 'New Agent…' && getComputedStyle(document.getElementById('agents')).display !== 'none'"), 'sidebar has the row + New agent')
   // (Settings starts with Invite too, 8 October)
   await A.js("trommi.router.visit('/settings/agents')")
   await A.until("document.querySelector('#settings-invite-agent') && document.querySelector('#settings-pair .set-qr-code')", 'Settings starts with Invite (agent, and the device code blurred)')
@@ -194,7 +194,10 @@ try {
 
   // ---- take it back from the toast's Undo ----
   const undoSel = `#says-host .says:not([hidden]) form[action$="/cards/${cardId}/reopen"] .says-back`
-  const undo = await A.until(`document.querySelector('${undoSel}')`, 'the answer toast with Undo', 5000).then(() => A.js(`document.querySelector('${undoSel}').click(); return true`), () => false)
+  const undo = await A.until(`document.querySelector('${undoSel}')`, 'the answer toast with Undo', 5000).then(async () => {
+    check(await A.js(`const s = document.querySelector('${undoSel}').closest('.says'); return s.getAttribute('role') === 'status' && !!s.querySelector('.says-ring .ring-run') && s.querySelector('.says-label')?.textContent === 'Undo' && getComputedStyle(document.getElementById('says-host')).pointerEvents === 'none'`), 'the undo pill: a ring running down, the word Undo, a status for screen readers, nothing under it blocked')
+    return A.js(`document.querySelector('${undoSel}').click(); return true`)
+  }, () => false)
   if (undo) {
     // (Undo from a toast leads to that card's page, the answers in view; the row stands on the Desk again)
     await A.until(`document.querySelector('#cardpage') && location.pathname.startsWith('/card/')`, 'the card page after Undo')

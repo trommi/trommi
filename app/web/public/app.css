@@ -776,3 +776,32 @@ html body .inbox-answer.is-take.is-advised { padding-bottom: var(--s-3); }
   :where(#inbox, #cardpage, #session, #ledger, #gallery, main) { overflow-x: hidden; overscroll-behavior-x: none; }
   :where(.rich, .bubble, .tc-title, .inbox-question) { overflow-wrap: anywhere; }
 }
+
+/* ---- Undo as a small glass pill (his word, 8 October): the undo arrow in a ring that runs down with the time left,
+   a number when the same action was done again; one at a time; never in the way (only the pill takes taps); a finger
+   flicks it away (its undo stays in the Desk's row menu). A wide screen: bottom left, with the word "Undo". A phone:
+   top right, under the ⋯, the arrow alone. The words stay for screen readers (role=status, polite). ---- */
+#says-host { pointer-events: none; }
+#says-host .says:has(form) { display: flex; align-items: center; gap: 0; width: auto; min-width: 0; max-width: none; height: 44px; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); border-radius: 22px; background: color-mix(in srgb, var(--surface) 72%, transparent); -webkit-backdrop-filter: blur(16px) saturate(1.7); backdrop-filter: blur(16px) saturate(1.7); box-shadow: 0 10px 26px -14px rgb(20 30 25 / .55), inset 0 1px 0 rgb(255 255 255 / .5); touch-action: none; }
+#says-host .says:has(form) .says-words { display: block !important; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#says-host .says:has(form) .back-line { display: none; }
+#says-host .says:has(form) .says-back { display: flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px 0 2px; border-radius: 18px; color: var(--fg); font: 700 var(--t-sm)/1 var(--font); }
+#says-host .says:has(form) .says-back:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.says-ring { position: relative; display: grid; place-items: center; width: 34px; height: 34px; flex: none; }
+.says-ring .ring-time { position: absolute; inset: 0; width: 100%; height: 100%; rotate: -90deg; }
+.says-ring .ring-track { fill: none; stroke: color-mix(in srgb, var(--fg) 12%, transparent); stroke-width: 2.4; }
+.says-ring .ring-run { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 100; animation: ring-down var(--back-ms, 5s) linear forwards; }
+.says[data-paused] .ring-run { animation-play-state: paused; }
+@keyframes ring-down { to { stroke-dashoffset: 100; } }
+#says-host .says-back .says-ring .back-arrow { width: 16px; height: 16px; }
+.says-n { position: absolute; top: -7px; right: -8px; min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px; background: var(--fg); color: var(--surface); font: 800 11px/18px var(--font); font-style: normal; text-align: center; }
+.says-n[hidden] { display: none; }
+#says-host .says:not(:has(form)) .says-ring { display: none; }
+@media (prefers-reduced-motion: reduce) { .says-ring .ring-run { animation: none; } }
+@media (max-width: 860px) {
+  #says-host:has(.says form) { top: calc(env(safe-area-inset-top, 0px) + 50px); bottom: auto; left: auto; right: max(12px, env(safe-area-inset-right, 0px)); padding: 0; align-items: flex-end; }
+  :root.is-demo #says-host:has(.says form) { top: calc(env(safe-area-inset-top, 0px) + 72px); }
+  #says-host .says:has(form) { width: 44px; padding: 0; justify-content: center; }
+  #says-host .says:has(form) .says-back { padding: 0; width: 40px; justify-content: center; }
+  #says-host .says:has(form) .says-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+}

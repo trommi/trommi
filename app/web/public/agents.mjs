@@ -70,17 +70,17 @@ function sheet(u, ctx, { group, others }) {
   const item = (action, name, value, words) => post(action, '', html`<button class="ledger-sheet-item" type="submit" name="${name}" value="${value}">${words}</button>`)
   return html`<details class="t-pick ledger-dots"${LATER}><summary class="ledger-ib ledger-menu" data-ledger="more" title="More: ${a.name}" aria-label="More for ${a.name}: rename, drawing, crown, group, archive">…</summary>
 ${later(html`<div class="ledger-sheet t-sheet" role="group" aria-label="Actions for ${a.name}"><h3>${a.name}</h3>
-<a class="ledger-sheet-item" data-nav href="${base}/s/${encodeURIComponent(a.id)}">Open the conversation</a>
+<a class="ledger-sheet-item" data-nav href="${base}/s/${encodeURIComponent(a.id)}">Open</a>
 ${post(`${forms}/edit`, html`<input type="text" name="label" value="${a.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session">`, html`<button class="ledger-sheet-item" type="submit">Rename</button>`)}
-<details class="t-sheet-marks"${LATER}><summary class="ledger-sheet-item">Choose a drawing</summary>${marksHolder(a, base, { stay: true, where: 's' })}</details>
-${item(`${forms}/star`, 'starred', a.starred ? '0' : '1', a.starred ? 'Take the crown off' : 'Give the crown')}
-${a.parent ? item(`${forms}/edit`, 'parent', '', `Stand alone (leave main agent ${m.byAgent.get(a.parent)?.name ?? a.parent})`) : ''}
-${group ? item(`${forms}/unpair`, 'out', '1', `Take out of the group with ${others}`) : ''}
-${item(`${forms}/move`, 'dir', 'up', 'Move up')}${item(`${forms}/move`, 'dir', 'down', 'Move down')}
+<details class="t-sheet-marks"${LATER}><summary class="ledger-sheet-item">Change Icon…</summary>${marksHolder(a, base, { stay: true, where: 's' })}</details>
+${item(`${forms}/star`, 'starred', a.starred ? '0' : '1', a.starred ? 'Remove as Main Session' : 'Make Main Session')}
+${a.parent ? item(`${forms}/edit`, 'parent', '', `Detach from ${m.byAgent.get(a.parent)?.name ?? a.parent}`) : ''}
+${group ? item(`${forms}/unpair`, 'out', '1', 'Remove from Group') : ''}
+${item(`${forms}/move`, 'dir', 'up', 'Move Up')}${item(`${forms}/move`, 'dir', 'down', 'Move Down')}
+${desks.length > 1 ? desks.filter(d => d.id !== a.desk).map(d => item(`${forms}/edit`, 'desk', d.id, `Move to ${d.name}`)) : ''}
+${a.parent ? '' : html`<form method="post" action="/pair"><input type="hidden" name="role" value="agent"><input type="hidden" name="continue" value="${a.device_id}"><button class="ledger-sheet-item" type="submit">Copy Invite Link</button></form>`}
 ${!a.online ? item(`${forms}/edit`, 'archived', '1', 'Archive') : ''}
-${desks.length > 1 ? desks.filter(d => d.id !== a.desk).map(d => item(`${forms}/edit`, 'desk', d.id, `Move to desk ${d.name}`)) : ''}
-${a.parent ? '' : html`<form method="post" action="/pair"><input type="hidden" name="role" value="agent"><input type="hidden" name="continue" value="${a.device_id}"><button class="ledger-sheet-item" type="submit">Copy invite link again</button></form>`}
-<button class="ledger-sheet-item is-close" type="button" data-pop-close>Close</button></div>`)}</details>`
+<button class="ledger-sheet-item is-close" type="button" data-pop-close>Done</button></div>`)}</details>`
 }
 
 /** One session's line. error: what the hub refused, said under the line. */
@@ -138,7 +138,7 @@ ${error ? html`<p class="ledger-err" role="alert">${error}</p>` : ''}
 /** Delete session, among a line's small buttons: the same confirm as in the session's More menu (agents.mjs /delete). */
 function delPick(a, base, subs) {
   if (a.own) return ''
-  return html`<details class="t-pick ledger-pick ledger-del"><summary class="ledger-ib" data-ledger="delete" title="Delete session" aria-label="Delete ${a.name}">${sk('bin')}</summary><div class="desk-move t-pop"><form class="session-delete-ask" method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/delete"><input type="hidden" name="stay" value="1"><p><b>Delete ${a.name}?</b> Its connector is removed from the room and ${subs ? 'the session with its helpers moves' : 'the session moves'} to the archive. Open questions are shredded.</p><div class="desk-duck-ways"><button type="submit" class="session-delete-yes">${sk('bin')}<span>Delete</span></button><button type="button" class="desk-duck-no" data-pop-close>Cancel</button></div></form></div></details>`
+  return html`<details class="t-pick ledger-pick ledger-del"><summary class="ledger-ib" data-ledger="delete" title="Delete…" aria-label="Delete ${a.name}…">${sk('bin')}</summary><div class="desk-move t-pop"><form class="session-delete-ask" method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/delete"><input type="hidden" name="stay" value="1"><p><b>Delete ${a.name}?</b> Its connector is removed from the room and ${subs ? 'the session with its helpers moves' : 'the session moves'} to the archive. Open questions are shredded.</p><div class="desk-duck-ways"><button type="submit" class="session-delete-yes">${sk('bin')}<span>Delete</span></button><button type="button" class="desk-duck-no" data-pop-close>Cancel</button></div></form></div></details>`
 }
 
 /** A session that was put away. */
@@ -184,8 +184,8 @@ const FAKE_QR = (() => {
 const inviteSection = base => html`<section class="set-invite" aria-labelledby="set-invite-h">
 <h2 id="set-invite-h">Invite</h2>
 <div class="set-invite-ways">
-<form method="post" action="${base}/pair" class="set-way"><input type="hidden" name="role" value="agent"><button type="submit" class="set-way-go" id="settings-invite-agent">${PLUS}<span>Invite an agent</span></button><small>A line to paste into a terminal where Claude Code runs. The agent shows up in the room once you compare six emoji.</small></form>
-<form method="post" action="${base}/pair" class="set-way is-device"><input type="hidden" name="role" value="human"><button type="submit" class="set-qr" id="settings-pair" aria-label="Show the code to pair a device"><span class="set-qr-code">${FAKE_QR}</span><span class="set-qr-show">Show the code</span></button><div><b>Pair a device</b><small>A phone or another computer scans the code. It is made when you ask for it and works once.</small></div></form>
+<form method="post" action="${base}/pair" class="set-way"><input type="hidden" name="role" value="agent"><button type="submit" class="set-way-go" id="settings-invite-agent">${PLUS}<span>Invite Agent…</span></button><small>A line to paste into a terminal where Claude Code runs. The agent shows up in the room once you compare six emoji.</small></form>
+<form method="post" action="${base}/pair" class="set-way is-device"><input type="hidden" name="role" value="human"><button type="submit" class="set-qr" id="settings-pair" aria-label="Show the code to pair a device"><span class="set-qr-code">${FAKE_QR}</span><span class="set-qr-show">Show Code</span></button><div><b>Pair a device</b><small>A phone or another computer scans the code. It is made when you ask for it and works once.</small></div></form>
 </div>
 </section>`
 
