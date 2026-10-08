@@ -1,20 +1,23 @@
 // The app's build: everything generated is made here, at deploy time, and never committed.
-//   gen/vendor/            the client core, copied flat from the repository's shared/ and shared/crypto/, and
-//                          tools-reference.mjs: the connector's tools and events as data, for the help page
+//   gen/app/               the app as one minified bundle (esbuild, split): app-<hash>.mjs (app, ui, desk, sidebar,
+//                          notes), one chunk per lazy view, the core (from the repository's shared/) in chunks of its
+//                          own, all named by their content
+//   gen/vendor/            tools-reference.mjs: the connector's tools and events as data, for the help page (the dev
+//                          server, bundle: false, also serves the core here, copied flat from shared/ and shared/crypto/)
 //   gen/bundle.<hash>.css  the stylesheets of index.html as one file (their <link>s become one)
 //   gen/build.txt          which commit this build is (the Web app deploy workflow reads it)
-//   index.html             the modulepreload list between <!-- preload --> and <!-- /preload -->, data-build=<version>
+//   index.html             the script, the modulepreload list between <!-- preload --> and <!-- /preload -->, data-build=<version>
 //   sw.js                  VERSION (a hash of every shell file) and SHELL (every file the app serves)
 //   gen/connector.mjs, gen/connector.mjs.sha256, gen/plugins/
 //                          the single-file connector, its checksum and the Claude Code plugin (connector/build.mjs)
 // In the repository index.html and sw.js are templates (empty preload block, VERSION "dev", SHELL []), so two
 // branches never conflict there, and public/gen/ is not in git at all.
 //
-// The connector files are the one part that needs the repository's npm packages (esbuild, the MCP SDK, zod; the rest
-// of this build has no dependency). Cloudflare's build (WORKERS_CI=1) installs them first: npm ci at the repository
-// root. Without them a check and the dev server go on without the connector files; a build that writes fails.
+// The bundle and the connector need the repository's npm packages (esbuild, the MCP SDK, zod). Cloudflare's build
+// (WORKERS_CI=1) installs them first: npm ci at the repository root. The dev server without --bundle needs none
+// (without them it goes on without the connector files); a build that writes fails without them.
 //
-//   node dev/build.mjs            check only: generate in memory, print what it would write
+//   node dev/build.mjs            check only: generate in memory, print what it would write and the cold start's size
 //   node dev/build.mjs --write    write it into public/ (Cloudflare's build: WORKERS_CI=1 counts as --write).
 //                                 Never commit what it writes into index.html and sw.js.
 // dev/serve.mjs serves generate() from memory, so the dev server needs no build step and never shows stale files.
