@@ -1,0 +1,35 @@
+[package]
+name = "trommi-hub"
+version = "1.0.0"
+edition.workspace = true
+publish = false
+description = "The thin hub (hub.trommi.com) in Rust: the same routes, schema and behaviour as hub/server.mjs"
+
+[[bin]]
+name = "trommi-hub"
+path = "src/main.rs"
+
+[dependencies]
+zcrypto = { path = "../zcrypto" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "fs", "io-util", "signal"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1"] }
+http-body-util = "0.1"
+http-body = "1"
+bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+parking_lot = "0.12"
+rand = "0.8"
+sha2 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+aes-gcm = "0.10"
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+scrypt = { version = "0.11", default-features = false }
+p256 = { version = "0.13", features = ["ecdh", "ecdsa", "pkcs8", "pem"] }
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+libc = "0.2"
+unicode-normalization = "0.1"
