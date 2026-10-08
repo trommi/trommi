@@ -21,7 +21,7 @@ let DRIVER_COMMANDS = [
   "version_info", "join", "join_wait", "login", "forgot", "whoami", "sync", "members", "sessions", "list_cards", "card",
   "answer", "shred", "mark_read", "decide_again", "chat_send", "chat_list", "set_register", "registers", "note_save", "notes",
   "invite", "invite_status", "invite_confirm", "remove_member", "leave", "register_push", "check_envelope", "alerts",
-  "account_status", "make_kit", "change_password", "canvas_draw", "canvas_shapes", "set_live",
+  "account_status", "make_kit", "change_password", "scribble_draw", "scribble_shapes", "set_live",
 ]
 
 @MainActor final class Driver {
@@ -296,15 +296,16 @@ let DRIVER_COMMANDS = [
       try await r.changePassword(current: try Driver.str(a, "current"), next: try Driver.str(a, "next"))
       return .obj([:])
 
-    case "canvas_draw":
+    case "scribble_draw":
       let r = try need()
       let tl = deskCanvas(a["desk"].string ?? "main")
       let pts = (a["points"].array ?? [10, 10, 40, 30, 80, 20]).compactMap { $0.double }
-      let e = CanvasState.entryOf(CanvasShape(id: "", by: "", tool: "pen", pts: pts, pr: nil, color: "ink", size: 4, z: 0))
+      // an entry as given (fixtures/strokes.json), else one this core makes
+      let e = a["entry"].object != nil ? a["entry"] : CanvasState.entryOf(CanvasShape(id: "", by: "", tool: "pen", pts: pts, pr: nil, color: "ink", size: 4, z: 0))
       try await r.sendCanvas(tl, .obj(["content_type": "strokes", "strokes": [e]]))
       try await r.flush()
       return .obj([:])
-    case "canvas_shapes":
+    case "scribble_shapes":
       let r = try need()
       try await r.sync()
       let st = try await r.loadCanvas(deskCanvas(a["desk"].string ?? "main"))

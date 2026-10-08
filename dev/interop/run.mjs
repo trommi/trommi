@@ -344,12 +344,18 @@ for (const pair of pairs) {
   })
 
   if (ia === 'swift' || ib === 'swift') {
-    await P('scribble board: a JS stroke reaches Swift, a Swift stroke reaches the board', async () => {
+    await P('scribble board: the sample strokes (fixtures/strokes.json) from JS decode on Swift point for point; a Swift stroke decodes on JS', async () => {
       const [js, sw] = ia === 'swift' ? [B, A] : [A, B]
-      await js.call('canvas_draw', { desk: 'main', points: [0, 0, 5, 5, 9, 2] })
-      await until('the JS stroke in Swift', async () => (await sw.call('canvas_shapes', { desk: 'main' })).some(s => s.points === 3))
-      await sw.call('canvas_draw', { desk: 'main' })
-      await until('both strokes in Swift', async () => (await sw.call('canvas_shapes', { desk: 'main' })).length >= 2)
+      const samples = JSON.parse(fs.readFileSync(path.join(here, 'fixtures/strokes.json'), 'utf8')).strokes
+      for (const s of samples) await js.call('scribble_draw', { desk: 'main', entry: s.entry })
+      const want = samples.map(s => [s.entry.tool, s.decoded.length])
+      let got
+      await until('the sample strokes in Swift', async () => { got = (await sw.call('scribble_shapes', { desk: 'main' })).map(s => [s.tool, s.points]); return got.length >= want.length }).catch(() => {})
+      const sorted = l => [...(l ?? [])].map(x => JSON.stringify(x)).sort()
+      assert.deepEqual(sorted(got), sorted(want), 'Swift decodes every sample stroke (tool, number of points)')
+      await sw.call('scribble_draw', { desk: 'main' })
+      const mine = await until('the Swift stroke on JS', async () => { const l = await js.call('scribble_shapes', { desk: 'main' }); return l.length > want.length ? l : null })
+      assert.ok(mine.at(-1).points > 0, `JS decodes the Swift stroke: ${JSON.stringify(mine.at(-1))}`)
     })
   }
 
