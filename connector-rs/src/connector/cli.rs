@@ -246,6 +246,26 @@ pub fn whoami() -> Result<String> {
     })).unwrap())
 }
 
+/// `allow-tools`: the plugin's board tools allowed in this folder (.claude/settings.local.json), as connect.sh does
+/// with node for the JS connector.
+pub fn allow_tools() -> std::io::Result<()> {
+    let f = std::path::Path::new(".claude/settings.local.json");
+    std::fs::create_dir_all(".claude")?;
+    let mut j: Value = std::fs::read_to_string(f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(|v| v.is_object()).unwrap_or_else(|| json!({}));
+    if !j["permissions"].is_object() {
+        j["permissions"] = json!({});
+    }
+    if !j["permissions"]["allow"].is_array() {
+        j["permissions"]["allow"] = json!([]);
+    }
+    let rule = json!("mcp__plugin_trommi_trommi");
+    let a = j["permissions"]["allow"].as_array_mut().unwrap();
+    if !a.contains(&rule) {
+        a.push(rule);
+    }
+    std::fs::write(f, serde_json::to_string_pretty(&j).unwrap() + "\n")
+}
+
 /// Dispatch a command line; Some(exit code) when it was one of the commands.
 pub async fn run(argv: &[String]) -> i32 {
     let cmd = argv.first().map(|s| s.as_str()).unwrap_or("");
@@ -306,6 +326,13 @@ pub async fn run(argv: &[String]) -> i32 {
                 }
             }
         }
+        "allow-tools" => match allow_tools() {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("[trommi] {e}");
+                1
+            }
+        },
         "--version" | "version" => {
             println!("trommi-connector {} ({}, {})", super::SERVER_VERSION, crate::CLIENT, super::disk_version());
             0

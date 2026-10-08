@@ -9,7 +9,8 @@
 // dev/serve.mjs answers through the same assetPath().
 
 /** The file of public/ that answers a public address (the same address for every file but the generated ones). */
-export const assetPath = pathname => (/^\/(connector\.mjs(\.sha256)?|plugins\/[\w.-]+)$/.test(pathname) ? `/gen${pathname}` : pathname)
+// (connector/trommi-connector-<target> and plugins/rs/: the binary connector of connector-rs/build-plugin.mjs)
+export const assetPath = pathname => (/^\/(connector\.mjs(\.sha256)?|connector\/(trommi-connector-[\w-]+(\.sha256|\.sig)?|release-key\.pub)|plugins\/(rs\/)?[\w.-]+)$/.test(pathname) ? `/gen${pathname}` : pathname)
 
 export default {
   async fetch(request, env) {

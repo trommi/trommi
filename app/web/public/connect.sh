@@ -14,6 +14,9 @@
 #   3. joins your account with the invite link (the link is passed by environment, never printed),
 #   4. tells you how to start Claude Code.
 # Without Node 22+ it offers to install it (Debian/Ubuntu: NodeSource + apt, macOS: Homebrew) and asks first.
+# TROMMI_CONNECTOR=binary: the connector as one binary instead (connector-rs; no Node needed): it downloads
+# connector/trommi-connector-<target> for this machine (Linux x86_64/aarch64, macOS arm64), checks its SHA-256, and
+# installs the plugin from plugins/rs/marketplace.json.
 # POSIX sh: runs on Linux and macOS (dash, bash, zsh as sh).
 set -eu
 
@@ -22,6 +25,8 @@ set -eu
 main() {
 APP="${TROMMI_APP:-https://app.trommi.com}"
 DIR="${TROMMI_CONNECTOR_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/trommi/connector}"
+KIND="${TROMMI_CONNECTOR:-node}"
+case "$KIND" in node|binary) ;; *) fail "TROMMI_CONNECTOR is node or binary (now: $KIND)." ;; esac
 
 
 LINK="${1:-${TROMMI_INVITE:-}}"
@@ -32,7 +37,7 @@ case "$LINK" in
 esac
 
 # ---- what this machine needs --------------------------------------------------------------------------------------
-node_ok || install_node
+[ "$KIND" = binary ] || node_ok || install_node
 command -v claude >/dev/null 2>&1 || fail "Claude Code (claude) is missing. Install it (https://claude.com/claude-code), then run this again."
 command -v curl >/dev/null 2>&1 || fail "curl is missing."
 
@@ -40,21 +45,33 @@ command -v curl >/dev/null 2>&1 || fail "curl is missing."
 mkdir -p "$DIR"
 TMP="$DIR/.download.$$"
 trap 'rm -f "$TMP" "$TMP.sha256"' EXIT INT TERM
+if [ "$KIND" = binary ]; then
+  case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64|Linux/amd64) TARGET=x86_64-unknown-linux-musl ;;
+    Linux/aarch64|Linux/arm64) TARGET=aarch64-unknown-linux-musl ;;
+    Darwin/arm64|Darwin/aarch64) TARGET=aarch64-apple-darwin ;;
+    *) fail "there is no Trommi connector binary for $(uname -s)/$(uname -m); run this again without TROMMI_CONNECTOR=binary (needs Node 22)." ;;
+  esac
+  FROM="connector/trommi-connector-$TARGET"; NAME=trommi-connector
+else
+  FROM="connector.mjs"; NAME=connector.mjs
+fi
 say "Downloading the Trommi connector…"
-curl -fsSL "$APP/connector.mjs" -o "$TMP" || fail "could not download $APP/connector.mjs"
-curl -fsSL "$APP/connector.mjs.sha256" -o "$TMP.sha256" || fail "could not download $APP/connector.mjs.sha256"
+curl -fsSL "$APP/$FROM" -o "$TMP" || fail "could not download $APP/$FROM"
+curl -fsSL "$APP/$FROM.sha256" -o "$TMP.sha256" || fail "could not download $APP/$FROM.sha256"
 WANT=$(cut -d ' ' -f 1 < "$TMP.sha256" | tr -d '\r\n')
 GOT=$(sha256 "$TMP")
 [ -n "$WANT" ] && [ "$WANT" = "$GOT" ] || fail "the downloaded connector does not match its checksum; nothing was changed. Try again."
-CONNECTOR="$DIR/connector.mjs"
+CONNECTOR="$DIR/$NAME"
+[ "$KIND" = binary ] && chmod 755 "$TMP"
 mv -f "$TMP" "$CONNECTOR"
-printf '%s  connector.mjs\n' "$GOT" > "$DIR/connector.mjs.sha256"
+printf '%s  %s\n' "$GOT" "$NAME" > "$DIR/$NAME.sha256"
 say "Connector $(printf '%s' "$GOT" | cut -c 1-12) in $DIR"
 
 # ---- 2. the plugin, for this folder ---------------------------------------------------------------------------------
 # Local scope: enabled only in this folder (every project folder has its own key), in .claude/settings.local.json.
 # Claude Code starts the connector in this folder, which names the key slot.
-MARKET="${TROMMI_MARKETPLACE:-$APP/plugins/marketplace.json}"
+if [ "$KIND" = binary ]; then MARKET="${TROMMI_MARKETPLACE:-$APP/plugins/rs/marketplace.json}"; else MARKET="${TROMMI_MARKETPLACE:-$APP/plugins/marketplace.json}"; fi
 PLUGIN=""
 if claude plugin marketplace add "$MARKET" </dev/null >/dev/null 2>&1 || claude plugin marketplace update trommi </dev/null >/dev/null 2>&1; then
   claude plugin marketplace update trommi </dev/null >/dev/null 2>&1 || true
@@ -71,13 +88,15 @@ if [ -n "$PLUGIN" ]; then
 else
   say "This Claude Code has no plugin support (update it: claude update); registering the connector directly."
   claude mcp remove trommi --scope project </dev/null >/dev/null 2>&1 || true
-  claude mcp add trommi --scope project -- node "$CONNECTOR" </dev/null >/dev/null || fail "claude mcp add failed (run this in your project folder)"
+  if [ "$KIND" = binary ]; then set -- "$CONNECTOR"; else set -- node "$CONNECTOR"; fi
+  claude mcp add trommi --scope project -- "$@" </dev/null >/dev/null || fail "claude mcp add failed (run this in your project folder)"
   say "Registered for $(pwd) (.mcp.json)"
 fi
 
 # ---- 3. join ------------------------------------------------------------------------------------------------------
 say "Joining your Trommi account… (keep the app open: it shows six emoji; compare them with the ones shown below and tap \"They match\" there)"
-TROMMI_INVITE="$LINK" node "$CONNECTOR" join </dev/null >/dev/null || fail "joining did not work (the line above says why)"
+if [ "$KIND" = binary ]; then set -- "$CONNECTOR"; else set -- node "$CONNECTOR"; fi
+TROMMI_INVITE="$LINK" "$@" join </dev/null >/dev/null || fail "joining did not work (the line above says why)"
 say "Joined."
 
 # ---- 4. next step -------------------------------------------------------------------------------------------------
@@ -103,6 +122,10 @@ fi
 # not committed settings).
 allow_tools() {
   mkdir -p .claude
+  if [ "$KIND" = binary ]; then
+    "$CONNECTOR" allow-tools </dev/null || say "(could not allow the Trommi tools in .claude/settings.local.json; Claude Code will ask once per tool)"
+    return
+  fi
   node -e '
     const fs = require("fs"), f = ".claude/settings.local.json", rule = "mcp__plugin_trommi_trommi"
     let j = {}; try { j = JSON.parse(fs.readFileSync(f, "utf8")) } catch {}

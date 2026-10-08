@@ -7,7 +7,8 @@
 //! every key made where no keychain answers) is read as before.
 //!
 //! TROMMI_KEYSTORE: `keychain` (always; fail when none answers), `file` (never), `auto` (default: the keychain when
-//! it answers a probe within two seconds, else the file).
+//! it answers a probe within two seconds, else the file; and always the file in a slot folder that has key files
+//! with the secret in them: one shared with the JS connector, see use_keychain_in).
 use crate::error::{Result, ZError};
 
 pub const SERVICE: &str = "trommi-connector";
@@ -101,6 +102,26 @@ pub fn use_keychain() -> Result<bool> {
         }
         _ => Ok(probe()),
     }
+}
+
+/// Whether a new key in the room's slot folder `dir` goes into the keychain. In `auto` a folder that holds any key
+/// file with the secret itself (made by the JS connector, which cannot read the keychain, or with `file`) stays with
+/// key files: the folder is shared with a JS connector, and either connector may have to open any of its slots.
+pub fn use_keychain_in(dir: &std::path::Path) -> Result<bool> {
+    let mode = std::env::var("TROMMI_KEYSTORE").unwrap_or_else(|_| "auto".into());
+    if mode != "file" && mode != "keychain" && shared_with_files(dir) {
+        return Ok(false);
+    }
+    use_keychain()
+}
+
+/// Whether `dir` holds a key file (`*.key`, also put aside) that is not a keychain reference.
+pub fn shared_with_files(dir: &std::path::Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(dir) else { return false };
+    rd.flatten().any(|e| {
+        let name = e.file_name().to_string_lossy().to_string();
+        name.ends_with(".key") && std::fs::read(e.path()).map(|b| !is_reference(&b)).unwrap_or(false)
+    })
 }
 
 /// A store, read and delete of a throwaway entry, within two seconds.
