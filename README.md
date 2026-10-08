@@ -25,7 +25,7 @@ and docs) was removed on 4 October 2026; its history is in git and in
 
 Every tracked file per main folder (`git ls-files`; generated files are not in git). Regenerate with `node dev/readme-trees.mjs`.
 
-<details><summary><code>app/web/</code> · 85 files</summary>
+<details><summary><code>app/web/</code> · 86 files</summary>
 
 ```
 ├── dev/
