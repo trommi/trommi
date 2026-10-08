@@ -7,12 +7,12 @@
 //
 // For every target: `cargo build --release --target <t>` (static: musl on Linux), then
 //
-//   trommi-connector-<target>             the binary
-//   trommi-connector-<target>.sha256      its SHA-256
-//   trommi-connector-<target>.sig         its signature (Ed25519 over "trommi-release/v1" 0x00 sha256), when TROMMI_RELEASE_KEY
+//   connector/trommi-connector-<target>             the binary (what connect.sh downloads with TROMMI_CONNECTOR=binary)
+//   connector/trommi-connector-<target>.sha256      its SHA-256
+//   connector/trommi-connector-<target>.sig         its signature (Ed25519 over "trommi-release/v1" 0x00 sha256), when TROMMI_RELEASE_KEY
 //                                         names a file with the 32-byte seed (hex or base64url); the public key goes to
 //                                         release-key.pub.
-//   plugins/marketplace.json, plugins/trommi-rs-<version>.zip
+//   plugins/rs/marketplace.json, plugins/rs/trommi-rs-<version>.zip
 //       the plugin: .claude-plugin/plugin.json, bin/trommi-connector (a POSIX sh launcher that picks the binary of the
 //       machine by `uname -s`/`uname -m`) and bin/<target>/trommi-connector for every target built. The manifest is
 //       connector/build.mjs's, with `${CLAUDE_PLUGIN_ROOT}/bin/trommi-connector …` for `node connector.mjs …`.
@@ -133,39 +133,50 @@ function build(target) {
   execFileSync(CARGO, ['build', '--release', '--target', target], { cwd: here, env, stdio: 'inherit' })
 }
 
+/**
+ * The files the app serves for the binary connector, by path under the app (as connector/build.mjs's connectorFiles):
+ * connector/trommi-connector-<target> (+ .sha256, + .sig when signed) for the connect script, and the plugin under
+ * plugins/rs/ (marketplace.json and the zip). `built` is { target: Buffer }.
+ */
+export function binaryFiles(built, { app = 'https://app.trommi.com', seed = null } = {}) {
+  const files = {}
+  let publicKey = null
+  for (const [t, data] of Object.entries(built)) {
+    const name = `trommi-connector-${t}`
+    files[`connector/${name}`] = data
+    files[`connector/${name}.sha256`] = `${sha256(data)}  ${name}\n`
+    if (seed) { const s = signRelease(seed, data); files[`connector/${name}.sig`] = s.signature.toString('base64url') + '\n'; publicKey = s.publicKey }
+  }
+  if (publicKey) files['connector/release-key.pub'] = publicKey.toString('base64url') + '\n'
+  const version = sha256(Buffer.concat(Object.keys(built).sort().map(t => built[t]))).slice(0, 12)
+  const archive = zip({
+    '.claude-plugin/plugin.json': { data: Buffer.from(JSON.stringify(pluginManifest(version), null, 2) + '\n') },
+    'bin/trommi-connector': { data: Buffer.from(LAUNCHER), mode: 0o755 },
+    ...Object.fromEntries(Object.entries(built).map(([t, data]) => [`bin/${t}/trommi-connector`, { data, mode: 0o755 }])),
+  })
+  const zipName = `trommi-rs-${version}.zip`
+  files[`plugins/rs/${zipName}`] = archive
+  files['plugins/rs/marketplace.json'] = JSON.stringify({ name: 'trommi', owner: { name: 'Trommi', url: 'https://trommi.com' }, description: 'Trommi for Claude Code',
+    plugins: [{ name: 'trommi', displayName: 'Trommi', version, description: pluginManifest(version).description, source: { source: 'archive', url: `${app}/plugins/rs/${zipName}`, sha256: sha256(archive) } }] }, null, 2) + '\n'
+  return files
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  fs.mkdirSync(out, { recursive: true })
   const seed = releaseSeed()
   const built = {}
   for (const t of TARGETS) {
     try { build(t) } catch (e) { console.error(`skipped ${t}: the build failed (${e.message.split('\n')[0]})`); continue }
     const bin = path.join(here, 'target', t, 'release', 'trommi-connector')
     if (!fs.existsSync(bin)) { console.error(`skipped ${t}: no ${path.relative(process.cwd(), bin)}`); continue }
-    const data = fs.readFileSync(bin)
-    built[t] = data
-    const name = `trommi-connector-${t}`
-    fs.writeFileSync(path.join(out, name), data, { mode: 0o755 })
-    fs.writeFileSync(path.join(out, `${name}.sha256`), `${sha256(data)}  ${name}\n`)
-    if (seed) {
-      const { signature, publicKey } = signRelease(seed, data)
-      fs.writeFileSync(path.join(out, `${name}.sig`), signature.toString('base64url') + '\n')
-      fs.writeFileSync(path.join(out, 'release-key.pub'), publicKey.toString('base64url') + '\n')
-    }
-    console.log(`${name}: ${(data.length / 1048576).toFixed(1)} MiB, sha256 ${sha256(data).slice(0, 12)}${seed ? ', signed' : ''}`)
+    built[t] = fs.readFileSync(bin)
+    console.log(`trommi-connector-${t}: ${(built[t].length / 1048576).toFixed(1)} MiB, sha256 ${sha256(built[t]).slice(0, 12)}${seed ? ', signed' : ''}`)
   }
   if (!Object.keys(built).length) { console.error('nothing built'); process.exit(1) }
-  const version = sha256(Buffer.concat(Object.keys(built).sort().map(t => built[t]))).slice(0, 12)
-  const files = {
-    '.claude-plugin/plugin.json': { data: Buffer.from(JSON.stringify(pluginManifest(version), null, 2) + '\n') },
-    'bin/trommi-connector': { data: Buffer.from(LAUNCHER), mode: 0o755 },
-    ...Object.fromEntries(Object.entries(built).map(([t, data]) => [`bin/${t}/trommi-connector`, { data, mode: 0o755 }])),
+  const files = binaryFiles(built, { app: APP, seed })
+  fs.rmSync(path.join(out, 'plugins/rs'), { recursive: true, force: true })
+  for (const [f, data] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(out, f)), { recursive: true })
+    fs.writeFileSync(path.join(out, f), data, { mode: /trommi-connector-[^.]*$/.test(f) ? 0o755 : 0o644 })
   }
-  const archive = zip(files)
-  const zipName = `trommi-rs-${version}.zip`
-  fs.mkdirSync(path.join(out, 'plugins'), { recursive: true })
-  fs.writeFileSync(path.join(out, 'plugins', zipName), archive)
-  const market = { name: 'trommi', owner: { name: 'Trommi', url: 'https://trommi.com' }, description: 'Trommi for Claude Code',
-    plugins: [{ name: 'trommi', displayName: 'Trommi', version, description: pluginManifest(version).description, source: { source: 'archive', url: `${APP}/plugins/${zipName}`, sha256: sha256(archive) } }] }
-  fs.writeFileSync(path.join(out, 'plugins', 'marketplace.json'), JSON.stringify(market, null, 2) + '\n')
-  console.log(`plugin ${zipName} (${(archive.length / 1048576).toFixed(1)} MiB) and marketplace.json in ${path.relative(process.cwd(), out) || '.'}`)
+  console.log(`wrote ${Object.keys(files).join(', ')} into ${path.relative(process.cwd(), out) || '.'}`)
 }

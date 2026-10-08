@@ -675,7 +675,16 @@ impl Member {
             me.joining = true;
         }
         let storage = self.me.lock().unwrap().storage.clone().unwrap();
-        let keychain = crate::keychain::use_keychain().unwrap_or(false);
+        let keychain = {
+            let dir = self.paths().map(|p| p.dir.clone()).unwrap_or_default();
+            match crate::keychain::use_keychain_in(&dir) {
+                Ok(k) => k,
+                Err(e) => {
+                    eprintln!("[trommi] {}; the key goes into its key file", e.text());
+                    false
+                }
+            }
+        };
         let res = room::join_room(link.trim(), storage, self.device_info.clone(), client_name(), keychain, 800, 15 * 60_000, |code| {
             let e = crate::connector::check_emoji(&code);
             eprintln!("[trommi] invite answered: check code {}  ({})", e.iter().map(|x| x.0).collect::<Vec<_>>().join("  "), e.iter().map(|x| x.1).collect::<Vec<_>>().join(", "));
