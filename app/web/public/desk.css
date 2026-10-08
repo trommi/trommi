@@ -829,7 +829,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 /* the session's drawing smaller, the urgency its own small sign before the title (his word: "komisch darüber") */
 .inbox-groups .inbox-row .row-mark { width: 20px; height: 20px; }
 .inbox-groups .inbox-row .row-mark > .crown-mark { left: 2px; top: -8px; width: 15px; }
-.row-urg { display: inline-grid; place-items: center; vertical-align: -.18em; width: 18px; height: 18px; margin-right: 6px; border-radius: 50%; }
+.row-urg { position: relative; display: inline-grid; place-items: center; vertical-align: -.18em; width: 18px; height: 18px; margin-right: 6px; border-radius: 50%; }   /* (relative: the hand drawn inside it stands beside the title, not at the row's left edge) */
 .row-urg > svg { width: 18px; height: 18px; }
 /* Whenever (nothing waits on it): the hourglass before the title, where a knock's mark stands; in a conversation's
    cards (it stood alone on a line of its own under the session's drawing). The Desk's rows show none. */
@@ -1403,3 +1403,8 @@ html body #desk-stacks:has(> .df-cards) { display: block !important; width: auto
 body > main#inbox { contain: strict; }
 .desk-layer { display: contents; }
 #inbox.is-choosing .inbox-row .row-mark { opacity: 1 !important; }
+
+/* ---- the session's small drawing before a Desk row's title, in its colour, like a stamp (his pick "mark", 8 October) ---- */
+.row-stamp { position: relative; display: inline-block; vertical-align: -.22em; width: 22px; height: 22px; margin-right: 7px; color: var(--tone-pen); }
+.row-stamp > svg { width: 100%; height: 100%; display: block; }
+.row-stamp .crown-mark { display: none; }
