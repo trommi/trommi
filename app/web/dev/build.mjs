@@ -161,9 +161,19 @@ async function bundle(pub, vendor) {
   const out = {}
   // The core's worker (shared/core-worker.ts): one file of its own, the whole core in it. The app learns its address
   // from __TROMMI_CORE_WORKER__ (without it, as on the dev server, it starts /gen/vendor/core-worker.mjs).
+  // What only the account screens need (the key derivation, the word list, founding and joining) is a file of its own,
+  // which the worker imports when one asks (core-worker-account-<hash>.mjs, with its own copy of the core it uses), so
+  // the worker of a stored room is one file and one round trip.
+  const acc = await esbuild.build({
+    entryPoints: [{ in: 'gen/vendor/account.mjs', out: 'core-worker-account' }], bundle: true, format: 'esm', minify: true, write: false,
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+  })
+  const accountFile = rel(acc.outputFiles[0].path)
+  out[accountFile] = acc.outputFiles[0].text
+  const accountExternal = { name: 'account-external', setup(b) { b.onResolve({ filter: /^\.\/account\.mjs$/, namespace: 'vendor' }, a => (a.importer === 'core-worker.mjs' ? { path: `./${path.posix.basename(accountFile)}`, external: true } : undefined)) } }
   const w = await esbuild.build({
     entryPoints: [{ in: 'gen/vendor/core-worker.mjs', out: 'core-worker' }], bundle: true, format: 'esm', minify: true, write: false, metafile: true,
-    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor],
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [accountExternal, fromVendor],
   })
   if (w.outputFiles.length !== 1) throw new Error('build: the core worker is not one file')
   const worker = rel(w.outputFiles[0].path)
