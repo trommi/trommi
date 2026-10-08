@@ -328,8 +328,12 @@ await test('commands become the same channel events as today', async () => {
   assert.deepEqual(events.at(-1).meta, { kind: 'info_read', card_id: id })
   await bridge.command({ command: 'trust', object_id: id, content: {} })
   assert.equal(events.at(-1).meta.trust, '1'); assert.equal(events.at(-1).meta.choice, 'tonight')
-  await bridge.command({ command: 'selection_sent', envelope_number: 77, content: { text: 'ship it', stroke_ids: ['s1', 's2'] } })
-  assert.deepEqual(events.at(-1).meta, { kind: 'pad', pad: 'global', message_id: '77', elements: 's1,s2' })
+  await bridge.command({ command: 'selection_sent', envelope_number: 77, content: { text: 'ship it', stroke_ids: ['s1', 's2'], board: `desk/${'d'.repeat(32)}` } })
+  assert.deepEqual(events.at(-1).meta, { kind: 'scribble', board: `desk/${'d'.repeat(32)}`, message_id: '77', elements: 's1,s2' })
+  assert.equal(events.at(-1).content, 'ship it')
+  await bridge.command({ command: 'selection_sent', envelope_number: 78, content: { stroke_ids: ['s3'], board: '../etc' } })
+  assert.deepEqual(events.at(-1).meta, { kind: 'scribble', message_id: '78', elements: 's3' }, 'a board that is no desk/<32 hex> is left out')
+  assert.match(events.at(-1).content, /Scribble Board/)
 })
 
 await test('history and late commands are marked; strokes are never chat', async () => {

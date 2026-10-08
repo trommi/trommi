@@ -559,10 +559,10 @@ export const EVENTS = [
     example: '<channel source="board" kind="info_read" card_id="a1b2c3d4">The human read "How the nightly migration works" and closed it.</channel>',
   },
   {
-    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'pad', when: 'The human selected elements on the pad and sent them to this session.',
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'scribble', when: 'The human selected (or cut out) part of the Scribble Board and sent it to this session. What was sent left the board.',
     content: 'the words of the selected notes and spoken notes in reading order, or a sentence pointing at the picture',
-    meta: { kind: 'pad', pad: 'which pad: global', message_id: 'the message in the conversation that shows the selection', elements: 'ids of the selected elements, comma-separated', image_path: 'PNG of exactly the selection, on white' },
-    example: '<channel source="board" kind="pad" pad="global" message_id="5e1f09ab" elements="0muqnb5cchmsr9cse,0muqnb7k2p1d4xw3a" image_path="/…/files/pad-9f2c41d07a3e.png">Ship the pad prototype</channel>',
+    meta: { kind: 'scribble', board: 'the Scribble Board it came from (desk/<id>)', message_id: 'the message in the conversation that shows the selection', elements: 'ids of the selected strokes, notes and pictures, comma-separated', image_path: 'PNG of exactly the selection, drawn from its strokes on white' },
+    example: '<channel source="board" kind="scribble" board="desk/9d7f8611247c59b9c82e0c78b7f084a4" message_id="77" elements="d1/12/0,d1/14/2" image_path="/…/files/selection-9f2c41d07a3e.png">Ship the pad prototype</channel>',
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel/permission', kind: null, when: 'The human answered an approval card. Claude Code decides whether this or the terminal came first.',
@@ -1313,8 +1313,8 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
       }
       case 'selection_sent': {
         const got = await download(c.attachments)
-        return send(String(c.text ?? '').trim() || 'The human selected part of the pad and sent it to you. image_path shows exactly the selection.', {
-          kind: 'pad', pad: 'global', message_id: String(cmd.envelope_number), elements: listArg(c.stroke_ids, 'stroke_ids').join(','), ...fileMeta(got),
+        return send(String(c.text ?? '').trim() || 'The human selected part of the Scribble Board and sent it to you. image_path shows exactly the selection.', {
+          kind: 'scribble', ...(typeof c.board === 'string' && /^desk\/[0-9a-f]{32}$/.test(c.board) ? { board: c.board } : {}), message_id: String(cmd.envelope_number), elements: listArg(c.stroke_ids, 'stroke_ids').join(','), ...fileMeta(got),
         })
       }
     }
