@@ -255,7 +255,9 @@ struct Attachments: View {
           }
         }
       }
-      ForEach(Array(files.enumerated()), id: \.offset) { _, f in
+      // videos play right here, in the talk (a tap loads and decrypts it)
+      ForEach(Array(files.filter { kindOf($0) == "video" }.enumerated()), id: \.offset) { _, f in InlineVideo(ref: f) }
+      ForEach(Array(files.filter { kindOf($0) != "video" }.enumerated()), id: \.offset) { _, f in
         Button { open(f) } label: {
           HStack(spacing: 8) {
             Sketch(kindOf(f) == "video" || kindOf(f) == "audio" ? "play" : "clip", color: Ink.fg).frame(width: 18, height: 18)
@@ -280,6 +282,63 @@ struct Attachments: View {
   }
 }
 struct OpenedFile: Identifiable { let id = UUID(); let name: String; let type: String; let data: Data }
+
+/** A video of the room, played inline: its name and a play button; a tap fetches and decrypts it, then the system's player
+ *  plays it in place (full screen and AirPlay from its own controls). */
+struct InlineVideo: View {
+  @EnvironmentObject var model: BoardModel
+  let ref: JV
+  @State private var url: URL?
+  @State private var loading = false
+  #if canImport(AVKit)
+  @State private var player: AVPlayer?
+  #endif
+  var body: some View {
+    let name = ref["file_name"].string ?? "video"
+    VStack(alignment: .leading, spacing: 4) {
+      #if canImport(AVKit)
+      if let p = player {
+        PlayerView(player: p).frame(maxWidth: 360).frame(height: 220).clipShape(RoundedRectangle(cornerRadius: 12))
+          .onDisappear { p.pause() }
+      } else { poster(name) }
+      #else
+      poster(name)
+      #endif
+    }
+  }
+  private func poster(_ name: String) -> some View {
+    Button(action: load) {
+      ZStack {
+        RoundedRectangle(cornerRadius: 12).fill(Ink.sunken)
+        if loading { ProgressView() } else {
+          VStack(spacing: 8) {
+            Image(systemName: "play.fill").font(.system(size: 22, weight: .bold)).foregroundStyle(Ink.fg).frame(width: 52, height: 52).background(Circle().fill(Ink.surface))
+            Text(name).font(Face.text(13, .medium)).foregroundStyle(Ink.muted).lineLimit(1).padding(.horizontal, 12)
+          }
+        }
+      }
+      .frame(maxWidth: 360).frame(height: 160)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Play \(name)")
+  }
+  private func load() {
+    guard !loading else { return }
+    loading = true
+    Task {
+      defer { loading = false }
+      do {
+        let d = try await model.attachment(ref)
+        let u = TempFile.url(OpenedFile(name: ref["file_name"].string ?? "video.mp4", type: ref["media_type"].string ?? "video/mp4", data: d))
+        #if canImport(AVKit)
+        let p = AVPlayer(url: u)
+        player = p
+        p.play()
+        #endif
+      } catch { model.fail("Not played", error) }
+    }
+  }
+}
 
 /** A file of the room, opened: a page (sandboxed), a text, a video; and shared on (the system's sheet). */
 struct FileSheet: View {
@@ -313,6 +372,16 @@ enum TempFile {
   }
 }
 #if canImport(AVKit)
+/** The system's player for a player already made (inline in the talk). */
+struct PlayerView: UIViewControllerRepresentable {
+  let player: AVPlayer
+  func makeUIViewController(context: Context) -> AVPlayerViewController {
+    let c = AVPlayerViewController()
+    c.player = player
+    return c
+  }
+  func updateUIViewController(_ c: AVPlayerViewController, context: Context) { if c.player !== player { c.player = player } }
+}
 struct VideoFile: UIViewControllerRepresentable {
   let file: OpenedFile
   func makeUIViewController(context: Context) -> AVPlayerViewController {
