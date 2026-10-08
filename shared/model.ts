@@ -2,11 +2,13 @@
 // No crypto, no I/O. The sync engine hands in verified, decoded records in hub order;
 // every client (human or agent) applies the same rules and so arrives at the same board.
 import { OBJECT_STATE_NAME, URGENCY_NAME, URGENCY, KIND, CARD_CONTENT_FIELDS, CONTENT_TYPES, OBJECT_TYPES, CARD_TYPES, ANSWER_ACTIONS } from './codec.ts'
+import { emptyModel, emptyChange, emptyNewer } from './model-shape.ts'
 import type {
   Alert, Answer, AnswerBody, ApplyResult, Body, Card, CardBody, CardOption, Causal, Change, ContentState, HumanRegisters, ItemState, Link, Linked, LinkState,
   Model, Newer, Note, ObjectState, PermissionRequest, Rec, Session, SessionSettings, StackKey, Timeline, TimelineItem, Urgency,
 } from './types.ts'
 
+export { emptyModel, emptyChange }
 export const ALERTS_MAX = 200
 const URGENCY_RANK: Record<string, number> = { critical: 3, high: 2, normal: 1, low: 0 }
 const isZeroHash = (h: string) => /^0*$/.test(h)
@@ -47,15 +49,6 @@ export const lamportOf = (c: { lamport?: unknown } | null | undefined): number =
 export const LAMPORT_STEP = 2 ** 24
 export const lamportAccepted = (lamport: number, seen: number | null | undefined): boolean => lamport > 0 && lamport <= (seen ?? 0) + LAMPORT_STEP
 
-export function emptyModel(): Model {
-  return {
-    room: { room_id: null, hub_url: null, my_device_id: null, my_role: null, key_epoch: 0, last_entry_number: -1, last_envelope_number: 0, connection: 'offline', agent_session_id: null, outbox_blocked: null },
-    members: new Map(), sessions: new Map(), cards: new Map(), permissions: new Map(), notes: new Map(), published: new Map(),
-    timelines: new Map(), human: emptyHuman(), invites: new Map(), alerts: [], outbox: [],
-    stack: [], open_permission_ids: [], newer: emptyNewer(),
-  }
-}
-const emptyNewer = (): Newer => ({ count: 0, what: [], envelope_number: 0 })
 
 // ---- forward compatibility: what a newer client wrote ---------------------------------------------------------------
 //
@@ -76,15 +69,6 @@ export function noteNewer(model: Model, change: Change, what: string, rec: { env
 const needsUpdate = (model: Model, change: Change, rec: Rec, what: string): ApplyResult => { noteNewer(model, change, what, rec); return { applied: false, refused: 'needs-update' } }
 /** Whether this version can show and act on a card (false: a placeholder, no answer from here). */
 export const cardSupported = (card: { unsupported?: unknown } | null | undefined): boolean => !card?.unsupported
-function emptyHuman(): HumanRegisters {
-  return { drafts: new Map(), snoozes: new Map(), ducks: new Map(), crown: null, desks: new Map(), session_settings: new Map(), scribble_snapshots: new Map(), raw: new Map() }
-}
-
-/** A change record: what a batch touched. Every field always present. */
-export function emptyChange(): Change {
-  return { cards: new Set(), sessions: new Set(), permissions: new Set(), notes: new Set(), published: new Set(), timelines: new Set(), registers: new Set(),
-    members: false, invites: new Set(), alerts: false, outbox: false, stack: false, room: false, items: new Map() }
-}
 /** change.items: Map<timeline_key, TimelineItem[]> added or replaced in this batch. */
 export function addItem(change: Change, key: string, item: TimelineItem): void { let l = change.items.get(key); if (!l) change.items.set(key, l = []); l.push(item) }
 const CHANGE_SETS = ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines', 'registers', 'invites'] as const
