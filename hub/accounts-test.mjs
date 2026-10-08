@@ -13,7 +13,7 @@ import { memoryStorage } from '../shared/index.ts'
 
 const outbox = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-mail-'))
 Object.assign(process.env, { HUB_MAIL_OUTBOX: outbox, HUB_LIMIT_LOGINS_PER_IP_10MIN: '1000', HUB_ACCOUNT_EXPIRE: '1' })
-const { startHub } = await import('./server.mjs')
+const { startHub } = process.env.HUB_CMD ? await import('./external.mjs') : await import('./server.mjs')
 
 const tests = []
 const test = (name, fn) => tests.push({ name, fn })

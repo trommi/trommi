@@ -22,7 +22,7 @@ const testKey = crypto.generateKeyPairSync('ed25519')
 const signed = (method, p, at) => ({ 'x-test-signature': signTestRequest(testKey.privateKey, method, p, at) })
 // Read when server.mjs is imported (LIMITS) and when a hub starts (ops): set before both.
 Object.assign(process.env, { HUB_TEST_PUBLIC_KEY: testKey.publicKey.export({ format: 'jwk' }).x, HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE: '6', HUB_MIN_APP: '1.2.0', HUB_RECOMMENDED_APP: '1.4.0', METRICS_PORT: '0' })
-const { startHub, LIMITS } = await import('../server.mjs')
+const { startHub, LIMITS } = process.env.HUB_CMD ? await import('../external.mjs') : await import('../server.mjs')
 
 const { hex, b64u, unb64u } = z
 const tests = []

@@ -1671,7 +1671,9 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "indexmap",
  "libc",
+ "libsqlite3-sys",
  "p256",
  "parking_lot",
  "rand 0.8.8",
@@ -1681,6 +1683,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "tokio-util",
  "unicode-normalization",
  "zcrypto",
 ]
