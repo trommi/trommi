@@ -170,6 +170,10 @@ public final class HubClient {
   public func threads(kind: String, timelineId: String, before: Int, limit: Int = 50) async throws -> JSON {
     try await request("GET", roomPath("/threads"), query: ["timeline_kind": kind, "timeline_id": timelineId, "before_envelope_number": String(before), "limit": String(limit)])
   }
+  /** A timeline's items after an envelope number, oldest first (a canvas's tail after its snapshot). */
+  public func threadsAfter(kind: String, timelineId: String, after: Int, limit: Int = 500) async throws -> JSON {
+    try await request("GET", roomPath("/threads"), query: ["timeline_kind": kind, "timeline_id": timelineId, "after_envelope_number": String(after), "limit": String(limit)])
+  }
   /** An attachment's encrypted bytes. */
   public func getAttachment(_ id: String) async throws -> Bytes {
     var req = URLRequest(url: URL(string: "\(hubURL)/v1\(roomPath("/attachments/\(try Self.checkHex(id, 32, "attachment_id"))"))")!)

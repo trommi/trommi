@@ -61,6 +61,11 @@ public struct CanvasShape: Identifiable, Equatable {
   public var nw: Double = 0, nh: Double = 0
   public var mime: String?
   public var name: String?
+  public init(id: String, by: String, tool: String, pts: [Double], pr: [Double]? = nil, color: String? = nil, size: Double = 4, z: Double = 0, group: String? = nil,
+              text: String? = nil, wrap: Double? = nil, attachment: JV? = nil) {
+    self.id = id; self.by = by; self.tool = tool; self.pts = pts; self.pr = pr; self.color = color; self.size = size; self.z = z; self.group = group
+    self.text = text; self.wrap = wrap; self.attachment = attachment
+  }
 }
 
 public final class CanvasState {

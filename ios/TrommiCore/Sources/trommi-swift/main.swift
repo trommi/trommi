@@ -39,6 +39,7 @@ let linkOut = option("--link-out")
 let confirmYes = flag("--yes")
 let titleWanted = option("--title")
 let closedWanted = option("--closed")
+let drawIt = flag("--draw")
 let asJSON = flag("--json")
 let command = args.first ?? "help"
 let rest = Array(args.dropFirst())
@@ -243,6 +244,28 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     }
     live.cancel()
     die("not seen live")
+  case "history":
+    // A session's conversation as the app shows it: the catch-up holds the headers, the bodies come page by page (GET threads).
+    let room = try pickRoom()
+    try await room.sync()
+    let d = DeskModel(board: room.board)
+    guard let a = (rest.first.flatMap { id in d.agents.first { $0.id == id } }) ?? d.agents.first, let key = d.sessionKey(of: a.id) else { die("no session") }
+    var pages = 0
+    while d.hasOlder(agent: a.id) && pages < 50 { try await room.loadOlder(timelineKeyOf("chat", "session/\(key)")); d.update(); pages += 1 }
+    for m in d.messagesOf(agent: a.id) where m.from != "event" { print("\(m.from): \(m.text)") }
+  case "canvas":
+    // trommi-swift canvas [<desk>] [--draw]: the desk's Scribble Board (its shapes), --draw adds one stroke first
+    let room = try pickRoom()
+    try await room.sync()
+    let tl = deskCanvas(rest.first ?? "main")
+    if drawIt {
+      let e = CanvasState.entryOf(CanvasShape(id: "", by: "", tool: "pen", pts: [10, 10, 40, 30, 80, 20], pr: nil, color: "ink", size: 4, z: 0))
+      try await room.sendCanvas(tl, .obj(["content_type": "strokes", "strokes": [e]]))
+      try await room.flush()
+      try await room.sync()
+    }
+    let st = try await room.loadCanvas(tl)
+    for s in st.shapes.values.sorted(by: { $0.id < $1.id }) { print("\(s.id) \(s.tool) \(s.pts.count / 2) points") }
   case "rooms":
     for id in Store.rooms(base: base) {
       let r = try Room.open(base: base, roomId: id)
