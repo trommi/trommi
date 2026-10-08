@@ -141,7 +141,9 @@ struct MenuPill: View {
         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.muted)
         if !model.live { Circle().fill(Ink.lead).frame(width: 7, height: 7).accessibilityLabel("Not connected") }
       }
-      .padding(.horizontal, 6)
+      // a Liquid Glass pill, as the other chrome pills (the agents and Blitz at the top right)
+      .padding(.horizontal, 14).frame(height: 44)
+      .glass(Capsule(), interactive: true)
     }
     .accessibilityLabel("\(v?.deskName ?? "Desk"), Menu")
     .alert("New Desk", isPresented: $askDesk) {
