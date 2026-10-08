@@ -1,8 +1,11 @@
 // Local static server for the app, as deployed: the SPA fallback Cloudflare gives (assets.not_found_handling), the
 // headers of public/_headers, the worker's addresses (worker.js) and what dev/build.mjs generates, made in memory on
 // every request (nothing to build, nothing stale). Its sw.js has VERSION "dev": the service worker caches nothing here.
-//   node dev/serve.mjs [port=8900] [--bundle]   (--bundle: the deployed bundle instead of the sources)
+//   node dev/serve.mjs [port=8900] [--bundle] [--prod]   (--bundle: the deployed bundle instead of the sources;
+//   --prod: as app.trommi.com serves it: the bundle, its real service worker version (cache-first shell) and brotli,
+//   for measuring: trommi-hub dev/load/perf-budget.mjs)
 import http from 'node:http'
+import zlib from 'node:zlib'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,12 +21,14 @@ try { let cur = null; for (const line of fs.readFileSync(path.join(root, '_heade
 // The build, made again when it is older than a moment (a page load asks for index.html, sw.js and the bundle at once).
 // By default the sources are served as they are (one module per file, unminified); --bundle serves the deployed
 // bundle (minified, split by view), as app.trommi.com does.
-const BUNDLE = process.argv.includes('--bundle')
+const PROD = process.argv.includes('--prod')
+const BUNDLE = PROD || process.argv.includes('--bundle')
 let made = null, making = null
 const built = async () => {
   if (made && Date.now() - made.at <= 500) return made.out
+  if (PROD && made) return made.out      // one build: its version is the service worker's cache name
   making ??= generate({ bundle: BUNDLE }).then(({ out }) => {
-    out['sw.js'] = out['sw.js'].replace(/^const VERSION = .*$/m, 'const VERSION = "dev"'); out['index.html'] = out['index.html'].replace(/data-build="\w+"/, 'data-build="dev"')
+    if (!PROD) { out['sw.js'] = out['sw.js'].replace(/^const VERSION = .*$/m, 'const VERSION = "dev"'); out['index.html'] = out['index.html'].replace(/data-build="\w+"/, 'data-build="dev"') }
     made = { at: Date.now(), out }
     return out
   }).finally(() => { making = null })
@@ -31,6 +36,7 @@ const built = async () => {
 }
 // A request never takes the server down: a file the build reads may be missing for a moment (a rebase under it).
 // The answer is 500 with the message; the same message is logged once.
+const compressed = new Map()   // --prod: brotli once per file and build
 let lastError = ''
 http.createServer((req, res) => {
   serve(req, res).catch(err => {
@@ -63,8 +69,15 @@ async function serve(req, res) {
   // Local hubs for development (the deployed CSP names only https://hub.trommi.com).
   if (h['Content-Security-Policy'] && !h['Content-Security-Policy'].includes('sandbox')) h['Content-Security-Policy'] = h['Content-Security-Policy'].replace('connect-src ', 'connect-src http://127.0.0.1:* http://localhost:* ')
   h['Cache-Control'] = 'no-cache'
-  res.writeHead(200, h)
   const out = rel === 'index.html' ? (await built())[rel] : gen[rel]
+  if (PROD && /\bbr\b/.test(req.headers['accept-encoding'] ?? '') && /^(text|application\/(json|manifest))/.test(h['Content-Type'])) {
+    const body = out ?? fs.readFileSync(path.join(root, rel))
+    let z = compressed.get(rel)
+    if (!z || z.src !== body) { z = { src: body, br: zlib.brotliCompressSync(body) }; compressed.set(rel, z) }
+    res.writeHead(200, { ...h, 'Content-Encoding': 'br', Vary: 'Accept-Encoding' })
+    return res.end(z.br)
+  }
+  res.writeHead(200, h)
   if (out != null) return res.end(out)
   fs.createReadStream(path.join(root, rel)).on('error', () => res.destroy()).pipe(res)
 }
