@@ -219,6 +219,88 @@ await test('cards round trip: create, revise, answer, decide again, hand back, c
   assert(card.versions.some(v => v.object_version === 1) && card.answers.some(a => a.taken_back_at), 'the card keeps its first version and the answer taken back')
 })
 
+await test('forward compatibility: what a newer client writes is verified and kept, shown as "needs a newer Trommi", never acted on as a guess', async () => {
+  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
+  const commands = []
+  agent.on('command', c => commands.push(c))
+  const te = new TextEncoder()
+  // A newer client: writes what this version's codec would refuse or drop (a content type, a schema version, a field).
+  const newer = (patch) => (kind, content) => te.encode(JSON.stringify({ schema_version: 1, ...content, ...patch(kind, content) }))
+  // 1. A card type this version does not know: a placeholder card, counted in model.newer, not answerable from here.
+  const poll = await agent.sendCard({ card_type: 'poll', title: 'Lunch?', options: [{ key: 'a', label: 'Pizza' }] })
+  await settleAll(agent)
+  await until(() => laptop.model.cards.get(poll), 'the poll card arrives')
+  eq(laptop.model.cards.get(poll).unsupported, 'card_type', 'card_type unknown: unsupported')
+  assert(laptop.model.newer.count >= 1 && laptop.model.newer.what.includes('card_type poll'), 'counted as newer')
+  let err = await laptop.answer({ object_id: poll, choices: ['a'] }).catch(e => e)
+  eq(err?.code, 'needs-update', 'no answer to a card of a newer version')
+  // 2. A chat item of a content type of a newer version, with an unknown field: verified, kept, an "unsupported" item;
+  // the agent hears that something arrived it cannot read (command flag), not a guess.
+  phone.encodePayload = newer((kind, c) => (c.content_type === 'message' ? { content_type: 'voice', duration_ms: 1200 } : {}))
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'listen' })
+  phone.encodePayload = null
+  await settleAll(phone)
+  await until(() => commands.some(c => c.command === 'message' && c.unsupported === 'content_type voice'), 'agent hears an unsupported message')
+  const tl = await until(() => [...laptop.model.timelines.values()].find(t => [...t.items.values()].some(i => i.content_type === 'voice')), 'laptop holds the item')
+  const item = [...tl.items.values()].find(i => i.content_type === 'voice')
+  eq([item.item_state, item.content.duration_ms, M.itemNeedsUpdate(item)], ['unsupported', 1200, true], 'kept with its unknown field, shown as unsupported')
+  // 3. An answer of a newer schema: it counts by its signed header; the agent gets "unsupported", never a plain answer.
+  const q = await agent.sendCard({ title: 'Ship?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(q), 'card on phone')
+  phone.encodePayload = newer(kind => (kind === codec.KIND.answer ? { schema_version: 2, answer_action: 'answer', choices: ['y'] } : {}))
+  await phone.answer({ object_id: q, choices: ['y'] })
+  phone.encodePayload = null
+  await settleAll(phone)
+  await until(() => commands.some(c => c.command === 'unsupported' && c.object_id === q), 'agent: unsupported answer')
+  assert(!commands.some(c => c.command === 'answer' && c.object_id === q), 'never a plain answer')
+  await until(() => laptop.model.cards.get(q).object_state === 'answered', 'the header counts: answered on the laptop')
+  eq(laptop.model.cards.get(q).answer.unsupported, true, 'the answer is marked as of a newer version')
+  // 4. An answer action of a newer version: counted by its header, the agent hears "unsupported".
+  const r = await agent.sendCard({ title: 'Later?', options: [{ key: 'y', label: 'Yes' }] })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(r), 'card r on phone')
+  await phone.answer({ object_id: r, answer_action: 'snooze' })
+  await settleAll(phone)
+  await until(() => commands.some(c => c.command === 'unsupported' && c.object_id === r && c.what === 'answer_action snooze'), 'agent: unsupported answer action')
+  // 5. A note of a newer schema: shown as it was, not edited from here; its unknown fields survive a version from here otherwise.
+  const keep = await laptop.saveNote({ text: 'plain', colour_v2: 'teal' })
+  await settleAll(laptop)
+  await until(() => phone.model.notes.get(keep)?.colour_v2 === 'teal', 'unknown note field kept')
+  await phone.saveNote({ object_id: keep, text: 'edited' })
+  await settleAll(phone)
+  await until(() => laptop.model.notes.get(keep)?.text === 'edited', 'edit arrives')
+  eq(laptop.model.notes.get(keep).colour_v2, 'teal', 'an edit from this version keeps the field it does not know')
+  phone.encodePayload = newer(kind => (kind === codec.KIND.object_version ? { schema_version: 2 } : {}))
+  const note = await phone.saveNote({ text: 'from the future' })
+  phone.encodePayload = null
+  await settleAll(phone)
+  await until(() => laptop.model.notes.get(note)?.unsupported, 'note marked unsupported')
+  err = await laptop.saveNote({ object_id: note, text: 'x' }).catch(e => e)
+  eq(err?.code, 'needs-update', 'no edit of a note of a newer version')
+  // Nothing of this broke a chain: the room goes on, and a device that joins later reads it all the same.
+  const late = await addHuman(phone, 'Late')
+  await until(() => late.model.cards.get(poll)?.unsupported === 'card_type' && late.model.cards.get(q)?.object_state === 'answered', 'a late device agrees')
+  assert(late.model.newer.count >= 3, 'the late device counts them too')
+  eq(late.model.alerts.filter(a => !['recovery-add'].includes(a.code)).map(a => a.code), [], 'no alerts: nothing was refused')
+})
+
+await test('forward compatibility (model): an envelope kind, object type or timeline kind of a newer version is counted, never applied or alerted', async () => {
+  const m = M.emptyModel(), ch = M.emptyChange()
+  m.room.my_role = 'human'; m.room.my_device_id = 'f'.repeat(64)
+  const base = { envelope_number: 7, envelope_hash: '1'.repeat(64), sender_device_id: 'a'.repeat(64), sender_role: 'human', recipient_device_id: null, sent_at: 1, is_head: true, object: null, timeline_kind: null, timeline_id: null, content: null, content_state: 'ok', bind: null }
+  eq(M.applyRecord(m, { ...base, kind: 9 }, ch), { applied: false, refused: 'needs-update' }, 'unknown kind')
+  eq(M.applyRecord(m, { ...base, envelope_number: 8, kind: codec.KIND.object_version, object: { object_id: 'b'.repeat(32), object_state: 1, urgency: 1 }, content: { schema_version: 1, object_type: 'checklist' } }, ch), { applied: false, refused: 'needs-update' }, 'unknown object type')
+  eq(M.applyRecord(m, { ...base, envelope_number: 9, kind: codec.KIND.status, content: { schema_version: 3, values: { 'desk/x': { name: 'never applied' } } }, content_state: 'newer_schema' }, ch), { applied: false }, 'newer status: values not applied')
+  eq(m.human.desks.size, 0, 'no register from a newer schema')
+  eq(M.applyRecord(m, { ...base, envelope_number: 10, is_head: false, kind: codec.KIND.timeline_item, timeline_kind: '3', timeline_id: `desk/${'d'.repeat(32)}`, content: { schema_version: 1, content_type: 'sticker' } }, ch).applied, true, 'a timeline kind of a newer version is kept (in no view)')
+  eq(m.alerts, [], 'no alerts')
+  eq([m.newer.count, m.newer.what, m.newer.envelope_number, ch.room], [4, ['envelope kind 9', 'object_type checklist', 'schema_version 3', 'timeline kind 3'], 10, true], 'counted')
+  eq([M.itemStateOf({ content_type: 'voice' }, 'ok'), M.itemStateOf({ content_type: 'message' }, 'ok'), M.itemStateOf(null, 'newer_schema'), M.itemStateOf({}, 'ok')], ['unsupported', 'loaded', 'newer_schema', 'loaded'], 'item states')
+  const d = codec.decodePayload(new TextEncoder().encode(JSON.stringify({ schema_version: 2, content_type: 'message', text: 'x' })))
+  eq(d.content_state, 'newer_schema', 'a newer schema decodes as newer_schema, with its content kept')
+})
+
 await test('final options: an answer whose every choice is final settles the card itself; take back reopens it; a note, a mixed choice or a trusted answer leave it with the agent', async () => {
   const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
   const commands = [], alerts = []

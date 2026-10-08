@@ -1,7 +1,7 @@
 // model.mjs: the board model and its reducer (shared/README.md "The model" is the contract).
 // Pure JavaScript: no crypto, no I/O. The sync engine hands in verified, decoded records in hub order;
 // every client (human or agent) applies the same rules and so arrives at the same board.
-import { OBJECT_STATE_NAME, URGENCY_NAME, URGENCY, KIND, CARD_CONTENT_FIELDS } from './codec.mjs'
+import { OBJECT_STATE_NAME, URGENCY_NAME, URGENCY, KIND, CARD_CONTENT_FIELDS, CONTENT_TYPES, OBJECT_TYPES, CARD_TYPES, ANSWER_ACTIONS } from './codec.mjs'
 
 export const ALERTS_MAX = 200
 const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
@@ -44,9 +44,30 @@ export function emptyModel() {
     room: { room_id: null, hub_url: null, my_device_id: null, my_role: null, key_epoch: 0, last_entry_number: -1, last_envelope_number: 0, connection: 'offline', agent_session_id: null, outbox_blocked: null },
     members: new Map(), sessions: new Map(), cards: new Map(), permissions: new Map(), notes: new Map(), published: new Map(),
     timelines: new Map(), human: emptyHuman(), invites: new Map(), alerts: [], outbox: [],
-    stack: [], open_permission_ids: [],
+    stack: [], open_permission_ids: [], newer: emptyNewer(),
   }
 }
+const emptyNewer = () => ({ count: 0, what: [], envelope_number: 0 })
+
+// ---- forward compatibility: what a newer client wrote ---------------------------------------------------------------
+//
+// Records this version cannot read (an envelope kind, object type, card type, content type, answer action or timeline
+// kind it does not know, or a body of a newer schema_version) were verified like any other: they never break a chain
+// and are never applied as something they are not. Each is counted in model.newer = { count, what: [up to 16 names],
+// envelope_number: the newest }; change.room is set, so the app can say once "this needs a newer Trommi" (codec
+// UPDATE_MESSAGE). Where a record has a place (a card, a timeline item, a note), that place shows a placeholder:
+// card.unsupported, item_state 'unsupported' / 'newer_schema', note.unsupported.
+export const NEWER_WHAT_MAX = 16
+export function noteNewer(model, change, what, rec) {
+  const n = (model.newer ??= emptyNewer())
+  n.count++
+  if (!n.what.includes(what)) { n.what.push(what); if (n.what.length > NEWER_WHAT_MAX) n.what.shift() }
+  n.envelope_number = Math.max(n.envelope_number, rec?.envelope_number ?? 0)
+  change.room = true
+}
+const needsUpdate = (model, change, rec, what) => { noteNewer(model, change, what, rec); return { applied: false, refused: 'needs-update' } }
+/** Whether this version can show and act on a card (false: a placeholder, no answer from here). */
+export const cardSupported = card => !card?.unsupported
 function emptyHuman() {
   return { drafts: new Map(), snoozes: new Map(), ducks: new Map(), crown: null, desks: new Map(), session_settings: new Map(), canvas_snapshots: new Map(), raw: new Map() }
 }
@@ -272,6 +293,12 @@ export function applyRecord(model, rec, change) {
     s.last_activity_at = Math.max(s.last_activity_at, rec.sent_at)
     change.sessions.add(rec.session_id)
   }
+  // A body of a newer schema: the head counts by its signed header alone (as a pruned one), its content is not read.
+  // Timeline items keep it (item_state 'newer_schema' shows the placeholder in place).
+  if (rec.content_state === 'newer_schema') {
+    noteNewer(model, change, rec.content ? `schema_version ${rec.content.schema_version}` : 'body format', rec)
+    if (rec.kind !== KIND.timeline_item) rec = { ...rec, newer_content: rec.content, content: null }
+  }
   switch (rec.kind) {
     case KIND.timeline_item: return applyTimelineItem(model, rec, change)
     case KIND.object_version: return applyObjectVersion(model, rec, change)
@@ -280,7 +307,7 @@ export function applyRecord(model, rec, change) {
     case KIND.verdict: return applyVerdict(model, rec, change)
     case KIND.status: return applyStatus(model, rec, change)
     case KIND.decide_again: return applyDecideAgain(model, rec, change)
-    default: return { applied: false, refused: 'unknown-kind' }
+    default: return needsUpdate(model, change, rec, `envelope kind ${rec.kind}`)   // a kind of a newer format (verified, chain whole)
   }
 }
 
@@ -307,10 +334,18 @@ export function itemFromRecord(rec) {
   return {
     envelope_number: rec.envelope_number, local_id: rec.local_id ?? null, pending: false, envelope_hash: rec.envelope_hash, sender_device_id: rec.sender_device_id, sender_sequence: rec.sender_sequence ?? null,
     recipient_device_id: rec.recipient_device_id, sent_at: rec.sent_at,
-    item_state: rec.content ? (rec.content_state === 'ok' ? 'loaded' : rec.content_state) : rec.content_state === 'pruned' ? 'pruned' : rec.content_state === 'undecryptable' ? 'undecryptable' : 'header',
+    item_state: itemStateOf(rec.content, rec.content_state),
     content_type: rec.content?.content_type ?? null, content: rec.content ?? null,
   }
 }
+/** A timeline item's state from its body and content_state: loaded, unsupported (a content type of a newer version),
+ *  newer_schema, pruned, undecryptable, or header (the body not fetched yet). */
+export const itemStateOf = (content, content_state) => (content ? (content_state !== 'ok' ? content_state : contentTypeKnown(content) ? 'loaded' : 'unsupported')
+  : ['pruned', 'undecryptable', 'newer_schema'].includes(content_state) ? content_state : 'header')
+/** A timeline item's content type this version knows (an item without one counts as a message). */
+export const contentTypeKnown = content => content?.content_type == null || CONTENT_TYPES.includes(content.content_type)
+/** item_state values that mean "a newer client wrote this": the views show the update placeholder. */
+export const itemNeedsUpdate = item => item?.item_state === 'unsupported' || item?.item_state === 'newer_schema'
 
 /** R1: who may write into which timeline. Returns null if allowed, else a refusal code. */
 export function timelineRefusal(model, rec) {
@@ -341,6 +376,8 @@ function applyTimelineItem(model, rec, change) {
   const why = timelineRefusal(model, rec)
   if (why) return refuse(model, change, rec, why, `not allowed in ${rec.timeline_id}`)
   const key = timelineKey(rec.timeline_kind, rec.timeline_id)
+  if (rec.timeline_kind !== 'chat' && rec.timeline_kind !== 'canvas') noteNewer(model, change, `timeline kind ${rec.timeline_kind}`, rec)
+  else if (rec.content && rec.content_state === 'ok' && !contentTypeKnown(rec.content)) noteNewer(model, change, `content_type ${rec.content.content_type}`, rec)
   const t = timelineOf(model, key)
   t.item_count++
   t.newest_envelope_number = Math.max(t.newest_envelope_number, rec.envelope_number)
@@ -390,11 +427,11 @@ function applyObjectVersion(model, rec, change) {
   const object_id = rec.object?.object_id
   if (!object_id) return refuse(model, change, rec, 'bad-object', 'object version without object id')
   const c = rec.content
-  const type = c?.object_type ?? (model.notes.has(object_id) || rec.sender_role === 'human' ? 'note' : model.published.has(object_id) ? 'published' : 'card')
+  const type = (c ?? rec.newer_content)?.object_type ?? (model.notes.has(object_id) || rec.sender_role === 'human' ? 'note' : model.published.has(object_id) ? 'published' : 'card')
   if (!c && rec.content_state === 'undecryptable' && model.room.my_role === 'agent' && rec.sender_role === 'human') return { applied: false }   // room scope: not for agents
+  if (!OBJECT_TYPES.includes(type)) return needsUpdate(model, change, rec, `object_type ${type}`)
   if (type === 'note') return applyNote(model, rec, change)
   if (type === 'published') return applyPublished(model, rec, change)
-  if (type !== 'card') return refuse(model, change, rec, 'unknown-object-type', `object_type ${type}`)
   let card = model.cards.get(object_id)
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'cards come from agents')
   const fresh = !card
@@ -433,6 +470,9 @@ function applyObjectVersion(model, rec, change) {
     card.object_version = (card.object_version ?? 0) + 1
     card.content_state = rec.content_state
   }
+  // A card this version cannot show: a newer schema, or a card_type it does not know (a placeholder, no answer from here).
+  card.unsupported = card.content_state === 'newer_schema' ? 'newer_schema' : card.content_state === 'ok' && !CARD_TYPES.includes(card.card_type) ? 'card_type' : null
+  if (card.unsupported === 'card_type') noteNewer(model, change, `card_type ${card.card_type}`, rec)
   card.versions.push({ object_version: card.object_version, version_hash: rec.envelope_hash, previous_version_hash: c?.previous_version_hash ?? null,
     envelope_number: rec.envelope_number, sent_at: rec.sent_at, object_state: st.object_state, urgency: st.urgency, content: c ?? null })
   // A new version from the agent ends "in revision" (README projection).
@@ -483,11 +523,12 @@ function applyNote(model, rec, change) {
   change.notes.add(object_id)
   return { applied: true }
 }
+
 function noteOf(object_id, rec, c, old) {
   const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, lamport: _l, ...extra } = c
   return { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '',
     object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
-    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.content ? rec.causal : { ...rec.causal, no_body: true }, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false }
+    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.content ? rec.causal : { ...rec.causal, no_body: true }, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false, unsupported: rec.content_state === 'newer_schema' }
 }
 
 function applyPublished(model, rec, change) {
@@ -528,7 +569,9 @@ export function answerRefusal(model, rec) {
   if ((b.versionHash ?? b.cardHash) !== card.version_hash) return 'answer-stale'
   const c = rec.content
   if (!c) return null   // pruned: the hub kept the header only; it counted when it was sent
-  if (!['answer', 'read', 'shred'].includes(c.answer_action)) return 'bad-answer'
+  // An answer action of a newer version: it counts by its signed header (answered or closed), as a pruned one does.
+  if (typeof c.answer_action === 'string' && !ANSWER_ACTIONS.includes(c.answer_action)) return null
+  if (!ANSWER_ACTIONS.includes(c.answer_action)) return 'bad-answer'
   // F24: this device holds only the card's header (retention; e.g. decided again after a prune): it cannot check the
   // choices against options it never saw. The bind names this version; the owner agent, which holds the card, checks the rest.
   if (card.content_state && card.content_state !== 'ok') return null
@@ -570,18 +613,20 @@ function applyAnswer(model, rec, change) {
   }
   const card = model.cards.get(rec.object.object_id)
   const c = rec.content ?? {}
+  const newerAction = typeof c.answer_action === 'string' && !ANSWER_ACTIONS.includes(c.answer_action)
+  if (newerAction) noteNewer(model, change, `answer_action ${c.answer_action}`, rec)
   const answer = {
     answer_action: c.answer_action ?? 'answer', choices: c.choices ?? [], note: c.note ?? null, option_notes: c.option_notes ?? {}, attachments: c.attachments ?? [],
     marks: c.marks ?? [], trusted: !!c.trusted, bound_version_hash: rec.bind?.cardHash ?? null, bound_object_version: card.object_version,
     envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, by_device_id: rec.sender_device_id, answered_at: rec.object.answered_at || rec.sent_at,
-    taken_back_at: null, taken_back_sent_at: null, pending: false,
+    taken_back_at: null, taken_back_sent_at: null, pending: false, ...(newerAction || rec.newer_content ? { unsupported: true } : {}),
   }
   card.answer = answer
   card.answers.push(answer)
   const st = stateOf(rec)
   card.object_state = st.object_state === 'open' ? 'answered' : st.object_state
   // settled: an answer that closed the card itself (every choice a final option); the agent never has to close it.
-  card.closed_how = answer.answer_action === 'read' ? 'read' : answer.answer_action === 'shred' ? 'shredded' : card.object_state === 'closed' && rec.content ? 'settled' : 'answered'
+  card.closed_how = answer.answer_action === 'read' ? 'read' : answer.answer_action === 'shred' ? 'shredded' : card.object_state === 'closed' && rec.content && !newerAction ? 'settled' : card.object_state === 'closed' ? 'closed' : 'answered'
   card.in_revision = null
   card.updated_at = rec.sent_at
   change.cards.add(card.object_id)
