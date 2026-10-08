@@ -184,7 +184,10 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
 
   let html = fs.readFileSync(path.join(pub, 'index.html'), 'utf8')
   const links = [...html.matchAll(SHEET_LINK)]
-  const css = links.map(([, href]) => { const text = fs.readFileSync(path.join(pub, href), 'utf8'); checkSheet(text, href); return `/* ${href} */\n${text}\n` }).join('')
+  let css = links.map(([, href]) => { const text = fs.readFileSync(path.join(pub, href), 'utf8'); checkSheet(text, href); return `/* ${href} */\n${text}\n` }).join('')
+  // The bundle's stylesheet minified (esbuild, no lowering): its comments and spaces were half of a cold start's bytes
+  // before the first paint (550 -> ~280 KB, brotli 93 -> ~55 KB).
+  if (bundled) css = (await (await import('esbuild')).transform(css, { loader: 'css', minify: true, logLevel: 'silent' })).code
   const sheet = `gen/bundle.${sha(css)}.css`
   out[sheet] = css
   let first = true
