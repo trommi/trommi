@@ -1153,12 +1153,14 @@ controller('says', class extends Controller {
 
 // A row's title of two lines leaves room for one line of text below it (css: .inbox-row[data-tall]).
 let fitObserver = null
-const fitting = () => (fitObserver ??= new ResizeObserver(entries => {
+// (The mark is set in the next frame: set inside the observer, it changes the row the title stands in, and WebKit
+// reports "ResizeObserver loop completed with undelivered notifications" as a page error on every Desk.)
+const fitting = () => (fitObserver ??= new ResizeObserver(entries => requestAnimationFrame(() => {
   for (const { target } of entries) {
-    if (!target.clientHeight) continue
+    if (!target.isConnected || !target.clientHeight) continue
     target.closest('.inbox-row')?.toggleAttribute('data-tall', target.clientHeight > parseFloat(getComputedStyle(target).lineHeight) * 1.5)
   }
-}))
+})))
 controller('fit', class extends Controller {
   connect() { fitting().observe(this.element) }
   disconnect() { fitting().unobserve(this.element) }
