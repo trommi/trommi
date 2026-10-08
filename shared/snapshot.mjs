@@ -38,7 +38,7 @@ export function snapshotOf(client) {
     log_seq: client.state.head.seq, log_hash: hex(client.state.head.hash),
     chains, frontiers: Object.fromEntries([...client.frontiers].map(([k, f]) => [k, Object.fromEntries(f)])),
     model: {
-      cards: [...m.cards.values()], permissions: [...m.permissions.values()], notes: [...m.notes.values()], published: [...m.published.values()],
+      cards: [...m.cards.values()].map(M.compactCard), permissions: [...m.permissions.values()], notes: [...m.notes.values()], published: [...m.published.values()],
       sessions: [...m.sessions.values()].map(M.serialiseSession), timelines: [...m.timelines.values()].map(M.serialiseTimelineMeta),
       human: [...m.human.raw], device_registers: [...(m._device_registers ?? [])],
     },
@@ -174,7 +174,7 @@ export async function bootFromSnapshot(client) {
     }
     client._snapshotChains = new Map(Object.entries(snap.chains).map(([k, [seq]]) => [hex(unb64u(k)), seq]))
     client.frontiers = new Map(Object.entries(snap.frontiers).map(([k, f]) => [k, new Map(Object.entries(f))]))
-    for (const c of snap.model.cards) m.cards.set(c.object_id, c)
+    for (const c of snap.model.cards) m.cards.set(c.object_id, M.expandCard(c))
     m._proj = null                                    // project builds its sorted lists again
     for (const p of snap.model.permissions) m.permissions.set(p.object_id, p)
     for (const x of snap.model.notes) m.notes.set(x.object_id, x)
