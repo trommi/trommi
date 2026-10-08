@@ -73,6 +73,8 @@ final class CompatTests: XCTestCase {
     let body = #"{"protocol_versions_supported":[1],"minimum_client_versions":{"ios":"1.2.0","app":"0.2.0"},"recommended_client_versions":{"ios":"1.4.0"},"message":"Bitte aktualisieren.","later_field":{"x":1}}"#
     let info = try XCTUnwrap(HubVersionInfo.parse(Data(body.utf8)))
     XCTAssertEqual(info.minimumClientVersions["ios"], "1.2.0")
+    XCTAssertEqual(info.writeSchemaVersion, 1, "nothing said: 1")
+    XCTAssertEqual(HubVersionInfo.parse(Data(#"{"write_format_versions":{"envelope":1,"schema":3}}"#.utf8))?.writeSchemaVersion, Compat.SCHEMA_VERSION, "never above its own")
     XCTAssertEqual(info.verdict(version: "1.1.9"), .updateRequired(minimum: "1.2.0", message: "Bitte aktualisieren."))
     XCTAssertEqual(info.verdict(version: "1.2.0"), .updateAvailable(recommended: "1.4.0"))
     XCTAssertEqual(info.verdict(version: "1.4.0-beta.1"), .current)

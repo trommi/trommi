@@ -130,7 +130,7 @@ test('versions: semver, the public version answer, 426 for an old client on ever
   assert.equal(parseClient('evil/1.0.0'), null)
   const w = await newHub({}, { HUB_UPGRADE_MESSAGE: 'Bitte neu laden.' })
   const v = (await expect(w, 'GET', '/v1/version', {}, 200)).json
-  assert.deepEqual(v, { protocol_versions_supported: [1], minimum_client_versions: { app: '1.2.0' }, recommended_client_versions: { app: '1.4.0' }, message: 'Bitte neu laden.' })
+  assert.deepEqual(v, { protocol_versions_supported: [1], minimum_client_versions: { app: '1.2.0' }, recommended_client_versions: { app: '1.4.0' }, write_format_versions: { envelope: 1, schema: 1 }, message: 'Bitte neu laden.' })
   const old = { headers: { 'trommi-client': 'app/1.1.9', 'trommi-protocol': '1' } }
   for (const [m, p] of [['GET', '/healthz'], ['POST', '/v1/rooms'], ['GET', `/v1/rooms/${'a'.repeat(64)}/envelopes`], ['GET', '/v1/version']]) {
     const r = await expect(w, m, p, old, 426, 'client-too-old')
