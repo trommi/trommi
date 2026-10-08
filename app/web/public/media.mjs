@@ -72,18 +72,21 @@ function shareForm(i, base) {
 <span class="lk-copy" data-controller="copy" data-copy-text-value="${sh.link}"><input class="lk-url" type="text" readonly value="${sh.link}" aria-label="The link for people outside the room" data-action="focus->lkshare#pick"><button type="button" class="lk-btn" data-action="copy#copy"><span data-copy-target="label">Copy link</span></button></span>
 <button type="submit" class="lk-btn lk-stop" name="stop" value="${sh.share_id}">Stop sharing</button></form>`
 }
+// A page as a tile of the grid (the rhythm of Media's): its preview (the screenshot its agent sent with it; else the page
+// itself, drawn small in the sandboxed frame once it comes into view, ui.mjs assetthumb; else the drawn page), its title,
+// the session's drawing and when, Open; Share lies in the tile's small menu (the ⋯).
+const pagePreview = i => (i.pic ? mediaPreview({ type: 'image', url: i.pic }) : mediaPreview({ type: 'html', url: i.url, name: i.title }))
 function pageRow(i, base) {
   const own = i.kind === 'page'
   const go = cls => (own ? html`data-nav href="${i.href}" class="${cls}"` : html`href="${i.href}" target="_blank" rel="noopener" class="${cls}"`)
-  return html`<li class="lk-row" id="${rowId(i.key)}" data-kind="${i.kind}"><span class="lk-glyph" aria-hidden="true">${sk('page')}</span>
-<div class="lk-main"><a ${go('lk-title')}>${i.title}</a><span class="lk-meta"><span class="lk-host">${own ? 'Published page' : 'A page of this room'}</span><span class="lk-from"><span class="gal-who">${smallMark(i.agent)}</span>${i.agent.name}</span>${agoSpan(i.ts, 'ago lk-ago')}</span></div>
-<div class="lk-acts"><a ${go('lk-btn')}>Open</a></div>
-${i.att ? shareForm(i, base) : ''}</li>`
+  return html`<li class="pg-tile" id="${rowId(i.key)}" data-kind="${i.kind}"><a ${go('pg-shot')} aria-label="Open ${i.title}">${pagePreview(i)}</a>
+<div class="pg-meta"><a ${go('pg-title')}>${i.title}</a><span class="pg-from"><span class="gal-who" title="${i.agent.name}">${smallMark(i.agent)}</span>${i.agent.name}${agoSpan(i.ts, 'ago pg-ago')}</span></div>
+<div class="pg-acts"><a ${go('lk-btn pg-open')}>Open</a>${i.att ? html`<details class="pg-menu" data-controller="pops"><summary class="pg-more" title="Share" aria-label="Share ${i.title}">⋯</summary><div class="pg-menu-body">${shareForm(i, base)}</div></details>` : ''}</div></li>`
 }
-const pagesList = (model, base) => html`<ol class="lk-list" id="pages-list">${pageItems(model, base).map(i => pageRow(i, base))}</ol>`
+const pagesList = (model, base) => html`<ol class="pg-grid" id="pages-list">${pageItems(model, base).map(i => pageRow(i, base))}</ol>`
 function pagesMain(model, base) {
   const n = pageItems(model, base).length
-  return html`<main id="gallery" class="gal-page lk-page" aria-label="Pages"><div class="gal-column lk-column">
+  return html`<main id="gallery" class="gal-page lk-page" aria-label="Pages"><div class="gal-column">
 <header class="gal-head page-head"><h2>Pages</h2><p>${n ? 'Every page your agents made in this room, the newest first.' : 'Nothing yet: pages your agents publish or send show up here.'}</p></header>
 ${pagesList(model, base)}
 </div></main>`

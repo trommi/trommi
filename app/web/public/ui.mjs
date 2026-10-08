@@ -2795,7 +2795,8 @@ export function galleryItems(model, base = '') {
 // newest first; a published page keeps its own title and address.
 const pagesKept = new WeakMap()
 const isPage = a => a && (a.type === 'text/html' || /\.html?$/i.test(a.name ?? ''))
-/** [{ key, kind: 'page' | 'file', href, title, agent, ts, att }], the newest first. Kept per state. */
+/** [{ key, kind: 'page' | 'file', href, url (the page's file), title, agent, ts, att, pic? (its screenshot) }], the newest
+ *  first. Kept per state. */
 export function pageItems(model, base = '') {
   const { state } = model
   const key = `${model.desk}|${model.everyone.map(a => a.desk).join(',')}|${base}`
@@ -2807,10 +2808,12 @@ export function pageItems(model, base = '') {
   const here = agentId => { const agent = model.byAgent.get(agentId); return agent && model.onDesk(agent) ? agent : null }
   const attId = url => /^\/att\/([0-9a-f]{32})$/.exec(String(url ?? ''))?.[1] ?? null
   // (a file of the room: its attachment id, or its address where the room hands it out by one, as the demo does)
-  const file = (url, name, id, agent, ts) => { const at = id ?? attId(url); if (at || url) put({ key: `file:${at ?? url}`, kind: 'file', href: url, title: name || 'Page', agent, ts, att: at }) }
+  const file = (url, name, id, agent, ts) => { const at = id ?? attId(url); if (at || url) put({ key: `file:${at ?? url}`, kind: 'file', href: url, url, title: name || 'Page', agent, ts, att: at }) }
+  // (a picture an agent sent with its page behind it is that page's preview: the screenshot it made of it)
+  const shots = new Map()   // page key -> picture url
   const fromAttachments = (list, agent, ts) => {
     for (const a of list ?? []) {
-      if (a?.page?.kind === 'file') file(a.page.url, a.page.name, attId(a.page.url), agent, ts)
+      if (a?.page?.kind === 'file') { file(a.page.url, a.page.name, attId(a.page.url), agent, ts); if (a.image && a.url) shots.set(`file:${attId(a.page.url) ?? a.page.url}`, a.url) }
       if (isPage(a)) file(a.url, a.name, a.ref?.attachment_id ?? null, agent, ts)
     }
   }
@@ -2818,7 +2821,7 @@ export function pageItems(model, base = '') {
     const agent = here(a.agent)
     if (!agent || a.type !== 'html') continue
     const id = a.att?.ref?.attachment_id ?? attId(a.att?.url)
-    put({ key: `file:${id ?? a.att?.url ?? a.id}`, kind: 'page', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, title: a.title || 'Untitled page', agent, ts: a.created ?? 0, att: id })
+    put({ key: `file:${id ?? a.att?.url ?? a.id}`, kind: 'page', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, url: a.att?.url ?? '', title: a.title || 'Untitled page', agent, ts: a.created ?? 0, att: id })
   }
   for (const c of state.cards) {
     const agent = here(c.agent)
@@ -2828,7 +2831,7 @@ export function pageItems(model, base = '') {
     const agent = msg.from === 'agent' ? here(msg.agent) : null
     if (agent) fromAttachments(msg.attachments, agent, msg.ts ?? 0)
   }
-  const out = [...by.values()].sort((x, y) => y.ts - x.ts)
+  const out = [...by.values()].map(i => (shots.has(i.key) ? { ...i, pic: shots.get(i.key) } : i)).sort((x, y) => y.ts - x.ts)
   pagesKept.set(state, { key, out })
   return out
 }
