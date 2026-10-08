@@ -1653,6 +1653,18 @@ export class Client {
     return this._send({ kind: codec.KIND.timeline_item, content: { content_type: 'message', ...fields }, recipient, timeline, session_id: sid, echo: this._echoTimelineItem(timeline, { content_type: 'message', ...fields }, recipient, object_id) })
   }
 
+  /** "▶ Explain": ask the card's agent for a short narrated explainer clip (content_type clip_request, README "Inside
+   *  the envelope"). The agent answers with a message on the card that carries the video. */
+  async requestClip({ object_id }) {
+    this._needHuman()
+    const card = this._card(object_id)
+    if (!M.cardSupported(card)) throw new ZError('needs-update', codec.UPDATE_MESSAGE)
+    const recipient = M.holderOf(this.model, card), sid = card.session_id
+    if (!recipient || !sid) throw new ZError('bad-argument', 'the card has no agent to ask')
+    const timeline = { timeline_kind: 'chat', timeline_id: `card/${object_id}` }, content = { content_type: 'clip_request' }
+    return this._send({ kind: codec.KIND.timeline_item, content, recipient, timeline, session_id: sid, echo: this._echoTimelineItem(timeline, content, recipient, object_id) })
+  }
+
   async answer({ object_id, choices = [], note, option_notes, attachments, marks, trusted, answer_action = 'answer' }) {
     this._needHuman()
     const card = this._card(object_id)
