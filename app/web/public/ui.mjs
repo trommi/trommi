@@ -1644,7 +1644,7 @@ controller('advice', class extends Controller {
 // content is, takes the theme when it changes, and hands a clicked link to this page, which opens
 // it in a new tab (a link never moves the frame itself). No forms, no popups, no way to move the
 // page around it.
-// The agent's connector has already cleaned what it sent (connector/tools.mjs); here it is parsed and
+// The agent's connector has already cleaned what it sent (connector-rs); here it is parsed and
 // cleaned once more by the browser's own parser, so that old state and other senders hold too.
 //
 // The richhtml controller calls htmlBlock() for each block ui.mjs marks; richMark() names a card's extras.

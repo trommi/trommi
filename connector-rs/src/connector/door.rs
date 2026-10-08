@@ -1,4 +1,4 @@
-//! connector.mjs: the slot's door (a Unix socket of the process that holds a keyed slot: `say`, the hooks, yielding),
+//! The slot's door (a Unix socket of the process that holds a keyed slot: `say`, the hooks, yielding),
 //! the bell of a Claude Code process, and the monitor's socket. One JSON line in, one JSON line out.
 use super::slots::{uid, SlotPaths};
 use crate::client::BoxFut;

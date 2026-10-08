@@ -1,4 +1,4 @@
 node_modules/
 data/
-# Generated at deploy time (app/web/dev/build.mjs, connector/build.mjs).
+# Generated at deploy time (app/web/dev/build.mjs).
 app/web/public/gen/

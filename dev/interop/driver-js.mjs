@@ -1,4 +1,4 @@
-// driver-js.mjs: the interop driver of the JS core (shared/, what the web app and the connector run). One device per
+// driver-js.mjs: the interop driver of the JS core (shared/, what the web app runs). One device per
 // process, JSON lines on stdin/stdout (dev/interop/protocol.mjs). A human device (found_room, join with a human
 // invite, login) or an agent (join with an agent invite: agent_card, close_card, agent_inbox, …).
 import fs from 'node:fs'
@@ -199,7 +199,7 @@ const H = {
   /** A hostile agent: a status with any values, past the client's key check (the receiving side must refuse what is not its). */
   async forge_status({ values }) { const c = need(); await c._send({ kind: codec.KIND.status, content: { values }, session_id: c.session_id, echo: null }); await settle(); return {} },
   async snapshot_info() { return { snapshot_cursor: need().snapshotCursor ?? null } },
-  // ---- the agent (the connector's core) ----
+  // ---- the agent (an agent device of the core) ----
   /** Many messages at once (a room past the snapshot threshold of 2,000 envelopes). */
   async chat_burst({ n = 100, text = 'burst' }) { const c = need(); for (let i = 0; i < n; i++) await c.sendMessage({ text: `${text} ${i}` }); await c.flush?.(); await c.settle?.({ timeout_ms: 120_000 }); return {} },
   async agent_card({ newer_schema, ...fields }) {

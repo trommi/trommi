@@ -1,4 +1,4 @@
-//! connector.mjs: the plugin's hooks (permission, notice, denied, resolved): the pieces, the hook process's request
+//! The plugin's hooks (permission, notice, denied, resolved): the pieces, the hook process's request
 //! and output, and the connector's desk that answers them.
 use super::door::Gone;
 use crate::bridge::Bridge;

@@ -1409,5 +1409,178 @@
       "name": "Design",
       "summary": "Three landing page pictures are in out/landing/, the blue one recommended"
     }
-  }
+  },
+  "events": [
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel",
+      "kind": "update",
+      "when": "A new version of the connector is on disk (or the hub recommends one).",
+      "content": "a sentence naming the version and what to do: file the update card (jetzt / später)",
+      "meta": {
+        "kind": "update",
+        "update_available": "1",
+        "version": "the new version (a hash of the connector code, or the hub's recommended version)",
+        "restart_required": "\"1\" when only a restart loads it (/mcp → trommi → Reconnect), \"0\" when reload_connector can"
+      },
+      "example": "<channel source=\"board\" kind=\"update\" update_available=\"1\" version=\"3f2a9c1d0b7e\" restart_required=\"0\">A new version of the Trommi connector is available …</channel>"
+    },
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel",
+      "kind": "unsupported",
+      "when": "The human sent something (a message, an answer) in a format of a newer Trommi version than this connector reads.",
+      "content": "a sentence saying so and that the connector needs an update; nothing of the unreadable part",
+      "meta": {
+        "kind": "unsupported",
+        "update_required": "1"
+      },
+      "optional": {
+        "card_id": "the card it was about, when it was one of yours"
+      },
+      "example": "<channel source=\"board\" kind=\"unsupported\" update_required=\"1\">The human sent something on the board that this Trommi connector is too old to read …</channel>"
+    },
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel",
+      "kind": "chat",
+      "when": "The human sent a chat message.",
+      "content": "the message; when the human sent only files, a sentence naming them",
+      "meta": {
+        "kind": "chat"
+      },
+      "optional": {
+        "card_id": "set when the human asks back about an open card instead of answering it; answer with reply and the same card_id",
+        "handback": "\"1\" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again",
+        "explain": "\"1\" when the human pressed \"What??\" (Explain) on that card: rework it with revise_card, and with a clip skill also attach a short silent clip of it (reply with card_id and the mp4)",
+        "cards": "ids of cards the human copied into this message, comma-separated, often another session's: each stands in full in the content (question, options, answer, notes, picture paths), so you can act on a decision you never saw",
+        "cards_json": "the same cards as a JSON list of {id, number, title, agent, choice_label, kind, status, choices}",
+        "marks": "how many notes and drawings the human pinned to parts of that card; they are lines of the content under \"Notes pinned to the card:\", and the picture of the annotated card is in image_path",
+        "files": "absolute paths of the files and pictures the human attached, comma-separated; open them",
+        "image_path": "the first attached picture, when there is one"
+      },
+      "example": "<channel source=\"board\" kind=\"chat\">Please check the logs first.</channel>"
+    },
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel",
+      "kind": "decision",
+      "when": "The human answered a decision card.",
+      "content": "the human's note, or a sentence naming the card and the chosen key; when the human wrote notes on single options, a blank line and \"Notes on options:\" follow, with one line \"- Label [key], chosen: note\" or \"- Label [key], not chosen: note\" per note, in the order of the options",
+      "meta": {
+        "kind": "decision",
+        "card_id": "the card",
+        "choice": "key of the chosen option; of several, the first"
+      },
+      "optional": {
+        "closed": "\"1\" when the answer settled the card: every chosen option was one you marked final, so the card closed itself; nothing is expected of you, no close_card",
+        "choices": "only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options",
+        "trust": "\"1\" when the human left the decision to you: choice is then the option you recommended, or empty if you recommended none; decide, say what you chose with reply and the card_id, and close the card",
+        "marks": "how many notes and drawings the human pinned to parts of the card; they are lines of the content under \"Notes pinned to the card:\"",
+        "option_notes": "only when the human wrote notes on single options: the keys that have one, comma-separated; the notes themselves are in the content",
+        "files": "absolute paths of what the human attached to the note of the answer, comma-separated",
+        "image_path": "the first attached picture, when there is one"
+      },
+      "example": "<channel source=\"board\" kind=\"decision\" card_id=\"a1b2c3d4\" choice=\"tonight\">After the backup, please.</channel>"
+    },
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel",
+      "kind": "decision_reopened",
+      "when": "The human took an answer back; the card is open again.",
+      "content": "a sentence saying which answer was taken back",
+      "meta": {
+        "kind": "decision_reopened",
+        "card_id": "the card",
+        "previous_choice": "key of the answer that no longer holds"
+      },
+      "optional": {
+        "previous_choices": "only for a card made with multiple: true: every key that was chosen, comma-separated",
+        "trust": "\"1\" when what is taken back is the human leaving the decision to you",
+        "shredded": "\"1\" when the human took a card back out of the shredder; previous_choice is then empty"
+      },
+      "example": "<channel source=\"board\" kind=\"decision_reopened\" card_id=\"a1b2c3d4\" previous_choice=\"tonight\">…</channel>"
+    },
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel",
+      "kind": "shredded",
+      "when": "The human threw a question (or an info) away unanswered.",
+      "content": "a sentence saying so and what to do: do not ask again, carry on with your own judgement or drop the matter; then the human's note, if they wrote one",
+      "meta": {
+        "kind": "shredded",
+        "card_id": "the card"
+      },
+      "optional": {
+        "marks": "how many notes and drawings the human pinned to the card before throwing it away; they are lines of the content",
+        "files": "absolute paths of the pictures that came with it, comma-separated",
+        "image_path": "the first picture"
+      },
+      "example": "<channel source=\"board\" kind=\"shredded\" card_id=\"a1b2c3d4\">The human threw the question \"Which font?\" away unanswered. …</channel>"
+    },
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel",
+      "kind": "info_read",
+      "when": "The human read an info card (create_info) and closed it. Nothing is expected of you.",
+      "content": "a sentence naming the card",
+      "meta": {
+        "kind": "info_read",
+        "card_id": "the card"
+      },
+      "example": "<channel source=\"board\" kind=\"info_read\" card_id=\"a1b2c3d4\">The human read \"How the nightly migration works\" and closed it.</channel>"
+    },
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel",
+      "kind": "scribble",
+      "when": "The human selected (or cut out) part of the Scribble Board and sent it to this session. What was sent left the board.",
+      "content": "the words of the selected notes and spoken notes in reading order, or a sentence pointing at the picture",
+      "meta": {
+        "kind": "scribble",
+        "board": "the Scribble Board it came from (desk/<id>)",
+        "message_id": "the message in the conversation that shows the selection",
+        "elements": "ids of the selected strokes, notes and pictures, comma-separated",
+        "image_path": "PNG of exactly the selection, drawn from its strokes on white"
+      },
+      "example": "<channel source=\"board\" kind=\"scribble\" board=\"desk/9d7f8611247c59b9c82e0c78b7f084a4\" message_id=\"77\" elements=\"d1/12/0,d1/14/2\" image_path=\"/…/files/selection-9f2c41d07a3e.png\">Ship the pad prototype</channel>"
+    },
+    {
+      "direction": "to_agent",
+      "method": "notifications/claude/channel/permission",
+      "kind": null,
+      "when": "The human answered an approval card. Claude Code decides whether this or the terminal came first.",
+      "params": {
+        "request_id": "the id from the request",
+        "behavior": "allow or deny"
+      },
+      "example": "{ \"request_id\": \"abcde\", \"behavior\": \"allow\" }"
+    },
+    {
+      "direction": "from_client",
+      "method": "notifications/claude/channel/permission_request",
+      "kind": null,
+      "when": "Claude Code wants approval for a tool call. It becomes a card with Allow and Deny, always on top of the stack.",
+      "params": {
+        "request_id": "echoed in the verdict",
+        "tool_name": "e.g. Bash",
+        "description": "what the tool does",
+        "input_preview": "the arguments, shortened"
+      },
+      "example": "{ \"request_id\": \"abcde\", \"tool_name\": \"Bash\", \"description\": \"Run shell command\", \"input_preview\": \"{\\\"command\\\":\\\"npm test\\\"}\" }"
+    },
+    {
+      "direction": "from_client",
+      "method": "initialize",
+      "kind": null,
+      "when": "Once, when the MCP connection starts. The name appears as \"Program\" in the sessions overview.",
+      "params": {
+        "clientInfo.name": "the program on the other end of stdio",
+        "clientInfo.version": "its version"
+      },
+      "example": "{ \"clientInfo\": { \"name\": \"claude-code\", \"version\": \"2.1.0\" } }"
+    }
+  ],
+  "retention_days": 30,
+  "max_asset": 67108864
 }

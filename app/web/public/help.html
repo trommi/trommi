@@ -260,7 +260,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
   <h2 class="hp-title" id="h-picture">The picture <b>four parties, two directions</b></h2>
   <figure class="hp-figure">
     <div id="diagram"></div>
-    <figcaption>Every session starts its own <code>connector/connector.mjs</code>: that process is the connector. It seals what the agent says before it leaves the machine; the hub only stores and forwards envelopes it cannot open; this app opens them on your device. Green arrows run towards the agent, dark ones towards you.</figcaption>
+    <figcaption>Every session starts its own <code>trommi-connector</code>: that process is the connector. It seals what the agent says before it leaves the machine; the hub only stores and forwards envelopes it cannot open; this app opens them on your device. Green arrows run towards the agent, dark ones towards you.</figcaption>
   </figure>
 </section>
 
@@ -314,7 +314,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 <script type="module">
 // The help page: the key list from the app's own key table (ui.mjs SHORT), the key beside each way, and the
 // part "For agents": the picture of the connector and the reference of tools and events, read from the connector's own
-// tables (connector/tools.mjs and prompt.md, written to gen/vendor/tools-reference.mjs by dev/build.mjs), so it cannot drift from them.
+// tables (connector-rs/tools.json and connector/prompt.md, written to gen/vendor/tools-reference.mjs by dev/build.mjs), so it cannot drift from them.
 import { SHORT, capOf } from '/ui.mjs'
 
 const $ = id => document.getElementById(id)
@@ -352,7 +352,7 @@ addEventListener('keydown', e => {
 
 const LANES = [
   { name: 'Claude Code', sub: 'the session: model and terminal' },
-  { name: 'Connector', sub: 'connector/connector.mjs, its own device keys' },
+  { name: 'Connector', sub: 'trommi-connector, its own device keys' },
   { name: 'Hub', sub: 'stores sealed envelopes, reads none' },
   { name: 'Trommi app', short: 'App', sub: 'you: opens them on your device', human: true },
 ]

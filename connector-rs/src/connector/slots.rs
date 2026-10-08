@@ -1,4 +1,4 @@
-//! connector.mjs: the lock (one process per key), who gets the key (presence, yielding), the folder watch, and which
+//! The lock (one process per key), who gets the key (presence, yielding), the folder watch, and which
 //! slot is whose. The files are the JS connector's: `<keys>/<room>/<base>-<slot>.key`, `.lock.<pid>`, `.owner`, `.out`,
 //! `<base>.here.<pid>`, `<base>.gone.<hash>`, `replaced-<time>-<name>.*`.
 use crate::crypto::{hex, sha256};
@@ -94,11 +94,11 @@ pub fn args_of(pid: u32) -> Vec<String> {
     }
     std::process::Command::new("ps").args(["-o", "args=", "-p", &pid.to_string()]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(String::from).collect()).unwrap_or_default()
 }
-/// A Trommi connector: node with connector.mjs, or this binary.
+/// A Trommi connector: this binary.
 pub fn is_connector(pid: u32) -> bool {
     args_of(pid).iter().take(3).any(|a| {
         let b = Path::new(a).file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-        b == "connector.mjs" || b == "trommi-connector"
+        b == "trommi-connector"
     })
 }
 /// Take the slot; true if this process holds it now. `session` is written into the claim.

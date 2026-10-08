@@ -1,4 +1,4 @@
-//! connector.mjs in Rust: the MCP stdio server `trommi` and the commands around it.
+//! The connector: the MCP stdio server `trommi` and the commands around it.
 //!
 //!   trommi-connector                  MCP server (Claude Code starts it from the plugin or .mcp.json)
 //!   trommi-connector join <link>      join a room with an agent invite link, then exit
