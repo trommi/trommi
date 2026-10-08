@@ -635,6 +635,8 @@ The hub never reads this; app and connector agree on it. The body's payload is U
 
 A `video/*` attachment (the connector maps `.mp4`, `.webm`, `.mov`) is shown on a card after its pictures as a player (`<video controls playsinline preload="metadata">`, never autoplaying); the app decrypts the whole file into a blob (up to the 64 MiB attachment limit) and its service worker answers the player's `Range` requests from that blob with `206`.
 
+**Clips after What??** No signal of their own: a What?? (`explain: true` on a human message about a card) asks the agent to rework the card, and an agent with a clip skill (`trommi-clip`) also answers with a short silent clip (the card's pictures with drawn circles, arrows and captions, the options, its pick) as an ordinary agent `message` on the card with a `video/*` attachment; it may attach one unasked to a big question. The card's talk plays every video inline (`<video controls playsinline preload="metadata">`); iOS does the same.
+
 A **session** on the board is an agent member. A human's envelope for a session has `recipient_device_id` = that agent; an agent's envelopes are for everyone. An object belongs to the member that created it; only its creator writes new versions (a note: any human device).
 
 | `envelope_kind` (crypto `KIND`) | From | Header | Body (besides `schema_version`) |

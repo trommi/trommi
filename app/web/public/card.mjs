@@ -266,7 +266,9 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const all = talkOf(model, card)
   const assets = model.state.assets
   const who = model.byAgent.get(card.agent)
-  const files = list => { const rest = (list ?? []).filter(a => kindOf(a) !== 'image'); return rest.length ? html`<p class="tc-files">${rest.map(fileChip)}</p>` : '' }
+  const files = list => { const rest = (list ?? []).filter(a => kindOf(a) !== 'image' && kindOf(a) !== 'video'); return rest.length ? html`<p class="tc-files">${rest.map(fileChip)}</p>` : '' }
+  // A video in the talk (the clip an agent makes after What??) plays where it is said, never by itself.
+  const vids = list => { const v = (list ?? []).filter(a => kindOf(a) === 'video'); return v.length ? html`<div class="tc-vids">${v.map(a => html`<figure class="tc-vid"><video src="${a.url}#t=0.001" controls playsinline preload="metadata" aria-label="Video: ${a.name}"></video></figure>`)}</div>` : '' }
   const shots = list => { const pics = (list ?? []).filter(a => kindOf(a) === 'image'); return pics.length ? html`<div class="shots">${pics.map(a => html`<a href="${a.url}" target="_blank" rel="noopener"><img${srcOf(a, 320)} alt="${a.name}" loading="lazy" decoding="async"></a>`)}</div>` : '' }
   // One column, every piece in the same two places: at the left who (the session's small drawing, the pen for you),
   // beside it the name, when, and the words. A line that only says where things stand (waiting for the explanation)
@@ -280,7 +282,7 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const sheet = (inner, cls = '') => html`<span class="tc-sheet ${cls}">${inner}</span>`
   const read = html`<span class="tc-read">${sk('tick')}</span>`
   const tiles = (labels, back = false) => html`<span class="tc-picked-row">${labels.map(l => html`<span class="tc-picked"><b>${l}</b>${back ? '' : RING}</span>`)}</span>`
-  const along = m => html`${shots(m.files)}${files(m.files)}`
+  const along = m => html`${shots(m.files)}${vids(m.files)}${files(m.files)}`
   // An answer (m: the event, app.mjs eventsOf), or the same answer taken back.
   const answered = (m, back = false) => {
     const said = back ? [] : [m.note ? `“${m.note}”` : '', ...(m.notes ?? []).map(([label, note]) => `On ${label}: “${note}”`)]
@@ -294,8 +296,8 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const you = html`<span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>`
   const head = (title, ts, by = name) => html`<header class="msg-head"><span class="msg-name">${by}</span>${title ? html`<b class="tc-said">${title}</b>` : ''}${ts ? agoSpan(ts, 'msg-time') : ''}</header>`
   const words = text => rich(text ?? '', { assets, hand: false })
-  const agentMsg = (m, cont = false) => html`<article class="msg msg-agent tc-c${cont ? ' cont' : ''}" id="msg-${m.id}">${cont ? '' : mark}<div class="tc-c-in">${cont ? '' : head('', m.ts)}${rich(m.text ?? '', { assets, extra: m.html ?? '', hand: false })}${shots(m.attachments)}${files(m.attachments)}${m.details ? html`<details class="msg-details"><summary>Details</summary>${words(m.details)}</details>` : ''}</div></article>`
-  const userMsg = (m, text = m.text) => html`<article class="msg msg-user tc-c" id="msg-${m.id}">${you}<div class="tc-c-in">${head('', m.ts, 'You')}${text ? html`<div class="bubble"><p>${text}</p></div>` : ''}${shots(m.attachments)}${files(m.attachments)}</div></article>`
+  const agentMsg = (m, cont = false) => html`<article class="msg msg-agent tc-c${cont ? ' cont' : ''}" id="msg-${m.id}">${cont ? '' : mark}<div class="tc-c-in">${cont ? '' : head('', m.ts)}${rich(m.text ?? '', { assets, extra: m.html ?? '', hand: false })}${shots(m.attachments)}${vids(m.attachments)}${files(m.attachments)}${m.details ? html`<details class="msg-details"><summary>Details</summary>${words(m.details)}</details>` : ''}</div></article>`
+  const userMsg = (m, text = m.text) => html`<article class="msg msg-user tc-c" id="msg-${m.id}">${you}<div class="tc-c-in">${head('', m.ts, 'You')}${text ? html`<div class="bubble"><p>${text}</p></div>` : ''}${shots(m.attachments)}${vids(m.attachments)}${files(m.attachments)}</div></article>`
   const isBare = m => (m.handback && m.text?.trim() === HAND_BACK_TEXT) || (m.explain && m.text?.trim() === EXPLAIN_TEXT)
 
   // ---- what the card did not hold ----
@@ -341,7 +343,7 @@ function cardThread(card, model, base = '', { more = false } = {}) {
       continue
     }
     // (a hand-back is the reverse card itself; what was written with it stands under it)
-    if (m.from === 'user' && m.handback) { askedAt = items.length; items.push({ handback: true, html: html`<div id="msg-${m.id}">${deed(uno, 'You handed it back', m.ts, { said: [isBare(m) ? '' : m.text], more: html`${shots(m.attachments)}${files(m.attachments)}` })}</div>` }); continue }
+    if (m.from === 'user' && m.handback) { askedAt = items.length; items.push({ handback: true, html: html`<div id="msg-${m.id}">${deed(uno, 'You handed it back', m.ts, { said: [isBare(m) ? '' : m.text], more: html`${shots(m.attachments)}${vids(m.attachments)}${files(m.attachments)}` })}</div>` }); continue }
     if (m.from === 'user') { items.push({ html: userMsg(m, m.text === EXPLAIN_TEXT ? WORDS.what : m.text) }); continue }
     items.push({ html: agentMsg(m, items.at(-1)?.agent === true), agent: true })
     items.at(-1).agent = true
