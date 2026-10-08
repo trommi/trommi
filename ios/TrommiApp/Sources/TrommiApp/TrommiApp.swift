@@ -86,6 +86,9 @@ final class BoardModel: ObservableObject {
   @Published var toast: Toast?
   @Published var path: [Route] = []
   @Published var drawer = false
+  /** The panel over the iPhone's bottom bar. */
+  enum Panel { case menu, waiting }
+  @Published var panel: Panel?
   /** Cards chosen on the Desk (the selection bar: Later, Duck it, Read, Shred for all of them). */
   @Published var selected = Set<String>()
   @Published var live = false

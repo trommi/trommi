@@ -60,7 +60,7 @@ struct DeskScreen: View {
     }
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
-      ToolbarItem(placement: .topBarLeading) { DrawerButton() }
+
       ToolbarItem(placement: .principal) { DeskTitle() }
       ToolbarItem(placement: .topBarTrailing) { NoteButton() }
     }

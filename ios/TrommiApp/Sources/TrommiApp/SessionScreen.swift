@@ -30,6 +30,7 @@ struct SessionScreen: View {
   @State private var name = ""
   @State private var drawings = false
   @State private var deleteAsk = false
+  @State private var filesOpen = false
   var body: some View {
     let _ = model.version
     if let d = model.desk, let a = d.byAgent[agentId] {
@@ -106,6 +107,7 @@ struct SessionScreen: View {
         Button("Cancel", role: .cancel) {}
       }
       .sheet(isPresented: $drawings) { DrawingPicker(agent: a) }
+      .sheet(isPresented: $filesOpen) { SessionFiles(agentId: a.id) }
       .confirmationDialog("Delete \(a.name)?", isPresented: $deleteAsk, titleVisibility: .visible) {
         Button("Delete", role: .destructive) { model.deleteSession(a) }
       } message: { Text("Its connector is removed from the room and the session moves to the archive. Open questions are shredded.") }
@@ -174,6 +176,7 @@ struct SessionScreen: View {
   private func more(_ a: Agent, _ d: DeskModel, freshCount: Int) -> some View {
     Menu {
       Toggle(isOn: $onlyQuestions) { Label(freshCount > 0 ? "Questions only (\(freshCount))" : "Questions only", systemImage: "questionmark.circle") }
+      Button { filesOpen = true } label: { Label("Files", systemImage: "paperclip") }
       Button { name = a.label.isEmpty ? a.name : a.label; renaming = true } label: { Label("Rename", systemImage: "pencil") }
       Button { drawings = true } label: { Label("Change its drawing", systemImage: "scribble") }
       Button { model.star(a, !a.starred) } label: { Label(a.starred ? "Take the crown off" : "Give it the crown", systemImage: "crown") }
@@ -664,5 +667,33 @@ struct ShareLinkSheet: View {
       .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
     }
     .presentationDetents([.medium])
+  }
+}
+
+/** A session's files (session.mjs files drawer): what it sent and was sent, and what its questions carry, newest first. */
+struct SessionFiles: View {
+  @EnvironmentObject var model: BoardModel
+  let agentId: String
+  @Environment(\.dismiss) private var dismiss
+  var body: some View {
+    let msgs = model.desk?.messagesOf(agent: agentId) ?? []
+    let cards = model.desk?.cards.filter { $0.agent == agentId } ?? []
+    let all: [JV] = (msgs.reversed().flatMap { $0.attachments } + cards.reversed().flatMap { $0.attachments })
+    let pics = all.filter { kindOf($0) == "image" }, others = all.filter { kindOf($0) != "image" }
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 14) {
+          if all.isEmpty { Text("No files yet.").font(Face.text(15)).foregroundStyle(Ink.muted) }
+          if !pics.isEmpty {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 6)], spacing: 6) {
+              ForEach(Array(pics.enumerated()), id: \.offset) { _, a in AttachmentImage(ref: a).frame(height: 100).clipShape(RoundedRectangle(cornerRadius: 8)) }
+            }
+          }
+          if !others.isEmpty { Attachments(list: others) }
+        }.padding(16)
+      }
+      .navigationTitle("Files").navigationBarTitleDisplayMode(.inline)
+      .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+    }
   }
 }

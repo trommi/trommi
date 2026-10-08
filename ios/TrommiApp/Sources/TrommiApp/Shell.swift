@@ -1,7 +1,7 @@
-// Shell.swift: the frame around every board screen (sidebar.mjs, app.mjs): on the iPhone one navigation stack under a
-// glass top bar, the sessions in a drawer from the left; on the iPad the sessions as a sidebar column beside it. The
-// desk switcher, the Trommi menu (desks, settings, theme, log out), the passing toast with its Undo, the calm line when
-// the hub asks for a newer app.
+// Shell.swift: the frame around every board screen (sidebar.mjs, app.mjs): on the iPhone one navigation stack with the
+// bar at the bottom (Menu · Desk · Waiting, Liquid Glass); on the iPad the sessions as a sidebar column beside it. The
+// desk switcher, the jump menu (desks, sessions, places), the passing toast with its Undo, the calm line when the hub
+// asks for a newer app.
 import SwiftUI
 import TrommiClient
 import TrommiCore
@@ -10,7 +10,7 @@ struct BoardShell: View {
   @EnvironmentObject var model: BoardModel
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var columns = NavigationSplitViewVisibility.all
-  @State private var edgePeek: CGFloat = 0
+
   var body: some View {
     Group {
       if hSize == .regular {
@@ -22,20 +22,16 @@ struct BoardShell: View {
           stack
         }
       } else {
-        ZStack(alignment: .leading) {
-          stack
-          // the left edge opens the sidebar on the Desk (in a pushed screen it goes back, as iOS does)
-          if model.path.isEmpty && !model.drawer {
-            Color.clear.frame(width: 22).contentShape(Rectangle())
-              .gesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
-                .onChanged { v in edgePeek = max(0, v.translation.width) }
-                .onEnded { v in
-                  let open = v.translation.width > 110 || v.predictedEndTranslation.width > 220
-                  withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.drawer = open; edgePeek = 0 }
-                })
-              .ignoresSafeArea()
+        // iPhone (his pick "both", 8 October): the bottom bar, Menu · Desk · Waiting; no sidebar
+        ZStack(alignment: .bottom) {
+          stack.safeAreaInset(edge: .bottom) { Color.clear.frame(height: 64) }
+          if model.panel != nil {
+            Color.black.opacity(0.28).ignoresSafeArea()
+              .onTapGesture { withAnimation(.snappy) { model.panel = nil } }
+              .transition(.opacity)
+            BarPanel().padding(.horizontal, 12).padding(.bottom, 84).transition(.move(edge: .bottom).combined(with: .opacity))
           }
-          Drawer(peek: edgePeek)
+          BottomBar().padding(.horizontal, 16).padding(.bottom, 4)
         }
       }
     }
@@ -60,6 +56,138 @@ struct BoardShell: View {
           case .scribble: ScribbleScreen()
           }
         }
+    }
+  }
+}
+
+/** The bar at the bottom of the iPhone: Menu (desks, sessions, places), Desk (back to it), Waiting (what waits, the count; red when one knocks). */
+struct BottomBar: View {
+  @EnvironmentObject var model: BoardModel
+  var body: some View {
+    let _ = model.version
+    let v = model.view
+    let n = v?.fresh.count ?? 0
+    let knocks = (v?.knocking ?? 0) > 0
+    HStack(spacing: 0) {
+      item("Menu", on: model.panel == .menu) { PenMark("draw:grid", color: Ink.fg).frame(width: 24, height: 24) } action: { toggle(.menu) }
+      item("Desk", on: model.panel == nil && model.path.isEmpty) { PenMark("sketch:desk", color: Ink.fg).frame(width: 26, height: 26) } action: {
+        withAnimation(.snappy) { model.panel = nil; model.path = [] }
+      }
+      item("Waiting", on: model.panel == .waiting) {
+        Sketch("tray", color: Ink.fg).frame(width: 26, height: 26)
+          .overlay(alignment: .topTrailing) {
+            if n > 0 {
+              Text("\(n)").font(Face.text(11, .bold)).foregroundStyle(.white).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18)
+                .background(Capsule().fill(knocks ? Ink.urgCritical : Ink.fg)).offset(x: 12, y: -8)
+            }
+          }
+      } action: { toggle(.waiting) }
+    }
+    .padding(6)
+    .glass(Capsule(), interactive: true)
+    .accessibilityElement(children: .contain)
+  }
+  private func toggle(_ p: BoardModel.Panel) { withAnimation(.snappy) { model.panel = model.panel == p ? nil : p } }
+  private func item<I: View>(_ word: String, on: Bool, @ViewBuilder icon: () -> I, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      VStack(spacing: 2) { icon(); Text(word).font(Face.text(12, .medium)).foregroundStyle(Ink.fg) }
+        .frame(maxWidth: .infinity, minHeight: 52)
+        .background(Capsule().fill(on ? Ink.fg.opacity(0.08) : .clear))
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(word)
+  }
+}
+
+/** The panel over the bar: the jump menu, or what waits for him. */
+struct BarPanel: View {
+  @EnvironmentObject var model: BoardModel
+  @State private var newDesk = ""
+  @State private var making = false
+  var body: some View {
+    let _ = model.version
+    ScrollView {
+      VStack(alignment: .leading, spacing: 2) {
+        if model.panel == .menu { menu } else { waiting }
+      }.padding(.vertical, 12)
+    }
+    .frame(maxHeight: 560)
+    .fixedSize(horizontal: false, vertical: true)
+    .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Ink.surface))
+    .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Ink.fg.opacity(0.85), lineWidth: 1.5))
+    .shadow(color: .black.opacity(0.18), radius: 18, y: 6)
+  }
+  private func heading(_ t: String) -> some View {
+    Text(t).font(Face.text(13, .semibold)).kerning(1.4).foregroundStyle(Ink.muted).padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 4)
+  }
+  private func row<I: View>(@ViewBuilder _ icon: () -> I, _ title: String, count: Int? = nil, on: Bool = false, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 14) {
+        icon().frame(width: 30, height: 30)
+        Text(title).font(Face.text(17, .medium)).foregroundStyle(Ink.fg).lineLimit(2).multilineTextAlignment(.leading)
+        Spacer(minLength: 6)
+        if let c = count, c > 0 { Text("\(c)").font(Face.text(15, .medium)).foregroundStyle(Ink.muted) }
+      }
+      .padding(.horizontal, 14).padding(.vertical, 10)
+      .background(RoundedRectangle(cornerRadius: 12).fill(on ? Ink.sunken : .clear))
+      .contentShape(Rectangle())
+    }.buttonStyle(.plain).padding(.horizontal, 8)
+  }
+  private func go(_ r: Route) { withAnimation(.snappy) { model.panel = nil; model.path = [r] } }
+  @ViewBuilder private var menu: some View {
+    let d = model.desk
+    let v = model.view
+    heading("DESKS")
+    if (d?.desks.count ?? 0) > 1 {
+      row({ PenMark("sketch:desk", color: Ink.fg) }, "All desks", count: v?.allFreshCount, on: v?.all == true) { model.deskId = ALL_DESKS; model.panel = nil; model.path = [] }
+    }
+    ForEach(d?.desks ?? []) { desk in
+      row({ PenMark("sketch:desk", color: Ink.fg) }, desk.name, count: d?.view(desk: desk.id).fresh.count, on: v?.all != true && v?.deskId == desk.id) {
+        model.deskId = desk.id; model.panel = nil; model.path = []
+      }
+      .contextMenu {
+        if (d?.desks.count ?? 0) > 1 { Button("Remove desk", role: .destructive) { model.removeDesk(desk.id) } }
+      }
+    }
+    if making {
+      HStack {
+        TextField("Name of the new desk", text: $newDesk).font(Face.text(16)).textFieldStyle(.roundedBorder).onSubmit(make)
+        Button("Make", action: make).font(Face.text(15, .semibold))
+      }.padding(.horizontal, 20).padding(.vertical, 6)
+    } else {
+      row({ PenMark("ui:PLUS", color: Ink.muted) }, "New desk") { making = true }
+    }
+    heading("SESSIONS")
+    ForEach((v?.units ?? []).filter { $0.parent == nil }) { u in
+      row({ AgentMark(agent: u.agent, size: 28).opacity(u.online ? 1 : 0.6) }, u.agent.name, count: u.open) { go(.session(u.id)) }
+      ForEach(u.subs, id: \.self) { sid in
+        if let su = v?.units.first(where: { $0.id == sid }) { row({ AgentMark(agent: su.agent, size: 24) }, su.agent.name, count: su.open) { go(.session(su.id)) }.padding(.leading, 18) }
+      }
+    }
+    heading("PLACES")
+    row({ Image(systemName: "checklist").foregroundStyle(Ink.fg) }, "Off your mind") { go(.off) }
+    row({ Image(systemName: "scribble.variable").foregroundStyle(Ink.fg) }, "Scribble Board") { go(.scribble) }
+    row({ Image(systemName: "photo.on.rectangle").foregroundStyle(Ink.fg) }, "Media") { go(.media) }
+    row({ Image(systemName: "doc.richtext").foregroundStyle(Ink.fg) }, "Pages") { go(.pages) }
+    row({ PenMark("sketch:key", color: Ink.fg) }, "Settings") { go(.settings("agents")) }
+  }
+  private func make() {
+    let n = newDesk.trimmingCharacters(in: .whitespaces)
+    if !n.isEmpty { model.newDesk(name: n) }
+    newDesk = ""; making = false; model.panel = nil
+  }
+  @ViewBuilder private var waiting: some View {
+    let v = model.view
+    let list = v?.deskCards() ?? []
+    heading("WAITING FOR YOU")
+    if list.isEmpty { Text("Nothing waits for you.").font(Face.text(16)).foregroundStyle(Ink.muted).padding(.horizontal, 20).padding(.vertical, 10) }
+    ForEach(list) { c in
+      let a = model.desk?.byAgent[c.agent]
+      row({
+        if c.urgency == "critical" { PenMark("hand", color: Ink.surface, blocked: true) }
+        else if let a = a { AgentMark(agent: a, size: 26) } else { Sketch("knock", color: Ink.urgHigh) }
+      }, c.title) { go(.card(c.id)) }
     }
   }
 }
