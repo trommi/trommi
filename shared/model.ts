@@ -968,11 +968,11 @@ export { mapToObj, objToMap, URGENCY }
 // (a room's cards were ~4 KB each, most of a warm start's reading). compactCard keeps a field only where rebuilding
 // gives exactly what was there; expandCard gives the same object back.
 const AT_REST = '$card'
-export function compactCard(c) {
-  let out = c
+export function compactCard(c: Card): Card | Record<string, unknown> {
+  let out: Card | Record<string, unknown> = c
   const lv = c.versions?.at(-1)
   if (lv?.content && typeof lv.content === 'object') {
-    const own = [], rest = {}
+    const own: string[] = [], rest: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(lv.content)) { if (k in c && JSON.stringify(c[k]) === JSON.stringify(v)) own.push(k); else rest[k] = v }
     if (own.length) {
       const keys = Object.keys(lv.content)
@@ -982,13 +982,13 @@ export function compactCard(c) {
   if (c.answer && c.answers?.length && (c.answers.at(-1) === c.answer || JSON.stringify(c.answers.at(-1)) === JSON.stringify(c.answer))) out = { ...(out === c ? { ...c } : out), answer: AT_REST }
   return out
 }
-export function expandCard(v) {
+export function expandCard(v: any): any {
   if (!v || typeof v !== 'object') return v
   const lv = v.versions?.at(-1)
   if (lv?.content?.[AT_REST]) {
     const { [AT_REST]: own, rest, keys } = lv.content
-    const content = {}
-    for (const k of keys) content[k] = own.includes(k) ? v[k] : rest[k]   // (shared, as the reducer shares them: a new version replaces fields, never edits them)
+    const content: Record<string, unknown> = {}
+    for (const k of keys as string[]) content[k] = own.includes(k) ? v[k] : rest[k]   // (shared, as the reducer shares them: a new version replaces fields, never edits them)
     v.versions[v.versions.length - 1] = { ...lv, content }
   }
   if (v.answer === AT_REST) v.answer = v.answers?.at(-1) ?? null
