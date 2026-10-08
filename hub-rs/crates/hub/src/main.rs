@@ -16,6 +16,8 @@ mod limits;
 mod mail;
 mod metrics;
 mod ops;
+#[cfg(test)]
+mod ops_tests;
 mod push;
 mod room;
 mod server;
