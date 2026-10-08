@@ -952,7 +952,9 @@ function equip(Klass, identifier) {
     })
     Object.defineProperty(proto, `has${cap(spec.name)}Value`, { configurable: true, get() { return this.element.hasAttribute(spec.attr) } })
   }
-  Klass.__equipped = { identifier, targets: [...targets], valueSpecs }
+  // (watched: it has a TargetConnected or TargetDisconnected callback, so its targets are followed as the page changes)
+  const watched = [...targets].some(t => typeof proto[`${t}TargetConnected`] === 'function' || typeof proto[`${t}TargetDisconnected`] === 'function')
+  Klass.__equipped = { identifier, targets: [...targets], valueSpecs, watched }
 }
 function targetsOf(controller, attr, name) {
   const root = controller.element, id = controller.identifier
@@ -1099,10 +1101,11 @@ class Application {
   }
   mutated(records) {
     let structural = false
-    const added = new Set(), touched = new Set()
+    const added = new Set(), touched = new Set(), spots = new Set()
     for (const r of records) {
       if (r.type === 'childList') {
         structural = true
+        spots.add(r.target)
         for (const n of r.addedNodes) if (n instanceof Element) added.add(n)
       } else if (r.type === 'attributes') {
         const el = r.target
@@ -1111,7 +1114,7 @@ class Application {
           for (const id of (r.oldValue ?? '').split(/\s+/).filter(Boolean)) if (!now.has(id)) this.disconnectOne(el, id)
           for (const id of now) this.connectOne(el, id)
         } else if (r.attributeName === 'data-action') this.bind(el)
-        else if (/^data-[\w-]+-target$/.test(r.attributeName)) structural = true
+        else if (/^data-[\w-]+-target$/.test(r.attributeName)) { structural = true; spots.add(r.target) }
         else if (/^data-[\w-]+-value$/.test(r.attributeName)) touched.add(el)
       }
     }
@@ -1120,7 +1123,13 @@ class Application {
       for (const [el, mine] of [...this.live]) if (!el.isConnected) for (const id of [...mine.keys()]) this.disconnectOne(el, id)
       for (const el of [...this.boundEls]) if (!el.isConnected) this.unbind(el)
       for (const n of added) if (n.isConnected) this.scan(n)
-      for (const mine of this.live.values()) for (const c of mine.values()) this.syncTargets(c)
+      // Targets change only inside the elements where the page changed: a controller around one of those spots looks
+      // again (all of them, on every change, was a long task on a Desk with hundreds of rows).
+      const where = [...spots].filter(n => n.isConnected)
+      for (const [el, mine] of this.live) {
+        if (!where.some(n => el.contains(n))) continue
+        for (const c of mine.values()) if (c.constructor.__equipped.watched) this.syncTargets(c)
+      }
     }
     for (const el of touched) for (const c of this.live.get(el)?.values() ?? []) this.syncValues(c)
   }
@@ -2794,10 +2803,11 @@ const ext = name => (/\.([a-z0-9]{1,5})$/i.exec(name ?? '')?.[1] ?? '').toUpperC
 const galleryKept = new WeakMap()
 export function galleryItems(model, base = '') {
   const { state } = model
-  const hit = galleryKept.get(state)
+  // (kept per card list: BoardState hands the same list and the same assets on while none of them changed)
+  const hit = galleryKept.get(state.cards)
   // (only what the sessions of the desk in view sent: a session that moved took its pictures along)
   const key = `${model.desk}|${model.everyone.map(a => a.desk).join(',')}`
-  if (hit && hit.base === base && hit.key === key && hit.cards === state.cards && hit.assets === state.assets) return hit.out
+  if (hit && hit.base === base && hit.key === key && hit.assets === state.assets) return hit.out
   const out = []
   for (const a of state.assets ?? []) {
     const agent = model.byAgent.get(a.agent)
@@ -2815,7 +2825,7 @@ export function galleryItems(model, base = '') {
     if (vids.length) out.push({ id: `${c.id}-v`, type: 'video', title: c.title, agent, ts: c.created ?? 0, url: vids[0].url, name: vids[0].name, href: `${base}/card/${encodeURIComponent(c.number ?? c.id)}?pic=${pics.length + 1}`, from: `Nr. ${c.number}`, more: vids.length })
   }
   out.sort((x, y) => y.ts - x.ts)
-  galleryKept.set(state, { base, key, cards: state.cards, assets: state.assets, out })
+  galleryKept.set(state.cards, { base, key, assets: state.assets, out })
   return out
 }
 
@@ -2830,8 +2840,11 @@ const isPage = a => a && (a.type === 'text/html' || /\.html?$/i.test(a.name ?? '
 export function pageItems(model, base = '') {
   const { state } = model
   const key = `${model.desk}|${model.everyone.map(a => a.desk).join(',')}|${base}`
-  const hit = pagesKept.get(state)
-  if (hit && hit.key === key) return hit.out
+  // (what each session sent with attachments: the board state keeps each list while its conversation is the same, so
+  //  a message without a file in another session leaves this as it was)
+  const sentOf = new Map((model.everyone ?? []).map(a => [a.id, state.filesOf ? state.filesOf(a.id) : (state.messages ?? []).filter(m => m.agent === a.id && m.from === 'agent' && m.attachments?.length)]))
+  const hit = pagesKept.get(state.cards)
+  if (hit && hit.key === key && hit.assets === state.assets && hit.sentOf.size === sentOf.size && [...sentOf].every(([id, l]) => hit.sentOf.get(id) === l)) return hit.out
   const by = new Map()
   // (one entry per file: the newest time it came; a published page's own entry wins over the same file sent along)
   const put = item => { const was = by.get(item.key); if (!was) return by.set(item.key, item); by.set(item.key, { ...(was.kind === 'page' ? was : item.kind === 'page' ? item : item.ts > was.ts ? item : was), ts: Math.max(was.ts, item.ts) }) }
@@ -2861,11 +2874,10 @@ export function pageItems(model, base = '') {
   for (const a of model.everyone ?? []) {
     const agent = here(a.id)
     if (!agent) continue
-    const sent = state.filesOf ? state.filesOf(a.id) : (state.messages ?? []).filter(m => m.agent === a.id && m.from === 'agent' && m.attachments?.length)
-    for (const msg of sent) fromAttachments(msg.attachments, agent, msg.ts ?? 0)
+    for (const msg of sentOf.get(a.id) ?? []) fromAttachments(msg.attachments, agent, msg.ts ?? 0)
   }
   const out = [...by.values()].map(i => (shots.has(i.key) ? { ...i, pic: shots.get(i.key) } : i)).sort((x, y) => y.ts - x.ts)
-  pagesKept.set(state, { key, out })
+  pagesKept.set(state.cards, { key, assets: state.assets, sentOf, out })
   return out
 }
 /** Artifacts (the Desk's pile, the page /artifacts): Media (galleryItems without its pages) and Pages (pageItems) as one
