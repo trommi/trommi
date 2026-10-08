@@ -2652,7 +2652,7 @@ ${tile('is-thumb is-lead is-ack', 'tick', WORDS.ack, { title: `${WORDS.ack}: rea
     const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : thumbs ? o === card.options[0] : advice.includes(o.key))
     const worded = !bare && size === 'none'
     return html`<form class="inbox-actions" method="post" action="${act(card, base, 'decide')}">${stay}${seen}
-${(thumbs ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options).map(o => {
+${[...card.options].sort((a, b) => isYes(a) - isYes(b)).map(o => {   // (the lead, the advised one, always at the right: Apple's alert order)
       const lead = isYes(o), advised = advisedKeys(card).includes(o.key)
       const cls = `is-thumb${thumbs ? '' : ' is-named'}${lead ? ' is-lead' : ''}${size === 'small' ? ' is-small' : ''}${worded ? ' is-short' : ''}${advised ? ' is-advised' : ''}`
       const final = o.final === true
