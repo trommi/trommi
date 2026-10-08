@@ -168,10 +168,12 @@ struct PadCanvas: UIViewRepresentable {
 struct ScribbleScreen: View {
   @EnvironmentObject var model: BoardModel
   @Environment(\.colorScheme) private var scheme
-  enum Tool: String { case pen, marker, eraser, sticky, select }
+  enum Tool: String { case view, pen, marker, eraser, sticky, select }
+  /** The MVP shows the board only (his decision, 8 October): pan and zoom, no drawing; true brings the tools back. */
+  static let draws = false
   @State private var canvas = CanvasState()
   @State private var loaded = false
-  @State private var tool: Tool = .pen
+  @State private var tool: Tool = ScribbleScreen.draws ? .pen : .view
   @State private var penColor = "ink"
   @State private var markerColor = "yellow"
   @State private var width: Double = 4
@@ -205,8 +207,10 @@ struct ScribbleScreen: View {
       if !loaded { ProgressView() }
       VStack {
         Spacer()
-        if !selection.isEmpty { selectionBar }
-        toolbar
+        if ScribbleScreen.draws {
+          if !selection.isEmpty { selectionBar }
+          toolbar
+        }
       }
     }
     .navigationTitle("Scribble").navigationBarTitleDisplayMode(.inline)

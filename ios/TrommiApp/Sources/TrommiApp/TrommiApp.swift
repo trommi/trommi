@@ -299,6 +299,7 @@ final class BoardModel: ObservableObject {
   /** Log in with email and password (shared/account.mjs loginWithPassword): this device adds itself to the room. */
   func login(email: String, password: String, name: String) async {
     lastEmail = email
+    if let p = UIDeviceName.firstName(email: email) { UIDeviceName.person = p }
     error = nil
     phase = .signingIn
     do {
@@ -626,14 +627,33 @@ final class BoardModel: ObservableObject {
 }
 
 /** What the web's name field guesses ("Phone"); iOS 16+ reports only the model, which is a fine default. */
+/**
+ * The suggested name of this device. iOS gives apps only the model ("iPhone") without Apple's device-name entitlement,
+ * so the person's first name comes from the login email (christopher.eller@… → Christopher), remembered for the next
+ * pairing: "iPhone von Christopher" in German, "Christopher's iPhone" otherwise. Always editable.
+ */
 enum UIDeviceName {
-  static var current: String {
+  static var model: String {
     #if canImport(UIKit)
     return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
     #else
     return ProcessInfo.processInfo.hostName
     #endif
   }
+  static var person: String? {
+    get { UserDefaults.standard.string(forKey: "trommi-person") }
+    set { UserDefaults.standard.set(newValue, forKey: "trommi-person") }
+  }
+  static func firstName(email: String) -> String? {
+    let local = email.split(separator: "@").first.map(String.init) ?? ""
+    guard let first = local.split(whereSeparator: { ".-_+0123456789".contains($0) }).first, first.count >= 2 else { return nil }
+    return first.prefix(1).uppercased() + first.dropFirst().lowercased()
+  }
+  static func named(_ person: String?) -> String {
+    guard let p = person, !p.isEmpty else { return model }
+    return Locale.preferredLanguages.first?.hasPrefix("de") == true ? "\(model) von \(p)" : "\(p)’s \(model)"
+  }
+  static var current: String { named(person) }
 }
 
 struct RootView: View {

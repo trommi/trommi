@@ -5,3 +5,5 @@ bundleID: com.trommi.ios
 product: TrommiApp
 infoPath: Info.plist
 entitlementsPath: TrommiApp.entitlements
+# The app icon for the xtool build (it cannot compile the asset catalog of the App Store build).
+iconPath: AppStore/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
