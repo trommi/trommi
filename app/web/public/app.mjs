@@ -413,7 +413,7 @@ export class BoardState {
     for (const s of sessionsOf(m)) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     // (the order he dragged them into in the menu: each desk's register holds its place, order; a desk made since then
     // comes last. Never dragged: the first desk, then by age)
-    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0, order: Number.isFinite(v.order) ? v.order : null, ...('crown' in v ? { crown: v.crown ?? null } : {}) }))
+    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: String(v.name ?? '').trim() || 'Desk', created: v.created_at ?? 0, order: Number.isFinite(v.order) ? v.order : null, ...('crown' in v ? { crown: v.crown ?? null } : {}) }))
     const ordered = desks.some(d => d.order != null)
     desks.sort((a, b) => (ordered ? (a.order ?? Infinity) - (b.order ?? Infinity) || a.created - b.created : a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
     const notes = boardNotes(m)
