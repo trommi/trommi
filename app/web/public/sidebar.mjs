@@ -440,7 +440,7 @@ const GEAR = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><pa
 function menuDoors(model, base) {
   return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" data-owns-keys hidden>
 <div class="menu-desks" id="menu-desks">${menuDeskRows(model, base)}
-<button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New Desk…">${NEW_DESK}<span>New Desk…</span></button>
+<button type="button" role="menuitem" class="menu-desk-add is-plus" id="desk-add" data-action="click->menu#newDesk" aria-label="New Desk…" title="New Desk…">${NEW_DESK}</button>
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Add</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 <a role="menuitem" class="menu-settings" href="${base}/settings" data-nav draggable="false" id="menu-settings">${GEAR}<span>Settings</span></a>

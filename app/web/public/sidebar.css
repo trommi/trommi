@@ -1146,3 +1146,19 @@ html body .topbar #brand-doors .menu-demo-row .demo-switch { margin-left: auto; 
 #push-toggle[data-level="all"] .sketch path { fill: currentColor; }
 #push-toggle[data-level="all"] { color: var(--fg) !important; }
 html body .topbar #brand-doors .menu-theme-row .ico-auto { padding: 0; margin: 0; width: auto; } html body .topbar #brand-doors .menu-theme-row .ico-auto::after, html body .topbar #brand-doors .menu-theme-row .ico-auto::before { content: none !important; }
+
+/* ---- the menu's desks, calm (his word, 8 October: "ugly"): no indent, no lines; All Desks bold, the desks regular,
+   the one in view highlighted; counts at the right; New Desk… a small + at the right end of All Desks ---- */
+html body .topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all)::before { display: none !important; }
+html body .topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all) .menu-desk { padding-left: var(--s-2) !important; }
+html body .topbar #brand-doors .menu-desk-rows.has-all .menu-desk-row:not(.is-all) .menu-desk .sketch.menu-lamp { width: 20px; height: 20px; }
+html body .topbar #brand-doors .menu-desk:not(.is-all) b { font-weight: 500 !important; }
+html body .topbar #brand-doors .menu-desk[aria-checked="true"] { background: var(--sunken); }
+html body .topbar #brand-doors .menu-desk[aria-checked="true"] b { font-weight: 700 !important; }
+html body .topbar #brand-doors .menu-desks { position: relative; }
+html body .topbar #brand-doors .menu-desk-row.is-all .menu-desk { padding-right: 44px; }
+html body .topbar #brand-doors .menu-desk-add.is-plus { position: absolute; z-index: 2; right: 4px; top: 4px; width: 32px !important; min-height: 32px !important; height: 32px; padding: 0 !important; justify-content: center; border-radius: 8px; color: var(--muted); }
+html body .topbar #brand-doors .menu-desk-add.is-plus:hover { background: var(--surface); color: var(--fg); }
+html body .topbar #brand-doors .menu-desk-add.is-plus svg { width: 18px; height: 18px; margin: 0; }
+html body .topbar #brand-doors .menu-desks:not(:has(.is-all)) .menu-desk-add.is-plus { top: 4px; }
+@media (max-width: 860px) { html body .topbar #brand-doors .menu-desk-add.is-plus { width: 40px !important; height: 40px; top: 5px; } html body .topbar #brand-doors .menu-desk.is-all b { font-weight: 800 !important; } }
