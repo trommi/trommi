@@ -60,7 +60,6 @@ struct DeskScreen: View {
       }
     }
     .scrollDismissesKeyboard(.interactively)
-    .barEdge()
     .refreshable { await model.refresh() }
     }
     .background(Ink.bg)

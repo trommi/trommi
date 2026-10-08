@@ -74,7 +74,6 @@ struct SessionScreen: View {
         }
         .defaultScrollAnchor(.bottom)
         .scrollDismissesKeyboard(.interactively)
-        .barEdge()
         // a tap in the conversation puts the keyboard away (Messages)
         .simultaneousGesture(TapGesture().onEnded { hideKeyboard() })
         .refreshable { await model.refresh() }
