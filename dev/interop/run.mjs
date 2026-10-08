@@ -11,6 +11,8 @@
 //     (hub/external.mjs; e.g. --hub-cmd hub-rs/target/release/trommi-hub)
 //   --hub-url <url> [--hub-data <dir>]: against a hub that already runs (its HUB_URL); with --hub-data (its HUB_DATA)
 //     the push scenario also reads its hub.db; that hub needs APNs and Web Push set up as below (HUB_PUSH_HOSTS=push.invalid)
+//   --switch-hub-cmd '<binary>': a switchover test: before every scenario the hub is stopped and the other implementation
+//     (this one, or the first hub) started on the same port and data directory; every scenario runs on data the other wrote
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -64,16 +66,29 @@ if (hubUrl) {
   if (db) db.q = sql => db.prepare(sql)
   hub = { hubUrl: hubUrl.replace(/\/$/, ''), db, close: async () => { db?.close() } }
 } else {
-  const { startHub, LIMITS } = hubCmd ? await import('../../hub/external.mjs') : await import('../../hub/server.mjs')
-  if (!hubCmd) { LIMITS.envelopesPerSecond = 5000; LIMITS.envelopeBurst = 10000 }
-  hub = await startHub({
-    port: 0, host: '127.0.0.1', dataDir: path.join(tmp, 'hub'), commit: 'interop', log: m => hubLog.push(m),
+  hub = await startOn(hubCmd, 0)
+}
+/** A hub of implementation `cmd` (null: hub/server.mjs in this process) on `port` and the one data directory. */
+async function startOn(cmd, port) {
+  if (cmd) process.env.HUB_CMD = cmd
+  const { startHub, LIMITS } = cmd ? await import('../../hub/external.mjs') : await import('../../hub/server.mjs')
+  if (!cmd) { LIMITS.envelopesPerSecond = 5000; LIMITS.envelopeBurst = 10000 }
+  return startHub({
+    port, host: '127.0.0.1', dataDir: path.join(tmp, 'hub'), commit: 'interop', log: m => hubLog.push(m), ...(port ? { hubUrl: HUB } : {}),
     apns: { key: privateKey.export({ type: 'pkcs8', format: 'pem' }), keyId: 'INTEROP01', teamId: 'INTEROPTM', topics: [APNS_TOPIC] },
     apnsHosts: { sandbox: 'https://127.0.0.1:9', production: 'https://127.0.0.1:9' }, pushHosts: ['push.invalid'],
   })
 }
+const switchCmd = opt('--switch-hub-cmd')
+let onFirst = true, switches = 0
+async function switchHub() {
+  await hub.close()
+  onFirst = !onFirst
+  hub = await startOn(onFirst ? hubCmd : switchCmd, Number(new URL(HUB).port))
+  switches++
+}
 const HUB = hub.hubUrl
-console.log(`hub: ${hubUrl ? `${HUB} (running)` : hubCmd ? `${hubCmd} at ${HUB}` : `hub/server.mjs at ${HUB}`}`)
+console.log(`hub: ${hubUrl ? `${HUB} (running)` : hubCmd ? `${hubCmd} at ${HUB}` : `hub/server.mjs at ${HUB}`}${switchCmd ? `, switching with ${switchCmd} before every scenario` : ''}`)
 
 const results = []
 const drivers = []
@@ -88,6 +103,7 @@ async function test(pair, name, fn) {
   if (only && !name.includes(only) && name !== 'setup') return
   const t0 = Date.now()
   const r = { pair, name, ok: false, ms: 0, error: null }
+  if (switchCmd && name !== 'setup') { await switchHub(); r.hub = onFirst ? (hubCmd ?? 'hub/server.mjs') : switchCmd }
   try { await fn(); r.ok = true } catch (e) { r.error = e.stack?.split('\n').slice(0, 4).join('\n      ') ?? String(e) }
   r.ms = Date.now() - t0
   results.push(r)
@@ -501,6 +517,6 @@ await hub.close().catch(() => {})
 fs.rmSync(tmp, { recursive: true, force: true })
 const passed = results.filter(r => r.ok).length, failed = results.length - passed
 fs.mkdirSync(path.join(here, 'out'), { recursive: true })
-fs.writeFileSync(path.join(here, 'out/run.json'), JSON.stringify({ at: new Date().toISOString(), hub: hubUrl ? { url: HUB } : hubCmd ? { cmd: hubCmd } : { impl: 'hub/server.mjs' }, pairs: pairRooms, skipped, passed, failed, results }, null, 2))
+fs.writeFileSync(path.join(here, 'out/run.json'), JSON.stringify({ at: new Date().toISOString(), hub: hubUrl ? { url: HUB } : hubCmd ? { cmd: hubCmd } : { impl: 'hub/server.mjs' }, ...(switchCmd ? { switch_hub_cmd: switchCmd, switches } : {}), pairs: pairRooms, skipped, passed, failed, results }, null, 2))
 console.log(`\n${passed} passed, ${failed} failed${skipped.length ? `; skipped: ${skipped.join(', ')}` : ''}  (dev/interop/out/run.json)`)
 process.exit(failed ? 1 : 0)
