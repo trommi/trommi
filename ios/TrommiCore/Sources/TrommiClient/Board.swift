@@ -231,6 +231,11 @@ public final class Card {
   public var refusedHead: Int?
   /** A card of a newer Trommi (an unknown card_type, a newer schema): a placeholder, never answered from here. */
   public var unsupported = false
+  /** A card read back from the board snapshot (BoardCodec): every field is set by the reader. */
+  init(snapshot id: String, agent: String) {
+    objectId = id; agentDeviceId = agent; envelopeNumber = 0; firstEnvelopeNumber = 0; createdAt = 0; sessionId = nil; updatedAt = 0
+    timelineKey = timelineKeyOf("chat", "card/\(id)")
+  }
   init(_ id: String, agent: String, rec: Rec) {
     objectId = id; agentDeviceId = agent; envelopeNumber = rec.envelopeNumber; firstEnvelopeNumber = rec.envelopeNumber
     createdAt = rec.sentAt; sessionId = rec.sessionId; updatedAt = rec.sentAt; timelineKey = timelineKeyOf("chat", "card/\(id)")
@@ -465,8 +470,25 @@ public final class Board {
   }
   var deviceRegisters: [String: JV] = [:]
   private var alertSeq = 0
+  /** (BoardCodec reads and writes it.) */
+  var alertSeqValue: Int { get { alertSeq } set { alertSeq = newValue } }
 
   public init() {}
+
+  /** Take every field of another board (a snapshot read off the main thread) into this one. */
+  public func adopt(_ o: Board) {
+    roomId = o.roomId ?? roomId; hubURL = o.hubURL ?? hubURL; myDeviceId = o.myDeviceId ?? myDeviceId; myRole = o.myRole ?? myRole
+    keyEpoch = max(keyEpoch, o.keyEpoch); lastEntryNumber = max(lastEntryNumber, o.lastEntryNumber); lastEnvelopeNumber = o.lastEnvelopeNumber; connection = o.connection
+    members = o.members; sessions = o.sessions; cards = o.cards; permissions = o.permissions; notes = o.notes; published = o.published; timelines = o.timelines
+    human = o.human; alerts = o.alerts; stack = o.stack; openPermissionIds = o.openPermissionIds
+    newerCount = o.newerCount; newerWhat = o.newerWhat; newerEnvelope = o.newerEnvelope; deviceRegisters = o.deviceRegisters; alertSeq = o.alertSeq; answerEchoes = [:]
+  }
+  /** Nothing of this device in flight on the board: no own echo, no pending answer, note or register (a snapshot may be taken). */
+  public var settled: Bool {
+    answerEchoes.isEmpty && timelines.values.allSatisfy { $0.echoes.isEmpty && !$0.items.values.contains { $0.pending } }
+      && !cards.values.contains { $0.answer?.pending == true || $0.answers.contains { $0.pending } }
+      && !notes.values.contains { $0.pending } && !human.raw.values.contains { $0.pending } && !sessions.values.contains { $0.registers.values.contains { $0.pending } }
+  }
 
   /** Forget everything the records built (a store that could not be read to its end): the member list stays. */
   public func reset() {

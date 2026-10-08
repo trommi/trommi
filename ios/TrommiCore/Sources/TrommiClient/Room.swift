@@ -626,6 +626,7 @@ public final class Room {
     var kept = rec
     kept.localId = nil
     log[p.number] = kept
+    sinceSnapshot += 1
     cacheSoon(p.number)
   }
 
@@ -820,6 +821,14 @@ public final class Room {
     // Below the oldest item whose body is here.
     let loadedNumbers = t.items.values.filter { $0.itemState != "header" }.compactMap { $0.envelopeNumber }
     let before = min(t.loadedDownTo, loadedNumbers.min() ?? (board.lastEnvelopeNumber + 1))
+    // First this device's own store (the board snapshot keeps headers only for older items): no hub, no network
+    let local = await fillFromStore(t, below: before, limit: limit)
+    if local.count >= limit || (!local.isEmpty && !t.items.keys.contains { $0 < local.min()! && t.items[$0]?.itemState == "header" }) {
+      t.loadedDownTo = min(t.loadedDownTo, local.min()!)
+      t.hasMore = t.items.keys.contains { $0 < t.loadedDownTo }
+      var ch = Change(); ch.timelines.insert(key); emit(ch)
+      return (local.count, t.hasMore)
+    }
     let r = try await noted { try await hub.threads(kind: p.kind, timelineId: p.timelineId, before: before, limit: limit) }
     var loaded = 0
     let secrets = Room.secretLookup(room: roomSecrets, sessions: sessionSecrets)
@@ -843,6 +852,7 @@ public final class Room {
     }
     t.loadedDownTo = min(t.loadedDownTo, (r["envelopes"] as? [JSON] ?? []).compactMap { ($0["envelope_number"] as? NSNumber)?.intValue }.min() ?? t.loadedDownTo)
     t.hasMore = r["has_more"] as? Bool ?? false
+    await keepBodies(t, (r["envelopes"] as? [JSON] ?? []).compactMap { ($0["envelope_number"] as? NSNumber)?.intValue })
     ch.timelines.insert(key)
     emit(ch)
     return (loaded, t.hasMore)
@@ -1422,6 +1432,52 @@ public final class Room {
     emit(ch)
   }
 
+  /**
+   * Bodies the hub just gave for records this device stored as headers (a catch-up reads conversations as headers):
+   * their stored record again, with the body, appended at the next save, so the next time they come from the store.
+   */
+  private func keepBodies(_ t: Timeline, _ numbers: [Int]) async {
+    let todo = numbers.filter { log[$0] == nil && t.items[$0]?.content != nil }
+    guard !todo.isEmpty, let rs = try? recordStore() else { return }
+    var ix = storeIndexMemo
+    if ix == nil { ix = await Task.detached(priority: .utility) { rs.index(keepBytes: false) }.value; storeIndexMemo = ix }
+    guard let index = ix else { return }
+    let recs = await Task.detached(priority: .utility) { rs.decode(index, at: rs.entries(index, todo)) }.value
+    for var r in recs {
+      guard let it = t.items[r.envelopeNumber], let c = it.content else { continue }
+      r.content = c; r.contentState = it.itemState == "loaded" || it.itemState == "unsupported" ? "ok" : it.itemState
+      rewritten[r.envelopeNumber] = r
+    }
+    if !recs.isEmpty { cacheSoon() }
+  }
+  /** Restored records whose body came later: appended again (the later copy wins), not counted as new records. */
+  private var rewritten: [Int: Rec] = [:]
+
+  /** Where the store's records lie (for bodies of older items), read once and kept without the segments' bytes. */
+  private var storeIndexMemo: RecordStore.Index?
+  /**
+   * The bodies of the newest `limit` header items below `below` from this device's record store (verified when they
+   * were stored); returns the numbers filled. Nothing found: the caller asks the hub.
+   */
+  private func fillFromStore(_ t: Timeline, below: Int, limit: Int) async -> [Int] {
+    let want = Array(t.items.filter { $0.key < below && $0.value.itemState == "header" }.keys.sorted().suffix(limit))
+    guard !want.isEmpty, let rs = try? recordStore() else { return [] }
+    var ix = storeIndexMemo
+    if ix == nil { ix = await Task.detached(priority: .userInitiated) { rs.index(keepBytes: false) }.value; storeIndexMemo = ix }
+    guard let index = ix else { return [] }
+    let recs = await Task.detached(priority: .userInitiated) { rs.decode(index, at: rs.entries(index, want)) }.value
+    var filled = [Int]()
+    defer { if PerfLog.on { PerfLog.line("fill from store: \(want.count) wanted, \(recs.count) read, \(filled.count) filled (\(recs.first.map { "\($0.contentState) \($0.content == nil ? "no body" : "body")" } ?? "-"))") } }
+    for r in recs {
+      guard var it = t.items[r.envelopeNumber], it.itemState == "header", let c = r.content, r.contentState == "ok" else { continue }
+      let fresh = Board.itemOf(r)
+      it.content = c; it.contentType = fresh.contentType; it.itemState = fresh.itemState
+      t.items[r.envelopeNumber] = it
+      filled.append(r.envelopeNumber)
+    }
+    return filled
+  }
+
   /** A canvas as it stands: the newest snapshot (register scribble_snapshot/<timeline>), then every item after it. */
   public func loadCanvas(_ timelineId: String) async throws -> CanvasState {
     let st = CanvasState()
@@ -1534,23 +1590,45 @@ public final class Room {
     }
   }
   /** Write it now (the app going to the background). */
-  public func saveCache() { Task { await saveCacheAndWait() } }
+  public func saveCache(snapshot: Bool = false) { Task { await saveCacheAndWait(snapshot: snapshot) } }
+  /** Records applied since the board snapshot on disk; past this many a save writes a new snapshot by itself. */
+  private var sinceSnapshot = 0
+  public static let snapshotEvery = 2000
   /**
    * Append the changed records and write the small head; the grants only when they changed. Off the main thread, one
    * save after the other (the segments are append-only).
    */
-  public func saveCacheAndWait() async {
-    guard cacheDirty, let rs = try? recordStore() else { return }
+  /**
+   * snapshot: also write the board snapshot (the app going to the background, the CLI at its end) when a fair number of
+   * records came since the last one; without it a snapshot is written only every `snapshotEvery` records (never per message). Only
+   * a settled board is written (nothing of this device in flight).
+   */
+  public func saveCacheAndWait(snapshot: Bool = false) async {
+    // (a few records after the snapshot replay in no time: rewriting 15 MB for them would cost more than it saves)
+    let wantSnap = ((synced && sinceSnapshot >= Room.snapshotEvery) || (snapshot && sinceSnapshot >= Room.snapshotEvery / 10)) && outbox.isEmpty && board.settled
+    guard cacheDirty || wantSnap, let rs = try? recordStore() else { return }
     cacheDirty = false
     let t0 = DispatchTime.now().uptimeNanoseconds
-    let recs = dirtyRecs.sorted().compactMap { log[$0] }
-    dirtyRecs = []
+    let recs = dirtyRecs.sorted().compactMap { log[$0] } + rewritten.keys.sorted().map { rewritten[$0]! }
+    dirtyRecs = []; rewritten = [:]
+    // (the index of where records lie is read again when next needed: these copies supersede older ones)
+    if !recs.isEmpty { storeIndexMemo = nil }
     // the chain heads without their kept hashes: those are the records' own (rebuilt from them at the next launch)
     let head = Head(records: restoredCount + log.count, cursor: cursor, lamport: lamport, chains: chains.mapValues { var c = $0; c.hashes = [:]; return c }, sessionSecrets: sessionSecrets.mapValues(SecretJSON.init))
     let gHash = grantsHash()
     let grants: [String: [String]]? = gHash == grantsWritten ? nil : sessionGrants.mapValues { $0.map(b64u) }
     grantsWritten = gHash
-    if PerfLog.on { PerfLog.line(String(format: "saveCache main %.1f ms, %d records", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6, recs.count)) }
+    var snap: [UInt8]? = nil
+    if wantSnap {
+      // the board as it stands at the cursor, the chain heads with their kept hashes beside it
+      var w = RecCodec.W()
+      w.b.append(1); w.u(UInt64(cursor)); w.i(lamport); w.u(UInt64(head.records))
+      BoardCodec.encodeChains(chains, into: &w)
+      BoardCodec.encode(board, into: &w)
+      snap = w.b
+      sinceSnapshot = 0
+    }
+    if PerfLog.on { PerfLog.line(String(format: "saveCache main %.1f ms, %d records%@", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6, recs.count, snap.map { ", board snapshot \($0.count / 1024) KiB" } ?? "")) }
     let prev = saveTail
     let t = Task.detached(priority: .utility) {
       _ = await prev?.value
@@ -1559,6 +1637,7 @@ public final class Room {
         if let g = grants { try rs.writeSmall(g, to: rs.grantsURL, aad: "trommi/v1/ios-grants") }
         try rs.append(recs)
         try rs.writeSmall(head, to: rs.headURL, aad: "trommi/v1/ios-head")
+        if let b = snap { try rs.writeBoard(b) }
       } catch {}
     }
     saveTail = t
@@ -1592,20 +1671,36 @@ public final class Room {
         return (sid, bytes, ss)
       }
     }
-    // the head and where every record lies, then the records opened in slices on all cores while this thread replays
-    // them in envelope order as they come (reading and replaying overlap)
-    let found: (head: Head, ix: RecordStore.Index)? = await Task.detached(priority: .userInitiated) {
-      guard let h = rs.readSmall(Head.self, from: rs.headURL, aad: "trommi/v1/ios-head"), h.v == 3, let ix = rs.index() else { return nil }
-      return (h, ix)
+    // the head, the board snapshot (when there is one) and where every later record lies; then those records opened
+    // in slices on all cores while this thread replays them in envelope order as they come
+    typealias Snap = (cursor: Int, lamport: Int, records: Int, chains: Chains, board: Board)
+    let found: (head: Head, snap: Snap?, ix: RecordStore.Index)? = await Task.detached(priority: .userInitiated) {
+      guard let h = rs.readSmall(Head.self, from: rs.headURL, aad: "trommi/v1/ios-head"), h.v == 3 else { return nil }
+      var snap: Snap? = nil
+      if let plain = rs.readBoard() {
+        snap = plain.withUnsafeBufferPointer { buf -> Snap? in
+          var r = RecCodec.R(b: buf)
+          guard (try? r.byte()) == 1, let c = try? r.u(), let l = try? r.i(), let n = try? r.u(), let ch = try? BoardCodec.decodeChains(&r) else { return nil }
+          let b = Board()
+          guard (try? BoardCodec.decode(&r, into: b)) != nil, r.at == buf.count, Int(c) <= h.cursor else { return nil }
+          return (Int(c), l, Int(n), ch, b)
+        }
+      }
+      guard let ix = rs.index(after: snap?.cursor) else { return nil }
+      return (h, snap, ix)
     }.value
     guard let f = found else { rs.wipe(); return false }
-    // the records the head covers (one past the cursor came after the last head: it is read again from the hub)
+    // the records after the snapshot (all without one) up to the head's cursor (one past it came after the last head:
+    // it is read again from the hub); fewer than the head counted means a store damaged beyond its tail
+    let base = f.snap?.cursor ?? 0
+    let lo0 = f.ix.entries.firstIndex { $0.n > base } ?? f.ix.entries.count
     let upto = f.ix.entries.firstIndex { $0.n > f.head.cursor } ?? f.ix.entries.count
-    guard upto >= f.head.records else { rs.wipe(); return false }
+    guard upto - lo0 >= f.head.records - (f.snap?.records ?? 0) else { rs.wipe(); return false }
+    if let sn = f.snap { board.adopt(sn.board); var mc = Change(); applyMemberList(&mc) }
     let slice = 2048
     let ix = f.ix
     // each slice also lists its senders' (sequence, hash) for the chain heads' kept hashes
-    let parts = stride(from: 0, to: upto, by: slice).map { lo in
+    let parts = stride(from: lo0, to: upto, by: slice).map { lo in
       Task.detached(priority: .userInitiated) { () -> (recs: [Rec], senders: [String: [(UInt64, String)]])? in
         guard let recs = rs.decode(ix, lo..<min(lo + slice, upto)) else { return nil }
         var senders = [String: [(UInt64, String)]]()
@@ -1613,7 +1708,7 @@ public final class Room {
         return (recs, senders)
       }
     }
-    if PerfLog.on { PerfLog.line(String(format: "restore indexed %.1f ms, %d records", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6, upto)) }
+    if PerfLog.on { PerfLog.line(String(format: "restore indexed %.1f ms, %@%d records to replay", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6, f.snap != nil ? "board snapshot at \(base), " : "", upto - lo0)) }
     var ch = Change()
     for (sid, bytes, st) in await grantsTask.value {
       sessionStates[sid] = st
@@ -1644,11 +1739,15 @@ public final class Room {
       applyNs += DispatchTime.now().uptimeNanoseconds - a0
     }
     if PerfLog.on { PerfLog.line(String(format: "restore: waited %.1f ms, applied %.1f ms (board %.1f)", Double(waitNs) / 1e6, Double(applyNs) / 1e6, Double(boardNs) / 1e6)) }
-    restoredCount = upto
+    restoredCount = f.head.records
+    // no snapshot yet (the first launch after the store came): one at the next save
+    sinceSnapshot = f.snap == nil ? Room.snapshotEvery : upto - lo0
     let c = (cursor: f.head.cursor, lamport: f.head.lamport, chains: f.head.chains)
     if PerfLog.on { PerfLog.line(String(format: "restore replayed %.1f ms", Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6)) }
     // each sender's newest kept envelope hashes again, from the records (the head keeps only seq, hash and told)
     var rebuilt = c.chains
+    // the snapshot's kept hashes first, then those of the records replayed after it
+    if let sn = f.snap { for (k, x) in sn.chains { if var ch = rebuilt[k] { ch.hashes = x.hashes; rebuilt[k] = ch } } }
     for (k, list) in perSender {
       guard var ch = rebuilt[k] else { continue }
       for (seq, h) in list.suffix(CHAIN_HASHES_KEPT) { if let b = try? unhex(h) { ch.hashes[seq] = b } }
