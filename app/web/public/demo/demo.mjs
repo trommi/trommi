@@ -820,7 +820,7 @@ function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 5
 // open, the selection, a toast, empty…) that switch the same pair of frames in place. [title, path, states], a state
 // [label, path?, state?, mock?] (path: another address of the same screen; state: demoState's click; mock: a demo room).
 const SCREENS = [
-  ['Desk', '/', [['With the selection bar', '', 'select'], ['Duck for all: the confirm', '', 'duck'], ['A toast with Undo', '', 'toast'], ['The end list and the piles', '', 'bottom'], ['Trommi menu open', '', 'menu'], ['Desk switcher open', '', 'switch'], ['Sidebar folded to the rail', '', 'rail'], ['Phone drawer open', '', 'drawer'], ['Keys sheet', '', 'keys'], ['Corner note open', '', 'note'], ['Empty, full piles', '', '', 'foot'], ['Quiet desk', '', '', 'quiet']]],
+  ['Desk', '/', [['With the selection bar', '', 'select'], ['Duck for all: the confirm', '', 'duck'], ['A toast with Undo', '', 'toast'], ['The end list and the piles', '', 'bottom'], ['Trommi menu open', '', 'menu'], ['A desk alone (filter)', '/?desk=test'], ['Sidebar folded to the rail', '', 'rail'], ['Rail: the desk words', '', 'switch'], ['Phone drawer open', '', 'drawer'], ['Keys sheet', '', 'keys'], ['Corner note open', '', 'note'], ['Empty, full piles', '', '', 'foot'], ['Quiet desk', '', '', 'quiet']]],
   ['Card page', '/card/30', [['Long card', '/card/31'], ['Long card, scrolled inside', '/card/31', 'inside'], ['The strip (card scrolled away)', '/card/31', 'strip'], ['Yes or no', '/card/46'], ['Several answers', '/card/11'], ['Info card', '/card/19'], ['Answered', '/card/1'], ['With the agent', '/card/1', 'with-agent'], ['Finished by its agent', '/card/34'], ['More menu open', '', 'more']]],
   ['Full screen', '/card/31/picture/1', [['A video', '/card/31/picture/9']]],
   ['Blitz', '/blitz', []],
@@ -974,7 +974,7 @@ export async function demoState(name) {
     toast: () => click('#desk-list .inbox-row .inbox-answer.is-thumb.is-lead:not(.is-ack)'),
     bottom: () => { const m = $('#inbox'); if (m) m.scrollTop = m.scrollHeight },
     menu: () => click('#brand-menu'),
-    switch: () => click('.desk-switch-open'),
+    switch: async () => { document.documentElement.dataset.rail = 'folded'; await new Promise(r => setTimeout(r, 300)); click('.rail-tag') },
     rail: () => { document.documentElement.dataset.rail = 'folded'; dispatchEvent(new Event('resize')) },
     drawer: () => click('#drawer-open'),
     keys: () => document.dispatchEvent(new Event('trommi:keys')),

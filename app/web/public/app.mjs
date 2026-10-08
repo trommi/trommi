@@ -173,8 +173,14 @@ function boardModel(state, agents = state.agents, desk = null) {
   const deskId = all ? ALL_DESKS : desks ? (desks.some(d => d.id === desk) ? desk : desks[0].id) : null
   const deskOf = a => (desks ? (desks.some(d => d.id === a?.desk) ? a.desk : desks[0].id) : null)
   const everyone = agents.map(a => ({ ...a, given: a.name, name: a.label || a.name, mark: a.icon || a.id, archived: Boolean(a.archived) }))
+  // The crown: one per desk, never one for all (his word, 8 October). A desk's own crown (its register desk/<id>, crown)
+  // decides on that desk; a desk without one keeps the room's old single crown, if that session stands on it.
+  if (desks) for (const a of everyone) { const d = desks.find(x => x.id === deskOf(a)); if (d && 'crown' in d) a.starred = Boolean(d.crown && (d.crown.session_id ? d.crown.session_id === a.session_id : d.crown.agent_device_id === a.agent_device_id && !a.parent)) }
   for (const a of everyone) a.hue = hueFor(a)
   const onDesk = a => !desks || all || deskOf(a) === deskId
+  // The desk the note and the Scribble Board belong to: the one in view; on All the desk last chosen (the first if none).
+  const last = (() => { try { return localStorage.getItem('trommi-desk-last') } catch { return null } })()
+  const homeDesk = !desks ? null : !all ? deskId : desks.some(d => d.id === last) ? last : desks[0].id
   // (A session of another desk is named with its desk wherever it shows here.)
   if (desks) for (const a of everyone) if (!onDesk(a)) a.name = `${a.name} · ${desks.find(d => d.id === deskOf(a))?.name ?? ''}`
   const here = everyone.filter(a => !a.archived && onDesk(a))
@@ -238,7 +244,7 @@ function boardModel(state, agents = state.agents, desk = null) {
   const cut = units.filter(u => u.link?.state === 'cut' && !(u.parent?.link?.state === 'cut' && u.parent.agent.agent_device_id === u.agent.agent_device_id)).map(u => ({ agent: u.agent, link: u.link }))
 
   return {
-    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, onDesk, desk: deskId, all, deskOf, desks: desks ?? [], revising, snoozed, done, landed, units,
+    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, onDesk, desk: deskId, homeDesk, all, deskOf, desks: desks ?? [], revising, snoozed, done, landed, units,
     cut, unheard: units.reduce((n, u) => n + u.unheard, 0),
     knocking: fresh.filter(isKnock).length,
     blocked: units.filter(u => u.blocked).length,
@@ -249,7 +255,7 @@ function boardModel(state, agents = state.agents, desk = null) {
 }
 
 /** Who receives a note: the crowned session of the desk. One crown per desk: the starred session. */
-export const crownOf = model => model.agents.find(a => a.starred) ?? null
+export const crownOf = model => (model.homeDesk ? model.everyone.find(a => a.starred && !a.archived && model.deskOf(a) === model.homeDesk) : model.agents.find(a => a.starred)) ?? null
 
 // ---- att ----
 // Attachments are end-to-end encrypted: the views render them at /att/<attachment_id> and the bytes are fetched and
@@ -407,7 +413,7 @@ export class BoardState {
     for (const s of sessionsOf(m)) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     // (the order he dragged them into in the menu: each desk's register holds its place, order; a desk made since then
     // comes last. Never dragged: the first desk, then by age)
-    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0, order: Number.isFinite(v.order) ? v.order : null }))
+    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0, order: Number.isFinite(v.order) ? v.order : null, ...('crown' in v ? { crown: v.crown ?? null } : {}) }))
     const ordered = desks.some(d => d.order != null)
     desks.sort((a, b) => (ordered ? (a.order ?? Infinity) - (b.order ?? Infinity) || a.created - b.created : a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
     const notes = boardNotes(m)
@@ -798,7 +804,11 @@ function hubFacade(client, board) {
     async starSession({ agent, starred }) {
       const a = board.state.agents.find(x => x.id === agent)
       if (!a) throw fail(404, 'unknown session')
-      await client.setCrown(starred ? { session_id: a.session_id ?? undefined, agent_device_id: a.agent_device_id } : null)
+      const crown = starred ? { session_id: a.session_id ?? undefined, agent_device_id: a.agent_device_id } : null
+      // (one crown per desk: it lies in the register of the session's desk; without desks the room's single crown)
+      const desks = board.state.desks ?? [], deskId = desks.some(d => d.id === a.desk) ? a.desk : desks[0]?.id
+      if (!deskId) return client.setCrown(crown)
+      await client.setDesk(deskId, { ...(m().human.desks.get(deskId) ?? { name: desks.find(d => d.id === deskId)?.name ?? 'Desk', created_at: Date.now() }), crown })
     },
     // Desks: the human register desk/<id>.
     async desk({ id, name, remove, order }) {
@@ -1493,7 +1503,7 @@ async function start(client, { fresh = false } = {}) {
   }
   // The menu's "switch desk" (/?desk=<id>) and /desk/<id>: the desk is this browser's; the address is the Desk's again.
   const desks = { register: t => {
-    t.get(/^\/$/, ({ res, url }) => { const d = url.searchParams.get('desk'); if (d == null) return false; desk = d; write('trommi-desk', d); t.redirect(res, '/') })
+    t.get(/^\/$/, ({ res, url }) => { const d = url.searchParams.get('desk'); if (d == null) return false; desk = d; write('trommi-desk', d); if (d !== ALL_DESKS) write('trommi-desk-last', d); t.redirect(res, '/') })
     t.get(/^\/desk\/([\w-]+)$/, ({ res, match }) => { desk = match[1]; write('trommi-desk', desk); t.redirect(res, '/') })
   } }
   // (the demo only: the review page of all screens, and ?state= hooks: demo/demo.mjs)

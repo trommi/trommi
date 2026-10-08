@@ -70,8 +70,8 @@
 .agent-invite-go { flex: 1; min-width: 0; min-height: 46px; display: flex; align-items: center; gap: var(--s-3); padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; color: var(--muted); font: inherit; text-align: left; cursor: pointer; transition: color var(--d-fast), background var(--d-fast); }
 .agent-invite-go .sketch { flex: none; width: 34px; height: 22px; stroke-width: 2.1; }
 .agent-invite-label { font-weight: 500; white-space: nowrap; }
-#agents:not(:has(.agent-row[data-unit], .desk-card-row)) .agent-invite-go { background: var(--accent-soft); color: var(--accent); }
-#agents:not(:has(.agent-row[data-unit], .desk-card-row)) .agent-invite-label { font-weight: 600; }
+#agents:not(:has(.agent-row[data-unit])) .agent-invite-go { background: var(--accent-soft); color: var(--accent); }
+#agents:not(:has(.agent-row[data-unit])) .agent-invite-label { font-weight: 600; }
 .agent-row { display: flex; align-items: center; min-width: 0; border-radius: var(--r-md); }
 .agent-entry { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); min-height: 46px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; text-align: left; transition: background var(--d-fast); }
 .agent-entry:hover { background: var(--sunken); }
@@ -487,7 +487,7 @@ a.agent-badge { text-decoration: none; }
 .topbar #brand-doors .menu-desk[aria-checked="true"] b { font-weight: 700; }
 .topbar #brand-doors .menu-desk-rows { display: contents; }
 /* the lamp's light: the menu's rows and the Desk box's drawing, a desk row on All desks */
-:is(.topbar, .desk-card) { --lamp: #e2a21b; } :root[data-theme="dark"] :is(.topbar, .desk-card) { --lamp: #f2bd4a; }
+:is(.topbar, .desk-divider) { --lamp: #e2a21b; } :root[data-theme="dark"] :is(.topbar, .desk-divider) { --lamp: #f2bd4a; }
 .menu-lamp .lamp-light { stroke: var(--lamp); stroke-width: 2; stroke-linecap: round; fill: none; }
 .menu-lamp .lamp-light :is(.lamp-glow, .lamp-cone) { fill: var(--lamp); stroke: none; }
 .menu-lamp .lamp-glow { fill-opacity: .85; }
@@ -828,33 +828,6 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
 .topbar #brand-doors .menu-look { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
 .topbar #brand-doors .menu-look button.menu-theme-row { display: flex; align-items: center; gap: 10px; }
 
-/* ---- All desks in the sidebar (his pick "rows", 8 October): calm rows like folders in a list: the desk drawing, its
-   name, who works there; at the right the main's small drawing with "+N" and the open count, a quiet orange number
-   (a dash when none). A pen rule between desks. No pill, no stack (those stay an agent's). A press opens the desk; the
-   row under the pointer lies on a white ground. Folded: the desk drawings with the number beside. ---- */
-.desk-card-row { position: relative; display: block; margin: 0; }
-.desk-card { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto minmax(14px, auto); align-items: center; column-gap: var(--s-2); min-height: 56px; padding: var(--s-2) var(--s-2) var(--s-2) 6px; border-radius: var(--r-md); color: var(--fg); text-decoration: none; transition: background var(--d-fast), box-shadow var(--d-fast); }
-.desk-card:hover, .desk-card:focus-visible { background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
-.desk-card > .sketch.menu-lamp { width: 28px; height: 28px; stroke-width: 1.6; color: var(--fg); overflow: visible; }
-.desk-card-text { display: grid; min-width: 0; text-align: left; }
-.desk-card-text strong { font: 700 16px/1.25 var(--font); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.desk-card-text small { font: 500 var(--t-xs)/1.3 var(--font); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.desk-card-who { display: inline-flex; align-items: center; gap: 2px; }
-.desk-card-who .agent-avatar { width: 22px; height: 22px; padding: 0; }
-.desk-card-who .agent-avatar .doodle { width: 20px; height: 20px; }
-.desk-card-who small { font: 600 11px/1 var(--font); color: var(--muted); }
-.desk-card-n { justify-self: end; font: 700 var(--t-sm)/1 var(--font); color: var(--urg-high); }
-.desk-card-n.is-none { color: var(--muted); font-weight: 500; }
-.desk-rule { display: none; width: calc(100% - 28px); height: 6px; margin: var(--s-2) 14px; overflow: visible; fill: none; stroke: var(--line-strong); stroke-width: 1.6; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-.desk-rule path { vector-effect: non-scaling-stroke; }
-.desk-card-row:has(+ .desk-card-row) .desk-rule { display: block; }
-@media (min-width: 861px) {
-  html[data-rail="folded"] .desk-card-row { margin: 0 0 6px; }
-  html[data-rail="folded"] .desk-card { display: grid; grid-template-columns: 1fr; justify-items: center; width: 60px; min-height: 0; padding: 6px 0; background: none; box-shadow: none; }
-  html[data-rail="folded"] .desk-card > .sketch.menu-lamp { width: 30px; height: 30px; }
-  html[data-rail="folded"] :is(.desk-card-text, .desk-card-who, .desk-rule, .desk-card-n.is-none) { display: none !important; }
-  html[data-rail="folded"] .desk-card-n { position: absolute; top: 0; right: 4px; font-size: 11px; }
-}
 
 /* (a helper whose main does not listen: calm and a little dimmed; the main's row says why) */
 #agents .agent-row.is-sub.is-hushed .agent-entry { opacity: .62; }
@@ -873,3 +846,33 @@ html[data-rail="folded"] .demo-band { left: calc(var(--side) + 14px); bottom: 14
 .note-up-again { margin-left: var(--s-1); padding: 2px var(--s-2); border: 0; border-radius: 8px; background: rgb(255 255 255 / .8); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .4); color: var(--note-ink); font: 600 var(--t-xs)/1.2 var(--font); cursor: pointer; }
 .corner-note-file.is-pic.is-failed { padding: 3px 3px 22px; }
 @media (prefers-reduced-motion: reduce) { .note-up svg { animation-duration: 3s; } }
+
+/* ---- All desks as a filter (sidebar.mjs deskWords, deskDivider): a line of plain words under the title, the chosen
+   one underlined by the pen; on All a hand-drawn divider over each desk's sessions. ---- */
+.desk-words { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 0 0 var(--s-3); padding: 0 6px; }
+.desk-words[hidden] { display: none; }
+.desk-word { display: inline-flex; align-items: baseline; gap: 1px; padding: 2px 0 7px; color: var(--muted); font: 600 var(--t-md)/1.2 var(--font); text-decoration: none; white-space: nowrap; }
+.desk-word:hover { color: var(--fg); }
+.desk-word[aria-current] { color: var(--fg); background: var(--under-ink) no-repeat left bottom / 100% 6px; }
+.desk-word sup { margin-left: 2px; color: var(--urg-high); font: 700 .68rem/1 var(--font); }
+.desk-word-add { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; align-self: center; }
+.desk-word-add:hover { background: var(--sunken); color: var(--fg); }
+.desk-word-add svg { width: 15px; height: 15px; }
+.desk-divider { display: grid !important; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: 8px; margin: var(--s-4) 0 6px; padding: 0 6px; }
+.desk-words + .desk-divider { margin-top: 2px; }
+.desk-divider-name { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: 600 var(--t-sm)/1.2 var(--font); text-decoration: none; }
+.desk-divider-name:hover { color: var(--fg); }
+.desk-divider-mark { width: 18px; height: 18px; flex: none; stroke-width: 1.7; }
+.desk-rule { width: 100%; height: 6px; overflow: visible; fill: none; stroke: var(--line-strong); stroke-width: 1.6; stroke-linecap: round; }
+.desk-rule path { vector-effect: non-scaling-stroke; }
+.desk-divider-n { color: var(--urg-high); font: 700 var(--t-xs)/1 var(--font); }
+/* the folded rail: no words line (the tag opens it); a divider is a tiny rule with the desk's name */
+html[data-rail="folded"] #agents > .desk-words { display: none; }
+html[data-rail="folded"] .desk-divider { grid-template-columns: 1fr; justify-items: center; margin: 10px 0 4px; padding: 0; }
+html[data-rail="folded"] .desk-divider-name { flex-direction: column-reverse; gap: 2px; font-size: 9px; max-width: 60px; text-align: center; }
+html[data-rail="folded"] .desk-divider-name span { max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html[data-rail="folded"] .desk-divider-mark { display: none; }
+html[data-rail="folded"] .desk-divider .desk-rule { order: -1; width: 40px; }
+html[data-rail="folded"] .desk-divider-n { display: none; }
+/* the rail's tag opens the same words as a small list */
+.desk-switch .desk-words { flex-direction: column; align-items: flex-start; gap: 6px; margin: 0; padding: 6px 8px; }

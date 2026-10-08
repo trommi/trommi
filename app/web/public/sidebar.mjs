@@ -249,29 +249,33 @@ export function sidebarRows(model, base, current = null) {
 }
 /** The same rows one by one, for the live stream: [id, row] of those connected (here) and those that are not (away);
  *  shape says their order, so that a change within one row replaces that row only (app.mjs, the board's live streams). */
-/** One desk as a row in the sidebar on All desks (his pick "rows", 8 October: calm rows like folders in a list; no pill,
- *  no stack: those stay an agent's with its helpers): the desk drawing (lit while something waits), its name, who
- *  works there; at the right the main session's small drawing (with its crown) and "+N" helpers, and the open count,
- *  a quiet number (a dash when nothing waits). A pen rule parts the desks. A press opens the desk. */
-function deskCard(model, base, d) {
-  const mine = model.agents.filter(a => model.deskOf(a) === d.id)
-  const lead = mine.find(a => a.starred) ?? mine.find(a => !a.parent) ?? mine[0]
-  const open = model.fresh.filter(c => model.deskOf(model.byAgent.get(c.agent)) === d.id).length
-  const others = mine.length - (lead ? 1 : 0)
-  const who = lead ? `${lead.name}${others ? ` and ${others} ${others === 1 ? 'helper' : 'helpers'}` : ''}` : 'no session yet'
-  return html`<div class="agent-row desk-card-row" id="agent-desk-${d.id}"><a class="desk-card" data-nav draggable="false" href="${base}/?desk=${d.id}" title="Open the desk ${d.name}" aria-label="${d.name || 'Desk'}: ${who}, ${open ? `${open} open` : 'nothing open'}">${deskMark(open > 0)}<span class="desk-card-text"><strong>${d.name || 'Desk'}</strong><small>${who}</small></span><span class="desk-card-who" aria-hidden="true">${lead ? avatar(lead) : ''}${others ? html`<small>+${others}</small>` : ''}</span><b class="desk-card-n${open ? '' : ' is-none'}" aria-hidden="true">${open || '–'}</b></a><svg class="desk-rule" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M1 3.4 Q40 2.2 90 3.1 T199 2.6"/></svg></div>`
+// ---- All desks as a filter (his pick, 8 October) ----
+// Under the sidebar's title a line of plain words, All · <desk> · <desk> …, each desk with its waiting count small and
+// orange; the chosen word underlined by the pen, as the greeting. A word filters: All shows every session with a
+// hand-drawn divider per desk (its drawing, name and count), a desk shows only its own. "+" makes a new desk (the menu's
+// "New desk"). On the folded rail the tag opens the same words as a small list (#desk-switch).
+function deskWords(model, base, id = 'agent-desk-words') {
+  if (model.desks.length < 2) return html`<nav class="desk-words" id="${id}" hidden></nav>`
+  const word = (href, name, on, open = 0) => html`<a class="desk-word" data-nav draggable="false" href="${href}"${on ? raw(' aria-current="true"') : ''}><span>${name}</span>${open ? html`<sup>${open}</sup>` : ''}</a>`
+  return html`<nav class="desk-words" id="${id}" aria-label="Show the desks">${word(`${base}/?desk=all`, 'All', model.all)}${desksOf(model).map(d => word(`${base}/?desk=${d.id}`, d.name, !model.all && d.id === model.desk, d.open))}<button type="button" class="desk-word-add" title="New desk" aria-label="New desk">${PLUS}</button></nav>`
+}
+const RULE = raw('<svg class="desk-rule" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M1 3.4 Q40 2.2 90 3.1 T199 2.6"/></svg>')
+/** On All: the divider over one desk's sessions: its drawing, its name (a press shows that desk alone), a pen rule, the count. */
+function deskDivider(model, base, d) {
+  return html`<div class="agent-row desk-divider" id="agent-desk-${d.id}"><a class="desk-divider-name" data-nav draggable="false" href="${base}/?desk=${d.id}" title="Show ${d.name} alone">${raw(sketchSvg('desk', 'desk-divider-mark'))}<span>${d.name}</span></a>${RULE}${d.open ? html`<b class="desk-divider-n">${d.open}</b>` : ''}</div>`
 }
 function sidebarParts(model, base, current = null) {
   const top = model.units.filter(u => !u.parent)
   const rows = u => [[u.id, row(u, base, current)], ...(u.subs ?? []).map(s => [s.id, row(s, base, current)])]
   const live = u => u.online || Boolean(u.subs?.some(s => s.online))
-  // All desks (his pick "cards", 7 October): the desks themselves, each one card like a main's (the desk drawing, its
-  // name, who works there, what waits, the stack of its sessions' colours); a press opens that desk. No sessions listed.
+  // All desks: every session, desk by desk, each desk under its divider (connected and not, the way they stand)
   if (model.all) {
-    const cards = model.desks.map(d => [`desk-${d.id}`, deskCard(model, base, d)])
-    return { here: cards, away: [], shape: cards.map(r => r[0]).join(' ') }
+    const words = [['desk-words', deskWords(model, base)]]
+    const groups = desksOf(model).flatMap(d => { const mine = top.filter(u => model.deskOf(u.agent) === d.id); return mine.length ? [[`desk-${d.id}`, deskDivider(model, base, d)], ...[...mine.filter(live), ...mine.filter(u => !live(u))].flatMap(rows)] : [] })
+    const here = [...words, ...groups]
+    return { here, away: [], shape: here.map(r => r[0]).join(' ') }
   }
-  const here = top.filter(live).flatMap(rows), away = top.filter(u => !live(u)).flatMap(rows)
+  const here = [['desk-words', deskWords(model, base)], ...top.filter(live).flatMap(rows)], away = top.filter(u => !live(u)).flatMap(rows)
   return { here, away, shape: `${here.map(r => r[0]).join(' ')}|${away.map(r => r[0]).join(' ')}` }
 }
 
@@ -410,10 +414,8 @@ export const SIDE_FOOT = raw(`<div class="side-foot"><button type="button" class
 /** The desk switcher (his word, 7 October: "up here there must be a dropdown"): opened by the chevron beside the desk's
  *  name at the top of the sidebar, and by the folded rail's tag; All desks first, the desks set in under it, the one in
  *  view marked. One component for both. Kept current by the live stream (#desk-switch-list). */
-function deskSwitchList(model, base) {
-  return html`<span class="desk-switch-list" id="desk-switch-list"><a role="menuitemradio" class="desk-switch-item is-all" data-nav draggable="false" href="${base}/?desk=all" aria-checked="${String(Boolean(model.all))}">${deskMark(model.allFresh?.length > 0)}<b>All desks</b></a>${desksOf(model).map(d => html`<a role="menuitemradio" class="desk-switch-item" data-nav draggable="false" href="${base}/?desk=${d.id}" aria-checked="${String(!model.all && d.id === model.desk)}">${deskMark(d.open > 0)}<b>${d.name}</b>${d.open ? html`<i>${d.open}</i>` : ''}</a>`)}</span>`
-}
-const deskSwitch = (model, base) => html`<nav class="desk-switch" id="desk-switch" role="menu" aria-label="Switch desks" hidden>${deskSwitchList(model, base)}</nav>`
+function deskSwitchList(model, base) { return deskWords(model, base, 'desk-switch-list') }
+const deskSwitch = (model, base) => html`<div class="desk-switch" id="desk-switch" hidden>${deskSwitchList(model, base)}</div>`
 /** The desk's name on the rail's tag: two short lines at most, whole words (a word too long is cut by its line). */
 function tagLines(name) {
   const words = String(name).trim().split(/\s+/), lines = []
@@ -424,7 +426,7 @@ function tagLines(name) {
 const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? 's' : n <= 11 ? 'm' : 'l' }
 export function topbar(model, base, current) {
     return html`<header class="topbar"><div class="brand">
-<h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a>${model.desks.length > 1 ? html`<button type="button" class="desk-switch-open" aria-haspopup="menu" aria-expanded="false" aria-controls="desk-switch" title="Switch desks" aria-label="Switch desks">${sk('unfold')}</button>` : ''}
+<h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a>
 <button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings" title="Menu">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark open-mark"'))}<b class="open-word">Trommi</b><span class="conn open-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
 ${menuDoors(model, base)}
 ${model.desks.length > 1 ? deskSwitch(model, base) : ''}
@@ -804,9 +806,10 @@ export function register(t) {
     const t = e.target instanceof Element ? e.target : null
     if (!t) return
     // the desk switcher: the chevron beside the desk's name and the rail's tag (with one desk the tag opens the menu)
-    const sw = $('#desk-switch'), opener = t.closest('.desk-switch-open, .rail-tag')
-    if (sw && opener) { const open = sw.hidden; sw.hidden = !open; for (const b of document.querySelectorAll('.desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', String(open)); shut(); return }
-    if (sw && !sw.hidden && (!t.closest('#desk-switch') || t.closest('a[href]'))) { sw.hidden = true; for (const b of document.querySelectorAll('.desk-switch-open, .rail-tag')) b.setAttribute('aria-expanded', 'false') }
+    if (t.closest('.desk-word-add')) { shut(); const sw0 = $('#desk-switch'); if (sw0) sw0.hidden = true; $('#brand-menu')?.click(); requestAnimationFrame(() => $('#desk-add')?.click()); return }
+    const sw = $('#desk-switch'), opener = t.closest('.rail-tag')
+    if (sw && opener) { const open = sw.hidden; sw.hidden = !open; for (const b of document.querySelectorAll('.rail-tag')) b.setAttribute('aria-expanded', String(open)); shut(); return }
+    if (sw && !sw.hidden && (!t.closest('#desk-switch') || t.closest('a[href]'))) { sw.hidden = true; for (const b of document.querySelectorAll('.rail-tag')) b.setAttribute('aria-expanded', 'false') }
     const menu = t.closest('#brand-menu, .rail-tag') && $('#brand-menu'), doors = $('#brand-doors')   // (with one desk the rail's tag opens the menu, at its desks)
     if (menu && doors) { delete doors.dataset.from; doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); return }
     if (doors && !doors.hidden && !t.closest('#brand-doors')) shut()
@@ -814,7 +817,7 @@ export function register(t) {
     if (t.closest('#demo-toggle')) { location.assign(inDemo() ? '/?mock=0' : '/?mock=1'); return }
     if (t.closest('#theme-toggle')) setThemeMode(nextThemeMode())   // Light → Dark → System
   })
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') { shut(); const sw = $('#desk-switch'); if (sw && !sw.hidden) { sw.hidden = true; $('.desk-switch-open')?.focus() } } })
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { shut(); const sw = $('#desk-switch'); if (sw && !sw.hidden) { sw.hidden = true; $('.rail-tag')?.focus() } } })
   drawer()
   // The rail is a wide screen's: a narrow window has the drawer, whole (the head's data-rail is taken off there).
   const narrow = matchMedia('(max-width: 860px)')
