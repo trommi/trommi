@@ -110,6 +110,9 @@ struct MenuPill: View {
     let _ = model.version
     let d = model.desk, v = model.view
     Menu {
+      if model.demo {
+        Section { Button { model.leaveDemo() } label: { Label("Leave Demo", systemImage: "xmark.circle") } }
+      }
       Section("Desks") {
         if (d?.desks.count ?? 0) > 1 {
           Button { model.deskId = ALL_DESKS; model.deskPath = []; model.tab = .desk } label: {
