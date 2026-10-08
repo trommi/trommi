@@ -594,6 +594,7 @@ export function socketPath(claudePid, env = process.env) {
 const KINDS = {
   chat: 'message', decision: 'answer to a question', info_read: 'info card read', shredded: 'card thrown away',
   decision_reopened: 'answer taken back', handback_withdrawn: 'card taken back', pad: 'pad selection',
+  explain: 'request for an explainer clip',
 }
 const cleanId = v => String(v ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
 const cleanName = v => String(v ?? '').replace(/[^\p{L}\p{N} ._-]/gu, '').replace(/\s+/g, ' ').trim().slice(0, 40)
