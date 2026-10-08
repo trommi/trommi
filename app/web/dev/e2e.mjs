@@ -182,9 +182,9 @@ try {
   // ---- the pile "Artifacts N" at the Desk's foot (Media and Pages in one; the newest pictures and videos fanned); a
   //      click opens /artifacts: both kinds together, the newest first, the filter All · Media · Pages ----
   await A.until("document.querySelector('#desk-stacks > #desk-artifacts .df-card video') && document.querySelector('#desk-artifacts .df-card img')", 'artifacts pile with a picture and a video').then(() => check(true, 'Artifacts pile: in the Desk foot, thumbnails of a picture and a video'), e => check(false, e.message))
-  check(await A.js("return !document.querySelector('#desk-media, #desk-pages') && /^All Artifacts\\s*2/.test(document.querySelector('#desk-artifacts .df-all').textContent.trim()) && document.querySelectorAll('#desk-artifacts .df-card').length === 2"), 'one pile, no Media or Pages pile; it says Artifacts 2')
+  check(await A.js("return !document.querySelector('#desk-media, #desk-pages') && /^All Artifacts\\s*2/.test(document.querySelector('#desk-artifacts .end-link').textContent.trim()) && document.querySelectorAll('#desk-artifacts .df-card').length === 2"), 'one pile, no Media or Pages pile; it says Artifacts 2')
   await A.until("[...document.querySelectorAll('#desk-artifacts img')].some(i => i.complete && i.naturalWidth > 0)", 'the fanned picture decrypted', 15000).then(() => check(true, 'the fanned picture is decrypted and shown'), e => check(false, e.message))
-  await A.js("document.querySelector('#desk-artifacts .df-all').click()")
+  await A.js("document.querySelector('#desk-artifacts .end-link').click()")
   await A.until("location.pathname === '/artifacts' && document.body.dataset.page === 'gallery' && document.querySelectorAll('#artifacts-list .gal-tile').length === 2", 'artifacts with two tiles').then(() => check(true, 'clicking the pile opens /artifacts'), e => check(false, e.message))
   check(await A.js("return [...document.querySelectorAll('#artifacts-list .gal-tile .asset-preview')].every(p => p.querySelector('img, video, svg.asset-glyph'))"), 'artifacts: no empty tile (each has its picture, video or drawn kind)')
   check(await A.js("return [...document.querySelectorAll('#gallery .art-kinds a')].map(a => a.textContent.trim()).join(' · ') === 'All · Media · Pages' && document.querySelector('#gallery .art-kinds a[aria-current]')?.textContent.trim() === 'All' && !!document.querySelector('#artifacts-list .gal-video video') && !!document.querySelector('#artifacts-list .gal-video .gal-play')"), 'artifacts: the filter All · Media · Pages; the video tile has its frame and a play mark')
@@ -381,10 +381,10 @@ try {
   check(await A.js("return !document.querySelector('#desk-stacks [data-pile=off], #desk-stacks [data-stack=off], .off-head') && !!document.querySelector('#desk-stacks #desk-artifacts')"), 'no pile Off the desk at the foot any more; Artifacts stays')
   // more than five: four more questions their session withdraws
   for (let i = 1; i <= 4; i++) await agent.close(await agent.sendCard({ title: `Ende ${i}`, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] }), `zurückgezogen ${i}`)
-  await A.until("document.querySelector('#desk-end .end-show')", 'more than five in the end list')
-  const ends = await A.js("const r = [...document.querySelectorAll('#desk-end .end-row')]; return { all: r.length, shown: r.filter(x => !x.hidden && x.getClientRects().length).length, more: document.querySelector('#desk-end .end-show')?.textContent.trim() ?? null }")
+  await A.until("document.querySelector('#desk-end .end-link')", 'more than five in the end list')
+  const ends = await A.js("const r = [...document.querySelectorAll('#desk-end .end-row')]; return { all: r.length, shown: r.filter(x => !x.hidden && x.getClientRects().length).length, more: document.querySelector('#desk-end .end-link')?.textContent.trim() ?? null }")
   check(ends.all === 5 && ends.shown === 5 && ends.more === 'Show more', `five rows on the Desk (only those are drawn), then Show more (${JSON.stringify(ends)})`)
-  await A.js("document.querySelector('#desk-end .end-show').click()")
+  await A.js("document.querySelector('#desk-end .end-link').click()")
   await A.until(`location.pathname === '/stacks/off' && document.querySelector('#off-end .end-row[data-id="${pile.snooze}"]')`, 'Show more opens the whole list').then(() => check(true, '"Show more" opens the whole list at /stacks/off'), e => check(false, e.message))
   check(await A.js("const l = [...document.querySelectorAll('#off-end .end-row')]; return l.length > 0 && l.every(x => x.querySelector('.end-tick') && x.querySelector('a.end-title')) && l.every(x => !x.hidden) && !!document.querySelector('.off-page .end-search input')"), 'the whole list: each row its mark and title, all shown, with its search')
   // the way back is on the card: a row opens it, its Wake up brings it back to the Desk
