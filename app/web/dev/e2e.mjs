@@ -322,9 +322,9 @@ try {
   check(await A.js(`const o = [...document.querySelectorAll('#desk-end .end-row')].map(r => r.dataset.g), rank = g => (g === 'open' ? 0 : g === 'later' ? 1 : 2); return o.every((x, i) => !i || rank(o[i - 1]) <= rank(x))`), 'the end list: finished first, then Later, then ticked off')
   // more than five: four more questions their session withdraws
   for (let i = 1; i <= 4; i++) await agent.close(await agent.sendCard({ title: `Ende ${i}`, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] }), `zurückgezogen ${i}`)
-  await A.until("document.querySelectorAll('#desk-end .end-row').length >= 7", 'seven or more in the end list')
+  await A.until("document.querySelector('#desk-end .end-show')", 'more than five in the end list')
   const ends = await A.js("const r = [...document.querySelectorAll('#desk-end .end-row')]; return { all: r.length, shown: r.filter(x => !x.hidden && x.getClientRects().length).length, more: document.querySelector('#desk-end .end-show')?.textContent.trim() ?? null }")
-  check(ends.shown === 5 && ends.more === 'Show more', `five rows shown, then Show more (${JSON.stringify(ends)})`)
+  check(ends.all === 5 && ends.shown === 5 && ends.more === 'Show more', `five rows on the Desk (only those are drawn), then Show more (${JSON.stringify(ends)})`)
   // a tick he made can be taken back on the list itself: the ticked box of the archived card unticks it
   await A.js(`${endRow(pile.done, 'done')}.querySelector('button.end-tick.is-ticked').click()`)
   await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick:not(.is-ticked)')`, 'unticked').then(() => check(true, 'a ticked box unticks: back to tick off'), e => check(false, e.message))

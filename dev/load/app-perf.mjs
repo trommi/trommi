@@ -7,6 +7,7 @@
 //
 //   node dev/load/app-perf.mjs --crazy=<dir with crazy.json> --app=http://127.0.0.1:8900 [--runs=5] [--profiles=desktop,phone]
 //        [--test-key=<file>] [--resolve='MAP hub.trommi.com <ip>,MAP app.trommi.com <ip>'] [--out=<file.json>]
+//        [--cpu-prof=<prefix>]   (a CPU profile of the second run's interactions per profile: <prefix>-<profile>.cpuprofile)
 // Needs the command sandbox off (Chromium), like dev/shot.sh.
 import fs from 'node:fs'
 import path from 'node:path'
@@ -19,6 +20,7 @@ const RUNS = Number(arg('runs', 5))
 const PROFILES = arg('profiles', 'desktop,phone').split(',')
 const RESOLVE = arg('resolve', null)
 const OUT = arg('out', path.join(CRAZY, 'app-perf.json'))
+const PROF = arg('cpu-prof', null)
 await useTestKey(arg('test-key', null))
 const info = JSON.parse(fs.readFileSync(path.join(CRAZY, 'crazy.json'), 'utf8'))
 const { client: phone } = await reopen(info.phone_dir)
@@ -83,6 +85,8 @@ async function profile(name, { width, height, throttle }) {
     add('warm reload: navigation -> live', Date.now() - t)
     out.reload_long_tasks = await longs()
     await sleep(500)
+    const profiling = PROF && run === Math.min(1, RUNS - 1)
+    if (profiling) { await page.send('Profiler.enable'); await page.send('Profiler.start') }
     add('Desk render (visit /)', await visit('/'))
     add('open the huge session chat', await visit(`/s/${bigAgent}`))
     const tl = Date.now()
@@ -107,6 +111,7 @@ async function profile(name, { width, height, throttle }) {
     }
     await visit('/')
     add('answer a card on the Desk (click -> row leaves)', await js(`const row = [...document.querySelectorAll('.inbox-row')].find(r => r.querySelector('button[name=key]')); if (!row) return null; const id = row.id; const t = performance.now(); row.querySelector('button[name=key]').click(); while (!(document.getElementById(id)?.inert || !document.getElementById(id)) && performance.now() - t < 10000) await new Promise(r => setTimeout(r, 1)); return performance.now() - t`))
+    if (profiling) { const { profile: p } = await page.send('Profiler.stop'); fs.writeFileSync(`${PROF}-${name}.cpuprofile`, JSON.stringify(p)) }
     add('a stroke through the core (sendStrokes -> echo in the model)', await js(`const c = trommi.client; const k = 'canvas:desk/${info.big_desk}'; const t = performance.now(); const p = c.sendStrokes({ timeline_id: 'desk/${info.big_desk}', strokes: [{ stroke_id: 'p' + Math.random(), points: 'AAgACAAIAAg', style: { tool: 'pen', color: '#222', size: 2 } }] }); const echo = performance.now() - t; await p; return echo`))
     if (run === 0) {
       const tc = Date.now()

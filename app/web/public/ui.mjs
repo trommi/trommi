@@ -1172,11 +1172,18 @@ controller('says', class extends Controller {
 let fitObserver = null
 // (The mark is set in the next frame: set inside the observer, it changes the row the title stands in, and WebKit
 // reports "ResizeObserver loop completed with undelivered notifications" as a page error on every Desk.)
+// (All heights are read first, then all marks set: reading after a write would lay the page out again per row.)
 const fitting = () => (fitObserver ??= new ResizeObserver(entries => requestAnimationFrame(() => {
+  const line = new Map(), marks = []
   for (const { target } of entries) {
-    if (!target.isConnected || !target.clientHeight) continue
-    target.closest('.inbox-row')?.toggleAttribute('data-tall', target.clientHeight > parseFloat(getComputedStyle(target).lineHeight) * 1.5)
+    if (!target.isConnected) continue
+    const h = target.clientHeight
+    if (!h) continue
+    const cls = target.className
+    if (!line.has(cls)) line.set(cls, parseFloat(getComputedStyle(target).lineHeight))
+    marks.push([target.closest('.inbox-row'), h > line.get(cls) * 1.5])
   }
+  for (const [row, tall] of marks) row?.toggleAttribute('data-tall', tall)
 })))
 controller('fit', class extends Controller {
   connect() { fitting().observe(this.element) }
@@ -2815,9 +2822,12 @@ export function pageItems(model, base = '') {
     const agent = here(c.agent)
     if (agent && c.kind !== 'permission') fromAttachments(c.attachments, agent, c.revised ?? c.created ?? 0)
   }
-  for (const msg of state.messages ?? []) {
-    const agent = msg.from === 'agent' ? here(msg.agent) : null
-    if (agent) fromAttachments(msg.attachments, agent, msg.ts ?? 0)
+  // (per session: what it sent with attachments, kept by the board state while its conversation is the same)
+  for (const a of model.everyone ?? []) {
+    const agent = here(a.id)
+    if (!agent) continue
+    const sent = state.filesOf ? state.filesOf(a.id) : (state.messages ?? []).filter(m => m.agent === a.id && m.from === 'agent' && m.attachments?.length)
+    for (const msg of sent) fromAttachments(msg.attachments, agent, msg.ts ?? 0)
   }
   const out = [...by.values()].map(i => (shots.has(i.key) ? { ...i, pic: shots.get(i.key) } : i)).sort((x, y) => y.ts - x.ts)
   pagesKept.set(state, { key, out })

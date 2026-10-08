@@ -210,15 +210,23 @@ function boardModel(state, agents = state.agents, desk = null) {
   const reads = open.filter(c => !c.with_agent && isInfo(c) && mine(c)).sort((a, b) => Number(isKnock(b)) - Number(isKnock(a)) || (b.created ?? 0) - (a.created ?? 0))   // knocks first, then the newest
   const fresh = open.filter(c => !c.with_agent && !isInfo(c))
   const revising = open.filter(c => c.with_agent).sort((a, b) => b.with_agent - a.with_agent)
-  const snoozed = state.cards.filter(c => c.status === 'open' && c.snoozed_until && !shelved.has(c.agent) && mine(c)).sort((a, b) => (b.snoozed_at ?? 0) - (a.snoozed_at ?? 0))
-  // Done rows: what the agents finished and he has not archived yet, the newest first (below the open questions).
-  const landed = state.cards.filter(c => c.landed && !shelved.has(c.agent) && mine(c)).sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0))
-  const answered = state.cards.filter(c => c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)) && mine(c))
-  const shredded = state.cards.filter(c => c.status === 'shredded' && mine(c))
-  const at = c => (c.status === 'shredded' ? c.shredded : c.decided) ?? 0
-  const done = [...answered, ...shredded].sort((a, b) => at(b) - at(a))
-
   const now = Date.now()
+  // One pass over every card (a room holds thousands): Later, the Done rows, what is answered or shredded, and per
+  // session how many of his answers it has not picked up.
+  const snoozed = [], landed = [], done = [], unheardOf = new Map()
+  for (const c of state.cards) {
+    if (!mine(c)) continue
+    if (c.status === 'open' && c.snoozed_until && !shelved.has(c.agent)) snoozed.push(c)
+    // Done rows: what the agents finished and he has not archived yet, the newest first (below the open questions).
+    if (c.landed && !shelved.has(c.agent)) landed.push(c)
+    if (c.status === 'shredded' || (c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)))) done.push(c)
+    if ((c.status === 'open' || c.status === 'decided') && heardOf(c, now)?.late) unheardOf.set(c.agent, (unheardOf.get(c.agent) ?? 0) + 1)
+  }
+  snoozed.sort((a, b) => (b.snoozed_at ?? 0) - (a.snoozed_at ?? 0))
+  landed.sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0))
+  const at = c => (c.status === 'shredded' ? c.shredded : c.decided) ?? 0
+  done.sort((a, b) => at(b) - at(a))
+
   // Per session: what waits on the human, whether it works, whether one of its questions knocks.
   const summary = ids => {
     const mine = fresh.filter(c => ids.has(c.agent))
@@ -241,7 +249,7 @@ function boardModel(state, agents = state.agents, desk = null) {
   for (const u of units) {
     // (a helper runs inside its main's process: it never listens on its own, its main's link says it for both)
     u.link = u.parent ? null : linkOf(u.agent, now)
-    u.unheard = state.cards.filter(c => c.agent === u.id && heardOf(c, now)?.late).length
+    u.unheard = unheardOf.get(u.id) ?? 0
   }
   // (what a helper's agent has not picked up is told once, on its main: the helpers' rows stay calm)
   for (const u of units) if (u.subs) { u.unheard += u.subs.reduce((n, x) => n + x.unheard, 0); for (const x of u.subs) x.unheard = 0 }
@@ -375,6 +383,12 @@ export class BoardState {
     this.client = client
     this.cardCache = new Map()       // object_id -> board card
     this.eventCache = new Map()      // object_id -> [event messages]
+    // The conversations, kept across changes: one session's or one card's is made again only when a change names its
+    // timeline, its cards or the session (update below); a message elsewhere leaves them as they are.
+    this.msgByAgent = new Map()      // board agent id -> [messages]
+    this.msgByCard = new Map()       // object_id -> [messages]
+    this.filesByAgent = new Map()    // board agent id -> [messages from the agent with attachments] (the Pages pile)
+    this.allMsgs = null
     this.state = null
     this.version = 0
   }
@@ -400,6 +414,7 @@ export class BoardState {
     const naming = [...devToAgent].join()
     if (naming !== this.naming) { this.naming = naming; this.cardCache.clear(); this.eventCache.clear() }
     this.devToAgent = devToAgent; this.agentToDev = agentToDev
+    this.forgetMessages(change, m, !this.eventCache.size)
     // Card numbers: the order cards (and permission requests) were first filed in, from 1. Never reused, the same on
     // every device. Sorted again only when a card or request came that was not numbered yet.
     const fresh = !change || !this.numberOf || [...change.cards, ...change.permissions].some(id => !this.numberOf.has(id)) || m.cards.size + m.permissions.size !== this.numberOf.size
@@ -431,12 +446,12 @@ export class BoardState {
     const assetType = t => (t === 'text/html' ? 'html' : t.startsWith('image/') ? 'image' : t.startsWith('video/') ? 'video' : t.startsWith('audio/') ? 'audio' : 'file')
     const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => { const a = p.attachments?.[0]; return { id: p.object_id, agent: devToAgent.get(keyOf(p)), type: assetType(String(a?.media_type ?? '')), title: p.title, note: p.note ?? '', size: a?.total_size ?? 0, att: this.att(a), envelope_number: p.envelope_number, created: p.sent_at ?? 0 } })
     const self = this
-    let messages = null
     const state = {
       cards, queue, agents, tasks, desks, notes, assets, pending: [], hub: {}, speech: false,
-      get messages() { return (messages ??= self.messages(cards)) },
+      get messages() { return (self.allMsgs ??= self.messages(cards)) },
       messagesOf: agent => self.messagesOf(agent),
       messagesOfCard: id => self.messagesOfCard(id),
+      filesOf: agent => self.filesOf(agent),
     }
     this.state = state
     this.version++
@@ -564,6 +579,19 @@ export class BoardState {
       summary: p.permission_state === 'withdrawn' ? 'Answered in the terminal' : p.permission_state === 'expired' ? 'Expired' : '', created: p.sent_at ?? 0, decided: p.verdict ? p.sent_at : null, recommended: null,
     }
   }
+  /** The conversations a change touches are made again (all of them: no change, other members, a published object). */
+  forgetMessages(change, m, all) {
+    if (all || !change || change.members || change.published?.size) { this.msgByAgent.clear(); this.msgByCard.clear(); this.filesByAgent.clear(); this.allMsgs = null; return }
+    const agentOfSession = sid => this.devToAgent.get(sid)
+    const agentOfCard = id => { const c = m.cards.get(id); return c ? this.devToAgent.get(keyOf(c)) : undefined }
+    const drop = agent => { if (agent === undefined) return; this.filesByAgent.delete(agent); if (this.msgByAgent.delete(agent)) this.allMsgs = null }
+    for (const id of change.cards) { drop(agentOfCard(id)); this.msgByCard.delete(id) }
+    for (const sid of change.sessions ?? []) drop(agentOfSession(sid))
+    for (const key of change.timelines) {
+      if (key.startsWith('chat:session/')) drop(agentOfSession(key.slice(13)))
+      else if (key.startsWith('chat:card/')) { const id = key.slice(10); drop(agentOfCard(id)); this.msgByCard.delete(id) }
+    }
+  }
   timeOf(key, n) {
     const t = this.model.timelines.get(key)
     return t?.items.get(n)?.sent_at ?? null
@@ -579,7 +607,7 @@ export class BoardState {
   /** One session's conversation: its cards' events, its chat and its cards' chats (the windows in memory), in
    *  hub order. Built once per state and session. */
   messagesOf(agent) {
-    const st = this.state, cached = st.__byAgent ??= new Map()
+    const st = this.state, cached = this.msgByAgent
     if (cached.has(agent)) return cached.get(agent)
     const m = this.model, dev = this.agentToDev.get(agent)
     const humans = this.humans ??= new Set()
@@ -599,9 +627,21 @@ export class BoardState {
     cached.set(agent, out)
     return out
   }
+  /** What one session sent with attachments (its chat and its cards' chats), without the cards' events: the Pages pile
+   *  reads it for every session, so it never makes every card's events. */
+  filesOf(agent) {
+    if (this.filesByAgent.has(agent)) return this.filesByAgent.get(agent)
+    const m = this.model, dev = this.agentToDev.get(agent), out = []
+    if (!this.humans) { this.humans = new Set(); for (const x of m.members.values()) if (x.device_role === 'human') this.humans.add(x.device_id) }
+    for (const id of m.sessions.get(dev)?.card_ids ?? []) this.itemsOf(m.timelines.get(`chat:card/${id}`), agent, id, out)
+    this.itemsOf(m.timelines.get(`chat:session/${dev}`), agent, null, out)
+    const sent = out.filter(x => x.from === 'agent' && x.attachments?.length)
+    this.filesByAgent.set(agent, sent)
+    return sent
+  }
   /** One card's conversation: its events and its chat window, in hub order. Built once per state and card. */
   messagesOfCard(id) {
-    const st = this.state, cached = st.__byCard ??= new Map()
+    const cached = this.msgByCard
     if (cached.has(id)) return cached.get(id)
     const card = this.byId.get(id), out = []
     if (card && card.kind !== 'permission') {
