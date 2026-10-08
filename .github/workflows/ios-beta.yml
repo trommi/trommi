@@ -93,6 +93,8 @@ jobs:
           [ "$(plist CFBundleIdentifier)" = "$BUNDLE_ID" ] && [ "$(plist CFBundleVersion)" = "$BUILD" ]
           test -d "$app/TrommiApp_TrommiApp.bundle" || { echo "::error::the package's resource bundle is missing"; exit 1; }
           test -d "$app/PlugIns/TrommiShare.appex" || { echo "::error::the Share Extension is missing"; exit 1; }
+          test -d "$app/PlugIns/TrommiNotify.appex" || { echo "::error::the Notification Service Extension is missing"; exit 1; }
+          test -d "$app/PlugIns/TrommiLive.appex" || { echo "::error::the Live Activity widget is missing"; exit 1; }
           codesign -d --entitlements :- "$app" > "$RUNNER_TEMP/entitlements.plist" 2>/dev/null
           /usr/libexec/PlistBuddy -c 'Print :aps-environment' "$RUNNER_TEMP/entitlements.plist"
 

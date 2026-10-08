@@ -26,8 +26,10 @@ targets:
     dependencies:
       - package: TrommiApp
         product: TrommiApp
-      # The Share Extension, embedded in PlugIns/
+      # The app extensions, embedded in PlugIns/
       - target: TrommiShareExtension
+      - target: TrommiNotifyExtension
+      - target: TrommiLiveExtension
     scheme: {}
     settings:
       base:
@@ -68,5 +70,50 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: TrommiShare.entitlements
         INFOPLIST_FILE: ../Share/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+  # The Notification Service Extension (the package's TrommiNotify; Sources/TrommiNotify): the card's title in a push,
+  # decrypted on the phone with the sealed context of the App Group (PushNotify).
+  TrommiNotifyExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: NotifyLink.swift
+    dependencies:
+      - package: TrommiApp
+        product: TrommiNotify
+    settings:
+      base:
+        PRODUCT_NAME: TrommiNotify
+        PRODUCT_MODULE_NAME: TrommiNotifyExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.trommi.ios.notify
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TrommiNotify.entitlements
+        INFOPLIST_FILE: ../Notify/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+  # The Live Activity's widget (the package's TrommiLive; Sources/TrommiLive, its @main WidgetBundle).
+  TrommiLiveExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: LiveLink.swift
+    dependencies:
+      - package: TrommiApp
+        product: TrommiLive
+    settings:
+      base:
+        PRODUCT_NAME: TrommiLive
+        PRODUCT_MODULE_NAME: TrommiLiveExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.trommi.ios.live
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: TrommiLive.entitlements
+        INFOPLIST_FILE: ../Live/Info.plist
         GENERATE_INFOPLIST_FILE: YES
         APPLICATION_EXTENSION_API_ONLY: YES
