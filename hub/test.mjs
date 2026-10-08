@@ -10,7 +10,8 @@ import os from 'node:os'
 import path from 'node:path'
 import * as z from '../shared/crypto/zcrypto.mjs'
 import { createSessionGrant } from '../shared/crypto/session-grants.mjs'
-import { startHub, LIMITS } from './server.mjs'
+// HUB_CMD=<a hub binary>: the same tests against that hub (hub/external.mjs; the Rust hub: hub-rs/README.md).
+const { startHub, LIMITS } = process.env.HUB_CMD ? await import('./external.mjs') : await import('./server.mjs')
 import { open as openApns } from './apns.mjs'
 
 const { ROLE, KIND, hex, utf8, b64u, unb64u } = z
