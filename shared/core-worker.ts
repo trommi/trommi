@@ -20,6 +20,7 @@ const post = (m: FromWorker, transfer: Transferable[] = []) => port.postMessage(
 
 let client: AnyClient | null = null
 let storageOpts: { name: string; prefix: string } = { name: 'trommi', prefix: 'room/' }
+let clientName: string | null = null
 
 /** An error as it travels: its message and every own field (code, status, …), so the page throws the same. */
 export function wireError(e: unknown): WireError {
@@ -36,7 +37,7 @@ function attach(c: AnyClient): void {
   c.on('alert', (a: unknown) => post({ t: 'event', event: 'alert', data: a }))
   c.on('error', (e: unknown) => post({ t: 'event', event: 'error', data: wireError(e) }))
   // A new client behind the proxy (this tab became the writer): the page takes the whole model again.
-  c.on('reset', () => { post({ t: 'snapshot', model: snapshotOf(c.model), extra: extra() }); post({ t: 'event', event: 'reset', data: null }) })
+  c.on('reset', () => { if (clientName && c['hub'] && !c['hub'].client_name) c['hub'].client_name = clientName; post({ t: 'snapshot', model: snapshotOf(c.model), extra: extra() }); post({ t: 'event', event: 'reset', data: null }) })
 }
 
 async function call(method: string, args: unknown[]): Promise<unknown> {
@@ -50,6 +51,8 @@ async function call(method: string, args: unknown[]): Promise<unknown> {
     case 'refreshMembers': return c['serial'](() => c['_refreshMembers']())
     case 'revisions': return c['_revisions']
     case 'storage.close': { await c['storage']?.close?.(); return null }
+    // the app's name for the hub (Trommi-Client), for a room core-start.ts opened before the app knew it
+    case 'configure': { clientName = (args[0] as { client?: string } | undefined)?.client ?? null; if (c['hub']) c['hub'].client_name = clientName; return null }
   }
   if (!CALLS.includes(method)) throw Object.assign(new Error(`not a client call: ${method}`), { code: 'bad-argument' })
   const fn = c[method]
@@ -61,6 +64,7 @@ port.onmessage = async ({ data: m }) => {
   if (m.t === 'open') {
     try {
       storageOpts = m.storage
+      clientName = m.client
       const storage = idbStorage(storageOpts)
       const open = openRoomInTabs as unknown as (o: Record<string, unknown>) => Promise<AnyClient | null>   // (tabs.mjs: not typed yet)
       const c = await open({ storage, makeStorage: () => idbStorage(storageOpts), client: m.client })

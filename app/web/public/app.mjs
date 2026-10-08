@@ -1700,7 +1700,10 @@ const inWorker = () => typeof Worker === 'function' && ses('trommi-core', new UR
 /** The stored room in the core worker: a RemoteClient, null (no room stored), or undefined (no worker here: open it in the page). */
 async function openInWorker() {
   if (!inWorker()) return undefined
-  try { return await (await import('./gen/vendor/remote.mjs')).openRemote({ url: CORE_WORKER, storage: { name: 'trommi', prefix: 'room/' }, client: CLIENT }) }
+  // (core-start.mjs, loaded before this module by index.html, started the worker already: taken over once)
+  const started = globalThis.__trommiCore ?? null
+  globalThis.__trommiCore = null
+  try { return await (await import('./gen/vendor/remote.mjs')).openRemote({ url: CORE_WORKER, storage: { name: 'trommi', prefix: 'room/' }, client: CLIENT, early: started }) }
   catch (err) { if (err?.code !== 'worker-failed' && err?.code !== 'worker-timeout') throw err; console.warn('core worker:', err.message, '(the room opens in the page)'); return undefined }
 }
 
