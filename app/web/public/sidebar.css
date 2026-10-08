@@ -1068,6 +1068,9 @@ html body .topbar #brand-doors .menu-icons .menu-ico { justify-content: center; 
   html body .phone-back { border-radius: 50%; border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent); width: 40px !important; }
   body[data-t-view="session"] #session .t-pick-desk > summary.t-head-more { background: color-mix(in srgb, var(--surface) 42%, transparent); }
   html body { grid-template-rows: 0 minmax(0, 1fr) !important; }
+  /* (the first row is no height now: a page that names no row of its own (the account screens: Log out, an invite's
+     clipboard; the chats) stands in the second, or the empty first row would cut it to its content) */
+  html body > :is(main#room, .chats-page) { grid-column: 1; grid-row: 2; }
   html body > main:not(#session), html body > #room, html body > .chats-page { padding-top: calc(env(safe-area-inset-top, 0px) + 54px) !important; }
   :root.is-demo body > main:not(#session), :root.is-demo body > #room, :root.is-demo body > .chats-page { padding-top: 54px !important; }
   /* a chat: its title line lies under the floating back, title and ⋯; no strip of its own */
