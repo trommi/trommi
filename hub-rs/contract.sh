@@ -1,7 +1,7 @@
 #!/bin/bash
 # hub-rs/contract.sh: the cross-implementation contract against the Rust hub, one line per suite.
 #   hub-rs/contract.sh [--quick]        (from anywhere; builds the release binary first)
-# The Rust tests (crypto vectors, units), then the JS suites with HUB_CMD, interop (all pairs; Swift ones when
+# The Rust tests (crypto vectors, units), then the JS suites with HUB_CMD, the differential run against the Node hub, interop (all pairs; Swift ones when
 # ios/TrommiCore is built), the connector e2e parts, quick fuzz. --quick skips interop, e2e and fuzz.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -26,6 +26,7 @@ run "hub/test.mjs" node hub/test.mjs
 run "hub/ops/test.mjs" node hub/ops/test.mjs
 run "hub/accounts-test" node hub/accounts-test.mjs
 run "hub/admin-test" node hub/admin-test.mjs
+run "hub-diff vs Node" node dev/interop/hub-diff.mjs --a='node hub/server.mjs' --b="$HUB_CMD" --n=3000
 if [ "${1:-}" != "--quick" ]; then
   run "interop (all pairs)" node dev/interop/run.mjs --hub-cmd "$HUB_CMD"
   for p in integration updates hooks monitor keyclaim link; do run "connector e2e $p" node connector/test-e2e.mjs --only "$p"; done
