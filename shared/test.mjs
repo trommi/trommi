@@ -2360,7 +2360,7 @@ await test('perf budget: a new device with 27 sessions logs in and goes live in 
 // round trip), 2.4 s desktop. The round trips on the way to the first paint are the budget: every request here waits
 // RTT_MS, requests side by side overlap, so the time counts the round trips one after another.
 await test('perf budget: email + password login with a snapshot boot: few requests, few round trips, the re-seal in the background', async () => {
-  const { addAccount, loginWithPassword } = await import('./account.mjs')
+  const { addAccount, loginWithPassword } = await import('./account.ts')
   const RTT_MS = 60, MAX_REQUESTS = 22, MAX_ROUND_TRIPS = 10, RESEAL_UPLOAD_MS = 3000
   const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
   phone.options.snapshot = false

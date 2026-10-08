@@ -1,7 +1,7 @@
 // index.mjs: the client core in one import. Browsers and Node alike; Node adds `./storage-file.mjs` itself
 // (it needs node:fs and is not re-exported here). Contract: shared/README.md.
 export { foundRoom, openRoom, joinRoom, recoverRoom, roomLink, parseRoomLink, joinWithRecoveryCode } from './room.mjs'
-// Accounts (email + password, Emergency Kit): import './account.mjs' directly (it carries Argon2 and the word list).
+// Accounts (email + password, Emergency Kit): import './account.ts' directly (it carries Argon2 and the word list).
 export { Client, shareLink, parseShareLink, openShared, membersOf, isHumanRegisterKey, isAgentRegisterKey } from './client.mjs'
 export { agentMethods } from './agent.mjs'
 export { Hub, normaliseHubUrl } from './transport.ts'

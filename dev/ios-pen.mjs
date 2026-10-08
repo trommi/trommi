@@ -34,11 +34,11 @@ fs.writeFileSync(path.join(here, '../ios/TrommiApp/Sources/TrommiApp/Resources/p
 const seeds = ['abc123def456', 'trommi', '0f3a9c2e11b7', 'Web App 3', 'session-x', '5b1e', 'deadbeefcafe', 'helper-ui', 'draw:spiral', 'draw:hatch', 'draw:burst', 'draw:knot']
 const vec = seeds.map(s => ({ seed: s, svg: ui.doodleSvg(s), hue: ui.hueFor({ id: s, mark: s }) }))
 fs.writeFileSync(path.join(here, '../ios/TrommiCore/Tests/TrommiClientTests/Fixtures/pen-vectors.json'), JSON.stringify(vec, null, 1) + '\n')
-// The EFF wordlist of shared/wordlist.mjs as Swift (the Emergency Kit, generated passwords).
-const { WORDS } = await import(path.join(here, '../shared/wordlist.mjs'))
+// The EFF wordlist of shared/wordlist.ts as Swift (the Emergency Kit, generated passwords).
+const { WORDS } = await import(path.join(here, '../shared/wordlist.ts'))
 const lines = []
 for (let i = 0; i < WORDS.length; i += 12) lines.push('  ' + WORDS.slice(i, i + 12).map(w => JSON.stringify(w)).join(', ') + ',')
-fs.writeFileSync(path.join(here, '../ios/TrommiCore/Sources/TrommiClient/Wordlist.swift'), '// Wordlist.swift: the EFF large wordlist (https://www.eff.org/dice, CC BY 3.0 US, Electronic Frontier Foundation) as\n// shared/wordlist.mjs has it (7772 words: the four hyphenated ones left out), for generated passwords and the\n// Emergency Kit. Written by dev/ios-pen.mjs from that file; do not edit.\npublic let WORDS: [String] = [\n' + lines.join('\n') + '\n]\n')
+fs.writeFileSync(path.join(here, '../ios/TrommiCore/Sources/TrommiClient/Wordlist.swift'), '// Wordlist.swift: the EFF large wordlist (https://www.eff.org/dice, CC BY 3.0 US, Electronic Frontier Foundation) as\n// shared/wordlist.ts has it (7772 words: the four hyphenated ones left out), for generated passwords and the\n// Emergency Kit. Written by dev/ios-pen.mjs from that file; do not edit.\npublic let WORDS: [String] = [\n' + lines.join('\n') + '\n]\n')
 // The Scribble Board's sample strokes, for the Swift ink tests.
 fs.copyFileSync(path.join(here, 'interop/fixtures/strokes.json'), path.join(here, '../ios/TrommiCore/Tests/TrommiClientTests/Fixtures/strokes.json'))
 console.log(`${Object.keys(sorted).length} marks, ${vec.length} vectors, ${WORDS.length} words`)

@@ -1,4 +1,4 @@
-// Tests for accounts (hub/accounts.mjs + shared/account.mjs): Argon2 vectors, create account, login on a
+// Tests for accounts (hub/accounts.mjs + shared/account.ts): Argon2 vectors, create account, login on a
 // second device, wrong password, enumeration resistance, rate limits, Emergency Kit + forgot password, password
 // change, email verification, expiry of unconfirmed claims. Real HTTP against hub/server.mjs on a free port.
 // Run: node hub/accounts-test.mjs [name filter]
@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { argon2id } from '../shared/crypto/argon2.mjs'
-import * as A from '../shared/account.mjs'
+import * as A from '../shared/account.ts'
 import { memoryStorage } from '../shared/index.mjs'
 
 const outbox = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-mail-'))

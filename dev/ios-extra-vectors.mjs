@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import * as z from '../shared/crypto/zcrypto.mjs'
 import * as G from '../shared/crypto/session-grants.mjs'
-import { masterKey, passwordKeys, wrapCode, ACCOUNT_KDF } from '../shared/account.mjs'
+import { masterKey, passwordKeys, wrapCode, ACCOUNT_KDF } from '../shared/account.ts'
 import { CHECK_EMOJI } from '../shared/check-emoji.ts'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
