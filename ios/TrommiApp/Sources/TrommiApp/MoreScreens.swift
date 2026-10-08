@@ -345,6 +345,11 @@ struct NoteScreen: View {
     }
     .onChange(of: text) { _, _ in keepSoon() }
     .onDisappear { keep() }
+    // what the share sheet added to the note while this screen was open (ShareImport.swift)
+    .onReceive(NotificationCenter.default.publisher(for: .trommiNoteImported)) { n in
+      guard let id = n.userInfo?["id"] as? String, let t = n.userInfo?["text"] as? String, let f = n.userInfo?["files"] as? [JV] else { return }
+      keepTask?.cancel(); noteId = id; text = t; files = f
+    }
     .sheet(isPresented: $pickingPhotos) { PhotoPicker(limit: 12) { picked in Task { await add(picked) } }.ignoresSafeArea() }
     .sheet(isPresented: $camera) { CameraPicker { data in Task { await add([(data, .jpeg)]) } }.ignoresSafeArea() }
     .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { r in
