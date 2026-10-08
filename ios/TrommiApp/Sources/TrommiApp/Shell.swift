@@ -36,12 +36,12 @@ struct BoardShell: View {
         TabView(selection: Binding(get: { model.tab }, set: { t in
           if t == .note { noteOpen = true } else { noteOpen = false; if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) } }
         })) {
-          Tab(value: BoardModel.Tab.chat) { chats.modifier(NotePanel(open: $noteOpen)) } label: { Image(systemName: "bubble.left.and.bubble.right").accessibilityLabel("Chat") }
+          Tab(value: BoardModel.Tab.chat) { chats.modifier(NotePanel(open: $noteOpen)) } label: { PenImage.of("sketch:bubble", size: 24).accessibilityLabel("Chat") }
           Tab(value: BoardModel.Tab.desk) {
             stack.toolbar(model.selected.isEmpty ? .automatic : .hidden, for: .tabBar).modifier(NotePanel(open: $noteOpen))
           } label: { PenImage.of("sketch:desk", size: 24).accessibilityLabel("Desk") }
           .badge(model.view?.fresh.count ?? 0)
-          Tab(value: BoardModel.Tab.note) { Color.clear } label: { Image(systemName: hasNote ? "note.text" : "note").accessibilityLabel(hasNote ? "Note, written" : "Note") }
+          Tab(value: BoardModel.Tab.note) { Color.clear } label: { PenImage.of("sketch:page", size: 24, dot: hasNote).accessibilityLabel(hasNote ? "Note, written" : "Note") }
         }
         .modifier(TabBarLook())
       }
