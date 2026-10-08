@@ -285,6 +285,8 @@ struct MessageView: View {
       if m.from == "event" {
         let c = m.cardId.flatMap { model.card($0) }
         EventRow(kind: m.kind ?? "asked", about: c?.title ?? m.text, text: eventText(m, c), ts: m.ts, number: c?.number, open: inCard || c == nil ? nil : { model.path.append(.card(c!.id)) })
+      } else if m.contentType == "clip_request" {
+        HStack { Spacer(minLength: 40); Label("Asked for an explainer clip", systemImage: "play.rectangle").font(Face.text(13, .medium)).foregroundStyle(Ink.muted) }
       } else if m.itemState != "loaded" && m.itemState != "pruned" {
         HStack { if m.from == "user" { Spacer(minLength: 40) }; UnsupportedLine(what: "message").frame(maxWidth: 420); if m.from != "user" { Spacer(minLength: 40) } }
       } else if m.from == "user" {

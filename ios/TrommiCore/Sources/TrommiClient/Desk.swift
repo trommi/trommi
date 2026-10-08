@@ -557,7 +557,7 @@ public final class DeskModel {
       let kind = i.contentType ?? "message"
       // a content type of a newer Trommi: a placeholder in its place; strokes and the like belong to a canvas
       let newer = !Compat.CONTENT_TYPES.contains(kind) || i.itemState == "newer_schema"
-      if i.itemState == "loaded" && !newer && kind != "message" && kind != "selection_sent" { continue }
+      if i.itemState == "loaded" && !newer && kind != "message" && kind != "selection_sent" && kind != "clip_request" { continue }
       let human = i.senderDeviceId == me || humans.contains(i.senderDeviceId)
       let c = i.content ?? .obj([:])
       let text: String
