@@ -16,8 +16,10 @@ struct SettingsScreen: View {
     let _ = model.version
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
+        InviteSection()
+        Divider().padding(.vertical, 4)
         Picker("Settings", selection: $tab) {
-          Text("Agents").tag("agents"); Text("Devices").tag("devices"); Text("Account").tag("account")
+          Text("Sessions").tag("agents"); Text("Devices").tag("devices"); Text("Account").tag("account")
         }
         .pickerStyle(.segmented)
         switch tab {
@@ -54,8 +56,6 @@ struct AgentsPane: View {
   @State private var renaming: Agent?
   @State private var name = ""
   @State private var drawingFor: Agent?
-  @State private var inviting = false
-  @State private var label = ""
   var body: some View {
     let agents = model.desk?.agents ?? []
     let connected = agents.filter { $0.online && !$0.archived }.count
@@ -77,17 +77,6 @@ struct AgentsPane: View {
       if !archived.isEmpty {
         DisclosureGroup("Archive (\(archived.count))") { VStack(spacing: 0) { ForEach(archived) { a in agentRow(a) } } }.font(Face.text(15, .medium)).tint(Ink.fg)
       }
-      Divider()
-      VStack(alignment: .leading, spacing: 10) {
-        Text("Invite an agent").font(Face.display(20, .bold))
-        TextField("Name of the session (e.g. Website)", text: $label).font(Face.text(16)).padding(12)
-          .background(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.lineStrong))
-        Button { inviting = true } label: {
-          HStack { PenMark("ui:PLUS", color: Ink.accentFg).frame(width: 18, height: 18); Text("Invite an agent").font(Face.text(16, .semibold)) }
-            .foregroundStyle(Ink.accentFg).padding(.horizontal, 16).padding(.vertical, 11).background(Capsule().fill(Ink.accent))
-        }.buttonStyle(.plain)
-      }
-      .sheet(isPresented: $inviting) { AgentInviteSheet(label: label) }
     }
     .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
       TextField("Name", text: $name)
@@ -130,18 +119,7 @@ struct DevicesPane: View {
     let agents = members.filter { $0.isActive && $0.deviceRole != "human" }
     let gone = members.filter { !$0.isActive }
     VStack(alignment: .leading, spacing: 14) {
-      Text("Add a device").font(Face.display(22, .bold))
-      Button { pairing = true } label: {
-        HStack(spacing: 12) {
-          PenMark("draw:phone", color: Ink.fg).frame(width: 34, height: 34)
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Pair a device").font(Face.text(17, .semibold)).foregroundStyle(Ink.fg)
-            Text("A QR code appears here. The new device scans it, you tap a number. Done.").font(Face.text(14)).foregroundStyle(Ink.muted)
-          }
-          Spacer()
-        }.padding(14).background(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.fg, lineWidth: 1.5))
-      }.buttonStyle(.plain)
-      Text("Your devices").font(Face.display(20, .bold)).padding(.top, 6)
+      Text("Your devices").font(Face.display(20, .bold))
       ForEach(people, id: \.deviceId) { deviceRow($0) }
       Text("Agents").font(Face.display(20, .bold)).padding(.top, 6)
       if agents.isEmpty { Text("No agent yet.").font(Face.text(15)).foregroundStyle(Ink.muted) }
@@ -477,4 +455,69 @@ struct AgentInviteSheet: View {
       catch { self.error = (error as? ZError)?.code == "code-mismatch" ? "They did not match: nobody was added." : model.describe(error); state = "failed" }
     }
   }
+}
+
+
+/** Invite, on top of Settings (his decision, 8 October): a new device by its QR code (blurred until he reveals it: the
+ *  code is a key to the room while it is open), or an agent by its command. */
+struct InviteSection: View {
+  @EnvironmentObject var model: BoardModel
+  @StateObject private var pairing = PairingModel()
+  @State private var revealed = false
+  @State private var agentInvite = false
+  @State private var label = ""
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      Text("Invite").font(Face.display(26, .heavy))
+      Text("A device: it scans this code, both show six emoji, you tap “They match”.").font(Face.text(15)).foregroundStyle(Ink.muted)
+      VStack(spacing: 14) {
+        switch pairing.state {
+        case .open(let link, let until) where revealed:
+          QRCode(text: link).frame(width: 220, height: 220).padding(10).background(RoundedRectangle(cornerRadius: 14).fill(.white))
+          HStack(spacing: 14) {
+            ShareLink(item: link) { Label("Send the link", systemImage: "square.and.arrow.up").font(Face.text(14, .medium)) }
+            Button("Hide") { revealed = false; pairing.cancel() }.font(Face.text(14, .medium))
+          }
+          Text("Waiting for the new device… works once, until \(clockOf(until)).").font(Face.text(13)).foregroundStyle(Ink.muted)
+        case .confirm(let code):
+          Text("A device wants to join. Does it show these six emoji, in this order?").font(Face.text(16, .medium)).multilineTextAlignment(.center)
+          EmojiGrid(code: code)
+          HStack(spacing: 12) {
+            Button { pairing.confirm(false) } label: { Text("They don’t match").font(Face.text(16, .semibold)).frame(maxWidth: .infinity, minHeight: 50) }.buttonStyle(TileStyle(lead: false, hue: 162))
+            Button { pairing.confirm(true) } label: { Text("They match").font(Face.text(16, .semibold)).frame(maxWidth: .infinity, minHeight: 50) }.buttonStyle(TileStyle(lead: true, hue: 162))
+          }
+        case .adding: ProgressView("Adding the device…").padding(20)
+        case .joined(let name):
+          Text("✓ \(name.isEmpty ? "The new device" : name) is in now.").font(Face.display(20, .bold)).foregroundStyle(Ink.accent)
+          Button("Invite another") { revealed = false; pairing.state = .making }.buttonStyle(QuietWay())
+        case .failed(let why):
+          Text(why).font(Face.text(15)).foregroundStyle(Ink.urgCritical).multilineTextAlignment(.center)
+          Button("Try again") { reveal() }.buttonStyle(QuietWay())
+        default:
+          // the code, blurred: a drawn QR stand-in until he reveals the real one
+          Button(action: reveal) {
+            ZStack {
+              QRCode(text: "https://app.trommi.com/join#v1.stand-in-for-the-blur").frame(width: 220, height: 220).padding(10)
+                .background(RoundedRectangle(cornerRadius: 14).fill(.white)).blur(radius: 9).opacity(0.75)
+              if revealed { ProgressView() } else {
+                Label("Show the code", systemImage: "eye").font(Face.text(16, .semibold)).foregroundStyle(Ink.fg)
+                  .padding(.horizontal, 16).padding(.vertical, 10).glass(Capsule(), interactive: true)
+              }
+            }
+          }.buttonStyle(.plain).accessibilityLabel("Show the pairing code")
+        }
+      }.frame(maxWidth: .infinity)
+      HStack(spacing: 10) {
+        TextField("Name of the session (e.g. Website)", text: $label).font(Face.text(15)).padding(10)
+          .background(RoundedRectangle(cornerRadius: 10).strokeBorder(Ink.lineStrong))
+        Button { agentInvite = true } label: {
+          HStack(spacing: 6) { PenMark("ui:PLUS", color: Ink.accentFg).frame(width: 16, height: 16); Text("An agent").font(Face.text(15, .semibold)) }
+            .foregroundStyle(Ink.accentFg).padding(.horizontal, 14).padding(.vertical, 10).background(Capsule().fill(Ink.accent))
+        }.buttonStyle(.plain)
+      }
+    }
+    .sheet(isPresented: $agentInvite) { AgentInviteSheet(label: label) }
+    .onDisappear { pairing.cancel() }
+  }
+  private func reveal() { revealed = true; pairing.start(model.room) }
 }

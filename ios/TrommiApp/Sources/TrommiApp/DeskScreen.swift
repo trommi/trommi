@@ -15,6 +15,7 @@ let DICE = Double.random(in: 0..<1)
 
 struct DeskScreen: View {
   @EnvironmentObject var model: BoardModel
+  @Environment(\.horizontalSizeClass) private var hSize
   @State private var duckAsk = false
   var body: some View {
     let _ = model.version
@@ -62,7 +63,7 @@ struct DeskScreen: View {
     .toolbar {
 
       ToolbarItem(placement: .principal) { DeskTitle() }
-      ToolbarItem(placement: .topBarTrailing) { NoteButton() }
+      ToolbarItem(placement: .topBarTrailing) { if hSize == .regular { NoteButton() } }
     }
     .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }
   }
