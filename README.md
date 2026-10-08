@@ -304,11 +304,36 @@ Three version numbers, independent of each other:
 | Format version byte | first byte of every signed structure (`shared/crypto/FORMAT.md`) | every client (the hub checks headers only) |
 | `schema_version` | inside the encrypted body | app and connector only |
 
-- `GET /v1/version` (public) → `{ protocol_versions_supported: [1], minimum_client_versions: { app?, connector?, ios? }, recommended_client_versions: { … }, message? }`, from `HUB_MIN_APP`, `HUB_MIN_CONNECTOR`, `HUB_MIN_IOS`, `HUB_RECOMMENDED_APP|CHANNEL|IOS`, `HUB_UPGRADE_MESSAGE`. A kind without a minimum is not checked.
+- `GET /v1/version` (public) → `{ protocol_versions_supported: [1], minimum_client_versions: { app?, connector?, ios? }, recommended_client_versions: { … }, write_format_versions: { envelope, schema }, message? }`, from `HUB_MIN_APP`, `HUB_MIN_CONNECTOR`, `HUB_MIN_IOS`, `HUB_RECOMMENDED_APP|CONNECTOR|IOS`, `HUB_WRITE_ENVELOPE_VERSION`, `HUB_WRITE_SCHEMA_VERSION` (default 1), `HUB_UPGRADE_MESSAGE`. A kind without a minimum is not checked.
 - A client below the minimum of its kind gets `426 { error: "client-too-old", minimum_version, message }` on **every** route. An open stream of a client that becomes too old while connected (minimum raised at run time) gets `event: upgrade_required` `{ minimum_version, message }` and is closed. A request without `Trommi-Client` is served for now (counted in the log once a minute); a later protocol version may require it.
 - `Trommi-Protocol` naming a version the hub does not speak → `400 bad-version` with the versions it does speak.
-- **The rule for every reader** (hub, app, connector): ignore unknown optional fields; refuse unknown *required* versions (format byte, protocol, a higher `schema_version`) with a clear message ("needs a newer app"), never guess.
+- **The rule for every reader** (hub, app, connector, iOS): ignore unknown optional fields; never guess at unknown *required* versions or kinds: "Versioning and compatibility" below.
 - **A v2 migration** would run like this: the hub serves `/v1` and `/v2` side by side and lists `[1, 2]`; clients that know v2 switch, `minimum_client_versions` rises in steps while the share of old clients (log, metrics) falls; when it is zero or the window (announced in `message`) ends, the hub drops v1. Stored data never needs a big-bang rewrite: rows keep their format byte, and new rows get the new one.
+
+### Versioning and compatibility
+
+Every client meets data written by a newer one sooner or later (an agent's connector, the app, the iOS app update at different times). The rules, the same in `shared/` (`codec.mjs`, `model.mjs`), the connector and `ios/TrommiCore` (`Compat.swift`):
+
+- **Unknown fields** are ignored, and kept where a body is written again (notes, registers: a version from an older client keeps what it does not know).
+- **Unknown kinds** (an envelope kind 8–255, an `object_type`, `card_type`, `content_type`, `answer_action` or timeline kind this version does not know, or a body with a higher `schema_version`) are **verified like everything else** (signature, chain, seen: FORMAT.md section 9, "Kinds a reader does not know"), so they never break a sender's chain, and are **never applied as something they are not**. They are counted in `model.newer` and shown as a placeholder in their place: a card `unsupported` (its title, "This needs a newer version of Trommi", nothing to answer), a chat item `item_state: 'unsupported' | 'newer_schema'`, a note `unsupported`; an answer of a newer action or schema counts by its signed header (answered/closed). The app shows once a calm line with **Reload** (which fetches the new build); the connector tells the agent with a channel event `kind="unsupported"` (`update_required="1"`) instead of guessing; iOS: `Item.of(...)` → `.unsupported(kind:)`.
+- **Writes that need a newer format** are refused locally with `needs-update` (answering an unsupported card, editing an unsupported note, an agent revising a card it cannot read).
+- **A newer format version byte** is `newer-version`, not `bad-version`: a newer body is quarantined (the item shows the placeholder); a newer header cannot be verified at all, so it must never appear before every member reads it (below).
+
+Rules for changes:
+
+| Change | How |
+| --- | --- |
+| New optional field | Just add it. Old readers ignore it (and keep it on re-write). |
+| New value of a kind field (`card_type`, `content_type`, `answer_action`, object type, timeline kind) | Add it; old clients show the placeholder. Raise `HUB_RECOMMENDED_*` so they get the quiet "update available". |
+| Rename or change the meaning of a field | Write the new field, keep writing and reading the old one until `HUB_MIN_*` is past every client that only reads the old one; then drop it. |
+| New envelope kind | Define it within the reader rule of FORMAT.md section 9 (no timeline block, object block by flag); deploy the hub first (it refuses kinds it does not know), then the clients. |
+| Breaking change of a body | Bump `schema_version` (codec `SCHEMA_VERSION`). Readers accept 1..N. Writers write `min(own, write_format_versions.schema)` from `GET /v1/version`; raise `HUB_WRITE_SCHEMA_VERSION` only after `HUB_MIN_*` made every client one that reads N. |
+| New envelope/header format | The same with the format version byte and `HUB_WRITE_ENVELOPE_VERSION`; an old reader cannot verify a newer header at all, so the minimum must come first. |
+| New hub protocol | `Trommi-Protocol` and `/v2` routes side by side (above). |
+
+Raising the minimum on the server: set `HUB_MIN_APP`, `HUB_MIN_CONNECTOR`, `HUB_MIN_IOS` (and `HUB_UPGRADE_MESSAGE`) in the hub's environment (`/srv/trommi`) and restart it; clients already connected learn it on their next request (426). At run time `ops.updateVersions` (hub/ops/index.mjs; no admin control yet) also ends the open streams of clients now too old (`upgrade_required`). Each client sends its own version: the app `APP_VERSION` in `app/web/public/app.mjs`, the connector `CLIENT` in `connector/connector.mjs`, iOS `HubClient.clientName`; raise it with every release that changes what it sends or understands.
+
+What each client shows when it is too old (426 `client-too-old` or `upgrade_required`): the app a calm line "Please reload: this app needs a newer version." with **Reload** (asks the service worker for the new build, then reloads); the connector stops (`phase: too-old`) and tells the agent to update the plugin (or `git pull`) and reconnect; iOS `HubVersionInfo.verdict` → `.updateRequired` (the please-update screen), `.updateAvailable` for a recommended version. The app also offers a quiet Reload when `recommended_client_versions.app` is newer than it.
 
 ### Errors
 
