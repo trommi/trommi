@@ -3,11 +3,12 @@
 // marketplace, as the app serves them (app/web/worker.js, from the R2 bucket that dev/deploy/connector.sh fills).
 // Nothing of this is committed.
 //
-//   node connector-rs/build-plugin.mjs [dir] [--targets x86_64-unknown-linux-musl,aarch64-unknown-linux-musl]
-//                                            [--no-build] [--app https://app.trommi.com]
+//   node connector-rs/build-plugin.mjs [dir] [--targets <t>,<t>,…] [--no-build] [--app https://app.trommi.com]
 //
-// For every target: `cargo build --release --target <t>` (static: musl on Linux), then into dir (default
-// connector-rs/dist), each file at its address under the app:
+// Targets (default all four): x86_64-unknown-linux-musl, aarch64-unknown-linux-musl (static, `cargo build` with
+// rust-lld and clang), aarch64-apple-darwin, x86_64-apple-darwin (`cargo zigbuild` with zig as linker, no Apple SDK:
+// the macOS keychain goes through /usr/bin/security, so nothing links an Apple framework; macOS 11 and newer). Each
+// built into dir (default connector-rs/dist), each file at its address under the app:
 //
 //   connector/<sha256>/trommi-connector-<target>    the binary, named by its content (what connect.sh downloads)
 //   connector/<sha256>/trommi-connector-<target>.sig
@@ -22,8 +23,8 @@
 //       and the binaries.
 //
 // The files named by their content never change; the .sha256 files and marketplace.json point at the newest.
-// macOS: no build here (the keychain crate needs Apple's SDK). On a Mac, `cargo build --release --target
-// aarch64-apple-darwin`, then --targets with it and --no-build; see connector-rs/README.md.
+// macOS needs cargo-zigbuild (`cargo install --locked cargo-zigbuild`) and zig 0.14 (ZIG, else `zig` on PATH, else
+// the newest under ~/.local/share/mise/installs/zig; `mise install zig@0.14.1`); see connector-rs/README.md.
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
@@ -35,7 +36,9 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const argv = process.argv.slice(2)
 const opt = name => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : null }
 const out = path.resolve(argv.find((a, i) => !a.startsWith('--') && !argv[i - 1]?.startsWith('--')) ?? path.join(here, 'dist'))
-const TARGETS = (opt('--targets') ?? 'x86_64-unknown-linux-musl,aarch64-unknown-linux-musl').split(',')
+export const ALL_TARGETS = ['x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl', 'aarch64-apple-darwin', 'x86_64-apple-darwin']
+const TARGETS = opt('--targets')?.split(',') ?? ALL_TARGETS
+const MACOS_MIN = '11.0'
 const APP = opt('--app') ?? 'https://app.trommi.com'
 const CARGO = process.env.CARGO ?? path.join(process.env.HOME, '.cargo/bin/cargo')
 export const sha256 = b => crypto.createHash('sha256').update(b).digest('hex')
@@ -135,7 +138,44 @@ function build(target) {
     env[`CARGO_TARGET_${target.toUpperCase().replace(/-/g, '_')}_LINKER`] ??= 'rust-lld'
     env[`CC_${target.replace(/-/g, '_')}`] ??= `clang --target=${target.replace('-unknown-', '-')}`
   }
+  if (target.endsWith('-apple-darwin')) {
+    env.MACOSX_DEPLOYMENT_TARGET = MACOS_MIN
+    env.CARGO_ZIGBUILD_ZIG_PATH = zigShim()
+    execFileSync(CARGO, ['zigbuild', '--release', '--target', target], { cwd: here, env, stdio: 'inherit' })
+    return
+  }
   execFileSync(CARGO, ['build', '--release', '--target', target], { cwd: here, env, stdio: 'inherit' })
+}
+
+/** zig for macOS links: ZIG, a `zig` on PATH that answers, or the newest zig mise installed. */
+function findZig() {
+  if (process.env.ZIG) return process.env.ZIG
+  const mise = path.join(process.env.HOME, '.local/share/mise/installs/zig')
+  const installed = fs.existsSync(mise) ? fs.readdirSync(mise).filter(x => /^\d+\.\d+\.\d+$/.test(x)).sort((a, b) => b.localeCompare(a, 'en', { numeric: true })) : []
+  const candidates = [...(process.env.PATH ?? '').split(':').filter(Boolean).map(d => path.join(d, 'zig')), ...installed.map(v => path.join(mise, v, 'zig'))]
+  for (const z of candidates) {
+    try { if (/^\d+\.\d+/.test(execFileSync(z, ['version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))) return z } catch {}
+  }
+  throw new Error('no zig for the macOS targets (ZIG=<path>, or `mise install zig@0.14.1`)')
+}
+
+/**
+ * A zig that puts the deployment target into cargo-zigbuild's `<arch>-macos-none` (zig ignores
+ * MACOSX_DEPLOYMENT_TARGET and -mmacosx-version-min and would stamp its own minimum, macOS 13).
+ */
+export const zigShimScript = (zig, min) => `#!/bin/sh
+for a do
+  shift
+  case "$a" in *-macos-none) a="\${a%-macos-none}-macos.${min}-none" ;; esac
+  set -- "$@" "$a"
+done
+exec '${zig.replace(/'/g, "'\\''")}' "$@"
+`
+function zigShim() {
+  const file = path.join(here, 'target', 'zig-macos', 'zig')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, zigShimScript(findZig(), MACOS_MIN), { mode: 0o755 })
+  return file
 }
 
 /**
