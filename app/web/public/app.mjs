@@ -14,8 +14,8 @@ import { rowSheet } from './desk.mjs'
 // so a later navigation finds them in memory.
 const VIEWS = [desk, sidebar, notes]
 const LAZY = {
-  auth: { load: () => import('./auth.mjs'), paths: /^\/(?:settings\/(?:devices|account)|devices\/|pair|logout|join|login)(?:\/|$)/ },
-  agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings(?:\/agents)?$|sessions\/)/ },
+  auth: { load: () => import('./auth.mjs'), paths: /^\/(?:settings(?:\/(?:devices|account|theme|keys|kit|password))?|devices\/|pair|logout|join|login)(?:\/|$)/ },
+  agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings\/(?:sessions|agents)$|sessions\/)/ },
   card: { load: () => import('./card.mjs'), paths: /^(?:\/s\/[^/]+)?\/card\/|^\/cards\/[0-9a-f]+\// },
   session: { load: () => import('./session.mjs'), paths: /^\/s\// },
   media: { load: () => import('./media.mjs'), paths: /^\/artifacts(?:\/|$)/ },
