@@ -24,14 +24,14 @@ struct BoardShell: View {
       } else {
         // iPhone (his pick "both", 8 October): the bottom bar, Menu · Desk · Waiting; no sidebar
         ZStack(alignment: .bottom) {
-          stack.safeAreaInset(edge: .bottom) { Color.clear.frame(height: 64) }
+          stack.safeAreaInset(edge: .bottom) { Color.clear.frame(height: 58) }
           if model.panel != nil {
             Color.black.opacity(0.28).ignoresSafeArea()
               .onTapGesture { withAnimation(.snappy) { model.panel = nil } }
               .transition(.opacity)
-            BarPanel().padding(.horizontal, 12).padding(.bottom, 84).transition(.move(edge: .bottom).combined(with: .opacity))
+            BarPanel().padding(.horizontal, 12).padding(.bottom, 74).transition(.move(edge: .bottom).combined(with: .opacity))
           }
-          BottomBar().padding(.horizontal, 16).padding(.bottom, 4)
+          BottomBar().padding(.bottom, 2)
         }
       }
     }
@@ -60,7 +60,7 @@ struct BoardShell: View {
   }
 }
 
-/** The bar at the bottom of the iPhone: Menu (desks, sessions, places), Desk (back to it), Waiting (what waits, the count; red when one knocks). */
+/** The compact bar at the bottom of the iPhone: Menu (desks, sessions, places), Desk (with what waits as a badge, red when one knocks), Note (the slip to the crowned session). */
 struct BottomBar: View {
   @EnvironmentObject var model: BoardModel
   var body: some View {
@@ -68,30 +68,35 @@ struct BottomBar: View {
     let v = model.view
     let n = v?.fresh.count ?? 0
     let knocks = (v?.knocking ?? 0) > 0
-    HStack(spacing: 0) {
-      item("Menu", on: model.panel == .menu) { PenMark("draw:grid", color: Ink.fg).frame(width: 24, height: 24) } action: { toggle(.menu) }
-      item("Desk", on: model.panel == nil && model.path.isEmpty) { PenMark("sketch:desk", color: Ink.fg).frame(width: 26, height: 26) } action: {
-        withAnimation(.snappy) { model.panel = nil; model.path = [] }
-      }
-      item("Waiting", on: model.panel == .waiting) {
-        Sketch("tray", color: Ink.fg).frame(width: 26, height: 26)
+    let hasNote = !(model.desk?.notes.filter { $0.held.isNull }.isEmpty ?? true)
+    HStack(spacing: 4) {
+      item("Menu", on: model.panel == .menu) { PenMark("draw:grid", color: Ink.fg).frame(width: 22, height: 22) } action: { toggle(.menu) }
+      item("Desk", on: model.panel == nil && model.path.isEmpty && !noteOpen) {
+        PenMark("sketch:desk", color: Ink.fg).frame(width: 24, height: 24)
           .overlay(alignment: .topTrailing) {
             if n > 0 {
               Text("\(n)").font(Face.text(11, .bold)).foregroundStyle(.white).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18)
-                .background(Capsule().fill(knocks ? Ink.urgCritical : Ink.fg)).offset(x: 12, y: -8)
+                .background(Capsule().fill(knocks ? Ink.urgCritical : Ink.fg)).offset(x: 13, y: -8)
             }
           }
-      } action: { toggle(.waiting) }
+      } action: { withAnimation(.snappy) { model.panel = nil; model.path = [] } }
+      .accessibilityLabel(n > 0 ? "Desk, \(n) waiting" : "Desk")
+      item("Note", on: noteOpen) {
+        PenMark("sidebar:NOTE_ICON").frame(width: 26, height: 26).opacity(hasNote ? 1 : 0.85)
+      } action: { withAnimation(.snappy) { model.panel = nil }; noteOpen = true }
     }
-    .padding(6)
+    .padding(5)
     .glass(Capsule(), interactive: true)
+    .fixedSize()
     .accessibilityElement(children: .contain)
+    .sheet(isPresented: $noteOpen) { NoteSheet().presentationDetents([.medium, .large]) }
   }
+  @State private var noteOpen = false
   private func toggle(_ p: BoardModel.Panel) { withAnimation(.snappy) { model.panel = model.panel == p ? nil : p } }
   private func item<I: View>(_ word: String, on: Bool, @ViewBuilder icon: () -> I, action: @escaping () -> Void) -> some View {
     Button(action: action) {
-      VStack(spacing: 2) { icon(); Text(word).font(Face.text(12, .medium)).foregroundStyle(Ink.fg) }
-        .frame(maxWidth: .infinity, minHeight: 52)
+      VStack(spacing: 1) { icon(); Text(word).font(Face.text(11, .medium)).foregroundStyle(Ink.fg) }
+        .frame(width: 68, height: 50)
         .background(Capsule().fill(on ? Ink.fg.opacity(0.08) : .clear))
         .contentShape(Rectangle())
     }
@@ -359,7 +364,6 @@ struct Sidebar: View {
       Button { go(.scribble) } label: { Label("Scribble Board", systemImage: "scribble.variable") }
       Button { go(.media) } label: { Label("Media", systemImage: "photo.on.rectangle") }
       Button { go(.pages) } label: { Label("Pages", systemImage: "doc.richtext") }
-      Link(destination: URL(string: "https://app.trommi.com/help.html")!) { Label("Help", systemImage: "questionmark.circle") }
       Picker("Theme", selection: $model.theme) { ForEach(ThemeMode.allCases) { Text($0.word).tag($0) } }
       Button { go(.settings("account")) } label: { Label("Log out…", systemImage: "rectangle.portrait.and.arrow.right") }
     } label: {
