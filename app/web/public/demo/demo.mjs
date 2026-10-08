@@ -808,19 +808,17 @@ function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 5
 // open, the selection, a toast, empty…) that switch the same pair of frames in place. [title, path, states], a state
 // [label, path?, state?, mock?] (path: another address of the same screen; state: demoState's click; mock: a demo room).
 const SCREENS = [
-  ['Desk', '/', [['With the selection bar', '', 'select'], ['Duck for all: the confirm', '', 'duck'], ['A toast with Undo', '', 'toast'], ['The end list and the piles', '', 'bottom'], ['Trommi menu open', '', 'menu'], ['A desk alone (filter)', '/?desk=test'], ['Sidebar folded to the rail', '', 'rail'], ['Rail: the desk words', '', 'switch'], ['Phone drawer open', '', 'drawer'], ['Keys sheet', '', 'keys'], ['Corner note open', '', 'note'], ['Empty, full piles', '', '', 'foot'], ['Quiet desk', '', '', 'quiet']]],
+  ['Desk', '/', [['With the selection bar', '', 'select'], ['Duck for all: the confirm', '', 'duck'], ['A toast with Undo', '', 'toast'], ['The end list and the piles', '', 'bottom'], ['Trommi menu open', '', 'menu'], ['A desk alone (filter)', '/?desk=test'], ['Waiting (phone tab)', '', 'waiting'], ['Keys sheet', '', 'keys'], ['Corner note open', '', 'note'], ['Empty, full piles', '', '', 'foot'], ['Quiet desk', '', '', 'quiet']]],
   ['Card page', '/card/30', [['Long card', '/card/31'], ['Long card, scrolled inside', '/card/31', 'inside'], ['The strip (card scrolled away)', '/card/31', 'strip'], ['Yes or no', '/card/46'], ['Several answers', '/card/11'], ['Info card', '/card/19'], ['Answered', '/card/1'], ['With the agent', '/card/1', 'with-agent'], ['Finished by its agent', '/card/34'], ['More menu open', '', 'more']]],
   ['Full screen', '/card/31/picture/1', [['A video', '/card/31/picture/9']]],
   ['Blitz', '/blitz', []],
   ['Session', '/s/trommi', [['Three-dot menu open', '', 'session-more'], ['Questions only', '/s/trommi?only=questions'], ['Files', '/s/trommi/files'], ['A helper', '/s/trommi-ui']]],
-  ['Settings', '/settings/agents', [['Devices', '/settings/devices'], ['Pairing a device', '/settings/devices', 'pair'], ['Account', '/settings/account']]],
-  ['Invite clipboard', '/', [['Emoji compare', '/s/trommi', 'invite-emoji'], ['Link run out', '', 'invite-ended']], 'invite'],
+  ['Settings', '/settings/agents', [['Invite an agent', '', 'invite'], ['Emoji compare', '/s/trommi', 'invite-emoji'], ['Link run out', '', 'invite-ended'], ['Pairing a device', '', 'pair'], ['Devices', '/settings/devices'], ['Account', '/settings/account']]],
   ['Media', '/assets', []],
   ['Pages', '/pages', [['Share open', '', 'share']]],
   ['Off the desk', '/stacks/off', []],
   ['Scribble Board', '/scribble-board', [['Its keys', '', 'board-help']]],
   ['Log out', '/logout', []],
-  ['Help page', '/help.html', []],
 ]
 const frameSrc = (path, state, mock = '1') => `${path}${path.includes('?') ? '&' : '?'}mock=${mock || '1'}${state ? `&state=${state}` : ''}`
 export function screensMain() {
@@ -828,17 +826,19 @@ export function screensMain() {
   const screen = ([title, path, states, first = '']) => {
     const all = [['As it is', path, first], ...states.map(([label, p, st, mock]) => [label, p || path, st ?? '', mock])]
     const src = frameSrc(path, first)
-    return `<figure class="scr-item" data-states='${JSON.stringify(all.map(([label, p, st, mock]) => ({ label, src: frameSrc(p, st, mock) }))).replace(/'/g, '&#39;')}'><figcaption><a href="${src}" target="_blank" rel="noopener" class="scr-title">${title}</a> <code>${path}</code></figcaption>${states.length ? `<div class="scr-states" role="group" aria-label="${title}: states">${all.map(([label], i) => `<button type="button" class="scr-state" data-action="screens#state" data-at="${i}"${i ? '' : ' aria-pressed="true"'}>${label}</button>`).join('')}</div>` : ''}<div class="scr-pair"><div class="scr-box is-wide"><iframe data-src="${src}" title="${title}, desktop" loading="lazy" width="1440" height="900"></iframe></div><div class="scr-box is-phone"><iframe data-src="${src}" title="${title}, phone" loading="lazy" width="390" height="844"></iframe></div></div></figure>`
+    const list = states.length ? `<div class="scr-states" role="group" aria-label="${title}: states">${all.map(([label], i) => `<button type="button" class="scr-state" data-action="screens#state" data-at="${i}"${i ? '' : ' aria-pressed="true"'}>${label}</button>`).join('')}</div>` : ''
+    return `<figure class="scr-item" data-states='${JSON.stringify(all.map(([label, p, st, mock]) => ({ label, src: frameSrc(p, st, mock) }))).replace(/'/g, '&#39;')}'><figcaption><a href="${src}" target="_blank" rel="noopener" class="scr-title">${title}</a> <code>${path}</code></figcaption><div class="scr-row"><div class="scr-pair"><div class="scr-box is-wide"><iframe data-src="${src}" title="${title}, desktop" loading="lazy" width="1440" height="900"></iframe></div><div class="scr-box is-phone"><iframe data-src="${src}" title="${title}, phone" loading="lazy" width="390" height="844"></iframe></div></div>${list}</div></figure>`
   }
   return `<main id="screens" class="scr-page" data-controller="screens"><style>
 .scr-page{grid-column:1/-1;overflow-y:auto;height:100%;padding:24px 32px 80px;background:var(--bg);color:var(--fg)}
 .scr-head{display:flex;align-items:center;gap:16px;margin-bottom:8px}.scr-head h1{font:800 2rem/1.1 var(--display);margin:0}
 .scr-head p{margin:0;color:var(--muted)}.scr-theme.is-tour{margin-left:auto;background:var(--fg);color:var(--bg)}.scr-theme{min-height:36px;padding:0 14px;border:1.6px solid var(--fg);border-radius:9px 12px 8px 13px/12px 8px 13px 9px;background:var(--surface);color:var(--fg);font:700 var(--t-sm)/1 var(--font);cursor:pointer}
 .scr-page h2{font:800 1.4rem/1.2 var(--display);margin:32px 0 12px;padding-top:12px;border-top:1px dashed var(--line-strong)}
-.scr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(620px,1fr));gap:24px 28px}
+.scr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(840px,1fr));gap:24px 28px}
+.scr-row{display:flex;gap:16px;align-items:flex-start}
 .scr-item{margin:0}.scr-item figcaption{display:flex;gap:10px;align-items:baseline;margin-bottom:6px;font:600 var(--t-sm)/1.3 var(--font)}
 .scr-item figcaption a{color:var(--fg)}.scr-item code{font:500 var(--t-xs)/1 var(--mono);color:var(--muted)}
-.scr-states{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}.scr-state{min-height:26px;padding:0 9px;border:0;border-radius:8px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line-strong);color:var(--muted);font:600 var(--t-xs)/1 var(--font);cursor:pointer}.scr-state[aria-pressed="true"]{background:var(--fg);color:var(--bg);box-shadow:none}
+.scr-states{display:flex;flex-direction:column;align-items:stretch;gap:4px;width:190px;margin:0}.scr-state{min-height:26px;padding:0 9px;border:0;border-radius:8px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line-strong);color:var(--muted);font:600 var(--t-xs)/1 var(--font);cursor:pointer}.scr-state[aria-pressed="true"]{background:var(--fg);color:var(--bg);box-shadow:none}
 .scr-item{padding-top:14px;border-top:1px dashed var(--line-strong)}.scr-item .scr-title{font:800 1.2rem/1.2 var(--display)}
 .scr-pair{display:flex;gap:12px;align-items:flex-start}
 .scr-box{position:relative;flex:none;overflow:hidden;border:1.5px solid var(--fg);border-radius:8px;background:var(--surface);box-shadow:0 8px 18px -12px rgb(20 30 25/.4)}
@@ -874,7 +874,23 @@ export function screensController({ Controller, controller }) {
     state(e) {
       const b = e.currentTarget, item = b.closest('.scr-item'), st = JSON.parse(item.dataset.states)[Number(b.dataset.at)]
       for (const x of item.querySelectorAll('.scr-state')) x.setAttribute('aria-pressed', String(x === b))
-      for (const f of item.querySelectorAll('iframe')) { this.io.unobserve(f); f.dataset.src = st.src; f.src = st.src; f.addEventListener('load', () => this.paint(f), { once: true }) }
+      const url = new URL(st.src, location.origin), q = url.searchParams, mock = q.get('mock') || '1', name = q.get('state') || ''
+      q.delete('mock'); q.delete('state')
+      const path = url.pathname + (q.toString() ? `?${q}` : '')
+      const t0 = performance.now()
+      for (const f of item.querySelectorAll('iframe')) {
+        const w = f.contentWindow, app = f.src && (() => { try { return w.trommi } catch { return null } })()
+        if (app?.router?.forget && (f.dataset.mock || '1') === mock) {
+          // the same demo room: the frame's own router paints the page anew and its click is made in place (no reload)
+          f.dataset.src = st.src
+          try { w.document.querySelectorAll('#says-host > *').forEach(n => n.remove()) } catch {}
+          app.router.forget()
+          Promise.resolve(app.router.visit(path, { action: 'replace' })).then(() => app.demoState?.(name, { now: true })).then(() => { item.dataset.took = String(Math.round(performance.now() - t0)); this.paint(f) })
+        } else {
+          this.io.unobserve(f); f.dataset.src = st.src; f.dataset.mock = mock; f.src = st.src
+          f.addEventListener('load', () => { this.paint(f); item.dataset.took = String(Math.round(performance.now() - t0)) }, { once: true })
+        }
+      }
       item.querySelector('.scr-title').href = st.src
     }
     // Load every frame now (for scrolling through all of them)
@@ -953,9 +969,10 @@ export function screensController({ Controller, controller }) {
 }
 
 /** ?state=<name> on a demo page: the click a state needs, done once the page is in (only in the demo). */
-export async function demoState(name) {
-  const $ = s => document.querySelector(s), wait = ms => new Promise(r => setTimeout(r, ms)), click = s => $(s)?.click()
-  await wait(500)
+export async function demoState(name, { now = false } = {}) {
+  const $ = s => document.querySelector(s), wait = ms => new Promise(r => setTimeout(r, ms)), click = s => { const el = $(s); el?.click(); return Boolean(el) }
+  if (!name) return
+  await wait(now ? 60 : 500)
   const S = {
     select: async () => { for (const b of [...document.querySelectorAll('#desk-list .inbox-row .row-mark')].slice(1, 3)) { b.click(); await wait(150) } },
     duck: () => click('.desk-duck-open'),
@@ -964,7 +981,7 @@ export async function demoState(name) {
     menu: () => click('#brand-menu'),
     switch: async () => { document.documentElement.dataset.rail = 'folded'; await new Promise(r => setTimeout(r, 300)); click('.rail-tag') },
     rail: () => { document.documentElement.dataset.rail = 'folded'; dispatchEvent(new Event('resize')) },
-    drawer: () => click('#drawer-open'),
+    waiting: () => click('.tab[data-tab="waiting"]'),
     keys: () => document.dispatchEvent(new Event('trommi:keys')),
     note: () => click('.corner-note-head'),
     inside: () => { const l = $('.tc-card > .tc-left'); if (l) l.scrollTop = 900 },
@@ -972,10 +989,10 @@ export async function demoState(name) {
     more: () => click('.tc-more-open'),
     'with-agent': () => { const c = window.trommi.model().state.cards.find(x => x.with_agent); if (c) window.trommi.router.visit(`/card/${c.number}`) },
     'session-more': () => click('.t-head-more'),
-    pair: () => click('#pair-start'),
-    invite: () => click('#sidebar-invite'),
+    pair: () => click('#settings-pair') || click('#pair-start'),
+    invite: () => click('#settings-invite-agent'),
     'invite-emoji': async () => { click('.t-head-more'); await wait(200); [...document.querySelectorAll('.desk-move button')].find(b => /invite link/.test(b.textContent))?.click() },
-    'invite-ended': async () => { click('#sidebar-invite'); await wait(900); const inv = [...window.trommi.client.model.invites.values()].at(-1); if (inv) { inv.expires_at = Date.now() - 1000; window.trommi.client.changed(c => c.invites.add(inv.invite_id)) } },
+    'invite-ended': async () => { click('#settings-invite-agent'); await wait(900); const inv = [...window.trommi.client.model.invites.values()].at(-1); if (inv) { inv.expires_at = Date.now() - 1000; window.trommi.client.changed(c => c.invites.add(inv.invite_id)) } },
     share: () => { const s = $('.lk-share .lk-switch input'); if (s) { s.checked = true; s.dispatchEvent(new Event('change', { bubbles: true })) } },
     'board-help': () => click('#help-btn'),
   }

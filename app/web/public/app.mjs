@@ -1421,7 +1421,9 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     const res = await board.request({ method: 'GET', path, headers: { accept: 'text/html' } })
     return res.kind === 'page' ? String(res.opts.main) : ''
   }
-  return { visit, refresh, changed, get page() { return page }, paint, keepPad, peek }
+  // (forget: every part is painted anew on the next page, as on a first load; the demo's /screens switches a frame's state so)
+  const forgetAll = () => { for (const part of parts.values()) for (const n of between(part)) n.remove(); parts.clear() }
+  return { visit, refresh, changed, get page() { return page }, paint, keepPad, peek, forget: forgetAll }
 }
 
 // ---- push ----
@@ -1591,7 +1593,7 @@ async function start(client, { fresh = false } = {}) {
   const b = createBoard({ hub, model, views: [desks, ...(demo ? [demo.screensView] : []), ...VIEWS] })
   const router = createRouter({ board: b, flush: () => apply() })
   startPush(client)
-  window.trommi = { client, board, router, model, mock: Boolean(mock), view }   // (view: a lazy view's module, for the dev tools)
+  window.trommi = { client, board, router, model, mock: Boolean(mock), view, ...(demo ? { demoState: demo.demoState } : {}) }   // (view: a lazy view's module, for the dev tools)
 
   // Changes come in batches; one frame patches the page for all that came meanwhile. A navigation or the end of a
   // form takes what is pending at once (flush), so a page never renders a state older than the action that led to it.

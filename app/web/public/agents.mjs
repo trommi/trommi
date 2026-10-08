@@ -13,7 +13,7 @@
 // On a phone a line is mark, name, state and "…": a tap opens the session, "…" a sheet at the lower edge (there also
 // "Copy invite link again": a link for this very session, auth.mjs /pair continue=<session>; a phone's session page has no head).
 import { BASE } from './app.mjs'
-import { LATER, agoSpan, answerFields, avatar, badge, cardPath, crownSvg, html, markControl, marksFrame, marksHolder, raw, renameControl, roomTabs, sessionForms, sk } from './ui.mjs'
+import { LATER, PLUS, agoSpan, answerFields, avatar, badge, cardPath, crownSvg, html, markControl, marksFrame, marksHolder, raw, renameControl, roomTabs, sessionForms, sk } from './ui.mjs'
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 const SEP = raw('<i class="ledger-sep"> · </i>')
 const STAY = { stay: true }
@@ -169,6 +169,26 @@ const VAL = {
 const leadWords = m => `${m.agents.filter(a => a.online).length} of ${m.agents.length} sessions are connected.`
 
 /** The whole page. find: words to look for; sort: a column's key, or 'order'; down: the other way round; errors: session id -> what was refused. */
+// ---- Invite, at the top of Settings (his word, 8 October): an agent by a command, a device by a code it scans. The
+// code is drawn blurred until it is asked for: only then is an invite made (POST /pair), never on the page's load. ----
+const FAKE_QR = (() => {
+  const n = 25, cells = [], finder = (x, y) => (x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7)
+  let seed = 7
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const ring = finder(x, y) && (() => { const fx = x < 7 ? x : x - (n - 7), fy = y < 7 ? y : y - (n - 7); return fx === 0 || fx === 6 || fy === 0 || fy === 6 || (fx >= 2 && fx <= 4 && fy >= 2 && fy <= 4) })()
+    if (finder(x, y) ? ring : rnd() > 0.52) cells.push(`M${x} ${y}h1v1h-1z`)
+  }
+  return raw(`<svg viewBox="-2 -2 ${n + 4} ${n + 4}" aria-hidden="true"><rect x="-2" y="-2" width="${n + 4}" height="${n + 4}" fill="#fff"/><path d="${cells.join('')}" fill="#14181a"/></svg>`)
+})()
+const inviteSection = base => html`<section class="set-invite" aria-labelledby="set-invite-h">
+<h2 id="set-invite-h">Invite</h2>
+<div class="set-invite-ways">
+<form method="post" action="${base}/pair" class="set-way"><input type="hidden" name="role" value="agent"><button type="submit" class="set-way-go" id="settings-invite-agent">${PLUS}<span>Invite an agent</span></button><small>A line to paste into a terminal where Claude Code runs. The agent shows up in the room once you compare six emoji.</small></form>
+<form method="post" action="${base}/pair" class="set-way is-device"><input type="hidden" name="role" value="human"><button type="submit" class="set-qr" id="settings-pair" aria-label="Show the code to pair a device"><span class="set-qr-code">${FAKE_QR}</span><span class="set-qr-show">Show the code</span></button><div><b>Pair a device</b><small>A phone or another computer scans the code. It is made when you ask for it and works once.</small></div></form>
+</div>
+</section>`
+
 function agentsMain(m, base, { find = '', sort = 'order', down = false, errors = new Map() } = {}) {
   const ctx = around(m, base)
   let { on, off, archived } = parts(m)
@@ -198,7 +218,8 @@ function agentsMain(m, base, { find = '', sort = 'order', down = false, errors =
   const trees = deskList.map(d => { const mine = tops.filter(u => deskOf(u) === d.id); const kids = loose.filter(u => deskOf(u) === d.id); return mine.length || kids.length ? html`<h3 class="ledger-deskhead">${sk('desk')}<span>${d.name || 'Desk'}</span></h3>${mine.map(treeOf)}${kids.map(line)}` : '' })
   return html`<main id="ledger" aria-label="Agents"><div class="ledger-page">
 ${roomTabs('agents', 'ledger-tabs')}
-<header class="ledger-head page-head"><h2>Agents</h2><p id="ledger-lead">${leadWords(m)}</p></header>
+${inviteSection(base)}
+<header class="ledger-head page-head"><h2>Sessions</h2><p id="ledger-lead">${leadWords(m)}</p></header>
 <div class="ledger-tools"><form method="get" action="${base}/settings/agents" role="search">${sort !== 'order' ? html`<input type="hidden" name="sort" value="${sort}">${down ? raw('<input type="hidden" name="down" value="1">') : ''}` : ''}<label class="ledger-find"><input type="search" name="find" value="${find}" autocomplete="off" placeholder="Find a session, a machine, a model" aria-label="Find a session"><kbd>/</kbd></label></form>${sort !== 'order' || words ? html`<a class="ledger-link" data-nav href="${base}/agents">${words ? 'Show all, in your order' : 'Back to your order'}</a>` : ''}</div>
 <div class="ledger${tree ? ' is-tree' : ''}" role="table" id="ledger-list" data-controller="pops"${sort !== 'order' || words ? raw(' data-sorted') : ''}${ctx.desks.length > 1 ? raw(' data-desks') : ''}${anyMain ? raw(' data-mains') : ''}>
 <div class="ledger-line is-head" role="row"><span></span><span></span>${th(COLS[0])}${th(COLS[1])}<span class="ledger-th">Asks or does</span>${COLS.slice(2).map(th)}<span></span></div>
