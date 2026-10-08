@@ -19,7 +19,8 @@ let package = Package(
       dependencies: [
         .product(name: "TrommiCore", package: "TrommiCore"),
         .product(name: "TrommiClient", package: "TrommiCore"),
-      ]
+      ],
+      resources: [.copy("Resources/pen.json"), .copy("Resources/Fonts")]
     ),
   ],
   swiftLanguageModes: [.v5]

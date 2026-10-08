@@ -145,6 +145,13 @@ public final class HubClient {
   public func accountLogin(email: String, authKey: String) async throws -> JSON {
     try await request("POST", "/accounts/login", body: ["email": email, "auth_key": authKey], auth: false)
   }
+  /** A new invite: the signed offer; the hub answers its invite_id. */
+  public func postInvite(signedOffer: Bytes) async throws -> JSON { try await request("POST", roomPath("/invites"), body: ["signed_offer": b64u(signedOffer)]) }
+  public func getRequests(_ inviteId: String) async throws -> JSON { try await request("GET", roomPath("/invites/\(try Self.checkHex(inviteId, 32, "invite_id"))/requests")) }
+  public func postReveal(_ inviteId: String, signedReveal: Bytes) async throws -> JSON {
+    try await request("POST", roomPath("/invites/\(try Self.checkHex(inviteId, 32, "invite_id"))/reveal"), body: ["signed_reveal": b64u(signedReveal)])
+  }
+  public func deleteInvite(_ inviteId: String) async throws { _ = try await request("DELETE", roomPath("/invites/\(try Self.checkHex(inviteId, 32, "invite_id"))")) }
   /** A conversation's items with their bodies, newest first below `before` (README "GET threads"). */
   public func threads(kind: String, timelineId: String, before: Int, limit: Int = 50) async throws -> JSON {
     try await request("GET", roomPath("/threads"), query: ["timeline_kind": kind, "timeline_id": timelineId, "before_envelope_number": String(before), "limit": String(limit)])

@@ -1,7 +1,8 @@
-// TrommiApp: the spike's iOS app. Sign in as the web app does: scan the QR code of "Pair a device" on a signed-in
-// device (or paste its link) and compare the six emoji, or log in with email and password; then the open cards
-// (title, options); tap an option to answer. Everything below the views is TrommiCore and
-// TrommiClient, the same code `trommi-swift` runs and the tests check against the JS core.
+// TrommiApp: Trommi for iOS. The same board as the web app (app.trommi.com), native: the Desk with the open questions,
+// a card's page, the conversation with each session, the sessions in the sidebar (a drawer on the iPhone), Blitz, Off
+// your mind, notes, files, settings with the devices and pairing. Sign in as on the web: scan the QR code of "Pair a
+// device", or email and password. Everything below the views is TrommiClient (Board.swift is the web's model, Room the
+// sync engine with the live stream), the same code `trommi-swift` runs and the parity checks hold against the JS core.
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -12,18 +13,45 @@ import TrommiCore
 @main
 struct TrommiApp: App {
   @StateObject private var model = BoardModel()
+  @Environment(\.scenePhase) private var scenePhase
   #if canImport(UIKit)
   @UIApplicationDelegateAdaptor(PushDelegate.self) private var push   // Push.swift
   #endif
+  init() { Face.registerFonts() }
   var body: some Scene {
     WindowGroup {
       RootView().environmentObject(model)
+        .preferredColorScheme(model.theme.scheme)
+        .tint(Ink.accent)
       #if canImport(UIKit)
         .onAppear { push.model = model; push.ask() }
         .onChange(of: model.phase) { _, p in if p == .board { push.ask() } }
       #endif
+        .onChange(of: scenePhase) { _, p in model.scene(active: p == .active) }
     }
   }
+}
+
+/** A passing line at the bottom: what was done, and its Undo. */
+struct Toast: Identifiable, Equatable {
+  let id = UUID()
+  var head: String
+  var line: String = ""
+  var alert = false
+  var undo: (() async -> Void)? = nil
+  static func == (a: Toast, b: Toast) -> Bool { a.id == b.id }
+}
+
+/** Where the board navigates (one stack on the iPhone; the detail column on the iPad). */
+enum Route: Hashable {
+  case card(String)                 // card id
+  case session(String)              // agent (board) id
+  case blitz
+  case off
+  case settings(String)             // agents | devices | account
+  case media
+  case pages
+  case picture(String, Int)         // card id, picture index
 }
 
 @MainActor
@@ -34,21 +62,83 @@ final class BoardModel: ObservableObject {
   static let hubURL = "https://hub.trommi.com"
 
   @Published var phase: Phase = .start
-  @Published var cards: [Card] = []
-  @Published var status: String = ""
   @Published var error: String?
   @Published var busy = false
   @Published var lastEmail = ""
-  private var room: Room?
+  /** Bumps after every change of the board (the views read `desk` again). */
+  @Published private(set) var version = 0
+  @Published var toast: Toast?
+  @Published var path: [Route] = []
+  @Published var drawer = false
+  @Published var live = false
+  @Published var upgrade: UpgradeNotice?
+  @Published var deskId: String? = UserDefaults.standard.string(forKey: "trommi-desk") {
+    didSet { UserDefaults.standard.set(deskId, forKey: "trommi-desk") }
+  }
+  @Published var theme: ThemeMode = ThemeMode(rawValue: UserDefaults.standard.string(forKey: "trommi-theme") ?? "system") ?? .system {
+    didSet { UserDefaults.standard.set(theme.rawValue, forKey: "trommi-theme") }
+  }
+  private(set) var room: Room?
+  private(set) var desk: DeskModel?
   private var joinTask: Task<Void, Never>?
+  private var liveTask: Task<Void, Never>?
+  private var pendingUpdate = false
+  private var active = true
 
   init() {
     if let id = Store.rooms(base: Store.defaultBase()).first, let r = try? Room.open(roomId: id) {
-      room = r
+      attach(r)
       phase = .board
-      Task { await refresh() }
     }
   }
+
+  private func attach(_ r: Room) {
+    room = r
+    desk = DeskModel(board: r.board)
+    r.onChange = { [weak self] _ in self?.changed() }
+    startLive()
+  }
+  /** A change of the board: the projection again, at most every 80 ms (a catch-up brings thousands). */
+  private func changed() {
+    if pendingUpdate { return }
+    pendingUpdate = true
+    Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 80_000_000)
+      pendingUpdate = false
+      desk?.update()
+      if let r = room { live = r.live; if upgrade == nil, let u = r.upgrade { upgrade = u } }
+      version &+= 1
+    }
+  }
+
+  // ---- live, refresh ------------------------------------------------------------------------------------
+
+  /** The one entry point for "read what is new" (push, pull to refresh, the app coming to the front). */
+  func refresh() async {
+    guard let room = room else { return }
+    busy = true
+    defer { busy = false }
+    do {
+      let report = try await room.sync()
+      if let w = report.warnings.first { error = w }
+      if liveTask == nil && active { startLive() }
+    } catch { self.error = describe(error) }
+  }
+  func scene(active: Bool) {
+    self.active = active
+    if active { startLive(); Task { await refresh() } } else { liveTask?.cancel(); liveTask = nil; live = false }
+  }
+  private func startLive() {
+    #if canImport(Darwin)
+    guard liveTask == nil, let r = room else { return }
+    liveTask = Task { @MainActor [weak self] in
+      await r.runLive()
+      self?.liveTask = nil
+    }
+    #endif
+  }
+
+  // ---- sign in -----------------------------------------------------------------------------------------
 
   func go(_ p: Phase) { error = nil; phase = p }
 
@@ -70,7 +160,7 @@ final class BoardModel: ObservableObject {
           if case .checkCode(let code) = ev { Task { @MainActor in if self.phase == .asking { self.phase = .checkCode(code) } } }
         }
         try await r.sendDeviceRegister(name: name, platform: "ios")
-        room = r
+        attach(r)
         phase = .board
         await refresh()
       } catch is CancellationError {
@@ -99,7 +189,7 @@ final class BoardModel: ObservableObject {
       switch try await Room.signInWithPassword(hubURL: Self.hubURL, email: email, password: password) {
       case .joined(let r):
         try await r.sendDeviceRegister(name: name, platform: "ios")
-        room = r
+        attach(r)
         phase = .board
         await refresh()
       }
@@ -109,27 +199,186 @@ final class BoardModel: ObservableObject {
     }
   }
 
-  func refresh() async {
-    guard let room = room else { return }
-    busy = true
-    defer { busy = false }
-    do {
-      let report = try await room.sync()
-      cards = room.openCards
-      status = "\(report.envelopes) verified" + (report.refused > 0 ? ", \(report.refused) refused" : "")
-      error = report.warnings.first
-    } catch { self.error = describe(error) }
+  // ---- what the views read ---------------------------------------------------------------------------------
+
+  var view: DeskModel.View? { desk?.view(desk: deskId) }
+  func card(_ id: String) -> DeskCard? { desk?.byCard[id] }
+  func agent(_ id: String) -> Agent? { desk?.byAgent[id] }
+  func say(_ head: String, _ line: String = "", undo: (() async -> Void)? = nil) { toast = Toast(head: head, line: line, undo: undo) }
+  func fail(_ head: String, _ e: Error) { toast = Toast(head: head, line: describe(e), alert: true) }
+
+  // ---- what a human does (the web's hubFacade and card WAYS) --------------------------------------------------
+
+  /** Run an action; a failure becomes an alert toast. */
+  func act(_ head: String = "Not saved", _ op: @escaping () async throws -> Void) {
+    Task { do { try await op() } catch { fail(head, error) } }
+  }
+  static func nextMorning(_ now: Date = Date()) -> UInt64 {
+    var c = Calendar.current.dateComponents([.year, .month, .day], from: now)
+    c.hour = 7; c.minute = 0
+    var at = Calendar.current.date(from: c) ?? now
+    if at <= now { at = Calendar.current.date(byAdding: .day, value: 1, to: at) ?? at }
+    return UInt64(at.timeIntervalSince1970 * 1000)
   }
 
-  func answer(_ card: Card, _ option: Option) async {
+  func decide(_ c: DeskCard, keys: [String], note: String = "", notes: [String: String] = [:], attachments: [JV] = []) {
     guard let room = room else { return }
-    busy = true
-    defer { busy = false }
-    do {
-      try await room.answer(cardId: card.objectId, choices: [option.key])
-      await refresh()
-    } catch { self.error = describe(error) }
+    act {
+      if c.kind == "permission" { try await room.verdict(requestId: c.id, allow: keys.first == "allow"); return }
+      try await room.answer(cardId: c.id, choices: c.options.filter { keys.contains($0.key) }.map { $0.key }, note: note.isEmpty ? nil : note,
+                            optionNotes: notes.filter { !$0.value.isEmpty }, attachments: attachments)
+      if c.draft != nil { try? await room.setDraft(cardId: c.id, nil) }
+      let picked = c.options.filter { keys.contains($0.key) }.map { $0.label }.joined(separator: ", ")
+      let settled = self.card(c.id)?.settled == true
+      self.say(settled ? "Settled" : "Answered", picked.isEmpty ? c.title : "\(c.title) → \(picked)", undo: settled || c.kind == "permission" ? nil : { [weak self] in self?.reopen(c.id) })
+    }
   }
+  func trust(_ c: DeskCard, note: String = "") {
+    guard let room = room else { return }
+    act {
+      try await room.trust(cardId: c.id, note: note.isEmpty ? nil : note)
+      self.say(Words.trust, c.title, undo: { [weak self] in self?.reopen(c.id) })
+    }
+  }
+  func closeInfo(_ c: DeskCard) {
+    guard let room = room else { return }
+    act { try await room.markRead(cardId: c.id); self.say("Read", c.title, undo: { [weak self] in self?.reopen(c.id) }) }
+  }
+  func shred(_ c: DeskCard, note: String = "") {
+    guard let room = room else { return }
+    act { try await room.shred(cardId: c.id, note: note.isEmpty ? nil : String(note.prefix(2000))); self.say("Shredded", c.title, undo: { [weak self] in self?.reopen(c.id) }) }
+  }
+  func snooze(_ c: DeskCard) {
+    guard let room = room else { return }
+    act { try await room.snooze(cardId: c.id, until: BoardModel.nextMorning()); self.say(Words.later, c.title, undo: { [weak self] in self?.wake(c.id) }) }
+  }
+  func wake(_ id: String) {
+    guard let room = room else { return }
+    act { try await room.snooze(cardId: id, until: nowMs()) }
+  }
+  /** Take an answer back; what was taken back becomes the draft again. */
+  func reopen(_ id: String) {
+    guard let room = room, let c = card(id) else { return }
+    act {
+      if c.status == "open" && c.snoozedUntil != nil { try await room.snooze(cardId: id, until: nowMs()); return }
+      try await room.decideAgain(cardId: id)
+      if c.kind == "decision" && (!c.choices.isEmpty || !c.note.isEmpty || !c.optionNotes.isEmpty) {
+        try? await room.setDraft(cardId: id, .obj(["keys": .arr(c.choices.map { .str($0) }), "note": .str(c.note), "notes": .obj(c.optionNotes.mapValues { .str($0) }), "ts": .n(nowMs())]))
+      }
+      self.say("Back on the Desk", c.title)
+    }
+  }
+  func takeBack(_ c: DeskCard) {
+    guard let room = room else { return }
+    act { try await room.sendMessage(cardId: c.id, text: "The human took the card back; no need to rework or explain it.", fields: ["present_card": true]) }
+  }
+  func handBack(_ c: DeskCard, text: String = "") {
+    guard let room = room else { return }
+    act {
+      try await room.sendMessage(cardId: c.id, text: text.isEmpty ? "Back to you: please rework this question and present it again. Take the comments under the card into account." : text, fields: ["hand_back": true])
+      self.say("Handed back", c.title, undo: { [weak self] in if let c = self?.card(c.id) { self?.takeBack(c) } })
+    }
+  }
+  func what(_ c: DeskCard) {
+    guard let room = room else { return }
+    act {
+      try await room.sendMessage(cardId: c.id, text: Words.explainText, fields: ["explain": true])
+      self.say("Asked: \(Words.what)", c.title, undo: { [weak self] in if let c = self?.card(c.id) { self?.takeBack(c) } })
+    }
+  }
+  func archive(_ id: String, _ on: Bool = true) {
+    guard let room = room else { return }
+    act { try await room.setRegisters(["archived/\(id)": on ? .obj(["at": .n(nowMs())]) : .null]); if on { self.say("Archived", self.card(id)?.title ?? "", undo: { [weak self] in self?.archive(id, false) }) } }
+  }
+  func setDraft(_ c: DeskCard, keys: [String], note: String, notes: [String: String]) {
+    guard let room = room, c.kind == "decision", c.status == "open" else { return }
+    let empty = keys.isEmpty && note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && notes.values.allSatisfy { $0.isEmpty }
+    Task { try? await room.setDraft(cardId: c.id, empty ? nil : .obj(["keys": .arr(keys.map { .str($0) }), "note": .str(note), "notes": .obj(notes.mapValues { .str($0) }), "ts": .n(nowMs())])) }
+  }
+  /** A message to a session (or about a card), with files. */
+  func send(agent: String, text: String, cardId: String? = nil, attachments: [JV] = []) async throws {
+    guard let room = room, let key = desk?.sessionKey(of: agent) else { throw ZError("not-found", "unknown session") }
+    var fields: [String: JV] = [:]
+    if !attachments.isEmpty { fields["attachments"] = .arr(attachments) }
+    try await room.sendMessage(sessionId: key, cardId: cardId, text: text, fields: fields)
+  }
+  func upload(_ data: Data, name: String, type: String, width: Int? = nil, height: Int? = nil) async throws -> JV {
+    guard let room = room else { throw ZError("offline", "no room") }
+    return try await room.uploadAttachment(Array(data), fileName: name, mediaType: type, width: width, height: height)
+  }
+  func attachment(_ ref: JV) async throws -> Data {
+    guard let room = room else { throw ZError("offline", "no room") }
+    return Data(try await room.fetchAttachment(ref))
+  }
+  func loadOlder(agent: String) async {
+    guard let room = room, let key = desk?.sessionKey(of: agent) else { return }
+    do {
+      try await room.loadOlder(timelineKeyOf("chat", "session/\(key)"), limit: 50)
+      for id in room.board.sessions[key]?.cardIds ?? [] where room.board.timelines[timelineKeyOf("chat", "card/\(id)")]?.items.values.contains(where: { $0.itemState == "header" }) == true {
+        try await room.loadOlder(timelineKeyOf("chat", "card/\(id)"), limit: 50)
+      }
+    } catch { fail("Not loaded", error) }
+  }
+  func loadOlder(card id: String) async {
+    guard let room = room else { return }
+    do { try await room.loadOlder(timelineKeyOf("chat", "card/\(id)"), limit: 50) } catch { fail("Not loaded", error) }
+  }
+  /** A session's settings (name, icon, desk, archived, parent, position). */
+  func editSession(_ a: Agent, _ fields: [String: JV]) {
+    guard let room = room else { return }
+    act { try await room.editSession(a.deviceId, fields) }
+  }
+  /** The crown of the session's desk (one per desk; the room's single crown without desks). */
+  func star(_ a: Agent, _ on: Bool) {
+    guard let room = room, let d = desk else { return }
+    act {
+      let crown: JV = on ? .obj(["session_id": .s(a.sessionId), "agent_device_id": .s(a.agentDeviceId)]) : .null
+      guard let deskId = d.deskOf(a) else { try await room.setCrown(crown); return }
+      var v = room.board.human.desks[deskId]?.object ?? ["name": .str(d.desks.first { $0.id == deskId }?.name ?? "Desk"), "created_at": .n(nowMs())]
+      v["crown"] = crown
+      try await room.setDesk(deskId, .obj(v))
+    }
+  }
+  func duckAll(_ ids: [String]) {
+    guard let room = room else { return }
+    act {
+      for id in ids { try await room.trust(cardId: id) }
+      self.say("Left to the agents", ids.count == 1 ? "1 question" : "\(ids.count) questions", undo: { [weak self] in for id in ids { self?.reopen(id) } })
+    }
+  }
+  /**
+   * Delete a session (agents.mjs /sessions/:id/delete): its open questions are shredded and it goes to the archive.
+   * (Removing its connector from the room's member list, with the new keys that needs, is done from the web app.)
+   */
+  func deleteSession(_ a: Agent) {
+    guard let room = room, let d = desk else { return }
+    act {
+      for c in d.cards where c.agent == a.id && c.status == "open" && c.kind != "permission" { try? await room.shred(cardId: c.id) }
+      try await room.editSession(a.deviceId, ["archived": true])
+      self.say("Deleted", a.name)
+      if self.path.last == .session(a.id) { self.path.removeLast() }
+    }
+  }
+  /** Desks: register desk/<id>. */
+  func newDesk(name: String) {
+    guard let room = room else { return }
+    act {
+      if room.board.human.desks.isEmpty { try await room.setDesk("main", .obj(["name": "Desk", "created_at": .n(nowMs() - 1)])) }
+      let id = (0..<4).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+      try await room.setDesk(id, .obj(["name": .str(String(name.trimmingCharacters(in: .whitespaces).prefix(40)).isEmpty ? "Desk" : String(name.prefix(40))), "created_at": .n(nowMs())]))
+      self.deskId = id
+    }
+  }
+  func renameDesk(_ id: String, _ name: String) {
+    guard let room = room else { return }
+    act { var v = room.board.human.desks[id]?.object ?? [:]; v["name"] = .str(String(name.prefix(40))); try await room.setDesk(id, .obj(v)) }
+  }
+  func removeDesk(_ id: String) {
+    guard let room = room else { return }
+    act { try await room.setDesk(id, nil); if self.deskId == id { self.deskId = nil } }
+  }
+
+  // ---- words ---------------------------------------------------------------------------------------------
 
   /** The web's wording for the account errors (auth.mjs accountError). */
   private func accountError(_ e: Error) -> String {
@@ -144,10 +393,9 @@ final class BoardModel: ObservableObject {
     default: return describe(e)
     }
   }
-
-  private func describe(_ e: Error) -> String {
-    if let z = e as? ZError { return z.description }
-    if let h = e as? HubError { return h.code == "offline" ? "Trommi is not reachable. Check the connection." : "hub: \(h.description)" }
+  func describe(_ e: Error) -> String {
+    if let z = e as? ZError { return z.message.isEmpty ? z.code : z.message }
+    if let h = e as? HubError { return h.code == "offline" ? "Trommi is not reachable. Check the connection." : h.message.isEmpty ? h.code : h.message }
     return "\(e)"
   }
 }
@@ -166,29 +414,35 @@ enum UIDeviceName {
 struct RootView: View {
   @EnvironmentObject var model: BoardModel
   var body: some View {
-    NavigationStack {
-      Group {
-        switch model.phase {
-        case .start: StartView()
-        case .scan: ScanView()
-        case .paste: PasteView()
-        case .email: EmailView()
-        case .deviceName(let link): DeviceNameView(link: link)
-        case .asking: Waiting(text: "Asking the other device…")
-        case .checkCode(let code): CheckCodeView(code: code)
-        case .signingIn: Waiting(text: "Logging in…")
-        case .pairFailed(let why): PairFailedView(why: why)
-        case .board: BoardView()
-        }
-      }
-      .navigationTitle(title)
-      .navigationBarTitleDisplayMode(model.phase == .start || model.phase == .board ? .large : .inline)
-      .toolbar {
-        if [.scan, .paste, .email].contains(model.phase) || { if case .deviceName = model.phase { return true }; return false }() {
-          ToolbarItem(placement: .topBarLeading) { Button("Back") { model.go(.start) } }
+    Group {
+      if model.phase == .board { BoardShell() }
+      else {
+        NavigationStack {
+          Group {
+            switch model.phase {
+            case .start: StartView()
+            case .scan: ScanView()
+            case .paste: PasteView()
+            case .email: EmailView()
+            case .deviceName(let link): DeviceNameView(link: link)
+            case .asking: Waiting(text: "Asking the other device…")
+            case .checkCode(let code): CheckCodeView(code: code)
+            case .signingIn: Waiting(text: "Logging in…")
+            case .pairFailed(let why): PairFailedView(why: why)
+            case .board: EmptyView()
+            }
+          }
+          .navigationTitle(title)
+          .navigationBarTitleDisplayMode(model.phase == .start ? .large : .inline)
+          .toolbar {
+            if [.scan, .paste, .email].contains(model.phase) || { if case .deviceName = model.phase { return true }; return false }() {
+              ToolbarItem(placement: .topBarLeading) { Button("Back") { model.go(.start) } }
+            }
+          }
         }
       }
     }
+    .background(Ink.bg)
   }
   private var title: String {
     switch model.phase {
@@ -196,187 +450,5 @@ struct RootView: View {
     case .email, .signingIn: return "Log in"
     default: return "Log in with a signed-in device"
     }
-  }
-}
-
-struct Waiting: View {
-  let text: String
-  var body: some View { VStack(spacing: 12) { ProgressView(); Text(text).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, maxHeight: .infinity) }
-}
-
-/** The start screen: scan (primary), email, and a small paste fallback. */
-struct StartView: View {
-  @EnvironmentObject var model: BoardModel
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Text("Your agents ask, you answer, from any device. End-to-end encrypted: the hub carries sealed envelopes only.")
-        .foregroundStyle(.secondary)
-      Spacer()
-      Button { model.go(.scan) } label: {
-        Label("Scan QR code", systemImage: "qrcode.viewfinder").frame(maxWidth: .infinity)
-      }
-      .buttonStyle(.borderedProminent).controlSize(.large)
-      Text("On a device that is logged in: menu → Devices → \u{201C}Pair a device\u{201D}. Then scan its code here.")
-        .font(.footnote).foregroundStyle(.secondary)
-      Button { model.go(.email) } label: {
-        Label("Sign in with email", systemImage: "envelope").frame(maxWidth: .infinity)
-      }
-      .buttonStyle(.bordered).controlSize(.large)
-      Button("Paste link") { model.go(.paste) }
-        .font(.footnote).frame(maxWidth: .infinity)
-        .padding(.top, 4)
-    }
-    .padding()
-  }
-}
-
-struct ScanView: View {
-  @EnvironmentObject var model: BoardModel
-  @State private var unavailable: String?
-  @State private var wrongCode = false
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Text("1. On the device that is logged in: menu → Devices → \u{201C}Pair a device\u{201D}.\n2. Hold its QR code in front of this camera.")
-        .font(.subheadline)
-      if let u = unavailable {
-        Text(u).foregroundStyle(.secondary)
-      } else {
-        QRScannerView(onLink: { text in if !model.gotLink(text) { wrongCode = true } }, onUnavailable: { unavailable = $0 })
-          .aspectRatio(1, contentMode: .fit)
-          .clipShape(RoundedRectangle(cornerRadius: 12))
-      }
-      if wrongCode { Text("That is no pairing link.").foregroundStyle(.red).font(.footnote) }
-      Spacer()
-      Button("Paste the link instead") { model.go(.paste) }.font(.footnote).frame(maxWidth: .infinity)
-    }
-    .padding()
-  }
-}
-
-struct PasteView: View {
-  @EnvironmentObject var model: BoardModel
-  @State private var link = ""
-  @State private var wrong = false
-  var body: some View {
-    Form {
-      Section {
-        TextField("https://app.trommi.com/join#v1…", text: $link, axis: .vertical)
-          .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).lineLimit(2...5)
-        Button("Next") { wrong = !model.gotLink(link) }.disabled(link.isEmpty)
-      } header: { Text("Paste the link here") } footer: {
-        Text(wrong ? "That is no pairing link. It contains \u{201C}#v1.\u{201D}." : "The link of \u{201C}Pair a device\u{201D} on a signed-in device (under \u{201C}No scanner? Send the link\u{201D}).")
-          .foregroundStyle(wrong ? .red : .secondary)
-      }
-    }
-  }
-}
-
-/** The web's join form: this device names itself, makes its own keys, then the six emoji. */
-struct DeviceNameView: View {
-  @EnvironmentObject var model: BoardModel
-  let link: String
-  @State private var name = UIDeviceName.current
-  var body: some View {
-    Form {
-      Section { Text("This device now makes its own keys. Then both devices show six emoji; on the other device you confirm that they match.").foregroundStyle(.secondary) }
-      Section("Name of this device") { TextField("Name of this device", text: $name).onChange(of: name) { _, v in if v.count > 40 { name = String(v.prefix(40)) } } }
-      Section { Button("Next") { model.pair(link: link, name: name.trimmingCharacters(in: .whitespaces)) }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty) }
-    }
-  }
-}
-
-struct CheckCodeView: View {
-  @EnvironmentObject var model: BoardModel
-  let code: String
-  var body: some View {
-    VStack(spacing: 24) {
-      Text("The other device shows six emoji too. If they are these, in this order, tap \u{201C}They match\u{201D} there:")
-        .multilineTextAlignment(.center)
-      let e = checkEmoji(code)
-      LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 16) {
-        ForEach(Array(e.enumerated()), id: \.offset) { _, x in
-          VStack { Text(x.emoji).font(.system(size: 48)); Text(x.word).font(.caption).foregroundStyle(.secondary) }
-        }
-      }
-      .accessibilityLabel("Check code: \(e.map { $0.word }.joined(separator: ", "))")
-      HStack(spacing: 8) { ProgressView(); Text("Waiting until it adds this device…").foregroundStyle(.secondary) }
-      Text("They don\u{2019}t match? Tap \u{201C}They don\u{2019}t match\u{201D} there; the code is then used up.")
-        .font(.footnote).multilineTextAlignment(.center).foregroundStyle(.secondary)
-      Button("Cancel and scan again") { model.cancelPairing() }.font(.footnote)
-    }
-    .padding()
-  }
-}
-
-struct PairFailedView: View {
-  @EnvironmentObject var model: BoardModel
-  let why: String
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Text("Not logged in: \(why)").foregroundStyle(.red)
-      Text("Show a new code on the other device.").foregroundStyle(.secondary)
-      Button("Scan again") { model.go(.scan) }.buttonStyle(.borderedProminent)
-      Button("Back") { model.go(.start) }
-      Spacer()
-    }
-    .padding()
-  }
-}
-
-/** Log in with email and password, as the web's "Log in" form. */
-struct EmailView: View {
-  @EnvironmentObject var model: BoardModel
-  @State private var email = ""
-  @State private var password = ""
-  @State private var name = UIDeviceName.current
-  var body: some View {
-    Form {
-      if let e = model.error { Section { Text(e).foregroundStyle(.red) } }
-      Section {
-        TextField("Email", text: $email)
-          .textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
-        SecureField("Password", text: $password).textContentType(.password)
-      }
-      Section("Name of this device") { TextField("Name of this device", text: $name) }
-      Section {
-        Button("Log in") { Task { await model.login(email: email, password: password, name: name.trimmingCharacters(in: .whitespaces)) } }
-          .disabled(email.isEmpty || password.isEmpty || name.trimmingCharacters(in: .whitespaces).isEmpty)
-      } footer: {
-        Text("Your password never leaves this device. Forgot it? Set a new one with your Emergency Kit at app.trommi.com.")
-      }
-    }
-    .onAppear { if email.isEmpty { email = model.lastEmail } }
-  }
-}
-
-struct BoardView: View {
-  @EnvironmentObject var model: BoardModel
-  var body: some View {
-    List {
-      if let e = model.error { Text(e).font(.footnote).foregroundStyle(.red) }
-      if model.cards.isEmpty && !model.busy { Text("No open questions.").foregroundStyle(.secondary) }
-      ForEach(model.cards, id: \.objectId) { card in
-        VStack(alignment: .leading, spacing: 8) {
-          HStack(alignment: .firstTextBaseline) {
-            if card.urgency == "high" || card.urgency == "critical" { Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange) }
-            Text(card.title.isEmpty ? "(no title)" : card.title).font(.headline)
-          }
-          if let body = card.body, !body.isEmpty { Text(body).font(.subheadline).foregroundStyle(.secondary).lineLimit(4) }
-          if !card.options.isEmpty {
-            HStack {
-              ForEach(card.options, id: \.key) { o in
-                Button(o.label) { Task { await model.answer(card, o) } }
-                  .buttonStyle(.bordered)
-                  .disabled(model.busy)
-              }
-            }
-          }
-        }
-        .padding(.vertical, 4)
-      }
-      if !model.status.isEmpty { Text(model.status).font(.caption2).foregroundStyle(.tertiary) }
-    }
-    .refreshable { await model.refresh() }
-    .toolbar { if model.busy { ProgressView() } }
   }
 }
