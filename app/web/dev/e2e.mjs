@@ -164,18 +164,22 @@ try {
   await A.js("trommi.router.visit('/')")
   await A.until(`document.getElementById('row-${cardId}')`, 'back on the Desk')
 
-  // ---- the pile "Media N" at the Desk's foot (the newest pictures and videos fanned); a click opens the plain gallery ----
-  await A.until("document.querySelector('#desk-stacks > #desk-media .photo video') && document.querySelector('#desk-media .photo img')", 'media pile with a picture and a video').then(() => check(true, 'Media pile: in the Desk foot, one slip per item, thumbnails of a picture and a video'), e => check(false, e.message))
-  check(await A.js("return !document.querySelector('.gal-shelf, #desk-shelf') && /^Media\\s*2$/.test(document.querySelector('#desk-media .off-label').textContent.trim())"), 'no shelf any more; the pile says Media 2')
-  await A.until("[...document.querySelectorAll('#desk-media img')].some(i => i.complete && i.naturalWidth > 0)", 'the fanned picture decrypted', 15000).then(() => check(true, 'the fanned picture is decrypted and shown'), e => check(false, e.message))
-  await A.js("document.getElementById('desk-media').click()")
-  await A.until("document.body.dataset.page === 'gallery' && document.querySelectorAll('#gallery .gal-grid .gal-tile').length === 2", 'gallery with two tiles').then(() => check(true, 'clicking the pile opens the media gallery'), e => check(false, e.message))
-  check(await A.js("return [...document.querySelectorAll('#gallery .gal-tile .asset-preview')].every(p => p.querySelector('img, video, svg.asset-glyph'))"), 'gallery: no empty tile (each has its picture, video or drawn kind)')
-  check(await A.js("return [...document.querySelectorAll('#gallery .gal-kinds a')].map(a => a.getAttribute('aria-label')).join(' · ') === 'Everything · Pictures · Videos · Files and pages' && document.querySelector('#gallery .gal-kinds a[aria-current]')?.getAttribute('aria-label') === 'Everything' && !!document.querySelector('#gallery .gal-video video') && !!document.querySelector('#gallery .gal-video .gal-play')"), 'gallery: the four drawn kinds Everything · Pictures · Videos · Files and pages; the video tile has its frame and a play mark')
-  await A.js("document.querySelector('#gallery .gal-kinds a[aria-label=Videos]').click()")
-  await A.until("location.search.includes('kind=video') && document.querySelectorAll('#gallery .gal-tile').length === 1 && document.querySelector('#gallery .gal-tile .gal-video')", 'Videos filter').then(() => check(true, 'gallery filter Videos shows only the video'), e => check(false, e.message))
+  // ---- the pile "Artifacts N" at the Desk's foot (Media and Pages in one; the newest pictures and videos fanned); a
+  //      click opens /artifacts: both kinds together, the newest first, the filter All · Media · Pages ----
+  await A.until("document.querySelector('#desk-stacks > #desk-artifacts .photo video') && document.querySelector('#desk-artifacts .photo img')", 'artifacts pile with a picture and a video').then(() => check(true, 'Artifacts pile: in the Desk foot, thumbnails of a picture and a video'), e => check(false, e.message))
+  check(await A.js("return !document.querySelector('#desk-media, #desk-pages') && /^Artifacts\\s*2$/.test(document.querySelector('#desk-artifacts .off-label').textContent.trim())"), 'one pile, no Media or Pages pile; it says Artifacts 2')
+  await A.until("[...document.querySelectorAll('#desk-artifacts img')].some(i => i.complete && i.naturalWidth > 0)", 'the fanned picture decrypted', 15000).then(() => check(true, 'the fanned picture is decrypted and shown'), e => check(false, e.message))
+  await A.js("document.getElementById('desk-artifacts').click()")
+  await A.until("location.pathname === '/artifacts' && document.body.dataset.page === 'gallery' && document.querySelectorAll('#artifacts-list .gal-tile').length === 2", 'artifacts with two tiles').then(() => check(true, 'clicking the pile opens /artifacts'), e => check(false, e.message))
+  check(await A.js("return [...document.querySelectorAll('#artifacts-list .gal-tile .asset-preview')].every(p => p.querySelector('img, video, svg.asset-glyph'))"), 'artifacts: no empty tile (each has its picture, video or drawn kind)')
+  check(await A.js("return [...document.querySelectorAll('#gallery .art-kinds a')].map(a => a.textContent.trim()).join(' · ') === 'All · Media · Pages' && document.querySelector('#gallery .art-kinds a[aria-current]')?.textContent.trim() === 'All' && !!document.querySelector('#artifacts-list .gal-video video') && !!document.querySelector('#artifacts-list .gal-video .gal-play')"), 'artifacts: the filter All · Media · Pages; the video tile has its frame and a play mark')
+  await A.js("[...document.querySelectorAll('#gallery .art-kinds a')].find(a => a.textContent.trim() === 'Pages').click()")
+  await A.until("location.search.includes('kind=pages') && !document.querySelector('#artifacts-list .gal-tile') && document.querySelector('#artifacts-list .gal-none')", 'Pages filter').then(() => check(true, 'filter Pages: no media tiles, says no pages yet'), e => check(false, e.message))
+  await A.js("[...document.querySelectorAll('#gallery .art-kinds a')].find(a => a.textContent.trim() === 'Media').click()")
+  await A.until("location.search.includes('kind=media') && document.querySelectorAll('#artifacts-list .gal-tile').length === 2", 'Media filter').then(() => check(true, 'filter Media shows the picture and the video'), e => check(false, e.message))
+  check(await A.js("return [...document.querySelectorAll('#brand-doors .menu-places a')].map(a => a.getAttribute('href')).join(' ') === '/scribble-board /artifacts' && !document.querySelector('#brand-doors a[href=\"/assets\"], #brand-doors a[href=\"/pages\"], #brand-doors a[href=\"/stacks/off\"]')"), 'the menu has Scribble and Artifacts (no Media, Pages, Off your mind)')
   await A.shot('e2e-4c-gallery.png')
-  await A.js("document.querySelector('#gallery .gal-tile').click()")
+  await A.js("document.querySelector('#artifacts-list .gal-tile').click()")
   await A.until("document.querySelector('#cardpage .tc-video video')", 'the big view from the gallery').then(() => check(true, 'a gallery tile opens the big view'), e => check(false, e.message))
   await A.js("trommi.router.visit('/')")
   await A.until(`document.getElementById('row-${cardId}')`, 'back on the Desk')
@@ -347,7 +351,7 @@ try {
   await A.until(`${endRow(pile.done, 'done')}`, 'ticked off once more')
   await A.js("trommi.router.visit('/')")
   await A.until("document.querySelector('#desk-stacks')", 'the Desk again')
-  check(await A.js("return !document.querySelector('#desk-stacks [data-pile=off], #desk-stacks [data-stack=off], .off-head') && !!document.querySelector('#desk-stacks #desk-media')"), 'no pile Off the desk at the foot any more; Media stays')
+  check(await A.js("return !document.querySelector('#desk-stacks [data-pile=off], #desk-stacks [data-stack=off], .off-head') && !!document.querySelector('#desk-stacks #desk-artifacts')"), 'no pile Off the desk at the foot any more; Artifacts stays')
   // more than five: four more questions their session withdraws
   for (let i = 1; i <= 4; i++) await agent.close(await agent.sendCard({ title: `Ende ${i}`, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] }), `zurückgezogen ${i}`)
   await A.until("document.querySelector('#desk-end .end-show')", 'more than five in the end list')
@@ -366,7 +370,7 @@ try {
   await A.until(`document.getElementById('row-${pile.snooze}')`, 'woken up', 15000).then(() => check(true, 'woken up from its card, back on the Desk'), e => check(false, e.message))
   await A.shot('e2e-pile.png')
   // ---- a session that moves to another desk takes its cards along: nothing of it stays on the old desk (open rows,
-  //      infos, with the agents, the end list, Media, the menu's count), and all of it is back after the move back ----
+  //      infos, with the agents, the end list, Artifacts, the menu's count), and all of it is back after the move back ----
   {
     const made = await A.js("const r = await fetch('/desk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Zweiter Desk' }) }); return (await r.json()).desk?.id")
     // (with two desks and none chosen, the browser shows All desks: the test looks at the first desk, where the session stands)

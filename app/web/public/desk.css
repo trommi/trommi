@@ -1252,12 +1252,9 @@ button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
   .end-title { grid-area: t; } .end-said { grid-area: s; font-size: var(--t-xs); } .end-ago { grid-area: w; }
 }
 
-/* (the foot holds two piles now, Media and Pages, centred; on its own page /stacks/off the list of everything stands
-   above them) */
-:is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs.is-two { grid-template-columns: minmax(0, 1fr) max-content max-content minmax(0, 1fr) !important; }
-#inbox .inbox-stacks.stack-tabs.is-two > #desk-media { grid-column: 2; grid-row: 1; }
-#inbox .inbox-stacks.stack-tabs.is-two > #desk-pages { grid-column: 3; grid-row: 1; }
-#inbox .inbox-stacks.stack-tabs.is-two:not(:has(> #desk-media)) > #desk-pages { grid-column: 2; }
+/* (the foot holds one pile, Artifacts, centred; on its own page /stacks/off the list of everything stands above it) */
+:is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs.is-two { grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr) !important; }
+#inbox .inbox-stacks.stack-tabs.is-two > #desk-artifacts { grid-column: 2; grid-row: 1; }
 .end-row > :is(.end-title, .end-said) { justify-self: stretch; text-align: left; } .end-row > .end-ago { justify-self: end; }
 
 /* ---- one list (his word, 8 October): the cards with the agents and the end list are one slim list. The working ones

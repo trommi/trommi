@@ -56,14 +56,9 @@ body[data-page="gallery"] #gallery {
 /* the stacks without frames (his word, 4 October): the pictures themselves, rounded, a soft shadow */
 .gal-sheet { padding: 0; border: 0; border-radius: 6px; background: var(--sunken); box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 60%, transparent), 0 2px 8px rgb(20 30 25 / .16); overflow: hidden; }
 .gal-sheet .asset-preview { inset: 0; border-radius: 6px; }
-/* ---- Simpler (his word, 4 October): the kind as four drawn buttons beside the heading; each tile's title begins with
-   its session's small drawing; no counts, no session chips ---- */
+/* ---- Simpler (his word, 4 October): each tile's title begins with its session's small drawing; no counts, no session
+   chips ---- */
 .gal-head { align-items: center; }
-.gal-kinds { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-md); background: var(--sunken); }
-.gal-kinds a { display: grid; place-items: center; width: 38px; height: 34px; border-radius: 9px; color: var(--muted); }
-.gal-kinds a .sketch { width: 20px; height: 20px; }
-.gal-kinds a:hover { color: var(--fg); }
-.gal-kinds a[aria-current] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
 .gal-meta strong { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .gal-who { flex: none; display: grid; width: 18px; height: 18px; }
 .gal-who .inbox-from-mark { position: static; width: 18px; height: 18px; color: var(--tone-pen); }
@@ -72,7 +67,7 @@ body[data-page="gallery"] #gallery {
 .gal-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gal-meta small { display: none; }
 
-/* ---- Pages (media.mjs): the pile "Pages N" at the foot of the Desk beside Media, and the page /pages it opens.
+/* ---- Pages (media.mjs): the pages sheets of the Desk's pile "Artifacts N" (when it holds no pictures), and their tiles.
    The pile is paper like its neighbours (desk.css .shop-slip, .photo-pile): three sheets with a folded corner, each
    with its title and a few lines of writing, fanned, the newest in front. The page is sober: one line per page. ---- */
 .pg-pile { width: 210px; }
@@ -90,7 +85,7 @@ body[data-page="gallery"] #gallery {
   .pg-lines { height: 14px; background: repeating-linear-gradient(transparent 0 4px, color-mix(in srgb, var(--fg) 22%, transparent) 4px 5px); }
 }
 
-/* the page /pages */
+/* the page /artifacts: the share controls */
 .lk-column { max-width: 900px; }
 .lk-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .lk-row { text-align: left; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 6px 14px; padding: 14px 2px; border-bottom: 1px solid var(--line); }
@@ -133,14 +128,9 @@ body[data-page="gallery"] #gallery {
   .lk-btn { min-height: 36px; }
   .lk-switch { min-height: 40px; }
 }
-/* the Desk's foot with Links: three objects side by side in the middle (Off the desk, Media, Links) */
-:is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs:has(> .pages-pile) { grid-template-columns: minmax(0, 1fr) max-content max-content max-content minmax(0, 1fr) !important; }
-#inbox .inbox-stacks.stack-tabs > .media-pile.pages-pile { grid-column: 4; grid-row: 1; }
-#inbox .inbox-stacks.stack-tabs:not(:has(> #desk-media)) > .media-pile.pages-pile { grid-column: 3; }
 #inbox .inbox-stacks.stack-tabs .pg-pile { rotate: -.5deg; }
-@container rows (max-width: 600px) { :is(#inbox, #session) .inbox-groups > .inbox-stacks.stack-tabs:has(> .pages-pile) { column-gap: 14px; } }
 
-/* ---- the page /pages as a grid (his word, 8 October: "like Media, with a mini preview per page"): the rhythm of
+/* ---- the pages of /artifacts as a grid (his word, 8 October: "like Media, with a mini preview per page"): the rhythm of
    .gal-grid; each tile the preview (4:3), the title, who and when, Open and the ⋯ that holds Share. ---- */
 .pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 48px var(--s-8); margin: 0; padding: 0; list-style: none; }
 .pg-tile { position: relative; display: grid; gap: 10px; min-width: 0; align-content: start; }
@@ -173,3 +163,12 @@ body[data-page="gallery"] #gallery {
 .pg-menu-body { left: 0; right: 0; width: auto; bottom: 48px; }
 .pg-menu-body .lk-share { margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); grid-column: auto; }
 @media (max-width: 860px) { .pg-menu-body { left: -4px; right: -4px; bottom: 54px; } }
+/* ---- Artifacts (media.mjs, his word 8 October): Media and Pages in one grid, the newest first; the filter All · Media ·
+   Pages as three small words in a quiet segmented strip ---- */
+.art-kinds { display: inline-flex; gap: 2px; justify-self: start; padding: 3px; border-radius: var(--r-md); background: var(--sunken); }
+.art-kinds a { display: grid; place-items: center; min-height: 32px; padding: 0 14px; border-radius: 9px; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-decoration: none; }
+.art-kinds a:hover { color: var(--fg); }
+.art-kinds a[aria-current] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
+.art-item { min-width: 0; }
+.art-grid > .gal-none { grid-column: 1 / -1; }
+@media (max-width: 860px) { .art-kinds a { min-height: 36px; } }

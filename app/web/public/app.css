@@ -646,10 +646,10 @@ button.t-chip-drop { background: none; color: var(--muted); text-decoration: und
   body * { visibility: hidden !important; }
 }
 
-/* Everything the agents sent (media.mjs): the pile "Media N" at the foot of the Desk and the plain media
-   gallery /assets it opens. The pile is paper like its neighbours (desk.css .off-pile); the gallery is sober. */
+/* Everything the agents made or sent (media.mjs): the pile "Artifacts N" at the foot of the Desk and the page
+   /artifacts it opens. The pile is paper like its neighbours (desk.css .off-pile); the page is sober. */
 
-/* ---- the page /assets ---- */
+/* ---- the page /artifacts ---- */
 #gallery { display: none; }
 
 /* ---- The page curl (ui.mjs curlHTML, controller "curl"): the sheet's box over the page's main area; only the corner
@@ -723,8 +723,8 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
   :is(.desk-duck-yes, .desk-duck-no, .tc-more-item, .tc-more .tc-more-list > .cardclip-copy, .t-picture-back, .session-buttons button, .session-filter-menu a, .t-menu button) { min-height: 44px; }
   .room-tabs a { display: inline-flex; align-items: center; min-height: 44px; }
   .ledger-find { height: 44px; }
-  :is(.row-mark, .tc-from, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout) { position: relative; }
-  :is(.row-mark, .tc-from, .tc-step, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
+  :is(.row-mark, .tc-from, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .art-kinds a, #settings-logout) { position: relative; }
+  :is(.row-mark, .tc-from, .tc-step, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .art-kinds a, #settings-logout)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
 }
 
 /* ---- A phone names the page once: the top line says it (Agents, Devices, Settings, Media, Links), so the page's own

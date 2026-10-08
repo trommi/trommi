@@ -2217,8 +2217,7 @@ const LAYOUT = [
     { id: 'go.agents', keys: ['g a'], does: 'Agents', verb: 'go to the Agents page' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'menu', verb: 'open the Trommi menu: desks and places' },
     { id: 'go.walk', keys: ['g b'], does: 'Blitz', verb: 'Blitz: every open question, one after the other' },
-    { id: 'go.media', keys: ['g m'], does: 'Media', verb: 'go to the Media: every picture, video and file' },
-    { id: 'go.pages', keys: ['g p'], does: 'Pages', verb: 'go to the Pages: every page your agents made in this room' },
+    { id: 'go.artifacts', keys: ['g m', 'g p'], does: 'Artifacts', verb: 'go to the Artifacts: every picture, video, file and page your agents made' },
     // 1…9 alone are the desks'; G then 1…9 are the sessions'.
     { id: 'go.session', keys: ['g 1…9'], does: 'session 1 to 9', verb: 'go to that session of the sidebar', needs: 'sidebar' },
     { id: 'desk.switch', keys: ['1…9'], does: 'desk 1 to 9', verb: 'switch to that desk', needs: 'desks' },
@@ -2488,8 +2487,7 @@ function start(signal) {
     'go.desk': () => go(`${base()}/`),
     'go.agents': () => go(`${base()}/settings/agents`),
     'go.walk': () => go(`${base()}/blitz`),
-    'go.media': () => go(`${base()}/assets`),
-    'go.pages': () => go(`${base()}/pages`),
+    'go.artifacts': () => go(`${base()}/artifacts`),
     'go.jump': () => openJump(),
     'desk.switch': n => { press(desks()[n - 1]) },   // a number past the last desk does nothing
     'go.session': n => { press(sessions()[n - 1]) },
@@ -2780,7 +2778,7 @@ export const linkSlip = (cut, base) => html`<section class="link-slip" id="link-
 // role agent, room.mjs), so it leads to the same invite page with the link for the Claude Code session.
 export const PLUS = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M12.3 5.2C11.9 9.7 12 14.2 12.1 18.9"/><path d="M5.3 12.4C9.8 11.8 14.3 11.9 18.8 12.2"/></svg>')
 
-// ---- what the agents sent: the Desk's Media pile and the gallery ----
+// ---- what the agents sent: the Desk's Artifacts pile and the page /artifacts ----
 const GLYPHS = {
   image: ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 9.2a1.2 1.2 0 1 0 0-.1'],
   html: ['M3.5 5h17v14h-17z', 'M3.5 9h17', 'M6 7h.01M8.5 7h.01', 'M7 12.5h7M7 15.5h10'],
@@ -2819,7 +2817,7 @@ export function galleryItems(model, base = '') {
   return out
 }
 
-// ---- the pages the agents made in this room: the Desk's Pages pile and the page /pages ----
+// ---- the pages the agents made in this room (Artifacts, filter Pages) ----
 // Only artifacts of the room (his word, 8 October): an HTML page an agent published, a page sent as a file with a card
 // or a message, a page behind a picture. No addresses of foreign websites. One entry per file (its attachment id), the
 // newest first; a published page keeps its own title and address.
@@ -2867,6 +2865,13 @@ export function pageItems(model, base = '') {
   const out = [...by.values()].map(i => (shots.has(i.key) ? { ...i, pic: shots.get(i.key) } : i)).sort((x, y) => y.ts - x.ts)
   pagesKept.set(state, { key, out })
   return out
+}
+/** Artifacts (the Desk's pile, the page /artifacts): Media (galleryItems without its pages) and Pages (pageItems) as one
+ *  list, the newest first: [{ kind: 'media' | 'pages', ts, item }]. */
+export function artifactItems(model, base = '') {
+  const media = galleryItems(model, base).filter(i => i.type !== 'html').map(item => ({ kind: 'media', ts: item.ts, item }))
+  const pages = pageItems(model, base).map(item => ({ kind: 'pages', ts: item.ts, item }))
+  return [...media, ...pages].sort((x, y) => y.ts - x.ts)
 }
 
 /** One preview, the app's own .asset-preview: a picture as itself, a video by its first frame with a play mark, a page by
