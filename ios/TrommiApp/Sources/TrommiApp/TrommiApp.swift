@@ -72,6 +72,11 @@ final class BoardModel: ObservableObject {
   @Published var drawer = false
   @Published var live = false
   @Published var upgrade: UpgradeNotice?
+  /** The hub's word on this version: nothing, an update available (a quiet line), or required (the calm full screen). */
+  @Published var verdict: HubVersionInfo.Verdict = .current
+  /** How many things of a newer Trommi this version met (shown as placeholders; one quiet line says it). */
+  @Published var newer = 0
+  private var versionChecked = false
   @Published var deskId: String? = UserDefaults.standard.string(forKey: "trommi-desk") {
     didSet { UserDefaults.standard.set(deskId, forKey: "trommi-desk") }
   }
@@ -106,7 +111,11 @@ final class BoardModel: ObservableObject {
       try? await Task.sleep(nanoseconds: 80_000_000)
       pendingUpdate = false
       desk?.update()
-      if let r = room { live = r.live; if upgrade == nil, let u = r.upgrade { upgrade = u } }
+      if let r = room {
+        live = r.live
+        if upgrade == nil, let u = r.upgrade { upgrade = u; verdict = .updateRequired(minimum: u.minimumVersion, message: u.message) }
+        newer = r.board.newerCount
+      }
       version &+= 1
     }
   }
@@ -118,6 +127,10 @@ final class BoardModel: ObservableObject {
     guard let room = room else { return }
     busy = true
     defer { busy = false }
+    if !versionChecked, let info = try? await room.hub.versionInfo() {
+      versionChecked = true
+      verdict = info.verdict(kind: "ios", version: HubClient.appVersion)
+    }
     do {
       let report = try await room.sync()
       if let w = report.warnings.first { error = w }

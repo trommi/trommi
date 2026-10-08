@@ -145,6 +145,20 @@ public final class HubClient {
   public func accountLogin(email: String, authKey: String) async throws -> JSON {
     try await request("POST", "/accounts/login", body: ["email": email, "auth_key": authKey], auth: false)
   }
+  /** GET /v1/version: which client versions the hub serves (HubVersionInfo). */
+  public func versionInfo() async throws -> HubVersionInfo? {
+    var req = URLRequest(url: URL(string: "\(hubURL)/v1/version")!)
+    req.setValue(Self.clientName, forHTTPHeaderField: "trommi-client")
+    req.setValue("1", forHTTPHeaderField: "trommi-protocol")
+    let (data, status) = try await send(req)
+    if status == 426 {
+      let json = (try? JSONSerialization.jsonObject(with: data)) as? JSON ?? [:]
+      return HubVersionInfo(minimumClientVersions: ["ios": json["minimum_version"] as? String ?? "999.0.0"], message: json["message"] as? String)
+    }
+    return HubVersionInfo.parse(data)
+  }
+  /** This app's version, as it names itself to the hub ("ios/<version>"). */
+  public static var appVersion: String { String(clientName.split(separator: "/").last ?? "0.0.0") }
   /** A new invite: the signed offer; the hub answers its invite_id. */
   public func postInvite(signedOffer: Bytes) async throws -> JSON { try await request("POST", roomPath("/invites"), body: ["signed_offer": b64u(signedOffer)]) }
   public func getRequests(_ inviteId: String) async throws -> JSON { try await request("GET", roomPath("/invites/\(try Self.checkHex(inviteId, 32, "invite_id"))/requests")) }

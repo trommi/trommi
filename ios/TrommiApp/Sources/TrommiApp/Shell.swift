@@ -29,6 +29,7 @@ struct BoardShell: View {
     }
     .overlay(alignment: .bottom) { ToastHost() }
     .overlay(alignment: .top) { UpdateBanner() }
+    .overlay { UpdateRequired() }
     .background(Ink.bg.ignoresSafeArea())
   }
   private var stack: some View {
@@ -322,19 +323,47 @@ struct ToastHost: View {
   }
 }
 
-/** The hub asks for a newer app: a calm line, never a wall (writes stop only where the hub refuses them). */
+/** A quiet line when a newer Trommi is out or this one met things it cannot show (the work goes on). */
 struct UpdateBanner: View {
   @EnvironmentObject var model: BoardModel
+  @State private var hidden = false
   var body: some View {
-    if let u = model.upgrade {
-      HStack(spacing: 10) {
-        Sketch("wake", color: Ink.noteInk).frame(width: 18, height: 18)
-        Text("Update available").font(Face.text(14, .semibold)).foregroundStyle(Ink.noteInk)
-        Text(u.message).font(Face.text(13)).foregroundStyle(Ink.noteInk.opacity(0.8)).lineLimit(1)
+    let line: String? = {
+      if case .updateAvailable = model.verdict { return "Update available" }
+      if model.newer > 0 { return "Some things here need a newer Trommi" }
+      return nil
+    }()
+    if let l = line, !hidden {
+      Button { hidden = true } label: {
+        HStack(spacing: 8) {
+          Sketch("wake", color: Ink.noteInk).frame(width: 16, height: 16)
+          Text(l).font(Face.text(14, .semibold)).foregroundStyle(Ink.noteInk)
+          Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Ink.noteInk.opacity(0.6))
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .background(Capsule().fill(Ink.yellow))
       }
-      .padding(.horizontal, 14).padding(.vertical, 8)
-      .background(Capsule().fill(Ink.yellow))
-      .padding(.top, 4)
+      .buttonStyle(.plain)
+      .padding(.top, 2)
+    }
+  }
+}
+
+/** The hub serves this version no more (426, upgrade_required): one calm screen. Nothing is lost; reading stops, writing too. */
+struct UpdateRequired: View {
+  @EnvironmentObject var model: BoardModel
+  var body: some View {
+    if case .updateRequired(let minimum, let message) = model.verdict {
+      VStack(spacing: 18) {
+        PenMark("ui:BELL", color: Ink.fg).frame(width: 64, height: 64)
+        Text("Bitte aktualisieren").font(Face.display(32, .heavy)).foregroundStyle(Ink.fg)
+        Text(message).font(Face.text(17)).foregroundStyle(Ink.muted).multilineTextAlignment(.center)
+        if let m = minimum { Text("Trommi \(m) or newer · this is \(HubClient.appVersion)").font(Face.mono(13)).foregroundStyle(Ink.faint) }
+        Text("Nothing is lost: your room, your keys and every question stay on this device and on the hub.").font(Face.text(14)).foregroundStyle(Ink.muted).multilineTextAlignment(.center)
+      }
+      .padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Ink.bg.ignoresSafeArea())
+      .transition(.opacity)
     }
   }
 }
