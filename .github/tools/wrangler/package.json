@@ -1,0 +1,8 @@
+{
+  "name": "trommi-deploy-tools",
+  "private": true,
+  "description": "The exact wrangler the web deploy uses (deploy_web.yml runs npm ci here). An upgrade is a change of this file and its lock.",
+  "dependencies": {
+    "wrangler": "4.149.0"
+  }
+}
