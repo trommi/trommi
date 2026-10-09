@@ -283,8 +283,8 @@ struct NoteSheet: View {
 
 /**
  * The note (notes.mjs): the yellow slip to the desk's crowned session, a full page of yellow paper on the iPhone (the
- * tab pill stays, lit on Note), a sheet on the iPad. From the top: "To: …" on its own row, the words, the pictures,
- * the paperclip · bin · send row.
+ * tab pill stays, lit on Note), a sheet on the iPad. From the top: the words, the pictures, and one row: paperclip
+ * and bin at the left, "To: …" and the envelope at the right.
  * Words, pictures and files (encrypted like the composer's); kept as a note object while he writes (every device sees
  * it), sent with a three-second Undo, then gone from the desk.
  */
@@ -317,9 +317,6 @@ struct NoteScreen: View {
     let target = to.flatMap { id in model.desk?.agents.first { $0.id == id } } ?? crown
     let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty
     VStack(alignment: .leading, spacing: 10) {
-      // "To: …" on a row of its own: the words begin below it and never run under it (build 20: as a navigation bar
-      // item the glass pill floated over the first lines)
-      HStack { Spacer(minLength: 0); recipient(target) }
       TextEditor(text: $text)
         .font(Face.text(18)).foregroundStyle(Ink.noteInk)
         .scrollContentBackground(.hidden)
@@ -335,9 +332,15 @@ struct NoteScreen: View {
       if !files.isEmpty || uploading || dropping {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 8) {
-            ForEach(Array(files.enumerated()), id: \.offset) { i, f in
+            // each tile is its file (not its place in the row): a new file never inherits the tile of the one before
+            ForEach(Array(files.enumerated()), id: \.element) { i, f in
               ZStack(alignment: .topTrailing) {
-                if kindOf(f) == "image" { AttachmentImage(ref: f, named: true).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 8)) }
+                // an outline around the picture: a yellow picture (a screenshot of the note itself) on the yellow paper
+                // read as an empty box (build 22)
+                if kindOf(f) == "image" {
+                  AttachmentImage(ref: f, named: true).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Ink.noteInk.opacity(0.4), lineWidth: 1))
+                }
                 else { VStack { Sketch("clip", color: Ink.noteInk).frame(width: 18, height: 18); Text(f["file_name"].string ?? "file").font(Face.text(11)).lineLimit(2) }.frame(width: 72, height: 72).background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.5))) }
                 Button { files.remove(at: i); keepSoon() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Ink.noteInk) }.offset(x: 6, y: -6)
                   .accessibilityLabel("Remove")
@@ -356,7 +359,10 @@ struct NoteScreen: View {
         .accessibilityLabel("Attach")
         Button { bin() } label: { Image(systemName: "trash").font(.system(size: 17)).frame(width: 44, height: 44) }
           .accessibilityLabel("Delete Note").disabled(empty)
-        Spacer()
+        Spacer(minLength: 4)
+        // "To: …" directly left of the envelope (his word on build 22); a long name is cut in its middle, the pill
+        // gives way before the envelope or the two at the left do
+        recipient(target).layoutPriority(-1)
         Group {
           if all && to == nil && crowns.count > 1 {
             Menu {
@@ -444,7 +450,7 @@ struct NoteScreen: View {
     } label: {
       HStack(spacing: 4) {
         Text("To:").foregroundStyle(Ink.noteInk.opacity(0.7))
-        Text(target?.name ?? "No Session").fontWeight(.semibold).foregroundStyle(Ink.noteInk).lineLimit(1)
+        Text(target?.name ?? "No Session").fontWeight(.semibold).foregroundStyle(Ink.noteInk).lineLimit(1).truncationMode(.middle)
         Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.noteInk.opacity(0.7))
       }
       .font(Face.text(15)).padding(.horizontal, 14).frame(minHeight: 40)
@@ -465,7 +471,9 @@ struct NoteScreen: View {
           let size = CGSize(width: (img.size.width * s).rounded(), height: (img.size.height * s).rounded())
           let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1; fmt.preferredRange = .standard; fmt.opaque = true
           let j = UIGraphicsImageRenderer(size: size, format: fmt).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }.jpegData(compressionQuality: 0.85) ?? d
-          files.append(try await model.upload(j, name: "picture-\(files.count + 1).jpg", type: "image/jpeg", width: Int(size.width), height: Int(size.height)))
+          let ref = try await model.upload(j, name: "picture-\(files.count + 1).jpg", type: "image/jpeg", width: Int(size.width), height: Int(size.height))
+          PictureCache.shared.seed(ref, j)
+          files.append(ref)
           continue
         }
         #endif

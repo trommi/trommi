@@ -116,7 +116,12 @@ enum NoteDrop {
       case .words(let w): words.append(w)
       case .skipped(let why): skipped.append(why)
       case .file(let data, let name, let type, let width, let height):
-        do { atts.append(try await m.upload(data, name: name, type: type, width: width, height: height)) }
+        do {
+          let ref = try await m.upload(data, name: name, type: type, width: width, height: height)
+          // the picture is shown from the bytes in hand: its tile has nothing to fetch when it appears
+          if type.hasPrefix("image/") { PictureCache.shared.seed(ref, data) }
+          atts.append(ref)
+        }
         catch { skipped.append("\(name): \(m.describe(error))") }
       }
     }
