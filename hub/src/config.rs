@@ -27,6 +27,13 @@ pub struct Config {
     /// who may found a room: `open` (anyone, within the limits), `token` (whoever brings `HUB_FOUND_TOKEN`),
     /// `closed` (nobody)
     pub founding: Founding,
+    /// The admin page (`admin.rs`): served on 127.0.0.1 at `admin_port`, only if this hash is set
+    /// (`HUB_ADMIN_PASSWORD_HASH`, Argon2id in PHC text form; `trommi-hub admin-hash` makes one).
+    pub admin_password_hash: Option<String>,
+    pub admin_port: u16,
+    /// 127.0.0.1 unless said otherwise. In a container the loopback is the container's own: there it is set to
+    /// 0.0.0.0 and the port is published to the host's loopback only (`-p 127.0.0.1:8791:8791`).
+    pub admin_host: String,
     /// `strict-transport-security` on every answer, two years with subdomains and `preload` (`HUB_HSTS=on`).
     /// Off unless switched on: it binds the whole domain to HTTPS in every browser that saw it.
     pub hsts: bool,
@@ -231,6 +238,9 @@ impl Config {
             },
             login_throttle: text("HUB_LOGIN_THROTTLE", "on") != "off",
             hsts: text("HUB_HSTS", "off") == "on",
+            admin_password_hash: optional("HUB_ADMIN_PASSWORD_HASH"),
+            admin_port: number(env, "HUB_ADMIN_PORT", 8791u16),
+            admin_host: text("HUB_ADMIN_HOST", "127.0.0.1"),
             test_control: env.get("HUB_TEST_CONTROL").is_some_and(|v| v == "1"),
             quiet: env.get("HUB_QUIET").is_some_and(|v| v == "1"),
             test_heavy_ms: number(env, "HUB_TEST_HEAVY_MS", 0),
