@@ -537,7 +537,7 @@ pub struct Outgoing {
 /// Refuses, before anything is signed, what the hub would refuse: `group-behind` for a group the device does
 /// not know, `not-member` when it is no leaf, `removed-sender` when a Cut ended its chain, `stale-session`, `epoch-full`, `forbidden` when 9.2 does not let
 /// this device write the item against the object state it has, `no-key` without the epoch's content key; and
-/// what [`envelope::seal`] refuses. A refusal uses up no number and leaves `own` as it was.
+/// what `envelope::seal` refuses. A refusal uses up no number and leaves `own` as it was.
 ///
 /// On success `own` has moved on: the number is used up, and a second call signs the next one. The caller
 /// stores `own` in the same write as the envelope's outbox entry, before the envelope leaves (section 13.2); a

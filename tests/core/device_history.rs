@@ -3,11 +3,13 @@
 //! from number 1, and holds the objects and registers an old device holds.
 
 use trommi_core::chain::Role;
+use trommi_core::codec;
 use trommi_core::crypto::{Secret, SystemEntropy};
 use trommi_core::device::{Draft, EnvelopeOutcome, Processed, Received};
 use trommi_core::envelope::{self, Urgency};
 use trommi_core::ids::BoardId;
-use trommi_core::ids::{DeviceId, GroupId};
+use trommi_core::ids::{DeviceId, GroupId, SessionId};
+use trommi_core::mls::profile::{CommitNote, TrommiSession};
 use trommi_core::objects::Objects;
 use trommi_core::recovery::RecoveryKeys;
 use trommi_core::store::{table, Batch, Storage};
@@ -197,6 +199,9 @@ fn world(rounds: usize) -> World {
     let main = found_main(&mut hub, &mut old, &first_agent.id());
     settle(&hub, &mut first_agent);
     observe(&hub, &mut helper);
+    helper
+        .observe_session(hub.group_info(&main).unwrap())
+        .unwrap();
     let side = found_helper(&mut hub, &mut first_agent, &main, &mut [&mut helper]);
     let mut writers = vec![old.id(), first_agent.id(), helper.id()];
     let mut w = Making {
@@ -274,22 +279,24 @@ fn world(rounds: usize) -> World {
         .unwrap();
     post_ok(&mut w.hub, &mut w.old);
     observe(&w.hub, &mut next);
+    // The device that was taken out has nothing more to follow.
+    let gone = std::mem::replace(&mut w.agent, next).id();
     w.sync();
     for group in [main, side] {
-        let cut = w.old.cut_of(&group, &w.agent.id()).unwrap();
-        let package = next.key_package(now()).unwrap();
+        let cut = w.old.cut_of(&group, &gone).unwrap();
+        let package = w.agent.key_package(now()).unwrap();
+        let next = w.agent.id();
         w.old
-            .clean_session(&group, &[cut], Some((&next.id(), &package)), now())
+            .clean_session(&group, &[cut], Some((&next, &package)), now())
             .unwrap();
         post_ok(&mut w.hub, &mut w.old);
         w.sync();
-        w.old.send_handover(&group, &next.id()).unwrap();
+        w.old.send_handover(&group, &next).unwrap();
         post_ok(&mut w.hub, &mut w.old);
     }
-    assert_eq!(settle_joining(&w.hub, &mut next).len(), 2);
-    writers.push(next.id());
-    w.agent = next;
     w.sync();
+    assert_eq!(w.agent.groups().unwrap().len(), 2);
+    writers.push(w.agent.id());
     w.rounds(rounds);
 
     // The code is replaced.
@@ -522,21 +529,24 @@ fn an_agent_device_that_takes_a_session_over_reads_its_past_and_nothing_of_the_r
         .unwrap();
     post_ok(&mut w.hub, &mut w.old);
     observe(&w.hub, &mut next);
+    let gone = std::mem::replace(&mut w.agent, next).id();
     w.sync();
     for group in [main, side] {
-        let cut = w.old.cut_of(&group, &w.agent.id()).unwrap();
-        let package = next.key_package(now()).unwrap();
+        let cut = w.old.cut_of(&group, &gone).unwrap();
+        let package = w.agent.key_package(now()).unwrap();
+        let next = w.agent.id();
         w.old
-            .clean_session(&group, &[cut], Some((&next.id(), &package)), now())
+            .clean_session(&group, &[cut], Some((&next, &package)), now())
             .unwrap();
         post_ok(&mut w.hub, &mut w.old);
         w.sync();
         // With history: the keys of that group are handed over in it.
-        w.old.send_handover(&group, &next.id()).unwrap();
+        w.old.send_handover(&group, &next).unwrap();
         post_ok(&mut w.hub, &mut w.old);
     }
-    assert_eq!(settle_joining(&w.hub, &mut next).len(), 2);
     w.sync();
+    let mut next = std::mem::replace(&mut w.agent, new_device());
+    assert_eq!(next.groups().unwrap().len(), 2);
 
     // It follows the room group from the epoch it was enrolled at: the session's Commits name older ones.
     let followed = next.group_past(&room).unwrap().unwrap();
@@ -827,8 +837,7 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
     // A hub that checks nothing stores a helper session founded by an agent device that is not the main
     // session's agent leaf. The human devices that were there find it when they join and remove the device;
     // what is left looks like any helper session.
-    let (mut a, mut b, mut agent, mut other) =
-        (new_device(), new_device(), new_device(), new_device());
+    let (mut a, mut b, mut agent) = (new_device(), new_device(), new_device());
     let mut hub = Hub::new(false);
     let room = trommi_tests::found_room_on(&mut hub, &mut a);
     add_human(&mut hub, &mut a, &mut b);
@@ -838,14 +847,32 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
     enrol(&mut hub, &mut a, &mut agent);
     publish_some(&mut hub, &mut agent, 1);
     let main = found_main(&mut hub, &mut a, &agent.id());
-    enrol(&mut hub, &mut a, &mut other);
+    // No device builds this founding: the other agent device is a member that obeys MLS only.
+    let other = Forger::new();
+    a.change_agents(&[other.id()], &[], now()).unwrap();
+    post_ok(&mut hub, &mut a);
     settle(&hub, &mut b);
     let packages = hub.claim(&[a.id(), b.id()]).unwrap();
-    let session = other
-        .found_helper(&main.session_id().unwrap(), &packages, now())
+    let session = TrommiSession {
+        room_id: room.room_id(),
+        session_id: SessionId::new([6; 16]),
+        parent: main.session_id().unwrap(),
+    };
+    let group = session.group_id();
+    let mut forged = other.found_session(&session);
+    let info_0 = other.group_info(&forged);
+    let state = a.room_history().unwrap().newest().clone();
+    let note = CommitNote {
+        room_epoch: state.epoch,
+        room_state: state.state,
+        time: now(),
+        cuts: Vec::new(),
+        join: false,
+    };
+    let first = other.commit(&mut forged, &codec::encode(&note).unwrap(), &packages);
+    other
+        .post_founding(&mut hub, &group, &info_0, &first)
         .unwrap();
-    post_ok(&mut hub, &mut other);
-    let group = GroupId::session(room.room_id(), session);
     for device in [&mut a, &mut b] {
         assert_eq!(settle_joining(&hub, device)[0].offending, [other.id()]);
     }

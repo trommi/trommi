@@ -630,18 +630,20 @@ impl<S: Storage> Device<S> {
 
     /// This device's own Commit with the outbox entry `outbox`, made at `time`, is being merged. The moment
     /// it processes the Commit is the latest clock it was told, and no earlier than the making. The Cuts are
-    /// the ones kept with that outbox entry: `Error::Storage` when they are not there, since a Commit that
-    /// removes a leaf must end its chain.
+    /// the ones kept with that outbox entry: `Error::Storage` when they are not there, or are not the Cuts
+    /// `noted` in the Commit as the log shows it, since a Commit that removes a leaf must end its chain.
     pub(super) fn merging_own(
         &mut self,
         group: &GroupId,
         outbox: u64,
         time: u64,
+        noted: &[Cut],
     ) -> Result<(), Error> {
+        // The Cuts kept are the ones the Commit's note carries, which every other device applies.
         let cuts = self
             .stored(&group_key(table::CHAIN, SUB_OWN_CUTS, group, &[]))
             .and_then(|value| codec::decode::<OwnCuts>(value, value.len()).ok())
-            .filter(|own| own.outbox == outbox)
+            .filter(|own| own.outbox == outbox && own.cuts == noted)
             .map(|own| own.cuts)
             .ok_or_else(|| damaged("the Cuts of an own Commit"))?;
         self.memory.wire.merging = Some(Merging {
