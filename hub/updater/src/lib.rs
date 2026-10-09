@@ -254,7 +254,23 @@ pub struct Systemd {
 
 impl Service for Systemd {
     fn stop(&self) -> Result<(), String> {
-        run("systemctl", &["stop", &self.unit], Duration::from_secs(120)).map(|_| ())
+        let stopped = run("systemctl", &["stop", &self.unit], Duration::from_secs(120));
+        match stopped {
+            Ok(_) => Ok(()),
+            // before the very first release there is no unit yet: what does not run counts as stopped
+            Err(e) => {
+                let active = run(
+                    "systemctl",
+                    &["is-active", "--quiet", &self.unit],
+                    Duration::from_secs(30),
+                );
+                if active.is_ok() {
+                    Err(e)
+                } else {
+                    Ok(())
+                }
+            }
+        }
     }
     fn start(&self) -> Result<(), String> {
         run("systemctl", &["start", &self.unit], Duration::from_secs(120)).map(|_| ())
@@ -839,7 +855,20 @@ impl Updater {
         Ok(Some(dir))
     }
 
-    /// Removes every release folder no link points at, and what a broken fetch left.
+    /// Removes what a fetch that was cut off left behind.
+    fn tidy(&self) {
+        for entry in std::fs::read_dir(self.releases())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if entry.file_name().to_string_lossy().starts_with(".tmp-") {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+
+    /// After a deploy that went well: removes every release folder no link points at.
     fn prune(&self) {
         let keep: Vec<String> = ["current", "previous", "updater", "updater-previous"]
             .iter()
@@ -1175,7 +1204,7 @@ impl Updater {
                 }
             }
         }
-        self.prune();
+        self.tidy();
     }
 
     /// Waits until no deploy runs (before the updater stops).
