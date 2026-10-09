@@ -14,3 +14,15 @@ trommi-core = { path = "../core" }
 [[test]]
 name = "core_groups_founding"
 path = "core/groups_founding.rs"
+
+[[test]]
+name = "core_store"
+path = "core/store.rs"
+
+[[test]]
+name = "core_rules"
+path = "core/rules.rs"
+
+[[test]]
+name = "core_profile"
+path = "core/profile.rs"

@@ -2,9 +2,11 @@
 //! few steps every scenario repeats (post the outbox, process the log, take the Welcomes).
 
 pub mod hub;
+pub mod store;
 
 use hub::{Hub, LogItem};
 use std::time::{SystemTime, UNIX_EPOCH};
+pub use store::MemoryStorage;
 use trommi_core::crypto::{Entropy, SystemEntropy};
 use trommi_core::device::{
     Accepted, Device, DeviceRecovery, Joined, LogEntry, LogKind, Processed, SealRequest,
@@ -12,7 +14,6 @@ use trommi_core::device::{
 };
 use trommi_core::ids::DeviceId;
 use trommi_core::mls::rules::{JoinClaim, RecoveryRules, SealedKeyClaim};
-use trommi_core::store::MemoryStorage;
 use trommi_core::Error;
 
 /// The `RecoveryAuth` the stand-in accepts.
