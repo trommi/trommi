@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{refuse, Res};
 use crate::observer::{Device, Observer};
 use crate::store::{self, Auth, Room, Who};
-use crate::util::{b64, random, same};
+use crate::util::{b64, random};
 use crate::wire::HubAuth;
 
 pub const CHALLENGE_MS: u64 = 120_000;
@@ -158,12 +158,5 @@ impl Sessions {
                 Err(refuse("not-member", "this device is no longer in the room"))
             }
         }
-    }
-
-    /// Ends the tokens of one device of a room.
-    pub fn end(&self, room: &Room, device: &Device) {
-        self.lock()
-            .tokens
-            .retain(|_, t| !(same(&t.room, room) && same(&t.device, device)));
     }
 }
