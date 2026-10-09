@@ -137,6 +137,15 @@ fn damaged() -> Error {
     Error::Storage("an observer entry does not decode".into())
 }
 
+/// The refusal of a founding whose first tree holds a leaf that is not the profile's: `bad-commit`, as for
+/// such a leaf in any Commit.
+fn founding(error: Error) -> Error {
+    match error {
+        Error::BadGroup => Error::BadCommit,
+        other => other,
+    }
+}
+
 /// A GroupInfo as it travels, parsed.
 pub(crate) fn parse_group_info(bytes: &[u8]) -> Result<VerifiableGroupInfo, Error> {
     if bytes.len() > MAX_COMMIT_REQUEST_LEN {
@@ -148,15 +157,19 @@ pub(crate) fn parse_group_info(bytes: &[u8]) -> Result<VerifiableGroupInfo, Erro
     }
 }
 
-/// The confirmation tag inside a GroupInfo as it travels: `MLSMessage { version, wire_format, GroupInfo {
-/// GroupContext, extensions<V>, confirmation_tag<V>, signer, signature<V> } }`.
-fn confirmation_tag_of(bytes: &[u8], group_info: &VerifiableGroupInfo) -> Result<Vec<u8>, Error> {
+/// The confirmation tag and the signer's leaf index inside a GroupInfo as it travels: `MLSMessage { version,
+/// wire_format, GroupInfo { GroupContext, extensions<V>, confirmation_tag<V>, signer, signature<V> } }`.
+fn tag_and_signer_of(
+    bytes: &[u8],
+    group_info: &VerifiableGroupInfo,
+) -> Result<(Vec<u8>, u32), Error> {
     let context_len = group_info.group_context().tls_serialized_len();
     let mut reader = Reader::new(bytes);
     reader.take(4)?;
     reader.take(context_len)?;
     reader.opaque()?;
-    Ok(reader.opaque()?.to_vec())
+    let tag = reader.opaque()?.to_vec();
+    Ok((tag, reader.u32()?))
 }
 
 impl Observer {
@@ -167,7 +180,8 @@ impl Observer {
             .ok_or_else(damaged)
     }
 
-    /// Starts from a GroupInfo with its tree: OpenMLS verifies the tree, every leaf and the GroupInfo's signature.
+    /// Starts from a GroupInfo with its tree: OpenMLS verifies the tree, every leaf and the GroupInfo's
+    /// signature (`bad-signature`), and every leaf must be the profile's (`bad-group`).
     fn start(group_info: &[u8]) -> Result<(Provider, PublicGroup, GroupId, GroupKind), Error> {
         let verifiable = parse_group_info(group_info)?;
         let tree = verifiable
@@ -188,6 +202,12 @@ impl Observer {
             ProposalStore::new(),
         )
         .map_err(|_| Error::BadSignature)?;
+        // OpenMLS takes any credential and any capabilities: that each leaf is the profile's is checked here.
+        rules::profile_leaves(&public)?;
+        // An epoch no group reaches by Commits: such a state is not stored, since it would not open again.
+        if public.group_context().epoch().as_u64() > profile::MAX_STORED_EPOCH {
+            return Err(Error::BadGroup);
+        }
         let (group, kind) = profile::kind_of_context(public.group_context())?;
         Ok((provider, public, group, kind))
     }
@@ -227,21 +247,28 @@ impl Observer {
         ))
     }
 
-    /// Puts `history` in the place of this observer's own, which must be its end: the same newest state. For
-    /// a device that held the room group as a leaf and follows it from where it stands, with what it verified
-    /// until then.
-    pub(crate) fn continuing(mut self, history: RoomHistory) -> Result<Self, Error> {
-        match &self.followed {
-            Followed::Room(own) if own.newest() == history.newest() => {}
-            _ => {
-                return Err(Error::Internal(
-                    "the history does not end where the observer stands",
-                ))
-            }
+    /// An observer of the room group from the public state a leaf of it holds (`public`: the entries of
+    /// [`provider::public_entries`]) and that leaf's record of the roles, whose newest state must be the one
+    /// the public state stands in. For a device that is removed from the room group and follows it from there:
+    /// nothing is verified again, the leaf verified all of it.
+    pub(crate) fn from_member(
+        public: MlsEntries,
+        group: GroupId,
+        history: RoomHistory,
+    ) -> Result<Self, Error> {
+        provider::validate_entries(&public)?;
+        let observer = Self::assemble(
+            Provider::without_entropy(public)?,
+            group,
+            Followed::Room(history),
+        );
+        let held = observer.public()?;
+        let leaves = rules::leaves_of(held.members())?;
+        let stands = rules::room_state_of(held.group_context(), &leaves)?;
+        match &observer.followed {
+            Followed::Room(history) if *history.newest() == stands => Ok(observer),
+            _ => Err(damaged()),
         }
-        self.untaken_from = history.states().next().map_or(0, |state| state.epoch);
-        self.followed = Followed::Room(history);
-        Ok(self)
     }
 
     /// The room's roles per epoch, for the holder that takes them over when it becomes a leaf of the room group.
@@ -276,7 +303,7 @@ impl Observer {
         sealed_key: &[u8],
         recovery: &dyn RecoveryRules,
     ) -> Result<(Self, DeviceId), Error> {
-        let observer = Self::follow_room(group_info, None)?;
+        let observer = Self::follow_room(group_info, None).map_err(founding)?;
         let Followed::Room(history) = &observer.followed else {
             return Err(Error::Internal("room observer"));
         };
@@ -306,7 +333,7 @@ impl Observer {
         first: &PostedCommit<'_>,
         context: &Context<'_>,
     ) -> Result<(Self, CommitFacts), Error> {
-        let (provider, public, group, kind) = Self::start(group_info)?;
+        let (provider, public, group, kind) = Self::start(group_info).map_err(founding)?;
         let GroupKind::Session(session) = kind else {
             return Err(Error::BadCommit);
         };
@@ -717,8 +744,9 @@ impl Observer {
     }
 
     /// Whether `group_info` is the GroupInfo of the observer's present state, signed by `signer` (14.1, 8.5):
-    /// its signature verifies under that device's key, its group context is byte for byte the observer's, and
-    /// its tree and confirmation tag are the observer's. `incomplete` otherwise.
+    /// its signature verifies under that device's key, the signer it names is that device's leaf, its group
+    /// context is byte for byte the observer's, and its tree and confirmation tag are the observer's.
+    /// `incomplete` otherwise.
     pub fn check_group_info(&self, group_info: &[u8], signer: &DeviceId) -> Result<(), Error> {
         let public = self.public()?;
         let verifiable = parse_group_info(group_info).map_err(|_| Error::Incomplete)?;
@@ -735,11 +763,13 @@ impl Observer {
             .ratchet_tree()
             .map(|extension| extension.ratchet_tree().tls_serialize_detached());
         let own_tag = encoded(&|| public.confirmation_tag().tls_serialize_detached())?;
-        let their_tag =
-            confirmation_tag_of(group_info, &verifiable).map_err(|_| Error::Incomplete)?;
+        let (their_tag, named) =
+            tag_and_signer_of(group_info, &verifiable).map_err(|_| Error::Incomplete)?;
+        // The leaf the GroupInfo names as its signer is that device's: whoever joins with it looks the key
+        // up by that index.
         let fits = public
             .members()
-            .any(|member| member.signature_key == signer.as_bytes())
+            .any(|member| member.index.u32() == named && member.signature_key == signer.as_bytes())
             && verifiable.group_context() == public.group_context()
             && verifiable.extensions().external_pub().is_some()
             && their_tree.is_some_and(|tree| tree.ok() == Some(own_tree))
