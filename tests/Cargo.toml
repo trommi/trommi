@@ -42,3 +42,7 @@ path = "core/groups_removal.rs"
 [[test]]
 name = "core_groups_takeover"
 path = "core/groups_takeover.rs"
+
+[[test]]
+name = "core_groups_helper"
+path = "core/groups_helper.rs"
