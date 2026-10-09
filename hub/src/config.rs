@@ -21,6 +21,9 @@ pub struct Config {
     pub commit: String,
     pub origins: Vec<String>,
     pub trust_proxy_header: bool,
+    /// `HUB_HSTS=on`: every answer tells browsers to use HTTPS only for this name and the names below it, for two
+    /// years, and that the name may go on the browsers' preload list. Off unless switched on.
+    pub hsts: bool,
     pub min_client: Option<String>,
     /// when set, `POST /v2/rooms` needs it in `x-found-token`
     pub found_token: Option<String>,
@@ -107,6 +110,34 @@ fn list(env: &HashMap<String, String>, name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// A private key in PEM form, whatever happened to its line breaks on the way: written as `\n`, or turned into
+/// spaces (the 1Password form does that when a value is edited by hand). The body is put back in lines of 64.
+pub fn private_key_pem(text: &str) -> String {
+    let text = text.replace("\\n", "\n");
+    let Some(label) = text
+        .split("-----")
+        .nth(1)
+        .and_then(|l| l.strip_prefix("BEGIN "))
+    else {
+        return text;
+    };
+    let body: String = text
+        .split("-----")
+        .nth(2)
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let lines: Vec<&str> = (0..body.len())
+        .step_by(64)
+        .map(|i| &body[i..body.len().min(i + 64)])
+        .collect();
+    format!(
+        "-----BEGIN {label}-----\n{}\n-----END {label}-----\n",
+        lines.join("\n")
+    )
+}
+
 /// v1 §8.1: `https://` + lowercase host [+ `:port`]; `http://` only for localhost and 127.0.0.1. Anything else is
 /// refused, never normalised.
 pub fn canonical_address(url: &str) -> bool {
@@ -155,9 +186,14 @@ impl Config {
                 .unwrap_or_else(|| default.to_string())
         };
         let optional = |name: &str| env.get(name).filter(|v| !v.is_empty()).cloned();
-        let apns_key_pem = optional("APNS_KEY")
-            .map(|k| k.replace("\\n", "\n"))
-            .or_else(|| optional("APNS_KEY_FILE").and_then(|f| std::fs::read_to_string(f).ok()));
+        // each push setting under its name in the 1Password Environment (APPLE_…) or its older name (APNS_…)
+        let either = |new: &str, old: &str| optional(new).or_else(|| optional(old));
+        let apns_key_pem = either("APPLE_APNS_KEY", "APNS_KEY")
+            .or_else(|| {
+                either("APPLE_APNS_KEY_FILE", "APNS_KEY_FILE")
+                    .and_then(|f| std::fs::read_to_string(f).ok())
+            })
+            .map(|k| private_key_pem(&k));
         let apns_hosts = optional("HUB_APNS_HOSTS")
             .and_then(|j| serde_json::from_str::<HashMap<String, String>>(&j).ok())
             .unwrap_or_else(|| {
@@ -178,9 +214,13 @@ impl Config {
             port,
             data: PathBuf::from(text("HUB_DATA", "/data")),
             url: text("HUB_URL", &format!("http://127.0.0.1:{port}")),
-            commit: text("COMMIT", "dev"),
+            // a release binary knows its commit from its build and cannot be told another one
+            commit: option_env!("TROMMI_COMMIT")
+                .filter(|c| !c.is_empty())
+                .map_or_else(|| text("COMMIT", "dev"), str::to_string),
             origins: list(env, "HUB_ORIGINS"),
             trust_proxy_header: env.get("HUB_TRUST_CF").is_some_and(|v| v == "1"),
+            hsts: env.get("HUB_HSTS").is_some_and(|v| v == "on"),
             min_client: optional("HUB_MIN_CLIENT"),
             found_token: optional("HUB_FOUND_TOKEN"),
             founding: match (
@@ -265,9 +305,12 @@ impl Config {
             push_subject: text("HUB_PUSH_SUBJECT", "https://trommi.com"),
             push_hosts: list(env, "HUB_PUSH_HOSTS"),
             apns_key_pem,
-            apns_key_id: optional("APNS_KEY_ID"),
-            apns_team_id: optional("APNS_TEAM_ID"),
-            apns_topics: list(env, "APNS_TOPIC"),
+            apns_key_id: either("APPLE_APNS_KEY_ID", "APNS_KEY_ID"),
+            apns_team_id: either("APPLE_TEAM_ID", "APNS_TEAM_ID"),
+            apns_topics: match list(env, "APPLE_APNS_TOPIC") {
+                topics if topics.is_empty() => list(env, "APNS_TOPIC"),
+                topics => topics,
+            },
             apns_hosts,
         }
     }
