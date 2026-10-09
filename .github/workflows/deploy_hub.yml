@@ -59,24 +59,42 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.commit }}
-          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ inputs.artifact }}
           path: out
+      # the signing script and the public key of the revision this workflow runs from, never of an artifact
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: repo
+          persist-credentials: false
+          sparse-checkout: release
       - name: The manifest is the one of this build
         env:
           VERSION: ${{ inputs.version }}
           COMMIT: ${{ inputs.commit }}
+          TARGET: x86_64-unknown-linux-musl
         run: |
           set -eu
           jq -e --arg v "$VERSION" --arg c "$COMMIT" --arg r "$GITHUB_REPOSITORY" \
-            '.product == "trommi-hub" and .repository == $r and (.version | tostring) == $v and .tag == "hub-v" + $v and .commit == $c' \
-            out/manifest.json > /dev/null || { echo "::error::manifest.json is not about hub-v$VERSION of $COMMIT"; exit 1; }
-          release/sign.sh files out/manifest.json
+            '.product == "trommi-hub" and .repository == $r and (.version | type) == "number" and (.version | tostring) == $v and .tag == "hub-v" + $v and .commit == $c' \
+            out/manifest.json > /dev/null || { echo "::error::manifest.json is not hub-v$VERSION of $COMMIT in this repository"; exit 1; }
+          # Every file the manifest names is there and is that file; nothing else lies beside it. Read with jq, entry
+          # by entry: an entry that is not a plain name, a SHA-256 and a size stops the run.
+          jq -e '(.assets | length) > 0 and all(.assets[]; (.name | test("^[A-Za-z0-9._-]+$")) and (.sha256 | test("^[0-9a-f]{64}$")) and (.size | type) == "number") and ([.assets[].name] | unique | length) == (.assets | length)' \
+            out/manifest.json > /dev/null || { echo "::error::manifest.json has an entry that is not a plain file with hash and size"; exit 1; }
+          jq -r '.assets[] | "\(.sha256)  \(.name)"' out/manifest.json > "$RUNNER_TEMP/sums"
+          (cd out && sha256sum -c --quiet "$RUNNER_TEMP/sums")
+          jq -r '.assets[] | "\(.size) \(.name)"' out/manifest.json | while read -r size name; do
+            [ "$(wc -c < "out/$name" | tr -d ' ')" = "$size" ] || { echo "::error::$name does not have the size the manifest names"; exit 1; }
+          done
+          find out -type f ! -name manifest.json -printf '%f\n' | sort > "$RUNNER_TEMP/there"
+          jq -r '.assets[].name' out/manifest.json | sort > "$RUNNER_TEMP/named"
+          diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files the manifest does not name"; exit 1; }
+          for name in "trommi-hub-$TARGET" "trommi-hub-updater-$TARGET" trommi-hub.service; do
+            grep -qx "$name" "$RUNNER_TEMP/named" || { echo "::error::the release has no $name"; exit 1; }
+          done
       - name: Install the 1Password CLI
         uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
         with:
@@ -90,7 +108,7 @@ jobs:
           test -n "$OP_SERVICE_ACCOUNT_TOKEN" || { echo "::error::OP_SERVICE_ACCOUNT_TOKEN is not set for this run"; exit 1; }
           test -n "$OP_ENVIRONMENT_ID" || { echo "::error::OP_ENVIRONMENT_ID is not set for this run"; exit 1; }
           # release/sign.sh puts the key back into PEM form, signs, and checks the result against release/public-key.pem
-          op run --environment "$OP_ENVIRONMENT_ID" -- release/sign.sh sign out/manifest.json
+          op run --environment "$OP_ENVIRONMENT_ID" -- sh repo/release/sign.sh sign out/manifest.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hub-signature
