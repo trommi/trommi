@@ -2192,3 +2192,27 @@ mod throttle_tests {
         assert_eq!(t.count("SELECT accounts FROM login_counts"), 0);
     }
 }
+
+mod pem_tests {
+    use trommi_hub::config::pem;
+
+    #[test]
+    fn a_key_stored_with_spaces_or_written_line_breaks_is_the_same_pem() {
+        let body = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgq7n1pZ0s1mE0Jm3uR8cJm9o1cYz1u8m0Q2l6l1bq0w+hRANCAAQ7";
+        let proper = format!(
+            "-----BEGIN PRIVATE KEY-----\n{}\n{}\n-----END PRIVATE KEY-----\n",
+            &body[..64],
+            &body[64..]
+        );
+        assert_eq!(pem(&proper), proper);
+        assert_eq!(pem(&proper.trim().replace('\n', " ")), proper);
+        assert_eq!(pem(&proper.replace('\n', "\\n")), proper);
+        assert_eq!(pem(&proper.replace('\n', "\r\n")), proper);
+        // the bare body, and another kind of key keeps its name
+        assert_eq!(pem(body), proper);
+        assert!(
+            pem("-----BEGIN EC PRIVATE KEY----- AAAA -----END EC PRIVATE KEY-----")
+                .starts_with("-----BEGIN EC PRIVATE KEY-----\nAAAA\n-----END EC PRIVATE KEY-----")
+        );
+    }
+}

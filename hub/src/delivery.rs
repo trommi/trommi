@@ -629,6 +629,9 @@ fn commit_in(
 
     let mut committer_is_human = true;
     let sealed_to: Vec<u8>;
+    // 8.2: the row's `room_epoch` is the note's; in the row of a room Commit that replaces the recovery keys it
+    // is the new room epoch, whose state holds the new keys
+    let mut row_room_epoch = note.room_epoch;
     let mut room_change = None;
     if row.kind == GroupKind::Room {
         rules::check_note(&note, row.epoch, &view.state, &facts)?;
@@ -701,7 +704,15 @@ fn commit_in(
                     return Err(bad("a recovery key that is or was a device's key"));
                 }
             }
+            // 8.6: never a key the room held before (the hub knows the keys its rows were sealed to)
+            if x.c
+                .prepare_cached("SELECT 1 FROM sealed_keys WHERE room_id = ?1 AND recovery_hpke_key = ?2 LIMIT 1")?
+                .exists(params![&room[..], after.recovery_hpke_key])?
+            {
+                return Err(bad("a recovery key the room held before"));
+            }
             scope.keys_replaced = true;
+            row_room_epoch = facts.after.epoch;
         }
         sealed_to = after.recovery_hpke_key.clone();
         room_change = Some(change);
@@ -803,7 +814,7 @@ fn commit_in(
         group_id,
         new_epoch,
         &body.group_info,
-        note.room_epoch,
+        row_room_epoch,
         &sealed_to,
         &committer,
         committer_is_human,
@@ -1349,11 +1360,13 @@ pub fn put_sealed_key(x: &Ctx, auth: &Auth, bytes: &[u8]) -> Res<Value> {
             "a SealedKey is posted by its writer",
         ));
     }
+    // 8.3: a posted row comes from a human device that is its writer, with a tag (a row without one comes only
+    // with the Commit of a writer that cannot set it)
     let human = auth.who == Who::Human;
-    if !human && !store::is_leaf(x.c, &row.group_id, &auth.device)? {
+    if !human {
         return Err(refuse(
-            "not-member",
-            "only a leaf of the group files its key",
+            "forbidden",
+            "a SealedKey is posted by a human device",
         ));
     }
     if let Some(held) =
@@ -1596,8 +1609,14 @@ fn recovery_row(
     let Some((key, expires, finished, hash, answer)) = row else {
         return Err(refuse("not-found", "no such recovery"));
     };
-    // A finished recovery is answered again under the key that ran it, although the room has a new one since.
-    if !same(&key, &auth.device) {
+    // A finished recovery is answered again under the key that ran it, although the room has a new one since,
+    // and under the token of the device it brought in (8.7).
+    let by_joiner = finished.is_some()
+        && answer
+            .as_deref()
+            .and_then(|a| serde_json::from_str::<Value>(a).ok())
+            .is_some_and(|a| a["device"] == b64(&auth.device));
+    if !same(&key, &auth.device) && !by_joiner {
         return Err(refuse("not-found", "no such recovery"));
     }
     if finished.is_none() && (expires as u64) <= x.now {
@@ -1860,10 +1879,12 @@ pub fn recovery_finish(
             "the recovery did not join the room group",
         ));
     };
-    if !scope.replaced_in_last {
+    // 8.7: the room Commit that removes the other human devices brings the new code (8.6); the session groups'
+    // Removes follow it, against the new room epoch
+    if !scope.keys_replaced {
         return Err(refuse(
             "incomplete",
-            "a recovery ends with the room Commit that brings the new code (8.6)",
+            "a recovery holds the room Commit that brings the new code (8.6)",
         ));
     }
     let view = store::room_view(x.c, &auth.room)?;
