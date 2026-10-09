@@ -112,8 +112,8 @@ import json, re, sys
 c = json.load(sys.stdin)[0]
 cfg, host = c["Config"], c["HostConfig"]
 def words(args):
-    # only what is plainly a flag or a sub-command is shown
-    return [a if re.fullmatch(r"-{0,2}[A-Za-z][A-Za-z0-9-]*|/[A-Za-z0-9/_.-]{1,40}", a) else "<hidden>" for a in args or []]
+    # flags by their name; of everything else only the program and the two sub-commands a tunnel is run with
+    return [a if re.fullmatch(r"--?[A-Za-z][A-Za-z0-9-]*", a) or a in ("tunnel", "run", "cloudflared", "/trommi-hub") else "<hidden>" for a in args or []]
 print()
 print("container", c["Name"].lstrip("/"), "-", c["State"]["Status"])
 print("  image:", cfg.get("Image"), c["Image"][:19])
@@ -171,22 +171,23 @@ old_stack_here() { [ -f "$1/compose.yaml" ] || [ -f "$1/docker-compose.yml" ]; }
 exec 9> /run/trommi-install.lock
 flock -n 9 || stop "another run of this script is at work on the server"
 
-# Stops what this script installed and starts the old stack from where it was. Deletes nothing.
+# Stops what this script installed and starts the old stack from where it was. Deletes nothing. Every step is
+# checked by itself (a function called in a condition does not stop at a failing command on its own).
 put_old_back() {
   systemctl disable --now trommi-hub-updater.service >/dev/null 2>&1 || true
   systemctl stop trommi-hub.service >/dev/null 2>&1 || true
-  rm -f "$UNITS/trommi-hub.service"
+  rm -f "$UNITS/trommi-hub.service" || return 1
   systemctl daemon-reload || true
   if [ -d "$OLD" ]; then
     if [ -e "$ROOT" ]; then
       aside="/srv/trommi-new-$(date -u +%Y%m%d-%H%M%S)"
-      mv "$ROOT" "$aside"
+      mv -T "$ROOT" "$aside" || { echo "    $ROOT could not be moved aside" >&2; return 1; }
       echo "    the new installation (its data too) is kept in $aside"
     fi
-    mv "$OLD" "$ROOT"
+    mv -T "$OLD" "$ROOT" || { echo "    $OLD could not be moved back to $ROOT" >&2; return 1; }
   fi
   old_stack_here "$ROOT" || { echo "    there is no old stack in $ROOT to start" >&2; return 1; }
-  (cd "$ROOT" && docker compose up -d)
+  (cd "$ROOT" && docker compose up -d) || { echo "    docker compose up failed in $ROOT" >&2; return 1; }
   for _ in $(seq 1 30); do
     if curl -fsS --max-time 3 http://127.0.0.1:8790/healthz >/dev/null 2>&1; then return 0; fi
     sleep 2

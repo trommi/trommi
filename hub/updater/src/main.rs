@@ -136,7 +136,9 @@ async fn run(updater: Arc<Updater>) -> i32 {
     }
     // First of all, before the tailnet is needed: a deploy that was cut off is settled and the hub is started.
     // The hub is not started at boot by itself, so that a release whose health was never known does not serve.
-    updater.recover().await;
+    while !updater.recover().await {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
     // The tailnet address may not be there yet (boot, Tailscale updating itself): wait for it rather than end,
     // so that a new updater on trial is not taken for broken. systemd ends a start that takes too long.
     let listener = loop {
