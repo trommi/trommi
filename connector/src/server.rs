@@ -116,7 +116,8 @@ pub fn channel_tag(params: &Value) -> String {
 /// Board content as it stands inside a `<channel>` tag: it cannot close the tag or open another, and carries no
 /// control or direction-changing characters (line breaks and tabs stay). What it says remains data.
 pub fn channel_text(text: &str) -> String {
-    let tags = regex::Regex::new(r"(?i)<(/?\s*channel)").unwrap();
+    // Every tag-like opening, not only the channel's own: board words name no tag of the harness either.
+    let tags = regex::Regex::new(r"<([A-Za-z/!?])").unwrap();
     let cleaned: String = text
         .chars()
         .filter(|c| {
@@ -146,6 +147,17 @@ pub(crate) fn clean_name(v: &Value) -> String {
 fn wire(mut params: Value) -> Value {
     if let Some(o) = params.as_object_mut() {
         o.remove("echo");
+        // Claude Code builds the tag from these: what the board said goes in cleaned, as in `channel_tag`.
+        if let Some(Value::String(content)) = o.get_mut("content") {
+            *content = channel_text(content);
+        }
+        if let Some(Value::Object(meta)) = o.get_mut("meta") {
+            for value in meta.values_mut() {
+                if let Value::String(text) = value {
+                    *text = channel_text(text);
+                }
+            }
+        }
     }
     params
 }
