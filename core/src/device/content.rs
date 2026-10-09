@@ -1430,6 +1430,35 @@ impl<S: Storage> Device<S> {
         let record = self
             .record(&group, &sender, seq)?
             .ok_or(Error::Internal("a chained envelope without its record"))?;
+        let mut record = record;
+        if record.status == Status::Taken && record.code.is_some() {
+            // It took its place without its body (pruned as served then, or its key came later): the body
+            // that opens now is taken, with what it says for the registers and for the gate.
+            record.code = None;
+            record.extra = extra_of(&received.header, &body, !self.is_human());
+            let mut registers = self.registers(&group)?;
+            if matches!(received.header.subject, Subject::Register(_)) {
+                match registers.judge(&Facts(self), &received.header, &record.extra) {
+                    Ok(update) => {
+                        registers.apply(&update)?;
+                        received.register = Some(RegisterChange {
+                            name: update.name.clone(),
+                            of: update.of,
+                            current: update.current,
+                        });
+                    }
+                    Err(fault) if is_fault(&fault) => return Err(fault),
+                    Err(code) => {
+                        record.code = Some(code);
+                        record.extra = Vec::new();
+                    }
+                }
+            } else {
+                take_extra(&Facts(self), &mut registers, &record)?;
+            }
+            self.put_registers(batch, &group, &registers)?;
+            self.put_envelope_record(batch, &group, &record)?;
+        }
         if record.status == Status::Taken && record.code.is_none() {
             received.outcome = EnvelopeOutcome::Applied;
             received.body = Some(body);
@@ -1448,6 +1477,35 @@ impl<S: Storage> Device<S> {
             received.code = record.code;
         }
         Ok(received)
+    }
+
+    // ---- relayed messages ----
+
+    /// Takes a stroke piece the hub only passed on (7.2): it is in no log and has no change number, so the
+    /// cursor stays. `message` is the application message as it was relayed; the group's ratchet state after
+    /// it is written. None for a message this device cannot open, or of a group it is no leaf of.
+    /// `bad-format`, with nothing consumed, for a message that opens to anything but a stroke piece: every
+    /// other message comes through the log, once. `group-behind` for a message of an epoch the device has
+    /// not reached.
+    pub fn receive_relay(
+        &mut self,
+        group: &GroupId,
+        message: &[u8],
+        now_ms: u64,
+    ) -> Result<Option<super::Received>, Error> {
+        self.transact(|this, batch| {
+            this.begin(now_ms);
+            if !this.is_leaf_of(group) {
+                return Ok(None);
+            }
+            match this.process_message(batch, group, message)? {
+                super::Processed::Message(piece @ super::Received::StrokePiece { .. }) => {
+                    Ok(Some(piece))
+                }
+                super::Processed::Message(_) => Err(Error::BadFormat),
+                _ => Ok(None),
+            }
+        })
     }
 
     // ---- the command gate ----
