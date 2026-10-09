@@ -548,6 +548,23 @@ fn a_second_owner_of_a_stored_state_is_found_out() {
     );
     assert_eq!(second.key_package(now()), Err(conflict.clone()));
     assert!(second.outbox().is_empty());
+    // It is the owner no more, and stops: also what would write nothing or only read is refused, and what it
+    // held for sending before the conflict is handed out no more.
+    assert!(!second.is_owner() && run.device.is_owner());
+    assert_eq!(
+        second.update(&room_group, false, now()),
+        Err(conflict.clone())
+    );
+    assert_eq!(second.groups().err(), Some(conflict.clone()));
+    assert_eq!(second.group(&room_group).err(), Some(conflict.clone()));
+    assert_eq!(
+        second.content_key(&room_group, 1).err(),
+        Some(conflict.clone())
+    );
+    assert_eq!(
+        second.outbox_accepted(1, Default::default()),
+        Err(conflict.clone())
+    );
     assert_eq!(run.handle.revision(), revision);
     assert_eq!(run.handle.entries(), stored);
     // It follows the log no further either: the first owner's Commit is its own key's, and it holds no
@@ -560,6 +577,23 @@ fn a_second_owner_of_a_stored_state_is_found_out() {
     let results = sync(&run.hub, &mut second);
     assert!(!results.is_empty() && results.iter().all(Result::is_err));
     assert_eq!(second.cursor(), cursor);
+
+    // What an object held for sending before it lost the store is handed out no more either: the other
+    // owner may have sent or replaced it. Two objects on a copy of the state, each with the same entry.
+    let copy = run.handle.reopened();
+    let mut first = reopen(copy.handle()).unwrap();
+    first.key_packages_to_upload(99, now()).unwrap().unwrap();
+    let mut late = reopen(copy.handle()).unwrap();
+    assert_eq!(late.outbox(), first.outbox());
+    first.key_package(now()).unwrap();
+    assert!(late.is_owner() && late.outbox().len() == 1);
+    assert_eq!(late.key_package(now()), Err(conflict.clone()));
+    assert!(!late.is_owner() && late.outbox().is_empty());
+    assert!(first.is_owner() && first.outbox().len() == 1);
+    // Opened again under the store's lock, the device is the one the store holds, with that entry.
+    drop((first, late));
+    let again = reopen(copy).unwrap();
+    assert!(again.is_owner() && again.outbox().len() == 1);
 
     // The first owner goes on undisturbed.
     sync_ok(&run.hub, &mut run.device);

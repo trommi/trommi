@@ -33,7 +33,7 @@ use crate::mls::rules::{
     self, CommitFacts, Judged, Parent, RecoveryRules, RoomHistory, RoomState, SessionBefore,
     SessionFacts, Verifier,
 };
-use crate::store::{self, table, Batch, Entry, OutboxEntry, OutboxKind, Storage};
+use crate::store::{self, table, Batch, Entry, OutboxEntry, OutboxKind, Storage, StorageError};
 use openmls::group::MlsGroup;
 use openmls::prelude::{KeyPackage, ProcessedMessageContent, ProtocolMessage, Sender};
 use openmls_traits::OpenMlsProvider as _;
@@ -535,6 +535,8 @@ pub struct Device<S: Storage> {
     provider: Provider,
     recovery: Box<dyn DeviceRecovery>,
     memory: Memory,
+    /// Another owner wrote to the stored state: this object works on it no more.
+    lost: bool,
 }
 
 impl<S: Storage> std::fmt::Debug for Device<S> {
@@ -744,6 +746,7 @@ impl<S: Storage> Device<S> {
                 record,
                 ..Memory::default()
             },
+            lost: false,
         })
     }
 
@@ -771,6 +774,7 @@ impl<S: Storage> Device<S> {
             provider: Provider::new(entropy, mls)?,
             recovery,
             memory,
+            lost: false,
         };
         device.read_groups()?;
         Ok(device)
@@ -815,11 +819,30 @@ impl<S: Storage> Device<S> {
         self.read_groups()
     }
 
+    /// The error of a device that is no longer the owner of its stored state.
+    fn owner(&self) -> Result<(), Error> {
+        if self.lost {
+            Err(StorageError::Conflict.into())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Whether this object is still the owner of its stored state. It is not once a write met
+    /// [`StorageError::Conflict`]: another owner wrote, and what this object holds in memory is behind. Every
+    /// operation and every reading that hands out keys or groups then returns `Error::Storage`,
+    /// [`Device::outbox`] is empty, and nothing more is written; the state is used again by
+    /// [`Device::open`] under the store's lock.
+    pub fn is_owner(&self) -> bool {
+        !self.lost
+    }
+
     /// Runs one operation and writes what it changed in one batch; on any failure memory is what is stored.
     fn transact<T>(
         &mut self,
         operation: impl FnOnce(&mut Self, &mut Batch) -> Result<T, Error>,
     ) -> Result<T, Error> {
+        self.owner()?;
         let mut batch = Batch::new();
         let result = operation(self, &mut batch).and_then(|value| {
             self.write(batch)?;
@@ -857,7 +880,10 @@ impl<S: Storage> Device<S> {
         if batch.is_empty() {
             return Ok(());
         }
-        self.store.apply(self.revision, batch.clone())?;
+        if let Err(error) = self.store.apply(self.revision, batch.clone()) {
+            self.lost = error == StorageError::Conflict;
+            return Err(error.into());
+        }
         self.revision = self.revision.saturating_add(1);
         for key in &batch.delete {
             self.mirror.remove(key);
@@ -909,6 +935,7 @@ impl<S: Storage> Device<S> {
     /// The content key of `group` at `epoch` (section 6); `no-key` when it is not held, or the group failed
     /// its first contact.
     pub fn content_key(&self, group: &GroupId, epoch: u64) -> Result<Secret<32>, Error> {
+        self.owner()?;
         if self
             .memory
             .groups
@@ -926,6 +953,7 @@ impl<S: Storage> Device<S> {
 
     /// The groups this device is a leaf of.
     pub fn groups(&self) -> Result<Vec<GroupSummary>, Error> {
+        self.owner()?;
         let known = self.known();
         let mut summaries = Vec::new();
         for (id, meta) in &self.memory.groups {
@@ -1084,8 +1112,13 @@ impl<S: Storage> Device<S> {
     // ---- the outbox ----
 
     /// Everything waiting to be sent, in the order to send it. An entry stays until the hub's answer was
-    /// reported; a Commit refused with `epoch-taken` is held back until the log decided it.
+    /// reported; a Commit refused with `epoch-taken` is held back until the log decided it. Empty for a device
+    /// that is no longer the owner of its stored state ([`Device::is_owner`]): what it holds may have been sent
+    /// or replaced by the other owner.
     pub fn outbox(&self) -> Vec<OutboxEntry> {
+        if self.lost {
+            return Vec::new();
+        }
         let held: BTreeSet<u64> = self
             .memory
             .groups
