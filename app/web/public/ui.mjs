@@ -2274,7 +2274,7 @@ const LAYOUT = [
     { id: 'go.desk', keys: ['g d', 'g i'], does: 'Desk', verb: 'go to the Desk' },
     { id: 'go.agents', keys: ['g a'], does: 'Sessions', verb: 'go to Settings · Sessions' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'menu', verb: 'open the Trommi menu: desks and places' },
-    { id: 'go.walk', keys: ['g b'], does: 'Blitz', verb: 'Blitz: every open question, one after the other' },
+    { id: 'go.walk', keys: ['g b'], does: 'Blitz', verb: 'Blitz: every open card, one after the other' },
     { id: 'go.artifacts', keys: ['g m', 'g p'], does: 'Artifacts', verb: 'go to the Artifacts: every picture, video, file and page your agents made' },
     // 1…9 alone are the desks'; G then 1…9 are the sessions'.
     { id: 'go.session', keys: ['g 1…9'], does: 'session 1 to 9', verb: 'go to that session of the sidebar', needs: 'sidebar' },
