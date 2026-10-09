@@ -25,7 +25,7 @@ public final class SSEReader: NSObject, URLSessionDataDelegate, @unchecked Senda
   public init(staleMs: Double = 40_000) { self.staleMs = staleMs }
 
   /** The longest line and the largest event taken, and how many events may wait to be read. */
-  static let maxLine = 1 << 20, maxEvent = 2 << 20, maxQueued = 2048
+  static let maxLine = 1 << 20, maxEvent = 1 << 20, maxQueued = 128
 
   public func start(_ req: URLRequest) -> AsyncStream<SSEEvent> {
     AsyncStream(bufferingPolicy: .bufferingOldest(Self.maxQueued)) { c in
@@ -70,6 +70,8 @@ public final class SSEReader: NSObject, URLSessionDataDelegate, @unchecked Senda
     if status != 200 { stop() }
   }
   public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive d: Data) {
+    // (checked before anything is kept: no piece of the stream grows the buffer past its bound)
+    if buffer.count + d.count > 2 * Self.maxLine { stop(); return }
     buffer += Array(d)
     var from = 0
     while let nl = buffer[from...].firstIndex(of: 0x0A) {
@@ -89,7 +91,7 @@ public final class SSEReader: NSObject, URLSessionDataDelegate, @unchecked Senda
     }
     if line.hasPrefix(":") { return }
     if line.hasPrefix("event:") { event = String(line.dropFirst(6).trimmingCharacters(in: .whitespaces).prefix(64)) }
-    else if line.hasPrefix("data:") { data += (data.isEmpty ? "" : "\n") + line.dropFirst(5).trimmingCharacters(in: .whitespaces) }
+    else if line.hasPrefix("data:"), data.utf8.count + line.utf8.count <= Self.maxEvent { data += (data.isEmpty ? "" : "\n") + line.dropFirst(5).trimmingCharacters(in: .whitespaces) }
   }
   public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     // An event without its closing blank line was cut off: it is not an event.
