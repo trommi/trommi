@@ -2,8 +2,8 @@
 //
 // - All or nothing: every write is ONE readwrite transaction. `apply` resolves when the transaction completed, and
 //   rejects, with nothing written, when it aborted; any request in it that fails aborts it.
-// - Durable on return: the transaction asks for durability "strict" (flushed to the disk before it completes). An
-//   engine that knows the option and does not grant it is refused; one that does not know it gives its default.
+// - Durable on return: the transaction asks for durability "strict" (flushed to the disk before it completes),
+//   and a browser that does not say it granted that is refused: nothing weaker is taken silently.
 // - The revision: one number beside the entries. A write is made only if the stored number is the one it names
 //   (compared inside the same transaction), and then makes it one more. Otherwise: StoreConflict.
 // - One owner: a Web Lock on the state's name, taken before anything is read and held until close(). A second
@@ -84,6 +84,7 @@ export class IdbStore {
       }
       const revision = transaction.objectStore(META).get('revision')
       await finished
+      if (this.#state !== 'loading') throw new Error('the store was closed while it loaded')
       this.#state = 'open'
       return { revision: revision.result ?? 0, entries }
     } catch (error) {
@@ -95,7 +96,7 @@ export class IdbStore {
   async apply(write) {
     if (this.#state !== 'open') throw new Error('the store is closed')
     const transaction = this.#db.transaction([ENTRIES, META], 'readwrite', { durability: 'strict' })
-    if (transaction.durability !== undefined && transaction.durability !== 'strict') {
+    if (transaction.durability !== 'strict') {
       transaction.abort()
       throw new Error('the browser does not grant a strict transaction')
     }

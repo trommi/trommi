@@ -11,7 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 trommi-core = { path = "../core", features = ["vectors"] }
 # The facade both bindings share, for the tests of the bindings (`bindings/`).
-trommi-core-swift = { path = "../core/swift", features = ["stand-in-recovery"] }
+trommi-core-swift = { path = "../core/swift" }
 serde_json = "=1.0.151"
 # OpenMLS itself, for the member of `src/forge.rs` that builds what no device builds.
 openmls = { workspace = true }
@@ -124,5 +124,6 @@ path = "core/recovery_flow.rs"
 name = "core_vectors_recovery"
 path = "core/vectors_recovery.rs"
 
+[[test]]
 name = "bindings_facade"
 path = "bindings/facade.rs"

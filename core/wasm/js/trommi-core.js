@@ -78,44 +78,76 @@ const camel = name => name.replace(/_([a-z0-9])/g, (_, letter) => letter.toUpper
 // Uint8Array of exactly their length, a list into a fresh Array, a record into an object of its own fields. The
 // core then never sees a caller's object: nothing of the caller's runs while the core works (no getter, no
 // iterator), a later change of an argument changes nothing, and a view of a larger or shared buffer brings along
-// only its own bytes.
+// only its own bytes. The copies of bytes are overwritten when the call is over. What a store's load() returns is
+// treated the same way.
 
-// The brand of a typed array, read past whatever the object itself claims; works across realms.
-const typedArrayName = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get
-const MAX_LIST = 4096              // no call takes a longer list
+// The brand and the length of a typed array, read past whatever the object itself claims; both work across realms.
+const typedArray = Object.getPrototypeOf(Uint8Array.prototype)
+const typedArrayName = Object.getOwnPropertyDescriptor(typedArray, Symbol.toStringTag).get
+const typedArrayLength = Object.getOwnPropertyDescriptor(typedArray, 'byteLength').get
+const fill = Uint8Array.prototype.fill
 const MAX_BYTES = 80 * 1024 * 1024 // a little above the largest stored file, for all bytes of one call together
+const MAX_VALUES = 4 * 1024 * 1024 // every value of one call together: a room's whole log served for a join is far below
+const MAX_TEXT = 1024 * 1024       // no call takes longer text
 
-function snapshot(value, budget, depth = 0) {
+/** Copies one argument. `copies` collects the byte arrays made, so that they can be overwritten after the call. */
+function snapshot(value, copies, depth = 0) {
+  if (++copies.values > MAX_VALUES) throw new TrommiError('too-large', 'too-large: the arguments of one call')
   if (value === null || value === undefined) return null
   const type = typeof value
-  if (type === 'string' || type === 'boolean' || type === 'number') return value
+  if (type === 'boolean' || type === 'number') return value
+  if (type === 'string') {
+    if (value.length > MAX_TEXT) throw new TrommiError('too-large', 'too-large: a text')
+    return value
+  }
   if (type !== 'object' || depth > 4) throw new TrommiError('bad-format', 'bad-format: an argument of a kind no call takes')
   if (typedArrayName.call(value) !== undefined) {
     if (typedArrayName.call(value) !== 'Uint8Array') throw new TrommiError('bad-format', 'bad-format: bytes are a Uint8Array')
+    copies.bytes += typedArrayLength.call(value)
+    if (copies.bytes > MAX_BYTES) throw new TrommiError('too-large', 'too-large: the arguments of one call')
     let copy
     try { copy = new Uint8Array(value) } catch { throw new TrommiError('bad-format', 'bad-format: the bytes cannot be read') }
-    budget.bytes += copy.length
-    if (budget.bytes > MAX_BYTES) throw new TrommiError('too-large', 'too-large: the arguments of one call')
+    copies.made.push(copy)
     return copy
   }
   if (Array.isArray(value)) {
     const length = value.length
-    if (!(length <= MAX_LIST)) throw new TrommiError('too-large', 'too-large: a list')
+    if (!(length <= MAX_VALUES)) throw new TrommiError('too-large', 'too-large: a list')
     const copy = new Array(length)
-    for (let at = 0; at < length; at++) copy[at] = snapshot(value[at], budget, depth + 1)
+    for (let at = 0; at < length; at++) copy[at] = snapshot(value[at], copies, depth + 1)
     return copy
   }
   const copy = Object.create(null)
-  for (const key of Object.keys(value)) copy[key] = snapshot(value[key], budget, depth + 1)
+  for (const key of Object.keys(value)) copy[key] = snapshot(value[key], copies, depth + 1)
   return copy
 }
 
-/** The arguments of one call, copied. */
-const taken = args => { const budget = { bytes: 0 }; return args.map(argument => snapshot(argument, budget)) }
+/** The arguments of one call, copied, and the way to overwrite the copies of their bytes afterwards: an argument
+ *  may be a key. If copying fails half-way, what was copied is overwritten at once. */
+function taken(args) {
+  const copies = { bytes: 0, values: 0, made: [] }
+  const wipe = () => { for (const copy of copies.made) fill.call(copy, 0) }
+  try {
+    return { args: args.map(argument => snapshot(argument, copies)), wipe }
+  } catch (error) {
+    wipe()
+    throw error
+  }
+}
 
-/** Overwrites the bytes of a store's records once they were used: they hold private keys. */
+/** One call into the module with the caller's arguments: copied before, the copies overwritten after. */
+function callWith(target, name, args) {
+  const copied = taken(args)
+  try {
+    return call(target, name, copied.args)
+  } finally {
+    copied.wipe()
+  }
+}
+
+/** Overwrites the bytes of records the module made for a store (they hold private keys), once they were used. */
 function wipe(entries) {
-  for (const entry of entries ?? []) entry?.value?.fill?.(0)
+  for (const entry of entries) fill.call(entry.value, 0)
 }
 
 // ---- the device ---------------------------------------------------------------------------------------------------
@@ -128,6 +160,8 @@ const DEVICE_CALLS = [
   'remove_human_devices', 'clean_session', 'readmit_helper', 'update', 'archive',
   'join_welcome', 'observe_room', 'observe_session', 'process_log_entry',
   'send_handover', 'handovers_sent', 'handover_read', 'send_stroke_piece', 'send_work_trail', 'hub_sign_in',
+  'holds_recovery_mac', 'key_is_confirmed', 'send_recovery_auth', 'post_sealed_key', 'verify_founding',
+  'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
 ]
 
 const CONSTRUCT = Symbol('Device')
@@ -167,18 +201,17 @@ export class Device {
       owned.delete(store)
       throw storageError(error)
     }
-    let rawDevice
+    // From here the store is this device's, and is closed if anything fails before the device stands.
     try {
-      rawDevice = call(raw.RawDevice, how, [loadedState])
+      // What the store handed over is copied like any argument: the core reads the copy, which is then overwritten.
+      const rawDevice = callWith(raw.RawDevice, how, [loadedState])
+      const device = new Device(CONSTRUCT, rawDevice, store)
+      await device.#enqueue(() => undefined)   // stores what creating wrote: the new key
+      return device
     } catch (error) {
       await closeStore(store)
       throw error
-    } finally {
-      wipe(loadedState?.entries)
     }
-    const device = new Device(CONSTRUCT, rawDevice, store)
-    await device.#enqueue(() => undefined)   // stores what creating wrote: the new key
-    return device
   }
 
   /** Runs `work` after every earlier call, then stores what it wrote, then hands on what it returned or threw. */
@@ -250,7 +283,10 @@ export class Device {
         // Copied now, not when the call's turn comes: what the caller does with its objects afterwards is its own.
         let copied
         try { copied = taken(args) } catch (error) { return Promise.reject(error) }
-        return this.#enqueue(() => call(this.#raw, name, copied))
+        const job = this.#enqueue(() => call(this.#raw, name, copied.args))
+        // Whether the call ran, was refused, or never got its turn: the copies go.
+        job.then(copied.wipe, copied.wipe)
+        return job
       }
     }
   }
@@ -283,7 +319,7 @@ class FileObject {
     const rawObject = this.#raw
     if (last) this.#raw = null
     try {
-      return call(rawObject, name, taken(args))
+      return callWith(rawObject, name, args)
     } finally {
       if (last && !stopped) { try { rawObject.free() } catch { stopped = true } }
     }
@@ -308,14 +344,14 @@ export class FileEncryptor extends FileObject {
 
 /** Decrypts a stored file piece by piece. What `update` handed out counts only once `finish` succeeded. */
 export class FileDecryptor extends FileObject {
-  constructor(file) { super(call(raw.RawFileDecryptor, 'create', taken([file]))) }
+  constructor(file) { super(callWith(raw.RawFileDecryptor, 'create', [file])) }
   update(stored) { return this[CALL]('update', [stored]) }
   finish() { return this[CALL]('finish', [], true) }
 }
 
 // ---- everything without state -------------------------------------------------------------------------------------
 
-const plain = name => (...args) => call(raw, name, taken(args))
+const plain = name => (...args) => callWith(raw, name, args)
 
 export const versions = plain('versions')
 export const selfTest = plain('self_test')
@@ -351,3 +387,5 @@ export const generateUserHandle = plain('generate_user_handle')
 export const generatePushKey = plain('generate_push_key')
 export const openApnsPush = plain('open_apns_push')
 export const readWebPush = plain('read_web_push')
+export const recoveryAnchor = plain('recovery_anchor')
+export const recoverySignIn = plain('recovery_sign_in')

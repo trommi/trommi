@@ -8,7 +8,7 @@ use crate::files::{FileDecryptor, FileEncryptor};
 use crate::records::{
     Cut, LogEntry, LogEntryKind, LogFinding, OutboxKind, ProcessedKind, ReceivedKind,
 };
-use crate::recovery;
+use crate::recovery::{recovery_anchor, ServedCommit, ServedGroup, ServedRoom};
 use crate::store::MemoryStore;
 use crate::{log_finding, open_apns_push, session_group_id, CoreError, ErrorCode};
 use trommi_core::crypto::{Secret, SystemEntropy};
@@ -32,8 +32,6 @@ record! {
         pub provider: String,
         /// This binding and the generator it is made with.
         pub binding: String,
-        /// The state of the recovery construct in this build: `built`, or why it is not.
-        pub recovery: String,
     }
 }
 
@@ -78,7 +76,6 @@ pub fn versions() -> Versions {
         openmls: OPENMLS.to_owned(),
         provider: PROVIDER.to_owned(),
         binding: format!("{} ({generator})", env!("CARGO_PKG_VERSION")),
-        recovery: recovery::STATE.to_owned(),
     }
 }
 
@@ -150,7 +147,12 @@ struct Relay {
     log: Vec<LogEntry>,
     /// Each Welcome with the change number of its Commit.
     welcomes: Vec<(u64, Vec<u8>)>,
-    room_group_info: Vec<u8>,
+    /// The room group's GroupInfo of every epoch, from its founding.
+    room_infos: Vec<Vec<u8>>,
+    /// Per session group: its founding GroupInfo and its newest.
+    session_infos: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
+    /// Every SealedKey posted.
+    rows: Vec<Vec<u8>>,
 }
 
 impl Relay {
@@ -159,22 +161,38 @@ impl Relay {
         for entry in device.outbox()? {
             let part = |at: usize| entry.parts.get(at).cloned().unwrap_or_default();
             let group = entry.group.clone().unwrap_or_default();
-            // Where the Commit, its GroupInfo and its Welcome stand among the parts of each kind.
+            // Where the Commit, its GroupInfo, its Welcome, its SealedKey and its RecoveryAuth stand among
+            // the parts of each kind.
             let commit = match entry.kind {
-                OutboxKind::GroupFounding => Some((part(2), part(3), part(4))),
-                OutboxKind::Commit => Some((part(0), part(1), part(2))),
+                OutboxKind::GroupFounding => {
+                    self.rows.push(part(1));
+                    self.session_infos.push((group.clone(), part(0), part(0)));
+                    Some((part(2), part(3), part(4), part(5), None))
+                }
+                OutboxKind::Commit => Some((part(0), part(1), part(2), part(3), None)),
+                OutboxKind::ExternalCommit => {
+                    Some((part(0), part(1), Vec::new(), part(2), Some(part(3))))
+                }
                 _ => None,
             };
             let change = match (entry.kind, commit) {
                 (OutboxKind::RoomFounding, _) => {
-                    self.room_group_info = part(0);
+                    self.room_infos.push(part(0));
+                    self.rows.push(part(1));
                     self.change += 1;
                     Some(self.change)
                 }
-                (_, Some((commit, group_info, welcome))) => {
+                (_, Some((commit, group_info, welcome, sealed_key, recovery_auth))) => {
                     self.change += 1;
+                    self.rows.push(sealed_key);
                     if group.len() == RoomId::LEN {
-                        self.room_group_info = group_info;
+                        self.room_infos.push(group_info);
+                    } else if let Some(session) = self
+                        .session_infos
+                        .iter_mut()
+                        .find(|(id, _, _)| *id == group)
+                    {
+                        session.2 = group_info;
                     }
                     if !welcome.is_empty() {
                         self.welcomes.push((self.change, welcome));
@@ -184,7 +202,7 @@ impl Relay {
                         group,
                         kind: LogEntryKind::Commit,
                         bytes: commit,
-                        recovery_auth: None,
+                        recovery_auth,
                     });
                     Some(self.change)
                 }
@@ -204,6 +222,47 @@ impl Relay {
             device.outbox_accepted(entry.id, change)?;
         }
         Ok(())
+    }
+
+    /// A group as the hub serves it to a device that verifies it from its founding.
+    fn served(&self, group: &[u8], founding: &[u8], current: &[u8]) -> ServedGroup {
+        ServedGroup {
+            founding: founding.to_vec(),
+            commits: self
+                .log
+                .iter()
+                .filter(|entry| entry.group == group && entry.kind == LogEntryKind::Commit)
+                .map(|entry| ServedCommit {
+                    change: entry.change,
+                    commit: entry.bytes.clone(),
+                    recovery_auth: entry.recovery_auth.clone(),
+                })
+                .collect(),
+            current: current.to_vec(),
+        }
+    }
+
+    /// The room as the hub serves it to a device that comes with the recovery code.
+    fn served_room(&self, room: &[u8], code: &[u8]) -> Result<ServedRoom, CoreError> {
+        let anchor = recovery_anchor(code.to_vec(), room.to_vec(), self.rows.clone())?;
+        let info = |epoch: Option<usize>| {
+            epoch
+                .and_then(|epoch| self.room_infos.get(epoch))
+                .cloned()
+                .ok_or_else(|| CoreError::internal("the room has no such GroupInfo"))
+        };
+        Ok(ServedRoom {
+            room: room.to_vec(),
+            group: self.served(
+                room,
+                &info(Some(0))?,
+                &info(self.room_infos.len().checked_sub(1))?,
+            ),
+            anchor: info(usize::try_from(anchor.epoch).ok())?,
+            rows: self.rows.clone(),
+            links: Vec::new(),
+            sessions: Vec::new(),
+        })
     }
 
     /// Hands the device the log after its cursor, in order, with every Welcome at its place. Returns what the
@@ -236,8 +295,8 @@ impl Relay {
 }
 
 /// Runs the self-test: two human devices and an agent device in memory found a room and a session, exchange a
-/// message, agree on the content keys, remove a device, and one of them is opened again from its store; then a
-/// file, a push, the hub's sign-in and the account's password keys. `now_ms` is the time: KeyPackages carry a
+/// message, agree on the content keys, remove a device, one of them is opened again from its store, and a new
+/// device joins with the recovery code; then a file, a push, the hub's sign-in and the account's password keys. `now_ms` is the time: KeyPackages carry a
 /// lifetime that is checked against the clock.
 ///
 /// The last step derives the password keys and is the slow one (Argon2id over 64 MiB): call this off the main
@@ -276,6 +335,7 @@ fn scenario<C: Fn() -> u64>(run: &mut Run<C>, now_ms: u64) {
     let mut room = Vec::new();
     let mut session_group = Vec::new();
     let mut key_before = Vec::new();
+    let mut code = Vec::new();
 
     run.step("three devices make their keys", || {
         devices.push(CoreDevice::create_on(Box::new(store.clone()))?);
@@ -290,7 +350,8 @@ fn scenario<C: Fn() -> u64>(run: &mut Run<C>, now_ms: u64) {
     };
 
     run.step("the first founds a room", || {
-        room = first.found_room(generate_recovery_code()?, now_ms)?;
+        code = generate_recovery_code()?;
+        room = first.found_room(code.clone(), now_ms)?;
         relay.post(first)
     });
     run.step("it adds the second, which joins by its Welcome", || {
@@ -315,7 +376,7 @@ fn scenario<C: Fn() -> u64>(run: &mut Run<C>, now_ms: u64) {
     run.step("an agent device is enrolled and a session founded", || {
         first.change_agents(vec![agent.id()?], Vec::new(), now_ms)?;
         relay.post(first)?;
-        agent.observe_room(relay.room_group_info.clone(), None)?;
+        agent.observe_room(relay.room_infos.last().cloned().unwrap_or_default(), None)?;
         relay.sync(second, &room, now_ms)?;
         let packages = vec![second.key_package(now_ms)?, agent.key_package(now_ms)?];
         let session = first.found_session(agent.id()?, packages, now_ms)?;
@@ -402,6 +463,40 @@ fn scenario<C: Fn() -> u64>(run: &mut Run<C>, now_ms: u64) {
             "the sign-in is not this device's",
         )
     });
+    run.step(
+        "a new device joins with the recovery code and reads what was",
+        || {
+            let newcomer = CoreDevice::create_on(Box::new(MemoryStore::default()))?;
+            let served = relay.served_room(&room, &code)?;
+            let joined = newcomer.join_room_with_code(code.clone(), served, now_ms)?;
+            expect(
+                joined.unverified.is_empty() && joined.missing_link.is_none(),
+                "the room did not verify whole",
+            )?;
+            relay.post(&newcomer)?;
+            expect(
+                newcomer.is_human()? && newcomer.holds_recovery_mac()?,
+                "the join left no human device",
+            )?;
+            let (group, founding, current) = relay
+                .session_infos
+                .first()
+                .cloned()
+                .ok_or_else(|| CoreError::internal("no session was founded"))?;
+            newcomer.join_session_with_code(
+                code.clone(),
+                relay.served(&group, &founding, &current),
+                now_ms,
+            )?;
+            relay.post(&newcomer)?;
+            // The epoch the session's first key belonged to is long over: the code opens it.
+            expect(
+                newcomer.content_key(session_group.clone(), 1)? == key_before
+                    && newcomer.key_is_confirmed(session_group.clone(), 1)?,
+                "the code did not open the session's earlier key",
+            )
+        },
+    );
     run.step("a file is encrypted and decrypted piece by piece", || {
         let plain: Vec<u8> = (0..200_000u32).map(|at| (at % 251) as u8).collect();
         let encryptor = FileEncryptor::new()?;

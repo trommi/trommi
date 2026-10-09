@@ -167,17 +167,21 @@ impl ToJs for Vec<u8> {
     }
 }
 
-/// No argument is larger than the largest stored file. Checked before the bytes are copied in: an absurd length
-/// is refused, not allocated.
+/// No argument is larger than the largest stored file: an absurd length is refused, not allocated.
+///
+/// The bytes are first copied into a `Uint8Array` made here, by the constructor, which reads the source's real
+/// length and not what the object says of itself (an own `length` on a typed array is the caller's to define).
+/// Only that copy is measured and read.
 impl FromJs for Vec<u8> {
     fn from_js(value: &JsValue) -> Result<Self, CoreError> {
-        let bytes = value
-            .dyn_ref::<Uint8Array>()
-            .ok_or_else(|| CoreError::bad_format("not a Uint8Array"))?;
-        if u64::from(bytes.length()) > trommi_core::files::MAX_STORED_LEN {
+        if !value.is_instance_of::<Uint8Array>() {
+            return Err(CoreError::bad_format("not a Uint8Array"));
+        }
+        let own = Uint8Array::new(value);
+        if u64::from(own.length()) > trommi_core::files::MAX_STORED_LEN {
             return Err(trommi_core::Error::TooLarge.into());
         }
-        Ok(bytes.to_vec())
+        Ok(own.to_vec())
     }
 }
 

@@ -112,7 +112,9 @@ final class FileStore: CoreStore, @unchecked Sendable {
     return StoredState(revision: revision, entries: entries)
   }
 
-  /// Until the rename nothing changed and a failure is "nothing written". After it the new state is in place.
+  /// Until the rename nothing changed and a failure is "nothing written". After it the new state is in place
+  /// whatever follows: a failure then cannot be reported as "nothing written". It is reported as a conflict,
+  /// which ends the device's use of this state; the next one opens whatever the disk holds.
   private func save(_ state: StoredState) throws {
     var data = Data()
     func number(_ value: UInt64) { data.append(contentsOf: (0..<8).reversed().map { UInt8(truncatingIfNeeded: value >> (UInt64($0) * 8)) }) }
@@ -131,17 +133,16 @@ final class FileStore: CoreStore, @unchecked Sendable {
     guard synced, rename(fresh.path, stateFile.path) == 0 else { throw failed }
     // The rename itself is durable once the directory is on the disk.
     let folder = open(directory.path, O_RDONLY)
-    guard folder >= 0 else { throw failed }
-    let durable = toDisk(folder)
-    _ = Foundation.close(folder)
-    guard durable else { throw failed }
+    let durable = folder >= 0 && fsync(folder) == 0
+    if folder >= 0 { _ = Foundation.close(folder) }
+    guard durable else { throw StoreError.Conflict }
   }
 
-  /// Whether everything written to `descriptor` is on the disk. On Apple's systems `fsync` hands the bytes to the
-  /// drive without asking it to write them: only F_FULLFSYNC does.
+  /// Whether everything written to the file `descriptor` is on the disk. On Apple's systems `fsync` hands the
+  /// bytes to the drive without asking it to write them: only F_FULLFSYNC does, and nothing weaker is taken.
   private func toDisk(_ descriptor: Int32) -> Bool {
     #if canImport(Darwin)
-    return fcntl(descriptor, F_FULLFSYNC) == 0 || fsync(descriptor) == 0
+    return fcntl(descriptor, F_FULLFSYNC) == 0
     #else
     return fsync(descriptor) == 0
     #endif

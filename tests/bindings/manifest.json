@@ -346,6 +346,44 @@
       ],
       "returns": "PushNote"
     },
+    "recoveryAnchor": {
+      "arguments": [
+        {
+          "name": "recoveryCode",
+          "type": "bytes"
+        },
+        {
+          "name": "room",
+          "type": "bytes"
+        },
+        {
+          "name": "rows",
+          "type": "list<bytes>"
+        }
+      ],
+      "returns": "Anchor"
+    },
+    "recoverySignIn": {
+      "arguments": [
+        {
+          "name": "recoveryCode",
+          "type": "bytes"
+        },
+        {
+          "name": "room",
+          "type": "bytes"
+        },
+        {
+          "name": "hub",
+          "type": "text"
+        },
+        {
+          "name": "challenge",
+          "type": "bytes"
+        }
+      ],
+      "returns": "SignedHubAuth"
+    },
     "versions": {
       "arguments": [],
       "returns": "Versions"
@@ -793,6 +831,160 @@
         ],
         "returns": "number"
       },
+      "holdsRecoveryMac": {
+        "arguments": [],
+        "returns": "bool"
+      },
+      "keyIsConfirmed": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "epoch",
+            "type": "number"
+          }
+        ],
+        "returns": "bool"
+      },
+      "sendRecoveryAuth": {
+        "arguments": [
+          {
+            "name": "recipient",
+            "type": "bytes"
+          }
+        ],
+        "returns": "optional<number>"
+      },
+      "postSealedKey": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "groupInfo",
+            "type": "bytes"
+          },
+          {
+            "name": "listed",
+            "type": "list<bytes>"
+          }
+        ],
+        "returns": "optional<number>"
+      },
+      "verifyFounding": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedGroup"
+          }
+        ],
+        "returns": "void"
+      },
+      "joinRoomWithCode": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedRoom"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "CodeJoin"
+      },
+      "joinSessionWithCode": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedGroup"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "newRecoveryCode": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "replaceCode": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "account",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "prepareRecovery": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedRoom"
+          }
+        ],
+        "returns": "RecoveryPlan"
+      },
+      "recover": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedRoom"
+          },
+          {
+            "name": "cuts",
+            "type": "list<GroupCut>"
+          },
+          {
+            "name": "account",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "CodeJoin"
+      },
       "hubSignIn": {
         "arguments": [
           {
@@ -1003,12 +1195,55 @@
       "auth": "bytes",
       "signature": "bytes"
     },
+    "ServedCommit": {
+      "change": "number",
+      "commit": "bytes",
+      "recoveryAuth": "optional<bytes>"
+    },
+    "ServedGroup": {
+      "founding": "bytes",
+      "commits": "list<ServedCommit>",
+      "current": "bytes"
+    },
+    "ServedRoom": {
+      "room": "bytes",
+      "group": "ServedGroup",
+      "anchor": "bytes",
+      "rows": "list<bytes>",
+      "links": "list<bytes>",
+      "sessions": "list<ServedGroup>"
+    },
+    "UnverifiedSession": {
+      "index": "number",
+      "code": "ErrorCode"
+    },
+    "CodeJoin": {
+      "outbox": "list<number>",
+      "missingLink": "optional<bytes>",
+      "unverified": "list<UnverifiedSession>"
+    },
+    "GroupCut": {
+      "group": "bytes",
+      "cut": "Cut"
+    },
+    "Removals": {
+      "group": "bytes",
+      "devices": "list<bytes>"
+    },
+    "RecoveryPlan": {
+      "newCode": "bytes",
+      "removals": "list<Removals>"
+    },
+    "Anchor": {
+      "group": "bytes",
+      "epoch": "number",
+      "groupInfo": "bytes"
+    },
     "Versions": {
       "core": "text",
       "openmls": "text",
       "provider": "text",
-      "binding": "text",
-      "recovery": "text"
+      "binding": "text"
     },
     "SelfTestStep": {
       "name": "text",
@@ -1115,7 +1350,9 @@
       "envelope": "envelope",
       "keyPackages": "keyPackages",
       "sealedKey": "sealedKey",
-      "recoveryCode": "recoveryCode"
+      "recoveryCode": "recoveryCode",
+      "recoveryCommit": "recoveryCommit",
+      "recoveryFinish": "recoveryFinish"
     },
     "LogEntryKind": {
       "commit": "commit",
@@ -1126,6 +1363,7 @@
       "strokePiece": "strokePiece",
       "workTrail": "workTrail",
       "recoveryAuth": "recoveryAuth",
+      "recoveryAuthConflict": "recoveryAuthConflict",
       "dropped": "dropped",
       "newerVersion": "newerVersion"
     },

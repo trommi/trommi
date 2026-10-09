@@ -1,7 +1,7 @@
 // The scenario of tests/bindings/scenario.json through the browser binding, in Node: the same module and .wasm a
 // browser loads, with a store in memory. Quick, and no browser needed; tests/bindings/browser.mjs runs the same in
 // Chromium with IndexedDB and workers.
-//   core/wasm/build.sh && node tests/bindings/node.mjs      (TROMMI_STAND_IN_RECOVERY=1 for the build, for now)
+//   core/wasm/build.sh && node tests/bindings/node.mjs
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import * as core from '../../core/wasm/pkg/trommi-core.js'
