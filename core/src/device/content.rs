@@ -1229,6 +1229,23 @@ impl<S: Storage> Device<S> {
     ) -> Result<ReceivedEnvelope, Error> {
         self.transact(|this, batch| {
             this.begin(now_ms);
+            this.receive_in(batch, bytes, change, ordered, void_code, now_ms)
+        })
+    }
+
+    /// [`Device::receive_envelope`] inside a running operation, which wrote what it holds so far into
+    /// `batch`: the envelope is checked against that state.
+    pub(super) fn receive_in(
+        &mut self,
+        batch: &mut Batch,
+        bytes: &[u8],
+        change: u64,
+        ordered: bool,
+        void_code: Option<&Error>,
+        now_ms: u64,
+    ) -> Result<ReceivedEnvelope, Error> {
+        let this = self;
+        {
             let envelope = Envelope::decode(bytes)?;
             let hash = envelope.hash()?;
             let header = envelope.header;
@@ -1290,7 +1307,7 @@ impl<S: Storage> Device<S> {
                 this.advance(batch, change)?;
             }
             Ok(received)
-        })
+        }
     }
 
     /// Writes what an envelope that took its place in its chain leaves behind.
