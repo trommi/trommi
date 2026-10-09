@@ -34,11 +34,14 @@ public final class TrommiNotificationService: UNNotificationServiceExtension {
 
   public override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
     let original = request.content
-    lock.lock(); handler = contentHandler; fallback = original; lock.unlock()
+    // What goes out when nothing was verified is made HERE: one of the three fixed texts, no path to open. Whatever
+    // else the push carried (the sender of a push is the hub, which is not believed) is not shown.
+    let plain = NotifyWork.fixed(original)
+    lock.lock(); handler = contentHandler; fallback = plain; lock.unlock()
     task = Task { [weak self] in
-      let shown = await NotifyWork.content(for: original)
+      let shown = await NotifyWork.content(for: original, fallback: plain)
       // cancelled: the time ran out and the fixed text went out already
-      self?.deliver(Task.isCancelled ? original : shown)
+      self?.deliver(Task.isCancelled ? plain : shown)
     }
   }
 
@@ -57,11 +60,31 @@ public final class TrommiNotificationService: UNNotificationServiceExtension {
 }
 
 enum NotifyWork {
-  /** The notification to show: the card's title from its session, or `original` untouched. */
-  static func content(for original: UNNotificationContent) async -> UNNotificationContent {
+  /** The three texts a push may show without anything verified (spec/v2.md 15.2); any other becomes the first. */
+  static let fixedTexts = ["A new question.", "Urgent: a new question.", "An agent lost its connection."]
+  static func fixed(_ original: UNNotificationContent) -> UNNotificationContent {
+    let c = UNMutableNotificationContent()
+    c.title = "Trommi"
+    c.body = fixedTexts.contains(original.body) ? original.body : fixedTexts[0]
+    c.sound = original.sound
+    return c
+  }
+
+  /** The notification to show: the card's title from its session, or the fixed text. */
+  static func content(for original: UNNotificationContent, fallback: UNNotificationContent) async -> UNNotificationContent {
     guard let e = original.userInfo["e"] as? String, let context = NotifyGroup.readContext(),
-          let found = await NotifyOpen.card(e: e, context: context, core: NotifyCoreLive(), fetch: fetch) else { return original }
-    return await show(found.card, room: found.room, original: original)
+          let found = await NotifyOpen.card(e: e, context: context, core: NotifyCoreLive(), shownBefore: shownBefore, fetch: fetch) else { return fallback }
+    return await show(found.card, room: found.room, original: fallback)
+  }
+
+  /** Whether this extension showed that envelope before; remembers it (the last 128, in the extension's own defaults). */
+  static func shownBefore(_ hash: [UInt8]) -> Bool {
+    let key = "trommi-notify-shown", text = Data(hash).base64EncodedString()
+    var list = UserDefaults.standard.stringArray(forKey: key) ?? []
+    if list.contains(text) { return true }
+    list.append(text)
+    UserDefaults.standard.set(Array(list.suffix(128)), forKey: key)
+    return false
   }
 
   /** The hub's answer for the ticket, nil on any failure. The ticket is in the URL: the URL is never logged. */
@@ -74,10 +97,19 @@ enum NotifyWork {
     var req = URLRequest(url: url)
     let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
     req.setValue("ios/\(version)", forHTTPHeaderField: "Trommi-Client")
-    let s = URLSession(configuration: conf)
-    defer { s.finishTasksAndInvalidate() }
-    guard let (data, res) = try? await s.data(for: req), (res as? HTTPURLResponse)?.statusCode == 200, data.count <= NotifyOpen.maxAnswer else { return nil }
+    // Read in pieces and given up at the bound (the extension has 24 MB in all), redirects not followed (the
+    // ticket goes to the hub's address and nowhere else).
+    let s = URLSession(configuration: conf, delegate: NoRedirects(), delegateQueue: nil)
+    defer { s.invalidateAndCancel() }
+    guard let (bytes, res) = try? await s.bytes(for: req), (res as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+    var data = Data()
+    do { for try await b in bytes { data.append(b); if data.count > NotifyOpen.maxAnswer { return nil } } } catch { return nil }
     return data
+  }
+  final class NoRedirects: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+      completionHandler(nil)
+    }
   }
 
   /** The card as a message from its session: the session's name and drawing as the sender, the title as the text. */

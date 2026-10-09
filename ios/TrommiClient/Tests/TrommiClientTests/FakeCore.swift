@@ -157,6 +157,7 @@ final class FakeDevice: CoreDevice {
   func receiveEnvelope(_ bytes: Bytes, change: UInt64, source: EnvelopeSource, voidCode: String?, nowMs: UInt64) throws -> ReceivedEnvelope {
     let e = parse(bytes)
     guard let h = e["h"] as? [String: Any], let group = (h["group"] as? String).flatMap({ try? unhex($0) }), let sender = h["sender"] as? String, let seq = (h["seq"] as? NSNumber)?.uint64Value else { throw TrommiError("bad-format") }
+    if group.count == 48, state.sessions[hex(group.suffix(16))] == nil { throw TrommiError("group-behind") }
     let key = "\(hex(group))/\(sender)"
     let own = sender == state.id
     var standing = EnvelopeStanding.accepted

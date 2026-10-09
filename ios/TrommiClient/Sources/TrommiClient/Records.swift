@@ -107,7 +107,7 @@ enum Records {
     var c = renameFiles(c, toWire: false, depth: 0)
     switch h.kind {
     case KIND.STATUS:
-      guard var name = c["name"].string else { return c }
+      guard var name = c["name"].string.map({ registerName($0, toWire: false) }) else { return c }
       if name.hasPrefix("board_snapshot/") { name = "scribble_snapshot/desk/\(name.dropFirst("board_snapshot/".count))" }
       if name == "goals", let sid = sessionId { name = "goals/\(sid)" }
       var out: [String: JV] = ["values": .obj([name: c["value"]])]
@@ -120,19 +120,27 @@ enum Records {
     default: return c
     }
   }
-  /** file_id (base64url) ↔ attachment_id (hex), everywhere in a body. */
+  /**
+   * Byte strings in a body are base64url on the wire (spec/v2.md section 2) and lower-case hex in the model, which
+   * names things by hex everywhere (timelines, cards, devices): file_id ↔ attachment_id, and every `…object_id`,
+   * `…object_ids` and `previous_version_hash`. A value that is not the id it should be is left as it is.
+   */
   static func renameFiles(_ v: JV, toWire: Bool, depth: Int) -> JV {
     if depth > 32 { return v }
+    func id(_ s: String, _ lengths: [Int]) -> JV? {
+      guard let bytes = toWire ? (try? unhex(s)) : (try? unb64u(s)), lengths.contains(bytes.count) else { return nil }
+      return .str(toWire ? b64u(bytes) : hex(bytes))
+    }
     switch v {
     case .arr(let a): return .arr(a.map { renameFiles($0, toWire: toWire, depth: depth + 1) })
     case .obj(let o):
       var out = [String: JV]()
       for (k, x) in o {
-        let pair = toWire ? Self.toWire[k] : Self.fromWire[k]
-        if let name = pair, let s = x.string {
-          let bytes = toWire ? (try? unhex(s)) : (try? unb64u(s))
-          out[name] = bytes.map { .str(toWire ? b64u($0) : hex($0)) } ?? x
-        } else { out[k] = renameFiles(x, toWire: toWire, depth: depth + 1) }
+        if let name = toWire ? Self.toWire[k] : Self.fromWire[k], let s = x.string { out[name] = id(s, [16]) ?? x }
+        else if k.hasSuffix("object_id"), let s = x.string { out[k] = id(s, [16]) ?? x }
+        else if k.hasSuffix("object_ids"), let list = x.array { out[k] = .arr(list.map { $0.string.flatMap { id($0, [16]) } ?? $0 }) }
+        else if k == "previous_version_hash", let s = x.string { out[k] = id(s, [32]) ?? x }
+        else { out[k] = renameFiles(x, toWire: toWire, depth: depth + 1) }
       }
       return .obj(out)
     default: return v
@@ -140,6 +148,13 @@ enum Records {
   }
   private static let fromWire = ["file_id": "attachment_id", "poster_file_id": "poster_attachment_id"]
   private static let toWire = ["attachment_id": "file_id", "poster_attachment_id": "poster_file_id"]
+  /** A register's name: a device id in it is base64url on the wire (9.3.3), hex in the model. */
+  static func registerName(_ name: String, toWire: Bool) -> String {
+    guard name.hasPrefix("device/") else { return name }
+    let id = String(name.dropFirst("device/".count))
+    guard let bytes = toWire ? (try? unhex(id)) : (try? unb64u(id)), bytes.count == 32 else { return name }
+    return "device/" + (toWire ? b64u(bytes) : hex(bytes))
+  }
 
   /** The file ids a body names, for the signed header. */
   static func fileIds(_ wire: JV) -> [FileId] {
