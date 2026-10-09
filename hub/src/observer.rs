@@ -104,6 +104,8 @@ pub struct KeyPackageFacts {
     pub device: Device,
     pub key_package_ref: Vec<u8>,
     pub last_resort: bool,
+    /// the end of its lifetime, seconds since the Unix epoch
+    pub not_after: u64,
 }
 
 pub trait Observer {
@@ -530,6 +532,7 @@ impl Observer for MlsObserver {
                 .as_slice()
                 .to_vec(),
             last_resort: kp.last_resort(),
+            not_after: kp.life_time().not_after(),
         })
     }
 

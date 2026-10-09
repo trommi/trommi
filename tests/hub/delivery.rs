@@ -2427,3 +2427,68 @@ fn commit_note(commit: &[u8]) -> CommitNote {
     }
     CommitNote::parse(r.vec().unwrap()).unwrap()
 }
+
+#[test]
+fn a_key_package_handed_out_in_one_room_is_not_handed_out_in_another() {
+    // one device key in two rooms of one hub, the same single-use KeyPackage uploaded to both
+    let hub = TestHub::start();
+    let (room_a, _, mut ada) = found_room(&hub);
+    let recovery_b = Recovery::new();
+    let room_b: [u8; 32] = random();
+    let info = ada.create_room(&room_b, &recovery_b);
+    let sealed = ada.sealed_key(&room_b, 0, &info, 0, &recovery_b.hpke_public, true);
+    hub.post(
+        "/v2/rooms",
+        &json!({ "group_info": b64(&info), "sealed_key": b64(&sealed) }),
+    )
+    .ok();
+    let token_a = ada.token.clone();
+    // room A: drain what is there, upload the one package, claim it
+    let claim = |ada: &Dev| {
+        ada.post(
+            &hub,
+            "/v2/key-packages/claim",
+            &json!({ "devices": [b64(&ada.id())] }),
+        )
+        .ok()["key_packages"][b64(&ada.id())]
+        .as_str()
+        .map(|s| unb64(s).unwrap())
+        .unwrap()
+    };
+    for _ in 0..5 {
+        claim(&ada);
+    }
+    let package = ada.key_package(false);
+    ada.put(
+        &hub,
+        "/v2/key-packages",
+        &json!({ "single_use": [b64(&package)] }),
+    )
+    .ok();
+    // room B gets the same bytes before room A hands them out
+    ada.sign_in(&hub, &room_b).ok();
+    let token_b = ada.token.clone();
+    ada.put(
+        &hub,
+        "/v2/key-packages",
+        &json!({ "single_use": [b64(&package)], "last_resort": b64(&ada.key_package(true)) }),
+    )
+    .ok();
+    ada.token = token_a;
+    ada.room = room_a;
+    assert_eq!(claim(&ada), package);
+    // room B never hands it out: its last-resort one comes instead; and uploading it again changes nothing
+    ada.token = token_b;
+    ada.room = room_b;
+    assert_ne!(claim(&ada), package);
+    assert_eq!(
+        ada.put(
+            &hub,
+            "/v2/key-packages",
+            &json!({ "single_use": [b64(&package)] })
+        )
+        .ok()["unused"],
+        0
+    );
+    assert_ne!(claim(&ada), package);
+}

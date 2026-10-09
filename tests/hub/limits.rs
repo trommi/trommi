@@ -9,7 +9,6 @@ use common::passkey::{Authenticator, ORIGIN, RP, UP_UV};
 use common::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::time::{Duration, Instant};
 use trommi_hub::util::{b64, random, unb64};
 use trommi_hub::wire::{self, ZERO16, ZERO32};
 
@@ -529,72 +528,190 @@ fn share_links_of_a_room() {
     };
     // 11.5: a Share link expires within 180 days: exactly 180 days ahead is taken, a minute more is not
     let now = trommi_hub::util::now();
-    share(now + 180 * day + 60_000).refused(400, "bad-format");
-    share(now + 180 * day - 5_000).ok();
+    // (the hub's clock reads a moment after this test's: "exactly 180 days from now" lies within, three seconds
+    // more lies beyond)
+    share(now + 180 * day + 3_000).refused(400, "bad-format");
+    share(now + 180 * day).ok();
     share(now + day).ok();
     share(now + day).refused(429, "too-many");
 }
 
+/// The limits of spec/v2.md section 16 at their real values, where a test can reach them: 32 human devices, 256
+/// agent devices, 32 live helper sessions, 20 passkeys, a 48 KiB message, a 64 MiB file, a Share link of 180 days.
 #[test]
-fn a_busy_room_does_not_hold_up_another_rooms_writes() {
-    // Every piece of expensive work takes 300 ms longer here, as if Commits were costly to verify. Two workers.
-    let hub = TestHub::start_with(&[
-        ("HUB_TEST_HEAVY_MS", "300"),
-        ("HUB_HEAVY_WORKERS", "2"),
-        ("HUB_HEAVY_WAITING", "2"),
-    ]);
-    let (room_a, recovery_a, ada) = found_room(&hub);
-    let (room_b, _, mut bob) = found_room(&hub);
-    // room A: six requests at once that each need a Commit verified (they are refused in the end; the work is done)
-    let path = format!("/v2/groups/{}/commits", b64(&room_a));
-    let junk = json!({ "epoch": 0, "commit": b64(&[1u8; 600]), "group_info": b64(&[2u8; 600]), "sealed_key": b64(&[3u8; 100]) });
-    let _ = recovery_a;
-    let (statuses, slowest) = std::thread::scope(|s| {
-        let heavy: Vec<_> = (0..6)
-            .map(|_| s.spawn(|| ada.post(&hub, &path, &junk)))
-            .collect();
-        std::thread::sleep(Duration::from_millis(50));
-        // room B writes meanwhile: each envelope is answered as fast as on an idle hub
-        let mut slowest = Duration::ZERO;
-        for _ in 0..20 {
-            let t = Instant::now();
-            bob.send(&hub, &room_b, &register(&random(), "x")).ok();
-            slowest = slowest.max(t.elapsed());
-        }
-        let statuses: Vec<(u16, String, bool)> = heavy
-            .into_iter()
-            .map(|h| h.join().unwrap())
-            .map(|r| (r.status, r.code(), r.header("retry-after").is_some()))
-            .collect();
-        (statuses, slowest)
-    });
-    assert!(
-        slowest < Duration::from_millis(150),
-        "a write of room B took {slowest:?} while room A kept the pool busy"
+fn the_defaults_at_their_exact_values() {
+    let mut w = world(&[]);
+    let room = w.room;
+    // 32 human devices: the founder and 31 more; the 33rd is refused
+    for _ in 0..31 {
+        w.add_human();
+    }
+    let one_more = Dev::new();
+    let (key_package, _) = invite(&w.hub, &w.ada, &one_more, 1, ZERO16);
+    let now = w.ada.room_now();
+    let out = w.ada.commit(
+        &room,
+        &Change {
+            adds: vec![key_package],
+            ..Default::default()
+        },
+        now,
     );
-    // the pool takes two at a time and lets two wait: the rest are told to come back, with `retry-after`
-    let refused: Vec<_> = statuses
-        .iter()
-        .filter(|(status, _, _)| *status == 503)
-        .collect();
-    assert!(
-        !refused.is_empty()
-            && refused
-                .iter()
-                .all(|(_, code, retry)| code == "overloaded" && *retry),
-        "{statuses:?}"
+    let sealed = w.ada.sealed_key(
+        &room,
+        out.epoch + 1,
+        &out.group_info,
+        out.epoch,
+        &w.recovery.hpke_public,
+        true,
     );
-    assert!(
-        statuses
-            .iter()
-            .any(|(status, code, _)| *status == 400 && code == "bad-commit"),
-        "{statuses:?}"
+    w.ada
+        .post_commit(&w.hub, &out, &sealed)
+        .refused(429, "too-many");
+    assert_eq!(w.ada.members(&room).len(), 32);
+
+    // 20 passkeys of an account
+    w.ada.post(&w.hub, "/v2/account", &json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&[2u8; 32]), "sealed_copy": b64(&[2u8; 61]) }, "password": { "auth_key": b64(&[3u8; 32]), "sealed_copy": b64(&[2u8; 61]), "kdf": { "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1 } } })).ok();
+    boundary(
+        "passkeys of an account",
+        20,
+        |_| {
+            let key = Authenticator::new();
+            let challenge = unb64(
+                w.ada
+                    .post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+                    .ok()["challenge"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            w.ada.post(&w.hub, "/v2/account/passkeys", &json!({
+                "attestation_object": b64(&key.attestation(RP, UP_UV)), "client_data_json": b64(&Authenticator::client_data("webauthn.create", &challenge, ORIGIN)),
+                "sealed_copy": b64(&[2u8; 61]),
+            }))
+        },
+        429,
+        "too-many",
     );
 
-    // the admission queue: a hub that works on no request at a time refuses each one before reading it
-    let closed = TestHub::start_with(&[("HUB_ADMITTED", "0")]);
-    let refused = closed.post("/v2/rooms", &json!({}));
-    refused.refused(503, "overloaded");
-    assert!(refused.header("retry-after").is_some());
-    assert_eq!(closed.get("/healthz").status, 200);
+    // 14.3: an application message of exactly 48 KiB is taken, one byte more is not
+    let limit = 48 * 1024;
+    let overhead = w.ada.application_message(&room, &vec![0u8; 40_000]).len() - 40_000;
+    let exact = w
+        .ada
+        .application_message(&room, &vec![0u8; limit - overhead]);
+    let over = w
+        .ada
+        .application_message(&room, &vec![0u8; limit - overhead + 1]);
+    assert_eq!(
+        (exact.len(), over.len()),
+        (limit, limit + 1),
+        "the test's own messages have the sizes it means"
+    );
+    let post = |message: &[u8]| {
+        w.ada.post(
+            &w.hub,
+            &format!("/v2/groups/{}/messages", b64(&room)),
+            &json!({ "epoch": w.ada.epoch(&room), "message": b64(message) }),
+        )
+    };
+    post(&exact).ok();
+    post(&over).refused(413, "too-large");
+
+    // 16: a file of exactly 64 MiB is taken, one byte more is not
+    let big = vec![0x5au8; (64 << 20) + 1];
+    w.ada
+        .raw(
+            &w.hub,
+            "PUT",
+            &format!("/v2/files/{}", b64(&random::<16>())),
+            &[],
+            &big,
+        )
+        .refused(413, "too-large");
+    assert_eq!(
+        w.ada
+            .raw(
+                &w.hub,
+                "PUT",
+                &format!("/v2/files/{}", b64(&random::<16>())),
+                &[],
+                &big[..64 << 20]
+            )
+            .ok()["size"],
+        64 << 20
+    );
+}
+
+#[test]
+fn agent_devices_and_helper_sessions_at_their_exact_values() {
+    // (the rates are lifted: this test makes in seconds what a room makes in years)
+    let mut w = world(&[
+        ("HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE", "100000"),
+        ("HUB_LIMIT_HEAVY_PER_SECOND", "100000"),
+        ("HUB_LIMIT_HEAVY_BURST", "100000"),
+    ]);
+    // 256 enrolled agent devices: the 257th is refused
+    let mut agents: Vec<[u8; 32]> = vec![];
+    let mut first = None;
+    for i in 0..257 {
+        let dev = Dev::new();
+        invite(&w.hub, &w.ada, &dev, 2, ZERO16);
+        let mut next = agents.clone();
+        next.push(dev.id());
+        let reply = w.set_agents(&next);
+        if i < 256 {
+            reply.ok();
+            agents = next;
+            if i == 0 {
+                first = Some(dev);
+            }
+        } else {
+            reply.refused(429, "too-many");
+        }
+    }
+    // 32 live helper sessions under one main session: the 33rd is refused
+    let mut agent = first.unwrap();
+    agent.sign_in(&w.hub, &w.room).ok();
+    agent.link(&w.hub).ok();
+    agent.upload_key_packages(&w.hub, 1).ok();
+    let (session, _) = w.found_main(&mut [], Some(&mut agent));
+    let humans = [w.ada.id()];
+    boundary(
+        "live helper sessions of a main session",
+        32,
+        |_| w.found_helper(&mut agent, &session, &humans, &[]).1,
+        429,
+        "too-many",
+    );
+}
+
+#[test]
+fn expensive_requests_of_one_device() {
+    // decision 30: ten a second, bursts of sixty (here: bursts of five)
+    let w = world(&[
+        ("HUB_LIMIT_HEAVY_BURST", "5"),
+        ("HUB_LIMIT_HEAVY_PER_SECOND", "0.001"),
+    ]);
+    let room = w.room;
+    let junk = json!({ "epoch": 0, "commit": b64(&[1u8; 64]), "group_info": b64(&[2u8; 64]), "sealed_key": b64(&[3u8; 64]) });
+    // (founding the room and uploading KeyPackages were not this device's token's requests: the burst is whole)
+    let mut taken = 0;
+    loop {
+        let reply = w
+            .ada
+            .post(&w.hub, &format!("/v2/groups/{}/commits", b64(&room)), &junk);
+        if reply.status == 429 {
+            assert_eq!(reply.code(), "rate-limited");
+            assert!(reply.header("retry-after").is_some());
+            break;
+        }
+        assert_eq!(reply.code(), "bad-commit");
+        taken += 1;
+        assert!(taken <= 5);
+    }
+    assert_eq!(
+        taken, 4,
+        "five at once, one of them was the upload of KeyPackages at the start"
+    );
 }

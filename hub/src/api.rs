@@ -124,7 +124,7 @@ fn own_room(auth: &Auth, text: &str) -> Res<()> {
     }
 }
 
-fn limited(result: Result<(), u64>) -> Res<()> {
+fn limited<T>(result: Result<T, u64>) -> Res<T> {
     result.map_err(|seconds| refuse("rate-limited", "too many requests").retry(seconds))
 }
 
@@ -347,8 +347,14 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
         body: parsed,
     };
     let worker = app.clone();
-    let result =
-        tokio::task::spawn_blocking(move || route(&worker, &rq).map(|v| v.to_string())).await;
+    // the place among the requests at work goes with the work: it is held until the answer is made, also if
+    // the client has gone meanwhile
+    let admitted = _admitted;
+    let result = tokio::task::spawn_blocking(move || {
+        let _admitted = admitted;
+        route(&worker, &rq).map(|v| v.to_string())
+    })
+    .await;
     match result {
         Ok(Ok(text)) => http::json_text(200, text),
         Ok(Err(r)) => {
@@ -432,16 +438,22 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         }
         ("POST", ["account", "passkey", "login"]) => {
             limited(app.limits.logins.check(rq.ip.as_bytes(), t, true))?;
-            // the signature is checked on the pool, reading only; a success is recorded in a write of its own
-            let found = app.heavy(|c, _| app.accounts.passkey_login(c, &rq.body, t))?.1?;
-            let found = match found {
-                Some((account, copy, credential, sign_count)) => {
-                    app.write(|x, _| accounts::passkey_used(x.c, &credential, sign_count, x.now))?;
-                    Some((account, copy))
-                }
-                None => None,
+            // the signature is checked on the pool, reading only; every failure of this route is the one answer
+            let checked = match app.heavy(|c, _| app.accounts.passkey_login(c, &rq.body, t))?.1 {
+                Ok(found) => found,
+                Err(r) if r.code == "bad-format" => None,
+                Err(other) => return Err(other),
             };
-            login_answer(app, found, "wrong-login")
+            let Some((account, copy, credential, sign_count, revision)) = checked else {
+                return Err(refuse("wrong-login", "e-mail or secret is wrong"));
+            };
+            // recorded and answered in a transaction that still finds that passkey on that account
+            app.write(|x, _| {
+                if accounts::revision_of(x.c, account)? != revision || !accounts::passkey_used(x.c, account, &credential, sign_count, x.now)? {
+                    return Err(refuse("overloaded", "the account changed under this login: try again").retry(1));
+                }
+                login_answer(app, x.c, account, &copy)
+            })
         }
         ("POST", ["rooms"]) => {
             limited(app.limits.foundings.check(rq.ip.as_bytes(), t, true))?;
@@ -530,6 +542,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("POST", ["account"]) => {
             let auth = read_auth()?;
             auth.human()?;
+            heavy_limit(&auth)?;
             let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["kit"], &rq.body["password"]]))?;
             app.write_as(&auth, rq.lease, |x, _| app.accounts.create(x.c, &auth.room, &rq.body, x.now, &pre))
         }
@@ -538,13 +551,16 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             auth.human()?;
             accounts::account_view(x.c, accounts::account_of(x.c, &auth.room)?)
         }),
-        ("PUT", ["account", "password"]) => {
+        ("PUT", ["account", what @ ("password" | "kit")]) => {
+            // who asks comes first: nobody without a human device's token has the hub make a slow hash
+            let auth = read_auth()?;
+            auth.human()?;
+            heavy_limit(&auth)?;
             let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body]))?;
-            human_write(app, rq, |x, auth| accounts::put_password(x.c, &auth.room, &rq.body, x.now, &pre))
-        }
-        ("PUT", ["account", "kit"]) => {
-            let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body]))?;
-            human_write(app, rq, |x, auth| accounts::put_kit(x.c, &auth.room, &rq.body, x.now, &pre))
+            app.write_as(&auth, rq.lease, |x, _| match *what {
+                "password" => accounts::put_password(x.c, &auth.room, &rq.body, x.now, &pre),
+                _ => accounts::put_kit(x.c, &auth.room, &rq.body, x.now, &pre),
+            })
         }
         ("POST", ["account", "passkeys", "challenge"]) => app.read(|x| {
             let auth = rq.auth(app, x.c)?;
@@ -606,7 +622,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let auth = read_auth()?;
             if relay {
                 // 16: stroke pieces, 20 per second per device
-                limited(app.limits.pieces.take(&[&auth.room[..], &auth.device[..]].concat(), 1.0, t))?;
+                limited(app.limits.pieces.check(&[&auth.room[..], &auth.device[..]].concat(), t, true))?;
             } else {
                 limited(app.limits.envelopes.take(&[&auth.room[..], &auth.device[..]].concat(), 1.0, t))?;
             }
@@ -699,6 +715,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             // Verified outside the write lock on the state the parts before it leave for its group; then, in a
             // short transaction, checked against what those parts leave behind (their writes are replayed and
             // rolled back; their cryptography is not repeated) and kept apart. Nothing of it is published.
+            heavy_limit(&auth)?;
             let (entries, commit_key) = app.heavy(|c, memo| crate::prepare::recovery_part(c, memo, &auth.room, &recovery, &group, &body))?;
             let stored = entries.clone();
             app.write_recovery(entries, Some(&recovery), &auth, |x, _| {
@@ -719,6 +736,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let hash: [u8; 32] = Sha256::digest(rq.body.to_string().as_bytes()).into();
             let auth = read_auth()?;
             own_room(&auth, room)?;
+            heavy_limit(&auth)?;
             let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["account"]["kit"]]))?;
             // every part was verified when it came: publishing replays their writes from what was kept
             app.write_recovery(Default::default(), Some(&recovery), &auth, |x, fx| {
@@ -922,56 +940,74 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
         let known = accounts::knows_source(x.c, row.account(), &source)?;
         Ok((row, known))
     })?;
-    if app.cfg.login_throttle {
-        limited(
-            app.limits
-                .login
-                .admit(account_key.as_bytes(), &source, known, t),
-        )?;
-    }
+    let attempt = match app.cfg.login_throttle {
+        true => Some(limited(app.limits.login.admit(
+            account_key.as_bytes(),
+            &source,
+            known,
+            t,
+        ))?),
+        false => None,
+    };
+    let (account, revision) = (row.account(), row.revision());
     // the slow hash is made on the pool with no database connection held
     let found = match app.pooled(|| app.accounts.check_login(row)) {
         Ok(found) => found,
         Err(busy) => {
             // not checked: the attempt is no failure, and no reset of the failures before it either
-            app.limits
-                .login
-                .not_checked(account_key.as_bytes(), &source, now());
+            if let Some(attempt) = attempt {
+                app.limits
+                    .login
+                    .not_checked(account_key.as_bytes(), &source, attempt);
+            }
             return Err(busy);
         }
     };
-    match &found {
-        Some((account, _)) => {
-            app.limits.login.succeeded(account_key.as_bytes(), &source);
-            let account = *account;
-            app.write(|x, _| accounts::remember_source(x.c, account, &source, x.now))?;
+    let Some((_, copy)) = found else {
+        if let Some(attempt) = attempt {
+            app.limits
+                .login
+                .failed(account_key.as_bytes(), &source, attempt, now());
         }
-        None => app
-            .limits
+        return Err(refuse(
+            if kit { "wrong-recovery" } else { "wrong-login" },
+            "e-mail or secret is wrong",
+        ));
+    };
+    if let Some(attempt) = attempt {
+        app.limits
             .login
-            .failed(account_key.as_bytes(), &source, now()),
+            .succeeded(account_key.as_bytes(), &source, attempt);
     }
-    login_answer(
-        app,
-        found,
-        if kit { "wrong-recovery" } else { "wrong-login" },
-    )
+    // The answer is made in a transaction that finds the account as the check found it: a password or kit
+    // replaced meanwhile makes this login start over.
+    let account = account.expect("a login that succeeded has an account");
+    app.write(|x, _| {
+        if accounts::revision_of(x.c, account)? != revision {
+            return Err(refuse(
+                "overloaded",
+                "the account changed under this login: try again",
+            )
+            .retry(1));
+        }
+        accounts::remember_source(x.c, account, &source, x.now)?;
+        login_answer(app, x.c, account, &copy)
+    })
 }
 
-fn login_answer(app: &Arc<App>, found: Option<(i64, Vec<u8>)>, code: &'static str) -> Res<Value> {
+/// The rooms of an account (one for now), each with the sealed copy and a sign-in challenge for the recovery key.
+fn login_answer(app: &Arc<App>, c: &rusqlite::Connection, account: i64, copy: &[u8]) -> Res<Value> {
     let t = now();
-    let Some((account, copy)) = found else {
-        return Err(refuse(code, "e-mail or secret is wrong"));
-    };
-    app.read(|x| {
-        let kdf: Option<String> = x.c.query_row("SELECT kdf FROM accounts WHERE account_id = ?1", [account], |r| r.get(0))?;
-        // an account has a list of rooms (one for now); each comes with a sign-in challenge for the recovery key
-        let rooms: Vec<Value> = accounts::rooms_of(x.c, account)?
-            .iter()
-            .map(|room| json!({ "room_id": b64(room), "sealed_copy": b64(&copy), "challenge": b64(&app.sessions.challenge(room, t)) }))
-            .collect();
-        Ok(json!({ "rooms": rooms, "kdf": kdf.and_then(|k| serde_json::from_str::<Value>(&k).ok()) }))
-    })
+    let kdf: Option<String> = c.query_row(
+        "SELECT kdf FROM accounts WHERE account_id = ?1",
+        [account],
+        |r| r.get(0),
+    )?;
+    let rooms: Vec<Value> = accounts::rooms_of(c, account)?
+        .iter()
+        .map(|room| json!({ "room_id": b64(room), "sealed_copy": b64(copy), "challenge": b64(&app.sessions.challenge(room, t)) }))
+        .collect();
+    Ok(json!({ "rooms": rooms, "kdf": kdf.and_then(|k| serde_json::from_str::<Value>(&k).ok()) }))
 }
 
 fn push_register(app: &Arc<App>, x: &delivery::Ctx, auth: &Auth, v: &Value) -> Res<Value> {
@@ -1186,6 +1222,13 @@ async fn stream(
         app.live.close(&auth.room, registered.id);
         return Err(refuse("not-member", "this device is no longer in the room"));
     }
+    // at the moment its token runs out the stream is over, whether anything is sent then or not
+    let deadline = s.clone();
+    let left = until.saturating_sub(now());
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(left)).await;
+        deadline.expire();
+    });
     app.stream_opened(&auth);
     let guard = StreamGuard {
         app: app.clone(),

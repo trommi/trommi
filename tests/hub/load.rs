@@ -299,7 +299,7 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
         ("a sender's chain", "SELECT header FROM envelopes WHERE group_id = x'00' AND sender = x'01' AND seq > 3 ORDER BY seq LIMIT 501", "envelopes_chain"),
         ("the chain's head (every post)", "SELECT seq, hash FROM envelopes WHERE group_id = x'00' AND sender = x'01' ORDER BY seq DESC LIMIT 1", "envelopes_chain"),
         ("every envelope of an object", "SELECT header FROM envelopes WHERE room_id = x'00' AND object_id = x'01' AND cut = 0 ORDER BY change", "envelopes_by_object"),
-        ("claim a KeyPackage", "SELECT id FROM key_packages WHERE room_id = x'00' AND device = x'01' AND claimed_at IS NULL AND expires_at > 5 ORDER BY last_resort, id LIMIT 1", "key_packages_claim"),
+        ("claim a KeyPackage", "SELECT id FROM key_packages WHERE room_id = x'00' AND device = x'01' AND expires_at > 5 AND (last_resort = 1 OR ref NOT IN (SELECT ref FROM spent_key_packages)) ORDER BY last_resort, id LIMIT 1", "key_packages_claim"),
         ("retention: what is due", "SELECT object_id FROM cards WHERE settled_at IS NOT NULL AND pruned_at IS NULL AND settled_at <= 5 ORDER BY settled_at LIMIT 200", "cards_due"),
     ];
     for (what, sql, index) in plans {

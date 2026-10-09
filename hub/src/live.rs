@@ -58,7 +58,8 @@ impl Stream {
         }
         // nothing is sent on a stream whose token has run out
         if crate::util::now() >= self.expires_at {
-            self.end();
+            // (not `expire`: the caller may hold the stream's phase)
+            self.overflow();
             return false;
         }
         if self.queued.fetch_add(chunk.len(), Ordering::Relaxed) + chunk.len() > self.limit {
@@ -115,6 +116,17 @@ impl Stream {
             }
         }
         *phase = Phase::Live(high);
+    }
+
+    /// The token the stream was opened with has run out: it is over at once. What waited to be sent is not
+    /// sent; the connection is cut. The device resumes with a new token by change number.
+    pub fn expire(&self) {
+        if let Phase::CatchingUp(pending) =
+            &mut *self.phase.lock().unwrap_or_else(|e| e.into_inner())
+        {
+            pending.clear();
+        }
+        self.overflow();
     }
 
     pub fn end(&self) {
@@ -243,7 +255,7 @@ impl Live {
         for list in self.lock().values_mut() {
             for s in list.iter() {
                 if s.expires_at <= now {
-                    s.end();
+                    s.expire();
                 } else {
                     s.deliver(None, chunk.clone());
                 }
