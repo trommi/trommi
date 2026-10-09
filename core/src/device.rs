@@ -25,8 +25,8 @@ use crate::mls::key_package::{self, KeyPackageInfo};
 use crate::mls::message::{EpochKey, TrommiMessage, MAX_HANDOVER_KEYS, MAX_MESSAGE_LEN};
 use crate::mls::observer::{self, Context, Observer};
 use crate::mls::profile::{
-    self, CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession, MAX_COMMIT_REQUEST_LEN,
-    MAX_HUMAN_DEVICES, RECOVERY_KEY_LEN,
+    self, CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession, MAX_AGENT_DEVICES,
+    MAX_COMMIT_REQUEST_LEN, MAX_HELPER_DEVICES, MAX_HUMAN_DEVICES, RECOVERY_KEY_LEN,
 };
 use crate::mls::provider::{self, DeviceSigner, MlsEntries, Provider};
 use crate::mls::rules::{
@@ -245,8 +245,8 @@ pub struct Joined {
     pub epoch: u64,
     /// The device that added this one.
     pub added_by: DeviceId,
-    /// The leaves the room state does not allow, or in a helper session whatever breaks 5.2.3: the finding of
-    /// first contact (5.2.6). Not empty: the device holds the group, hands out no content key of it, opens no
+    /// The leaves the room state does not allow, or in a helper session whatever breaks 5.2.3 (also every
+    /// helper device of a session that holds more than seven): the finding of first contact (5.2.6). Not empty: the device holds the group, hands out no content key of it, opens no
     /// message of it and writes nothing into it but the Commit that removes leaves, until those leaves are
     /// removed.
     pub offending: Vec<DeviceId>,
@@ -1013,6 +1013,30 @@ impl<S: Storage> Device<S> {
             known.main_session(&session.parent, room.epoch)
         };
         rules::disallowed_leaves(history, room, session, parent, leaves)
+    }
+
+    /// What first contact finds among a session group's leaves (5.2.6): the leaves the newest room state does
+    /// not allow, and in a helper session that holds more helper devices than 5.2.3 allows, all of those.
+    fn unfit_at_first_contact(
+        &self,
+        meta: &GroupMeta,
+        leaves: &BTreeSet<DeviceId>,
+        known: &Known,
+    ) -> Vec<DeviceId> {
+        let mut unfit = self.disallowed(meta, leaves, known);
+        if let (Some(session), Some(history)) = (meta.session.as_ref(), self.room_history()) {
+            let room = history.newest();
+            let parent = known.main_session(&session.parent, room.epoch);
+            let helpers = rules::helper_devices(history, room, session, parent, leaves);
+            if helpers.len() > MAX_HELPER_DEVICES {
+                for helper in helpers {
+                    if !unfit.contains(&helper) {
+                        unfit.push(helper);
+                    }
+                }
+            }
+        }
+        unfit
     }
 
     /// Whether this device is the opener of the helper session `session` (5.2.3), by what it knows: an agent
@@ -2052,7 +2076,8 @@ impl<S: Storage> Device<S> {
 
     /// Joins the group a Welcome is for (12.1.5, 5.2.6). The Welcome must be for one of this device's
     /// KeyPackages, for a group of the expected room that this device does not hold, and committed by the
-    /// expected device; one above [`MAX_COMMIT_REQUEST_LEN`] is `too-large` and is not parsed. A Welcome that is refused or does not open still uses up its single-use KeyPackage
+    /// expected device; one above [`MAX_COMMIT_REQUEST_LEN`] is `too-large` and is not parsed. A room group
+    /// with more than 32 human or 256 agent devices is refused (`too-many`). A Welcome that is refused or does not open still uses up its single-use KeyPackage
     /// (3.7): the device then asks to be added again.
     pub fn join_welcome(
         &mut self,
@@ -2144,6 +2169,12 @@ impl<S: Storage> Device<S> {
         match kind {
             GroupKind::Room(_) => {
                 let state = rules::room_state_of(staged.group_context(), &leaves)?;
+                // Section 16: a device is added to a room of at most 32 human and 256 agent devices.
+                if state.humans.len() > MAX_HUMAN_DEVICES
+                    || state.room.agents.len() > MAX_AGENT_DEVICES
+                {
+                    return Err(Error::TooMany);
+                }
                 batch.put(history_key(state.epoch), codec::encode(&state)?);
                 self.memory.history = Some(RoomHistory::new(state));
                 self.memory.record.room = Some(expected.room);
@@ -2160,7 +2191,7 @@ impl<S: Storage> Device<S> {
                 }
                 // 5.2.6: the group must obey the rules of its kind, and a helper session must have been
                 // made by its main session's agent leaf, the only non-human device that adds anyone.
-                offending = self.disallowed(&meta, &devices, &known);
+                offending = self.unfit_at_first_contact(&meta, &devices, &known);
                 let by_human = room.is_human(&added_by);
                 let by_opener = !session.parent.is_zero()
                     && !offending.contains(&added_by)
@@ -2499,7 +2530,9 @@ impl<S: Storage> Device<S> {
                 .map(|(_, device)| device)
                 .collect();
             let meta = self.meta(id)?.clone();
-            let clean = self.disallowed(&meta, &after, &known).is_empty();
+            let clean = self
+                .unfit_at_first_contact(&meta, &after, &known)
+                .is_empty();
             self.meta(id)?.distrusted = !clean;
         }
         let removed = !group.is_active();

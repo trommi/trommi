@@ -1,14 +1,15 @@
 //! Helper sessions (5.2.3 to 5.2.6, 5.3.3, 5.3.5): founded by the main session's agent leaf, their opener,
 //! with every human device and up to seven helper devices; what the hub refuses; first contact.
 
-use trommi_core::device::{Joined, Processed, Received};
+use trommi_core::device::{Joined, Processed, Received, WelcomeExpectation};
 use trommi_core::ids::{GroupId, SessionId, TurnId};
-use trommi_core::mls::profile::Cut;
+use trommi_core::mls::profile::{Cut, TrommiSession};
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device, now, observe,
-    post_ok, post_refused, publish_some, settle, settle_joining, sync_ok, TestDevice,
+    add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
+    now, observe, post_ok, post_refused, publish_some, settle, settle_joining, sync_ok, TestDevice,
 };
 
 struct Room {
@@ -583,5 +584,53 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
         let summary = device.group(&group).unwrap();
         assert_eq!((summary.epoch, summary.disallowed.len()), (2, 0));
         assert_eq!(summary.leaves, [a.id(), b.id()].into_iter().collect());
+    }
+}
+
+#[test]
+fn first_contact_finds_more_helper_devices_than_a_helper_session_holds() {
+    let Room {
+        mut hub,
+        mut a,
+        mut b,
+        agent,
+        main,
+        parent,
+        ..
+    } = room(false);
+    // A human device that builds what no device builds: a helper session of its own making with eight
+    // helper devices, which it adds the other human devices and the main session's agent to.
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_ok(&hub, &mut b);
+    let session = TrommiSession {
+        room_id: main.room_id(),
+        session_id: SessionId::new([5; 16]),
+        parent,
+    };
+    let helpers: Vec<Forger> = (0..8).map(|_| Forger::new()).collect();
+    let mut packages = hub.claim(&[a.id(), b.id(), agent.id()]).unwrap();
+    packages.extend(helpers.iter().map(Forger::key_package));
+    let mut group = forger.found_session(&session);
+    let welcome = forger
+        .commit(&mut group, b"", &packages)
+        .welcome
+        .expect("a Welcome");
+    let expected = WelcomeExpectation {
+        room: main.room_id(),
+        committer: None,
+    };
+    let mut many: Vec<_> = helpers.iter().map(Forger::id).collect();
+    many.sort_unstable();
+    for device in [&mut a, &mut b] {
+        // Each human device finds the helper devices, seven at most by 5.2.3, and opens nothing of it.
+        let joined = device.join_welcome(&welcome, &expected, now()).unwrap();
+        assert_eq!(joined.group, session.group_id());
+        assert_eq!(joined.offending, many);
+        assert_eq!(device.content_key(&joined.group, 1), Err(Error::NoKey));
+        assert_eq!(
+            device.send_handover(&joined.group, &agent.id()),
+            Err(Error::BadGroup)
+        );
     }
 }

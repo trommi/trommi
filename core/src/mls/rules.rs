@@ -12,7 +12,8 @@ use crate::ids::{DeviceId, GroupId, Hash32, SessionId};
 use crate::mls::key_package;
 use crate::mls::profile::{
     self, CommitNote, GroupKind, TrommiRoom, TrommiSession, MAX_AGENT_DEVICES,
-    MAX_COMMIT_REQUEST_LEN, MAX_HELPER_DEVICES, MAX_LIVE_HELPERS, MAX_NOTE_LEN, RECOVERY_KEY_LEN,
+    MAX_COMMIT_REQUEST_LEN, MAX_HELPER_DEVICES, MAX_HUMAN_DEVICES, MAX_LIVE_HELPERS, MAX_NOTE_LEN,
+    RECOVERY_KEY_LEN,
 };
 use openmls::group::StagedCommit;
 use openmls::prelude::{
@@ -314,7 +315,10 @@ pub struct Verifier<'a> {
     pub sessions: &'a dyn SessionFacts,
     /// The recovery construct's checks.
     pub recovery: &'a dyn RecoveryRules,
-    /// The most human devices the room may hold after the Commit: 32, or 33 while a recovery runs.
+    /// The most human devices the room may hold after the Commit: 32, or 33 while a recovery runs. A verifier
+    /// that cannot know whether one runs (a device) gives 33. Above 32 the rules take only what a recovery
+    /// does, whatever is given here: a join from outside, and in a room that holds more than 32 a Commit
+    /// that adds nobody.
     pub max_human_devices: usize,
     /// Whether the Commit is being posted: the hub takes it only if it names the newest room epoch (5.2.1).
     pub posting: bool,
@@ -471,7 +475,17 @@ pub fn check_room_commit(verifier: &Verifier<'_>, judged: &Judged<'_>) -> Result
             Error::BadCommit,
         )?;
     }
-    refuse(humans.len() > verifier.max_human_devices, Error::TooMany)
+    // Section 16, 8.7: 32 human devices. The 33rd comes only by a join from outside, and a room that holds 33
+    // takes on only Commits that add nobody, so that the recovery's removal passes. Whether a recovery runs
+    // is the hub's to know: it sets the most to 32 outside one, and then no join makes a 33rd.
+    let recovering =
+        facts.external || (before.humans.len() > MAX_HUMAN_DEVICES && facts.adds.is_empty());
+    let most = if recovering {
+        verifier.max_human_devices
+    } else {
+        verifier.max_human_devices.min(MAX_HUMAN_DEVICES)
+    };
+    refuse(humans.len() > most, Error::TooMany)
 }
 
 /// What a session group's leaves are judged against: the room state its Commit names, and the main session a
@@ -556,6 +570,27 @@ pub fn disallowed_leaves(
         }
     }
     unfit
+}
+
+/// The helper devices among a helper session's leaves (5.2.3): those that are neither human devices nor the
+/// opener. `parent` is its main session at that place. None for a main session.
+pub fn helper_devices(
+    history: &RoomHistory,
+    room: &RoomState,
+    session: &TrommiSession,
+    parent: Parent,
+    leaves: &BTreeSet<DeviceId>,
+) -> Vec<DeviceId> {
+    let allowed = Allowed {
+        history,
+        room,
+        session,
+        parent,
+    };
+    if !allowed.is_helper_session() {
+        return Vec::new();
+    }
+    allowed.others(leaves).copied().collect()
 }
 
 /// Judges a Commit of a session group (5.2, 5.3) against the group before it and the room state it names.
@@ -661,6 +696,18 @@ pub fn check_session_commit(
             // 5.2.3: while the main session has no agent leaf, only leaves the room no longer allows go.
             refuse(allowed.allows(gone), Error::BadCommit)?;
         }
+        // 5.2.3: the opener is a leaf for as long as it is the main session's agent leaf. A verifier that
+        // does not follow the main session cannot tell and does not judge this.
+        let opener = parent == Parent::Seat(Some(*gone)) && room.is_agent(gone);
+        refuse(helper && opener, Error::BadCommit)?;
+    }
+    if !helper {
+        // 5.3.1: a takeover replaces an agent device that the room holds no more: its removal from `agents`
+        // comes first. An agent leaf may go and leave the seat empty (5.2.2) while its device is enrolled;
+        // another agent device takes the seat in the same Commit only once the old one is out of `A(r)`.
+        let seats_another = facts.adds.iter().any(|added| !room.is_human(added));
+        let unseats_enrolled = facts.removes.iter().any(|gone| room.is_agent(gone));
+        refuse(seats_another && unseats_enrolled, Error::BadCommit)?;
     }
 
     // 5.2.8: a leaf the room state does not allow makes the group stale. Only the Commit that removes every
