@@ -792,3 +792,72 @@ fn a_takeover_reaches_every_helper_session_and_survives_a_restart() {
         .unwrap();
     post_ok(&mut hub, &mut new);
 }
+
+#[test]
+fn the_recovery_mac_follows_the_add_by_link_without_a_call_also_across_a_restart() {
+    use trommi_tests::{new_device_on, reopen, MemoryStorage};
+    // The inviter crashes at one of three places: nowhere, before it posted the Commit, or after the hub
+    // took the Commit and before it heard the answer.
+    for crash in [0, 1, 2] {
+        let store = MemoryStorage::new();
+        let handle = store.handle();
+        let (mut hub, room, main, mut a, _) = room_of(new_device_on(store));
+        let mut b = new_device();
+        let (opened, _, accepted) = exchange(&mut a, &mut b, Role::Human, None);
+        let code = b.join_reveal(&accepted.signed_reveal).unwrap();
+        a.invite_confirm(
+            &opened.invite_id,
+            &code,
+            &accepted.request_hash,
+            true,
+            now(),
+        )
+        .unwrap()
+        .unwrap();
+        if crash == 1 {
+            drop(a);
+            a = reopen(handle.reopened()).unwrap();
+        }
+        if crash == 2 {
+            let entry = a.outbox().remove(0);
+            hub.post(&a.id(), &entry).unwrap();
+            drop(a);
+            a = reopen(handle.reopened()).unwrap();
+        }
+        // The host only posts what is in the outbox and feeds the log: the Add, and behind it the message
+        // the inviter owes with that Commit (7.4).
+        post_ok(&mut hub, &mut a);
+        sync_all(&hub, &mut a);
+        post_ok(&mut hub, &mut a);
+        let welcome = hub.welcomes.last().unwrap().clone();
+        b.join_invited(&welcome.bytes, now()).unwrap();
+        for item in hub.log_after(welcome.change) {
+            trommi_tests::process(&mut b, &item).unwrap();
+        }
+        assert!(b.holds_recovery_mac(), "crash {crash}");
+        // It commits: an update of its own leaf.
+        b.update(&room, true, now()).unwrap().unwrap();
+        post_ok(&mut hub, &mut b);
+
+        // A later session Welcome is taken from any human device of the room, not only the inviter (5.2.7).
+        let mut c = new_device();
+        sync_all(&hub, &mut a);
+        trommi_tests::add_human(&mut hub, &mut a, &mut c);
+        sync_all(&hub, &mut a);
+        publish_some(&mut hub, &mut c, 2);
+        let package = hub.claim(&[c.id()]).unwrap().remove(0);
+        a.add_to_session(&main, &c.id(), &package, now()).unwrap();
+        post_ok(&mut hub, &mut a);
+        sync_all(&hub, &mut c);
+        sync_all(&hub, &mut b);
+        let package = b.key_package(now()).unwrap();
+        c.add_to_session(&main, &b.id(), &package, now()).unwrap();
+        post_ok(&mut hub, &mut c);
+        let joined = trommi_tests::take_welcomes(&hub, &mut b, hub.change());
+        assert_eq!(joined.len(), 1);
+        assert_eq!((joined[0].group, joined[0].added_by), (main, c.id()));
+        assert!(joined[0].offending.is_empty());
+        // The invite is over for the new device: the stored Offer names no later Welcome.
+        assert_eq!(b.join_invited(&welcome.bytes, now()), Err(Error::NotFound));
+    }
+}
