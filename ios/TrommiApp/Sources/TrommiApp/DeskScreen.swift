@@ -17,16 +17,30 @@ struct DeskScreen: View {
   @EnvironmentObject var model: BoardModel
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var duckAsk = false
+  @Environment(\.accessibilityReduceMotion) private var still
+  /** The height of the stack's part of the page, the scroll view's top inset, and whether Off your mind is pulled up. */
+  @State private var pageHeight: CGFloat = 0
+  @State private var topInset: CGFloat = 0
+  @State private var revealed = false
+  /** What of the first screen is left under the stack on an iPhone: the heading of Off your mind, above the tab pill. */
+  static let foldHint: CGFloat = 116
   var body: some View {
     let _ = RenderCount.body("DeskScreen")
     let _ = model.version
     let v = model.view
+    // iPhone (his word, 9 October): at rest the Desk is the stack alone; Off your mind is only hinted at the bottom (its
+    // heading above the tab pill) and comes up with a decided pull (DeskSnap). An iPad keeps one flowing page.
+    let tucked = hSize != .regular
+    GeometryReader { geo in
+    // (where the page rests with the heading of Off your mind just above the tab pill: the top, unless the stack is taller)
+    let rest = max(0, pageHeight - (geo.size.height - DeskScreen.foldHint))
     ScrollViewReader { scroller in
     ScrollView {
       LazyVStack(alignment: .leading, spacing: 12) {
         Color.clear.frame(height: 0).id("desk-top")
         if let v = v, let d = model.desk, !v.units.isEmpty || model.room?.cursor ?? 0 > 0 {
           let _ = StartClock.desk(cards: v.fresh.count, restored: model.room?.restored ?? false)
+          VStack(alignment: .leading, spacing: 12) {
           head(v)
           if !v.cut.isEmpty { CutSlip(units: v.cut) }
           let cards = v.deskCards()
@@ -38,11 +52,11 @@ struct DeskScreen: View {
               Sketch("desk", color: Ink.faint).frame(width: 64, height: 64)
               Text("Questions land here.").font(Face.text(15)).foregroundStyle(Ink.muted).multilineTextAlignment(.center)
             }.frame(maxWidth: .infinity).padding(.vertical, 28)
-          } else if !cards.isEmpty {
-            Text("Hold a card: Later, Reverse, Duck it, What??, Shred, Copy. Tap its title: text and pictures.")
-              .font(Face.text(13, .medium)).foregroundStyle(Ink.faint).multilineTextAlignment(.center).frame(maxWidth: .infinity).padding(.horizontal, 12)
           }
-          OffList(view: v, full: false)
+          }
+          .frame(minHeight: tucked ? max(0, geo.size.height - DeskScreen.foldHint) : nil, alignment: .top)
+          .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pageHeight = $0 }
+          OffList(view: v, full: false, chevron: tucked ? (revealed ? "chevron.down" : "chevron.up") : nil)
         } else {
           ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
         }
@@ -61,6 +75,11 @@ struct DeskScreen: View {
     }
     .scrollDismissesKeyboard(.interactively)
     .refreshable { await model.refresh() }
+    .modifier(DeskFold(snap: tucked && !still && pageHeight > 0 ? DeskSnap(top: topInset, rest: rest, fold: pageHeight + 20) : nil))
+    .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.top } action: { _, v in topInset = v }
+    .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top - rest > DeskSnap.pull } action: { _, on in if tucked { revealed = on } }
+    .sensoryFeedback(.impact(weight: .light), trigger: revealed)
+    }
     }
     .background(Ink.bg)
     .background {
@@ -258,12 +277,9 @@ struct DeskRow: View {
     let hue = agent?.hue ?? 162
     // the row is the title and its answer tiles (his decision, 8 October): no session line, no teaser, no paper icon
     VStack(alignment: .leading, spacing: 10) {
-      HStack(alignment: .top, spacing: 6) {
+      HStack(alignment: .top, spacing: 8) {
         Button { model.path.append(.card(card.id)) } label: {
           HStack(alignment: .firstTextBaseline, spacing: 6) {
-            if model.selected.contains(card.id) { Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).foregroundStyle(Tone.color(hue: hue, .pen)) }
-            // the asking session's drawing in its colour, a stamp before the title (his pick "mark", 8 October)
-            else if let a = agent { AgentMark(agent: a, size: 22, crown: false).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }.accessibilityLabel(a.name) }
             if card.isKnock {
               if card.urgency == "critical" { PenMark("hand", color: Ink.surface, blocked: true).frame(width: 24, height: 24).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 } }
               else { Sketch("knock", color: Ink.urgHigh).frame(width: 20, height: 20).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 3 } }
@@ -275,11 +291,12 @@ struct DeskRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint(card.knockWord ?? "")
-        if !card.isKnock || card.urgency != "critical" {
-          Button { model.snooze(card) } label: { PenMark("ui:LATER_TAG", color: Tone.color(hue: hue, .pen)).frame(width: 16, height: 32).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle()) }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(Words.later): put this question off")
-        }
+        // the asking session's drawing in its colour at the row's end (his word, 9 October: the content starts at the
+        // left); it stands where the Later tag hung: Later is a swipe to the left now (SwipeLater) and in the held menu
+        Group {
+          if model.selected.contains(card.id) { Image(systemName: "checkmark.circle.fill").font(.system(size: 20)).foregroundStyle(Tone.color(hue: hue, .pen)) }
+          else if let a = agent { AgentMark(agent: a, size: 22, crown: false).accessibilityLabel(a.name) }
+        }.frame(width: 26, height: 26)
       }
       if card.unsupported {
         UnsupportedLine(what: "card")
@@ -292,6 +309,84 @@ struct DeskRow: View {
     .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(model.selected.contains(card.id) ? Tone.color(hue: hue, .pen) : Ink.lineStrong, lineWidth: model.selected.contains(card.id) ? 2 : 1))
     .shadow(color: .black.opacity(0.05), radius: 3, y: 1)
     .contextMenu { RowMenu(card: card) }
+    .modifier(SwipeLater(on: !card.isKnock || card.urgency != "critical") { model.snooze(card) })
+  }
+}
+
+/**
+ * Later behind a swipe to the left (his word, 9 October: no tag on the card): a part of the way shows the action (the
+ * three Z, "Later") and it stays open to be tapped; all the way does it at once, with a light tap of the motor where
+ * that begins. A swipe back closes it. VoiceOver has it as the row's action "Later".
+ */
+struct SwipeLater: ViewModifier {
+  let on: Bool
+  let act: () -> Void
+  /** Where the row rests: 0, or open by the action's width. */
+  @State private var open = false
+  /** The finger's way sideways while it drags (0 again when the drag ends or the page takes it for scrolling). */
+  @GestureState private var drag: CGFloat = 0
+  @State private var past = false
+  private static let wide: CGFloat = 88, all: CGFloat = 190
+  func body(content: Content) -> some View {
+    if !on { content } else {
+      let x = min(0, (open ? -SwipeLater.wide : 0) + drag)
+      content
+        .offset(x: x)
+        .background(alignment: .trailing) {
+          if x < -1 {
+            Button { open = false; act() } label: {
+              VStack(spacing: 4) {
+                Sketch("snooze", color: Ink.stampLater).frame(width: 22, height: 22)
+                Text(Words.later).font(Face.text(12, .semibold)).foregroundStyle(Ink.fg).lineLimit(1)
+              }
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Ink.sunken))
+            }
+            .buttonStyle(.plain)
+            .frame(width: max(0, -x - 8))
+            .opacity(Double(min(1, -x / 60)))
+            .accessibilityHidden(true)
+          }
+        }
+        .simultaneousGesture(
+          DragGesture(minimumDistance: 18)
+            .updating($drag) { v, s, _ in if abs(v.translation.width) > abs(v.translation.height) * 1.4 || s != 0 { s = v.translation.width } }
+            .onEnded { v in
+              guard abs(v.translation.width) > abs(v.translation.height) else { return }
+              let end = (open ? -SwipeLater.wide : 0) + v.translation.width
+              if end < -SwipeLater.all { open = false; act() }
+              else { open = (open ? -SwipeLater.wide : 0) + v.predictedEndTranslation.width < -SwipeLater.wide / 2 }
+            }
+        )
+        .onChange(of: x < -SwipeLater.all) { _, now in past = now }
+        .sensoryFeedback(.impact(weight: .light), trigger: past) { _, now in now }
+        .animation(.snappy(duration: 0.22), value: x)
+        .accessibilityAction(named: Text(Words.later)) { act() }
+    }
+  }
+}
+
+/** The Desk's fold on an iPhone: between the stack at rest and Off your mind pulled up the page does not stop. A pull
+ *  shorter than `pull` springs back, a decided one goes to the list; the same on the way back. Above and below it the
+ *  page scrolls freely (a stack taller than the screen, the list itself). Offsets count from the page's top (the scroll
+ *  view's own count starts above its top inset: `top`). */
+struct DeskSnap: ScrollTargetBehavior {
+  static let pull: CGFloat = 90
+  let top: CGFloat, rest: CGFloat, fold: CGFloat
+  func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+    let y = target.rect.minY + top, from = context.originalTarget.rect.minY + top
+    guard y > rest, y < fold else { return }
+    let to: CGFloat
+    if from <= rest + 2 { to = y - rest > DeskSnap.pull ? fold : rest }
+    else if from >= fold { to = fold - y > DeskSnap.pull ? rest : fold }
+    else { to = y < from - DeskSnap.pull ? rest : y > from + DeskSnap.pull ? fold : from }
+    target.rect.origin.y = to - top
+  }
+}
+struct DeskFold: ViewModifier {
+  let snap: DeskSnap?
+  func body(content: Content) -> some View {
+    if let s = snap { content.scrollTargetBehavior(s) } else { content }
   }
 }
 
@@ -496,14 +591,25 @@ struct TailWho: View {
 
 struct EndDivider: View {
   let title: String
+  /** A small arrow after the title: the section lies under the fold (up: pull it up; down: it is up). */
+  var chevron: String? = nil
+  /** "Show more" where the rule ends, as the web's heading has it (desk.mjs divider, .end-link). */
+  var more: (() -> Void)? = nil
   var body: some View {
     HStack(spacing: 10) {
       PenMark(doc: SVGReader.parse("<svg viewBox=\"0 0 300 8\" preserveAspectRatio=\"none\"><path d=\"M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4\"/></svg>"), inks: PenInks(stroke: Ink.lineStrong, width: 1.4))
         .frame(height: 8).frame(maxWidth: .infinity)
-      Text(title.uppercased()).font(Face.text(12, .semibold)).kerning(1.2).foregroundStyle(Ink.muted).fixedSize()
+      HStack(spacing: 6) {
+        Text(title.uppercased()).font(Face.text(12, .semibold)).kerning(1.2).foregroundStyle(Ink.muted).fixedSize()
+        if let c = chevron { Image(systemName: c).font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.faint).accessibilityHidden(true) }
+      }
       PenMark(doc: SVGReader.parse("<svg viewBox=\"0 0 300 8\" preserveAspectRatio=\"none\"><path d=\"M2 4.2 Q70 5.4 140 3.8 T298 4.6\"/></svg>"), inks: PenInks(stroke: Ink.lineStrong, width: 1.4))
         .frame(height: 8).frame(maxWidth: .infinity)
-    }.padding(.vertical, 4)
+      if let more = more {
+        Button(action: more) { Text("Show more").font(Face.text(13, .medium)).underline().foregroundStyle(Ink.muted).fixedSize().frame(minHeight: 44).contentShape(Rectangle()) }
+          .buttonStyle(.plain)
+      }
+    }.padding(.vertical, more == nil ? 4 : 0)
   }
 }
 
