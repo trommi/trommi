@@ -10,7 +10,7 @@ device keys).
 `.ts` itself (type stripping, hence `erasableSyntaxOnly`: no `enum`, `namespace` or parameter properties), and the app's
 build erases the types for the browser (esbuild; `../dev/ts.mjs` for single files).
 
-The bytes on the wire are [`spec/FORMAT.md`](../../../spec/FORMAT.md). This file is the contract **between the core and
+The bytes on the wire are [`spec/v1.md`](../../../spec/v1.md). This file is the contract **between the core and
 its users**: the model the app renders from and the API an agent's client drives. Names are snake_case, ids lowercase
 hex, times in ms. Where this file says `README "…"` or a rule number (R1 to R9), it means the protocol's description
 (routes, envelope bodies, security rules), which is written down with the hub.
@@ -20,7 +20,7 @@ hex, times in ms. Where this file says `README "…"` or a rule number (R1 to R9
 | File | What |
 | --- | --- |
 | `index.ts` | re-exports the room, the client, the model and the storage adapters; import this |
-| `crypto/` | the pure crypto, no dependencies: `zcrypto.mjs` (the library; its bytes: `spec/FORMAT.md`, its interface: `zcrypto.d.mts`), `session-grants.mjs` (per-session keys), `argon2.mjs` (vendored); plain JavaScript, with `*.d.mts` beside them for the TypeScript core |
+| `crypto/` | the pure crypto, no dependencies: `zcrypto.mjs` (the library; its bytes: `spec/v1.md`, its interface: `zcrypto.d.mts`), `session-grants.mjs` (per-session keys), `argon2.mjs` (vendored); plain JavaScript, with `*.d.mts` beside them for the TypeScript core |
 | `types.ts` | the protocol's and the model's shapes as TypeScript types (nothing at run time) |
 | `transport.ts` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
 | `room.ts` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
