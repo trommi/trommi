@@ -1,0 +1,255 @@
+//! The connector as Claude Code runs it: the built binary as a child process, spoken to over MCP on its stdio.
+use super::TempDir;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+
+/// The connector's binary, built once per test run beside the test's own executable.
+pub fn connector_binary() -> PathBuf {
+    static BUILT: std::sync::Once = std::sync::Once::new();
+    let exe = std::env::current_exe().expect("the test's path");
+    // target/<profile>/deps/<test> → target/<profile>/trommi-connector
+    let profile_dir = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("the target directory");
+    BUILT.call_once(|| {
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let mut build = std::process::Command::new(cargo);
+        build.args(["build", "--locked", "-p", "trommi-connector"]);
+        if profile_dir
+            .file_name()
+            .is_some_and(|name| name == "release")
+        {
+            build.arg("--release");
+        }
+        let status = build
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .status()
+            .expect("cargo runs");
+        assert!(status.success(), "the connector builds");
+    });
+    profile_dir.join("trommi-connector")
+}
+
+/// The folder, home and state of one Claude Code session in a test.
+pub struct Seat {
+    pub home: TempDir,
+    pub folder: PathBuf,
+    pub hub_url: String,
+    /// What stands for the Claude Code session: slots are owned by it.
+    pub session_key: String,
+    /// The runtime directory: short, because the connector's sockets live in it and a socket's path is
+    /// bounded.
+    run: TempDir,
+}
+
+impl Seat {
+    pub fn new(hub_url: &str) -> Seat {
+        let home = TempDir::new("seat");
+        let folder = home.path().join("project");
+        std::fs::create_dir_all(&folder).expect("a project folder");
+        let short = std::env::temp_dir()
+            .parent()
+            .map(|parent| parent.join("r"))
+            .unwrap_or_else(std::env::temp_dir)
+            .join(trommi_connector::util::random_hex(3));
+        std::fs::create_dir_all(&short).expect("a runtime directory");
+        Seat {
+            run: TempDir(short),
+            home,
+            folder,
+            hub_url: hub_url.to_string(),
+            session_key: format!("test-{}", trommi_connector::util::random_hex(4)),
+        }
+    }
+
+    /// The connector's command with this seat's environment and nothing of the machine's.
+    pub fn command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(connector_binary());
+        command
+            .args(args)
+            .env_clear()
+            .env("HOME", self.home.path())
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("XDG_RUNTIME_DIR", self.run.path())
+            .env("TMPDIR", self.home.path())
+            .env("TROMMI_KEYS_DIR", self.home.path().join("keys"))
+            .env("TROMMI_FOLDER", &self.folder)
+            .env("TROMMI_HUB", &self.hub_url)
+            .env("TROMMI_SESSION_KEY", &self.session_key)
+            .env("TROMMI_CHANNEL_EVENTS", "on")
+            .current_dir(&self.folder)
+            .kill_on_drop(true);
+        command
+    }
+
+    /// Runs `trommi-connector join <link>` to its end. Returns its exit status and what it wrote to stderr.
+    pub async fn join(&self, link: &str) -> (bool, String) {
+        let output = self
+            .command(&["join", link])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .expect("the join runs");
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    }
+
+    /// Starts the MCP server.
+    pub async fn serve(&self) -> Mcp {
+        Mcp::start(self.command(&[])).await
+    }
+}
+
+/// A running connector, as its MCP client sees it.
+pub struct Mcp {
+    pub child: Child,
+    stdin: ChildStdin,
+    lines: tokio::io::Lines<BufReader<ChildStdout>>,
+    next_id: u64,
+    /// Every notification the server sent, in order: `(method, params)`.
+    pub notifications: Vec<(String, Value)>,
+}
+
+impl Mcp {
+    async fn start(mut command: Command) -> Mcp {
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(if std::env::var_os("TROMMI_TEST_LOG").is_some() {
+                Stdio::inherit()
+            } else {
+                Stdio::null()
+            })
+            .spawn()
+            .expect("the connector starts");
+        let stdin = child.stdin.take().expect("its stdin");
+        let lines = BufReader::new(child.stdout.take().expect("its stdout")).lines();
+        let mut mcp = Mcp {
+            child,
+            stdin,
+            lines,
+            next_id: 1,
+            notifications: Vec::new(),
+        };
+        let hello = mcp
+            .request(
+                "initialize",
+                json!({ "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "0" } }),
+            )
+            .await;
+        assert_eq!(hello["serverInfo"]["name"], "trommi", "{hello}");
+        mcp.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
+            .await;
+        mcp
+    }
+
+    async fn send(&mut self, message: &Value) {
+        self.stdin
+            .write_all(format!("{message}\n").as_bytes())
+            .await
+            .expect("the connector reads");
+        self.stdin.flush().await.expect("flushed");
+    }
+
+    /// One line from the server, or none within `ms`.
+    async fn read(&mut self, ms: u64) -> Option<Value> {
+        let line =
+            tokio::time::timeout(std::time::Duration::from_millis(ms), self.lines.next_line())
+                .await
+                .ok()?
+                .expect("the connector's stdout")?;
+        Some(serde_json::from_str(&line).expect("one JSON message per line"))
+    }
+
+    /// A request and its result; notifications that come meanwhile are kept.
+    pub async fn request(&mut self, method: &str, params: Value) -> Value {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))
+            .await;
+        loop {
+            let message = self.read(60_000).await.expect("an answer in time");
+            if message.get("id").and_then(Value::as_u64) == Some(id) {
+                assert!(message.get("error").is_none(), "{method}: {message}");
+                return message["result"].clone();
+            }
+            self.keep(message);
+        }
+    }
+
+    fn keep(&mut self, message: Value) {
+        if let Some(method) = message.get("method").and_then(Value::as_str) {
+            self.notifications
+                .push((method.to_string(), message["params"].clone()));
+        }
+    }
+
+    /// Calls a tool: `(its text, whether it is an error)`.
+    pub async fn call(&mut self, name: &str, arguments: Value) -> (String, bool) {
+        let result = self
+            .request(
+                "tools/call",
+                json!({ "name": name, "arguments": arguments }),
+            )
+            .await;
+        let text = result["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        (text, result["isError"] == json!(true))
+    }
+
+    /// Calls a tool that must succeed; returns its text.
+    pub async fn ok(&mut self, name: &str, arguments: Value) -> String {
+        let (text, failed) = self.call(name, arguments).await;
+        assert!(!failed, "{name} failed: {text}");
+        text
+    }
+
+    /// Waits for a channel event whose meta has `kind`; returns its params.
+    pub async fn event(&mut self, kind: &str) -> Value {
+        let found = |list: &mut Vec<(String, Value)>| {
+            let at = list.iter().position(|(method, params)| {
+                method == "notifications/claude/channel" && params["meta"]["kind"] == kind
+            })?;
+            Some(list.remove(at).1)
+        };
+        for _ in 0..200 {
+            if let Some(params) = found(&mut self.notifications) {
+                return params;
+            }
+            if let Some(message) = self.read(100).await {
+                self.keep(message);
+            }
+        }
+        panic!("no {kind} event; got {:?}", self.notifications);
+    }
+
+    /// Waits until the connector is in its room: a tool call no longer says it is not.
+    pub async fn ready(&mut self) {
+        for _ in 0..100 {
+            let (text, failed) = self.call("list_cards", json!({})).await;
+            if !failed {
+                return;
+            }
+            let _ = text;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        panic!("the connector never got into its room");
+    }
+
+    /// Ends the server as Claude Code does: its stdin closes.
+    pub async fn close(mut self) {
+        drop(self.stdin);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(10), self.child.wait()).await;
+    }
+}

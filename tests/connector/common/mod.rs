@@ -4,6 +4,8 @@
 //! connector's hub client; everything a human's app does in these tests is here, step by step.
 #![allow(dead_code)]
 
+pub mod process;
+
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
