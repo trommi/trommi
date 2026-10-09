@@ -1,0 +1,10 @@
+.DS_Store
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/
+/xtool
+/.bsp
+/AppStore/*.xcodeproj
+__pycache__/

@@ -1,0 +1,13 @@
+# Build output of SwiftPM and xtool, wherever under ios/ a build is started.
+.build/
+.swiftpm/
+.bsp/
+xtool/
+# Xcode (the project is generated from TrommiApp/AppStore/project.yml, never checked in).
+*.xcodeproj
+xcuserdata/
+DerivedData/
+# Signed builds and what tools leave behind.
+*.ipa
+__pycache__/
+.DS_Store
