@@ -5,7 +5,7 @@
 //                          their content; and the Rust core's trommi-core-<hash>.wasm beside them ("the Rust core"
 //                          below; its scripts are in the worker's bundle)
 //   gen/vendor/            tools-reference.mjs: the connector's tools and events as data, for the help page (the dev
-//                          server, bundle: false, also serves the core here, copied flat from core/ and core/crypto/,
+//                          server, bundle: false, also serves the core here, copied flat from core/,
 //                          with the Rust core's scripts and its trommi_core_wasm_bg.wasm)
 //   gen/bundle.<hash>.css  the stylesheets of index.html as one file (their <link>s become one)
 //   gen/build.txt          which commit this build is, and the build hash (dev/verify.mjs reads it)
@@ -174,20 +174,19 @@ export function coreFiles(repo = REPO, { dir = 'gen/app', hashed = true } = {}) 
 export const coreFromPkg = (repo = REPO) => ({ name: 'core-from-pkg', setup(b) { b.onResolve({ filter: /(^|\/)core\/wasm\/js\/[\w-]+\.js$/ }, a => ({ path: path.join(repo, 'core/wasm/pkg', path.basename(a.path)) })) } })
 
 // ---- the core ----
-const NOT_VENDORED = /(^test|-test\.(mjs|ts)$|^test-|^storage-file\.(mjs|ts)$|^hub\.(mjs|ts)$|\.d\.m?ts$)/   // tests, Node-only, the hub's side, declarations
+const NOT_VENDORED = /\.d\.m?ts$/   // declarations
 function vendorFiles(repo, { sourcemap = false } = {}) {
   const core = path.join(repo, 'app', 'web', 'core')
   if (!['index.mjs', 'index.ts'].some(f => fs.existsSync(path.join(core, f)))) throw new Error(`build: the core is missing (${core}/index.mjs)`)
   const out = {}
-  // gen/vendor/ is flat: core/crypto/ lands beside the rest, so an import of './crypto/x.mjs' becomes './x.mjs'.
   // A TypeScript module (x.ts) lands as x.mjs, its types erased (dev/ts.mjs), its imports of './y.ts' as './y.mjs'.
-  for (const dir of [core, path.join(core, 'crypto')]) for (const f of fs.readdirSync(dir).sort()) {
+  for (const f of fs.readdirSync(core).sort()) {
     if (!/\.(mjs|ts)$/.test(f) || NOT_VENDORED.test(f)) continue
     const name = f.replace(/\.ts$/, '.mjs')
-    if (out[name] != null) throw new Error(`build: ${name} twice (core/ and core/crypto/, or .mjs and .ts)`)
-    let text = fs.readFileSync(path.join(dir, f), 'utf8')
-    if (f.endsWith('.ts')) text = toJs(text, path.relative(repo, path.join(dir, f)), { sourcemap })
-    out[name] = fromBinding(renameTs(text, '.mjs').replace(/(['"])\.\/crypto\//g, '$1./'))
+    if (out[name] != null) throw new Error(`build: ${name} twice (.mjs and .ts)`)
+    let text = fs.readFileSync(path.join(core, f), 'utf8')
+    if (f.endsWith('.ts')) text = toJs(text, path.relative(repo, path.join(core, f)), { sourcemap })
+    out[name] = fromBinding(renameTs(text, '.mjs'))
   }
   for (const [name, text] of Object.entries(coreWasm(repo).modules)) {
     if (out[name] != null) throw new Error(`build: ${name} twice (core/ and the Rust core's binding)`)

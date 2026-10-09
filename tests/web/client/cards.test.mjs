@@ -1,0 +1,135 @@
+// Cards, answers, permission requests, Chat, the work trail and an agent's registers between an agent stand-in and
+// two human devices. STAND-IN core (plain JSON content) and FAKE hub.
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { modelsAgree, scene, until } from './helpers.mjs'
+
+test('an agent asks, a human answers, the agent hears it once and closes the card; take back; info card read', async t => {
+  const { a, b, agent } = await scene(t, { agent: true, second: true })
+  const card = await agent.askCard({ title: 'Which database?', body: 'For the new service.', options: [{ key: 'pg', label: 'Postgres' }, { key: 'sqlite', label: 'SQLite' }], recommended: 'pg' }, { urgency: 'high' })
+  await agent.settle(); await a.settle(); await b.settle()
+  assert.deepEqual(a.model.stack, [card])
+  assert.equal(a.model.cards.get(card).urgency, 'high')
+  assert.equal(a.model.sessions.get(agent.session_id).open_card_ids.includes(card), true)
+
+  // the optimistic echo is there before the envelope is sealed
+  const answering = a.answer({ object_id: card, choices: ['sqlite'], note: 'keep it small' })
+  assert.equal(a.model.cards.get(card).answer.pending, true)
+  assert.equal(a.model.cards.get(card).object_state, 'answered')
+  assert.deepEqual(a.model.stack, [])
+  const sent = await answering
+  await a.settle(); await agent.settle(); await b.settle()
+  assert.equal(a.model.cards.get(card).answer.pending, false)
+  assert.equal(a.model.cards.get(card).answer.envelope_hash, sent.envelope_hash)
+  assert.equal(a.model.outbox.length, 0)
+  assert.equal(b.model.cards.get(card).object_state, 'answered')
+  const heard = agent.commands.filter(c => c.kind === 'answer')
+  assert.equal(heard.length, 1, 'the command reached the agent exactly once')
+  assert.deepEqual(heard[0].choices, ['sqlite'])
+  assert.equal(heard[0].body.note, 'keep it small')
+  assert.equal(heard[0].object_id, card)
+
+  // take back: open again, on the stack again, and the agent is told
+  await b.decideAgain({ object_id: card })
+  await b.settle(); await a.settle(); await agent.settle()
+  assert.equal(a.model.cards.get(card).object_state, 'open')
+  assert.equal(a.model.cards.get(card).answer, null)
+  assert.deepEqual(a.model.stack, [card])
+  assert.equal(agent.commands.filter(c => c.kind === 'takeBack').length, 1)
+
+  await a.trust({ object_id: card })
+  await a.settle(); await agent.settle()
+  assert.deepEqual(agent.commands.filter(c => c.kind === 'answer').at(-1).choices, ['pg'])
+  await agent.closeCard(card, { close_summary: 'Postgres it is.' })
+  await agent.settle(); await a.settle(); await b.settle()
+  assert.equal(a.model.cards.get(card).object_state, 'closed')
+  assert.equal(a.model.cards.get(card).close_summary, 'Postgres it is.')
+  assert.equal(agent.commands.filter(c => c.kind === 'answer').length, 2)
+
+  const info = await agent.askCard({ card_type: 'info', title: 'Deployed', body: 'All green.' })
+  await agent.settle(); await b.settle()
+  await b.markRead({ object_id: info })
+  await b.settle(); await a.settle()
+  assert.equal(a.model.cards.get(info).object_state, 'closed')
+  assert.equal(a.model.cards.get(info).closed_how, 'read')
+  assert.deepEqual(a.model.stack, [])
+  // an answer to a card that is not open is refused here, before anything is sealed
+  await assert.rejects(a.answer({ object_id: info, choices: [] }), { code: 'card-closed' })
+  modelsAgree(a.model, b.model)
+})
+
+test('a permission request and its verdict; Chat both ways, on a card too, hand back and explain', async t => {
+  const { a, b, agent } = await scene(t, { agent: true, second: true })
+  const request = await agent.askPermission({ tool_name: 'Bash', description: 'Run the tests', input_preview: 'npm test' })
+  await agent.settle(); await a.settle(); await b.settle()
+  assert.deepEqual(a.model.open_permission_ids, [request])
+  assert.equal(a.model.permissions.get(request).tool_name, 'Bash')
+  await a.verdict({ object_id: request, allow: true })
+  await a.settle(); await agent.settle(); await b.settle()
+  assert.equal(b.model.permissions.get(request).permission_state, 'allowed')
+  assert.deepEqual(b.model.open_permission_ids, [])
+  assert.deepEqual(agent.commands.filter(c => c.kind === 'verdict').map(c => c.allow), [true])
+
+  const key = `chat:session/${agent.session_id}`
+  const sending = a.sendMessage({ session_id: agent.session_id, text: 'How far are you?' })
+  assert.equal([...a.model.timelines.get(key).items.values()].at(-1).pending, true)
+  const { local_id } = await sending
+  await agent.say({ text: 'Half way.', terminal: 'answer' })
+  await a.settle(); await agent.settle(); await b.settle()
+  const items = [...a.model.timelines.get(key).items.values()].filter(i => !i.content?.work)
+  assert.deepEqual(items.map(i => i.content.text), ['How far are you?', 'Half way.'])
+  assert.equal(items[0].local_id, local_id, 'the echo was replaced in place')
+  assert.equal(items[0].pending, false)
+  assert.equal(items[0].recipient_device_id, agent.device_id)
+  assert.deepEqual(agent.commands.filter(c => c.kind === 'message').map(c => c.body.text), ['How far are you?'])
+
+  const card = await agent.askCard({ title: 'Rename the repo?', options: [{ key: 'yes', label: 'Yes' }] })
+  await agent.settle(); await a.settle()
+  await a.sendMessage({ object_id: card, text: 'What would break?', hand_back: true })
+  await a.settle(); await agent.settle(); await b.settle()
+  assert.equal(b.model.cards.get(card).in_revision.by, 'hand_back')
+  assert.equal(agent.commands.at(-1).object_id, card)
+  await agent.say({ text: 'Nothing: redirects stay.', present_card: true }, card)
+  await agent.settle(); await a.settle(); await b.settle()
+  assert.equal(a.model.cards.get(card).in_revision, null)
+  await b.sendMessage({ object_id: card, text: 'I do not follow', explain: true })
+  await b.settle(); await a.settle(); await agent.settle()
+  assert.equal(a.model.cards.get(card).in_revision.by, 'explain')
+  await agent.reviseCard(card, { body: 'Plainly: the old address keeps working.' })
+  await agent.settle(); await a.settle(); await b.settle()
+  assert.equal(a.model.cards.get(card).in_revision, null)
+  assert.equal(a.model.cards.get(card).object_version, 2)
+  await b.loadTimeline(`chat:card/${card}`)
+  assert.deepEqual([...b.model.timelines.get(`chat:card/${card}`).items.values()].map(i => i.content.text), ['What would break?', 'Nothing: redirects stay.', 'I do not follow'])
+  modelsAgree(a.model, b.model)
+})
+
+test('the work trail of a turn, and an agent\'s registers: profile, status line, receipt', async t => {
+  const { a, agent } = await scene(t, { agent: true })
+  await agent.setRegister('profile', { model: 'opus', task: 'the migration', agent_name: 'Ada' })
+  await agent.setRegister('status_line/build', { label: 'Build', state: 'working', detail: 'compiling' })
+  const turn = 'ab'.repeat(16)
+  await agent.workStep(turn, 1, { text: 'reading the schema', tool: 'Read' })
+  await agent.workStep(turn, 2, { text: 'writing the migration' })
+  await agent.settle(); await a.settle()
+  const session = a.model.sessions.get(agent.session_id)
+  assert.equal(session.profile.agent_name, 'Ada')
+  assert.equal(session.profile.is_main, true)
+  assert.deepEqual(session.status_lines.map(l => [l.id, l.state, l.detail]), [['build', 'working', 'compiling']])
+  const steps = [...a.model.timelines.get(session.timeline_key).items.values()].filter(i => i.content?.terminal === 'work')
+  assert.equal(steps.length, 2)
+  assert.equal(steps[0].content.work.turn, turn)
+
+  const said = await a.sendMessage({ session_id: agent.session_id, text: 'stop there' })
+  await a.settle(); await agent.settle()
+  const number = [...a.model.timelines.get(session.timeline_key).items.values()].find(i => i.local_id === said.local_id).envelope_number
+  await agent.setRegister('heard', { up_to: number, at: Date.now() })
+  await agent.setRegister('status_line/build', null)
+  await agent.settle(); await a.settle()
+  assert.equal(a.model.sessions.get(agent.session_id).heard_up_to, number)
+  assert.deepEqual(a.model.sessions.get(agent.session_id).status_lines, [])
+  // a human device may not write an agent's register: the core does not take it as the current value
+  await a.setRegisters({ profile: { agent_name: 'Mallory' } }, { session_id: agent.session_id })
+  await a.settle()
+  assert.equal(a.model.sessions.get(agent.session_id).profile.agent_name, 'Ada')
+})
