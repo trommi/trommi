@@ -11,6 +11,10 @@
 //!
 //! A panic stops the module (WebAssembly has no unwinding here): the export throws a `RuntimeError`, and the
 //! JavaScript layer refuses every later call.
+//!
+//! Built for another target than the browser's, this crate is empty.
+
+#![cfg(target_arch = "wasm32")]
 
 use js_sys::{Error, Reflect};
 use trommi_core_ffi as facade;
