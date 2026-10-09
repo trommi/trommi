@@ -385,3 +385,19 @@ pub fn post_refused(hub: &mut Hub, device: &mut TestDevice) -> Vec<Error> {
         .map(|answer| answer.expect_err("the hub refuses"))
         .collect()
 }
+
+/// Processes the log like [`settle`] and returns the groups the device joined from Welcomes on the way.
+pub fn settle_joining(hub: &Hub, device: &mut TestDevice) -> Vec<Joined> {
+    let mut joined = Vec::new();
+    for item in hub.log_after(device.cursor()) {
+        if let Err(error) = process(device, &item) {
+            assert_eq!(
+                log_finding(&error),
+                LogFinding::Duplicate,
+                "the entry processes: {error:?}"
+            );
+        }
+        joined.extend(take_welcomes(hub, device, item.change));
+    }
+    joined
+}
