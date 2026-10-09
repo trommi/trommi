@@ -57,6 +57,12 @@ fn take(human: &mut Human, board: &BoardId, bytes: &[u8]) -> Result<Option<Appli
                 .skip_unread(header.sender, header.seq, Unread::Newer);
             Ok(None)
         }
+        Err(Error::NoKey) => {
+            human
+                .board
+                .skip_unread(header.sender, header.seq, Unread::NoKey);
+            Ok(None)
+        }
         Err(_) => Ok(None),
     }
 }
@@ -200,4 +206,44 @@ fn an_agent_writes_no_board_item() {
         &mut dice.0,
     );
     assert_eq!(refused.err(), Some(Error::Forbidden));
+}
+
+#[test]
+fn a_device_without_the_key_keeps_the_chain_and_writes_no_snapshot() {
+    let mut dice = Dice(entropy("content board flow no key").unwrap());
+    let group = GroupId::room(ROOM);
+    let board = BoardId::ALL_DESKS;
+    let writer = SigningKey::generate(&mut dice.0).unwrap();
+    let writer_id = DeviceId::new(writer.public());
+    let leaves = [(writer_id, Role::Human)];
+    let view = View::new(group, &leaves, Some(KEY));
+    let body = ItemBody::Strokes(vec![shape(&mut dice).unwrap()]);
+    let draft =
+        Draft::board_item(board, body.encode().unwrap().expose()).with_files(body.file_ids());
+    let sealed = seal_next(
+        &view,
+        &view.chains,
+        &view.objects,
+        &mut OwnChain::new(),
+        &draft,
+        group,
+        &writer,
+        NOW,
+        &mut dice.0,
+    )
+    .unwrap();
+
+    let mut reader = Human {
+        id: writer_id,
+        signer: writer,
+        view: View::new(group, &leaves, None),
+        own: OwnChain::new(),
+        board: Board::new(),
+    };
+    let taken = take(&mut reader, &board, &sealed.envelope.encode().unwrap()).unwrap();
+    assert_eq!(taken, None);
+    assert_eq!(reader.view.chains.head(&writer_id).seq, 1);
+    assert_eq!(reader.board.unread(), Some(Unread::NoKey));
+    let frontier = [(writer_id, reader.view.chains.head(&writer_id))];
+    assert_eq!(reader.board.snapshot(&frontier).err(), Some(Error::NoKey));
 }

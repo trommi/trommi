@@ -20,7 +20,7 @@
 use crate::board::ShapeId;
 use crate::chain::{Head, HeadsWire};
 use crate::crypto::SecretBytes;
-use crate::envelope::MAX_PAYLOAD_LEN;
+use crate::envelope::{self, MAX_PAYLOAD_LEN};
 use crate::error::Error;
 use crate::files::FileRef;
 use crate::ids::{self, DeviceId};
@@ -783,7 +783,8 @@ struct BodyOut<'a> {
 /// Only the version of a body, read before anything else.
 #[derive(Deserialize)]
 struct VersionIn {
-    schema_version: u64,
+    #[serde(default, deserialize_with = "present")]
+    schema_version: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -863,14 +864,18 @@ impl ItemBody {
 
     /// The body a payload holds. `too-large` above [`MAX_PAYLOAD_LEN`] bytes; `newer-version` for a
     /// `schema_version` above 2 (tell the board with [`Board::skip_unread`]); `bad-format` for everything else
-    /// that [`ItemBody::encode`] would not have written, except fields this version does not know, which are
-    /// ignored.
+    /// that [`ItemBody::encode`] would not have written, except that fields this version does not know are
+    /// ignored and a payload without `schema_version` is read as version 2. No object in it names a key twice.
     pub fn decode(payload: &[u8]) -> Result<Self, Error> {
         if payload.len() > MAX_PAYLOAD_LEN {
             return Err(Error::TooLarge);
         }
+        if !envelope::is_json_object(payload) {
+            return Err(Error::BadFormat);
+        }
         let version: VersionIn = serde_json::from_slice(payload).map_err(|_| Error::BadFormat)?;
-        match version.schema_version {
+        // Without a version a payload is of version 2 (9.0.2).
+        match version.schema_version.unwrap_or(SCHEMA_VERSION) {
             SCHEMA_VERSION => {}
             newer if newer > SCHEMA_VERSION => return Err(Error::NewerVersion),
             _ => return Err(Error::BadFormat),
@@ -1162,6 +1167,9 @@ impl Board {
     pub fn from_snapshot(file: &[u8], frontier: &[(DeviceId, Head)]) -> Result<Self, Error> {
         if file.len() > MAX_SNAPSHOT_LEN {
             return Err(Error::TooLarge);
+        }
+        if !envelope::is_json_object(file) {
+            return Err(Error::BadFormat);
         }
         let version: SnapshotVersionIn =
             serde_json::from_slice(file).map_err(|_| Error::BadFormat)?;

@@ -92,7 +92,6 @@ pub fn refused_items() -> Vec<(String, &'static str, &'static str)> {
     vec![
         ("strokes".to_owned(), bad, "no JSON"),
         (json!([1]).to_string(), bad, "no object"),
-        (json!({ "content_type": "strokes", "strokes": [stroke_entry()] }).to_string(), bad, "no schema_version"),
         (json!({ "schema_version": 1, "content_type": "strokes", "strokes": [stroke_entry()] }).to_string(), bad, "schema_version 1"),
         (json!({ "schema_version": "2", "content_type": "strokes", "strokes": [stroke_entry()] }).to_string(), bad, "schema_version as text"),
         (json!({ "schema_version": 3, "content_type": "strokes", "strokes": [stroke_entry()] }).to_string(), "newer-version", "schema_version 3"),
@@ -147,6 +146,9 @@ pub fn refused_items() -> Vec<(String, &'static str, &'static str)> {
         (strokes(stroke_entry()).replace("\"width\":64", "\"width\":64,\"group\":null"), bad, "a field of its own set to null"),
         (ids(json!([format!("{a}/1/0")])).replace("\"shape_ids\"", "\"strokes\":null,\"shape_ids\""), bad, "an erase with strokes set to null"),
         (strokes(picture_entry()).replace("\"file_key\":\"A", "\"file_key\":\"\\u0041"), bad, "a file key written with an escape"),
+        (ids(json!([format!("{a}/1/0")])).replace("\"shape_ids\"", "\"later\":{\"x\":1,\"x\":2},\"shape_ids\""), bad, "a key twice in a field no reader knows"),
+        (ids(json!([format!("{a}/1/0")])).replace("\"schema_version\":2", "\"schema_version\":null"), bad, "schema_version set to null"),
+        (moved(json!([1, 2])).replace("[1,2]", "[-0,2]"), bad, "an offset of minus zero"),
     ]
 }
 
@@ -383,13 +385,16 @@ pub fn generate() -> Result<Value, Error> {
     let small = text(small.snapshot(&small_heads)?.expose())?;
 
     Ok(json!({
-        "about": "The Scribble Board (spec/v2.md section 10). points: packed points of a stroke in hex and what they hold, [x, y, t, force, azimuth, altitude] per point, x and y in 1/16 board unit. points_refused: packed bytes no reader takes. items: payloads of board items; a reader that decodes and encodes one gets the same text; file_ids is what the envelope's header lists. items_with_unknown_fields: payloads that read like the one named in same_as. items_refused, snapshots_refused: with the code of the refusal. history: board items in one order of arrival (sender in hex, envelope number, payload); applied in any order that keeps each sender's own order they give the board whose snapshot file, taken at frontier, is snapshot.",
+        "about": "The Scribble Board (spec/v2.md section 10). points: packed points of a stroke in hex and what they hold, [x, y, t, force, azimuth, altitude] per point, x and y in 1/16 board unit. points_refused: packed bytes no reader takes. items: payloads of board items; a reader that decodes and encodes one gets the same text; file_ids is what the envelope's header lists. items_with_unknown_fields: payloads with fields no reader knows, or without schema_version, that read like the one named in same_as. items_refused, snapshots_refused: with the code of the refusal. history: board items in one order of arrival (sender in hex, envelope number, payload); applied in any order that keeps each sender's own order they give the board whose snapshot file, taken at frontier, is snapshot.",
         "points": points,
         "points_refused": refused_points().iter().map(|(packed, why)| json!({ "packed": packed, "why": why })).collect::<Vec<_>>(),
         "items": items,
         "items_with_unknown_fields": [{
             "payload": json!({ "schema_version": 2, "content_type": "strokes", "later": [1, 2],
                 "strokes": [with(with(stroke_entry(), "transform", json!([2, 0, 0, 2, 100, 50])), "nw", Value::Null)] }).to_string(),
+            "same_as": strokes(stroke_entry()),
+        }, {
+            "payload": json!({ "content_type": "strokes", "strokes": [stroke_entry()] }).to_string(),
             "same_as": strokes(stroke_entry()),
         }],
         "items_refused": refused_items().iter().map(|(payload, code, why)| json!({ "payload": payload, "code": code, "why": why })).collect::<Vec<_>>(),

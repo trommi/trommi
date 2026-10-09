@@ -25,8 +25,10 @@ fn owned_by(name: &str, role: Role, sender: &DeviceId) -> Option<bool> {
         (!agent).then_some(false)
     } else if name == "profile"
         || name == "heard"
-        || name.starts_with("status_line/")
-        || name.starts_with("alert/")
+        || name
+            .strip_prefix("status_line/")
+            .is_some_and(|id| !id.is_empty())
+        || name.strip_prefix("alert/").is_some_and(|id| !id.is_empty())
     {
         agent.then_some(false)
     } else {
@@ -51,6 +53,8 @@ fn random_values_leave_the_current_ones_the_specification_describes() {
         "heard",
         "status_line/a",
         "status_line/b",
+        "status_line/",
+        "alert/",
         "crown",
         "desk/x",
     ]

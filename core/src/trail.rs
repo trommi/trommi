@@ -3,10 +3,11 @@
 //! ([`crate::mls::message`]) inside an MLS application message and are never stored content. This module reads
 //! and writes those two fields; sending, and who may send which in which group, is the device's.
 //!
-//! Both are JSON. A reader ignores fields it does not know and refuses a known field of the wrong form, `null`
+//! Both are one JSON object in which no object names a key twice. A reader ignores fields it does not know and refuses a known field of the wrong form, `null`
 //! included.
 
 use crate::board_items::{present, Ink, Pen, MAX_COLOR_LEN, MAX_WIDTH};
+use crate::envelope;
 use crate::error::Error;
 use crate::ids;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,9 @@ fn to_json(value: &impl Serialize) -> Result<Vec<u8>, Error> {
 fn from_json<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, Error> {
     if bytes.len() > MAX_BODY_LEN {
         return Err(Error::TooLarge);
+    }
+    if !envelope::is_json_object(bytes) {
+        return Err(Error::BadFormat);
     }
     serde_json::from_slice(bytes).map_err(|_| Error::BadFormat)
 }
