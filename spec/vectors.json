@@ -1,0 +1,1133 @@
+{
+  "about": "Deterministic test vectors for zcrypto.mjs format version 1. All byte strings are lower-case hex. Regenerate with: node app/web/core/crypto/crypto-test.mjs --write-vectors",
+  "rng": "Test-only randomness: call number c (from 0) of a generator with seed s returns n bytes, byte j = (s + 17c + j) mod 256. Each section names its seed.",
+  "encoding": {
+    "bytes": "00fbff10",
+    "base64url": "APv_EA",
+    "hash": {
+      "label": "trommi/v1/log-entry",
+      "data": "616263",
+      "out": "12fd924d0f1e51253d5f82e6db6668d03c425e03f90bee4a92fd861c4d641e42"
+    },
+    "hkdf": {
+      "ikm": "0101010101010101010101010101010101010101010101010101010101010101",
+      "salt": "0202020202020202020202020202020202020202020202020202020202020202",
+      "label": "trommi/v1/sender-key",
+      "context": "00000001",
+      "length": 32,
+      "out": "307a78b97a958b7f62c7dcb77bfd9a130c9b3df84c5d07fcb71d3e3c56a72424"
+    }
+  },
+  "devices": {
+    "phone": {
+      "signSeed": "1111111111111111111111111111111111111111111111111111111111111111",
+      "kexSeed": "1212121212121212121212121212121212121212121212121212121212121212",
+      "signPub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "kexPub": "052a50773ac8d91773f2dc9662e12f0defe915e415b8a1c8e20a5a3d6ab2b843",
+      "id": "34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64",
+      "secretFile": "010c11111111111111111111111111111111111111111111111111111111111111111212121212121212121212121212121212121212121212121212121212121212"
+    },
+    "laptop": {
+      "signSeed": "2121212121212121212121212121212121212121212121212121212121212121",
+      "kexSeed": "2222222222222222222222222222222222222222222222222222222222222222",
+      "signPub": "884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b",
+      "kexPub": "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20",
+      "id": "45b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a"
+    },
+    "agent": {
+      "signSeed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "kexSeed": "3232323232323232323232323232323232323232323232323232323232323232",
+      "signPub": "48075a597e721a156e2e0799de5cc0c5324dc6e7eaf1cdd46250868ec53215dd",
+      "kexPub": "59d9225473451efffe6b36dbcaefdbf7b1895de62084509a7f5b58bf01d06418",
+      "id": "0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3",
+      "secretFile": "010c31313131313131313131313131313131313131313131313131313131313131313232323232323232323232323232323232323232323232323232323232323232"
+    },
+    "tablet": {
+      "signSeed": "4141414141414141414141414141414141414141414141414141414141414141",
+      "kexSeed": "4242424242424242424242424242424242424242424242424242424242424242",
+      "signPub": "db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d",
+      "kexPub": "132c442be010fbd57e72603328aa76e71fccc1503aae219327d14d9c9993f472",
+      "id": "b07e1e1fce936d224bf862055f22d0f4a5a79a2022223b9e1a551f9775bb34b1"
+    },
+    "helper": {
+      "signSeed": "5151515151515151515151515151515151515151515151515151515151515151",
+      "kexSeed": "5252525252525252525252525252525252525252525252525252525252525252",
+      "signPub": "c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445a",
+      "kexPub": "f68b05ba03f7185e1ba88878682f8dd0b15158f6050889c9481d79c2d7d2fa07",
+      "id": "949c8b800e4bca941ad0a5709ba53af2a60740cf9a362201680491b5c282bac0"
+    }
+  },
+  "signature": {
+    "signer": "phone",
+    "label": "trommi/v1/log-sig",
+    "message": "6d657373616765",
+    "signature": "7f3f005ee0c7873085a75fd091eec30201c2e768aea71ac9d0e9a44ec9c77156fab6c8d6ad1e445e640d6607cca7d2cddeec8f1e2caa99882dbe2d4c4bcc120d"
+  },
+  "ed25519": {
+    "rule": "ed25519Verify(pub, message, signature), no label. Refused before the equation: S not below the group order L; a public key or R whose y is not below p = 2^255 - 19; a public key or R of small order (refusedPoints, which also lists the non-canonical encodings). Then the equation without cofactor: [S]B = R + [k]A.",
+    "signer": "phone",
+    "refusedPoints": [
+      {
+        "point": "0100000000000000000000000000000000000000000000000000000000000000",
+        "why": "the neutral element (order 1)"
+      },
+      {
+        "point": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "order 2 (y = -1)"
+      },
+      {
+        "point": "0000000000000000000000000000000000000000000000000000000000000000",
+        "why": "order 4 (y = 0)"
+      },
+      {
+        "point": "0000000000000000000000000000000000000000000000000000000000000080",
+        "why": "order 4 (y = 0, the other x)"
+      },
+      {
+        "point": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "why": "order 8"
+      },
+      {
+        "point": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        "why": "order 8"
+      },
+      {
+        "point": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "why": "order 8"
+      },
+      {
+        "point": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        "why": "order 8"
+      },
+      {
+        "point": "0100000000000000000000000000000000000000000000000000000000000080",
+        "why": "the neutral element with the sign bit set (x = 0)"
+      },
+      {
+        "point": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "order 2 with the sign bit set (x = 0)"
+      },
+      {
+        "point": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "not canonical: y = p (order 4)"
+      },
+      {
+        "point": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "not canonical: y = p, sign bit set (order 4)"
+      },
+      {
+        "point": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "not canonical: y = p + 1 (the neutral element)"
+      },
+      {
+        "point": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "not canonical: y = p + 1, sign bit set"
+      },
+      {
+        "point": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "not canonical: y = p + 3"
+      },
+      {
+        "point": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "not canonical: y = 2^255 - 1"
+      }
+    ],
+    "cases": [
+      {
+        "name": "valid",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": true
+      },
+      {
+        "name": "another message",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c657300",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "S + L (the same scalar, not canonical)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c76235994ff2627629ebd3ef475d596d3019e64e061fa3c93cc060333e9908991a",
+        "valid": false
+      },
+      {
+        "name": "S = L",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c7edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+        "valid": false
+      },
+      {
+        "name": "R with the sign bit flipped",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509477561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "speccheck 0: S = 0, A and R of small order",
+        "pub": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        "message": "8c93255d71dcab10e8f379c26200f3c7bd5f09d9bc3068d3ef4edeb4853022b6",
+        "signature": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a0000000000000000000000000000000000000000000000000000000000000000",
+        "valid": false
+      },
+      {
+        "name": "speccheck 1: A of small order",
+        "pub": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        "message": "9bd9f44f4dcc75bd531b56b2cd280b0bb38fc1cd6d1230e14861d861de092e79",
+        "signature": "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43a5bb704786be79fc476f91d3f3f89b03984d8068dcf1bb7dfc6637b45450ac04",
+        "valid": false
+      },
+      {
+        "name": "speccheck 2: R of small order",
+        "pub": "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43",
+        "message": "aebf3f2601a0c8c5d39cc7d8911642f740b78168218da8471772b35f9d35b9ab",
+        "signature": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa8c4bd45aecaca5b24fb97bc10ac27ac8751a7dfe1baff8b953ec9f5833ca260e",
+        "valid": false
+      },
+      {
+        "name": "speccheck 3: A and R of mixed order; holds with and without cofactor: the one case that verifies",
+        "pub": "cdb267ce40c5cd45306fa5d2f29731459387dbf9eb933b7bd5aed9a765b88d4d",
+        "message": "9bd9f44f4dcc75bd531b56b2cd280b0bb38fc1cd6d1230e14861d861de092e79",
+        "signature": "9046a64750444938de19f227bb80485e92b83fdb4b6506c160484c016cc1852f87909e14428a7a1d62e9f22f3d3ad7802db02eb2e688b6c52fcd6648a98bd009",
+        "valid": true
+      },
+      {
+        "name": "speccheck 4: A and R of mixed order; holds only with the cofactor",
+        "pub": "cdb267ce40c5cd45306fa5d2f29731459387dbf9eb933b7bd5aed9a765b88d4d",
+        "message": "e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec4011eaccd55b53f56c",
+        "signature": "160a1cb0dc9c0258cd0a7d23e94d8fa878bcb1925f2c64246b2dee1796bed5125ec6bc982a269b723e0668e540911a9a6a58921d6925e434ab10aa7940551a09",
+        "valid": false
+      },
+      {
+        "name": "speccheck 5: A of mixed order; holds only with the cofactor",
+        "pub": "cdb267ce40c5cd45306fa5d2f29731459387dbf9eb933b7bd5aed9a765b88d4d",
+        "message": "e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec4011eaccd55b53f56c",
+        "signature": "21122a84e0b5fca4052f5b1235c80a537878b38f3142356b2c2384ebad4668b7e40bc836dac0f71076f9abe3a53f9c03c1ceeeddb658d0030494ace586687405",
+        "valid": false
+      },
+      {
+        "name": "speccheck 6: S above L",
+        "pub": "442aad9f089ad9e14647b1ef9099a1ff4798d78589e66f28eca69c11f582a623",
+        "message": "85e241a07d148b41e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec40",
+        "signature": "e96f66be976d82e60150baecff9906684aebb1ef181f67a7189ac78ea23b6c0e547f7690a0e2ddcd04d87dbc3490dc19b3b3052f7ff0538cb68afb369ba3a514",
+        "valid": false
+      },
+      {
+        "name": "speccheck 7: S far above L",
+        "pub": "442aad9f089ad9e14647b1ef9099a1ff4798d78589e66f28eca69c11f582a623",
+        "message": "85e241a07d148b41e47d62c63f830dc7a6851a0b1f33ae4bb2f507fb6cffec40",
+        "signature": "8ce5b96c8f26d0ab6c47958c9e68b937104cd36e13c33566acd2fe8d38aa19427e71f98a473474f2f13f06f97c20d58cc3f54b8bd0d272f42b695dd7e89a8c22",
+        "valid": false
+      },
+      {
+        "name": "speccheck 8: non-canonical R of small order (reduced for the hash)",
+        "pub": "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43",
+        "message": "9bedc267423725d473888631ebf45988bad3db83851ee85c85e241a07d148b41",
+        "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff03be9678ac102edcd92b0210bb34d7428d12ffc5df5f37e359941266a4e35f0f",
+        "valid": false
+      },
+      {
+        "name": "speccheck 9: non-canonical R of small order (not reduced for the hash)",
+        "pub": "f7badec5b8abeaf699583992219b7b223f1df3fbbea919844e3f7c554a43dd43",
+        "message": "9bedc267423725d473888631ebf45988bad3db83851ee85c85e241a07d148b41",
+        "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffca8c5b64cd208982aa38d4936621a4775aa233aa0505711d8fdcfdaa943d4908",
+        "valid": false
+      },
+      {
+        "name": "speccheck 10: non-canonical A of small order (reduced for the hash)",
+        "pub": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "message": "e96b7021eb39c1a163b6da4e3093dcd3f21387da4cc4572be588fafae23c155b",
+        "signature": "a9d55260f765261eb9b84e106f665e00b867287a761990d7135963ee0a7d59dca5bb704786be79fc476f91d3f3f89b03984d8068dcf1bb7dfc6637b45450ac04",
+        "valid": false
+      },
+      {
+        "name": "speccheck 11: non-canonical A of small order (not reduced for the hash)",
+        "pub": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "message": "39a591f5321bbe07fd5a23dc2f39d025d74526615746727ceefd6e82ae65c06f",
+        "signature": "a9d55260f765261eb9b84e106f665e00b867287a761990d7135963ee0a7d59dca5bb704786be79fc476f91d3f3f89b03984d8068dcf1bb7dfc6637b45450ac04",
+        "valid": false
+      },
+      {
+        "name": "R: the neutral element (order 1)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "01000000000000000000000000000000000000000000000000000000000000007561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: order 2 (y = -1)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: order 4 (y = 0)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "00000000000000000000000000000000000000000000000000000000000000007561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: order 4 (y = 0, the other x)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "00000000000000000000000000000000000000000000000000000000000000807561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: order 8",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc057561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: order 8",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc857561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: order 8",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: order 8",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: the neutral element with the sign bit set (x = 0)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "01000000000000000000000000000000000000000000000000000000000000807561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: order 2 with the sign bit set (x = 0)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: not canonical: y = p (order 4)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: not canonical: y = p, sign bit set (order 4)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: not canonical: y = p + 1 (the neutral element)",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: not canonical: y = p + 1, sign bit set",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: not canonical: y = p + 3",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "R: not canonical: y = 2^255 - 1",
+        "pub": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "message": "7800656432353531392072756c6573",
+        "signature": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f7561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: the neutral element (order 1)",
+        "pub": "0100000000000000000000000000000000000000000000000000000000000000",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: order 2 (y = -1)",
+        "pub": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: order 4 (y = 0)",
+        "pub": "0000000000000000000000000000000000000000000000000000000000000000",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: order 4 (y = 0, the other x)",
+        "pub": "0000000000000000000000000000000000000000000000000000000000000080",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: order 8",
+        "pub": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: order 8",
+        "pub": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: order 8",
+        "pub": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: order 8",
+        "pub": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: the neutral element with the sign bit set (x = 0)",
+        "pub": "0100000000000000000000000000000000000000000000000000000000000080",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: order 2 with the sign bit set (x = 0)",
+        "pub": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: not canonical: y = p (order 4)",
+        "pub": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: not canonical: y = p, sign bit set (order 4)",
+        "pub": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: not canonical: y = p + 1 (the neutral element)",
+        "pub": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: not canonical: y = p + 1, sign bit set",
+        "pub": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: not canonical: y = p + 3",
+        "pub": "f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      },
+      {
+        "name": "public key: not canonical: y = 2^255 - 1",
+        "pub": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "message": "7800656432353531392072756c6573",
+        "signature": "4091fd206ff14066bcc6270062d3735d968e153b99da6fa9dc927cfceb7509c77561a3f2d7ff63d11437f8a47e5f8e1b19e64e061fa3c93cc060333e9908990a",
+        "valid": false
+      }
+    ]
+  },
+  "recovery": {
+    "rngSeed": 64,
+    "raw": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "code": "810M-4GT4-8N34-EJ29-995M-RKAE-9X85-2MJK-AHAN-CNTR-B5D5-PQ2X-BSFG",
+    "signPub": "84ff8bbb6e6ff23b21b4ff81e64d561873153ec82f5850a2901c76f9f58997df",
+    "kexPub": "57a0124ce66e122ef2529074a07dc12657852f47f3aefa43f55cb95ec1db8020",
+    "id": "5b354d7930dae759b0a7d1340a05062a6d39448c3aa6689e3c87168f42ffcb38"
+  },
+  "sealedBox": {
+    "rngSeed": 80,
+    "recipient": "laptop",
+    "plaintext": "7365616c656420626f78",
+    "aad": "6173736f636961746564",
+    "ephemeralSeed": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f",
+    "sealed": "0104392d174a38b3b1beafaf1fe824870841c5fa531bc6eafdb6402c124664488c1cc1b136e098c099408cddf411dab9d371f7c35218713d0da89df3"
+  },
+  "x25519": {
+    "rule": "X25519 as RFC 7748 defines it (bit 255 of the public key ignored, u of p and above reduced modulo p); an all-zero result is refused (bad-key). Nothing else is refused.",
+    "recipient": "laptop",
+    "aad": "7832353531392072756c65",
+    "plaintext": "746865206261736520706f696e742c207772697474656e20756e757375616c6c79",
+    "refused": [
+      {
+        "pub": "0000000000000000000000000000000000000000000000000000000000000000",
+        "why": "u = 0 (order 4)",
+        "sealed": "0104000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "pub": "0100000000000000000000000000000000000000000000000000000000000000",
+        "why": "u = 1 (order 1)",
+        "sealed": "0104010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "pub": "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+        "why": "order 8",
+        "sealed": "0104e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b80000000000000000000000000000000000"
+      },
+      {
+        "pub": "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+        "why": "order 8",
+        "sealed": "01045f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f115700000000000000000000000000000000"
+      },
+      {
+        "pub": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "u = p - 1 (order 2)",
+        "sealed": "0104ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f00000000000000000000000000000000"
+      },
+      {
+        "pub": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "u = p (0, not canonical)",
+        "sealed": "0104edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f00000000000000000000000000000000"
+      },
+      {
+        "pub": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "u = p + 1 (1, not canonical)",
+        "sealed": "0104eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f00000000000000000000000000000000"
+      },
+      {
+        "pub": "0000000000000000000000000000000000000000000000000000000000000080",
+        "why": "u = 0 (order 4), bit 255 set",
+        "sealed": "0104000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000"
+      },
+      {
+        "pub": "0100000000000000000000000000000000000000000000000000000000000080",
+        "why": "u = 1 (order 1), bit 255 set",
+        "sealed": "0104010000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000"
+      },
+      {
+        "pub": "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880",
+        "why": "order 8, bit 255 set",
+        "sealed": "0104e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b88000000000000000000000000000000000"
+      },
+      {
+        "pub": "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
+        "why": "order 8, bit 255 set",
+        "sealed": "01045f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d700000000000000000000000000000000"
+      },
+      {
+        "pub": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "u = p - 1 (order 2), bit 255 set",
+        "sealed": "0104ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000"
+      },
+      {
+        "pub": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "u = p (0, not canonical), bit 255 set",
+        "sealed": "0104edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000"
+      },
+      {
+        "pub": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "u = p + 1 (1, not canonical), bit 255 set",
+        "sealed": "0104eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000"
+      }
+    ],
+    "accepted": [
+      {
+        "ephPub": "f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "why": "u = p + 9: reduced to the base point",
+        "sealed": "0104f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f47546f778634e7c424de4bf1396b4f99147979cfe1a62c4b6c90d29dbb418f6bd054f4b14585fa5117cd03b61511ab666a"
+      },
+      {
+        "ephPub": "0900000000000000000000000000000000000000000000000000000000000080",
+        "why": "the base point with bit 255 set: the bit is ignored",
+        "sealed": "0104090000000000000000000000000000000000000000000000000000000000008000b457ab95c99028de6d48b79b94cd97bdfc92a52a1785ebe6cc724ddc39dacc92541e56366686c9161d117bf126876acc"
+      },
+      {
+        "ephPub": "f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "why": "u = p + 9 with bit 255 set",
+        "sealed": "0104f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd906fd4ac0f6dd2cc653450f2be4319e156dbdd51e9dcfdfc5f70fa481d6217d82a7717bf75820cc5c6d59722bcff0242b"
+      }
+    ]
+  },
+  "room": {
+    "rngSeed": 96,
+    "rngCalls": "room nonce (16), room key (32), history key (32), then one ephemeral X25519 key (32) per wrap",
+    "time": 1790000000000,
+    "name": "Phone",
+    "genesis": "010101000000000000000000000000000000000000000000000000000000000000000000000000000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64606162636465666768696a6b6c6d6e6f01d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737052a50773ac8d91773f2dc9662e12f0defe915e415b8a1c8e20a5a3d6ab2b84384ff8bbb6e6ff23b21b4ff81e64d561873153ec82f5850a2901c76f9f58997df57a0124ce66e122ef2529074a07dc12657852f47f3aefa43f55cb95ec1db8020000000015121f7dc353abdc8cdb109bda25b020e28e140573273e853d08afa7126966461311ddd9be3356296e9177d784499b7c6f51765c4e676731037eb388c2370bbe2162fd1971b6f1e98ec90e299b34206f5f2374ca20f8cac7bbf0deeec76c2868495f74a05ac9d0cb14fa09ed4b9b5fed74acd81f58777fda3c1b05e926857950f",
+    "roomId": "18f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a",
+    "secret": {
+      "epoch": 1,
+      "key": "7172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f90",
+      "hist": "82838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1"
+    },
+    "keyCommit": "5121f7dc353abdc8cdb109bda25b020e28e140573273e853d08afa7126966461",
+    "histCommit": "311ddd9be3356296e9177d784499b7c6f51765c4e676731037eb388c2370bbe2",
+    "wraps": [
+      {
+        "recipient": "phone",
+        "recipientId": "34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64",
+        "sealed": "01049ccc2096135a07c11a2144add1cb4231e54f934f9378247bc7d0e7b76e5a76746fde11380fc93b74d36734122a59273fcb7af293742dd2a85e2b156bab3ce2e686d2740901612cff8827ae44e1faff4d060e5282d60f64c0a5ba59e094e6d863038a8fb798db9f86a90a530d2752182167"
+      },
+      {
+        "recipient": "recovery key",
+        "recipientId": "5b354d7930dae759b0a7d1340a05062a6d39448c3aa6689e3c87168f42ffcb38",
+        "sealed": "010420f999985e197e2df77c0b21c4348620937d4bcf649ea2d2b4bcaff560ed574d51a5322d31210b929ce6e8828ea69ef39ecd7e5db89df9a3e2a7ee915673ed5a168b6c43f625e6ba58e76b3cd01ccc9f0cc39467fe5c97030d0b5ddb77461b7bb5b023b971c9e773e6c8d85591e0d0b71b"
+      }
+    ]
+  },
+  "invites": [
+    {
+      "rngSeed": 112,
+      "rngCalls": "link secret (32), nonce (32)",
+      "wrapRngSeed": 113,
+      "hub": "https://hub.example",
+      "app": "https://app.example/join",
+      "role": 1,
+      "name": "Laptop",
+      "inviter": "phone",
+      "now": 1790000000000,
+      "logSeqBefore": 0,
+      "secret": "707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f",
+      "nonce": "8182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0",
+      "inviteId": "1be4d69511c29239cb1f3810eea0db80",
+      "expiresAt": 1790000600000,
+      "link": "https://app.example/join#v1.aHR0cHM6Ly9odWIuZXhhbXBsZQ.GPD8BybAMz951xDNb_EkBiM1Cl_clfMvhn4BWorfiTo.cHFyc3R1dnd4eXp7fH1-f4CBgoOEhYaHiImKi4yNjo8",
+      "offer": "010518f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a1be4d69511c29239cb1f3810eea0db8001000001a0c45993c0fd0693a870d006af41c28b66eafbf0407c2aa9eb10034c201a02b5f8ac11eb3f34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000018f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a4c834cd66f5668b6da62644c0bfaadd1ee6bd9075d504067222ffbaeaac2ed4648f0122bb1fbe00237412751e778b885f2dd0b883c80ef861ce357097ff46004",
+      "offerHash": "62bdbd71d3ff87a8a8f3d37952badd1d2f74f0e9f753afa98709d44bb9333259",
+      "request": "010618f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a1be4d69511c29239cb1f3810eea0db80001368747470733a2f2f6875622e6578616d706c6501884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f2062bdbd71d3ff87a8a8f3d37952badd1d2f74f0e9f753afa98709d44bb93332595c20bc2abea189483487791f9417d966c465beb79466132691be5343a7650b2ce8c80d2de131a0be7e5b40c242fb93d7fc3d4534c9875fcf839a220d1fcd5459f1f2fc4f421bd7490b00e4d8ca8271fdacdc810774b3bac75e1cbc9617c50407",
+      "requestHash": "37df9abd810ad908d67dddfd3def75f5b848e08046d0d9479bc09e7bf33cf15c",
+      "reveal": "01071be4d69511c29239cb1f3810eea0db808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa037df9abd810ad908d67dddfd3def75f5b848e08046d0d9479bc09e7bf33cf15ccf266ae94e1c4ada42dcf161161df46d2b1a525488de2263597bb8333d2bf49dddb58016ed6199fb32ab161e237d1e221a4d556bf9c381a13d21a7454cedd10d",
+      "checkCode": "03-27-39-11-35-49",
+      "checkCodeCompared": true,
+      "entry": "0101020000000118f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a6401884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f201be4d69511c29239cb1f3810eea0db80f5cd0c44ba949fad3662504048120a151e336f67f0e65bde0374a972f7bfca0e7ec1dfc20b1bff8c10fca77259a85fc32bb90a3da59de55819b56ba600a20d05",
+      "wrap": "0104d214723afdfe2cddbdc929b18a5e43017e44445fc5d6c8fcf88b1868c53f395c1bf44aeebc8780ead0cd1ee5eda2b54f2f3463d31866e7f835bf409d4a2513736d7586031cb0f5752b70427512f66d155ecfa454f276bb73c286b16e916d26dd7035679d1e67fe6cb147c4f07f0fe79f2e",
+      "roomKeyOpened": {
+        "epoch": 1,
+        "key": "7172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f90",
+        "hist": "82838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1"
+      }
+    },
+    {
+      "rngSeed": 120,
+      "rngCalls": "link secret (32), nonce (32)",
+      "wrapRngSeed": 121,
+      "hub": "https://hub.example",
+      "app": "https://app.example/join",
+      "role": 2,
+      "name": "Agent",
+      "inviter": "phone",
+      "now": 1790000000000,
+      "logSeqBefore": 1,
+      "secret": "78797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f9091929394959697",
+      "nonce": "898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8",
+      "inviteId": "22c9cad3a499e32ac4687d0ca55c7b7d",
+      "expiresAt": 1790000600000,
+      "link": "https://app.example/join#v1.aHR0cHM6Ly9odWIuZXhhbXBsZQ.GPD8BybAMz951xDNb_EkBiM1Cl_clfMvhn4BWorfiTo.eHl6e3x9fn-AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpc",
+      "offer": "010518f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a22c9cad3a499e32ac4687d0ca55c7b7d02000001a0c45993c082ea600ff8168f78022f02ad38102a4ec243a617e2e8a9f4bede1c4985e42e5234c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000163342a428fd6b36cccd8ee26edc7c066c5ec414461292f8d9ea61c646b116a2d2428925d0b9be7e980826c5082815d42c2b0681fdaba467d304c60ca0f091699f670782fa95ea01482fb81a189b82054fc26ca640dd4028332502b0c0070110a",
+      "offerHash": "9f40c9215babeeec3a8547c8206e01497d3d9ec9f4ecb807cc3641f39dc79e82",
+      "request": "010618f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a22c9cad3a499e32ac4687d0ca55c7b7d001368747470733a2f2f6875622e6578616d706c650248075a597e721a156e2e0799de5cc0c5324dc6e7eaf1cdd46250868ec53215dd59d9225473451efffe6b36dbcaefdbf7b1895de62084509a7f5b58bf01d064189f40c9215babeeec3a8547c8206e01497d3d9ec9f4ecb807cc3641f39dc79e822b16fd45a9a71684f0d8a2ece0862fd746e3d33a79c931e4d6363c42e76368dd06b542a9ecdd81fc476d6c3804a60613a833b23123df41faf6a27ab999bdeae76c2acaaabc2b3926255269b40ecb222c32fb0a1f1ed1ed97a750c15668a20602",
+      "requestHash": "9d6b01b47e9da8f9e21866326a4528146d30cb0e4f7438d9f65c0ba2476c64f8",
+      "reveal": "010722c9cad3a499e32ac4687d0ca55c7b7d898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a89d6b01b47e9da8f9e21866326a4528146d30cb0e4f7438d9f65c0ba2476c64f8ba5a6f6de55342100cf6662a0cc9883970aa64c2dcf1cbf25d0118154686dccca7e49aaef2f2492f32d068762e82ac23bfc1db6be237a67cc4fa44b8b7e92d05",
+      "checkCode": "33-57-17-57-39-13",
+      "checkCodeCompared": true,
+      "entry": "0101020000000263342a428fd6b36cccd8ee26edc7c066c5ec414461292f8d9ea61c646b116a2d000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640248075a597e721a156e2e0799de5cc0c5324dc6e7eaf1cdd46250868ec53215dd59d9225473451efffe6b36dbcaefdbf7b1895de62084509a7f5b58bf01d0641822c9cad3a499e32ac4687d0ca55c7b7db7b6cd3f6fe97ca4c31eb90e5ef1587d8a231248b7adf85fc98ee44fd1727aaa2e96889e251b8cc51708a9c5a5fed535218637945c9d5516057f949e2f335b0c",
+      "wrap": null,
+      "roomKeyOpened": null
+    },
+    {
+      "rngSeed": 136,
+      "rngCalls": "link secret (32), nonce (32)",
+      "wrapRngSeed": 137,
+      "hub": "https://hub.example",
+      "app": "https://app.example/join",
+      "role": 2,
+      "name": "Helper",
+      "inviter": "laptop",
+      "now": 1790000000000,
+      "logSeqBefore": 2,
+      "secret": "88898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7",
+      "nonce": "999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8",
+      "inviteId": "79d7c2b5b2bd660f70472c47511c350e",
+      "expiresAt": 1790000600000,
+      "link": "https://app.example/join#v1.aHR0cHM6Ly9odWIuZXhhbXBsZQ.GPD8BybAMz951xDNb_EkBiM1Cl_clfMvhn4BWorfiTo.iImKi4yNjo-QkZKTlJWWl5iZmpucnZ6foKGio6Slpqc",
+      "offer": "010518f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a79d7c2b5b2bd660f70472c47511c350e02000001a0c45993c0be56189a0ad777d636d006f58e36aa394af60d4bf176a10e88ef4a0dcc03928445b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a00000002d7bd6dcc3e3ed33d7a8b7d8ae37eef80b78d94fdc46139c14f548053ccb511d8178aba5552d7c0c044d6c9e768ec55e28b8a5fea99e7fe0882614c519237c0bf0b62376e4a44f1006ca343a7734d49d00128c4369c6b29a21764c0d70ae30e07",
+      "offerHash": "87009003c6fe7ba820360420581cbb7f6956fc79e527bc71a6afa32d52f7846f",
+      "request": "010618f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a79d7c2b5b2bd660f70472c47511c350e001368747470733a2f2f6875622e6578616d706c6502c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445af68b05ba03f7185e1ba88878682f8dd0b15158f6050889c9481d79c2d7d2fa0787009003c6fe7ba820360420581cbb7f6956fc79e527bc71a6afa32d52f7846f61a6abb364873eede673accf8c53025d1c239eae703d37b478d5301a787ef53f74d623ca607446ac126253231df7f083d248cb9d188c913a8fa41fb1d6575fbae502a7ab3008d1db9b22f3ab322bf139b4fde512d0347a363df600707e9f7308",
+      "requestHash": "c8d66ac3ed87f776e66eec4946b6b96aaf9fe77675091eceeab586a0e92c553f",
+      "reveal": "010779d7c2b5b2bd660f70472c47511c350e999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8c8d66ac3ed87f776e66eec4946b6b96aaf9fe77675091eceeab586a0e92c553f10b67216f11819ad8c03b62fbd902c480303508883f3572bddecb50cf9087d6a419ae2b611528ccdb21f8e456c20a9574096495d2d7299c347908bd3349e8a0a",
+      "checkCode": "46-07-02-49-39-50",
+      "checkCodeCompared": true,
+      "entry": "01010200000003d7bd6dcc3e3ed33d7a8b7d8ae37eef80b78d94fdc46139c14f548053ccb511d8000001a0c4506c000145b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a02c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445af68b05ba03f7185e1ba88878682f8dd0b15158f6050889c9481d79c2d7d2fa0779d7c2b5b2bd660f70472c47511c350e85d343c716bfd6d4ab46b44dccab154b51dc551353d3fab7348a38ba416eeeebd36f31ceded5ca11e12243493e3a65cc0c1c79edd25730135e6838f12caf1503",
+      "wrap": null,
+      "roomKeyOpened": null
+    }
+  ],
+  "envelopes": {
+    "session": {
+      "sessionId": "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+      "sessionKey": {
+        "epoch": 1,
+        "key": "6161616161616161616161616161616161616161616161616161616161616161",
+        "hist": "6262626262626262626262626262626262626262626262626262626262626262"
+      }
+    },
+    "senderKeys": {
+      "phoneRoom": "3a5c528125ef7e935d4bc93047f8c8787bb48f137533a427851943a72522bc69",
+      "phoneSession": "574d6bbd12e46f47063747f1f29faf05744aa7a7213735d1cd899b6f7917dd87",
+      "agentSession": "b59182c4387a375a78be1491ed42c95272478b17e23a06b69fb6e995d40a50f4"
+    },
+    "chat": {
+      "rngSeed": 128,
+      "sender": "phone",
+      "kind": 1,
+      "timelineKind": 1,
+      "timelineId": "session/5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+      "keyScope": 1,
+      "payload": "68656c6c6f",
+      "recipient": "agent",
+      "time": 1790000000001,
+      "epoch": 1,
+      "seq": 1,
+      "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+      "logSeq": 3,
+      "logHash": "ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce",
+      "seen": [],
+      "hubSees": {
+        "push": false,
+        "isHead": false,
+        "kind": 1,
+        "timelineKind": 1,
+        "timelineId": "session/5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+        "card": null,
+        "blobs": []
+      },
+      "header": "010018f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000000000001000000000000000000000000000000000000000000000000000000000000000000000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3000001a0c4506c0101000001025e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e00",
+      "nonce": "808182838485868788898a8b",
+      "ciphertext": "47ce5f66b94b8acc921f323c9f6d408e4017da23c7c881e96d25a990380ff8424df1e4d561409d1c7d883b03052fd3b9e455c62d8a83d1ec6a282b4f6f7fa89802ab915fad0b73f61c276a1106a082528bbea7f32c985c551acaf2ee12af29ccc28bfeb8430054be5f97a5d4713cfbd6146b776a52769f301e6834f480e8bd7e774df76e61129c9234f6899a1be4c850590fb77965ee41bb8f16720874d8bfd76d6569280bda300fcefad14ba2e531dd69ef6294ae86c473448b0e31fdcfb9cdcddb6917661b3905f2d68629dcec466eae37e702fe41b297e2f01196c6533d3d30bc6ea8e130d928e64cccf44ed1470ed2ffceb025deb4e34d7cd2ebc3b6e8336adf9387937d7053d67d88fbb54c0a8f",
+      "ciphertextHash": "8aa2e11ad9bd3242772fb74cd8cb180199a9b1c63c493610801599e2829d3bb9",
+      "signature": "c2fe3fdfd325c9f8639b4e9c42ce967024f574d08ac682b769490feb8444f8826d1b1dce370d034c2e77c839cd0667c7d8101549e6c534ff6dc1cfee687b3507",
+      "hash": "00bed49c94b44717d4f500fa83036127526dfafbfd05fd3bb42df96eca53d801",
+      "bytes": "010200e1010018f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000000000001000000000000000000000000000000000000000000000000000000000000000000000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3000001a0c4506c0101000001025e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e00808182838485868788898a8b0000011047ce5f66b94b8acc921f323c9f6d408e4017da23c7c881e96d25a990380ff8424df1e4d561409d1c7d883b03052fd3b9e455c62d8a83d1ec6a282b4f6f7fa89802ab915fad0b73f61c276a1106a082528bbea7f32c985c551acaf2ee12af29ccc28bfeb8430054be5f97a5d4713cfbd6146b776a52769f301e6834f480e8bd7e774df76e61129c9234f6899a1be4c850590fb77965ee41bb8f16720874d8bfd76d6569280bda300fcefad14ba2e531dd69ef6294ae86c473448b0e31fdcfb9cdcddb6917661b3905f2d68629dcec466eae37e702fe41b297e2f01196c6533d3d30bc6ea8e130d928e64cccf44ed1470ed2ffceb025deb4e34d7cd2ebc3b6e8336adf9387937d7053d67d88fbb54c0a8fc2fe3fdfd325c9f8639b4e9c42ce967024f574d08ac682b769490feb8444f8826d1b1dce370d034c2e77c839cd0667c7d8101549e6c534ff6dc1cfee687b3507"
+    },
+    "desk": {
+      "rngSeed": 131,
+      "sender": "phone",
+      "kind": 1,
+      "timelineKind": 2,
+      "timelineId": "desk/d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5",
+      "keyScope": 0,
+      "payload": "7b22636f6e74656e745f74797065223a227374726f6b6573227d",
+      "time": 1790000000004,
+      "epoch": 1,
+      "seq": 3,
+      "prev": "60c9706cf215d628126af154c53542fe830d2f498b5f9c900b0ac865658aabb0",
+      "logSeq": 3,
+      "logHash": "ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce",
+      "seen": [],
+      "hubSees": {
+        "push": false,
+        "isHead": false,
+        "kind": 1,
+        "timelineKind": 2,
+        "timelineId": "desk/d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5",
+        "card": null,
+        "blobs": []
+      },
+      "header": "010018f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a000000010034c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64000000000000000360c9706cf215d628126af154c53542fe830d2f498b5f9c900b0ac865658aabb000000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0000000000000000000000000000000000000000000000000000000000000000000001a0c4506c040100000203d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d500",
+      "nonce": "838485868788898a8b8c8d8e",
+      "ciphertext": "b808f5aa89ab9f125674fb5d6d6c0e3b5e904294568e73c0678f29f8053d49c72897f09d09d44180751cf2072730b7a1e080da4f4bfabd21f28f025057e2d79e06d797a035dc7e190dce937de0ea8a4f99d9744234516ab457498f8d0260cea1e7b6df8dfe4751579be79a3663264ae664d21360cbaa79c72676ba528032b1c43657dd66e2662c20f89fce017c3bb718705d66fbf58a66dac4c68c4ff4a4b59a236a881e03522bad49b9eb2f38549cb67550f793287e25a1a934b0cc45d4e01e538a80fe67e0edfce995bee38baa7559679cd7e660c13c2a16ef046dfe40ab1d7cfbae0a71bbff687cba6373021a9ca3537baea095812e06647f7f8cf914b64e94c77ccef7b7274de7b8b4992d6dae99",
+      "ciphertextHash": "6d7f9257459ad226daabe8904b1062ef2e09f80f9e4f00220c62f121f86d4940",
+      "signature": "14e982275b41247f68a6625e5c651d2f091ee4cf5264a431696660d90454186b0c2f56cee98ea04b72b3b8b4fd511b947bd0d61b6c737fa74c6263f40833d70a",
+      "hash": "478c04ab390ef45c1bbf4c90420e3fc5cde5b62973c8e9806998cf97b8d5b10b",
+      "bytes": "010200d1010018f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a000000010034c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64000000000000000360c9706cf215d628126af154c53542fe830d2f498b5f9c900b0ac865658aabb000000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0000000000000000000000000000000000000000000000000000000000000000000001a0c4506c040100000203d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d500838485868788898a8b8c8d8e00000110b808f5aa89ab9f125674fb5d6d6c0e3b5e904294568e73c0678f29f8053d49c72897f09d09d44180751cf2072730b7a1e080da4f4bfabd21f28f025057e2d79e06d797a035dc7e190dce937de0ea8a4f99d9744234516ab457498f8d0260cea1e7b6df8dfe4751579be79a3663264ae664d21360cbaa79c72676ba528032b1c43657dd66e2662c20f89fce017c3bb718705d66fbf58a66dac4c68c4ff4a4b59a236a881e03522bad49b9eb2f38549cb67550f793287e25a1a934b0cc45d4e01e538a80fe67e0edfce995bee38baa7559679cd7e660c13c2a16ef046dfe40ab1d7cfbae0a71bbff687cba6373021a9ca3537baea095812e06647f7f8cf914b64e94c77ccef7b7274de7b8b4992d6dae9914e982275b41247f68a6625e5c651d2f091ee4cf5264a431696660d90454186b0c2f56cee98ea04b72b3b8b4fd511b947bd0d61b6c737fa74c6263f40833d70a"
+    },
+    "objectIdOfCard": "objectIdOf(agent, 1)",
+    "card": {
+      "rngSeed": 129,
+      "sender": "agent",
+      "kind": 2,
+      "payload": "7b227469746c65223a224465706c6f793f222c226f7074696f6e73223a5b22796573222c226e6f225d7d",
+      "time": 1790000000002,
+      "cardId": "257b4dcd897ad66f8a2be1739d03f619",
+      "blobId": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+      "epoch": 1,
+      "seq": 1,
+      "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+      "logSeq": 3,
+      "logHash": "ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce",
+      "seen": [
+        {
+          "sender": "phone",
+          "seq": 1,
+          "hash": "00bed49c94b44717d4f500fa83036127526dfafbfd05fd3bb42df96eca53d801"
+        }
+      ],
+      "hubSees": {
+        "push": true,
+        "isHead": true,
+        "kind": 2,
+        "timelineKind": null,
+        "timelineId": null,
+        "card": {
+          "id": "257b4dcd897ad66f8a2be1739d03f619",
+          "state": 1,
+          "urgency": 2,
+          "answeredAt": 0
+        },
+        "blobs": [
+          "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+        ]
+      },
+      "header": "010318f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a30000000000000001000000000000000000000000000000000000000000000000000000000000000000000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0000000000000000000000000000000000000000000000000000000000000000000001a0c4506c0202000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64000000000000000100bed49c94b44717d4f500fa83036127526dfafbfd05fd3bb42df96eca53d801257b4dcd897ad66f8a2be1739d03f6190102000000000000000001b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+      "nonce": "8182838485868788898a8b8c",
+      "ciphertext": "8174409ef019a480396b06ec3d9904e1fb5d5c2f33c780f95e4b39e468b3e3ed295b7404629161734bfe8eee6e2c12c89f3a9fdf91f8ef5873104d4d69219185c146eb96610a37d369ea675ec39944f4da173bcca3b006d8e7016cb8cd11c70262ef4466ba02e93ce7dfd9885d98b0a4b2c890b82733ef706409abbf6658ef328d8e326763c5646bfcbf1c6d3da4ff6ad0c98822302168f20a8b2071c9268fa8c844fbc3700416c3d45729d71e5276b83361b07cafb85a323343ff14d95e8e83c1cde7713c25f0ec1cabca6c20566843fb87ba516003717f3d4f60d4b650af42da1130344106c6a60aff6ccd1a41eabf3123fcb430f94543b8430ac5bd3b0954c3f744fcd0c1b80662eba7fe1eeb453e",
+      "ciphertextHash": "cc77e65da87c56033851704e5e8f62192215e95de5dce0a5cbba2446e83fe0e5",
+      "signature": "92c2882d6b51062b5be2f8a77b9807c0f789c10527d1b6c288879a37acfb7d1b2f05d9fb1bcece7db1757f46e20db91a611acca5464fa75e86aff5ebeceff20c",
+      "hash": "569d3eede2cd4033ae76dd8bd6fcb9b558d1d6ef70f0e5c6bd22e1a44667a332",
+      "bytes": "01020141010318f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a30000000000000001000000000000000000000000000000000000000000000000000000000000000000000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0000000000000000000000000000000000000000000000000000000000000000000001a0c4506c0202000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64000000000000000100bed49c94b44717d4f500fa83036127526dfafbfd05fd3bb42df96eca53d801257b4dcd897ad66f8a2be1739d03f6190102000000000000000001b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b18182838485868788898a8b8c000001108174409ef019a480396b06ec3d9904e1fb5d5c2f33c780f95e4b39e468b3e3ed295b7404629161734bfe8eee6e2c12c89f3a9fdf91f8ef5873104d4d69219185c146eb96610a37d369ea675ec39944f4da173bcca3b006d8e7016cb8cd11c70262ef4466ba02e93ce7dfd9885d98b0a4b2c890b82733ef706409abbf6658ef328d8e326763c5646bfcbf1c6d3da4ff6ad0c98822302168f20a8b2071c9268fa8c844fbc3700416c3d45729d71e5276b83361b07cafb85a323343ff14d95e8e83c1cde7713c25f0ec1cabca6c20566843fb87ba516003717f3d4f60d4b650af42da1130344106c6a60aff6ccd1a41eabf3123fcb430f94543b8430ac5bd3b0954c3f744fcd0c1b80662eba7fe1eeb453e92c2882d6b51062b5be2f8a77b9807c0f789c10527d1b6c288879a37acfb7d1b2f05d9fb1bcece7db1757f46e20db91a611acca5464fa75e86aff5ebeceff20c"
+    },
+    "answer": {
+      "rngSeed": 130,
+      "sender": "phone",
+      "kind": 3,
+      "bind": "01257b4dcd897ad66f8a2be1739d03f619569d3eede2cd4033ae76dd8bd6fcb9b558d1d6ef70f0e5c6bd22e1a44667a332010003796573",
+      "payload": "7b226e6f7465223a22676f227d",
+      "recipient": "agent",
+      "time": 1790000000003,
+      "epoch": 1,
+      "seq": 2,
+      "prev": "00bed49c94b44717d4f500fa83036127526dfafbfd05fd3bb42df96eca53d801",
+      "logSeq": 3,
+      "logHash": "ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce",
+      "seen": [
+        {
+          "sender": "agent",
+          "seq": 1,
+          "hash": "569d3eede2cd4033ae76dd8bd6fcb9b558d1d6ef70f0e5c6bd22e1a44667a332"
+        }
+      ],
+      "hubSees": {
+        "push": false,
+        "isHead": true,
+        "kind": 3,
+        "timelineKind": null,
+        "timelineId": null,
+        "card": {
+          "id": "257b4dcd897ad66f8a2be1739d03f619",
+          "state": 2,
+          "urgency": 2,
+          "answeredAt": 1790000000003
+        },
+        "blobs": []
+      },
+      "header": "010218f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64000000000000000200bed49c94b44717d4f500fa83036127526dfafbfd05fd3bb42df96eca53d80100000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3000001a0c4506c030300010f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a30000000000000001569d3eede2cd4033ae76dd8bd6fcb9b558d1d6ef70f0e5c6bd22e1a44667a332257b4dcd897ad66f8a2be1739d03f6190202000001a0c4506c0300",
+      "nonce": "82838485868788898a8b8c8d",
+      "ciphertext": "44f958334a69ae3ae721ec9986cbe58ddfc285d9146c298c96b75ab851414584b8dc921497e5142c9389858d2a71df771a76e9c064d4eb0a41fb060ed2de3b3bc824996e5aa3ac815971b716f66b7178d51504444c4fad592adfb030f4aab5d31df30574e7b210b59ff7e847e7454af9fa23cf18be39697f3feb3a6fa7c3ae0e7682fc13c3cda7986efc05acd1ee5cb13130abfcb8c10c17dd38e3bb9fad017a3fa2e232f816e2d46303247566034edf68deed14c9cff3531533f6f49be85523f2ae819a733a313cbfd4da0cb1ed5b76f7f445e408663f733afb8759c8b64d57553e6b264b1664e7003ff0c981948dc39e1442a15e32b4446e46a009210fe5ac75f60e2ecebde2101fe2cdd51815bc2a",
+      "ciphertextHash": "8668cbba29f747cc4fbd70912fc93153d5eabd9591e9c35a3171e26cefd54f7e",
+      "signature": "57a619dfc78d0fe5b75e54e64a4188d78fbb72861d405dec177878cca8dc7652492cbbdf096d85d53a3089cdb30c4fa171d679a1bd09b9996de8bb2a0e9dd60e",
+      "hash": "60c9706cf215d628126af154c53542fe830d2f498b5f9c900b0ac865658aabb0",
+      "bytes": "01020131010218f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64000000000000000200bed49c94b44717d4f500fa83036127526dfafbfd05fd3bb42df96eca53d80100000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3000001a0c4506c030300010f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a30000000000000001569d3eede2cd4033ae76dd8bd6fcb9b558d1d6ef70f0e5c6bd22e1a44667a332257b4dcd897ad66f8a2be1739d03f6190202000001a0c4506c030082838485868788898a8b8c8d0000011044f958334a69ae3ae721ec9986cbe58ddfc285d9146c298c96b75ab851414584b8dc921497e5142c9389858d2a71df771a76e9c064d4eb0a41fb060ed2de3b3bc824996e5aa3ac815971b716f66b7178d51504444c4fad592adfb030f4aab5d31df30574e7b210b59ff7e847e7454af9fa23cf18be39697f3feb3a6fa7c3ae0e7682fc13c3cda7986efc05acd1ee5cb13130abfcb8c10c17dd38e3bb9fad017a3fa2e232f816e2d46303247566034edf68deed14c9cff3531533f6f49be85523f2ae819a733a313cbfd4da0cb1ed5b76f7f445e408663f733afb8759c8b64d57553e6b264b1664e7003ff0c981948dc39e1442a15e32b4446e46a009210fe5ac75f60e2ecebde2101fe2cdd51815bc2a57a619dfc78d0fe5b75e54e64a4188d78fbb72861d405dec177878cca8dc7652492cbbdf096d85d53a3089cdb30c4fa171d679a1bd09b9996de8bb2a0e9dd60e"
+    },
+    "pruned": "010300e1010018f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000000000001000000000000000000000000000000000000000000000000000000000000000000000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3000001a0c4506c0101000001025e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e00808182838485868788898a8b8aa2e11ad9bd3242772fb74cd8cb180199a9b1c63c493610801599e2829d3bb9c2fe3fdfd325c9f8639b4e9c42ce967024f574d08ac682b769490feb8444f8826d1b1dce370d034c2e77c839cd0667c7d8101549e6c534ff6dc1cfee687b3507",
+    "prunedAnswer": "01030131010218f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64000000000000000200bed49c94b44717d4f500fa83036127526dfafbfd05fd3bb42df96eca53d80100000003ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce0f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3000001a0c4506c030300010f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a30000000000000001569d3eede2cd4033ae76dd8bd6fcb9b558d1d6ef70f0e5c6bd22e1a44667a332257b4dcd897ad66f8a2be1739d03f6190202000001a0c4506c030082838485868788898a8b8c8d8668cbba29f747cc4fbd70912fc93153d5eabd9591e9c35a3171e26cefd54f7e57a619dfc78d0fe5b75e54e64a4188d78fbb72861d405dec177878cca8dc7652492cbbdf096d85d53a3089cdb30c4fa171d679a1bd09b9996de8bb2a0e9dd60e",
+    "afterRecovery": {
+      "rngSeed": 180,
+      "sender": "tablet",
+      "kind": 1,
+      "timelineKind": 1,
+      "timelineId": "session/5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+      "keyScope": 1,
+      "payload": "6261636b20616761696e",
+      "recipient": "agent",
+      "time": 1790000000040,
+      "senderKey": "2548926a315f3098a9f3b39488d4aa0e9b01bfcfb0f6e6c2e8822bd82b8583c3",
+      "epoch": 1,
+      "seq": 1,
+      "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+      "logSeq": 5,
+      "logHash": "e25ef8d8939b18f994f59545f17399be6f73670f3f9d898d42c50b0fc5682e03",
+      "seen": [],
+      "hubSees": {
+        "push": false,
+        "isHead": false,
+        "kind": 1,
+        "timelineKind": 1,
+        "timelineId": "session/5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+        "card": null,
+        "blobs": []
+      },
+      "header": "010018f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5eb07e1e1fce936d224bf862055f22d0f4a5a79a2022223b9e1a551f9775bb34b10000000000000001000000000000000000000000000000000000000000000000000000000000000000000005e25ef8d8939b18f994f59545f17399be6f73670f3f9d898d42c50b0fc5682e030f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3000001a0c4506c2801000001025e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e00",
+      "nonce": "b4b5b6b7b8b9babbbcbdbebf",
+      "ciphertext": "9ab1b8064ad72550a95608c43f71660df53a4bd71c40fce65ffd28da5626914ca59dd36972e792e5383fc8103bccc14550b55f98d5a4a25c31058023a14b38d9b60e3108eb065c8252d7eddb52b27cacbb86e2abf5fa407884b1ebf376242f170a33ee81b5d9a88bcbe9366899357e32aa9d2e8202372d186f4bf23431f93a0582352a7bb52bd1c009d9b2dce4661143e0c1f07f302c70b9c1bbad6d79dd0f0bd248a8e96b88b739991961d84dea8c467d700e35f0c4edf8c9e06d38e6b321efa2502c195d1384e4d0a61d0151ab3d835cc0df5f26bd67454011f677671e1721a9ffd7c68dee6591684b70e383e263925a40f800fee5cb7516772bc0fe42d57939559b7e6cc756498edee54a5002a00b",
+      "ciphertextHash": "67e23a5c7e8d5e76d5c99a9485ad6fb3182d2f2d7c33abffdafa4ecf962d5a03",
+      "signature": "3910583779585df599149f6509f4368dcc6cb5fd9a71965168d4ad01adcc55f5e6517412274c78c160a4eeb8f36c961066577cb2af8d1590582a23af5cb57f0c",
+      "hash": "1b52297f14e33fdabfb35de5bede4d729fc1537f4ce1bfca1d9c7ed4a62f5f4b",
+      "bytes": "010200e1010018f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a00000001015e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5eb07e1e1fce936d224bf862055f22d0f4a5a79a2022223b9e1a551f9775bb34b10000000000000001000000000000000000000000000000000000000000000000000000000000000000000005e25ef8d8939b18f994f59545f17399be6f73670f3f9d898d42c50b0fc5682e030f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a3000001a0c4506c2801000001025e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e00b4b5b6b7b8b9babbbcbdbebf000001109ab1b8064ad72550a95608c43f71660df53a4bd71c40fce65ffd28da5626914ca59dd36972e792e5383fc8103bccc14550b55f98d5a4a25c31058023a14b38d9b60e3108eb065c8252d7eddb52b27cacbb86e2abf5fa407884b1ebf376242f170a33ee81b5d9a88bcbe9366899357e32aa9d2e8202372d186f4bf23431f93a0582352a7bb52bd1c009d9b2dce4661143e0c1f07f302c70b9c1bbad6d79dd0f0bd248a8e96b88b739991961d84dea8c467d700e35f0c4edf8c9e06d38e6b321efa2502c195d1384e4d0a61d0151ab3d835cc0df5f26bd67454011f677671e1721a9ffd7c68dee6591684b70e383e263925a40f800fee5cb7516772bc0fe42d57939559b7e6cc756498edee54a5002a00b3910583779585df599149f6509f4368dcc6cb5fd9a71965168d4ad01adcc55f5e6517412274c78c160a4eeb8f36c961066577cb2af8d1590582a23af5cb57f0c"
+    }
+  },
+  "binds": {
+    "answer": "01257b4dcd897ad66f8a2be1739d03f619569d3eede2cd4033ae76dd8bd6fcb9b558d1d6ef70f0e5c6bd22e1a44667a332010003796573",
+    "verdict": "01717171717171717171717171717171717272727272727272727272727272727272727272727272727272727272727272000001a0c454ffe001",
+    "decideAgain": "01257b4dcd897ad66f8a2be1739d03f61960c9706cf215d628126af154c53542fe830d2f498b5f9c900b0ac865658aabb0569d3eede2cd4033ae76dd8bd6fcb9b558d1d6ef70f0e5c6bd22e1a44667a332",
+    "request": "0171717171717171717171717171717171000001a0c454ffe0"
+  },
+  "hubAuth": {
+    "signer": "agent",
+    "hub": "https://hub.example",
+    "challenge": "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c",
+    "logSeq": 3,
+    "signed": "010d18f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a001368747470733a2f2f6875622e6578616d706c650f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a35c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cd996336e6a82e5485a74fba54068ead6d0deaca8bb2175ff77b2ef622733fdf6bfbe459a0ef6ad3859d75c933059f7dee04405fbe3e491dda0a01723364d180b"
+  },
+  "epochChanges": {
+    "remove": {
+      "rngSeed": 144,
+      "signer": "laptop",
+      "removed": [
+        "helper"
+      ],
+      "time": 1790000000010,
+      "rngCalls": "room key (32), history key (32), then one ephemeral X25519 key (32) per wrap",
+      "entry": "01010300000004ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce000001a0c4506c0a0145b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a0001949c8b800e4bca941ad0a5709ba53af2a60740cf9a362201680491b5c282bac00000000000000000000000000000000000000000000000000000000000000000000000000000000000000002166e79cb7c85d668d9e73c08c5b0b087e5742a511675b9a2fce597f7fc80f4c80358c9ac4a136df98defd7fdb7318fdb60ea32e62a65858ec4a9c1888dffd3ff49fdf5e55b1f58f1e7f04c9b8b7d0f42c3d315687a1837e18dcf873210a1ce9b47681476f9afb172454ea5be8d609ceeba669898e729e89213f64baf3db65508",
+      "entryHash": "e04c1c809bd215d77d2daf69baa00727774077cd46fabd660f3f704916d044b7",
+      "removedIds": [
+        "949c8b800e4bca941ad0a5709ba53af2a60740cf9a362201680491b5c282bac0"
+      ],
+      "secret": {
+        "epoch": 2,
+        "key": "909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "hist": "a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0"
+      },
+      "keyCommit": "166e79cb7c85d668d9e73c08c5b0b087e5742a511675b9a2fce597f7fc80f4c8",
+      "histCommit": "0358c9ac4a136df98defd7fdb7318fdb60ea32e62a65858ec4a9c1888dffd3ff",
+      "wraps": [
+        {
+          "recipient": "phone",
+          "recipientId": "34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64",
+          "sealed": "01040750dfba4c5b7d1c711c0e3be6206aad38560eba30998f95092d330006abbb623ccc217d9c879dd2a4b705f7f016fa1c463ff5c3ce3219d93e5ed8c1624352ae971d9e44098e59bee074fbd0d4ce0a2d9d988d570bb38651bef21d9ab54370e7b3d38aa3dc5b0b7320b260082cac64ec71"
+        },
+        {
+          "recipient": "laptop",
+          "recipientId": "45b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a",
+          "sealed": "0104da3a8fd5a50ffa3b641f1bf224143d9084505b907d2323410c259fbb653ddf3236d4297ceeb1471e3d6d90a8f52096671672d1614196cf5b97e73bacbee047e1f4e4245dafe0d44d2868ff00221b4b9db3d371e2d977ad5c1d7f2a21307f85b7120c6f647dccf760a02c25ca729abb9745"
+        },
+        {
+          "recipient": "recovery key",
+          "recipientId": "5b354d7930dae759b0a7d1340a05062a6d39448c3aa6689e3c87168f42ffcb38",
+          "sealed": "01045cdb0c8dfc7604873a3fbb04298d829d6ba27689f0020d5749ffac03fff3092b88a2199f56f58afdfd8ec471668cb6f1736bc9ef12c23270eb48bff0c13089c4ae919c466affe4f1b4a0f6b17539267d46d0209ac934f9f8bd7d01c5519764c286a26558404417156e4006aabd701ed446"
+        }
+      ],
+      "backLink": "010800000002835876fc8bd997c510c24e7083aff1ee126382db26aa91874d907a92e7fd8a95756f3f8258910158e3feb3d6a2c56e1a28646237edceea1f7f0f1b32e1929f118958e206b685ef8e4feb8bc6bd12fe16",
+      "membersAfter": [
+        "phone",
+        "laptop",
+        "agent"
+      ]
+    },
+    "recover": {
+      "rngSeed": 168,
+      "signer": "recovery key",
+      "removed": [
+        "phone",
+        "laptop"
+      ],
+      "kept": [
+        "agent"
+      ],
+      "recoveryWrapUsed": "01045cdb0c8dfc7604873a3fbb04298d829d6ba27689f0020d5749ffac03fff3092b88a2199f56f58afdfd8ec471668cb6f1736bc9ef12c23270eb48bff0c13089c4ae919c466affe4f1b4a0f6b17539267d46d0209ac934f9f8bd7d01c5519764c286a26558404417156e4006aabd701ed446",
+      "newCodeRngSeed": 160,
+      "newCode": "M2GT-58X4-MPKA-FA59-NANT-SBDE-NYRB-3CNK-PJTV-DDXR-Q6XB-QF5X-QTZG",
+      "newRecovery": {
+        "signPub": "201312d4452a462698a17d6e489d60cae6962cc56f16c18b35c7e90e469f88c1",
+        "kexPub": "99e9993a4c4ee8946c1ee5aa63cd8c028f7ae962533898439f63683eb93b5a18",
+        "id": "aa66fc83635b6fb05ef0de5fe8508f3f26067d9cbefa6215d58f5f8e3339ad4d"
+      },
+      "newDevice": "tablet",
+      "name": "Tablet",
+      "time": 1790000000030,
+      "rngCalls": "room key (32), history key (32), then one ephemeral X25519 key (32) per wrap",
+      "entry": "01010500000005e04c1c809bd215d77d2daf69baa00727774077cd46fabd660f3f704916d044b7000001a0c4506c1e025b354d7930dae759b0a7d1340a05062a6d39448c3aa6689e3c87168f42ffcb3801db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d132c442be010fbd57e72603328aa76e71fccc1503aae219327d14d9c9993f472000234c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000000000000000000000000000000000000000000000000000000000000000000000000000045b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000030f3d3acb468d34314d0684f7897a28c2c146cd57d1c1009666b911d98dea67ba480e65492b6eb0120c638842b8e5ea2955cd9fd785af39da5e6eb63c5c1b98b6201312d4452a462698a17d6e489d60cae6962cc56f16c18b35c7e90e469f88c199e9993a4c4ee8946c1ee5aa63cd8c028f7ae962533898439f63683eb93b5a18fb3406788d87331f8e1eeacabe8796e16d12862b19e6a1b17416015670311ca8d81bb38669d91a8da5cdb03c4d045d026c02a7cc7b080cccb7c0b5c964d76e06",
+      "entryHash": "e25ef8d8939b18f994f59545f17399be6f73670f3f9d898d42c50b0fc5682e03",
+      "removedIds": [
+        "34c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64",
+        "45b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a"
+      ],
+      "secret": {
+        "epoch": 3,
+        "key": "a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7",
+        "hist": "b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8"
+      },
+      "keyCommit": "0f3d3acb468d34314d0684f7897a28c2c146cd57d1c1009666b911d98dea67ba",
+      "histCommit": "480e65492b6eb0120c638842b8e5ea2955cd9fd785af39da5e6eb63c5c1b98b6",
+      "wraps": [
+        {
+          "recipient": "tablet",
+          "recipientId": "b07e1e1fce936d224bf862055f22d0f4a5a79a2022223b9e1a551f9775bb34b1",
+          "sealed": "0104e2d5dfa0ad2cdb3944a10a4605796d66f5698f9345194b6e5409f74035b92544df77414cdd18ce36021b660dfae4ffece9428c7b1dcc7af1e3917bbaef4a15396ed25abf005f1cd44421f75f9d30c30dc4b54ca2cd1fd6d797df7ef50ddb6406666380233cf41f437fcd1de912a9dafe74"
+        },
+        {
+          "recipient": "new recovery key",
+          "recipientId": "aa66fc83635b6fb05ef0de5fe8508f3f26067d9cbefa6215d58f5f8e3339ad4d",
+          "sealed": "01047c10766c386fc446decf3a0e6d264402f4db601b69fd4c568a22fa3ccec665252976e1952f68f3e3ac6e20d68f21297245b93e2341548c0d502d8dae915d8a8a12c508e10ebe2c56a57d3a50ca2ee0f1aab3322608392f8009bb10393fc5a80f7ba1060aa6201fb9d470f78d0b34030865"
+        }
+      ],
+      "backLink": "010800000003db2c5ed562709a284629bbb79c1b57f5ffce5432d0d3a19a4e5c11bbc6993ad4395dff2b40b4d9acc5b0f87923eefe758aa44685c524000e876150193dab45a1f11a29694635602ae10358e6ac5161a6",
+      "membersAfter": [
+        "agent",
+        "tablet"
+      ]
+    }
+  },
+  "log": {
+    "entries": [
+      {
+        "seq": 0,
+        "type": 1,
+        "typeName": "genesis",
+        "signerKind": 1,
+        "signer": "phone",
+        "time": 1790000000000,
+        "epochAfter": 1,
+        "body": "010101000000000000000000000000000000000000000000000000000000000000000000000000000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64606162636465666768696a6b6c6d6e6f01d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737052a50773ac8d91773f2dc9662e12f0defe915e415b8a1c8e20a5a3d6ab2b84384ff8bbb6e6ff23b21b4ff81e64d561873153ec82f5850a2901c76f9f58997df57a0124ce66e122ef2529074a07dc12657852f47f3aefa43f55cb95ec1db8020000000015121f7dc353abdc8cdb109bda25b020e28e140573273e853d08afa7126966461311ddd9be3356296e9177d784499b7c6f51765c4e676731037eb388c2370bbe2",
+        "signature": "162fd1971b6f1e98ec90e299b34206f5f2374ca20f8cac7bbf0deeec76c2868495f74a05ac9d0cb14fa09ed4b9b5fed74acd81f58777fda3c1b05e926857950f",
+        "hash": "18f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a",
+        "bytes": "010101000000000000000000000000000000000000000000000000000000000000000000000000000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a64606162636465666768696a6b6c6d6e6f01d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737052a50773ac8d91773f2dc9662e12f0defe915e415b8a1c8e20a5a3d6ab2b84384ff8bbb6e6ff23b21b4ff81e64d561873153ec82f5850a2901c76f9f58997df57a0124ce66e122ef2529074a07dc12657852f47f3aefa43f55cb95ec1db8020000000015121f7dc353abdc8cdb109bda25b020e28e140573273e853d08afa7126966461311ddd9be3356296e9177d784499b7c6f51765c4e676731037eb388c2370bbe2162fd1971b6f1e98ec90e299b34206f5f2374ca20f8cac7bbf0deeec76c2868495f74a05ac9d0cb14fa09ed4b9b5fed74acd81f58777fda3c1b05e926857950f"
+      },
+      {
+        "seq": 1,
+        "type": 2,
+        "typeName": "add",
+        "signerKind": 1,
+        "signer": "phone",
+        "time": 1790000000000,
+        "epochAfter": 1,
+        "body": "0101020000000118f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a6401884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f201be4d69511c29239cb1f3810eea0db80",
+        "signature": "f5cd0c44ba949fad3662504048120a151e336f67f0e65bde0374a972f7bfca0e7ec1dfc20b1bff8c10fca77259a85fc32bb90a3da59de55819b56ba600a20d05",
+        "hash": "63342a428fd6b36cccd8ee26edc7c066c5ec414461292f8d9ea61c646b116a2d",
+        "bytes": "0101020000000118f0fc0726c0333f79d710cd6ff1240623350a5fdc95f32f867e015a8adf893a000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a6401884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f201be4d69511c29239cb1f3810eea0db80f5cd0c44ba949fad3662504048120a151e336f67f0e65bde0374a972f7bfca0e7ec1dfc20b1bff8c10fca77259a85fc32bb90a3da59de55819b56ba600a20d05"
+      },
+      {
+        "seq": 2,
+        "type": 2,
+        "typeName": "add",
+        "signerKind": 1,
+        "signer": "phone",
+        "time": 1790000000000,
+        "epochAfter": 1,
+        "body": "0101020000000263342a428fd6b36cccd8ee26edc7c066c5ec414461292f8d9ea61c646b116a2d000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640248075a597e721a156e2e0799de5cc0c5324dc6e7eaf1cdd46250868ec53215dd59d9225473451efffe6b36dbcaefdbf7b1895de62084509a7f5b58bf01d0641822c9cad3a499e32ac4687d0ca55c7b7d",
+        "signature": "b7b6cd3f6fe97ca4c31eb90e5ef1587d8a231248b7adf85fc98ee44fd1727aaa2e96889e251b8cc51708a9c5a5fed535218637945c9d5516057f949e2f335b0c",
+        "hash": "d7bd6dcc3e3ed33d7a8b7d8ae37eef80b78d94fdc46139c14f548053ccb511d8",
+        "bytes": "0101020000000263342a428fd6b36cccd8ee26edc7c066c5ec414461292f8d9ea61c646b116a2d000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640248075a597e721a156e2e0799de5cc0c5324dc6e7eaf1cdd46250868ec53215dd59d9225473451efffe6b36dbcaefdbf7b1895de62084509a7f5b58bf01d0641822c9cad3a499e32ac4687d0ca55c7b7db7b6cd3f6fe97ca4c31eb90e5ef1587d8a231248b7adf85fc98ee44fd1727aaa2e96889e251b8cc51708a9c5a5fed535218637945c9d5516057f949e2f335b0c"
+      },
+      {
+        "seq": 3,
+        "type": 2,
+        "typeName": "add",
+        "signerKind": 1,
+        "signer": "laptop",
+        "time": 1790000000000,
+        "epochAfter": 1,
+        "body": "01010200000003d7bd6dcc3e3ed33d7a8b7d8ae37eef80b78d94fdc46139c14f548053ccb511d8000001a0c4506c000145b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a02c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445af68b05ba03f7185e1ba88878682f8dd0b15158f6050889c9481d79c2d7d2fa0779d7c2b5b2bd660f70472c47511c350e",
+        "signature": "85d343c716bfd6d4ab46b44dccab154b51dc551353d3fab7348a38ba416eeeebd36f31ceded5ca11e12243493e3a65cc0c1c79edd25730135e6838f12caf1503",
+        "hash": "ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce",
+        "bytes": "01010200000003d7bd6dcc3e3ed33d7a8b7d8ae37eef80b78d94fdc46139c14f548053ccb511d8000001a0c4506c000145b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a02c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445af68b05ba03f7185e1ba88878682f8dd0b15158f6050889c9481d79c2d7d2fa0779d7c2b5b2bd660f70472c47511c350e85d343c716bfd6d4ab46b44dccab154b51dc551353d3fab7348a38ba416eeeebd36f31ceded5ca11e12243493e3a65cc0c1c79edd25730135e6838f12caf1503"
+      },
+      {
+        "seq": 4,
+        "type": 3,
+        "typeName": "remove",
+        "signerKind": 1,
+        "signer": "laptop",
+        "time": 1790000000010,
+        "epochAfter": 2,
+        "body": "01010300000004ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce000001a0c4506c0a0145b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a0001949c8b800e4bca941ad0a5709ba53af2a60740cf9a362201680491b5c282bac00000000000000000000000000000000000000000000000000000000000000000000000000000000000000002166e79cb7c85d668d9e73c08c5b0b087e5742a511675b9a2fce597f7fc80f4c80358c9ac4a136df98defd7fdb7318fdb60ea32e62a65858ec4a9c1888dffd3ff",
+        "signature": "49fdf5e55b1f58f1e7f04c9b8b7d0f42c3d315687a1837e18dcf873210a1ce9b47681476f9afb172454ea5be8d609ceeba669898e729e89213f64baf3db65508",
+        "hash": "e04c1c809bd215d77d2daf69baa00727774077cd46fabd660f3f704916d044b7",
+        "bytes": "01010300000004ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce000001a0c4506c0a0145b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a0001949c8b800e4bca941ad0a5709ba53af2a60740cf9a362201680491b5c282bac00000000000000000000000000000000000000000000000000000000000000000000000000000000000000002166e79cb7c85d668d9e73c08c5b0b087e5742a511675b9a2fce597f7fc80f4c80358c9ac4a136df98defd7fdb7318fdb60ea32e62a65858ec4a9c1888dffd3ff49fdf5e55b1f58f1e7f04c9b8b7d0f42c3d315687a1837e18dcf873210a1ce9b47681476f9afb172454ea5be8d609ceeba669898e729e89213f64baf3db65508"
+      },
+      {
+        "seq": 5,
+        "type": 5,
+        "typeName": "recover",
+        "signerKind": 2,
+        "signer": "recovery key",
+        "time": 1790000000030,
+        "epochAfter": 3,
+        "body": "01010500000005e04c1c809bd215d77d2daf69baa00727774077cd46fabd660f3f704916d044b7000001a0c4506c1e025b354d7930dae759b0a7d1340a05062a6d39448c3aa6689e3c87168f42ffcb3801db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d132c442be010fbd57e72603328aa76e71fccc1503aae219327d14d9c9993f472000234c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000000000000000000000000000000000000000000000000000000000000000000000000000045b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000030f3d3acb468d34314d0684f7897a28c2c146cd57d1c1009666b911d98dea67ba480e65492b6eb0120c638842b8e5ea2955cd9fd785af39da5e6eb63c5c1b98b6201312d4452a462698a17d6e489d60cae6962cc56f16c18b35c7e90e469f88c199e9993a4c4ee8946c1ee5aa63cd8c028f7ae962533898439f63683eb93b5a18",
+        "signature": "fb3406788d87331f8e1eeacabe8796e16d12862b19e6a1b17416015670311ca8d81bb38669d91a8da5cdb03c4d045d026c02a7cc7b080cccb7c0b5c964d76e06",
+        "hash": "e25ef8d8939b18f994f59545f17399be6f73670f3f9d898d42c50b0fc5682e03",
+        "bytes": "01010500000005e04c1c809bd215d77d2daf69baa00727774077cd46fabd660f3f704916d044b7000001a0c4506c1e025b354d7930dae759b0a7d1340a05062a6d39448c3aa6689e3c87168f42ffcb3801db995fe25169d141cab9bbba92baa01f9f2e1ece7df4cb2ac05190f37fcc1f9d132c442be010fbd57e72603328aa76e71fccc1503aae219327d14d9c9993f472000234c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000000000000000000000000000000000000000000000000000000000000000000000000000045b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000030f3d3acb468d34314d0684f7897a28c2c146cd57d1c1009666b911d98dea67ba480e65492b6eb0120c638842b8e5ea2955cd9fd785af39da5e6eb63c5c1b98b6201312d4452a462698a17d6e489d60cae6962cc56f16c18b35c7e90e469f88c199e9993a4c4ee8946c1ee5aa63cd8c028f7ae962533898439f63683eb93b5a18fb3406788d87331f8e1eeacabe8796e16d12862b19e6a1b17416015670311ca8d81bb38669d91a8da5cdb03c4d045d026c02a7cc7b080cccb7c0b5c964d76e06"
+      }
+    ],
+    "finalEpoch": 3,
+    "activeMembers": [
+      "agent",
+      "tablet"
+    ],
+    "refused": {
+      "about": "Entries a verifier must refuse when applied after entry 3 (bad-entry or bad-format).",
+      "retiredType4": "01010400000004ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce000001a0c4506c000134c67ffae10088f2d14b6bea06379b241312d052363ab3143130af7e00e83a640000000201010101010101010101010101010101010101010101010101010101010101010202020202020202020202020202020202020202020202020202020202020202cb7fdafb7062a48d172a10213be8119c8a1de3b4a69e7b12bfc400fb4a4794544854408c2821c3fbaa367abac8220b24df0923151fd2c9f1c4a879d99818750f",
+      "signedByAgent": "01010300000004ded3f102a019feea4f1d6a8c33ddee788f9b8a270aad32093eed21864d889dce000001a0c4506c00010f2c805eb753f7f2b9c46ba1f03f7b210880b07aad466cc9f316045b7cc343a30001949c8b800e4bca941ad0a5709ba53af2a60740cf9a362201680491b5c282bac000000000000000000000000000000000000000000000000000000000000000000000000000000000000000020101010101010101010101010101010101010101010101010101010101010101020202020202020202020202020202020202020202020202020202020202020271098c8d347be175892339672445b98f3c94d75437662280748ca63dcd16aec4d8f1340937bf056a80e8946cefb575eeaa08dcfb19fe3ca59ee20917a17e4805",
+      "replayOfEntry3": "01010200000003d7bd6dcc3e3ed33d7a8b7d8ae37eef80b78d94fdc46139c14f548053ccb511d8000001a0c4506c000145b96f51b34d86ae4d4ee4ae72d7c6438ad8a661134bf8d01a772941feb2595a02c050c5637a44fa8629fff3cccce2300cb362a63d99d95fc54145266f4332445af68b05ba03f7185e1ba88878682f8dd0b15158f6050889c9481d79c2d7d2fa0779d7c2b5b2bd660f70472c47511c350e85d343c716bfd6d4ab46b44dccab154b51dc551353d3fab7348a38ba416eeeebd36f31ceded5ca11e12243493e3a65cc0c1c79edd25730135e6838f12caf1503"
+    }
+  },
+  "assets": {
+    "small": {
+      "rngSeed": 176,
+      "plaintext": "6173736574",
+      "key": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf",
+      "blobId": "c1c2c3c4c5c6c7c8c9cacbcccdcecfd0",
+      "blob": "0109c1c2c3c4c5c6c7c8c9cacbcccdcecfd00001000080bf707f400b42cbe820faa4f7ef3c1d5632db1c5a",
+      "sha256": "aa73369da1b6a2c1685ca0e600557737ead8e5a95d286a3a025e42cab8ed1a5d",
+      "notItsSha256": "d59386e0ae435e292fbe0ebcdb954b75ed5fb3922091277cb19f798fc5d50718"
+    },
+    "twoChunks": {
+      "rngSeed": 184,
+      "plaintext": "70000 bytes, byte i = 7i mod 256",
+      "key": "b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7",
+      "blobId": "c9cacbcccdcecfd0d1d2d3d4d5d6d7d8",
+      "blobLength": 70054,
+      "sha256": "8398e45a1664af9168675ba24635ca4235e1950851fdf8409f3753a1a743df6e"
+    }
+  }
+}

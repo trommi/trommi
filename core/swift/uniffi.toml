@@ -1,0 +1,7 @@
+# The names of what UniFFI writes for Swift: the Swift module TrommiCoreRust over the C module TrommiCoreFFI.
+# No module map of UniFFI's: SwiftPM writes one for the C target (Sources/TrommiCoreFFI/include).
+[bindings.swift]
+module_name = "TrommiCoreRust"
+ffi_module_name = "TrommiCoreFFI"
+ffi_module_filename = "TrommiCoreFFI"
+generate_module_map = false

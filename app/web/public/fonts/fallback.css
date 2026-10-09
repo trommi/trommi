@@ -1,0 +1,7 @@
+/* The first paint's fonts: the system's Arial (Liberation Sans on Linux) and Courier New, sized to the web fonts'
+   metrics (average width, ascent, descent), so the swap when fonts.css comes (after the first paint, app.mjs
+   loadFonts) moves hardly anything. The values: Bricolage Grotesque 700, IBM Plex Sans 400, IBM Plex Mono 400 against
+   Liberation Sans Bold / Regular and Liberation Mono (fontTools: English letter frequencies; hhea or OS/2 typo metrics). */
+@font-face { font-family: 'Trommi Display Fallback'; src: local('Arial Bold'), local('Arial-BoldMT'), local('Liberation Sans Bold'), local('Arial'); font-weight: 600 800; size-adjust: 93.70%; ascent-override: 99.25%; descent-override: 28.81%; line-gap-override: 0%; }
+@font-face { font-family: 'Trommi Sans Fallback'; src: local('Arial'), local('ArialMT'), local('Liberation Sans'); font-weight: 400 600; size-adjust: 101.57%; ascent-override: 100.92%; descent-override: 27.07%; line-gap-override: 0%; }
+@font-face { font-family: 'Trommi Mono Fallback'; src: local('Courier New'), local('CourierNewPSMT'), local('Liberation Mono'); font-weight: 400 500; size-adjust: 99.98%; ascent-override: 102.52%; descent-override: 27.50%; line-gap-override: 0%; }

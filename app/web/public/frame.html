@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>Published page</title><script>
+// The sandboxed frame a published page is shown in (controller "assetthumb"): no origin, no network, no storage
+// (its own CSP in public/_headers). It gets the page, already decrypted, as one message from the app.
+addEventListener('message', function take(e) {
+  if (e.source !== parent || !e.data || typeof e.data.html !== 'string') return
+  removeEventListener('message', take)
+  document.open()
+  document.write(e.data.html)
+  document.close()
+})
+parent.postMessage('ready', '*')
+</script>
