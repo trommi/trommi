@@ -644,3 +644,41 @@ fn room_founding_is_checked() {
         Err(Error::BadCommit)
     );
 }
+
+#[test]
+fn a_removed_human_device_does_not_make_the_agent_leaf_unfit() {
+    let mut history = history();
+    history
+        .record(state(3, &[H1], &[AGENT, OTHER_AGENT]))
+        .unwrap();
+    let main = session(SessionId::ZERO, MAIN);
+    let stale = before(main, &[H1, H2, AGENT], 2);
+    // Only the removed human device goes; the session's agent device stays its agent leaf.
+    assert_eq!(
+        disallowed_leaves(
+            &history,
+            history.newest(),
+            &main,
+            Parent::NotAMainSession,
+            &stale.leaves
+        ),
+        vec![device(H2)]
+    );
+    let cleaning = removing(facts(main.group_id(), 5, H1, 3), &[H2]);
+    assert_eq!(
+        session_verdict(&history, &SESSIONS, &stale, &cleaning),
+        Ok(())
+    );
+    // Two agent devices in one main session: neither is allowed until one is left.
+    let doubled = before(main, &[H1, AGENT, OTHER_AGENT], 3);
+    assert_eq!(
+        disallowed_leaves(
+            &history,
+            history.newest(),
+            &main,
+            Parent::NotAMainSession,
+            &doubled.leaves
+        ),
+        vec![device(AGENT), device(OTHER_AGENT)]
+    );
+}
