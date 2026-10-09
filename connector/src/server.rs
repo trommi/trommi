@@ -1441,7 +1441,10 @@ impl member::Host for ConnHost {
 fn spawn_witness(cfg: &Cfg) {
     use std::os::unix::process::CommandExt;
     // With a release key pinned, a binary at this path that CI did not sign is not run, not even for this.
-    if crate::update::verify_file(&self_path()) == crate::update::Release::Refused {
+    if matches!(
+        crate::update::verify_file(&self_path()),
+        crate::update::Release::Refused(_)
+    ) {
         return;
     }
     let mut cmd = std::process::Command::new(self_path());
@@ -1798,13 +1801,13 @@ pub async fn main_server() {
                 // A new binary stands at this connector's path. With a release key pinned, only a binary
                 // that CI signed is announced (update.rs); without one, the announcement says so.
                 let release = crate::update::verify_file(&path);
-                if release == crate::update::Release::Refused {
-                    eprintln!("[trommi] a new binary is at the connector's path, but {}: it is not announced as an update", crate::update::standing(release));
+                if let crate::update::Release::Refused(_) = release {
+                    eprintln!("[trommi] a new binary is at the connector's path: {}. It is not announced as an update", crate::update::standing(&release));
                     continue;
                 }
                 eprintln!(
                     "[trommi] a new connector binary is in place ({})",
-                    crate::update::standing(release)
+                    crate::update::standing(&release)
                 );
                 c.on_update(&disk, true).await;
             }
