@@ -7,6 +7,8 @@
 
 #![allow(dead_code)]
 
+pub mod enc;
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -16,6 +18,7 @@ use std::time::Duration;
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::ChaCha20Poly1305;
+pub use enc::Bytes;
 use openmls::group::{
     MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedWelcome,
     PURE_PLAINTEXT_WIRE_FORMAT_POLICY,
@@ -36,8 +39,8 @@ use trommi_hub::observer::SUITE;
 use trommi_hub::push::Recorder;
 use trommi_hub::util::{b64, hex, random, unb64};
 use trommi_hub::wire::{
-    self, CommitNote, Cut, Header, Subject, TrommiRoom, TrommiSession, Writer, EXT_ROOM,
-    EXT_SESSION, ZERO16, ZERO32,
+    self, CommitNote, Cut, Header, Subject, TrommiRoom, TrommiSession, EXT_ROOM, EXT_SESSION,
+    ZERO16, ZERO32,
 };
 
 // ---- the hub under test
@@ -100,6 +103,11 @@ impl TestHub {
         let app = App::new(Config::from_map(&map), recorder.clone()).unwrap();
         let stop = Arc::new(tokio::sync::Notify::new());
         let (a, s) = (app.clone(), stop.clone());
+        // with TEST_JOBS the periodic jobs run as in production (`spawn_jobs`), on the intervals the test set
+        if env.iter().any(|(k, v)| *k == "TEST_JOBS" && *v == "1") {
+            let jobs = app.clone();
+            runtime.block_on(async move { trommi_hub::server::spawn_jobs(&jobs) });
+        }
         runtime.spawn(async move { trommi_hub::server::serve(a, listener, s).await });
         TestHub {
             app,
@@ -376,7 +384,7 @@ impl Recovery {
 }
 
 pub fn sign_with_label(signer: &SignatureKeyPair, label: &str, content: &[u8]) -> Vec<u8> {
-    signer.sign(&wire::sign_content(label, content)).unwrap()
+    signer.sign(&enc::sign_content(label, content)).unwrap()
 }
 
 // ---- a device
@@ -411,10 +419,7 @@ fn context_extensions(ext: Extension) -> Extensions<GroupContext> {
 }
 
 pub fn room_extensions(room: &TrommiRoom) -> Extensions<GroupContext> {
-    context_extensions(Extension::Unknown(
-        EXT_ROOM,
-        UnknownExtension(room.encode()),
-    ))
+    context_extensions(Extension::Unknown(EXT_ROOM, UnknownExtension(room.bytes())))
 }
 
 fn ten_years() -> Lifetime {
@@ -568,7 +573,7 @@ impl Dev {
             &group_id,
             context_extensions(Extension::Unknown(
                 EXT_SESSION,
-                UnknownExtension(session.encode()),
+                UnknownExtension(session.bytes()),
             )),
         );
         (group_id, info)
@@ -601,7 +606,7 @@ impl Dev {
             .unwrap();
         (
             group.epoch().as_u64(),
-            wire::ref_hash("Trommi Room State", &context),
+            enc::ref_hash("Trommi Room State", &context),
         )
     }
 
@@ -645,7 +650,7 @@ impl Dev {
             change.removes.len(),
             "a device to remove is not a leaf"
         );
-        group.set_aad(note.encode());
+        group.set_aad(note.bytes());
         let only_adds = !key_packages.is_empty() && leaves.is_empty() && change.room.is_none();
         let mut builder = group
             .commit_builder()
@@ -753,7 +758,7 @@ impl Dev {
         };
         let (group, bundle) = MlsGroup::external_commit_builder()
             .with_config(self.join_config())
-            .with_aad(note.encode())
+            .with_aad(note.bytes())
             .build_group(&self.provider, info, self.credential.clone())
             .unwrap()
             .leaf_node_parameters(
@@ -824,7 +829,7 @@ impl Dev {
             context: wire::KeyContext {
                 group_id: group_id.to_vec(),
                 epoch,
-                group_info: wire::ref_hash("Trommi Group Info", group_info),
+                group_info: enc::ref_hash("Trommi Group Info", group_info),
             },
             room_epoch,
             recovery_hpke_key: hpke_public.to_vec(),
@@ -833,7 +838,7 @@ impl Dev {
             writer: self.id(),
             mac: if tag { random::<32>().to_vec() } else { vec![] },
         }
-        .encode()
+        .bytes()
     }
 
     // -- envelopes (section 9)
@@ -865,11 +870,9 @@ impl Dev {
             subject: item.subject.clone(),
             file_ids: item.file_ids.clone(),
         }
-        .encode();
+        .bytes();
         // Body: version, bind, payload; zero bytes up to the next of 256, 512 … 65536
-        let mut body = Writer::default();
-        body.u8(2).vec(&[]).vec(&item.payload);
-        let mut padded = body.0;
+        let mut padded = enc::body(&[], &item.payload);
         padded.resize(padded.len().next_power_of_two().max(256), 0);
         let nonce = random::<12>();
         let ciphertext = ChaCha20Poly1305::new(key.into())
@@ -882,10 +885,10 @@ impl Dev {
             )
             .unwrap();
         let body_hash: [u8; 32] = Sha256::digest(&ciphertext).into();
-        let hash = wire::envelope_hash(&header, &nonce, &body_hash);
+        let hash = enc::envelope_hash(&header, &nonce, &body_hash);
         let signature = self.sign("TrommiEnvelope", &hash);
         (
-            wire::encode_envelope(&header, &nonce, Some(&ciphertext), &body_hash, &signature),
+            enc::envelope(&header, &nonce, &ciphertext, &signature),
             hash,
         )
     }
@@ -1065,7 +1068,7 @@ pub fn sign_in_with(
         device: key.to_public_vec().try_into().unwrap(),
         challenge,
     }
-    .encode();
+    .bytes();
     let signature = sign_with_label(key, "TrommiHubAuth", &auth);
     hub.post(
         &format!("/v2/rooms/{}/tokens", b64(room)),
@@ -1085,16 +1088,20 @@ pub fn recovery_auth(
         base: wire::KeyContext {
             group_id: out.group_id.clone(),
             epoch: out.epoch,
-            group_info: wire::ref_hash("Trommi Group Info", base_group_info),
+            group_info: enc::ref_hash("Trommi Group Info", base_group_info),
         },
         room_epoch: room.0,
         room_state: room.1,
         joiner: *joiner,
-        commit: wire::ref_hash("Trommi Commit", &out.commit),
+        commit: enc::ref_hash("Trommi Commit", &out.commit),
         signature: vec![0; 64],
     };
-    auth.signature = sign_with_label(recovery, "TrommiRecoveryJoin", &auth.signed());
-    auth.encode()
+    auth.signature = sign_with_label(
+        recovery,
+        "TrommiRecoveryJoin",
+        &enc::recovery_join_and_commit(&auth),
+    );
+    auth.bytes()
 }
 
 // ---- items
@@ -1235,7 +1242,7 @@ pub fn invite(
         role,
         session_id,
         expires_at: trommi_hub::util::now() + 600_000,
-        commitment: wire::ref_hash(
+        commitment: enc::ref_hash(
             "Trommi Invite Commitment",
             &[&invite_id[..], &nonce[..]].concat(),
         ),
@@ -1243,7 +1250,7 @@ pub fn invite(
         room_epoch,
         room_state,
     }
-    .encode();
+    .bytes();
     inviter.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&inviter.sign("TrommiInviteOffer", &offer)) })).ok();
     let key_package = newcomer.key_package(false);
     let request = wire::InviteRequest {
@@ -1252,9 +1259,9 @@ pub fn invite(
         hub: hub.url.as_bytes().to_vec(),
         role,
         key_package: key_package.clone(),
-        offer_hash: wire::ref_hash("Trommi Invite Offer", &offer),
+        offer_hash: enc::ref_hash("Trommi Invite Offer", &offer),
     }
-    .encode();
+    .bytes();
     // the MAC under the link's secret: the hub cannot check it
     let mac = Sha256::digest([&secret[..], &request[..]].concat()).to_vec();
     let signed = [&request[..], &mac[..]].concat();
@@ -1266,9 +1273,9 @@ pub fn invite(
     let reveal = wire::Reveal {
         invite_id,
         nonce,
-        request_hash: wire::ref_hash("Trommi Invite Request", &signed),
+        request_hash: enc::ref_hash("Trommi Invite Request", &signed),
     }
-    .encode();
+    .bytes();
     inviter.put(hub, &format!("/v2/invites/{}/reveal", b64(&invite_id)), &json!({ "reveal": b64(&reveal), "signature": b64(&inviter.sign("TrommiInviteReveal", &reveal)) })).ok();
     (key_package, invite_id)
 }
@@ -1276,6 +1283,49 @@ pub fn invite(
 impl World {
     /// Adds a human device by link: invite, the Add in the room group, the Welcome; then every live session
     /// group (5.2.7). Returns the device, signed in.
+    /// Founds a helper session under `session` by its opener, with every human device named and the given
+    /// helper devices; the opener merges. Returns the group id, the reply and the Commit.
+    pub fn found_helper(
+        &self,
+        opener: &mut Dev,
+        session: &[u8; 16],
+        humans: &[[u8; 32]],
+        helpers: &[&Dev],
+    ) -> (Vec<u8>, Reply, Out) {
+        let now = self.ada.room_now();
+        let mut adds = self.claim(opener, humans);
+        adds.extend(helpers.iter().map(|h| h.key_package(false)));
+        let (group, info0) = opener.create_session(&random(), session);
+        let key0 = opener.sealed_key(&group, 0, &info0, now.0, &self.recovery.hpke_public, false);
+        let out = opener.commit(
+            &group,
+            &Change {
+                adds,
+                ..Default::default()
+            },
+            now,
+        );
+        let key1 = opener.sealed_key(
+            &group,
+            1,
+            &out.group_info,
+            now.0,
+            &self.recovery.hpke_public,
+            false,
+        );
+        let reply = opener.post(
+            &self.hub,
+            "/v2/groups",
+            &founding_json(&info0, &key0, &out, &key1),
+        );
+        if reply.status == 200 {
+            opener.merge(&group);
+        } else {
+            opener.forget(&group);
+        }
+        (group, reply, out)
+    }
+
     pub fn add_human(&mut self) -> Dev {
         let mut dev = Dev::new();
         let (key_package, _) = invite(&self.hub, &self.ada, &dev, 1, ZERO16);

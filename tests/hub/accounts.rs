@@ -98,7 +98,7 @@ fn an_account_is_made_with_the_room_and_opens_it_again() {
         device: recovery.public(),
         challenge,
     }
-    .encode();
+    .bytes();
     let token = hub.post(&format!("/v2/rooms/{}/tokens", b64(&room)), &json!({ "auth": b64(&hub_auth), "signature": b64(&sign_with_label(&recovery.sign, "TrommiHubAuth", &hub_auth)) })).ok();
     assert_eq!(token["role"], "recovery");
 
@@ -569,7 +569,7 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
         ciphertext: vec![2; 80],
         mac: vec![3; 32]
     }
-    .encode()));
+    .bytes()));
     let path = format!("/v2/rooms/{}/recovery-code", b64(&room));
     // without the account's new copies nothing is applied: not the Commit either
     w.ada.post(&w.hub, &path, &body).refused(400, "incomplete");

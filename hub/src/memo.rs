@@ -22,7 +22,7 @@ pub type Key = [u8; 32];
 
 #[derive(Debug, Clone)]
 pub enum Entry {
-    Opened(GroupState, Snapshot, Device),
+    Opened(GroupState, Box<Snapshot>, Device),
     Committed(GroupState, Box<CommitFacts>),
     Checked,
     KeyPackage(KeyPackageFacts),
@@ -153,12 +153,12 @@ impl Observer for Memo<'_> {
     fn open(&self, group_info: &[u8]) -> Result<(GroupState, Snapshot, Device), Refusal> {
         let e = self.resolve(key(1, &[group_info]), || {
             match self.inner.open(group_info) {
-                Ok((state, snapshot, signer)) => Entry::Opened(state, snapshot, signer),
+                Ok((state, snapshot, signer)) => Entry::Opened(state, Box::new(snapshot), signer),
                 Err(r) => Entry::Refused(r),
             }
         })?;
         match e {
-            Entry::Opened(a, b, c) => Ok((a, b, c)),
+            Entry::Opened(a, b, c) => Ok((a, *b, c)),
             Entry::Refused(r) => Err(r),
             _ => Err(Refusal::Busy),
         }
