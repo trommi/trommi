@@ -1,0 +1,465 @@
+# Trommi wire format, version 1
+
+The whole specification: the bytes every client and hub reads and writes, and what each must refuse. Format version 1 with the security rules v1.1 and v1.1.1 (the tags R1–R9, v1.1, v1.1.1 name the rule a line implements). Every numbered line is a MUST; "refused (`code`)" means rejected with that stable error code. Reference code: `app/web/core/crypto/zcrypto.mjs`, `app/web/core/crypto/session-grants.mjs`, `app/web/core/account.ts`. If this text and that code disagree, the code is right and this text is a bug. Labels are frozen bytes.
+
+## 1. Primitives
+
+| Purpose | Primitive | Parameters |
+| --- | --- | --- |
+| Signature | Ed25519 (RFC 8032) | 32-byte public key, 64-byte signature |
+| Key agreement | X25519 (RFC 7748) | 32-byte public key |
+| AEAD | AES-256-GCM | 96-bit nonce, 128-bit tag appended to the ciphertext |
+| KDF | HKDF-SHA-256 (RFC 5869) | extract and expand, always both |
+| MAC | HMAC-SHA-256 | invite request only |
+| Hash | SHA-256 | |
+| Password KDF | Argon2id | account only (section 16) |
+
+Nothing else is used in the room's formats; there is no algorithm field to negotiate. (A passkey's own signature algorithm is WebAuthn's matter between the authenticator and a hub; section 16 uses only its prf output.)
+
+- 1.1 A signature `R(32) ‖ S(32)` under public key `A(32)` verifies if and only if: (a) `S`, little-endian, is below L = 2^252 + 27742317777372353535851937790883648493; (b) `A` and `R` are canonical: y (the low 255 bits, little-endian) is below p = 2^255 − 19; (c) neither `A` nor `R` is one of the ten small-order encodings `01 00…00`, `ec ff…ff 7f`, `00…00`, `00…00 80`, `26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05`, the same ending `85`, `c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a`, the same ending `fa`, `01 00…00 80`, `ec ff…ff ff`; (d) `A` and `R` decode to curve points and `[S]B = R + [k]A` with `k = SHA-512(R ‖ A ‖ message) mod L`, the equation without the cofactor. Anything else does not verify.
+- 1.2 Signing is plain RFC 8032. A signature is never input to a hash, a chain or the check code (R9), so a randomising signer changes nothing.
+- 1.3 X25519 is RFC 7748 as it stands (bit 255 of a public key ignored, u ≥ p reduced modulo p). Its result is refused (`bad-key`) if and only if it is all zero, which is exactly every public key of small order, on both sides of a sealed box. No other check is made on a public key; however a library reports the zero result, it becomes this one error.
+
+## 2. Canonical encoding
+
+- 2.1 Everything signed, hashed or used as associated data is built by these rules; a value has exactly one encoding. Decoders refuse anything else (`bad-format`; a wrong version byte `bad-version`, in a session back link `bad-format`): unknown versions, types, roles, kinds, scopes or flags, unsorted lists, trailing bytes, truncated input.
+
+| Notation | Meaning |
+| --- | --- |
+| `u8`, `u16`, `u32`, `u64` | unsigned, big-endian; a `u64` is at most 2^53 − 1 |
+| `(n)` | exactly n raw bytes |
+| `var16`, `var32` | a `u16` or `u32` length, then that many bytes |
+| `str16(max)` | `var16` of well-formed UTF-8, at most `max` bytes, not starting with U+FEFF (refused, never stripped); no Unicode normalisation |
+| `a ‖ b` | concatenation |
+
+- 2.2 Fields stand in the fixed order given; nothing is optional except where a flag, count, kind or scope says so. Lists of ids are ascending by bytes (lexicographic, unsigned), without duplicates.
+- 2.3 Every top-level object starts with the version byte `0x01` and a type byte. The envelope header, the envelope body and a bind start with the version byte only.
+
+| Type | Object | Type | Object |
+| --- | --- | --- | --- |
+| `0x01` | log entry | `0x08` | back link (room) |
+| `0x02` | envelope | `0x09` | asset blob |
+| `0x03` | pruned envelope | `0x0a`, `0x0b` | reserved, refused |
+| `0x04` | sealed box | `0x0c` | device secret file |
+| `0x05` | invite offer | `0x0d` | hub sign-in |
+| `0x06` | invite request | `0x0e` | session grant |
+| `0x07` | invite reveal | `0x0f` | session back link |
+
+- 2.4 In text (links, JSON) byte strings are base64url without padding (RFC 4648 section 5); padding, foreign characters and non-zero trailing bits are refused. There is no signed JSON: JSON only carries finished byte strings. The vector files use lower-case hex.
+
+## 3. Labels
+
+A label is the ASCII string below followed by one `0x00` byte; each has one use.
+
+- `H(label, data…)` = SHA-256(label ‖ 0x00 ‖ data…)
+- `Sign(key, label, m)` = Ed25519 over label ‖ 0x00 ‖ m
+- `KDF(ikm, salt, label, context, n)` = HKDF-SHA-256 with info = label ‖ 0x00 ‖ context, n bytes
+
+| Label | Use | Label | Use |
+| --- | --- | --- | --- |
+| `trommi/v1/device-id` | H: device id | `trommi/v1/invite-request-sig` | Sign: request |
+| `trommi/v1/log-entry` | H: entry hash, room id | `trommi/v1/invite-reveal-sig` | Sign: reveal |
+| `trommi/v1/log-sig` | Sign: log entry | `trommi/v1/invite-code` | H: check code |
+| `trommi/v1/sealed-box` | KDF: box key, nonce | `trommi/v1/recovery/sign` | KDF: recovery Ed25519 seed |
+| `trommi/v1/epoch-wrap` | aad prefix: room key wrap | `trommi/v1/recovery/kex` | KDF: recovery X25519 key |
+| `trommi/v1/epoch-commit/key` | KDF: room key commitment | `trommi/v1/hub-auth` | Sign: hub sign-in |
+| `trommi/v1/epoch-commit/hist` | KDF: history key commitment | `trommi/v1/object-id` | H: object id |
+| `trommi/v1/back-link` | KDF: room back link key, nonce | `trommi/v1/session-commit/key` | KDF: session key commitment |
+| `trommi/v1/sender-key` | KDF: per-sender key | `trommi/v1/session-commit/hist` | KDF: session history commitment |
+| `trommi/v1/envelope` | H: envelope hash | `trommi/v1/session-grant-sig` | Sign: grant |
+| `trommi/v1/envelope-sig` | Sign: envelope | `trommi/v1/session-grant` | H: grant hash |
+| `trommi/v1/invite-id` | KDF: invite id | `trommi/v1/session-wrap` | aad prefix: session key wrap |
+| `trommi/v1/invite-mac` | KDF: MAC key; MAC input prefix | `trommi/v1/session-manifest` | H: manifest of a grant's wraps |
+| `trommi/v1/invite-commit` | H: nonce commitment | `trommi/v1/session-back-link` | KDF: session back link key, nonce |
+| `trommi/v1/invite-offer` | H: offer body hash | `trommi/v1/account-salt` | H: account salt |
+| `trommi/v1/invite-offer-sig` | Sign: offer | `trommi/v1/account-auth` | KDF: auth key |
+| `trommi/v1/invite-request` | H: request body ‖ MAC | `trommi/v1/account-wrap-key` | KDF: password wrap key |
+| `trommi/v1/recovery-auth` | KDF: kit auth key | `trommi/v1/account-wrap` | aad prefix: sealed copy of the code |
+| `trommi/v1/recovery-wrap-key` | KDF: kit wrap key | `trommi/v1/passkey-wrap-key` | KDF: passkey wrap key |
+
+`trommi/v1/passkey-prf` is not a label: its UTF-8 bytes, without `0x00`, are the fixed WebAuthn prf input (16.7).
+
+## 4. Device identity
+
+A device (human device or agent) has an Ed25519 and an X25519 key pair.
+
+```
+deviceId   = H("trommi/v1/device-id", signPub(32) ‖ kexPub(32))   32 bytes
+deviceSecret = 0x01 0x0c ‖ signSeed(32) ‖ kexPrivate(32)   66 bytes: an agent's key file (mode 0600)
+```
+
+- 4.1 `signSeed` is the RFC 8032 seed, `kexPrivate` the RFC 7748 scalar before clamping.
+- 4.2 Wherever exchange keys are compared, bit 255 is cleared first (X25519 ignores it).
+
+## 5. Sealed box
+
+```
+sealed   = 0x01 0x04 ‖ ephPub(32) ‖ ciphertext                 plaintext length + 50 bytes
+shared   = X25519(ephPrivate, recipientKexPub)   all-zero refused (1.3)
+okm   = KDF(shared, salt = ephPub ‖ recipientKexPub, "trommi/v1/sealed-box", context = empty, 44)
+key, nonce = okm[0..32], okm[32..44]
+ciphertext = AES-256-GCM(key, nonce, aad, plaintext)            with its 16-byte tag
+```
+
+- 5.1 The ephemeral key is fresh per box. `aad` is given by the caller and not transmitted. Not wire-compatible with RFC 9180.
+- 5.2 A box names no sender. Wherever a box carries a key, the receiver checks the key against a commitment in a signed structure: the log (7.2) or the grant chain (19.3).
+
+## 6. Member log
+
+An append-only list; an entry is `body ‖ signature(64)`.
+
+```
+body   = 0x01 0x01 ‖ type u8 ‖ seq u32 ‖ prev(32) ‖ time u64 ‖ signerKind u8 ‖ signer(32) ‖ payload
+entryHash = H("trommi/v1/log-entry", body)
+signature = Sign(signer, "trommi/v1/log-sig", body)
+roomId   = entryHash of entry 0
+member   = role u8 ‖ signPub(32) ‖ kexPub(32)   role 1 human, 2 agent; 65 bytes
+epoch   = epoch u32 ‖ keyCommit(32) ‖ histCommit(32)
+removed   = count u16 ‖ ( deviceId(32) ‖ cutSeq u64 ‖ cutHash(32) ) × count   ascending by id, no duplicates
+```
+
+| Type | Payload | Signed by |
+| --- | --- | --- |
+| 1 genesis | `roomNonce(16) ‖ member ‖ recSignPub(32) ‖ recKexPub(32) ‖ epoch` | the founding device = `member`, role human; epoch 1 |
+| 2 add | `member ‖ inviteId(16)` (zeros if not by invite) | an active human device; or the recovery key, for a human device with `inviteId` zeros |
+| 3 remove | `removed ‖ epoch` (count ≥ 1) | an active human device |
+| 5 recover | `member ‖ removed ‖ epoch ‖ newRecSignPub(32) ‖ newRecKexPub(32)` | the current recovery key |
+
+A verifier applies entry by entry; a broken rule is `bad-entry`, a bad signature `bad-signature`, a bad encoding `bad-format`.
+
+- 6.1 `seq` counts from 0 and is the predecessor's plus one; `prev` is the predecessor's `entryHash` (32 zero bytes for genesis). `time` is the signer's claim in ms since the Unix epoch, not checked. `signerKind`: 1 device (`signer` = device id), 2 recovery key (`signer` = device id of the recovery key pair). Type 4 is reserved; it and every other type or signer kind is refused.
+- 6.2 The signature verifies under the key the log itself gives the signer. A device signer is active (added, not removed) and human before the entry is applied. Any human device may sign; there is no main device. Agents sign nothing. The recovery key signs type 5, and type 2 for a human device without an invite; nothing else.
+- 6.3 A member carries no name (v1.1, R8); names are encrypted registers (`device/<device_id>`).
+- 6.4 A new `epoch` number is the current one plus one; only remove and recover carry one, and they always do. Nothing else starts an epoch: no rotation on a schedule, none on an add.
+- 6.5 An added device is new: its id never appeared in the log (removed devices cannot return), and neither its signing key nor its exchange key (4.2) is used by any member before, removed ones included, or by the recovery key. The recovery key can never be a member.
+- 6.6 In genesis the recovery key differs from the founding device's id and shares neither key with it. A room cannot be founded without a recovery code (`recovery-required`).
+- 6.7 Removed ids are active members. Each carries its cut (v1.1, R3): `seq` and `envelopeHash` of that device's last envelope the remover had seen, or 0 and 32 zero bytes; `cutSeq` 0 with a non-zero `cutHash` is refused.
+- 6.8 A non-zero `inviteId` appears in one add entry only.
+- 6.9 A recover entry enrols one human device, installs a recovery key that differs from the old one and shares no key with any member, and its removed list holds every active human device; it may also hold active agents (v1.1, R6). Agents not listed stay members.
+- 6.10 A log is trusted only relative to a room id from elsewhere: the invite link or the device's own storage (`wrong-room`).
+- 6.11 A device pins `{ seq, hash }` of the newest entry it accepted, all entry hashes and the position of the last recover entry. A served log that is a shorter prefix is refused (`log-rollback`). One that differs at an entry is refused (`log-fork`), except: if its first differing entry is a recover entry and the pinned branch holds no recover entry at or after that position, the result is `recovery-override`, which the client shows to the user and never applies silently. Without the pinned hashes it is a fork.
+
+## 7. Room key epochs
+
+An epoch secret is two independent random 32-byte values, `key` (the room key) and `hist` (the history key).
+
+```
+keyCommit  = KDF(key,  salt = empty, "trommi/v1/epoch-commit/key",  context = epoch u32, 32)
+histCommit = KDF(hist, salt = empty, "trommi/v1/epoch-commit/hist", context = epoch u32, 32)
+
+wrap   = sealed box to the recipient's kexPub, with
+plaintext  = 0x02 ‖ key(32) ‖ hist(32)
+aad   = "trommi/v1/epoch-wrap" ‖ 0x00 ‖ roomId(32) ‖ epoch u32 ‖ recipientId(32)
+
+okm   = KDF(hist_n, salt = roomId, "trommi/v1/back-link", context = n u32, 44);  key, nonce = okm[0..32], okm[32..44]
+backLink   = 0x01 0x08 ‖ n u32 ‖ AES-256-GCM(key, nonce, aad, key_{n-1}(32) ‖ hist_{n-1}(32))   86 bytes
+aad   = 0x01 0x08 ‖ roomId(32) ‖ n u32
+
+senderKey  = KDF(scopeKey, salt = roomId, "trommi/v1/sender-key", context = scope ‖ epoch u32 ‖ senderId(32), 32)
+scope   = 0x00   key scope 0: scopeKey = the room key, epoch = the room key epoch
+           | 0x01 ‖ sessionId(16)   key scope 1: scopeKey = that session's key, epoch = the session key epoch
+```
+
+- 7.1 Human devices and the recovery key hold `key` and `hist`; agents never hold a room key (v1.1, R6). One wrap per active human device and one for the recovery key, per epoch; an agent's add comes with no wrap.
+- 7.2 After opening a wrap the receiver recomputes the commitments and compares them with the log entry that started the epoch (`key-mismatch`; an epoch the log does not know: `wrong-epoch`). A decoder also accepts `0x01 ‖ key(32)` (no history key), but no room key wrap is made that way.
+- 7.3 One back link per epoch from 2 on; the opened secret is checked against the commitments of epoch n−1.
+- 7.4 Nobody encrypts a message with a scope key itself, only with the sender key.
+
+## 8. Invite
+
+```
+link   = <app url> "#v1." b64u(utf8(hub)) "." b64u(roomId) "." b64u(secret)   secret: 32 random bytes
+inviteId = KDF(secret, salt = roomId, "trommi/v1/invite-id",  context = empty, 16)
+macKey   = KDF(secret, salt = roomId, "trommi/v1/invite-mac", context = empty, 32)
+
+offer   = body ‖ Sign(inviter, "trommi/v1/invite-offer-sig", body)
+  body   = 0x01 0x05 ‖ roomId(32) ‖ inviteId(16) ‖ role u8 ‖ expiresAt u64 ‖ commit(32) ‖ inviterId(32) ‖ logSeq u32 ‖ logHash(32)
+  commit = H("trommi/v1/invite-commit", inviteId ‖ nonce(32))   nonce: 32 random bytes, kept by the inviter
+request  = body ‖ mac(32) ‖ Sign(newDevice, "trommi/v1/invite-request-sig", body ‖ mac)
+  body   = 0x01 0x06 ‖ roomId(32) ‖ inviteId(16) ‖ hub str16(512) ‖ role u8 ‖ signPub(32) ‖ kexPub(32) ‖ offerHash(32)
+  mac   = HMAC-SHA-256(macKey, "trommi/v1/invite-mac" ‖ 0x00 ‖ body)
+  offerHash   = H("trommi/v1/invite-offer", offer body)
+reveal   = body ‖ Sign(inviter, "trommi/v1/invite-reveal-sig", body)
+  body   = 0x01 0x07 ‖ inviteId(16) ‖ nonce(32) ‖ requestHash(32)
+  requestHash = H("trommi/v1/invite-request", request body ‖ mac)
+checkCode = the first 36 bits of H("trommi/v1/invite-code", offer body ‖ request body ‖ mac ‖ nonce), most significant
+            bit first, as six numbers 0–63, each written as two decimal digits, joined by "-" ("07-33-12-05-60-01")
+```
+
+- 8.1 The hub address is canonical (v1.1, R9): `https://` + lowercase host [+ `:port`], no path, no trailing slash; `http://` only for `localhost` and `127.0.0.1`; exactly `^(https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*|http://(localhost|127\.0\.0\.1))(:[1-9][0-9]{0,4})?$`. Anything else is refused, never normalised, in the link, the request and the hub sign-in. A link of another version is `bad-version`, a malformed one `bad-invite` (`bad-format` when its room id or its secret is not base64url).
+- 8.2 Hashes and check code cover the signed bodies, never a signature (R9). The request carries no name (v1.1, R8). The role is in the offer and under the request's MAC, not in the link.
+- 8.3 Each number of the check code is an index into the 64 emoji of `app/web/core/check-emoji.ts`; both devices show the six emoji and the human compares them.
+- 8.4 Inviter: only an active human device invites (`not-human`); it publishes the offer, which names its log head, and hands over the link.
+- 8.5 New device: verifies the log against the room id in the link, then the offer (`bad-invite`, `bad-signature`, `invite-expired`): it belongs to the link's invite, is signed by an active human member, is not expired, and its `logSeq`/`logHash` are in the served log. Then it sends the request with the offer's role.
+- 8.6 Inviter: accepts the first request with a valid MAC (`bad-mac`) that matches room, invite id, hub, role and offer hash (`bad-invite`) and is signed by the key it carries; marks the invite used (`invite-used` afterwards); only then reveals the nonce. A request without a valid MAC does not use up the invite.
+- 8.7 New device: checks the reveal (signed by the inviter, an active human member) against invite id, request hash and commitment (`bad-invite`). Both show the code.
+- 8.8 The check code is compared for every invite, agents included (an agent's connector prints it). Only after the human confirmed it does the inviter write the add entry with `inviteId`. The function that writes it takes `{ code, requestHash }` as confirmed, recomputes the code of the accepted request and refuses another or a missing code (`code-not-confirmed`) and another request's hash (`bad-invite`); no flag skips this. "They don't match" burns the invite.
+- 8.9 For a human only, the inviter seals the current epoch secret to the new device (7.1); an agent gets no room key.
+- 8.10 The new device checks that the add entry that enrolled it names this invite, was signed by the inviter and gives the invited role (`bad-invite`).
+- 8.11 Enforced by the inviter's device, not the hub: `expiresAt` (`INVITE_TTL_MS`, ten minutes by default) when the request arrives; single use; `INVITE_CONFIRM_MS`, five minutes, between accepting the request and the confirmation (`invite-expired`).
+
+## 9. Envelope
+
+```
+full   = 0x01 0x02 ‖ header var16 ‖ nonce(12) ‖ ciphertext var32 ‖ signature(64)
+pruned = 0x01 0x03 ‖ header var16 ‖ nonce(12) ‖ ciphertextHash(32) ‖ signature(64)
+
+header = 0x01 ‖ flags u8 ‖ roomId(32) ‖ epoch u32 ‖ keyScope u8 ‖ [ sessionId(16) ]   iff keyScope = 1
+         ‖ sender(32) ‖ seq u64 ‖ prev(32) ‖ logSeq u32 ‖ logHash(32) ‖ recipient(32) ‖ time u64 ‖ kind u8
+         ‖ seenCount u16 ‖ ( sender(32) ‖ seq u64 ‖ hash(32) ) × seenCount
+         ‖ [ objectId(16) ‖ objectState u8 ‖ urgency u8 ‖ answeredAt u64 ]   iff flags bit 1
+         ‖ [ timelineKind u8 ‖ timelineScope u8 ‖ timelineRef(16) ]   iff kind = 1
+         ‖ blobCount u8 ‖ blobId(16) × blobCount
+
+ciphertext   = AES-256-GCM(senderKey, nonce, aad = header, paddedBody)   nonce: 12 random bytes; includes the tag
+ciphertextHash = SHA-256(ciphertext)
+envelopeHash   = H("trommi/v1/envelope", header ‖ nonce ‖ ciphertextHash)
+signature   = Sign(sender, "trommi/v1/envelope-sig", envelopeHash)
+objectId   = first 16 bytes of H("trommi/v1/object-id", creatorId(32) ‖ seq u64)   seq: the creator's envelope number of version 1
+
+body   = 0x01 ‖ bind var16 ‖ payload var32
+paddedBody = body ‖ 0x00 …   to the next of 256, 512, 1024, … 65536 bytes, above that the next multiple of 65536
+```
+
+Sizes: version byte to `seenCount` 190 bytes (scope 0) or 206 (scope 1); a `seen` entry 72; object block 26; timeline 18; `blobCount` 1 and 16 per blob.
+
+- 9.1 `flags`: bit 0 "send a push", bit 1 object block present; any other bit is refused. There is no head bit: kind 1 is the only thread kind, every other kind is a head.
+- 9.2 `keyScope`: 0 the room key (human senders only), 1 a session key, followed by `sessionId`; others refused. `epoch` is the key epoch of that scope.
+- 9.3 `seq` starts at 1 per sender and room (0 refused); `prev` is the `envelopeHash` of the sender's previous envelope, zeros for the first. One chain per sender covers all scopes. A device never signs a second envelope under a number it used.
+- 9.4 `logSeq`, `logHash`: the newest log entry the sender knew. `recipient`: a device id, or zeros for everyone. `time`: the sender's clock in ms, a claim.
+- 9.5 `kind`: 1 timeline item, 2 object version, 3 answer, 4 permission request, 5 verdict, 6 status, 7 decide again (`KIND_MAX` = 7). Kind 0 is refused. Kinds 8–255 are reserved: writers and a hub refuse them, a reader accepts them (9.13).
+- 9.6 `seen` (v1.1, R5): ascending by sender id, the newest envelope of each other sender the author had accepted; only senders active at `logSeq` whose head changed since the author's own previous envelope; at most 64 (`SEEN_MAX`); never the author itself. Receivers carry earlier values forward.
+- 9.7 Object block iff kind is 2, 3, 4, 5 or 7, and flags bit 1 says exactly that: `objectState` 1 open, 2 answered, 3 closed (withdrawn, expired or closed without an answer); `urgency` 0 low, 1 normal, 2 high, 3 critical; `answeredAt` ms, 0 while open, display only; other values refused. For a verdict the request id is the `objectId`.
+- 9.8 Timeline iff kind = 1: `timelineKind` 1 chat, 2 scribble; any value 1–255 is accepted, 0 refused. `timelineScope` 1 card, 2 session, 3 desk (others refused); `timelineRef` is the object id, session id or desk id. Text form: `card/<32 hex>`, `session/<32 hex>`, `desk/<32 hex>`, lowercase, nothing else. A session timeline is sent under key scope 1 with `sessionId` = `timelineRef`; a desk timeline under key scope 0.
+- 9.9 `blobCount` ≤ 255; each `blobId` is an attachment id (section 11).
+- 9.10 The whole header is the associated data; the signature covers header, nonce and ciphertext hash through `envelopeHash`, which also links the chain. A pruned envelope therefore still verifies and still carries the chain.
+- 9.11 The body has no kind byte (v1.1). The padded length is exactly the size the rule gives for the used length and the padding is all zero. `payload` is opaque here (the application's UTF-8 JSON); one starting with `EF BB BF` is refused.
+- 9.12 `bind` by kind, empty for the others:
+
+```
+answer (3)   = 0x01 ‖ objectId(16) ‖ versionHash(32) ‖ count u8 ‖ choice str16(256) × count   count ≤ 64
+permission request (4) = 0x01 ‖ requestId(16) ‖ expiresAt u64
+verdict (5)   = 0x01 ‖ requestId(16) ‖ requestHash(32) ‖ expiresAt u64 ‖ verdict u8   1 allow, 2 deny
+decide again (7)   = 0x01 ‖ objectId(16) ‖ previousHash(32) ‖ versionHash(32)
+```
+
+`versionHash`: the `envelopeHash` of the object version the human answered; an answer binds every chosen option (v1.1, R7). `requestId`: the request's object id; `requestHash`: the request's `envelopeHash`. `previousHash`: the `envelopeHash` of the answer taken back.
+
+- 9.13 A reader parses a kind above 7 by the rule every later kind must keep: no timeline block, the object block iff flags bit 1, the bind opaque. Everything else is checked as for any envelope and the chain advances; the body is decrypted, nothing of it is applied, and the client shows that it needs a newer Trommi. A kind that cannot keep this rule needs a new header version.
+- 9.14 A version byte above 1 in an envelope, header, body or bind is `newer-version`, not `bad-version`. A body or bind of a newer version under a valid signature is quarantined (9.15, step 10). A header of a newer version cannot be verified, so writers use one only once every member's client reads it.
+- 9.15 Receiver checks, in this order:
+  1. Format, versions, flags, kind, key scope, the grammar above, `seen` ≤ 64 and ascending, `seq` ≥ 1 (`bad-format`); room id (`wrong-room`).
+  2. `logSeq` is not beyond the receiver's log (`log-behind`: fetch the log first) and `logHash` equals the receiver's entry at `logSeq` (`log-fork`).
+  3. The sender was an active member once entry `logSeq` was applied (`not-member`). Scope 0: the sender is human (`forbidden`) and `epoch` is the room epoch in force at `logSeq` (`wrong-epoch`). Scope 1: the epoch is checked against the session's grant chain through the key supplied.
+  4. Freshness (R3): an envelope in an older key epoch of its scope is refused (`wrong-epoch`) once the receiver learned of the current epoch more than two minutes ago (`EPOCH_GRACE_MS`). This wall-clock rule holds only for live envelopes on a device connected since it learned of the change; otherwise (catch-up, resync, history) the signed times decide: header `time` minus the signed `time` of the log entry or grant that began epoch `epoch + 1` is at most two minutes plus three minutes of skew. A stale envelope still advances its sender's chain; its body is never applied.
+  5. The sender is not removed in the receiver's current log (`removed-sender`). Reading history on purpose, a removed sender is accepted up to its cut: `seq` above `cutSeq` is `removed-sender`; at `cutSeq` the `envelopeHash` equals `cutHash` (`equivocation`, checked after the signature).
+  6. Every sender in `seen` was active at `logSeq` and is not the sender itself (`bad-format`).
+  7. The signature verifies under the sender's key from the log (`bad-signature`).
+  8. Chain: `seq` is the last accepted number of this sender plus one and `prev` matches; else `replay` (already accepted), `equivocation` (same number, other hash), `gap` (numbers missing; the error says which), `chain-break` (right number, wrong predecessor, or a first envelope that names one). A sender never seen starts at 1, unless the caller allows a chain start.
+  9. `seen`: a hash that differs from the receiver's under the same number is `equivocation`; a higher number than the receiver has is reported as withheld, not as an error.
+  10. Decrypt with the sender key of the named scope and epoch (`no-key` if the receiver has none: nothing advances; a pruned envelope: `pruned`). A body that fails to decrypt or decode (`decrypt-failed`, `bad-format`, `bad-version`, `newer-version`) under a valid signature and chain is quarantined (v1.1, R4): the chain advances and the result carries no payload. Only now does the chain advance.
+- 9.16 A thread item first received pruned is verified and chained by its `envelopeHash`. When the full envelope is fetched later, the reader recomputes `envelopeHash` from header, nonce and SHA-256 of the ciphertext, refuses another (`hash-mismatch`), verifies the signature under the sender's key from the log and decrypts; chains are not touched.
+
+## 10. Commands
+
+After an envelope opened, an agent executes it only if all of this holds.
+
+- 10.1 The body was not quarantined (`not-a-command`); the sender is an active human device in the agent's current log (`not-human`); `recipient` is this agent's device id (`not-for-me`).
+- 10.2 The envelope's epoch is the current one of its key scope (scope 1: the session's current key epoch), or the previous one and the agent learned of the new epoch at most two minutes ago (`stale-epoch`). Optionally `time` is not older than a caller-given maximum (`stale`).
+- 10.3 Only kinds 1, 3, 5 and 7 are commands (`not-a-command`). A timeline item counts only on a chat timeline (`timelineKind` 1) and is a message.
+- 10.4 If the sender's `seen` of the agent (carried forward) is behind the agent's own last envelope, the command is marked late, not refused.
+- 10.5 Answer: the object in `bind` exists and equals the header's `objectId` (`card-mismatch`); `versionHash` is its current version hash (`card-changed`); it is open (`card-closed`); at least one choice if it has options, and every choice is one of its options (`bad-choice`).
+- 10.6 Verdict: `requestId` names the agent's request and equals the header's `objectId` (`request-mismatch`); it is pending (`request-not-pending`); its hash and expiry equal `requestHash` and `expiresAt` (`request-changed`); the agent's clock is not past `expiresAt` (`request-expired`).
+- 10.7 Decide again: the object matches as for an answer (`card-mismatch`), `versionHash` is its current version hash (`card-changed`), `previousHash` is the hash of the answer in force (`decision-mismatch`).
+
+## 11. Assets
+
+```
+blob   = head ‖ chunk_0 ‖ chunk_1 ‖ …
+head   = 0x01 0x09 ‖ blobId(16) ‖ chunkSize u32 (= 65536)   22 bytes
+chunk_i = AES-256-GCM(assetKey, nonce_i, aad = head, plaintext[i × 65536 …])   up to 65536 + 16 bytes
+nonce_i = 0x00 0x00 0x00 ‖ i u64 ‖ last u8   last = 1 for the final chunk, else 0
+```
+
+- 11.1 `assetKey` is 32 fresh random bytes per asset, used for nothing else; `blobId` is 16 random bytes. An empty asset has one empty chunk; every chunk but the last is full; another `chunkSize` is refused. A blob cut at a chunk boundary fails: its last chunk lacks the final mark.
+- 11.2 `assetKey`, SHA-256 of the blob, name and type travel only in the encrypted payload of the message that names the asset; the header lists only `blobId`. There is no wrapped asset key and no asset link.
+- 11.3 The blob hash is always checked: decryption takes the SHA-256 the message names, compares it with the SHA-256 of the blob and refuses a difference (`decrypt-failed`) before decrypting; a call without a 32-byte hash is refused (`bad-argument`). A read of one chunk relies on the chunk's own authentication (key, chunk number, last mark, head).
+
+## 12. Recovery code
+
+- 12.1 32 random bytes, shown as 52 Crockford base32 characters (`0123456789ABCDEFGHJKMNPQRSTVWXYZ`) in thirteen groups of four joined by `-`; bits most significant first; the last character holds one data bit and four zero bits.
+- 12.2 Input is accepted in any case, with spaces or hyphens, `O` read as `0`, `I` and `L` as `1`; anything else, another length or non-zero padding bits is refused (`bad-recovery-code`). There is no checksum: a mistyped code yields a key pair the log does not know.
+
+```
+recovery signSeed   = KDF(code(32), salt = empty, "trommi/v1/recovery/sign", context = empty, 32)
+recovery kexPrivate = KDF(code(32), salt = empty, "trommi/v1/recovery/kex",  context = empty, 32)
+```
+
+- 12.3 Recovery: derive the key pair (not the room's: `bad-recovery-code`), open the recovery key's wrap of the current epoch, sign a recover entry (6.9) that enrols the new device and removes every human device and the agents the human chose, wrap the new epoch for the new device and the new recovery key, write the back link. Agents that stay need no wrap; their sessions are stale until a human device re-keys them (19.10).
+
+## 13. Key schedule
+
+```
+link secret → invite id, MAC key (KDF)   recovery code → recovery Ed25519 seed, X25519 key (KDF)
+room epoch n: key_n, hist_n random → keyCommit_n, histCommit_n in the log (KDF)
+   key_n → senderKey(scope 0, n, device) (KDF) → AES-256-GCM over bodies, random nonce
+   hist_n → back link key and nonce (KDF) → encrypts key_{n-1} ‖ hist_{n-1}
+   (key_n, hist_n) → sealed box to each human device and the recovery key
+session S, epoch m: as a room epoch, with commitments in the grant and senderKey(scope 1 ‖ S, m, device)
+   (key_m, hist_m) → sealed box to humans, the recovery key, agents with history; key_m alone to agents without
+asset: assetKey random, inside the encrypted body that names the asset → AES-256-GCM over 64 KiB chunks, counter nonce
+account: password → master (Argon2id) → auth key, wrap key (KDF); kit words → kit auth key, kit wrap key (KDF);
+   passkey prf → passkey wrap key (KDF); each wrap key → AES-256-GCM over a copy of the recovery code
+```
+
+## 14. Known limits
+
+- No forward secrecy and no post-compromise security, by decision (no ratchet). Whoever holds a scope key and the ciphertexts reads that epoch; with a history key, all earlier epochs of that scope. Whoever holds a device's X25519 key opens every key sealed to it until the device is removed.
+- Every holder of a scope key reads every message of that scope and epoch; per-sender keys separate nonces, not readers; only signatures separate senders. Agents hold only their sessions' keys.
+- A room epoch lasts until someone is removed: a leaked room key opens everything from the last removal to the next.
+- Scope keys exist as bytes in memory; only device private keys can be non-extractable.
+- A device that loses its chain state and sends again produces `equivocation` at every receiver and needs a new identity.
+- A fork is noticed only when forked devices exchange a message or a log. A hub can always withhold the end of a log or chain; that shows through `log-behind` and `seen`, not earlier.
+- The cut is the remover's view: envelopes of a removed device the remover had not seen are refused.
+- Expiry and freshness use the local clock of the device that enforces them; header `time` and `answeredAt` are claims.
+- Envelope nonces are random, no counter: with n envelopes under one sender key the chance of a repeat is at most n(n−1)/2 · 2^−96; the NIST SP 800-38D limit is n = 2^32. Nothing enforces it in code. A hub admits at most 50 envelopes a second from one device (bursts of 200). The format sets no maximum body size (9: padding goes on in steps of 65536 bytes); a hub may refuse a larger body, and the reference client refuses a payload above 60 000 bytes (`too-large`).
+- The check code has 36 bits: an active attacker with a stolen link succeeds with chance 2^−36 per attempt; each attempt burns an invite, and the inviter commits to its nonce before it sees the request.
+- Speech is not end-to-end encrypted: a hub sees the audio and text of what is dictated or read aloud.
+- Whoever serves the client's code can use the keys.
+
+## 15. Open questions
+
+- Not audited.
+- Ed25519: the equation itself stays the library's (1.1 d). A verifier that used the cofactor would accept signatures of a key with a small-order component that the others refuse; only a member can make such a key. On Apple platforms the vectors must be run against CryptoKit itself.
+- The X25519 key in an invite request is not proven to be owned; a wrong key only locks the new device out.
+- The genesis entry is not countersigned by the recovery key. Changing the recovery code without a recovery cannot be expressed.
+- Not covered by version 1: the Scribble Board version counter, encrypted snapshots as a format, a streaming interface for assets (there is whole-buffer encryption and per-chunk decryption).
+
+## 16. Account
+
+An account (an email with a password, passkeys or both, and an Emergency Kit) is a way into a room: each way opens a sealed copy of the room's recovery code, with which a new device adds itself (a type 2 entry signed by the recovery key, 6.2). A hub never sees the password, the kit's words, a prf output or the code. Reference: `app/web/core/account.ts`, `passkey.ts`, `passwords.ts`.
+
+```
+salt   = H("trommi/v1/account-salt", email)
+master   = Argon2id(password as NFC UTF-8, salt, m = 65536 KiB (64 MiB), t = 3, p = 1, 32 bytes)
+K(ikm, l)  = KDF(ikm, salt, l, context = empty, 32)
+authKey   = K(master, "trommi/v1/account-auth")   wrapKey   = K(master, "trommi/v1/account-wrap-key")
+kitAuth   = K(r, "trommi/v1/recovery-auth")   kitWrapKey = K(r, "trommi/v1/recovery-wrap-key")
+passkeyWrapKey = KDF(prf(32), salt = roomId(32), "trommi/v1/passkey-wrap-key", context = credentialId, 32)
+sealedCopy = 0x02 ‖ nonce(12) ‖ AES-256-GCM(key, nonce, aad, code(32))   61 bytes
+aad   = "trommi/v1/account-wrap" ‖ 0x00 ‖ roomId(32) ‖ what ‖ [ credentialId ]   iff what = "passkey"
+what   = ASCII "password" (key = wrapKey) | "recovery" (kitWrapKey) | "passkey" (passkeyWrapKey)
+```
+
+- 16.1 Email: (1) leading and trailing U+0020 and U+0009–U+000D are dropped; (2) every character left is U+0021–U+007E, anything else is refused, never mapped; (3) A–Z become a–z; (4) at most 254 characters, exactly one `@`, 1 to 64 characters before it, after it a `.` with 1 to 190 characters before and 2 to 63 after. Otherwise `bad-email`.
+- 16.2 A password may be used if its NFC form has at least 12 code points (`weak-password`).
+- 16.3 `code` is the 32 raw bytes of the recovery code (12.1); the nonce is 12 random bytes. A copy of another length or first byte (`0x01` included) is refused (`bad-format`), not converted. A copy that does not open: `wrong-login`, for the kit `wrong-recovery`.
+- 16.4 `authKey` goes to the hub at sign-in, which keeps only a slow hash of it; `kitAuth` is what the hub checks before it hands out the kit's copy. The wrap keys never leave the device.
+- 16.5 Kit: 12 uniformly random words of the list in `app/web/core/wordlist.ts` (7772 words, about 155 bits; no slow KDF). `r` = UTF-8 of the lowercase words joined by one space. Input is lowercased and split at anything but a–z; other than 12 words of the list is `bad-recovery-words`.
+- 16.6 The key derivation record is pinned to `{ alg: "argon2id", v: 1, m: 65536, t: 3, p: 1 }`: a record from a hub is accepted only if these five fields are exactly so (other fields are ignored); none means the pinned set; anything else is `bad-kdf` and nothing is derived with it.
+- 16.7 Passkey: `prf` is the 32-byte output of the WebAuthn prf extension over the fixed input UTF-8 `trommi/v1/passkey-prf`, a client constant never chosen by a hub; without it `no-prf` and nothing is sent. The user handle is 32 random bytes. A passkey challenge lasts two minutes and one use.
+- 16.8 An account is made with its kit in one request: none exists without one. A new kit replaces the one before. Changing the password re-wraps the code and replaces `authKey`; nothing else is re-encrypted.
+- 16.9 A hub gives one answer for an unknown email and a wrong password (`wrong-login`), and refuses to remove the last way in (`last-way-in`).
+
+## 17. Signing in to a hub
+
+```
+signed = body ‖ Sign(device, "trommi/v1/hub-auth", body)
+  body = 0x01 0x0d ‖ roomId(32) ‖ hub str16(512) ‖ deviceId(32) ‖ challenge(32)
+```
+
+- 17.1 The hub hands out `challenge`: 32 random bytes, two minutes, one use.
+- 17.2 `deviceId` names an active member or the room's current recovery key pair. The hub checks the room (`wrong-room`), its own canonical address (`wrong-hub`) and the signature under the key the log gives that id (`bad-signature`), then issues a token for ten minutes, bound to the device.
+- 17.3 A device that is not a member is refused (`not-member`); a removed one that proved its key is told the `seq` of the entry that removed it. A token of a replaced recovery key stops working.
+
+## 18. Vectors
+
+`spec/vectors.json` plays one room through from fixed seeds (hex); `node app/web/core/crypto/crypto-test.mjs` compares it byte for byte, `--write-vectors` rewrites it. Its `rng` field describes the test randomness, `rngCalls` what a section draws.
+
+| Part | Checks |
+| --- | --- |
+| `encoding`, `signature` | base64url, a labelled hash, KDF and signature |
+| `ed25519` | 1.1: 49 cases with their verdict (`valid`), no label; the twelve of ed25519-speccheck (only case 3 verifies); every refused point as R and as public key |
+| `devices`, `recovery`, `sealedBox` | key pairs, ids and key files from seeds; code → bytes → key pair; a box with a fixed ephemeral key |
+| `x25519` | 1.3: `refused`, fourteen small-order keys as ephemeral key (`bad-key`) and as recipient; `accepted`, three boxes whose ephemeral key is the base point as u = p + 9 and with bit 255 set |
+| `room`, `invites` | genesis, room id, epoch 1, wraps; three invites (a human with wrap, two agents without) with every message, hash, check code and add entry, and what 8.8 refuses |
+| `envelopes`, `binds`, `hubAuth` | sender keys; chat, card, answer and desk envelopes with every part and `hubSees`; pruned forms; `afterRecovery`; the four binds; a hub sign-in |
+| `epochChanges`, `log` | `remove` and `recover` with entry, new epoch, wraps and back link; all six entries; three that must be refused (type 4, signed by an agent, a replay) |
+| `assets` | a small and a two-chunk asset; a hash that is not the blob's (`decrypt-failed`) |
+
+Session grants, wraps and back links have no vectors there: `node app/web/core/crypto/session-grants-test.mjs`. `spec/account-vectors.json` checks section 16 (`labels`, `password`, `recovery`, `passkey`, `email`, `passwordRule`, `kdf`, and `refused`: what must not open): `node app/web/core/account-test.mjs`, rewritten with `--write-vectors`. `spec/strokes.json` holds sample Scribble Board strokes with their packed points: `node app/web/core/scribble-test.mjs`.
+
+## 19. Session keys
+
+Each agent session has its own key, independent of the room key (v1.1, R6). A session is created by its first grant; `sessionId` is 16 random bytes chosen by the granting device. A session secret is `{ epoch, key(32), hist(32) }`, both random.
+
+```
+keyCommit  = KDF(key,  salt = empty, "trommi/v1/session-commit/key",  context = sessionId(16) ‖ epoch u32, 32)
+histCommit = KDF(hist, salt = empty, "trommi/v1/session-commit/hist", context = sessionId(16) ‖ epoch u32, 32)
+
+grant = body ‖ Sign(signer, "trommi/v1/session-grant-sig", body)
+  body = 0x01 0x0e ‖ roomId(32) ‖ sessionId(16) ‖ grantNumber u32 ‖ previousGrantHash(32) ‖ sessionKeyEpoch u32
+         ‖ flags u8 ‖ agentCount u16 ‖ agentId(32) × agentCount ‖ keyCommit(32) ‖ histCommit(32)
+         ‖ manifestHash(32) ‖ logSeq u32 ‖ logHash(32) ‖ time u64 ‖ signerId(32)
+grantHash   = H("trommi/v1/session-grant", body)
+manifestHash = H("trommi/v1/session-manifest", for each recipient ascending by id: recipientId(32) ‖ SHA-256(sealed))
+
+wrap   = sealed box to the recipient's kexPub, with
+plaintext  = 0x02 ‖ key(32) ‖ hist(32)   human devices, the recovery key, agents given the history
+           | 0x01 ‖ key(32)   agents without history
+aad   = "trommi/v1/session-wrap" ‖ 0x00 ‖ roomId(32) ‖ sessionId(16) ‖ epoch u32 ‖ recipientId(32)
+
+okm   = KDF(hist_n, salt = roomId ‖ sessionId, "trommi/v1/session-back-link", context = n u32, 44);  key, nonce = okm[0..32], okm[32..44]
+backLink   = 0x01 0x0f ‖ sessionId(16) ‖ n u32 ‖ AES-256-GCM(key, nonce, aad, key_{n-1}(32) ‖ hist_{n-1}(32))   102 bytes
+aad   = 0x01 0x0f ‖ roomId(32) ‖ sessionId(16) ‖ n u32
+```
+
+- 19.1 Holders: every active human device and the recovery key, always; and the agents the newest grant assigns.
+- 19.2 `flags`: bit 0 = `with_history` (some assigned agent got the history key in this grant); other bits refused. Agent ids ascending, no duplicates. `logSeq`, `logHash` name the log entry the grant is built on.
+- 19.3 After opening a wrap the receiver checks the key, and the history key if present, against the commitments of that epoch in the grant chain (`key-mismatch`; an unknown epoch: `wrong-epoch`). A session back link comes with every grant that raises the epoch, from epoch 2 on; its opened secret is checked against the commitments of epoch n−1.
+
+A grant is applied against the session's state before it and the verified log; a broken rule is `bad-grant`.
+
+- 19.4 The room id matches (`wrong-room`); `logSeq` is in the verifier's log (`log-behind`) and `logHash` equals that entry (`log-fork`).
+- 19.5 The signer is an active human device at `logSeq`, or the recovery key valid at `logSeq` (installed by the newest genesis or recover entry at or before it); or, for the first grant of a session only, an active agent that assigns itself alone, without history. The signature verifies under that key (`bad-signature`).
+- 19.6 The first grant has `grantNumber` 0, `previousGrantHash` zeros and epoch 1. Each later grant has the same `sessionId`, `grantNumber` + 1 and `previousGrantHash` = the predecessor's `grantHash`.
+- 19.7 The epoch is the predecessor's (a re-seal) or the predecessor's + 1 (a rotation). A re-seal carries the same commitments and may only add agents: if an assigned agent loses the session, the key changes (v1.1.1).
+- 19.8 No backdating across a member change (v1.1.1; a member change is a remove or recover entry): if one lies between the predecessor's `logSeq` and this grant's, this grant's `logSeq` is not the lower one and the grant rotates.
+- 19.9 Every assigned agent is an active agent at `logSeq`.
+- 19.10 A session whose newest grant's `logSeq` is below the newest member change the verifier knows is stale: its keys still read, nobody sends under them (`stale-session-key`), and a human device re-keys it with a new grant on the current log (a new epoch). A removed device's grant is therefore stale on arrival.
+
+## 20. What a hub must refuse
+
+A hub holds no key and decides nothing about content; it verifies what it can from signed headers and the log, as the second line behind every client. Every refusal carries a stable code.
+
+- 20.1 Log entries: the entry applies (section 6: `bad-entry`, `bad-signature`, `bad-format`) and is not in the log already (`replay`); a room is founded once (`room-exists`).
+- 20.2 The wraps with an entry are exactly one per wanted recipient, each of the size of a `0x02` room key wrap (`incomplete`, `bad-format`): for genesis, remove and recover, every active human device after the entry and the recovery key; for a human's add, that device; for an agent's add, none.
+- 20.3 A remove or recover brings the 86-byte back link of the new epoch (`incomplete`); any other entry brings none.
+- 20.4 An add that names an invite is its outcome: the device whose request the inviter revealed, the invited role, signed by the inviter (`bad-invite`).
+- 20.5 A removal ends the removed devices' tokens, streams and leases at once.
+- 20.6 Grants: the grant applies (section 19: `bad-grant`, `bad-signature`, `log-behind`, `log-fork`). Then `stale-grant` if the signer is no longer an active human device and not the current recovery key (for the first grant of a session that an agent signs for itself, 19.5: no longer an active agent), or if the grant is stale (19.10); `bad-grant` if an assigned agent is no longer a member.
+- 20.7 The sealed session keys are exactly one per active human device, the recovery key and each assigned agent, of the `0x02` size for humans and the recovery key and the `0x01` size for agents (either, per agent, if the history flag is set), and their manifest hash equals the grant's (`bad-grant`). A grant that raises the epoch brings the 102-byte back link of that session and epoch (`incomplete`); any other brings none.
+- 20.8 Envelopes are posted full, by the signed-in device itself (`wrong-sender`); an agent only with its current lease generation (`lease-lost`). Then 9.15 steps 1 to 9 without advancing the chain, with kinds above 7 refused (`bad-format`).
+- 20.9 Key scope 1: the session exists and an agent sender is assigned to it (`forbidden`); the session is not stale (`stale-session-key`: retry the same bytes after the new grant); the epoch is known and, if older, within two minutes of the next epoch's arrival at the hub (`wrong-epoch`). Key scope 0: human senders only (`forbidden`); an older epoch within two minutes of the next epoch's arrival (`wrong-epoch`).
+- 20.10 Objects (R1): a new object's id is `objectId` (section 9) of its sender and `seq`; permission requests come from agents; an object keeps its kind and key scope; only its creator writes new versions (notes: any human device).
+- 20.11 Answers, decide again and verdicts (R1) come from human devices, addressed to the object's creator, under the object's key; a verdict to a permission request, an answer or decide again to an object version.
+- 20.12 Timeline items (R1): a human's chat on a session goes to its assigned agent; a card's chat comes from its creator or from a human writing to the creator, under the card's key; desks are for human devices.
+- 20.13 A status body is at most 4 KiB (`too-large`). The push flag is honoured only on object versions and permission requests.
+- 20.14 Void records (v1.1.1): an envelope that passed verification (signature, membership, exactly the sender's next `seq` with the right `prev`) and is then refused with `forbidden`, `wrong-epoch`, `too-large` or `bad-format` is stored in its pruned form as a void record that takes the next envelope number and advances the sender's chain; the refusal says `voided: true`. Void records are served like pruned envelopes with their `voidCode` and bind no object, timeline or attachment. Retryable refusals (`unauthorised`, `gap`, `stale-session-key`, `lease-lost`, rate limits) take no number.
+- 20.15 Receivers verify a void record's header chain and apply nothing. The void flag is unsigned: a receiver accepts another sender's void silently only when it can re-check the code from the signed header (`wrong-epoch`: the header epoch is not the scope's current one; `forbidden`: an agent under the room key, or in a session it was not assigned to at that epoch), and otherwise raises `hub-voided-other`.
+- 20.16 Ephemeral envelopes are relayed only if signed by the signed-in device, from an active member, under a key it may use now; the chain is neither checked nor advanced, nothing is stored.
+- 20.17 Retention, 30 days: an object's clock is the hub's own arrival time of the object's newest head, if that head's state is answered or closed; a newer open head cancels it; `answeredAt` never moves it. 30 days later every envelope whose object block names that object is replaced by its pruned form; chains still verify.
+
+## 21. What a client must keep
+
+- Durably and atomically: the device keys, the pinned log head with all entry hashes (6.11), the per-sender chains including its own, the epoch secrets, the grant chains and session secrets, and each invite record until it is finalised.
+- Compare every newly fetched log with the pin before using it.
+- Feed envelopes in the order the hub delivers them.
+- Show every refusal as a finding; never swallow one.
+
+## 22. Not in this document
+
+- HTTP routes, JSON bodies and HTTP status codes of a hub.
+- The payload schema inside an envelope body: `app/web/core/codec.ts` and `app/web/core/types.ts`.
+- The stroke format of the Scribble Board: `app/web/core/ink.ts`, `spec/strokes.json`.
+- Pairing as the user sees it, and the threat model.
