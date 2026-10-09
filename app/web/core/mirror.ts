@@ -7,8 +7,8 @@
 // place, as the core mutates in place); a record that is gone is deleted. snapshotOf(model) is the whole model once
 // (at open, and after a 'reset': a new client behind the copy).
 //
-// Every record the core changes is named in its change (that is the contract the app renders by); what the core keeps
-// for itself (model._proj, the projection's sort state) does not travel.
+// Every record the core changes is named in its change (that is the contract the app renders by); what the builder
+// keeps for itself (model._builder: echoes, the projection's sort state) does not travel.
 import { emptyChange, emptyModel } from './model-shape.ts'
 import type { Alert, Card, Change, HumanRegister, Invite, Member, Model, Newer, Note, OutboxItem, PermissionRequest, Published, Room, Session, Timeline, TimelineItem } from './types.ts'
 
@@ -36,7 +36,6 @@ export interface ModelPatch {
   outbox?: OutboxItem[]
   stack?: string[]
   open_permission_ids?: string[]
-  device_registers?: [string, unknown][]
   change: PlainChange
   extra?: Record<string, unknown>
 }
@@ -46,14 +45,14 @@ export interface PlainChange {
   members: boolean; alerts: boolean; outbox: boolean; stack: boolean; room: boolean
   items: [string, ItemKey[]][]
 }
-/** The whole model as it travels (without the core's own projection state). */
-export type ModelSnapshot = Omit<Model, '_proj'>
+/** The whole model as it travels (without the builder's own state). */
+export type ModelSnapshot = Omit<Model, '_builder'>
 
 const MAPS = ['sessions', 'cards', 'permissions', 'notes', 'published', 'invites'] as const
 
 /** The whole model, for the copy's first picture. */
 export function snapshotOf(model: Model): ModelSnapshot {
-  const { _proj, ...rest } = model
+  const { _builder, ...rest } = model
   return rest
 }
 
@@ -64,7 +63,7 @@ const timelineMeta = (t: Timeline): Omit<Timeline, 'items'> => { const { items: 
 export function patchOf(model: Model, change: Change, extra?: Record<string, unknown>): ModelPatch {
   const p: ModelPatch = { room: model.room, change: plainChange(change) }
   if (change.room) p.newer = model.newer
-  if (change.members) { p.members = [...model.members]; if (model._device_registers) p.device_registers = [...model._device_registers] }
+  if (change.members) p.members = [...model.members]
   for (const name of MAPS) {
     const ids = change[name]
     if (!ids.size) continue
@@ -81,7 +80,6 @@ export function patchOf(model: Model, change: Change, extra?: Record<string, unk
   if (change.registers.size) {
     p.human = [...change.registers].map(key => ({ key, raw: model.human.raw.get(key) ?? null }))
     p.crown = model.human.crown
-    if (model._device_registers && [...change.registers].some(k => k.startsWith('device/'))) p.device_registers = [...model._device_registers]
   }
   if (change.alerts) p.alerts = model.alerts
   if (change.outbox) p.outbox = model.outbox
@@ -142,7 +140,6 @@ export function applyPatch(m: Model, p: ModelPatch): Change {
     for (const id of [...m.members.keys()]) if (!keep.has(id)) m.members.delete(id)
     putAll(m.members, p.members)
   }
-  if (p.device_registers) m._device_registers = new Map(p.device_registers)
   for (const name of MAPS) { const e = (p as unknown as Record<string, Entries<object> | undefined>)[name]; if (e) putAll(m[name] as Map<string, object>, e) }
   const items = new Map<string, TimelineItem[]>()
   for (const tp of p.timelines ?? []) {

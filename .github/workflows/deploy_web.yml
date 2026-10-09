@@ -1,0 +1,206 @@
+# Delivers the web app to https://app.trommi.com (the Cloudflare worker trommi-app). It delivers the files a build
+# run made and tested, and builds nothing itself.
+#
+# Interface (build.yml calls it; see the head of build.yml):
+#   version   the number of the build run
+#   commit    the commit that was built
+#   artifact  the artifact of that run: out/ of .github/scripts/web_release.mjs (public/, worker.js, entry.js,
+#             wrangler.jsonc, manifest.json, checksums.txt)
+# By hand (Actions -> deploy_web -> Run workflow): `run_id`, the id of a build run whose web-release is delivered
+# once more (its artifact is kept for 30 days).
+#
+#   attest   checks every file against checksums.txt and manifest.json against the run, then attests them: GitHub's
+#            build provenance for each file and for the manifest (no secret; who built what, from which commit)
+#   deliver  `wrangler deploy` of exactly those files, then asks app.trommi.com which commit it serves
+#
+# Secrets: the environment `web` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; CLOUDFLARE_API_TOKEN
+# and CLOUDFLARE_ACCOUNT_ID come from the 1Password Environment and are seen by the wrangler command only.
+name: deploy_web
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The number of the build run
+        required: true
+        type: string
+      commit:
+        description: The commit that was built
+        required: true
+        type: string
+      artifact:
+        description: The artifact of this run that holds the release
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: The id of a build run whose web release is delivered again
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  attest:
+    name: Check and attest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      id-token: write
+      attestations: write
+    outputs:
+      commit: ${{ steps.check.outputs.commit }}
+      version: ${{ steps.check.outputs.version }}
+      manifest: ${{ steps.check.outputs.manifest }}
+    steps:
+      # A run named by hand must be a build of the main branch of this repository: a pull request's run also has
+      # artifacts, and nothing of such a run may be signed, attested or delivered.
+      - name: The run that is delivered again
+        id: source
+        if: inputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -eu
+          printf '%s' "$RUN_ID" | grep -Eq '^[1-9][0-9]{0,19}$' || { echo "::error::not a run id: $RUN_ID"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > "$RUNNER_TEMP/run.json"
+          jq -e --arg r "$GITHUB_REPOSITORY" \
+            '.path == ".github/workflows/build.yml" and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .repository.full_name == $r and .head_repository.full_name == $r' \
+            "$RUNNER_TEMP/run.json" > /dev/null || { echo "::error::run $RUN_ID is not a build of the main branch of this repository"; exit 1; }
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --jq '.jobs[] | select(.conclusion == "success") | .name' > "$RUNNER_TEMP/jobs.txt"
+          grep -Fq "Web app (test and build)" "$RUNNER_TEMP/jobs.txt" || { echo "::error::the job Web app (test and build) of run $RUN_ID did not succeed"; exit 1; }
+          echo "commit=$(jq -r .head_sha "$RUNNER_TEMP/run.json")" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact || 'web-release' }}
+          path: release
+          run-id: ${{ inputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: The files are the ones the build named
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit || steps.source.outputs.commit }}
+        run: |
+          set -eu
+          cd release
+          sha256sum -c --quiet checksums.txt
+          # nothing lies in the release that the list does not name
+          find . -type f ! -name checksums.txt | sed 's|^\./||' | sort > "$RUNNER_TEMP/there"
+          cut -d' ' -f3- checksums.txt | sort > "$RUNNER_TEMP/named"
+          diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files checksums.txt does not name"; exit 1; }
+          jq -e --arg r "$GITHUB_REPOSITORY" '.product == "trommi-web" and .repository == $r and .worker == "trommi-app" and .host == "app.trommi.com"' manifest.json > /dev/null \
+            || { echo "::error::manifest.json is not a web release of this repository"; exit 1; }
+          commit=$(jq -r .commit manifest.json)
+          version=$(jq -r .version manifest.json)
+          printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::the manifest names no commit"; exit 1; }
+          printf '%s' "$version" | grep -Eq '^[1-9][0-9]{0,11}$' || { echo "::error::the manifest names no version"; exit 1; }
+          # the release must be of the commit the run built, and called by a build also of its number
+          [ "$commit" = "$COMMIT" ] || { echo "::error::the release is of $commit, the run built $COMMIT"; exit 1; }
+          if [ -n "$VERSION" ] && [ "$version" != "$VERSION" ]; then echo "::error::the release is build $version, asked for was build $VERSION"; exit 1; fi
+          # the manifest and the list agree file by file
+          jq -r '.files[] | "\(.sha256)  \(.name)"' manifest.json | sort > "$RUNNER_TEMP/manifest-sums"
+          grep -v '  manifest\.json$' checksums.txt | sort > "$RUNNER_TEMP/list-sums"
+          diff "$RUNNER_TEMP/manifest-sums" "$RUNNER_TEMP/list-sums" || { echo "::error::manifest.json and checksums.txt do not agree"; exit 1; }
+          {
+            echo "commit=$commit"
+            echo "version=$version"
+            echo "manifest=$(sha256sum manifest.json | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest the files and the manifest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: release/checksums.txt
+
+  deliver:
+    name: Deliver to Cloudflare
+    needs: attest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: web
+      url: https://app.trommi.com
+    # one delivery at a time; a waiting one is not cut off
+    concurrency:
+      group: deploy_web
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+    env:
+      COMMIT: ${{ needs.attest.outputs.commit }}
+      VERSION: ${{ needs.attest.outputs.version }}
+      MANIFEST: ${{ needs.attest.outputs.manifest }}
+    steps:
+      # only the pinned wrangler is taken from the repository
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/tools/wrangler
+            .node-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact || 'web-release' }}
+          path: release
+          run-id: ${{ inputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: The files are the attested ones
+        run: |
+          set -eu
+          # The artifact is fetched a second time here. Only the manifest's hash came from the job that attested, so
+          # every file is checked against that manifest, and nothing may lie beside what it names.
+          [ "$(sha256sum release/manifest.json | cut -d' ' -f1)" = "$MANIFEST" ] || { echo "::error::manifest.json is not the attested one"; exit 1; }
+          cd release
+          jq -r '.files[] | "\(.sha256)  \(.name)"' manifest.json > "$RUNNER_TEMP/manifest-sums"
+          sha256sum -c --quiet "$RUNNER_TEMP/manifest-sums"
+          find . -type f ! -name checksums.txt ! -name manifest.json | sed 's|^\./||' | sort > "$RUNNER_TEMP/there"
+          jq -r '.files[].name' manifest.json | sort > "$RUNNER_TEMP/named"
+          diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files the attested manifest does not name"; exit 1; }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: wrangler (pinned in .github/tools/wrangler)
+        run: npm ci --no-audit --no-fund --ignore-scripts --prefix .github/tools/wrangler
+      - name: Install the 1Password CLI
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+        with:
+          version: latest-beta
+      - name: Deliver
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -eu
+          test -n "$OP_SERVICE_ACCOUNT_TOKEN" || { echo "::error::OP_SERVICE_ACCOUNT_TOKEN is not set for this run"; exit 1; }
+          test -n "$OP_ENVIRONMENT_ID" || { echo "::error::OP_ENVIRONMENT_ID is not set for this run"; exit 1; }
+          wrangler="$PWD/.github/tools/wrangler/node_modules/.bin/wrangler"
+          cd release
+          # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID come from the 1Password Environment
+          op run --environment "$OP_ENVIRONMENT_ID" -- "$wrangler" deploy --message "build $VERSION of $COMMIT"
+      # What the site serves now must be this build (a rollout takes a moment).
+      - name: Ask app.trommi.com
+        run: |
+          set -u
+          short=$(printf '%s' "$COMMIT" | cut -c1-7)
+          got=
+          for try in $(seq 1 30); do
+            got=$(curl -fsS --max-time 10 "https://app.trommi.com/gen/build.txt?ci=$GITHUB_RUN_ID-$try" | sed -n 's/^commit: //p' | head -n 1 || true)
+            echo "try $try: app.trommi.com serves ${got:-nothing}"
+            [ "$got" = "$short" ] && break
+            sleep 5
+          done
+          {
+            echo "### Web app: build $VERSION"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`$COMMIT\` |"
+            echo "| app.trommi.com serves | \`${got:-nothing}\` |"
+            echo "| manifest (SHA-256) | \`$MANIFEST\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$got" = "$short" ] || { echo "::error::app.trommi.com does not serve $short"; exit 1; }
