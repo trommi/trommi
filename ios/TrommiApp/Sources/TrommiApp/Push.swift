@@ -141,7 +141,8 @@ enum Push {
         _ = try await room.hub.request("POST", "/push", body: ["apns": apns, "level": level])
       }
       UserDefaults.standard.set(true, forKey: mark)
-    } catch { log.error("trommi push: registration for room \(String(id.prefix(8)), privacy: .public) failed: \(String(describing: error), privacy: .public)") }
+    // (only the hub's code: its message is the hub's text about a request that carried the push key)
+    } catch { log.error("trommi push: registration for room \(String(id.prefix(8)), privacy: .public) failed: \((error as? HubError)?.code ?? "no answer", privacy: .public)") }
   }
 }
 #endif

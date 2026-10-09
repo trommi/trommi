@@ -161,6 +161,7 @@ final class FakeDevice: CoreDevice {
     if source == .page { standing = (state.seqs[key] ?? 0) >= seq ? .accepted : .provisional }
     else {
       guard change > state.cursor else { throw TrommiError("replay") }
+      if own { state.seqs[key] = max(state.seqs[key] ?? 0, seq) }
       if !own {
         guard seq == (state.seqs[key] ?? 0) + 1 else { throw TrommiError(seq <= (state.seqs[key] ?? 0) ? "replay" : "gap") }
         state.seqs[key] = seq

@@ -33,10 +33,21 @@ public struct SyncReport { public var envelopes = 0, opened = 0, headerOnly = 0,
 /** The hub said this app is too old to be served. */
 public struct UpgradeNotice: Equatable { public var minimumVersion: String?; public var message: String }
 
-/** The room's folder: room.json, the device's state (DeviceStore), the record cache. In the app's own container. */
+/**
+ * A device's folder: room.json (which room, which hub; no secret), the device's state (DeviceStore), the record
+ * cache. In the app's own container, left out of backups. The folder's name is random and never changes: the keys in
+ * the Keychain are named by it, and a room gets its id only from its founding, after the state exists.
+ */
 public struct Store {
   public let dir: URL
-  public init(base: URL, roomId: String) { dir = base.appendingPathComponent(roomId, isDirectory: true) }
+  init(dir: URL) { self.dir = dir }
+  /** The folder of the room this device is in; nil when it is in no such room. */
+  public init?(base: URL, roomId: String) {
+    guard let d = Store.folders(base).first(where: { (try? Store(dir: $0).load())?.roomId == roomId }) else { return nil }
+    dir = d
+  }
+  /** A new, empty folder. */
+  static func new(base: URL) throws -> Store { Store(dir: base.appendingPathComponent("d-\(hex(try LocalKey.random(8)))", isDirectory: true)) }
   public static func defaultBase() -> URL {
     if let x = ProcessInfo.processInfo.environment["TROMMI_SWIFT_HOME"] { return URL(fileURLWithPath: x, isDirectory: true) }
     #if os(Linux)
@@ -45,23 +56,56 @@ public struct Store {
     return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("trommi", isDirectory: true)
     #endif
   }
-  /** The rooms this device is in (hex ids). */
-  public static func rooms(base: URL) -> [String] {
-    ((try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []).filter { $0.utf8.count == 64 && FileManager.default.fileExists(atPath: base.appendingPathComponent($0).appendingPathComponent("room.json").path) }.sorted()
+  static func folders(_ base: URL) -> [URL] {
+    ((try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []).filter { $0.hasPrefix("d-") }.sorted().map { base.appendingPathComponent($0, isDirectory: true) }
   }
+  /** The rooms this device is in (hex ids). */
+  public static func rooms(base: URL) -> [String] { folders(base).compactMap { (try? Store(dir: $0).load())?.roomId }.sorted() }
   var stateDir: URL { dir.appendingPathComponent("state", isDirectory: true) }
-  /** Forgets the room on this device: its folder and its keys in the Keychain. */
+  var hasRecord: Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent("room.json").path) }
+  /** Forgets the device: its folder and its items in the Keychain. Only its owner calls this, with the state closed. */
   public func wipe() {
-    LocalKey.wipe(dir: dir)
     try? FileManager.default.removeItem(at: dir)
+    LocalKey.wipe(dir: dir)
   }
   public func save(_ r: RoomRecord) throws {
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    #if os(iOS)
+    var values = URLResourceValues(); values.isExcludedFromBackup = true
+    var d = dir; try d.setResourceValues(values)
+    #endif
     try JSONEncoder().encode(r).write(to: dir.appendingPathComponent("room.json"), options: .atomic)
   }
   public func load() throws -> RoomRecord { try JSONDecoder().decode(RoomRecord.self, from: Data(contentsOf: dir.appendingPathComponent("room.json"))) }
-  /** The device's state under its lock; throws `StoreError.failed("busy")` when it is open already. */
-  func openState() throws -> DeviceStore { try DeviceStore(directory: stateDir, key: try LocalKey.get("state", dir: dir)) }
+  /**
+   * The device's state under its lock; throws `StoreError.failed("busy")` when it is open already. The lock is
+   * taken before the key is asked for, so two openers never both make a key. `create`: a new device.
+   */
+  func openState(create: Bool = false) throws -> DeviceStore {
+    let fresh = create && !FileManager.default.fileExists(atPath: stateDir.path)
+    // A throwaway key until the lock is held; the store is then opened again with the real one.
+    let probe = try DeviceStore(directory: stateDir, key: Bytes(repeating: 0, count: 32))
+    let key: Bytes
+    do { key = try LocalKey.get("state", dir: dir, create: fresh) } catch { probe.close(); throw error }
+    return try probe.rekeyed(key, anchor: LocalAnchor(dir: dir))
+  }
+  /** The key of the record cache and the share links: lost, it is made again and the cache starts empty. */
+  func cacheKey() throws -> Bytes { try LocalKey.get("cache", dir: dir, create: true) }
+
+  /**
+   * Folders a join or a founding left behind without a room (the app was ended in between): removed, unless
+   * someone holds their lock. Called under `lifecycle`.
+   */
+  static func sweep(base: URL) {
+    for d in folders(base) {
+      let s = Store(dir: d)
+      guard !s.hasRecord, let state = try? DeviceStore(directory: s.stateDir, key: Bytes(repeating: 0, count: 32)) else { continue }
+      state.close()
+      s.wipe()
+    }
+  }
+  /** Creating, abandoning and removing device folders happen one at a time in this process. */
+  static let lifecycle = NSLock()
 }
 
 public final class Room {
@@ -126,7 +170,7 @@ public final class Room {
 
   /** A room that is on this device already. Fails with `busy` when it is open elsewhere in this process. */
   public static func open(base: URL = Store.defaultBase(), roomId: String) throws -> Room {
-    let store = Store(base: base, roomId: roomId)
+    guard let store = Store(base: base, roomId: roomId) else { throw TrommiError("not-found", "this device is not in that room") }
     let record = try store.load()
     let state = try store.openState()
     do { return try Room(store: store, record: record, deviceStore: state, device: try Core.tools.openDevice(store: state)) }
@@ -139,17 +183,36 @@ public final class Room {
     if let r = device.room, r != room { throw TrommiError("wrong-room", "the stored device is in another room") }
     self.store = store; self.record = record; self.deviceStore = deviceStore; self.device = device
     roomId = room
-    hub = try HubClient(hubURL: record.hubURL, room: room, signer: device)
+    coreCursor = device.cursor
+    hub = try HubClient(hubURL: record.hubURL, room: room)
+    hub.signer = QueueSigner(id: device.id) { [coreQueue] room, hub, challenge in try coreQueue.sync { try device.signHubAuth(room: room, hub: hub, challenge: challenge) } }
     board.roomId = record.roomId; board.hubURL = record.hubURL; board.myDeviceId = record.myDeviceId; board.myRole = record.role
     var ch = Change()
     try applyGroups(try device.groups(), &ch)
   }
 
-  /** Gives the state's lock back (signing out, tests). The room is unusable afterwards. */
+  /**
+   * Stops the room and gives the state's lock back (signing out, tests). First nothing new is taken (every later
+   * call into the core fails with `closed`, the outbox pump and the timers end, the hub gets no more signatures),
+   * then the lock is released. The room is unusable afterwards.
+   */
   public func close() {
-    liveTask?.cancel()
+    closed = true
+    liveTask?.cancel(); goalsTask?.cancel(); cacheTask?.cancel()
+    hub.signer = nil
+    hub.forgetToken()
     coreQueue.sync { deviceStore.close() }
   }
+  /** `close`, after what is running (queued operations, a cache save) has ended. */
+  public func shutdown() async {
+    closed = true
+    _ = await queueTail?.value
+    await saveTail?.value
+    close()
+  }
+  public private(set) var closed = false
+  /** The device's own cursor as last seen: what the core has processed, which the board's cache may lag behind. */
+  var coreCursor: UInt64 = 0
   var liveTask: Task<Void, Never>?
 
   // ---- one after the other -------------------------------------------------------------------------------
@@ -167,6 +230,7 @@ public final class Room {
 
   /** The one place the core is called from once the room is open. Only inside `serial`. */
   func onCore<T>(_ body: @escaping (CoreDevice) throws -> T) async throws -> T {
+    guard !closed else { throw TrommiError("closed", "this room was closed") }
     let device = self.device
     return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
       coreQueue.async { cont.resume(with: Result { try body(device) }) }
@@ -192,7 +256,7 @@ public final class Room {
 
   // ---- desk goals for the agents (spec/v2.md 9.3.4, Goals.swift) -----------------------------------------
 
-  private var goalsTask: Task<Void, Never>?
+  var goalsTask: Task<Void, Never>?
   /** What this device last wrote to `goals` of a session, in this run. */
   private var goalsSaid: [String: JV] = [:]
   private func goalsSoon() {
@@ -358,23 +422,28 @@ public final class Room {
   func process(_ items: [JSON], source: EnvelopeSource, report: inout SyncReport, change: inout Change) async throws {
     let parsed = items.compactMap(Item.init).filter { $0.change > cursor }
     guard !parsed.isEmpty else { return }
-    let outcomes: [Outcome] = try await onCore { device in
+    let (outcomes, coreAt): ([Outcome], UInt64) = try await onCore { device in
       var out = [Outcome]()
+      // What the core processed already and the board's cache has not (the app ended before the cache was written):
+      // an envelope is read again without touching any state, a log entry is done with.
+      let done = device.cursor
       for item in parsed {
         do {
           switch item {
-          case .log(let entry): out.append(.processed(try device.processLogEntry(entry)))
-          case .envelope(let c, let bytes, let void): out.append(.envelope(try device.receiveEnvelope(bytes, change: c, source: source, voidCode: void, nowMs: nowMs()), change: c))
+          case .log(let entry): out.append(entry.change <= done ? .processed(.skipped) : .processed(try device.processLogEntry(entry)))
+          case .envelope(let c, let bytes, let void):
+            out.append(.envelope(try device.receiveEnvelope(bytes, change: c, source: c <= done ? .page : source, voidCode: void, nowMs: nowMs()), change: c))
           }
         } catch {
           // A local failure is not the item's fault: stop here, nothing after it is processed out of order.
-          if case .local = device.logFinding(error) { if out.isEmpty { throw error }; return out }
+          if case .local = device.logFinding(error) { if out.isEmpty { throw error }; return (out, device.cursor) }
           if !device.isOwner { throw error }
           out.append(.refused(change: item.change, code: Room.codeOf(error)))
         }
       }
-      return out
+      return (out, device.cursor)
     }
+    coreCursor = coreAt
     // The groups are read again from the core after a Commit and before the next item is shown: an envelope right
     // behind the Commit that founded its session must find that session on the board.
     var groupsStale = false, groupsChanged = false
@@ -550,7 +619,7 @@ public final class Room {
     Task { @MainActor in
       defer { pumping = false }
       var backoff: UInt64 = 300_000_000
-      while !Task.isCancelled {
+      while !Task.isCancelled && !closed {
         guard let entry = try? await onCore({ $0.outbox().first }) else { return }
         do {
           let r = try await noted { try await hub.post(entry) }
@@ -617,4 +686,12 @@ public final class Room {
     }
     return out
   }
+}
+
+/** Signs hub challenges as the room's device, on the queue the core is called from; gone once the room is closed. */
+final class QueueSigner: CoreSigner {
+  let id: DeviceId
+  private let sign: (RoomId, String, Bytes) throws -> (auth: Bytes, signature: Bytes)
+  init(id: DeviceId, sign: @escaping (RoomId, String, Bytes) throws -> (auth: Bytes, signature: Bytes)) { self.id = id; self.sign = sign }
+  func signHubAuth(room: RoomId, hub: String, challenge: Bytes) throws -> (auth: Bytes, signature: Bytes) { try sign(room, hub, challenge) }
 }
