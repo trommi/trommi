@@ -97,6 +97,7 @@ fn facts(group: GroupId, epoch: u64, committer: u8, room_epoch: u64) -> CommitFa
             cuts: vec![],
             join: false,
         }),
+        newer_version: false,
     }
 }
 
@@ -358,6 +359,103 @@ fn a_join_from_outside_needs_the_recovery_signature() {
         }),
         Err(Error::BadCommit)
     );
+    // Nor does it take a `SealedKey`, whatever its bytes: it cannot check one.
+    for sealed_key in [&b""[..], &[1], b"test sealed key"] {
+        assert_eq!(
+            NoRecovery.verify_sealed_key(
+                &SealedKeyClaim {
+                    group: &group,
+                    epoch: 3,
+                    group_info: b"group info",
+                    room_epoch: 2,
+                    recovery_hpke_key: &[0xE2; 32],
+                    writer: &device(H1),
+                    writer_is_human: true,
+                },
+                sealed_key
+            ),
+            Err(Error::Incomplete)
+        );
+    }
+}
+
+#[test]
+fn the_thirty_third_human_device_comes_by_a_join_from_outside_only() {
+    let group = GroupId::room(ROOM);
+    let verdict = |history: &RoomHistory, facts: &CommitFacts, most: usize| {
+        let verifier = Verifier {
+            history,
+            sessions: &SESSIONS,
+            recovery: &AnyJoin,
+            max_human_devices: most,
+            posting: false,
+        };
+        check_room_commit(
+            &verifier,
+            &Judged {
+                facts,
+                commit: b"commit",
+                recovery_auth: facts.external.then_some(&b"signed"[..]),
+            },
+        )
+    };
+    let humans: Vec<u8> = (1..=33).collect();
+    let full = RoomHistory::new(state(0, &humans[..32], &[]));
+    let mut join = facts(group, 0, 33, 0);
+    join.external = true;
+    join.external_inits = 1;
+    join.note.as_mut().unwrap().join = true;
+
+    // A room of 32: a device that cannot know whether a recovery runs allows 33, and still takes no Add of
+    // a 33rd, only a join from outside. A hub outside a recovery allows 32 and takes neither.
+    let add = adding(facts(group, 0, 1, 0), &[33]);
+    assert_eq!(verdict(&full, &add, 33), Err(Error::TooMany));
+    assert_eq!(verdict(&full, &add, 32), Err(Error::TooMany));
+    assert_eq!(verdict(&full, &join, 33), Ok(()));
+    assert_eq!(verdict(&full, &join, 32), Err(Error::TooMany));
+
+    // A room of 33, as a recovery leaves it for a moment: a Commit that adds nobody passes, so that the
+    // other devices are removed and the room can go on; nobody is added, and nobody else joins.
+    let over = RoomHistory::new(state(0, &humans, &[]));
+    assert_eq!(verdict(&over, &facts(group, 0, 33, 0), 33), Ok(()));
+    let removal = removing(facts(group, 0, 33, 0), &humans[..32]);
+    assert_eq!(verdict(&over, &removal, 33), Ok(()));
+    assert_eq!(verdict(&over, &removal, 32), Ok(()));
+    let swap = adding(removing(facts(group, 0, 33, 0), &[1]), &[34]);
+    assert_eq!(verdict(&over, &swap, 33), Err(Error::TooMany));
+    join.committer = device(34);
+    assert_eq!(verdict(&over, &join, 33), Err(Error::TooMany));
+}
+
+#[test]
+fn a_note_of_a_newer_version_is_named_as_such() {
+    let history = history();
+    let sessions = SESSIONS;
+    let main = session(SessionId::ZERO, MAIN);
+    // The note of a newer version does not decode: the Commit is `newer-version`, in the room group and in a
+    // session group, also when it holds what this build takes for forbidden.
+    for forbidden in [false, true] {
+        let mut newer = facts(GroupId::room(ROOM), 2, H1, 2);
+        newer.note = None;
+        newer.newer_version = true;
+        newer.forbidden = forbidden;
+        assert_eq!(room_verdict(&history, &newer), Err(Error::NewerVersion));
+        newer.group = main.group_id();
+        newer.epoch = 1;
+        assert_eq!(
+            session_verdict(
+                &history,
+                &sessions,
+                &before(main, &[H1, H2, AGENT], 2),
+                &newer
+            ),
+            Err(Error::NewerVersion)
+        );
+    }
+    // A note that does not decode for another reason stays `bad-commit`.
+    let mut broken = facts(GroupId::room(ROOM), 2, H1, 2);
+    broken.note = None;
+    assert_eq!(room_verdict(&history, &broken), Err(Error::BadCommit));
 }
 
 #[test]
@@ -413,10 +511,30 @@ fn main_session_commits_follow_5_2() {
             Err(Error::BadCommit)
         );
     }
-    // A takeover is Remove and Add in one Commit.
+    // A takeover is Remove and Add in one Commit, and comes after the old agent device left `agents`
+    // (5.3.1): while the room holds it, another device does not take its seat.
     let takeover = adding(removing(update.clone(), &[AGENT]), &[OTHER_AGENT]);
     assert_eq!(
         session_verdict(&history, &SESSIONS, &live, &takeover),
+        Err(Error::BadCommit)
+    );
+    let mut after_removal = history.clone();
+    after_removal
+        .record(state(3, &[H1, H2], &[OTHER_AGENT]))
+        .unwrap();
+    let takeover = adding(removing(facts(group, 3, H1, 3), &[AGENT]), &[OTHER_AGENT]);
+    assert_eq!(
+        session_verdict(&after_removal, &SESSIONS, &live, &takeover),
+        Ok(())
+    );
+    // The agent leaf of an enrolled device may go and leave the seat empty (5.2.2).
+    assert_eq!(
+        session_verdict(
+            &history,
+            &SESSIONS,
+            &live,
+            &removing(update.clone(), &[AGENT])
+        ),
         Ok(())
     );
     // A room epoch the verifier does not know, one below the previous Commit's, one that is not the
@@ -589,6 +707,18 @@ fn helper_session_commits_follow_5_2_3_to_5_2_5() {
             Err(Error::BadCommit)
         );
     }
+    // A human device does not remove the opener while it is the main session's agent leaf (5.2.3); a
+    // verifier that does not follow the main session does not judge this.
+    let unseat = removing(facts(group, 1, H1, 2), &[AGENT]);
+    assert_eq!(
+        session_verdict(&history, &SESSIONS, &live, &unseat),
+        Err(Error::BadCommit)
+    );
+    let unknown = Sessions {
+        seat: Parent::Unknown,
+        ..SESSIONS
+    };
+    assert_eq!(session_verdict(&history, &unknown, &live, &unseat), Ok(()));
     // After a takeover of the main session the old opener's leaf makes the group stale; a human device
     // replaces it with the new one. While the seat is empty the helper devices stay.
     let taken_over = Sessions {
