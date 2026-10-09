@@ -538,11 +538,14 @@ impl InviteLink {
         {
             return Err(Error::BadFormat);
         }
+        // The secret goes straight into a place that is wiped: no buffer on the heap holds it on the way.
+        let mut secret_bytes = Zeroizing::new([0u8; 32]);
+        ids::base64url_decode_into(secret, secret_bytes.as_mut_slice())?;
         Self::new(
             app,
             HubAddress::from_bytes(&ids::base64url_decode(hub)?)?,
             RoomId::from_base64url(room_id)?,
-            Secret::from_slice(&Zeroizing::new(ids::base64url_decode(secret)?))?,
+            Secret::new(*secret_bytes),
         )
     }
 
@@ -890,7 +893,8 @@ impl Inviter {
 
     /// The invite for the device's store. It holds the link's secret and the nonce.
     pub fn to_stored(&self) -> Result<SecretBytes, Error> {
-        let mut writer = Writer::new();
+        // Room for all of it, so that the secret and the nonce are written once and never moved.
+        let mut writer = Writer::with_capacity(MAX_STORED_LEN);
         writer.u8(STORED_VERSION);
         writer.opaque(self.link.app.as_bytes())?;
         writer.value(&self.link.hub)?;
