@@ -10,6 +10,8 @@ path = "src/lib.rs"
 
 [dependencies]
 trommi-core = { path = "../core", features = ["vectors"] }
+# The facade both bindings share, for the tests of the bindings (`bindings/`).
+trommi-core-swift = { path = "../core/swift" }
 serde_json = "=1.0.151"
 # OpenMLS itself, for the member of `src/forge.rs` that builds what no device builds.
 openmls = { workspace = true }
@@ -85,3 +87,7 @@ path = "core/groups_lifetimes.rs"
 [[test]]
 name = "core_groups_cost"
 path = "core/groups_cost.rs"
+
+[[test]]
+name = "bindings_facade"
+path = "bindings/facade.rs"
