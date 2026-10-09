@@ -12,12 +12,21 @@
 root=${1:-/srv/trommi}
 cd "$root" 2>/dev/null || exit 0
 [ -f updater-trial ] || exit 0
+# A trial is about the program, not about the network: while the tailnet address the updater listens on is not there
+# (Tailscale updating itself, an early boot), no try is counted. The updater itself waits for the address too.
+address=${UPDATER_LISTEN%:*}
+if [ -n "$address" ] && command -v ip >/dev/null 2>&1 && ! ip -o addr 2>/dev/null | grep -qF " $address/"; then
+  echo "updater-prestart: $address is not there yet; this start is not counted as a try"
+  exit 0
+fi
 count='' tag=''
 read -r count tag < updater-trial || true
 if [ "$count" = 0 ]; then
-  printf '1 %s\n' "$tag" > updater-trial.part && mv -f updater-trial.part updater-trial
-  echo "updater-prestart: first start of the updater of $tag"
-  exit 0
+  if printf '1 %s\n' "$tag" > updater-trial.part && mv -f updater-trial.part updater-trial; then
+    echo "updater-prestart: first start of the updater of $tag"
+    exit 0
+  fi
+  # the try cannot be written down: rather go back now than try without end
 fi
 # The link goes back first; the note of the trial goes only when that is done, so a failure here is tried again at
 # the next start.
