@@ -1067,6 +1067,15 @@ fn accepted_content_arrives_live_and_a_stream_resumes_by_change_number() {
     let hash = s.w.ada.chain(&s.group).1;
     let e = human.until("envelope");
     assert_eq!(envelope_of(&e.data).hash(), hash);
+    // a live event is the item that catch-up gives
+    let replayed = s
+        .bea
+        .get(
+            hub,
+            &format!("/v2/changes?after={}&limit=1", e.id.unwrap() - 1),
+        )
+        .ok();
+    assert_eq!(replayed["items"][0], e.data);
     assert_eq!(e.id, e.data["change"].as_i64());
     assert_eq!(envelope_of(&agent.until("envelope").data).hash(), hash);
     // room content does not reach the agent device; a Commit of the room group does (it observes the room)
