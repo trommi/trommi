@@ -589,7 +589,9 @@ impl<S: Storage> Device<S> {
         }
         match invited.role {
             Role::Human => {
-                if !invited.handed_over {
+                let handed =
+                    invited.handed_over || self.memory.sent.contains(&(device, room_group));
+                if !handed {
                     return Ok(Some(if waits(&room_group) {
                         InviteStep::Wait
                     } else {
@@ -646,9 +648,9 @@ impl<S: Storage> Device<S> {
                     return Ok(None);
                 };
                 if self.leaves_now(&group)?.contains(&device) {
-                    return Ok(
-                        (!invited.handed_over).then_some(InviteStep::Handover { group, device })
-                    );
+                    return Ok((!invited.handed_over
+                        && !self.memory.sent.contains(&(device, group)))
+                    .then_some(InviteStep::Handover { group, device }));
                 }
                 if waits(&group) {
                     return Ok(Some(InviteStep::Wait));
@@ -838,6 +840,25 @@ impl<S: Storage> Device<S> {
         Ok(())
     }
 
+    /// A device that answered an invite follows the room group only as that invite says (12.1.6): after the
+    /// Reveal was checked, as an agent device, from the state the Offer names (`bad-invite` otherwise).
+    pub(super) fn observing_as_invited(
+        &self,
+        expected_state: Option<&Hash32>,
+    ) -> Result<(), Error> {
+        let Some(joining) = self.joining_by_link()? else {
+            return Ok(());
+        };
+        let offer = joining.joiner.offer();
+        if !joining.revealed
+            || offer.role != Role::Agent
+            || expected_state != Some(&offer.room_state)
+        {
+            return Err(Error::BadInvite);
+        }
+        Ok(())
+    }
+
     /// An invited agent device joins no session group before it saw its inviter enrol it: `room-behind`,
     /// the room group's log is processed first.
     pub(super) fn enrolment_verified(&self) -> Result<(), Error> {
@@ -861,13 +882,6 @@ impl<S: Storage> Device<S> {
         if !facts.group.is_room() {
             return Ok(());
         }
-        let Some(joining) = self.joining_by_link()? else {
-            return Ok(());
-        };
-        let offer = joining.joiner.offer();
-        if offer.role != Role::Agent {
-            return Ok(());
-        }
         let history = self.history()?;
         let now = history.newest();
         let before = now
@@ -878,7 +892,17 @@ impl<S: Storage> Device<S> {
         if !now.is_agent(&self.id) || before {
             return Ok(());
         }
-        if facts.committer != offer.inviter {
+        // This Commit enrols this device. Without an invite it takes no enrolment, except under the cargo
+        // feature `vectors`, where the scenario tests enrol devices without one.
+        let Some(joining) = self.joining_by_link()? else {
+            return if cfg!(feature = "vectors") {
+                Ok(())
+            } else {
+                Err(Error::BadInvite)
+            };
+        };
+        let offer = joining.joiner.offer();
+        if !joining.revealed || offer.role != Role::Agent || facts.committer != offer.inviter {
             return Err(Error::BadInvite);
         }
         self.delete_stored(batch, joiner_key());

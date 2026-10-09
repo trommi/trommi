@@ -290,10 +290,13 @@ fn a_command_survives_a_crash_or_a_failed_write_and_never_acts_twice() {
             run.agent.command(&hash, now()).unwrap(),
             Decision::Uncertain
         );
+        // After a restart the device names it among the commands whose effect is uncertain.
+        assert_eq!(run.agent.commands_uncertain().unwrap(), vec![hash]);
         // 3: the effect is complete.
         run.step(3, |_, device| device.command_finished(&hash));
         assert_eq!(run.agent.command(&hash, now()).unwrap(), Decision::Done);
         assert!(run.agent.commands_pending().unwrap().is_empty());
+        assert!(run.agent.commands_uncertain().unwrap().is_empty());
     }
 }
 

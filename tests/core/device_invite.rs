@@ -564,6 +564,8 @@ fn an_agent_device_is_enrolled_by_its_inviter_alone() {
     let offered = hub.group_info(&room).unwrap().clone();
     assert_eq!(agent.join_observe(&offered), Err(Error::NotFound));
     agent.join_reveal(&accepted.signed_reveal).unwrap();
+    // Nor from any state but the one the Offer names.
+    assert_eq!(agent.observe_room(&offered, None), Err(Error::BadInvite));
     agent.join_observe(&offered).unwrap();
     // Another human device enrols it, not its inviter: the new device does not take that.
     c.change_agents(&[agent.id()], &[], now()).unwrap();
