@@ -1,0 +1,39 @@
+{
+  "made_at": 1791469800000,
+  "room": {
+    "room_id": "1111111111111111111111111111111111111111111111111111111111111111",
+    "hub_url": "mock:",
+    "my_device_id": "2222222222222222222222222222222222222222222222222222222222222222",
+    "my_role": "human",
+    "key_epoch": 1,
+    "last_entry_number": 0,
+    "last_envelope_number": 0,
+    "connection": "live"
+  },
+  "members": [
+    {
+      "device_id": "2222222222222222222222222222222222222222222222222222222222222222",
+      "device_role": "human",
+      "device_name": "Laptop",
+      "is_active": true,
+      "added_entry_number": 0,
+      "removed_entry_number": null,
+      "is_me": true,
+      "is_online": true
+    }
+  ],
+  "sessions": [],
+  "cards": [],
+  "permissions": [],
+  "notes": [],
+  "published": [],
+  "timelines": {},
+  "human": {
+    "drafts": {},
+    "snoozes": {},
+    "ducks": {},
+    "crown": null,
+    "desks": {},
+    "session_settings": {}
+  }
+}
