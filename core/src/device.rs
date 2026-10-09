@@ -3059,8 +3059,8 @@ impl<S: Storage> Device<S> {
         expected_state: Option<&Hash32>,
     ) -> Result<(), Error> {
         self.transact(|this, batch| {
-            this.observing_as_invited(expected_state)?;
             let observer = Observer::follow_room(group_info, expected_state)?;
+            this.observing_as_invited(expected_state, observer.history())?;
             let group = observer.group();
             let known_room = this.memory.record.room;
             if this.memory.history.is_some()

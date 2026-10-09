@@ -538,8 +538,10 @@ fn is_fault(error: &Error) -> bool {
 
 impl<S: Storage> Device<S> {
     fn own_chain(&self, group: &GroupId) -> Result<OwnChain, Error> {
+        // The chain is written when the device begins its first epoch in the group: without it the device
+        // cannot tell which numbers it used.
         self.stored(&group_key(table::CHAIN, SUB_OWN_CHAIN, group, &[]))
-            .map_or(Ok(OwnChain::new()), OwnChain::from_bytes)
+            .map_or(Err(damaged("the own chain")), OwnChain::from_bytes)
     }
 
     fn own_ids(&self, group: &GroupId) -> Result<OwnIds, Error> {
@@ -1061,13 +1063,21 @@ impl<S: Storage> Device<S> {
             // names (`equivocation`).
             for (writer, named) in &snapshot.frontier {
                 let held = chains_held.head(writer);
+                // Of a writer this device holds nothing of, the frontier is the one shortcut of 9.0.6.
+                if held.seq == 0 {
+                    continue;
+                }
                 if held.seq < named.seq {
                     return Err(Error::Withheld);
                 }
-                let same = this
-                    .record(&room, writer, named.seq)?
-                    .is_none_or(|record| record.hash == named.hash);
-                if !same {
+                let at_frontier = if held.seq == named.seq {
+                    held.hash
+                } else {
+                    this.record(&room, writer, named.seq)?
+                        .ok_or_else(|| damaged("a chain record"))?
+                        .hash
+                };
+                if at_frontier != named.hash {
                     return Err(Error::Equivocation);
                 }
             }
@@ -1251,7 +1261,8 @@ impl<S: Storage> Device<S> {
             change,
             hash,
             status: Status::Taken,
-            fresh: Facts(self).processed_epoch(&group)? == Some(header.epoch),
+            fresh: matches!(outcome, Outcome::Taken { .. })
+                || Facts(self).processed_epoch(&group)? == Some(header.epoch),
             code: None,
             header: header.clone(),
             extra: Vec::new(),
@@ -1569,21 +1580,40 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// Drops what the gate was not yet asked about in `group`: the state those envelopes were kept with was
-    /// built again.
-    pub(super) fn drop_undecided(
+    /// The state of `group` was built again: what the gate was not yet asked about there is kept only if its
+    /// envelope still counts, with the state its object has just before it now.
+    pub(super) fn refresh_undecided(
         &mut self,
         batch: &mut Batch,
         group: &GroupId,
     ) -> Result<(), Error> {
         let prefix = store::key(table::COMMAND, &[&[SUB_CANDIDATE]]);
         for (key, value) in self.stored_under(&prefix) {
-            let candidate: Candidate =
+            let mut candidate: Candidate =
                 codec::decode(&value, value.len()).map_err(|_| damaged("a command record"))?;
-            let of_group = Envelope::decode(&candidate.envelope)
-                .is_ok_and(|envelope| envelope.header.group == *group);
-            if candidate.state == Asked::No && of_group {
+            let Ok(envelope) = Envelope::decode(&candidate.envelope) else {
+                return Err(damaged("a command record"));
+            };
+            if candidate.state != Asked::No || envelope.header.group != *group {
+                continue;
+            }
+            let record = self
+                .record(group, &envelope.header.sender, envelope.header.seq)?
+                .filter(|record| record.status == Status::Taken);
+            let Some(record) = record else {
                 self.delete_stored(batch, key);
+                continue;
+            };
+            let before = match envelope.header.subject.object() {
+                Some(fields) => self
+                    .objects_before(group, record.change)?
+                    .get(&fields.object_id)
+                    .cloned(),
+                None => None,
+            };
+            if before != candidate.before {
+                candidate.before = before;
+                self.put_stored(batch, key, codec::encode(&candidate)?);
             }
         }
         Ok(())

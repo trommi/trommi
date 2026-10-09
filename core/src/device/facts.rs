@@ -565,6 +565,11 @@ impl<S: Storage> Device<S> {
     ) -> Result<(), Error> {
         let merging = self.memory.wire.merging.take();
         let facts = self.roles(group, leaves, room_epoch)?;
+        // The device's own chain in the group exists from its first epoch there on.
+        let own_chain = group_key(table::CHAIN, SUB_OWN_CHAIN, group, &[]);
+        if self.stored(&own_chain).is_none() {
+            self.put_stored(batch, own_chain, OwnChain::new().to_bytes()?);
+        }
         self.put_stored(
             batch,
             group_key(table::CHAIN, SUB_EPOCH, group, &epoch.to_be_bytes()),
@@ -885,10 +890,9 @@ impl<S: Storage> Device<S> {
         for record in changed {
             self.put_envelope_record(batch, group, &record)?;
         }
-        // What the gate was not yet asked about was kept with a state of its object that no longer holds.
-        self.drop_undecided(batch, group)?;
         self.put_objects(batch, group, &objects)?;
-        self.put_registers(batch, group, &registers)
+        self.put_registers(batch, group, &registers)?;
+        self.refresh_undecided(batch, group)
     }
 
     // ---- Cuts ----
