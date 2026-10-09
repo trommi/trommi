@@ -9,9 +9,8 @@
 //!
 //! **Numbers.** Every position, length and offset is a whole number of quanta, 1/16 board unit ([`QUANTUM`]),
 //! held in an `i32`. Positions are taken modulo 2^32 quanta: adding an offset wraps, so sums are exact and do not
-//! depend on the order of the additions. In JSON the same values stand in board units (`12.5`), and only
-//! multiples of 1/16 that fit are accepted. There is no floating point arithmetic on any path that two devices
-//! must agree on.
+//! depend on the order of the additions. JSON carries the same whole numbers; a number written with a fraction
+//! or an exponent is refused, so no value is ever rounded. There is no floating point in this module.
 //!
 //! **Merging.** Adding happens once per id, erasing wins for good, moves add up. Each of the three commutes with
 //! the others, so two devices that applied the same items hold the same board, whatever order the items of
@@ -25,7 +24,7 @@ use crate::envelope::MAX_PAYLOAD_LEN;
 use crate::error::Error;
 use crate::files::FileRef;
 use crate::ids::{self, DeviceId};
-use serde::de::{self, Deserializer, Visitor};
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -420,48 +419,27 @@ impl Shape {
 
 // ---- JSON ----
 
-/// A number of quanta as JSON shows it: board units, a multiple of 1/16.
-#[derive(Clone, Copy)]
-pub(crate) struct Units(pub(crate) i32);
-
-impl Serialize for Units {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if self.0 % QUANTUM == 0 {
-            serializer.serialize_i32(self.0 / QUANTUM)
-        } else {
-            // Exact: an i32 divided by a power of two is a double, and at most fourteen digits long.
-            serializer.serialize_f64(f64::from(self.0) / f64::from(QUANTUM))
-        }
-    }
+/// A field that, if it stands, holds a value: `null` is no way to leave a field out.
+pub(crate) fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
 }
 
-impl<'de> Deserialize<'de> for Units {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let units = f64::deserialize(deserializer)?;
-        // Exact as well: a multiplication by a power of two.
-        let quanta = units * f64::from(QUANTUM);
-        let fits =
-            quanta.fract() == 0.0 && quanta >= f64::from(i32::MIN) && quanta <= f64::from(i32::MAX);
-        if !fits {
-            return Err(de::Error::custom("not a multiple of 1/16 in range"));
-        }
-        // No rounding and no saturation: the value is whole and within the type.
-        Ok(Self(quanta as i32))
-    }
-}
-
-/// A file key as a body's JSON carries it, wiped when dropped.
+/// A file key as a body's JSON carries it, wiped when dropped. Only text that stands in the JSON as it is: a
+/// key written with an escape would pass through the parser's own buffer, which is not wiped, and no writer
+/// writes one.
 struct KeyText(Zeroizing<String>);
 
 impl<'de> Deserialize<'de> for KeyText {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct Text;
-        impl Visitor<'_> for Text {
+        impl<'de> Visitor<'de> for Text {
             type Value = KeyText;
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("a file key")
+                f.write_str("a file key without escapes")
             }
-            fn visit_str<E: de::Error>(self, text: &str) -> Result<KeyText, E> {
+            fn visit_borrowed_str<E: de::Error>(self, text: &'de str) -> Result<KeyText, E> {
                 Ok(KeyText(Zeroizing::new(text.to_owned())))
             }
         }
@@ -499,7 +477,9 @@ struct AttachmentIn {
     file_name: String,
     media_type: String,
     total_size: u64,
+    #[serde(default, deserialize_with = "present")]
     width: Option<u32>,
+    #[serde(default, deserialize_with = "present")]
     height: Option<u32>,
 }
 
@@ -516,21 +496,21 @@ struct EntryOut<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     color: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    width: Option<Units>,
+    width: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     points: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     live: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    at: Option<[Units; 2]>,
+    at: Option<[i32; 2]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    size: Option<Units>,
+    size: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    wrap: Option<Units>,
+    wrap: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    rect: Option<[Units; 4]>,
+    rect: Option<[i32; 4]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     attachment: Option<AttachmentOut<'a>>,
     #[serde(skip_serializing_if = "is_zero")]
@@ -541,20 +521,32 @@ struct EntryOut<'a> {
 
 #[derive(Deserialize)]
 struct EntryIn {
+    #[serde(default, deserialize_with = "present")]
     id: Option<String>,
     tool: String,
+    #[serde(default, deserialize_with = "present")]
     color: Option<String>,
-    width: Option<Units>,
+    #[serde(default, deserialize_with = "present")]
+    width: Option<i32>,
+    #[serde(default, deserialize_with = "present")]
     points: Option<String>,
+    #[serde(default, deserialize_with = "present")]
     live: Option<String>,
-    at: Option<[Units; 2]>,
+    #[serde(default, deserialize_with = "present")]
+    at: Option<[i32; 2]>,
+    #[serde(default, deserialize_with = "present")]
     text: Option<String>,
-    size: Option<Units>,
-    wrap: Option<Units>,
-    rect: Option<[Units; 4]>,
+    #[serde(default, deserialize_with = "present")]
+    size: Option<i32>,
+    #[serde(default, deserialize_with = "present")]
+    wrap: Option<i32>,
+    #[serde(default, deserialize_with = "present")]
+    rect: Option<[i32; 4]>,
+    #[serde(default, deserialize_with = "present")]
     attachment: Option<AttachmentIn>,
     #[serde(default)]
     z: i32,
+    #[serde(default, deserialize_with = "present")]
     group: Option<String>,
 }
 
@@ -583,7 +575,7 @@ impl<'a> EntryOut<'a> {
                     Pen::Marker => "marker",
                 };
                 entry.color = Some(&stroke.color);
-                entry.width = Some(Units(stroke.width));
+                entry.width = Some(stroke.width);
                 entry.points = Some(stroke.ink.to_base64url());
                 entry.live = stroke.live.map(|live| ids::base64url_encode(&live));
             }
@@ -593,15 +585,15 @@ impl<'a> EntryOut<'a> {
                     NoteKind::Sticky => "sticky",
                     NoteKind::Voice => "voice",
                 };
-                entry.at = Some(note.at.map(Units));
+                entry.at = Some(note.at);
                 entry.text = Some(&note.text);
-                entry.size = Some(Units(note.size));
+                entry.size = Some(note.size);
                 entry.color = Some(&note.color);
-                entry.wrap = note.wrap.map(Units);
+                entry.wrap = note.wrap;
             }
             ShapeKind::Picture(picture) => {
                 entry.tool = "image";
-                entry.rect = Some(picture.rect.map(Units));
+                entry.rect = Some(picture.rect);
                 entry.attachment = Some(AttachmentOut {
                     file_id: picture.file.file_id.to_base64url(),
                     file_key: &picture.file,
@@ -655,7 +647,7 @@ impl EntryIn {
             ShapeKind::Stroke(Stroke {
                 pen,
                 color,
-                width: width.0,
+                width,
                 ink: Ink::from_base64url(&points)?,
                 live: self.live.as_deref().map(live_id).transpose()?,
             })
@@ -672,11 +664,11 @@ impl EntryIn {
             };
             ShapeKind::Note(Note {
                 kind,
-                at: [x.0, y.0],
+                at: [x, y],
                 text,
-                size: size.0,
+                size,
                 color,
-                wrap: self.wrap.map(|wrap| wrap.0),
+                wrap: self.wrap,
             })
         } else if self.tool == "image" {
             let nothing_else = self.color.is_none()
@@ -692,7 +684,7 @@ impl EntryIn {
                 return Err(Error::BadFormat);
             };
             ShapeKind::Picture(Picture {
-                rect: rect.map(|side| side.0),
+                rect,
                 file: FileRef::from_base64url(
                     &attachment.file_id,
                     &attachment.file_key.0,
@@ -785,7 +777,7 @@ struct BodyOut<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     shape_ids: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    offset: Option<[Units; 2]>,
+    offset: Option<[i32; 2]>,
 }
 
 /// Only the version of a body, read before anything else.
@@ -797,15 +789,23 @@ struct VersionIn {
 #[derive(Deserialize)]
 struct BodyIn {
     content_type: String,
+    #[serde(default, deserialize_with = "present")]
     strokes: Option<Vec<EntryIn>>,
+    #[serde(default, deserialize_with = "present")]
     shape_ids: Option<Vec<String>>,
-    offset: Option<[Units; 2]>,
+    #[serde(default, deserialize_with = "present")]
+    offset: Option<[i32; 2]>,
 }
 
-/// The ids a body names: at least one, at most [`MAX_SHAPE_IDS`], none twice.
+/// The ids a body names: at least one, at most [`MAX_SHAPE_IDS`], none twice, none with number 0.
 fn check_ids(shapes: &[ShapeId]) -> Result<(), Error> {
     let distinct: BTreeSet<&ShapeId> = shapes.iter().collect();
-    if shapes.is_empty() || shapes.len() > MAX_SHAPE_IDS || distinct.len() != shapes.len() {
+    let numbered = shapes.iter().all(|id| id.seq > 0);
+    if shapes.is_empty()
+        || shapes.len() > MAX_SHAPE_IDS
+        || distinct.len() != shapes.len()
+        || !numbered
+    {
         return Err(Error::BadFormat);
     }
     Ok(())
@@ -848,7 +848,7 @@ impl ItemBody {
             Self::Strokes(shapes) => ("strokes", Some(shapes.as_slice()), None, None),
             Self::Erase(shapes) => ("erase", None, ids(shapes), None),
             Self::SendAway(shapes) => ("send_away", None, ids(shapes), None),
-            Self::Move { shapes, offset } => ("move", None, ids(shapes), Some(offset.map(Units))),
+            Self::Move { shapes, offset } => ("move", None, ids(shapes), Some(*offset)),
         };
         let body = BodyOut {
             schema_version: SCHEMA_VERSION,
@@ -895,7 +895,7 @@ impl ItemBody {
             ("send_away", None, None) => Self::SendAway(parse_ids(body.shape_ids)?),
             ("move", None, Some([dx, dy])) => Self::Move {
                 shapes: parse_ids(body.shape_ids)?,
-                offset: [dx.0, dy.0],
+                offset: [dx, dy],
             },
             _ => return Err(Error::BadFormat),
         };
@@ -1105,7 +1105,9 @@ impl Board {
     /// The snapshot file of the board as it is now (10.2): JSON, to be compressed and stored as a file by the
     /// caller. `frontier` names, per writer, the last envelope in the room group that the caller accepted, and
     /// so everything this board has taken into account; it is also what the register `board_snapshot/<board>`
-    /// names. `bad-format` if it is behind the board for any writer, or names a writer twice or a number 0.
+    /// names. The caller has handed every board item up to those numbers to [`Board::apply`] or
+    /// [`Board::skip_unread`] before: an item the frontier covers and the board never saw is lost to every
+    /// device that loads the file. `bad-format` if it is behind the board for any writer, or names a writer twice or a number 0.
     /// `newer-version` or `no-key` if an item was skipped as unread; `too-large` above [`MAX_SNAPSHOT_LEN`] bytes. The bytes
     /// may hold file keys.
     pub fn snapshot(&self, frontier: &[(DeviceId, Head)]) -> Result<SecretBytes, Error> {
@@ -1145,7 +1147,7 @@ impl Board {
                 .moved_ahead
                 .iter()
                 .filter(|(id, _)| !covered(id))
-                .map(|(id, [dx, dy])| (id.to_string(), Units(*dx), Units(*dy)))
+                .map(|(id, [dx, dy])| (id.to_string(), *dx, *dy))
                 .collect(),
         };
         to_json(&file, MAX_SNAPSHOT_LEN)
@@ -1178,15 +1180,13 @@ impl Board {
             .map(|(sender, head)| (*sender, head.seq))
             .collect();
 
-        let mut before = None;
-        for mut entry in file.shapes {
-            let id = ShapeId::parse(&entry.id.take().ok_or(Error::BadFormat)?)?;
-            if !board.covers(&ascending(&mut before, id)?) {
+        for (id, shape) in file.shapes.0 {
+            if !board.covers(&id) {
                 return Err(Error::BadFormat);
             }
-            board.shapes.insert(id, entry.shape()?);
+            board.shapes.insert(id, shape);
         }
-        before = None;
+        let mut before = None;
         for text in &file.gone {
             let id = ascending(&mut before, ShapeId::parse(text)?)?;
             if board.covers(&id) {
@@ -1197,7 +1197,7 @@ impl Board {
         before = None;
         for (text, dx, dy) in &file.moved {
             let id = ascending(&mut before, ShapeId::parse(text)?)?;
-            let offset = [dx.0, dy.0];
+            let offset = [*dx, *dy];
             if board.covers(&id) || board.gone_ahead.contains(&id) || offset == [0, 0] {
                 return Err(Error::BadFormat);
             }
@@ -1213,7 +1213,7 @@ struct SnapshotOut<'a> {
     shapes: Shapes<'a>,
     frontier: BTreeMap<String, (u64, String)>,
     gone: Vec<String>,
-    moved: Vec<(String, Units, Units)>,
+    moved: Vec<(String, i32, i32)>,
 }
 
 /// Only the version of a snapshot file, read before anything else.
@@ -1222,10 +1222,39 @@ struct SnapshotVersionIn {
     v: u64,
 }
 
+/// The shapes of a snapshot file, each read, checked and turned into its shape before the next: a file full
+/// of entries that are no shapes is refused at the first.
+struct ShapesIn(Vec<(ShapeId, Shape)>);
+
+impl<'de> Deserialize<'de> for ShapesIn {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct List;
+        impl<'de> Visitor<'de> for List {
+            type Value = ShapesIn;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("shapes in ascending order")
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut list: A) -> Result<ShapesIn, A::Error> {
+                let mut shapes = Vec::new();
+                let mut before = None;
+                while let Some(mut entry) = list.next_element::<EntryIn>()? {
+                    let id = entry.id.take().ok_or_else(|| de::Error::custom("no id"))?;
+                    let id = ShapeId::parse(&id)
+                        .and_then(|id| ascending(&mut before, id))
+                        .map_err(de::Error::custom)?;
+                    shapes.push((id, entry.shape().map_err(de::Error::custom)?));
+                }
+                Ok(ShapesIn(shapes))
+            }
+        }
+        deserializer.deserialize_seq(List)
+    }
+}
+
 #[derive(Deserialize)]
 struct SnapshotIn {
-    shapes: Vec<EntryIn>,
+    shapes: ShapesIn,
     frontier: HeadsWire,
     gone: Vec<String>,
-    moved: Vec<(String, Units, Units)>,
+    moved: Vec<(String, i32, i32)>,
 }

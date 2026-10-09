@@ -17,7 +17,7 @@ fn text(bytes: Vec<u8>) -> Result<String, Error> {
 }
 
 fn piece() -> Value {
-    json!({ "stroke": "AAECAwQFBgcICQoLDA0ODw", "number": 2, "tool": "pen", "color": "ink", "width": 4,
+    json!({ "stroke": "AAECAwQFBgcICQoLDA0ODw", "number": 2, "tool": "pen", "color": "ink", "width": 64,
         "points": "AYAsgDEwHyWSwAE_BBomkg" })
 }
 
@@ -49,6 +49,11 @@ pub fn refused_steps() -> Vec<(String, &'static str, &'static str)> {
             "a tool of 81 bytes",
         ),
         (r#"{"text":"a","text":"b"}"#.to_owned(), bad, "text twice"),
+        (
+            json!({ "text": "x", "tool": null }).to_string(),
+            bad,
+            "a tool set to null",
+        ),
     ]
 }
 
@@ -75,9 +80,9 @@ pub fn refused_pieces() -> Vec<(String, &'static str, &'static str)> {
         (with(piece(), "color", json!("")), bad, "an empty colour"),
         (with(piece(), "width", json!(0)), bad, "width 0"),
         (
-            with(piece(), "width", json!(4.01)),
+            with(piece(), "width", json!(64.5)),
             bad,
-            "a width that is no multiple of 1/16",
+            "a width with a fraction",
         ),
         (with(piece(), "points", json!("AA")), bad, "no point"),
         (with(piece(), "points", Value::Null), bad, "no points"),
@@ -130,7 +135,7 @@ pub fn generate() -> Result<Value, Error> {
             "step": text(step.encode()?)?, "text": step.text, "tool": step.tool,
         }))).collect::<Result<Vec<_>, Error>>()?,
         "steps_with_unknown_fields": [{
-            "step": json!({ "text": "x", "tool": null, "state": "running" }).to_string(),
+            "step": json!({ "text": "x", "state": "running" }).to_string(),
             "same_as": json!({ "text": "x" }).to_string(),
         }],
         "steps_refused": refused(refused_steps(), "step"),

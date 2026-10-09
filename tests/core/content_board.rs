@@ -163,6 +163,20 @@ fn ink_refuses_what_it_could_not_pack() {
         code(Ink::new(vec![point(0); MAX_POINTS + 1], false, false)),
         "bad-format"
     );
+    // The longest stroke there is reads its own text back: every point the widest step, with tilt.
+    let widest = (0..MAX_POINTS)
+        .map(|i| Point {
+            x: if i % 2 == 0 { i32::MIN } else { 0 },
+            y: if i % 2 == 0 { i32::MIN } else { 0 },
+            t: 0,
+            force: 1,
+            azimuth: 2,
+            altitude: 3,
+        })
+        .collect();
+    let widest = Ink::new(widest, true, false).unwrap();
+    assert_eq!(widest.pack().len(), 1 + MAX_POINTS * 14);
+    assert_eq!(Ink::from_base64url(&widest.to_base64url()).unwrap(), widest);
     let mut packed = Ink::new(vec![point(0); MAX_POINTS], false, false)
         .unwrap()
         .pack();
@@ -209,6 +223,7 @@ fn a_writer_cannot_encode_what_a_reader_refuses() {
     refused(ItemBody::Strokes(vec![]));
     refused(ItemBody::Erase(vec![]));
     refused(ItemBody::Erase(vec![id(a, 1, 0), id(a, 1, 0)]));
+    refused(ItemBody::Erase(vec![id(a, 0, 0)]));
     refused(ItemBody::Move {
         shapes: (0..=MAX_SHAPE_IDS as u32).map(|i| id(a, 1, i)).collect(),
         offset: [1, 1],

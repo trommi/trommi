@@ -3,9 +3,10 @@
 //! ([`crate::mls::message`]) inside an MLS application message and are never stored content. This module reads
 //! and writes those two fields; sending, and who may send which in which group, is the device's.
 //!
-//! Both are JSON. A reader ignores fields it does not know and refuses a known field of the wrong form.
+//! Both are JSON. A reader ignores fields it does not know and refuses a known field of the wrong form, `null`
+//! included.
 
-use crate::board_items::{Ink, Pen, Units, MAX_COLOR_LEN, MAX_WIDTH};
+use crate::board_items::{present, Ink, Pen, MAX_COLOR_LEN, MAX_WIDTH};
 use crate::error::Error;
 use crate::ids;
 use serde::{Deserialize, Serialize};
@@ -58,6 +59,7 @@ struct StepOut<'a> {
 #[derive(Deserialize)]
 struct StepIn {
     text: String,
+    #[serde(default, deserialize_with = "present")]
     tool: Option<String>,
 }
 
@@ -118,7 +120,7 @@ struct PieceOut<'a> {
     number: u32,
     tool: &'static str,
     color: &'a str,
-    width: Units,
+    width: i32,
     points: String,
 }
 
@@ -128,7 +130,7 @@ struct PieceIn {
     number: u32,
     tool: String,
     color: String,
-    width: Units,
+    width: i32,
     points: String,
 }
 
@@ -157,7 +159,7 @@ impl StrokePiece {
                 Pen::Marker => "marker",
             },
             color: &self.color,
-            width: Units(self.width),
+            width: self.width,
             points: self.ink.to_base64url(),
         })
     }
@@ -177,7 +179,7 @@ impl StrokePiece {
                 _ => return Err(Error::BadFormat),
             },
             color: wire.color,
-            width: wire.width.0,
+            width: wire.width,
             ink: Ink::from_base64url(&wire.points)?,
         };
         piece.check()?;

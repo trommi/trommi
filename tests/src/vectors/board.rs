@@ -49,7 +49,14 @@ pub fn writers() -> [DeviceId; 3] {
 }
 
 fn stroke_entry() -> Value {
-    json!({ "tool": "pen", "color": "ink", "width": 4, "points": "AYCAAYBgAICAww" })
+    json!({ "tool": "pen", "color": "ink", "width": 64, "points": "AYCAAYBgAICAww" })
+}
+
+fn picture_entry() -> Value {
+    json!({ "tool": "image", "rect": [0, 0, 160, 160], "attachment": {
+        "file_id": "AAAAAAAAAAAAAAAAAAAAAA", "file_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "file_name": "a.png",
+        "media_type": "image/png", "total_size": 3 } })
 }
 
 fn strokes(entry: Value) -> String {
@@ -72,11 +79,8 @@ fn without(mut entry: Value, key: &str) -> Value {
 pub fn refused_items() -> Vec<(String, &'static str, &'static str)> {
     let a = writers()[0].to_base64url();
     let note =
-        json!({ "tool": "sticky", "at": [1, 2.5], "text": "x", "size": 20, "color": "yellow" });
-    let picture = json!({ "tool": "image", "rect": [0, 0, 10, 10], "attachment": {
-        "file_id": "AAAAAAAAAAAAAAAAAAAAAA", "file_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "file_name": "a.png",
-        "media_type": "image/png", "total_size": 3 } });
+        json!({ "tool": "sticky", "at": [16, -40], "text": "x", "size": 320, "color": "yellow" });
+    let picture = picture_entry();
     let ids = |list: Value| {
         json!({ "schema_version": 2, "content_type": "erase", "shape_ids": list }).to_string()
     };
@@ -102,8 +106,8 @@ pub fn refused_items() -> Vec<(String, &'static str, &'static str)> {
         (strokes(without(stroke_entry(), "color")), bad, "a stroke without colour"),
         (strokes(with(stroke_entry(), "color", json!(""))), bad, "an empty colour"),
         (strokes(with(stroke_entry(), "width", json!(0))), bad, "width 0"),
-        (strokes(with(stroke_entry(), "width", json!(1000.0625))), bad, "a width above 1 000"),
-        (strokes(with(stroke_entry(), "width", json!(0.03125))), bad, "a width that is no multiple of 1/16"),
+        (strokes(with(stroke_entry(), "width", json!(16001))), bad, "a width above 16 000"),
+        (strokes(with(stroke_entry(), "width", json!(4.5))), bad, "a width with a fraction"),
         (strokes(with(stroke_entry(), "width", json!("4"))), bad, "a width as text"),
         (strokes(with(stroke_entry(), "points", json!(""))), bad, "no points"),
         (strokes(with(stroke_entry(), "points", json!("AYCAAYBgAICA"))), bad, "points with a point cut short"),
@@ -116,7 +120,7 @@ pub fn refused_items() -> Vec<(String, &'static str, &'static str)> {
         (strokes(with(note.clone(), "size", json!(0))), bad, "a note of size 0"),
         (strokes(with(note.clone(), "wrap", json!(0))), bad, "a note that wraps at 0"),
         (strokes(with(note.clone(), "at", json!([1]))), bad, "a note at one number"),
-        (strokes(with(note.clone(), "at", json!([1, 134217728]))), bad, "a position beyond the range"),
+        (strokes(with(note.clone(), "at", json!([1, 2147483648u32]))), bad, "a position beyond the range"),
         (strokes(with(note, "points", json!("AYCAAYBgAICAww"))), bad, "a note with points"),
         (strokes(without(picture.clone(), "attachment")), bad, "a picture without attachment"),
         (strokes(with(picture.clone(), "attachment", json!({ "file_id": "AAAAAAAAAAAAAAAAAAAAAA", "file_key": "AAAA",
@@ -133,8 +137,16 @@ pub fn refused_items() -> Vec<(String, &'static str, &'static str)> {
         (json!({ "schema_version": 2, "content_type": "erase", "shape_ids": [format!("{a}/1/0")], "offset": [1, 1] }).to_string(), bad, "an erase with an offset"),
         (json!({ "schema_version": 2, "content_type": "move", "shape_ids": [format!("{a}/1/0")] }).to_string(), bad, "a move without offset"),
         (moved(json!([1, 2, 3])), bad, "an offset of three numbers"),
-        (moved(json!([1e12, 0])), bad, "an offset beyond the range"),
-        (moved(json!([0.1, 0])), bad, "an offset that is no multiple of 1/16"),
+        (moved(json!([-2147483649i64, 0])), bad, "an offset beyond the range"),
+        (moved(json!([0.5, 0])), bad, "an offset with a fraction"),
+        // Spelled out, because a JSON library would write these numbers another way.
+        (strokes(stroke_entry()).replace("\"width\":64", "\"width\":64.0"), bad, "a whole number written with a fraction"),
+        (strokes(stroke_entry()).replace("\"width\":64", "\"width\":6.4e1"), bad, "a whole number written with an exponent"),
+        (strokes(stroke_entry()).replace("\"width\":64", "\"width\":64,\"z\":1e-400"), bad, "a layer too small to tell from 0"),
+        (strokes(stroke_entry()).replace("\"width\":64", "\"width\":64,\"wrap\":null"), bad, "a stroke with a note's field set to null"),
+        (strokes(stroke_entry()).replace("\"width\":64", "\"width\":64,\"group\":null"), bad, "a field of its own set to null"),
+        (ids(json!([format!("{a}/1/0")])).replace("\"shape_ids\"", "\"strokes\":null,\"shape_ids\""), bad, "an erase with strokes set to null"),
+        (strokes(picture_entry()).replace("\"file_key\":\"A", "\"file_key\":\"\\u0041"), bad, "a file key written with an escape"),
     ]
 }
 
@@ -150,7 +162,7 @@ fn small_snapshot() -> Value {
         ],
         "frontier": { a.clone(): [4, hash.clone()], b.clone(): [1, hash] },
         "gone": [format!("{a}/5/0")],
-        "moved": [[format!("{b}/2/0"), 1.5, -2]],
+        "moved": [[format!("{b}/2/0"), 24, -32]],
     })
 }
 
@@ -257,9 +269,9 @@ pub fn refused_snapshots() -> Vec<(String, &'static str, &'static str)> {
             "a move kept for an erased shape",
         ),
         (
-            set(&["moved", "0"], json!([format!("{b}/2/0"), 0.1, 1])),
+            set(&["moved", "0"], json!([format!("{b}/2/0"), 0.5, 1])),
             bad,
-            "a move that is no multiple of 1/16",
+            "a move with a fraction",
         ),
     ]
 }
@@ -377,7 +389,7 @@ pub fn generate() -> Result<Value, Error> {
         "items": items,
         "items_with_unknown_fields": [{
             "payload": json!({ "schema_version": 2, "content_type": "strokes", "later": [1, 2],
-                "strokes": [with(with(stroke_entry(), "transform", json!([2, 0, 0, 2, 100, 50])), "wrap", Value::Null)] }).to_string(),
+                "strokes": [with(with(stroke_entry(), "transform", json!([2, 0, 0, 2, 100, 50])), "nw", Value::Null)] }).to_string(),
             "same_as": strokes(stroke_entry()),
         }],
         "items_refused": refused_items().iter().map(|(payload, code, why)| json!({ "payload": payload, "code": code, "why": why })).collect::<Vec<_>>(),
