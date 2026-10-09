@@ -144,8 +144,12 @@ function wireError(e: unknown): WireError {
   return out
 }
 const thrown = (w: WireError): Error => Object.assign(new Error(w.message), w)
-/** The binding's StoreConflict (by its name: this module does not load the binding). */
-const isConflict = (e: unknown): boolean => (e as { name?: string } | null)?.name === 'StoreConflict'
+/** Another tab or worker has the state open: the binding's StoreConflict, as the store throws it or as the cause of
+ *  a Device's `storage` refusal (by its name: this module does not load the binding). */
+const isConflict = (e: unknown): boolean => {
+  const err = e as { name?: string; code?: string; cause?: { name?: string } } | null
+  return err?.name === 'StoreConflict' || (err?.code === 'storage' && err.cause?.name === 'StoreConflict')
+}
 
 /**
  * The stored device for this tab: its owner if no other tab is, else a follower of the owner. Resolves with null
@@ -359,9 +363,9 @@ async function tabs({ name, store, open, cache, calls, events = ['alert', 'error
   const lead = async (s: DeviceStore, stored: StoredState): Promise<boolean> => {
     let c: ClientLike | null
     opening = s
-    try { c = await open(s, stored) } catch (e) { s.close(); throw e } finally { opening = null }
-    if (!c) { s.close(); return false }
-    if (closed) { await c.stop?.(); s.close(); return false }
+    try { c = await open(s, stored) } catch (e) { await s.close(); throw e } finally { opening = null }
+    if (!c) { await s.close(); return false }
+    if (closed) { await c.stop?.(); await s.close(); return false }
     const takeover = copy !== null
     client = c; copy = null; role = 'leader'; following = null; seq = 0; heard = false
     stopHello()
@@ -407,7 +411,7 @@ async function tabs({ name, store, open, cache, calls, events = ['alert', 'error
       try {
         const stored = await s.load()
         inLine = null
-        if (closed) { s.close(); return }
+        if (closed) { await s.close(); return }
         if (await lead(s, stored)) { if (waitingToOpen) opened(true); return }
         if (closed) return
         // Nothing is stored any more (the owner signed out and deleted the store): there is nothing to lead.
@@ -418,7 +422,7 @@ async function tabs({ name, store, open, cache, calls, events = ['alert', 'error
         // The takeover failed (the store or the client did not open): the lock is free again, this tab stands in
         // line once more.
         inLine = null
-        s.close()
+        await s.close()
         if (closed) return
         if (waitingToOpen) { openFailed(e); return }
         emit('error', e)
@@ -432,17 +436,17 @@ async function tabs({ name, store, open, cache, calls, events = ['alert', 'error
     closed = true
     stopHello()
     rejectPending(refusal('closed', 'this tab left the device'))
-    inLine?.close()
+    const waiting = inLine, half = opening
     inLine = null
-    opening?.close()   // (a client still being opened must not keep the lock)
-    await dropClient()
+    // (a store in line gives its place up; a client still being opened must not keep the lock)
+    await Promise.all([waiting?.close(), half?.close(), dropClient()])
     channel?.close()
   }
 
   const first = store(false)
   let stored: StoredState | null = null
   try { stored = await first.load() } catch (e) {
-    first.close()
+    await first.close()
     if (!isConflict(e)) { channel?.close(); throw e }
   }
   if (stored) {

@@ -3,14 +3,12 @@
 // run in headless Chromium: this file bundles the test page (page.ts) with esbuild, serves it and the core's WASM
 // build from 127.0.0.1, drives Chromium over the DevTools protocol (app/web/dev/cdp.mjs) and prints one line per test.
 //
-//   node tests/web/store/run.mjs      exit 0: all ran and passed · 1: a test failed or was skipped · 2: it could not run
+//   node tests/web/store/run.mjs      exit 0: all ran and passed · 1: a test failed · 2: it could not run
 //
 // It needs:
 // - Chromium: `chromium` on the PATH or the program CHROMIUM names (as app/web/dev/e2e.mjs finds it).
 // - esbuild: the repository's devDependency (`npm install`).
-// - The core's WASM build: core/wasm/pkg/, or the folder TROMMI_CORE_PKG names. `core/wasm/build.sh` makes it; the
-//   tests that found a room need it built with TROMMI_STAND_IN_RECOVERY=1 until the core has its recovery construct
-//   (they say so and count as skipped without it).
+// - The core's WASM build: core/wasm/pkg/, or the folder TROMMI_CORE_PKG names. `core/wasm/build.sh` makes it.
 // The bundle and the browser's profile are written under TROMMI_TEST_TMP (default: `.cache/trommi-work/v2/web-tmp/
 // store/run` in the home folder) and removed at the end.
 //
@@ -105,23 +103,21 @@ async function until(cond, what, ms = 15000) {
 }
 const same = (got, want, what) => { const g = JSON.stringify(got), w = JSON.stringify(want); if (g !== w) throw new Error(`${what}: got ${g}, expected ${w}`) }
 
-let failed = 0, passed = 0, skipped = 0
-/** ok: true passed, false failed, null could not run (the reason in `detail`). */
+let failed = 0, passed = 0
 function report(ok, name, detail = '') {
-  if (ok) passed++; else if (ok === null) skipped++; else failed++
-  console.log(`${ok ? 'ok  ' : ok === null ? 'SKIP' : 'FAIL'} ${name}${detail ? `\n       ${detail}` : ''}`)
+  if (ok) passed++; else failed++
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `\n       ${detail}` : ''}`)
 }
-class Skip extends Error {}
 /** A test driven from here; a `note` it returns is printed beside its name. */
 async function test(name, run) {
-  try { const note = await run(); report(true, name + (note ? ` (${note})` : '')) } catch (e) { report(e instanceof Skip ? null : false, name, String(e?.message ?? e)) }
+  try { const note = await run(); report(true, name + (note ? ` (${note})` : '')) } catch (e) { report(false, name, String(e?.message ?? e)) }
 }
 const stamp = Date.now().toString(36)
 
 try {
   // ---- everything one page can show ----
   const page = await openTab('page')
-  const recovery = await page.step('recovery')
+  const versions = await page.step('versions')
   for (const r of await page.step('single')) report(r.ok, r.name, r.detail)
 
   await test('store: a write over the origin\'s quota (a real QuotaExceededError) is refused whole; a new store gives the last good state and goes on', async () => {
@@ -215,7 +211,6 @@ try {
   })
 
   await test('tabs (real core): the owner creates a Device and founds a room, the follower mirrors it; the owner closes: the follower opens the SAME device and room from what is stored', async () => {
-    if (recovery.startsWith('not built')) throw new Skip(`the core's build has no recovery construct (${recovery}); build with TROMMI_STAND_IN_RECOVERY=1`)
     const name = `real-${stamp}`
     const a = await openTab('tab a'), b = await openTab('tab b')
     same([await a.step('tabOpen', name, 'real', false), await b.step('tabOpen', name, 'real', false)], ['leader', 'follower'], 'roles')
@@ -228,7 +223,7 @@ try {
     const next = await until(async () => { const s = await b.step('tabState'); return s.role === 'leader' && s }, 'the takeover')
     same([next.device, next.room, next.stack, next.errors], [owner.device, room, owner.stack, []], 'the device the new owner opened')
     await b.close()
-    return `recovery: ${recovery}`
+    return `core ${versions.core}, binding ${versions.binding}`
   })
 } catch (e) {
   report(false, 'the run itself', String(e?.stack ?? e))
@@ -238,5 +233,5 @@ try {
   fs.rmSync(tmp, { recursive: true, force: true })
 }
 for (const p of problems) { failed++; console.log(`FAIL an exception in a page: ${p}`) }
-console.log(`${passed} passed, ${failed} failed, ${skipped} skipped (the client in the tabs is the fake of tests/web/store/fake-client.ts: no engine, no hub)`)
-process.exit(failed || skipped ? 1 : 0)
+console.log(`${passed} passed, ${failed} failed (the client in the tabs is the fake of tests/web/store/fake-client.ts: no engine, no hub)`)
+process.exit(failed ? 1 : 0)
