@@ -22,7 +22,8 @@ adding; what exists is kept.
 | `mls::observer`, `mls::rules`, `mls::profile`, `mls::key_package` | following a group from its public messages, the rules on Commits shared by members and the hub, `TrommiRoom`, `TrommiSession`, `CommitNote`, `Cut`, KeyPackage checks | 3, 4, 5, 14 | built |
 | `mls::message` | `TrommiMessage`: key handover, stroke piece, work trail, recovery auth | 7 | built |
 | `recovery` | keys from the code, `SealedKey`, `RecoveryAuth`, `RecoveryLink`, the checks of joining with the code | 8 | planned |
-| `envelope`, `chain`, `objects`, `registers`, `board` | the stored-content envelope, per-sender chains and receiver checks, object state and command gate, registers, Scribble Board loading | 9, 10 | in work |
+| `envelope`, `chain`, `objects`, `registers`, `board` | the stored-content envelope (`Draft`, `Envelope`), per-sender chains and the receiver's checks (`seal_next`, `receive`, `hub_take`, `provisional`, `heads`), object state and the command gate (`judge`, `replay`, `command_gate`), registers, Scribble Board loading (`verify_load`); group facts come in through `chain::GroupFacts` | 9, 10 | built; being wired into `device` |
+| `board_items`, `trail` | Scribble Board item bodies, packed points, the merge of items (`Board::apply`), the snapshot file; the bodies of a work-trail step and a stroke piece (`WorkStep`, `StrokePiece`) | 7.2, 7.3, 10 | built |
 | `files` | chunked file encryption (`Encryptor`, `Decryptor`, `encrypt_file`, `decrypt_file`, `open_chunk`, `Layout`), `FileRef`, `ShareLink` | 11 | built |
 | `invite` | joining by link: `InviteLink`, `Inviter`, `Joiner`, `CheckCode`, `ConfirmedInvite`, the hub's checks | 12.1 | built |
 | `hub_auth`, `push` | `HubAddress`, `HubAuth`, `sign`, `verify`; `ApnsPush`, `WebPush`, `seal`, `open` | 12.3, 15.2 | built |
