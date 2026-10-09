@@ -6,8 +6,8 @@ use trommi_core::crypto::{Secret, SystemEntropy};
 use trommi_core::push;
 
 record! {
-    /// What a push says.
-    pub struct PushNote {
+    /// What a push says. The ticket fetches an envelope for a day: it is not printed.
+    secret pub struct PushNote {
         /// The room something changed in, 32 bytes.
         pub room_id: Vec<u8>,
         /// The hub's change number of the envelope that rang.

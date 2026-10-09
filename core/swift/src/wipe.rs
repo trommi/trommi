@@ -9,13 +9,16 @@
 //! What the host holds (a `Uint8Array`, a `Data`) is the host's to forget.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::mem::MaybeUninit;
 use zeroize::Zeroize;
 
 /// The system's allocator, wiping what it takes back.
 pub struct Wiping;
 
 // SAFETY: every call is passed to the system allocator unchanged. `dealloc` first writes zeros over exactly the
-// block being freed: `pointer` is valid for `layout.size()` bytes, as the caller of `dealloc` guarantees.
+// block being freed: `pointer` is valid for writes of `layout.size()` bytes, as the caller of `dealloc`
+// guarantees, and the block is looked at as bytes that may be uninitialised, which is what it holds (unused
+// capacity, padding).
 // `realloc` is the trait's own: allocate, copy, `dealloc` the old block, which wipes it. The system's `realloc`
 // could move a block and leave the old bytes behind.
 unsafe impl GlobalAlloc for Wiping {
@@ -29,7 +32,7 @@ unsafe impl GlobalAlloc for Wiping {
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
         // Through `zeroize`, whose writes the compiler may not drop as "dead stores before a free".
-        std::slice::from_raw_parts_mut(pointer, layout.size()).zeroize();
+        std::slice::from_raw_parts_mut(pointer.cast::<MaybeUninit<u8>>(), layout.size()).zeroize();
         System.dealloc(pointer, layout);
     }
 }
