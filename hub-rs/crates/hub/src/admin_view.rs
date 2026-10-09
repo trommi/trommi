@@ -2,7 +2,7 @@
 //! browser (tree, table, row detail). Ciphertext, signed blobs and secrets are shown as size + first 16 bytes hex and
 //! can be neither filtered, sorted nor searched; the encrypted body is never decoded; the cleartext envelope header is.
 
-use crate::admin_assets::{BELL, CSS, JS};
+use crate::admin_assets::{BELL, COLUMN_CLASSES, CSS, JS, SPRITE, TABLE_NOTES};
 use crate::server::Hub;
 use parking_lot::Mutex;
 use rusqlite::types::Value as V;
@@ -30,6 +30,7 @@ enum CacheVal {
     Rows(Vec<(V, i64)>),
     Lines(Vec<(V, V, i64)>),
     Tables(Vec<Table>),
+    Grid(Vec<Vec<V>>),
 }
 impl Source {
     pub fn new(db_path: PathBuf, data_dir: Option<PathBuf>, hub: Option<Arc<Hub>>) -> Source { Source { db_path, data_dir, hub, conn: Mutex::new(None), cache: Mutex::new(HashMap::new()) } }
@@ -327,17 +328,19 @@ fn sha(t: &str) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(zcrypto::prim::sha256(&[t.as_bytes()]))
 }
-pub fn csp() -> String { format!("default-src 'none'; style-src 'sha256-{}'; script-src 'sha256-{}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", sha(CSS), sha(JS)) }
+pub fn csp() -> String { format!("default-src 'none'; style-src 'sha256-{}'; script-src 'sha256-{}'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", sha(CSS), sha(JS)) }
 fn head(title: &str) -> String {
-    format!("<!doctype html><html lang=\"de\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"light dark\"><title>{}</title><style>{CSS}</style></head><body>", esc(title))
+    format!("<!doctype html><html lang=\"de\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"color-scheme\" content=\"light dark\"><title>{}</title><style>{CSS}</style></head><body>{SPRITE}", esc(title))
 }
 fn foot() -> String { format!("<script>{JS}</script></body></html>") }
 pub fn top_bar(login: &str, csrf: &str, on: &str) -> String {
     let tab = |href: &str, label: &str, key: &str| format!("<a href=\"{href}\"{}>{label}</a>", if on == key { " class=\"on\"" } else { "" });
     format!(
-        "<header class=\"top\"><span class=\"brand\">{BELL}<b>Trommi</b> <small>hub admin</small></span><nav>{}{}{}{}</nav>\n<div class=\"who\"><span class=\"login-name\">{}</span><form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button>Abmelden</button></form></div></header>",
+        "<header class=\"top\"><span class=\"brand\">{BELL}<b>Trommi</b> <small>hub admin</small></span><nav>{}{}{}{}{}{}</nav>\n<div class=\"who\"><span class=\"login-name\">{}</span><form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button>Abmelden</button></form></div></header>",
         tab("/", "Übersicht", "overview"),
         tab("/data", "Daten", "data"),
+        tab("/accounts", "Konten", "accounts"),
+        tab("/schema", "Schema", "schema"),
         tab("/test-accounts", "Test accounts", "tests"),
         tab("/password", "Passwort ändern", "password"),
         esc(login),
@@ -346,7 +349,7 @@ pub fn top_bar(login: &str, csrf: &str, on: &str) -> String {
 }
 pub fn render_login_page(login: &str, message: &str) -> String {
     format!(
-        "{}<div class=\"login\"><h1>Trommi hub admin</h1><p class=\"muted\">Tailscale login: <span class=\"mono\">{}</span></p>{}\n<form method=\"post\" action=\"/login\"><label>Admin password <input type=\"password\" name=\"password\" autocomplete=\"current-password\" required autofocus></label><button class=\"primary\">Anmelden</button></form></div></body></html>",
+        "{}<div class=\"login\"><span class=\"brand\">{BELL}<b>Trommi</b> <small>hub admin</small></span><h1>Sign in</h1><p class=\"muted\">Tailscale login: <span class=\"mono\">{}</span></p>{}\n<form method=\"post\" action=\"/login\"><label>Admin password <input type=\"password\" name=\"password\" autocomplete=\"current-password\" required autofocus></label><button class=\"primary\">Anmelden</button></form></div></body></html>",
         head("Trommi hub admin"),
         esc(login),
         if message.is_empty() { String::new() } else { format!("<p class=\"err\">{}</p>", esc(message)) }
@@ -417,6 +420,365 @@ fn bind_for(t: &Table, col: &str, value: &str) -> V {
 fn is_int15(v: &str) -> bool {
     let d = v.strip_prefix('-').unwrap_or(v);
     !d.is_empty() && d.len() <= 15 && d.bytes().all(|c| c.is_ascii_digit())
+}
+
+// ---- what a column holds (COLUMN_CLASSES of hub/store.mjs, through admin_assets.rs) ---------------------
+
+const CLASS_ORDER: [&str; 4] = ["e2e", "plain", "hash", "none"];
+/// class -> (name, short name under a column head, what it means)
+fn class_label(cls: &str) -> (&'static str, &'static str, &'static str) {
+    match cls {
+        "e2e" => ("End-to-end encrypted", "E2E encrypted", "Ciphertext or a sealed key. Only the members' devices can open it; the hub cannot."),
+        "plain" => ("Server-readable", "readable", "Ids, numbers, times, roles, addresses and signed records. The hub reads them to route and to answer."),
+        "hash" => ("Hash or proof", "hash", "A hash, salt or signature. It links or proves something and says nothing of the content."),
+        _ => ("Not classified", "unclassified", "A column the hub's schema does not name (a table from before). Take it as readable."),
+    }
+}
+fn class_entry(table: &str, column: &str) -> Option<(&'static str, &'static str)> { COLUMN_CLASSES.iter().find(|c| c.0 == table && c.1 == column).map(|c| (c.2, c.3)) }
+pub fn class_of(table: &str, column: &str) -> &'static str { class_entry(table, column).map(|c| c.0).unwrap_or("none") }
+/// The mark of a class: its drawing and its name in words (never colour alone).
+fn class_mark(cls: &str, long: bool) -> String {
+    let l = class_label(cls);
+    format!("<span class=\"cm cm-{cls}\" title=\"{}\"><svg aria-hidden=\"true\"><use href=\"#c-{cls}\"/></svg>{}</span>", esc(l.0), esc(if long { l.0 } else { l.1 }))
+}
+fn class_index(cls: &str) -> usize { CLASS_ORDER.iter().position(|k| *k == cls).unwrap_or(3) }
+/// A table's columns counted by class, each count with its mark (a class without a column is left out).
+fn class_summary(t: &Table) -> String {
+    let mut n = [0usize; 4];
+    for (name, _) in &t.columns {
+        n[class_index(class_of(&t.name, name))] += 1;
+    }
+    CLASS_ORDER.iter().enumerate().filter(|(i, _)| n[*i] > 0).map(|(i, k)| format!("<span><b>{}</b> {}</span>", n[i], class_mark(k, true))).collect()
+}
+/// Whether this page shows a column's values as size + first bytes only (render_cell).
+fn is_masked(name: &str, ty: &str) -> bool { is_opaque(name) || (ty.to_uppercase().contains("BLOB") && !is_device_column(name)) }
+
+/// /schema: every table of hub.db with its columns, each marked with what it holds; the legend on top.
+pub fn render_schema(src: &Source, login: &str, csrf: &str) -> String {
+    let c = src.db();
+    let tables = c.as_ref().map(|c| table_info(src, c)).unwrap_or_default();
+    let mut total = [0usize; 4];
+    let mut cards: Vec<String> = vec![];
+    for t in &tables {
+        let mut rows = String::new();
+        for (name, ty) in &t.columns {
+            let cls = class_of(&t.name, name);
+            total[class_index(cls)] += 1;
+            rows.push_str(&format!(
+                "<tr><td class=\"mono\">{}</td><td class=\"mono muted\">{}</td><td>{}</td><td class=\"muted\">{}</td><td class=\"muted\">{}</td></tr>",
+                esc(name),
+                esc(ty),
+                class_mark(cls, true),
+                if is_masked(name, ty) { "masked: size + 16 bytes" } else { "shown" },
+                esc(class_entry(&t.name, name).map(|e| e.1).unwrap_or(""))
+            ));
+        }
+        let count = c.as_ref().and_then(|c| total_count(src, c, &t.name)).map(|n| n as f64).unwrap_or(f64::NAN);
+        cards.push(format!(
+            "<section class=\"card schema\" id=\"t-{}\"><header><h2><a href=\"{}\">{}</a></h2><span class=\"n\">{} rows</span></header>\n<div class=\"sum\">{}</div>{}\n<div class=\"scroll\"><table class=\"grid\"><thead><tr><th>Column</th><th>Type</th><th>Holds</th><th>On this page</th><th>Note</th></tr></thead><tbody>{rows}</tbody></table></div></section>",
+            esc(&t.name),
+            esc(&data_href(&Href { table: &t.name, ..Default::default() })),
+            esc(&t.name),
+            esc(&fmt_num(count, 0)),
+            class_summary(t),
+            TABLE_NOTES.iter().find(|n| n.0 == t.name).map(|n| format!("<p class=\"note\">{}</p>", esc(n.1))).unwrap_or_default()
+        ));
+    }
+    let columns: usize = total.iter().sum();
+    let legend: String = CLASS_ORDER
+        .iter()
+        .enumerate()
+        .filter(|(i, k)| **k != "none" || total[*i] > 0)
+        .map(|(i, k)| format!("<li>{}{} <span class=\"n\">{} column{}</span></li>", class_mark(k, true), esc(class_label(k).2), total[i], if total[i] == 1 { "" } else { "s" }))
+        .collect();
+    format!(
+        "{}{}<main class=\"page\">\n<div class=\"head\"><h1>Schema</h1><span class=\"muted\">{} tables · {columns} columns in hub.db</span></div>\n<section class=\"card\"><h3>What the hub can read</h3><ul class=\"legend\">{legend}</ul>\n<p class=\"note\">Masked values are shown as size and first 16 bytes only and can be neither searched, filtered nor sorted. Nothing here is decrypted: the hub holds no key that could.</p></section>\n{}\n</main></body></html>",
+        head("Schema · Trommi hub admin"),
+        if login.is_empty() { String::new() } else { top_bar(login, csrf, "schema") },
+        tables.len(),
+        if cards.is_empty() { "<section class=\"card\"><p class=\"muted\">hub.db does not exist yet. It is made when the hub first starts.</p></section>".to_string() } else { cards.join("\n") }
+    )
+}
+
+// ---- accounts: what the hub knows of one user, and what it cannot see (renderAccounts of admin-view.mjs) ----
+//
+// Counts, sizes and times out of the hub's own tables; the email stays masked. Every query is bound to one room and
+// answered from an index; the one sum over a room's envelopes reads its newest SCAN_CAP only.
+const SCAN_CAP: i64 = 50000;
+fn ask(src: &Source, c: &Connection, sql: &str, args: &[&str]) -> Vec<Vec<V>> {
+    let v = src.cached(&format!("ask:{}:{sql}", args.join(",")), 10000, || {
+        let run = || -> rusqlite::Result<Vec<Vec<V>>> {
+            let mut st = c.prepare(sql)?;
+            let n = st.column_count();
+            let rows = st.query_map(rusqlite::params_from_iter(args.iter()), |r| (0..n).map(|i| r.get::<_, V>(i)).collect::<rusqlite::Result<Vec<V>>>())?;
+            rows.collect()
+        };
+        CacheVal::Grid(run().unwrap_or_default())
+    });
+    match v {
+        CacheVal::Grid(g) => g,
+        _ => vec![],
+    }
+}
+fn vnum(v: Option<&V>) -> f64 { v.and_then(is_num).unwrap_or(0.0) }
+fn num(v: Option<&V>) -> String { fmt_num(vnum(v), 0) }
+fn when(v: Option<&V>) -> String {
+    match v.and_then(is_num) {
+        Some(t) if t > 0.0 => date_fmt(t as i64),
+        _ => "–".into(),
+    }
+}
+fn text_of(v: Option<&V>) -> String { v.map(plain).unwrap_or_else(|| "undefined".into()) }
+fn name_or(column: &str, v: Option<&V>) -> String { v.and_then(|x| enum_name(column, x)).map(String::from).unwrap_or_else(|| text_of(v)) }
+fn mini_table(heads: &[&str], rows: &[Vec<String>]) -> String {
+    format!(
+        "<div class=\"scroll\"><table class=\"grid mini\"><thead><tr>{}</tr></thead><tbody>{}</tbody></table></div>",
+        heads.iter().map(|h| format!("<th>{h}</th>")).collect::<String>(),
+        rows.iter().map(|r| format!("<tr>{}</tr>", r.iter().enumerate().map(|(i, c)| format!("<td{}>{c}</td>", if i > 0 { " class=\"num\"" } else { "" })).collect::<String>())).collect::<String>()
+    )
+}
+fn kv_list(pairs: &[(&str, String)]) -> String { format!("<dl class=\"kv\">{}</dl>", pairs.iter().map(|(k, v)| format!("<dt>{}</dt><dd>{v}</dd>", esc(k))).collect::<String>()) }
+fn account_row(c: &Connection, room: &str) -> Option<Row> { query_rows(c, "SELECT * FROM accounts WHERE room_id = ?", &[V::Text(room.into())], false).ok().and_then(|r| r.into_iter().next()) }
+
+fn account_detail(src: &Source, c: &Connection, room: &str, has: &dyn Fn(&str, Option<&str>) -> bool) -> String {
+    let one = |sql: &str| ask(src, c, sql, &[room]).into_iter().next().unwrap_or_default();
+    let mut known: Vec<String> = vec![];
+    let mut section = |title: &str, html: String| {
+        if !html.is_empty() {
+            known.push(format!("<h4>{}</h4>{html}", esc(title)));
+        }
+    };
+    let r = one("SELECT founded_at, last_envelope_number FROM rooms WHERE room_id = ?");
+    let (founded, last_number) = (r.first().cloned(), r.get(1).cloned());
+    let last_at = if has("envelopes", None) { one("SELECT received_at FROM envelopes WHERE room_id = ? ORDER BY envelope_number DESC LIMIT 1").first().cloned() } else { None };
+    let account = if has("accounts", None) { account_row(c, room) } else { None };
+    section(
+        "Account",
+        match &account {
+            Some(a) => {
+                let verified = row_get(a, "email_verified_at");
+                kv_list(&[
+                    ("email", render_cell("email", row_get(a, "email"))),
+                    ("verified", esc(&if is_num(verified).is_some_and(|n| n != 0.0) { when(Some(verified)) } else { "not verified".into() })),
+                    ("created", esc(&when(Some(row_get(a, "created_at"))))),
+                    ("changed", esc(&when(Some(row_get(a, "updated_at"))))),
+                    ("Emergency Kit", if matches!(row_get(a, "recovery_hash"), V::Null) { "not set" } else { "set" }.into()),
+                ])
+            }
+            None => "<p class=\"muted\">No account: this room has no email sign-in, only its devices.</p>".into(),
+        },
+    );
+    let mut room_kv = vec![("founded", esc(&when(founded.as_ref()))), ("last envelope received", esc(&when(last_at.as_ref()))), ("envelopes ever", esc(&num(last_number.as_ref())))];
+    if has("member_entries", None) {
+        room_kv.push(("member entries", esc(&num(one("SELECT count(*) FROM member_entries WHERE room_id = ?").first()))));
+    }
+    section("Room", kv_list(&room_kv));
+
+    if has("devices", None) {
+        let rows = ask(src, c, "SELECT device_role, sum(removed_entry_number IS NULL), sum(removed_entry_number IS NOT NULL) FROM devices WHERE room_id = ? GROUP BY device_role ORDER BY device_role", &[room]);
+        section("Devices", if rows.is_empty() { String::new() } else { mini_table(&["Role", "Active", "Removed"], &rows.iter().map(|r| vec![esc(&text_of(r.first())), esc(&num(r.get(1))), esc(&num(r.get(2)))]).collect::<Vec<_>>()) });
+    }
+    let (mut bodies, mut padded) = (0.0, 0.0);
+    if has("envelopes", None) {
+        let rows = ask(
+            src,
+            c,
+            &format!("SELECT envelope_kind, count(*), sum(b), sum(padded_size) FROM (SELECT envelope_kind, encrypted_body IS NOT NULL AS b, padded_size FROM envelopes WHERE room_id = ? ORDER BY envelope_number DESC LIMIT {SCAN_CAP}) GROUP BY envelope_kind ORDER BY envelope_kind"),
+            &[room],
+        );
+        for r in &rows {
+            bodies += vnum(r.get(2));
+            padded += vnum(r.get(3));
+        }
+        let capped = vnum(last_number.as_ref()) > SCAN_CAP as f64;
+        section(
+            "Envelopes by kind",
+            if rows.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "{}\n<p class=\"note\">{}The kind, the sender device, the time, the card and its state and urgency stand in each envelope's cleartext header. Bodies are padded, so a size is a step, not a length. A body is dropped 30 days after its card is done.</p>",
+                    mini_table(&["Kind", "Envelopes", "Body kept", "Padded size"], &rows.iter().map(|r| vec![esc(&name_or("envelope_kind", r.first())), esc(&num(r.get(1))), esc(&num(r.get(2))), esc(&format_bytes(vnum(r.get(3))))]).collect::<Vec<_>>()),
+                    if capped { format!("The newest {} envelopes only. ", fmt_num(SCAN_CAP as f64, 0)) } else { String::new() }
+                )
+            },
+        );
+    }
+    if has("timelines", None) {
+        let rows = ask(src, c, "SELECT timeline_kind, CASE WHEN instr(timeline_id, '/') > 0 THEN substr(timeline_id, 1, instr(timeline_id, '/')) ELSE '' END, count(*), sum(item_count) FROM timelines WHERE room_id = ? GROUP BY 1, 2 ORDER BY 1, 2", &[room]);
+        section(
+            "Timelines",
+            if rows.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "{}\n<p class=\"note\">A timeline's id is cleartext and begins with what it hangs on (a card, a session, a desk), so the hub can tell chats from boards and count them. What is written or drawn in them it cannot read.</p>",
+                    mini_table(
+                        &["Kind", "Id begins with", "Timelines", "Items"],
+                        &rows
+                            .iter()
+                            .map(|r| {
+                                let prefix = text_of(r.get(1));
+                                vec![esc(&name_or("timeline_kind", r.first())), format!("<span class=\"mono\">{}</span>", esc(if prefix.is_empty() { "–" } else { &prefix })), esc(&num(r.get(2))), esc(&num(r.get(3)))]
+                            })
+                            .collect::<Vec<_>>()
+                    )
+                )
+            },
+        );
+    }
+    if has("objects", None) {
+        let rows = ask(src, c, "SELECT object_state, count(*), sum(urgency >= 2) FROM objects WHERE room_id = ? GROUP BY object_state ORDER BY object_state", &[room]);
+        section("Cards and other objects", if rows.is_empty() { String::new() } else { mini_table(&["State", "Objects", "High or critical"], &rows.iter().map(|r| vec![esc(&name_or("object_state", r.first())), esc(&num(r.get(1))), esc(&num(r.get(2)))]).collect::<Vec<_>>()) });
+    }
+    let mut more: Vec<(&str, String)> = vec![];
+    if has("session_grants", None) {
+        more.push(("agent sessions", esc(&num(one("SELECT count(DISTINCT session_id) FROM session_grants WHERE room_id = ?").first()))));
+    }
+    let (mut files, mut file_bytes) = (0.0, 0.0);
+    if has("attachments", None) {
+        let r = one("SELECT count(*), sum(total_size) FROM attachments WHERE room_id = ?");
+        files = vnum(r.first());
+        file_bytes = vnum(r.get(1));
+        more.push(("attachments", format!("{} · {}", esc(&fmt_num(files, 0)), esc(&format_bytes(file_bytes)))));
+    }
+    if has("shares", None) {
+        more.push(("shared links", esc(&num(one("SELECT count(*) FROM shares WHERE room_id = ?").first()))));
+    }
+    if has("push_subscriptions", None) {
+        let rows = ask(src, c, "SELECT level, sum(endpoint NOT LIKE 'apns:%'), sum(endpoint LIKE 'apns:%') FROM push_subscriptions WHERE room_id = ? GROUP BY level ORDER BY level", &[room]);
+        more.push(("push registrations", if rows.is_empty() { "0".into() } else { rows.iter().map(|r| format!("{}: {} Web Push, {} APNs", esc(&text_of(r.first())), esc(&num(r.get(1))), esc(&num(r.get(2))))).collect::<Vec<_>>().join("<br>") }));
+    }
+    if has("invites", None) {
+        more.push(("open invites", esc(&num(one("SELECT count(*) FROM invites WHERE room_id = ? AND used_at IS NULL AND burned_at IS NULL").first()))));
+    }
+    if has("agent_leases", None) {
+        more.push(("running agents", esc(&num(one("SELECT count(*) FROM agent_leases WHERE room_id = ?").first()))));
+    }
+    section("Counted", if more.is_empty() { String::new() } else { kv_list(&more) });
+
+    // The other side comes out of COLUMN_CLASSES: every end-to-end encrypted column of a table with a room_id, and how many of it this room has.
+    let mut unseen: Vec<String> = vec![];
+    for (table, col, cls, note) in COLUMN_CLASSES {
+        if *cls != "e2e" || class_entry(table, "room_id").is_none() || !has(table, Some(col)) {
+            continue;
+        }
+        let body = *table == "envelopes" && *col == "encrypted_body";
+        let n = if body { bodies } else { vnum(one(&format!("SELECT count(*) FROM {} WHERE room_id = ? AND {} IS NOT NULL", quote_ident(table), quote_ident(col))).first()) };
+        if n == 0.0 {
+            continue;
+        }
+        let size = if body { format!(" · {} padded", format_bytes(padded)) } else { String::new() };
+        let mut chars = note.chars();
+        let title = chars.next().map(|f| f.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default();
+        unseen.push(format!("<li><b>{}</b><span class=\"n\">{} stored{}</span><span class=\"mono\">{}.{}</span></li>", esc(&title), esc(&fmt_num(n, 0)), esc(&size), esc(table), esc(col)));
+    }
+    if files > 0.0 {
+        unseen.push(format!(
+            "<li><b>What is in the files, and what they are called</b><span class=\"n\">{} files · {}</span><span class=\"mono\">attachments/ beside hub.db: encrypted on the device before upload</span></li>",
+            esc(&fmt_num(files, 0)),
+            esc(&format_bytes(file_bytes))
+        ));
+    }
+    format!(
+        "<div class=\"two\"><section class=\"card\"><div class=\"side\">{}<h2>The hub knows</h2></div><p class=\"muted\">Counts, sizes and times from its own tables.</p>{}</section>\n<section class=\"card\"><div class=\"side\">{}<h2>The hub cannot see</h2></div><p class=\"muted\">Ciphertext it stores and has no key for.</p>\n{}\n<p class=\"note\">So: no message text, no card title, option or answer, no drawing, no name of a session, desk or device, no file. How many there are, how big, when and from which device stands on the left, because that the hub does know.</p></section></div>",
+        class_mark("plain", true),
+        known.join(""),
+        class_mark("e2e", true),
+        if unseen.is_empty() { "<p class=\"note\">Nothing encrypted is stored for this room yet.</p>".to_string() } else { format!("<ul class=\"unseen\">{}</ul>", unseen.join("")) }
+    )
+}
+
+/// /accounts: the rooms with their account, 50 per page; /accounts?room=<id>: one of them. None: no such room.
+pub fn render_accounts(src: &Source, params: &[(String, String)], login: &str, csrf: &str) -> Option<String> {
+    let guard = src.db();
+    let frame = |body: String| format!("{}{}<main class=\"page\">{body}</main>{}", head("Konten · Trommi hub admin"), if login.is_empty() { String::new() } else { top_bar(login, csrf, "accounts") }, foot());
+    let none = || frame("<div class=\"head\"><h1>Accounts</h1></div><section class=\"card\"><p class=\"muted\">hub.db has no rooms yet. They come with the first sign-up.</p></section>".into());
+    let Some(c) = guard.as_ref() else { return Some(none()) };
+    let c: &Connection = c;
+    let tables = table_info(src, c);
+    let has = |table: &str, col: Option<&str>| tables.iter().find(|t| t.name == table).is_some_and(|t| col.is_none_or(|x| t.names.contains(x)));
+    if !has("rooms", None) {
+        return Some(none());
+    }
+    let get = |k: &str| params.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let room = get("room");
+    if !room.is_empty() {
+        if !room_ok(&room) || ask(src, c, "SELECT 1 FROM rooms WHERE room_id = ?", &[&room]).is_empty() {
+            return None;
+        }
+        return Some(frame(format!(
+            "<div class=\"crumbs\"><span><a href=\"/accounts\">Accounts</a></span><span>room <span class=\"mono\">{}</span></span></div>\n<div class=\"head\"><h1>One account</h1><span class=\"muted\">room <span class=\"mono\">{}</span> · <a href=\"{}\">its rows</a></span></div>{}",
+            esc(&short(&room, 12)),
+            esc(&short(&room, 16)),
+            esc(&data_href(&Href { room: &room, table: "envelopes", ..Default::default() })),
+            account_detail(src, c, &room, &has)
+        )));
+    }
+    let page = parse_int_prefix(&get("page")).unwrap_or(0).clamp(0, 1_000_000);
+    let total = total_count(src, c, "rooms").unwrap_or(0);
+    let list = ask(src, c, &format!("SELECT room_id, founded_at, last_envelope_number FROM rooms ORDER BY last_envelope_number DESC, room_id LIMIT {} OFFSET {}", PAGE_SIZE + 1, page * PAGE_SIZE), &[]);
+    let more = list.len() as i64 > PAGE_SIZE;
+    let rows: Vec<String> = list
+        .iter()
+        .take(PAGE_SIZE as usize)
+        .map(|r| {
+            let id = text_of(r.first());
+            let account = if has("accounts", None) { account_row(c, &id) } else { None };
+            let roles = if has("devices", None) { ask(src, c, "SELECT device_role, count(*) FROM devices WHERE room_id = ? AND removed_entry_number IS NULL GROUP BY device_role", &[&id]) } else { vec![] };
+            let role = |name: &str| roles.iter().find(|x| x.first().is_some_and(|v| plain(v) == name)).and_then(|x| x.get(1)).cloned();
+            let att = if has("attachments", None) { ask(src, c, "SELECT count(*), sum(total_size) FROM attachments WHERE room_id = ?", &[&id]).into_iter().next().unwrap_or_default() } else { vec![] };
+            let last_at = if has("envelopes", None) { ask(src, c, "SELECT received_at FROM envelopes WHERE room_id = ? ORDER BY envelope_number DESC LIMIT 1", &[&id]).into_iter().next().unwrap_or_default() } else { vec![] };
+            let href = format!("/accounts?room={id}");
+            format!(
+                "<tr data-href=\"{}\"><td><a class=\"id\" href=\"{}\" title=\"{}\">{}</a></td>\n<td>{}</td>\n<td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"num\">{} · {}</td><td>{}</td><td>{}</td></tr>",
+                esc(&href),
+                esc(&href),
+                esc(&id),
+                esc(&short(&id, 12)),
+                match &account {
+                    Some(a) => format!("{} <span class=\"tag\">{}</span>", render_cell("email", row_get(a, "email")), if is_num(row_get(a, "email_verified_at")).is_some_and(|n| n != 0.0) { "verified" } else { "not verified" }),
+                    None => "<span class=\"null\">no account</span>".into(),
+                },
+                esc(&num(role("human").as_ref())),
+                esc(&num(role("agent").as_ref())),
+                esc(&num(r.get(2))),
+                esc(&num(att.first())),
+                esc(&format_bytes(vnum(att.get(1)))),
+                esc(&when(r.get(1))),
+                esc(&when(last_at.first()))
+            )
+        })
+        .collect();
+    let prev = if page > 0 { format!("<a href=\"/accounts{}\">‹ prev</a>", if page > 1 { format!("?page={}", page - 1) } else { String::new() }) } else { "<span class=\"off\">‹ prev</span>".into() };
+    let next = if more { format!("<a href=\"/accounts?page={}\">next ›</a>", page + 1) } else { "<span class=\"off\">next ›</span>".into() };
+    Some(frame(format!(
+        "<div class=\"head\"><h1>Accounts</h1><span class=\"muted\">{} room{} · one account belongs to one room, a room is one user's whole board</span></div>\n<section class=\"card\">{}\n<p class=\"note\">Open a row for everything the hub can count of that room, and for what it stores without being able to read it. Emails stay masked here as everywhere.</p></section>",
+        esc(&fmt_num(total as f64, 0)),
+        if total == 1 { "" } else { "s" },
+        if rows.is_empty() {
+            "<p class=\"muted\">No rooms on this page.</p>".to_string()
+        } else {
+            format!(
+                "<div class=\"scroll\"><table class=\"grid\"><thead><tr><th>Room</th><th>Account</th><th>Humans</th><th>Agents</th><th>Envelopes</th><th>Attachments</th><th>Founded</th><th>Last activity</th></tr></thead><tbody>{}</tbody></table></div>\n<div class=\"tools\"><div class=\"pager\"><span>{}–{} of {}</span>{prev}{next}</div></div>",
+                rows.join(""),
+                fmt_num((page * PAGE_SIZE + 1) as f64, 0),
+                fmt_num((page * PAGE_SIZE + rows.len() as i64) as f64, 0),
+                fmt_num(total as f64, 0)
+            )
+        }
+    )))
+}
+
+/// A page that only says something (not found, no database yet), in the page's frame.
+pub fn render_notice(title: &str, text: &str, login: &str, csrf: &str) -> String {
+    format!(
+        "{}{}<main class=\"page notice\"><h1>{}</h1><p>{}</p><a href=\"/\">Back to the overview</a></main></body></html>",
+        head(&format!("{title} · Trommi hub admin")),
+        if login.is_empty() { String::new() } else { top_bar(login, csrf, "") },
+        esc(title),
+        esc(text)
+    )
 }
 
 // ---- state --------------------------------------------------------------------------------------
@@ -933,7 +1295,7 @@ fn query_rows(c: &Connection, sql: &str, args: &[V], rowid: bool) -> rusqlite::R
     rows.collect()
 }
 fn render_table_pane(src: &Source, c: &Connection, s: &State) -> Result<String, String> {
-    let Some(t) = &s.table else { return Ok("<section class=\"pane\"><div class=\"panehead\"><p class=\"muted\">No tables yet.</p></div></section>".into()) };
+    let Some(t) = &s.table else { return Ok("<section class=\"pane\"><div class=\"panehead\"><h2>No tables yet</h2><p class=\"muted\">hub.db has no tables. They are made when the hub first starts.</p></div></section>".into()) };
     let (where_, args) = where_of(t, s);
     let mut order = if s.sort.is_empty() { vec![] } else { vec![format!("{} {}", quote_ident(&s.sort), s.dir.to_uppercase())] };
     order.extend(default_order(t));
@@ -975,6 +1337,7 @@ fn render_table_pane(src: &Source, c: &Connection, s: &State) -> Result<String, 
         if !s.room.is_empty() && !room_ignored { " in this room" } else { "" },
         if room_ignored { " (no room_id: room filter ignored)" } else { "" }
     ));
+    out.push(format!("<div class=\"sum\">{}<a href=\"/schema#t-{}\">What the marks mean</a></div>", class_summary(t), esc(&t.name)));
     let chips: Vec<String> = s
         .filters
         .iter()
@@ -1022,14 +1385,15 @@ fn render_table_pane(src: &Source, c: &Connection, s: &State) -> Result<String, 
     out.push("</div><div class=\"tablewrap\"><table class=\"grid\"><thead><tr><th></th>".into());
     let shown: Vec<&(String, String)> = if !s.room.is_empty() && !room_ignored { t.columns.iter().filter(|c| c.0 != "room_id").collect() } else { t.columns.iter().collect() };
     for (name, _) in &shown {
+        let mark = class_mark(class_of(&t.name, name), false);
         if is_opaque(name) {
-            out.push(format!("<th>{}</th>", esc(name)));
+            out.push(format!("<th>{}{mark}</th>", esc(name)));
             continue;
         }
         let on = s.sort == *name;
         let dir = if on && s.dir == "desc" { "asc" } else { "desc" };
         out.push(format!(
-            "<th><a{} href=\"{}\" title=\"sort\">{}{}</a></th>",
+            "<th><a{} href=\"{}\" title=\"sort\">{}{}</a>{mark}</th>",
             if on { " class=\"on\"" } else { "" },
             esc(&data_href(&Href { room: &s.room, table: &t.name, filters: s.filters.clone(), q: &s.q, sort: name, dir, ..Default::default() })),
             esc(name),
@@ -1056,7 +1420,7 @@ fn render_table_pane(src: &Source, c: &Connection, s: &State) -> Result<String, 
         out.push("</tr>".into());
     }
     if rows.is_empty() {
-        out.push(format!("<tr><td></td><td colspan=\"{}\" class=\"muted\">No rows.</td></tr>", shown.len()));
+        out.push(format!("<tr><td class=\"none\" colspan=\"{}\">{}</td></tr>", shown.len() + 1, if where_.is_empty() { "This table is empty." } else { "No rows match." }));
     }
     out.push("</tbody></table></div></section>".into());
     Ok(out.join(""))
@@ -1274,7 +1638,7 @@ fn render_detail(c: &Connection, s: &State) -> Result<String, String> {
             }
         }
         let link = cell_link(t, name, v, s);
-        out.push(format!("<dt>{}</dt><dd>{}</dd>", esc(name), match link {
+        out.push(format!("<dt>{}{}</dt><dd>{}</dd>", esc(name), class_mark(class_of(&t.name, name), false), match link {
             Some(l) => format!("<a href=\"{}\">{html}</a>", esc(&l)),
             None => html,
         }));
@@ -1560,7 +1924,7 @@ pub fn render_overview(src: &Source, started_at: i64, wanted: Option<&str>, now:
         None => "<p class=\"muted\">hub.db does not exist yet.</p>".into(),
     };
     Ok(format!(
-        "{}{}<main class=\"page\">\n<div class=\"head\"><h1>Overview</h1><div class=\"seg\" role=\"tablist\" aria-label=\"Range\">{seg}</div><span class=\"muted\">{}</span></div>\n<div class=\"tiles\">{}</div>\n<div class=\"charts\">{}</div>\n<div class=\"cols\"><section class=\"card\"><h3>Hub</h3><dl class=\"kv\">{}</dl></section>\n<section class=\"card\"><h3>Tables <a class=\"n\" href=\"/data\">open data browser →</a></h3>{tables_html}</section></div>\n</main>{}",
+        "{}{}<main class=\"page\">\n<div class=\"head\"><h1>Overview</h1><div class=\"seg\" role=\"tablist\" aria-label=\"Range\">{seg}</div><span class=\"muted\">{}</span></div>\n<div class=\"tiles\">{}</div>\n<div class=\"charts\">{}</div>\n<div class=\"cols\"><section class=\"card\"><h3>Hub</h3><dl class=\"kv\">{}</dl></section>\n<section class=\"card\"><h3>Tables <span><a href=\"/data\">Data browser</a> · <a href=\"/schema\">Schema</a></span></h3>{tables_html}</section></div>\n</main>{}",
         head("Übersicht · Trommi hub admin"),
         if login.is_empty() { String::new() } else { top_bar(login, csrf, "overview") },
         esc(&date_fmt(now)),
@@ -1655,6 +2019,33 @@ mod tests {
         assert_eq!(format_bytes(100.0), "100 B");
         assert_eq!(to_fixed(0.25, 1), "0.3");
         assert_eq!(render_cell("signed_entry", &V::Text("AAEC".into())), "<span class=\"opaque\">3 B · 000102</span>");
+    }
+    /// Every column of the hub's own schema has a class in COLUMN_CLASSES (hub/store.mjs, generated into
+    /// admin_assets.rs), COLUMN_CLASSES names nothing the schema does not have, and what is end-to-end encrypted is masked.
+    #[test]
+    fn column_classes_cover_the_schema() {
+        let dir = std::env::temp_dir().join(format!("hubrs-classes-{}", zcrypto::hex(&crate::util::random_bytes(6))));
+        std::fs::create_dir_all(&dir).unwrap();
+        drop(crate::db::Db::open(&dir, &|_| {}).unwrap());
+        let c = Connection::open(dir.join("hub.db")).unwrap();
+        let tables: Vec<String> = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").unwrap().query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        let mut schema: Vec<(String, String)> = vec![];
+        for t in &tables {
+            let cols: Vec<String> = c.prepare(&format!("PRAGMA table_info({})", quote_ident(t))).unwrap().query_map([], |r| r.get(1)).unwrap().map(|r| r.unwrap()).collect();
+            for col in cols {
+                assert_ne!(class_of(t, &col), "none", "{t}.{col} has no class in COLUMN_CLASSES (hub/store.mjs, then gen-admin-assets.mjs)");
+                schema.push((t.clone(), col));
+            }
+        }
+        for (t, col, cls, _) in COLUMN_CLASSES {
+            assert!(schema.iter().any(|s| s.0 == *t && s.1 == *col), "COLUMN_CLASSES names {t}.{col}, which the schema does not have");
+            assert!(["e2e", "plain", "hash"].contains(cls), "{t}.{col}: {cls}");
+            if *cls == "e2e" {
+                assert!(is_opaque(col), "{t}.{col} is end-to-end encrypted and must be masked");
+            }
+        }
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
     }
     #[test]
     fn berlin_time() {

@@ -7,6 +7,8 @@ RUN apk add --no-cache musl-dev
 WORKDIR /src
 COPY hub-rs/Cargo.toml hub-rs/Cargo.lock hub-rs/
 COPY hub-rs/crates hub-rs/crates
+# The admin page's fonts are the web app's (include_bytes! in crates/hub/src/admin.rs).
+COPY app/web/public/fonts/f1.woff2 app/web/public/fonts/f3.woff2 app/web/public/fonts/f7.woff2 app/web/public/fonts/
 RUN cd hub-rs && cargo build --release --locked -p trommi-hub \
  && mkdir -p /out/data && cp target/release/trommi-hub /out/trommi-hub
 
