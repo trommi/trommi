@@ -1,0 +1,4 @@
+# app.trommi.com is the app, not a site: every answer carries "X-Robots-Tag: noindex" (public/_headers).
+# Crawling stays allowed so that crawlers see that header. The website is https://trommi.com/.
+User-agent: *
+Allow: /

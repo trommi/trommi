@@ -1,0 +1,14 @@
+# The Rust compiler every build of this workspace uses, and the targets it is built for: the browser (WASM), iOS
+# (device and simulator), and the connector's four (static Linux, macOS). An upgrade is a change of this file.
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+targets = [
+  "wasm32-unknown-unknown",
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+]

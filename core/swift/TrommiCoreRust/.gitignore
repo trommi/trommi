@@ -1,0 +1,5 @@
+# Written by ../build.sh: the Rust static libraries and UniFFI's Swift file and C header.
+lib/
+Sources/TrommiCoreFFI/include/
+Sources/TrommiCoreRust/TrommiCoreRust.swift
+.build/

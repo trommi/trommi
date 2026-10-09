@@ -1,0 +1,31 @@
+# Cloudflare static assets headers (also read by dev/serve.mjs). Strict CSP: scripts, styles, fonts only from this
+# origin; data only to the hub. Nothing of the app is for a search engine (X-Robots-Tag; robots.txt lets crawlers in so
+# that they read it). No inline script or style element but the hashed ones (index.html's theme script, the
+# help page's script and style); style attributes are allowed (style-src-attr: the views set --hue etc. per element).
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-USOmt2hbScOoML+lzkiY7PYTiXF9wtsUU16lwW3pbLs=' 'sha256-ybvuf1L5uav+6VcsUPoL5ireqy4OGv2k20ARdev3Y88='; style-src 'self' 'sha256-EcuDZUlqOtaNAcwG9eAtUJe5qwlPygYYVo1mHFmnNRo='; style-src-attr 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://hub.trommi.com; frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
+  X-Content-Type-Options: nosniff
+  X-Robots-Tag: noindex
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(self), geolocation=(), microphone=(self)
+/sw.js
+  Cache-Control: no-cache
+# Universal links of the iOS app (worker.js serves it at /.well-known/apple-app-site-association; Apple's CDN fetches it).
+/apple-app-site-association.json
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600
+/index.html
+  Cache-Control: no-cache
+# The stylesheet bundle and the app's modules (dev/build.mjs): their names change with their content.
+/gen/bundle.*
+  Cache-Control: public, max-age=31536000, immutable
+/gen/app/*
+  Cache-Control: public, max-age=31536000, immutable
+# The sandboxed viewer for published pages (scripts of an agent's page run here, never in the app's origin).
+# (Cloudflare answers /frame.html with a redirect to /frame: the rule must name both.)
+/frame
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts
+/frame.html
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts
