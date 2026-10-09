@@ -203,8 +203,8 @@ impl App {
                 .map(|s| s.is_none())
                 .unwrap_or(false);
             if gone {
-                // 14.4: a removal ends the removed device's tokens and streams at once
-                self.sessions.end(room, device);
+                // 14.4: a removal ends the removed device's tokens and streams at once: every request with
+                // its token is refused from here on (its standing is checked each time), and its streams end
                 self.live.end_where(room, |a| &a.device == device);
             }
         }
