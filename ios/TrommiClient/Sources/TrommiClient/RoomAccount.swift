@@ -95,8 +95,7 @@ extension Room {
     let made = try newDevice(base: base, roomId: nil)
     do {
       let code = try tools.generateRecoveryCode()
-      let keys = try tools.recoveryPublicKeys(code: code)
-      let room = try made.device.foundRoom(recoverySignatureKey: keys.signatureKey, recoveryHpkeKey: keys.hpkeKey, nowMs: nowMs())
+      let room = try made.device.foundRoom(recoveryCode: code, nowMs: nowMs())
       guard let entry = made.device.outbox().first(where: { $0.kind == .roomFounding }) else { throw TrommiError("internal", "the core made no founding") }
       // The same bytes again while no answer comes: the hub answers a repeated founding with its first answer. If
       // none comes at all, this device is given up; had the hub taken the founding after all, the account it made
@@ -138,8 +137,8 @@ extension Room {
       var sealed = [Bytes](), after: UInt64 = 0
       while true {
         let page = try await hub.request("GET", "/sealed-keys", query: ["after": String(after)])
-        sealed += (page["rows"] as? [String] ?? []).compactMap { try? unb64u($0) }
-        guard page["more"] as? Bool == true, let next = (page["change"] as? NSNumber)?.uint64Value, next > after else { break }
+        sealed += (page["rows"] as? [JSON] ?? []).compactMap { ($0["sealed_key"] as? String).flatMap { try? unb64u($0) } }
+        guard page["more"] as? Bool == true, let next = Wire.uint(page["change"]), next > after else { break }
         after = next
       }
       _ = try tools.joinWithRecoveryCode(device: made.device, code: code, groupInfos: infos, sealedKeys: sealed, nowMs: nowMs())
@@ -148,7 +147,7 @@ extension Room {
       // taken before it stands, and the device is found again by the next sign-in's fresh join.
       for e in made.device.outbox() where e.kind == .externalCommit {
         let r = try await hub.post(e)
-        try made.device.outboxAccepted(e.id, change: (r["change"] as? NSNumber)?.uint64Value)
+        try made.device.outboxAccepted(e.id, change: Wire.uint(r["change"]))
       }
       let record = RoomRecord(hubURL: hubURL, roomId: roomId, myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false)
       try made.store.save(record)

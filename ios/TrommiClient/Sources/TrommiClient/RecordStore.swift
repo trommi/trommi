@@ -1,12 +1,13 @@
-// RecordStore.swift: the device's encrypted store of what it verified (README "The huge room": per change, not per
-// room). Three kinds of file in the room's folder, each sealed with the cache key (AES-256-GCM, Keychain on iOS):
+// RecordStore.swift: the device's sealed cache of what it already opened and showed (RoomCache.swift), per change
+// and not per room. Files in the device's folder, each sealed with the cache key (AES-256-GCM, LocalSeal.swift; the
+// key is in the Keychain on iOS):
 //
-//   records/<first>.seg  append-only segments of records: [u32 length][u64 envelope number][12 nonce][sealed record
-//                        in RecCodec's bytes],
-//                        AAD "trommi ios record/<number>" (a record cannot be moved to another number). A record seen
-//                        again (its body loaded later) is appended again; the later one wins. A segment closes at 1 MiB (read in parallel).
-//   head.bin             cursor, lamport, the chain heads, the session secrets: small, rewritten on each save.
-//   grants.bin           the session grant chains: written only when they changed.
+//   records/<first>.seg  append-only segments of records: [u32 length][u64 change number][12 nonce][sealed record
+//                        in RecCodec's bytes], AAD "trommi ios record/<number>" (a record cannot be moved to another
+//                        number). A record seen again (its body loaded later) is appended again; the later one
+//                        wins. A segment closes at 1 MiB (read in parallel).
+//   head.bin             the cursor and the lamport: small, rewritten on each save.
+//   board.bin            now and then the board as a whole, so a start replays only what came after it.
 //
 // One new message therefore writes its record (about a KiB) and the head, not the room. Reading verifies every seal;
 // a damaged tail (a crash mid-write) is cut off and the rest kept.
@@ -21,7 +22,6 @@ public final class RecordStore: @unchecked Sendable {
 
   var recordsDir: URL { dir.appendingPathComponent("records", isDirectory: true) }
   var headURL: URL { dir.appendingPathComponent("head.bin") }
-  var grantsURL: URL { dir.appendingPathComponent("grants.bin") }
   var boardURL: URL { dir.appendingPathComponent("board.bin") }
 
   /** The board snapshot (BoardCodec bytes and what goes with them), sealed as a whole. */
@@ -204,7 +204,6 @@ public final class RecordStore: @unchecked Sendable {
   public func wipe() {
     try? FileManager.default.removeItem(at: recordsDir)
     try? FileManager.default.removeItem(at: headURL)
-    try? FileManager.default.removeItem(at: grantsURL)
     try? FileManager.default.removeItem(at: boardURL)
   }
 

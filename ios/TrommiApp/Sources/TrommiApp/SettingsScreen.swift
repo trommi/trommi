@@ -551,7 +551,7 @@ struct InviteDeviceSheet: View {
             // the code, blurred: a stand-in until he reveals the real one (nothing is made before)
             Button(action: reveal) {
               ZStack {
-                QRCode(text: "https://app.trommi.com/join#v1.stand-in-for-the-blur").frame(width: 240, height: 240).padding(12)
+                QRCode(text: "https://app.trommi.com/join#v2.stand-in-for-the-blur").frame(width: 240, height: 240).padding(12)
                   .background(RoundedRectangle(cornerRadius: 16).fill(.white)).blur(radius: 10).opacity(0.75)
                 if revealed { ProgressView() } else {
                   Label("Show Code", systemImage: "eye").font(Face.text(16, .semibold)).foregroundStyle(Ink.fg)

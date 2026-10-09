@@ -91,11 +91,13 @@ public struct GroupSummary: Equatable {
   public var session: SessionInfo?
   public var epoch: UInt64
   public var leaves: [DeviceId]
+  /** Leaves that may no longer be there (a session whose agent left `agents`: stale until cleaned, 5.2.8). */
+  public var disallowed: [DeviceId]
   public var archived: Bool
   /** An own Commit is waiting for the hub's answer. */
   public var pending: Bool
-  public init(group: GroupId, session: SessionInfo?, epoch: UInt64, leaves: [DeviceId], archived: Bool, pending: Bool) {
-    self.group = group; self.session = session; self.epoch = epoch; self.leaves = leaves; self.archived = archived; self.pending = pending
+  public init(group: GroupId, session: SessionInfo?, epoch: UInt64, leaves: [DeviceId], disallowed: [DeviceId] = [], archived: Bool, pending: Bool) {
+    self.group = group; self.session = session; self.epoch = epoch; self.leaves = leaves; self.disallowed = disallowed; self.archived = archived; self.pending = pending
   }
 }
 /** A removed device's last envelope the remover accepted (spec 9.0.10): 0 and zeros if none. */
@@ -255,7 +257,8 @@ public protocol CoreDevice: CoreSigner {
   func keyPackagesToUpload(unusedAtHub: Int, nowMs: UInt64) throws -> UInt64?
   func keyPackage(nowMs: UInt64) throws -> Bytes
 
-  func foundRoom(recoverySignatureKey: Bytes, recoveryHpkeKey: Bytes, nowMs: UInt64) throws -> RoomId
+  /** Founds the room with the recovery code (32 bytes), whose public halves the room group names (8.1, 8.2). */
+  func foundRoom(recoveryCode: Bytes, nowMs: UInt64) throws -> RoomId
   func foundSession(agent: DeviceId, keyPackages: [Bytes], nowMs: UInt64) throws -> SessionId
   func addHumanDevice(_ device: DeviceId, keyPackage: Bytes, nowMs: UInt64) throws -> UInt64
   func addToSession(group: GroupId, device: DeviceId, keyPackage: Bytes, nowMs: UInt64) throws -> UInt64
@@ -271,10 +274,21 @@ public protocol CoreDevice: CoreSigner {
 
   func sendHandover(group: GroupId, recipient: DeviceId) throws -> [UInt64]
   func sendStrokePiece(board: BoardId, piece: Bytes) throws -> UInt64
+  /**
+   * awaited: a message the hub only passed on (the stream's `relay`: a piece of a stroke being drawn, 7.2). It has
+   * no change number and is not in the log, so it cannot go through `processLogEntry`.
+   */
+  func processRelay(group: GroupId, bytes: Bytes) throws -> ReceivedMessage
 
   func outbox() -> [OutboxEntry]
   func outboxAccepted(_ id: UInt64, change: UInt64?) throws
-  func outboxRefused(_ id: UInt64, code: String) throws
+  /**
+   * Only for the hub's last word on those bytes (`CoreTools.isFinalRefusal`); for anything else the entry stays
+   * and is sent again unchanged. `voided`: the hub kept the envelope's number as a void record (9.0.8).
+   */
+  func outboxRefused(_ id: UInt64, code: String, voided: Bool) throws
+  /** Ends the device: it answers no more and lets go of its store. */
+  func close()
 
   // awaited: section 9 on the device (core/README.md: "envelopes … are being wired in")
   /** Seals and signs the next envelope of this device's chain in the draft's group and puts it into the outbox. */
@@ -408,11 +422,11 @@ public protocol CoreTools: AnyObject {
   func parseRecoveryCode(_ text: String) throws -> Bytes
   func sealCode(_ code: Bytes, email: String, room: RoomId, way: AccountWay) throws -> Bytes
   func openCode(_ sealed: Bytes, email: String, room: RoomId, way: AccountWay) throws -> Bytes
-  /** The public halves of the recovery key, which the room group names (8.1). */
-  func recoveryPublicKeys(code: Bytes) throws -> (signatureKey: Bytes, hpkeKey: Bytes)
 
   // hub_auth (12.3)
   func canonicalHub(_ text: String) throws -> String
+  /** Whether a code the hub answered an outbox entry with is its last word on those bytes (else: send again). */
+  func isFinalRefusal(_ code: String) -> Bool
 
   // invite, the joining side (12.1)
   func parseInviteLink(_ text: String) throws -> InviteLinkParts
@@ -425,7 +439,8 @@ public protocol CoreTools: AnyObject {
   // files (11)
   func encryptFile(_ plain: Bytes) throws -> SealedFile
   func decryptFile(fileId: FileId, fileKey: Bytes, sha256: Bytes, stored: Bytes) throws -> Bytes
-  func createShareLink(app: String, fileId: FileId, fileKey: Bytes) throws -> ShareLinkParts
+  /** The link carries the file's key and the hash of its stored bytes after the # (11.5). */
+  func createShareLink(app: String, fileId: FileId, fileKey: Bytes, sha256: Bytes) throws -> ShareLinkParts
 
   // push (15.2)
   func generatePushKey() throws -> Bytes

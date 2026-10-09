@@ -1,5 +1,5 @@
 // QRScanner.swift: the camera view that reads the pairing QR code a signed-in device shows (web app: menu → Devices →
-// "Pair a device"). AVFoundation's metadata output, QR only; the first code that holds a pairing link ("#v1.") wins.
+// "Pair a device"). AVFoundation's metadata output, QR only; the first code that holds a pairing link ("#v2.") wins.
 import SwiftUI
 #if canImport(UIKit) && canImport(AVFoundation)
 import AVFoundation
@@ -72,7 +72,7 @@ final class ScannerUIView: UIView, AVCaptureMetadataOutputObjectsDelegate {
   func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
     guard !done else { return }
     for o in objects {
-      guard let text = (o as? AVMetadataMachineReadableCodeObject)?.stringValue, text.contains("#v1.") else { continue }
+      guard let text = (o as? AVMetadataMachineReadableCodeObject)?.stringValue, text.contains("#v2.") else { continue }
       done = true
       UINotificationFeedbackGenerator().notificationOccurred(.success)
       stop()

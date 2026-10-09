@@ -66,15 +66,32 @@ minutes the first time, 20 seconds after.
 
 ## Who owns the state
 
-- **The app alone owns the device.** The device's state (its keys, the MLS groups, the outbox) lies in the app's
-  private container, opened under an exclusive lock by one process. The core's `Storage` rule is one owner per stored
-  state; two processes on one device state would fork it.
-- **Extensions never open it.** They cannot sign, send, or follow a group.
-- **Share Extension:** writes what was shared into the sealed inbox in the App Group; the app takes it from there and
-  sends it.
-- **Notification Service Extension:** gets, through a shared Keychain item, the push key and the content keys of the
-  newest two epochs of each session. With them it opens the push and the one envelope it names, and nothing else.
-- **Live Activity widget:** shows counts and a drawing the app prepared; it holds no key of the room.
+The core's rule (`core/src/store.rs`): exactly one owner works on a stored device state; two would sign two
+different items under one number.
+
+- **The app alone owns the device.** The device's state (its key, the MLS groups, the chains, the outbox) lies in the
+  app's own container (`Application Support/trommi/d-<random>/state`), not in the App Group, sealed under a key that
+  is a Keychain item of the app alone. `DeviceStore` takes an exclusive lock on the folder before it reads and keeps
+  it until the room is closed: a second opener, in this process or another, fails with `busy`. The revision is the
+  check behind the lock.
+- **Written whole, read with suspicion.** One sealed record per batch, flushed to the drive before the core is
+  answered; a write whose outcome is unknown stops the store. On reading, every record is opened, only the end of
+  the log may be incomplete, and a state below its **anchor** (a revision kept in the Keychain, moved forward by
+  every batch that puts something into the outbox) does not load: an older state put back is refused. The folder is
+  left out of backups.
+- **Extensions never open it**, and cannot: no path, no key. They cannot sign, send, or follow a group.
+  - **Share Extension:** writes what was shared into the sealed inbox in the App Group; the app takes it from there
+    and sends it.
+  - **Notification Service Extension:** gets, in one Keychain item whose access group is the App Group, the push key
+    and of each live session the content key of its newest two epochs and its agent devices. With them it opens the
+    push and the one envelope it names. Know the limit: such a key opens everything of that session in that epoch,
+    and every member of the App Group (the three extensions) can read the item; a narrower hand-over needs either a
+    Keychain group of its own for app and notification extension (the signing scripts and profiles do not carry one
+    today) or a title sealed separately by the core.
+  - **Live Activity widget:** shows two counts; it holds no key and reads no file.
+- **What is not covered:** a phone whose app container AND Keychain an attacker can write. The lock is held while
+  the app is suspended; the folder is not a shared container, where iOS would end an app for that, but this is to
+  be watched on a device.
 
 ## Not on Linux
 

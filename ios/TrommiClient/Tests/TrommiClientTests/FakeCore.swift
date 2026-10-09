@@ -24,7 +24,7 @@ final class FakeDevice: CoreDevice {
   var state: State
   var revision: UInt64
   var box: [UInt64: OutboxEntry] = [:]
-  private(set) var isOwner = true
+  var isOwner = true
   static let stateKey: Bytes = [1]
 
   init(store: CoreStorage, create: Bool) throws {
@@ -77,7 +77,7 @@ final class FakeDevice: CoreDevice {
   func contentKey(group: GroupId, epoch: UInt64) throws -> Bytes { Bytes(repeating: UInt8(truncatingIfNeeded: epoch), count: 32) }
   func keyPackagesToUpload(unusedAtHub: Int, nowMs: UInt64) throws -> UInt64? { nil }
   func keyPackage(nowMs: UInt64) throws -> Bytes { j(["key_package": state.id]) }
-  func foundRoom(recoverySignatureKey: Bytes, recoveryHpkeKey: Bytes, nowMs: UInt64) throws -> RoomId {
+  func foundRoom(recoveryCode: Bytes, nowMs: UInt64) throws -> RoomId {
     state.room = hex(systemRandom(32))
     _ = try queue(.roomFounding, group: room, parts: [j(["room": state.room!, "founder": state.id]), [0]])
     return room!
@@ -116,7 +116,9 @@ final class FakeDevice: CoreDevice {
   func sendStrokePiece(board: BoardId, piece: Bytes) throws -> UInt64 { try queue(.relayMessage, group: room, parts: [piece]) }
   func outbox() -> [OutboxEntry] { isOwner ? box.keys.sorted().map { box[$0]! } : [] }
   func outboxAccepted(_ id: UInt64, change: UInt64?) throws { try write([], drop: [id]) }
-  func outboxRefused(_ id: UInt64, code: String) throws { try write([], drop: [id]) }
+  func outboxRefused(_ id: UInt64, code: String, voided: Bool) throws { try write([], drop: [id]) }
+  func close() { isOwner = false }
+  func processRelay(group: GroupId, bytes: Bytes) throws -> ReceivedMessage { .strokePiece(from: id, board: ALL_DESKS_BOARD, piece: bytes) }
 
   /** An "envelope" here is JSON of its header and its body in the clear. */
   func sendEnvelope(_ draft: EnvelopeDraft, nowMs: UInt64) throws -> SentEnvelope {
@@ -202,7 +204,7 @@ final class FakeTools: CoreTools {
   func parseRecoveryCode(_ text: String) throws -> Bytes { try unhex(text) }
   func sealCode(_ code: Bytes, email: String, room: RoomId, way: AccountWay) throws -> Bytes { code.reversed() }
   func openCode(_ sealed: Bytes, email: String, room: RoomId, way: AccountWay) throws -> Bytes { sealed.reversed() }
-  func recoveryPublicKeys(code: Bytes) throws -> (signatureKey: Bytes, hpkeKey: Bytes) { (code, code) }
+  func isFinalRefusal(_ code: String) -> Bool { !["internal", "overloaded", "rate-limited", "unauthorised"].contains(code) && !code.hasPrefix("http-") }
   func canonicalHub(_ text: String) throws -> String { text }
   func parseInviteLink(_ text: String) throws -> InviteLinkParts { throw TrommiError("not-built") }
   func inviteRequest(link: String, offer: Bytes, offerSignature: Bytes, device: CoreDevice, nowMs: UInt64) throws -> JoinRequest { throw TrommiError("not-built") }
@@ -210,7 +212,7 @@ final class FakeTools: CoreTools {
   func checkEmoji(_ numbers: [UInt8]) -> [(emoji: String, word: String)] { numbers.map { ("#", String($0)) } }
   func encryptFile(_ plain: Bytes) throws -> SealedFile { SealedFile(fileId: systemRandom(16), fileKey: [1], sha256: [2], stored: plain.reversed()) }
   func decryptFile(fileId: FileId, fileKey: Bytes, sha256: Bytes, stored: Bytes) throws -> Bytes { stored.reversed() }
-  func createShareLink(app: String, fileId: FileId, fileKey: Bytes) throws -> ShareLinkParts { ShareLinkParts(link: app + "/a/x", shareId: systemRandom(16), secretHash: [3]) }
+  func createShareLink(app: String, fileId: FileId, fileKey: Bytes, sha256: Bytes) throws -> ShareLinkParts { ShareLinkParts(link: app + "/a/x", shareId: systemRandom(16), secretHash: [3]) }
   func generatePushKey() throws -> Bytes { systemRandom(32) }
   func recoverySigner(code: Bytes) throws -> CoreSigner { throw TrommiError("not-built") }
   func joinWithRecoveryCode(device: CoreDevice, code: Bytes, groupInfos: [(group: GroupId, groupInfo: Bytes)], sealedKeys: [Bytes], nowMs: UInt64) throws -> Bytes { throw TrommiError("not-built") }

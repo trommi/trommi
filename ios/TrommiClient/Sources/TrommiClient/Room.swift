@@ -137,6 +137,8 @@ public final class Room {
   /** The groups as the core last told them, by group id (hex). */
   var groups: [String: GroupSummary] = [:]
   var roomGroup: GroupId?
+  /** The hub's last word on how many of this device's KeyPackages are unused; nil before it said so in this run. */
+  var keyPackagesAtHub: Int?
   /** Which session an envelope of a group belongs to: group id (hex) to session id (hex). */
   var sessionIdOfGroup: [String: String] = [:]
   var synced = false
@@ -358,7 +360,7 @@ public final class Room {
       guard let bytes = (w["welcome"] as? String).flatMap({ try? unb64u($0) }) else { continue }
       // A Welcome that does not check is left alone: the hub keeps it, an alert says so, nothing is joined.
       do { _ = try await onCore { try $0.joinWelcome(bytes, room: room, committer: nil, nowMs: nowMs()) } }
-      catch let e as TrommiError where e.code == "group-exists" || e.code == "wrong-epoch" { continue }
+      catch let e as TrommiError where e.code == "wrong-epoch" { continue }   // (joined before: the hub still had it)
       catch { board.pushAlert(&change, code: "welcome", message: "a Welcome was refused: \(Self.codeOf(error))") }
     }
     try await refreshGroups(&change)
@@ -366,33 +368,65 @@ public final class Room {
 
   /** Keeps the hub stocked with this device's KeyPackages (spec 14.2). */
   func publishKeyPackages() async throws {
-    // The hub's count comes with its answer to an upload; before the first one of a run the device decides from
-    // what it remembers having published (0 here means "tell me if any are due").
-    _ = try await onCore { try $0.keyPackagesToUpload(unusedAtHub: Int.max, nowMs: nowMs()) }
+    // How many are unused at the hub comes with its answer to an upload (`unused`), nowhere else: before the first
+    // answer of a run the device is told "none", and makes a batch if its own records say one is due.
+    let unused = keyPackagesAtHub ?? 0
+    _ = try await onCore { try $0.keyPackagesToUpload(unusedAtHub: unused, nowMs: nowMs()) }
   }
 
-  /** GET /v2/changes from the cursor until the hub has no more. */
+  /**
+   * GET /v2/changes from the cursor until the hub has no more. The hub's answer is not believed about its shape:
+   * every item must carry a change number above the one before it, and the page's own `change` may only stand at
+   * or behind its last item. A page that is out of order, or that says "more" without moving on, ends the catch-up
+   * with a finding and the cursor where the last good item left it. (That the hub gave EVERYTHING it has is not
+   * something numbers can show: that is the chains' and the `heads` registers' work in the core, 9.0.7.)
+   */
   func readChanges(_ report: inout SyncReport, _ change: inout Change) async throws {
-    while true {
+    for _ in 0..<10_000 {
+      let before = cursor
       let page = try await noted { try await hub.changes(after: cursor) }
-      let items = page["items"] as? [JSON] ?? []
+      let raw = page["items"] as? [JSON] ?? []
+      let items = try Self.ordered(raw, after: cursor)
       try await process(items, source: .catchUp, report: &report, change: &change)
-      let upTo = (page["change"] as? NSNumber)?.uint64Value ?? cursor
-      // The hub moves the cursor over what this device may not see; never backwards.
-      if upTo > cursor { cursor = upTo; board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, Int(upTo)) }
-      if page["more"] as? Bool != true { break }
-      if items.isEmpty && upTo <= cursor { break }   // a hub that says "more" and gives nothing is not followed for ever
+      // The hub moves the cursor over what this device may not see: forwards only, and only when the whole page
+      // was taken (process throws otherwise).
+      if let upTo = Wire.uint(page["change"]), upTo > cursor { cursor = upTo; board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, Int(upTo)) }
+      if page["more"] as? Bool != true { return }
+      if cursor <= before { throw finding("bad-format", "the hub says there is more and gives nothing new") }
     }
+    throw finding("bad-format", "the hub's changes do not end")
+  }
+  /** The items of a page as they must be: each readable, each with a change number above the one before. */
+  static func ordered(_ raw: [JSON], after: UInt64) throws -> [Item] {
+    var last = after
+    return try raw.map { j in
+      guard let item = Item(j) else {
+        // (a kind a newer hub adds is passed over; anything else that does not read is not)
+        if let k = j["kind"] as? String, !["envelope", "commit", "message"].contains(k), let n = Wire.uint(j["change"]), n > last { last = n; return nil }
+        throw TrommiError("bad-format", "an item of the hub's changes does not read")
+      }
+      guard item.change > last else { throw TrommiError("bad-format", "the hub's changes are not in order") }
+      last = item.change
+      return item
+    }.compactMap { $0 }
+  }
+  /** A finding about the hub: shown, and thrown. */
+  func finding(_ code: String, _ message: String) -> TrommiError {
+    var ch = Change()
+    board.pushAlert(&ch, code: code, message: message)
+    emit(ch)
+    return TrommiError(code, message)
   }
 
   /** One item of GET /v2/changes or of the stream, as bytes for the core. */
   enum Item {
-    case log(LogEntry)
+    /** `n`: the entry's number in its group's log, which a report to the hub names (14.7). */
+    case log(n: UInt64?, LogEntry)
     case envelope(change: UInt64, bytes: Bytes, voidCode: String?)
-    var change: UInt64 { switch self { case .log(let e): return e.change; case .envelope(let c, _, _): return c } }
+    var change: UInt64 { switch self { case .log(_, let e): return e.change; case .envelope(let c, _, _): return c } }
 
     init?(_ j: JSON) {
-      guard let change = (j["change"] as? NSNumber)?.uint64Value else { return nil }
+      guard let change = Wire.uint(j["change"]), change > 0 else { return nil }
       if j["kind"] as? String == "envelope" {
         guard let bytes = (j["envelope"] as? String).flatMap({ try? unb64u($0) }) else { return nil }
         self = .envelope(change: change, bytes: bytes, voidCode: j["void_code"] as? String)
@@ -400,8 +434,8 @@ public final class Room {
       }
       guard let group = (j["group_id"] as? String).flatMap({ try? unb64u($0) }), let bytes = (j["bytes"] as? String).flatMap({ try? unb64u($0) }) else { return nil }
       switch j["kind"] as? String {
-      case "commit": self = .log(LogEntry(change: change, group: group, kind: .commit(bytes: bytes, recoveryAuth: (j["recovery_auth"] as? String).flatMap { try? unb64u($0) })))
-      case "message": self = .log(LogEntry(change: change, group: group, kind: .message(bytes: bytes)))
+      case "commit": self = .log(n: Wire.uint(j["n"]), LogEntry(change: change, group: group, kind: .commit(bytes: bytes, recoveryAuth: (j["recovery_auth"] as? String).flatMap { try? unb64u($0) })))
+      case "message": self = .log(n: Wire.uint(j["n"]), LogEntry(change: change, group: group, kind: .message(bytes: bytes)))
       default: return nil    // a kind a newer hub adds
       }
     }
@@ -412,6 +446,8 @@ public final class Room {
     case processed(Processed)
     case envelope(ReceivedEnvelope, change: UInt64)
     case refused(change: UInt64, code: String)
+    /** The run ends before this item; the cursor stays in front of it. */
+    case stopped(code: String)
   }
 
   /**
@@ -419,8 +455,7 @@ public final class Room {
    * item the core refuses changes nothing and is counted; a local failure (the store, a lost owner) stops the run
    * with the cursor before it, so it is read again.
    */
-  func process(_ items: [JSON], source: EnvelopeSource, report: inout SyncReport, change: inout Change) async throws {
-    let parsed = items.compactMap(Item.init).filter { $0.change > cursor }
+  func process(_ parsed: [Item], source: EnvelopeSource, report: inout SyncReport, change: inout Change) async throws {
     guard !parsed.isEmpty else { return }
     let (outcomes, coreAt): ([Outcome], UInt64) = try await onCore { device in
       var out = [Outcome]()
@@ -430,15 +465,25 @@ public final class Room {
       for item in parsed {
         do {
           switch item {
-          case .log(let entry): out.append(entry.change <= done ? .processed(.skipped) : .processed(try device.processLogEntry(entry)))
+          case .log(_, let entry): out.append(entry.change <= done ? .processed(.skipped) : .processed(try device.processLogEntry(entry)))
           case .envelope(let c, let bytes, let void):
             out.append(.envelope(try device.receiveEnvelope(bytes, change: c, source: c <= done ? .page : source, voidCode: void, nowMs: nowMs()), change: c))
           }
         } catch {
           // A local failure is not the item's fault: stop here, nothing after it is processed out of order.
-          if case .local = device.logFinding(error) { if out.isEmpty { throw error }; return (out, device.cursor) }
           if !device.isOwner { throw error }
-          out.append(.refused(change: item.change, code: Room.codeOf(error)))
+          switch device.logFinding(error) {
+          // The store failed: not the item's fault. Stop here; nothing after it is processed out of order.
+          case .local: out.append(.stopped(code: Room.codeOf(error))); return (out, device.cursor)
+          // Something this item builds on has not come yet (its group is behind): stop before it, so that it is
+          // read again with what it needs, instead of being passed over.
+          case .early: out.append(.stopped(code: Room.codeOf(error))); return (out, device.cursor)
+          // Processed before: nothing to do.
+          case .duplicate: out.append(.processed(.skipped))
+          // It does not verify or cannot be merged (13.4): the device keeps its last good state, the finding is
+          // shown and, for a Commit, reported to the hub (14.7). Later items of other groups go on.
+          case .badGroup: out.append(.refused(change: item.change, code: Room.codeOf(error)))
+          }
         }
       }
       return (out, device.cursor)
@@ -448,7 +493,9 @@ public final class Room {
     // behind the Commit that founded its session must find that session on the board.
     var groupsStale = false, groupsChanged = false
     func freshGroups() async throws { if groupsStale { groupsStale = false; groupsChanged = true; try await refreshGroups(&change) } }
+    var stopped: String? = nil
     for (i, o) in outcomes.enumerated() {
+      if case .stopped(let code) = o { stopped = code; break }
       cursor = max(cursor, parsed[i].change)
       board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, Int(cursor))
       switch o {
@@ -460,7 +507,7 @@ public final class Room {
         case .ownCommit, .observed: groupsStale = true
         case .message(let m):
           try await freshGroups()
-          if case .log(let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
+          if case .log(_, let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
         case .skipped: break
         }
       case .envelope(let e, let c):
@@ -469,11 +516,19 @@ public final class Room {
       case .refused(let c, let code):
         report.refused += 1
         if report.refused <= 5 { report.warnings.append("change \(c) refused: \(code)") }
+        // Never swallowed (section 16): shown on the board; a Commit that cannot be merged is reported (14.7).
+        board.pushAlert(&change, code: code == "internal" ? "bad-group" : code, message: "an item from the hub was refused (change \(c))", envelopeNumber: Int(c))
+        if case .log(let n?, let entry) = parsed[i], case .commit = entry.kind { reportBadCommit(entry.group, n) }
+      case .stopped: break
       }
     }
     try await freshGroups()
     if groupsChanged { notifyKeysChanged?() }
-    if outcomes.count < parsed.count { throw TrommiError("storage", "this device's store did not take a change") }
+    if let code = stopped { throw TrommiError(code, "the catch-up stopped before a change it could not take yet") }
+  }
+  /** Tells the hub that a Commit of its log cannot be merged (14.7); the hub withdraws nothing, it notes it. */
+  private func reportBadCommit(_ group: GroupId, _ n: UInt64) {
+    Task { _ = try? await hub.request("POST", "/groups/\(b64u(group))/reject", body: ["n": n]) }
   }
   /** Called when the groups or their epochs changed: the app hands the notification extension its new keys. */
   public var notifyKeysChanged: (() -> Void)?
@@ -500,8 +555,18 @@ public final class Room {
   /** One received envelope into the board. */
   func apply(_ e: ReceivedEnvelope, change n: UInt64, report: inout SyncReport, _ change: inout Change) {
     report.envelopes += 1
-    if case .notApplied(let code) = e.standing, e.payload == nil, code != "pruned", code != "no-key", code != "decrypt-failed" { report.voids += 1; return }
+    if case .notApplied(let code) = e.standing, code != "pruned" {
+      // Chained and never applied. Why is a finding (a void of another sender the core could not re-check, an
+      // equivocation, a body that does not open): shown, never swallowed (section 16).
+      board.pushAlert(&change, code: code, message: "an item was not applied", envelopeNumber: Int(n), sender: hex(e.header.sender))
+      if e.payload == nil, code != "no-key", code != "decrypt-failed" { report.voids += 1; return }
+    }
     guard var rec = Records.record(e, change: n, sessionId: sessionIdOfGroup[hex(e.header.group)]) else { return }
+    // A lamport far above every one seen is not counted (9.3.2: the core counts it as 0; so does the board).
+    if rec.causal.lamport > 0, !lamportAccepted(rec.causal.lamport, lamport) {
+      board.pushAlert(&change, code: "lamport-inflated", message: "a write claims a lamport far above every one seen: counted as 0", envelopeNumber: Int(n), sender: rec.senderDeviceId)
+      rec.causal.lamport = 0
+    }
     switch rec.contentState {
     case "ok": report.opened += 1
     case "pruned", "header": report.headerOnly += 1
@@ -535,13 +600,22 @@ public final class Room {
   public func handleStreamEvent(_ event: String, _ data: JV) async {
     switch event {
     case "envelope", "log":
-      guard let item = data.any as? JSON, let n = (item["change"] as? NSNumber)?.uint64Value, n > cursor else { return }
+      // The hub sends the item as GET /v2/changes gives it. A `log` event that only names its group and number
+      // (spec/hub-api.md allows that), or anything else that does not read, is a hint: catch up from the cursor.
+      // An item that is not the next one is taken by the same catch-up, in order.
+      let item = (data.any as? JSON).flatMap(Item.init)
+      if let i = item, i.change <= cursor { return }
       _ = try? await serial { [self] in
         var report = SyncReport(), change = Change()
-        try await self.process([item], source: .live, report: &report, change: &change)
-        self.board.project(change)
-        self.emit(change)
-        self.pumpOutbox()
+        defer { self.board.project(change); self.emit(change); self.pumpOutbox() }
+        if let i = item, i.change > self.cursor { do { try await self.process([i], source: .live, report: &report, change: &change); return } catch {} }
+        try await self.readChanges(&report, &change)
+      }
+    case "relay":
+      // A message the hub only passes on (a piece of a stroke being drawn): no change number, not in the log.
+      guard let group = data["group_id"].string.flatMap({ try? unb64u($0) }), let bytes = data["message"].string.flatMap({ try? unb64u($0) }) else { return }
+      _ = try? await serial { [self] in
+        if case let .strokePiece(from, boardId, piece) = try await self.onCore({ try $0.processRelay(group: group, bytes: bytes) }) { self.onStrokePiece?(hex(from), "desk/\(hex(boardId))", piece) }
       }
     case "welcome":
       _ = try? await serial { [self] in var ch = Change(); try await self.takeWelcomes(&ch); self.board.project(); self.emit(ch) }
@@ -579,20 +653,20 @@ public final class Room {
             if status != 200 { reader.stop(); break }
             live = true; board.connection = "live"
             var ch = Change(); ch.room = true; emit(ch)
-            pause = 300_000_000
           case .event(let name, let data):
+            pause = 300_000_000   // (a stream that brought something was a real one: the next pause is short again)
             if let v = JV.parse(Array(data.utf8)) { await handleStreamEvent(name, v) }
           }
         }
       } catch {}
       reader.stop()
       if Task.isCancelled { break }
-      if unauthorised { hub.forgetToken() }
+      if unauthorised { hub.forgetToken(); pause = max(pause, 2_000_000_000) }
       live = false; board.connection = "offline"
       var ch = Change(); ch.room = true; emit(ch)
       if upgrade != nil { return }
-      try? await Task.sleep(nanoseconds: pause)
-      pause = min(pause * 2, 5_000_000_000)
+      try? await Task.sleep(nanoseconds: pause + UInt64.random(in: 0...(pause / 4)))
+      pause = min(pause * 2, 30_000_000_000)
       Task { await self.refreshPresence() }
     }
     live = false
@@ -618,30 +692,54 @@ public final class Room {
     pumping = true
     Task { @MainActor in
       defer { pumping = false }
-      var backoff: UInt64 = 300_000_000
+      var backoff: UInt64 = 300_000_000, unknown = 0
       while !Task.isCancelled && !closed {
         guard let entry = try? await onCore({ $0.outbox().first }) else { return }
         do {
           let r = try await noted { try await hub.post(entry) }
-          let change = (r["change"] as? NSNumber)?.uint64Value
-          try await onCore { try $0.outboxAccepted(entry.id, change: change) }
+          // Only an answer of the documented shape is the hub's "taken": anything else (an empty 200, a page of
+          // HTML) says nothing, and the entry is sent again.
+          guard let answer = Self.accepted(entry.kind, r) else { throw HubError(status: 0, code: "offline", message: "the hub's answer to an outbox entry does not read") }
+          if entry.kind == .keyPackages { keyPackagesAtHub = Wire.int(r["unused"]) }
+          try await onCore { try $0.outboxAccepted(entry.id, change: answer) }
           outcome[entry.id] = .success(())
-          backoff = 300_000_000
+          backoff = 300_000_000; unknown = 0
           if entry.kind != .envelope && entry.kind != .message && entry.kind != .relayMessage { var ch = Change(); try? await refreshGroups(&ch); emit(ch) }
         } catch let e as HubError {
-          if e.isOffline || e.status >= 500 || e.status == 429 || e.code == "unauthorised" {
-            try? await Task.sleep(nanoseconds: backoff); backoff = min(backoff * 2, 10_000_000_000); continue
-          }
+          // TROMMI_DEBUG: which kind of entry met which status and code (never its bytes).
+          if ProcessInfo.processInfo.environment["TROMMI_DEBUG"] != nil { FileHandle.standardError.write(Data("[outbox] \(entry.kind) -> \(e.status) \(e.code)\n".utf8)) }
           if e.status == 426 { return }
-          do { try await onCore { try $0.outboxRefused(entry.id, code: e.code) } } catch { return }
-          outcome[entry.id] = .failure(e)
-          if entry.kind == .envelope {
-            var ch = Change()
-            board.pushAlert(&ch, code: e.code, message: "the hub refused an item: \(e.message)")
-            emit(ch)
+          if e.status == 401 { hub.forgetToken() }
+          // Not the hub's last word: no answer, it could not answer, it asks to sign in again, or it names a code
+          // the core does not know. The entry stays and goes out again unchanged; a code nobody knows is said once.
+          // (by the code, not the status: the hub answers 429 both for "slow down" and for a limit that is final)
+          if e.isOffline || e.status >= 500 || e.status == 401 || !Core.tools.isFinalRefusal(e.code) {
+            if !e.isOffline && e.status < 500 && e.status != 401 && !["rate-limited", "overloaded", "internal", "unauthorised"].contains(e.code) {
+              unknown += 1
+              if unknown == 3 { var ch = Change(); board.pushAlert(&ch, code: "hub-answer", message: "the hub answers something this app does not know (\(e.status)): what was written waits to be sent"); emit(ch) }
+            }
+            try? await Task.sleep(nanoseconds: backoff); backoff = min(backoff * 2, 30_000_000_000); continue
           }
+          do { try await onCore { try $0.outboxRefused(entry.id, code: e.code, voided: e.extra["voided"] as? Bool == true) } }
+          catch { var ch = Change(); board.pushAlert(&ch, code: Room.codeOf(error), message: "a refusal of the hub could not be taken: sending stopped"); emit(ch); return }
+          outcome[entry.id] = .failure(e)
+          var ch = Change()
+          board.pushAlert(&ch, code: e.code, message: entry.kind == .envelope ? "the hub refused an item: \(e.message)" : "the hub refused a change to a group: \(e.message)")
+          emit(ch)
         } catch { return }   // the store failed or this device is no longer the owner: nothing more is sent
       }
+    }
+  }
+  /** What the hub's answer to an outbox entry must hold to count as "taken"; the change number the core wants. */
+  static func accepted(_ kind: OutboxKind, _ r: JSON) -> UInt64?? {
+    switch kind {
+    case .envelope, .commit, .externalCommit, .recoveryCode: return Wire.uint(r["change"]).map { .some($0) }
+    case .message: return Wire.uint(r["n"]) != nil ? .some(nil) : nil
+    case .relayMessage: return r["n"] != nil ? .some(nil) : nil   // (passed on, not stored: `n` is null)
+    case .keyPackages: return Wire.uint(r["unused"]) != nil ? .some(nil) : nil
+    case .groupFounding: return r["group_id"] is String ? .some(nil) : nil
+    case .roomFounding: return r["room_id"] is String ? .some(nil) : nil
+    case .sealedKey: return .some(nil)
     }
   }
   /**
