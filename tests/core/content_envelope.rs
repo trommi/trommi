@@ -221,7 +221,7 @@ fn a_hub_that_replays_drops_or_reorders_is_caught_and_consumes_nothing() {
 }
 
 #[test]
-fn any_changed_bit_breaks_the_envelope() {
+fn sampled_single_bit_changes_break_the_envelope() {
     let story = told();
     let mut dice = Dice(entropy("content envelope bits").unwrap());
     for told in &story.told {
@@ -246,7 +246,7 @@ fn any_changed_bit_breaks_the_envelope() {
 }
 
 #[test]
-fn no_bytes_make_the_decoder_panic_and_what_decodes_encodes_the_same() {
+fn sampled_bytes_never_make_the_decoder_panic_and_what_decodes_encodes_the_same() {
     let story = told();
     let mut dice = Dice(entropy("content envelope fuzz").unwrap());
     let mut seeds: Vec<Vec<u8>> = story.told.iter().map(|told| told.bytes.clone()).collect();
