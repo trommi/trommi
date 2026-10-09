@@ -8,6 +8,7 @@ import SwiftUI
 import PhotosUI
 #if canImport(UIKit)
 import UIKit
+import AVFoundation
 #endif
 import UniformTypeIdentifiers
 import TrommiClient
@@ -618,7 +619,96 @@ struct EmptyChat: View {
 
 // ---- the composer -----------------------------------------------------------------------------------------------
 
-struct Pending: Identifiable { let id = UUID(); var name: String; var type: String; var data: Data; var width: Int?; var height: Int? }
+struct Pending: Identifiable {
+  let id = UUID(); var name: String; var type: String; var data: Data; var width: Int?; var height: Int?
+  #if canImport(UIKit)
+  /** What the composer shows of it: the picture small, a video's first frame; nil for any other file (and until it is made). */
+  var thumb: UIImage? = nil
+  static func preview(_ data: Data, type: String, name: String) async -> UIImage? {
+    if type.hasPrefix("image/") {
+      guard let img = UIImage(data: data), img.size.width > 0, img.size.height > 0 else { return nil }
+      let s = min(1, 420 / img.size.height, 660 / img.size.width)
+      return img.preparingThumbnail(of: CGSize(width: (img.size.width * s).rounded(), height: (img.size.height * s).rounded())) ?? img
+    }
+    if type.hasPrefix("video/") {
+      // (the frame is read from a file: written to the app's temporary folder for that moment, then removed)
+      let ext = (name as NSString).pathExtension
+      let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).\(ext.isEmpty ? "mov" : ext)")
+      guard (try? data.write(to: url, options: .completeFileProtection)) != nil else { return nil }
+      defer { try? FileManager.default.removeItem(at: url) }
+      let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+      gen.appliesPreferredTrackTransform = true
+      gen.maximumSize = CGSize(width: 660, height: 420)
+      guard let cg = try? await gen.image(at: .zero).image else { return nil }
+      return UIImage(cgImage: cg)
+    }
+    return nil
+  }
+  #endif
+}
+
+/**
+ * What is attached to the message being written, inside the composer's field above the text line (Messages): a row of
+ * previews to swipe through. A picture as itself (its shape kept, 140 pt tall at most), a video as its first frame with
+ * a play sign, any other file as a small tile with its kind and name; each with a round × at its top right corner.
+ */
+struct PendingFiles: View {
+  @Binding var files: [Pending]
+  var body: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(alignment: .bottom, spacing: 8) {
+        ForEach(files) { f in
+          tile(f)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Ink.line, lineWidth: 0.5))
+            .overlay(alignment: .topTrailing) {
+              Button { withAnimation(.snappy) { files.removeAll { $0.id == f.id } } } label: {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                  .frame(width: 22, height: 22).background(Circle().fill(Color.black.opacity(0.55)))
+                  .frame(width: 36, height: 36).contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .accessibilityLabel("Remove \(f.name)")
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(f.name)
+        }
+      }
+      .padding(.horizontal, 10).padding(.top, 10)
+    }
+  }
+  @ViewBuilder private func tile(_ f: Pending) -> some View {
+    #if canImport(UIKit)
+    if let t = f.thumb, t.size.width > 0, t.size.height > 0 {
+      let shape = t.size.width / t.size.height
+      let w = min(220, max(64, 140 * shape)), h = min(140, max(64, w / shape))
+      Image(uiImage: t).resizable().scaledToFill().frame(width: w, height: h).clipped()
+        .overlay {
+          if f.type.hasPrefix("video/") {
+            Image(systemName: "play.fill").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
+              .frame(width: 40, height: 40).background(Circle().fill(Color.black.opacity(0.5)))
+          }
+        }
+    } else { fileTile(f) }
+    #else
+    fileTile(f)
+    #endif
+  }
+  private func fileTile(_ f: Pending) -> some View {
+    let ext = (f.name as NSString).pathExtension.uppercased()
+    let icon = f.type.hasPrefix("image/") ? "photo" : f.type.hasPrefix("video/") ? "film" : f.type.hasPrefix("audio/") ? "waveform" : f.type == "application/pdf" ? "doc.richtext" : "doc"
+    return VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 6) {
+        Image(systemName: icon).font(.system(size: 18, weight: .medium)).foregroundStyle(Ink.fg)
+        if !ext.isEmpty { Text(ext.prefix(5)).font(Face.text(11, .bold)).kerning(0.6).foregroundStyle(Ink.muted) }
+      }
+      Text(f.name).font(Face.text(13, .medium)).foregroundStyle(Ink.fg).lineLimit(2).multilineTextAlignment(.leading)
+    }
+    .padding(.leading, 10).padding(.trailing, 30).padding(.vertical, 10)
+    .frame(width: 148, height: 76, alignment: .topLeading)
+    .background(Ink.sunken)
+  }
+}
 
 struct Composer: View {
   @EnvironmentObject var model: BoardModel
@@ -664,21 +754,8 @@ struct Composer: View {
           }
         }
       }
-      if !files.isEmpty {
-        ScrollView(.horizontal, showsIndicators: false) {
-          HStack(spacing: 6) {
-            ForEach(files) { f in
-              HStack(spacing: 6) {
-                Sketch(f.type.hasPrefix("image/") ? "picture" : "clip", color: Ink.fg).frame(width: 14, height: 14)
-                Text(f.name).font(Face.text(13)).lineLimit(1).frame(maxWidth: 140)
-                Button { files.removeAll { $0.id == f.id } } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).frame(minWidth: 32, minHeight: 44).contentShape(Rectangle()) }.buttonStyle(.plain).accessibilityLabel("Remove")
-              }
-              .padding(.horizontal, 10).padding(.vertical, 6).background(Capsule().fill(Ink.sunken))
-            }
-          }
-        }
-      }
-      // as Messages on iOS 26: a round glass "+" for files, the field as a glass capsule with the send arrow inside
+      // as Messages on iOS 26: a round glass "+" for files, the field as a glass capsule with the send arrow inside;
+      // what is attached lies in the field above the text line (PendingFiles), the field grows with it
       HStack(alignment: .bottom, spacing: 8) {
         Menu {
           Button { pickingPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
@@ -690,24 +767,28 @@ struct Composer: View {
           Image(systemName: "plus").font(.system(size: 19, weight: .semibold)).foregroundStyle(Ink.fg).frame(width: 44, height: 44).glass(Circle(), interactive: true)
         }
         .accessibilityLabel("Attach")
-        HStack(alignment: .bottom, spacing: 4) {
-          TextField(placeholder, text: $text, axis: .vertical)
-            .font(Face.text(17))
-            .lineLimit(1...7)
-            .focused($focused)
-            .padding(.leading, 16).padding(.vertical, 11)
-          Button(action: send) {
-            Group {
-              if sending { ProgressView().tint(Ink.accentFg) }
-              else { Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)) }
+        VStack(alignment: .leading, spacing: 0) {
+          if !files.isEmpty { PendingFiles(files: $files) }
+          HStack(alignment: .bottom, spacing: 4) {
+            TextField(placeholder, text: $text, axis: .vertical)
+              .font(Face.text(17))
+              .lineLimit(1...7)
+              .focused($focused)
+              .padding(.leading, 16).padding(.vertical, 11)
+            Button(action: send) {
+              Group {
+                if sending { ProgressView().tint(Ink.accentFg) }
+                else { Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)) }
+              }
+              .foregroundStyle(Ink.accentFg).frame(width: 34, height: 34).background(Circle().fill(canSend ? Ink.accent : Ink.faint))
+              .frame(width: 44, height: 44).contentShape(Rectangle())
             }
-            .foregroundStyle(Ink.accentFg).frame(width: 34, height: 34).background(Circle().fill(canSend ? Ink.accent : Ink.faint))
-            .frame(width: 44, height: 44).contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(!canSend || sending)
+            .accessibilityLabel("Send")
           }
-          .buttonStyle(.plain)
-          .disabled(!canSend || sending)
-          .accessibilityLabel("Send")
         }
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
       }
     }
@@ -720,11 +801,21 @@ struct Composer: View {
         for u in urls.prefix(MAX_FILES - files.count) {
           let ok = u.startAccessingSecurityScopedResource(); defer { if ok { u.stopAccessingSecurityScopedResource() } }
           if let d = try? Data(contentsOf: u) {
-            files.append(Pending(name: u.lastPathComponent, type: UTType(filenameExtension: u.pathExtension)?.preferredMIMEType ?? "application/octet-stream", data: d))
+            add(Pending(name: u.lastPathComponent, type: UTType(filenameExtension: u.pathExtension)?.preferredMIMEType ?? "application/octet-stream", data: d))
           }
         }
       }
     }
+  }
+  /** Attach it; its preview (a picture small, a video's first frame) follows as soon as it is made. */
+  private func add(_ p: Pending) {
+    withAnimation(.snappy) { files.append(p) }
+    #if canImport(UIKit)
+    Task {
+      let t = await Pending.preview(p.data, type: p.type, name: p.name)
+      if let t, let i = files.firstIndex(where: { $0.id == p.id }) { files[i].thumb = t }
+    }
+    #endif
   }
   private var canSend: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty || !cards.isEmpty }
   private func take(_ items: [(data: Data, type: UTType?)]) async {
@@ -739,13 +830,13 @@ struct Composer: View {
         let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1; fmt.preferredRange = .standard; fmt.opaque = true
         let small = UIGraphicsImageRenderer(size: size, format: fmt).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
         if let j = small.jpegData(compressionQuality: 0.85) {
-          files.append(Pending(name: "picture-\(files.count + 1).jpg", type: "image/jpeg", data: j, width: Int(size.width), height: Int(size.height)))
+          add(Pending(name: "picture-\(files.count + 1).jpg", type: "image/jpeg", data: j, width: Int(size.width), height: Int(size.height)))
           continue
         }
       }
       #endif
       if type?.conforms(to: .movie) == true { name = "video-\(files.count + 1).\(type?.preferredFilenameExtension ?? "mov")"; mime = type?.preferredMIMEType ?? "video/quicktime" }
-      files.append(Pending(name: name, type: mime, data: d))
+      add(Pending(name: name, type: mime, data: d))
     }
   }
   private func send() {
