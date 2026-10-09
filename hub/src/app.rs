@@ -58,6 +58,7 @@ pub struct App {
     pub admitted_per_address: Mutex<HashMap<String, usize>>,
     /// the pool for expensive work
     pub gate: Gate,
+    pub admin: crate::admin::Admin,
     live_due: Mutex<HashSet<Room>>,
     /// per room: the bytes and the number of uploads in progress
     uploads: Mutex<HashMap<Room, (u64, usize)>>,
@@ -154,6 +155,7 @@ impl App {
             in_flight: AtomicUsize::new(0),
             admitted: AtomicUsize::new(0),
             admitted_per_address: Mutex::new(HashMap::new()),
+            admin: Default::default(),
             gate: Gate::new(cfg_heavy.0, cfg_heavy.1),
             live_due: Mutex::new(HashSet::new()),
             uploads: Mutex::new(HashMap::new()),

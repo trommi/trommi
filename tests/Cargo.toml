@@ -212,3 +212,6 @@ path = "hub/jobs.rs"
 name = "hub_busy"
 path = "hub/busy.rs"
 
+[[test]]
+name = "hub_admin"
+path = "hub/admin.rs"

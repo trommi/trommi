@@ -127,6 +127,23 @@ impl TestHub {
         }
     }
 
+    /// Starts the admin page's listener as `main` does, on 127.0.0.1 and a free port; returns the port.
+    pub fn admin(&self) -> u16 {
+        let runtime = self.runtime.as_ref().unwrap();
+        let listener = runtime.block_on(async {
+            tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap()
+        });
+        let port = listener.local_addr().unwrap().port();
+        runtime.spawn(trommi_hub::server::serve_admin(
+            self.app.clone(),
+            listener,
+            self.stop.clone(),
+        ));
+        port
+    }
+
     /// Stops the hub and keeps its data directory, to start another on it.
     pub fn stop_keep(mut self) -> PathBuf {
         self.stop.notify_one();

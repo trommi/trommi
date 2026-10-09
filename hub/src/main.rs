@@ -40,6 +40,18 @@ fn main() {
     match std::env::args().nth(1).as_deref() {
         None => {}
         Some("healthcheck") => std::process::exit(healthcheck(&cfg)),
+        Some("admin-hash") => {
+            // the hash to set as HUB_ADMIN_PASSWORD_HASH, for a password read from standard input
+            let mut password = String::new();
+            let _ = std::io::stdin().read_line(&mut password);
+            let password = password.trim_end_matches(['\r', '\n']);
+            if password.len() < 12 {
+                eprintln!("a password of at least 12 characters, on standard input");
+                std::process::exit(2);
+            }
+            println!("{}", trommi_hub::admin::hash_password(password));
+            return;
+        }
         Some("version") => {
             println!("{}", cfg.commit);
             return;
@@ -81,6 +93,30 @@ fn main() {
             "listening",
             json!({ "port": app.cfg.port, "commit": app.cfg.commit, "apns": app.apns.is_some() }),
         );
+        // the admin page: on this machine only (127.0.0.1 unless configured), and only if a password hash is set
+        let admin_stop = Arc::new(tokio::sync::Notify::new());
+        if app.cfg.admin_password_hash.is_some() {
+            match tokio::net::TcpListener::bind((app.cfg.admin_host.as_str(), app.cfg.admin_port))
+                .await
+            {
+                Ok(listener) => {
+                    trommi_hub::log::info(
+                        "admin_listening",
+                        json!({ "host": app.cfg.admin_host, "port": app.cfg.admin_port }),
+                    );
+                    tokio::spawn(trommi_hub::server::serve_admin(
+                        app.clone(),
+                        listener,
+                        admin_stop.clone(),
+                    ));
+                }
+                // the hub itself runs without it
+                Err(e) => eprintln!(
+                    "the admin page cannot listen on 127.0.0.1:{}: {e}",
+                    app.cfg.admin_port
+                ),
+            }
+        }
         trommi_hub::server::spawn_jobs(&app);
         let stop = Arc::new(tokio::sync::Notify::new());
         let signalled = stop.clone();
