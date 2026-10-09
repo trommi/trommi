@@ -7,7 +7,7 @@
 //     version does not know is verified like any other (signature, chain) but never applied as something it is not:
 //     it shows as a placeholder, `Item.unsupported(kind:)`, with `Compat.UPDATE_MESSAGE`;
 //   - a write that would need a newer format is refused locally ("needs-update");
-//   - the hub says which client versions it serves: `HubVersionInfo` (GET /v1/version), 426 client-too-old.
+//   - the hub says which client versions it serves: `HubVersionInfo`, and 426 client-too-old on any request.
 import Foundation
 
 import Foundation
@@ -15,7 +15,7 @@ import Foundation
 public enum Compat {
   /** The body schema this version writes and reads (codec.mjs SCHEMA_VERSION); a higher one is "newer_schema". */
   public static let SCHEMA_VERSION = 2
-  /** The hub protocol this version speaks (Trommi-Protocol header). */
+  /** The hub protocol this version speaks (the routes under /v2). */
   public static let PROTOCOL_VERSION = 2
   public static let CONTENT_TYPES: Set<String> = ["message", "strokes", "erase", "move", "send_away", "selection_sent"]
   public static let OBJECT_TYPES: Set<String> = ["card", "note", "artifact"]
@@ -73,7 +73,7 @@ public func compareVersions(_ a: String, _ b: String) -> Int {
 }
 
 /**
- * The hub's GET /v1/version: which protocols it speaks and which client versions it serves. Unknown fields are ignored,
+ * The hub's version answer: which protocols it speaks and which client versions it serves. Unknown fields are ignored,
  * missing ones are empty. `verdict(kind:version:)` says what the app shows: nothing, a quiet "update available", or the
  * "please update" screen (the hub also answers such a client 426 client-too-old, and its stream `upgrade_required`).
  */

@@ -126,3 +126,18 @@ public func systemRandom(_ n: Int) -> Bytes {
 
 /** The clock, in milliseconds since 1970. */
 public func nowMs() -> UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
+
+/** Numbers of an untrusted JSON answer (the hub's), read exactly. */
+public enum Wire {
+  /** The most a counter of the protocol may be (spec/v2.md 15.2: 2^53 − 1), so that no JSON reader rounds it. */
+  public static let maxCount: UInt64 = (1 << 53) - 1
+  /** A whole number from 0 to 2^53 − 1; nil for anything else (negative, a fraction, a boolean, text, too large). */
+  public static func uint(_ v: Any?) -> UInt64? {
+    if v is Bool { return nil }
+    guard let n = v as? NSNumber else { return nil }
+    let d = n.doubleValue
+    guard d >= 0, d <= Double(maxCount), d == d.rounded() else { return nil }
+    return UInt64(d)
+  }
+  public static func int(_ v: Any?) -> Int? { uint(v).map { Int($0) } }
+}

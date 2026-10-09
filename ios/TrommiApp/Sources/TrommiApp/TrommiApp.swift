@@ -687,7 +687,7 @@ final class BoardModel: ObservableObject {
       if self.path.last == .session(a.id) { self.path.removeLast() }
     }
   }
-  /** Remove a device of the room (Devices): a new room key, every session re-keyed. */
+  /** Remove a device of the room (Devices): it leaves the room group and every session group; their keys move on. */
   func removeDevice(_ id: String, name: String) {
     guard let room = acting() else { return }
     act("Not removed") { try await room.removeDevices([id]); self.say("Removed", name) }

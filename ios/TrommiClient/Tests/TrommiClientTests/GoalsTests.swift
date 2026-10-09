@@ -71,7 +71,7 @@ final class GoalsTests: XCTestCase {
     // a desk that is gone: the first of the menu again
     set(b, [.init("session/\(s2)"): ["desk": "nowhere"]])
     XCTAssertEqual(wanted(b)[s2]?["desk_id"], "main")
-    // a new key epoch (a new agent of the session cannot read what was sealed before it came)
+    // a new epoch of the session (a new agent of the session cannot read what was sealed before it came)
     b.sessionOf(s1).sessionKeyEpoch = 4
     XCTAssertEqual(GoalsSync.toWrite(b, holdsKey: { _ in true }).first { $0.sessionId == s1 }?.value["epoch"].int, 4)
     // the goals are taken away: null

@@ -36,24 +36,14 @@ public final class HubClient: @unchecked Sendable {
   private let lock = NSLock()
   private var token: String?
   private var tokenExpiresAt: UInt64 = 0
-  private var sessionNow: URLSession
 
   /** Tests answer the hub's routes in the process (URLProtocol classes); empty in the app. */
   nonisolated(unsafe) static var transportForTests: [AnyClass] = []
-  private static func newSession() -> URLSession {
-    let cfg = URLSessionConfiguration.ephemeral
-    cfg.timeoutIntervalForRequest = 30
-    // No cookies, no cache, no credentials store: the token is the only state and lives in memory.
-    cfg.httpCookieStorage = nil; cfg.urlCache = nil; cfg.urlCredentialStorage = nil
-    if !transportForTests.isEmpty { cfg.protocolClasses = transportForTests }
-    return URLSession(configuration: cfg)
-  }
-  private var session: URLSession { lock.lock(); defer { lock.unlock() }; return sessionNow }
+  /** The largest answer taken: of a JSON route, and of a file (the largest stored file of spec/v2.md section 11). */
+  static let maxJSON = 16 << 20, maxFile = (64 << 20) + (1 << 20)
+  private var transport = Transport()
   /** A fresh connection pool (after a transport failure: the hub restarted and closed the pooled connections). */
-  private func renewSession() {
-    lock.lock(); let old = sessionNow; sessionNow = Self.newSession(); lock.unlock()
-    old.finishTasksAndInvalidate()
-  }
+  private func renewTransport() { let old = lock.withLock { () -> Transport in let o = transport; transport = Transport(); return o }; old.end() }
 
   /** `room` empty: a handle for the routes outside a room (account, founding, invites, shares). */
   public init(hubURL: String, room: RoomId = [], signer: CoreSigner? = nil) throws {
@@ -65,7 +55,6 @@ public final class HubClient: @unchecked Sendable {
     self.hubURL = hubURL.hasSuffix("/") ? String(hubURL.dropLast()) : hubURL
     self.room = room
     self.signer = signer
-    sessionNow = Self.newSession()
   }
   static func isLoopback(_ host: String?) -> Bool { host == "127.0.0.1" || host == "localhost" || host == "[::1]" || host == "::1" }
 
@@ -106,43 +95,32 @@ public final class HubClient: @unchecked Sendable {
       req.httpBody = body
       req.setValue(contentType ?? "application/octet-stream", forHTTPHeaderField: "content-type")
     }
-    let (data, response) = try await send(req)
+    let (data, response) = try await send(req, cap: path.hasPrefix("/files/") ? Self.maxFile : Self.maxJSON)
     let status = response?.statusCode ?? 0
     if status == 401 && auth && !retried {
       forgetToken()
       return try await exchange(method, path, query: query, body: body, contentType: contentType, auth: auth, headers: headers, retried: true)
     }
-    if status >= 400 || status < 200 {
+    if status < 200 || status >= 300 {   // (a redirect is not followed and is no success)
       let json = HubClient.json(data) ?? [:]
       throw HubError(status: status, code: json["error"] as? String ?? "http-\(status)", message: json["message"] as? String ?? "", extra: json)
     }
     return (data, response)
   }
 
-  /** A transport failure (no HTTP answer), with what URLSession said. */
-  struct TransportFailure: Error { let code: Int; let message: String }
-
   /**
    * One HTTP exchange, tried once more on a transport failure. That is safe for every route: the hub answers a
    * repeated post of the same bytes with its first answer (spec/hub-api.md, last line), and everything this client
    * posts is the exact bytes of an outbox entry or an idempotent write.
    */
-  private func send(_ req: URLRequest) async throws -> (Data, HTTPURLResponse?) {
-    do { return try await sendOnce(req) }
-    catch let f as TransportFailure {
-      _ = f
-      renewSession()
+  private func send(_ req: URLRequest, cap: Int) async throws -> (Data, HTTPURLResponse?) {
+    do { return try await lock.withLock({ transport }).send(req, cap: cap) }
+    catch let f as Transport.Failure {
+      if f.tooLarge { throw HubError(status: 0, code: "too-large", message: "the hub's answer is larger than this client takes") }
+      renewTransport()
       try? await Task.sleep(nanoseconds: 250_000_000)
-      do { return try await sendOnce(req) }
-      catch let g as TransportFailure { throw HubError(status: 0, code: "offline", message: "hub not reachable: \(g.message)") }
-    }
-  }
-  private func sendOnce(_ req: URLRequest) async throws -> (Data, HTTPURLResponse?) {
-    try await withCheckedThrowingContinuation { cont in
-      session.dataTask(with: req) { data, res, err in
-        if let err = err { cont.resume(throwing: TransportFailure(code: (err as? URLError)?.code.rawValue ?? (err as NSError).code, message: err.localizedDescription)); return }
-        cont.resume(returning: (data ?? Data(), res as? HTTPURLResponse))
-      }.resume()
+      do { return try await lock.withLock({ transport }).send(req, cap: cap) }
+      catch let g as Transport.Failure { throw HubError(status: 0, code: g.tooLarge ? "too-large" : "offline", message: "hub not reachable: \(g.message)") }
     }
   }
 
@@ -177,7 +155,7 @@ public final class HubClient: @unchecked Sendable {
     let signed = try signer.signHubAuth(room: room, hub: hubURL, challenge: challenge)
     let r = try await request("POST", "/rooms/\(b64u(room))/tokens", body: ["auth": b64u(signed.auth), "signature": b64u(signed.signature)], auth: false)
     guard let t = r["token"] as? String, !t.isEmpty else { throw TrommiError("unauthorised", "the hub gave no token") }
-    setToken(t, expiresAt: (r["expires_at"] as? NSNumber)?.uint64Value ?? 0)
+    setToken(t, expiresAt: Wire.uint(r["expires_at"]) ?? 0)
     return r["role"] as? String ?? ""
   }
 
@@ -263,7 +241,7 @@ public final class HubClient: @unchecked Sendable {
     return try (r["key_packages"] as? [String: String] ?? [:]).map { (try unb64u($0.key), try unb64u($0.value)) }
   }
   /** The wishes of signed-in devices to the human devices (readmit, handover, session). Nothing follows without a Commit. */
-  public func requests() async throws -> JSON { try await request("GET", "/requests") }
+  public func requests() async throws -> [JSON] { try await requestList("GET", "/requests") }
 
   // ---- files (11) ----------------------------------------------------------------------------------------
 
@@ -318,11 +296,62 @@ public final class HubClient: @unchecked Sendable {
   public func versionInfo() async throws -> HubVersionInfo? {
     var req = URLRequest(url: url("/version", [:]))
     req.setValue(Self.clientName, forHTTPHeaderField: "trommi-client")
-    let (data, response) = try await send(req)
+    let (data, response) = try await send(req, cap: Self.maxJSON)
     if response?.statusCode == 426 {
       let json = HubClient.json(data) ?? [:]
       return HubVersionInfo(minimumClientVersions: ["ios": json["minimum_version"] as? String ?? "999.0.0"], message: json["message"] as? String)
     }
+    guard response?.statusCode == 200 else { return nil }
     return HubVersionInfo.parse(data)
+  }
+}
+
+/**
+ * The connections to the hub: answers are read in pieces and given up once they pass the caller's bound (the hub is
+ * not trusted with this device's memory), and a redirect is never followed (a token, a push key or a ticket must
+ * not travel to another address than the hub's).
+ */
+final class Transport: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+  struct Failure: Error { let message: String; var tooLarge = false }
+  private struct Pending { var data = Data(); var cap: Int; var over = false; let done: CheckedContinuation<(Data, HTTPURLResponse?), Error> }
+  private let lock = NSLock()
+  private var pending: [Int: Pending] = [:]
+  private var session: URLSession!
+
+  override init() {
+    super.init()
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = 30
+    // No cookies, no cache, no credentials store: the token is the only state and lives in memory.
+    cfg.httpCookieStorage = nil; cfg.urlCache = nil; cfg.urlCredentialStorage = nil
+    if !HubClient.transportForTests.isEmpty { cfg.protocolClasses = HubClient.transportForTests }
+    session = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
+  }
+  func end() { session.finishTasksAndInvalidate() }
+
+  func send(_ req: URLRequest, cap: Int) async throws -> (Data, HTTPURLResponse?) {
+    try await withCheckedThrowingContinuation { cont in
+      let task = session.dataTask(with: req)
+      lock.withLock { pending[task.taskIdentifier] = Pending(cap: cap, done: cont) }
+      task.resume()
+    }
+  }
+  func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+    completionHandler(nil)   // the 3xx answer itself is what the caller gets
+  }
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    let over = lock.withLock { () -> Bool in
+      guard var p = pending[dataTask.taskIdentifier], !p.over else { return false }
+      if p.data.count + data.count > p.cap { p.over = true; p.data = Data() } else { p.data.append(data) }
+      pending[dataTask.taskIdentifier] = p
+      return p.over
+    }
+    if over { dataTask.cancel() }
+  }
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    guard let p = lock.withLock({ pending.removeValue(forKey: task.taskIdentifier) }) else { return }
+    if p.over { p.done.resume(throwing: Failure(message: "answer too large", tooLarge: true)) }
+    else if let error = error { p.done.resume(throwing: Failure(message: error.localizedDescription)) }
+    else { p.done.resume(returning: (p.data, task.response as? HTTPURLResponse)) }
   }
 }
