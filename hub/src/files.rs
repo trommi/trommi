@@ -196,13 +196,13 @@ fn file_row(c: &Connection, room: &Room, file_id: &[u8]) -> Res<Option<FileRow>>
 }
 
 /// 11.3: human devices of the room fetch a file; an agent or helper device only while it is a leaf of the file's
-/// group; a file no envelope names yet, only its uploader. What the asker may not fetch does not exist for it.
+/// group; a file no envelope names yet, only its uploader and human devices. What the asker may not fetch does not exist for it.
 pub fn readable(c: &Connection, auth: &Auth, file_id: &[u8; 16]) -> Res<FileRow> {
     auth.member()?;
     let missing = || refuse("not-found", "no such file");
     let row = file_row(c, &auth.room, file_id)?.ok_or_else(missing)?;
     let allowed = match (&row.group_id, auth.who) {
-        (None, _) => row.uploader == auth.device,
+        (None, who) => row.uploader == auth.device || who == Who::Human,
         (Some(_), Who::Human) => true,
         (Some(group), _) => store::is_leaf(c, group, &auth.device)?,
     };

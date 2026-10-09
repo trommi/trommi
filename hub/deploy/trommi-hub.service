@@ -2,6 +2,7 @@
 # /srv/trommi/current/trommi-hub.service, so the unit and the program change together and go back together.
 # Settings of this server are in /etc/trommi/hub.env (address, origins, switches) and /etc/trommi/hub-secrets.env
 # (push credentials); where the hub listens and keeps its data is fixed here and cannot be changed from those files.
+# Not started at boot by itself: the updater starts it, after it has settled a deploy that a reboot may have cut off.
 [Unit]
 Description=Trommi hub
 After=network-online.target
@@ -41,6 +42,3 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 CapabilityBoundingSet=
 AmbientCapabilities=
-
-[Install]
-WantedBy=multi-user.target

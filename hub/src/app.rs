@@ -605,7 +605,8 @@ impl App {
                 _ => started_at,
             };
             let mut dead = false;
-            let mut delivered = token.is_none() && event != "start";
+            // without a token nothing was delivered: an end stays due until the activity's token is there
+            let mut delivered = false;
             if let Some(token) = &token {
                 if let Some(request) = apns.live_activity(
                     &environment,

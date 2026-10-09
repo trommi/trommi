@@ -182,8 +182,8 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer
     let origin = http::header(req.headers(), "origin")
         .filter(|o| allowed_origin(&app, o))
         .map(str::to_string);
-    let mut answer = respond(app.clone(), req, conn).await;
-    hsts(&app, &mut answer);
+    let hsts = app.cfg.hsts;
+    let mut answer = respond(app, req, conn).await;
     if let Some(origin) = origin {
         let h = answer.headers_mut();
         if let Ok(v) = origin.parse() {
@@ -200,12 +200,7 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer
     answer
         .headers_mut()
         .insert("x-content-type-options", "nosniff".parse().expect("static"));
-    answer
-}
-
-/// With `HUB_HSTS=on`: HTTPS only, for two years, subdomains included, fit for the preload list.
-pub fn hsts(app: &App, answer: &mut Answer) {
-    if app.cfg.hsts {
+    if hsts {
         answer.headers_mut().insert(
             "strict-transport-security",
             "max-age=63072000; includeSubDomains; preload"
@@ -213,6 +208,7 @@ pub fn hsts(app: &App, answer: &mut Answer) {
                 .expect("static"),
         );
     }
+    answer
 }
 
 async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
@@ -754,12 +750,12 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let auth = read_auth()?;
             own_room(&auth, room)?;
             heavy_limit(&auth)?;
-            let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["account"]["kit"]]))?;
+            let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["account"]["kit"], &rq.body["account"]["password"]]))?;
             // every part was verified when it came: publishing replays their writes from what was kept
             app.write_recovery(Default::default(), Some(&recovery), &auth, |x, fx| {
                 let (answer, published_now) = delivery::recovery_finish(x, &auth, &recovery, &link, &hash, fx)?;
                 if published_now {
-                    accounts::replace_copies(x.c, &auth.room, &rq.body["account"], x.now, &pre)?;
+                    app.accounts.replace_copies(x.c, &auth.room, &rq.body["account"], x.now, &pre)?;
                 }
                 Ok(answer)
             })
@@ -771,7 +767,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             app.write_recovery(Default::default(), None, &auth, |x, _| delivery::recovery_drop(x, &auth, &recovery))
         }
         ("POST", ["rooms", room, "recovery-code"]) => {
-            let body = commit_body(&rq.body)?;
+            // the Commit's fields under `commit`; beside the other members is taken too
+            let body = commit_body(if rq.body["commit"].is_object() { &rq.body["commit"] } else { &rq.body })?;
             let link = crate::wire::RecoveryLink::parse(&rq.bytes("recovery_link")?)?;
             let auth = read_auth()?;
             own_room(&auth, room)?;
@@ -780,7 +777,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             heavy_limit(&auth)?;
             let (entries, pre) = app.heavy(|c, memo| {
                 crate::prepare::commit(c, memo, &auth.room, &auth.room, &body);
-                accounts::Prehashed::of(&[&rq.body["account"]["kit"]])
+                accounts::Prehashed::of(&[&rq.body["account"]["kit"], &rq.body["account"]["password"]])
             })?;
             app.write_as_with(entries, &auth, rq.lease, |x, fx| {
                 let mut scope = Scope { link: Some(link), ..Default::default() };
@@ -793,7 +790,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
                     }
                     return Ok(json!({ "epoch": a.epoch, "change": a.change }));
                 }
-                accounts::replace_copies(x.c, &auth.room, &rq.body["account"], x.now, &pre)?;
+                app.accounts.replace_copies(x.c, &auth.room, &rq.body["account"], x.now, &pre)?;
                 Ok(json!({ "epoch": a.epoch, "change": a.change }))
             })
         }
@@ -889,7 +886,14 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             )?;
             Ok(json!({ "deleted": n }))
         }),
-        ("POST", ["live-activity"]) => human_write(app, rq, |x, auth| live_activity_register(app, x, auth, &rq.body)),
+        ("POST", ["live-activity"]) => {
+            let auth = read_auth()?;
+            auth.human()?;
+            let answer = app.write_as(&auth, rq.lease, |x, _| live_activity_register(app, x, &auth, &rq.body))?;
+            // a token that is new has been sent nothing: once it is stored, a round sends it the counts
+            app.live_soon(auth.room);
+            Ok(answer)
+        }
         ("POST", ["link"]) => {
             let auth = read_auth()?;
             // not under the room's recovery lock (a lease must be kept alive through a recovery), but under the
@@ -991,7 +995,7 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
         let known = accounts::knows_source(x.c, row.account(), &source)?;
         Ok((row, known))
     })?;
-    let (account, revision) = (row.account(), row.revision());
+    let revision = row.revision();
     // The slow hash is made on the pool with no database connection held. The attempt is admitted there, at the
     // moment its check starts: time spent waiting for the pool lets nobody check faster than the throttle says.
     let checked = app.pooled(|| -> Res<Checked> {
@@ -1001,25 +1005,39 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
                 .check_login(row)
                 .map_or(Checked::Wrong, |(a, copy)| Checked::Found(a, copy)));
         }
-        let t = now();
+        // (the time is taken under the write lock: waiting for it lets nobody start sooner than the line says)
+        let finish = |attempt: i64, found: &Option<(i64, Vec<u8>)>| {
+            app.db.write(|c| match found {
+                Some(_) => throttle::succeeded(c, account_key, &source, attempt),
+                None => throttle::failed(c, account_key, &source, attempt, now()),
+            })
+        };
         match app
             .db
-            .write(|c| throttle::admit(c, account_key, &source, known, account.is_some(), t))?
+            .write(|c| throttle::admit(c, account_key, &source, known, now()))?
         {
             Verdict::Own(wait) => Ok(Checked::Wait(wait)),
-            Verdict::Line { wait, early: false } => {
+            Verdict::Line { wait, early: None } => {
                 // the same work as a check
                 app.accounts.spend(&row);
                 Ok(Checked::Wait(wait))
             }
-            Verdict::Line { wait, early: true } => match app.accounts.check_login(row) {
-                Some((a, copy)) => {
-                    app.db
-                        .write(|c| throttle::early_succeeded(c, account_key, &source))?;
-                    Ok(Checked::Found(a, copy))
-                }
-                None => Ok(Checked::Wait(wait)),
-            },
+            Verdict::Line {
+                wait,
+                early: Some(attempt),
+            } => {
+                // a source the account knows: checked on record; a wrong credential is told to wait its turn
+                let mut checking = Checking {
+                    app,
+                    account: account_key,
+                    source: &source,
+                    attempt: Some(attempt),
+                };
+                let found = app.accounts.check_login(row);
+                finish(attempt, &found)?;
+                checking.attempt = None;
+                Ok(found.map_or(Checked::Wait(wait), |(a, copy)| Checked::Found(a, copy)))
+            }
             Verdict::Check { attempt } => {
                 let mut checking = Checking {
                     app,
@@ -1028,10 +1046,7 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
                     attempt: Some(attempt),
                 };
                 let found = app.accounts.check_login(row);
-                app.db.write(|c| match found {
-                    Some(_) => throttle::succeeded(c, account_key, &source, attempt),
-                    None => throttle::failed(c, account_key, &source, attempt, now()),
-                })?;
+                finish(attempt, &found)?;
                 checking.attempt = None;
                 Ok(found.map_or(Checked::Wrong, |(a, copy)| Checked::Found(a, copy)))
             }
@@ -1224,8 +1239,6 @@ fn live_activity_register(app: &Arc<App>, x: &delivery::Ctx, auth: &Auth, v: &Va
            {column} = excluded.{column}"
     ))?
     .execute(rusqlite::params![&auth.room[..], &auth.device[..], environment, topic, tag, token, x.now as i64])?;
-    // a token that is new has been sent nothing: the next round sends it the counts
-    app.live_soon(auth.room);
     Ok(json!({ "registered": true }))
 }
 

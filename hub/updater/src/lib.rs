@@ -186,8 +186,6 @@ pub struct Config {
     pub repository: String,
     /// `https://api.github.com`
     pub api: String,
-    /// only while the repository is private
-    pub token: Option<String>,
     pub key: VerifyingKey,
     /// e.g. `x86_64-unknown-linux-musl`
     pub target: String,
@@ -483,6 +481,9 @@ impl Updater {
 
     /// Points a link at a release (or takes it away), in one step: a new link is made beside it and renamed over.
     fn point(&self, link: &str, tag: Option<&str>) -> Result<(), String> {
+        if self.linked(link).as_deref() == tag && (tag.is_some() || !self.cfg.root.join(link).exists()) {
+            return Ok(());
+        }
         let path = self.cfg.root.join(link);
         let run = || -> std::io::Result<()> {
             match tag {
@@ -638,15 +639,11 @@ impl Updater {
     // ---- fetching ----
 
     async fn get(&self, url: &str, accept: &str) -> Result<reqwest::Response, String> {
-        let mut request = self
+        let answer = self
             .client
             .get(url)
             .header("accept", accept)
-            .header("x-github-api-version", "2022-11-28");
-        if let Some(token) = &self.cfg.token {
-            request = request.bearer_auth(token);
-        }
-        let answer = request
+            .header("x-github-api-version", "2022-11-28")
             .send()
             .await
             .map_err(|e| format!("GitHub did not answer: {}", plain(&e)))?;
@@ -923,7 +920,13 @@ impl Updater {
             Ok(lock) => lock,
             Err(e) => return Outcome::new("busy", tag, e),
         };
+        if self.replaced() || self.cfg.root.join("updater-trial").exists() {
+            // a new updater is taking over: it is not given a second change before it has shown that it is up
+            return Outcome::new("busy", tag, "the updater is being replaced; call again in a minute");
+        }
         log("deploy", json!({ "tag": tag }));
+        // a swap that was cut off earlier is settled before a new one begins
+        self.settle().await;
         let mut outcome = self.deploy_locked(tag, version).await;
         outcome.running = self.linked("current");
         outcome.updater = self.updater_state();
@@ -952,8 +955,8 @@ impl Updater {
             .high_water
             .max(running.as_ref().map_or(0, |r| r.version));
         // asking for what runs changes nothing, whatever the floor is
-        if let Some(now) = running.as_ref().filter(|r| r.tag == tag) {
-            return self.same_again(tag, now).await;
+        if running.as_ref().is_some_and(|r| r.tag == tag) {
+            return self.same_again(tag).await;
         }
         if version < floor {
             return Outcome::new(
@@ -1021,6 +1024,7 @@ impl Updater {
             outcome.ok = true;
             outcome.result = "deployed";
             outcome.message = format!("{tag} runs and is well");
+            // should the note stay behind, the next start finds the release it names running and well and keeps it
             let _ = remove_whole(&self.cfg.root.join("deploy-journal.json"));
             self.prune();
             return outcome;
@@ -1053,32 +1057,88 @@ impl Updater {
                 outcome.rollback_health = Some(again);
             }
         }
+        // the release that failed is not kept (nothing points at it any more)
+        if !self.cfg.root.join("deploy-journal.json").exists() {
+            self.prune();
+        }
         outcome
     }
 
-    /// Puts the hub back to what the journal says ran before, starts it, and removes the journal.
+    /// Puts the hub back to what the journal says ran before and starts it. The journal goes only when `current`
+    /// is back where it was; otherwise it stays, and the next start of the updater tries again.
     async fn put_back(&self, journal: &Journal, commit: Option<&str>) -> Health {
         let _ = self.stop().await;
-        let back = self
-            .point("current", journal.old.as_deref())
-            .and_then(|()| self.point("previous", journal.old_previous.as_deref()));
-        let health = match (back, &journal.old) {
-            (Err(e), _) => Health::failed(e),
+        let back = self.point("current", journal.old.as_deref());
+        if back.is_ok() {
+            // the link to the release before that is only a convenience: failing to restore it stops nothing
+            let _ = self.point("previous", journal.old_previous.as_deref());
+            let _ = remove_whole(&self.cfg.root.join("deploy-journal.json"));
+        }
+        match (back, &journal.old) {
             (Ok(()), None) => Health::failed("nothing ran before".into()),
+            // also when the link could not be put back: whatever `current` names is better than a hub that stands
             (Ok(()), Some(_)) => self.started_healthy(commit).await,
+            (Err(e), _) => {
+                let _ = self.start().await;
+                Health::failed(e)
+            }
+        }
+    }
+
+    /// Settles a swap that was cut off (the updater or the machine went down in the middle): when the release the
+    /// note names is the one in place and it runs and is well, the deploy counts as done; otherwise the release
+    /// before is put back.
+    async fn settle(&self) {
+        let path = self.cfg.root.join("deploy-journal.json");
+        let Ok(bytes) = std::fs::read(&path) else {
+            return;
         };
-        let _ = remove_whole(&self.cfg.root.join("deploy-journal.json"));
-        health
+        let Ok(journal) = serde_json::from_slice::<Journal>(&bytes) else {
+            // unreadable: nothing to go by; the hub runs whatever `current` names
+            let _ = remove_whole(&path);
+            return;
+        };
+        let commit_of = |tag: &Option<String>| {
+            tag.as_ref()
+                .and_then(|t| self.stored_manifest(t))
+                .map(|m| m.commit)
+        };
+        let new = Some(journal.tag.clone());
+        if self.linked("current") == new && self.proved(&self.releases().join(&journal.tag), &journal.tag).is_ok() {
+            if let Some(commit) = commit_of(&new) {
+                if self.started_healthy(Some(&commit)).await.ok {
+                    let _ = remove_whole(&path);
+                    log("deploy-completed", json!({ "cut_off": journal.tag }));
+                    return;
+                }
+            }
+        }
+        let health = self.put_back(&journal, commit_of(&journal.old).as_deref()).await;
+        log(
+            "deploy-undone",
+            json!({ "cut_off": journal.tag, "back_to": journal.old, "health": health }),
+        );
     }
 
     /// The release asked for is the one that runs: nothing is fetched or swapped. A hub that is well is left alone,
     /// so a repeated call costs no restart; one that is not is started again.
-    async fn same_again(&self, tag: &str, now: &Running) -> Outcome {
-        let commit = now.manifest.as_ref().map(|m| m.commit.clone());
+    async fn same_again(&self, tag: &str) -> Outcome {
+        let (manifest, sha256) = match self.proved(&self.releases().join(tag), tag) {
+            Ok(proved) => proved,
+            Err(e) => {
+                return Outcome::new(
+                    "failed",
+                    tag,
+                    format!("the stored copy of {tag}, which runs, is damaged: {e}; a newer release replaces it"),
+                )
+            }
+        };
+        let commit = Some(manifest.commit);
         let mut outcome = Outcome::new("unchanged", tag, format!("{tag} already runs and is well"));
         outcome.commit = commit.clone();
+        outcome.sha256 = Some(sha256);
         if let Ok((true, got)) = self.ask().await {
-            if commit.is_none() || got == commit {
+            if got == commit {
                 return outcome;
             }
         }
@@ -1124,7 +1184,7 @@ impl Updater {
     /// the running updater has to end for it.
     fn stage_updater(&self, tag: &str) -> Result<Option<String>, String> {
         let now = self.linked("updater");
-        if now.as_deref() == Some(tag) {
+        if now.as_deref() == Some(tag) || self.replaced() || self.cfg.root.join("updater-trial").exists() {
             return Ok(None);
         }
         // one that was tried and did not come up is not tried a second time; a later release may bring a better one
@@ -1149,9 +1209,13 @@ impl Updater {
         }
         self.point("updater", Some(tag))?;
         let _ = remove_whole(&root.join("updater-reverted"));
+        log("updater-staged", json!({ "from": now, "to": tag }));
+        if now.is_none() {
+            // no updater was in place (a first installation by hand): nothing runs that has to make room
+            return Ok(None);
+        }
         self.replaced
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        log("updater-staged", json!({ "from": now, "to": tag }));
         Ok(Some(tag.to_string()))
     }
 
@@ -1182,34 +1246,10 @@ impl Updater {
         let Ok(_lock) = self.file_lock().await else {
             return;
         };
-        let root = &self.cfg.root;
-        let journal = std::fs::read(root.join("deploy-journal.json"))
-            .ok()
-            .map(|bytes| serde_json::from_slice::<Journal>(&bytes));
-        match journal {
-            Some(Ok(journal)) => {
-                let commit = journal
-                    .old
-                    .as_ref()
-                    .and_then(|t| self.stored_manifest(t))
-                    .map(|m| m.commit);
-                let health = self.put_back(&journal, commit.as_deref()).await;
-                log(
-                    "deploy-undone",
-                    json!({ "cut_off": journal.tag, "back_to": journal.old, "health": health }),
-                );
-            }
-            Some(Err(_)) => {
-                // unreadable: nothing to go by; the hub runs whatever `current` names
-                let _ = remove_whole(&root.join("deploy-journal.json"));
-                let _ = self.start().await;
-            }
-            None => {
-                if self.linked("current").is_some() {
-                    if let Err(e) = self.start().await {
-                        log("start", json!({ "error": e }));
-                    }
-                }
+        self.settle().await;
+        if self.linked("current").is_some() {
+            if let Err(e) = self.start().await {
+                log("start", json!({ "error": e }));
             }
         }
         self.tidy();

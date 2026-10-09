@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::{Connection, OpenFlags};
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub const SCHEMA: &str = r#"
 -- ---- accounts: a way into a room. The hub checks the login; the sealed copies of the recovery code are opaque.
@@ -64,9 +64,6 @@ CREATE TABLE login_sources (
   next_at        INTEGER NOT NULL,
   -- the attempt being checked now
   checking       INTEGER,
-  -- of a known source's checks while it stood in line
-  early_failures INTEGER NOT NULL,
-  early_next_at  INTEGER NOT NULL,
   PRIMARY KEY (account, source)
 ) STRICT;
 CREATE INDEX login_sources_by_wait ON login_sources(next_at);
@@ -74,18 +71,16 @@ CREATE INDEX login_sources_by_account_wait ON login_sources(account, next_at);
 -- an account's hour of checks from sources it does not know, and its line
 CREATE TABLE login_accounts (
   account        BLOB PRIMARY KEY,
-  real           INTEGER NOT NULL,
   budget_start   INTEGER NOT NULL,
   budget_used    INTEGER NOT NULL,
-  next_turn      INTEGER NOT NULL,
-  last_served    INTEGER NOT NULL
+  next_turn      INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
-CREATE INDEX login_accounts_by_age ON login_accounts(real, budget_start);
+CREATE INDEX login_accounts_by_age ON login_accounts(budget_start);
 CREATE TABLE login_turns (
   account        BLOB NOT NULL,
   source         BLOB NOT NULL,
   turn           INTEGER NOT NULL,
-  kept_until     INTEGER NOT NULL,
+  good_until     INTEGER NOT NULL,
   PRIMARY KEY (account, source)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX login_turns_in_order ON login_turns(account, turn);
@@ -266,6 +261,12 @@ CREATE TABLE recovery_links (
 CREATE UNIQUE INDEX recovery_links_by_change ON recovery_links(room_id, change);
 
 -- A recovery in progress (8.7): its parts are kept apart and published at `finish`, all or none.
+-- Every recovery key a room ever held, signature and HPKE alike: none of them comes back (8.6).
+CREATE TABLE recovery_keys_held (
+  room_id        BLOB NOT NULL,
+  key            BLOB NOT NULL,
+  PRIMARY KEY (room_id, key)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE recoveries (
   recovery_id    BLOB PRIMARY KEY,
   room_id        BLOB NOT NULL,

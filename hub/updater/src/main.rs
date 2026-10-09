@@ -18,7 +18,6 @@
 //! | `UPDATER_UPDATER_UNIT` | `trommi-hub-updater.service` | this program's own unit (restarted after `deploy` on the command line brought a new updater) |
 //! | `UPDATER_CALLER_TAGS` | `tag:trommi-ci` | tailnet tags whose devices may call |
 //! | `UPDATER_CALLER_USERS` | none | tailnet logins whose own (untagged) devices may call: the owner |
-//! | `UPDATER_GITHUB_TOKEN` | none | a read-only token, needed only while the repository is private |
 
 #![forbid(unsafe_code)]
 
@@ -56,7 +55,6 @@ fn config() -> Result<(Config, String), String> {
     let cfg = Config {
         repository: env("UPDATER_REPOSITORY").unwrap_or_else(|| "trommi/trommi".into()),
         api: "https://api.github.com".into(),
-        token: env("UPDATER_GITHUB_TOKEN"),
         key,
         target: env("UPDATER_TARGET")
             .unwrap_or_else(|| format!("{}-unknown-linux-musl", std::env::consts::ARCH)),
@@ -136,12 +134,21 @@ async fn run(updater: Arc<Updater>) -> i32 {
         eprintln!("cannot start: {listen} is not a tailnet address; the endpoint listens nowhere else");
         return 1;
     }
-    // the tailnet interface may not be up yet: systemd starts the updater again
-    let listener = match tokio::net::TcpListener::bind(listen).await {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("cannot listen on {listen}: {e}");
-            return 1;
+    // First of all, before the tailnet is needed: a deploy that was cut off is settled and the hub is started.
+    // The hub is not started at boot by itself, so that a release whose health was never known does not serve.
+    updater.recover().await;
+    // The tailnet address may not be there yet (boot, Tailscale updating itself): wait for it rather than end,
+    // so that a new updater on trial is not taken for broken. systemd ends a start that takes too long.
+    let listener = loop {
+        match tokio::net::TcpListener::bind(listen).await {
+            Ok(l) => break l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrNotAvailable => {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Err(e) => {
+                eprintln!("cannot listen on {listen}: {e}");
+                return 1;
+            }
         }
     };
     let list = |name: &str, default: &str| -> Vec<String> {
@@ -161,11 +168,9 @@ async fn run(updater: Arc<Updater>) -> i32 {
         json!({ "on": listen.to_string(), "repository": updater.cfg.repository, "target": updater.cfg.target,
                 "caller_tags": callers.tags, "caller_users": callers.users }),
     );
-    // up: a trial of this program ends here and systemd is told; then a deploy that was cut off is undone and
-    // the hub is started (that may take as long as a health check, which is why it comes after)
+    // up: a trial of this program ends here, and systemd is told
     updater.confirm();
     notify_ready();
-    updater.recover().await;
     let stop = Arc::new(tokio::sync::Notify::new());
     let signalled = stop.clone();
     tokio::spawn(async move {

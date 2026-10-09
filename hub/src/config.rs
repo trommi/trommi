@@ -21,15 +21,15 @@ pub struct Config {
     pub commit: String,
     pub origins: Vec<String>,
     pub trust_proxy_header: bool,
-    /// `HUB_HSTS=on`: every answer tells browsers to use HTTPS only for this name and the names below it, for two
-    /// years, and that the name may go on the browsers' preload list. Off unless switched on.
-    pub hsts: bool,
     pub min_client: Option<String>,
     /// when set, `POST /v2/rooms` needs it in `x-found-token`
     pub found_token: Option<String>,
     /// who may found a room: `open` (anyone, within the limits), `token` (whoever brings `HUB_FOUND_TOKEN`),
     /// `closed` (nobody)
     pub founding: Founding,
+    /// `strict-transport-security` on every answer, two years with subdomains and `preload` (`HUB_HSTS=on`).
+    /// Off unless switched on: it binds the whole domain to HTTPS in every browser that saw it.
+    pub hsts: bool,
     /// whether failed logins slow their source down (`throttle.rs`); `off` leaves the per-address limit only
     pub login_throttle: bool,
     pub test_control: bool,
@@ -99,6 +99,39 @@ fn number<T: std::str::FromStr>(env: &HashMap<String, String>, name: &str, defau
         .unwrap_or(default)
 }
 
+/// A PEM key as a secret store hands it over: with its line breaks, with `\n` written out, or with spaces where
+/// the line breaks were. The PEM is built again from the base64 body between its two marker lines.
+pub fn pem(given: &str) -> String {
+    let text = given.replace("\\n", "\n");
+    let mut label = "PRIVATE KEY".to_string();
+    let mut body = String::new();
+    // the markers go, whatever stands between their dashes; what is left is the body
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find("-----") {
+        body.push_str(&rest[..start]);
+        let after = &rest[start + 5..];
+        let Some(end) = after.find("-----") else {
+            rest = after;
+            break;
+        };
+        if let Some(name) = after[..end].strip_prefix("BEGIN ") {
+            label = name.trim().to_string();
+        }
+        rest = &after[end + 5..];
+    }
+    body.push_str(rest);
+    let body: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    let lines: Vec<&str> = body
+        .as_bytes()
+        .chunks(64)
+        .map(|l| std::str::from_utf8(l).unwrap_or(""))
+        .collect();
+    format!(
+        "-----BEGIN {label}-----\n{}\n-----END {label}-----\n",
+        lines.join("\n")
+    )
+}
+
 fn list(env: &HashMap<String, String>, name: &str) -> Vec<String> {
     env.get(name)
         .map(|v| {
@@ -108,34 +141,6 @@ fn list(env: &HashMap<String, String>, name: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// A private key in PEM form, whatever happened to its line breaks on the way: written as `\n`, or turned into
-/// spaces (the 1Password form does that when a value is edited by hand). The body is put back in lines of 64.
-pub fn private_key_pem(text: &str) -> String {
-    let text = text.replace("\\n", "\n");
-    let Some(label) = text
-        .split("-----")
-        .nth(1)
-        .and_then(|l| l.strip_prefix("BEGIN "))
-    else {
-        return text;
-    };
-    let body: String = text
-        .split("-----")
-        .nth(2)
-        .unwrap_or("")
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
-    let lines: Vec<&str> = (0..body.len())
-        .step_by(64)
-        .map(|i| &body[i..body.len().min(i + 64)])
-        .collect();
-    format!(
-        "-----BEGIN {label}-----\n{}\n-----END {label}-----\n",
-        lines.join("\n")
-    )
 }
 
 /// v1 §8.1: `https://` + lowercase host [+ `:port`]; `http://` only for localhost and 127.0.0.1. Anything else is
@@ -186,14 +191,11 @@ impl Config {
                 .unwrap_or_else(|| default.to_string())
         };
         let optional = |name: &str| env.get(name).filter(|v| !v.is_empty()).cloned();
-        // each push setting under its name in the 1Password Environment (APPLE_…) or its older name (APNS_…)
-        let either = |new: &str, old: &str| optional(new).or_else(|| optional(old));
-        let apns_key_pem = either("APPLE_APNS_KEY", "APNS_KEY")
+        let apns_key_pem = optional("APPLE_APNS_KEY")
             .or_else(|| {
-                either("APPLE_APNS_KEY_FILE", "APNS_KEY_FILE")
-                    .and_then(|f| std::fs::read_to_string(f).ok())
+                optional("APPLE_APNS_KEY_FILE").and_then(|f| std::fs::read_to_string(f).ok())
             })
-            .map(|k| private_key_pem(&k));
+            .map(|k| pem(&k));
         let apns_hosts = optional("HUB_APNS_HOSTS")
             .and_then(|j| serde_json::from_str::<HashMap<String, String>>(&j).ok())
             .unwrap_or_else(|| {
@@ -220,7 +222,6 @@ impl Config {
                 .map_or_else(|| text("COMMIT", "dev"), str::to_string),
             origins: list(env, "HUB_ORIGINS"),
             trust_proxy_header: env.get("HUB_TRUST_CF").is_some_and(|v| v == "1"),
-            hsts: env.get("HUB_HSTS").is_some_and(|v| v == "on"),
             min_client: optional("HUB_MIN_CLIENT"),
             found_token: optional("HUB_FOUND_TOKEN"),
             founding: match (
@@ -232,6 +233,7 @@ impl Config {
                 _ => Founding::Open,
             },
             login_throttle: text("HUB_LOGIN_THROTTLE", "on") != "off",
+            hsts: text("HUB_HSTS", "off") == "on",
             test_control: env.get("HUB_TEST_CONTROL").is_some_and(|v| v == "1"),
             quiet: env.get("HUB_QUIET").is_some_and(|v| v == "1"),
             test_heavy_ms: number(env, "HUB_TEST_HEAVY_MS", 0),
@@ -302,15 +304,12 @@ impl Config {
             lease_watch_ms: number(env, "HUB_LEASE_WATCH_MS", 5_000),
             stream_buffer_bytes: number(env, "HUB_STREAM_BUFFER_BYTES", 4 << 20),
 
-            push_subject: text("HUB_PUSH_SUBJECT", "https://trommi.com"),
+            push_subject: text("HUB_WEB_PUSH_SUBJECT", "https://trommi.com"),
             push_hosts: list(env, "HUB_PUSH_HOSTS"),
             apns_key_pem,
-            apns_key_id: either("APPLE_APNS_KEY_ID", "APNS_KEY_ID"),
-            apns_team_id: either("APPLE_TEAM_ID", "APNS_TEAM_ID"),
-            apns_topics: match list(env, "APPLE_APNS_TOPIC") {
-                topics if topics.is_empty() => list(env, "APNS_TOPIC"),
-                topics => topics,
-            },
+            apns_key_id: optional("APPLE_APNS_KEY_ID"),
+            apns_team_id: optional("APPLE_TEAM_ID"),
+            apns_topics: list(env, "APPLE_APNS_TOPIC"),
             apns_hosts,
         }
     }
