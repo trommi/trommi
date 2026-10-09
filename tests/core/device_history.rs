@@ -1131,3 +1131,136 @@ fn a_frontier_that_the_chain_does_not_lead_to_is_a_finding() {
     assert_eq!(take(&mut b, &other_two).outcome, EnvelopeOutcome::Applied);
     assert_eq!(take(&mut b, &other_two).code, Some(Error::Replay));
 }
+
+#[test]
+fn a_recovery_cuts_every_chain_where_it_verified_it() {
+    use trommi_core::device::ServedEnvelope;
+    use trommi_core::recovery::check_room;
+
+    // Two human devices and a member whose key the test holds write in the room; then every device is
+    // lost.
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    for round in 0..3 {
+        write(&mut hub, &mut a, &note(round));
+        write(&mut hub, &mut b, &desk(&room, "b"));
+    }
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let item = envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    );
+    let mut pen = Pen::new(&forger.key);
+    let one = pen.sign(&claim, &item, &Objects::new(), now());
+    let mut branch = pen.fork();
+    let two = pen.sign(&claim, &item, &Objects::new(), now());
+    let other_two = branch.sign(&claim, &item, &Objects::new(), now());
+    for envelope in [&one, &two] {
+        hub.post(&pen.id(), &trommi_tests::forge_content::posting(envelope))
+            .unwrap();
+    }
+    sync_all(&hub, &mut a);
+    let heads: Vec<_> = [a.id(), b.id(), pen.id()]
+        .iter()
+        .map(|writer| (*writer, a.chain_head(&room, writer).unwrap()))
+        .collect();
+    assert!(heads.iter().all(|(_, head)| head.seq >= 2));
+    drop((a, b));
+
+    let keys = test_keys();
+    let stored = trommi_tests::served_chains(&hub);
+    let recover = |hub: &mut Hub, device: &mut TestDevice, served: &[(Vec<u8>, u64)]| {
+        hub.open_recovery(&device.id()).unwrap();
+        let fetched = trommi_tests::fetch(hub, &keys);
+        let replacement = fetched.served(|served| {
+            let checked = check_room(&keys, served)?;
+            keys.replace(
+                &mut SystemEntropy,
+                &room.room_id(),
+                checked.observer.history().unwrap(),
+            )
+        })?;
+        let chains: Vec<ServedEnvelope<'_>> = served
+            .iter()
+            .map(|(bytes, change)| ServedEnvelope {
+                bytes,
+                change: *change,
+                void_code: None,
+            })
+            .collect();
+        let built = fetched.served(|served| {
+            device.recover(&keys, served, &replacement, &chains, b"copies", now())
+        });
+        if built.is_err() {
+            hub.drop_recovery();
+        }
+        built.map(|_| ())
+    };
+    let honest: Vec<(Vec<u8>, u64)> = stored
+        .iter()
+        .map(|stored| (stored.pruned(), stored.change))
+        .collect();
+    let at = |hash: trommi_core::ids::Hash32| {
+        stored
+            .iter()
+            .position(|stored| stored.hash == hash)
+            .unwrap()
+    };
+
+    // A hub that serves a chain with a hole, or with another envelope under a number: no Cut is taken from
+    // it, and nothing is built.
+    let mut device = new_device();
+    let mut holed = honest.clone();
+    holed.remove(at(one.hash().unwrap()));
+    assert_eq!(recover(&mut hub, &mut device, &holed), Err(Error::Gap));
+    let mut forked = honest.clone();
+    let after = forked[at(two.hash().unwrap())].1;
+    forked.push((other_two.prune().unwrap().encode().unwrap(), after + 1_000));
+    assert_eq!(
+        recover(&mut hub, &mut device, &forked),
+        Err(Error::Equivocation)
+    );
+    let mut swapped = honest.clone();
+    let (first, second) = (at(one.hash().unwrap()), at(two.hash().unwrap()));
+    swapped.swap(first, second);
+    assert_eq!(recover(&mut hub, &mut device, &swapped), Err(Error::Gap));
+    assert!(device.outbox().is_empty() && device.room().is_none());
+
+    // The chains as they are: every Remove carries the head the device verified from number 1.
+    recover(&mut hub, &mut device, &honest).unwrap();
+    post_ok(&mut hub, &mut device);
+    assert!(device.is_human());
+    for (writer, head) in &heads {
+        assert_eq!(device.chain_cut(&room, writer).unwrap(), Some(*head));
+        assert_eq!(device.chain_head(&room, writer).unwrap(), *head);
+    }
+    assert_eq!(device.objects(&room).unwrap().len(), 3);
+    // What lies beyond a Cut is refused by everyone afterwards: by the device and by the hub.
+    let three = pen.sign(&claim, &item, &Objects::new(), now());
+    let got = device
+        .receive_envelope(
+            &three.encode().unwrap(),
+            device.cursor() + 1,
+            true,
+            None,
+            now(),
+        )
+        .unwrap();
+    assert_eq!(got.code, Some(Error::RemovedSender));
+    assert_eq!(
+        hub.post(&pen.id(), &trommi_tests::forge_content::posting(&three)),
+        Err(Error::RemovedSender)
+    );
+}
