@@ -10,7 +10,7 @@
 // Calm and sober: this is about keys; pen drawings only on the choice buttons.
 // Core features that may not be there yet (usage, session handover) are shown only when the core has them.
 import { BELL, Controller, PLUS, SET_CHEVRON, avatar, controller, copyText, doodleSvg, errorLine, html, keysList, raw, roomPage, roomShell, setRow, setThemeMode, settingsPage, sk, sketchSvg, themeMode } from './ui.mjs'
-import { CLIENT, account, checkEmoji, core, qrReader, ses } from './app.mjs'
+import { CLIENT, account, checkEmoji, core, openInWorker, qrReader, ses } from './app.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
 const foundCode = () => ses('trommi-found-code', new URLSearchParams(location.search).get('found_code')) || undefined
@@ -110,8 +110,6 @@ const sessionName = s => s.settings?.name || s.profile?.agent_name || s.agent_se
 // ---- inside a room: devices, pairing, settings (pages of the board, rendered like any other) ----
 export function register(t) {
   const client = t.hub.client
-  // What an agent invite should do once the agent joined (session handover; kept in this tab only).
-  const handovers = new Map()
   let k = null   // the core's helpers (roomLink); the demo room has none
   core().then(x => { k = x }).catch(() => {})
   {
@@ -134,7 +132,7 @@ ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remo
     }
     // The earlier conversation stays closed unless the human opens it: an agent invite comes without history.
     const historyAsk = () => html`<fieldset class="room-history"><legend>May it read the earlier conversation?</legend><label><input type="radio" name="with_history" value="no" checked> No</label><label><input type="radio" name="with_history" value="yes"> Yes</label></fieldset>`
-    const sessionOptions = (except = null) => [...m().sessions.values()].filter(s => s.agent_device_id !== except).map(s => html`<option value="${s.agent_session_id || s.agent_device_id}">${sessionName(s)}</option>`)
+    const sessionOptions = (except = null) => [...m().sessions.values()].filter(s => s.agent_device_id !== except).map(s => html`<option value="${s.session_id ?? s.agent_session_id ?? s.agent_device_id}">${sessionName(s)}</option>`)
     // Hand a session to an agent that is in the room: one form under the agents (not one per row: big rooms).
     const handoverForm = agents => html`<details class="room-more room-handover"><summary>Hand a session to an agent</summary><form method="post" action="/devices/handover" class="room-form">
 <label>Agent<select name="agent_device_id" required>${agents.map(d => html`<option value="${d.device_id}">${d.device_name || 'Agent'} · ${fp(d)}</option>`)}</select></label>
@@ -202,10 +200,10 @@ ${raw(L.gone)}
         const label = String(form.get('label') ?? '').trim() || null
         // continue=<session>: "Copy invite link again" on a session's page. The link is for THAT session: the connector that
         // joins with it continues it, after the human confirmed its check code here (the core: createInvite takeover).
-        const cont = agent ? String(form.get('continue') ?? '') : ''
+        // session_id: "Takes over" on the Devices page, the same kind of link (the client hands the session over when
+        // the new agent has joined).
+        const cont = agent ? String(form.get('continue') ?? '') || String(form.get('session_id') ?? '') : ''
         const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}), ...(cont ? { session_id: cont, takeover: true } : agent ? { desk: inviteDesk(req) } : {}) })
-        const session_id = String(form.get('session_id') ?? '')
-        if (agent && session_id) handovers.set(invite.invite_id, { session_id, with_history: form.get('with_history') === 'yes', done: false })
         t.redirect(res, !agent && form.get('in') === 'settings' ? `/settings?pair=${invite.invite_id}` : `/pair/${invite.invite_id}`)
       } catch (err) { if (form.get('in') === 'settings') return home(req, res, '', `No code: ${err.message}`, 422); page(req, res, 'Devices', devicesMain(`No invite: ${err.message}`), {}, 422) }
     })
@@ -235,7 +233,6 @@ ${raw(L.gone)}
       const dead = !open && !joined && !coming
       const who = joined ? t.model().agents.find(a => a.agent_device_id === inv.newcomer?.device_id || a.id === inv.newcomer?.device_id) ?? null : null
       const name = newcomerName(inv) || who?.name || 'The agent'
-      const h = handovers.get(inv.invite_id)
       const done = open ? '' : 'done'
       // A link that continues an existing session ("Copy invite link again"): the human sees which session, and
       // confirms that the six emoji the new connector's terminal shows are the ones shown here before anything is granted.
@@ -253,7 +250,7 @@ ${inv.takeover ? html`<small>If they match, that connector continues <strong>${c
 ${matchButtons(inv)}
 ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${inv.takeover ? html`, and ${contName} stays as it is` : ''}.</small></div>`
         : joined && inv.takeover ? html`<b class="clip-in">${cont ? avatar(cont, { crown: false }) : ''}<span>${contName} goes on with the new connector</span></b><small>The connector that held it before is retired.</small>`
-        : joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>${h && !h.done ? html`<small>Handing over the session…</small>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}`
+        : joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>`
         : coming ? html`<b>Adding ${newcomerName(inv) || 'the agent'}…</b>`
         : dead ? html`<b>${state === 'expired' ? 'This link has run out' : inv.error === 'code-mismatch' ? 'They did not match: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
         : html`<b>Compare the six emoji</b><small>The command prints six emoji, each with a word, and they show here too. Nobody is added before you tap "They match".</small>`
@@ -285,23 +282,13 @@ ${emojiRow(inv.check_code)}${matchButtons(inv)}
 ${errorLine(error)}<p class="room-meta">"They don't match" burns the invite: nobody is added.</p>${back}`
       else if (state === 'adding') body = html`<p class="room-wait">Adding ${newcomerName(inv) || (agent ? 'the agent' : 'the device')}…</p>`
       else if (state === 'joined') {
-        const h = handovers.get(inv.invite_id)
-        body = html`<p class="room-lead room-ok">✓ ${newcomerName(inv) || (agent ? 'The agent' : 'The new device')} is in now.</p>${h && !h.done ? html`<p class="room-wait">Handing over the session…</p>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}<a href="/settings/devices" data-nav class="room-done">Done</a>`
+        body = html`<p class="room-lead room-ok">✓ ${newcomerName(inv) || (agent ? 'The agent' : 'The new device')} is in now.</p><a href="/settings/devices" data-nav class="room-done">Done</a>`
       } else if (inv.error === 'code-mismatch') body = html`<p class="room-error" role="alert">They did not match. Nobody was added; the invite is used up.</p>${again(agent)}${back}`
       else body = html`<p class="room-error" role="alert">${state === 'expired' ? 'The invite has expired.' : `That did not work${inv.error ? ` (${inv.error})` : ''}.`}</p>${errorLine(error)}${again(agent)}${back}`
       return roomShell(agent ? 'Invite an agent' : state === 'confirm_code' ? 'Add a new device?' : 'Pair a device', html`<div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">${body}</div>`)
     }
-    // After an agent joined, hand the chosen session over once.
-    const handOver = inv => {
-      const h = inv && handovers.get(inv.invite_id)
-      if (!h || h.started || inv.invite_state !== 'joined' || !inv.newcomer) return
-      h.started = true
-      client.assignSession({ session_id: h.session_id, agent_device_id: inv.newcomer.device_id, with_history: h.with_history })
-        .catch(err => { h.error = err.message }).finally(() => { h.done = true })
-    }
     t.get(/^\/pair\/([0-9a-f]+)$/, ({ req, res, match }) => {
       const inv = m().invites.get(match[1])
-      handOver(inv)
       page(req, res, inv?.device_role === 'agent' ? 'Invite an agent' : 'Pair a device', inviteMain(inv), { view: 'invite', stream: `&invite=${match[1]}` })
     })
     t.post(/^\/pair\/([0-9a-f]+)\/confirm$/, async ({ req, res, match, form }) => {
@@ -313,7 +300,7 @@ ${errorLine(error)}<p class="room-meta">"They don't match" burns the invite: nob
       t.redirect(res, list ? `/settings?pair=${match[1]}` : `/pair/${match[1]}`)
     })
     t.live('invite', {
-      take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); handOver(inv); return [id, String(inviteMain(inv)).replace(/\d+ more min\.|less than a minute\.|no time left\./g, '').replace(/data-invite-clip-until-value="\d+"/, '')] })),
+      take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); return [id, String(inviteMain(inv)).replace(/\d+ more min\.|less than a minute\.|no time left\./g, '').replace(/data-invite-clip-until-value="\d+"/, '')] })),
       diff: (was, now, c) => { const id = c.params.get('invite'); return was.get(id) !== now.get(id) ? String(t.stream('refresh')) : '' },
     })
 
@@ -477,16 +464,17 @@ ${note ? html`<p class="room-lead" id="logout-last">${note}</p>` : ''}<p class="
   }
 }
 
-// ---- Log out: this device leaves the member list (a signed removal by itself), the streams close, every local trace of
-// the app on this origin goes (IndexedDB, Cache Storage, localStorage, sessionStorage; the service worker stays and
-// fills its cache again from the network), and the start page comes. Offline: the removal fails, the wipe still happens,
-// and the start page says the device stays in "Devices" until another device removes it.
+// ---- Log out: what is still to send goes out, the streams close, every local trace of the app on this origin goes
+// (IndexedDB, Cache Storage, localStorage, sessionStorage; the service worker stays and fills its cache again from
+// the network), and the start page comes. No device takes itself out of the room: the start page says the device
+// stays in "Devices" until another device removes it.
 async function logOut(client) {
   // (the demo has no account: leaving it is all there is to do; nothing stored on this device is touched)
   if (client?.model?.room?.hub_url === 'mock:') { try { sessionStorage.removeItem('trommi-mock') } catch {} return location.replace('/') }
   let removed = !client?.hub   // the demo has nothing to remove
   if (typeof client?.leaveRoom === 'function') {
-    try { await Promise.race([client.leaveRoom(), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 20_000))]); removed = true }
+    // (`removed: false`: no device takes itself out of the room; it stays under Devices until another one removes it)
+    try { removed = (await Promise.race([client.leaveRoom(), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 20_000))]))?.removed !== false }
     catch (err) { console.warn('log out: not removed', err?.code ?? '', err?.message ?? err) }
   }
   try { await client?.stop?.() } catch {}
@@ -745,7 +733,6 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
     else if (b.classList.contains('ob-gen')) { input.value = input.dataset.made = (await account()).generatePassword(); eye(input, false); rule(input) }
     else if (b.classList.contains('ob-copy')) b.textContent = (await copyText(input.value)) ? 'Copied' : 'Not copied'
   })
-  const storage = async () => (await core()).idbStorage({ name: 'trommi', prefix: 'room/' })
   const done = async (client, { keep = false } = {}) => { if (!keep) root.remove(); history.replaceState(null, '', '/'); await start(client, { fresh: true }) }
   const on = (sel, ev, fn) => root.querySelector(sel)?.addEventListener(ev, fn)
   const wireBack = () => on('#room-home', 'click', e => { e.preventDefault(); history.replaceState(null, '', '/'); welcome() })
@@ -813,7 +800,7 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   // out first); if it does not open, the broken screen.
   async function roomExists() {
     try {
-      const client = await c.openRoom({ storage: await storage(), client: CLIENT })
+      const client = await openInWorker()
       if (client) return done(client)
     } catch (err) { return brokenFlow(err, { fromLogin: true }) }
     return brokenFlow(new Error('the stored account vanished meanwhile'), { fromLogin: true })

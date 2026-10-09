@@ -15,7 +15,7 @@
 import { Client, ClientError, engineMeta } from './client.ts'
 import type { Core, Device, Store } from './core-api.ts'
 import { Engine } from './engine.ts'
-import type { EngineTiming, InviteDevice } from './engine.ts'
+import type { EngineTiming } from './engine.ts'
 import { accountCopiesBytes, Hub, HubError, hubAddress } from './hub.ts'
 import type { AccountCopies, NewAccount } from './hub.ts'
 import { b64u, hex, unb64u, unhex } from './ids.ts'
@@ -58,6 +58,7 @@ export interface Rooms {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
 const codeText = (numbers: readonly number[]): string => numbers.map(n => String(n).padStart(2, '0')).join('-')
 
 export function roomsOn(env: RoomEnv): Rooms {
@@ -85,16 +86,24 @@ export function roomsOn(env: RoomEnv): Rooms {
   async function clientOf(o: DeviceOptions, core: Core, hub: Hub, engine: Engine, cache: Cache): Promise<Client> {
     return new Client({ core, hub, engine, cache, ...(o.device_name ? { device_name: o.device_name } : {}), ...(o.device_info !== undefined ? { device_info: o.device_info } : {}) }).open()
   }
-  /** Posts everything in the outbox now, in order, each entry once: a step's own posts, whose failure is the step's. */
+  /** Posts everything in the outbox now, in order: a step's own posts, whose failure is the step's. An entry the
+   *  hub did not answer is the same bytes again, a few times (the hub answers a repeated post like the first). */
   async function postAll(engine: Engine): Promise<void> {
-    while ((await engine.outbox()).length) await engine.postHead()
+    for (let tries = 0; (await engine.outbox()).length;) {
+      try { await engine.postHead(); tries = 0 } catch (e) {
+        if (!(e instanceof HubError) || !e.transient || ++tries > 4) throw e
+        await sleep(300 * 2 ** tries)
+      }
+    }
   }
+  /** Whether a failed post may have reached the hub all the same: its answer was lost, or the hub was busy. */
+  const uncertain = (e: unknown): boolean => e instanceof HubError && e.transient
 
   async function foundRoom(o: Parameters<Rooms['foundRoom']>[0]): Promise<{ client: Client; recovery_code: Uint8Array }> {
     const core = await env.core()
     const hub = hubOf(o, o.hub_url)
     const device = await fresh(o, core)
-    let engine: Engine | null = null
+    let engine: Engine | null = null, posting = false
     const code = o.recovery_code ? o.recovery_code.slice() : core.generateRecoveryCode()
     try {
       const room_id = await device.foundRoom(code, Date.now())
@@ -105,12 +114,17 @@ export function roomsOn(env: RoomEnv): Rooms {
       engine = new Engine({ core, hub, meta: engineMeta(cache), ...again(o), ...timing }, device)
       const founding = (await engine.outbox()).find(e => e.kind === 'roomFounding') ?? (() => { throw new ClientError('internal', 'the core made no founding') })()
       await engine.attach(founding.id, { account, found_token: o.found_token ?? null })
-      await engine.postHead()
+      posting = true
+      await postAll(engine)
       await engine.load()
       return { client: await clientOf(o, core, hub, engine, cache), recovery_code: code }
     } catch (e) {
       code.fill(0)
-      await discard(o, device, engine)
+      // A founding the hub may have taken (its answers were lost) is NOT thrown away: the device and its outbox
+      // stay, with the account that goes with them, and the next start of this stored room posts the same bytes
+      // again. Everything else leaves nothing stored.
+      if (posting && uncertain(e)) { if (engine) await engine.stop().catch(() => {}); else await device.close().catch(() => {}) }
+      else await discard(o, device, engine)
       throw e
     }
   }
@@ -152,16 +166,15 @@ export function roomsOn(env: RoomEnv): Rooms {
       const device = await fresh(o, core)
       let engine: Engine | null = null
       try {
-        const joiner = device as unknown as InviteDevice
         const invite = await hub.getInvite(link.inviteId)
-        const request = await joiner.joinRequest(o.link, { offer: invite.offer, signature: invite.signature }, Date.now())
+        const request = await device.joinRequest(o.link, { offer: invite.offer, signature: invite.signature }, Date.now())
         await hub.postInviteRequest(link.inviteId, { request: request.request, mac: request.mac, signature: request.signature })
         // the inviter's Reveal: with it both sides hold the same six numbers
         let reveal = null
         while (!reveal) {
           try { reveal = await hub.getReveal(link.inviteId) } catch (e) { if (!(e instanceof HubError) || (e.code !== 'not-found' && !e.transient)) throw e; await wait() }
         }
-        tellCode(codeText(await joiner.joinReveal(reveal)))
+        tellCode(codeText(await device.joinReveal(reveal)))
         // Let in once the person confirmed on the inviter's side: from then on the hub knows this device's key.
         hub.useSigner(link.roomId, (address, challenge) => device.hubSignIn(link.roomId, address, challenge))
         for (;;) {
@@ -212,17 +225,27 @@ export function roomsOn(env: RoomEnv): Rooms {
         // The new code is made, and the account's copies of it (or the person's own copy: the caller's `account`
         // resolves once the code is on their screen), BEFORE the recovery is opened: the hub locks the room for
         // ten minutes from then on, and nothing of a recovery is posted for a code nobody holds.
-        const served = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
+        const { served, session_groups } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
         const plan = await held.prepareRecovery(code, served)
         let copies: Uint8Array
         try { copies = accountCopiesBytes(o.account ? await o.account(plan.newCode) as AccountCopies | null : null) } finally { plan.newCode.fill(0) }
-        // A removed device's chain ends at its Cut for everyone (9.0.10). The Cut is the last envelope of a chain
-        // this device VERIFIED; the core cannot verify stored content yet, so only a device that wrote nothing is
-        // cut here (at nothing). Cutting a chain unseen would take a person's notes and answers away.
+        // A removed device's chain ends at its Cut for everyone (9.0.10): the last envelope of its chain as this
+        // device VERIFIED it. A device that wrote nothing is cut at nothing; a chain is verified by the core
+        // (`chainCut`, provisional: the binding refuses with `core-missing`, and so does this recovery then, since
+        // cutting a chain unseen would take a person's notes and answers away).
         const cuts = []
-        for (const removal of plan.removals) for (const gone of removal.devices) {
-          if ((await hub.chain(removal.group, gone, { limit: 1 })).items.length) throw new ClientError('core-missing', 'a recovery removes devices that wrote content, and the core cannot verify their chains yet')
-          cuts.push({ group: removal.group, cut: { device: gone, seq: 0, hash: new Uint8Array(32) } })
+        for (const removal of plan.removals) {
+          const group = [served.group, ...served.sessions][[room, ...session_groups].findIndex(g => sameBytes(g, removal.group))]
+          for (const gone of removal.devices) {
+            const chain: Uint8Array[] = []
+            for (let more = true; more;) {
+              const page = await hub.chain(removal.group, gone, { after: chain.length, limit: 500 })
+              for (const link of page.items) chain.push(link.envelope)
+              more = page.more && page.items.length > 0
+            }
+            if (chain.length && !group) throw new ClientError('bad-answer', 'the hub names a group in a recovery that it did not serve')
+            cuts.push({ group: removal.group, cut: chain.length ? await held.chainCut(group!, gone, chain) : { device: gone, seq: 0, hash: new Uint8Array(32) } })
+          }
         }
         const recovery = await hub.openRecovery()
         try {
@@ -231,7 +254,7 @@ export function roomsOn(env: RoomEnv): Rooms {
           await postAll(engine)
         } catch (e) { await hub.dropRecovery(recovery.recovery_id).catch(() => {}); throw e }
       } else {
-        const served = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
+        const { served } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
         // (the sessions are joined one by one below; handed over here as well, a room with sessions is deeper than
         // the binding's copy of an argument goes, and it refuses the call with `bad-format`)
         await held.joinRoomWithCode(code, { ...served, sessions: [] }, Date.now())

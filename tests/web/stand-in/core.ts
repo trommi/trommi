@@ -258,11 +258,8 @@ export type AgentDraft =
   | { kind: 'objectFirst'; session: Uint8Array; objectType: 'card' | 'request' | 'artifact'; urgency: Urgency; push: boolean; expiresAt?: number; payload: Uint8Array }
   | { kind: 'objectVersion'; session: Uint8Array; objectId: Uint8Array; closed: boolean; urgency: Urgency; push: boolean; payload: Uint8Array }
 
-/** What the stand-in's device has beside core-api.ts's `Device`. The first three are what the engine needs of the
- *  real core and core-api.ts does not name yet (see the engine's header); `sealAgent` is for the agent stand-in. */
+/** What the stand-in's device has beside core-api.ts's `Device`: `sealAgent`, for the agent stand-in. */
 export interface StandInExtras {
-  /** A relayed application message (a stroke piece, 7.2): not in the log, no change number. Null: not readable. */
-  receiveRelay(group: Uint8Array, epoch: number, sender: Uint8Array, message: Uint8Array, nowMs: number): Promise<ReceivedMessage | null>
   sealAgent(draft: AgentDraft, fileIds: Uint8Array[], nowMs: number): Promise<Sealed>
 }
 export type StandInDevice = Device & StandInExtras
@@ -691,6 +688,18 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       state.set(`heads/${id}`, { value, at: nowMs })
       return utf8.encode(value)
     }),
+    // no signature to verify here: the numbers and links of the stand-in's JSON envelopes are all there is
+    chainCut: (_served: ServedGroup, d: Uint8Array, envelopes: Uint8Array[]) => run(async (): Promise<Cut> => {
+      let seq = 0, hash = ZERO32
+      for (const bytes of envelopes) {
+        const w = JSON.parse(text.decode(bytes)) as Wire
+        if (w.sender !== b64(d)) refuse('not-member', 'an envelope of another sender in the chain')
+        if (w.seq !== seq + 1) refuse('gap', 'the chain misses an envelope')
+        if (w.prev !== hash) refuse('chain-break', 'the chain does not link')
+        seq = w.seq; hash = b64(sha256(bytes))
+      }
+      return { device: d, seq, hash: unb64(hash) }
+    }),
     cutOf: (g: Uint8Array, d: Uint8Array) => run(async (): Promise<Cut> => {
       const c = state.get<Chain>(`chain/${b64(g)}/${b64(d)}`)
       return { device: d, seq: c?.seq ?? 0, hash: c ? unb64(c.hash) : new Uint8Array(32) }
@@ -718,7 +727,7 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
         commitment: b64(hashOf('Trommi Invite Commitment', inviteId, nonce)), inviter: k.me, room_epoch: k.roles!.epoch, room_state: b64(k.roles!.state) }))
       state.set(`invite/${b64(inviteId)}`, { secret: b64(secret), nonce: b64(nonce), role, session_id: sessionId ? b64(sessionId) : null, offer: b64(offer), expires_at: expiresAt, hub, used: null, burned: false } satisfies Invite)
       const link = `${app.replace(/\/+$/, '')}/join#v2.${b64(utf8.encode(hub))}.${k.room}.${b64(secret)}`
-      return { inviteId, link, expiresAt, signedOffer: offer, offer, signature: fakeSignature('TrommiInviteOffer', offer) }
+      return { inviteId, link, expiresAt, offer, signature: fakeSignature('TrommiInviteOffer', offer) }
     }),
     inviteAccept: (inviteId: Uint8Array, signed: { request: Uint8Array; mac: Uint8Array; signature: Uint8Array }, nowMs: number) => run(async () => {
       const { request, mac } = signed
@@ -736,7 +745,7 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       const checkCode = codeOf(unb64(inv.offer), request, mac, unb64(inv.nonce))
       state.set(key, { ...inv, used: { device: r.device, key_package: r.key_package, request_hash: b64(requestHash), code: checkCode } } satisfies Invite)
       const reveal = utf8.encode(JSON.stringify({ invite_id: b64(inviteId), nonce: inv.nonce, request_hash: b64(requestHash) }))
-      return { newDevice, checkCode, signedReveal: reveal, reveal, signature: fakeSignature('TrommiInviteReveal', reveal), requestHash }
+      return { newDevice, checkCode, reveal, signature: fakeSignature('TrommiInviteReveal', reveal), requestHash }
     }),
     inviteConfirm: (inviteId: Uint8Array, matches: boolean, nowMs: number) => run(async () => {
       const key = `invite/${b64(inviteId)}`, inv = state.get<Invite>(key) ?? refuse('bad-invite', 'no such invite')
@@ -763,7 +772,7 @@ function makeDevice(binding: Binding, raw: BindingModule.Device, state: State): 
       const request = utf8.encode(JSON.stringify({ room_id: o.room_id, invite_id: o.invite_id, hub: parts.hub, role: o.role, key_package: b64(keyPackage), offer_hash: b64(hashOf('Trommi Invite Offer', offer)), device: me }))
       const mac = macOf(unb64(parts.secret), room, request)
       state.set('joining', { invite_id: o.invite_id, secret: parts.secret, offer: b64(offer), request: b64(request), mac: b64(mac), inviter: o.inviter } satisfies Joining)
-      return { signedRequest: request, request, mac, signature: fakeSignature('TrommiInviteRequest', concat(request, mac)), role: o.role, inviter: unb64(o.inviter), expiresAt: o.expires_at,
+      return { request, mac, signature: fakeSignature('TrommiInviteRequest', concat(request, mac)), role: o.role, inviter: unb64(o.inviter), expiresAt: o.expires_at,
         sessionId: o.session_id ? unb64(o.session_id) : null, roomEpoch: o.room_epoch, roomState: unb64(o.room_state) }
     }),
     joinReveal: (signed: { reveal: Uint8Array; signature: Uint8Array }) => run(async () => {

@@ -129,7 +129,7 @@ export async function showShare() {
   try { parseShareLink(link) } catch { return say('This link is incomplete: the part after # is missing or damaged.', 'room-error') }
   say('Opening…', 'room-wait')
   try {
-    const bytes = await openShared(new Hub({ hub_url: hubUrl(), client: CLIENT }), link)
+    const bytes = await openShared(new Hub({ hub_url: hubUrl(), client_name: CLIENT }), link)
     const [kind, type] = kindOf(bytes)
     if (kind === 'html') main.replaceChildren(frame(new TextDecoder().decode(bytes)))
     else {
