@@ -41,7 +41,7 @@ fn scene_on(hub: TestHub) -> Scene {
 /// A card's first version by the agent; returns its object id and envelope hash.
 fn card(s: &mut Scene, urgency: u8, flags: u8) -> ([u8; 16], [u8; 32]) {
     let seq = s.agent.chain(&s.group).0 + 1;
-    let id = wire::object_id(&s.group, &s.agent.id(), seq);
+    let id = enc::object_id(&s.group, &s.agent.id(), seq);
     let mut item = object(
         wire::KIND_VERSION,
         id,
@@ -92,10 +92,9 @@ fn the_hub_runs_its_checks_in_order_and_takes_no_number_before_the_chain() {
         .refused(400, "bad-format");
     // a pruned envelope is not posted
     let parsed = Envelope::parse(&bytes).unwrap();
-    let pruned = wire::encode_envelope(
+    let pruned = enc::pruned_envelope(
         &parsed.header_bytes,
         &parsed.nonce,
-        None,
         &parsed.body_hash,
         &parsed.signature,
     );
@@ -168,7 +167,7 @@ fn a_refusal_after_the_chain_check_is_stored_as_a_void_record() {
     let mut s = scene();
     let hub = &s.w.hub;
     // (7) a human device writes a card: forbidden, and the number is used
-    let id = wire::object_id(&s.group, &s.w.ada.id(), 1);
+    let id = enc::object_id(&s.group, &s.w.ada.id(), 1);
     let reply = s.w.ada.send(
         hub,
         &s.group,
@@ -278,7 +277,7 @@ fn only_the_allowed_sender_writes_each_item() {
     let hub = &s.w.hub;
     let forbidden = |reply: Reply| assert_eq!(reply.refused(403, "forbidden")["voided"], true);
     // Notes, board items and room registers: human devices, in the room group
-    let note_id = wire::object_id(&room, &s.w.ada.id(), 1);
+    let note_id = enc::object_id(&room, &s.w.ada.id(), 1);
     s.w.ada
         .send(
             hub,
@@ -317,7 +316,7 @@ fn only_the_allowed_sender_writes_each_item() {
     forbidden(s.w.ada.send(hub, &room, &chat(&s.session, ZERO32, "x")));
     // a board item or a Note in a session group
     forbidden(s.w.ada.send(hub, &s.group, &board_item(&board)));
-    let id = wire::object_id(&s.group, &s.w.ada.id(), s.w.ada.chain(&s.group).0 + 1);
+    let id = enc::object_id(&s.group, &s.w.ada.id(), s.w.ada.chain(&s.group).0 + 1);
     forbidden(s.w.ada.send(
         hub,
         &s.group,
@@ -520,7 +519,7 @@ fn only_the_allowed_sender_writes_each_item() {
         )
         .ok();
     // a permission request and its verdict
-    let request_id = wire::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
+    let request_id = enc::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
     s.agent
         .send(
             hub,
@@ -676,7 +675,7 @@ fn the_desk_lists_open_objects_by_urgency_and_every_writers_newest_register_valu
         )
         .ok();
     // a permission request, an Artifact, a Note
-    let request = wire::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
+    let request = enc::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
     s.agent
         .send(
             hub,
@@ -692,7 +691,7 @@ fn the_desk_lists_open_objects_by_urgency_and_every_writers_newest_register_valu
             ),
         )
         .ok();
-    let artifact = wire::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
+    let artifact = enc::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
     s.agent
         .send(
             hub,
@@ -709,7 +708,7 @@ fn the_desk_lists_open_objects_by_urgency_and_every_writers_newest_register_valu
         )
         .ok();
     let room = s.w.room;
-    let note = wire::object_id(&room, &s.w.ada.id(), s.w.ada.chain(&room).0 + 1);
+    let note = enc::object_id(&room, &s.w.ada.id(), s.w.ada.chain(&room).0 + 1);
     s.w.ada
         .send(
             hub,

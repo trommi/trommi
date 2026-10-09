@@ -52,7 +52,7 @@ fn artifact(
     state: u8,
 ) -> ([u8; 16], [u8; 32]) {
     let (object_id, previous) = id.unwrap_or((
-        wire::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1),
+        enc::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1),
         ZERO32,
     ));
     let mut item = object(
@@ -355,7 +355,7 @@ fn web_subscription(n: u8) -> Value {
 }
 
 fn card(s: &mut Scene, urgency: u8, flags: u8) -> [u8; 32] {
-    let id = wire::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
+    let id = enc::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
     let mut item = object(
         wire::KIND_VERSION,
         id,
@@ -442,7 +442,7 @@ fn the_push_flag_makes_one_content_free_push_per_human_device_that_wants_it() {
     let mut from_human = chat(&s.session, s.agent.id(), "pushy");
     from_human.flags = wire::FLAG_PUSH;
     s.w.ada.send(hub, &s.group, &from_human).ok();
-    let request_id = wire::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
+    let request_id = enc::object_id(&s.group, &s.agent.id(), s.agent.chain(&s.group).0 + 1);
     let mut permission = object(
         wire::KIND_REQUEST,
         request_id,

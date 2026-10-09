@@ -161,7 +161,7 @@ fn signing_in_needs_a_fresh_challenge_this_hub_and_a_standing() {
         device: w.ada.id(),
         challenge,
     }
-    .encode();
+    .bytes();
     let good = json!({ "auth": b64(&auth), "signature": b64(&w.ada.sign("TrommiHubAuth", &auth)) });
     let bad = json!({ "auth": b64(&auth), "signature": b64(&[0u8; 64]) });
     let path = format!("/v2/rooms/{}/tokens", b64(&w.room));
@@ -185,7 +185,7 @@ fn signing_in_needs_a_fresh_challenge_this_hub_and_a_standing() {
         device: w.ada.id(),
         challenge,
     }
-    .encode();
+    .bytes();
     w.hub
         .post(
             &path,
@@ -345,7 +345,7 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
         role: 1,
         session_id: ZERO16,
         expires_at: trommi_hub::util::now() + 600_000,
-        commitment: wire::ref_hash(
+        commitment: enc::ref_hash(
             "Trommi Invite Commitment",
             &[&invite_id[..], &nonce[..]].concat(),
         ),
@@ -353,7 +353,7 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
         room_epoch,
         room_state,
     };
-    let bytes = offer.encode();
+    let bytes = offer.bytes();
     let publish = |dev: &Dev, offer: &[u8], signer: &Dev| {
         dev.post(&w.hub, "/v2/invites", &json!({ "offer": b64(offer), "signature": b64(&signer.sign("TrommiInviteOffer", offer)) }))
     };
@@ -363,13 +363,13 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
         expires_at: trommi_hub::util::now() + 3_600_000,
         ..offer.clone()
     }
-    .encode();
+    .bytes();
     publish(&w.ada, &long, &w.ada).refused(400, "bad-invite");
     let stale = wire::Offer {
         room_state: [1; 32],
         ..offer.clone()
     }
-    .encode();
+    .bytes();
     publish(&w.ada, &stale, &w.ada).refused(400, "bad-invite");
     publish(&w.ada, &bytes, &w.ada).ok();
     // by invite id only, without a token: the Offer
@@ -391,12 +391,12 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
             hub: hub_address.as_bytes().to_vec(),
             role,
             key_package: dev.key_package(false),
-            offer_hash: wire::ref_hash("Trommi Invite Offer", &bytes),
+            offer_hash: enc::ref_hash("Trommi Invite Offer", &bytes),
         }
-        .encode();
+        .bytes();
         let mac = [5u8; 32];
         let signed = [&r[..], &mac[..]].concat();
-        (r.clone(), w.hub.post(&format!("{path}/request"), &json!({ "request": b64(&r), "mac": b64(&mac), "signature": b64(&dev.sign("TrommiInviteRequest", &signed)) })), wire::ref_hash("Trommi Invite Request", &signed))
+        (r.clone(), w.hub.post(&format!("{path}/request"), &json!({ "request": b64(&r), "mac": b64(&mac), "signature": b64(&dev.sign("TrommiInviteRequest", &signed)) })), enc::ref_hash("Trommi Invite Request", &signed))
     };
     // another hub address, another role
     request(&Dev::new(), "https://other.example", 1)
@@ -413,9 +413,9 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
         hub: w.hub.url.as_bytes().to_vec(),
         role: 1,
         key_package: dev.key_package(false),
-        offer_hash: wire::ref_hash("Trommi Invite Offer", &bytes),
+        offer_hash: enc::ref_hash("Trommi Invite Offer", &bytes),
     }
-    .encode();
+    .bytes();
     w.hub.post(&format!("{path}/request"), &json!({ "request": b64(&r), "mac": b64(&[5u8; 32]), "signature": b64(&Dev::new().sign("TrommiInviteRequest", &[&r[..], &[5u8; 32][..]].concat())) })).refused(400, "bad-signature");
     let mut hashes = vec![];
     for _ in 0..4 {
@@ -441,7 +441,7 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
             nonce,
             request_hash: hash,
         }
-        .encode();
+        .bytes();
         w.ada.put(
             &w.hub,
             &format!("{path}/reveal"),
@@ -1954,7 +1954,7 @@ fn what_the_second_review_found_stays_refused() {
         ciphertext: vec![2; 80],
         mac: vec![3; 32]
     }
-    .encode()));
+    .bytes()));
     w.ada
         .post(
             &w.hub,

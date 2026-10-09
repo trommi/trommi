@@ -48,7 +48,7 @@ fn lifetimes_and_retention() {
         device: w.ada.id(),
         challenge,
     }
-    .encode();
+    .bytes();
     hub.post(
         &format!("/v2/rooms/{}/tokens", b64(&room)),
         &json!({ "auth": b64(&auth), "signature": b64(&w.ada.sign("TrommiHubAuth", &auth)) }),
@@ -122,7 +122,7 @@ fn lifetimes_and_retention() {
         room_epoch,
         room_state,
     }
-    .encode();
+    .bytes();
     w.ada.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&w.ada.sign("TrommiInviteOffer", &offer)) })).ok();
     hub.get(&format!("/v2/invites/{}", b64(&invite_id))).ok();
 
@@ -194,7 +194,7 @@ fn lifetimes_and_retention() {
     // ---- content for the retention: cards open, answered, closed, closed and reopened; a permission request;
     // an Artifact with a share; a Note; a card Chat with the file; a work trail
     let first_version = |agent: &mut Dev, object_type: u8, files: Vec<[u8; 16]>| {
-        let id = wire::object_id(&group, &agent.id(), agent.chain(&group).0 + 1);
+        let id = enc::object_id(&group, &agent.id(), agent.chain(&group).0 + 1);
         let kind = if object_type == wire::TYPE_REQUEST {
             wire::KIND_REQUEST
         } else {
@@ -223,7 +223,7 @@ fn lifetimes_and_retention() {
     let (artifact_id, _) = first_version(&mut agent, wire::TYPE_ARTIFACT, vec![share_file]);
     let (share, secret): ([u8; 16], [u8; 32]) = (random(), random());
     agent.post(hub, "/v2/shares", &json!({ "share_id": b64(&share), "secret_hash": b64(&Sha256::digest(secret)), "file_id": b64(&share_file), "expires_at": trommi_hub::util::now() + 40 * DAY as u64 })).ok();
-    let note = wire::object_id(&room, &w.ada.id(), w.ada.chain(&room).0 + 1);
+    let note = enc::object_id(&room, &w.ada.id(), w.ada.chain(&room).0 + 1);
     w.ada
         .send(
             hub,
