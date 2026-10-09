@@ -584,6 +584,17 @@ public final class Board {
     change.stack = true
   }
 
+  /**
+   * A device the core vouched for as an agent or helper device of that session in that epoch (it accepted an
+   * envelope of it there, or one addressed to it): the board's own checks know it from then on, also when the
+   * device left before this one joined.
+   */
+  public func sawAgent(_ sessionId: String, _ device: String, epoch: Int) {
+    let s = sessionOf(sessionId)
+    if !s.everAgentIds.contains(device) { s.everAgentIds.append(device) }
+    if !(s.epochAgentIds[epoch] ?? []).contains(device) { s.epochAgentIds[epoch, default: []].append(device) }
+  }
+
   /** The parent a session names in its profile, if it may (model.mjs parentSessionOf). */
   public func parentSessionOf(_ s: Session) -> String? {
     // A helper session's group names its main session (5.2.5): that is the tree, whatever a profile says.

@@ -3,8 +3,8 @@
 //   cache-<room>   the key that seals what this device already opened, kept for a quick start (RecordStore.swift)
 // Both are kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly (a push wakes the app while the phone is locked; never in
 // a backup, never on another device) and are items of the APP: no access group is named, so they land in the app's
-// own group, which the app's entitlements list first and the extensions' entitlements do not list at all. The one
-// item the notification extension may read is PushNotify's, in the shared group.
+// own group (<team>.<bundle id>), which no extension is in. The one item the notification extension may read is
+// PushNotify's, which names the App Group as its access group (NotifyGroup.swift).
 // Elsewhere (Linux: tests) the key is a 0600 file beside the state.
 import Foundation
 #if os(iOS)

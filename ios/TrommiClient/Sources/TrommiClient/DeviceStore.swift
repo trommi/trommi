@@ -35,7 +35,7 @@ import Darwin
 
 public final class DeviceStore: CoreStorage {
   /** The log is folded into a new snapshot once it is larger than this. */
-  static let compactAbove = 4 << 20
+  nonisolated(unsafe) static var compactAbove = 4 << 20
   private static let logAad = Array("trommi state record".utf8), snapAad = Array("trommi state snapshot".utf8)
 
   public let directory: URL
