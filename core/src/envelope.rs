@@ -47,6 +47,8 @@ pub const OBJECT_BLOCK_LEN: usize = 59;
 const LABEL_HASH: &str = "Trommi Envelope";
 const LABEL_SIGNATURE: &str = "TrommiEnvelope";
 const LABEL_OBJECT: &str = "Trommi Object";
+/// The most bytes a body has beside its bind and its payload: the version and the two lengths.
+const BODY_OVERHEAD: usize = 1 + 4 + 4;
 const FLAG_PUSH: u8 = 1;
 const FORM_FULL: u8 = 1;
 const FORM_PRUNED: u8 = 2;
@@ -847,12 +849,21 @@ impl Body {
 
     /// `Body ‖ zero bytes` up to the next of 256, 512, … 65536 bytes; `too-large` beyond.
     fn pad(&self) -> Result<Zeroizing<Vec<u8>>, Error> {
-        let mut writer = Writer::new();
+        let bind = self.bind.encode()?;
+        // The body is written into a buffer that has its padded length from the start: growing it would
+        // leave the payload behind in the buffer it outgrew.
+        let unpadded = BODY_OVERHEAD
+            .saturating_add(bind.len())
+            .saturating_add(self.payload.len());
+        let mut writer = Writer::with_capacity(bucket(unpadded).ok_or(Error::TooLarge)?);
         writer.u8(VERSION);
-        writer.opaque(&self.bind.encode()?)?;
+        writer.opaque(&bind)?;
         writer.opaque(&self.payload)?;
+        let len = bucket(writer.len()).ok_or(Error::TooLarge)?;
         let mut padded = Zeroizing::new(writer.into_bytes());
-        let len = bucket(padded.len()).ok_or(Error::TooLarge)?;
+        if len > padded.capacity() {
+            return Err(Error::Internal("padded length"));
+        }
         padded.resize(len, 0);
         Ok(padded)
     }

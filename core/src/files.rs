@@ -571,13 +571,13 @@ pub fn decrypt_file(file: &FileRef, stored: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(std::mem::take(&mut *plain))
 }
 
-/// Reads the `N` bytes of a key, a secret, an id or a hash from base64url. Text of another length than `N`
-/// bytes have is refused unread.
+/// Reads the `N` bytes of a key, a secret, an id or a hash from base64url, straight into the place that is
+/// wiped when dropped: no buffer on the heap holds them on the way. Text of another length than `N` bytes
+/// have is refused unread.
 fn fixed_from_base64url<const N: usize>(text: &str) -> Result<Secret<N>, Error> {
-    if text.len() != (N * 4).div_ceil(3) {
-        return Err(Error::BadFormat);
-    }
-    Secret::from_slice(&Zeroizing::new(ids::base64url_decode(text)?))
+    let mut bytes = Zeroizing::new([0u8; N]);
+    ids::base64url_decode_into(text, bytes.as_mut_slice())?;
+    Ok(Secret::new(*bytes))
 }
 
 /// What opens a stored file: the fields `file_id`, `file_key` and `sha256` of an attachment reference (9.1.1).
