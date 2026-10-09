@@ -1,4 +1,0 @@
-failures/*.json
-failures/.seen.json
-failures/runs.jsonl
-remote-rooms.jsonl

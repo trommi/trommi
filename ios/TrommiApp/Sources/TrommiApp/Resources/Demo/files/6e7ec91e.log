@@ -1,6 +1,0 @@
-[12:01:04] build: start (node 26.0.0)
-[12:01:05] lint: 214 files, 0 errors, 3 warnings
-[12:01:09] test: server/test.mjs ... ok (412 assertions)
-[12:01:15] test: server/turbo-test.mjs ... ok
-[12:01:15] warn: client/web/css/app.css:812 unused selector .inbox-old
-[12:01:16] build: done in 12.4 s
