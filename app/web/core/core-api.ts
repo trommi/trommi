@@ -10,7 +10,9 @@
 // resolves only once what it wrote is stored, so a result in hand is always durable (spec 13.2).
 //
 // Part 2 is PROVISIONAL: what the web app needs and the binding does not have yet, because the core is still
-// wiring it into its `Device` (core/README.md "State": stored content, joining by link, recovery). Its shapes are
+// wiring it into its `Device` (core/README.md "State": stored content, joining by link). Recovery and signing in
+// with the code (spec 8) are the binding's own: `joinRoomWithCode`, `joinSessionWithCode`, `prepareRecovery`,
+// `recover`, `newRecoveryCode`, `replaceCode`, `recoverySignIn`, `recoveryAnchor`. Its shapes are
 // this file's reading of the spec in the binding's conventions, and are the first thing to check when the
 // binding grows them. core-wasm.ts answers each of them with the refusal `core-missing` until then; the tests run
 // them on a stand-in (tests/web/stand-in/core.ts).
@@ -24,6 +26,7 @@ export type {
   OutboxKind, OutboxEntry, Cut, Replacement, Joined, LogEntry, CommitSummary, ReceivedMessage, Processed, LogFinding,
   HandoverSent, KeyPackageInfo, SignedHubAuth, FileRef, FileEnd, FileLayout, FileChunk, ShareLink, AccountKeys, AccountWay,
   PushNote, Versions, SelfTestStep, SelfTestReport, FileEncryptor, FileDecryptor,
+  ServedCommit, ServedGroup, ServedRoom, UnverifiedSession, CodeJoin, GroupCut, Removals, RecoveryPlan, Anchor,
 } from '../../../core/wasm/js/trommi-core.js'
 
 /** Everything of the binding's module that has no state: versions, the self test, the account, files, share links,
@@ -114,15 +117,6 @@ export interface InviteConfirmed { newDevice: Uint8Array; role: InviteRole; sess
 export interface InviteLinkParts { app: string; hub: string; roomId: Uint8Array; inviteId: Uint8Array }
 export interface JoinRequest { signedRequest: Uint8Array; role: InviteRole; inviter: Uint8Array; expiresAt: number }
 
-// ---- recovery and signing in on a new device, spec 8. Core module `recovery`: planned.
-
-/** What a device that holds the code needs from the hub before it joins (8.4, 8.5), as the hub served it. */
-export interface RecoveryMaterial {
-  groups: { group: Uint8Array; kind: 'room' | 'main' | 'helper'; groupInfo: Uint8Array; foundingGroupInfo: Uint8Array | null; log: Binding.LogEntry[] }[]
-  sealedKeys: Uint8Array[]
-  recoveryLinks: Uint8Array[]
-}
-
 /** The calls on a device that the binding does not have yet. */
 export interface ProvisionalDevice {
   /** Seals one item into the outbox; the envelope's number is used for good. */
@@ -144,14 +138,6 @@ export interface ProvisionalDevice {
   /** Checks the Reveal and gives the six numbers (0 to 63) of the check code. */
   joinReveal(signedReveal: Uint8Array): Promise<number[]>
 
-  /** Signs in to the hub with the code's signature key (8.4), before this device is a member. */
-  recoverySignIn(recoveryCode: Uint8Array, room: Uint8Array, hub: string, challenge: Uint8Array): Promise<Binding.SignedHubAuth>
-  /** Joins the room group and every live session group with the code (8.4, 8.5): the joins go to the outbox. */
-  joinWithCode(recoveryCode: Uint8Array, material: RecoveryMaterial, nowMs: number): Promise<{ groups: Uint8Array[] }>
-  /** Replaces the code (8.6) with `newCode`; with `removeOthers` also removes every other human device (8.7). */
-  replaceRecoveryCode(newCode: Uint8Array, removeOthers: boolean, nowMs: number): Promise<void>
-  /** Sends `recovery_mac` (7.4) to one device, or to all with null. */
-  sendRecoveryAuth(recipient: Uint8Array | null): Promise<number>
 }
 
 /** Module-level calls the binding does not have yet. */
