@@ -440,9 +440,9 @@ impl<S: Storage> Device<S> {
         };
         let sessions = self.past_sessions()?;
         if let Some(session) = session.filter(|session| !session.parent.is_zero()) {
-            // 5.2.6: a human device judges a helper session against its main session's agent leaf of
-            // the time. A device that is no leaf of the main session cannot, as when it joined.
-            if self.is_human() && !sessions.seats.contains_key(&session.parent) {
+            // 5.2.6: a helper session is judged against its main session's agent leaf of the time,
+            // which only a device that holds that session's whole past can tell.
+            if !sessions.seats.contains_key(&session.parent) {
                 return Err(Error::GroupBehind.into());
             }
         }
@@ -467,11 +467,24 @@ impl<S: Storage> Device<S> {
         };
         let mut walked = Walked::begin(&observer)?;
         let mut served = commits.iter();
+        let mut places: Vec<(u64, u64)> = Vec::new();
         while observer.epoch()? < origin.epoch {
             // A history that ends before the device's own epoch is cut short.
             let commit = served.next().ok_or(Refusal::BadGroup)?;
-            match walked.follow(&mut observer, commit, &context) {
-                Ok(_) => {}
+            // A group's Commits stand in the hub's order.
+            if places
+                .last()
+                .is_some_and(|(_, last)| *last >= commit.change)
+            {
+                return Err(Refusal::BadGroup);
+            }
+            // 5.2.1: a session Commit names the room epoch that was current at its place.
+            let at = match session {
+                Some(_) => Some(self.room_epoch_at(commit.change)?),
+                None => None,
+            };
+            match walked.follow(&mut observer, commit, &context, at) {
+                Ok(_) => places.push((observer.epoch()?, commit.change)),
                 Err(fault) if is_fault(&fault) => return Err(fault.into()),
                 Err(early @ (Error::RoomBehind | Error::NewerVersion)) => return Err(early.into()),
                 Err(_) => return Err(Refusal::BadGroup),
@@ -490,6 +503,13 @@ impl<S: Storage> Device<S> {
 
         if let Some(earlier) = observer.history() {
             self.take_room_past(batch, group, earlier)?;
+            // Where each room epoch began in the hub's order, by which a session Commit is judged at
+            // its place. A place the device knows from the log itself stays.
+            for (epoch, change) in places {
+                if !self.memory.room_places.contains_key(&epoch) {
+                    self.put_room_place(batch, epoch, change);
+                }
+            }
         }
         if session.is_some_and(|session| session.parent.is_zero()) {
             if member {

@@ -562,7 +562,7 @@ impl<S: Storage> Device<S> {
     /// Refused before anything is signed, and without using a number: what the hub would refuse
     /// (`not-member`, `removed-sender`, `stale-session`, `epoch-full`, `forbidden` against the object state
     /// this device holds, `no-key`), `busy` while a Commit of this device in the group or its founding waits
-    /// for the hub, `gone` in an archived session, `bad-group` in a group that failed its first contact,
+    /// for the hub's answer, `gone` in an archived session, `bad-group` in a group that failed its first contact,
     /// `not-found` for an object or request this device does not know, `bad-format` and `too-large` for a
     /// payload no envelope may carry.
     pub fn seal(
@@ -585,7 +585,14 @@ impl<S: Storage> Device<S> {
             if meta.archived {
                 return Err(Error::Gone);
             }
-            if meta.founding || meta.pending.is_some() {
+            // An own Commit that the hub accepted is merged where the log shows it. Until then the group
+            // stands in the old epoch here, and what is sealed is sealed under it: the hub and the readers
+            // take an envelope of an epoch that just ended (9.0.5), so writing goes on meanwhile.
+            let unanswered = meta
+                .pending
+                .as_ref()
+                .is_some_and(|pending| !pending.accepted);
+            if meta.founding || unanswered {
                 return Err(Error::Busy);
             }
             if meta.distrusted {
