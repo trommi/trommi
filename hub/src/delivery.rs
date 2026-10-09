@@ -163,12 +163,20 @@ fn store_group_info(
         bytes
     ])?;
     if !keep_all {
-        // a session group keeps the founding one and the current one; the hash of every epoch stays
-        c.prepare_cached(
-            "UPDATE group_infos SET bytes = NULL WHERE group_id = ?1 AND epoch NOT IN (0, ?2)",
-        )?
-        .execute(params![group_id, epoch as i64])?;
+        prune_group_infos(c, group_id, epoch)?;
     }
+    Ok(())
+}
+
+/// A session group keeps the GroupInfo of its founding, of its current epoch, and of every epoch that still lacks
+/// a `SealedKey` with a tag (8.3: a human device checks that GroupInfo before it posts one); the hash of every
+/// epoch stays.
+fn prune_group_infos(c: &Connection, group_id: &[u8], current: u64) -> Res<()> {
+    c.prepare_cached(
+        "UPDATE group_infos SET bytes = NULL WHERE group_id = ?1 AND epoch NOT IN (0, ?2) AND bytes IS NOT NULL
+           AND EXISTS (SELECT 1 FROM sealed_keys k WHERE k.group_id = ?1 AND k.epoch = group_infos.epoch AND k.has_mac = 1)",
+    )?
+    .execute(params![group_id, current as i64])?;
     Ok(())
 }
 
@@ -1456,6 +1464,10 @@ pub fn put_sealed_key(x: &Ctx, auth: &Auth, bytes: &[u8]) -> Res<Value> {
         return Err(refuse("incomplete", "the SealedKey does not name the GroupInfo the hub holds, the room's recovery key, or its tag"));
     }
     store_sealed_key(x.c, &auth.room, &key, bytes)?;
+    // the epoch has its tagged key now: its GroupInfo is no longer needed, unless it is the current one
+    if row.kind != GroupKind::Room {
+        prune_group_infos(x.c, &row.group_id, row.epoch)?;
+    }
     Ok(json!({ "stored": true }))
 }
 

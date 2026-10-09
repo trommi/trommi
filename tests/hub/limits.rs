@@ -634,8 +634,10 @@ fn the_defaults_at_their_exact_values() {
     post(&exact).ok();
     post(&over).refused(413, "too-large");
 
-    // 16: a file of exactly 64 MiB is taken, one byte more is not
-    let big = vec![0x5au8; (64 << 20) + 1];
+    // 11.1, 16: a file has at most 64 MiB of plaintext: stored (its head and one tag per chunk), 67 125 269
+    // bytes. Exactly that is taken, one byte more is not.
+    const STORED: usize = 67_125_269;
+    let big = vec![0x5au8; STORED + 1];
     w.ada
         .raw(
             &w.hub,
@@ -652,10 +654,10 @@ fn the_defaults_at_their_exact_values() {
                 "PUT",
                 &format!("/v2/files/{}", b64(&random::<16>())),
                 &[],
-                &big[..64 << 20]
+                &big[..STORED]
             )
             .ok()["size"],
-        64 << 20
+        STORED
     );
 }
 
