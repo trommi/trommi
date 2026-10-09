@@ -48,6 +48,32 @@ check(await refusal(() => core.keyPackageInfo(new Uint8Array(5))) === 'bad-key-p
 check(core.errorCodeFromText('no-such-code') === null && core.errorCodeFromText('gap') === 'gap', 'the codes are not read as they are spelled')
 check(Object.getPrototypeOf(core.versions()) === null, 'a record has a prototype')
 
+// A file object that was used up refuses, and the module goes on.
+{
+  const encryptor = new core.FileEncryptor()
+  encryptor.update(new Uint8Array(10))
+  const end = encryptor.finish()
+  check(await refusal(() => encryptor.finish()) === 'internal' && await refusal(() => encryptor.update(new Uint8Array(1))) === 'internal', 'a finished encryptor answered')
+  const decryptor = new core.FileDecryptor(end.file)
+  decryptor.close()
+  check(await refusal(() => decryptor.finish()) === 'internal', 'a closed decryptor answered')
+  check(core.versions().core.length > 0, 'the module stopped over a used-up object')
+}
+
+// Arguments are copied when the call is made, as what they are and not as what they claim to be.
+{
+  const liar = new Uint8Array(32).fill(65)
+  let asked = 0
+  Object.defineProperty(liar, 'length', { get: () => (asked++ < 2 ? 1 : 32) })
+  check(core.base64urlEncode(liar).length === 43, 'a typed array was read by the length it claims')
+  const view = new Uint8Array(new Uint8Array(64).fill(7).buffer, 8, 3)
+  check(core.base64urlDecode(core.base64urlEncode(view)).length === 3, 'a view brought its whole buffer along')
+  check(await refusal(() => core.base64urlEncode(new Uint16Array(4))) === 'bad-format', 'other typed arrays were taken as bytes')
+  check(await refusal(() => core.keyPackageInfo({ length: 5 })) === 'bad-format', 'an object was taken as bytes')
+  check(await refusal(() => core.shareLinkCreate('https://app.example', { fileId: new Uint8Array(16), fileKey: new Uint8Array(32), sha256: new Uint8Array(32), get extra() { throw new core.TrommiError('forbidden', 'forged') } })) === 'forbidden', 'a getter of the caller did not run in the caller\'s own turn, before the core was called')
+  check(core.versions().core.length > 0, 'the module stopped over a caller\'s own exception')
+}
+
 // A device's calls run in the order they were made, and none resolves before its write is stored.
 {
   let stored = 0
@@ -63,6 +89,13 @@ check(Object.getPrototypeOf(core.versions()) === null, 'a record has a prototype
   ]
   await Promise.all(calls)
   check(JSON.stringify(order) === JSON.stringify([['keyPackage', 2], ['id', 2], ['keyPackage', 3]]), `the calls did not run in order, each after its write: ${JSON.stringify(order)}`)
+  // What the caller does to an argument after the call does not reach the core.
+  const group = new Uint8Array(31)
+  const asked = device.group(group)
+  group.fill(1)
+  check(await refusal(() => asked) === 'bad-format' && await refusal(() => device.group(new Uint8Array(32))) === 'not-found', 'an argument was read after the call was made')
+  check(await refusal(() => core.Device.open(store)) === 'storage', 'a store object served a second device')
+  check(await refusal(() => device.id()) === null, 'opening with a used store closed its device')
   check(await refusal(() => device.outboxRefused(1, 'no-such-code')) === 'bad-format', 'an unknown code was taken as a refusal')
   check(await refusal(() => device.outboxAccepted(1n)) === 'bad-format', 'a bigint was taken as a number')
   check(await refusal(() => new core.Device()) !== null, 'a device was constructed without a store')
