@@ -31,9 +31,11 @@ the crates' licence texts with the client.
 | aes | 0.8.4 | MIT OR Apache-2.0 | all |
 | aes-gcm | 0.10.3 | Apache-2.0 OR MIT | all |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | iOS |
+| argon2 | 0.5.3 | MIT OR Apache-2.0 | all |
 | base16ct | 0.2.0 | Apache-2.0 OR MIT | all |
 | base64ct | 1.8.3 | Apache-2.0 OR MIT | all |
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | iOS |
+| blake2 | 0.10.6 | MIT OR Apache-2.0 | all |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | all |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 | all |
 | bytes | 1.12.1 | MIT | iOS |
@@ -157,9 +159,11 @@ the crates' licence texts with the client.
 | subtle | 2.6.1 | BSD-3-Clause | all |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | iOS |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | all |
+| tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | all |
 | tls_codec | 0.5.0 | Apache-2.0 OR MIT | all |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | all |
 | unicode-ident | 1.0.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | web |
+| unicode-normalization | 0.1.25 | MIT OR Apache-2.0 | all |
 | uniffi | 0.32.2 | **MPL-2.0** | iOS |
 | uniffi_core | 0.32.2 | **MPL-2.0** | iOS |
 | uniffi_pipeline | 0.32.2 | **MPL-2.0** | iOS |
