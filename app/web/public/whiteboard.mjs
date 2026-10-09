@@ -9,7 +9,7 @@
 // the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's scribble.mjs).
 import { Controller, controller, html, isTyping, letterKeysOn, markArt, raw, sk } from './ui.mjs'
-import { attachmentBlob, scribbleWire } from './app.mjs'
+import { SCRIBBLE_FILE, addressOf, attachmentBlob, scribbleWire } from './app.mjs'
 // The core's stroke format, shape and palette (scribble.mjs with ink.mjs and palette.mjs), loaded with this view.
 /** The core's scribble.mjs as this view loaded it. */
 const wire = await scribbleWire()
@@ -624,10 +624,11 @@ function paintThumb(cv, list) {
 //   const canvas = await openCanvas({ client, timeline_id, onRemote, onState })
 //   canvas.records()                 every element now (pad records)
 //   canvas.push(changes, how)        the pad changed: [{ id, before, after }] (after null: gone; how 'send_away' for a send)
-//   canvas.live(g) / claim(g, id) / drop(g)   a stroke being drawn goes out every ~150 ms; at its end it is element id
+//   canvas.live(g) / claim(g, id) / drop(g)   a stroke being drawn goes out in pieces every ~150 ms (relayed to the
+//                                    devices that are connected, never stored); at its end it is element id
 //   await canvas.putBlob(blob, meta) the picture, encrypted and uploaded: its attachment id
 //   await canvas.getBlob(id)         { blob } of a picture on the canvas
-//   await canvas.send({ to, text, png, ids })   the selection as a picture with its words to a session (selection_sent)
+//   await canvas.send({ to, text, png })   the selection as a picture with its words to a session: a Chat message
 //   canvas.state()                   { mode, pending, error }
 //
 // Ids: the pad keeps the id an element had when it was made here (stable for undo and selection); on the wire an
@@ -648,7 +649,7 @@ const SLICE = 2000          // shapes per slice when a big canvas is loaded
 const breath = () => (globalThis.scheduler?.yield ? scheduler.yield() : new Promise(r => setTimeout(r)))
 
 export async function openCanvas({ client, timeline_id, onRemote, onState }) {
-  const { CanvasState, entryOf, inkOf, isStroke, packSnapshot, unpackSnapshot, chunks } = await scribbleWire()
+  const { CanvasState, entryOf, inkOf, isStroke, packSnapshot, unpackSnapshot, chunks, MAX_POINTS } = await scribbleWire()
   const key = `scribble:${timeline_id}`
   const st = new CanvasState()
   const real = typeof client.sendStrokes === 'function'
@@ -656,9 +657,9 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
   const refs = new Map()          // attachment id -> reference (pictures)
   const alias = new Map()         // pad id -> version { wire: stroke id | null } of an element made or changed here
   const padOf = new Map()         // stroke id -> pad id, for those
-  const lives = new Map()         // gesture -> { g, ver, sent: points sent }
-  const claims = new Map()        // pad id -> the version of the live stroke it became
-  let queue = []                  // ops for the next flush: { add, ver } | { move: [dx, dy], ver } | { gone, ver } | { tail }
+  const lives = new Map()         // gesture -> { g, stroke: its id for the pieces (32 hex), number: pieces sent, sent: points sent }
+  const liveOf = new Map()        // pad id -> the stroke id under which its pieces went out while it was drawn
+  let queue = []                  // ops for the next flush: { add, ver, live? } | { move: [dx, dy], ver } | { gone, ver }
   let flushing = null, flushTimer = 0, snapTimer = 0, error = null, mockSeq = 0, lastOp = 0, started = false
   let mode = real ? 'starting' : 'local'
   const state = () => ({ mode, pending: queue.length + lives.size + (flushing ? 1 : 0), error })
@@ -699,8 +700,11 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
   function take(items) {
     const changed = new Set()
     for (const it of items) {
-      if (it.pending || it.item_state !== 'loaded' || !it.content) continue
+      // (an item that cannot be read here goes in too: the canvas state must know that it is not all of the board)
+      if (it.pending) continue
       if (it.envelope_number > st.last_envelope_number && st.covered(it.sender_device_id, it.sender_sequence)) st.last_envelope_number = it.envelope_number   // an own item, confirmed
+      // A piece of a new stroke of a device: the stroke it drew before was dropped, or is on its way as an item.
+      if (it.content_type === 'stroke_piece') for (const id of [...st.shapes.keys()]) if (id.startsWith(`live:${it.sender_device_id}/`) && id !== `live:${it.sender_device_id}/${it.content?.stroke}`) { st.shapes.delete(id); changed.add(id) }
       const got = st.apply(it)
       if (got) for (const id of got) changed.add(id)
     }
@@ -738,24 +742,26 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     if (st.applied >= SNAP_EVERY) snapSoon()
     report()
   }
+  /** A stroke of more points than one shape may carry is cut there (the wire refuses the whole item otherwise). */
+  const cut = s => (isStroke(s) && s.t.length > MAX_POINTS ? { ...s, pts: s.pts.slice(0, 2 * MAX_POINTS), t: s.t.slice(0, MAX_POINTS), f: s.f.slice(0, MAX_POINTS), az: s.az ? s.az.slice(0, MAX_POINTS) : null, al: s.al ? s.al.slice(0, MAX_POINTS) : null } : s)
   async function send(ops, live) {
-    // 1. new shapes, and the strokes being drawn: their first piece, or the points since the last piece
-    const entries = []   // [entry, version | null]
-    for (const op of ops) if (op.add) entries.push([entryOf(op.add), op.ver])
-    const pieces = (l, ink) => (l.ver.wire ? [{ continues: l.ver.wire, points: packPoints(ink) }, null] : [entryOf({ tool: l.g.tool, ...ink, color: l.g.color, width: l.g.width, z: l.g.z }), l.ver])
+    // 0. the strokes being drawn: the points since the last piece, relayed to whoever is connected. Nothing of a
+    //    piece is stored, so one that does not get through is not sent again: the finished stroke carries everything.
     for (const l of live) {
       const ink = inkFrom(l.g, l.sent)
       l.sent += ink.t.length
-      entries.push(pieces(l, ink))
+      if (real) client.sendStrokePiece({ timeline_id, stroke: l.stroke, number: ++l.number, tool: l.g.tool, color: l.g.color, width: l.g.width, points: packPoints(ink) }).catch(() => {})
     }
-    for (const op of ops) if (op.tail) entries.push(pieces(op.tail, op.ink))
+    // 1. new shapes; a finished stroke names the pieces that went out of it (`live`), and replaces them where they showed
+    const entries = []   // [entry, version]
+    for (const op of ops) if (op.add) entries.push([{ ...entryOf(cut(op.add)), ...(op.live ? { live: op.live } : {}) }, op.ver])
     for (let at = 0; at < entries.length;) {
       let end = at, size = 0
       while (end < entries.length && (end === at || size + JSON.stringify(entries[end][0]).length < ITEM_BYTES)) size += JSON.stringify(entries[end++][0]).length
       const prefix = await seal({ content_type: 'strokes', strokes: entries.slice(at, end).map(e => e[0]) })
       for (let i = at; i < end; i++) {
         const ver = entries[i][1]
-        if (ver && !ver.wire) { ver.wire = `${prefix}/${i - at}`; if (ver.pad) padOf.set(ver.wire, ver.pad) }
+        if (!ver.wire) { ver.wire = `${prefix}/${i - at}`; if (ver.pad) padOf.set(ver.wire, ver.pad) }
       }
       at = end
     }
@@ -775,8 +781,9 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     if (real) mode = connection()
   }
 
-  /** The version of what the pad knows as id: made or changed here (alias), else someone's stroke id. */
-  const versionOf = id => alias.get(id) ?? { wire: id, pad: id }
+  /** The version of what the pad knows as id: made or changed here (alias), else someone's stroke id. A stroke
+   *  someone is still drawing (`live:…`) is no shape of the board yet: nothing on the wire names it. */
+  const versionOf = id => alias.get(id) ?? { wire: String(id).startsWith('live:') ? null : id, pad: id }
   /** The pad changed. One call is one undo step of the pad; on the wire it becomes adds, moves and erasures. */
   function push(changes, how = 'erase') {
     for (const c of changes) {
@@ -786,12 +793,12 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
         if (dx || dy) queue.push({ move: [dx, dy], ver: versionOf(c.before.id) })
         continue
       }
-      const claimed = claims.get(c.after.id)   // a stroke whose pieces went out while it was drawn
-      if (claimed && !c.before) { claims.delete(c.after.id); alias.set(c.after.id, claimed); continue }
       const was = c.before ? versionOf(c.before.id) : null
       const ver = { wire: null, pad: c.after.id }
       alias.set(c.after.id, ver)
-      queue.push({ add: shapeOfRecord(c.after), ver })
+      const live = c.before ? null : liveOf.get(c.after.id)   // a stroke whose pieces went out while it was drawn
+      liveOf.delete(c.after.id)
+      queue.push({ add: shapeOfRecord(c.after), ver, ...(live ? { live } : {}) })
       if (was) queue.push({ gone: 'erase', ver: was })
     }
     soon()
@@ -799,26 +806,18 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
 
   // ---- a stroke while it is drawn (g: the pad's gesture; its pts and pr grow) ----
   function live(g) {
-    if (!lives.has(g)) lives.set(g, { g, ver: { wire: null, pad: null }, sent: 0 })
+    if (!lives.has(g)) lives.set(g, { g, stroke: [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join(''), number: 0, sent: 0 })
     soon(false)
   }
-  /** The stroke ended and became element id: the rest of its points go out as its last piece. */
+  /** The stroke ended and became element id: it goes out whole, as one shape that names its pieces. */
   function claim(g, id) {
     const l = lives.get(g)
     lives.delete(g)
-    if (!l?.sent) return   // nothing went out yet: it goes as an ordinary new shape
-    l.ver.pad = id
-    if (l.ver.wire) padOf.set(l.ver.wire, id)
-    claims.set(id, l.ver)
-    if (g.t.length > l.sent) queue.push({ tail: l, ink: inkFrom(g, l.sent) })
-    soon()
+    if (l?.number) liveOf.set(id, l.stroke)
   }
-  /** A stroke that is not kept (a second finger came): what of it went out is erased. */
-  function drop(g) {
-    const l = lives.get(g)
-    lives.delete(g)
-    if (l?.sent) { queue.push({ gone: 'erase', ver: l.ver }); soon() }
-  }
+  /** A stroke that is not kept (a second finger came). Its pieces were never stored: where they showed, they go
+   *  with the next stroke this device draws (take above). */
+  function drop(g) { lives.delete(g) }
 
   // ---- snapshots ----
   function snapSoon() {
@@ -827,13 +826,18 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     snapTimer = setTimeout(writeSnapshot, SNAP_IDLE_MS + Math.random() * 2000)
   }
   async function writeSnapshot() {
+    // An item of this board could not be read here: what this device holds is not all of it, so it writes no snapshot.
+    if (st.unread) return
     if (Date.now() - lastOp < SNAP_IDLE_MS || flushing || queue.length || lives.size || client.model?.outbox?.length || connection() !== 'online') return snapSoon()
     try {
       const snap = st.snapshot(), applied = st.applied
       const attachment = await client.uploadAttachment(await packSnapshot(snap), { file_name: 'canvas.json.gz', media_type: 'application/gzip' })
       await client.setRegisters({ [`scribble_snapshot/${timeline_id}`]: { attachment, frontier: snap.frontier, last_envelope_number: snap.last_envelope_number, shapes: snap.shapes.length } })
       st.applied -= applied
-    } catch (e) { console.warn('canvas snapshot', e) }
+    } catch (e) {
+      // (the canvas state refuses: an item without its hash yet, or one that could not be read: no snapshot now)
+      if (!['newer-version', 'no-key', 'bad-format'].includes(e?.code)) console.warn('canvas snapshot', e)
+    }
   }
 
   // ---- start: snapshot + tail, then live ----
@@ -851,8 +855,9 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
     const snap = client.model.human?.scribble_snapshots?.get(timeline_id)
     if (snap?.attachment) {
       try {
-        const got = await unpackSnapshot(await client.fetchAttachment(snap.attachment))
-        st.load(got, { shapes: false })
+        // (the file names no change number: the register's says from where the tail is read)
+        const got = await unpackSnapshot(await client.fetchAttachment(snap.attachment), snap.frontier)
+        st.load({ ...got, last_envelope_number: snap.last_envelope_number }, { shapes: false })
         // in slices, so that a big canvas never holds the page for long (budget: no task over 200 ms on a slow phone)
         for (let i = 0; i < (got.shapes?.length ?? 0); i += SLICE) { st.addShapes(got.shapes.slice(i, i + SLICE)); await breath() }
       }
@@ -892,15 +897,15 @@ export async function openCanvas({ client, timeline_id, onRemote, onState }) {
       if (!ref) return undefined
       try { return { id, blob: await client.attachmentBlob(ref) } } catch { return undefined }
     },
-    /** The selection to a session: a picture and its words, as selection_sent into the session's conversation.
-     *  to: the agent's device id. Throws a readable Error; never pretends. */
-    async send({ to, text, png, ids }) {
+    /** The selection to a session: a picture and its words, as a Chat message in the session's conversation (the
+     *  picture's name, SCRIBBLE_FILE, is how the conversation knows it for a scribble: app.mjs). What was sent then
+     *  leaves the board with the pad's own next change (`send_away`). to: the session. Throws a readable Error;
+     *  never pretends. */
+    async send({ to, text, png }) {
       await flush()
       if (error) throw new Error(`The canvas could not be saved (${error}).`)
-      const attachment = await client.uploadAttachment(dataUrlBytes(png), { file_name: 'selection.png', media_type: 'image/png' })
-      const stroke_ids = ids.map(id => versionOf(id).wire).filter(Boolean)
-      if (real) await client.sendStrokes({ timeline_id: `session/${to}`, content_type: 'selection_sent', recipient_device_id: to, ...(text ? { text } : {}), attachments: [attachment], stroke_ids, board: timeline_id })
-      else await client.sendMessage({ agent_device_id: to, text: text || '', attachments: [{ ...attachment, kind: 'scribble' }] })
+      const attachment = await client.uploadAttachment(dataUrlBytes(png), { file_name: SCRIBBLE_FILE, media_type: 'image/png' })
+      await client.sendMessage({ ...addressOf(client.model, to), ...(text || !real ? { text: text || '' } : {}), attachments: [attachment] })
     },
     settled: async () => { await flush(); return !error },
     close() { off?.(); clearTimeout(snapTimer); if (queue.length || lives.size) flush() },
@@ -2177,10 +2182,10 @@ function mountPad(main, { canvasId: PAD, client }) {
     }
   })
 
-  /** The picture of the selection and its words go to the session (openCanvas send: selection_sent, end-to-end). */
+  /** The picture of the selection and its words go to the session (openCanvas send: a Chat message, end-to-end). */
   async function sendTo(session, payload) {
     if (!session.device) throw new Error('That session has no device in this room.')
-    await (await canvasReady).send({ to: session.device, text: payload.text, png: payload.png, ids: payload.elements.map(e => e.id) })
+    await (await canvasReady).send({ to: session.device, text: payload.text, png: payload.png })
   }
 
   // What was sent leaves the paper: it is the agent's now. One step, so one undo brings all of it back.
