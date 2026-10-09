@@ -1217,7 +1217,7 @@
           },
           "expires_hours": {
             "type": "number",
-            "description": "The release ends by itself after this many hours. 0 or left out: the longest, 30 days."
+            "description": "The release ends by itself after this many hours. 0 or left out: the longest, 180 days."
           }
         },
         "required": [

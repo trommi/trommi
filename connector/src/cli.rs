@@ -372,8 +372,8 @@ pub fn whoami() -> Result<String> {
     })).unwrap())
 }
 
-/// `allow-tools`: the plugin's board tools allowed in this folder (.claude/settings.local.json), as connect.sh does
-/// with node for the JS connector.
+/// `allow-tools`: the plugin's board tools allowed in this folder (.claude/settings.local.json), as the connect
+/// script asks for.
 pub fn allow_tools() -> std::io::Result<()> {
     let f = std::path::Path::new(".claude/settings.local.json");
     std::fs::create_dir_all(".claude")?;

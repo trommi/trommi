@@ -90,7 +90,7 @@ fn with_description(t: &Value) -> Value {
     let name = m["name"].as_str().unwrap_or("").to_string();
     m.insert("description".into(), Value::String(description(&name)));
     let v = Value::Object(m);
-    // BOARD_MAX_HTML_KB other than the default: the texts say so, as the JS connector's do
+    // BOARD_MAX_HTML_KB other than the default: the texts say so
     let kb = crate::html::html_max_kb();
     if kb != 200 {
         let s = serde_json::to_string(&v)
