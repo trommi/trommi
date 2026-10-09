@@ -1665,14 +1665,17 @@ impl Room {
             .unwrap();
         // The Commit is merged where the log shows it.
         self.device
-            .process_log_entry(&LogEntry {
-                change,
-                group: self.group,
-                kind: LogKind::Commit {
-                    bytes: &entry.parts[0],
-                    recovery_auth: None,
+            .process_log_entry(
+                &LogEntry {
+                    change,
+                    group: self.group,
+                    kind: LogKind::Commit {
+                        bytes: &entry.parts[0],
+                        recovery_auth: None,
+                    },
                 },
-            })
+                now(),
+            )
             .unwrap();
         self.commits.push(entry.parts[0].clone());
         self.infos.push(entry.parts[1].clone());
