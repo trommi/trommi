@@ -415,7 +415,8 @@ struct ToastHost: View {
     .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.toast)
     .onChange(of: model.toast) { old, new in
       #if canImport(UIKit)
-      defer { if top { if let n = new, n.undo != nil { IslandWindow.shared.show(n, count: count, model: model) } else { IslandWindow.shared.hide() } } }
+      // every toast is said by the island's pill (one place); only a phone without an island shows the glass toast
+      defer { if top { if let n = new { IslandWindow.shared.show(n, count: count, model: model) } else { IslandWindow.shared.hide() } } }
       #endif
       guard let n = new, n.undo != nil else { return }
       if let o = old, o.undo != nil, o.id != n.id, let at = lastUndoAt, Date().timeIntervalSince(at) < Self.undoSeconds { count += 1 } else { count = 1 }
@@ -449,8 +450,8 @@ struct ToastHost: View {
     }.frame(width: size, height: size)
   }
   @ViewBuilder private func phone(_ t: Toast) -> some View {
-    // on a phone with a Dynamic Island the undo is the island's pill, in its own window (IslandWindow.swift)
-    if t.undo != nil && onIsland { Color.clear.frame(width: 0, height: 0) }
+    // on a phone with a Dynamic Island every toast is the island's pill, in its own window (IslandWindow.swift)
+    if onIsland { Color.clear.frame(width: 0, height: 0) }
     else { phoneFallback(t) }
   }
   private var onIsland: Bool {
