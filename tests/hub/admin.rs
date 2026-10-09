@@ -10,19 +10,24 @@ fn text(reply: &Reply) -> String {
     String::from_utf8_lossy(&reply.body).into_owned()
 }
 
-fn sign_in(port: u16, password: &str, headers: &[(&str, String)]) -> Reply {
-    let mut all = vec![(
-        "content-type",
-        "application/x-www-form-urlencoded".to_string(),
-    )];
-    all.extend_from_slice(headers);
-    request(
-        port,
-        "POST",
-        "/login",
-        &all,
-        format!("password={password}").as_bytes(),
-    )
+/// Standard base64 with padding, as a browser writes a Basic credential.
+fn base64(bytes: &[u8]) -> String {
+    let mut out: String = b64(bytes).replace('-', "+").replace('_', "/");
+    while !out.len().is_multiple_of(4) {
+        out.push('=');
+    }
+    out
+}
+
+fn basic(password: &str) -> Vec<(&'static str, String)> {
+    vec![(
+        "authorization",
+        format!("Basic {}", base64(format!("admin:{password}").as_bytes())),
+    )]
+}
+
+fn get(port: u16, headers: &[(&str, String)]) -> Reply {
+    request(port, "GET", "/", headers, b"")
 }
 
 #[test]
@@ -30,8 +35,8 @@ fn the_admin_page_is_behind_its_password_and_shows_only_what_the_hub_sees() {
     // without a configured hash there is no page, whatever is asked
     let bare = TestHub::start();
     let port = bare.admin();
-    assert_eq!(request(port, "GET", "/", &[], b"").status, 404);
-    assert_eq!(sign_in(port, "anything at all", &[]).status, 404);
+    assert_eq!(get(port, &[]).status, 404);
+    assert_eq!(get(port, &basic("anything at all")).status, 404);
 
     let hash = trommi_hub::admin::hash_password("correct horse battery");
     assert!(hash.starts_with("$argon2id$"));
@@ -60,54 +65,54 @@ fn the_admin_page_is_behind_its_password_and_shows_only_what_the_hub_sees() {
     for path in ["/", "/login", "/admin"] {
         assert_eq!(request(hub.port, "GET", path, &[], b"").status, 404);
     }
-    assert_eq!(sign_in(hub.port, "correct horse battery", &[]).status, 404);
+    assert_eq!(get(hub.port, &basic("correct horse battery")).status, 404);
 
-    // not signed in: the form, and nothing of the hub
-    let form = request(admin, "GET", "/", &[], b"");
-    assert_eq!(form.status, 200);
-    assert!(text(&form).contains("name=\"password\"") && !text(&form).contains("Rooms"));
-    assert_eq!(form.header("cache-control"), Some("no-store"));
-    assert!(form
+    // without the password: the browser is asked for it, and nothing of the hub is shown
+    let asked = get(admin, &[]);
+    assert_eq!(asked.status, 401);
+    assert!(asked
+        .header("www-authenticate")
+        .unwrap()
+        .starts_with("Basic "));
+    assert!(!text(&asked).contains("Rooms"));
+    assert_eq!(asked.header("cache-control"), Some("no-store"));
+    assert!(asked
         .header("content-security-policy")
         .unwrap()
         .contains("default-src 'none'"));
-    // a cookie somebody made up signs nobody in
-    let forged = [("cookie", format!("trommi_admin={}", b64(&[5u8; 32])))];
-    assert!(!text(&request(admin, "GET", "/", &forged, b"")).contains("Rooms"));
-    // a form posted from another site is not a sign-in, even with the right password
-    let cross = sign_in(
-        admin,
-        "correct+horse+battery",
-        &[("sec-fetch-site", "cross-site".to_string())],
-    );
-    assert_eq!((cross.status, cross.header("set-cookie")), (403, None));
+    // no cookie is set or taken: a credential of this kind goes to this origin and port only
+    assert_eq!(asked.header("set-cookie"), None);
+    let cookie = [("cookie", format!("trommi_admin={}", b64(&[5u8; 32])))];
+    assert_eq!(get(admin, &cookie).status, 401);
+    // something that is no Basic credential
+    for odd in ["Bearer abc", "Basic", "Basic !!!", "Basic YWRtaW4="] {
+        assert_eq!(
+            get(admin, &[("authorization", odd.to_string())]).status,
+            401,
+            "{odd}"
+        );
+    }
 
     // wrong passwords: each makes the page wait longer before it takes another, the right one included
-    assert_eq!(sign_in(admin, "wrong", &[]).status, 401);
-    let early = sign_in(admin, "correct+horse+battery", &[]);
+    assert_eq!(get(admin, &basic("wrong")).status, 401);
+    let early = get(admin, &basic("correct horse battery"));
     assert_eq!(
         (early.status, early.header("retry-after")),
         (429, Some("1"))
     );
     hub.clock(1000);
-    assert_eq!(sign_in(admin, "wrong+again", &[]).status, 401);
+    assert_eq!(get(admin, &basic("wrong again")).status, 401);
     hub.clock(1000);
-    let early = sign_in(admin, "correct+horse+battery", &[]);
+    let early = get(admin, &basic("correct horse battery"));
     assert_eq!(
         (early.status, early.header("retry-after")),
         (429, Some("1"))
     );
     hub.clock(1000);
-
-    // the right one (as a browser sends it: a space as `+`, a letter as `%xx`)
-    let signed = sign_in(admin, "correct+horse+b%61ttery", &[]);
-    assert_eq!(signed.status, 303);
-    let cookie = signed.header("set-cookie").unwrap();
-    assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
-    let session = [("cookie", cookie.split(';').next().unwrap().to_string())];
+    let session = basic("correct horse battery");
 
     // the page: version and health, the room with its counts and its account, the tables classified
-    let page = request(admin, "GET", "/", &session, b"");
+    let page = get(admin, &session);
     assert_eq!(page.status, 200);
     let html = text(&page);
     assert!(html.contains("version <code>dev</code>") && html.contains("1 rooms"));
@@ -134,12 +139,40 @@ fn the_admin_page_is_behind_its_password_and_shows_only_what_the_hub_sees() {
     // nothing of what was written, no key, no hash: the page has only counts and what the hub reads anyway
     assert!(!html.contains("nobody but the room"));
     assert!(!html.contains(&b64(&w.ada.id())) && !html.contains("argon2id$"));
-    // read-only: there is nothing to post but the sign-out
-    assert_eq!(html.matches("<form").count(), 1);
-    assert_eq!(request(admin, "POST", "/", &session, b"").status, 404);
-    assert_eq!(request(admin, "DELETE", "/", &session, b"").status, 404);
+    // read-only: no form, and nothing but GET / is taken, password or not
+    assert_eq!(html.matches("<form").count(), 0);
+    for (method, path) in [
+        ("POST", "/"),
+        ("DELETE", "/"),
+        ("POST", "/login"),
+        ("GET", "/rooms"),
+    ] {
+        assert_eq!(request(admin, method, path, &session, b"").status, 404);
+    }
+    // a credential that was checked is taken again without the slow hash, and a wrong one after it is still wrong
+    assert_eq!(get(admin, &session).status, 200);
+    assert_eq!(get(admin, &basic("correct horse batterx")).status, 401);
+    // the page is put together once for all who ask within a few seconds
+    assert_eq!(text(&get(admin, &session)), html);
 
-    // signed out, the cookie is worth nothing
-    assert_eq!(request(admin, "POST", "/logout", &session, b"").status, 303);
-    assert!(!text(&request(admin, "GET", "/", &session, b"")).contains("Rooms"));
+    // few connections, none for long: the seventeenth is closed at once, and the hub's own port is not touched
+    let held: Vec<std::net::TcpStream> = (0..trommi_hub::admin::MAX_CONNECTIONS + 4)
+        .map(|_| std::net::TcpStream::connect(("127.0.0.1", admin)).unwrap())
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let closed = held
+        .iter()
+        .filter(|socket| {
+            use std::io::Read;
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_millis(50)))
+                .unwrap();
+            matches!((&**socket).read(&mut [0u8; 1]), Ok(0))
+        })
+        .count();
+    assert!(
+        closed >= 4,
+        "{closed} of the connections over the limit were closed"
+    );
+    assert_eq!(hub.get("/healthz").status, 200);
 }

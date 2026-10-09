@@ -146,7 +146,7 @@ fn room_for_source(c: &Connection, a: &Key, asker: &Key, now: u64) -> Res<bool> 
              WHERE account = ?1 AND checking IS NULL AND next_at <= ?2 AND source != ?3 ORDER BY next_at LIMIT 1)"
         } else {
             "DELETE FROM login_sources WHERE rowid = (SELECT rowid FROM login_sources INDEXED BY login_sources_by_wait
-             WHERE ?1 IS NOT NULL AND checking IS NULL AND next_at <= ?2 AND source != ?3 ORDER BY next_at LIMIT 1)"
+             WHERE checking IS NULL AND next_at <= ?2 AND NOT (account = ?1 AND source = ?3) ORDER BY next_at LIMIT 1)"
         };
         let gone = c
             .prepare_cached(sql)?
@@ -268,45 +268,60 @@ pub fn admit(
             }
         }
     } else {
-        // The line. Turns are two seconds apart; a turn is the source's alone and good from its time for five
-        // seconds. One that ran out is replaced by a new one at the end.
-        // (a turn is cleared away only when no request that came in time can still be waiting inside the hub)
-        c.prepare_cached("DELETE FROM login_turns WHERE account = ?1 AND good_until + ?3 < ?2")?
+        'line: {
+            // The line. Turns are two seconds apart; a turn is the source's alone and good from its time for five
+            // seconds. One that ran out is replaced by a new one at the end.
+            // (a turn is cleared away only when no request that came in time can still be waiting inside the hub)
+            c.prepare_cached(
+                "DELETE FROM login_turns WHERE account = ?1 AND good_until + ?3 < ?2",
+            )?
             .execute(params![&a[..], now as i64, HELD_MS as i64])?;
-        c.prepare_cached(
-            "DELETE FROM login_turns WHERE account = ?1 AND source = ?2 AND good_until < ?3",
-        )?
-        .execute(params![&a[..], &s[..], arrived as i64])?;
-        let mine: Option<i64> = c
-            .prepare_cached("SELECT turn FROM login_turns WHERE account = ?1 AND source = ?2")?
-            .query_row(params![&a[..], &s[..]], |r| r.get(0))
-            .optional()?;
-        let turn = match mine {
-            Some(turn) => Some(turn as u64),
-            None if next_turn.max(now) > now + LANE_HORIZON_MS => None,
-            None => {
-                let turn = next_turn.max(now);
-                next_turn = turn + SLOW_LANE_MS;
-                save(start, used, next_turn)?;
-                c.prepare_cached("INSERT INTO login_turns (account, source, turn, good_until) VALUES (?1, ?2, ?3, ?4)")?
-                    .execute(params![&a[..], &s[..], turn as i64, (turn + TURN_GOOD_MS) as i64])?;
-                Some(turn)
-            }
-        };
-        match turn {
-            // the line is full: ask again
-            None => Some(60.max(own.unwrap_or(0))),
-            Some(turn) if now < turn => Some(secs(turn - now).max(own.unwrap_or(0))),
-            // its turn has come
-            Some(_) => match own {
-                // (still waiting out an early check that failed: the turn stays good for what is left of it)
-                Some(wait) => return Ok(Verdict::Own(wait)),
-                None => {
-                    c.prepare_cached("DELETE FROM login_turns WHERE account = ?1 AND source = ?2")?
-                        .execute(params![&a[..], &s[..]])?;
-                    None
+            let mine: Option<(i64, i64)> = c
+                .prepare_cached(
+                    "SELECT turn, good_until FROM login_turns WHERE account = ?1 AND source = ?2",
+                )?
+                .query_row(params![&a[..], &s[..]], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()?;
+            // A request that came after its source's turn ran out has no turn. The old one stays where it is until
+            // no request that came in time can still be waiting (it may be this source's own, a moment ahead):
+            // then a new turn is given. Until then: come again.
+            if let Some((_, good_until)) = mine {
+                if arrived > good_until as u64 {
+                    let again = secs(
+                        good_until as u64 + HELD_MS + 1 - now.min(good_until as u64 + HELD_MS),
+                    );
+                    break 'line Some(again.max(own.unwrap_or(0)));
                 }
-            },
+            }
+            let turn = match mine {
+                Some((turn, _)) => Some(turn as u64),
+                None if next_turn.max(now) > now + LANE_HORIZON_MS => None,
+                None => {
+                    let turn = next_turn.max(now);
+                    next_turn = turn + SLOW_LANE_MS;
+                    save(start, used, next_turn)?;
+                    c.prepare_cached("INSERT INTO login_turns (account, source, turn, good_until) VALUES (?1, ?2, ?3, ?4)")?
+                    .execute(params![&a[..], &s[..], turn as i64, (turn + TURN_GOOD_MS) as i64])?;
+                    Some(turn)
+                }
+            };
+            match turn {
+                // the line is full: ask again
+                None => Some(60.max(own.unwrap_or(0))),
+                Some(turn) if now < turn => Some(secs(turn - now).max(own.unwrap_or(0))),
+                // its turn has come
+                Some(_) => match own {
+                    // (still waiting out an early check that failed: the turn stays good for what is left of it)
+                    Some(wait) => return Ok(Verdict::Own(wait)),
+                    None => {
+                        c.prepare_cached(
+                            "DELETE FROM login_turns WHERE account = ?1 AND source = ?2",
+                        )?
+                        .execute(params![&a[..], &s[..]])?;
+                        None
+                    }
+                },
+            }
         }
     };
     let record = |attempt: i64| -> Res<()> {
