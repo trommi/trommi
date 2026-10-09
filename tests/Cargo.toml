@@ -34,3 +34,7 @@ path = "core/groups_session.rs"
 [[test]]
 name = "core_groups_history"
 path = "core/groups_history.rs"
+
+[[test]]
+name = "core_groups_removal"
+path = "core/groups_removal.rs"
