@@ -27,7 +27,7 @@ pub struct Object {
     /// What it is; fixed by its first version.
     pub object_type: ObjectType,
     /// The device that wrote its newest version. Who owns the object now is [`owner`]'s to say: the ownership
-    /// passes on when this device is no longer a leaf.
+    /// passes on, for good, when this device is no longer a leaf.
     pub owner: DeviceId,
     /// Open, answered or closed.
     pub state: ObjectState,
@@ -204,17 +204,21 @@ fn allow(condition: bool) -> Result<(), Error> {
     }
 }
 
-/// The device that owns `object` in `epoch` of `group` (section 9.2): the writer of its newest version while it
-/// is a leaf; after that the session's agent device, in a helper session its opener; nobody while that seat is
-/// empty.
+/// The device that owns `object` in `epoch` of `group` (section 9.2): the writer of its newest version until
+/// it is no longer a leaf; from then on, and for good, the session's agent device, in a helper session its
+/// opener; nobody while that seat is empty. A writer whose leaf was removed does not own the object again when
+/// the same key is a leaf of the group once more: its chain ended at its Cut, and what it owned has passed on.
 pub fn owner(
     facts: &dyn GroupFacts,
     group: &GroupId,
     epoch: u64,
     object: &Object,
 ) -> Result<Option<DeviceId>, Error> {
-    if facts.leaf_role(group, epoch, &object.owner)?.is_some() {
-        Ok(Some(object.owner))
+    let writer = &object.owner;
+    if facts.leaf_role(group, epoch, writer)?.is_some()
+        && !facts.removed_by(group, epoch, writer)?
+    {
+        Ok(Some(*writer))
     } else {
         facts.seat(group, epoch)
     }
