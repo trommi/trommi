@@ -139,9 +139,9 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
   small drawings and "+N" at the end of the teaser's line; a tap there unfolds them as smaller set-in rows; which are
   open is kept on the phone. The main's row counts its helpers in. Desks are quiet section heads.
 - **Note:** a full page of yellow paper over the list he came from (`NotePanel` in `Shell.swift`), edge to edge, up
-  under the status bar and on behind the tab pill, which stays and is lit on Note. From the top: a handle, "To: …" as
-  a glass pill on a row of its own (the words begin below it, never under it), the words, the pictures, the
-  paperclip · bin · send row just above the tab pill; send is the web's envelope with the crown as its seal
+  under the status bar and on behind the tab pill, which stays and is lit on Note. From the top: a handle, the
+  words, the pictures (each with a thin outline), and one row just above the tab pill: paperclip and bin at the left,
+  "To: …" as a glass pill directly left of the envelope (a long name is cut in its middle); send is the web's envelope with the crown as its seal
   (`NoteEnvelope`, the path data of `notes.css`), half faded while there is nothing to send. Sending, throwing away
   and every other way out put the keyboard away. A tap on Note or another tab, or a drag down on the handle,
   leaves it; the draft stays on the note. With the keyboard up the tab pill hides and the row sits on the keyboard:

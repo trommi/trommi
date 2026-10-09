@@ -195,6 +195,11 @@ func sizeWord(_ n: Int) -> String { n >= 1_000_000 ? String(format: "%.1f MB", D
   private var images: [String: UIImage] = [:]
   func image(_ id: String) -> UIImage? { images[id] }
   func put(_ id: String, _ i: UIImage) { if images.count > 120 { images.removeAll() }; images[id] = i }
+  /** A picture just attached on this phone: shown from the bytes in hand, so its tile is there at once. */
+  func seed(_ ref: JV, _ data: Data) {
+    guard let id = ref["attachment_id"].string, images[id] == nil, let i = Thumb.image(data, maxPixel: 1600) else { return }
+    put(id, i)
+  }
   #endif
 }
 
@@ -207,7 +212,11 @@ enum Thumb {
     let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
                                  kCGImageSourceThumbnailMaxPixelSize: maxPixel, kCGImageSourceShouldCacheImmediately: true]
     guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary), cg.width > 0, cg.height > 0 else { return nil }
-    return UIImage(cgImage: cg)
+    // drawn once into a plain standard-range bitmap: whatever the file was (HDR, 16 bit, a wide colour space) the
+    // picture on the screen is an ordinary one (an HDR photo drawn small came out black, 8 October)
+    let size = CGSize(width: cg.width, height: cg.height)
+    let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1; fmt.preferredRange = .standard
+    return UIGraphicsImageRenderer(size: size, format: fmt).image { _ in UIImage(cgImage: cg).draw(in: CGRect(origin: .zero, size: size)) }
   }
 }
 #endif
@@ -244,10 +253,15 @@ struct AttachmentImage: View {
   }
   private func load() async {
     #if canImport(UIKit)
-    guard let id = ref["attachment_id"].string else { failed = true; return }
-    if let hit = PictureCache.shared.image(id) { image = hit; return }
+    guard let id = ref["attachment_id"].string else { image = nil; failed = true; return }
+    if let hit = PictureCache.shared.image(id) { image = hit; failed = false; return }
+    // another file than the one this tile showed: its placeholder until the new picture is there, never the old one
+    image = nil; failed = false
     do {
-      let d = try await model.attachment(ref)
+      // one more try after a moment (the phone just woke, the hub was slow): then the tile says it could not
+      let d: Data
+      do { d = try await model.attachment(ref) }
+      catch { try await Task.sleep(nanoseconds: 1_500_000_000); d = try await model.attachment(ref) }
       // decoded off the main thread at display size, through ImageIO (HEIC, PNG with alpha, orientation, and an HDR
       // photo as its standard-range picture: drawn small it came out black, 8 October); UIKit's decoder as the fallback
       let made = await Task.detached(priority: .userInitiated) { () -> UIImage? in
@@ -258,7 +272,7 @@ struct AttachmentImage: View {
       guard let shown = made, shown.size.width > 0, shown.size.height > 0 else { failed = true; return }
       PictureCache.shared.put(id, shown)
       image = shown
-    } catch { failed = true }
+    } catch { if !Task.isCancelled { failed = true } }
     #endif
   }
 }
