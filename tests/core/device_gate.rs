@@ -176,3 +176,49 @@ fn a_helper_device_acts_on_the_answer_to_its_own_card_and_its_opener_does_not() 
         Decision::Act(Command::Chat)
     );
 }
+
+#[test]
+fn a_helper_device_removed_and_added_again_under_its_key_owns_its_card_no_more() {
+    let mut w = world();
+    let (mut helper, mut other) = (new_device(), new_device());
+    for device in [&mut helper, &mut other] {
+        observe(&w.hub, device);
+    }
+    let group = found_helper(&mut w.hub, &mut w.agent, &w.main, &mut [&mut helper]);
+    for device in [&mut w.a, &mut w.agent, &mut helper] {
+        sync_all(&w.hub, device);
+    }
+    let made = write(&mut w.hub, &mut helper, &card(&group));
+    let card_id = made.object_id.unwrap();
+    sync_all(&w.hub, &mut w.a);
+    sync_all(&w.hub, &mut w.agent);
+    assert_eq!(
+        w.a.object_owner(&group, &card_id).unwrap(),
+        Some(helper.id())
+    );
+    // The opener removes the helper device, with its Cut, and adds it again under the same key.
+    let cut = w.agent.cut_of(&group, &helper.id()).unwrap();
+    let package = other.key_package(now()).unwrap();
+    w.agent
+        .readmit_helper(&group, cut, &other.id(), &package, now())
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.agent);
+    sync_all(&w.hub, &mut w.agent);
+    let again = helper.key_package(now()).unwrap();
+    w.agent
+        .add_to_session(&group, &helper.id(), &again, now())
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.agent);
+    sync_all(&w.hub, &mut w.agent);
+    sync_all(&w.hub, &mut w.a);
+    assert!(w.a.group(&group).unwrap().leaves.contains(&helper.id()));
+    // The card went to the session's opener when its writer left, for good.
+    for device in [&w.a, &w.agent] {
+        assert_eq!(
+            device.object_owner(&group, &card_id).unwrap(),
+            Some(w.agent.id())
+        );
+    }
+    // And the chain of that key stays ended at its Cut.
+    assert_eq!(w.a.chain_cut(&group, &helper.id()).unwrap().unwrap().seq, 1);
+}

@@ -6,6 +6,8 @@ pub mod content;
 pub mod forge;
 pub mod forge_content;
 pub mod hub;
+pub mod room;
+pub mod seal;
 pub mod store;
 
 use hub::content::{Change, StoredEnvelope};
