@@ -303,6 +303,18 @@ pub(crate) fn public_entries(
         .collect()
 }
 
+/// The ids of the groups whose state `entries` hold: one per stored group context. `Error::Storage` when one
+/// does not decode.
+pub(crate) fn stored_groups(entries: &MlsEntries) -> Result<Vec<Vec<u8>>, Error> {
+    entries
+        .iter()
+        .filter(|(key, _)| key.starts_with(b"GroupContext"))
+        .map(|(_, value)| {
+            decodes::<GroupContext>(value).map(|context| context.group_id().as_slice().to_vec())
+        })
+        .collect()
+}
+
 /// The serialised form of OpenMLS's own key pair of a leaf or path node, which it does not export: the same
 /// fields with the same types, so that a value that decodes here decodes there.
 #[derive(serde::Deserialize)]
