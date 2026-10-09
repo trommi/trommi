@@ -16,7 +16,6 @@ use crate::util::{b64, random, same, unb64};
 use crate::webauthn;
 
 pub const SEALED_COPY_LEN: usize = 61;
-const MAX_PASSKEYS: i64 = 20;
 const PASSKEY_CHALLENGE_MS: u64 = 120_000;
 
 /// v1 §16.1: trim, only U+0021–U+007E, lowercase, one `@`, the lengths. Refused otherwise, never mapped.
@@ -71,6 +70,34 @@ fn var_bytes(v: &Value, key: &str, max: usize) -> Res<Vec<u8>> {
         .ok_or_else(|| refuse("bad-format", format!("{key}: base64url")))
 }
 
+/// The slow hashes of the login keys a request brings, made before its transaction (the hash is slow on
+/// purpose; the database's write lock is not held meanwhile).
+#[derive(Default)]
+pub struct Prehashed(Vec<(Vec<u8>, [u8; 16], [u8; 32])>);
+
+impl Prehashed {
+    /// Hashes the `auth_key` of each given object that has a well-formed one.
+    pub fn of(objects: &[&Value]) -> Prehashed {
+        let mut out = Vec::new();
+        for v in objects {
+            if let Ok(key) = bytes(v, "auth_key", 32) {
+                let salt = random::<16>();
+                let hash = slow_hash(&key, &salt);
+                out.push((key, salt, hash));
+            }
+        }
+        Prehashed(out)
+    }
+
+    fn take(&self, key: &[u8]) -> Res<([u8; 16], [u8; 32])> {
+        self.0
+            .iter()
+            .find(|(k, _, _)| same(k, key))
+            .map(|(_, salt, hash)| (*salt, *hash))
+            .ok_or_else(|| refuse("overloaded", "try again").retry(1))
+    }
+}
+
 /// v1 §16.3: a sealed copy is 61 bytes and begins with 0x02; anything else is refused, not converted.
 pub fn sealed_copy(v: &Value, key: &str) -> Res<Vec<u8>> {
     let copy = bytes(v, key, SEALED_COPY_LEN)?;
@@ -94,6 +121,41 @@ pub fn kdf_record(v: &Value) -> Res<String> {
     Ok(json!({ "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1 }).to_string())
 }
 
+pub struct LoginRow {
+    auth: Vec<u8>,
+    held: Option<(i64, Vec<u8>, Vec<u8>, Vec<u8>)>,
+}
+
+impl LoginRow {
+    pub fn account(&self) -> Option<i64> {
+        self.held.as_ref().map(|h| h.0)
+    }
+}
+
+/// Whether an account was signed in to from this source before.
+pub fn knows_source(c: &Connection, account: Option<i64>, source: &[u8]) -> Res<bool> {
+    // the same query for an e-mail without an account: -1 is no account's id
+    Ok(
+        c.prepare_cached("SELECT 1 FROM account_sources WHERE account_id = ?1 AND source = ?2")?
+            .exists(params![account.unwrap_or(-1), source])?,
+    )
+}
+
+/// After a successful sign-in: the account knows this source; the 16 newest are kept.
+pub fn remember_source(c: &Connection, account: i64, source: &[u8], now: u64) -> Res<()> {
+    c.prepare_cached(
+        "INSERT INTO account_sources (account_id, source, last_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT (account_id, source) DO UPDATE SET last_at = excluded.last_at",
+    )?
+    .execute(params![account, source, now as i64])?;
+    c.prepare_cached(
+        "DELETE FROM account_sources WHERE account_id = ?1 AND source NOT IN
+         (SELECT source FROM account_sources WHERE account_id = ?1 ORDER BY last_at DESC LIMIT 16)",
+    )?
+    .execute([account])?;
+    Ok(())
+}
+
 /// In-memory state of the account routes: passkey challenges, the dummies that make an unknown e-mail cost and
 /// answer like a known one.
 pub struct Accounts {
@@ -104,15 +166,17 @@ pub struct Accounts {
     dummy_salt: [u8; 16],
     dummy_key: Vec<u8>,
     pub origins: Vec<String>,
+    pub max_passkeys: i64,
 }
 
 impl Accounts {
-    pub fn new(origins: Vec<String>) -> Self {
+    pub fn new(origins: Vec<String>, max_passkeys: i64) -> Self {
         Accounts {
             challenges: Mutex::new((HashMap::new(), VecDeque::new())),
             dummy_salt: random(),
             dummy_key: webauthn::dummy_key(),
             origins,
+            max_passkeys,
         }
     }
 
@@ -178,7 +242,14 @@ impl Accounts {
 
     /// v1 §16.8: an account is made with its kit in one request: none exists without one. A way in comes with
     /// it: a password, a passkey or both.
-    pub fn create(&self, c: &Connection, room: &Room, v: &Value, now: u64) -> Res<Value> {
+    pub fn create(
+        &self,
+        c: &Connection,
+        room: &Room,
+        v: &Value,
+        now: u64,
+        pre: &Prehashed,
+    ) -> Res<Value> {
         let email = normalise_email(v["email"].as_str().unwrap_or(""))?;
         let kit = &v["kit"];
         let kit_auth = bytes(kit, "auth_key", 32)?;
@@ -220,13 +291,13 @@ impl Accounts {
                 "an account with this e-mail exists",
             ));
         }
-        let kit_salt = random::<16>();
+        let (kit_salt, kit_hash) = pre.take(&kit_auth)?;
         let (auth_salt, auth_hash, kdf, password_copy) = match &password {
             Some((auth, copy, kdf)) => {
-                let salt = random::<16>();
+                let (salt, hash) = pre.take(auth)?;
                 (
                     Some(salt.to_vec()),
-                    Some(slow_hash(auth, &salt).to_vec()),
+                    Some(hash.to_vec()),
                     Some(kdf.clone()),
                     Some(copy.clone()),
                 )
@@ -237,7 +308,7 @@ impl Accounts {
             "INSERT INTO accounts (email, created_at, updated_at, auth_salt, auth_hash, kdf, password_copy, kit_salt, kit_hash, kit_copy, user_handle)
              VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )?
-        .execute(params![email, now as i64, auth_salt, auth_hash, kdf, password_copy, &kit_salt[..], &slow_hash(&kit_auth, &kit_salt)[..], kit_copy, &user_handle[..]])?;
+        .execute(params![email, now as i64, auth_salt, auth_hash, kdf, password_copy, &kit_salt[..], &kit_hash[..], kit_copy, &user_handle[..]])?;
         let account = c.last_insert_rowid();
         c.prepare_cached(
             "INSERT INTO account_rooms (account_id, room_id, position) VALUES (?1, ?2, 0)",
@@ -258,7 +329,7 @@ impl Accounts {
         let count: i64 = c
             .prepare_cached("SELECT count(*) FROM passkeys WHERE account_id = ?1")?
             .query_row([account], |r| r.get(0))?;
-        if count >= MAX_PASSKEYS {
+        if count >= self.max_passkeys {
             return Err(refuse("too-many", "an account has at most 20 passkeys"));
         }
         let (registered, copy, transports) =
@@ -268,9 +339,9 @@ impl Accounts {
         Ok(json!({ "credential_id": b64(&registered.credential_id), "created_at": now }))
     }
 
-    /// Sign-in with e-mail and the login key. One answer for an unknown e-mail and a wrong password (v1 §16.9),
-    /// at one cost: a hash is always computed.
-    pub fn login(&self, c: &Connection, v: &Value, kit: bool) -> Res<Option<(i64, Vec<u8>)>> {
+    /// Sign-in with e-mail and the login key, first half: what the hub holds for that e-mail. The slow hash is
+    /// made by the caller outside any database connection (`check_login`).
+    pub fn login_row(&self, c: &Connection, v: &Value, kit: bool) -> Res<LoginRow> {
         let email = normalise_email(v["email"].as_str().unwrap_or("")).ok();
         let auth = bytes(v, "auth_key", 32)?;
         let (salt_col, hash_col, copy_col) = if kit {
@@ -285,24 +356,39 @@ impl Accounts {
                 .optional()?,
             None => None,
         };
-        match row {
-            Some((account, Some(salt), Some(hash), Some(copy))) => {
-                Ok(same(&slow_hash(&auth, &salt), &hash).then_some((account, copy)))
+        Ok(LoginRow {
+            auth,
+            held: match row {
+                Some((account, Some(salt), Some(hash), Some(copy))) => {
+                    Some((account, salt, hash, copy))
+                }
+                _ => None,
+            },
+        })
+    }
+
+    /// Second half: one answer for an unknown e-mail and a wrong password (v1 §16.9), at one cost: a hash is
+    /// always computed.
+    pub fn check_login(&self, row: LoginRow) -> Option<(i64, Vec<u8>)> {
+        match row.held {
+            Some((account, salt, hash, copy)) => {
+                same(&slow_hash(&row.auth, &salt), &hash).then_some((account, copy))
             }
-            _ => {
-                let _ = slow_hash(&auth, &self.dummy_salt);
-                Ok(None)
+            None => {
+                let _ = slow_hash(&row.auth, &self.dummy_salt);
+                None
             }
         }
     }
 
     /// Sign-in with a passkey. An unknown credential is checked against a key nobody holds.
+    /// The check reads only; the caller records the use (`passkey_used`) in a short write of its own.
     pub fn passkey_login(
         &self,
         c: &Connection,
         v: &Value,
         now: u64,
-    ) -> Res<Option<(i64, Vec<u8>)>> {
+    ) -> Res<Option<(i64, Vec<u8>, Vec<u8>, u32)>> {
         let credential_id = var_bytes(v, "credential_id", 1023)?;
         let authenticator_data = var_bytes(v, "authenticator_data", 1024)?;
         let client_data = var_bytes(v, "client_data_json", 4096)?;
@@ -336,14 +422,18 @@ impl Accounts {
         };
         match (row, verified, fresh && handle_fits) {
             (Some((account, _, copy, _)), Ok(sign_count), true) => {
-                // the counter never goes back; a passkey that is synced between devices reports none
-                c.prepare_cached("UPDATE passkeys SET sign_count = max(sign_count, ?1), last_used_at = ?2 WHERE credential_id = ?3")?
-                    .execute(params![sign_count, now as i64, credential_id])?;
-                Ok(Some((account, copy)))
+                Ok(Some((account, copy, credential_id, sign_count)))
             }
             _ => Ok(None),
         }
     }
+}
+
+/// The counter never goes back; a passkey that is synced between devices reports none.
+pub fn passkey_used(c: &Connection, credential_id: &[u8], sign_count: u32, now: u64) -> Res<()> {
+    c.prepare_cached("UPDATE passkeys SET sign_count = max(sign_count, ?1), last_used_at = ?2 WHERE credential_id = ?3")?
+        .execute(params![sign_count, now as i64, credential_id])?;
+    Ok(())
 }
 
 fn insert_passkey(
@@ -443,7 +533,13 @@ fn check_revision(c: &Connection, account: i64, v: &Value) -> Res<()> {
 }
 
 /// Changing the password re-wraps the code and replaces the login key; nothing else is re-encrypted.
-pub fn put_password(c: &Connection, room: &Room, v: &Value, now: u64) -> Res<Value> {
+pub fn put_password(
+    c: &Connection,
+    room: &Room,
+    v: &Value,
+    now: u64,
+    pre: &Prehashed,
+) -> Res<Value> {
     let account = account_of(c, room)?;
     check_revision(c, account, v)?;
     let (auth, copy, kdf) = (
@@ -451,34 +547,29 @@ pub fn put_password(c: &Connection, room: &Room, v: &Value, now: u64) -> Res<Val
         sealed_copy(v, "sealed_copy")?,
         kdf_record(v)?,
     );
-    let salt = random::<16>();
+    let (salt, hash) = pre.take(&auth)?;
     c.prepare_cached("UPDATE accounts SET auth_salt = ?1, auth_hash = ?2, kdf = ?3, password_copy = ?4 WHERE account_id = ?5")?
-        .execute(params![&salt[..], &slow_hash(&auth, &salt)[..], kdf, copy, account])?;
+        .execute(params![&salt[..], &hash[..], kdf, copy, account])?;
     bump(c, account, now)?;
     Ok(json!({ "revision": v["revision"].as_i64().unwrap_or(0) + 1 }))
 }
 
 /// A new kit replaces the one before.
-pub fn put_kit(c: &Connection, room: &Room, v: &Value, now: u64) -> Res<Value> {
+pub fn put_kit(c: &Connection, room: &Room, v: &Value, now: u64, pre: &Prehashed) -> Res<Value> {
     let account = account_of(c, room)?;
     check_revision(c, account, v)?;
-    set_kit(c, account, v)?;
+    set_kit(c, account, v, pre)?;
     bump(c, account, now)?;
     Ok(json!({ "revision": v["revision"].as_i64().unwrap_or(0) + 1 }))
 }
 
-fn set_kit(c: &Connection, account: i64, v: &Value) -> Res<()> {
+fn set_kit(c: &Connection, account: i64, v: &Value, pre: &Prehashed) -> Res<()> {
     let (auth, copy) = (bytes(v, "auth_key", 32)?, sealed_copy(v, "sealed_copy")?);
-    let salt = random::<16>();
+    let (salt, hash) = pre.take(&auth)?;
     c.prepare_cached(
         "UPDATE accounts SET kit_salt = ?1, kit_hash = ?2, kit_copy = ?3 WHERE account_id = ?4",
     )?
-    .execute(params![
-        &salt[..],
-        &slow_hash(&auth, &salt)[..],
-        copy,
-        account
-    ])?;
+    .execute(params![&salt[..], &hash[..], copy, account])?;
     Ok(())
 }
 
@@ -509,7 +600,13 @@ pub fn delete_passkey(c: &Connection, room: &Room, credential_id: &[u8], now: u6
 /// 8.6: with new recovery keys come the account's new sealed copies: one under the way in used just now
 /// (password or passkey) and one under a new Emergency Kit; every other way in is removed and set up again by
 /// the person. A room without an account brings none.
-pub fn replace_copies(c: &Connection, room: &Room, v: &Value, now: u64) -> Res<()> {
+pub fn replace_copies(
+    c: &Connection,
+    room: &Room,
+    v: &Value,
+    now: u64,
+    pre: &Prehashed,
+) -> Res<()> {
     let account: Option<i64> = c
         .prepare_cached("SELECT account_id FROM account_rooms WHERE room_id = ?1")?
         .query_row([&room[..]], |r| r.get(0))
@@ -527,7 +624,7 @@ pub fn replace_copies(c: &Connection, room: &Room, v: &Value, now: u64) -> Res<(
             "new recovery keys come with the account's new sealed copies",
         ));
     }
-    set_kit(c, account, &v["kit"])
+    set_kit(c, account, &v["kit"], pre)
         .map_err(|_| refuse("incomplete", "the account's new Emergency Kit copy"))?;
     match (&v["password"], &v["passkey"]) {
         (p, Value::Null) if !p.is_null() => {

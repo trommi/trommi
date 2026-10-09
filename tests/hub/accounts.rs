@@ -29,11 +29,31 @@ fn account_body(email: &str, auth: &[u8; 32], kit: &[u8; 32]) -> Value {
     })
 }
 
-fn login(hub: &TestHub, email: &str, auth: &[u8; 32]) -> Reply {
-    hub.post(
-        "/v2/account/login",
-        &json!({ "email": email, "auth_key": b64(auth) }),
+/// An address no other call of this test binary has used: a source of its own for the login throttle.
+fn fresh_source() -> String {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("198.51.{}.{}", n / 250 % 250, n % 250 + 1)
+}
+
+fn sign_in_from(hub: &TestHub, source: &str, route: &str, email: &str, key: &[u8; 32]) -> Reply {
+    request(
+        hub.port,
+        "POST",
+        &format!("/v2/account/{route}"),
+        &[("cf-connecting-ip", source.to_string())],
+        json!({ "email": email, "auth_key": b64(key) })
+            .to_string()
+            .as_bytes(),
     )
+}
+
+fn login(hub: &TestHub, email: &str, auth: &[u8; 32]) -> Reply {
+    sign_in_from(hub, &fresh_source(), "login", email, auth)
+}
+
+fn recover(hub: &TestHub, email: &str, kit: &[u8; 32]) -> Reply {
+    sign_in_from(hub, &fresh_source(), "recover", email, kit)
 }
 
 #[test]
@@ -88,18 +108,9 @@ fn an_account_is_made_with_the_room_and_opens_it_again() {
     wrong.refused(401, "wrong-login");
     assert_eq!((wrong.status, &wrong.body), (unknown.status, &unknown.body));
     // the Emergency Kit: its own login key, its own copy, its own code for a wrong one
-    let recovered = hub
-        .post(
-            "/v2/account/recover",
-            &json!({ "email": "ADA@example.org", "auth_key": b64(&kit) }),
-        )
-        .ok();
+    let recovered = recover(&hub, "ADA@example.org", &kit).ok();
     assert_eq!(recovered["rooms"][0]["sealed_copy"], copy(9));
-    hub.post(
-        "/v2/account/recover",
-        &json!({ "email": "ada@example.org", "auth_key": b64(&auth) }),
-    )
-    .refused(401, "wrong-recovery");
+    recover(&hub, "ada@example.org", &auth).refused(401, "wrong-recovery");
     login(&hub, "ada@example.org", &kit).refused(401, "wrong-login");
 
     // what a human device of the room sees of its account: no hash
@@ -187,66 +198,139 @@ fn password_and_kit_change_under_a_revision_and_only_by_a_human_device() {
             &json!({ "auth_key": b64(&new_kit), "sealed_copy": copy(6), "revision": 2 }),
         )
         .ok();
-    w.hub
-        .post(
-            "/v2/account/recover",
-            &json!({ "email": "ada@example.org", "auth_key": b64(&kit) }),
-        )
-        .refused(401, "wrong-recovery");
+    recover(&w.hub, "ada@example.org", &kit).refused(401, "wrong-recovery");
     assert_eq!(
-        w.hub
-            .post(
-                "/v2/account/recover",
-                &json!({ "email": "ada@example.org", "auth_key": b64(&new_kit) })
-            )
-            .ok()["rooms"][0]["sealed_copy"],
+        recover(&w.hub, "ada@example.org", &new_kit).ok()["rooms"][0]["sealed_copy"],
         copy(6)
     );
 }
 
+/// Advances the hub's clock past a `retry-after`.
+fn wait_out(hub: &TestHub, refused: &Reply) {
+    let seconds: i64 = refused
+        .header("retry-after")
+        .expect("a refusal says when to come back")
+        .parse()
+        .unwrap();
+    hub.clock(seconds * 1000);
+}
+
 #[test]
-fn repeated_failures_lock_an_e_mail_out_and_an_address_is_limited() {
-    let hub = TestHub::start_with(&[
-        ("HUB_LIMIT_LOGIN_FAILURES_PER_EMAIL_HOUR", "3"),
-        ("HUB_LIMIT_LOGINS_PER_IP_10MIN", "8"),
-    ]);
+fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
+    let hub = TestHub::start_with(&[("HUB_LIMIT_LOGINS_PER_IP_10MIN", "100000")]);
     let w = World::on(hub);
-    let auth: [u8; 32] = random();
+    let hub = &w.hub;
+    let (auth, kit) = (random::<32>(), random::<32>());
     w.ada
         .post(
-            &w.hub,
+            hub,
             "/v2/account",
-            &account_body("ada@example.org", &auth, &random()),
+            &account_body("ada@example.org", &auth, &kit),
         )
         .ok();
-    let from = |ip: &str, email: &str, key: &[u8; 32]| {
-        request(
-            w.hub.port,
-            "POST",
-            "/v2/account/login",
-            &[("cf-connecting-ip", ip.to_string())],
-            json!({ "email": email, "auth_key": b64(key) })
-                .to_string()
-                .as_bytes(),
-        )
-    };
-    for _ in 0..3 {
-        from("203.0.113.1", "ada@example.org", &random()).refused(401, "wrong-login");
+    let (home, attacker) = (fresh_source(), fresh_source());
+    // the owner signs in from home: the account knows that source from now on
+    sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
+
+    // one source guessing: after each failure it waits longer, 1 s, 2 s, 4 s …; in between it is not even checked
+    let mut waits = vec![];
+    for _ in 0..6 {
+        sign_in_from(hub, &attacker, "login", "ada@example.org", &random())
+            .refused(401, "wrong-login");
+        let early = sign_in_from(hub, &attacker, "login", "ada@example.org", &auth);
+        early.refused(429, "rate-limited");
+        waits.push(early.header("retry-after").unwrap().parse::<i64>().unwrap());
+        wait_out(hub, &early);
     }
-    // locked: also the right password waits, whoever asks; the answer says how long
-    let locked = from("203.0.113.2", "ada@example.org", &auth);
-    locked.refused(429, "rate-limited");
-    assert!(locked.header("retry-after").is_some());
-    // an unknown e-mail is locked the same way: the lock tells nothing about whether it exists
-    for _ in 0..3 {
-        from("203.0.113.3", "ghost@example.org", &random()).refused(401, "wrong-login");
+    assert_eq!(waits, vec![1, 2, 4, 8, 16, 32]);
+    // meanwhile the owner gets in at once, from home and from a place the account has never seen
+    sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
+    sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &auth).ok();
+    // the Emergency Kit is throttled apart: the same attacking source is not slowed there yet
+    sign_in_from(hub, &attacker, "recover", "ada@example.org", &random())
+        .refused(401, "wrong-recovery");
+    // an e-mail without an account behaves the same: nothing tells whether it exists
+    let ghost = fresh_source();
+    sign_in_from(hub, &ghost, "login", "ghost@example.org", &random()).refused(401, "wrong-login");
+    let early = sign_in_from(hub, &ghost, "login", "ghost@example.org", &random());
+    assert_eq!(
+        (early.status, early.header("retry-after")),
+        (429, Some("1"))
+    );
+
+    // many sources hammering the account: its budget for sources it does not know (100 an hour) is spent
+    // (eight of them were used above: six by the guessing source, two by the owner from places then new)
+    for _ in 0..92 {
+        sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &random())
+            .refused(401, "wrong-login");
     }
-    from("203.0.113.3", "ghost@example.org", &random()).refused(429, "rate-limited");
+    // the owner at home is not touched by it
+    sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
+    // sources the account does not know are now served one every two seconds, in the order they came: the
+    // first right away, each next one is told its turn
+    sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &random())
+        .refused(401, "wrong-login");
+    let (second, third) = (fresh_source(), fresh_source());
+    let told = sign_in_from(hub, &second, "login", "ada@example.org", &random());
+    assert_eq!((told.status, told.header("retry-after")), (429, Some("2")));
+    // the owner on a new device somewhere else, with the right password: told a turn, and in at that turn
+    let turn = sign_in_from(hub, &third, "login", "ada@example.org", &auth);
+    assert_eq!((turn.status, turn.header("retry-after")), (429, Some("4")));
+    wait_out(hub, &turn);
+    sign_in_from(hub, &third, "login", "ada@example.org", &auth).ok();
+    // and that place is known from now on: no turn needed next time, whatever the others do
+    for _ in 0..5 {
+        let _ = sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &random());
+    }
+    sign_in_from(hub, &third, "login", "ada@example.org", &auth).ok();
+    // the answer to a failure is the same for a wrong password and an unknown e-mail
+    let wrong = login(hub, "ada@example.org", &random());
+    let _ = wrong;
+
+    // behind a proxy the source is the forwarded address only when the hub is told to trust the proxy:
+    // without that, a client naming other addresses stays one source
+    let plain = TestHub::start_with(&[("HUB_TRUST_CF", "0")]);
+    sign_in_from(&plain, "203.0.113.5", "login", "x@example.org", &random())
+        .refused(401, "wrong-login");
+    sign_in_from(&plain, "203.0.113.6", "login", "x@example.org", &random())
+        .refused(429, "rate-limited");
+    // and the forwarded value must be an address: anything else is the peer
+    let trusted = TestHub::start();
+    sign_in_from(
+        &trusted,
+        "not an address",
+        "login",
+        "y@example.org",
+        &random(),
+    )
+    .refused(401, "wrong-login");
+    sign_in_from(
+        &trusted,
+        "another string",
+        "login",
+        "y@example.org",
+        &random(),
+    )
+    .refused(429, "rate-limited");
     // one address: so many attempts in ten minutes, whatever the e-mail
+    let limited = TestHub::start_with(&[("HUB_LIMIT_LOGINS_PER_IP_10MIN", "8")]);
     for i in 0..8 {
-        let _ = from("203.0.113.9", &format!("u{i}@example.org"), &random());
+        let _ = sign_in_from(
+            &limited,
+            "203.0.113.9",
+            "login",
+            &format!("u{i}@example.org"),
+            &random(),
+        );
     }
-    from("203.0.113.9", "fresh@example.org", &random()).refused(429, "rate-limited");
+    sign_in_from(
+        &limited,
+        "203.0.113.9",
+        "login",
+        "fresh@example.org",
+        &random(),
+    )
+    .refused(429, "rate-limited");
 }
 
 #[test]
@@ -504,19 +588,9 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
         login(&w.hub, "ada@example.org", &auth).ok()["rooms"][0]["sealed_copy"],
         copy(8)
     );
-    w.hub
-        .post(
-            "/v2/account/recover",
-            &json!({ "email": "ada@example.org", "auth_key": b64(&kit) }),
-        )
-        .refused(401, "wrong-recovery");
+    recover(&w.hub, "ada@example.org", &kit).refused(401, "wrong-recovery");
     assert_eq!(
-        w.hub
-            .post(
-                "/v2/account/recover",
-                &json!({ "email": "ada@example.org", "auth_key": b64(&new_kit) })
-            )
-            .ok()["rooms"][0]["sealed_copy"],
+        recover(&w.hub, "ada@example.org", &new_kit).ok()["rooms"][0]["sealed_copy"],
         copy(4)
     );
 }

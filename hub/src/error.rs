@@ -90,6 +90,11 @@ impl From<crate::observer::Refusal> for Refused {
             BadCommit(m) => refuse("bad-commit", m),
             BadKeyPackage(m) => refuse("bad-key-package", m),
             BadFormat(m) => refuse("bad-format", m),
+            Busy => refuse(
+                "overloaded",
+                "the state changed under this request: try again",
+            )
+            .retry(1),
         }
     }
 }

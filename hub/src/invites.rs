@@ -210,8 +210,8 @@ pub fn request(
     if count >= MAX_REQUESTS {
         return Err(refuse("too-many", "an invite takes four Requests"));
     }
-    x.c.prepare_cached("INSERT INTO invite_requests (invite_id, request_hash, request, mac, signature, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?
-        .execute(params![id, &hash[..], request_bytes, mac, signature, x.now as i64])?;
+    x.c.prepare_cached("INSERT INTO invite_requests (invite_id, request_hash, request, mac, signature, key_package_ref, device, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)")?
+        .execute(params![id, &hash[..], request_bytes, mac, signature, kp.key_package_ref, &kp.device[..], x.now as i64])?;
     fx.events.push(Event {
         room: invite.room,
         audience: Audience {
@@ -275,23 +275,14 @@ pub fn reveal(
             "the Reveal does not open the Offer's commitment",
         ));
     }
-    let request: Vec<u8> =
-        x.c.prepare_cached(
-            "SELECT request FROM invite_requests WHERE invite_id = ?1 AND request_hash = ?2",
-        )?
-        .query_row(params![id, &reveal.request_hash[..]], |r| r.get(0))
-        .optional()?
-        .ok_or_else(|| {
-            refuse(
-                "bad-invite",
-                "the Reveal names a Request the hub does not hold",
-            )
-        })?;
-    let kp = x
-        .obs
-        .key_package(&InviteRequest::parse(&request)?.key_package)?;
+    // the KeyPackage of that Request was checked when it came
+    let (key_package_ref, device): (Vec<u8>, Vec<u8>) =
+        x.c.prepare_cached("SELECT key_package_ref, device FROM invite_requests WHERE invite_id = ?1 AND request_hash = ?2")?
+            .query_row(params![id, &reveal.request_hash[..]], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?
+            .ok_or_else(|| refuse("bad-invite", "the Reveal names a Request the hub does not hold"))?;
     x.c.prepare_cached("UPDATE invites SET reveal = ?1, reveal_signature = ?2, revealed_request = ?3, revealed_ref = ?4, revealed_device = ?5 WHERE invite_id = ?6")?
-        .execute(params![reveal_bytes, signature, &reveal.request_hash[..], kp.key_package_ref, &kp.device[..], id])?;
+        .execute(params![reveal_bytes, signature, &reveal.request_hash[..], key_package_ref, device, id])?;
     Ok(json!({ "revealed": true }))
 }
 
