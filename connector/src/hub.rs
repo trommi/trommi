@@ -245,7 +245,10 @@ impl Hub {
             .and_then(Value::as_str)
             .unwrap_or("")
             .chars()
-            .filter(|c| !c.is_control())
+            .filter(|c| {
+                !c.is_control()
+                    && !matches!(*c, '<' | '>' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+            })
             .take(200)
             .collect();
         let mut fault = Fault::new(code, message).status(status);

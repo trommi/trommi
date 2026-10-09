@@ -209,12 +209,10 @@ pub async fn knock(p: &SlotPaths, request: &Value, timeout_ms: u64) -> Result<Va
 
 /// The socket of one Claude Code process: <runtime dir>/trommi-<uid>/mon-<pid>.sock.
 pub fn socket_path(claude_pid: u32) -> PathBuf {
-    let base = std::env::var("XDG_RUNTIME_DIR")
-        .ok()
-        .filter(|x| !x.is_empty() && Path::new(x).exists())
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join(format!("trommi-{}", uid()))
+    // The same private directory as the door's (owned by this user, mode 0700, no link): where that cannot be
+    // had, a path that cannot exist, so that nothing listens or connects in a directory of someone else's.
+    door_dir()
+        .unwrap_or_else(|_| PathBuf::from("/nonexistent/trommi"))
         .join(format!("mon-{claude_pid}.sock"))
 }
 pub fn bell_path(claude_pid: u32) -> PathBuf {

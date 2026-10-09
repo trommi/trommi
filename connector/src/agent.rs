@@ -697,7 +697,19 @@ impl Client {
         reference.insert("sha256".into(), json!(sealed.file.sha256.to_base64url()));
         reference.insert("total_size".into(), json!(sealed.plain_len));
         let mut core = self.core.lock().await;
-        core.files.push((file_id, bytes));
+        // Kept under the whole reference (id, key, hash): another reference to the same id finds nothing.
+        let cached = format!(
+            "{file_id} {} {}",
+            reference
+                .get("file_key")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            reference
+                .get("sha256")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        );
+        core.files.push((cached, bytes));
         if core.files.len() > 16 {
             core.files.remove(0);
         }
@@ -710,13 +722,14 @@ impl Client {
         let text = |key: &str| reference.get(key).and_then(Value::as_str).unwrap_or("");
         let file = FileRef::from_base64url(text("file_id"), text("file_key"), text("sha256"))?;
         let file_id = file.file_id.to_base64url();
+        let cached = format!("{file_id} {} {}", text("file_key"), text("sha256"));
         if let Some((_, bytes)) = self
             .core
             .lock()
             .await
             .files
             .iter()
-            .find(|(id, _)| *id == file_id)
+            .find(|(id, _)| *id == cached)
         {
             return Ok(bytes.clone());
         }

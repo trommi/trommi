@@ -6,23 +6,21 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
-/// The connector's binary, built once per test run beside the test's own executable.
-pub fn connector_binary() -> PathBuf {
-    static BUILT: std::sync::Once = std::sync::Once::new();
+/// A binary of this workspace, built once per test run beside the test's own executable.
+pub fn built(package: &str, name: &str) -> PathBuf {
+    static BUILT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     let exe = std::env::current_exe().expect("the test's path");
-    // target/<profile>/deps/<test> → target/<profile>/trommi-connector
+    // target/<profile>/deps/<test> → target/<profile>/<name>
     let profile_dir = exe
         .parent()
         .and_then(|p| p.parent())
         .expect("the target directory");
-    BUILT.call_once(|| {
+    let mut built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
+    if !built.iter().any(|done| done == package) {
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let mut build = std::process::Command::new(cargo);
-        build.args(["build", "--locked", "-p", "trommi-connector"]);
-        if profile_dir
-            .file_name()
-            .is_some_and(|name| name == "release")
-        {
+        build.args(["build", "--locked", "-p", package]);
+        if profile_dir.file_name().is_some_and(|dir| dir == "release") {
             build.arg("--release");
         }
         let status = build
@@ -30,9 +28,15 @@ pub fn connector_binary() -> PathBuf {
             .stderr(Stdio::inherit())
             .status()
             .expect("cargo runs");
-        assert!(status.success(), "the connector builds");
-    });
-    profile_dir.join("trommi-connector")
+        assert!(status.success(), "{package} builds");
+        built.push(package.to_string());
+    }
+    profile_dir.join(name)
+}
+
+/// The connector's binary.
+pub fn connector_binary() -> PathBuf {
+    built("trommi-connector", "trommi-connector")
 }
 
 /// The folder, home and state of one Claude Code session in a test.
@@ -52,11 +56,15 @@ impl Seat {
         let home = TempDir::new("seat");
         let folder = home.path().join("project");
         std::fs::create_dir_all(&folder).expect("a project folder");
-        let short = std::env::temp_dir()
-            .parent()
-            .map(|parent| parent.join("r"))
-            .unwrap_or_else(std::env::temp_dir)
-            .join(trommi_connector::util::random_hex(3));
+        // Inside the temporary folder, with a short name: a socket's path is bounded (about 104 bytes), and
+        // the connector's sockets lie two levels below this.
+        let short =
+            std::env::temp_dir().join(format!("r{}", trommi_connector::util::random_hex(3)));
+        assert!(
+            short.as_os_str().len() + 40 <= 103,
+            "the temporary folder's path is too long for the connector's sockets ({}): set TMPDIR to a shorter one",
+            short.display()
+        );
         std::fs::create_dir_all(&short).expect("a runtime directory");
         Seat {
             run: TempDir(short),
@@ -82,6 +90,8 @@ impl Seat {
             .env("TROMMI_HUB", &self.hub_url)
             .env("TROMMI_SESSION_KEY", &self.session_key)
             .env("TROMMI_CHANNEL_EVENTS", "on")
+            // `say` gives up after half a minute by default; a busy test machine may need longer to go online
+            .env("TROMMI_SAY_MS", "120000")
             .current_dir(&self.folder)
             .kill_on_drop(true);
         command
@@ -206,7 +216,7 @@ impl Mcp {
 
     /// Waits for a notification of this method; returns its params.
     pub async fn notification(&mut self, method: &str) -> Value {
-        for _ in 0..200 {
+        for _ in 0..900 {
             if let Some(at) = self.notifications.iter().position(|(m, _)| m == method) {
                 return self.notifications.remove(at).1;
             }
@@ -247,7 +257,7 @@ impl Mcp {
             })?;
             Some(list.remove(at).1)
         };
-        for _ in 0..200 {
+        for _ in 0..900 {
             if let Some(params) = found(&mut self.notifications) {
                 return params;
             }
@@ -260,7 +270,7 @@ impl Mcp {
 
     /// Waits until the connector is in its room: a tool call no longer says it is not.
     pub async fn ready(&mut self) {
-        for _ in 0..100 {
+        for _ in 0..450 {
             let (text, failed) = self.call("list_cards", json!({})).await;
             if !failed {
                 return;

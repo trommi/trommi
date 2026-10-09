@@ -251,7 +251,8 @@ jobs:
       - name: Build the release
         run: |
           set -eu
-          node connector/build-plugin.mjs "$RUNNER_TEMP/dist"
+          # the release number is compiled in: a connector refuses a release older than itself (update.rs)
+          TROMMI_RELEASE_VERSION="$VERSION" node connector/build-plugin.mjs "$RUNNER_TEMP/dist"
           mkdir out
           for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
             hash=$(cut -d' ' -f1 "$RUNNER_TEMP/dist/connector/trommi-connector-$target.sha256") || { echo "::error::no build for $target"; exit 1; }
