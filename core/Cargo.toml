@@ -3,6 +3,11 @@ name = "trommi-core"
 version = "0.0.0"
 edition.workspace = true
 publish.workspace = true
+description = "Trommi's protocol core: MLS groups through OpenMLS, and Trommi's own constructs on the same primitives."
+
+[features]
+# The seeded random source, for the generator of the specification's vectors only. Never in a shipped build.
+vectors = ["dep:rand_chacha", "dep:rand_core"]
 
 [dependencies]
 openmls = { workspace = true }
@@ -10,11 +15,25 @@ openmls_rust_crypto = { workspace = true }
 openmls_basic_credential = { workspace = true }
 openmls_traits = { workspace = true }
 openmls_memory_storage = { workspace = true }
-# The body cipher, used directly: the same crate and version the provider brings.
-aes-gcm = "=0.10.3"
+# Everything below is the crate and version the OpenMLS provider itself brings: named here only to be used directly.
+# The TLS presentation language, with MLS's rule that a length prefix is minimal.
+tls_codec = { version = "=0.5.0", features = ["derive", "mls"] }
+zeroize = "=1.9.1"
+subtle = "=2.6.1"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+getrandom = "=0.2.17"
+# The public half of a signature key from its seed; signing and verifying go through the provider.
+ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["zeroize"] }
+# HPKE's key schedule and the provider's X25519, for sealing with randomness from the caller.
+hpke-rs = { version = "=0.7.0", default-features = false }
+hpke-rs-crypto = "=0.7.0"
+hpke-rs-rust-crypto = "=0.7.0"
+rand_chacha = { version = "=0.3.1", default-features = false, optional = true }
+rand_core = { version = "=0.6.4", default-features = false, optional = true }
 
 # In a browser: randomness from crypto.getRandomValues (both getrandom generations in the tree need their switch),
 # time from Date.now (web-time, through OpenMLS's "js" feature).
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 openmls = { workspace = true, features = ["js"] }
-getrandom_02 = { package = "getrandom", version = "0.2.17", features = ["js"] }
+getrandom = { version = "=0.2.17", features = ["js"] }

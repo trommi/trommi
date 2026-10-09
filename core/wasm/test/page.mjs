@@ -1,4 +1,4 @@
-// The test page's module: the round trip in the page itself, or in a module worker (as the app's core runs).
+// The test page's module: the call into the core in the page itself, or in a module worker (as the app's core runs).
 import { roundTrip } from '/test/round-trip.mjs'
 const violations = []
 addEventListener('securitypolicyviolation', e => violations.push(`${e.violatedDirective} ${e.blockedURI}`))
