@@ -1,0 +1,46 @@
+# The hub under systemd. This file is part of every hub release: /etc/systemd/system/trommi-hub.service is a link to
+# /srv/trommi/current/trommi-hub.service, so the unit and the program change together and go back together.
+# Settings of this server are in /etc/trommi/hub.env (address, origins, switches) and /etc/trommi/hub-secrets.env
+# (push credentials); where the hub listens and keeps its data is fixed here and cannot be changed from those files.
+[Unit]
+Description=Trommi hub
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=trommi
+Group=trommi
+EnvironmentFile=/etc/trommi/hub.env
+EnvironmentFile=-/etc/trommi/hub-secrets.env
+ExecStart=/usr/bin/env HUB_HOST=127.0.0.1 HUB_PORT=8790 HUB_DATA=/srv/trommi/data /srv/trommi/current/trommi-hub
+Restart=always
+RestartSec=2
+TimeoutStopSec=30
+LimitNOFILE=65536
+UMask=0077
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/trommi/data
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
