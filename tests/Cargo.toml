@@ -169,3 +169,7 @@ path = "core/device_gate.rs"
 [[test]]
 name = "core_device_invite"
 path = "core/device_invite.rs"
+
+[[test]]
+name = "core_device_history"
+path = "core/device_history.rs"
