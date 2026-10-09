@@ -10,11 +10,21 @@
 //! **A Commit is pending** until the hub answers. Accepted: it is merged. `epoch-taken`: it stays until the
 //! log shows the Commit that took the epoch; if that is this device's own it is merged, otherwise it is
 //! dropped, the other one is processed, and the caller builds its change again. A join from outside is built on
-//! a copy of the state that replaces the real one only when the hub accepted it.
+//! a copy of the state that replaces the real one only when the hub accepted it, or when the log shows the
+//! join's own Commit; it is held back and decided by the log in the same way. While a Commit of a group is
+//! pending the device sends no application message in that group.
 //!
-//! **The log** is processed entry by entry in the hub's order ([`Device::process_log_entry`]). An entry that
-//! does not verify, process or obey the rules changes nothing: the error says why, and
-//! [`log_finding`] says what it means (`bad-group`, or an entry that came too early).
+//! **The log** is processed entry by entry in the hub's order ([`Device::process_log_entry`]), each entry
+//! once. An entry that does not verify, process or obey the rules changes nothing: the error says why, and
+//! [`log_finding`] says what it means (`bad-group`, an entry that came too early, a duplicate).
+//!
+//! **Leaf or observer.** A device follows a group as a leaf of it or as an observer, never as both. When it
+//! becomes a leaf of a group it followed, what the observer verified becomes the device's own record and the
+//! observer goes in the same write; a human device that processes its removal from the room group becomes an
+//! observer of it and so knows the room state that removed it.
+//!
+//! **One owner.** A write that meets [`StorageError::Conflict`] ends this object: it answers
+//! `Error::Storage` from then on and hands out nothing ([`Device::is_owner`]).
 
 use crate::codec::{self, Decode, Encode, Opaque, Reader, Writer};
 use crate::crypto::{self, Entropy, Secret, SigningKey};
@@ -25,8 +35,8 @@ use crate::mls::key_package::{self, KeyPackageInfo};
 use crate::mls::message::{EpochKey, TrommiMessage, MAX_HANDOVER_KEYS, MAX_MESSAGE_LEN};
 use crate::mls::observer::{self, Context, Observer};
 use crate::mls::profile::{
-    self, CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession, MAX_COMMIT_REQUEST_LEN,
-    MAX_HUMAN_DEVICES, RECOVERY_KEY_LEN,
+    self, CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession, MAX_AGENT_DEVICES,
+    MAX_COMMIT_REQUEST_LEN, MAX_HELPER_DEVICES, MAX_HUMAN_DEVICES, RECOVERY_KEY_LEN,
 };
 use crate::mls::provider::{self, DeviceSigner, MlsEntries, Provider};
 use crate::mls::rules::{
@@ -60,9 +70,10 @@ const SUB_GROUP: u8 = 2;
 const SUB_KEY_PACKAGE: u8 = 3;
 const SUB_STAGED: u8 = 4;
 const SUB_SENT: u8 = 5;
-const SUB_OWED: u8 = 6;
+const SUB_OWED: u8 = 7;
 const SUB_MAC: u8 = 0;
 const SUB_UNCONFIRMED: u8 = 1;
+const SUB_UNBOUND: u8 = 6;
 const SUB_OWN_HISTORY: u8 = 0;
 const SUB_OBSERVER: u8 = 1;
 
@@ -110,15 +121,17 @@ pub enum Processed {
     /// The entry is this device's own Commit: merged now, or already when the hub accepted it. Also its own
     /// join from outside, whose copy becomes the real state here when the hub's answer never came.
     OwnCommit,
+    /// A Commit of a group this device follows as an observer.
+    Observed(CommitFacts),
     /// A Commit of another device took the epoch that a join from outside of this device was built on: the
-    /// join and its outbox entry `superseded` are dropped, and the join is to be built again on what the hub
-    /// serves now.
+    /// join and its outbox entry `superseded` are dropped, and the join is to be built again on a newer
+    /// GroupInfo. `observed`: what that Commit did, where this device follows the group as an observer.
     JoinSuperseded {
         /// The dropped join.
         superseded: u64,
+        /// The Commit that took the epoch, as an observer saw it.
+        observed: Option<CommitFacts>,
     },
-    /// A Commit of a group this device follows as an observer.
-    Observed(CommitFacts),
     /// An application message that opened.
     Message(Received),
     /// Nothing for this device: a group it does not hold, a message it cannot open (7.0), or a message of a
@@ -130,6 +143,11 @@ pub enum Processed {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Received {
     /// A key handover for this device: how many keys were new to it, and whether it was the last message.
+    /// A key is taken only for an epoch its group has reached, as far as the device can tell: up to the
+    /// epoch of a group it is a leaf of or follows. A human device takes the keys of a session group it
+    /// never held as they come, in the room group, since it is handed them before it is added there; when
+    /// it joins that group, the handed keys of its joining epoch and of later ones are dropped. A key of a
+    /// group it was removed from is not taken.
     Keys {
         /// The sender.
         from: DeviceId,
@@ -192,13 +210,31 @@ pub enum Received {
 pub enum LogFinding {
     /// The entry came before another it needs: process the room group, or this group, further and try again.
     Early,
-    /// The entry lies behind what the device already processed: a duplicate.
+    /// The entry lies behind what the device already processed: a duplicate. Its `change` is not above the
+    /// cursor, or it is a Commit for an epoch its group has left.
     Duplicate,
     /// The entry does not verify, process or obey the rules: the finding `bad-group` (13.4). The device kept
     /// its last good state; the entry is reported to the hub.
     BadGroup,
     /// The device itself failed: its store, its entropy, or a request still pending.
     Local,
+}
+
+/// The group whose handshake message `bytes` are, as it travels: an `MLSMessage` holding a `PublicMessage`. The
+/// group is the one the message itself names, whatever the log entry says.
+fn handshake_group(bytes: &[u8]) -> Option<GroupId> {
+    if bytes.len() > MAX_COMMIT_REQUEST_LEN {
+        return None;
+    }
+    let parsed = openmls::prelude::MlsMessageIn::tls_deserialize_exact(bytes)
+        .ok()
+        .and_then(|message| message.try_into_protocol_message().ok());
+    match parsed {
+        Some(message @ ProtocolMessage::PublicMessage(_)) => {
+            GroupId::from_bytes(message.group_id().as_slice()).ok()
+        }
+        _ => None,
+    }
 }
 
 /// Sorts an error of [`Device::process_log_entry`].
@@ -229,8 +265,8 @@ pub struct Joined {
     pub epoch: u64,
     /// The device that added this one.
     pub added_by: DeviceId,
-    /// The leaves the room state does not allow, or in a helper session whatever breaks 5.2.3: the finding of
-    /// first contact (5.2.6). Not empty: the device holds the group, hands out no content key of it, opens no
+    /// The leaves the room state does not allow, or in a helper session whatever breaks 5.2.3 (also every
+    /// helper device of a session that holds more than seven): the finding of first contact (5.2.6). Not empty: the device holds the group, hands out no content key of it, opens no
     /// message of it and writes nothing into it but the Commit that removes leaves, until those leaves are
     /// removed.
     pub offending: Vec<DeviceId>,
@@ -297,6 +333,8 @@ struct Pending {
     time: u64,
     /// The hub answered `epoch-taken`: the log decides.
     awaiting_log: bool,
+    /// The Commit has a path, which renews this device's leaf; one that only adds has none (3.4).
+    renews_leaf: bool,
 }
 
 /// What the device keeps of a group beside OpenMLS's state.
@@ -307,7 +345,9 @@ struct GroupMeta {
     previous_room_epoch: u64,
     /// A main session's agent leaf over time.
     seats: Vec<(u64, Option<DeviceId>)>,
-    /// When this device's leaf was last renewed, and when it last committed an update.
+    /// When this device's leaf was last renewed: by an own Commit with a path, or when the group was founded
+    /// or joined (a Welcome does not say when the KeyPackage it used was made, so the join counts). And when
+    /// the device last committed an update.
     own_leaf_ms: u64,
     last_update_ms: u64,
     archived: bool,
@@ -344,7 +384,12 @@ impl Encode for GroupMeta {
                 self.pending
                     .as_ref()
                     .is_some_and(|pending| pending.awaiting_log),
-            ) << 4);
+            ) << 4)
+            | (u8::from(
+                self.pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.renews_leaf),
+            ) << 5);
         writer.u8(flags);
         let pending = self.pending.as_ref();
         writer.u64(pending.map_or(0, |pending| pending.outbox));
@@ -371,7 +416,7 @@ impl Decode for GroupMeta {
         let own_leaf_ms = reader.u64()?;
         let last_update_ms = reader.u64()?;
         let flags = reader.u8()?;
-        if flags >= 1 << 5 {
+        if flags >= 1 << 6 {
             return Err(Error::BadFormat);
         }
         let outbox = reader.u64()?;
@@ -382,6 +427,7 @@ impl Decode for GroupMeta {
             room_epoch,
             time,
             awaiting_log: flags & (1 << 4) != 0,
+            renews_leaf: flags & (1 << 5) != 0,
         });
         let epoch = reader.u64()?;
         let hash: Hash32 = reader.value()?;
@@ -407,9 +453,13 @@ impl Decode for GroupMeta {
 struct OwnKeyPackage {
     last_resort: bool,
     made_ms: u64,
-    /// For a last-resort one that was replaced: when.
+    /// For a last-resort one that was replaced: since when its private part is kept for one period more;
+    /// [`REPLACED`] until the device is told the time; 0 for one that is current.
     retired_ms: u64,
 }
+
+/// A last-resort KeyPackage that the hub replaced, before the device was told the time again.
+const REPLACED: u64 = u64::MAX;
 
 /// A change to the stored state that waits for the hub (13.2): everything a join from outside, or a whole
 /// recovery, leaves behind. It was made on a copy and is applied only when the hub accepted the outbox entry
@@ -419,6 +469,8 @@ struct Staged {
     entries: Vec<u64>,
     put: Vec<(Vec<u8>, Vec<u8>)>,
     delete: Vec<Vec<u8>>,
+    /// The hub answered `epoch-taken`: the log decides.
+    awaiting_log: bool,
 }
 
 impl Encode for Staged {
@@ -431,7 +483,9 @@ impl Encode for Staged {
         }
         writer.opaque(&put.into_bytes())?;
         let delete: Vec<Opaque> = self.delete.iter().cloned().map(Opaque).collect();
-        writer.vector(&delete)
+        writer.vector(&delete)?;
+        writer.u8(u8::from(self.awaiting_log));
+        Ok(())
     }
 }
 
@@ -448,10 +502,16 @@ impl Decode for Staged {
             .into_iter()
             .map(|key| key.0)
             .collect();
+        let awaiting_log = match reader.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::BadFormat),
+        };
         Ok(Self {
             entries,
             put,
             delete,
+            awaiting_log,
         })
     }
 }
@@ -483,6 +543,16 @@ impl Staged {
         };
         self.put.iter().all(|(key, _)| allowed(key)) && self.delete.iter().all(allowed)
     }
+}
+
+/// How far a group is, as a device that is handed one of its keys can tell.
+enum Reached {
+    /// The device is a leaf of the group or follows it, and it stands in this epoch.
+    Epoch(u64),
+    /// The device never held the group.
+    NotJoined,
+    /// The device was a leaf of the group and is none now, or its state of the group does not load.
+    Unknown,
 }
 
 /// What a Commit of the log means for a join from outside that waits.
@@ -544,6 +614,8 @@ struct Posting {
     recovery_auth: Vec<u8>,
     /// The room epoch its note names.
     room_epoch: u64,
+    /// Whether it has a path, which renews this device's leaf; a Commit that only adds has none (3.4).
+    renews_leaf: bool,
 }
 
 /// What a join with the code leaves behind (8.4).
@@ -579,6 +651,9 @@ struct Memory {
     owed: BTreeMap<OwedKey, Owed>,
     /// The content keys that only a row without a `mac` vouches for (8.5).
     unconfirmed: BTreeSet<(GroupId, u64)>,
+    /// Content keys that were handed over for a session group this device was no leaf of yet, so that it
+    /// could not tell whether the group had reached their epoch: group and epoch.
+    unbound: BTreeSet<(GroupId, u64)>,
 }
 
 /// What the device knows of the room's sessions, as the rules ask it.
@@ -649,6 +724,14 @@ fn content_key_key(group: &GroupId, epoch: u64) -> Vec<u8> {
     store::key(
         table::CONTENT_KEY,
         &[&[group.len() as u8], group, &epoch.to_be_bytes()],
+    )
+}
+
+fn unbound_key(group: &GroupId, epoch: u64) -> Vec<u8> {
+    let group = group.as_bytes();
+    device_key(
+        SUB_UNBOUND,
+        &[&[group.len() as u8], group, &epoch.to_be_bytes()].concat(),
     )
 }
 
@@ -759,6 +842,16 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                     let group = GroupId::from_bytes(rest.take(rest.remaining())?)
                         .map_err(|_| damaged("a handover record"))?;
                     memory.sent.insert((recipient, group));
+                }
+                SUB_UNBOUND => {
+                    let parsed = (|| {
+                        let group = group_after(&mut rest)?;
+                        let epoch = rest.u64()?;
+                        rest.finish()?;
+                        Ok::<_, Error>((group, epoch))
+                    })()
+                    .map_err(|_| damaged("a handed key's record"))?;
+                    memory.unbound.insert(parsed);
                 }
                 SUB_OWED => {
                     let waits_for = rest.u64().map_err(|_| damaged("an owed key"))?;
@@ -1077,7 +1170,9 @@ impl<S: Storage> Device<S> {
         self.memory.record.cursor
     }
 
-    /// The room's roles per epoch as this device knows them: from its own room group, or as an observer.
+    /// The room's roles per epoch as this device knows them: from its own room group, or as an observer. One
+    /// record at a time: a device that becomes a leaf of the room group takes its observer's record over, and
+    /// one that is removed from it hands its record to the observer it becomes.
     pub fn room_history(&self) -> Option<&RoomHistory> {
         let observed = self
             .memory
@@ -1092,7 +1187,9 @@ impl<S: Storage> Device<S> {
         self.room_history().ok_or(Error::RoomBehind)
     }
 
-    /// Whether this device is a human device now.
+    /// Whether this device is a human device now: a leaf of the room group in the newest room state it
+    /// knows. A device that processed its own removal from the room group follows that group as an observer
+    /// from then on and is no human device; operations in the room group answer `forbidden`.
     pub fn is_human(&self) -> bool {
         self.room_history()
             .is_some_and(|history| history.newest().is_human(&self.id))
@@ -1171,6 +1268,47 @@ impl<S: Storage> Device<S> {
         rules::disallowed_leaves(history, room, session, parent, leaves)
     }
 
+    /// What first contact finds among a session group's leaves (5.2.6): the leaves the newest room state does
+    /// not allow, and in a helper session that holds more helper devices than 5.2.3 allows, all of those.
+    fn unfit_at_first_contact(
+        &self,
+        meta: &GroupMeta,
+        leaves: &BTreeSet<DeviceId>,
+        known: &Known,
+    ) -> Vec<DeviceId> {
+        let mut unfit = self.disallowed(meta, leaves, known);
+        if let (Some(session), Some(history)) = (meta.session.as_ref(), self.room_history()) {
+            let room = history.newest();
+            let parent = known.main_session(&session.parent, room.epoch);
+            let helpers = rules::helper_devices(history, room, session, parent, leaves);
+            if helpers.len() > MAX_HELPER_DEVICES {
+                for helper in helpers {
+                    if !unfit.contains(&helper) {
+                        unfit.push(helper);
+                    }
+                }
+            }
+        }
+        unfit
+    }
+
+    /// Whether this device is the opener of the helper session `session` (5.2.3), by what it knows: an agent
+    /// device that is its main session's agent leaf. A device that does not follow the main session cannot
+    /// tell; as an agent device it then takes itself for the opener, and the others judge what it sends.
+    fn opens(&self, session: &TrommiSession) -> bool {
+        let Some(room) = self.room_history().map(RoomHistory::newest) else {
+            return false;
+        };
+        if session.parent.is_zero() || !room.is_agent(&self.id) {
+            return false;
+        }
+        match self.known().main_session(&session.parent, room.epoch) {
+            Parent::Seat(seat) => seat == Some(self.id),
+            Parent::Unknown => true,
+            Parent::NotAMainSession => false,
+        }
+    }
+
     fn known(&self) -> Known {
         let mut known = Known {
             seats: BTreeMap::new(),
@@ -1202,6 +1340,90 @@ impl<S: Storage> Device<S> {
             }
         }
         known
+    }
+
+    /// Takes the observer of `group` out of memory and its entries out of the store, in `batch`: for a device
+    /// that becomes a leaf of the group it followed.
+    fn retire_observer(&mut self, batch: &mut Batch, group: &GroupId) -> Option<Observer> {
+        let observer = self.memory.observers.remove(group)?;
+        let prefix = observer_prefix(group);
+        for key in self
+            .mirror
+            .range(prefix.clone()..)
+            .map(|(key, _)| key)
+            .take_while(|key| key.starts_with(&prefix))
+        {
+            batch.delete(key.clone());
+        }
+        Some(observer)
+    }
+
+    /// Makes `state`, the room group as this device joined it, the newest state of its own history. What it
+    /// verified before as an observer is carried over whole, revocations included (4.2), and the joined state
+    /// must fit its end: in the observer's epoch it is the same state (`bad-group`); one epoch on it follows
+    /// it, and brings back no key the history knows as revoked (`bad-group`); further on is `room-behind`:
+    /// the device processes the log up to the Commit that added it first. A state behind the observer's
+    /// epoch is `wrong-epoch`: nothing verified is given up for it.
+    fn adopt_room_history(
+        &mut self,
+        batch: &mut Batch,
+        observed: Option<RoomHistory>,
+        state: RoomState,
+    ) -> Result<(), Error> {
+        let history = match observed {
+            None => RoomHistory::new(state),
+            Some(mut observed) => {
+                let stands = observed.newest().epoch;
+                if state.epoch < stands {
+                    return Err(Error::WrongEpoch);
+                }
+                if state.epoch == stands {
+                    if *observed.newest() != state {
+                        return Err(Error::BadGroup);
+                    }
+                } else if stands.checked_add(1) == Some(state.epoch) {
+                    // The Commit that led here was not judged by the observer: what it must not have done
+                    // to the roles is checked on its result.
+                    let returns = state
+                        .humans
+                        .iter()
+                        .chain(state.room.agents.iter())
+                        .any(|device| observed.is_revoked(device, stands));
+                    if returns {
+                        return Err(Error::BadGroup);
+                    }
+                    observed.record(state)?;
+                } else {
+                    return Err(Error::RoomBehind);
+                }
+                observed
+            }
+        };
+        for state in history.states() {
+            batch.put(history_key(state.epoch), codec::encode(state)?);
+        }
+        self.memory.history = Some(history);
+        Ok(())
+    }
+
+    /// What an observer of a session group knew of it, for the record of a device that became a leaf of it
+    /// at `epoch` with `leaves`: the agent leaf over time and the room epoch of the last Commit. An observer
+    /// that stands in that epoch must hold the same leaves (`bad-group`); one in another epoch says nothing.
+    fn adopt_session_record(
+        meta: &mut GroupMeta,
+        observer: &Observer,
+        epoch: u64,
+        leaves: &BTreeSet<DeviceId>,
+    ) -> Result<(), Error> {
+        if observer.epoch()? != epoch {
+            return Ok(());
+        }
+        if observer.leaves()? != *leaves {
+            return Err(Error::BadGroup);
+        }
+        meta.seats = observer.seats().to_vec();
+        meta.previous_room_epoch = observer.previous_room_epoch();
+        Ok(())
     }
 
     // ---- small writers ----
@@ -1260,6 +1482,41 @@ impl<S: Storage> Device<S> {
         }
     }
 
+    /// This device stands in `group` at `epoch` now, as a leaf: of the keys it was handed for the group before
+    /// it could tell how far the group was (7.1), those of that epoch and of later ones go. The key of its
+    /// own epoch it derives itself, and a later epoch the group had not reached.
+    fn bound_handed_keys(&mut self, batch: &mut Batch, group: &GroupId, epoch: u64) {
+        let handed: Vec<u64> = self
+            .memory
+            .unbound
+            .range((*group, 0)..=(*group, u64::MAX))
+            .map(|(_, epoch)| *epoch)
+            .collect();
+        for handed in handed {
+            self.memory.unbound.remove(&(*group, handed));
+            batch.delete(unbound_key(group, handed));
+            if handed >= epoch {
+                self.memory.keys.remove(&(*group, handed));
+                batch.delete(content_key_key(group, handed));
+            }
+        }
+    }
+
+    /// How far `group` is, as far as this device can tell: the epoch of a group it is a leaf of or follows.
+    fn reached(&self, group: &GroupId) -> Reached {
+        match self.memory.groups.get(group) {
+            Some(meta) if meta.removed => Reached::Unknown,
+            Some(_) => group::load(&self.provider, group).map_or(Reached::Unknown, |held| {
+                Reached::Epoch(held.epoch().as_u64())
+            }),
+            None => match self.memory.observers.get(group).map(Observer::epoch) {
+                Some(Ok(epoch)) => Reached::Epoch(epoch),
+                Some(Err(_)) => Reached::Unknown,
+                None => Reached::NotJoined,
+            },
+        }
+    }
+
     fn enqueue(
         &mut self,
         batch: &mut Batch,
@@ -1291,13 +1548,20 @@ impl<S: Storage> Device<S> {
     // ---- the outbox ----
 
     /// Everything waiting to be sent, in the order to send it. An entry stays until the hub's answer was
-    /// reported; a Commit refused with `epoch-taken` is held back until the log decided it. Empty for a device
+    /// reported; a Commit or a join from outside refused with `epoch-taken` is held back until the log decided
+    /// it. Empty for a device
     /// that is no longer the owner of its stored state ([`Device::is_owner`]): what it holds may have been sent
     /// or replaced by the other owner.
     pub fn outbox(&self) -> Vec<OutboxEntry> {
         if self.lost {
             return Vec::new();
         }
+        let joins = self
+            .memory
+            .staged
+            .iter()
+            .filter(|(_, staged)| staged.awaiting_log)
+            .map(|(outbox, _)| *outbox);
         let held: BTreeSet<u64> = self
             .memory
             .groups
@@ -1305,6 +1569,7 @@ impl<S: Storage> Device<S> {
             .filter_map(|meta| meta.pending.as_ref())
             .filter(|pending| pending.awaiting_log)
             .map(|pending| pending.outbox)
+            .chain(joins)
             .collect();
         self.memory
             .outbox
@@ -1366,9 +1631,10 @@ impl<S: Storage> Device<S> {
         Ok(())
     }
 
-    /// The hub refused the outbox entry `id` with `code`. `epoch-taken` for a Commit: it is held back, and the
-    /// caller processes the log, which decides it. Any other refusal undoes what the entry was for: the pending
-    /// Commit is cleared, a founding's group or a staged join is dropped, the KeyPackages' private parts go.
+    /// The hub refused the outbox entry `id` with `code`. `epoch-taken` for a Commit or a join from outside:
+    /// it is held back, and the caller processes the log, which decides it. Any other refusal undoes what the
+    /// entry was for: the pending Commit is cleared, a founding's group or a staged join is dropped, the
+    /// KeyPackages' private parts go.
     pub fn outbox_refused(&mut self, id: u64, code: &Error) -> Result<(), Error> {
         self.transact(|device, batch| {
             let entry = device
@@ -1408,7 +1674,19 @@ impl<S: Storage> Device<S> {
                     | OutboxKind::RecoveryCommit
                     | OutboxKind::RecoveryFinish,
                     _,
-                ) => device.drop_staged(batch, id),
+                ) => {
+                    if entry.kind == OutboxKind::ExternalCommit && *code == Error::EpochTaken {
+                        // 13.2: the copy stays until the log shows which Commit took the epoch.
+                        let staged = device.memory.staged.get_mut(&id).ok_or(Error::NotFound)?;
+                        staged.awaiting_log = true;
+                        batch.put(
+                            device_key(SUB_STAGED, &id.to_be_bytes()),
+                            codec::encode(staged)?,
+                        );
+                        return Ok(());
+                    }
+                    device.drop_staged(batch, id);
+                }
                 (OutboxKind::Message, _) => {
                     // 7.0: a message of an epoch that ended is encrypted again; a recovery_mac is owed
                     // until the hub took it.
@@ -1463,7 +1741,9 @@ impl<S: Storage> Device<S> {
             .map_err(mls_fault)?;
         let meta = self.meta(id)?;
         meta.founding = false;
-        meta.own_leaf_ms = pending.time;
+        if pending.renews_leaf {
+            meta.own_leaf_ms = pending.time;
+        }
         meta.last_commit = Some((built_on, crypto::sha256(&commit)?));
         self.settle(batch, id, &group, pending.room_epoch)?;
         // 7.4: the recovery_mac owed with this Commit is encrypted in the epoch it led to.
@@ -1617,6 +1897,7 @@ impl<S: Storage> Device<S> {
                 .map(|entry| (entry.key.clone(), entry.value.clone()))
                 .collect(),
             delete: copy.delete.clone(),
+            awaiting_log: false,
         };
         batch.put(
             device_key(SUB_STAGED, &under.to_be_bytes()),
@@ -1733,14 +2014,31 @@ impl<S: Storage> Device<S> {
     /// still holds: enough to have [`SINGLE_USE_KEY_PACKAGES`], and a last-resort one when none was made in
     /// the last [`LAST_RESORT_FOR_MS`]. Their private parts are written with the outbox entry that publishes
     /// them (13.2). The last-resort one before it is retired when the hub accepted that entry, and its
-    /// private part kept [`LAST_RESORT_FOR_MS`] more; a refused entry leaves it the current one. Returns the
-    /// entry's id, or none when nothing is due.
+    /// private part kept [`LAST_RESORT_FOR_MS`] more, counted from the first call of this function after the
+    /// hub's answer; a refused entry leaves it the current one. Returns the entry's id, or none when nothing
+    /// is due.
     pub fn key_packages_to_upload(
         &mut self,
         unused_at_hub: usize,
         now_ms: u64,
     ) -> Result<Option<u64>, Error> {
         self.transact(|device, batch| {
+            // A last-resort one that the hub replaced is kept for a period from now on.
+            let replaced: Vec<Hash32> = device
+                .memory
+                .key_packages
+                .iter()
+                .filter(|(_, own)| own.retired_ms == REPLACED)
+                .map(|(reference, _)| *reference)
+                .collect();
+            for reference in replaced {
+                if let Some(own) = device.memory.key_packages.get_mut(&reference) {
+                    // A time of 0 would read as current.
+                    own.retired_ms = now_ms.clamp(1, REPLACED.saturating_sub(1));
+                    let own = own.clone();
+                    device.put_key_package(batch, &reference, &own);
+                }
+            }
             let fresh_last_resort = device.memory.key_packages.values().any(|own| {
                 own.last_resort
                     && own.retired_ms == 0
@@ -1762,6 +2060,7 @@ impl<S: Storage> Device<S> {
                     .filter(|(_, own)| {
                         own.last_resort
                             && own.retired_ms != 0
+                            && own.retired_ms != REPLACED
                             && now_ms.saturating_sub(own.retired_ms) >= LAST_RESORT_FOR_MS
                     })
                     .map(|(reference, _)| *reference)
@@ -1782,10 +2081,12 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// The hub took `replacement` as this device's last-resort KeyPackage: every one before it is retired from
-    /// the time the replacement was made. Its private part stays for [`LAST_RESORT_FOR_MS`] more.
+    /// The hub took `replacement` as this device's last-resort KeyPackage: every one made before it is
+    /// replaced. The period for which a replaced one's private part stays begins at the next call of
+    /// [`Device::key_packages_to_upload`], the first time after the hub's answer that the device is told the
+    /// time. One made after `replacement` is a later upload's and stays current.
     fn retire_last_resort(&mut self, batch: &mut Batch, replacement: &Hash32) {
-        let Some(since) = self
+        let Some(made) = self
             .memory
             .key_packages
             .get(replacement)
@@ -1797,15 +2098,12 @@ impl<S: Storage> Device<S> {
             .memory
             .key_packages
             .iter()
-            .filter(|(reference, own)| {
-                own.last_resort && own.retired_ms == 0 && *reference != replacement
-            })
+            .filter(|(_, own)| own.last_resort && own.retired_ms == 0 && own.made_ms < made)
             .map(|(reference, _)| *reference)
             .collect();
         for reference in before {
             if let Some(own) = self.memory.key_packages.get_mut(&reference) {
-                // A time of 0 would read as not retired.
-                own.retired_ms = since.max(1);
+                own.retired_ms = REPLACED;
                 let own = own.clone();
                 self.put_key_package(batch, &reference, &own);
             }
@@ -2077,6 +2375,8 @@ impl<S: Storage> Device<S> {
                         room_epoch: room.epoch,
                         time: now_ms,
                         awaiting_log: false,
+                        // The founder's leaf is as old as the group; the first Commit only adds.
+                        renews_leaf: false,
                     }),
                     ..GroupMeta::default()
                 },
@@ -2133,6 +2433,8 @@ impl<S: Storage> Device<S> {
             join: false,
         };
         let kind = context.map(GroupKind::Room);
+        // 3.4: a Commit that only adds has no path, and so leaves the committer's leaf as it is.
+        let renews_leaf = adds.is_empty() || !removes.is_empty() || kind.is_some();
         let change = Change {
             adds,
             removes: &removes,
@@ -2171,6 +2473,7 @@ impl<S: Storage> Device<S> {
             sealed,
             recovery_auth: Vec::new(),
             room_epoch: room.epoch,
+            renews_leaf,
         })
     }
 
@@ -2191,6 +2494,7 @@ impl<S: Storage> Device<S> {
             welcome,
             sealed,
             room_epoch,
+            renews_leaf,
             ..
         } = posting;
         let (kind, parts) = match with {
@@ -2209,6 +2513,7 @@ impl<S: Storage> Device<S> {
             room_epoch,
             time: now_ms,
             awaiting_log: false,
+            renews_leaf,
         });
         self.put_group(batch, &group)?;
         Ok(outbox)
@@ -2386,7 +2691,9 @@ impl<S: Storage> Device<S> {
     }
 
     /// The opener replaces a helper device that lost its state (5.3.5): Remove of the old leaf with its Cut
-    /// and Add of the new device in one Commit. A handover follows.
+    /// and Add of the new device in one Commit. A handover follows. Only the session's opener does this
+    /// (`forbidden`). The device that comes back has a new key (4.3), and the leaf that goes is a helper
+    /// device's: the same key again, a human device's leaf or the opener's own is `bad-commit`.
     pub fn readmit_helper(
         &mut self,
         group: &GroupId,
@@ -2396,8 +2703,13 @@ impl<S: Storage> Device<S> {
         now_ms: u64,
     ) -> Result<u64, Error> {
         self.transact(|this, batch| {
-            if group.is_room() || this.is_human() {
+            let session = this.meta(group)?.session;
+            if !session.is_some_and(|session| this.opens(&session)) {
                 return Err(Error::Forbidden);
+            }
+            let human = this.history()?.newest().is_human(&old.device);
+            if *device == old.device || old.device == this.id || human {
+                return Err(Error::BadCommit);
             }
             key_package::verify_key_package_of(key_package, device)?;
             let (package, _) = key_package::validated(key_package)?;
@@ -2407,8 +2719,9 @@ impl<S: Storage> Device<S> {
 
     /// The own-leaf update of a human device (5.2.9): an empty Commit when its leaf in `group` is older than
     /// seven days and its last update there older than a day, or at once when `forced` (after 5 000 stroke
-    /// pieces in an epoch, or `epoch-full`). Agent and helper devices make no Commit for an update
-    /// (`forbidden`). Returns none when nothing is due.
+    /// pieces in an epoch, or `epoch-full`). A leaf's age counts from the device's last Commit there that had
+    /// a path (an Add alone has none and renews nothing), or from its founding or joining the group. Agent
+    /// and helper devices make no Commit for an update (`forbidden`). Returns none when nothing is due.
     pub fn update(
         &mut self,
         group: &GroupId,
@@ -2447,7 +2760,16 @@ impl<S: Storage> Device<S> {
 
     /// Joins the group a Welcome is for (12.1.5, 5.2.6). The Welcome must be for one of this device's
     /// KeyPackages, for a group of the expected room that this device does not hold, and committed by the
-    /// expected device; one above [`MAX_COMMIT_REQUEST_LEN`] is `too-large` and is not parsed. A Welcome that is refused or does not open still uses up its single-use KeyPackage
+    /// expected device; one above [`MAX_COMMIT_REQUEST_LEN`] is `too-large` and is not parsed. A room group
+    /// with more than 32 human or 256 agent devices is refused (`too-many`).
+    ///
+    /// A device that followed the group as an observer becomes its leaf here: what it verified (the room's
+    /// roles per epoch with every revocation, a main session's agent leaf over time) becomes its own record,
+    /// the joined state must agree with it at the same epoch and bring back no revoked key (`bad-group`), and
+    /// the observer goes in the same write. A Welcome into the room group more than one epoch beyond what
+    /// the observer followed is `room-behind` and uses up nothing: the device processes the log further and
+    /// takes it then. One for an epoch the observer has left behind is `wrong-epoch`: a Welcome is taken at
+    /// its place in the log, with the Commit that made it. A Welcome that is refused or does not open still uses up its single-use KeyPackage
     /// (3.7): the device then asks to be added again.
     pub fn join_welcome(
         &mut self,
@@ -2468,25 +2790,35 @@ impl<S: Storage> Device<S> {
             if own.is_empty() {
                 return Err(Error::NotMember);
             }
-            let before = this.provider.entries();
-            let joined = this.join(batch, welcome, expected, now_ms);
-            if joined.is_err() {
-                // The refusal stands, and so does the loss of the single-use KeyPackage.
-                this.provider.restore(before);
-                for reference in own {
-                    let single_use = this
-                        .memory
-                        .key_packages
-                        .get(&reference)
-                        .is_some_and(|own| !own.last_resort);
-                    if single_use {
-                        key_package::forget(&this.provider, &reference)?;
-                        this.memory.key_packages.remove(&reference);
-                        batch.delete(device_key(SUB_KEY_PACKAGE, reference.as_bytes()));
+            let mut joining = Batch::new();
+            match this.join(&mut joining, welcome, expected, now_ms) {
+                Ok(joined) => {
+                    batch.put.append(&mut joining.put);
+                    batch.delete.append(&mut joining.delete);
+                    Ok(Ok(joined))
+                }
+                Err(error) => {
+                    // Nothing of the attempt stays. The refusal stands, and so does the loss of the
+                    // single-use KeyPackage (3.7), except where the Welcome only came too early: the room
+                    // group is to be processed further first, and the Welcome is taken then.
+                    this.reset()?;
+                    if error != Error::RoomBehind {
+                        for reference in own {
+                            let single_use = this
+                                .memory
+                                .key_packages
+                                .get(&reference)
+                                .is_some_and(|own| !own.last_resort);
+                            if single_use {
+                                key_package::forget(&this.provider, &reference)?;
+                                this.memory.key_packages.remove(&reference);
+                                batch.delete(device_key(SUB_KEY_PACKAGE, reference.as_bytes()));
+                            }
+                        }
                     }
+                    Ok(Err(error))
                 }
             }
-            Ok(joined)
         })?
     }
 
@@ -2530,6 +2862,10 @@ impl<S: Storage> Device<S> {
             return Err(Error::BadGroup);
         }
         let epoch = staged.group_context().epoch().as_u64();
+        // An epoch no group reaches by Commits: such a state would not open again.
+        if epoch > profile::MAX_STORED_EPOCH {
+            return Err(Error::BadGroup);
+        }
         let mut meta = GroupMeta {
             own_leaf_ms: now_ms,
             joined_epoch: epoch,
@@ -2539,23 +2875,35 @@ impl<S: Storage> Device<S> {
         match kind {
             GroupKind::Room(_) => {
                 let state = rules::room_state_of(staged.group_context(), &leaves)?;
-                batch.put(history_key(state.epoch), codec::encode(&state)?);
-                self.memory.history = Some(RoomHistory::new(state));
+                // Section 16: a device is added to a room of at most 32 human and 256 agent devices.
+                if state.humans.len() > MAX_HUMAN_DEVICES
+                    || state.room.agents.len() > MAX_AGENT_DEVICES
+                {
+                    return Err(Error::TooMany);
+                }
+                // What the device verified as an observer becomes its own history; the observer goes.
+                let observed = self
+                    .retire_observer(batch, &id)
+                    .and_then(Observer::into_history);
+                self.adopt_room_history(batch, observed, state)?;
                 self.memory.record.room = Some(expected.room);
                 self.put_record(batch)?;
             }
             GroupKind::Session(session) => {
+                if let Some(observer) = self.retire_observer(batch, &id) {
+                    Self::adopt_session_record(&mut meta, &observer, epoch, &devices)?;
+                }
                 let known = self.known();
                 let history = self.history()?;
                 let room = history.newest();
                 meta.session = Some(session);
-                if session.parent.is_zero() {
+                if session.parent.is_zero() && meta.seats.is_empty() {
                     meta.seats
                         .push((0, observer::seat(&session, &leaves, room)));
                 }
                 // 5.2.6: the group must obey the rules of its kind, and a helper session must have been
                 // made by its main session's agent leaf, the only non-human device that adds anyone.
-                offending = self.disallowed(&meta, &devices, &known);
+                offending = self.unfit_at_first_contact(&meta, &devices, &known);
                 let by_human = room.is_human(&added_by);
                 let by_opener = !session.parent.is_zero()
                     && !offending.contains(&added_by)
@@ -2569,7 +2917,10 @@ impl<S: Storage> Device<S> {
         let group = staged
             .into_group(&self.provider)
             .map_err(|_| Error::BadGroup)?;
+        // Section 3: every leaf of the tree the Welcome brought is the profile's.
+        rules::profile_leaves(group.public_group())?;
         let key = group::content_key(&self.provider, &group)?;
+        self.bound_handed_keys(batch, &id, epoch);
         self.keep_key(batch, &id, epoch, key);
         self.memory.groups.insert(id, meta);
         self.put_group(batch, &id)?;
@@ -2624,7 +2975,7 @@ impl<S: Storage> Device<S> {
     /// Starts following a main session's group as an observer, as a helper device does for the session its
     /// helper session hangs under (4.4).
     pub fn observe_session(&mut self, group_info: &[u8]) -> Result<(), Error> {
-        self.transact(|this, _| {
+        self.transact(|this, batch| {
             let room = this.history()?.newest().clone();
             let observer = Observer::follow_session(group_info, &room)?;
             let group = observer.group();
@@ -2634,6 +2985,9 @@ impl<S: Storage> Device<S> {
             {
                 return Err(Error::Replay);
             }
+            // The device can tell how far the group is now: handed keys beyond that go.
+            let beyond = observer.epoch()?.saturating_add(1);
+            this.bound_handed_keys(batch, &group, beyond);
             this.memory.observers.insert(group, observer);
             Ok(())
         })
@@ -2749,6 +3103,7 @@ impl<S: Storage> Device<S> {
             sealed,
             recovery_auth,
             room_epoch: room.epoch,
+            renews_leaf: true,
         })
     }
 
@@ -3101,14 +3456,36 @@ impl<S: Storage> Device<S> {
     /// a new epoch and the cursor are written together. Entries are handed in the hub's order across groups; a
     /// Commit that is not the next of its group, or a session Commit whose room epoch this device has not
     /// reached, is refused and changes nothing ([`log_finding`]).
+    ///
+    /// Every entry is processed once: one whose `change` is not above [`Device::cursor`] is refused as a
+    /// duplicate (`wrong-epoch`). An entry processed moves the cursor to its `change`, so handing a later
+    /// entry first passes the earlier ones. An own request that the hub accepted moves the cursor only when
+    /// its `change` is the next one; otherwise the log brings it by again, above the cursor, and it is met
+    /// there ([`Processed::OwnCommit`], or a message that is skipped).
+    ///
+    /// One kind of entry is processed at or below the cursor, and leaves the cursor where it is: the next
+    /// Commit of a group this device is a leaf of or follows, the one that names the epoch the group stands
+    /// in. It cannot be a duplicate. A device meets it there when it joined a group by a Welcome it took
+    /// after it had passed that group's later Commits, or when an entry was filed under another group: it
+    /// hands the group's entries again from the Welcome's place, and each next Commit is processed. An
+    /// application message at or below the cursor stays a duplicate: it opens once.
+    ///
+    /// An entry called a message whose bytes are a handshake message (a `PublicMessage`) of a group this
+    /// device is a leaf of or follows, by the group the message itself names, is refused (`bad-format`, the
+    /// finding `bad-group`) and the cursor stays: it is not passed over as a message that does not open.
     pub fn process_log_entry(&mut self, entry: &LogEntry<'_>) -> Result<Processed, Error> {
         let (processed, adopted) = self.transact(|this, batch| {
-            let member = this
-                .memory
-                .groups
-                .get(&entry.group)
-                .is_some_and(|meta| !meta.removed);
             let mut adopted = false;
+            // 5.4.1: every entry once, in the hub's order. One at or below the cursor was processed, or was
+            // passed when a later one was: it is a duplicate. The one exception is the next Commit of a
+            // group this device is a leaf of or follows, which cannot have been processed.
+            if entry.change <= this.memory.record.cursor && !this.is_next_commit(entry) {
+                return Err(Error::WrongEpoch);
+            }
+            // A group this device is a leaf of is processed as a member, also when an observer of it is
+            // still held.
+            let member = this.is_leaf_of(&entry.group);
+            let observed = this.memory.observers.contains_key(&entry.group);
             let processed = match entry.kind {
                 LogKind::Commit {
                     bytes,
@@ -3119,22 +3496,37 @@ impl<S: Storage> Device<S> {
                         Processed::OwnCommit
                     }
                     verdict => {
-                        let processed = if this.memory.observers.contains_key(&entry.group) {
-                            this.observe_commit(&entry.group, bytes, recovery_auth)?
-                        } else if member {
+                        let processed = if member {
                             this.process_commit(batch, &entry.group, bytes, recovery_auth)?
+                        } else if observed {
+                            this.observe_commit(&entry.group, bytes, recovery_auth)?
                         } else {
                             Processed::Skipped
                         };
-                        match verdict {
-                            Some(StagedVerdict::Superseded(superseded)) => {
-                                Processed::JoinSuperseded { superseded }
+                        match (verdict, processed) {
+                            (Some(StagedVerdict::Superseded(superseded)), processed) => {
+                                Processed::JoinSuperseded {
+                                    superseded,
+                                    observed: match processed {
+                                        Processed::Observed(facts) => Some(facts),
+                                        _ => None,
+                                    },
+                                }
                             }
-                            _ => processed,
+                            (_, processed) => processed,
                         }
                     }
                 },
                 LogKind::Message { bytes } => {
+                    // A handshake message of a group this device follows is no application message,
+                    // whatever the entry is called and whichever group it is filed under: passing it over
+                    // would lose a Commit.
+                    let hidden = handshake_group(bytes).is_some_and(|named| {
+                        this.is_leaf_of(&named) || this.memory.observers.contains_key(&named)
+                    });
+                    if hidden {
+                        return Err(Error::BadFormat);
+                    }
                     if member {
                         this.process_message(batch, &entry.group, bytes)?
                     } else {
@@ -3187,6 +3579,39 @@ impl<S: Storage> Device<S> {
         }
         self.drop_staged(batch, outbox);
         Ok(Some(StagedVerdict::Superseded(outbox)))
+    }
+
+    fn is_leaf_of(&self, group: &GroupId) -> bool {
+        self.memory
+            .groups
+            .get(group)
+            .is_some_and(|meta| !meta.removed)
+    }
+
+    /// Whether `entry` is the next Commit of its group as this device holds or follows it: the Commit names
+    /// the group and the epoch the group stands in. Such an entry was not processed, whatever its place in the
+    /// log: a device that took a Welcome after it had passed the group's later Commits meets them this way.
+    fn is_next_commit(&self, entry: &LogEntry<'_>) -> bool {
+        let LogKind::Commit { bytes, .. } = entry.kind else {
+            return false;
+        };
+        let Ok(message) = rules::parse_commit(bytes) else {
+            return false;
+        };
+        if GroupId::from_bytes(message.group_id().as_slice()) != Ok(entry.group) {
+            return false;
+        }
+        let stands = if self.is_leaf_of(&entry.group) {
+            group::load(&self.provider, &entry.group)
+                .ok()
+                .map(|group| group.epoch().as_u64())
+        } else {
+            self.memory
+                .observers
+                .get(&entry.group)
+                .and_then(|observer| observer.epoch().ok())
+        };
+        stands == Some(message.epoch().as_u64())
     }
 
     fn observe_commit(
@@ -3308,6 +3733,13 @@ impl<S: Storage> Device<S> {
         let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
             return Err(Error::BadGroup);
         };
+        // A device removed from the room group goes on as an observer of it, so that it knows the room
+        // state that removed it and judges its remaining session groups against it.
+        let follower = if id.is_room() && staged.self_removed() {
+            Some(self.follow_after_removal(id, commit, recovery_auth, &known)?)
+        } else {
+            None
+        };
         group
             .merge_staged_commit(&self.provider, *staged)
             .map_err(|_| Error::BadGroup)?;
@@ -3319,16 +3751,56 @@ impl<S: Storage> Device<S> {
                 .map(|(_, device)| device)
                 .collect();
             let meta = self.meta(id)?.clone();
-            let clean = self.disallowed(&meta, &after, &known).is_empty();
+            let clean = self
+                .unfit_at_first_contact(&meta, &after, &known)
+                .is_empty();
             self.meta(id)?.distrusted = !clean;
         }
         let removed = !group.is_active();
         self.settle(batch, id, &group, room_epoch)?;
+        if let Some(observer) = follower {
+            // The roles are the observer's from here on: the device's own record of them goes.
+            for state in self
+                .memory
+                .history
+                .take()
+                .iter()
+                .flat_map(RoomHistory::states)
+            {
+                batch.delete(history_key(state.epoch));
+            }
+            self.memory.observers.insert(*id, observer);
+        }
         Ok(Processed::Commit {
             facts,
             superseded,
             removed,
         })
+    }
+
+    /// An observer of the room group that stands behind `commit`, which removes this device: started from the
+    /// public state this device holds as a leaf, with its history, and then following the Commit as any
+    /// observer does. OpenMLS gives a removed member the new tree and no full group context; the observer has
+    /// both. Nothing of the state before the Commit is verified again: the leaf verified it.
+    fn follow_after_removal(
+        &self,
+        group: &GroupId,
+        commit: &[u8],
+        recovery_auth: Option<&[u8]>,
+        known: &Known,
+    ) -> Result<Observer, Error> {
+        let id = openmls::prelude::GroupId::from_slice(group.as_bytes());
+        let public = provider::public_entries(&self.provider.entries(), &id)?;
+        let history = self.memory.history.clone().ok_or(Error::RoomBehind)?;
+        let mut observer = Observer::from_member(public, *group, history)?;
+        let context = Context {
+            room: None,
+            sessions: known,
+            recovery: &PublicRules,
+            max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
+        };
+        observer.process_commit(commit, recovery_auth, &context)?;
+        Ok(observer)
     }
 
     // ---- application messages ----
@@ -3396,8 +3868,10 @@ impl<S: Storage> Device<S> {
         from: DeviceId,
         message: TrommiMessage,
     ) -> Result<Received, Error> {
-        let room = self.history()?.newest().clone();
+        let history = self.history()?;
+        let room = history.newest().clone();
         let from_human = room.is_human(&from);
+        let from_revoked = history.is_revoked(&from, room.epoch);
         let session = self.meta(id)?.session;
         let helper = session.is_some_and(|session| !session.parent.is_zero());
         let from_opener = helper && !from_human && {
@@ -3434,19 +3908,27 @@ impl<S: Storage> Device<S> {
                     if key.group.room_id() != id.room_id() {
                         continue;
                     }
-                    // Only for an epoch that group has reached.
+                    // Only for an epoch that group has reached. A human device is handed the keys of the
+                    // session groups in the room group before it is added to them (7.1): of a session group
+                    // it never held it takes them unchecked and remembers that, until it joins the group.
+                    // A key of a group whose epoch it cannot tell for another reason is not taken.
                     let reached = if here {
-                        Some(own_epoch)
+                        Reached::Epoch(own_epoch)
                     } else {
-                        group::load(&self.provider, &key.group)
-                            .ok()
-                            .map(|other| other.epoch().as_u64())
+                        self.reached(&key.group)
                     };
-                    if reached.is_some_and(|reached| key.epoch > reached) {
-                        continue;
-                    }
-                    if self.keep_key(batch, &key.group, key.epoch, key.content_key) {
+                    let unbound = match reached {
+                        Reached::Epoch(reached) if key.epoch <= reached => false,
+                        Reached::NotJoined if !key.group.is_room() => true,
+                        _ => continue,
+                    };
+                    let (of, epoch) = (key.group, key.epoch);
+                    if self.keep_key(batch, &of, epoch, key.content_key) {
                         taken = taken.saturating_add(1);
+                        if unbound {
+                            self.memory.unbound.insert((of, epoch));
+                            batch.put(unbound_key(&of, epoch), Vec::new());
+                        }
                     }
                 }
                 Received::Keys { from, taken, last }
@@ -3459,13 +3941,17 @@ impl<S: Storage> Device<S> {
                 number,
                 time,
                 step,
-            } if session.is_some() && !from_human && number != 0 => Received::WorkTrail {
-                from,
-                turn,
-                number,
-                time,
-                step,
-            },
+                // 7.3: from the session's agent or helper devices. A leaf that is no human device is one of them
+                // unless its key is revoked: a removed human device, or a replaced agent device.
+            } if session.is_some() && !from_human && !from_revoked && number != 0 => {
+                Received::WorkTrail {
+                    from,
+                    turn,
+                    number,
+                    time,
+                    step,
+                }
+            }
             TrommiMessage::RecoveryAuth {
                 recipient,
                 recovery_hpke_key,
@@ -3559,7 +4045,7 @@ impl<S: Storage> Device<S> {
 
     /// Hands old content keys to `recipient` in `group` (7.1), in as many messages as needed. In the room
     /// group a human device sends every key it holds for every group of the room; in a session group a human
-    /// device, or a helper session's opener, sends that group's keys. What was sent is remembered until
+    /// device, or a helper session's opener, sends that group's keys; any other device is `forbidden`. What was sent is remembered until
     /// [`Device::handover_read`]. Returns the outbox ids.
     pub fn send_handover(
         &mut self,
@@ -3568,18 +4054,24 @@ impl<S: Storage> Device<S> {
     ) -> Result<Vec<u64>, Error> {
         self.transact(|this, batch| {
             let human = this.is_human();
-            let helper = this
-                .meta(group)?
-                .session
-                .is_some_and(|session| !session.parent.is_zero());
-            if !human && !helper {
+            let session = this.meta(group)?.session;
+            if !human && !session.is_some_and(|session| this.opens(&session)) {
                 return Err(Error::Forbidden);
             }
+            // 5.2.6: no key of a group that failed its first contact is handed on.
+            let quarantined: BTreeSet<GroupId> = this
+                .memory
+                .groups
+                .iter()
+                .filter(|(_, meta)| meta.distrusted)
+                .map(|(of, _)| *of)
+                .collect();
             let keys: Vec<EpochKey> = this
                 .memory
                 .keys
                 .iter()
                 .filter(|((of, _), _)| of == group || (group.is_room() && human))
+                .filter(|((of, _), _)| !quarantined.contains(of))
                 .map(|((of, epoch), key)| EpochKey {
                     group: *of,
                     epoch: *epoch,

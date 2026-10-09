@@ -251,13 +251,12 @@ fn duplicates_and_reordered_entries_are_refused_and_change_nothing() {
         b.content_key(&group, 2).unwrap(),
     );
 
-    // Each of them a second time: a Commit lies behind the device's state, a message opens once.
-    for item in [room_1, room_2, session_1] {
+    // Each of them a second time: it lies at or below the cursor, a duplicate, whatever it holds.
+    for item in [room_1, room_2, session_1, message] {
         let error = process(&mut b, item).unwrap_err();
         assert_eq!(error, Error::WrongEpoch);
         assert_eq!(log_finding(&error), LogFinding::Duplicate);
     }
-    assert_eq!(process(&mut b, message), Ok(Processed::Skipped));
     assert_eq!(state(&b), (4, 2));
     assert_eq!(b.content_key(&room_group, 4).unwrap(), keys.0);
     assert_eq!(b.content_key(&group, 2).unwrap(), keys.1);
@@ -268,6 +267,48 @@ fn duplicates_and_reordered_entries_are_refused_and_change_nothing() {
     b.send_handover(&room_group, &a.id()).unwrap();
     post_ok(&mut hub, &mut a);
     assert_eq!(post_refused(&mut hub, &mut b), [Error::WrongEpoch]);
+    sync_ok(&hub, &mut b);
+
+    // The same Commits under a change number the hub never gave them, above the cursor: each lies behind
+    // its group's epoch, and the message opens no second time.
+    let mut again = hub.change();
+    for item in [room_1, room_2, session_1] {
+        again += 1;
+        let mut moved = item.clone();
+        moved.change = again;
+        let error = process(&mut b, &moved).unwrap_err();
+        assert_eq!(error, Error::WrongEpoch);
+        assert_eq!(log_finding(&error), LogFinding::Duplicate);
+    }
+    let mut moved = message.clone();
+    moved.change = again + 1;
+    assert_eq!(process(&mut b, &moved), Ok(Processed::Skipped));
+    assert_eq!(b.cursor(), again + 1);
+
+    // An entry that the hub calls a message and that holds a Commit of a group the device is a leaf of is
+    // not passed over like a message that does not open: it is refused, and the cursor stays.
+    a.update(&group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    let mut mislabelled = hub.log.last().unwrap().clone();
+    assert!(mislabelled.commit);
+    mislabelled.change = b.cursor() + 1;
+    mislabelled.commit = false;
+    let error = process(&mut b, &mislabelled).unwrap_err();
+    assert_eq!(error, Error::BadFormat);
+    assert_eq!(log_finding(&error), LogFinding::BadGroup);
+    assert_eq!((b.cursor(), state(&b)), (again + 1, (5, 2)));
+    // Filed under another group it is still what it is: the group is the one the message names.
+    mislabelled.group = room_group;
+    assert_eq!(process(&mut b, &mislabelled), Err(Error::BadFormat));
+    assert_eq!((b.cursor(), state(&b)), (again + 1, (5, 2)));
+    mislabelled.group = group;
+    // Called what it is, it processes.
+    mislabelled.commit = true;
+    assert!(matches!(
+        process(&mut b, &mislabelled),
+        Ok(Processed::Commit { .. })
+    ));
+    assert_eq!(state(&b), (5, 3));
 }
 
 #[test]
@@ -582,4 +623,72 @@ fn a_takeover_races_with_a_helper_founding() {
     // and its first contact (5.2.6) judges the group against the newest room state, not the one of the
     // founding: it holds the group as distrusted and hands out no key of it, so the keys of the helper session
     // are not compared here.
+}
+
+#[test]
+fn a_welcome_taken_late_is_caught_up_from_its_place_in_the_log() {
+    let (mut a, mut b, mut agent) = (new_device(), new_device(), new_device());
+    let (mut hub, room_group) = found_room(&mut a);
+    enrol(&mut hub, &mut a, &mut agent);
+    publish_some(&mut hub, &mut agent, 1);
+    let group = found_main(&mut hub, &mut a, &agent.id());
+    add_human(&mut hub, &mut a, &mut b);
+    settle(&hub, &mut b);
+
+    // The device is added to the session group, and the group and the room go on.
+    let from = hub.change();
+    let package = b.key_package(now()).unwrap();
+    a.add_to_session(&group, &b.id(), &package, now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let welcome = hub.welcomes.last().unwrap().bytes.clone();
+    for target in [group, room_group, group] {
+        a.update(&target, true, now()).unwrap().unwrap();
+        post_ok(&mut hub, &mut a);
+    }
+    // It processes the log without taking its Welcome: the session's entries are not for it yet, and the
+    // cursor passes them.
+    let log = hub.log_after(from);
+    let done: Vec<_> = log.iter().map(|item| process(&mut b, item)).collect();
+    assert!(matches!(
+        &done[..],
+        [
+            Ok(Processed::Skipped),
+            Ok(Processed::Skipped),
+            Ok(Processed::Commit { .. }),
+            Ok(Processed::Skipped)
+        ]
+    ));
+    assert_eq!(b.cursor(), hub.change());
+
+    // It takes the Welcome now, and hands the entries again from the Welcome's place. Those of the group it
+    // just joined that are its next Commits process, below the cursor; every other one is a duplicate.
+    let expected = trommi_core::device::WelcomeExpectation {
+        room: room_group.room_id(),
+        committer: Some(a.id()),
+    };
+    let joined = b.join_welcome(&welcome, &expected, now()).unwrap();
+    assert_eq!((joined.group, joined.epoch), (group, 2));
+    let again: Vec<_> = log.iter().map(|item| process(&mut b, item)).collect();
+    assert!(matches!(
+        &again[..],
+        [
+            Err(Error::WrongEpoch),
+            Ok(Processed::Commit { .. }),
+            Err(Error::WrongEpoch),
+            Ok(Processed::Commit { .. })
+        ]
+    ));
+    assert_eq!(b.cursor(), hub.change());
+    let epoch = hub.epoch(&group).unwrap();
+    assert_eq!(b.group(&group).unwrap().epoch, epoch);
+    for at in 2..=epoch {
+        assert_eq!(
+            b.content_key(&group, at).unwrap(),
+            a.content_key(&group, at).unwrap()
+        );
+    }
+    // A third time every one of them is a duplicate.
+    for item in &log {
+        assert_eq!(process(&mut b, item), Err(Error::WrongEpoch));
+    }
 }

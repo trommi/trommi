@@ -1588,7 +1588,8 @@ fn the_log_decides_a_join_whose_answer_never_came() {
     post_ok(&mut w.hub, &mut w.a);
     let processed = sync(&w.hub, &mut e);
     assert!(processed.contains(&Ok(Processed::JoinSuperseded {
-        superseded: built_e.outbox[0]
+        superseded: built_e.outbox[0],
+        observed: None
     })));
     assert!(e.outbox().is_empty() && e.room().is_none());
     assert!(d.outbox().is_empty() && built.outbox.len() == 1);

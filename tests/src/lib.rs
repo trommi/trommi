@@ -2,6 +2,7 @@
 //! with, and the few steps every scenario repeats (post the outbox, process the log, take the Welcomes, fetch
 //! what a device that joins with the code is served).
 
+pub mod content;
 pub mod forge;
 pub mod hub;
 pub mod store;
