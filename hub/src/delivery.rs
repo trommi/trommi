@@ -111,6 +111,21 @@ fn check_sealed_key(
     Ok(key)
 }
 
+fn hold_recovery_keys(
+    c: &Connection,
+    room: &Room,
+    signature_key: &[u8],
+    hpke_key: &[u8],
+) -> Res<()> {
+    for key in [signature_key, hpke_key] {
+        c.prepare_cached(
+            "INSERT OR IGNORE INTO recovery_keys_held (room_id, key) VALUES (?1, ?2)",
+        )?
+        .execute(params![&room[..], key])?;
+    }
+    Ok(())
+}
+
 fn store_sealed_key(c: &Connection, room: &Room, key: &SealedKey, bytes: &[u8]) -> Res<()> {
     let change = next_change(c, room)?;
     c.prepare_cached(
@@ -247,6 +262,12 @@ pub fn found_room(x: &Ctx, group_info: &[u8], sealed_key: &[u8]) -> Res<Founded>
         &room_ext.recovery_hpke_key,
         &founder,
         true,
+    )?;
+    hold_recovery_keys(
+        x.c,
+        &room,
+        &room_ext.recovery_signature_key,
+        &room_ext.recovery_hpke_key,
     )?;
     x.c.prepare_cached(
         "INSERT INTO rooms (room_id, founded_at, change, epoch, room_state, recovery_signature_key, recovery_hpke_key)
@@ -704,13 +725,26 @@ fn commit_in(
                     return Err(bad("a recovery key that is or was a device's key"));
                 }
             }
-            // 8.6: never a key the room held before (the hub knows the keys its rows were sealed to)
-            if x.c
-                .prepare_cached("SELECT 1 FROM sealed_keys WHERE room_id = ?1 AND recovery_hpke_key = ?2 LIMIT 1")?
-                .exists(params![&room[..], after.recovery_hpke_key])?
-            {
-                return Err(bad("a recovery key the room held before"));
+            // 8.6: never a key the room held before, as either of the two
+            for key in [&after.recovery_signature_key, &after.recovery_hpke_key] {
+                if x.c
+                    .prepare_cached(
+                        "SELECT 1 FROM recovery_keys_held WHERE room_id = ?1 AND key = ?2",
+                    )?
+                    .exists(params![&room[..], key])?
+                {
+                    return Err(bad("a recovery key the room held before"));
+                }
             }
+            if after.recovery_signature_key == after.recovery_hpke_key {
+                return Err(bad("one key for both of the recovery's uses"));
+            }
+            hold_recovery_keys(
+                x.c,
+                &room,
+                &after.recovery_signature_key,
+                &after.recovery_hpke_key,
+            )?;
             scope.keys_replaced = true;
             row_room_epoch = facts.after.epoch;
         }
