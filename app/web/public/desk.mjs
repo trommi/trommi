@@ -281,13 +281,12 @@ const deskStacks = (model, base) => html`<div class="inbox-stacks stack-tabs is-
 // ---- the end of the Desk's list (his word, 8 October: "much slimmer at the end of the list, a checkbox to tick off,
 // max 5, then load more; ticked ones stay visible; the pile Off the desk goes into it") ----
 // After the open questions and the cards out with the agents: one slim list. First what the agents finished and he has
-// not ticked off yet (app.mjs landed: a drawn empty box, the title, the agent's closing line in grey); a tick is Archive
-// (the toast's Undo takes it back). Then what is put off (Later: the three Z), then what is ticked off already (answered,
-// done, shredded, withdrawn: a ticked box, struck through). Five rows, "Load more" five more; "All" opens the whole
+// not archived yet (app.mjs landed: the title, the agent's closing line in grey, the drawn archive box at the right: his
+// word, 9 October, "an Archive button instead of ticking, and it strikes the row through"); the button is Archive: the
+// title is struck through first (STRIKE_MS below), then the card is archived (the toast's Undo takes it back). Then
+// what is put off (Later: the three Z), then what is ticked off already (answered, done, shredded, withdrawn: a ticked box, struck through). Five rows, "Load more" five more; "All" opens the whole
 // list with its search (/stacks/off). A title opens its card.
 const END_STEP = 5
-// The gear that turns while a card is with its agent (desk.css: slowly; still where motion is reduced)
-const BOX = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/></svg>')
 const BOX_TICK = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/><path class="end-check" d="M7.4 12.6 Q9.4 14.8 10.8 16.8 Q14.6 10.4 21.6 3.2"/></svg>')
 /** A section's heading at the Desk's foot: a pen rule with its small label; a link (Show more, All Artifacts) where
  *  the rule ends, at its right. */
@@ -305,14 +304,14 @@ function endList(model, base, { full = false, q = '' } = {}) {
   const total = whole ? items.length : works.length + open.length + later.length + closedSize
   if (terms.length) items = items.filter(s => terms.every(w => `${s.card.title} ${model.byAgent.get(s.card.agent)?.name ?? ''} ${s.said}`.toLowerCase().includes(w)))
   if (!items.length && !full) return html`<section id="${id}" class="endlist" hidden></section>`
-  // (a box he ticked himself can be unticked: Archive taken back; a card closed by his answer stays ticked)
+  // (a card he archived himself can be taken back: its ticked box is Unarchive; a card closed by his answer stays ticked)
   const tickForm = (c, way, label, inner, cls = '') => html`<form class="end-form" method="post" action="${act(c, base, way)}"><input type="hidden" name="stay" value="1"><button class="end-tick${cls}" type="submit" title="${label}" aria-label="${label}: ${c.title}">${inner}</button></form>`
   const row = (s, i) => {
     const c = s.card, href = cardPath(c, base)
     const box = s.g === 'works' ? html`<span class="end-tick is-working" title="Being worked on" role="img" aria-label="Being worked on"><i class="work-dot"></i></span>`
-      : s.g === 'open' ? tickForm(c, 'archive', 'Tick it off', BOX)
+      : s.g === 'open' ? tickForm(c, 'archive', 'Archive', sk('archive'), ' is-archive')
       : s.g === 'later' ? html`<span class="end-tick is-later" title="Put off: Later" role="img" aria-label="Later">${sk('snooze')}</span>`
-        : c.archived ? tickForm(c, 'unarchive', 'Untick: back to tick off', BOX_TICK, ' is-ticked')
+        : c.archived ? tickForm(c, 'unarchive', 'Unarchive', BOX_TICK, ' is-ticked')
           : html`<span class="end-tick is-ticked" title="${s.g === 'trash' ? 'Thrown away' : 'Done'}" role="img" aria-label="${s.g === 'trash' ? 'Thrown away' : 'Done'}">${BOX_TICK}</span>`
     return html`<li class="end-row" data-g="${s.g}" data-id="${c.id}">${box}<a class="end-title" data-nav href="${href}" title="${c.title} · ${s.said}">${c.title}</a><span class="end-said">${s.said}</span>${agoSpan(s.at, 'ago end-ago')}</li>`
   }
@@ -321,6 +320,26 @@ ${divider('Off your mind', !full && (terms.length ? items.length : total) > END_
 <ol class="end-rows">${(full ? items : items.slice(0, END_STEP)).map(row)}</ol>${full && !items.length ? html`<p class="end-none">${terms.length ? 'Nothing here has these words.' : 'Nothing yet.'}</p>` : ''}
 </section>`
 }
+
+/** Archive in the end list strikes the row through first: the line is drawn across the title and the row dims
+ *  (desk.css .end-row.is-archiving), then the form goes as before. Where motion is reduced it goes at once. */
+const STRIKE_MS = 700
+const striking = new Set(), struck = new Set()
+if (typeof document !== 'undefined') document.addEventListener('submit', e => {
+  const form = e.target, row = form.closest?.('.end-row[data-g="open"]'), id = row?.dataset.id
+  if (!id || !form.classList.contains('end-form')) return
+  if (struck.delete(id) || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  e.preventDefault(); e.stopImmediatePropagation()
+  if (striking.has(id)) return
+  striking.add(id)
+  row.classList.add('is-archiving')
+  setTimeout(() => {
+    striking.delete(id)
+    // (a live update may have drawn the row anew meanwhile: the form of now)
+    const now = document.querySelector(`.end-row[data-g="open"][data-id="${CSS.escape(id)}"] form.end-form`)
+    if (now) { struck.add(id); now.closest('.end-row').classList.add('is-archiving'); now.requestSubmit(now.querySelector('button')) }
+  }, STRIKE_MS)
+}, true)
 
 /** The page /stacks/off: the whole list, the work with the agents first, then every row of the end list, with a search. */
 const offMain = (model, base, q) => html`<main id="inbox" class="off-page" aria-label="Off your mind"><header class="inbox-head desk-top"><h2 class="desk-hello"><a class="off-back" data-nav href="${base}/" aria-label="Back to the Desk">←</a> Off your <em>mind</em></h2><form class="end-search" method="get" action="${base}/stacks/off" role="search"><label><span class="offscreen">Search</span><input type="search" name="q" value="${q}" placeholder="Search the list" autocomplete="off"></label></form></header>

@@ -1038,8 +1038,9 @@ html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { padding-r
 /* (a phone: the advised pair a little taller, the stroke clear under the words) */
 @media (max-width: 860px) { html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-advised::after { bottom: 3px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer { height: 60px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take { padding-bottom: 14px; } }
 
-/* ---- the end of the Desk's list (desk.mjs endList): slim rows, a drawn box to tick off, ticked ones struck through.
-   The box in the pen's line; a ticked box in the done ink; Later's three Z in its ink. Max five, then Load more. ---- */
+/* ---- the end of the Desk's list (desk.mjs endList): slim rows, a drawn archive box to put a finished one away (its
+   title is struck through first, then it is archived), archived ones struck through with a ticked box in the done ink;
+   Later's three Z in its ink. Max five, then Show more. ---- */
 .endlist { display: grid; gap: 2px; margin: var(--s-6) 0 0; }
 .endlist[hidden] { display: none; }
 .end-rows { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
@@ -1054,6 +1055,14 @@ html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { padding-r
 button.end-tick { cursor: pointer; }
 button.end-tick:hover { background: var(--sunken); }
 button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
+.end-tick.is-archive .sketch { width: 22px; height: 22px; }
+button.end-tick.is-archive:hover { color: var(--stamp-ink-done); }
+/* Archive pressed (desk.mjs STRIKE_MS): the pen's line runs across the title's words, the row dims; then it is archived */
+.end-row.is-archiving > :is(.end-title, .end-said, .end-ago) { opacity: .5; transition: opacity .5s ease-out; }
+.end-row.is-archiving .end-tick { opacity: .5; pointer-events: none; }
+.end-row.is-archiving > .end-title { position: relative; justify-self: start; max-width: 100%; }
+.end-row.is-archiving > .end-title::after { content: ""; position: absolute; left: 0; right: 0; top: 54%; height: 1.6px; border-radius: 2px; background: var(--fg); transform-origin: left center; rotate: -.5deg; animation: end-strike .45s cubic-bezier(.3, 0, .2, 1) both; }
+@keyframes end-strike { from { transform: scaleX(0); } }
 .end-box { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
 .end-tick.is-ticked { color: var(--faint); }
 .end-tick.is-ticked .end-check { stroke: var(--stamp-ink-done); stroke-width: 2.2; }
