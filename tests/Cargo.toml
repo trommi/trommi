@@ -133,3 +133,7 @@ path = "core/device_crash.rs"
 [[test]]
 name = "core_device_gate"
 path = "core/device_gate.rs"
+
+[[test]]
+name = "core_device_invite"
+path = "core/device_invite.rs"
