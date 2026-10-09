@@ -53,6 +53,19 @@ What a client must expect of the device:
   (`Processed::Skipped`) and takes only the Commit that removes leaves.
 - `Received::NewerVersion` and `Error::NewerVersion` are the finding `newer-version`: shown, never swallowed.
 
+## Changes a caller must follow
+
+Newest first. The interface grows by adding; these are the additions that an exhaustive `match` or a caller's
+assumptions have to take in.
+
+- `Received::NewerVersion`, `Processed::JoinSuperseded`, the field `CommitFacts::newer_version`; `Device::is_owner`,
+  `mls::profile::MAX_STORED_EPOCH`, `mls::rules::helper_devices`.
+- `process_log_entry` refuses an entry at or below the cursor (`wrong-epoch`), except the next Commit of a group
+  the device holds back or follows.
+- `join_welcome` can also return `too-large`, `too-many`, `room-behind`, `wrong-epoch`, `bad-group`.
+- `Error::Busy` (code `busy`, local): a request on this group still waits for the hub; send the outbox, process
+  the log, then call again.
+
 ## Building
 
 `cargo test --workspace --locked` · `core/wasm/build.sh` · `core/swift/build.sh`. Compiler and targets:
