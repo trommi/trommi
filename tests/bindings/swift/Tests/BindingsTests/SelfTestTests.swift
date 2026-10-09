@@ -9,7 +9,7 @@ final class SelfTestTests: XCTestCase {
       XCTAssertTrue(step.ok, "\(step.name): \(step.detail)")
     }
     XCTAssertTrue(report.ok)
-    XCTAssertEqual(report.steps.count, 11)
+    XCTAssertEqual(report.steps.count, 12)
     XCTAssertEqual(report.versions, versions())
     XCTAssertEqual(report.versions.openmls, "0.9.1")
   }

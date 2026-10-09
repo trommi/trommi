@@ -74,7 +74,8 @@ export interface StoreWrite {
 export interface Store {
   /** Rejects when it cannot load, and then holds nothing: no lock, no connection. */
   load(): Promise<StoredState>
-  /** The bytes of `write` are the device's: a store copies what it keeps, they are overwritten afterwards. */
+  /** The bytes of `write` are the device's: a store copies what it keeps, they are overwritten afterwards. Like
+   *  `load`, it must not call its device, nor wait for a call of it: the device waits for the store. */
   apply(write: StoreWrite): Promise<void>
   /** Called once when the device closes, also when it closes itself after a failed write. */
   close?(): void | Promise<void>
@@ -115,7 +116,7 @@ export interface RoomRoles {
 /** What an outbox entry asks the hub for. The parts of each kind, in order, are listed in core/swift/src/records.rs. */
 export type OutboxKind =
   | 'roomFounding' | 'groupFounding' | 'commit' | 'externalCommit' | 'message' | 'relayMessage' | 'envelope'
-  | 'keyPackages' | 'sealedKey' | 'recoveryCode'
+  | 'keyPackages' | 'sealedKey' | 'recoveryCode' | 'recoveryCommit' | 'recoveryFinish'
 
 /** One request waiting to be sent, or sent and not yet answered. */
 export interface OutboxEntry {
@@ -173,7 +174,8 @@ export interface CommitSummary {
   time: number | null
 }
 
-export type ReceivedKind = 'keys' | 'strokePiece' | 'workTrail' | 'recoveryAuth' | 'dropped' | 'newerVersion'
+export type ReceivedKind =
+  | 'keys' | 'strokePiece' | 'workTrail' | 'recoveryAuth' | 'recoveryAuthConflict' | 'dropped' | 'newerVersion'
 
 /** An application message as its receiver takes it. The fields are filled as `kind` says. */
 export interface ReceivedMessage {
@@ -277,8 +279,6 @@ export interface Versions {
   openmls: string
   provider: string
   binding: string
-  /** `built`, or a warning that the recovery construct is a stand-in. */
-  recovery: string
 }
 
 export interface SelfTestStep {
@@ -293,6 +293,78 @@ export interface SelfTestReport {
   steps: SelfTestStep[]
   micros: number
   versions: Versions
+}
+
+// ---- recovery -----------------------------------------------------------------------------------------------------
+// The recovery code is 32 bytes the host holds only while it founds a room, joins with the code, recovers or
+// replaces the code. What the hub serves for a join with the code is handed over as it came: nothing in it is trusted.
+
+/** One Commit of a group's log, as the hub serves it. */
+export interface ServedCommit {
+  change: number
+  commit: Uint8Array
+  recoveryAuth?: Uint8Array | null
+}
+
+/** One group as the hub serves it to a device that verifies it from its founding. */
+export interface ServedGroup {
+  /** The founding GroupInfo (epoch 0). */
+  founding: Uint8Array
+  /** Every Commit since, in the hub's order. */
+  commits: ServedCommit[]
+  /** The GroupInfo the hub offers as current. */
+  current: Uint8Array
+}
+
+/** A room as the hub serves it to a device that joins with the code. */
+export interface ServedRoom {
+  room: Uint8Array
+  group: ServedGroup
+  /** The GroupInfo of the anchor's epoch (`recoveryAnchor` names the epoch). */
+  anchor: Uint8Array
+  /** Every SealedKey of the room. */
+  rows: Uint8Array[]
+  /** Every RecoveryLink of the room. */
+  links: Uint8Array[]
+  /** Every live session group, main sessions before helper sessions. */
+  sessions: ServedGroup[]
+}
+
+export interface UnverifiedSession {
+  /** Its place among the sessions that were served, from 0. */
+  index: number
+  code: ErrorCode
+}
+
+/** What a join with the code, or a recovery, leaves behind. */
+export interface CodeJoin {
+  /** The outbox entries to post, in order. */
+  outbox: number[]
+  /** Not null: the finding `withheld`; the content of the older codes' time stays closed. */
+  missingLink: Uint8Array | null
+  unverified: UnverifiedSession[]
+}
+
+export interface GroupCut {
+  group: Uint8Array
+  cut: Cut
+}
+
+export interface Removals {
+  group: Uint8Array
+  devices: Uint8Array[]
+}
+
+/** A recovery, prepared. `newCode` is a secret. */
+export interface RecoveryPlan {
+  newCode: Uint8Array
+  removals: Removals[]
+}
+
+export interface Anchor {
+  group: Uint8Array
+  epoch: number
+  groupInfo: Uint8Array
 }
 
 // ---- the device ---------------------------------------------------------------------------------------------------
@@ -344,6 +416,18 @@ export class Device {
   sendStrokePiece(board: Uint8Array, piece: Uint8Array): Promise<number>
   sendWorkTrail(group: Uint8Array, turn: Uint8Array, number: number, step: Uint8Array, nowMs: number): Promise<number>
   hubSignIn(room: Uint8Array, hub: string, challenge: Uint8Array): Promise<SignedHubAuth>
+  holdsRecoveryMac(): Promise<boolean>
+  keyIsConfirmed(group: Uint8Array, epoch: number): Promise<boolean>
+  sendRecoveryAuth(recipient: Uint8Array): Promise<number | null>
+  postSealedKey(group: Uint8Array, groupInfo: Uint8Array, listed: Uint8Array[]): Promise<number | null>
+  verifyFounding(group: Uint8Array, served: ServedGroup): Promise<void>
+  joinRoomWithCode(recoveryCode: Uint8Array, served: ServedRoom, nowMs: number): Promise<CodeJoin>
+  joinSessionWithCode(recoveryCode: Uint8Array, served: ServedGroup, nowMs: number): Promise<number>
+  /** The new code, 32 bytes, kept in the device's memory until `replaceCode`. */
+  newRecoveryCode(recoveryCode: Uint8Array): Promise<Uint8Array>
+  replaceCode(recoveryCode: Uint8Array, account: Uint8Array, nowMs: number): Promise<number>
+  prepareRecovery(recoveryCode: Uint8Array, served: ServedRoom): Promise<RecoveryPlan>
+  recover(recoveryCode: Uint8Array, served: ServedRoom, cuts: GroupCut[], account: Uint8Array, nowMs: number): Promise<CodeJoin>
 }
 
 // ---- files --------------------------------------------------------------------------------------------------------
@@ -405,3 +489,6 @@ export function generateUserHandle(): Uint8Array
 export function generatePushKey(): Uint8Array
 export function openApnsPush(key: Uint8Array, sealed: Uint8Array): PushNote
 export function readWebPush(payload: Uint8Array): PushNote
+export function recoveryAnchor(recoveryCode: Uint8Array, room: Uint8Array, rows: Uint8Array[]): Anchor
+/** The hub's sign-in under the recovery code, for a device that is not yet a member. */
+export function recoverySignIn(recoveryCode: Uint8Array, room: Uint8Array, hub: string, challenge: Uint8Array): SignedHubAuth

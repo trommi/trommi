@@ -20,26 +20,26 @@ use crate::records::{
     HandoverSent, Joined, LogEntry, LogEntryKind, LogFinding, OutboxEntry, Processed, Replacement,
     RoomRoles, SignedHubAuth,
 };
-use crate::recovery::{self, Recovery};
+use crate::recovery::{
+    self, group_cuts, with_group, with_room, CodeJoin, GroupCut, RecoveryPlan, ServedGroup,
+    ServedRoom,
+};
 use crate::store::{AnyStore, Seed};
 use crate::{CoreError, ErrorCode};
 use std::sync::PoisonError;
-use trommi_core::crypto::{Secret, SigningKey, SystemEntropy};
+use trommi_core::crypto::{SigningKey, SystemEntropy};
 use trommi_core::device::{self as core, Accepted, Device, LogKind, WelcomeExpectation};
 use trommi_core::hub_auth::{self, HubAddress, CHALLENGE_LEN};
+use trommi_core::recovery::{self as construct, Replacement as NewCode};
 use trommi_core::store::Storage;
 
-/// The core's device over any store, and where its store noted the seed of its signature key. The core's type
-/// is not `Send` only because it holds the recovery construct as a boxed trait object without that bound.
+/// The core's device over any store, where its store noted the seed of its signature key, and a new recovery
+/// code between its making and the Commit that puts it in force.
 struct Inner {
     device: Device<AnyStore>,
     seed: Seed,
+    replacement: Option<NewCode>,
 }
-
-// SAFETY: every part of the device is owned data that may move between threads. The one part the compiler
-// cannot see through is the boxed recovery construct, and the only value ever put there is `Recovery`, a
-// struct without fields. The device is reached only through `Guarded`, one thread at a time.
-unsafe impl Send for Inner {}
 
 /// One device: its signature key, the groups it is a leaf of, its content keys and its outbox, over the store
 /// the host gave it. Exactly one such object works on a stored state at a time.
@@ -57,13 +57,17 @@ impl CoreDevice {
         let _quiet = Quiet::enter();
         let device = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if create {
-                Device::create(store, Box::new(SystemEntropy), Box::new(Recovery))
+                Device::create(store, Box::new(SystemEntropy))
             } else {
-                Device::open(store, Box::new(SystemEntropy), Box::new(Recovery))
+                Device::open(store, Box::new(SystemEntropy))
             }
         }))
         .map_err(|_| CoreError::internal("the device failed to open inside the core"))??;
-        Ok(Guarded::new(Inner { device, seed }))
+        Ok(Guarded::new(Inner {
+            device,
+            seed,
+            replacement: None,
+        }))
     }
 
     /// A new device in the empty store `store`: a fresh signature key, no room yet. `storage` when the store
@@ -135,13 +139,13 @@ impl CoreDevice {
     /// is not empty.
     #[uniffi::constructor]
     pub fn create(store: std::sync::Arc<dyn crate::store::CoreStore>) -> Result<Self, CoreError> {
-        Self::create_on(Box::new(crate::store::ForeignStore(store)))
+        Self::create_on(Box::new(crate::store::ForeignStore::new(store)))
     }
 
     /// The device `store` holds. `storage` when anything in it does not decode or fit together.
     #[uniffi::constructor]
     pub fn open(store: std::sync::Arc<dyn crate::store::CoreStore>) -> Result<Self, CoreError> {
-        Self::open_on(Box::new(crate::store::ForeignStore(store)))
+        Self::open_on(Box::new(crate::store::ForeignStore::new(store)))
     }
 }
 
@@ -235,9 +239,11 @@ impl CoreDevice {
     /// pending Commit is cleared, a founding's group is dropped, the KeyPackages' private parts go.
     ///
     /// Only a refusal that will not change is reported here. When the hub could not answer (`internal`,
-    /// `overloaded`, `rate-limited`), asks to sign in again (`unauthorised`), answered with a code this version
-    /// does not know, or did not answer at all, the entry stays and is sent again unchanged. Those codes, and the
-    /// ones that are no hub's answer, are `bad-format` here and change nothing.
+    /// `overloaded`, `rate-limited`), asks to sign in again (`unauthorised`, `bad-challenge`), refuses for a
+    /// reason that passes while the request stays the same (`quota-exceeded`, `too-many`, `client-too-old`,
+    /// `gap`), answered with a code this version does not know, or did not answer at all, the entry stays and
+    /// is sent again unchanged. Those codes, and the ones that are no hub's answer, are `bad-format` here and
+    /// change nothing.
     pub fn outbox_refused(&self, id: u64, code: ErrorCode) -> Result<(), CoreError> {
         if !is_refusal(code) {
             return Err(CoreError::bad_format(
@@ -264,14 +270,11 @@ impl CoreDevice {
     }
 
     /// Founds the room with the recovery code `recovery_code` (32 bytes, from
-    /// [`crate::generate_recovery_code`]) and posts its founding. Returns the room's id, 32 random bytes.
+    /// [`crate::generate_recovery_code`]) and posts its founding. The device keeps the key that authenticates
+    /// the room's sealed keys, and nothing else of the code. Returns the room's id, 32 random bytes.
     pub fn found_room(&self, recovery_code: Vec<u8>, now_ms: u64) -> Result<Vec<u8>, CoreError> {
-        let code = Secret::<32>::from_slice(&recovery_code)?;
-        self.write(|device| {
-            let (signature_key, hpke_key) = recovery::public_keys(&code)?;
-            let room = device.found_room(signature_key, hpke_key, now_ms)?;
-            Ok(room.as_bytes().to_vec())
-        })
+        let keys = recovery::keys(&recovery_code)?;
+        self.write(|device| Ok(device.found_room(&keys, now_ms)?.as_bytes().to_vec()))
     }
 
     /// Founds a main session as a human device, adding the agent device `agent` and every other human device
@@ -559,6 +562,188 @@ impl CoreDevice {
         })
     }
 
+    /// Whether this device holds the key that authenticates the room's sealed keys under the recovery code in
+    /// force. A human device that does not founds nothing and commits nothing: it asks another human device
+    /// for it, which answers with [`CoreDevice::send_recovery_auth`].
+    pub fn holds_recovery_mac(&self) -> Result<bool, CoreError> {
+        self.read(|device| Ok(device.holds_recovery_mac()))
+    }
+
+    /// Whether the content key of `group` at `epoch` is vouched for: the device derived it itself, or a human
+    /// device's sealed key names it. Content of an epoch whose key is not confirmed is shown as unconfirmed.
+    pub fn key_is_confirmed(&self, group: Vec<u8>, epoch: u64) -> Result<bool, CoreError> {
+        self.read(|device| Ok(device.key_is_confirmed(&group_id(&group)?, epoch)))
+    }
+
+    /// Sends the key that authenticates the room's sealed keys to `recipient`, or to all with 32 zero bytes:
+    /// room group, from a human device that holds it (`no-key` otherwise). Returns the outbox entry's id, or
+    /// none while a Commit of this device is pending in the room group: it is then sent when that is decided.
+    pub fn send_recovery_auth(&self, recipient: Vec<u8>) -> Result<Option<u64>, CoreError> {
+        self.write(|device| Ok(device.send_recovery_auth(&device_id(&recipient)?)?))
+    }
+
+    /// Posts the sealed key of the epoch `group` stands in, vouched for by this device, when the hub lists
+    /// none this device can verify: `listed` are the sealed keys the hub lists for it, `group_info` the
+    /// GroupInfo it holds for that epoch. Returns the outbox entry's id, or none when one is listed.
+    pub fn post_sealed_key(
+        &self,
+        group: Vec<u8>,
+        group_info: Vec<u8>,
+        listed: Vec<Vec<u8>>,
+    ) -> Result<Option<u64>, CoreError> {
+        self.write(|device| Ok(device.post_sealed_key(&group_id(&group)?, &group_info, &listed)?))
+    }
+
+    /// First contact with a session group this device joined by Welcome: verifies the group from its founding
+    /// through its Commits against the room states this device holds. `bad-group` is the finding: the device
+    /// then opens none of the session's content. `room-behind` and `group-behind` are no findings: process
+    /// further and ask again.
+    pub fn verify_founding(&self, group: Vec<u8>, served: ServedGroup) -> Result<(), CoreError> {
+        self.read(|device| {
+            let group = group_id(&group)?;
+            with_group(
+                &served,
+                |served| Ok(device.verify_founding(&group, served)?),
+            )
+        })
+    }
+
+    /// Signs in on a new device with the recovery code: checks the room the hub serves and builds the join of
+    /// the room group from outside. Nothing of the device's state changes until the hub accepted the outbox
+    /// entry; then it is a human device and holds every content key the code opened. It joins each live
+    /// session group next ([`CoreDevice::join_session_with_code`]).
+    pub fn join_room_with_code(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedRoom,
+        now_ms: u64,
+    ) -> Result<CodeJoin, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.write(|device| {
+            with_room(&served, |served| {
+                Ok(device.join_room_with_code(&keys, served, now_ms)?.into())
+            })
+        })
+    }
+
+    /// Joins a live session group with the recovery code, as a human device that joined the room group with
+    /// it. Main sessions are joined before their helper sessions. Returns the outbox entry's id.
+    pub fn join_session_with_code(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedGroup,
+        now_ms: u64,
+    ) -> Result<u64, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.write(|device| {
+            with_group(&served, |served| {
+                Ok(device.join_session_with_code(&keys, served, now_ms)?)
+            })
+        })
+    }
+
+    /// Makes a new recovery code to replace the one in force, `recovery_code`, and returns it (32 bytes): for
+    /// the account's new sealed copies, and shown to the person. The device keeps what belongs to it in memory
+    /// until [`CoreDevice::replace_code`]; nothing is stored or sent yet, and a second call makes another code.
+    /// `wrong-recovery` unless `recovery_code` is the code in force.
+    pub fn new_recovery_code(&self, recovery_code: Vec<u8>) -> Result<Vec<u8>, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.device.run(|inner| {
+            let room = inner.device.room().ok_or(trommi_core::Error::NoRoom)?;
+            let history = inner
+                .device
+                .room_history()
+                .ok_or(trommi_core::Error::NoRoom)?;
+            let replacement = keys.replace(&mut SystemEntropy, &room, history)?;
+            let code = replacement.code.expose().to_vec();
+            inner.replacement = Some(replacement);
+            Ok(code)
+        })
+    }
+
+    /// Replaces the recovery code with the one [`CoreDevice::new_recovery_code`] made, as a human device that
+    /// holds the code in force: one request with the room Commit, the link from the old code, and `account`,
+    /// the account's sealed copies of the new code. When the hub accepted it, the device sends the new
+    /// authentication key to every human device. `incomplete` when no new code was made. Returns the outbox
+    /// entry's id.
+    pub fn replace_code(
+        &self,
+        recovery_code: Vec<u8>,
+        account: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<u64, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.device.run(|inner| {
+            let replacement = inner
+                .replacement
+                .as_ref()
+                .ok_or(trommi_core::Error::Incomplete)?;
+            let entry = inner
+                .device
+                .replace_code(&keys, replacement, &account, now_ms)?;
+            inner.replacement = None;
+            Ok(entry)
+        })
+    }
+
+    /// Prepares the whole recovery, when every device is lost, on a new device with the code: checks the room
+    /// the hub serves after the recovery was opened there, makes the new code, and names the leaves the
+    /// recovery removes. The caller verifies each one's chain, names its Cut, seals the new code for the
+    /// account, and calls [`CoreDevice::recover`].
+    pub fn prepare_recovery(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedRoom,
+    ) -> Result<RecoveryPlan, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        self.device.run(|inner| {
+            with_room(&served, |served| {
+                let checked = construct::check_room(&keys, served)?;
+                let history = checked
+                    .observer
+                    .history()
+                    .ok_or(trommi_core::Error::Internal("room history"))?;
+                let replacement = keys.replace(&mut SystemEntropy, &served.room, history)?;
+                let plan = RecoveryPlan {
+                    new_code: replacement.code.expose().to_vec(),
+                    removals: recovery::removals(&checked)?,
+                };
+                inner.replacement = Some(replacement);
+                Ok(plan)
+            })
+        })
+    }
+
+    /// The whole recovery, as [`CoreDevice::prepare_recovery`] prepared it: the device joins the room group and
+    /// every session group from outside, removes every other human device together with the replacement of
+    /// the code, and then every leaf the new room state does not allow. `cuts` hold the Cut of every leaf to
+    /// go (`incomplete` when one is missing); `account` are the account's sealed copies of the new code. The
+    /// outbox entries are posted in order; the device's state changes only when the hub accepted the last.
+    pub fn recover(
+        &self,
+        recovery_code: Vec<u8>,
+        served: ServedRoom,
+        cuts: Vec<GroupCut>,
+        account: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<CodeJoin, CoreError> {
+        let keys = recovery::keys(&recovery_code)?;
+        let cuts = group_cuts(&cuts)?;
+        self.device.run(|inner| {
+            let replacement = inner
+                .replacement
+                .as_ref()
+                .ok_or(trommi_core::Error::Incomplete)?;
+            let built = with_room(&served, |served| {
+                Ok(inner
+                    .device
+                    .recover(&keys, served, replacement, &cuts, &account, now_ms)?)
+            })?;
+            inner.replacement = None;
+            Ok(built.into())
+        })
+    }
+
     /// Signs the hub's sign-in challenge (32 bytes) for the room `room` at the hub `hub`, which must be the
     /// hub's canonical address. The result is posted as it is; the token the hub answers with is the host's.
     pub fn hub_sign_in(
@@ -600,6 +785,11 @@ fn is_refusal(code: ErrorCode) -> bool {
             | ErrorCode::Overloaded
             | ErrorCode::RateLimited
             | ErrorCode::Unauthorised
+            | ErrorCode::BadChallenge
+            | ErrorCode::QuotaExceeded
+            | ErrorCode::TooMany
+            | ErrorCode::ClientTooOld
+            | ErrorCode::Gap
             | ErrorCode::Storage
             | ErrorCode::Entropy
             | ErrorCode::Busy
