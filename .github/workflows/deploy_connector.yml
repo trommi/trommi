@@ -1,0 +1,207 @@
+# Publishes a connector build as a signed GitHub release. It publishes the files a build run made and tested, and
+# builds nothing itself.
+#
+# Interface (build.yml calls it; see the head of build.yml):
+#   version   the release number of the build run; the release is connector-v<version>
+#   commit    the commit that was built
+#   artifact  the artifact of that run: the four binaries (trommi-connector-<target>), the plugin's archive
+#             (trommi-<12 hex>.zip) and manifest.json (release/manifest.sh, product trommi-connector), not yet signed
+# By hand (Actions -> deploy_connector -> Run workflow): `run_id`, the id of a build run whose connector-release is
+# signed and published after all (its artifact is kept for 30 days). A release that is published is never replaced.
+#
+#   sign     signs the manifest with SIGN_RELEASE_KEY (the only job that sees that key) and checks the signature
+#            against release/public-key.pem
+#   publish  attests the files (GitHub's build provenance) and makes the release connector-v<version> with the files,
+#            manifest.json and manifest.json.sig
+#
+# The form is the hub's (release/sign.sh): Ed25519 over the exact bytes of manifest.json, 64 raw bytes. Whoever takes
+# a release checks the signature first, then product, repository, tag and version, then each file against the manifest.
+#
+# Secrets: the environment `connector` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; SIGN_RELEASE_KEY comes
+# from the 1Password Environment.
+name: deploy_connector
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The release number of the build run; the release is connector-v<version>
+        required: true
+        type: string
+      commit:
+        description: The commit that was built
+        required: true
+        type: string
+      artifact:
+        description: The artifact of this run that holds the files and manifest.json
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: The id of a build run whose connector release is published after all
+        required: true
+        type: string
+
+permissions: {}
+
+# one release at a time; a waiting one is not cut off
+concurrency:
+  group: deploy_connector
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    name: Sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # reads the secrets of the environment without counting as a deployment of it
+    environment:
+      name: connector
+      deployment: false
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      commit: ${{ steps.check.outputs.commit }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact || 'connector-release' }}
+          path: out
+          run-id: ${{ inputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      # the scripts and the public key of the commit that was built
+      - name: What the manifest says
+        id: read
+        run: |
+          set -eu
+          commit=$(jq -r .commit out/manifest.json)
+          printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::the manifest names no commit"; exit 1; }
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.read.outputs.commit }}
+          path: repo
+          persist-credentials: false
+          sparse-checkout: release
+      - name: The manifest is the one of this build
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -eu
+          jq -e --arg r "$GITHUB_REPOSITORY" \
+            '.product == "trommi-connector" and .repository == $r and (.version | type) == "number" and .tag == "connector-v" + (.version | tostring)' \
+            out/manifest.json > /dev/null || { echo "::error::manifest.json is not a connector release of this repository"; exit 1; }
+          tag=$(jq -r .tag out/manifest.json)
+          commit=$(jq -r .commit out/manifest.json)
+          printf '%s' "$tag" | grep -Eq '^connector-v[1-9][0-9]{0,11}$' || { echo "::error::not a connector release: $tag"; exit 1; }
+          # called by a build: the release must be that build's
+          if [ -n "$COMMIT" ]; then
+            [ "$commit" = "$COMMIT" ] && [ "$tag" = "connector-v$VERSION" ] || { echo "::error::the release is $tag of $commit, asked for was connector-v$VERSION of $COMMIT"; exit 1; }
+          fi
+          # every file the manifest names is there and is that file; nothing else lies beside it
+          repo/release/sign.sh files out/manifest.json
+          find out -type f ! -name manifest.json -printf '%f\n' | sort > "$RUNNER_TEMP/there"
+          jq -r '.assets[].name' out/manifest.json | sort > "$RUNNER_TEMP/named"
+          diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files the manifest does not name"; exit 1; }
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
+            grep -qx "trommi-connector-$target" "$RUNNER_TEMP/named" || { echo "::error::the release has no binary for $target"; exit 1; }
+          done
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      - name: Install the 1Password CLI
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+        with:
+          version: latest-beta
+      - name: Sign the manifest
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
+        run: |
+          set -eu
+          test -n "$OP_SERVICE_ACCOUNT_TOKEN" || { echo "::error::OP_SERVICE_ACCOUNT_TOKEN is not set for this run"; exit 1; }
+          test -n "$OP_ENVIRONMENT_ID" || { echo "::error::OP_ENVIRONMENT_ID is not set for this run"; exit 1; }
+          # release/sign.sh puts the key back into PEM form (in a file of mode 600 under RUNNER_TEMP, removed when it
+          # ends), signs, and checks the result against release/public-key.pem
+          op run --environment "$OP_ENVIRONMENT_ID" -- repo/release/sign.sh sign out/manifest.json
+      - name: No key file is left
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/sign.*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: connector-signature
+          path: out/manifest.json.sig
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish the release
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: connector
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.sign.outputs.tag }}
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.sign.outputs.tag }}
+      COMMIT: ${{ needs.sign.outputs.commit }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact || 'connector-release' }}
+          path: out
+          run-id: ${{ inputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: connector-signature
+          path: out
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.sign.outputs.commit }}
+          path: repo
+          persist-credentials: false
+          sparse-checkout: release
+      # what is published is what was signed
+      - name: Check the signature and the files
+        run: |
+          set -eu
+          repo/release/sign.sh verify out/manifest.json
+          repo/release/sign.sh files out/manifest.json
+          [ "$(jq -r .tag out/manifest.json)" = "$TAG" ] && [ "$(jq -r .commit out/manifest.json)" = "$COMMIT" ]
+      - name: Attest the files
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            out/trommi-connector-*
+            out/trommi-*.zip
+            out/manifest.json
+      # A published release is never replaced: a second run of the same build leaves what is published.
+      - name: Publish
+        run: |
+          set -eu
+          state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$state" = true ]; then
+            echo "an unfinished draft of $TAG is removed"
+            gh release delete "$TAG" --yes
+            state=none
+          fi
+          if [ "$state" = none ]; then
+            gh release create "$TAG" --target "$COMMIT" --latest=false --title "Connector $TAG" \
+              --notes "The Trommi connector for Linux and macOS and the plugin's archive, built from $COMMIT. Signed: manifest.json and manifest.json.sig (see release/sign.sh)." \
+              out/*
+            echo "published $TAG" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$TAG is published already and stays as it is" >> "$GITHUB_STEP_SUMMARY"
+          fi
