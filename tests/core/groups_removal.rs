@@ -320,7 +320,9 @@ fn a_hub_that_checks_nothing_does_not_keep_a_removed_device_in() {
     // it knows, where it was a human device. A checking hub answers `room-behind`; this one stores it. In the
     // room group its Commit comes too late for the epoch.
     x.update(&group, true, now()).unwrap().unwrap();
-    post_ok(&mut hub, &mut x);
+    let entry = x.outbox().remove(0);
+    let accepted = hub.post(&x.id(), &entry).unwrap();
+    x.outbox_accepted(entry.id, accepted).unwrap();
     x.update(&room_group, true, now()).unwrap().unwrap();
     assert_eq!(post_refused(&mut hub, &mut x), [Error::EpochTaken]);
 

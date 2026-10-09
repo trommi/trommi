@@ -7,9 +7,15 @@
 //! for sending except through [`Device::outbox`]; the caller posts an entry and reports the hub's answer with
 //! [`Device::outbox_accepted`] or [`Device::outbox_refused`]. A retry sends the same bytes.
 //!
-//! **A Commit is pending** until the hub answers. Accepted: it is merged. `epoch-taken`: it stays until the
-//! log shows the Commit that took the epoch; if that is this device's own it is merged, otherwise it is
-//! dropped, the other one is processed, and the caller builds its change again. A join from outside is built on
+//! **A Commit is pending** until the log shows it. It is merged at its place in the hub's order, when
+//! [`Device::process_log_entry`] is handed it, and not when the hub answers: whatever the hub ordered before
+//! it in the old epoch (a key handover, a step of a work trail, a `recovery_auth`) opens only in that epoch,
+//! and a device keeps no past epoch. The hub's answer is recorded: accepted, the request leaves the outbox
+//! and the Commit waits for its place; `epoch-taken`, it is held back. Either way the log decides: the
+//! Commit that took the epoch is this device's own and is merged, or it is another's, the own one is
+//! dropped, the other is processed, and the caller builds its change again. Until then the group stands in
+//! the old epoch for everything, and the device commits and sends nothing more in it (`busy`). A device
+//! knows its own Commit in the log by the SHA-256 of the Commit as it posted it. A join from outside is built on
 //! a copy of the state that replaces the real one only when the hub accepted it, or when the log shows the
 //! join's own Commit; it is held back and decided by the log in the same way. While a Commit of a group is
 //! pending the device sends no application message in that group.
@@ -118,7 +124,7 @@ pub enum Processed {
         /// Whether this device is no leaf of the group any more.
         removed: bool,
     },
-    /// The entry is this device's own Commit: merged now, or already when the hub accepted it. Also its own
+    /// The entry is this device's own Commit, merged here, at its place in the hub's order. Also its own
     /// join from outside, whose copy becomes the real state here when the hub's answer never came.
     OwnCommit,
     /// A Commit of a group this device follows as an observer.
@@ -287,7 +293,7 @@ pub struct GroupSummary {
     pub disallowed: Vec<DeviceId>,
     /// Whether it was archived (5.2.10).
     pub archived: bool,
-    /// Whether a Commit of this device waits for the hub's answer.
+    /// Whether a Commit of this device waits: for the hub's answer, or for its place in the log.
     pub pending: bool,
 }
 
@@ -325,9 +331,11 @@ impl Decode for Record {
     }
 }
 
-/// A Commit of this device that waits for the hub.
+/// A Commit of this device that is built and not merged: it waits for the hub's answer, and then for its
+/// place in the log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Pending {
+    /// The outbox entry that carries it; the entry is gone once the hub accepted it.
     outbox: u64,
     room_epoch: u64,
     time: u64,
@@ -335,6 +343,17 @@ struct Pending {
     awaiting_log: bool,
     /// The Commit has a path, which renews this device's leaf; one that only adds has none (3.4).
     renews_leaf: bool,
+    /// The hub accepted it: it is the Commit of its epoch, and is merged where the log shows it.
+    accepted: bool,
+    /// What the device knows its own Commit in the log by ([`posted_as`]).
+    commit: Hash32,
+}
+
+/// What a device knows its own Commit in the log by: the SHA-256 of the Commit as it posted it. A pending
+/// Commit keeps it, since its outbox entry goes when the hub accepted it; a join from outside has it from the
+/// entry it keeps.
+fn posted_as(commit: &[u8]) -> Result<Hash32, Error> {
+    crypto::sha256(commit)
 }
 
 /// What the device keeps of a group beside OpenMLS's state.
@@ -358,9 +377,6 @@ struct GroupMeta {
     /// This device was removed: OpenMLS's state is gone, the keys stay.
     removed: bool,
     pending: Option<Pending>,
-    /// The epoch this device's last merged own Commit built on, and its hash: so it is known when the log
-    /// brings it by again.
-    last_commit: Option<(u64, Hash32)>,
     /// The epoch this device joined the group at: Commits before it are not for it.
     joined_epoch: u64,
 }
@@ -389,15 +405,18 @@ impl Encode for GroupMeta {
                 self.pending
                     .as_ref()
                     .is_some_and(|pending| pending.renews_leaf),
-            ) << 5);
+            ) << 5)
+            | (u8::from(
+                self.pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.accepted),
+            ) << 6);
         writer.u8(flags);
         let pending = self.pending.as_ref();
         writer.u64(pending.map_or(0, |pending| pending.outbox));
         writer.u64(pending.map_or(0, |pending| pending.room_epoch));
         writer.u64(pending.map_or(0, |pending| pending.time));
-        let (epoch, hash) = self.last_commit.unwrap_or((u64::MAX, Hash32::ZERO));
-        writer.u64(epoch);
-        writer.value(&hash)?;
+        writer.value(&pending.map_or(Hash32::ZERO, |pending| pending.commit))?;
         writer.u64(self.joined_epoch);
         Ok(())
     }
@@ -416,21 +435,22 @@ impl Decode for GroupMeta {
         let own_leaf_ms = reader.u64()?;
         let last_update_ms = reader.u64()?;
         let flags = reader.u8()?;
-        if flags >= 1 << 6 {
+        if flags >= 1 << 7 {
             return Err(Error::BadFormat);
         }
         let outbox = reader.u64()?;
         let room_epoch = reader.u64()?;
         let time = reader.u64()?;
+        let commit: Hash32 = reader.value()?;
         let pending = (outbox != 0).then_some(Pending {
             outbox,
             room_epoch,
             time,
             awaiting_log: flags & (1 << 4) != 0,
             renews_leaf: flags & (1 << 5) != 0,
+            accepted: flags & (1 << 6) != 0,
+            commit,
         });
-        let epoch = reader.u64()?;
-        let hash: Hash32 = reader.value()?;
         Ok(Self {
             session: None,
             previous_room_epoch,
@@ -442,7 +462,6 @@ impl Decode for GroupMeta {
             distrusted: flags & (1 << 2) != 0,
             removed: flags & (1 << 3) != 0,
             pending,
-            last_commit: (epoch != u64::MAX).then_some((epoch, hash)),
             joined_epoch: reader.u64()?,
         })
     }
@@ -1549,7 +1568,8 @@ impl<S: Storage> Device<S> {
 
     /// Everything waiting to be sent, in the order to send it. An entry stays until the hub's answer was
     /// reported; a Commit or a join from outside refused with `epoch-taken` is held back until the log decided
-    /// it. Empty for a device
+    /// it. A repeated post of an entry gets the hub's first answer again (13.2), so an answer that was lost
+    /// is had by sending the entry once more. Empty for a device
     /// that is no longer the owner of its stored state ([`Device::is_owner`]): what it holds may have been sent
     /// or replaced by the other owner.
     pub fn outbox(&self) -> Vec<OutboxEntry> {
@@ -1579,8 +1599,15 @@ impl<S: Storage> Device<S> {
             .collect()
     }
 
-    /// The hub accepted the outbox entry `id`: the entry goes, and its consequence is applied in the same write
-    /// (a pending Commit is merged, a join from outside replaces the real state).
+    /// The hub accepted the outbox entry `id`: the entry goes, and its consequence is applied in the same
+    /// write. A join from outside replaces the real state.
+    ///
+    /// A Commit is recorded as accepted and stays pending: it is merged when [`Device::process_log_entry`]
+    /// is handed it, at its place in the hub's order, so that everything ordered before it is opened in the
+    /// epoch it was made in. A founding's first Commit is such a Commit: its place is where the hub put it
+    /// in the log. Until then the group stands in the old epoch, and this device commits and sends nothing
+    /// in it (`busy`). An answer for an entry that is gone (the log showed the Commit first) is `not-found`
+    /// and changes nothing.
     pub fn outbox_accepted(&mut self, id: u64, answer: Accepted) -> Result<(), Error> {
         let adopted = self.transact(|device, batch| {
             let mut adopted = false;
@@ -1590,12 +1617,25 @@ impl<S: Storage> Device<S> {
                 .get(&id)
                 .cloned()
                 .ok_or(Error::NotFound)?;
+            // A Commit has an entry of its own in the log, which is still to be processed: the cursor
+            // moves there. Every other request is passed when nothing lies between.
+            let mut in_the_log = false;
             match (entry.kind, entry.group) {
                 (
                     OutboxKind::Commit | OutboxKind::GroupFounding | OutboxKind::RecoveryCode,
                     Some(group),
                 ) => {
-                    device.merge_own(batch, &group)?;
+                    let meta = device.meta(&group)?;
+                    let pending = meta
+                        .pending
+                        .as_mut()
+                        .filter(|pending| pending.outbox == id)
+                        .ok_or(Error::Internal("pending commit"))?;
+                    pending.accepted = true;
+                    pending.awaiting_log = false;
+                    meta.founding = false;
+                    device.put_group(batch, &group)?;
+                    in_the_log = true;
                 }
                 (OutboxKind::RoomFounding, Some(group)) => {
                     device.meta(&group)?.founding = false;
@@ -1619,7 +1659,8 @@ impl<S: Storage> Device<S> {
             // device that the hub ordered before it is still to be processed (5.4.1), and the log then
             // brings the own one by again.
             let next = device.memory.record.cursor.checked_add(1);
-            if let Some(change) = answer.change.filter(|change| Some(*change) == next) {
+            let passed = answer.change.filter(|change| Some(*change) == next);
+            if let Some(change) = passed.filter(|_| !in_the_log) {
                 device.advance(batch, change)?;
             }
             Ok(adopted)
@@ -1632,7 +1673,8 @@ impl<S: Storage> Device<S> {
     }
 
     /// The hub refused the outbox entry `id` with `code`. `epoch-taken` for a Commit or a join from outside:
-    /// it is held back, and the caller processes the log, which decides it. Any other refusal undoes what the
+    /// it is held back, and the caller processes the log, which decides it: where the log shows the Commit
+    /// that took the epoch, the own one is merged if that is it, and dropped otherwise. Any other refusal undoes what the
     /// entry was for: the pending Commit is cleared, a founding's group or a staged join is dropped, the
     /// KeyPackages' private parts go.
     pub fn outbox_refused(&mut self, id: u64, code: &Error) -> Result<(), Error> {
@@ -1721,21 +1763,11 @@ impl<S: Storage> Device<S> {
         Ok(())
     }
 
-    /// Merges this device's pending Commit of `group` and settles the new epoch.
+    /// Merges this device's pending Commit of `group`, which the log shows at this place, and settles the new
+    /// epoch. Its outbox entry goes, if the hub's answer has not taken it yet.
     fn merge_own(&mut self, batch: &mut Batch, id: &GroupId) -> Result<(), Error> {
         let pending = self.meta(id)?.pending.take().ok_or(Error::NotFound)?;
-        let commit = self
-            .memory
-            .outbox
-            .get(&pending.outbox)
-            .and_then(|entry| {
-                let at = usize::from(entry.kind == OutboxKind::GroupFounding).saturating_mul(2);
-                entry.parts.get(at)
-            })
-            .cloned()
-            .ok_or(Error::Internal("pending commit"))?;
         let mut group = group::load(&self.provider, id)?;
-        let built_on = group.epoch().as_u64();
         group
             .merge_pending_commit(&self.provider)
             .map_err(mls_fault)?;
@@ -1744,7 +1776,7 @@ impl<S: Storage> Device<S> {
         if pending.renews_leaf {
             meta.own_leaf_ms = pending.time;
         }
-        meta.last_commit = Some((built_on, crypto::sha256(&commit)?));
+        self.drop_outbox(batch, pending.outbox);
         self.settle(batch, id, &group, pending.room_epoch)?;
         // 7.4: the recovery_mac owed with this Commit is encrypted in the epoch it led to.
         for (recipient, owed) in self.take_owed(batch, pending.outbox) {
@@ -2350,6 +2382,7 @@ impl<S: Storage> Device<S> {
                 None,
             )?;
             device.keep_key(batch, &group_id, 0, key_0);
+            let first_commit = posted_as(&built.commit)?;
             let outbox = device.enqueue(
                 batch,
                 OutboxKind::GroupFounding,
@@ -2377,6 +2410,8 @@ impl<S: Storage> Device<S> {
                         awaiting_log: false,
                         // The founder's leaf is as old as the group; the first Commit only adds.
                         renews_leaf: false,
+                        accepted: false,
+                        commit: first_commit,
                     }),
                     ..GroupMeta::default()
                 },
@@ -2497,6 +2532,7 @@ impl<S: Storage> Device<S> {
             renews_leaf,
             ..
         } = posting;
+        let commit_hash = posted_as(&commit)?;
         let (kind, parts) = match with {
             Some([link, account]) => (
                 OutboxKind::RecoveryCode,
@@ -2514,6 +2550,8 @@ impl<S: Storage> Device<S> {
             time: now_ms,
             awaiting_log: false,
             renews_leaf,
+            accepted: false,
+            commit: commit_hash,
         });
         self.put_group(batch, &group)?;
         Ok(outbox)
@@ -3492,9 +3530,10 @@ impl<S: Storage> Device<S> {
     ///
     /// Every entry is processed once: one whose `change` is not above [`Device::cursor`] is refused as a
     /// duplicate (`wrong-epoch`). An entry processed moves the cursor to its `change`, so handing a later
-    /// entry first passes the earlier ones. An own request that the hub accepted moves the cursor only when
-    /// its `change` is the next one; otherwise the log brings it by again, above the cursor, and it is met
-    /// there ([`Processed::OwnCommit`], or a message that is skipped).
+    /// entry first passes the earlier ones. An own Commit is merged here, where the log shows it
+    /// ([`Processed::OwnCommit`]), and never before: the hub's answer only records that it was accepted. Any
+    /// other own request that the hub accepted moves the cursor when its `change` is the next one;
+    /// otherwise the log brings it by again, above the cursor (a message, which is skipped).
     ///
     /// One kind of entry is processed at or below the cursor, and leaves the cursor where it is: the next
     /// Commit of a group this device is a leaf of or follows, the one that names the epoch the group stands
@@ -3593,10 +3632,18 @@ impl<S: Storage> Device<S> {
                 && self.memory.staged.contains_key(&entry.id)
         });
         let Some((outbox, built_on, own)) = waiting.map(|entry| {
-            let own = entry.parts.first().is_some_and(|own| own == commit);
-            (entry.id, entry.epoch, own)
+            (
+                entry.id,
+                entry.epoch,
+                entry.parts.first().map(Vec::as_slice),
+            )
         }) else {
             return Ok(None);
+        };
+        // The join's own Commit is known as a pending Commit is.
+        let own = match own {
+            Some(own) => posted_as(own)? == posted_as(commit)?,
+            None => false,
         };
         if own {
             self.adopt_staged(batch, outbox)?;
@@ -3696,32 +3743,19 @@ impl<S: Storage> Device<S> {
             return Ok(Processed::Skipped);
         }
         if named < epoch {
-            // An own Commit that was merged when the hub accepted it comes by again in the log.
-            let own = meta.last_commit == Some((named, crypto::sha256(commit)?));
-            return if own {
-                Ok(Processed::OwnCommit)
-            } else {
-                Err(Error::WrongEpoch)
-            };
+            return Err(Error::WrongEpoch);
         }
         if named > epoch {
             return Err(Error::GroupBehind);
         }
-        // 13.2: the Commit that took the epoch is this device's own, or the pending one goes.
+        // 13.2: this is the place in the hub's order of the Commit that took the epoch. It is this device's
+        // own and is merged here, whether or not the hub's answer was recorded; or it is another's, and the
+        // pending one goes, whatever the hub answered: the log is what every member follows.
         let mut superseded = None;
         if let Some(pending) = &meta.pending {
-            let own = self
-                .memory
-                .outbox
-                .get(&pending.outbox)
-                .is_some_and(|entry| {
-                    let at = usize::from(entry.kind == OutboxKind::GroupFounding).saturating_mul(2);
-                    entry.parts.get(at).is_some_and(|own| own == commit)
-                });
             let outbox = pending.outbox;
-            if own {
+            if pending.commit == posted_as(commit)? {
                 self.merge_own(batch, id)?;
-                self.drop_outbox(batch, outbox);
                 return Ok(Processed::OwnCommit);
             }
             self.clear_pending(batch, id)?;

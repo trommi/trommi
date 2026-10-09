@@ -158,12 +158,22 @@ fn a_commit_survives_a_crash_or_a_failed_write_at_every_step() {
             assert_eq!(hub.post(&device.id(), &entry), Ok(answer));
             device.outbox_accepted(entry.id, answer)
         });
+        // The answer is written, and the Commit waits for its place in the log: the group stands in the old
+        // epoch, also after a crash.
+        let waiting = run.device.group(&room_group).unwrap();
+        assert_eq!((waiting.epoch, waiting.pending), (1, true));
+        assert!(run.device.outbox().is_empty());
+        assert_eq!(
+            run.device.update(&room_group, true, now()),
+            Err(Error::Busy)
+        );
         // The same bytes under the same id every time, and one Commit for the epoch in the log.
         assert!(posted.iter().all(|parts| *parts == entry.parts));
         assert_eq!(run.hub.log.len(), log_before + 1);
         assert_eq!(run.hub.log.last().unwrap().bytes, entry.parts[0]);
         assert_eq!(run.hub.epoch(&room_group), Some(2));
-        // 4: the log is processed: the peer followed the Commit and made the next one.
+        // 4: the log is processed: the device merges its Commit where the log shows it; the peer followed the
+        // Commit and made the next one.
         sync_ok(&run.hub, &mut run.peer);
         run.peer.update(&room_group, true, now()).unwrap().unwrap();
         post_ok(&mut run.hub, &mut run.peer);
@@ -176,11 +186,14 @@ fn a_commit_survives_a_crash_or_a_failed_write_at_every_step() {
         });
         assert!(matches!(
             &processed[..],
-            [Processed::Commit {
-                superseded: None,
-                removed: false,
-                ..
-            }]
+            [
+                Processed::OwnCommit,
+                Processed::Commit {
+                    superseded: None,
+                    removed: false,
+                    ..
+                }
+            ]
         ));
 
         // The end is the one of an uninterrupted run: merged, nothing pending, nothing to send, and the keys

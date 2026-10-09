@@ -97,8 +97,9 @@ fn a_lost_answer_is_met_with_the_same_bytes_and_the_same_answer() {
     assert_eq!(hub.post(&a.id(), &entry), Ok(accepted));
     assert_eq!((hub.epoch(&room_group), hub.log.len()), (Some(2), log_len));
     a.outbox_accepted(id, accepted).unwrap();
+    // The Commit is accepted and waits for its place in the log.
     let summary = a.group(&room_group).unwrap();
-    assert_eq!((summary.epoch, summary.pending), (2, false));
+    assert_eq!((summary.epoch, summary.pending), (1, true));
     assert!(a.outbox().is_empty());
     // An answer for an entry that is gone changes nothing.
     assert_eq!(a.outbox_accepted(id, accepted), Err(Error::NotFound));
@@ -106,7 +107,10 @@ fn a_lost_answer_is_met_with_the_same_bytes_and_the_same_answer() {
         a.outbox_refused(id, &Error::EpochTaken),
         Err(Error::NotFound)
     );
-    // The log brings the own Commit by again: nothing more happens.
+    // The log brings the own Commit: it is merged there, once.
+    assert_eq!(sync_ok(&hub, &mut a), [Processed::OwnCommit]);
+    let summary = a.group(&room_group).unwrap();
+    assert_eq!((summary.epoch, summary.pending), (2, false));
     assert_eq!(sync_ok(&hub, &mut a), [] as [Processed; 0]);
     sync_ok(&hub, &mut b);
     assert_eq!(
