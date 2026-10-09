@@ -14,10 +14,11 @@
 //! - the device's signature key is read from the stored entry the core wrote it to ([`Vault::signing_key`]),
 //!   because sealing an envelope, answering an invite and signing in need it and the device hands out none;
 //! - what the content rules ask about a group's past ([`trommi_core::chain::GroupFacts`]) is answered from a
-//!   ledger the vault keeps from the Commits it processed. For epochs before this device joined a group it
-//!   answers with the leaves and roles of the epoch it joined at: the hub keeps the earlier Commits, and the
-//!   core's device will follow them; an envelope is still verified under its sender's key and chained from
-//!   number 1.
+//!   ledger the vault keeps from the Commits it processed. The epochs before this device joined a group it
+//!   learns as the trait asks, from the group's founding GroupInfo and its Commits, which the hub keeps
+//!   ([`Vault::learn_past`]): they are followed with the core's observer against a room history that is itself
+//!   followed from the room's founding and must arrive at the room state this device was invited at. Until
+//!   that has happened for a group, it answers for earlier epochs with the leaves of the epoch it joined at.
 use crate::error::{Fault, Result};
 use crate::recovery::AgentRecovery;
 use crate::store::{CoreStore, Journal, SIDE};
@@ -30,6 +31,7 @@ use trommi_core::crypto::{Secret, SigningKey, SystemEntropy};
 use trommi_core::device::{Device, DeviceRecovery};
 use trommi_core::envelope::{Draft, Subject};
 use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId};
+use trommi_core::mls::observer::{Context, NoSessions, Observer};
 use trommi_core::mls::profile::Cut;
 use trommi_core::objects::{self, Decision, GateLog, Objects, OwnRecord};
 use trommi_core::registers::{self, OwnIds, Registers};
@@ -93,6 +95,9 @@ impl From<StoredRole> for Role {
 struct Ledger {
     /// The first epoch the vault saw: the one it joined or founded the group at.
     first: u64,
+    /// The lowest epoch whose leaves are known: `first`, or 0 once the group's past was learned.
+    #[serde(default)]
+    known_from: Option<u64>,
     /// When this device joined, by its clock.
     joined_at: u64,
     epochs: BTreeMap<u64, BTreeMap<String, StoredRole>>,
@@ -103,7 +108,8 @@ struct Ledger {
 
 impl Ledger {
     fn roles(&self, epoch: u64) -> Option<&BTreeMap<String, StoredRole>> {
-        self.epochs.get(&epoch.max(self.first))
+        self.epochs
+            .get(&epoch.max(self.known_from.unwrap_or(self.first)))
     }
 }
 
@@ -190,9 +196,10 @@ impl GroupFacts for Facts<'_> {
         let Some(ledger) = self.ledgers.get(group) else {
             return Ok(None);
         };
-        if epoch < ledger.first {
-            // An epoch that ended before this device joined: it ended at the latest then, and the time its
-            // Commit named is not known, so an envelope of it is never judged late by that time.
+        if epoch < ledger.first && !ledger.ends.contains_key(&epoch) {
+            // An epoch that ended before this device joined, and whose Commit it has not learned: it ended at
+            // the latest then, and the time its Commit named is not known, so an envelope of it is never
+            // judged late by that time.
             return Ok(Some(EpochEnd {
                 processed_at: ledger.joined_at,
                 time: u64::MAX / 2,
@@ -259,6 +266,20 @@ impl ChainRecords for Accepted<'_> {
                 .map_err(|_| Error::Storage("a stored envelope hash does not read".into())),
         }
     }
+}
+
+/// What the hub keeps of a group's past, for [`Vault::learn_past`]: Commits with the `RecoveryAuth` stored beside
+/// a join from outside, in the order of the group's log.
+#[derive(Debug, Clone, Default)]
+pub struct Past {
+    /// The room group's GroupInfo of epoch 0.
+    pub room_info: Vec<u8>,
+    /// The room group's Commits.
+    pub room_commits: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// The group's GroupInfo of epoch 0.
+    pub info: Vec<u8>,
+    /// The group's Commits.
+    pub commits: Vec<(Vec<u8>, Option<Vec<u8>>)>,
 }
 
 /// A register value an envelope set, as the model takes it.
@@ -638,6 +659,139 @@ impl Vault {
         );
         self.stage_content(group)?;
         Ok(findings)
+    }
+
+    /// Learns the epochs of `group` before this device joined it (`chain::GroupFacts::processed_epoch`): who
+    /// its leaves were and in which role, when each epoch ended, which Cuts its Commits named.
+    ///
+    /// `past` is what the hub keeps: the room group's founding GroupInfo and Commits, and the group's own. The
+    /// room is followed from its founding and must arrive at `anchor`, the room epoch and state this device
+    /// was invited at (12.1.6): a room state names its whole history. The group is followed from its founding
+    /// through every Commit up to the epoch this device joined at, each judged by the core's rules against
+    /// that room history, and must arrive at the leaves this device's own group has. On any refusal nothing
+    /// is learned and the error says why.
+    pub fn learn_past(
+        &mut self,
+        group: &GroupId,
+        past: &Past,
+        anchor: (u64, Hash32),
+        now_ms: u64,
+    ) -> Result<()> {
+        let summary = self.device.group(group)?;
+        let Some(first) = self.first_epoch(group) else {
+            return Err(Fault::new("not-found", "a group this device does not hold"));
+        };
+        let unfit = |what: &str| {
+            Fault::new(
+                "bad-group",
+                format!("the group's past does not fit: {what}"),
+            )
+        };
+        let recovery = AgentRecovery;
+        let sessions = NoSessions;
+
+        let mut room = Observer::follow_room(&past.room_info, None)?;
+        if room.epoch()? != 0 {
+            return Err(unfit("the room's founding"));
+        }
+        for (commit, auth) in &past.room_commits {
+            let context = Context {
+                room: None,
+                sessions: &sessions,
+                recovery: &recovery,
+                max_human_devices: 33,
+            };
+            room.process_commit(commit, auth.as_deref(), &context)?;
+        }
+        let history = room.history().ok_or_else(|| unfit("no room history"))?;
+        if history.at(anchor.0).map(|state| state.state) != Some(anchor.1) {
+            return Err(unfit("the room this device was invited to"));
+        }
+
+        let founding = history
+            .at(0)
+            .ok_or_else(|| unfit("the room's first state"))?;
+        let mut session = Observer::follow_session(&past.info, founding)?;
+        if session.group() != *group || session.epoch()? != 0 {
+            return Err(unfit("the group's founding"));
+        }
+        let extension = *session
+            .session()
+            .ok_or_else(|| unfit("not a session group"))?;
+        let is_main = extension.parent.is_zero();
+        let roles_at = |leaves: &std::collections::BTreeSet<DeviceId>, room_epoch: u64| {
+            let state = history.at(room_epoch);
+            leaves
+                .iter()
+                .map(|leaf| {
+                    let role = if state.is_none_or(|state| state.is_human(leaf)) {
+                        StoredRole::Human
+                    } else if is_main {
+                        StoredRole::Agent
+                    } else if state.is_some_and(|state| state.is_agent(leaf)) {
+                        StoredRole::Opener
+                    } else {
+                        StoredRole::Helper
+                    };
+                    (leaf.to_base64url(), role)
+                })
+                .collect::<BTreeMap<String, StoredRole>>()
+        };
+        let mut epochs = BTreeMap::new();
+        let mut ends = BTreeMap::new();
+        let mut cuts: BTreeMap<String, (u64, String)> = BTreeMap::new();
+        epochs.insert(0, roles_at(&session.leaves()?, 0));
+        for (commit, auth) in &past.commits {
+            let before = session.epoch()?;
+            if before >= first {
+                break;
+            }
+            let context = Context {
+                room: Some(history),
+                sessions: &sessions,
+                recovery: &recovery,
+                max_human_devices: 33,
+            };
+            let facts = session.process_commit(commit, auth.as_deref(), &context)?;
+            let note = facts
+                .note
+                .ok_or_else(|| unfit("a Commit without its note"))?;
+            ends.insert(before, (now_ms, note.time));
+            for cut in &note.cuts {
+                cuts.entry(cut.device.to_base64url())
+                    .or_insert((cut.seq, cut.hash.to_base64url()));
+            }
+            epochs.insert(
+                session.epoch()?,
+                roles_at(&session.leaves()?, note.room_epoch),
+            );
+        }
+        if session.epoch()? != first
+            || (summary.epoch == first && session.leaves()? != summary.leaves)
+        {
+            return Err(unfit("it does not arrive at this device's group"));
+        }
+        let ledger = self
+            .ledgers
+            .get_mut(group)
+            .ok_or_else(|| damaged("a ledger"))?;
+        // What this device recorded itself, from the epoch it joined at, stands.
+        epochs.remove(&first);
+        for (epoch, roles) in epochs {
+            ledger.epochs.entry(epoch).or_insert(roles);
+        }
+        for (epoch, end) in ends {
+            ledger.ends.entry(epoch).or_insert(end);
+        }
+        for (device, cut) in cuts {
+            ledger.cuts.entry(device).or_insert(cut);
+        }
+        ledger.known_from = Some(0);
+        self.journal.put(
+            side_key(TAG_LEDGER, &[group.as_bytes()]),
+            serde_json::to_vec(ledger)?,
+        );
+        Ok(())
     }
 
     /// Forgets what was received in `group` (chains, objects, registers and the accepted hashes), keeping this
