@@ -137,10 +137,19 @@ fn client_ip(app: &App, conn: &Conn, headers: &hyper::HeaderMap) -> String {
         std::net::IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
     };
     // the header must be an address; it is keyed in its one canonical spelling
-    match http::header(headers, "cf-connecting-ip").and_then(|h| h.parse::<std::net::IpAddr>().ok())
+    let address = match http::header(headers, "cf-connecting-ip")
+        .and_then(|h| h.parse::<std::net::IpAddr>().ok())
     {
-        Some(named) if app.cfg.trust_proxy_header && private => named.to_canonical().to_string(),
-        _ => peer.to_canonical().to_string(),
+        Some(named) if app.cfg.trust_proxy_header && private => named.to_canonical(),
+        _ => peer.to_canonical(),
+    };
+    // one IPv6 network (/64) is one source: its holder has every address in it
+    match address {
+        std::net::IpAddr::V6(v6) => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+        }
+        v4 => v4.to_string(),
     }
 }
 
@@ -301,7 +310,7 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
 
     // The admission queue: so many requests are worked on at a time. One more is told to come back, before its
     // body is read, and holds nothing meanwhile.
-    let _admitted = match Admitted::enter(&app) {
+    let _admitted = match Admitted::enter(&app, &ip) {
         Some(a) => a,
         None => {
             return http::refusal(
@@ -357,21 +366,45 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
 }
 
 /// A place among the requests being worked on; given back when dropped.
-struct Admitted(Arc<App>);
+struct Admitted(Arc<App>, String);
 
 impl Admitted {
-    fn enter(app: &Arc<App>) -> Option<Admitted> {
+    /// So many requests at work in all, and so many of one address (a few slow senders do not take every place).
+    fn enter(app: &Arc<App>, ip: &str) -> Option<Admitted> {
         if app.admitted.fetch_add(1, Ordering::Relaxed) >= app.cfg.admitted {
             app.admitted.fetch_sub(1, Ordering::Relaxed);
             return None;
         }
-        Some(Admitted(app.clone()))
+        let mut per = app
+            .admitted_per_address
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let count = per.entry(ip.to_string()).or_insert(0);
+        if *count >= app.cfg.admitted_per_address {
+            drop(per);
+            app.admitted.fetch_sub(1, Ordering::Relaxed);
+            return None;
+        }
+        *count += 1;
+        drop(per);
+        Some(Admitted(app.clone(), ip.to_string()))
     }
 }
 
 impl Drop for Admitted {
     fn drop(&mut self) {
         self.0.admitted.fetch_sub(1, Ordering::Relaxed);
+        let mut per = self
+            .0
+            .admitted_per_address
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = per.get_mut(&self.1) {
+            *count -= 1;
+            if *count == 0 {
+                per.remove(&self.1);
+            }
+        }
     }
 }
 
@@ -900,8 +933,10 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
     let found = match app.pooled(|| app.accounts.check_login(row)) {
         Ok(found) => found,
         Err(busy) => {
-            // not checked: the attempt does not count as a failure
-            app.limits.login.succeeded(account_key.as_bytes(), &source);
+            // not checked: the attempt is no failure, and no reset of the failures before it either
+            app.limits
+                .login
+                .not_checked(account_key.as_bytes(), &source, now());
             return Err(busy);
         }
     };

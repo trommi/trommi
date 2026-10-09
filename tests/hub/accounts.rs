@@ -594,3 +594,34 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
         copy(4)
     );
 }
+
+#[test]
+fn one_ipv6_network_is_one_source() {
+    let hub = TestHub::start();
+    // two addresses of one /64: the second is the same guessing source
+    sign_in_from(
+        &hub,
+        "2001:db8:1:2::1",
+        "login",
+        "v6@example.org",
+        &random(),
+    )
+    .refused(401, "wrong-login");
+    sign_in_from(
+        &hub,
+        "2001:db8:1:2:aaaa:bbbb:cccc:dddd",
+        "login",
+        "v6@example.org",
+        &random(),
+    )
+    .refused(429, "rate-limited");
+    // another network is another source
+    sign_in_from(
+        &hub,
+        "2001:db8:1:3::1",
+        "login",
+        "v6@example.org",
+        &random(),
+    )
+    .refused(401, "wrong-login");
+}
