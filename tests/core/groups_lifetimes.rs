@@ -3,10 +3,11 @@
 //! KeyPackage here.
 
 use std::collections::BTreeMap;
-use trommi_core::device::{key_package_info, WelcomeExpectation};
+use trommi_core::device::{key_package_info, Processed, WelcomeExpectation};
 use trommi_core::ids::GroupId;
 use trommi_core::mls::key_package::verify_key_package_of;
 use trommi_core::mls::observer::Observer;
+use trommi_core::mls::profile::Cut;
 use trommi_core::store::{table, Batch, Storage};
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
@@ -61,6 +62,44 @@ fn a_founders_expired_leaf_stops_observers_and_no_join_by_welcome() {
     let observer = Observer::follow_room(hub.group_info(&room_group).unwrap(), None).unwrap();
     assert_eq!(observer.epoch().unwrap(), 2);
     assert_eq!(observer.leaves().unwrap().len(), 2);
+}
+
+#[test]
+fn a_device_removed_while_the_tree_holds_an_expired_leaf_knows_it_is_out() {
+    // A room whose founder's leaf ran out, on a hub that checks nothing, with a second human device.
+    let mut a = new_device();
+    let room = a
+        .found_room([0xE1; 32], [0xE2; 32], now() - ELEVEN_YEARS_MS)
+        .unwrap();
+    let room_group = GroupId::room(room);
+    let mut hub = Hub::new(false);
+    post_ok(&mut hub, &mut a);
+    let mut b = new_device();
+    add_human(&mut hub, &mut a, &mut b);
+    settle(&hub, &mut b);
+    assert!(b.is_human());
+
+    // The founder removes it. The removed device cannot go on as an observer of the room group, since an
+    // observer checks every leaf's lifetime: the removal stands all the same. It is no human device, holds
+    // no record of the room's roles, and builds nothing.
+    a.remove_human_devices(&[Cut::none(b.id())], now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let processed = sync_ok(&hub, &mut b);
+    assert!(matches!(
+        processed[..],
+        [Processed::Commit { removed: true, .. }]
+    ));
+    assert!(!b.is_human());
+    assert_eq!(b.room_history(), None);
+    assert_eq!(b.group(&room_group).err(), Some(Error::NotFound));
+    assert_eq!(b.update(&room_group, true, now()), Err(Error::Forbidden));
+    assert!(b.content_key(&room_group, 1).is_ok());
+    // Told to follow the room again, from a GroupInfo whose leaves are all in their lifetime (the founder's
+    // was renewed by the path of its Commit), it does.
+    b.observe_room(hub.group_info(&room_group).unwrap(), None)
+        .unwrap();
+    assert!(!b.is_human());
+    assert!(b.room_history().unwrap().newest().is_human(&a.id()));
 }
 
 #[test]
