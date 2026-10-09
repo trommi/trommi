@@ -2,7 +2,7 @@
 //! message that carries them, and under random input.
 
 use serde_json::Value;
-use trommi_core::board_items::Ink;
+use trommi_core::board_items::{Ink, Pen, Point};
 use trommi_core::codec;
 use trommi_core::ids::{BoardId, TurnId};
 use trommi_core::mls::message::{TrommiMessage, MAX_MESSAGE_LEN};
@@ -90,10 +90,12 @@ fn limits_hold_on_both_sides_and_the_largest_body_fits_its_message() {
     assert_eq!(code(WorkStep::decode(&long)), "too-large");
     assert_eq!(code(StrokePiece::decode(&long)), "too-large");
 
-    let largest = step(
-        "x".repeat(MAX_STEP_TEXT_LEN),
-        Some("t".repeat(MAX_TOOL_LEN)),
-    );
+    // The longest step there is: 40 000 bytes of JSON, a text within its limit that needs two bytes for
+    // many of its own. It travels in its message; one byte more is refused before it is sent.
+    let filling = |plain: usize| format!("{}{}", "\n".repeat(10_000), "x".repeat(plain));
+    let largest = step(filling(19_989), None);
+    assert_eq!(largest.encode().unwrap().len(), MAX_BODY_LEN);
+    assert_eq!(code(step(filling(19_990), None).encode()), "too-large");
     let message = TrommiMessage::WorkTrail {
         turn: TurnId::new([1; 16]),
         number: 1,
@@ -109,19 +111,46 @@ fn limits_hold_on_both_sides_and_the_largest_body_fits_its_message() {
     };
     assert_eq!(WorkStep::decode(&carried).unwrap(), largest);
 
-    let file = read(NAME).unwrap();
-    let piece = text(&list(&file, "pieces")[0], "piece").as_bytes().to_vec();
+    // The longest piece: as many of the widest points as 40 000 bytes hold.
+    let wide = |n: usize| {
+        let points = (0..n)
+            .map(|i| Point {
+                x: if i % 2 == 0 { i32::MIN } else { 0 },
+                y: if i % 2 == 0 { i32::MIN } else { 0 },
+                t: 0,
+                force: 255,
+                azimuth: 255,
+                altitude: 255,
+            })
+            .collect();
+        StrokePiece {
+            stroke: [9; 16],
+            number: u32::MAX,
+            pen: Pen::Marker,
+            color: "c".repeat(40),
+            width: 16_000,
+            ink: Ink::new(points, true, true).unwrap(),
+        }
+    };
+    let fits = (1..4_000)
+        .rev()
+        .find(|n| wide(*n).encode().is_ok())
+        .unwrap();
+    assert!(wide(fits).encode().unwrap().len() > MAX_BODY_LEN - 24);
+    assert_eq!(code(wide(fits + 1).encode()), "too-large");
+    let piece = wide(fits).encode().unwrap();
     let message = TrommiMessage::StrokePiece {
         board: BoardId::ALL_DESKS,
         piece: piece.clone(),
     };
     let bytes = codec::encode(&message).unwrap();
+    assert!(bytes.len() < MAX_MESSAGE_LEN - 2048);
     let TrommiMessage::StrokePiece { piece: carried, .. } =
         codec::decode::<TrommiMessage>(&bytes, MAX_MESSAGE_LEN).unwrap()
     else {
         panic!("another message");
     };
-    assert_eq!(carried, piece);
+    assert_eq!(StrokePiece::decode(&carried).unwrap(), wide(fits));
 
     let printed = format!("{:?}", step("vertraulich".into(), None));
     assert!(!printed.contains("vertraulich"));
