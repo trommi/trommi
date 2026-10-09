@@ -22,6 +22,7 @@ use crate::mls::profile::{TrommiRoom, RECOVERY_KEY_LEN};
 use crate::mls::rules::{JoinClaim, RecoveryRules, RoomHistory, RoomState, SealedKeyClaim};
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use zeroize::Zeroizing;
 
 /// The label that derives the seed of `recovery_sign` from the code.
 pub const SIGN_LABEL: &str = "trommi recovery sign";
@@ -547,21 +548,22 @@ pub struct RecoveryKeys {
 }
 
 impl RecoveryKeys {
-    /// The keys of `code`.
-    pub fn from_code(code: &Secret<32>) -> Result<Self, Error> {
-        let hpke_secret: Secret<32> = crypto::expand_with_label(code, HPKE_LABEL, &[])?;
+    /// The keys of `code`. The code is taken and wiped here: whoever still needs it afterwards (to seal the
+    /// account's copies of a new code) made a second copy on purpose.
+    pub fn from_code(code: Secret<32>) -> Result<Self, Error> {
+        let hpke_secret: Secret<32> = crypto::expand_with_label(&code, HPKE_LABEL, &[])?;
         Ok(Self {
-            sign: SigningKey::from_seed(crypto::expand_with_label(code, SIGN_LABEL, &[])?),
+            sign: SigningKey::from_seed(crypto::expand_with_label(&code, SIGN_LABEL, &[])?),
             hpke: crypto::derive_hpke_keypair(&hpke_secret)?,
             hpke_secret,
-            mac: crypto::expand_with_label(code, MAC_LABEL, &[])?,
+            mac: crypto::expand_with_label(&code, MAC_LABEL, &[])?,
         })
     }
 
     /// A fresh code, 32 random bytes, with its keys.
     pub fn generate(entropy: &mut dyn Entropy) -> Result<(Secret<32>, Self), Error> {
         let code = Secret::random(entropy)?;
-        let keys = Self::from_code(&code)?;
+        let keys = Self::from_code(code.duplicate())?;
         Ok((code, keys))
     }
 
@@ -586,7 +588,8 @@ impl RecoveryKeys {
         }
     }
 
-    /// What opens and authenticates the rows sealed to this code's key.
+    /// What opens and authenticates the rows sealed to this code's key. It holds a copy of the private key
+    /// and outlives [`RecoveryKeys::finish`]: the caller drops it when the rows are opened.
     pub fn opener(&self) -> Result<Opener, Error> {
         Ok(Opener {
             hpke: crypto::derive_hpke_keypair(&self.hpke_secret)?,
@@ -618,18 +621,20 @@ impl RecoveryKeys {
     }
 
     /// Replaces this code (8.6): a fresh code with keys the room never held, and the `RecoveryLink` that hands
-    /// this code's HPKE secret and `recovery_mac` to it. `history` is the room's, as far as the caller holds it;
-    /// the rules refuse the Commit if the room held one of the keys before the history began. A draw that
-    /// repeats a held key, or a device's key, is `Error::Entropy`: no honest source does that.
+    /// this code's HPKE secret and `recovery_mac` to it. Only the code in force replaces: `wrong-recovery` when
+    /// the newest state of `history` does not hold this code's keys. `history` is the room's, as far as the
+    /// caller holds it; the rules refuse the Commit if the room held one of the keys before the history began.
+    /// A draw that repeats a held key, or a device's key, is `Error::Entropy`: no honest source does that.
     pub fn replace(
         &self,
         entropy: &mut dyn Entropy,
         room: &RoomId,
         history: &RoomHistory,
     ) -> Result<Replacement, Error> {
+        let newest = history.newest();
+        self.check_room(&newest.room)?;
         let (code, keys) = Self::generate(entropy)?;
         let public = keys.public();
-        let newest = history.newest();
         let repeats = [public.signature_key, public.hpke_key].iter().any(|key| {
             let as_device = DeviceId::new(*key);
             history.held_recovery_key(key)
@@ -639,16 +644,22 @@ impl RecoveryKeys {
         if repeats || public.signature_key == public.hpke_key {
             return Err(Error::Entropy);
         }
-        let old = OldRecovery {
-            hpke_secret: self.hpke_secret.duplicate(),
-            recovery_mac: self.mac.duplicate(),
-        };
+        // The encoded OldRecovery, in a buffer that is wiped: both halves are secret.
+        let mut old = Zeroizing::new([0u8; OLD_RECOVERY_LEN]);
+        let halves = self
+            .hpke_secret
+            .expose()
+            .iter()
+            .chain(self.mac.expose().iter());
+        for (to, from) in old.iter_mut().zip(halves) {
+            *to = *from;
+        }
         let sealed = crypto::encrypt_with_label(
             entropy,
             &public.hpke_key,
             LINK_LABEL,
             room.as_bytes(),
-            &codec::encode(&old)?,
+            old.as_slice(),
         )?;
         let mut link = RecoveryLink {
             room_id: *room,
@@ -1186,17 +1197,47 @@ pub struct RecoveredKey {
     pub confirmed: bool,
 }
 
+/// Whether a row is sealed to the recovery key in force where it belongs: the room state at its `room_epoch`
+/// holds the key it names, and that room epoch is not below the one its content epoch began under. For the
+/// room group that is the epoch's own state, or the one before it when the key did not change between them;
+/// for a session group `begun` names the `room_epoch` of the Commit that led to the epoch, where the caller
+/// verified that Commit. So a replaced code authenticates nothing for an epoch that began after it.
+fn in_force(
+    row: &SealedKey,
+    history: &RoomHistory,
+    begun: &dyn Fn(&GroupId, u64) -> Option<u64>,
+) -> bool {
+    let key_at = |epoch: u64| history.at(epoch).map(|state| state.room.recovery_hpke_key);
+    let context = &row.context;
+    let floor = if context.group.is_room() {
+        let before = context.epoch.checked_sub(1).and_then(key_at);
+        match (before, key_at(context.epoch)) {
+            (Some(before), Some(own)) if before == own => context.epoch.saturating_sub(1),
+            (_, Some(_)) => context.epoch,
+            (_, None) => return false,
+        }
+    } else {
+        begun(&context.group, context.epoch).unwrap_or(0)
+    };
+    row.room_epoch >= floor && key_at(row.room_epoch) == Some(row.recovery_hpke_key)
+}
+
 /// The content keys of the room `room` that `openers` open from `rows` (8.5), per group and epoch, ascending.
+/// `history` is the room's from its founding on, as the caller verified it; `begun` names, for an epoch of a
+/// session group whose Commits the caller verified, the `room_epoch` of the Commit that led to it.
 ///
-/// The rows of an epoch with a valid `mac` must open to one key, which is taken (`equivocation` when two differ,
-/// `decrypt-failed` when one does not open). A row with an empty `mac` is taken only if its epoch has none with
-/// a valid one, and its key is marked unconfirmed; of several such rows the first that opens counts. A row
-/// whose non-empty `mac` does not verify is ignored, as is a row of another room, a row sealed to a key no
-/// opener is for, and bytes that are no row.
+/// Only rows sealed to the recovery key in force where they belong count: the room state at the row's
+/// `room_epoch` holds the key it names, and that is not before the epoch began. Of these, the rows of an epoch
+/// with a valid `mac` must open to one key, which is taken (`equivocation` when two differ or one does not
+/// open). A row with an empty `mac` is taken only if its epoch has none with a valid one, and its key is marked
+/// unconfirmed; of several such rows the first that opens counts. A row whose non-empty `mac` does not verify
+/// is ignored, as is a row of another room, a row sealed to a key no opener is for, and bytes that are no row.
 pub fn select_keys(
     room: &RoomId,
     rows: &[Vec<u8>],
     openers: &[Opener],
+    history: &RoomHistory,
+    begun: &dyn Fn(&GroupId, u64) -> Option<u64>,
 ) -> Result<Vec<RecoveredKey>, Error> {
     let mut confirmed: BTreeMap<(GroupId, u64), Secret<32>> = BTreeMap::new();
     let mut unconfirmed: BTreeMap<(GroupId, u64), Secret<32>> = BTreeMap::new();
@@ -1204,7 +1245,7 @@ pub fn select_keys(
         .iter()
         .filter_map(|row| SealedKey::from_bytes(row).ok())
     {
-        if row.context.group.room_id() != *room {
+        if row.context.group.room_id() != *room || !in_force(&row, history, begun) {
             continue;
         }
         let Some(opener) = openers
@@ -1216,7 +1257,10 @@ pub fn select_keys(
         let place = (row.context.group, row.context.epoch);
         match row.mac_state(&opener.mac)? {
             MacState::Valid => {
-                let key = row.open(opener)?;
+                let key = row.open(opener).map_err(|error| match error {
+                    Error::DecryptFailed => Error::Equivocation,
+                    other => other,
+                })?;
                 match confirmed.get(&place) {
                     Some(held) if *held != key => return Err(Error::Equivocation),
                     Some(_) => {}
