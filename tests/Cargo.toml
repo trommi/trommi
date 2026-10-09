@@ -133,3 +133,7 @@ path = "core/push.rs"
 [[test]]
 name = "core_account"
 path = "core/account.rs"
+
+[[test]]
+name = "core_join_invite"
+path = "core/join_invite.rs"
