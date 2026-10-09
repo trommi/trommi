@@ -23,18 +23,18 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | **Groups (MLS delivery service)** | | |
 | `POST /v2/groups` | `{ group_info_0, sealed_key_0, commit, group_info, welcome?, sealed_key }` → `{ group_id }` | founding of a session group (5.2.5) |
 | `POST /v2/groups/{group}/commits` | `{ epoch, commit, group_info, welcome?, sealed_key, recovery_auth? }` → `{ epoch, change }` | `epoch` = the epoch it builds on; `epoch-taken`, `room-behind`, `bad-commit`, `incomplete` |
-| `POST /v2/rooms/{room}/recovery` → `{ recovery_id, expires_at }` · `POST …/recovery/{id}/commits` (a body as above with `group_id`, one per call) → `{ epoch, kept }` · `POST …/recovery/{id}/finish` (`{ recovery_link, account }`) → `{ published, first_change, change, device }` · `DELETE` | recovery key's token | 8.7: the room is locked for ten minutes; nothing is visible to others until `finish`, which publishes all or nothing |
-| `POST /v2/rooms/{room}/recovery-code` | `{ epoch, commit, group_info, sealed_key, recovery_link, account }` → `{ epoch, change }` | 8.6: one room Commit, all or nothing; a human device |
+| `POST /v2/rooms/{room}/recovery` → `{ recovery_id, expires_at }` · `POST …/recovery/{id}/commits` (`{ group_id, epoch, commit, group_info, welcome?, sealed_key, recovery_auth? }`, one per call) → `{ epoch, kept }` · `POST …/recovery/{id}/finish` (`{ recovery_link, account }`) → `{ published, first_change, change, device }` · `DELETE` | recovery key's token | 8.7: the room is locked for ten minutes; nothing is visible to others until `finish`, which publishes all or nothing |
+| `POST /v2/rooms/{room}/recovery-code` | `{ commit: { epoch, commit, group_info, sealed_key }, recovery_link, account }` → `{ epoch, change }` | 8.6: one room Commit, all or nothing; a human device |
 | `POST /v2/groups/{group}/reject` | `{ n }` | 14.7 |
 | `POST /v2/groups/{group}/archive` | | 5.2.10; human devices |
 | `GET /v2/groups/{group}/log?after=&limit=&kind=commit` | → `{ items: [ { n, change, epoch, at, kind: "commit", bytes, recovery_auth? } \| { n, change, epoch, at, kind: "message", bytes } ], more }` | the ordered log (5.4.1, 7.0); `gone` when `after` is older than what is kept |
 | `POST /v2/groups/{group}/messages` | `{ epoch, message, relay? }` → `{ n }` | application message; `relay: true`: passed on, not stored (7.2); `wrong-epoch` |
-| `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | current, and epoch 0 (the founding) of every group; for the room group every epoch is kept |
+| `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | without `epoch`: the current one; with it exactly that epoch (`not-found`). Kept: the current one and epoch 0 (the founding) of every group, every epoch that still lacks a `SealedKey` with a `mac` (8.3), every epoch of the room group |
 | `GET /v2/welcomes` | → `[ { group_id, welcome, at } ]` | for the asking device; deleted when it has joined |
 | `PUT /v2/key-packages` | `{ single_use: [..], last_resort? }` → `{ unused }` | 14.2; `bad-key-package` |
 | `POST /v2/key-packages/claim` | `{ devices: [..] }` → `{ key_packages: { device: bytes } }` | one each, all or nothing; the last-resort one when none is left; none uploaded more than 90 days ago |
 | `GET /v2/rooms/{room}/groups` | → `[ { group_id, kind, session_id, parent, epoch, live, stale, leaves } ]` | what the asker may see: a human device all, another device its own groups and the room group |
-| `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
+| `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; writing: a human device that is the row's `writer`; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
 | `POST /v2/requests` · `GET /v2/requests` | `{ kind: readmit \| handover \| session, group?, key_package? }` | an unsigned wish of the signed-in device to the human devices (5.2.7, 5.3.5, 7.1, 13.4); nothing follows from it without a Commit |
 | **Content** | | |
 | `POST /v2/envelopes` | `{ envelope }` → `{ change }` or a refusal with `voided` | every stored item (9); the hub files it by its header |
@@ -47,7 +47,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `GET /v2/stream?after=` | server-sent events: `envelope`, `log`, `relay`, `welcome`, `request`, `presence`, `file_evicted`, `ping` | live; resumes by change number (`after`, or `Last-Event-ID`) |
 | **Files, shares, push, presence** | | |
 | `PUT /v2/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; `quota-exceeded` |
-| `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5 |
+| `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5; `expires_at` at most 180 days ahead |
 | `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | Offer + signature; Reveal + signature | human devices |
 | `POST /v2/push` · `GET` · `DELETE` | `{ web_push: { endpoint, keys: { p256dh, auth } } \| apns: { token, key, environment, topic }, level }`; `GET` → `{ subscriptions, vapid_public_key, apns }` | 15; human devices |
 | `POST /v2/live-activity` | `{ kind: start \| activity, token, tag, environment, topic }` | 15.3 |
@@ -66,14 +66,14 @@ written. Catch-up is "everything above N".
 | `key_packages` | `device`, `ref`, `last_resort`, `expires_at`, `bytes` | | claim: (`device`, `last_resort`, oldest) |
 | `groups` | `group_id`, `room_id`, `kind` (room, main, helper), `session_id`, `parent`, `epoch`, `room_epoch`, `live`, `archived_at`, `log_n`, the serialised public group | | by room |
 | `group_log` | `group_id`, `n`, `epoch`, `kind`, `bytes` (a Commit: readable; a message: opaque), `sender` (the posting device), `at`, `change` | messages | **catch up a group**: (`group_id`, `n`) |
-| `group_infos` | `group_id`, `epoch`, `bytes` | | current; room group: all |
+| `group_infos` | `group_id`, `epoch`, `bytes` | | current, epoch 0, epochs without an authenticated `SealedKey`; room group: all |
 | `welcomes` | `device`, `group_id`, `at` | `bytes` | by device |
 | `sealed_keys`, `recovery_links` | `group_id`, `epoch`, `writer`, `recovery_hpke_key` | `sealed` | (`room_id`, `change`) |
 | `envelopes` | `change`, `group_id`, `epoch`, `sender`, `seq`, `prev`, `hash`, `recipient`, `kind`, `flags`, `time`, `received_at`, `timeline` (kind, scope, ref), `object_id`, `object_type`, `object_state`, `urgency`, `answered_at`, `object_ref`, `register_id`, `file_ids`, `padded_size`, `header`, `nonce`, `body_hash`, `signature`, `void_code` | `body` (null once pruned) | truth for all stored content. **Chain**: unique (`group_id`, `sender`, `seq`). **Catch-up**: (`room_id`, `change`). **Page a chat, load a board**: (`timeline`, `change`) |
 | `cards`, `notes`, `permission_requests`, `artifacts` | `object_id`, `group_id`, `state`, `urgency`, `answered_at`, `owner`, `first_change`, `head_change`, `closed_at` | | **the Desk**: partial index on `state = open` by (`urgency` desc, `first_change`). Derived from `envelopes`, rebuildable |
 | `chats`, `boards` | `timeline`, `group_id`, `item_count`, `last_change` | | derived |
 | `registers` | `group_id`, `writer`, `register_id`, `head_change` | | **all current values**: (`group_id`); derived |
-| `files` | `file_id`, `room_id`, `uploader`, `object_id`, `size`, `stored_at`, `referenced_at` | bytes beside the database | by object; pending uploads by `stored_at` |
+| `files` | `file_id`, `room_id`, `uploader`, `group_id`, `object_id`, `size`, `stored_at`, `referenced_at` | bytes beside the database | by object; pending uploads by `stored_at` |
 | `shares` | `share_id`, `file_id`, `secret_hash`, `expires_at`, `created_by` | | by id |
 | `invites`, `invite_requests` | signed Offer, Requests, Reveal, `expires_at`, `used_at`, `burned_at` | | by `invite_id` |
 | `requests` | `room_id`, `device`, `kind`, `group_id`, `at` | | by room |
@@ -83,7 +83,7 @@ written. Catch-up is "everything above N".
 - The four object tables, `chats`, `boards` and `registers` are indexes over `envelopes`, written in the same
   transaction from signed header fields, and can be dropped and rebuilt. One write route, one truth table; the app's
   names are on what is read.
-- Retention: `group_log` messages 30 days; Commits and the founding GroupInfo of a group as long as any envelope of
+- Retention: `group_log` messages 30 days; Commits and the founding GroupInfo of a group while it is live and as long as any envelope of
   it is kept (the room group: for ever); `envelopes.body` per v2.md 9.4; `welcomes` until joined; relay-only messages never.
 - Who may read: a human device everything of its room; an agent or helper device the Commits and GroupInfo of the
   room group and, for a helper session, of its main session's group (public state only, no messages), and the log,
@@ -93,7 +93,8 @@ written. Catch-up is "everything above N".
 - A recovery (8.7) is a transaction of its own: each posted part advances a copy of the public state of the groups
   it touches, later parts are checked against that copy, every other reader sees the state from before. `finish`
   checks that the room group and every live session group were joined and cleaned, then publishes all parts under
-  consecutive change numbers; repeated, it gives the same answer. At expiry or `DELETE` the copy is dropped.
+  consecutive change numbers; repeated, by the recovery key's token or after publication by the new device's own,
+  it gives the same answer. While a recovery is open the room takes no other write (v2.md 8.7). At expiry or `DELETE` the copy is dropped.
 - The log route gives a join from outside together with its `RecoveryAuth`. The chain route marks envelopes beyond
   a Cut `cut`. Nothing in a log is ever withdrawn.
 - A repeated post of the same bytes gets the first answer again. Every read route serves a void record with its

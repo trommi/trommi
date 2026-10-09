@@ -95,6 +95,13 @@ impl TestHub {
                 "HUB_LIMIT_FOUND_PER_IP_HOUR".to_string(),
                 "100000".to_string(),
             ),
+            // the scenarios run faster than a device is let: the limits of expensive requests have tests of
+            // their own, which set them
+            (
+                "HUB_LIMIT_HEAVY_PER_SECOND".to_string(),
+                "100000".to_string(),
+            ),
+            ("HUB_LIMIT_HEAVY_BURST".to_string(), "100000".to_string()),
         ]);
         for (k, v) in env {
             map.insert(k.to_string(), v.to_string());

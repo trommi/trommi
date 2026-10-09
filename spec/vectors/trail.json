@@ -1,0 +1,138 @@
+{
+  "about": "The bodies of the live messages (spec/v2.md sections 7.2 and 7.3). steps: the step of a work trail message and what it holds. pieces: the piece of a stroke piece message; stroke and packed in hex, width in 1/16 board unit. A reader that decodes and encodes one gets the same text. steps_refused, pieces_refused: with the code of the refusal.",
+  "pieces": [
+    {
+      "number": 1,
+      "packed": "02a8b301cc7b0de7d703ab011efc93acbab803a8b7bede0a0ddbff035e0f3b",
+      "piece": "{\"stroke\":\"yYHA-I5cuf3D4TdLgPtTrA\",\"number\":1,\"tool\":\"pen\",\"color\":\"ink\",\"width\":17,\"points\":\"AqizAcx7DefXA6sBHvyTrLq4A6i3vt4KDdv_A14POw\"}",
+      "stroke": "c981c0f88e5cb9fdc3e1374b80fb53ac",
+      "width": 17
+    },
+    {
+      "number": 2,
+      "packed": "00e1b6089a9d0106cedc01f4022602b401b8040c15b603f10222670df203132f8e048a032476",
+      "piece": "{\"stroke\":\"cFpqQoCnnueLEFVXeeRMNA\",\"number\":2,\"tool\":\"marker\",\"color\":\"ink\",\"width\":33,\"points\":\"AOG2CJqdAQbO3AH0AiYCtAG4BAwVtgPxAiJnDfIDEy-OBIoDJHY\"}",
+      "stroke": "705a6a4280a79ee78b10555779e44c34",
+      "width": 33
+    },
+    {
+      "number": 3,
+      "packed": "00e7ed06cdf40523e785048202255b8eefcf9d0c8083b2e005070225ba04004fa2038901232838a9030434",
+      "piece": "{\"stroke\":\"0qGf0HKhb_FMtxU1OrFlDw\",\"number\":3,\"tool\":\"pen\",\"color\":\"ink\",\"width\":49,\"points\":\"AOftBs30BSPnhQSCAiVbju_PnQyAg7LgBQcCJboEAE-iA4kBIyg4qQMENA\"}",
+      "stroke": "d2a19fd072a16ff14cb715353ab1650f",
+      "width": 49
+    }
+  ],
+  "pieces_refused": [
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"ink\",\"number\":2,\"points\":\"AYAsgDEwHyWSwAE_BBomkg\",\"stroke\":\"AAECAwQFBgcICQoLDA0O\",\"tool\":\"pen\",\"width\":64}",
+      "why": "a stroke id of 15 bytes"
+    },
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"ink\",\"number\":0,\"points\":\"AYAsgDEwHyWSwAE_BBomkg\",\"stroke\":\"AAECAwQFBgcICQoLDA0ODw\",\"tool\":\"pen\",\"width\":64}",
+      "why": "number 0"
+    },
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"ink\",\"number\":4294967296,\"points\":\"AYAsgDEwHyWSwAE_BBomkg\",\"stroke\":\"AAECAwQFBgcICQoLDA0ODw\",\"tool\":\"pen\",\"width\":64}",
+      "why": "a number beyond 32 bits"
+    },
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"ink\",\"number\":2,\"points\":\"AYAsgDEwHyWSwAE_BBomkg\",\"stroke\":\"AAECAwQFBgcICQoLDA0ODw\",\"tool\":\"sticky\",\"width\":64}",
+      "why": "a tool that draws no stroke"
+    },
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"\",\"number\":2,\"points\":\"AYAsgDEwHyWSwAE_BBomkg\",\"stroke\":\"AAECAwQFBgcICQoLDA0ODw\",\"tool\":\"pen\",\"width\":64}",
+      "why": "an empty colour"
+    },
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"ink\",\"number\":2,\"points\":\"AYAsgDEwHyWSwAE_BBomkg\",\"stroke\":\"AAECAwQFBgcICQoLDA0ODw\",\"tool\":\"pen\",\"width\":0}",
+      "why": "width 0"
+    },
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"ink\",\"number\":2,\"points\":\"AYAsgDEwHyWSwAE_BBomkg\",\"stroke\":\"AAECAwQFBgcICQoLDA0ODw\",\"tool\":\"pen\",\"width\":64.5}",
+      "why": "a width with a fraction"
+    },
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"ink\",\"number\":2,\"points\":\"AA\",\"stroke\":\"AAECAwQFBgcICQoLDA0ODw\",\"tool\":\"pen\",\"width\":64}",
+      "why": "no point"
+    },
+    {
+      "code": "bad-format",
+      "piece": "{\"color\":\"ink\",\"number\":2,\"points\":null,\"stroke\":\"AAECAwQFBgcICQoLDA0ODw\",\"tool\":\"pen\",\"width\":64}",
+      "why": "no points"
+    }
+  ],
+  "steps": [
+    {
+      "step": "{\"text\":\"Reading spec/v2.md\",\"tool\":\"Read\"}",
+      "text": "Reading spec/v2.md",
+      "tool": "Read"
+    },
+    {
+      "step": "{\"text\":\"Zwei Tests schlagen fehl:\\n\\t\\\"merge\\\" und „snapshot“\"}",
+      "text": "Zwei Tests schlagen fehl:\n\t\"merge\" und „snapshot“",
+      "tool": null
+    },
+    {
+      "step": "{\"text\":\"\",\"tool\":\"Bash\"}",
+      "text": "",
+      "tool": "Bash"
+    }
+  ],
+  "steps_refused": [
+    {
+      "code": "bad-format",
+      "step": "text",
+      "why": "no JSON"
+    },
+    {
+      "code": "bad-format",
+      "step": "\"text\"",
+      "why": "no object"
+    },
+    {
+      "code": "bad-format",
+      "step": "{\"tool\":\"Bash\"}",
+      "why": "no text"
+    },
+    {
+      "code": "bad-format",
+      "step": "{\"text\":1}",
+      "why": "a text that is a number"
+    },
+    {
+      "code": "bad-format",
+      "step": "{\"text\":\"x\",\"tool\":\"\"}",
+      "why": "an empty tool"
+    },
+    {
+      "code": "bad-format",
+      "step": "{\"text\":\"x\",\"tool\":\"ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt\"}",
+      "why": "a tool of 81 bytes"
+    },
+    {
+      "code": "bad-format",
+      "step": "{\"text\":\"a\",\"text\":\"b\"}",
+      "why": "text twice"
+    },
+    {
+      "code": "bad-format",
+      "step": "{\"text\":\"x\",\"tool\":null}",
+      "why": "a tool set to null"
+    }
+  ],
+  "steps_with_unknown_fields": [
+    {
+      "same_as": "{\"text\":\"x\"}",
+      "step": "{\"state\":\"running\",\"text\":\"x\"}"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-// The round trip in a module worker, as the app's core runs. Its own CSP violations are collected here: the page
+// The call into the core in a module worker, as the app's core runs. Its own CSP violations are collected here: the page
 // does not see them.
 import { roundTrip } from '/test/round-trip.mjs'
 const violations = []

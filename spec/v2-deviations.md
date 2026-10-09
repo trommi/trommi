@@ -53,6 +53,9 @@ key package (RFC 9420 allows the reuse, the draft defines the mark).
   your devices: after a device is stolen the code should be replaced, and the app asks for it.
 - **Recommendation.** As proposed: recovery is the last line of defence and should not hang on a replay.
 - **Covers:** recovery, sign-in on a new device, the account.
+- **Extensions, approved 2026-10-09.** (1) The authentication tag (`recovery_mac`) on every sealed row and on the
+  sealed link, with the message that hands its key to a new device (`v2.md` 7.4, 8.3, 8.5). (2) The join from
+  outside under the recovery signature also for session groups, not only for the room group (8.4, 5.2.7).
 
 ## D2. Stored content as Trommi's own envelope
 
