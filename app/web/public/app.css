@@ -703,7 +703,7 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
 /* ---- A phone's tap targets: what a finger presses is at least 44px each way. Controls with room grow to it; small
    ones keep their look and an unseen area around them takes the tap (as the list in session.css does). ---- */
 @media (max-width: 860px) {
-  :is(.desk-duck-yes, .desk-duck-no, .tc-more-item, .tc-more .tc-more-list > .cardclip-copy, .t-picture-back, .session-buttons button, .session-filter-menu a, .t-menu button) { min-height: 44px; }
+  :is(.desk-duck-yes, .desk-duck-no, .tc-more-item, .tc-more .tc-more-list > .cardclip-copy, .t-picture-back, .session-buttons button, .t-menu button) { min-height: 44px; }
   
   .ledger-find { height: 44px; }
   :is(.row-mark, .tc-from, .tc-clip, .tc-draw-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .art-kinds a, #settings-logout) { position: relative; }

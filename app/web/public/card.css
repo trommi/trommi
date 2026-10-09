@@ -548,7 +548,6 @@ a.focus-stage-step { display: grid; place-items: center; }
 .t-picture .focus-stage-step.is-next { right: 14px; }
 
 .t-menu button:hover, .t-menu button:focus-visible { background: var(--sunken); }
-.session-filter-menu a:hover, .session-filter-menu a:focus-visible { background: var(--sunken); }
 .files-close:hover, .files-close:focus-visible { background: var(--sunken); color: var(--fg); }
 .files-jump:hover, .files-jump:focus-visible { background: var(--sunken); }
 .focus-chip { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 0; border-radius: var(--r-pill); background: var(--sunken); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); }

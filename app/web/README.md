@@ -142,10 +142,10 @@ instead); files come network first, the cache only offline. On the dev server (`
   at once ("settled by your answer"), and Take back opens it again.
 - **Foot:** Off your mind (the end list: what is with the agents, then snoozed, done, shredded cards, five lines; "Show
   more" at the right end of its heading opens `/stacks/off`, the whole list with a search), Artifacts (the newest four;
-  "All Artifacts N" at its heading's right opens `/artifacts`: Media and Pages together, the newest first, the filter
+  its heading "Artifacts N" is the link that opens `/artifacts`: Media and Pages together, the newest first, the filter
   All · Media · Pages, compact tiles in a soft frame with Open and, on a page, Share as small icons; 25 tiles made at once,
   the rest as they come near).
-- **Note:** one drawn yellow note at the window's bottom-right; it unfolds there to write, takes attachments, sends to the crown (`sidebar.mjs` `cornerNote`).
+- **Note:** one drawn yellow note at the window's bottom-right; it unfolds there to write, takes attachments, sends to the crown (on All Desks: to a desk's crowned session, chosen where several desks have one); a square sheet on a wide window (`sidebar.mjs` `cornerNote`).
 - **Sidebar:** the Desk box, the sessions (a main with its helpers on a pen bracket, tallies, the red hand), "New agent" and
   the Trommi menu at its foot. One sidebar, two presentations (`sidebar.css` "A phone"): beside the page on a wide
   screen (foldable to a rail), a drawer up to 860px that a finger from the left edge slides in over the dimmed page (a

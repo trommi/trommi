@@ -284,9 +284,9 @@ const deskStacks = (model, base) => html`<div class="inbox-stacks stack-tabs is-
 // withdrawn ones struck through). Nothing to tick, nothing to archive. Five rows, then "Show more" opens the whole list
 // with its search (/stacks/off). A title opens its card.
 const END_STEP = 5
-/** A section's heading at the Desk's foot: a pen rule with its small label; a link (Show more, All Artifacts) where
- *  the rule ends, at its right. */
-const divider = (label, link = '') => html`<div class="end-divider"><svg viewBox="0 0 300 8" preserveAspectRatio="none" aria-hidden="true"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span aria-hidden="true">${label}</span>${link}</div>`
+/** A section's heading at the Desk's foot: a pen rule with its small label; a link (Show more) where the rule ends, at
+ *  its right. With href the label itself is the link to the section's whole page (Artifacts, with its count). */
+const divider = (label, link = '', { href = '', count = null } = {}) => html`<div class="end-divider"><svg viewBox="0 0 300 8" preserveAspectRatio="none" aria-hidden="true"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg>${href ? html`<a class="end-head" data-nav href="${href}" aria-label="All ${label}${count == null ? '' : `, ${count}`}">${label}${count == null ? '' : html` <span class="off-count">${count}</span>`}</a>` : html`<span aria-hidden="true">${label}</span>`}${link}</div>`
 /** The end list. On the Desk the first five rows and "Show more"; full (the page /stacks/off): every row, with its search. */
 function endList(model, base, { full = false, q = '' } = {}) {
   const { later, closedTop, closedSize } = offParts(model)
@@ -328,7 +328,7 @@ function artifactsPile(model, base) {
   const seen = new Set(), four = []
   for (const x of all) { const k = x.item.url || x.item.pic || x.item.title; if (seen.has(k)) continue; seen.add(k); four.push(x); if (four.length === 4) break }
   const thumb = x => x.kind === 'media' ? mediaPreview(x.item) : html`<span class="df-page"${x.item.pic ? raw(` style="background-image:url('${x.item.pic}')"`) : ''}>${x.item.pic ? '' : html`<b>${x.item.title}</b><i></i><i></i><i></i>`}</span>`
-  return html`<section class="df-cards" id="desk-artifacts" aria-label="Artifacts, ${all.length}">${divider('Artifacts', html`<a class="end-link" data-nav href="${base}/artifacts">All Artifacts <span class="off-count">${all.length}</span> →</a>`)}
+  return html`<section class="df-cards" id="desk-artifacts" aria-label="Artifacts, ${all.length}">${divider('Artifacts', '', { href: `${base}/artifacts`, count: all.length })}
 <div class="df-row">${four.map(x => html`<a class="df-card" data-nav href="${x.item.href ?? `${base}/artifacts`}" title="${x.item.title || x.item.name}"><span class="df-thumb">${thumb(x)}</span><span class="df-title">${x.item.title || x.item.name}</span></a>`)}</div></section>`
 }
 

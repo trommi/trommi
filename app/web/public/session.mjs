@@ -301,19 +301,12 @@ function sessionNow(s, base = '') {
   const facts = [a.model, a.host].filter(Boolean).join(' · ')
   return html`<p class="pane-now" id="session-now-${a.id}"${link && link.state !== 'live' ? html` data-link="${link.state}" title="${link.line}"` : ''}><span>${words}</span>${facts ? html`<span class="caps">${facts}</span>` : ''}${filesChip(s, base)}</p>`
 }
-/** The filter beside the composer: one quiet icon that opens a small menu, All / Questions only (with the number that
- *  waits) / Files, the one in view ticked; a dot on the icon while a filter is on. A <details> (controller "pops" closes
- *  it on Escape or a click beside it); the entries are real links, so it works without scripts. */
-const FILTERS = [['', 'All messages', null], ['questions', 'Questions only', 'filter-questions'], ['files', 'Files', 'filter-files']]   // (Files: on a phone only, app.css; it opens the drawer)
+/** The filter beside the composer: one round button that switches straight to the questions only and back (his word,
+ *  9 October: "direkt filtern, nicht erst fragen"); filled while it is on. A real link (the choice lives in the
+ *  address, ?only=questions), so it works without scripts. */
 function sessionFilters(s, base, mode = '') {
-  const here = sessionPath(s.id, base)
-  const href = { '': here, questions: `${here}?only=questions`, files: `${here}/files` }
-  if (mode !== 'questions') mode = ''   // ("Files" is the conversation with the drawer open: no filter is on)
-  const on = FILTERS.find(f => f[0] === mode) ?? FILTERS[0]
-  const n = fileCount(s)
-  return html`<details class="t-pick session-filter" id="session-filters-${s.id}"${mode ? raw(' data-on') : ''} data-controller="pops title" data-title-count-value="${s.fresh.length}"><summary class="session-filter-btn" title="Filter: ${on[1]}" aria-label="Filter the conversation: ${on[1]}">${ico('filter')}${mode ? raw('<i class="session-filter-dot"></i>') : ''}</summary><nav class="t-pop t-menu session-filter-menu" aria-label="Filter the conversation">${FILTERS.map(([m, label, id]) => m === 'files'
-    ? (n ? html`<a href="${href[m]}" data-nav id="${id}" class="session-filter-files" data-turbo-frame="files-frame-${s.id}" data-action="files#open">${ico('clip', 'ico session-filter-tick')}<span>${label} (${n})</span></a>` : '')
-    : html`<a href="${href[m]}" data-nav${id ? html` id="${id}"` : ''}${m === mode ? raw(' aria-current="true"') : ''}>${ico('decided', 'ico session-filter-tick')}<span>${label}</span>${m === 'questions' ? html`<b id="filter-count">${s.fresh.length || ''}</b>` : ''}</a>`)}</nav></details>`
+  const here = sessionPath(s.id, base), on = mode === 'questions'
+  return html`<a class="session-filter session-filter-btn" id="session-filters-${s.id}" role="button" aria-pressed="${on ? 'true' : 'false'}" data-nav href="${on ? here : `${here}?only=questions`}" title="Questions only" aria-label="Questions only" data-controller="title" data-title-count-value="${s.fresh.length}">${ico('filter')}</a>`
 }
 /** The status lines of the session's running work, and that it is answering. They stand at the end of the conversation. */
 function sessionStatus(s, base, now = Date.now()) {
@@ -1091,7 +1084,7 @@ controller('files', class extends Controller {
   }
   outside(event) {
     if (!this.isOpen || !event.target.isConnected) return
-    if (this.drawerTarget.contains(event.target) || event.target.closest('.files-chip, .session-filter-files, .session-filter')) return
+    if (this.drawerTarget.contains(event.target) || event.target.closest('.files-chip, .session-filter')) return
     this.close()
   }
   jump(event) {

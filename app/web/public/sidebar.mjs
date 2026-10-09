@@ -67,15 +67,17 @@ const deskNotesOf = model => (model.state.notes ?? []).filter(m => !m.held).sort
 const MAC = /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? '')
 const SEND_KEYS = MAC ? 'Meta+Enter' : 'Control+Enter', SEND_WORD = MAC ? '⌘ Enter' : 'Ctrl+Enter'
 export function cornerNote(model, base) {
-  const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
+  const note = deskNotesOf(model)[0] ?? null
   // On All desks the note asks which desk's crowned session gets it (his word, 8 October; the last one marked)
   const crowns = model.all ? (model.desks ?? []).map(d => ({ desk: d, a: model.everyone.find(a => a.starred && !a.archived && model.deskOf(a) === d.id) })).filter(x => x.a) : []
+  // (All desks, and the desk last looked at has no crown: the note still goes to a crowned session, another desk's)
+  const crown = crownOf(model) ?? crowns[0]?.a ?? null, far = crown && crowns.length === 1 && crown !== crownOf(model)
   const chooser = crowns.length > 1 ? html`<div class="note-to-pick" role="menu" aria-label="Send to" hidden>${crowns.map(x => html`<button type="button" role="menuitem" class="note-to-row" data-action="corner-note#sendTo" data-to="${x.a.id}">${raw(sketchSvg('desk'))}<span><b>${x.desk.name || 'Desk'}</b><small>${x.a.name}</small></span></button>`)}</div>` : ''
   const text = note?.text ?? '', files = note?.attachments ?? []
   return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
 <button type="button" class="corner-note-head" data-action="corner-note#open" data-tip="${text || files.length ? 'Your note: open it (N)' : 'New note (N)'}" aria-label="${text || files.length ? 'Your note: open it' : 'New note'}" aria-expanded="false">${NOTE_ICON}</button>
 <div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop keydown->corner-note#key">${crown ? html`<span class="corner-note-to">${avatar(crown, { crown: false })}<b>${crown.name}</b></span>` : ''}<textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" aria-keyshortcuts="${SEND_KEYS}" data-action="input->corner-note#typed">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
-<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<span class="corner-note-sending">${chooser}<button type="button" class="note-send corner-note-send" data-action="corner-note#send" data-name="${crown.name}" aria-label="Send to ${crown.name}" aria-keyshortcuts="${SEND_KEYS}">${raw(crownSvg())}</button><kbd class="corner-note-keys" aria-hidden="true">${SEND_WORD}</kbd></span>` : html`<a class="corner-note-nocrown" data-nav href="${base}/settings/sessions">Give a session the crown to send</a>`}</footer></div>
+<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<span class="corner-note-sending">${chooser}<button type="button" class="note-send corner-note-send" data-action="corner-note#send"${far ? html` data-to="${crown.id}"` : ''} data-name="${crown.name}" aria-label="Send to ${crown.name}" aria-keyshortcuts="${SEND_KEYS}">${raw(crownSvg())}</button><kbd class="corner-note-keys" aria-hidden="true">${SEND_WORD}</kbd></span>` : html`<a class="corner-note-nocrown" data-nav href="${base}/settings/sessions">Give a session the crown to send</a>`}</footer></div>
 </section>`
 }
 controller('corner-note', class extends Controller {
@@ -264,6 +266,7 @@ controller('corner-note', class extends Controller {
       if (pick.hidden) { pick.hidden = false; for (const r of rows) r.classList.toggle('is-last', r === marked); marked?.focus(); return }
       to = marked?.dataset.to
     }
+    to ??= this.element.querySelector('.corner-note-send')?.dataset.to || null
     if (!this.idValue) { await this.save(); if (!this.idValue) return }
     const id = this.idValue
     this.idValue = ''; this.field.value = ''; this.element.querySelector('.corner-note-files').innerHTML = ''
