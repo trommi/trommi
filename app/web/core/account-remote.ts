@@ -1,66 +1,64 @@
-// account-remote.ts: the account (account.ts) as the page uses it, with its slow and secret parts in the core worker.
-// Creating an account, logging in, a new password from the Emergency Kit and joining with a link run in a new core
-// worker (remote.ts), which then holds the room: the page gets a RemoteClient, and Argon2id, the room's founding or
-// joining crypto and the device keys never run on the page's thread. The account routes of a signed-in device (a new
-// kit, a new password, a new passkey, …) run in the worker of that device's RemoteClient. WebAuthn itself (the prompts)
-// is the page's (auth.mjs): these functions carry what a ceremony returned. The light parts (the password rule,
-// generated passwords) are the same functions as account.ts. A page without workers, or with ?core=page, runs it all
-// here (account.ts, room.ts).
+// account-remote.ts: the account (account.ts) as the page uses it. Everything slow or secret runs in the core
+// worker: creating an account, logging in, the Emergency Kit's ways back and joining with a link run in a new core
+// worker (remote.ts), which then holds the room, and the page gets its RemoteClient; the account's routes of a
+// signed-in device (a new kit, a new password, a passkey, …) run in the worker of that device's RemoteClient. The
+// page's thread never loads the core: no key is derived on it and no sealed copy is opened on it.
+//
+// What stays on the page is light and holds no key (passwords.ts, passkey.ts): a form's own checks, a generated
+// password, the hub's challenge for a passkey and the prf input. WebAuthn's prompts are the page's too
+// (public/auth.mjs); these functions carry what a ceremony returned, the prf output with it, into the worker.
+//
+// A page without workers cannot run the core: every step that needs it fails with `worker-failed`, which the
+// screens word.
 import { accountInWorker, joinInWorker, type RemoteClient } from './remote.ts'
-import type { AccountClient, Unlock, PasskeyRegistration } from './account.ts'
-import { joinRoom as joinHere } from './room.ts'
+import type { AccountStatus, Kit, PasskeyRegistration, Unlock } from './account.ts'
+import { PASSKEY_PRF_INPUT, passkeyChallenge as challengeFromHub } from './passkey.ts'
 
-export { PASSWORD_MIN, normaliseEmail, passwordProblem, generatePassword, generateRecoveryWords, parseRecoveryWords } from './passwords.ts'
+export { PASSWORD_MIN, normaliseEmail, passwordProblem, generatePassword, parseRecoveryWords } from './passwords.ts'
 
 type Args = Record<string, unknown> & { client?: string | null }
-const local = () => import('./account.ts')
-const isRemote = (c: unknown): c is RemoteClient => !!c && typeof (c as RemoteClient).call === 'function' && !!(c as RemoteClient).worker
+type Opened = { client: RemoteClient }
+/** A step of account.ts that makes this device's room (worker-protocol.ts ACCOUNT_OPENS). */
+type Opens = 'createAccount' | 'createAccountWithPasskey' | 'loginWithPassword' | 'loginWithPasskey' | 'resetPassword' | 'recoverWithKit' | 'recoverWithCode'
 
-/** The same rule as core-start.ts: workers, unless this tab asked for the core in the page (?core=page). */
-function workerWanted(): boolean {
-  if (typeof Worker !== 'function') return false
-  try { return (new URLSearchParams(location.search).get('core') ?? sessionStorage.getItem('trommi-core')) !== 'page' } catch { return true }
+/** A step that makes a room, in a new core worker. `onEvent`: what the worker says before it is done; what it
+ *  returns (or throws) is the page's answer to that event. */
+async function opening<T extends Opened>(fn: Opens, args: Args, onEvent?: (event: string, data: unknown) => unknown): Promise<T> {
+  if (typeof Worker !== 'function') throw Object.assign(new Error('this browser runs no workers'), { code: 'worker-failed' })
+  const options = { client: args.client ?? null, ...(onEvent ? { onEvent } : {}) }
+  return await accountInWorker(fn, args, options) as unknown as T
 }
-const workerFailed = (e: unknown) => ['worker-failed', 'worker-timeout'].includes((e as { code?: string } | null)?.code ?? '')
-
-/** A step that makes a room: in a worker, else (no worker, or one that does not come up) here. */
-async function opening<T>(fn: 'createAccount' | 'createAccountWithPasskey' | 'loginWithPassword' | 'loginWithPasskey' | 'resetPassword' | 'recoverWithKit', args: Args): Promise<T> {
-  if (workerWanted()) {
-    try { return await accountInWorker(fn, args, { client: args.client ?? null }) as T }
-    catch (e) { if (!workerFailed(e)) throw e; console.warn('core worker:', (e as Error).message, '(the account step runs in the page)') }
-  }
-  return ((await local())[fn] as unknown as (a: Args) => Promise<T>)(args)
+export const createAccount = (args: Args) => opening<Opened & { kit: Kit }>('createAccount', args)
+export const createAccountWithPasskey = (args: Args) => opening<Opened & { kit: Kit }>('createAccountWithPasskey', args)
+export const loginWithPassword = (args: Args) => opening<Opened>('loginWithPassword', args)
+export const loginWithPasskey = (args: Args) => opening<Opened>('loginWithPasskey', args)
+export const recoverWithKit = (args: Args) => opening<Opened>('recoverWithKit', args)
+export const resetPassword = (args: Args) => opening<Opened & { kit: Kit }>('resetPassword', args)
+/** `on_recovery_code` cannot cross to the worker as a function: the worker says the new code as its event
+ *  `recovery-code` before anything of the recovery is posted, waits until the page has taken it (remote.ts), and
+ *  the code is shown here. A recovery without it is refused in the worker. */
+export function recoverWithCode({ on_recovery_code, ...args }: Args & { on_recovery_code: (code: string) => unknown }) {
+  return opening<Opened & { recovery_code: string }>('recoverWithCode', args, (event, data) => (event === 'recovery-code' ? on_recovery_code(String(data)) : undefined))
 }
-export const createAccount = (args: Args) => opening<{ client: RemoteClient | AccountClient; kit: { words: string; email: string } }>('createAccount', args)
-export const loginWithPassword = (args: Args) => opening<{ client: RemoteClient | AccountClient }>('loginWithPassword', args)
-export const resetPassword = (args: Args) => opening<{ client: RemoteClient | AccountClient }>('resetPassword', args)
-export const createAccountWithPasskey = (args: Args) => opening<{ client: RemoteClient | AccountClient; kit: { words: string; email: string } }>('createAccountWithPasskey', args)
-export const loginWithPasskey = (args: Args) => opening<{ client: RemoteClient | AccountClient }>('loginWithPasskey', args)
-export const recoverWithKit = (args: Args) => opening<{ client: RemoteClient | AccountClient }>('recoverWithKit', args)
-// The light parts of a passkey ceremony, on the page beside navigator.credentials (passkey.ts: HKDF and one AES block; no worker, no Argon2):
-// the anonymous challenge and the fixed prf input.
-const light = () => import('./passkey.ts')
-export const passkeyChallenge = async (args: { hub_url: string; client?: string | null }) => (await light()).passkeyChallenge(args)
-export const passkeyPrfInput = async () => (await light()).PASSKEY_PRF_INPUT
 
-/** A route of the signed-in device's account: in its worker, or here for a client of the page. */
-async function onClient<T>(fn: string, client: AccountClient | RemoteClient, args?: unknown): Promise<T> {
-  if (isRemote(client)) return client.call('account', fn, args) as Promise<T>
-  return ((await local()) as unknown as Record<string, (c: unknown, a: unknown) => Promise<T>>)[fn]!(client, args)
-}
-export const accountStatus = (client: AccountClient | RemoteClient) => onClient<Record<string, unknown> | null>('accountStatus', client)
-export const addAccount = (client: AccountClient | RemoteClient, args: { email: string; password: string; recovery_code: string }) => onClient<{ kit: { words: string; email: string } }>('addAccount', client, args)
-export const makeEmergencyKit = (client: AccountClient | RemoteClient, args: Unlock) => onClient<{ words: string; email: string }>('makeEmergencyKit', client, args)
-export const setPassword = (client: AccountClient | RemoteClient, args: { unlock: Unlock; next: string }) => onClient<void>('setPassword', client, args)
-export const checkUnlock = (client: AccountClient | RemoteClient, args: Unlock) => onClient<void>('checkUnlock', client, args)
-export const passkeyChallengeFor = (client: AccountClient | RemoteClient) => onClient<string>('passkeyChallengeFor', client)
-export const addPasskey = (client: AccountClient | RemoteClient, args: { unlock: Unlock; passkey: PasskeyRegistration }) => onClient<{ credential_id: string }>('addPasskey', client, args)
-export const removePasskey = (client: AccountClient | RemoteClient, credential_id: string) => onClient<unknown>('removePasskey', client, credential_id)
-export const changePassword = (client: AccountClient | RemoteClient, args: { current: string; next: string }) => onClient<void>('changePassword', client, args)
-export const verifyEmail = (client: AccountClient | RemoteClient, code: unknown) => onClient<unknown>('verifyEmail', client, code)
-export const resendEmailCode = (client: AccountClient | RemoteClient) => onClient<unknown>('resendEmailCode', client)
+// The light parts of a passkey ceremony, on the page beside navigator.credentials (passkey.ts).
+export const passkeyChallenge = (args: { hub_url: string; client?: string | null }): Promise<string> => challengeFromHub(args)
+export const passkeyPrfInput = async (): Promise<Uint8Array<ArrayBuffer>> => PASSKEY_PRF_INPUT
 
-/** Join with an invite link (room.ts joinRoom's shape), in a worker when the page has them. */
-export function joinRoom(args: Args): { check_code: Promise<string>; client: Promise<unknown>; cancel(): void } {
-  return workerWanted() ? joinInWorker(args, { client: args.client ?? null }) : joinHere(args as never)
+/** A route of the signed-in device's account, in its worker (worker-protocol.ts ACCOUNT_CALLS). */
+const onClient = <T>(fn: string, client: RemoteClient, args?: unknown): Promise<T> => client.call('account', fn, args) as Promise<T>
+export const accountStatus = (client: RemoteClient) => onClient<AccountStatus | null>('accountStatus', client)
+export const addAccount = (client: RemoteClient, args: { email: string; password: string; recovery_code: string }) => onClient<{ kit: Kit }>('addAccount', client, args)
+export const makeEmergencyKit = (client: RemoteClient, args: Unlock) => onClient<Kit>('makeEmergencyKit', client, args)
+export const changePassword = (client: RemoteClient, args: { current: string; next: string }) => onClient<{ kit: Kit | null }>('changePassword', client, args)
+export const setPassword = (client: RemoteClient, args: { unlock: Unlock; next: string }) => onClient<{ kit: Kit | null }>('setPassword', client, args)
+export const checkUnlock = (client: RemoteClient, args: Unlock) => onClient<void>('checkUnlock', client, args)
+export const passkeyChallengeFor = (client: RemoteClient) => onClient<string>('passkeyChallengeFor', client)
+export const addPasskey = (client: RemoteClient, args: { unlock: Unlock; passkey: PasskeyRegistration }) => onClient<{ credential_id: string; kit: Kit | null }>('addPasskey', client, args)
+export const removePasskey = (client: RemoteClient, credential_id: string) => onClient<void>('removePasskey', client, credential_id)
+export const replaceRecoveryCode = (client: RemoteClient, args: Unlock) => onClient<Kit>('replaceRecoveryCode', client, args)
+
+/** Join with an invite link (room.ts joinRoom's shape), in a new core worker. */
+export function joinRoom(args: Args): { check_code: Promise<string>; client: Promise<RemoteClient>; cancel(): void } {
+  return joinInWorker(args, { client: args.client ?? null })
 }
