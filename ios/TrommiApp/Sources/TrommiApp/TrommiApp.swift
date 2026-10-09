@@ -612,6 +612,14 @@ final class BoardModel: ObservableObject {
     guard let room = acting() else { return }
     act { var v = room.board.human.desks[id]?.object ?? [:]; v["name"] = .str(String(name.prefix(40))); try await room.setDesk(id, .obj(v)) }
   }
+  /** A desk's goals (DeskGoals; app.mjs hub.desk({ id, goals })): a field of its register, every other field kept.
+   *  With no desk yet, the first one ("main") is made for them. */
+  func setGoals(_ id: String, _ text: String) {
+    guard let room = acting() else { return }
+    let have = room.board.human.desks
+    guard let did = have[id]?.object != nil ? id : have.isEmpty ? "main" : nil else { return }
+    act { try await room.setDesk(did, deskRegister(have[did], goals: text)) }
+  }
   func removeDesk(_ id: String) {
     guard let room = acting() else { return }
     act { try await room.setDesk(id, nil); if self.deskId == id { self.deskId = nil } }

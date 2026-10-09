@@ -88,7 +88,10 @@ struct DeskScreen: View {
       if hSize != .regular {
         // iPhone: the greeting wraps beside two small round glass buttons (the duck for all, Blitz with its count)
         HStack(alignment: .top, spacing: 10) {
-          Greeting(text: line).layoutPriority(1)
+          VStack(alignment: .leading, spacing: 0) {
+            Greeting(text: line)
+            if !v.all { DeskGoals(desk: v.deskId ?? "main", text: v.goals) }
+          }.layoutPriority(1)
           Spacer(minLength: 0)
         }
         .padding(.top, 18).padding(.bottom, 6)
@@ -98,6 +101,7 @@ struct DeskScreen: View {
       } else {
       VStack(alignment: .leading, spacing: 14) {
         Greeting(text: line).padding(.top, 18)
+        if !v.all { DeskGoals(desk: v.deskId ?? "main", text: v.goals).padding(.top, -14) }
         if n > 0 {
           HStack(spacing: 12) {
             Spacer()

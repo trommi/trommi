@@ -139,7 +139,11 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
   still covers of the page (`UIResponder.keyboardWillChangeFrameNotification`; the content's keyboard inset ended a
   little below the keyboard's top edge) is kept free at its bottom. On the iPad the note is a sheet from the Desk's
   corner button.
-- **Desk:** no text field; the keyboard only appears in sheets (New Desk, Rename), which the system handles.
+- **Desk:** one text field, the desk's goals under the greeting (`DeskGoals.swift`; the web's `desk.mjs` `deskGoals`):
+  a quiet line or a few (at most 5 lines of 200 characters, `cleanGoals` in `TrommiClient/Desk.swift`), empty a faint
+  "Goals…", nothing on All desks. A tap writes in place; the keyboard going away keeps it, an emptied field clears it.
+  The write keeps every other field of the register `desk/<desk_id>` (`deskRegister`). Otherwise the keyboard only
+  appears in sheets (New Desk, Rename), which the system handles.
 - **Settings:** forms with the system's keyboard handling; a drag dismisses it.
 
 ## TestFlight from CI
@@ -273,8 +277,4 @@ the stored note, as a share does (`ShareImport.addToNote`).
 - Creating an account (founding a room) and the old recovery-code recovery: on the web.
 - Freshness (R3) on envelopes of an older key epoch; drawing on a card (the web's pen tool), card versions as they were.
 - A re-seal that fails after the device added itself is not retried (the JS core keeps `reseal_pending`).
-- **Desk goals** (web since 8 October 2026): the desk register `desk/<desk_id>` carries `goals`, a string of at most 5
-  lines of at most 200 characters each (no blank lines at either end); shown under the Desk's greeting on that desk
-  (nothing on All desks), empty = a faint "Goals…"; a tap writes in place, the write keeps every other field of the
-  register (name, created_at, order, crown). Web: `app/web/public/desk.mjs` `deskGoals`, `app.mjs` `cleanGoals`.
 - Screenshots of the phone from Linux: `pymobiledevice3 developer dvt screenshot` works over its userspace tunnel without root (`npm run interop:screens -- --iphone-current`).
