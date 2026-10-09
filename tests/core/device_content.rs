@@ -607,3 +607,615 @@ fn heads_are_due_when_a_head_changed_and_show_what_a_reader_lacks() {
         "the last envelope accepted"
     );
 }
+
+// ---- every outcome, a removed device, a hostile hub ----
+
+use trommi_core::chain::Role;
+use trommi_core::device::Confirmation;
+use trommi_core::envelope::{self, Envelope, ObjectFields, ObjectType, Subject};
+use trommi_core::ids::{BoardId, Hash32, ObjectId};
+use trommi_core::objects::Objects;
+use trommi_tests::forge::Forger;
+use trommi_tests::forge_content::{posting, Claim, Pen};
+use trommi_tests::hub::content::{Change, StoredEnvelope};
+use trommi_tests::{add_forger, post_ok, take_envelope};
+
+/// A room whose founder reads, with a second human leaf whose key the test holds.
+struct Forged {
+    hub: Hub,
+    room: GroupId,
+    reader: TestDevice,
+    pen: Pen,
+}
+
+fn forged() -> Forged {
+    let mut reader = new_device();
+    let (mut hub, room) = found_room(&mut reader);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut reader, &forger);
+    sync_all(&hub, &mut reader);
+    Forged {
+        hub,
+        room,
+        reader,
+        pen: Pen::new(&forger.key),
+    }
+}
+
+impl Forged {
+    /// What the pen claims: a human leaf of the room group in the epoch the reader stands in.
+    fn claim(&self) -> Claim {
+        let epoch = self.reader.group(&self.room).unwrap().epoch;
+        self.claim_in(epoch)
+    }
+
+    fn claim_in(&self, epoch: u64) -> Claim {
+        Claim {
+            group: self.room,
+            epoch,
+            role: Role::Human,
+            seat: None,
+            key: self.reader.content_key(&self.room, epoch).unwrap(),
+        }
+    }
+
+    fn stroke(&mut self) -> Envelope {
+        let claim = self.claim();
+        self.pen.sign(&claim, &board_item(), &Objects::new(), now())
+    }
+
+    /// The hub takes the envelope; returns it as served.
+    fn post(&mut self, envelope: &Envelope) -> StoredEnvelope {
+        self.hub
+            .post(&self.pen.id(), &posting(envelope))
+            .expect("the hub takes it");
+        self.hub.content.envelopes.last().unwrap().clone()
+    }
+
+    /// Hands the reader an envelope the hub never took, read back at the reader's cursor.
+    fn slip(&mut self, envelope: &Envelope) -> ReceivedEnvelope {
+        let change = self.reader.cursor();
+        self.reader
+            .receive_envelope(&envelope.encode().unwrap(), change, true, None, now())
+            .unwrap()
+    }
+}
+
+fn board_item() -> envelope::Draft {
+    envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    )
+}
+
+fn note_draft() -> envelope::Draft {
+    envelope::Draft::first_version(
+        ObjectType::Note,
+        Urgency::Normal,
+        format!(r#"{{"text":"n","previous_version_hash":"{ZERO_HASH}"}}"#).as_bytes(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn every_refusal_of_checks_one_to_six_consumes_nothing() {
+    let mut f = forged();
+    let head = |f: &Forged| f.reader.chain_head(&f.room, &f.pen.id()).unwrap();
+    // Check 1: not an envelope at all; another room.
+    assert_eq!(
+        f.reader.receive_envelope(&[], 0, true, None, now()),
+        Err(Error::BadFormat)
+    );
+    let mut pen = f.pen.fork();
+    let mut elsewhere = pen.sign(&f.claim(), &board_item(), &Objects::new(), now());
+    elsewhere.header.group = GroupId::room(trommi_core::ids::RoomId::new([7; 32]));
+    pen.resign(&mut elsewhere);
+    assert_eq!(f.slip(&elsewhere).code, Some(Error::WrongRoom));
+    // Check 2: an epoch the reader has not reached; with the cursor held back when it comes in order.
+    let mut pen = f.pen.fork();
+    let mut ahead = pen.sign(&f.claim(), &board_item(), &Objects::new(), now());
+    ahead.header.epoch += 1;
+    pen.resign(&mut ahead);
+    assert_eq!(f.slip(&ahead).code, Some(Error::GroupBehind));
+    let cursor = f.reader.cursor();
+    let early = f
+        .reader
+        .receive_envelope(&ahead.encode().unwrap(), cursor + 5, true, None, now())
+        .unwrap();
+    assert_eq!(early.outcome, EnvelopeOutcome::Refused);
+    assert_eq!(early.code, Some(Error::GroupBehind));
+    assert_eq!(f.reader.cursor(), cursor, "the log is processed first");
+    // Check 3: a signer that is no leaf.
+    let stranger =
+        trommi_core::crypto::SigningKey::generate(&mut trommi_core::crypto::SystemEntropy).unwrap();
+    let outside = Pen::new(&stranger).sign(&f.claim(), &board_item(), &Objects::new(), now());
+    assert_eq!(f.slip(&outside).code, Some(Error::NotMember));
+    // Check 5: a signature that is not the sender's.
+    let mut unsigned = f
+        .pen
+        .fork()
+        .sign(&f.claim(), &board_item(), &Objects::new(), now());
+    unsigned.signature[0] ^= 1;
+    assert_eq!(f.slip(&unsigned).code, Some(Error::BadSignature));
+    // Check 6: a number beyond the next, a wrong link, and after the first envelope a replay and a fork.
+    let mut pen = f.pen.fork();
+    let first = pen.sign(&f.claim(), &board_item(), &Objects::new(), now());
+    let second = pen.sign(&f.claim(), &board_item(), &Objects::new(), now());
+    assert_eq!(f.slip(&second).code, Some(Error::Gap));
+    assert_eq!(head(&f).seq, 0, "nothing was consumed");
+    assert_eq!(f.slip(&first).outcome, EnvelopeOutcome::Applied);
+    assert_eq!(f.slip(&first).code, Some(Error::Replay));
+    let other_first = f
+        .pen
+        .fork()
+        .sign(&f.claim(), &board_item(), &Objects::new(), now());
+    assert_eq!(f.slip(&other_first).code, Some(Error::Equivocation));
+    let mut broken = second.clone();
+    broken.header.prev = Hash32::new([3; 32]);
+    pen.resign(&mut broken);
+    assert_eq!(f.slip(&broken).code, Some(Error::ChainBreak));
+    assert_eq!(head(&f).seq, 1);
+    assert_eq!(f.slip(&second).outcome, EnvelopeOutcome::Applied);
+    assert_eq!(head(&f).hash, second.hash().unwrap());
+}
+
+#[test]
+fn what_fails_checks_seven_to_nine_is_chained_and_never_applied() {
+    let mut f = forged();
+    let claim = f.claim();
+    // Check 7: a version of an object nobody began.
+    let mut forbidden = f.pen.sign(&claim, &note_draft(), &Objects::new(), now());
+    let Subject::Version(fields) = forbidden.header.subject else {
+        panic!("a version");
+    };
+    forbidden.header.subject = Subject::Version(ObjectFields {
+        object_id: ObjectId::new([5; 16]),
+        object_ref: Hash32::new([6; 32]),
+        ..fields
+    });
+    f.pen.resign(&mut forbidden);
+    let got = f.slip(&forbidden);
+    assert_eq!(
+        (got.outcome, got.code.clone()),
+        (EnvelopeOutcome::Chained, Some(Error::Forbidden))
+    );
+    assert!(got.body.is_none() && got.object_after.is_none());
+    assert!(f.reader.objects(&f.room).unwrap().is_empty());
+    // Check 9: a body sealed under another header does not open; the envelope still counts for its object.
+    let mut unreadable = f.pen.sign(&claim, &note_draft(), &Objects::new(), now());
+    unreadable.header.time += 1;
+    f.pen.resign(&mut unreadable);
+    let got = f.slip(&unreadable);
+    assert_eq!(
+        (got.outcome, got.code.clone()),
+        (EnvelopeOutcome::Chained, Some(Error::DecryptFailed))
+    );
+    assert_eq!(got.object_after.unwrap().1.state, ObjectState::Open);
+    // A pruned envelope verifies and carries the chain and the object.
+    let note = f.pen.sign(&claim, &note_draft(), &Objects::new(), now());
+    let got = f.slip(&note.prune().unwrap());
+    assert_eq!(
+        (got.outcome, got.code.clone()),
+        (EnvelopeOutcome::Chained, Some(Error::Pruned))
+    );
+    assert!(got.object_after.is_some());
+    // A kind of a newer Trommi is chained and nothing else.
+    let mut newer = f.pen.sign(&claim, &note_draft(), &Objects::new(), now());
+    newer.header.subject = Subject::Reserved {
+        kind: 9,
+        block: [0; envelope::OBJECT_BLOCK_LEN],
+    };
+    f.pen.resign(&mut newer);
+    let got = f.slip(&newer);
+    assert_eq!(
+        (got.outcome, got.code.clone()),
+        (EnvelopeOutcome::Chained, Some(Error::NewerVersion))
+    );
+    assert_eq!(f.reader.chain_head(&f.room, &f.pen.id()).unwrap().seq, 4);
+    assert_eq!(f.reader.objects(&f.room).unwrap().len(), 2);
+}
+
+#[test]
+fn an_envelope_of_an_ended_epoch_is_taken_for_two_minutes() {
+    let mut f = forged();
+    let old = f.claim();
+    let in_time = f.pen.sign(&old, &board_item(), &Objects::new(), now());
+    let late = f.pen.sign(&old, &board_item(), &Objects::new(), now());
+    // The reader ends the epoch at a moment of its own clock.
+    let ended = now();
+    f.reader.update(&f.room, true, ended).unwrap().unwrap();
+    post_ok(&mut f.hub, &mut f.reader);
+    sync_all(&f.hub, &mut f.reader);
+    assert_eq!(f.reader.group(&f.room).unwrap().epoch, old.epoch + 1);
+    let take = |f: &mut Forged, envelope: &Envelope, at: u64| {
+        let stored = f.post(envelope);
+        f.reader
+            .receive_envelope(&stored.bytes, stored.change, true, None, at)
+            .unwrap()
+    };
+    let got = take(&mut f, &in_time, ended + 119_000);
+    assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+    let got = take(&mut f, &late, ended + 121_000);
+    assert_eq!(
+        (got.outcome, got.code),
+        (EnvelopeOutcome::Chained, Some(Error::WrongEpoch))
+    );
+}
+
+#[test]
+fn a_void_record_is_chained_and_a_missing_or_unfounded_marker_shows() {
+    let mut f = forged();
+    let claim = f.claim();
+    // The hub voids what check 7 forbids: it keeps the number and says so.
+    let mut forbidden = f.pen.sign(&claim, &note_draft(), &Objects::new(), now());
+    let Subject::Version(fields) = forbidden.header.subject else {
+        panic!("a version");
+    };
+    forbidden.header.subject = Subject::Version(ObjectFields {
+        object_id: ObjectId::new([5; 16]),
+        object_ref: Hash32::new([6; 32]),
+        ..fields
+    });
+    f.pen.resign(&mut forbidden);
+    let entry = posting(&forbidden);
+    assert_eq!(f.hub.post(&f.pen.id(), &entry), Err(Error::Forbidden));
+    assert!(f.hub.voided(&entry));
+    let stored = f.hub.content.envelopes.last().unwrap().clone();
+    assert!(Envelope::decode(&stored.bytes).unwrap().is_pruned());
+    // Served with its marker: a void record whose reason the reader checks again and finds.
+    let got = take_envelope(&mut f.reader, &stored);
+    assert_eq!(
+        (got.outcome, got.code.clone(), got.finding.clone()),
+        (EnvelopeOutcome::Void, Some(Error::Forbidden), None)
+    );
+
+    // A hub that removes the marker changes nothing: the reader's own check 7 refuses the envelope.
+    let mut second = forged();
+    let claim = second.claim();
+    let mut forbidden = second
+        .pen
+        .sign(&claim, &note_draft(), &Objects::new(), now());
+    forbidden.header.subject = Subject::Version(ObjectFields {
+        object_id: ObjectId::new([5; 16]),
+        object_ref: Hash32::new([6; 32]),
+        ..fields
+    });
+    second.pen.resign(&mut forbidden);
+    let _ = second.hub.post(&second.pen.id(), &posting(&forbidden));
+    let mut stored = second.hub.content.envelopes.last().unwrap().clone();
+    stored.void_code = None;
+    let got = take_envelope(&mut second.reader, &stored);
+    assert_eq!(
+        (got.outcome, got.code),
+        (EnvelopeOutcome::Chained, Some(Error::Forbidden))
+    );
+    assert!(second.reader.objects(&second.room).unwrap().is_empty());
+
+    // A hub that voids another sender's good envelope is found out: the reason cannot be checked again.
+    let good = f
+        .pen
+        .sign(&f.claim(), &note_draft(), &Objects::new(), now());
+    let change = f.reader.cursor() + 1;
+    let got = f
+        .reader
+        .receive_envelope(
+            &good.prune().unwrap().encode().unwrap(),
+            change,
+            true,
+            Some(&Error::Forbidden),
+            now(),
+        )
+        .unwrap();
+    assert_eq!(got.outcome, EnvelopeOutcome::Void);
+    assert_eq!(got.finding, Some(Error::HubVoidedOther));
+    assert!(f.reader.objects(&f.room).unwrap().is_empty());
+}
+
+#[test]
+fn a_provisional_envelope_is_confirmed_or_dropped_when_its_chain_arrives() {
+    let mut f = forged();
+    let first = f.stroke();
+    let second = f.stroke();
+    let fetch = |f: &mut Forged, envelope: &Envelope| {
+        f.reader
+            .receive_envelope(&envelope.encode().unwrap(), 0, false, None, now())
+            .unwrap()
+    };
+    // A page of the board brings the second before its chain: shown, not accepted.
+    let got = fetch(&mut f, &second);
+    assert_eq!(got.outcome, EnvelopeOutcome::Provisional);
+    assert!(got.body.is_some() && !got.command);
+    assert_eq!(f.reader.chain_head(&f.room, &f.pen.id()).unwrap().seq, 0);
+    assert_eq!(f.slip(&first).provisional, None);
+    assert_eq!(f.slip(&second).provisional, Some(Confirmation::Confirmed));
+    // Fetched again, it is what its chain made of it.
+    assert_eq!(fetch(&mut f, &second).outcome, EnvelopeOutcome::Applied);
+
+    // Another envelope under a number the chain holds is a hash mismatch at once.
+    let mut pen = f.pen.fork();
+    let third = pen.sign(&f.claim(), &board_item(), &Objects::new(), now());
+    let third_again = f
+        .pen
+        .fork()
+        .sign(&f.claim(), &note_draft(), &Objects::new(), now());
+    assert_eq!(fetch(&mut f, &third).outcome, EnvelopeOutcome::Provisional);
+    // The chain reaches the number with the other one: what was shown is dropped.
+    let got = f.slip(&third_again);
+    assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+    assert_eq!(
+        got.provisional,
+        Some(Confirmation::Dropped(Error::HashMismatch))
+    );
+    let got = fetch(&mut f, &third);
+    assert_eq!(
+        (got.outcome, got.code),
+        (EnvelopeOutcome::Refused, Some(Error::HashMismatch))
+    );
+}
+
+#[test]
+fn a_cut_ends_a_removed_devices_chain_for_everyone() {
+    let mut a = new_device();
+    let mut b = new_device();
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let mut pen = Pen::new(&forger.key);
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let mut write = |hub: &mut Hub, draft: &envelope::Draft| {
+        let envelope = pen.sign(&claim, draft, &Objects::new(), now());
+        hub.post(&pen.id(), &posting(&envelope)).unwrap();
+        hub.content.envelopes.last().unwrap().clone()
+    };
+    let one = write(&mut hub, &board_item());
+    let two = write(&mut hub, &note_draft());
+    let note_id = two.header.subject.object().unwrap().object_id;
+    // The remover has accepted the first only; the other device both.
+    take_envelope(&mut a, &one);
+    take_envelope(&mut b, &one);
+    assert_eq!(
+        take_envelope(&mut b, &two).outcome,
+        EnvelopeOutcome::Applied
+    );
+    assert!(b.object(&room, &note_id).unwrap().is_some());
+    let cut = a.cut_of(&room, &pen.id()).unwrap();
+    assert_eq!((cut.seq, cut.hash), (1, one.hash));
+    a.remove_human_devices(&[cut], now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    // The hub marks what lies beyond the Cut and serves it no more; its objects are as if it never came.
+    assert!(hub.chain_of(&room, &pen.id(), 1)[0].cut);
+    assert!(hub.objects(&room).get(&note_id).is_none());
+    assert!(!hub
+        .changes_after(0)
+        .iter()
+        .any(|change| matches!(change, Change::Envelope(stored) if stored.hash == two.hash)));
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    for device in [&mut a, &mut b] {
+        assert_eq!(device.chain_cut(&room, &pen.id()).unwrap().unwrap().seq, 1);
+        assert_eq!(device.chain_head(&room, &pen.id()).unwrap().hash, one.hash);
+        assert!(device.object(&room, &note_id).unwrap().is_none());
+        // What lies beyond is refused by everyone, by whichever route it comes.
+        let again = device
+            .receive_envelope(&two.bytes, two.change, true, None, now())
+            .unwrap();
+        assert_eq!(again.code, Some(Error::RemovedSender));
+        let fetched = device
+            .receive_envelope(&two.bytes, two.change, false, None, now())
+            .unwrap();
+        assert_eq!(fetched.code, Some(Error::RemovedSender));
+        assert!(device.findings().unwrap().is_empty());
+    }
+    // And by the hub.
+    let three = pen.sign(&claim, &board_item(), &Objects::new(), now());
+    assert_eq!(
+        hub.post(&pen.id(), &posting(&three)),
+        Err(Error::RemovedSender)
+    );
+}
+
+#[test]
+fn a_hostile_hub_ends_in_the_named_finding() {
+    let mut a = new_device();
+    let mut b = new_device();
+    let mut c = new_device();
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    add_human(&mut hub, &mut a, &mut c);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    sync_all(&hub, &mut c);
+    let note = |n: u32| Draft::NoteFirst {
+        payload: json(&format!(
+            r#"{{"text":"{n}","previous_version_hash":"{ZERO_HASH}"}}"#
+        )),
+    };
+    let first = write(&mut hub, &mut b, &note(1));
+    let second = write(&mut hub, &mut b, &note(2));
+    let third = write(&mut hub, &mut b, &note(3));
+    sync_all(&hub, &mut b);
+    let served: Vec<StoredEnvelope> = hub.chain_of(&room, &b.id(), 0);
+
+    // It reorders within a chain: nothing is taken out of turn, and in turn everything is.
+    let got = take_envelope(&mut a, &served[1]);
+    assert_eq!(got.code, Some(Error::Gap));
+    assert_eq!(
+        take_envelope(&mut a, &served[0]).outcome,
+        EnvelopeOutcome::Applied
+    );
+    assert_eq!(
+        take_envelope(&mut a, &served[1]).outcome,
+        EnvelopeOutcome::Applied
+    );
+    assert_eq!(
+        a.object(&room, &second.object_id.unwrap()).unwrap(),
+        b.object(&room, &second.object_id.unwrap()).unwrap()
+    );
+    let _ = first;
+
+    // It drops the newest envelope of a sender: the heads of a device that got it show what is missing.
+    sync_all(&hub, &mut c);
+    let value = c.heads_due(&room, now()).unwrap().unwrap();
+    let heads = Draft::Register {
+        group: room,
+        name: "heads".into(),
+        value: Some(SecretBytes::new(value)),
+    };
+    write(&mut hub, &mut c, &heads);
+    let told = hub.chain_of(&room, &c.id(), 0);
+    assert_eq!(
+        take_envelope(&mut a, &told[0]).outcome,
+        EnvelopeOutcome::Applied
+    );
+    let standings = a.compare_heads(&room, &c.id()).unwrap();
+    assert_eq!(standings, vec![(b.id(), HeadStanding::Behind { have: 2 })]);
+    // The reader asks for the chain after number 2, the hub has nothing, and the comparison stands.
+    let _ = third;
+    let again = a.compare_heads(&room, &c.id()).unwrap();
+    assert_eq!(again[0].1.after_fetch(), Err(Error::Withheld));
+
+    // It serves a fork: another envelope under a number the reader holds.
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let pen = Pen::new(&forger.key);
+    let one = pen
+        .fork()
+        .sign(&claim, &board_item(), &Objects::new(), now());
+    let other = pen
+        .fork()
+        .sign(&claim, &note_draft(), &Objects::new(), now());
+    let cursor = a.cursor();
+    let take = |a: &mut TestDevice, envelope: &Envelope| {
+        a.receive_envelope(&envelope.encode().unwrap(), cursor, true, None, now())
+            .unwrap()
+    };
+    assert_eq!(take(&mut a, &one).outcome, EnvelopeOutcome::Applied);
+    let got = take(&mut a, &other);
+    assert_eq!(
+        (got.outcome, got.code),
+        (EnvelopeOutcome::Refused, Some(Error::Equivocation))
+    );
+    let forked = other.header.subject.object().unwrap().object_id;
+    assert!(a.object(&room, &forked).unwrap().is_none());
+}
+
+#[test]
+fn a_board_is_loaded_from_its_snapshot_and_the_items_after_it() {
+    use trommi_core::board::{self, ServedItem, Snapshot};
+    use trommi_core::board_items::{ItemBody, Shape};
+    use trommi_core::crypto::SystemEntropy;
+    use trommi_core::device::{board_reduce, BoardItem, BoardSnapshot};
+    use trommi_tests::content::{shape, Dice};
+
+    let mut a = new_device();
+    let mut b = new_device();
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let board_id = BoardId::ALL_DESKS;
+    let mut dice = Dice(SystemEntropy);
+    let drawn: Shape = shape(&mut dice).unwrap();
+    let strokes = |shapes: Vec<Shape>| Draft::BoardItem {
+        board: board_id,
+        payload: SecretBytes::new(
+            ItemBody::Strokes(shapes)
+                .encode()
+                .unwrap()
+                .expose()
+                .to_vec(),
+        ),
+    };
+    let item = |device: &TestDevice, sealed: &trommi_core::device::Sealed, hub: &Hub| BoardItem {
+        sender: device.id(),
+        seq: sealed.seq,
+        payload: SecretBytes::new(
+            Envelope::decode(&hub.chain_of(&room, &device.id(), sealed.seq - 1)[0].bytes)
+                .unwrap()
+                .open(
+                    &device
+                        .content_key(&room, device.group(&room).unwrap().epoch)
+                        .unwrap(),
+                )
+                .unwrap()
+                .payload()
+                .to_vec(),
+        ),
+    };
+    // One item, then the writer's snapshot of the board as it stands, then another item.
+    let first = write(&mut hub, &mut a, &strokes(vec![drawn]));
+    sync_all(&hub, &mut a);
+    let frontier = vec![(a.id(), a.chain_head(&room, &a.id()).unwrap())];
+    let file = board_reduce(None, &[item(&a, &first, &hub)], &frontier).unwrap();
+    let snapshot = Snapshot {
+        attachment: r#"{"file_id":"AAAAAAAAAAAAAAAAAAAAAA"}"#.into(),
+        frontier: frontier.clone(),
+        change: a.cursor(),
+    };
+    write(
+        &mut hub,
+        &mut a,
+        &Draft::Register {
+            group: room,
+            name: board::snapshot_name(&board_id),
+            value: Some(json(&snapshot.value().unwrap())),
+        },
+    );
+    let second = write(&mut hub, &mut a, &strokes(vec![shape(&mut dice).unwrap()]));
+
+    // The other device has no snapshot before it read the register.
+    assert_eq!(b.board_load(&board_id, &[]), Err(Error::NotFound));
+    sync_all(&hub, &mut b);
+    let served = [ServedItem {
+        sender: a.id(),
+        seq: second.seq,
+        hash: second.envelope_hash,
+    }];
+    // A hub that leaves out the item after the snapshot is found out by the writer's chain.
+    assert_eq!(b.board_load(&board_id, &[]), Err(Error::Withheld));
+    let loaded = b.board_load(&board_id, &served).unwrap();
+    assert_eq!(loaded.fresh, vec![0]);
+    assert_eq!(
+        loaded.frontier,
+        vec![(a.id(), b.chain_head(&room, &a.id()).unwrap())]
+    );
+    // The board is the snapshot with the fresh item merged in.
+    let whole = board_reduce(
+        Some(&BoardSnapshot {
+            file: file.expose(),
+            frontier: &frontier,
+        }),
+        &[item(&a, &second, &hub)],
+        &loaded.frontier,
+    )
+    .unwrap();
+    let direct = board_reduce(
+        None,
+        &[item(&a, &second, &hub), item(&a, &first, &hub)],
+        &loaded.frontier,
+    )
+    .unwrap();
+    assert_eq!(whole.expose(), direct.expose());
+    // An older snapshot is not loaded over a newer frontier.
+    let reopened = b.board_load(&board_id, &served);
+    assert_eq!(reopened, Err(Error::Replay));
+}

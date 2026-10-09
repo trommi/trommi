@@ -125,3 +125,11 @@ path = "core/vectors_recovery.rs"
 [[test]]
 name = "core_device_content"
 path = "core/device_content.rs"
+
+[[test]]
+name = "core_device_crash"
+path = "core/device_crash.rs"
+
+[[test]]
+name = "core_device_gate"
+path = "core/device_gate.rs"
