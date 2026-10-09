@@ -177,12 +177,46 @@ final class RoomTests: XCTestCase {
     XCTAssertEqual(FakeHub.shared.envelopePosts.count, 0)
   }
 
+  func testTheHubsPagesAreNotBelievedAboutTheirShape() async throws {
+    let room = try await founded()
+    addSession(room)
+    agentSays(room, seq: 1, "one")
+    func item(_ change: Any) -> JSON { ["kind": "envelope", "change": change, "envelope": "AA"] }
+    // out of order, twice the same, not above the cursor, not a whole number, beyond 2^53: refused before the core sees any
+    for bad in [[item(5), item(4)], [item(5), item(5)], [item(0)], [item(1.5)], [item(9_223_372_036_854_775_808.0)], [item(-1)], [["kind": "envelope", "change": 3]]] as [[JSON]] {
+      XCTAssertThrowsError(try Room.ordered(bad, after: 0))
+    }
+    XCTAssertEqual(try Room.ordered([item(3), ["kind": "of-a-newer-hub", "change": 4], item(9)], after: 2).map(\.change), [3, 9])
+    XCTAssertNil(Wire.uint(true)); XCTAssertNil(Wire.uint("7")); XCTAssertEqual(Wire.uint(NSNumber(value: 7)), 7)
+    // an item whose group is behind stops the run in front of it: the cursor does not pass it
+    FakeHub.shared.lock.withLock { FakeHub.shared.items.reverse(); for i in FakeHub.shared.items.indices { FakeHub.shared.items[i]["change"] = UInt64(i + 1) } }
+    do { _ = try await room.sync(); XCTFail("the envelope came before the Commit that founds its session") } catch { XCTAssertEqual(Room.codeOf(error), "group-behind") }
+    XCTAssertEqual(room.cursor, 0)
+    XCTAssertEqual(texts(room), [])
+    room.close()
+  }
+
+  func testOnlyADocumentedAnswerCountsAsTaken() {
+    XCTAssertNil(Room.accepted(.envelope, [:]))
+    XCTAssertNil(Room.accepted(.envelope, ["change": "3"]))
+    XCTAssertEqual(Room.accepted(.envelope, ["change": 3]), .some(3))
+    XCTAssertEqual(Room.accepted(.relayMessage, ["n": NSNull()]), .some(nil))
+    XCTAssertNil(Room.accepted(.message, ["n": NSNull()]))
+    XCTAssertNil(Room.accepted(.keyPackages, [:]))
+  }
+
   func testBodiesAreRenamedBetweenTheWireAndTheModel() throws {
     let file = Bytes(repeating: 5, count: 16)
-    let wire: JV = .obj(["attachments": .arr([.obj(["file_id": .str(b64u(file)), "file_key": "k"])])])
+    let wire: JV = .obj(["attachments": .arr([.obj(["file_id": .str(b64u(file)), "file_key": "k"])]), "previous_version_hash": .str(b64u(ZERO32)),
+                         "note": .obj(["object_id": .str(b64u(file))]), "merged_from_object_ids": .arr([.str(b64u(file))])])
     let model = Records.renameFiles(wire, toWire: false, depth: 0)
     XCTAssertEqual(model["attachments"].array?.first?["attachment_id"].string, hex(file))
+    XCTAssertEqual(model["previous_version_hash"].string, hex(ZERO32))
+    XCTAssertEqual(model["note"]["object_id"].string, hex(file))
+    XCTAssertEqual(model["merged_from_object_ids"].array?.first?.string, hex(file))
     XCTAssertEqual(Records.renameFiles(model, toWire: true, depth: 0), wire)
+    XCTAssertEqual(Records.registerName("device/" + b64u(ZERO32), toWire: false), "device/" + hex(ZERO32))
+    XCTAssertEqual(Records.registerName("device/" + hex(ZERO32), toWire: true), "device/" + b64u(ZERO32))
     XCTAssertEqual(Records.fileIds(wire), [file])
     // a body that names a file its signed header does not list is not shown
     let h = EnvelopeHeader(kind: KIND.TIMELINE_ITEM, group: [], epoch: 0, sender: [], seq: 1, time: 0, fileIds: [])

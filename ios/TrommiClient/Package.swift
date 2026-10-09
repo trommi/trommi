@@ -39,6 +39,7 @@ let package = Package(
     .testTarget(name: "TrommiCoreLiveTests", dependencies: ["TrommiCoreLive"]),
     .testTarget(name: "ShareInboxTests", dependencies: ["ShareInbox"]),
     .testTarget(name: "PushNotifyTests", dependencies: ["PushNotify"]),
+    .testTarget(name: "NotifyCoreLiveTests", dependencies: ["NotifyCoreLive"]),
   ],
   swiftLanguageModes: [.v5]
 )
