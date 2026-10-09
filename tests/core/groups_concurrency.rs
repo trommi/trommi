@@ -423,7 +423,9 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
         }
     }
     let changes = (hub.change() - start) as usize;
-    assert_eq!(changes, ROUNDS * 11 + ROUNDS / 2 * 2 + handovers);
+    // Per round: the Add with the recovery_mac behind it, three session Adds, three updates, the removal
+    // with its three clean-ups.
+    assert_eq!(changes, ROUNDS * 12 + ROUNDS / 2 * 2 + handovers);
     assert!(changes >= 1000 && handovers > ROUNDS);
     let log = hub.log_after(start);
     assert_eq!(log.len(), changes);
@@ -491,7 +493,9 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
         .iter()
         .filter(|done| matches!(done, Processed::Message(Received::Dropped)))
         .count();
-    assert_eq!((commits, dropped), (changes - handovers, handovers));
+    // The handovers and the recovery_mac of each round were for the guest.
+    let for_guests = handovers + ROUNDS;
+    assert_eq!((commits, dropped), (changes - for_guests, for_guests));
     assert_eq!(b.cursor(), hub.change());
 
     // The device stands where the hub and the device that made the changes stand, in all twenty groups.
