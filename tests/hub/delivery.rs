@@ -1942,7 +1942,7 @@ fn what_the_second_review_found_stays_refused() {
         &room,
         out.epoch + 1,
         &out.group_info,
-        out.epoch,
+        out.epoch + 1,
         &[8; 32],
         true,
     );
