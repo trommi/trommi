@@ -1,5 +1,6 @@
-//! What the tests of the protocol core share: a hub in memory, a stand-in for the recovery construct, and the
-//! few steps every scenario repeats (post the outbox, process the log, take the Welcomes).
+//! What the tests of the protocol core share: a hub in memory, the recovery code every test room is founded
+//! with, and the few steps every scenario repeats (post the outbox, process the log, take the Welcomes, fetch
+//! what a device that joins with the code is served).
 
 pub mod content;
 pub mod forge;
@@ -9,74 +10,24 @@ pub mod store;
 use hub::{Hub, LogItem};
 use std::time::{SystemTime, UNIX_EPOCH};
 pub use store::MemoryStorage;
-use trommi_core::crypto::{Entropy, SystemEntropy};
+use trommi_core::crypto::{Secret, SystemEntropy};
 use trommi_core::device::{
-    log_finding, Accepted, Device, DeviceRecovery, Joined, LogEntry, LogFinding, LogKind,
-    Processed, SealRequest, WelcomeExpectation,
+    log_finding, Accepted, CodeJoin, Device, Joined, LogEntry, LogFinding, LogKind, Processed,
+    WelcomeExpectation,
 };
 use trommi_core::ids::{DeviceId, GroupId};
 use trommi_core::mls::profile::Cut;
-use trommi_core::mls::rules::{JoinClaim, RecoveryRules, SealedKeyClaim};
+use trommi_core::recovery::{select_anchor, RecoveryKeys, ServedCommit, ServedGroup, ServedRoom};
 use trommi_core::Error;
 
-/// The `RecoveryAuth` the stand-in accepts.
-pub const TEST_RECOVERY_AUTH: &[u8] = b"test recovery auth";
-
-/// A stand-in for the recovery construct of section 8, for tests only: its `SealedKey` is a readable tag and
-/// seals nothing, and a join from outside is "authorised" by a fixed byte string when `joins` allows it.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TestRecovery {
-    /// Whether [`TEST_RECOVERY_AUTH`] authorises a join from outside.
-    pub joins: bool,
-    /// Whether this device fails to make a `SealedKey`, as a human device without the `recovery_mac` does.
-    pub cannot_seal: bool,
+/// The recovery code of every room the tests found.
+pub fn test_code() -> Secret<32> {
+    Secret::new([0xC0; 32])
 }
 
-impl RecoveryRules for TestRecovery {
-    fn verify_join(&self, claim: &JoinClaim<'_>) -> Result<(), Error> {
-        if self.joins && claim.recovery_auth == Some(TEST_RECOVERY_AUTH) {
-            Ok(())
-        } else {
-            Err(Error::BadSignature)
-        }
-    }
-
-    fn verify_sealed_key(
-        &self,
-        claim: &SealedKeyClaim<'_>,
-        sealed_key: &[u8],
-    ) -> Result<(), Error> {
-        let expected = format!(
-            "test sealed key {} {} {}",
-            claim.group, claim.epoch, claim.room_epoch
-        );
-        if sealed_key == expected.as_bytes() {
-            Ok(())
-        } else {
-            Err(Error::Incomplete)
-        }
-    }
-}
-
-impl DeviceRecovery for TestRecovery {
-    fn seal_key(
-        &mut self,
-        _: &mut dyn Entropy,
-        request: &SealRequest<'_>,
-    ) -> Result<Vec<u8>, Error> {
-        if self.cannot_seal {
-            return Err(Error::NoKey);
-        }
-        Ok(format!(
-            "test sealed key {} {} {}",
-            request.group, request.epoch, request.room_epoch
-        )
-        .into_bytes())
-    }
-
-    fn rules(&self) -> &dyn RecoveryRules {
-        self
-    }
+/// The keys of [`test_code`].
+pub fn test_keys() -> RecoveryKeys {
+    RecoveryKeys::from_code(test_code()).expect("the keys of the code")
 }
 
 /// A device in the tests.
@@ -91,53 +42,45 @@ pub fn now() -> u64 {
 
 /// A new device in a new store.
 pub fn new_device() -> TestDevice {
-    new_device_with(TestRecovery::default())
-}
-
-/// A new device with this stand-in.
-pub fn new_device_with(recovery: TestRecovery) -> TestDevice {
-    Device::create(
-        MemoryStorage::new(),
-        Box::new(SystemEntropy),
-        Box::new(recovery),
-    )
-    .expect("a new device")
+    new_device_on(MemoryStorage::new())
 }
 
 /// A new device in `store`. A test keeps `store.handle()` to see what the device wrote, to plan a failing
 /// write, and to play a crash.
 pub fn new_device_on(store: MemoryStorage) -> TestDevice {
-    Device::create(
-        store,
-        Box::new(SystemEntropy),
-        Box::new(TestRecovery::default()),
-    )
-    .expect("a new device")
+    Device::create(store, Box::new(SystemEntropy)).expect("a new device")
 }
 
 /// The device a store holds: what a restart finds.
 pub fn reopen(store: MemoryStorage) -> Result<TestDevice, Error> {
-    Device::open(
-        store,
-        Box::new(SystemEntropy),
-        Box::new(TestRecovery::default()),
-    )
+    Device::open(store, Box::new(SystemEntropy))
 }
 
-/// Posts everything in the device's outbox and reports each answer. Returns the answers in order.
+/// Posts everything in the device's outbox and reports each answer, and again whatever an answer left to send
+/// (the `recovery_mac` a device owes after its Add was accepted, 7.4). Returns the answers in order.
 pub fn post_all(hub: &mut Hub, device: &mut TestDevice) -> Vec<Result<Accepted, Error>> {
     let mut answers = Vec::new();
-    for entry in device.outbox() {
-        let answer = hub.post(&device.id(), &entry);
-        match &answer {
-            Ok(accepted) => device
-                .outbox_accepted(entry.id, *accepted)
-                .expect("the accepted entry is applied"),
-            Err(code) => device
-                .outbox_refused(entry.id, code)
-                .expect("the refused entry is undone"),
+    for _ in 0..8 {
+        let outbox = device.outbox();
+        if outbox.is_empty() {
+            break;
         }
-        answers.push(answer);
+        for entry in outbox {
+            // A refusal may have taken other entries with it (a recovery goes whole).
+            if !device.outbox().iter().any(|held| held.id == entry.id) {
+                continue;
+            }
+            let answer = hub.post(&device.id(), &entry);
+            match &answer {
+                Ok(accepted) => device
+                    .outbox_accepted(entry.id, *accepted)
+                    .expect("the accepted entry is applied"),
+                Err(code) => device
+                    .outbox_refused(entry.id, code)
+                    .expect("the refused entry is undone"),
+            }
+            answers.push(answer);
+        }
     }
     answers
 }
@@ -258,10 +201,15 @@ pub fn found_room(founder: &mut TestDevice) -> (Hub, GroupId) {
 /// Founds the room on `hub`. Returns the room group.
 pub fn found_room_on(hub: &mut Hub, founder: &mut TestDevice) -> GroupId {
     let room = founder
-        .found_room([0xE1; 32], [0xE2; 32], now())
+        .found_room(&test_keys(), now())
         .expect("the room is founded");
     post_ok(hub, founder);
     GroupId::room(room)
+}
+
+/// The change number of the newest Welcome: where the Commit that added its device stands in the log.
+pub fn added_at(hub: &Hub) -> u64 {
+    hub.welcomes.last().map_or(0, |welcome| welcome.change)
 }
 
 /// `adder` adds the new human device `newcomer` to the room group, and the newcomer joins from its Welcome.
@@ -270,9 +218,17 @@ pub fn add_human(hub: &mut Hub, adder: &mut TestDevice, newcomer: &mut TestDevic
     adder
         .add_human_device(&newcomer.id(), &package, now())
         .expect("the Add is built");
+    // The Add, and behind it the recovery_mac the adder owes the newcomer (7.4).
     post_ok(hub, adder);
-    let joined = take_welcomes(hub, newcomer, hub.change());
+    let added = added_at(hub);
+    let joined = take_welcomes(hub, newcomer, added);
     assert_eq!(joined.len(), 1, "the newcomer joins the room group");
+    for item in hub.log_after(added) {
+        if !item.commit && item.group.is_room() {
+            process(newcomer, &item).expect("the recovery_mac is taken");
+        }
+    }
+    assert!(newcomer.holds_recovery_mac());
 }
 
 /// `adder` adds the human device `newcomer` to the session group `group` (5.2.7); the newcomer joins when it
@@ -417,3 +373,153 @@ pub fn settle_joining(hub: &Hub, device: &mut TestDevice) -> Vec<Joined> {
     joined
 }
 pub mod vectors;
+
+/// One group as a hub serves it to a device that joins with the code. A test changes the fields to play a
+/// hub that lies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchedGroup {
+    pub group: GroupId,
+    /// The founding GroupInfo.
+    pub founding: Vec<u8>,
+    /// Every Commit since, each with its change number and its `RecoveryAuth`.
+    pub commits: Vec<(u64, Vec<u8>, Option<Vec<u8>>)>,
+    /// The GroupInfo offered as current.
+    pub current: Vec<u8>,
+}
+
+/// A room as a hub serves it to a device that joins with the code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fetched {
+    pub room: FetchedGroup,
+    /// The GroupInfo of the anchor's epoch.
+    pub anchor: Vec<u8>,
+    pub rows: Vec<Vec<u8>>,
+    pub links: Vec<Vec<u8>>,
+    /// The live session groups, main sessions first.
+    pub sessions: Vec<FetchedGroup>,
+}
+
+/// What the hub holds of one group.
+pub fn fetch_group(hub: &Hub, group: &GroupId) -> FetchedGroup {
+    FetchedGroup {
+        group: *group,
+        founding: hub.group_info_at(group, 0).cloned().unwrap_or_default(),
+        commits: hub.commits_of(group),
+        current: hub.group_info(group).cloned().unwrap_or_default(),
+    }
+}
+
+/// What the hub serves a device that holds `keys`: the room group, the rows and links, every live session
+/// group, and the GroupInfo of the epoch that the device's anchor names.
+pub fn fetch(hub: &Hub, keys: &RecoveryKeys) -> Fetched {
+    let group = GroupId::room(hub_room(hub));
+    let rows = hub.rows();
+    let anchor = select_anchor(keys, &group.room_id(), &rows)
+        .ok()
+        .and_then(|anchor| hub.group_info_at(&group, anchor.epoch))
+        .cloned()
+        .unwrap_or_default();
+    Fetched {
+        room: fetch_group(hub, &group),
+        anchor,
+        rows,
+        links: hub.links.clone(),
+        sessions: hub
+            .live_sessions()
+            .iter()
+            .map(|session| fetch_group(hub, session))
+            .collect(),
+    }
+}
+
+impl FetchedGroup {
+    /// Hands `use_it` this group as the core takes it.
+    pub fn served<T>(&self, use_it: impl FnOnce(&ServedGroup<'_>) -> T) -> T {
+        let commits: Vec<ServedCommit<'_>> = self
+            .commits
+            .iter()
+            .map(|(change, commit, recovery_auth)| ServedCommit {
+                change: *change,
+                commit,
+                recovery_auth: recovery_auth.as_deref(),
+            })
+            .collect();
+        use_it(&ServedGroup {
+            founding: &self.founding,
+            commits: &commits,
+            current: &self.current,
+        })
+    }
+}
+
+impl Fetched {
+    /// Hands `use_it` this room as the core takes it.
+    pub fn served<T>(&self, use_it: impl FnOnce(&ServedRoom<'_>) -> T) -> T {
+        let commits: Vec<Vec<ServedCommit<'_>>> = self
+            .sessions
+            .iter()
+            .map(|session| {
+                session
+                    .commits
+                    .iter()
+                    .map(|(change, commit, recovery_auth)| ServedCommit {
+                        change: *change,
+                        commit,
+                        recovery_auth: recovery_auth.as_deref(),
+                    })
+                    .collect()
+            })
+            .collect();
+        let sessions: Vec<ServedGroup<'_>> = self
+            .sessions
+            .iter()
+            .zip(&commits)
+            .map(|(session, commits)| ServedGroup {
+                founding: &session.founding,
+                commits,
+                current: &session.current,
+            })
+            .collect();
+        self.room.served(|group| {
+            use_it(&ServedRoom {
+                room: self.room.group.room_id(),
+                group: *group,
+                anchor: &self.anchor,
+                rows: &self.rows,
+                links: &self.links,
+                sessions: &sessions,
+            })
+        })
+    }
+}
+
+/// `device` signs in with the code `keys` (8.4): it builds its join of the room group from what the hub
+/// serves. Nothing is posted yet.
+pub fn join_room(
+    hub: &Hub,
+    device: &mut TestDevice,
+    keys: &RecoveryKeys,
+) -> Result<CodeJoin, Error> {
+    fetch(hub, keys).served(|served| device.join_room_with_code(keys, served, now()))
+}
+
+/// `device`, a human device that joined the room with the code, builds its join of the session `group`.
+pub fn join_session(
+    hub: &Hub,
+    device: &mut TestDevice,
+    keys: &RecoveryKeys,
+    group: &GroupId,
+) -> Result<u64, Error> {
+    fetch_group(hub, group).served(|served| device.join_session_with_code(keys, served, now()))
+}
+
+/// `device` signs in with the code of the tests' rooms and joins the room group and every live session group.
+pub fn sign_in(hub: &mut Hub, device: &mut TestDevice) {
+    let keys = test_keys();
+    join_room(hub, device, &keys).expect("the join is built");
+    post_ok(hub, device);
+    for group in hub.live_sessions() {
+        join_session(hub, device, &keys, &group).expect("the join is built");
+        post_ok(hub, device);
+    }
+}
