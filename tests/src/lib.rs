@@ -9,10 +9,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub use store::MemoryStorage;
 use trommi_core::crypto::{Entropy, SystemEntropy};
 use trommi_core::device::{
-    Accepted, Device, DeviceRecovery, Joined, LogEntry, LogKind, Processed, SealRequest,
-    WelcomeExpectation,
+    log_finding, Accepted, Device, DeviceRecovery, Joined, LogEntry, LogFinding, LogKind,
+    Processed, SealRequest, WelcomeExpectation,
 };
-use trommi_core::ids::DeviceId;
+use trommi_core::ids::{DeviceId, GroupId};
+use trommi_core::mls::profile::Cut;
 use trommi_core::mls::rules::{JoinClaim, RecoveryRules, SealedKeyClaim};
 use trommi_core::Error;
 
@@ -215,4 +216,158 @@ pub fn publish_key_packages(hub: &mut Hub, device: &mut TestDevice) {
 /// A device id that no device holds.
 pub fn stranger(byte: u8) -> DeviceId {
     DeviceId::new([byte; 32])
+}
+
+/// Publishes a last-resort KeyPackage and `single_use` single-use ones: enough for a scenario, and quick.
+pub fn publish_some(hub: &mut Hub, device: &mut TestDevice, single_use: usize) {
+    let held = trommi_core::device::SINGLE_USE_KEY_PACKAGES.saturating_sub(single_use);
+    device
+        .key_packages_to_upload(held, now())
+        .expect("key packages are made");
+    post_ok(hub, device);
+}
+
+/// A checking hub and the room `founder` founds on it. Returns the hub and the room group.
+pub fn found_room(founder: &mut TestDevice) -> (Hub, GroupId) {
+    let mut hub = Hub::new(true);
+    let group = found_room_on(&mut hub, founder);
+    (hub, group)
+}
+
+/// Founds the room on `hub`. Returns the room group.
+pub fn found_room_on(hub: &mut Hub, founder: &mut TestDevice) -> GroupId {
+    let room = founder
+        .found_room([0xE1; 32], [0xE2; 32], now())
+        .expect("the room is founded");
+    post_ok(hub, founder);
+    GroupId::room(room)
+}
+
+/// `adder` adds the new human device `newcomer` to the room group, and the newcomer joins from its Welcome.
+pub fn add_human(hub: &mut Hub, adder: &mut TestDevice, newcomer: &mut TestDevice) {
+    let package = newcomer.key_package(now()).expect("a key package");
+    adder
+        .add_human_device(&newcomer.id(), &package, now())
+        .expect("the Add is built");
+    post_ok(hub, adder);
+    let joined = take_welcomes(hub, newcomer, hub.change());
+    assert_eq!(joined.len(), 1, "the newcomer joins the room group");
+}
+
+/// `adder` adds the human device `newcomer` to the session group `group` (5.2.7); the newcomer joins when it
+/// next processes the log.
+pub fn add_to_session(
+    hub: &mut Hub,
+    adder: &mut TestDevice,
+    newcomer: &mut TestDevice,
+    group: &GroupId,
+) {
+    let package = newcomer.key_package(now()).expect("a key package");
+    adder
+        .add_to_session(group, &newcomer.id(), &package, now())
+        .expect("the Add is built");
+    post_ok(hub, adder);
+}
+
+/// Starts `device` following the room group as an observer, from the hub's current GroupInfo (4.4).
+pub fn observe(hub: &Hub, device: &mut TestDevice) {
+    let room = hub_room(hub);
+    let info = hub
+        .group_info(&GroupId::room(room))
+        .expect("the room's GroupInfo");
+    device
+        .observe_room(info, None)
+        .expect("the room is followed");
+}
+
+/// `human` enrols `agent` as an agent device; the agent then follows the room group from that epoch.
+pub fn enrol(hub: &mut Hub, human: &mut TestDevice, agent: &mut TestDevice) {
+    human
+        .change_agents(&[agent.id()], &[], now())
+        .expect("the enrolment is built");
+    post_ok(hub, human);
+    observe(hub, agent);
+}
+
+/// `founder` founds a main session for `agent` with a KeyPackage claimed for it and for every other human
+/// device of the room. Returns the session group; the others join when they next process the log.
+pub fn found_main(hub: &mut Hub, founder: &mut TestDevice, agent: &DeviceId) -> GroupId {
+    let room = founder.room().expect("a room");
+    let mut needed: Vec<DeviceId> = founder
+        .room_history()
+        .expect("the room's roles")
+        .newest()
+        .humans
+        .iter()
+        .copied()
+        .filter(|human| *human != founder.id())
+        .collect();
+    needed.push(*agent);
+    let packages = hub.claim(&needed).expect("a KeyPackage of each");
+    let session = founder
+        .found_session(agent, &packages, now())
+        .expect("the founding is built");
+    post_ok(hub, founder);
+    GroupId::session(room, session)
+}
+
+/// The opener `agent` founds a helper session under the main session group `parent`, with a KeyPackage claimed
+/// for every human device and one made by each of `helpers`. Returns the helper session's group.
+pub fn found_helper(
+    hub: &mut Hub,
+    agent: &mut TestDevice,
+    parent: &GroupId,
+    helpers: &mut [&mut TestDevice],
+) -> GroupId {
+    let room = agent.room().expect("a room");
+    let humans: Vec<DeviceId> = agent
+        .room_history()
+        .expect("the room's roles")
+        .newest()
+        .humans
+        .iter()
+        .copied()
+        .collect();
+    let mut packages = hub.claim(&humans).expect("a KeyPackage of each");
+    for helper in helpers {
+        packages.push(helper.key_package(now()).expect("a key package"));
+    }
+    let parent = parent.session_id().expect("a session group");
+    let session = agent
+        .found_helper(&parent, &packages, now())
+        .expect("the founding is built");
+    post_ok(hub, agent);
+    GroupId::session(room, session)
+}
+
+/// Processes the log like [`sync`] and expects every entry to process, except that entries behind what the
+/// device holds are passed over: a device that began to follow a group at a later epoch meets the group's
+/// earlier Commits as duplicates. Returns what the other entries did.
+pub fn settle(hub: &Hub, device: &mut TestDevice) -> Vec<Processed> {
+    sync(hub, device)
+        .into_iter()
+        .filter_map(|result| match result {
+            Ok(processed) => Some(processed),
+            Err(error) => {
+                assert_eq!(
+                    log_finding(&error),
+                    LogFinding::Duplicate,
+                    "the entry processes: {error:?}"
+                );
+                None
+            }
+        })
+        .collect()
+}
+
+/// The Cuts for the leaves the room no longer allows in `group`, as `device` sees it: none of them has an
+/// accepted envelope here.
+pub fn cuts_for(device: &TestDevice, group: &GroupId) -> Vec<Cut> {
+    device
+        .group(group)
+        .expect("the group")
+        .disallowed
+        .into_iter()
+        .map(Cut::none)
+        .collect()
 }
