@@ -32,11 +32,17 @@ fn of_two_commits_for_one_epoch_the_hub_takes_the_first() {
     post_ok(&mut hub, &mut a);
     assert_eq!(hub.epoch(&room_group), Some(2));
 
+    // While its Commit waits for the hub, a device sends no message in that group: it would be of the epoch
+    // the Commit ends and reach the hub after it.
+    assert_eq!(b.send_handover(&room_group, &a.id()), Err(Error::Busy));
+    assert_eq!(b.outbox().len(), 1);
+
     // The loser hears `epoch-taken`: its Commit is held back, out of the outbox, until the log decides.
     assert_eq!(post_all(&mut hub, &mut b), [Err(Error::EpochTaken)]);
     assert!(b.outbox().is_empty());
     assert!(b.group(&room_group).unwrap().pending);
     assert_eq!(b.update(&room_group, true, now()), Err(Error::Busy));
+    assert_eq!(b.send_handover(&room_group, &a.id()), Err(Error::Busy));
     assert_eq!(b.group(&room_group).unwrap().epoch, 1);
 
     // The log shows the Commit that took the epoch: the own one is dropped for it.
@@ -59,7 +65,9 @@ fn of_two_commits_for_one_epoch_the_hub_takes_the_first() {
         a.content_key(&room_group, 2).unwrap()
     );
 
-    // It builds its change again, on the new epoch, and succeeds.
+    // With nothing pending it sends again, and builds its change again, on the new epoch, and succeeds.
+    b.send_handover(&room_group, &a.id()).unwrap();
+    post_ok(&mut hub, &mut b);
     b.update(&room_group, true, now()).unwrap().unwrap();
     assert_ne!(b.outbox()[0].parts[0], lost_bytes);
     assert_eq!(b.outbox()[0].epoch, 2);

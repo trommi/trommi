@@ -350,3 +350,67 @@ fn a_damaged_entry_is_a_storage_error_or_a_device_that_still_answers() {
         &groups,
     );
 }
+
+#[test]
+fn a_stored_group_in_an_epoch_no_group_reaches_is_damaged() {
+    // A human device, and a device that follows the room group and a main session's group as an observer.
+    let stores: Vec<MemoryStorage> = (0..2).map(|_| MemoryStorage::new()).collect();
+    let handles = [stores[0].handle(), stores[1].handle()];
+    let mut stores = stores.into_iter();
+    let mut human = new_device_on(stores.next().unwrap());
+    let mut follower = new_device_on(stores.next().unwrap());
+    let mut agent = new_device();
+    let (mut hub, _) = found_room(&mut human);
+    enrol(&mut hub, &mut human, &mut agent);
+    publish_some(&mut hub, &mut agent, 1);
+    let main = found_main(&mut hub, &mut human, &agent.id());
+    observe(&hub, &mut follower);
+    follower
+        .observe_session(hub.group_info(&main).unwrap())
+        .unwrap();
+    drop((human, follower));
+
+    // The stored group context of a group the device is a leaf of, and of one it follows, with the epoch put
+    // far up: where OpenMLS's count would run over on the next Commit, or halfway there.
+    let cases = [
+        ("a member", &handles[0], "mls/GroupContext"),
+        (
+            "an observer",
+            &handles[1],
+            "observer of a session group/mls/GroupContext",
+        ),
+    ];
+    for (name, handle, wanted) in cases {
+        let stored: BTreeMap<Vec<u8>, Vec<u8>> = handle
+            .entries()
+            .iter()
+            .map(|entry| (entry.key.clone(), entry.value.clone()))
+            .collect();
+        assert!(reopen(store_with(handle, &stored)).is_ok(), "{name}");
+        let key = stored
+            .keys()
+            .find(|key| class(key) == wanted)
+            .unwrap_or_else(|| panic!("{name}: a stored group context"))
+            .clone();
+        for (epoch, damaged) in [
+            (u64::MAX, true),
+            (u64::MAX / 2 + 1, true),
+            (u64::MAX / 2, false),
+        ] {
+            let mut context: serde_json::Value = serde_json::from_slice(&stored[&key]).unwrap();
+            assert!(context["epoch"].is_u64(), "{name}");
+            context["epoch"] = epoch.into();
+            let mut entries = stored.clone();
+            entries.insert(key.clone(), serde_json::to_vec(&context).unwrap());
+            match reopen(store_with(handle, &entries)) {
+                Err(Error::Storage(_)) => assert!(damaged, "{name}, epoch {epoch}"),
+                Err(other) => panic!("{name}, epoch {epoch}: {other:?}"),
+                // Below that the device opens, and its operations return.
+                Ok(device) => {
+                    assert!(!damaged, "{name}, epoch {epoch}");
+                    let _ = device.groups();
+                }
+            }
+        }
+    }
+}
