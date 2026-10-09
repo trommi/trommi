@@ -5,6 +5,10 @@
 //! `vectors` writes the files; the test `core_vectors` fails when a committed file differs from what the core
 //! produces now; each subject's own test reads its file back and checks it through the core's public interface.
 
+pub mod board;
+pub mod envelope;
+pub mod trail;
+
 use std::path::PathBuf;
 
 use serde_json::Value;
@@ -15,7 +19,11 @@ use trommi_core::Error;
 pub type Generate = fn() -> Result<Value, Error>;
 
 /// Every vector file: its name without `.json`, and its generator. A subject adds its line here.
-pub const FILES: &[(&str, Generate)] = &[];
+pub const FILES: &[(&str, Generate)] = &[
+    (board::NAME, board::generate),
+    (envelope::NAME, envelope::generate),
+    (trail::NAME, trail::generate),
+];
 
 /// The random source of the vector file `name`: seeded from the name alone.
 pub fn entropy(name: &str) -> Result<SeededEntropy, Error> {
