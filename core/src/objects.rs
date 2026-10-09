@@ -72,11 +72,15 @@ pub struct Transition {
     pub after: Object,
     /// A Note's version: the envelope's hash, which later versions of the Note may follow.
     pub note_version: Option<Hash32>,
+    /// The revision of the [`Objects`] the envelope was judged against.
+    pub revision: u64,
 }
 
 /// The objects of one group.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Objects {
+    /// How many transitions this state has taken: a transition fits only the revision it was judged against.
+    revision: u64,
     objects: BTreeMap<ObjectId, Object>,
     /// Every version taken of every Note: a Note's version may follow any other.
     note_versions: BTreeSet<(ObjectId, Hash32)>,
@@ -126,9 +130,12 @@ impl Objects {
     /// the envelope was judged: a transition is applied once, before the next envelope of the group is
     /// judged.
     pub fn apply(&mut self, transition: &Transition) -> Result<(), Error> {
-        if self.objects.get(&transition.object_id) != transition.before.as_ref() {
+        if self.revision != transition.revision
+            || self.objects.get(&transition.object_id) != transition.before.as_ref()
+        {
             return Err(Error::Internal("a transition applied out of turn"));
         }
+        self.revision = self.revision.saturating_add(1);
         self.objects
             .insert(transition.object_id, transition.after.clone());
         if let Some(version) = transition.note_version {
@@ -145,6 +152,7 @@ impl Objects {
             .map(|(id, object)| ObjectEntry(*id, object.clone()))
             .collect();
         let mut writer = Writer::new();
+        writer.u64(self.revision);
         writer.vector(&entries)?;
         let mut versions = Writer::new();
         for (object, version) in &self.note_versions {
@@ -157,10 +165,14 @@ impl Objects {
 
     fn read(bytes: &[u8]) -> Result<Self, Error> {
         let mut reader = Reader::new(bytes);
+        let revision = reader.u64()?;
         let entries: Vec<ObjectEntry> = reader.vector()?;
         let mut versions = Reader::new(reader.opaque()?);
         reader.finish()?;
-        let mut objects = Self::new();
+        let mut objects = Self {
+            revision,
+            ..Self::new()
+        };
         for ObjectEntry(id, object) in entries {
             if objects.objects.insert(id, object).is_some() {
                 return Err(Error::BadFormat);
@@ -298,6 +310,7 @@ fn begin(
             answer: None,
         },
         note_version: (fields.object_type == ObjectType::Note).then_some(*hash),
+        revision: objects.revision,
     })
 }
 
@@ -379,6 +392,7 @@ pub fn judge(
         before: Some(before.clone()),
         after,
         note_version,
+        revision: objects.revision,
     }))
 }
 
@@ -480,7 +494,7 @@ pub enum Refusal {
     /// This device did not hand in its own record of the card version or request named, so the answer or
     /// verdict cannot be held against it.
     NoRecord,
-    /// The answer's payload names no known `answer_action`, or its choices are not those of the bind.
+    /// The answer's payload names no known `answer_action`.
     BadAnswer,
     /// The choices are not what the card version allows.
     BadChoice,
@@ -630,8 +644,6 @@ struct CardOption {
 #[derive(Deserialize)]
 struct AnswerPayload {
     answer_action: String,
-    #[serde(default)]
-    choices: Option<Vec<String>>,
 }
 
 type Gate<T> = Result<T, Refusal>;
@@ -696,10 +708,6 @@ fn answer_command(
         .iter()
         .map(|choice| String::from_utf8(choice.clone()).map_err(|_| Refusal::BadChoice))
         .collect::<Gate<Vec<String>>>()?;
-    hold(
-        answer.choices.is_none_or(|named| named == choices),
-        Refusal::BadAnswer,
-    )?;
     let options: BTreeSet<&str> = card
         .options
         .iter()
@@ -994,6 +1002,29 @@ mod tests {
         assert_eq!(answered.before.as_ref(), Some(&before));
         assert_eq!(answered.after, state(&world, &session(), &id));
         assert_eq!(answered.object_id, id);
+    }
+
+    #[test]
+    fn two_answers_judged_against_one_state_cannot_both_be_applied() {
+        let mut world = World::new();
+        let v1 = world.post(3, session(), &first(ObjectType::Card));
+        let id = id_of(&v1);
+        // A second answer is judged before the first is applied.
+        let stale_objects = world.objects(&session());
+        let b = world.sign(1, session(), &answer(id, v1.hash, 3, false));
+        let judged_early = judge(&world.fake, &stale_objects, &b.envelope.header, &b.hash)
+            .unwrap()
+            .unwrap();
+        // The first answer and its take back leave the card exactly as it was.
+        let a = world.post(2, session(), &answer(id, v1.hash, 3, false));
+        world.post(2, session(), &take_back(id, v1.hash, a.hash, 3));
+        let mut objects = world.objects(&session());
+        assert_eq!(objects.get(&id), stale_objects.get(&id));
+        assert!(matches!(
+            objects.apply(&judged_early),
+            Err(Error::Internal(_))
+        ));
+        assert_eq!(objects, world.objects(&session()));
     }
 
     #[test]
@@ -1662,7 +1693,7 @@ mod tests {
         }
         let mut damaged = bytes.clone();
         // The first entry's type byte: its id is 16 bytes behind the two-byte length.
-        damaged[18] = 9;
+        damaged[26] = 9;
         assert!(matches!(
             Objects::from_bytes(&damaged),
             Err(Error::Storage(_))

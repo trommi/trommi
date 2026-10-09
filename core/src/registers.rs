@@ -249,10 +249,8 @@ pub struct Update {
     pub current: bool,
     stamp: Stamp,
     register: RegisterId,
-    /// The largest lamport seen and the stamp held for the name when the envelope was judged, and the
-    /// largest lamport seen with it.
-    seen: u64,
-    replaces: Option<Stamp>,
+    /// The revision of the registers the envelope was judged against, and the largest lamport seen with it.
+    revision: u64,
     largest: u64,
 }
 
@@ -271,6 +269,8 @@ impl fmt::Debug for Update {
 /// The registers of one group as a reader holds them.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct Registers {
+    /// How many updates this state has taken: an update fits only the revision it was judged against.
+    revision: u64,
     /// The largest counted lamport seen in the group.
     largest: u64,
     values: BTreeMap<(String, Option<DeviceId>), Held>,
@@ -363,8 +363,10 @@ impl Registers {
             sender: header.sender,
             seq: header.seq,
         };
-        let replaces = self.values.get(&(name.clone(), of)).map(|held| held.stamp);
-        let current = replaces.is_none_or(|held| held < stamp);
+        let current = self
+            .values
+            .get(&(name.clone(), of))
+            .is_none_or(|held| held.stamp < stamp);
         Ok(Update {
             name,
             of,
@@ -372,8 +374,7 @@ impl Registers {
             current,
             stamp,
             register,
-            seen: self.largest,
-            replaces,
+            revision: self.revision,
             largest: self.largest.max(counted),
         })
     }
@@ -382,16 +383,17 @@ impl Registers {
     /// which counts by the same rule. A writer's next lamport lies above it.
     pub fn observe_lamport(&mut self, lamport: u64) {
         self.largest = self.largest.max(counted_lamport(lamport, self.largest));
+        self.revision = self.revision.saturating_add(1);
     }
 
     /// Takes the change of one register envelope. `Error::Internal`, and no change, if the registers no
     /// longer stand as the envelope was judged: an update is applied once, before the next register envelope
     /// of the group is judged.
     pub fn apply(&mut self, update: &Update) -> Result<(), Error> {
-        let held = self.values.get(&(update.name.clone(), update.of));
-        if self.largest != update.seen || held.map(|held| held.stamp) != update.replaces {
+        if self.revision != update.revision {
             return Err(Error::Internal("a register update applied out of turn"));
         }
+        self.revision = self.revision.saturating_add(1);
         self.largest = update.largest;
         let sender = update.stamp.sender;
         self.names
@@ -413,6 +415,7 @@ impl Registers {
     /// The stored form.
     pub fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         let mut writer = Writer::new();
+        writer.u64(self.revision);
         writer.u64(self.largest);
         let mut values = Writer::new();
         for ((name, of), held) in &self.values {
@@ -441,6 +444,7 @@ impl Registers {
         }
         let mut reader = Reader::new(bytes);
         let mut registers = Self {
+            revision: reader.u64()?,
             largest: reader.u64()?,
             ..Self::default()
         };
