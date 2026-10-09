@@ -9,7 +9,7 @@
 // the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's scribble.mjs).
 import { Controller, controller, html, isTyping, letterKeysOn, markArt, nextThemeMode, raw, setThemeMode, sk } from './ui.mjs'
-import { scribbleWire } from './app.mjs'
+import { attachmentBlob, scribbleWire } from './app.mjs'
 // The core's stroke format, shape and palette (scribble.mjs with ink.mjs and palette.mjs), loaded with this view.
 /** The core's scribble.mjs as this view loaded it (also for the dev tools: dev/migrate, e2e). */
 export const wire = await scribbleWire()
@@ -1707,7 +1707,7 @@ function mountPad(main, { canvasId: PAD, client }) {
       URL.revokeObjectURL(url)
     }
   }
-  async function addImages(files, at) {
+  async function addImages(files, at, top = false) {
     const list = [...files].filter(f => f.type.startsWith('image/'))
     if (!list.length) return note('That is not a picture.', 'error')
     note(list.length > 1 ? `Adding ${list.length} pictures…` : 'Adding the picture…', 'busy', 0)
@@ -1722,7 +1722,7 @@ function mountPad(main, { canvasId: PAD, client }) {
         const w = r2(nw * k), h = r2(nh * k)
         const [cx, cy] = at ? toWorld(at[0], at[1]) : toWorld(W / 2, (H - 20) / 2)
         const off = (added.length * 28) / view.z
-        added.push(make('image', { x: cx - w / 2 + off, y: cy - h / 2 + off, w, h }, { mime: blob.type, nw, nh, name: f.name || '' }, ++z, id))
+        added.push(make('image', { x: cx - w / 2 + off, y: cy - (top ? 0 : h / 2) + off, w, h }, { mime: blob.type, nw, nh, name: f.name || '' }, ++z, id))
       } catch { failed++ }
     }
     $('toast').hidden = true
@@ -2002,7 +2002,8 @@ function mountPad(main, { canvasId: PAD, client }) {
     addImages(e.dataTransfer.files, local(e))
   })
   on(document, 'paste', e => {
-    if (e.target === editor || document.querySelector('dialog[open]')) return
+    // (a paste into a field outside the pad, the corner note's, is that field's: it took it already, or takes the words)
+    if (e.target === editor || e.defaultPrevented || (e.target instanceof Element && !pad.contains(e.target) && e.target.closest('textarea, input, [contenteditable]')) || document.querySelector('dialog[open]')) return
     const files = [...(e.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'))
     if (files.length) { e.preventDefault(); return addImages(files) }
     // pasted words become a note at the cursor
@@ -2456,11 +2457,33 @@ function mountPad(main, { canvasId: PAD, client }) {
     refresh()
   }
   on(document, 'trommi:park-note', e => {
-    const box = pad.getBoundingClientRect(), { text, x, y } = e.detail ?? {}
-    if (!String(text ?? '').trim() || x < box.left || x > box.right || y < box.top || y > box.bottom) return
+    const box = pad.getBoundingClientRect(), { text, x, y, pictures = [] } = e.detail ?? {}
+    const words = String(text ?? '').trim()
+    if ((!words && !pictures.length) || x < box.left || x > box.right || y < box.top || y > box.bottom) return
     commitEditor()
-    addSticky(String(text).trim(), ...toWorld(x - box.left, y - box.top))
+    const px = x - box.left, py = y - box.top
+    let under = py
+    if (words) {
+      addSticky(words, ...toWorld(px, py))
+      const made = ordered().at(-1)
+      under = py + (made.h / 2) * view.z + 24
+    }
     e.detail.taken = true
+    // The note's pictures, laid under the sticky one after the other; placed: the urls of those that are on the board
+    // now (the corner's note keeps a picture that could not be read).
+    e.detail.placed = (async () => {
+      const done = []
+      for (const p of pictures) {
+        try {
+          const blob = await attachmentBlob(p.url)
+          const before = els.size
+          await addImages([new File([blob], p.name || 'picture', { type: /^image\//.test(blob.type) ? blob.type : /\.jpe?g$/i.test(p.name) ? 'image/jpeg' : /\.(gif|webp|svg)$/i.test(p.name) ? `image/${p.name.split('.').pop().toLowerCase().replace('svg', 'svg+xml')}` : 'image/png' })], [px, under], true)
+          if (els.size > before) { done.push(p.url); under += selectionBox().box.h * view.z + 16 }
+        } catch (err) { console.warn('park picture', err) }
+      }
+      sel.clear(); refresh()
+      return done
+    })()
   })
 
   // For scripts that drive the page (dev/e2e.mjs) and for the curious in the console.

@@ -77,7 +77,7 @@ export function cornerNote(model, base) {
   return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
 <button type="button" class="corner-note-head" data-action="corner-note#open" data-tip="${text || files.length ? 'Your note: open it (N)' : 'New note (N)'}" aria-label="${text || files.length ? 'Your note: open it' : 'New note'}" aria-expanded="false">${NOTE_ICON}</button>
 <div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop keydown->corner-note#key">${crown ? html`<span class="corner-note-to">${avatar(crown, { crown: false })}<b>${crown.name}</b></span>` : ''}<textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" aria-keyshortcuts="${SEND_KEYS}" data-action="input->corner-note#typed">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
-<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<span class="corner-note-sending">${chooser}<button type="button" class="note-send corner-note-send" data-action="corner-note#send"${far ? html` data-to="${crown.id}"` : ''} data-name="${crown.name}" aria-label="Send to ${crown.name}" aria-keyshortcuts="${SEND_KEYS}">${raw(crownSvg())}</button><kbd class="corner-note-keys" aria-hidden="true">${SEND_WORD}</kbd></span>` : html`<a class="corner-note-nocrown" data-nav href="${base}/settings/sessions">Give a session the crown to send</a>`}</footer></div>
+<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><span class="corner-note-park" data-tip="Drag the note onto the board" aria-hidden="true">${raw(sketchSvg('go'))}<b>onto the board</b></span><i></i>${crown ? html`<span class="corner-note-sending">${chooser}<button type="button" class="note-send corner-note-send" data-action="corner-note#send"${far ? html` data-to="${crown.id}"` : ''} data-name="${crown.name}" aria-label="Send to ${crown.name}" aria-keyshortcuts="${SEND_KEYS}">${raw(crownSvg())}</button><kbd class="corner-note-keys" aria-hidden="true">${SEND_WORD}</kbd></span>` : html`<a class="corner-note-nocrown" data-nav href="${base}/settings/sessions">Give a session the crown to send</a>`}</footer></div>
 </section>`
 }
 controller('corner-note', class extends Controller {
@@ -90,31 +90,36 @@ controller('corner-note', class extends Controller {
     document.addEventListener('trommi:note', this.write)
     this.park()
   }
-  // ---- park the note on the Scribble Board: there, the sticky can be dragged out of its corner (mouse or finger) and
-  // dropped on the board; it stays where it was dropped as a sticky with its words (whiteboard.mjs), and the
-  // corner is empty again. A press without a drag opens the note, as everywhere. Attached files do not go along:
-  // they stay with the corner's note.
+  // ---- park the note on the Scribble Board: there, the note can be dragged onto the board (mouse or finger) and
+  // dropped; it stays where it was dropped as a sticky with its words, its pictures laid under it (whiteboard.mjs),
+  // and the corner is empty again. Closed, the corner's sticky is what is dragged (a press without a drag opens the
+  // note, as everywhere); open, the sheet is taken by its paper (its edge, its foot, the grip "onto the board"), never
+  // by the words, which are selected as in any field. Files that are no pictures stay with the corner's note.
+  pictures() { return [...this.element.querySelectorAll('.corner-note-file.is-pic:not(.is-uploading):not(.is-failed)')].map(c => ({ url: c.dataset.url, name: c.title.replace(/: click to take it off$/, '') })) }
   park() {
-    const head = this.element.querySelector('.corner-note-head')
+    const head = this.element.querySelector('.corner-note-head'), body = this.element.querySelector('.corner-note-body')
     let drag = null
     const ghostAt = e => { drag.ghost.style.left = `${e.clientX}px`; drag.ghost.style.top = `${e.clientY}px` }
-    head.addEventListener('pointerdown', e => {
-      if (e.button > 0 || document.body.dataset.tView !== 'whiteboard' || !this.field.value.trim()) return
+    const down = e => {
+      if (e.button > 0 || document.body.dataset.tView !== 'whiteboard' || !(this.field.value.trim() || this.pictures().length)) return
+      if (e.currentTarget === body && e.target.closest('textarea, button, input, a, .note-to-pick')) return
+      if (e.currentTarget === body) e.preventDefault()   // (no words are selected along the way)
       drag = { x: e.clientX, y: e.clientY, id: e.pointerId, ghost: null }
-      head.setPointerCapture(e.pointerId)
-    })
-    head.addEventListener('pointermove', e => {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    }
+    const move = e => {
       if (!drag || e.pointerId !== drag.id) return
       if (!drag.ghost) {
         if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 8) return
         // (what is carried is the note as a conversation shows it: the paper with its strip of tape, notes.css .msg-note)
+        const words = this.field.value.trim(), n = this.pictures().length
         drag.ghost = Object.assign(document.createElement('figure'), { className: 'msg-note corner-note-ghost' })
-        drag.ghost.append(Object.assign(document.createElement('i'), { className: 'msg-note-tape' }), Object.assign(document.createElement('p'), { textContent: this.field.value.trim() }))
+        drag.ghost.append(Object.assign(document.createElement('i'), { className: 'msg-note-tape' }), Object.assign(document.createElement('p'), { textContent: words || (n > 1 ? `${n} pictures` : 'A picture') }))
         document.body.append(drag.ghost)
         this.element.classList.add('is-parking')
       }
       ghostAt(e)
-    })
+    }
     const end = e => {
       const d = drag; drag = null
       if (!d?.ghost) return
@@ -124,15 +129,19 @@ controller('corner-note', class extends Controller {
       const far = Math.hypot(e.clientX - d.x, e.clientY - d.y) > 48
       if (e.type === 'pointerup' && far) this.parked(e.clientX, e.clientY)
     }
-    head.addEventListener('pointerup', end); head.addEventListener('pointercancel', end)
+    for (const from of [head, body]) { from.addEventListener('pointerdown', down); from.addEventListener('pointermove', move); from.addEventListener('pointerup', end); from.addEventListener('pointercancel', end) }
   }
   async parked(x, y) {
-    const detail = { text: this.field.value, x, y, taken: false }
+    // (the board answers in the event: taken, and placed: the promise of the pictures it could lay down, by their url)
+    const detail = { text: this.field.value, pictures: this.pictures(), x, y, taken: false, placed: null }
     document.dispatchEvent(new CustomEvent('trommi:park-note', { detail }))
     if (!detail.taken) return
     this.field.value = ''
-    this.element.classList.toggle('has-words', this.files().length > 0)
-    await this.save(true)
+    // (first the pictures leave the note, then its words: a note without words and files is gone)
+    const placed = new Set(await detail.placed ?? [])
+    for (const chip of this.element.querySelectorAll('.corner-note-file')) if (placed.has(chip.dataset.url)) chip.remove()
+    if (placed.size && this.idValue) await fetch('/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: this.files() }) })
+    if (this.element.classList.contains('is-open')) this.close(); else { this.element.classList.toggle('has-words', this.files().length > 0); await this.save(true) }
   }
   disconnect() { document.removeEventListener('turbo:before-stream-render', this.guard); document.removeEventListener('trommi:note', this.write); clearTimeout(this.timer) }
   async post(path, fields = {}) {

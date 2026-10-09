@@ -326,6 +326,8 @@ export async function uploadFile(c, blob, { file_name, media_type, object_id }) 
 }
 /** An attachment's text, decrypted here (the sandboxed page viewer reads an attached page with it). */
 export const attachmentText = async id => { const b = await blobOf(id); if (!b) throw new Error('gone'); return b.text() }
+/** An attachment's bytes by its /att/ address or id, decrypted here (the Scribble Board lays a parked note's pictures down with it). */
+export const attachmentBlob = async at => { const b = await blobOf(/([0-9a-f]{32})(?:#.*)?$/.exec(String(at))?.[1]); if (!b) throw new Error('gone'); return b }
 const blobOf = id => {
   if (!blobs.has(id)) {
     const ref = refs.get(id)
