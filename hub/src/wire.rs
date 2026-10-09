@@ -31,10 +31,18 @@ impl<'a> Reader<'a> {
         Ok(self.take(1)?[0])
     }
     pub fn u32(&mut self) -> Parse<u32> {
-        Ok(u32::from_be_bytes(self.take(4)?.try_into().expect("four bytes")))
+        Ok(u32::from_be_bytes(
+            self.take(4)?.try_into().expect("four bytes"),
+        ))
     }
+    /// A `uint64` of the wire. Every number the hub stores or compares (epochs, sequence numbers, times) must
+    /// fit the database's signed 64 bits; a larger one is refused as malformed, never wrapped.
     pub fn u64(&mut self) -> Parse<u64> {
-        Ok(u64::from_be_bytes(self.take(8)?.try_into().expect("eight bytes")))
+        let v = u64::from_be_bytes(self.take(8)?.try_into().expect("eight bytes"));
+        if v > i64::MAX as u64 {
+            return Err(Malformed("a number above 2^63"));
+        }
+        Ok(v)
     }
     pub fn fixed<const N: usize>(&mut self) -> Parse<[u8; N]> {
         Ok(self.take(N)?.try_into().expect("fixed length"))
@@ -44,7 +52,10 @@ impl<'a> Reader<'a> {
         let first = self.u8()?;
         let (value, minimum) = match first >> 6 {
             0 => (usize::from(first & 0x3f), 0),
-            1 => ((usize::from(first & 0x3f) << 8) | usize::from(self.u8()?), 64),
+            1 => (
+                (usize::from(first & 0x3f) << 8) | usize::from(self.u8()?),
+                64,
+            ),
             2 => {
                 let rest = self.take(3)?;
                 (
@@ -103,10 +114,12 @@ impl Writer {
         if n < 64 {
             self.0.push(n as u8);
         } else if n < 16384 {
-            self.0.extend_from_slice(&((n as u16) | 0x4000).to_be_bytes());
+            self.0
+                .extend_from_slice(&((n as u16) | 0x4000).to_be_bytes());
         } else {
             assert!(n < 1 << 30, "vector too long for the encoding");
-            self.0.extend_from_slice(&((n as u32) | 0x8000_0000).to_be_bytes());
+            self.0
+                .extend_from_slice(&((n as u32) | 0x8000_0000).to_be_bytes());
         }
         self.0.extend_from_slice(v);
         self
@@ -160,11 +173,17 @@ impl TrommiRoom {
         if agents.windows(2).any(|w| w[0] >= w[1]) {
             return Err(Malformed("agents not ascending"));
         }
-        Ok(TrommiRoom { recovery_signature_key, recovery_hpke_key, agents })
+        Ok(TrommiRoom {
+            recovery_signature_key,
+            recovery_hpke_key,
+            agents,
+        })
     }
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
-        w.vec(&self.recovery_signature_key).vec(&self.recovery_hpke_key).vec(&self.agents.concat());
+        w.vec(&self.recovery_signature_key)
+            .vec(&self.recovery_hpke_key)
+            .vec(&self.agents.concat());
         w.0
     }
 }
@@ -179,7 +198,11 @@ pub struct TrommiSession {
 impl TrommiSession {
     pub fn parse(bytes: &[u8]) -> Parse<Self> {
         let mut r = Reader::new(bytes);
-        let out = TrommiSession { room_id: r.fixed()?, session_id: r.fixed()?, parent: r.fixed()? };
+        let out = TrommiSession {
+            room_id: r.fixed()?,
+            session_id: r.fixed()?,
+            parent: r.fixed()?,
+        };
         r.end()?;
         Ok(out)
     }
@@ -229,12 +252,22 @@ impl CommitNote {
         let mut cuts = Vec::new();
         let mut c = Reader::new(list);
         while c.position() < list.len() {
-            cuts.push(Cut { device: c.fixed()?, seq: c.u64()?, hash: c.fixed()? });
+            cuts.push(Cut {
+                device: c.fixed()?,
+                seq: c.u64()?,
+                hash: c.fixed()?,
+            });
         }
         if cuts.windows(2).any(|w| w[0].device >= w[1].device) {
             return Err(Malformed("cuts not ascending"));
         }
-        Ok(CommitNote { room_epoch, room_state, time, cuts, join })
+        Ok(CommitNote {
+            room_epoch,
+            room_state,
+            time,
+            cuts,
+            join,
+        })
     }
     pub fn encode(&self) -> Vec<u8> {
         let mut list = Writer::default();
@@ -242,7 +275,12 @@ impl CommitNote {
             list.raw(&c.device).u64(c.seq).raw(&c.hash);
         }
         let mut w = Writer::default();
-        w.u8(2).u64(self.room_epoch).raw(&self.room_state).u64(self.time).vec(&list.0).u8(u8::from(self.join));
+        w.u8(2)
+            .u64(self.room_epoch)
+            .raw(&self.room_state)
+            .u64(self.time)
+            .vec(&list.0)
+            .u8(u8::from(self.join));
         w.0
     }
 }
@@ -258,7 +296,15 @@ pub struct KeyContext {
 
 impl KeyContext {
     fn read(r: &mut Reader) -> Parse<Self> {
-        Ok(KeyContext { group_id: r.vec()?.to_vec(), epoch: r.u64()?, group_info: r.fixed()? })
+        let group_id = r.vec()?;
+        if !(group_id.len() == 32 || group_id.len() == 48) {
+            return Err(Malformed("group id length"));
+        }
+        Ok(KeyContext {
+            group_id: group_id.to_vec(),
+            epoch: r.u64()?,
+            group_info: r.fixed()?,
+        })
     }
     fn write(&self, w: &mut Writer) {
         w.vec(&self.group_id).u64(self.epoch).raw(&self.group_info);
@@ -290,7 +336,11 @@ impl SealedKey {
         };
         r.end()?;
         // X25519 encapsulation, a 32-byte key under ChaCha20-Poly1305, an HMAC-SHA-256 tag or none.
-        if out.kem_output.len() != 32 || out.ciphertext.len() != 48 || !(out.mac.is_empty() || out.mac.len() == 32) {
+        if out.recovery_hpke_key.len() != 32
+            || out.kem_output.len() != 32
+            || out.ciphertext.len() != 48
+            || !(out.mac.is_empty() || out.mac.len() == 32)
+        {
             return Err(Malformed("sealed key lengths"));
         }
         Ok(out)
@@ -330,13 +380,19 @@ impl RecoveryAuth {
             signature: r.vec()?.to_vec(),
         };
         r.end()?;
+        if out.signature.len() != 64 {
+            return Err(Malformed("signature length"));
+        }
         Ok(out)
     }
     /// `join ‖ commit`: what the recovery key signed under the label "TrommiRecoveryJoin".
     pub fn signed(&self) -> Vec<u8> {
         let mut w = Writer::default();
         self.base.write(&mut w);
-        w.u64(self.room_epoch).raw(&self.room_state).raw(&self.joiner).raw(&self.commit);
+        w.u64(self.room_epoch)
+            .raw(&self.room_state)
+            .raw(&self.joiner)
+            .raw(&self.commit);
         w.0
     }
     pub fn encode(&self) -> Vec<u8> {
@@ -367,14 +423,22 @@ impl RecoveryLink {
         };
         r.end()?;
         // OldRecovery is 64 bytes; the tag is always set (a human device writes it).
-        if out.kem_output.len() != 32 || out.ciphertext.len() != 80 || out.mac.len() != 32 {
+        if out.new_recovery_hpke_key.len() != 32
+            || out.kem_output.len() != 32
+            || out.ciphertext.len() != 80
+            || out.mac.len() != 32
+        {
             return Err(Malformed("recovery link lengths"));
         }
         Ok(out)
     }
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
-        w.raw(&self.room_id).vec(&self.new_recovery_hpke_key).vec(&self.kem_output).vec(&self.ciphertext).vec(&self.mac);
+        w.raw(&self.room_id)
+            .vec(&self.new_recovery_hpke_key)
+            .vec(&self.kem_output)
+            .vec(&self.ciphertext)
+            .vec(&self.mac);
         w.0
     }
 }
@@ -408,9 +472,22 @@ pub const FLAG_PUSH: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
-    Item { timeline_kind: u8, timeline_scope: u8, timeline_ref: [u8; 16] },
-    Register { register_id: [u8; 16] },
-    Object { object_id: [u8; 16], object_type: u8, object_state: u8, urgency: u8, answered_at: u64, object_ref: [u8; 32] },
+    Item {
+        timeline_kind: u8,
+        timeline_scope: u8,
+        timeline_ref: [u8; 16],
+    },
+    Register {
+        register_id: [u8; 16],
+    },
+    Object {
+        object_id: [u8; 16],
+        object_type: u8,
+        object_state: u8,
+        urgency: u8,
+        answered_at: u64,
+        object_ref: [u8; 32],
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -455,6 +532,9 @@ impl Header {
             return Err(HeaderError::Malformed("flags"));
         }
         let group_id = r.vec()?.to_vec();
+        if !(group_id.len() == 32 || group_id.len() == 48) {
+            return Err(HeaderError::Malformed("group id length"));
+        }
         let epoch = r.u64()?;
         let sender = r.fixed()?;
         let seq = r.u64()?;
@@ -466,14 +546,22 @@ impl Header {
                 let (timeline_kind, timeline_scope, timeline_ref) = (r.u8()?, r.u8()?, r.fixed()?);
                 let fits = matches!(
                     (timeline_kind, timeline_scope),
-                    (TIMELINE_CHAT, SCOPE_CARD) | (TIMELINE_CHAT, SCOPE_SESSION) | (TIMELINE_BOARD, SCOPE_DESK)
+                    (TIMELINE_CHAT, SCOPE_CARD)
+                        | (TIMELINE_CHAT, SCOPE_SESSION)
+                        | (TIMELINE_BOARD, SCOPE_DESK)
                 );
                 if !fits {
                     return Err(HeaderError::Malformed("timeline"));
                 }
-                Subject::Item { timeline_kind, timeline_scope, timeline_ref }
+                Subject::Item {
+                    timeline_kind,
+                    timeline_scope,
+                    timeline_ref,
+                }
             }
-            KIND_REGISTER => Subject::Register { register_id: r.fixed()? },
+            KIND_REGISTER => Subject::Register {
+                register_id: r.fixed()?,
+            },
             KIND_VERSION | KIND_ANSWER | KIND_REQUEST | KIND_VERDICT | KIND_TAKE_BACK => {
                 let s = Subject::Object {
                     object_id: r.fixed()?,
@@ -483,8 +571,17 @@ impl Header {
                     answered_at: r.u64()?,
                     object_ref: r.fixed()?,
                 };
-                if let Subject::Object { object_type, object_state, urgency, .. } = &s {
-                    if !(1..=4).contains(object_type) || !(1..=3).contains(object_state) || *urgency > 3 {
+                if let Subject::Object {
+                    object_type,
+                    object_state,
+                    urgency,
+                    ..
+                } = &s
+                {
+                    if !(1..=4).contains(object_type)
+                        || !(1..=3).contains(object_state)
+                        || *urgency > 3
+                    {
                         return Err(HeaderError::Malformed("object fields"));
                     }
                 }
@@ -497,11 +594,26 @@ impl Header {
         if files.len() % 16 != 0 || files.len() / 16 > 255 {
             return Err(HeaderError::Malformed("file ids"));
         }
-        let file_ids: Vec<[u8; 16]> = files.chunks(16).map(|c| c.try_into().expect("16")).collect();
+        let file_ids: Vec<[u8; 16]> = files
+            .chunks(16)
+            .map(|c| c.try_into().expect("16"))
+            .collect();
         if seq == 0 {
             return Err(HeaderError::Malformed("seq"));
         }
-        Ok(Header { kind, flags, group_id, epoch, sender, seq, prev, recipient, time, subject, file_ids })
+        Ok(Header {
+            kind,
+            flags,
+            group_id,
+            epoch,
+            sender,
+            seq,
+            prev,
+            recipient,
+            time,
+            subject,
+            file_ids,
+        })
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self, HeaderError> {
@@ -513,17 +625,41 @@ impl Header {
 
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
-        w.u8(2).u8(self.kind).u8(self.flags).vec(&self.group_id).u64(self.epoch);
-        w.raw(&self.sender).u64(self.seq).raw(&self.prev).raw(&self.recipient).u64(self.time);
+        w.u8(2)
+            .u8(self.kind)
+            .u8(self.flags)
+            .vec(&self.group_id)
+            .u64(self.epoch);
+        w.raw(&self.sender)
+            .u64(self.seq)
+            .raw(&self.prev)
+            .raw(&self.recipient)
+            .u64(self.time);
         match &self.subject {
-            Subject::Item { timeline_kind, timeline_scope, timeline_ref } => {
+            Subject::Item {
+                timeline_kind,
+                timeline_scope,
+                timeline_ref,
+            } => {
                 w.u8(*timeline_kind).u8(*timeline_scope).raw(timeline_ref);
             }
             Subject::Register { register_id } => {
                 w.raw(register_id);
             }
-            Subject::Object { object_id, object_type, object_state, urgency, answered_at, object_ref } => {
-                w.raw(object_id).u8(*object_type).u8(*object_state).u8(*urgency).u64(*answered_at).raw(object_ref);
+            Subject::Object {
+                object_id,
+                object_type,
+                object_state,
+                urgency,
+                answered_at,
+                object_ref,
+            } => {
+                w.raw(object_id)
+                    .u8(*object_type)
+                    .u8(*object_state)
+                    .u8(*urgency)
+                    .u64(*answered_at)
+                    .raw(object_ref);
             }
         }
         w.vec(&self.file_ids.concat());
@@ -568,7 +704,14 @@ impl Envelope {
         if signature.len() != 64 {
             return Err(HeaderError::Malformed("signature length"));
         }
-        Ok(Envelope { header, header_bytes, nonce, body, body_hash, signature })
+        Ok(Envelope {
+            header,
+            header_bytes,
+            nonce,
+            body,
+            body_hash,
+            signature,
+        })
     }
 
     pub fn hash(&self) -> [u8; 32] {
@@ -585,9 +728,17 @@ pub fn envelope_hash(header: &[u8], nonce: &[u8], body_hash: &[u8]) -> [u8; 32] 
 }
 
 /// The bytes of an envelope from its stored parts; pruned when there is no body.
-pub fn encode_envelope(header: &[u8], nonce: &[u8], body: Option<&[u8]>, body_hash: &[u8], signature: &[u8]) -> Vec<u8> {
+pub fn encode_envelope(
+    header: &[u8],
+    nonce: &[u8],
+    body: Option<&[u8]>,
+    body_hash: &[u8],
+    signature: &[u8],
+) -> Vec<u8> {
     let mut w = Writer::default();
-    w.u8(if body.is_some() { 1 } else { 2 }).raw(header).raw(nonce);
+    w.u8(if body.is_some() { 1 } else { 2 })
+        .raw(header)
+        .raw(nonce);
     match body {
         Some(b) => w.vec(b),
         None => w.raw(body_hash),
@@ -618,13 +769,21 @@ pub struct HubAuth {
 impl HubAuth {
     pub fn parse(bytes: &[u8]) -> Parse<Self> {
         let mut r = Reader::new(bytes);
-        let out = HubAuth { room_id: r.fixed()?, hub: r.vec()?.to_vec(), device: r.fixed()?, challenge: r.fixed()? };
+        let out = HubAuth {
+            room_id: r.fixed()?,
+            hub: r.vec()?.to_vec(),
+            device: r.fixed()?,
+            challenge: r.fixed()?,
+        };
         r.end()?;
         Ok(out)
     }
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
-        w.raw(&self.room_id).vec(&self.hub).raw(&self.device).raw(&self.challenge);
+        w.raw(&self.room_id)
+            .vec(&self.hub)
+            .raw(&self.device)
+            .raw(&self.challenge);
         w.0
     }
 }
@@ -664,8 +823,15 @@ impl Offer {
     }
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
-        w.raw(&self.room_id).raw(&self.invite_id).u8(self.role).raw(&self.session_id).u64(self.expires_at);
-        w.raw(&self.commitment).raw(&self.inviter).u64(self.room_epoch).raw(&self.room_state);
+        w.raw(&self.room_id)
+            .raw(&self.invite_id)
+            .u8(self.role)
+            .raw(&self.session_id)
+            .u64(self.expires_at);
+        w.raw(&self.commitment)
+            .raw(&self.inviter)
+            .u64(self.room_epoch)
+            .raw(&self.room_state);
         w.0
     }
 }
@@ -696,7 +862,12 @@ impl InviteRequest {
     }
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
-        w.raw(&self.room_id).raw(&self.invite_id).vec(&self.hub).u8(self.role).vec(&self.key_package).raw(&self.offer_hash);
+        w.raw(&self.room_id)
+            .raw(&self.invite_id)
+            .vec(&self.hub)
+            .u8(self.role)
+            .vec(&self.key_package)
+            .raw(&self.offer_hash);
         w.0
     }
 }
@@ -711,13 +882,19 @@ pub struct Reveal {
 impl Reveal {
     pub fn parse(bytes: &[u8]) -> Parse<Self> {
         let mut r = Reader::new(bytes);
-        let out = Reveal { invite_id: r.fixed()?, nonce: r.fixed()?, request_hash: r.fixed()? };
+        let out = Reveal {
+            invite_id: r.fixed()?,
+            nonce: r.fixed()?,
+            request_hash: r.fixed()?,
+        };
         r.end()?;
         Ok(out)
     }
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::default();
-        w.raw(&self.invite_id).raw(&self.nonce).raw(&self.request_hash);
+        w.raw(&self.invite_id)
+            .raw(&self.nonce)
+            .raw(&self.request_hash);
         w.0
     }
 }
@@ -765,8 +942,20 @@ mod tests {
     #[test]
     fn headers_of_every_shape_round_trip() {
         let shapes = [
-            header(KIND_ITEM, Subject::Item { timeline_kind: 1, timeline_scope: 2, timeline_ref: [3; 16] }),
-            header(KIND_REGISTER, Subject::Register { register_id: [4; 16] }),
+            header(
+                KIND_ITEM,
+                Subject::Item {
+                    timeline_kind: 1,
+                    timeline_scope: 2,
+                    timeline_ref: [3; 16],
+                },
+            ),
+            header(
+                KIND_REGISTER,
+                Subject::Register {
+                    register_id: [4; 16],
+                },
+            ),
             header(
                 KIND_ANSWER,
                 Subject::Object {
@@ -786,18 +975,38 @@ mod tests {
 
     #[test]
     fn header_values_out_of_range_are_refused() {
-        let good = header(KIND_ITEM, Subject::Item { timeline_kind: 1, timeline_scope: 2, timeline_ref: [3; 16] });
+        let good = header(
+            KIND_ITEM,
+            Subject::Item {
+                timeline_kind: 1,
+                timeline_scope: 2,
+                timeline_ref: [3; 16],
+            },
+        );
         let mut reserved_kind = good.encode();
         reserved_kind[1] = 8;
-        assert_eq!(Header::parse(&reserved_kind), Err(HeaderError::Malformed("kind")));
+        assert_eq!(
+            Header::parse(&reserved_kind),
+            Err(HeaderError::Malformed("kind"))
+        );
         let mut flags = good.encode();
         flags[2] = 3;
         assert_eq!(Header::parse(&flags), Err(HeaderError::Malformed("flags")));
         let mut newer = good.encode();
         newer[0] = 3;
         assert_eq!(Header::parse(&newer), Err(HeaderError::NewerVersion));
-        let board_in_a_session = header(KIND_ITEM, Subject::Item { timeline_kind: 2, timeline_scope: 2, timeline_ref: [3; 16] });
-        assert_eq!(Header::parse(&board_in_a_session.encode()), Err(HeaderError::Malformed("timeline")));
+        let board_in_a_session = header(
+            KIND_ITEM,
+            Subject::Item {
+                timeline_kind: 2,
+                timeline_scope: 2,
+                timeline_ref: [3; 16],
+            },
+        );
+        assert_eq!(
+            Header::parse(&board_in_a_session.encode()),
+            Err(HeaderError::Malformed("timeline"))
+        );
         let mut trailing = good.encode();
         trailing.push(0);
         assert!(Header::parse(&trailing).is_err());
@@ -805,11 +1014,25 @@ mod tests {
 
     #[test]
     fn a_pruned_envelope_has_the_hash_of_the_full_one() {
-        let h = header(KIND_REGISTER, Subject::Register { register_id: [4; 16] }).encode();
+        let h = header(
+            KIND_REGISTER,
+            Subject::Register {
+                register_id: [4; 16],
+            },
+        )
+        .encode();
         let body = vec![0x55; 272];
         let body_hash: [u8; 32] = Sha256::digest(&body).into();
-        let full = Envelope::parse(&encode_envelope(&h, &[1; 12], Some(&body), &body_hash, &[9; 64])).unwrap();
-        let pruned = Envelope::parse(&encode_envelope(&h, &[1; 12], None, &body_hash, &[9; 64])).unwrap();
+        let full = Envelope::parse(&encode_envelope(
+            &h,
+            &[1; 12],
+            Some(&body),
+            &body_hash,
+            &[9; 64],
+        ))
+        .unwrap();
+        let pruned =
+            Envelope::parse(&encode_envelope(&h, &[1; 12], None, &body_hash, &[9; 64])).unwrap();
         assert!(full.body.is_some() && pruned.body.is_none());
         assert_eq!(full.hash(), pruned.hash());
     }
@@ -820,7 +1043,18 @@ mod tests {
             room_epoch: 4,
             room_state: [1; 32],
             time: 77,
-            cuts: vec![Cut { device: [1; 32], seq: 3, hash: [2; 32] }, Cut { device: [2; 32], seq: 0, hash: ZERO32 }],
+            cuts: vec![
+                Cut {
+                    device: [1; 32],
+                    seq: 3,
+                    hash: [2; 32],
+                },
+                Cut {
+                    device: [2; 32],
+                    seq: 0,
+                    hash: ZERO32,
+                },
+            ],
             join: true,
         };
         assert_eq!(CommitNote::parse(&note.encode()).unwrap(), note);
@@ -828,9 +1062,16 @@ mod tests {
         unordered.cuts.reverse();
         assert!(CommitNote::parse(&unordered.encode()).is_err());
 
-        let room = TrommiRoom { recovery_signature_key: vec![1; 32], recovery_hpke_key: vec![2; 32], agents: vec![[1; 32], [2; 32]] };
+        let room = TrommiRoom {
+            recovery_signature_key: vec![1; 32],
+            recovery_hpke_key: vec![2; 32],
+            agents: vec![[1; 32], [2; 32]],
+        };
         assert_eq!(TrommiRoom::parse(&room.encode()).unwrap(), room);
-        let twice = TrommiRoom { agents: vec![[1; 32], [1; 32]], ..room.clone() };
+        let twice = TrommiRoom {
+            agents: vec![[1; 32], [1; 32]],
+            ..room.clone()
+        };
         assert!(TrommiRoom::parse(&twice.encode()).is_err());
     }
 }

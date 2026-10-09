@@ -11,7 +11,10 @@ static CLOCK_OFFSET_MS: AtomicI64 = AtomicI64::new(0);
 
 /// Milliseconds since the Unix epoch.
 pub fn now() -> u64 {
-    let real = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let real = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
     (real + CLOCK_OFFSET_MS.load(Ordering::Relaxed)).max(0) as u64
 }
 
@@ -44,10 +47,17 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 || !text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+    if !text.len().is_multiple_of(2)
+        || !text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         return None;
     }
-    (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).ok()).collect()
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).ok())
+        .collect()
 }
 
 pub fn same(a: &[u8], b: &[u8]) -> bool {

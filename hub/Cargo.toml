@@ -34,7 +34,8 @@ subtle = "=2.6.1"
 base64 = "=0.22.1"
 getrandom = "=0.2.17"
 argon2 = "=0.5.3"
-p256 = { version = "=0.13.2", features = ["ecdsa", "ecdh"] }
+p256 = { version = "=0.13.2", features = ["ecdsa", "ecdh", "pkcs8", "pem"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "http2"] }
 aes-gcm = "=0.10.3"
 chacha20poly1305 = "=0.10.1"
 
