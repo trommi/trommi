@@ -4,6 +4,9 @@
 import SwiftUI
 import TrommiClient
 import TrommiCore
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct BoardShell: View {
   @EnvironmentObject var model: BoardModel
@@ -62,6 +65,8 @@ struct BoardShell: View {
     .overlay { UpdateRequired() }
     .background(Ink.bg.ignoresSafeArea())
     .modifier(StatusBarUnderIsland())
+    // anything dropped onto the app goes onto the note (NoteDrop.swift): the note opens and shows it arrive
+    .modifier(NoteDropTarget { if hSize == .regular { NotificationCenter.default.post(name: .trommiNoteOpen, object: nil) } else { withAnimation(.snappy) { noteOpen = true } } })
   }
   private var stack: some View {
     NavigationStack(path: $model.deskPath) {
@@ -616,14 +621,28 @@ struct UpdateRequired: View {
  * The note as a panel over the page, ABOVE the tab bar (his word, 8 October: a sheet covered the bar): inside the
  * bar's safe area, so its bottom is the bar's top and the keyboard lifts it as it lifts the content. The page stays visible,
  * dimmed; a tap beside it or a swipe down closes it; the draft stays (NoteScreen keeps it on the note object).
+ *
+ * With the keyboard up the whole note stays above it (build 20: the paperclip · bin · send row was half behind the
+ * keyboard). Two causes, both taken away here: the panel had a fixed height (55 % of what the keyboard left, at least
+ * 320 pt) that the note's content did not fit into, so its last row was cut off; and the panel's bottom lay about
+ * 14 pt below the keyboard's top edge (the tab content's keyboard inset is not the keyboard's frame). So the panel
+ * takes the room there is, and what the keyboard's own frame still covers of it (`under`) is kept free at its bottom,
+ * the paper running on behind the keyboard.
  */
 struct NotePanel: ViewModifier {
   @Binding var open: Bool
   @State private var drag: CGFloat = 0
+  /** The keyboard's top edge on the screen while it shows (its own frame, not the safe area made from it). */
+  @State private var keyboardTop: CGFloat? = nil
   func body(content: Content) -> some View {
     content.overlay {
       if open {
         GeometryReader { geo in
+          // what the keyboard covers of this tab's content although the safe area says it is free, and a little air
+          let under = keyboardTop.map { max(0, geo.frame(in: .global).maxY - $0) + 6 } ?? 0
+          let room = max(200, geo.size.height - under - 12)
+          // while he writes the note takes the room above the keyboard; else a good half of the page
+          let height = min(room, keyboardTop == nil ? max(360, geo.size.height * 0.55) : 400)
           ZStack(alignment: .bottom) {
             Color.black.opacity(0.28).ignoresSafeArea()
               .onTapGesture { withAnimation(.snappy) { open = false } }
@@ -638,7 +657,8 @@ struct NotePanel: ViewModifier {
                 .accessibilityAction { open = false }
               NavigationStack { NoteScreen(onDone: { withAnimation(.snappy) { open = false } }) }
             }
-            .frame(height: max(320, geo.size.height * 0.55))
+            .padding(.bottom, under)
+            .frame(height: height + under)
             .background(Ink.noteYellow)
             .clipShape(UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22, style: .continuous))
             .shadow(color: .black.opacity(0.25), radius: 18, y: -2)
@@ -649,5 +669,17 @@ struct NotePanel: ViewModifier {
       }
     }
     .animation(.snappy, value: open)
+    .animation(.snappy, value: keyboardTop)
+    #if canImport(UIKit)
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
+      guard let f = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+      keyboardTop = NotePanel.keyboardTop(frame: f, screen: UIScreen.main.bounds.height)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardTop = nil }
+    #endif
+  }
+  /** The top edge of a keyboard that is on the screen; nil when it is away (its frame below the screen, or empty). */
+  static func keyboardTop(frame f: CGRect, screen: CGFloat) -> CGFloat? {
+    f.height < 1 || f.minY >= screen - 1 ? nil : f.minY
   }
 }

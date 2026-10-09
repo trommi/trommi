@@ -125,7 +125,11 @@ final class ShareModel: ObservableObject {
   private func loadOne(_ p: NSItemProvider, index: Int) async throws -> Loaded? {
     guard let inbox = inbox else { return nil }
     let id = requestId
-    if p.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+    // what it becomes is decided by ShareIntake (the same rules as a drop onto the app)
+    let dataType = p.registeredTypeIdentifiers.first { UTType($0)?.conforms(to: .data) == true && UTType($0)?.conforms(to: .plainText) != true }
+    let has = { (t: UTType) in p.hasItemConformingToTypeIdentifier(t.identifier) }
+    let kind = ShareIntake.kind(.init(image: has(.image), url: has(.url), fileURL: has(.fileURL), data: dataType != nil, text: has(.plainText)))
+    if kind == .image {
       let raw = try await p.loadItemAsync(UTType.image.identifier)
       let src: CGImageSource?
       switch raw {
@@ -139,13 +143,13 @@ final class ShareModel: ObservableObject {
       let file = try inbox.addPayload(pic.data, request: id, index: index, name: name)
       return Loaded(item: ShareItem(kind: .image, file: file, name: name, type: "image/jpeg", size: pic.data.count, width: pic.width, height: pic.height), thumb: thumb)
     }
-    if p.hasItemConformingToTypeIdentifier(UTType.url.identifier) && !p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+    if kind == .url {
       if let u = try await p.loadItemAsync(UTType.url.identifier) as? URL {
         return Loaded(item: ShareItem(kind: .url, name: u.host ?? "link", type: "text/uri-list", text: u.absoluteString))
       }
     }
-    if let type = p.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .data) == true && UTType($0)?.conforms(to: .plainText) != true })
-        ?? (p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) ? UTType.data.identifier : nil) {
+    if kind == .file {
+      let type = dataType ?? UTType.data.identifier
       let ut = UTType(type)
       return try await withCheckedThrowingContinuation { (c: CheckedContinuation<Loaded?, Error>) in
         _ = p.loadFileRepresentation(forTypeIdentifier: type) { url, err in
@@ -153,9 +157,8 @@ final class ShareModel: ObservableObject {
           do {
             // the file is valid only inside this handler: read (mapped), seal, write, here
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            var name = p.suggestedName ?? url.deletingPathExtension().lastPathComponent
             let ext = url.pathExtension.isEmpty ? (ut?.preferredFilenameExtension ?? "") : url.pathExtension
-            if !ext.isEmpty && !name.lowercased().hasSuffix(".\(ext.lowercased())") { name += ".\(ext)" }
+            let name = ShareIntake.fileName(suggested: p.suggestedName, file: url.deletingPathExtension().lastPathComponent, ext: url.pathExtension, typeExt: ut?.preferredFilenameExtension)
             if size > ShareInbox.maxItemBytes { throw ShareError.tooLarge(name) }
             let d = try Data(contentsOf: url, options: .mappedIfSafe)
             let file = try inbox.addPayload(d, request: id, index: index, name: name)
@@ -168,12 +171,7 @@ final class ShareModel: ObservableObject {
     if p.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
       let raw = try await p.loadItemAsync(UTType.plainText.identifier)
       let s = (raw as? String) ?? (raw as? Data).flatMap { String(data: $0, encoding: .utf8) } ?? (raw as? NSAttributedString)?.string
-      if let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
-        if let u = URL(string: s), u.scheme?.hasPrefix("http") == true, !s.contains(" ") {
-          return Loaded(item: ShareItem(kind: .url, name: u.host ?? "link", type: "text/uri-list", text: s))
-        }
-        return Loaded(item: ShareItem(kind: .text, name: "text", type: "text/plain", text: String(s.prefix(ShareInbox.maxTextChars))))
-      }
+      if let item = s.flatMap({ ShareIntake.words($0) }) { return Loaded(item: item) }
     }
     return nil
   }

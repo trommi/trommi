@@ -2,6 +2,7 @@
 // on, then what is done; its search), Artifacts (Media and Pages: what the agents published and sent), a picture in full screen, the corner note (the yellow
 // slip to the crowned session), the drawing a session wears.
 import SwiftUI
+import ShareInbox
 import TrommiClient
 import TrommiCore
 import UniformTypeIdentifiers
@@ -316,6 +317,8 @@ struct NoteButton: View {
     Button { open = true } label: { PenMark("sidebar:NOTE_ICON").frame(width: 30, height: 30).opacity(has ? 1 : 0.85) }
       .accessibilityLabel("Note")
       .sheet(isPresented: $open) { NoteSheet().presentationDetents([.medium, .large]) }
+      // something was dropped onto the app (NoteDrop.swift): the note opens and shows it arrive
+      .onReceive(NotificationCenter.default.publisher(for: .trommiNoteOpen)) { _ in open = true }
   }
 }
 /** The note as a sheet (the iPad's corner button). */
@@ -342,6 +345,10 @@ struct NoteScreen: View {
   @State private var pickingPhotos = false
   @State private var importing = false
   @State private var camera = false
+  /** This note is the one on screen: it takes what is dropped onto the app (NoteDrop.swift). */
+  @State private var shown = false
+  /** A drop is being uploaded. */
+  @State private var dropping = false
   /** Another session than the crowned one, picked with the "To" chip. */
   @State private var to: String? = nil
   @FocusState private var focused: Bool
@@ -359,11 +366,14 @@ struct NoteScreen: View {
         .scrollContentBackground(.hidden)
         .scrollDismissesKeyboard(.interactively)
         .focused($focused)
-        .frame(minHeight: 140)
+        // the words give way, never the row below: in a short panel (keyboard up, pictures attached) the text area
+        // shrinks and scrolls, the pictures and the paperclip · bin · send row keep their place above the keyboard
+        .frame(minHeight: 44)
+        .layoutPriority(-1)
         .overlay(alignment: .topLeading) {
           if text.isEmpty { Text("Write a note…").font(Face.text(18)).foregroundStyle(Ink.noteInk.opacity(0.45)).padding(.top, 8).padding(.leading, 5).allowsHitTesting(false) }
         }
-      if !files.isEmpty || uploading {
+      if !files.isEmpty || uploading || dropping {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 8) {
             ForEach(Array(files.enumerated()), id: \.offset) { i, f in
@@ -374,7 +384,7 @@ struct NoteScreen: View {
                   .accessibilityLabel("Remove")
               }
             }
-            if uploading { ProgressView().frame(width: 72, height: 72) }
+            if uploading || dropping { ProgressView().frame(width: 72, height: 72) }
           }.padding(.top, 6)
         }
       }
@@ -401,8 +411,8 @@ struct NoteScreen: View {
             Button { send(target) } label: { sendFace }
           }
         }
-        .disabled(target == nil || empty || uploading)
-        .opacity(target == nil || empty || uploading ? 0.35 : 1)
+        .disabled(target == nil || empty || uploading || dropping)
+        .opacity(target == nil || empty || uploading || dropping ? 0.35 : 1)
         .accessibilityLabel(target.map { "Send to \($0.name)" } ?? "Send")
       }
       .foregroundStyle(Ink.noteInk)
@@ -421,9 +431,19 @@ struct NoteScreen: View {
     .onAppear {
       if !loaded, let n = model.desk?.notes.filter({ $0.held.isNull }).sorted(by: { $0.updated > $1.updated }).first { text = n.text; noteId = n.id; files = n.attachments }
       loaded = true
+      shown = true
     }
     .onChange(of: text) { _, _ in keepSoon() }
-    .onDisappear { keep() }
+    .onDisappear { shown = false; dropping = false; keep() }
+    // what was dropped onto the app (NoteDrop.swift): onto this note as it is on screen, words he has just typed kept
+    .onReceive(NotificationCenter.default.publisher(for: .trommiNoteDropping)) { n in dropping = shown && (n.object as? Bool ?? false) }
+    .onReceive(NotificationCenter.default.publisher(for: .trommiNoteAdd)) { n in
+      guard shown, loaded, let a = n.object as? NoteAddition, !a.taken else { return }
+      a.taken = true
+      text = ShareIntake.appended(text, a.words)
+      files.append(contentsOf: a.files)
+      keepTask?.cancel(); keep()
+    }
     // what the share sheet added to the note while this screen was open (ShareImport.swift)
     .onReceive(NotificationCenter.default.publisher(for: .trommiNoteImported)) { n in
       guard let id = n.userInfo?["id"] as? String, let t = n.userInfo?["text"] as? String, let f = n.userInfo?["files"] as? [JV] else { return }

@@ -131,8 +131,12 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
   `TrommiClient/Desk.swift`): seven drawings at most, the stopped ones first and marked, the count, how many wait on
   him or are at work; the main's row counts its helpers in. A tap unfolds a stack; which are open is kept on the phone.
 - **Note:** a panel inside the page, above the tab bar, not a sheet (a sheet covered the bar). The page stays
-  visible behind it, dimmed. The keyboard lifts the panel as it lifts the page. Drag the handle down or tap beside the
-  panel to close it; the draft stays on the note.
+  visible behind it, dimmed. The keyboard lifts the panel as it lifts the page, and the whole note stays above it: the
+  panel takes the room above the keyboard (at most 400 pt), the text area shrinks and scrolls (the pictures and the
+  paperclip · bin · send row never give way), and what the keyboard's own frame still covers of the panel
+  (`UIResponder.keyboardWillChangeFrameNotification`; the tab content's keyboard inset ended a little below the
+  keyboard's top edge) is kept free at its bottom (`NotePanel` in `Shell.swift`). Drag the handle down or tap beside
+  the panel to close it; the draft stays on the note.
 - **Desk:** no text field; the keyboard only appears in sheets (New Desk, Rename), which the system handles.
 - **Settings:** forms with the system's keyboard handling; a drag dismisses it.
 
@@ -242,6 +246,22 @@ running app took the share at once.
   registers the `.share` one on its first `xtool dev run`, or make it there with Identifiers → +) and `com.trommi.ios`, `com.trommi.ios.share` (TestFlight;
   `asc.py prepare` registers them): App Groups → Configure → tick the group → Save. Until then an install fails with an
   entitlements error, because the profile does not carry the group the app asks for.
+
+## Drop onto the app
+
+Anything dropped onto the app goes onto the note (`NoteDrop.swift`, `.onDrop` on the shell): pictures, videos and other
+files become its attachments, links and text its words. While something hovers, the app shows a hand-drawn dashed
+outline and one line of glass ("Drop onto the note"); on the drop the note opens (the panel on the iPhone, the corner
+sheet on the iPad's Desk). The note on screen takes the drop into what is being written; without one open it goes onto
+the stored note, as a share does (`ShareImport.addToNote`).
+
+- What a thing becomes is `ShareIntake` (TrommiCore `ShareInbox`, under `swift test`), the same rules as the Share
+  Extension: a picture → JPEG of at most 2400 px; a link (not a file URL) → its address as a line of text; any other
+  data or a file URL → a file with its name and type; plain text → words, a lone http(s) address as a link.
+- The share sheet's limits: 20 things per drop, 32 MB per file, 20 000 characters of text. What is left out is named
+  in a toast.
+- Not in the demo and not signed out (the drop is refused). A text field under the finger takes dropped text itself,
+  as every iOS text field does. Sheets other than the note (Settings' invites, a file's preview) are not drop targets.
 
 ## Not there yet
 

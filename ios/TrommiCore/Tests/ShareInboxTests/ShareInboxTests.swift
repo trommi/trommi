@@ -134,4 +134,54 @@ final class ShareInboxTests: XCTestCase {
                    ["group.XTL-70CB783D.com.trommi.ios", "group.com.trommi.ios"])
     XCTAssertEqual(ShareGroup.candidates(bundleID: "com.trommi.ios", infoGroup: "group.com.trommi.ios"), ["group.com.trommi.ios"])
   }
+
+  // ---- ShareIntake: what a shared or dropped thing becomes in the note ------------------------------------
+
+  func testIntakeKind() {
+    typealias O = ShareIntake.Offer
+    XCTAssertEqual(ShareIntake.kind(O(image: true, data: true)), .image, "a photo")
+    XCTAssertEqual(ShareIntake.kind(O(image: true, url: true, fileURL: true, data: true)), .image, "a picture file from Files")
+    XCTAssertEqual(ShareIntake.kind(O(url: true, text: true)), .url, "a link from Safari offers its title as text too")
+    XCTAssertEqual(ShareIntake.kind(O(url: true, data: true)), .url, "a link with a .webloc beside it")
+    XCTAssertEqual(ShareIntake.kind(O(url: true, fileURL: true)), .file, "a file URL is a file, not a link")
+    XCTAssertEqual(ShareIntake.kind(O(data: true)), .file, "a movie, a PDF")
+    XCTAssertEqual(ShareIntake.kind(O(data: true, text: true)), .file, "a PDF that also offers its text")
+    XCTAssertEqual(ShareIntake.kind(O(text: true)), .text)
+    XCTAssertNil(ShareIntake.kind(O()), "nothing we take")
+  }
+
+  func testIntakeWords() {
+    let link = ShareIntake.words("  https://example.com/a?b=1\n")
+    XCTAssertEqual(link?.kind, .url)
+    XCTAssertEqual(link?.text, "https://example.com/a?b=1")
+    XCTAssertEqual(link?.name, "example.com")
+    XCTAssertEqual(ShareIntake.words("HTTP://Example.com")?.kind, .url)
+    XCTAssertEqual(ShareIntake.words("see https://example.com")?.kind, .text, "a sentence with a link is text")
+    XCTAssertEqual(ShareIntake.words("https://a.example\nhttps://b.example")?.kind, .text, "two lines are text")
+    XCTAssertEqual(ShareIntake.words("httpfoo://x")?.kind, .text, "only http and https are links")
+    XCTAssertEqual(ShareIntake.words("mailto:a@example.com")?.kind, .text)
+    XCTAssertEqual(ShareIntake.words("buy milk")?.text, "buy milk")
+    XCTAssertNil(ShareIntake.words(" \n\t "))
+    XCTAssertEqual(ShareIntake.words(String(repeating: "x", count: ShareInbox.maxTextChars + 50))?.text?.count, ShareInbox.maxTextChars)
+  }
+
+  func testIntakeFileName() {
+    XCTAssertEqual(ShareIntake.fileName(suggested: "Report", file: "tmp123", ext: "pdf", typeExt: "pdf"), "Report.pdf")
+    XCTAssertEqual(ShareIntake.fileName(suggested: "Report.PDF", file: "tmp123", ext: "pdf", typeExt: nil), "Report.PDF", "the extension once")
+    XCTAssertEqual(ShareIntake.fileName(suggested: nil, file: "clip", ext: "", typeExt: "mov"), "clip.mov", "the type's extension when the file has none")
+    XCTAssertEqual(ShareIntake.fileName(suggested: "  ", file: "clip", ext: "mp4", typeExt: "mov"), "clip.mp4", "the file's own extension wins")
+    XCTAssertEqual(ShareIntake.fileName(suggested: nil, file: "", ext: "", typeExt: nil), "file")
+  }
+
+  func testIntakeAppended() {
+    XCTAssertEqual(ShareIntake.appended("", "a"), "a")
+    XCTAssertEqual(ShareIntake.appended(" \n", " a "), "a", "an empty note becomes the new words")
+    XCTAssertEqual(ShareIntake.appended("one", "two"), "one\ntwo")
+    XCTAssertEqual(ShareIntake.appended("one", "  "), "one", "nothing new changes nothing")
+    let items = [ShareItem(kind: .url, name: "l", type: "text/uri-list", text: "https://example.com"),
+                 ShareItem(kind: .image, file: "f", name: "p.jpg", type: "image/jpeg"),
+                 ShareItem(kind: .text, name: "t", type: "text/plain", text: " hello "),
+                 ShareItem(kind: .url, name: "l", type: "text/uri-list", text: "https://example.com")]
+    XCTAssertEqual(ShareIntake.joined(items), "https://example.com\nhello", "one per line, none twice, files are not words")
+  }
 }

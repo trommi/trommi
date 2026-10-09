@@ -127,10 +127,9 @@ final class ShareImport {
   }
 
   /** Onto the one note: its words below the note's, its files after the note's. */
-  private func addToNote(_ words: String, _ atts: [JV], room: Room, model m: BoardModel) async {
+  func addToNote(_ words: String, _ atts: [JV], room: Room, model m: BoardModel) async {
     let note = m.desk?.notes.filter { $0.held.isNull }.sorted { $0.updated > $1.updated }.first
-    var text = note?.text ?? ""
-    if !words.isEmpty { text = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? words : text + "\n" + words }
+    let text = ShareIntake.appended(note?.text ?? "", words)
     let files = (note?.attachments ?? []) + atts
     var fields: [String: JV] = ["text": .str(text), "attachments": .arr(files), "updated_at": .n(nowMs())]
     if note == nil { fields["created_at"] = .n(nowMs()) }
