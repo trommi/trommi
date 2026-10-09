@@ -184,8 +184,28 @@ impl Observer {
             .ok_or_else(damaged)
     }
 
-    /// Starts from a GroupInfo with its tree: OpenMLS verifies the tree, every leaf and the GroupInfo's
-    /// signature (`bad-signature`), and every leaf must be the profile's (`bad-group`).
+    /// Starts from a GroupInfo with its tree.
+    ///
+    /// OpenMLS (`PublicGroup::from_external`) verifies, and any failure is `bad-signature`: the suite is one
+    /// it supports; the signature of every leaf, with the group id for a leaf from a Commit or an Update;
+    /// the parent hashes of the tree; that no two leaves share a signature key and no two nodes an
+    /// encryption key; that every unmerged leaf is a blank-free descendant listed all the way up; that each
+    /// leaf's extensions are valid in a leaf and covered by its own capabilities, that its capabilities
+    /// cover its credential type and what the group context requires, and that every leaf supports every
+    /// other leaf's credential type; that the lifetime of a leaf from a KeyPackage holds the present time;
+    /// the GroupInfo's signature under the key of the leaf it names as its signer; that the tree hashes to
+    /// the group context's tree hash; that the version is `mls10`. It does not check the confirmation tag
+    /// (an observer holds no key), nor that the GroupInfo is the newest.
+    ///
+    /// The core adds what OpenMLS leaves open, since it takes any credential, any capabilities above the
+    /// required ones and any group context: the GroupInfo carries the tree and `external_pub`
+    /// (`bad-format`); every leaf of the tree is the profile's, a basic credential that is the leaf's
+    /// signature key, exactly the profile's capabilities and no leaf extension (`bad-group`); the epoch is
+    /// one a group reaches by Commits (`bad-group`); and the group context is the profile's: `mls10`, the
+    /// suite, and the extension list of a room or of a session group with its `required_capabilities`
+    /// (`bad-format`). A leaf's lifetime is not readable outside OpenMLS: that it spans no more than the
+    /// profile's ten years is checked where a KeyPackage is verified, before it is stored or added and
+    /// where a Commit adds it, not for a leaf already in a tree.
     fn start(group_info: &[u8]) -> Result<(Provider, PublicGroup, GroupId, GroupKind), Error> {
         let verifiable = parse_group_info(group_info)?;
         let tree = verifiable

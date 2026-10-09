@@ -1,7 +1,7 @@
 //! KeyPackages (section 3, 4.5, 14.2): making a device's own, and checking another device's before it is added
 //! or stored. A KeyPackage is the profile's when its signature verifies, its credential is a basic credential
-//! holding the leaf's signature key, its capabilities are exactly the profile's, and it carries no extension but
-//! `last_resort`.
+//! holding the leaf's signature key, its capabilities are exactly the profile's, its lifetime is no longer than
+//! the profile's, and it carries no extension but `last_resort`.
 
 use crate::crypto::{self, SigningKey, CIPHERSUITE};
 use crate::error::Error;
@@ -50,7 +50,15 @@ pub(crate) fn info(key_package: &KeyPackage) -> Result<KeyPackageInfo, Error> {
         .extensions()
         .iter()
         .all(|extension| matches!(extension, Extension::LastResort(_)));
-    if key_package.ciphersuite() != CIPHERSUITE || !only_last_resort {
+    // Section 3: a lifetime spans at most the profile's, from one hour ago to ten years ahead. OpenMLS
+    // checks that it holds the present time, not how long it is.
+    let lifetime = key_package.life_time();
+    let span_ms = lifetime
+        .not_after()
+        .saturating_sub(lifetime.not_before())
+        .saturating_mul(1000);
+    let longest = profile::LIFETIME_MS.saturating_add(profile::LIFETIME_MARGIN_MS);
+    if key_package.ciphersuite() != CIPHERSUITE || !only_last_resort || span_ms > longest {
         return Err(Error::BadKeyPackage);
     }
     let reference = key_package
