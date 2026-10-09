@@ -65,6 +65,9 @@ use zeroize::{Zeroize as _, Zeroizing};
 pub const UPDATE_AFTER_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 /// And at most once in this time.
 pub const UPDATE_AT_MOST_EVERY_MS: u64 = 24 * 60 * 60 * 1000;
+/// After this many stroke pieces in one epoch of the room group the sender commits an update (7.2, 3.5): its
+/// sender ratchet is not run further.
+pub const STROKE_PIECES_PER_EPOCH: u64 = 5000;
 /// A device keeps this many single-use KeyPackages at the hub.
 pub const SINGLE_USE_KEY_PACKAGES: usize = 100;
 /// The last-resort KeyPackage is replaced after this time, and its private part kept as long again.
@@ -141,8 +144,9 @@ pub enum Processed {
     },
     /// An application message that opened.
     Message(Received),
-    /// Nothing for this device: a group it does not hold, a message it cannot open (7.0), or a message of a
-    /// group that failed its first contact, which is not opened (5.2.6).
+    /// Nothing for this device: a group it does not hold, a message it cannot open (7.0), a message of a
+    /// group that failed its first contact, which is not opened (5.2.6), or a message that arrived in a group
+    /// that is stale at its place in the log, where nobody writes (5.2.8).
     Skipped,
 }
 
@@ -387,6 +391,8 @@ struct GroupMeta {
     /// The change number of the last Commit of the group this device processed, or of the Commit that led to
     /// the epoch it joined at: the group's next Commit lies behind it in the hub's order.
     place: u64,
+    /// The stroke pieces this device sent in the epoch the room group stands in (7.2).
+    pieces: u64,
 }
 
 impl Encode for GroupMeta {
@@ -428,6 +434,7 @@ impl Encode for GroupMeta {
         writer.u64(self.joined_epoch);
         writer.u64(self.passed);
         writer.u64(self.place);
+        writer.u64(self.pieces);
         Ok(())
     }
 }
@@ -475,6 +482,7 @@ impl Decode for GroupMeta {
             joined_epoch: reader.u64()?,
             passed: reader.u64()?,
             place: reader.u64()?,
+            pieces: reader.u64()?,
         })
     }
 }
@@ -1922,6 +1930,8 @@ impl<S: Storage> Device<S> {
                 }
             }
         }
+        // 7.2: the pieces are counted per epoch.
+        self.meta(id)?.pieces = 0;
         self.put_group(batch, id)
     }
 
@@ -2907,8 +2917,9 @@ impl<S: Storage> Device<S> {
     }
 
     /// The own-leaf update of a human device (5.2.9): an empty Commit when its leaf in `group` is older than
-    /// seven days and its last update there older than a day, or at once when `forced` (after 5 000 stroke
-    /// pieces in an epoch, or `epoch-full`). A leaf's age counts from the device's last Commit there that had
+    /// seven days and its last update there older than a day; in the room group also when this device sent
+    /// [`STROKE_PIECES_PER_EPOCH`] stroke pieces in the epoch (7.2); or at once when `forced` (`epoch-full`
+    /// for envelopes). A leaf's age counts from the device's last Commit there that had
     /// a path (an Add alone has none and renews nothing), or from its founding or joining the group. Agent
     /// and helper devices make no Commit for an update (`forbidden`). Returns none when nothing is due.
     pub fn update(
@@ -2924,7 +2935,8 @@ impl<S: Storage> Device<S> {
             let meta = this.meta(group)?;
             let due = now_ms.saturating_sub(meta.own_leaf_ms) >= UPDATE_AFTER_MS
                 && now_ms.saturating_sub(meta.last_update_ms) >= UPDATE_AT_MOST_EVERY_MS;
-            if !due && !forced {
+            let full = meta.pieces >= STROKE_PIECES_PER_EPOCH;
+            if !due && !full && !forced {
                 return Ok(None);
             }
             meta.last_update_ms = now_ms;
@@ -4178,6 +4190,19 @@ impl<S: Storage> Device<S> {
             return Ok(Processed::Skipped);
         }
         let leaves = rules::leaves_of(group.members())?;
+        // 5.2.8: nobody writes into a stale group, and the hub takes nothing for it. A message that
+        // arrives in one all the same is dropped unopened, whoever sent it: its sender may be a leaf the
+        // room no longer allows, which a session group holds until it is cleaned. The log is processed in
+        // the hub's order, so the room state this device holds is the one at the message's place: what
+        // was sent before the room Commit that made the group stale lies before it and was opened.
+        let meta = self.meta(id)?.clone();
+        let known = self.known();
+        let devices: BTreeSet<DeviceId> = leaves.iter().map(|(_, device)| *device).collect();
+        if self.knows_parent(&meta, &known).is_err()
+            || !self.disallowed(&meta, &devices, &known).is_empty()
+        {
+            return Ok(Processed::Skipped);
+        }
         let before = self.provider.entries();
         let Ok(processed) = group.process_message(&self.provider, message) else {
             // 7.0: a receiver that cannot open a message skips it.
@@ -4475,14 +4500,28 @@ impl<S: Storage> Device<S> {
     }
 
     /// Sends the points of a stroke still being drawn (7.2): room group, human devices, relayed and not stored.
+    ///
+    /// The pieces sent in the room group's epoch are counted, in the write that holds the message and the
+    /// ratchet state after it. After [`STROKE_PIECES_PER_EPOCH`] of them the next one is refused with
+    /// `epoch-full`: the sender commits an update first ([`Device::update`], which is due then), and sends
+    /// again once that Commit is merged. The specification names `epoch-full` for the cap on envelopes of
+    /// an epoch and gives the cap on stroke pieces no code of its own; the device answers both with the one
+    /// code whose remedy is to commit an update. It is this device's own refusal: no hub sends it for a piece.
     pub fn send_stroke_piece(&mut self, board: &BoardId, piece: &[u8]) -> Result<u64, Error> {
         self.transact(|this, batch| {
             let group = this.room_group()?;
+            if this.meta(&group)?.pieces >= STROKE_PIECES_PER_EPOCH {
+                return Err(Error::EpochFull);
+            }
             let message = TrommiMessage::StrokePiece {
                 board: *board,
                 piece: piece.to_vec(),
             };
-            this.send(batch, &group, &message, true)
+            let outbox = this.send(batch, &group, &message, true)?;
+            let meta = this.meta(&group)?;
+            meta.pieces = meta.pieces.saturating_add(1);
+            this.put_group(batch, &group)?;
+            Ok(outbox)
         })
     }
 
