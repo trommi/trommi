@@ -932,4 +932,106 @@ mod rules {
             Err(Error::Storage(_))
         ));
     }
+
+    #[test]
+    fn goals_keep_to_twenty_lines_of_two_hundred_characters() {
+        let lines = |n: usize, len: usize| vec!["ä".repeat(len); n].join("\n");
+        let desk = |goals: &str| json!({ "name": "Desk", "order": 1, "goals": goals }).to_string();
+        let handed = |goals: &str| {
+            json!({ "desk_id": "d", "desk_name": "Desk", "goals": goals }).to_string()
+        };
+        let registers = Registers::new();
+        let write_as = |name: &str, value: &str| {
+            write(
+                &registers,
+                &mut OwnIds::new(),
+                name,
+                Some(value),
+                &mut seeded(1),
+            )
+            .map(|_| ())
+        };
+        // What a reader makes of the same value, written by a device that does not keep the limits.
+        let read_as = |name: &str, value: &str| {
+            let payload = format!(r#"{{"name":"{name}","value":{value},"lamport":1}}"#);
+            Value::parse(payload.as_bytes()).map(|_| ())
+        };
+        for name in ["desk/abc", "goals"] {
+            let value: &dyn Fn(&str) -> String = if name == "goals" { &handed } else { &desk };
+            for fits in [
+                lines(20, 40),
+                lines(1, 200),
+                lines(1, 0),
+                "Ship it".to_owned(),
+            ] {
+                assert_eq!(write_as(name, &value(&fits)), Ok(()), "{name}");
+                assert_eq!(read_as(name, &value(&fits)), Ok(()), "{name}");
+            }
+            for beyond in [lines(21, 1), lines(1, 201), lines(20, 1) + "\n"] {
+                assert_eq!(
+                    write_as(name, &value(&beyond)),
+                    Err(Error::TooLarge),
+                    "{name}"
+                );
+                assert_eq!(
+                    read_as(name, &value(&beyond)),
+                    Err(Error::TooLarge),
+                    "{name}"
+                );
+            }
+            // No Goals: null, or no field. Goals that are no text are no value of the name.
+            for none in [
+                r#"{"name":"Desk","goals":null}"#,
+                r#"{"name":"Desk"}"#,
+                "null",
+            ] {
+                assert_eq!(read_as(name, none), Ok(()), "{name}");
+            }
+            assert_eq!(write_as(name, r#"{"goals":null}"#), Ok(()));
+            for odd in [
+                r#"{"goals":["a","b"]}"#,
+                r#"{"goals":7}"#,
+                r#"{"goals":{}}"#,
+            ] {
+                assert_eq!(write_as(name, odd), Err(Error::BadFormat), "{name}");
+                assert_eq!(read_as(name, odd), Err(Error::BadFormat), "{name}");
+            }
+        }
+        // Two hundred characters, not bytes: the line above is 400 bytes long. And only Goals are held to it.
+        assert_eq!(lines(1, 200).len(), 400);
+        // The limit of every value holds beside it: twenty full lines fit in 4 KiB as plain letters and not
+        // as letters of two bytes.
+        let full = vec!["a".repeat(200); 20].join("\n");
+        assert_eq!(write_as("goals", &handed(&full)), Ok(()));
+        assert_eq!(read_as("goals", &handed(&full)), Ok(()));
+        assert!(handed(&lines(20, 200)).len() > MAX_VALUE_LEN);
+        assert_eq!(
+            write_as("goals", &handed(&lines(20, 200))),
+            Err(Error::TooLarge)
+        );
+        assert_eq!(write_as("session/abc", &desk(&lines(30, 1))), Ok(()));
+        assert_eq!(read_as("profile", &desk(&lines(1, 300))), Ok(()));
+        assert_eq!((MAX_GOALS_LINES, MAX_GOALS_LINE_LEN), (20, 200));
+
+        // A reader does not take such a value: the Goals an agent reads stay the ones before it.
+        let mut scene = Scene::new();
+        let payload = |goals: &str, lamport: u64| {
+            format!(
+                r#"{{"name":"goals","value":{},"lamport":{lamport}}}"#,
+                handed(goals)
+            )
+        };
+        let id = RegisterId::new([4; 16]);
+        assert!(scene
+            .set_with_id(1, session(), id, payload("Ship it", 1).as_bytes())
+            .is_ok());
+        assert_eq!(
+            scene
+                .set_with_id(1, session(), id, payload(&lines(21, 1), 2).as_bytes())
+                .err(),
+            Some(Error::TooLarge)
+        );
+        let kept = scene.registers[&session()].get("goals").unwrap().to_owned();
+        assert_eq!(kept, handed("Ship it"));
+    }
 }
