@@ -15,7 +15,7 @@
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
 import { BASE, NEEDS_NEWER, SAID, heardOf, linkOf, stream, walkOf } from './app.mjs'
-import { Controller, EXPLAIN_TEXT, isTyping, letterKeysOn, FINAL_TIP, LATER_TAG, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
+import { Controller, EXPLAIN_TEXT, HAND_BACK_TEXT, isTyping, letterKeysOn, FINAL_TIP, LATER_TAG, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, linkNote, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
 // Drawn with the pen, for the round buttons above a card: an arrow to the left and one to the right, a cross, three
@@ -40,7 +40,6 @@ function sendButton(canReverse, asker) {
   if (!canReverse) return send
   return html`<span class="tc-send-split">${send}<details class="tc-send-menu" data-controller="pops"><summary class="tc-send-more" title="More ways to send" aria-label="More ways to send">${CHEVRON}</summary><div class="tc-send-pop" role="menu"><button type="button" role="menuitem" class="tc-send-rev" data-action="card#sendReverse" data-pop-close><span class="tc-send-rev-uno" aria-hidden="true">${sk('reverse')}</span><span>Send and Reverse</span><small>back to ${to} for rework</small></button></div></details></span>`
 }
-const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
 const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
 /** What is attached and is neither picture nor video (a table, a log, a sound): shown as files. */

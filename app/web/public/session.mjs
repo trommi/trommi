@@ -17,7 +17,7 @@
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
 import { BASE, UNHEARD_MS, blockedOf, linkOf, quietOf } from './app.mjs'
-import { Controller, WORDS, advisedLabels, later, agoSpan, assetGlyph, avatar, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
+import { Controller, EXPLAIN_TEXT, HAND_BACK_TEXT, WORDS, advisedLabels, later, agoSpan, assetGlyph, avatar, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
 const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const IN_VIEW = 14            // of them, rendered with the page (a phone shows fewer); the rest of the window right after its first paint
@@ -103,7 +103,19 @@ function attachments(list, s, base, from) {
 }
 
 // ---- one line for something that happened to a question ----
-const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised', trusted: WORDS.trust, snoozed: WORDS.later, handed: 'With the agent', shredded: 'Shredded' }
+const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised', trusted: WORDS.trust, snoozed: WORDS.later, handed: 'With the agent', shredded: 'Shredded',
+  took_back: 'You took it back', handed_back: 'You handed it back', explain: 'You asked for an explanation' }
+ICONS.took_back = ICONS.handed_back = ICONS.reopened
+/** A message of his that is a deed on a card, by its marker in the content (present_card, hand_back, explain): the
+ *  kind of its quiet line, in the words of the card's talk; null for a plain message. `bare`: nothing of his own in
+ *  it, only the words the app sends along for the session. */
+function deedOf(m) {
+  const kind = m.present ? 'took_back' : m.handback ? 'handed_back' : m.explain ? 'explain' : null
+  if (!kind) return null
+  const t = (m.text ?? '').trim()
+  const own = t && !m.present && !(m.handback && t === HAND_BACK_TEXT) && !(m.explain && t === EXPLAIN_TEXT)
+  return { kind, bare: !own && !m.attachments?.length && !m.cards?.length }
+}
 function eventLine({ id, kind, text, ts }, card, base, { cont = false, echo = false, wrap = false } = {}) {
   const cls = `event event-${/^[a-z_]+$/.test(kind ?? '') ? kind : 'board'}${cont ? ' cont' : ''}${echo ? ' event-echo' : ''}`
   const inner = html`<span class="event-ico">${ico(ICONS[kind] ? kind : 'asked')}</span><span class="event-body"><span class="event-kind">${EVENT_LABEL[kind] ?? 'Board'}</span>${card && (card.title !== text || !text) ? html`<span class="event-about">${card.title}</span>` : ''}${text ? html`<span class="event-text">${text}</span>` : ''}</span>${timeNode(ts, 'event-time')}`
@@ -216,9 +228,14 @@ function build(m, cont, about, s, base) {
   // A note he sent from the Notes stack: in the conversation where it was sent, on his side, as the slip of yellow
   // paper it was, stuck on with one strip of tape (the one hand-made thing in a conversation). No bubble around it.
   if (m.from === 'user' && m.note) return html`<article class="msg msg-user msg-note-at" id="msg-${m.id}"><figure class="msg-note"><i class="msg-note-tape" aria-hidden="true"></i><figcaption class="msg-note-cap">${sk('page')}<span>Note</span>${m.note.written ? html`<span class="msg-note-when">written ${clock(m.note.written)}</span>` : ''}</figcaption><p>${m.text}</p>${attachments(m.attachments ?? [], s, base, m.id)}</figure>${timeNode(m.ts, 'msg-time')}</article>`
+  // A hand-back, a take-back, What??: what he did, not what he said. The words that went to the session with it are
+  // the machine's: a quiet line stands for them, never his bubble. What he wrote himself with it stays his bubble.
+  const deed = m.from === 'user' ? deedOf(m) : null
+  if (deed?.bare) return eventLine({ id: m.id, kind: deed.kind, text: '', ts: m.ts }, about, base, { cont })
+  const deedNode = deed ? eventLine({ kind: deed.kind, text: '', ts: m.ts }, about, base, { wrap: true }) : ''
   if (m.from === 'user') {
     const list = m.attachments ?? []
-    return html`<article class="msg msg-user${cont ? ' cont' : ''}" id="msg-${m.id}">${list.filter(a => a.kind === 'scribble' && a.url).map(a => html`<a class="scribble-card" href="${a.url}" target="_blank" rel="noopener" aria-label="Scribble sent: open the picture"><img${srcOf(a, 280)} alt="" loading="lazy" decoding="async" width="280" height="210"><span>Scribble</span></a>`)}${attachments(list.filter(a => a.kind !== 'scribble'), s, base, m.id)}${aboutNode}${m.cards?.length ? html`<div class="cardclip-row">${m.cards.map(c => html`<a class="cardclip-chip is-link" data-nav href="${sessionPath(s.id, base)}/card/${encodeURIComponent(c.number)}" title="Nr. ${c.number} · ${c.title}${c.choice_label ? ` → ${c.choice_label}` : ''}"><b>Nr. ${c.number}</b><span class="cardclip-title">${c.title}</span>${c.choice_label ? html`<span class="cardclip-answer">→ ${c.choice_label}</span>` : ''}</a>`)}</div>` : ''}${m.text ? html`<div class="bubble"><p>${m.text}</p></div>` : ''}${timeNode(m.ts, 'msg-time')}</article>`
+    return html`${deedNode}<article class="msg msg-user${cont ? ' cont' : ''}" id="msg-${m.id}">${list.filter(a => a.kind === 'scribble' && a.url).map(a => html`<a class="scribble-card" href="${a.url}" target="_blank" rel="noopener" aria-label="Scribble sent: open the picture"><img${srcOf(a, 280)} alt="" loading="lazy" decoding="async" width="280" height="210"><span>Scribble</span></a>`)}${attachments(list.filter(a => a.kind !== 'scribble'), s, base, m.id)}${aboutNode}${m.cards?.length ? html`<div class="cardclip-row">${m.cards.map(c => html`<a class="cardclip-chip is-link" data-nav href="${sessionPath(s.id, base)}/card/${encodeURIComponent(c.number)}" title="Nr. ${c.number} · ${c.title}${c.choice_label ? ` → ${c.choice_label}` : ''}"><b>Nr. ${c.number}</b><span class="cardclip-title">${c.title}</span>${c.choice_label ? html`<span class="cardclip-answer">→ ${c.choice_label}</span>` : ''}</a>`)}</div>` : ''}${m.text ? html`<div class="bubble"><p>${m.text}</p></div>` : ''}${timeNode(m.ts, 'msg-time')}</article>`
   }
   // The agent's words (the light markdown; a layout fenced as html goes into the sandboxed frame, ui.mjs), with what it attached.
   const text = m.published ? assetCard(assetOf(m, s), s, base) : raw(String(words(m.text ?? '', { assets, extra: m.html ?? '' })).replace(/<\/div>$/, () => `${attachments(m.attachments, s, base, m.id)}</div>`))

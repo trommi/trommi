@@ -466,12 +466,12 @@ final class BoardModel: ObservableObject {
   }
   func takeBack(_ c: DeskCard) {
     guard let room = acting() else { return }
-    act { try await room.sendMessage(cardId: c.id, text: "The human took the card back; no need to rework or explain it.", fields: ["present_card": true]) }
+    act { try await room.sendMessage(cardId: c.id, text: Words.takeBackText,fields: ["present_card": true]) }
   }
   func handBack(_ c: DeskCard, text: String = "") {
     guard let room = acting() else { return }
     act {
-      try await room.sendMessage(cardId: c.id, text: text.isEmpty ? "Back to you: please rework this question and present it again. Take the comments under the card into account." : text, fields: ["hand_back": true])
+      try await room.sendMessage(cardId: c.id, text: text.isEmpty ? Words.handBackText : text, fields: ["hand_back": true])
       self.say("Handed back", c.title, undo: { [weak self] in if let c = self?.card(c.id) { self?.takeBack(c) } })
     }
   }

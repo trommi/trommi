@@ -583,7 +583,9 @@ export const WORDS = {
   later: 'Later', duck: 'Duck it', wake: 'Wake up', ack: 'Got it', what: 'What??', trust: 'I don’t give a duck', revise: 'Reverse',
   revising: 'In revision', shred: 'Shred', walk: 'Blitz', desk: 'Desk', takeBack: 'Take back',
 }
-export const EXPLAIN_TEXT = 'Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do.'
+/** What a bare hand-back says to the session (the machine's words: a conversation shows a quiet line instead). */
+export const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
+export const EXPLAIN_TEXT ='Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do.'
 
 export const isKnock = card => card.kind === 'permission' || card.urgency === 'high' || card.urgency === 'critical'
 export const knockWord = card => (card.kind === 'permission' ? 'Knock! Permission' : card.urgency === 'critical' ? 'Knock! Blocking' : card.urgency === 'high' ? 'Knock' : null)

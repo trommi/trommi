@@ -17,6 +17,9 @@ public enum Words {
   public static let later = "Later", duck = "Duck it", wake = "Wake up", ack = "Got it", what = "What??", trust = "I don’t give a duck", revise = "Reverse"
   public static let revising = "In revision", shred = "Shred", walk = "Blitz", desk = "Desk", takeBack = "Take back"
   public static let explainText = "Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do."
+  /** What a bare hand-back and a take-back say to the session (the machine's words: the talk shows a quiet line instead). */
+  public static let handBackText = "Back to you: please rework this question and present it again. Take the comments under the card into account."
+  public static let takeBackText = "The human took the card back; no need to rework or explain it."
   public static let settled = "Settled by your answer"
   public static let finalTip = "Settles it: nothing follows from this answer, the card goes straight to Done"
 }

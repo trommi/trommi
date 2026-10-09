@@ -311,12 +311,54 @@ struct MessageView: View {
         EventRow(kind: m.kind ?? "asked", about: c?.title ?? m.text, text: eventText(m, c), ts: m.ts, number: c?.number, open: inCard || c == nil ? nil : { model.path.append(.card(c!.id)) })
       } else if m.itemState != "loaded" && m.itemState != "pruned" {
         HStack { if m.from == "user" { Spacer(minLength: 40) }; UnsupportedLine(what: "message").frame(maxWidth: 420); if m.from != "user" { Spacer(minLength: 40) } }
+      } else if m.from == "user", let deed = Self.deed(m) {
+        // a hand-back, a take-back, What??: what he DID, not what he said. The words that went to the session with it
+        // are the machine's (Words.handBackText …): a quiet centred line stands for them. What he wrote himself with a
+        // hand-back stays his bubble under the line.
+        VStack(spacing: 6) {
+          deedLine(deed, m)
+          if !Self.bare(m) { userMessage(m) }
+        }
       } else if m.from == "user" {
         userMessage(m)
       } else {
         agentMessage(m)
       }
     }
+  }
+  /** A message of his that is a deed on a card, by its marker in the content (present_card, hand_back, explain), in
+   *  the words of the web's card talk; nil for a plain message. */
+  static func deed(_ m: Message) -> (word: String, icon: String)? {
+    if m.present { return ("You took it back", "arrow.uturn.forward") }
+    if m.handback { return ("You handed it back", "arrow.uturn.backward") }
+    if m.explain { return ("You asked for an explanation", "questionmark") }
+    return nil
+  }
+  /** Nothing of his own in it: only the words the app sends along for the session. */
+  static func bare(_ m: Message) -> Bool {
+    let t = m.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let own = !(t.isEmpty || m.present || (m.handback && t == Words.handBackText) || (m.explain && t == Words.explainText))
+    return !own && m.attachments.isEmpty && m.marks.isEmpty && m.copiedCards.isEmpty
+  }
+  /** The quiet line of a deed: centred, no bubble, the time behind it; outside the card's page it names the card and
+   *  opens it. */
+  private func deedLine(_ deed: (word: String, icon: String), _ m: Message) -> some View {
+    let c = inCard ? nil : m.cardId.flatMap { model.card($0) }
+    return Button { if let c = c { model.path.append(.card(c.id)) } } label: {
+      HStack(spacing: 6) {
+        Image(systemName: deed.icon).font(.system(size: 10, weight: .semibold))
+        Text(deed.word).font(Face.text(12, .semibold))
+        if let c = c { Text(c.title).font(Face.text(12)).lineLimit(1).truncationMode(.tail) }
+        if m.pending { Image(systemName: "clock").font(.system(size: 10)) } else { Text(clockOf(m.ts)).font(Face.text(11)).foregroundStyle(Ink.faint) }
+      }
+      .foregroundStyle(Ink.muted)
+      .frame(maxWidth: .infinity, alignment: .center)
+      .padding(.vertical, 4).padding(.horizontal, 24)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(c == nil)
+    .accessibilityElement(children: .combine)
   }
   private func eventText(_ m: Message, _ c: DeskCard?) -> String {
     switch m.kind {
@@ -357,9 +399,6 @@ struct MessageView: View {
           Text(m.text).font(Face.text(16)).foregroundStyle(Ink.fg).textSelection(.enabled)
             .padding(.horizontal, 14).padding(.vertical, 10)
             .background(UnevenRoundedRectangle(topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: cont ? 18 : 6, topTrailingRadius: 18, style: .continuous).fill(Ink.accentSoft))
-        }
-        if m.handback || m.explain {
-          Text(m.explain ? "Asked: What??" : "Handed back").font(Face.text(11, .semibold)).foregroundStyle(Ink.muted)
         }
       }
       VStack {
