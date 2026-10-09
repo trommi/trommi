@@ -13,6 +13,8 @@ import { rowSheet } from './desk.mjs'
 // when an address of it is first asked for (LAZY: the addresses it answers), and all of them once the page is idle,
 // so a later navigation finds them in memory.
 const VIEWS = [desk, sidebar, notes]
+/** "MLS proof" (proof.mjs): a page of Settings, and a screen of its own on a device without a room (boot). */
+const PROOF_PATH = /^\/settings\/proof$/
 const LAZY = {
   auth: { load: () => import('./auth.mjs'), paths: /^\/(?:settings(?:\/(?:devices|account|theme|keys|kit|password))?|devices\/|pair|logout|join|login)(?:\/|$)/ },
   agents: { load: () => import('./agents.mjs'), paths: /^\/(?:settings\/(?:sessions|agents)$|sessions\/)/ },
@@ -20,6 +22,7 @@ const LAZY = {
   session: { load: () => import('./session.mjs'), paths: /^\/s\// },
   media: { load: () => import('./media.mjs'), paths: /^\/artifacts(?:\/|$)/ },
   whiteboard: { load: () => import('./whiteboard.mjs'), paths: /^\/scribble-board$/ },
+  proof: { load: () => import('./proof.mjs'), paths: PROOF_PATH },
 }
 const loaded = {}   // name -> the view's module, once loaded
 /** A lazy view's module (loaded once; registered on the board, when there is one, as it arrives). */
@@ -2139,6 +2142,8 @@ async function boot() {
   const client = await openClient().catch(err => { console.error('open', err); openError = err; return null })
   OPEN_MS = performance.now() - T0   // the room from storage (or the demo's fixture) in memory
   if (client) { keepStorage(); await start(client) }
+  // (the core's self test needs no room: by its address it opens on a device that is not logged in too)
+  else if (PROOF_PATH.test(location.pathname)) { fontsAfterPaint(); (await view('proof')).proofScreen() }
   else { fontsAfterPaint(); await (await view('auth')).roomScreen({ start: async (c, o) => { keepStorage(); return start(await adopt(c), o) }, hub: hubUrl(), openError }) }
 }
 if (typeof window !== 'undefined') boot()

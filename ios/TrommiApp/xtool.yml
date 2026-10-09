@@ -1,0 +1,28 @@
+version: 1
+# The App Store bundle id (the app record's); xtool prefixes it with XTL-<team> for its development builds.
+# AppStore/project.yml names it again for the TestFlight builds (.github/workflows/ios-beta.yml).
+bundleID: com.trommi.ios
+product: TrommiApp
+infoPath: Info.plist
+entitlementsPath: TrommiApp.entitlements
+# The app icon for the xtool build (it cannot compile the asset catalog of the App Store build).
+iconPath: AppStore/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
+# The privacy manifest, at the bundle's root where Apple reads it.
+resources:
+  - Sources/TrommiApp/Resources/PrivacyInfo.xcprivacy
+# The Share Extension (Sources/TrommiShare): Trommi in the share sheet; App Group group.com.trommi.ios with the app.
+extensions:
+  - product: TrommiShare
+    bundleID: com.trommi.ios.share
+    infoPath: Share/Info.plist
+    entitlementsPath: Share/TrommiShare.entitlements
+  # The Notification Service Extension (Sources/TrommiNotify): the card's title in a push, decrypted on the phone.
+  - product: TrommiNotify
+    bundleID: com.trommi.ios.notify
+    infoPath: Notify/Info.plist
+    entitlementsPath: Notify/TrommiNotify.entitlements
+  # The Live Activity's widget (Sources/TrommiLive): agents working, questions waiting.
+  - product: TrommiLive
+    bundleID: com.trommi.ios.live
+    infoPath: Live/Info.plist
+    entitlementsPath: Live/TrommiLive.entitlements

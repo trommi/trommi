@@ -249,6 +249,22 @@ body > main.set-page { max-width: none; margin: 0; padding: var(--s-8) var(--gut
 .set-keys dt i, .set-keys .keys-caps i { font-style: normal; color: var(--muted); font-size: var(--t-xs); }
 .set-keys kbd { font: 600 .78rem/1 var(--mono); padding: 4px 6px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); }
 .set-keys dd { margin: 0; color: var(--fg); font-size: var(--t-sm); line-height: 1.45; }
+/* MLS proof (proof.mjs): the first line, the steps with their times, what ran; alone in #room-screen without a room */
+#room-screen > main.set-page { padding: var(--s-8) var(--gutter) var(--s-10); }
+.proof-line { margin: 0 0 var(--s-5); font: 700 var(--t-xl)/1.25 var(--display); letter-spacing: -.01em; overflow-wrap: anywhere; }
+.proof-line.room-wait { font: 400 var(--t-md)/1.5 var(--font); letter-spacing: 0; }
+.proof .room-error { margin: 0 0 var(--s-5); overflow-wrap: anywhere; }
+.proof-line.is-fail, .proof-steps .is-fail b { color: var(--deny); }
+.proof-steps { margin-top: 0; padding: 0; list-style: none; }
+.proof-steps > li, .proof-facts > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-4); align-items: baseline; padding: 10px var(--s-4); font-size: var(--t-sm); line-height: 1.45; }
+.proof-name small { display: block; color: var(--muted); }
+.proof-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.proof-time b { color: var(--accent); font-weight: 600; }
+.proof-facts { margin-top: 0; }
+.proof-facts > div { grid-template-columns: 6.5rem minmax(0, 1fr); }
+.proof-facts dt { color: var(--muted); }
+.proof-facts dd { margin: 0; overflow-wrap: anywhere; }
+.proof-do { display: flex; flex-wrap: wrap; gap: var(--s-2); margin: var(--s-5) 0 0; }
 /* Devices and Account under Settings: their sections in the same column */
 .set-page .room-section:first-of-type { margin-top: 0; }
 @media (max-width: 860px) {

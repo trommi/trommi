@@ -1,279 +1,291 @@
-// room.ts: founding, opening, joining and recovering a room. Each returns a Client (client.ts) whose
-// state is in `storage`. Contract: core/README.md "Opening a room".
-import * as z from './crypto/zcrypto.mjs'
-import { Hub, normaliseHubUrl } from './transport.ts'
-import { Client, secretFromJson, verifiedHeads } from './client.ts'
-import './agent.ts'
-import * as G from './crypto/session-grants.mjs'
-import { prefetchSnapshot } from './snapshot.ts'
-import type { Device, LogState } from './crypto/zcrypto.mjs'
-import type { Storage } from './types.ts'
-import type { RoomRecord, Secret, SessionKey } from './client.ts'
+// room.ts: how a device comes to hold a room, and the `Client` over it: founding one, opening the stored one, joining
+// by an invite link (spec/v2.md 12.1), signing in with the recovery code (8.4) and recovering with it (8.7). What
+// account.ts and core-worker.ts call; they hold no key and no device themselves.
+//
+// Every function here returns a client that is NOT started (`client.start()` is the caller's). A step that fails
+// leaves nothing stored: the device it made is closed and its stores are deleted, so the same step can be taken
+// again. The recovery code is copied on the way in and the copy is overwritten when the step is over.
+//
+// Where the core, the device's store and the cache come from is one small record (`RoomEnv`). The product's is
+// below: core-wasm.ts and store-idb.ts, loaded when first needed. Tests hand in another (the stand-in core over
+// the real binding, stores in memory) through `roomsOn`; the product has no switch for that.
+//
+// The hub's address is not part of a device's state. It is kept in the cache (`client/room`, written durably when
+// the room is made); a caller that knows it may pass `hub_url` to `openRoom` for a cache that was lost.
+import { Client, ClientError, engineMeta } from './client.ts'
+import type { Core, Device, Store } from './core-api.ts'
+import { Engine } from './engine.ts'
+import type { EngineTiming, InviteDevice } from './engine.ts'
+import { accountCopiesBytes, Hub, HubError, hubAddress } from './hub.ts'
+import type { AccountCopies, NewAccount } from './hub.ts'
+import { b64u, hex, unb64u, unhex } from './ids.ts'
+import type { Cache } from './store-idb.ts'
 
-/**
- * As the recovery key: every session's grant chain and its current key (the recovery key holds every session key, R6).
- * raw: the answer of GET session_grants (fetched alongside the member list), or null: fetched here; a hub without
- * that route is asked per session.
- */
-async function sessionsAsRecovery(hub: Hub, state: LogState, rec: Device, raw: SessionBundle[] | null = null): Promise<Map<string, SessionKey>> {
-  const out = new Map<string, SessionKey>()
-  let bundle = raw ?? await fetchSessionBundle(hub)
-  if (!bundle) {
-    let list = []
-    try { list = (await hub.sessions()).sessions } catch (e: any) { if (e.status === 404) return out; throw e }
-    bundle = []
-    for (const { session_id } of list) {
-      if (!/^[0-9a-f]{32}$/.test(session_id ?? "")) continue
-      bundle!.push({ session_id, signed_grants: (await hub.sessionGrants(session_id, -1)).signed_grants, sealed_session_keys: (await hub.sealedSessionKeys(session_id, 0)).sealed_session_keys })
+export interface DeviceOptions {
+  storage: { name: string }
+  client?: string | null; device_name?: string; device_info?: unknown; fetch?: typeof fetch | null
+  /** The store on `storage.name`, loaded: for a caller that holds its lock already (tabs.ts `adoptInTabs`). The
+   *  device made over it is then not opened again in place when it closes itself: that caller takes over. */
+  store?: Store
+}
+/** Where a room's parts come from. */
+export interface RoomEnv {
+  core(): Promise<Core>
+  /** A new store object on the device state `name`; `load()` takes its lock. */
+  store(name: string): Store
+  cache(name: string): Promise<Cache>
+  /** Deletes everything stored under `name`. */
+  destroy(name: string): Promise<void>
+  /** Left out in the product. Tests: another hub client (one that also hands an agent device the room group's
+   *  Commits, which the fake hub's catch-up leaves out), and shorter waits. */
+  hub?(opts: { hub_url: string; client_name: string | null; fetch?: typeof fetch }): Hub
+  timing?: Partial<EngineTiming>
+}
+export interface Joining { check_code: Promise<string>; client: Promise<Client>; cancel(): void }
+export interface Rooms {
+  foundRoom(o: DeviceOptions & { hub_url: string; recovery_code?: Uint8Array; found_token?: string | null; account?: ((room_id: Uint8Array) => Record<string, unknown> | Promise<Record<string, unknown>>) | null }): Promise<{ client: Client; recovery_code: Uint8Array }>
+  /** null: nothing is stored. */
+  openRoom(o: DeviceOptions & { hub_url?: string }): Promise<Client | null>
+  /** The client over a store that is loaded already (tabs.ts holds its lock): null when it holds no room. Its
+   *  device is not opened again in place when it closes itself; the client says `device-closed` and tabs.ts takes over. */
+  openRoomOver(o: DeviceOptions & { hub_url?: string }, store: Store): Promise<Client | null>
+  /** `check_code`: the six numbers both sides compare, 'nn-nn-nn-nn-nn-nn'. */
+  joinRoom(o: DeviceOptions & { link: string; poll_ms?: number; timeout_ms?: number }): Joining
+  /** Signs in on a new device with the code (8.4). With `recover` the recovery of 8.7: every other human device is
+   *  removed and the code replaced; `account` is called exactly once with the new code, before anything is posted,
+   *  and gives the account's new sealed copies (null: a room without an account). */
+  joinWithCode(o: DeviceOptions & { hub_url: string; room_id: string; code: Uint8Array; recover?: boolean; account?: ((new_code: Uint8Array) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>) | null }): Promise<{ client: Client }>
+}
+
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+const codeText = (numbers: readonly number[]): string => numbers.map(n => String(n).padStart(2, '0')).join('-')
+
+export function roomsOn(env: RoomEnv): Rooms {
+  const hubOf = (o: DeviceOptions, hub_url: string): Hub => {
+    const opts = { hub_url, client_name: o.client ?? null, ...(o.fetch ? { fetch: o.fetch } : {}) }
+    return env.hub ? env.hub(opts) : new Hub(opts)
+  }
+  const timing = env.timing ? { timing: env.timing } : {}
+  /** Where a device that closed itself is opened again: here, unless the caller holds the store's lock itself. */
+  const again = (o: DeviceOptions): { store?: () => Store } => (o.store ? {} : { store: () => env.store(o.storage.name) })
+
+  /** A new device in an empty store. A store that holds something is a room already: `room-exists`, nothing touched. */
+  async function fresh(o: DeviceOptions, core: Core): Promise<Device> {
+    const store = o.store ?? env.store(o.storage.name)
+    let stored
+    try { stored = await store.load() } catch (e) { await store.close?.(); throw e }
+    if (stored.revision !== 0 || stored.entries.length) { await store.close?.(); throw new ClientError('room-exists', 'this browser holds an account already') }
+    return core.createDevice(store)
+  }
+  /** Undoes a step that failed: the device it made holds nothing anyone else knows of. */
+  async function discard(o: DeviceOptions, device: Device, engine: Engine | null): Promise<void> {
+    if (engine) await engine.stop().catch(() => {}); else await device.close().catch(() => {})
+    await env.destroy(o.storage.name).catch(() => {})
+  }
+  async function clientOf(o: DeviceOptions, core: Core, hub: Hub, engine: Engine, cache: Cache): Promise<Client> {
+    return new Client({ core, hub, engine, cache, ...(o.device_name ? { device_name: o.device_name } : {}), ...(o.device_info !== undefined ? { device_info: o.device_info } : {}) }).open()
+  }
+  /** Posts everything in the outbox now, in order, each entry once: a step's own posts, whose failure is the step's. */
+  async function postAll(engine: Engine): Promise<void> {
+    while ((await engine.outbox()).length) await engine.postHead()
+  }
+
+  async function foundRoom(o: Parameters<Rooms['foundRoom']>[0]): Promise<{ client: Client; recovery_code: Uint8Array }> {
+    const core = await env.core()
+    const hub = hubOf(o, o.hub_url)
+    const device = await fresh(o, core)
+    let engine: Engine | null = null
+    const code = o.recovery_code ? o.recovery_code.slice() : core.generateRecoveryCode()
+    try {
+      const room_id = await device.foundRoom(code, Date.now())
+      // the account's sealed copies bind the room id: they are made now, before the founding is posted
+      const account = o.account ? await o.account(room_id) as unknown as NewAccount : null
+      const cache = await env.cache(o.storage.name)
+      await cache.set('client/room', { hub_url: hub.hub_url }, { durable: true })
+      engine = new Engine({ core, hub, meta: engineMeta(cache), ...again(o), ...timing }, device)
+      const founding = (await engine.outbox()).find(e => e.kind === 'roomFounding') ?? (() => { throw new ClientError('internal', 'the core made no founding') })()
+      await engine.attach(founding.id, { account, found_token: o.found_token ?? null })
+      await engine.postHead()
+      await engine.load()
+      return { client: await clientOf(o, core, hub, engine, cache), recovery_code: code }
+    } catch (e) {
+      code.fill(0)
+      await discard(o, device, engine)
+      throw e
     }
   }
-  for (const { session_id, signed_grants, sealed_session_keys } of bundle) {
-    if (!/^[0-9a-f]{32}$/.test(session_id ?? "") || !signed_grants?.length) continue
-    const sstate = await G.verifyGrants(signed_grants.map(unb64u), state)
-    const w = (sealed_session_keys ?? []).find((x: { session_key_epoch: number }) => x.session_key_epoch === sstate.epoch)
-    const secrets = new Map<number, Secret>()
-    if (w) secrets.set(sstate.epoch, await G.unwrapSessionKey({ roomId: state.roomId, sessionState: sstate, device: rec, sealed: unb64u(w.key_sealed), epoch: sstate.epoch }))
-    out.set(session_id, { state: sstate, grants: signed_grants, secrets, since: null })
+
+  async function over(o: DeviceOptions & { hub_url?: string }, store: Store, reopen: boolean): Promise<Client | null> {
+    let stored
+    try { stored = await store.load() } catch (e) { await store.close?.(); throw e }
+    if (stored.revision === 0 && !stored.entries.length) { await store.close?.(); return null }
+    const core = await env.core()
+    const device = await core.openDevice(store)
+    try {
+      // a device that never came to hold a room (a join that was given up) is nothing to open
+      if (!(await device.room()) && !(await device.groups()).length) { await device.close(); return null }
+      const cache = await env.cache(o.storage.name)
+      const kept = (await cache.get('client/room')) as { hub_url?: string } | undefined
+      const hub_url = kept?.hub_url ?? o.hub_url ?? (() => { throw new ClientError('no-hub', 'this device no longer knows its hub\'s address') })()
+      const hub = hubOf(o, hub_url)
+      const engine = new Engine({ core, hub, meta: engineMeta(cache), ...(reopen ? { store: () => env.store(o.storage.name) } : {}), ...timing }, device)
+      await engine.load()
+      return await clientOf(o, core, hub, engine, cache)
+    } catch (e) { await device.close().catch(() => {}); throw e }
   }
-  return out
-}
-/** Open the back links of every session the recovery key holds a current key for (older epochs: history). */
-async function walkSessionLinks(client: Client, sessions: Map<string, SessionKey>, bundle: SessionBundle[] | null): Promise<void> {
-  const links = new Map((bundle ?? []).map(b => [b.session_id, b.key_back_links]))
-  await Promise.all([...sessions.keys()].map(sid => client._walkSessionBackLinks(sid, links.get(sid) ?? null).catch(() => {})))
-}
-/** GET session_grants for the whole room: [{ session_id, signed_grants, sealed_session_keys }], or null (no such route). */
-async function fetchSessionBundle(hub: Hub): Promise<SessionBundle[] | null> {
-  try { return (await hub.sessionBundle(null)).sessions }
-  catch (e: any) { if (e.status === 404 || e.status === 405) return null; throw e }
-}
 
-const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
-type Fetch = typeof globalThis.fetch | null | undefined
-/** What every way into a room takes besides its own arguments. */
-interface OpenOptions { storage: Storage; client?: string | null; device_name?: string; device_info?: Record<string, unknown> | null; fetch?: Fetch }
-/** One session in GET session_grants. */
-interface SessionBundle { session_id: string; signed_grants: string[]; sealed_session_keys?: { session_key_epoch: number; key_sealed: string }[]; key_back_links?: { session_key_epoch: number; key_back_link: string }[] }
-/** The storage adapters' saveDevice: the file storage names the key file by room id. */
-const saveDevice = (storage: Storage, device: Device, room_id: string) => (storage.saveDevice as (d: Device, o?: { room_id?: string }) => Promise<void>)(device, { room_id })
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-const roleName = (r: number): 'human' | 'agent' => (r === ROLE.HUMAN ? 'human' : 'agent')
-
-async function newDevice(storage: Storage): Promise<Device> {
-  return z.generateDevice({ extractable: !!(storage.extractable_keys || storage.wraps_keys) })   // a wrapping storage hands back non-extractable keys (storage-idb.ts)
-}
-
-async function makeClient({ storage, device, state, secrets, roomRecord, fetch, client: clientName = null, save = true, follower = false }: { storage: Storage; device: Device; state: LogState; secrets: (Secret | null | undefined)[]; roomRecord: RoomRecord; fetch: Fetch; client?: string | null; save?: boolean; follower?: boolean }): Promise<Client> {
-  const me = z.memberAt(state, device.id)
-  const client = new Client({ storage, hub_url: roomRecord.hub_url, room_id: roomRecord.room_id, device, state, secrets: new Map((secrets.filter(Boolean) as Secret[]).map(s => [s.epoch, s])),
-    my_role: me ? roleName(me.role) : roomRecord.my_role, roomRecord, fetch, client: clientName })
-  // A stored room is not saved again before it is loaded: that would write an empty session list over the stored
-  // session keys (a recovery's keys, older epochs an agent was given).
-  // A follower tab (tabs.ts) reads only: no seal, no post, no lock of its own; the hub handle refuses writes too.
-  if (follower) { client.follower = true; client.externalLock = true; client.hub.readOnly = true }
-  if (save) await client._saveRoom()
-  await client.loadPersisted()
-  return client
-}
-
-/**
- * Found a room on a hub: device keys, recovery code (returned ONCE: show it, never store it), epoch 1.
- * device_info goes into the encrypted register device/<id> on the first start ({ device_name, platform, folder, host }).
- */
-export async function foundRoom({ hub_url: given, storage, client: client_name = null, device_name = '', device_info = null, found_token = null, fetch = null }: OpenOptions & { hub_url: string; found_token?: string | null }): Promise<{ client: Client; recovery_code: string }> {
-  const hub_url = normaliseHubUrl(given)
-  if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
-  const device = await newDevice(storage)
-  const recovery_code = z.generateRecoveryCode()
-  const room = await z.createRoom({ device, name: '', recovery: await z.recoveryDevice(recovery_code) })
-  const hub = new Hub({ hub_url, fetch, found_token, client: client_name })
-  const r = await hub.foundRoom({ signed_entry: b64u(room.entry), sealed_room_keys: room['wraps'].map((w: { id: Uint8Array; sealed: Uint8Array }) => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })) })
-  if (r.room_id !== hex(room.roomId)) throw new ZError('wrong-room', 'the hub named another room id')
-  await saveDevice(storage, device, r.room_id)
-  const roomRecord: RoomRecord = { hub_url, room_id: r.room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false }
-  const client = await makeClient({ storage, device, state: room.state, secrets: [room.secret], roomRecord, fetch, client: client_name })
-  return { client, recovery_code }
-}
-
-/** Open the room in this storage (warm start): verify the stored member list against the stored room id, load the model. */
-export async function openRoom({ storage, client: client_name = null, fetch = null, follower = false }: { storage: Storage; client?: string | null; fetch?: Fetch; follower?: boolean }): Promise<Client | null> {
-  const roomRecord = await storage.get('room')
-  if (!roomRecord) return null
-  const device = await storage.loadDevice()
-  if (!device) throw new ZError('no-device', 'the room is stored but the device key is missing')
-  const state = await z.verifyLog(roomRecord.entries.map(unb64u), unhex(roomRecord.room_id))
-  return makeClient({ storage, device, state, secrets: roomRecord.secrets.map(secretFromJson), roomRecord, fetch, client: client_name, save: false, follower })
-}
-
-/**
- * Join with an invite link. Returns { check_code: Promise<string>, client: Promise<Client>, cancel() }.
- * check_code is six numbers 0–63 ("07-33-12-05-60-01"); show it as emoji (checkEmoji, check-emoji.ts). The device that
- * made the link shows the same; the human compares the two there. An agent logs it (checkEmojiLine). client resolves once the inviter added this device.
- */
-export function joinRoom({ link, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, poll_ms = 800, timeout_ms = 15 * 60_000 }: OpenOptions & { link: string; poll_ms?: number; timeout_ms?: number }): { check_code: Promise<string>; client: Promise<Client>; cancel(): void } {
-  let cancelled = false, codeResolve: (code: string) => void = () => {}, codeReject: (e: unknown) => void = () => {}
-  const check_code = new Promise<string>((res, rej) => { codeResolve = res; codeReject = rej })
-  check_code.catch(() => {})
-  const client = (async () => {
-    if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
-    const { hub: hub_url, roomId } = z.parseInviteLink(link)
-    const room_id = hex(roomId)
-    const hub = new Hub({ hub_url, room_id, fetch, client: client_name })
-    const { secret } = z.parseInviteLink(link)
-    const inviteId = hex(await z.hkdf(secret, roomId, z.LABEL.inviteId, new Uint8Array(0), 16))
-    const inv = await hub.getInvite(inviteId)
-    const device = await newDevice(storage)
-    const log = inv.signed_entries.map(unb64u)
-    const { request, join } = await z.createJoinRequest({ link, offer: unb64u(inv.signed_offer), log, device, name: '' })
-    const { request_hash } = await hub.postRequest(inviteId, b64u(request))
-    const until = Date.now() + timeout_ms
-    let revealed = false
-    while (!cancelled && Date.now() < until) {
-      const s = await hub.joinStatus(inviteId, request_hash)
-      if (s.join_status === 'taken') throw new ZError('invite-used', 'this invite was answered for another device')
-      if ((s.join_status === 'revealed' || s.join_status === 'joined') && !revealed && s.signed_reveal) {
-        revealed = true
-        codeResolve(await z.checkReveal({ join, reveal: unb64u(s.signed_reveal), log: s.signed_entries ? s.signed_entries.map(unb64u) : log }))
-      }
-      if (s.join_status === 'joined') {
-        const entries = s.signed_entries.map(unb64u)
-        const done = await z.completeJoin({ join, device, log: entries, wrap: s.key_sealed ? unb64u(s.key_sealed) : null })
-        await saveDevice(storage, device, room_id)
-        const roomRecord: RoomRecord = { hub_url: normaliseHubUrl(hub_url), room_id, my_device_id: hex(device.id), my_role: roleName(join.role), device_info: device_info ?? { device_name }, device_register_sent: false }
-        const c = await makeClient({ storage, device, state: done.state, secrets: [done.secret], roomRecord, fetch, client: client_name })
-        if (c.is_human) { await c.hub.signIn(); await c._walkBackLinks().catch(() => {}); await c._saveRoom() }
-        return c
-      }
-      await sleep(poll_ms)
+  function joinRoom(o: Parameters<Rooms['joinRoom']>[0]): Joining {
+    const poll = o.poll_ms ?? 800, until = Date.now() + (o.timeout_ms ?? 15 * 60_000)
+    let cancelled = false
+    let tellCode: (code: string) => void = () => {}, failCode: (e: unknown) => void = () => {}
+    const check_code = new Promise<string>((resolve, reject) => { tellCode = resolve; failCode = reject })
+    check_code.catch(() => {})
+    const wait = async (): Promise<void> => {
+      if (cancelled) throw new ClientError('cancelled', 'joining was given up')
+      if (Date.now() > until) throw new ClientError('invite-expired', 'nobody confirmed this device in time')
+      await sleep(poll)
     }
-    throw new ZError(cancelled ? 'cancelled' : 'invite-expired', cancelled ? 'join cancelled' : 'the invite ran out before it was confirmed')
-  })()
-  client.catch(e => codeReject(e))
-  return { check_code, client, cancel() { cancelled = true } }
-}
-
-/**
- * All devices lost, code at hand: sign in as the recovery key, enrol a new device, remove every human device, keep the agents,
- * new epoch, NEW recovery code (returned once).
- */
-export async function recoverRoom({ hub_url: given, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, remove_agents = [], on_recovery_code = null }: OpenOptions & { hub_url: string; room_id: string; code: string; remove_agents?: string[]; on_recovery_code?: ((code: string) => unknown) | null }): Promise<{ client: Client; recovery_code: string }> {
-  const hub_url = normaliseHubUrl(given)
-  const rec = await z.recoveryDevice(code)
-  const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
-  await hub.signIn()
-  const m = await hub.members({ after_entry_number: -1 })
-  const state = await z.verifyLog(m.signed_entries.map(unb64u), unhex(room_id))
-  const keys = await hub.sealedRoomKeys(0)
-  const wrap = keys.sealed_room_keys.find((k: { key_epoch: number }) => k.key_epoch === state.epoch)
-  if (!wrap) throw new ZError('no-key', 'the hub holds no sealed key of the current epoch for the recovery key')
-  const device = await newDevice(storage)
-  const newCode = z.generateRecoveryCode()
-  const bundle = await fetchSessionBundle(hub)
-  const sessions = await sessionsAsRecovery(hub, state, rec, bundle)
-  // R3: real cuts for every device the recovery removes (its last verified envelope), never an empty cut that would
-  // refuse all its history on every device that verifies the room later.
-  const removed = [...state.members.values()].filter(m => m.removedSeq === null && (m.role === ROLE.HUMAN || remove_agents.includes(hex(m.id)))).map(m => hex(m.id))
-  const cuts = await verifiedHeads(hub, state, removed)
-  if (!Object.keys(cuts).length && removed.length) console.warn('[core] recovery: the hub let the recovery key read no envelopes; cuts are empty')
-  // The new code reaches the human before the entry that makes it valid is posted (show it, never store it).
-  if (on_recovery_code) await on_recovery_code(newCode)
-  const r = await z.recoverRoom({ state, code, newCode, newDevice: device, name: '', recoveryWrap: unb64u(wrap.key_sealed), removeAgents: remove_agents.map(unhex), cuts })
-  // The new device, its room record and the session keys reach storage BEFORE the entry is posted. A crash
-  // after the post would otherwise leave every session stale with nobody holding its key (the old humans are removed,
-  // the new recovery key has no session wraps): this way the next start finds the keys and re-keys the sessions.
-  await saveDevice(storage, device, room_id)
-  // The recovery key held every older epoch through the back links: open them so history stays readable.
-  const secrets = [r['secret'], r['previous']]
-  const roomRecord: RoomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false, epoch_changed_at: Date.now(), recovery_pending: true }
-  const client = await makeClient({ storage, device, state: r.state, secrets, roomRecord, fetch, client: client_name })
-  for (const [sid, k] of sessions) client.sessionKeys.set(sid, k)
-  await client._saveRoom()
-  try {
-    await hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r['wraps'].map((w: { id: Uint8Array; sealed: Uint8Array }) => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r['backLink'] ? b64u(r['backLink']) : undefined })
-  } catch (e: any) {
-    // Refused (not a crash): nothing changed on the hub; forget the room again so this storage can be used anew.
-    if (e.status >= 400 && e.status < 500) await storage.set('room', undefined).catch(() => {})
-    throw e
+    const client = (async (): Promise<Client> => {
+      const core = await env.core()
+      const link = core.inviteLinkParse(o.link)
+      const hub = hubOf(o, link.hub)
+      const device = await fresh(o, core)
+      let engine: Engine | null = null
+      try {
+        const joiner = device as unknown as InviteDevice
+        const invite = await hub.getInvite(link.inviteId)
+        const request = await joiner.joinRequest(o.link, { offer: invite.offer, signature: invite.signature }, Date.now())
+        await hub.postInviteRequest(link.inviteId, { request: request.request, mac: request.mac, signature: request.signature })
+        // the inviter's Reveal: with it both sides hold the same six numbers
+        let reveal = null
+        while (!reveal) {
+          try { reveal = await hub.getReveal(link.inviteId) } catch (e) { if (!(e instanceof HubError) || (e.code !== 'not-found' && !e.transient)) throw e; await wait() }
+        }
+        tellCode(codeText(await joiner.joinReveal(reveal)))
+        // Let in once the person confirmed on the inviter's side: from then on the hub knows this device's key.
+        hub.useSigner(link.roomId, (address, challenge) => device.hubSignIn(link.roomId, address, challenge))
+        for (;;) {
+          try { await hub.signIn(); break } catch (e) {
+            if (!(e instanceof HubError) || (e.code !== 'not-member' && !e.transient)) throw e
+            // "They don't match" burns the invite: the hub says so on the invite's own route
+            try { await hub.getReveal(link.inviteId) } catch (burned) { if (burned instanceof HubError && burned.code === 'invite-burned') throw new ClientError('code-mismatch', 'the other device said the codes do not match') }
+            await wait()
+          }
+        }
+        if (request.role === 'agent') {
+          // an agent device follows the room group from the epoch the Offer names (12.1.6)
+          const info = await hub.groupInfo(core.roomGroupId(link.roomId), request.roomEpoch)
+          await device.observeRoom(info.group_info, request.roomState)
+        }
+        const cache = await env.cache(o.storage.name)
+        await cache.set('client/room', { hub_url: hub.hub_url }, { durable: true })
+        engine = new Engine({ core, hub, meta: engineMeta(cache), ...again(o), ...timing }, device)
+        await engine.load(link.roomId)
+        // The Welcome: into the room group for a human device, into its session for an agent; committed by the inviter.
+        const inside = (): boolean => (request.role === 'human' ? engine!.is_human : engine!.groups.some(g => g.session !== null))
+        while (!inside()) { if (!(await engine.joinNow(request.inviter)) || !inside()) await wait() }
+        return await clientOf(o, core, hub, engine, cache)
+      } catch (e) {
+        failCode(e)
+        await discard(o, device, engine)
+        throw e
+      }
+    })()
+    client.catch(() => {})
+    return { check_code, client, cancel() { cancelled = true } }
   }
-  delete client.roomRecord.recovery_pending
-  await client._saveRoom().catch(e => client._localAlert('storage', e))
-  await client.hub.signIn()
-  await client._walkBackLinks().catch(() => {})
-  // The recovery key holds only each session's current key; its back links open the older epochs (without them a
-  // second recovery after a re-key cannot read the cards of the first epoch).
-  await walkSessionLinks(client, sessions, bundle)
-  // Every session gets a new key: the old human devices held them (R6). Agents that stay keep their sessions.
-  // The entry is in: from here on nothing may lose the new code. A failed re-key is finished at the next start (stale grants).
-  await client._healStaleSessions().catch(e => client._localAlert('rekey', e))
-  await client._saveRoom().catch(e => client._localAlert('storage', e))
-  return { client, recovery_code: newCode }
+
+  async function joinWithCode(o: Parameters<Rooms['joinWithCode']>[0]): Promise<{ client: Client }> {
+    const core = await env.core()
+    const room = unhex(o.room_id), code = o.code.slice()
+    const hub = hubOf(o, o.hub_url)
+    let device: Device | null = null, engine: Engine | null = null
+    try {
+      device = await fresh(o, core)
+      const held = device
+      // under the recovery key's token: it reads what a join needs and posts the join's Commits (12.3.2)
+      hub.useSigner(room, async (address, challenge) => core.recoverySignIn(code, room, address, challenge))
+      const cache = await env.cache(o.storage.name)
+      await cache.set('client/room', { hub_url: hub.hub_url }, { durable: true })
+      engine = new Engine({ core, hub, meta: engineMeta(cache), ...again(o), ...timing }, device)
+      if (o.recover) {
+        // The new code is made, and the account's copies of it (or the person's own copy: the caller's `account`
+        // resolves once the code is on their screen), BEFORE the recovery is opened: the hub locks the room for
+        // ten minutes from then on, and nothing of a recovery is posted for a code nobody holds.
+        const served = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
+        const plan = await held.prepareRecovery(code, served)
+        let copies: Uint8Array
+        try { copies = accountCopiesBytes(o.account ? await o.account(plan.newCode) as AccountCopies | null : null) } finally { plan.newCode.fill(0) }
+        // A removed device's chain ends at its Cut for everyone (9.0.10). The Cut is the last envelope of a chain
+        // this device VERIFIED; the core cannot verify stored content yet, so only a device that wrote nothing is
+        // cut here (at nothing). Cutting a chain unseen would take a person's notes and answers away.
+        const cuts = []
+        for (const removal of plan.removals) for (const gone of removal.devices) {
+          if ((await hub.chain(removal.group, gone, { limit: 1 })).items.length) throw new ClientError('core-missing', 'a recovery removes devices that wrote content, and the core cannot verify their chains yet')
+          cuts.push({ group: removal.group, cut: { device: gone, seq: 0, hash: new Uint8Array(32) } })
+        }
+        const recovery = await hub.openRecovery()
+        try {
+          const done = await held.recover(code, served, cuts, copies, Date.now())
+          for (const id of done.outbox) await engine.attach(id, { recovery_id: recovery.recovery_id })
+          await postAll(engine)
+        } catch (e) { await hub.dropRecovery(recovery.recovery_id).catch(() => {}); throw e }
+      } else {
+        const served = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
+        // (the sessions are joined one by one below; handed over here as well, a room with sessions is deeper than
+        // the binding's copy of an argument goes, and it refuses the call with `bad-format`)
+        await held.joinRoomWithCode(code, { ...served, sessions: [] }, Date.now())
+        await postAll(engine)
+        // every live session group, main sessions first (the order the hub client serves them in)
+        for (const session of served.sessions) {
+          await held.joinSessionWithCode(code, session, Date.now())
+          await postAll(engine)
+        }
+      }
+      await engine.load()
+      return { client: await clientOf(o, core, hub, engine, cache) }
+    } catch (e) {
+      if (device) await discard(o, device, engine)
+      throw e
+    } finally { code.fill(0) }
+  }
+
+  return {
+    foundRoom, joinRoom, joinWithCode,
+    openRoom: o => over(o, env.store(o.storage.name), true),
+    openRoomOver: (o, store) => over(o, store, false),
+  }
 }
 
-/** The link a fresh device types or scans to recover: `<app>#r1.<b64u hub>.<b64u room>`. Not secret. */
+/** The product's parts: the WASM core and IndexedDB, loaded when a room function first needs them. */
+const product: RoomEnv = (() => {
+  const wasm = () => import('./core-wasm.ts')
+  const idb = () => import('./store-idb.ts')
+  return {
+    core: async () => (await wasm()).loadCore(),
+    store(name: string): Store {
+      // the store's modules are loaded by `load()`, the first thing anyone calls on a store
+      let inner: Promise<Store> | null = null
+      const open = (): Promise<Store> => inner ??= (async () => { const [{ IdbStore }, { openDeviceStore }] = await Promise.all([wasm(), idb()]); return openDeviceStore({ name, IdbStore }) })()
+      return { load: async () => (await open()).load(), apply: async write => (await open()).apply(write), close: async () => { if (inner) await (await inner).close?.() } }
+    },
+    cache: async name => (await idb()).openCache(name),
+    destroy: async name => { const [{ IdbStore }, { deleteStores }] = await Promise.all([wasm(), idb()]); await deleteStores({ name, IdbStore }) },
+  }
+})()
+export const { foundRoom, openRoom, openRoomOver, joinRoom, joinWithCode } = roomsOn(product)
+
+/** The address a fresh device needs to log in to a room by hand: `<app>#r1.<hub>.<room id>`, both base64url. Its
+ *  form is the app's own and older than protocol v2; it names no secret. */
 export function roomLink(hub_url: string, room_id: string, app = 'https://app.trommi.com/login'): string {
-  return `${app}#r1.${b64u(new TextEncoder().encode(normaliseHubUrl(hub_url)))}.${b64u(unhex(room_id))}`
+  return `${app}#r1.${b64u(new TextEncoder().encode(hubAddress(hub_url)))}.${b64u(unhex(room_id))}`
 }
 export function parseRoomLink(text: unknown): { hub_url: string; room_id: string } {
   const s = String(text).trim()
-  const frag = s.includes('#') ? s.slice(s.indexOf('#') + 1) : s
-  const parts = frag.split('.')
-  if (parts[0] !== 'r1' || parts.length !== 3) throw new ZError('bad-format', 'not a room link')
-  const room = unb64u(parts[2]!)
-  if (room.length !== 32) throw new ZError('bad-format', 'room id')
-  return { hub_url: normaliseHubUrl(new TextDecoder('utf-8', { fatal: true }).decode(unb64u(parts[1]!))), room_id: hex(room) }
-}
-
-/**
- * A fresh device that holds the room's recovery code (from an account login, account.ts, or the Emergency Kit):
- * sign in as the recovery key, add ITSELF as a human device (entry signed by the recovery key; nobody is removed),
- * seal the room key and every session key for itself. Every human device then shows the alert 'recovery-add'.
- */
-export async function joinWithRecoveryCode({ hub_url: given, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, challenge = null }: OpenOptions & { hub_url: string; room_id: string; code: string; challenge?: string | Promise<string> | null }): Promise<{ client: Client }> {
-  const hub_url = normaliseHubUrl(given)
-  if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
-  const rec = await z.recoveryDevice(code)
-  const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
-  await hub.signIn({ challenge })                           // the login answer carries a challenge: one round trip less
-  // The member list, the sealed room keys and every session's grants and keys: three requests side by side.
-  const [m, keys, bundle] = await Promise.all([hub.members({ after_entry_number: -1 }), hub.sealedRoomKeys(0), fetchSessionBundle(hub)])
-  const state = await z.verifyLog(m.signed_entries.map(unb64u), unhex(room_id))
-  if (!z.bytesEqual(rec.id, state.recovery.id)) throw new ZError('bad-recovery-code', 'an old recovery code (a recovery happened since)')
-  const wrap = keys.sealed_room_keys.find((k: { key_epoch: number }) => k.key_epoch === state.epoch)
-  if (!wrap) throw new ZError('no-key', 'the hub holds no sealed room key for the recovery key')
-  const secret = await z.unwrapEpochKey(state, rec, unb64u(wrap.key_sealed), state.epoch)
-  const sessions = await sessionsAsRecovery(hub, state, rec, bundle)
-  const device = await newDevice(storage)
-  const added = await z.addMember(state, rec, { member: { role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub } })
-  const sealed = await z.wrapEpochKey(added['state'], secret, device.id)
-  await saveDevice(storage, device, room_id)            // before the entry that makes it a member
-  // The new device's sign-in challenge is asked side by side with the post that makes it a member (a challenge is
-  // nobody's until it is signed; the hub checks membership when the signed one comes back).
-  const nextChallenge = hub.challenge()
-  nextChallenge.catch(() => {})
-  await hub.postMember({ signed_entry: b64u(added['entry']), sealed_room_keys: [{ device_id: hex(device.id), key_sealed: b64u(sealed) }] })
-  const roomRecord: RoomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false }
-  const client = await makeClient({ storage, device, state: added['state'], secrets: [secret], roomRecord, fetch, client: client_name })
-  // The new device is a human member now: re-seal every session key for everyone who holds it (itself included), all
-  // sessions in one atomic post (POST session_grants, no sign-in needed), not one request per session. The device holds
-  // every key already (as the recovery key), so the first start does not wait for it: a phone uploads the re-seal (one
-  // wrap per holder and session) for about a second. The session refresh waits for it (client._resealing); a re-seal
-  // that did not get through is posted at the next start (roomRecord.reseal_pending). Meanwhile, as soon as the device
-  // is signed in: the room's older keys, and what the first start reads for a snapshot boot (snapshot.ts).
-  client._adoptSessionKeys(sessions)
-  const reseal = [...sessions].filter(([, k]) => k.secrets.has(k.state.epoch)).map(([sid]) => sid)
-  if (reseal.length) roomRecord.reseal_pending = reseal
-  await client._saveRoom()
-  // The snapshot's first request goes out before the re-seal's sealing takes the CPU (about 0.2 s on a phone), the
-  // sealing then overlaps with the network instead of holding the request back.
-  const signedIn = client.hub.signIn({ challenge: nextChallenge })
-  client._snapshotPrefetch = signedIn.then(() => prefetchSnapshot(client))
-  client._snapshotPrefetch.catch(() => {})
-  const resealing = signedIn.catch(() => {}).then(() => reseal.length ? client._startReseal(reseal) : null)
-  resealing.catch(() => {})
-  await signedIn
-  // The recovery key holds each session's current key only; the back links open the older epochs.
-  await Promise.all([client._walkBackLinks().catch(() => {}), walkSessionLinks(client, sessions, bundle)])
-  await client._saveRoom()
-  client._joinedAt = Date.now()                       // start() trusts the member list and keys it was just handed
-  return { client }
+  const parts = (s.includes('#') ? s.slice(s.indexOf('#') + 1) : s).split('.')
+  if (parts[0] !== 'r1' || parts.length !== 3) throw new ClientError('bad-format', 'not a room link')
+  let room: Uint8Array, hub: string
+  try { room = unb64u(parts[2]!); hub = hubAddress(new TextDecoder('utf-8', { fatal: true }).decode(unb64u(parts[1]!))) } catch { throw new ClientError('bad-format', 'not a room link') }
+  if (room.length !== 32) throw new ClientError('bad-format', 'not a room link')
+  return { hub_url: hub, room_id: hex(room) }
 }

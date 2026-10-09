@@ -12,8 +12,8 @@
 # Secrets: the environment `hub` (branch main only) holds OP_SERVICE_ACCOUNT_TOKEN, OP_ENVIRONMENT_ID,
 # TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_AUDIENCE. SIGN_RELEASE_KEY comes from the 1Password Environment.
 #
-# Until the server has had its first installation (hub/deploy/install.sh) the release is published but not
-# delivered: `deliver` calls the server only when the repository variable HUB_SERVER_READY is `true`.
+# When nothing answers on the server's deploy port (before its first installation, or while it is down), the release
+# is published all the same and `deliver` fails saying so: nothing was delivered.
 name: deploy_hub
 
 on:
@@ -50,7 +50,7 @@ jobs:
     name: Sign
     # only for a fresh build; a release delivered again is signed already
     if: inputs.version != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # reads the secrets of the environment without counting as a deployment of it
     environment:
@@ -101,7 +101,7 @@ jobs:
   publish:
     name: Publish the release
     needs: sign
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
@@ -138,31 +138,12 @@ jobs:
             echo "$TAG is published already and stays as it is" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # Before the server's first installation there is nothing to call: the release is there, and that is said.
-  not_delivered:
-    name: Not delivered (server not installed yet)
-    needs: publish
-    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') && vars.HUB_SERVER_READY != 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    env:
-      TAG: ${{ inputs.tag || format('hub-v{0}', inputs.version) }}
-    steps:
-      - run: |
-          {
-            echo "### Hub: \`$TAG\` is published, not delivered"
-            echo
-            echo "The server has not had its first installation, so nothing was called."
-            echo "First installation, on the owner's laptop: \`hub/deploy/install.sh install $TAG\`."
-            echo "Afterwards set the repository variable \`HUB_SERVER_READY\` to \`true\`; from then on every hub build is delivered."
-          } >> "$GITHUB_STEP_SUMMARY"
-
   deliver:
     name: Deliver to the server
     needs: publish
     # also when nothing had to be signed and published (a release delivered again)
-    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') && vars.HUB_SERVER_READY == 'true' }}
-    runs-on: ubuntu-latest
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
       name: hub
@@ -175,31 +156,42 @@ jobs:
       - name: The release name
         run: |
           printf '%s' "$TAG" | grep -Eq '^hub-v[1-9][0-9]{0,11}$' || { echo "::error::not a hub release: $TAG"; exit 1; }
-      - name: Join the tailnet
+      - name: Join the tailnet as the CI
         uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
           oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
           audience: ${{ secrets.TAILSCALE_AUDIENCE }}
           tags: tag:trommi-ci
-          ping: ${{ env.HUB_SERVER }}
       - name: Tell the server
         run: |
           set -u
           url="http://$HUB_SERVER:$HUB_DEPLOY_PORT"
-          # Only "could not connect" is tried again (the server may be starting after a reboot). An answer is final:
-          # a deploy that failed is not asked for a second time.
-          code=000
+          # Tried again: no connection (the server may be starting after a reboot) and "busy" (another deploy, or the
+          # updater changing itself). Every other answer is final: a deploy that failed is not asked for twice.
           for try in 1 2 3 4 5 6 7 8 9; do
+            status=0
             code=$(curl -sS --connect-timeout 10 --max-time 900 -o answer.json -w '%{http_code}' \
-              -X POST -H 'content-type: application/json' --data "{\"tag\":\"$TAG\"}" "$url/deploy")
-            status=$?
-            [ "$status" = 7 ] || [ "$status" = 6 ] || break
-            echo "the server does not take connections yet (try $try)"
+              -X POST -H 'content-type: application/json' --data "{\"tag\":\"$TAG\"}" "$url/deploy") || status=$?
+            if [ "$status" = 6 ] || [ "$status" = 7 ]; then echo "no connection (try $try)"
+            elif [ "$status" = 0 ] && [ "$code" = 503 ]; then echo "the server is busy (try $try)"
+            else break
+            fi
             sleep 20
           done
-          if [ "$code" = 000 ] || ! jq -e . answer.json > /dev/null 2>&1; then
-            echo "::error::no answer from the server's deploy endpoint (curl exit $status)"
-            echo "### Hub deploy: no answer from the server" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" = 6 ] || [ "$status" = 7 ]; then
+            {
+              echo "### Hub: \`$TAG\` is published, NOT delivered"
+              echo
+              echo "Nothing answers on the server's deploy port. If the server has not had its first installation yet,"
+              echo "that is expected: run \`hub/deploy/install.sh install $TAG\` on the owner's laptop."
+              echo "Otherwise the server or its updater is down; once it is back, start this workflow by hand with \`$TAG\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$TAG is published but was not delivered: the server is not set up yet (run hub/deploy/install.sh install) or is down"
+            exit 1
+          fi
+          if [ "$status" != 0 ] || ! jq -e . answer.json > /dev/null 2>&1; then
+            echo "### Hub: no usable answer from the server (curl exit $status, HTTP $code)" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::no usable answer from the server's deploy endpoint (curl exit $status, HTTP $code); ask it: ssh root@$HUB_SERVER trommi-hub-updater status"
             exit 1
           fi
           {
@@ -208,12 +200,12 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| asked for | \`$TAG\` |"
-            echo "| runs now | \`$(jq -r '.running // "nothing"' answer.json)\` |"
+            echo "| hub that runs now | \`$(jq -r '.running // "none"' answer.json)\` |"
             echo "| commit | \`$(jq -r '.commit // "?"' answer.json)\` |"
             echo "| SHA-256 of the hub | \`$(jq -r '.sha256 // "?"' answer.json)\` |"
             echo "| health | $(jq -r 'if .health then (if .health.ok then "well" else "NOT well: " + .health.detail end) + " after " + (.health.seconds | tostring) + " s" else "not asked" end' answer.json) |"
             echo "| put back | $(jq -r 'if .rollback_health then (if .rollback_health.ok then "the release before, and it is well" else "the release before, and it is NOT well: " + .rollback_health.detail end) else "no" end' answer.json) |"
-            echo "| updater | \`$(jq -r '.updater.release // "?"' answer.json)\`$(jq -r 'if .updater.next then ", changing to `" + .updater.next + "`" else "" end' answer.json)$(jq -r 'if .updater.reverted then ", `" + .updater.reverted + "` did not come up earlier" else "" end' answer.json) |"
+            echo "| updater that answered | \`$(jq -r '.updater.release // "?"' answer.json)\`$(jq -r 'if .updater.next then ", changing to `" + .updater.next + "`" else "" end' answer.json)$(jq -r 'if .updater.reverted then "; the updater of `" + .updater.reverted + "` did not come up" else "" end' answer.json) |"
             echo "| server says | $(jq -r .message answer.json) |"
           } >> "$GITHUB_STEP_SUMMARY"
           jq . answer.json
@@ -229,13 +221,13 @@ jobs:
           # that the new one did not come up.
           next=$(jq -r '.updater.next // empty' answer.json)
           [ -n "$next" ] || exit 0
-          for _ in $(seq 1 30); do
+          for _ in $(seq 1 60); do
             sleep 5
             curl -sS --connect-timeout 5 --max-time 20 -o status.json "$url/status" 2>/dev/null || continue
-            release=$(jq -r '.updater.release // empty' status.json 2>/dev/null)
-            reverted=$(jq -r '.updater.reverted // empty' status.json 2>/dev/null)
+            release=$(jq -r '.updater.release // empty' status.json 2>/dev/null) || continue
+            reverted=$(jq -r '.updater.reverted // empty' status.json 2>/dev/null) || continue
             if [ "$reverted" = "$next" ]; then
-              echo "The updater of \`$next\` did not come up; the one of \`$release\` runs again." >> "$GITHUB_STEP_SUMMARY"
+              echo "The updater of \`$next\` did not come up; the one of \`$release\` runs again. The hub \`$TAG\` runs." >> "$GITHUB_STEP_SUMMARY"
               echo "::error::the updater of $next did not come up; the server put its previous updater back"
               exit 1
             fi
@@ -244,5 +236,5 @@ jobs:
               exit 0
             fi
           done
-          echo "::error::the server's updater did not answer as $next within the time"
+          echo "::error::the server's updater did not answer as $next within five minutes"
           exit 1
