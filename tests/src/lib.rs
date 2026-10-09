@@ -65,6 +65,10 @@ pub fn post_all(hub: &mut Hub, device: &mut TestDevice) -> Vec<Result<Accepted, 
             break;
         }
         for entry in outbox {
+            // A refusal may have taken other entries with it (a recovery goes whole).
+            if !device.outbox().iter().any(|held| held.id == entry.id) {
+                continue;
+            }
             let answer = hub.post(&device.id(), &entry);
             match &answer {
                 Ok(accepted) => device
