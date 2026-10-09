@@ -498,9 +498,15 @@ pub(crate) use given::hpke_export_with;
 #[cfg(any(test, feature = "vectors"))]
 pub(crate) use given::hpke_seal_with;
 
-/// HPKE single-shot sealing in base mode (RFC 9180 section 6.1) to `public_key`, by the provider. `entropy` is
-/// asked for 32 bytes first: a source that fails is `Error::Entropy` here and no panic below. `bad-format` for a
-/// public key that is not 32 bytes or is a point of small order.
+/// HPKE single-shot sealing in base mode (RFC 9180 section 6.1) to `public_key`, by the provider. `bad-format`
+/// for a public key that is not 32 bytes or is a point of small order.
+///
+/// `entropy` is asked for 32 bytes first and those bytes are thrown away: a source that fails at that moment
+/// is `Error::Entropy` here. That is a check before the call and no more. The provider takes no source: for
+/// every sealing it seeds a generator of its own from the system and panics if the system source fails at
+/// that moment. A failure between the check and the provider's own draw is therefore a panic, and so is a
+/// failure when `entropy` is not the system source. Only a provider whose HPKE takes its randomness from the
+/// caller closes this.
 #[cfg(not(feature = "vectors"))]
 pub(crate) fn hpke_seal(
     entropy: &mut dyn Entropy,
