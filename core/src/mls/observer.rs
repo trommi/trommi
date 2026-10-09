@@ -227,6 +227,31 @@ impl Observer {
         ))
     }
 
+    /// Puts `history` in the place of this observer's own, which must be its end: the same newest state. For
+    /// a device that held the room group as a leaf and follows it from where it stands, with what it verified
+    /// until then.
+    pub(crate) fn continuing(mut self, history: RoomHistory) -> Result<Self, Error> {
+        match &self.followed {
+            Followed::Room(own) if own.newest() == history.newest() => {}
+            _ => {
+                return Err(Error::Internal(
+                    "the history does not end where the observer stands",
+                ))
+            }
+        }
+        self.untaken_from = history.states().next().map_or(0, |state| state.epoch);
+        self.followed = Followed::Room(history);
+        Ok(self)
+    }
+
+    /// The room's roles per epoch, for the holder that takes them over when it becomes a leaf of the room group.
+    pub(crate) fn into_history(self) -> Option<RoomHistory> {
+        match self.followed {
+            Followed::Room(history) => Some(history),
+            Followed::Session(_) => None,
+        }
+    }
+
     /// Follows a session group from a GroupInfo of any epoch, as a helper device follows its main session's
     /// group. What happened before is unknown to it.
     pub fn follow_session(group_info: &[u8], room: &RoomState) -> Result<Self, Error> {
