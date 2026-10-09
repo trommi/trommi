@@ -407,7 +407,8 @@ jobs:
       - name: Scripts of the deploy path
         run: |
           set -eu
-          shellcheck release/*.sh hub/deploy/*.sh
+          # notes of the lowest level differ between shellcheck versions and do not stop the build
+          shellcheck -S warning release/*.sh hub/deploy/*.sh
           bash hub/deploy/install.sh check
       # The files of the release: both programs as static binaries, the hub's systemd unit, and the manifest that
       # names them. The commit is compiled in; paths of the build machine are not.
