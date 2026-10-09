@@ -29,7 +29,7 @@ declare const __TROMMI_CORE_WASM_SHA256__: string
 
 /** The calls of core-api.ts the binding does not have yet (a Record: a call missing here, or one too many, does not compile). */
 const MISSING_ON_DEVICE: Record<keyof ProvisionalDevice, true> = {
-  seal: true, receiveEnvelope: true, headsDue: true, cutOf: true,
+  seal: true, receiveEnvelope: true, headsDue: true, cutOf: true, chainCut: true, receiveRelay: true,
   inviteOpen: true, inviteAccept: true, inviteConfirm: true, joinRequest: true, joinReveal: true,
 }
 const MISSING_STATELESS: Record<keyof ProvisionalStateless, true> = { inviteLinkParse: true, checkEmoji: true, hubAddress: true, boardReduce: true }
