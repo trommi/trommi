@@ -1,0 +1,16 @@
+[package]
+name = "trommi-tests"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Scenario, conformance and crash tests of Trommi's protocol core, against an in-memory hub."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+trommi-core = { path = "../core" }
+
+[[test]]
+name = "core_groups_founding"
+path = "core/groups_founding.rs"
