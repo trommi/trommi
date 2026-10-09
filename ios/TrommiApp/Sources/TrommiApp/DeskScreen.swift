@@ -71,19 +71,7 @@ struct DeskScreen: View {
         Button("") { model.path.append(.settings("agents")) }.keyboardShortcut(",", modifiers: .command)
       }.opacity(0).accessibilityHidden(true)
     }
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-
-      if hSize == .regular { ToolbarItem(placement: .principal) { DeskTitle() } }
-      else { ToolbarItem(placement: .principal) { MenuPill() } }
-      // the duck for all and Blitz: two glass buttons, not one shared pill (his word, 8 October)
-      if hSize == .regular { ToolbarItem(placement: .topBarTrailing) { NoteButton() } }
-      else {
-        ToolbarItem(placement: .topBarTrailing) { DeskWays(part: .duck) }
-        if #available(iOS 26.0, *) { ToolbarSpacer(.fixed, placement: .topBarTrailing) }
-        ToolbarItem(placement: .topBarTrailing) { DeskWays(part: .blitz) }
-      }
-    }
+    .modifier(DeskTop(regular: hSize == .regular))
     .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }
   }
 
@@ -606,6 +594,22 @@ struct SelectionBar: View {
 }
 
 
+/** The Desk's top: on the iPad the navigation bar (title, note); on the iPhone the floating pills, the place pill at
+ *  the left, the duck for all and Blitz as two glass buttons at the right (his words, 8 and 9 October). */
+struct DeskTop: ViewModifier {
+  let regular: Bool
+  func body(content: Content) -> some View {
+    if regular {
+      content.navigationBarTitleDisplayMode(.inline).toolbar {
+        ToolbarItem(placement: .principal) { DeskTitle() }
+        ToolbarItem(placement: .topBarTrailing) { NoteButton() }
+      }
+    } else {
+      content.topPills { DeskWays(part: .duck); DeskWays(part: .blitz) }
+    }
+  }
+}
+
 /** The desk's name in the top bar: its own view, read again on every change of the board (a toolbar keeps what it built). */
 struct DeskTitle: View {
   @EnvironmentObject var model: BoardModel
@@ -634,7 +638,8 @@ struct DeskWays: View {
     if n > 0 {
       Group {
         if part == .duck && !decisions.isEmpty {
-          Button { duckAsk = true } label: { PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 24, height: 20).frame(width: 44, height: 44).contentShape(Rectangle()) }
+          Button { duckAsk = true } label: { PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 24, height: 20).frame(width: 44, height: 44).contentShape(Rectangle()).glass(Circle(), interactive: true) }
+            .buttonStyle(.plain)
             .accessibilityLabel("I don’t give a duck: for all \(decisions.count) open decisions")
             .popover(isPresented: $duckAsk, arrowEdge: .top) {
               VStack(alignment: .leading, spacing: 14) {
@@ -655,11 +660,12 @@ struct DeskWays: View {
         }
         if part == .blitz {
         Button { model.path.append(.blitz) } label: {
-          PenMark("desk:BOLT").frame(width: 20, height: 20).frame(width: 44, height: 44).contentShape(Rectangle())
+          PenMark("desk:BOLT").frame(width: 20, height: 20).frame(width: 44, height: 44).contentShape(Rectangle()).glass(Circle(), interactive: true)
             .overlay(alignment: .topTrailing) {
               Text("\(n)").font(Face.text(10, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 4).frame(minWidth: 17, minHeight: 17).background(Capsule().fill(Ink.fg)).offset(x: 3, y: -2)
             }
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("\(Words.walk): \(n) open questions")
         }
       }
