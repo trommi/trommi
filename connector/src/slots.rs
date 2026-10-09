@@ -1,5 +1,5 @@
 //! The lock (one process per key), who gets the key (presence, yielding), the folder watch, and which
-//! slot is whose. The files are the JS connector's: `<keys>/<room>/<base>-<slot>.key`, `.lock.<pid>`, `.owner`, `.out`,
+//! slot is whose. The files: `<keys>/<room>/<base>-<slot>.key` (a marker; the state is in `<base>-<slot>.state/`), `.lock.<pid>`, `.owner`, `.out`,
 //! `<base>.here.<pid>`, `<base>.gone.<hash>`, `replaced-<time>-<name>.*`.
 use crate::util::now_ms;
 use crate::util::{hex, sha256};
@@ -326,7 +326,7 @@ pub fn others_here(dir: &Path, base: &str, keep_dead: bool) -> Vec<Other> {
                 pid: p,
                 session: who
                     .get("session")
-                    .map(|v| crate::util::js_string(v))
+                    .map(crate::util::js_string)
                     .filter(|_| !who["session"].is_null())
                     .unwrap_or_default(),
                 spare: crate::util::truthy(&who["spare"]),

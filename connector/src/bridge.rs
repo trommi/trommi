@@ -2449,8 +2449,8 @@ impl Bridge {
         };
         let unsupported = |what: &str| {
             let mut m = meta(vec![("kind", json!("unsupported"))]);
-            if card.is_some() && is_mine {
-                m.insert("card_id".into(), json!(card.as_ref().unwrap().object_id));
+            if let (Some(card), true) = (card.as_ref(), is_mine) {
+                m.insert("card_id".into(), json!(card.object_id));
             }
             m.insert("update_required".into(), json!("1"));
             send(format!("The human sent something on {} that this Trommi connector is too old to read ({what}). {NEEDS_UPDATE}", if card.is_some() { format!("\"{title}\"") } else { "the board".into() }), m)

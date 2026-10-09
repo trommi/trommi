@@ -258,8 +258,7 @@ pub fn last_out(cfg: &Cfg, room_id: &str) -> Option<Value> {
     marks.sort_by_key(|m| m.get("at").and_then(|v| v.as_u64()).unwrap_or(0));
     let own = marks
         .iter()
-        .filter(|m| owned_by(m.get("owner"), &cfg.owner, ppid()))
-        .last()
+        .rfind(|m| owned_by(m.get("owner"), &cfg.owner, ppid()))
         .cloned();
     own.or_else(|| marks.last().cloned())
 }
