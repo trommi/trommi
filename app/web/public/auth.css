@@ -254,7 +254,7 @@ body > main.set-page { max-width: none; margin: 0; padding: var(--s-8) var(--gut
 .proof-line { margin: 0 0 var(--s-5); font: 700 var(--t-xl)/1.25 var(--display); letter-spacing: -.01em; overflow-wrap: anywhere; }
 .proof-line.room-wait { font: 400 var(--t-md)/1.5 var(--font); letter-spacing: 0; }
 .proof .room-error { margin: 0 0 var(--s-5); overflow-wrap: anywhere; }
-.proof-line.is-fail, .proof-steps .is-fail b, .proof-facts .is-warning dd { color: var(--deny); }
+.proof-line.is-fail, .proof-steps .is-fail b { color: var(--deny); }
 .proof-steps { margin-top: 0; padding: 0; list-style: none; }
 .proof-steps > li, .proof-facts > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-4); align-items: baseline; padding: 10px var(--s-4); font-size: var(--t-sm); line-height: 1.45; }
 .proof-name small { display: block; color: var(--muted); }

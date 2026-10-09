@@ -25,7 +25,7 @@ let commit = null
 const buildCommit = () => (commit ??= fetch('/gen/build.txt').then(r => (r.ok ? r.text() : '')).then(text => /^commit: (\S+)$/m.exec(text)?.[1] ?? null, () => null))
 
 /** What the screen says of one run, for the page and for "Copy result" alike:
- *  { ok, line, error, steps: [{ ok, name, time, detail }], versions: [[label, value, warning?]], here: [[label, value]] }.
+ *  { ok, line, error, steps: [{ ok, name, time, detail }], versions: [[label, value]], here: [[label, value]] }.
  *  result: the worker's one message ({ report, versions } or { error: { code, message } }). */
 function account(result, madeFrom) {
   const { report, versions: v, error } = result
@@ -39,7 +39,7 @@ function account(result, madeFrom) {
     error: error ? `${error.message} (${error.code})` : '',
     steps: (report?.steps ?? []).map(step => ({ ok: step.ok, name: step.name, time: `${ms(step.micros)} ms`, detail: step.detail })),
     versions: [
-      ...(v ? [['Core', v.core], ['OpenMLS', v.openmls], ['Provider', v.provider], ['Binding', v.binding], ['Recovery', v.recovery, v.recovery !== 'built']] : []),
+      ...(v ? [['Core', v.core], ['OpenMLS', v.openmls], ['Provider', v.provider], ['Binding', v.binding]] : []),
       ['App', `Trommi ${CLIENT}, build ${build}${madeFrom ? `, commit ${madeFrom}` : ''}`],
     ],
     here: [['Browser', navigator.userAgent], ['Cores', String(navigator.hardwareConcurrency ?? 'unknown')], ['Ran in', "a worker, off the page's thread"]],
@@ -52,7 +52,7 @@ const asText = a => [
   ...[...a.versions, ...a.here].map(([label, value]) => `${label}: ${value}`),
 ].join('\n')
 
-const facts = (title, id, list) => html`<section class="room-section" aria-labelledby="${id}"><h3 id="${id}">${title}</h3><dl class="set-group proof-facts">${list.map(([label, value, warning]) => html`<div${warning ? html` class="is-warning"` : ''}><dt>${label}</dt><dd>${value}</dd></div>`)}</dl></section>`
+const facts = (title, id, list) => html`<section class="room-section" aria-labelledby="${id}"><h3 id="${id}">${title}</h3><dl class="set-group proof-facts">${list.map(([label, value]) => html`<div><dt>${label}</dt><dd>${value}</dd></div>`)}</dl></section>`
 const shown = a => html`${a.error ? html`<p class="room-error" role="alert" id="proof-error">${a.error}</p>` : ''}
 ${a.steps.length ? html`<section class="room-section" aria-labelledby="proof-steps-head"><h3 id="proof-steps-head">Steps</h3><ol class="set-group proof-steps" id="proof-steps">${a.steps.map(step => html`<li class="${step.ok ? 'is-ok' : 'is-fail'}"><span class="proof-name">${step.name}${step.detail ? html`<small>${step.detail}</small>` : ''}</span><span class="proof-time"><b>${step.ok ? 'OK' : 'FAIL'}</b> ${step.time}</span></li>`)}</ol></section>` : ''}
 ${facts('Versions', 'proof-versions-head', a.versions)}
