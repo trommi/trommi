@@ -68,3 +68,8 @@ pub fn same(a: &[u8], b: &[u8]) -> bool {
 pub fn short(bytes: &[u8]) -> String {
     hex(&bytes[..bytes.len().min(4)])
 }
+
+pub fn sha256(bytes: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).into()
+}

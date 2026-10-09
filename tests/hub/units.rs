@@ -1159,6 +1159,38 @@ mod live_tests {
     }
 
     #[test]
+    fn a_stream_whose_token_runs_out_is_cut_even_if_it_had_ended_before() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let cut = std::sync::Arc::new(tokio::sync::Notify::new());
+        let live = Live::default();
+        let (s, mut rx) = live
+            .open(auth(1, Who::Human), 8, 1 << 20, u64::MAX, Some(cut.clone()))
+            .unwrap();
+        s.go_live(0);
+        live.publish(&event(Some(1), true, vec![], None), &json!({ "n": 1 }));
+        // the stream ends in the ordinary way (its device was removed), with a reader that reads nothing
+        s.end();
+        let waits = rt.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_millis(50), cut.notified())
+                .await
+                .is_err()
+        });
+        assert!(waits, "an ordinary end leaves the connection to the reader");
+        // its token runs out: the connection is cut all the same
+        s.expire();
+        rt.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(1), cut.notified()).await
+        })
+        .expect("cut at expiry");
+        // and nothing is queued after that
+        live.publish(&event(Some(2), true, vec![], None), &json!({ "n": 2 }));
+        assert_eq!(drain(&mut rx).len(), 2, "the event from before and the end");
+    }
+
+    #[test]
     fn what_arrives_during_the_catch_up_follows_it_once() {
         let live = Live::default();
         let (s, mut rx) = live
@@ -1704,18 +1736,96 @@ mod accounts_tests {
 }
 
 mod throttle_tests {
+    use sha2::{Digest, Sha256};
+    use trommi_hub::db::Db;
+    use trommi_hub::error::Refused;
     use trommi_hub::throttle::*;
 
     const HOUR: u64 = 3_600_000;
+    const ACCOUNT: &[u8] = b"password:a@example.org";
+
+    struct T {
+        db: Db,
+        path: std::path::PathBuf,
+    }
+
+    fn fresh() -> T {
+        let path = std::env::temp_dir().join(format!(
+            "throttle-{}.db",
+            trommi_hub::util::b64(&trommi_hub::util::random::<12>())
+        ));
+        T {
+            db: Db::open(&path).unwrap(),
+            path,
+        }
+    }
+
+    impl T {
+        fn admit(&self, account: &[u8], source: &[u8], known: bool, now: u64) -> Verdict {
+            self.db
+                .write(|c| admit(c, account, source, known, true, now))
+                .map_err(|e: Refused| e.message)
+                .unwrap()
+        }
+        fn failed(&self, account: &[u8], source: &[u8], attempt: i64, now: u64) {
+            self.db
+                .write(|c| failed(c, account, source, attempt, now))
+                .map_err(|e: Refused| e.message)
+                .unwrap()
+        }
+        fn succeeded(&self, account: &[u8], source: &[u8], attempt: i64) {
+            self.db
+                .write(|c| succeeded(c, account, source, attempt))
+                .map_err(|e: Refused| e.message)
+                .unwrap()
+        }
+        /// A wrong guess: checked or not, and how long it is told to wait if not.
+        fn guess(&self, account: &[u8], source: &[u8], known: bool, now: u64) -> Result<(), u64> {
+            match self.admit(account, source, known, now) {
+                Verdict::Check { attempt } => {
+                    self.failed(account, source, attempt, now);
+                    Ok(())
+                }
+                Verdict::Own(wait) | Verdict::Line { wait, .. } => Err(wait),
+            }
+        }
+        fn count(&self, sql: &str) -> i64 {
+            self.db
+                .read(|c| Ok::<_, Refused>(c.query_row(sql, [], |r| r.get(0))?))
+                .map_err(|e| e.message)
+                .unwrap()
+        }
+        /// Spends the account's hour: 100 wrong guesses from 100 sources.
+        fn spend_hour(&self, now: u64) {
+            for n in 0..ACCOUNT_BUDGET_PER_HOUR as u32 {
+                assert_eq!(
+                    self.guess(
+                        ACCOUNT,
+                        &[b"spender".as_slice(), &n.to_be_bytes()].concat(),
+                        false,
+                        now
+                    ),
+                    Ok(())
+                );
+            }
+        }
+    }
+
+    impl Drop for T {
+        fn drop(&mut self) {
+            for ext in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{ext}", self.path.display()));
+            }
+        }
+    }
 
     /// One source guessing at one account as fast as it is let: how many checks it gets in a stretch of time.
-    fn guesses(t: &LoginThrottle, account: &[u8], source: &[u8], from: u64, until: u64) -> usize {
+    fn guesses(t: &T, account: &[u8], source: &[u8], from: u64, until: u64) -> usize {
         let (mut now, mut checked) = (from, 0);
         while now < until {
-            match t.admit(account, source, false, now) {
-                Ok(attempt) => {
+            match t.guess(account, source, false, now) {
+                Ok(()) => {
                     checked += 1;
-                    t.failed(account, source, attempt, now);
                     now += 1;
                 }
                 Err(seconds) => now += seconds * 1000,
@@ -1726,30 +1836,15 @@ mod throttle_tests {
 
     #[test]
     fn one_source_gets_thirteen_guesses_in_the_first_hour_and_four_an_hour_after() {
-        let t = LoginThrottle::default();
+        let t = fresh();
         let start = 1_000_000;
+        assert_eq!(guesses(&t, ACCOUNT, b"s", start, start + HOUR), 13);
         assert_eq!(
-            guesses(&t, b"password:a@example.org", b"s", start, start + HOUR),
-            13
-        );
-        assert_eq!(
-            guesses(
-                &t,
-                b"password:a@example.org",
-                b"s",
-                start + HOUR,
-                start + 2 * HOUR
-            ),
+            guesses(&t, ACCOUNT, b"s", start + HOUR, start + 2 * HOUR),
             4
         );
         assert_eq!(
-            guesses(
-                &t,
-                b"password:a@example.org",
-                b"s",
-                start + 2 * HOUR,
-                start + 3 * HOUR
-            ),
+            guesses(&t, ACCOUNT, b"s", start + 2 * HOUR, start + 3 * HOUR),
             4
         );
         // the waits: 1 s, 2 s, 4 s … 15 minutes
@@ -1760,62 +1855,71 @@ mod throttle_tests {
             ]
         );
         // the Emergency Kit is another account key: the same source starts afresh there
-        assert!(t
-            .admit(b"kit:a@example.org", b"s", false, start + 3 * HOUR)
-            .is_ok());
+        assert!(matches!(
+            t.admit(b"kit:a@example.org", b"s", false, start + 3 * HOUR),
+            Verdict::Check { .. }
+        ));
     }
 
     #[test]
-    fn however_many_sources_an_account_takes_1900_unknown_guesses_an_hour_and_never_refuses_a_known_one(
+    fn however_many_sources_an_account_takes_2000_unknown_guesses_an_hour_and_the_owner_always_gets_in(
     ) {
-        let t = LoginThrottle::default();
-        let account = b"password:a@example.org";
+        let t = fresh();
         let start = 5_000_000;
-        // a botnet: a new source every 200 ms for an hour, each coming back exactly when it is told to, each wrong
+        // a botnet: a new source every 200 ms for two minutes and one every two seconds after that, for two
+        // hours, each coming back exactly when it is told to, each wrong; the checks are counted per minute
         let mut waiting: Vec<(u64, Vec<u8>)> = vec![];
-        let (mut checked, mut owner_refused) = (0usize, 0usize);
+        let mut per_minute = vec![0usize; 120];
+        let mut owner_refused = 0usize;
         let mut n = 0u32;
         let mut now = start;
-        while now < start + HOUR {
-            // those whose turn has come ask again
+        while now < start + 2 * HOUR {
             let (due, later): (Vec<_>, Vec<_>) = waiting.drain(..).partition(|(at, _)| *at <= now);
             waiting = later;
-            let fresh = {
-                n += 1;
-                n.to_be_bytes().to_vec()
-            };
-            for source in due.into_iter().map(|(_, s)| s).chain([fresh]) {
-                match t.admit(account, &source, false, now) {
-                    Ok(attempt) => {
-                        checked += 1;
-                        t.failed(account, &source, attempt, now);
-                    }
+            n += 1;
+            let fresh =
+                (now < start + 120_000 || n.is_multiple_of(10)).then(|| n.to_be_bytes().to_vec());
+            for source in due.into_iter().map(|(_, s)| s).chain(fresh) {
+                match t.guess(ACCOUNT, &source, false, now) {
+                    Ok(()) => per_minute[((now - start) / 60_000) as usize] += 1,
                     // told its turn, or (the line being full) to ask again in a minute: it does as told
                     Err(seconds) => waiting.push((now + seconds * 1000, source)),
                 }
             }
-            // the owner, from a place the account knows, with the right password, once a minute
-            if (now - start) % 60_000 == 0 {
-                match t.admit(account, b"home", true, now) {
-                    Ok(attempt) => t.succeeded(account, b"home", attempt),
-                    Err(_) => owner_refused += 1,
+            // the owner, from a place the account knows, with the right password, once a minute: checked at
+            // once, on record or (while others stand in line) beside the line
+            if (now - start).is_multiple_of(60_000) {
+                match t.admit(ACCOUNT, b"home", true, now) {
+                    Verdict::Check { attempt } => t.succeeded(ACCOUNT, b"home", attempt),
+                    Verdict::Line { early: true, .. } => {
+                        t.db.write(|c| early_succeeded(c, ACCOUNT, b"home"))
+                            .map_err(|e: Refused| e.message)
+                            .unwrap()
+                    }
+                    _ => owner_refused += 1,
                 }
             }
             now += 200;
         }
-        assert!(checked <= 1900, "{checked} guesses were checked in an hour");
-        assert!(checked >= 1800, "the slow lane kept moving: {checked}");
         assert_eq!(
             owner_refused, 0,
-            "the owner at a known place is never told to wait for what others did"
+            "the owner at a known place is never kept out by what others did"
         );
-        // the owner at a new place: in at once if the hour's budget has room again, else at the turn it is told
-        let mut at = now;
-        let mut told = 0;
+        // any sixty minutes on end: at most 2 000 checks
+        let worst = per_minute
+            .windows(60)
+            .map(|w| w.iter().sum::<usize>())
+            .max()
+            .unwrap();
+        assert!(worst <= 2000, "{worst} guesses were checked within an hour");
+        let all: usize = per_minute.iter().sum();
+        assert!(all >= 3600, "the line kept moving: {all} in two hours");
+        // the owner at a new place: at the turn it is told, within the line's ten minutes and a little
+        let (mut at, mut told) = (now, 0);
         let attempt = loop {
-            match t.admit(account, b"new place", false, at) {
-                Ok(attempt) => break attempt,
-                Err(seconds) => {
+            match t.admit(ACCOUNT, b"new place", false, at) {
+                Verdict::Check { attempt } => break attempt,
+                Verdict::Own(seconds) | Verdict::Line { wait: seconds, .. } => {
                     told += seconds;
                     assert!(
                         told <= 720,
@@ -1825,43 +1929,266 @@ mod throttle_tests {
                 }
             }
         };
-        t.succeeded(account, b"new place", attempt);
+        t.succeeded(ACCOUNT, b"new place", attempt);
+        // what it all left behind is bounded
+        assert!(t.count("SELECT count(*) FROM login_turns") <= 400);
+        assert_eq!(t.count("SELECT count(*) FROM login_accounts"), 1);
+        assert_eq!(
+            t.count("SELECT sources FROM login_counts"),
+            t.count("SELECT count(*) FROM login_sources")
+        );
     }
 
     #[test]
-    fn a_source_has_one_check_at_a_time_and_a_late_or_unchecked_result_changes_nothing() {
-        let t = LoginThrottle::default();
-        let (account, source) = (b"password:a@example.org", b"s");
-        let first = t.admit(account, source, true, 1000).unwrap();
-        // while that check runs (it may take longer than a second), the source starts no other
-        assert_eq!(t.admit(account, source, true, 1500), Err(1));
-        assert_eq!(t.admit(account, source, true, 9000), Err(1));
-        t.failed(account, source, first, 9000);
-        assert_eq!(t.admit(account, source, true, 9500), Err(1));
-        let second = t.admit(account, source, true, 10_000).unwrap();
-        // the hub was busy and did not check: the failure before it stays, the wait is not reset
-        t.not_checked(account, source, second);
-        let third = t.admit(account, source, true, 10_000).unwrap();
-        t.failed(account, source, third, 10_000);
+    fn the_line_is_served_in_the_order_of_its_turns() {
+        let t = fresh();
+        let t0 = 10_000_000;
+        t.spend_hour(t0);
+        // the first in line is checked at once; three more are told their turns, two seconds apart
+        assert_eq!(t.guess(ACCOUNT, b"first", false, t0), Ok(()));
+        assert_eq!(t.guess(ACCOUNT, b"a", false, t0), Err(2));
+        assert_eq!(t.guess(ACCOUNT, b"b", false, t0), Err(4));
+        assert_eq!(t.guess(ACCOUNT, b"c", false, t0), Err(6));
+        // asking early changes nothing
+        assert_eq!(t.guess(ACCOUNT, b"b", false, t0 + 1000), Err(3));
+        // a is late. b comes on time and is not checked before a, who is still expected: b is told when
+        assert_eq!(t.guess(ACCOUNT, b"b", false, t0 + 4000), Err(2));
+        // a comes, late but within the three seconds its turn is kept: checked
+        assert_eq!(t.guess(ACCOUNT, b"a", false, t0 + 4500), Ok(()));
+        // c's turn has come, but b is before it, and two seconds have not passed since a
+        assert_eq!(t.guess(ACCOUNT, b"c", false, t0 + 6000), Err(1));
+        assert_eq!(t.guess(ACCOUNT, b"b", false, t0 + 6000), Err(1));
+        assert_eq!(t.guess(ACCOUNT, b"b", false, t0 + 6500), Ok(()));
+        assert_eq!(t.guess(ACCOUNT, b"c", false, t0 + 7000), Err(2));
+        assert_eq!(t.guess(ACCOUNT, b"c", false, t0 + 8500), Ok(()));
+        // one who never comes back holds the next up for a second past its own turn's three, no longer
+        assert_eq!(t.guess(ACCOUNT, b"gone", false, t0 + 8500), Err(2));
+        assert_eq!(t.guess(ACCOUNT, b"d", false, t0 + 8500), Err(4));
+        assert_eq!(t.guess(ACCOUNT, b"d", false, t0 + 12_500), Err(2));
+        assert_eq!(t.guess(ACCOUNT, b"d", false, t0 + 13_502), Ok(()));
+        // the line is ten minutes long: who finds it full is told to ask again, and holds no place
+        let t1 = t0 + 20_000;
+        let mut placed = 0;
+        for n in 0..400u32 {
+            match t.guess(
+                ACCOUNT,
+                &[b"crowd".as_slice(), &n.to_be_bytes()].concat(),
+                false,
+                t1,
+            ) {
+                Err(60) if placed >= 300 => {}
+                Err(wait) => {
+                    placed += 1;
+                    assert!(wait <= 602, "{wait}");
+                }
+                Ok(()) => placed += 1,
+            }
+        }
+        assert_eq!(placed, 301);
+    }
+
+    #[test]
+    fn a_wrong_guess_is_answered_alike_from_a_source_the_account_knows_and_one_it_does_not() {
+        let t = fresh();
+        let t0 = 20_000_000;
+        t.spend_hour(t0);
+        assert_eq!(t.guess(ACCOUNT, b"first", false, t0), Ok(()));
+        // in line, a known source is told to wait like the unknown one beside it; its credential is checked all
+        // the same (once: its early checks have a back-off of their own, which the answer does not show)
         assert_eq!(
-            t.admit(account, source, true, 11_000),
-            Err(1),
+            t.admit(ACCOUNT, b"unknown", false, t0),
+            Verdict::Line {
+                wait: 2,
+                early: false
+            }
+        );
+        assert_eq!(
+            t.admit(ACCOUNT, b"known", true, t0),
+            Verdict::Line {
+                wait: 4,
+                early: true
+            }
+        );
+        assert_eq!(
+            t.admit(ACCOUNT, b"unknown", false, t0 + 500),
+            Verdict::Line {
+                wait: 2,
+                early: false
+            }
+        );
+        assert_eq!(
+            t.admit(ACCOUNT, b"known", true, t0 + 500),
+            Verdict::Line {
+                wait: 4,
+                early: false
+            }
+        );
+        // both are checked on record when their turns come
+        assert_eq!(t.guess(ACCOUNT, b"unknown", false, t0 + 2000), Ok(()));
+        assert_eq!(t.guess(ACCOUNT, b"known", true, t0 + 4000), Ok(()));
+        // and both then wait out their failure like anyone
+        assert_eq!(
+            t.admit(ACCOUNT, b"unknown", false, t0 + 2500),
+            Verdict::Own(1)
+        );
+        assert_eq!(t.admit(ACCOUNT, b"known", true, t0 + 4500), Verdict::Own(1));
+        // a guesser at a known source gets no more checks than the back-off gives: in an hour of asking every
+        // second, 13 early ones beside its turns in line
+        let mut early = 0;
+        for k in 0..3600u64 {
+            if let Verdict::Line { early: true, .. } =
+                t.admit(ACCOUNT, b"nat", true, t0 + 10_000 + k * 1000)
+            {
+                early += 1;
+            }
+        }
+        assert!(early <= 13, "{early}");
+    }
+
+    #[test]
+    fn a_source_has_one_check_at_a_time_however_long_it_takes_and_an_unchecked_one_changes_nothing()
+    {
+        let t = fresh();
+        let source = b"s";
+        let Verdict::Check { attempt: first } = t.admit(ACCOUNT, source, true, 1000) else {
+            panic!()
+        };
+        // while that check runs — a second, a minute, an hour — the source starts no other
+        for later in [1500, 9000, 61_000, HOUR] {
+            assert_eq!(t.admit(ACCOUNT, source, true, later), Verdict::Own(1));
+        }
+        assert_eq!(
+            t.db.read(|c| own_wait(c, ACCOUNT, source, 9000))
+                .map_err(|e: Refused| e.message)
+                .unwrap(),
+            Some(1)
+        );
+        t.failed(ACCOUNT, source, first, 9000);
+        assert_eq!(t.admit(ACCOUNT, source, true, 9500), Verdict::Own(1));
+        let Verdict::Check { attempt: second } = t.admit(ACCOUNT, source, true, 10_000) else {
+            panic!()
+        };
+        // the request died before the check: the failure before it stays, the wait is not reset
+        t.db.write(|c| not_checked(c, ACCOUNT, source, second))
+            .map_err(|e: Refused| e.message)
+            .unwrap();
+        let Verdict::Check { attempt: third } = t.admit(ACCOUNT, source, true, 10_000) else {
+            panic!()
+        };
+        // a result under another attempt's name changes nothing
+        t.succeeded(ACCOUNT, source, third + 1);
+        t.failed(ACCOUNT, source, third + 1, 10_000);
+        assert_eq!(t.admit(ACCOUNT, source, true, 10_500), Verdict::Own(1));
+        t.failed(ACCOUNT, source, third, 10_000);
+        assert_eq!(
+            t.admit(ACCOUNT, source, true, 10_500),
+            Verdict::Own(2),
             "two failures: two seconds"
         );
-        // a result that comes after the attempt was given up for lost does not undo what happened since
-        let fourth = t.admit(account, source, true, 12_000).unwrap();
-        let fifth = t.admit(account, source, true, 12_000 + 30_000).unwrap();
-        t.succeeded(account, source, fourth);
+        // a success ends it
+        let Verdict::Check { attempt: fourth } = t.admit(ACCOUNT, source, true, 12_000) else {
+            panic!()
+        };
+        t.succeeded(ACCOUNT, source, fourth);
+        assert_eq!(t.count("SELECT count(*) FROM login_sources"), 0);
+        assert_eq!(t.count("SELECT sources FROM login_counts"), 0);
+    }
+
+    #[test]
+    fn a_restart_resets_nothing() {
+        let t = fresh();
+        let t0 = 30_000_000;
+        t.spend_hour(t0);
+        assert_eq!(t.guess(ACCOUNT, b"first in line", false, t0), Ok(()));
+        let kit = b"kit:a@example.org";
         assert_eq!(
-            t.admit(account, source, true, 43_000),
-            Err(1),
-            "the fifth is still being checked"
+            guesses(&t, kit, b"guesser", t0, t0 + 8000),
+            4,
+            "at 0, 1, 3 and 7 seconds; the fifth waits till 15"
         );
-        t.failed(account, source, fifth, 43_000);
+        let Verdict::Check { .. } = t.admit(kit, b"cut off", true, t0 + 8000) else {
+            panic!()
+        };
+        // the hub stops and starts again
+        let again = Db::open(&t.path).unwrap();
+        again
+            .write(recover)
+            .map_err(|e: Refused| e.message)
+            .unwrap();
+        let t = T {
+            db: again,
+            path: t.path.clone(),
+        };
+        // the wait of the guesser stands, the hour is still spent and its line where it was, and the check that
+        // was cut off is over
+        assert_eq!(t.admit(kit, b"guesser", false, t0 + 8000), Verdict::Own(8));
+        assert!(matches!(
+            t.admit(ACCOUNT, b"someone new", false, t0 + 1000),
+            Verdict::Line { early: false, .. }
+        ));
+        assert!(matches!(
+            t.admit(kit, b"cut off", true, t0 + 8000),
+            Verdict::Check { .. }
+        ));
+    }
+
+    #[test]
+    fn an_account_full_of_records_checks_no_source_it_cannot_record_and_always_the_ones_it_knows() {
+        let t = fresh();
+        let now = 40_000_000u64;
+        let account = &Sha256::digest(ACCOUNT)[..16];
+        // the account has its 5 000 sources on record, each still waiting out a failure
+        t.db.write(|c| {
+            for n in 0..SOURCES_PER_ACCOUNT {
+                c.execute(
+                    "INSERT INTO login_sources (account, source, failures, next_at, checking, early_failures, early_next_at) VALUES (?1, ?2, 5, ?3, NULL, 0, 0)",
+                    rusqlite::params![account, &Sha256::digest(n.to_be_bytes())[..16], (now + 10_000 + n as u64) as i64],
+                )?;
+            }
+            c.execute("UPDATE login_counts SET sources = (SELECT count(*) FROM login_sources)", [])?;
+            Ok::<_, Refused>(())
+        })
+        .map_err(|e| e.message)
+        .unwrap();
+        // one more it does not know: not checked, nothing recorded, nothing forgotten
         assert_eq!(
-            t.admit(account, source, true, 43_500),
-            Err(4),
-            "three failures: four seconds"
+            t.admit(ACCOUNT, b"one more", false, now),
+            Verdict::Line {
+                wait: 60,
+                early: false
+            }
         );
+        assert_eq!(
+            t.count("SELECT count(*) FROM login_sources"),
+            SOURCES_PER_ACCOUNT
+        );
+        // a source it knows is checked all the same
+        let Verdict::Check { attempt } = t.admit(ACCOUNT, b"home", true, now) else {
+            panic!()
+        };
+        t.succeeded(ACCOUNT, b"home", attempt);
+        // another account is not touched
+        assert_eq!(
+            t.guess(b"password:b@example.org", b"one more", false, now),
+            Ok(())
+        );
+        // once a wait has run out, the record that ran out longest ago makes room; no record that still waits
+        // is ever given up
+        assert_eq!(t.guess(ACCOUNT, b"one more", false, now + 10_001), Ok(()));
+        assert_eq!(
+            t.count("SELECT count(*) FROM login_sources WHERE failures = 5"),
+            SOURCES_PER_ACCOUNT - 1
+        );
+        assert_eq!(
+            t.count("SELECT sources FROM login_counts"),
+            t.count("SELECT count(*) FROM login_sources")
+        );
+        // the sweep forgets a record a day after its wait ran out, and an hour that is over
+        t.db.write(|c| sweep(c, now + 2 * 86_400_000))
+            .map_err(|e: Refused| e.message)
+            .unwrap();
+        assert_eq!(t.count("SELECT count(*) FROM login_sources"), 0);
+        assert_eq!(t.count("SELECT count(*) FROM login_accounts"), 0);
+        assert_eq!(t.count("SELECT accounts FROM login_counts"), 0);
     }
 }

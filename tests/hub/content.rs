@@ -1194,3 +1194,66 @@ fn the_envelope_rate_limit_answers_with_retry_after() {
         "a rate-limited envelope took no number"
     );
 }
+
+#[test]
+fn the_desk_has_one_byte_budget_for_all_it_shows() {
+    let mut s = scene_on(TestHub::start_with(&[("HUB_LIMIT_JSON", "200000")]));
+    let room = s.w.room;
+    // the agent's cards fill the Desk to just under its 8 MiB (each envelope is 64 KiB, some 87 400 characters)
+    let big = |item: Item| Item {
+        payload: vec![b'x'; 65536 - 6],
+        ..item
+    };
+    for _ in 0..95 {
+        let seq = s.agent.chain(&s.group).0 + 1;
+        let id = enc::object_id(&s.group, &s.agent.id(), seq);
+        let item = big(object(
+            wire::KIND_VERSION,
+            id,
+            wire::TYPE_CARD,
+            wire::STATE_OPEN,
+            1,
+            ZERO32,
+            ZERO32,
+        ));
+        s.agent.send(&s.w.hub, &s.group, &item).ok();
+    }
+    // and one large Note of a human device
+    let note = enc::object_id(&room, &s.w.ada.id(), s.w.ada.chain(&room).0 + 1);
+    let item = big(object(
+        wire::KIND_VERSION,
+        note,
+        wire::TYPE_NOTE,
+        wire::STATE_OPEN,
+        0,
+        ZERO32,
+        ZERO32,
+    ));
+    s.w.ada.send(&s.w.hub, &room, &item).ok();
+    let desk = s.w.ada.get(&s.w.hub, "/v2/desk").ok();
+    let sizes: Vec<usize> = desk
+        .as_object()
+        .unwrap()
+        .values()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|item| {
+            item["version"]["envelope"]
+                .as_str()
+                .or(item["envelope"].as_str())
+        })
+        .map(str::len)
+        .collect();
+    let bytes: usize = sizes.iter().sum();
+    assert!(sizes.len() >= 90, "{} items", sizes.len());
+    assert!(
+        bytes <= trommi_hub::content::ANSWER_BYTES,
+        "{bytes} bytes of envelopes on one Desk"
+    );
+    assert!(
+        bytes + 100_000 > trommi_hub::content::ANSWER_BYTES,
+        "filled to the budget: {bytes}"
+    );
+    // what did not fit is not shown, whatever its kind, and the Desk says so
+    assert_eq!(desk["truncated"], true);
+}
