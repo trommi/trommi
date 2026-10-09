@@ -12,6 +12,7 @@ type Job<T> = Box<dyn FnOnce(&mut T) + Send>;
 /// The handle on a kept value. Dropping it ends the thread and drops the value.
 pub struct Keeper<T> {
     jobs: Mutex<mpsc::Sender<Job<T>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl<T: 'static> Keeper<T> {
@@ -19,7 +20,7 @@ impl<T: 'static> Keeper<T> {
     pub fn spawn(make: impl FnOnce() -> Result<T> + Send + 'static) -> Result<Keeper<T>> {
         let (jobs, inbox) = mpsc::channel::<Job<T>>();
         let (made, wait) = mpsc::channel::<Result<()>>();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("trommi-vault".into())
             .spawn(move || {
                 let mut value = match make() {
@@ -41,7 +42,17 @@ impl<T: 'static> Keeper<T> {
             .map_err(|_| Fault::new("internal", "the vault's thread ended"))??;
         Ok(Keeper {
             jobs: Mutex::new(jobs),
+            thread: Some(thread),
         })
+    }
+
+    /// Ends the thread and waits until the value is dropped: afterwards another keeper may hold the same state.
+    pub fn close(mut self) {
+        let (ended, _) = mpsc::channel();
+        *self.jobs.lock().unwrap_or_else(|e| e.into_inner()) = ended;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
     }
 
     /// Runs `job` on the value and returns its answer.

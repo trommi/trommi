@@ -27,7 +27,7 @@ use trommi_core::chain::{
     self, ChainRecords, Chains, EpochEnd, GroupFacts, Head, Mode, OwnChain, Receipt, Role, Served,
 };
 use trommi_core::crypto::{Secret, SigningKey, SystemEntropy};
-use trommi_core::device::Device;
+use trommi_core::device::{Device, DeviceRecovery};
 use trommi_core::envelope::{Draft, Subject};
 use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId};
 use trommi_core::mls::profile::Cut;
@@ -346,14 +346,15 @@ fn group_of_key(key: &[u8]) -> Option<GroupId> {
 impl Vault {
     /// A new device in an empty journal, written before this returns.
     pub fn create(journal: Journal) -> Result<Vault> {
+        Self::create_with(journal, Box::new(AgentRecovery))
+    }
+
+    /// A new device with another recovery construct than an agent's: what a test's human stand-in runs on.
+    pub fn create_with(journal: Journal, recovery: Box<dyn DeviceRecovery>) -> Result<Vault> {
         if !journal.is_empty() {
             return Err(damaged("a new device needs an empty state"));
         }
-        let device = Device::create(
-            journal.core_store(),
-            Box::new(SystemEntropy),
-            Box::new(AgentRecovery),
-        )?;
+        let device = Device::create(journal.core_store(), Box::new(SystemEntropy), recovery)?;
         let mut vault = Self::around(journal, device)?;
         vault.commit()?;
         Ok(vault)

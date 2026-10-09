@@ -17,6 +17,10 @@ openmls_rust_crypto = { workspace = true }
 openmls_basic_credential = { workspace = true }
 openmls_traits = { workspace = true }
 tls_codec = "=0.5.0"
+# The connector's tests (tests/connector/…): the crate itself, and what its end-to-end tests drive it with.
+trommi-connector = { path = "../connector" }
+tokio = { version = "=1.53.2", features = ["rt-multi-thread", "macros", "time", "sync", "process", "io-util"] }
+reqwest = { version = "=0.12.28", default-features = false }
 
 [[test]]
 name = "core_groups_founding"
@@ -85,3 +89,7 @@ path = "core/groups_lifetimes.rs"
 [[test]]
 name = "core_groups_cost"
 path = "core/groups_cost.rs"
+
+[[test]]
+name = "connector_e2e"
+path = "connector/e2e.rs"

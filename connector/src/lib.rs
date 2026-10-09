@@ -6,6 +6,7 @@ pub mod agent;
 pub mod client;
 pub mod error;
 pub mod hub;
+pub mod join;
 pub mod keeper;
 pub mod model;
 pub mod recovery;
