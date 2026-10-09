@@ -5,7 +5,7 @@
 //! that the caller stores).
 //!
 //! An id inside a name (`device/<device id>`) is base64url, as bytes are in JSON (section 2). A value is JSON
-//! text: this module does not look into it.
+//! text: this module does not look into it, except to hold a Desk's Goals to their limits.
 
 use crate::chain::{GroupFacts, Role};
 use crate::codec::{Reader, Writer};
@@ -27,6 +27,14 @@ pub const MAX_LAMPORT_JUMP: u64 = 1 << 24;
 pub const HEADS: &str = "heads";
 /// The prefix of the name that points at a board's snapshot (section 10.2).
 pub const BOARD_SNAPSHOT: &str = "board_snapshot/";
+/// The name under which human devices hand a Desk's Goals to a main session's agent (section 9.3.4).
+pub const GOALS: &str = "goals";
+/// The prefix of the name of a Desk, whose value carries the Desk's Goals.
+pub const DESK: &str = "desk/";
+/// The most lines Goals have.
+pub const MAX_GOALS_LINES: usize = 20;
+/// The most characters (Unicode scalar values) one line of Goals has.
+pub const MAX_GOALS_LINE_LEN: usize = 200;
 /// The largest stored state this module reads.
 const MAX_STATE_LEN: usize = 1 << 28;
 
@@ -81,15 +89,41 @@ fn value_limit(name: &str) -> usize {
     }
 }
 
+/// Holds the Goals in a value of `name` to their limits (section 9.3.3). Goals stand in the value of a Desk
+/// (`desk/<id>`) and of `goals`, as the field `goals`: one text of at most [`MAX_GOALS_LINES`] lines separated
+/// by a line feed, each of at most [`MAX_GOALS_LINE_LEN`] characters; null or absent for none. `bad-format` for
+/// a `goals` that is neither text nor null, `too-large` beyond the limits. Every other name and every other
+/// field passes: this module does not look into them.
+fn goals_fit(name: &str, value: &serde_json::Value) -> Result<(), Error> {
+    if name != GOALS && !name.starts_with(DESK) {
+        return Ok(());
+    }
+    let goals = match value.get(GOALS) {
+        None | Some(serde_json::Value::Null) => return Ok(()),
+        Some(serde_json::Value::String(goals)) => goals,
+        Some(_) => return Err(Error::BadFormat),
+    };
+    let mut lines = 0usize;
+    for line in goals.split('\n') {
+        lines = lines.saturating_add(1);
+        if lines > MAX_GOALS_LINES || line.chars().count() > MAX_GOALS_LINE_LEN {
+            return Err(Error::TooLarge);
+        }
+    }
+    Ok(())
+}
+
 impl Value {
     /// The value a register envelope's payload holds. `bad-format` unless it is a JSON object with a text
     /// `name`, a `value` (any JSON, or null) and a whole, non-negative `lamport`, each once; other fields are
-    /// ignored. `too-large` for a value above [`MAX_VALUE_LEN`].
+    /// ignored. `too-large` for a value above [`MAX_VALUE_LEN`], and for Goals beyond their limits: a reader
+    /// holds a value to what a writer may write, and does not take one that is beyond it.
     pub fn parse(payload: &[u8]) -> Result<Self, Error> {
         if !envelope::is_json_object(payload) {
             return Err(Error::BadFormat);
         }
         let wire: Wire = serde_json::from_slice(payload).map_err(|_| Error::BadFormat)?;
+        goals_fit(&wire.name, &wire.value)?;
         let value = match wire.value {
             serde_json::Value::Null => None,
             value => Some(serde_json::to_string(&value).map_err(|_| Error::BadFormat)?),
@@ -108,12 +142,15 @@ impl Value {
     }
 
     /// The payload of the register envelope that carries this value. `bad-format` if `value` is not JSON
-    /// text; `too-large` above [`MAX_VALUE_LEN`], measured as compact JSON.
+    /// text, or its `goals` is neither text nor null; `too-large` above [`MAX_VALUE_LEN`], measured as compact
+    /// JSON, and for Goals of more than [`MAX_GOALS_LINES`] lines or a line of more than
+    /// [`MAX_GOALS_LINE_LEN`] characters.
     pub fn payload(&self) -> Result<Vec<u8>, Error> {
         let value = match &self.value {
             None => serde_json::Value::Null,
             Some(text) => serde_json::from_str(text).map_err(|_| Error::BadFormat)?,
         };
+        goals_fit(&self.name, &value)?;
         let compact = serde_json::to_string(&value).map_err(|_| Error::BadFormat)?;
         if !value.is_null() && compact.len() > value_limit(&self.name) {
             return Err(Error::TooLarge);
@@ -196,7 +233,7 @@ pub fn name_owner(name: &str, in_room: bool) -> Option<NameOwner> {
     if in_room {
         let room_humans = ["crown", "kit"].contains(&name)
             || has_prefix(&[
-                "desk/",
+                DESK,
                 "session/",
                 "draft/",
                 "snooze/",
@@ -206,7 +243,7 @@ pub fn name_owner(name: &str, in_room: bool) -> Option<NameOwner> {
             ]);
         return room_humans.then_some(NameOwner::RoomHumans);
     }
-    if name == "goals" {
+    if name == GOALS {
         return Some(NameOwner::SessionHumans);
     }
     let session_devices =
