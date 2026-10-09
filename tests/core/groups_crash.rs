@@ -9,9 +9,9 @@ use trommi_core::store::{OutboxEntry, OutboxKind};
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, enrol, found_room, new_device, new_device_on, new_device_with, now, observe,
-    post_all, post_ok, process, publish_some, reopen, settle, sync, sync_ok, take_welcomes,
-    MemoryStorage, TestDevice, TestRecovery, TEST_RECOVERY_AUTH,
+    add_human, enrol, found_room, join_room, new_device, new_device_on, now, post_all, post_ok,
+    process, publish_some, reopen, settle, sync, sync_ok, take_welcomes, test_keys, MemoryStorage,
+    TestDevice,
 };
 
 /// What a device shows of its state: enough to tell two states apart.
@@ -466,7 +466,7 @@ fn a_key_packages_private_part_is_written_before_it_leaves_the_device() {
         .unwrap();
     post_ok(&mut run.hub, &mut run.device);
     assert_eq!(
-        take_welcomes(&run.hub, &mut newcomer, run.hub.change()).len(),
+        take_welcomes(&run.hub, &mut newcomer, trommi_tests::added_at(&run.hub)).len(),
         1
     );
     assert_eq!(
@@ -482,21 +482,12 @@ fn a_key_packages_private_part_is_written_before_it_leaves_the_device() {
 
 #[test]
 fn a_join_from_outside_survives_a_crash_as_a_copy() {
-    let joins = TestRecovery {
-        joins: true,
-        ..TestRecovery::default()
-    };
-    let mut founder = new_device_with(joins);
+    let mut founder = new_device();
     let (mut hub, room_group) = found_room(&mut founder);
-    hub.recovery = joins;
     let store = MemoryStorage::new();
     let handle = store.handle();
     let mut joiner = new_device_on(store);
-    observe(&hub, &mut joiner);
-    let info = hub.group_info(&room_group).unwrap().clone();
-    joiner
-        .join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec()))
-        .unwrap();
+    join_room(&hub, &mut joiner, &test_keys()).unwrap();
     let entry = joiner.outbox().remove(0);
     drop(joiner);
 
@@ -604,7 +595,6 @@ fn a_second_owner_of_a_stored_state_is_found_out() {
         trommi_core::device::Device::create(
             run.handle.handle(),
             Box::new(trommi_core::crypto::SystemEntropy),
-            Box::new(TestRecovery::default()),
         ),
         Err(Error::Storage(_))
     ));
