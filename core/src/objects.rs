@@ -674,8 +674,11 @@ fn owned<'a>(
     let Some(object) = opened.before else {
         return Ok(Err(Refusal::NotOwned));
     };
-    let header = opened.header;
-    if owner(facts, &header.group, header.epoch, object)? != Some(*me) {
+    // Who owns it now, not in the envelope's epoch: an answer of the epoch before still comes in after the
+    // Commit that removed its recipient, and what that device owned has passed on by then.
+    let group = &opened.header.group;
+    let now = facts.processed_epoch(group)?.ok_or(Error::GroupBehind)?;
+    if owner(facts, group, now, object)? != Some(*me) {
         return Ok(Err(Refusal::NotOwned));
     }
     Ok(Ok(object))

@@ -897,6 +897,64 @@ mod rules {
     }
 
     #[test]
+    fn the_gate_asks_who_owns_the_object_now() {
+        // A human answers the helper's card; before the helper gets to it, the opener removes the helper.
+        let mut world = World::new();
+        world.me = device(4);
+        let card_payload = version_payload(&Hash32::ZERO, two_options());
+        let draft = Draft::first_version(ObjectType::Card, Urgency::Normal, &card_payload).unwrap();
+        let v1 = world.post(4, helper_session(), &draft);
+        let bind = AnswerBind {
+            object_id: id_of(&v1),
+            version_hash: v1.hash(),
+            choices: vec![b"yes".to_vec()],
+        };
+        let payload = br#"{"answer_action":"answer"}"#;
+        let answer = Draft::answer(bind, false, Urgency::Normal, device(4), payload);
+        let sealed = world.sign(2, helper_session(), &answer);
+        let own = OwnRecord::CardVersion {
+            hash: v1.hash(),
+            payload: &card_payload,
+        };
+        let gate = |world: &World, receipt: &Receipt| {
+            command_gate(
+                &world.fake,
+                &mut GateLog::new(),
+                &device(4),
+                &receipt.opened().unwrap(),
+                &own,
+                NOW,
+            )
+            .unwrap()
+        };
+        let mut before = World::new();
+        before.take(v1.envelope()).unwrap();
+        let receipt = before.take(&sealed.envelope).unwrap();
+        assert_eq!(
+            gate(&before, &receipt),
+            act_answer(AnswerAction::Answer, &["yes"])
+        );
+
+        world.fake.commit(&helper_session(), NOW, NOW, |leaves| {
+            leaves.remove(&device(4));
+        });
+        let cut = Head {
+            seq: 1,
+            hash: v1.hash(),
+        };
+        world
+            .fake
+            .group(&helper_session())
+            .cuts
+            .insert(device(4), cut);
+        // The answer of the epoch before still comes in within the two minutes and counts for the card's
+        // state: it was addressed to the owner of its epoch. The device it names owns nothing now.
+        let receipt = world.take(&sealed.envelope).unwrap();
+        assert!(receipt.opened().is_some());
+        assert_eq!(gate(&world, &receipt), Decision::Refused(Refusal::NotOwned));
+    }
+
+    #[test]
     fn an_answer_needs_an_open_card_its_current_version_and_its_owner() {
         let mut world = World::new();
         let v1 = world.post(3, session(), &first(ObjectType::Card));

@@ -372,13 +372,13 @@ pub fn verify_load(
         {
             return Err(Error::Equivocation);
         }
-        if bridge
-            .get(&(item.sender, item.seq))
-            .is_some_and(|hash| *hash != item.hash)
-        {
-            return Err(Error::HashMismatch);
-        }
         if item.seq < start.seq {
+            if bridge
+                .get(&(item.sender, item.seq))
+                .is_some_and(|hash| *hash != item.hash)
+            {
+                return Err(Error::HashMismatch);
+            }
             covered.push(index);
         } else if item.seq == start.seq {
             if item.hash != start.hash {
