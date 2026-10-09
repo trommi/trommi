@@ -6,6 +6,7 @@
 //! produces now; each subject's own test reads its file back and checks it through the core's public interface.
 
 pub mod board;
+pub mod envelope;
 pub mod trail;
 
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ pub type Generate = fn() -> Result<Value, Error>;
 /// Every vector file: its name without `.json`, and its generator. A subject adds its line here.
 pub const FILES: &[(&str, Generate)] = &[
     (board::NAME, board::generate),
+    (envelope::NAME, envelope::generate),
     (trail::NAME, trail::generate),
 ];
 

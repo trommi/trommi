@@ -351,3 +351,278 @@ impl ChainRecords for View {
         Ok(self.accepted.get(&(*sender, seq)).copied())
     }
 }
+
+// ---- a session's story: one envelope of every kind ----
+
+use trommi_core::chain::{hub_take, receive, seal_next, Mode, OwnChain, Served};
+use trommi_core::crypto::SigningKey;
+use trommi_core::envelope::{
+    AnswerBind, Draft, ObjectType, TakeBackBind, Urgency, Verdict, VerdictBind,
+};
+use trommi_core::ids::SessionId;
+use trommi_core::registers::{self, OwnIds, Registers};
+
+/// The clock of the story's first envelope; each later one is a second on.
+pub const STORY_START: u64 = 1_800_000_000_000;
+/// The content key of the story's group in its epoch 0.
+pub const STORY_KEY: [u8; 32] = [7; 32];
+
+/// One envelope of a story, as the hub stores it.
+#[derive(Debug, Clone)]
+pub struct Told {
+    /// What it is, in a word or two.
+    pub what: &'static str,
+    /// Who signed it.
+    pub sender: DeviceId,
+    /// Its bytes.
+    pub bytes: Vec<u8>,
+    /// Its hash.
+    pub hash: Hash32,
+    /// Its payload.
+    pub payload: Vec<u8>,
+    /// The sender's clock.
+    pub time: u64,
+}
+
+/// A main session with one human and one agent device, and what they wrote in the hub's order: a card with a
+/// push, its answer, the take back, a second answer, a closing version, a permission request and its verdict,
+/// Chat both ways and a register of each.
+pub struct Story {
+    /// The session group.
+    pub group: GroupId,
+    /// The human device.
+    pub human: DeviceId,
+    /// The agent device.
+    pub agent: DeviceId,
+    /// The envelopes.
+    pub told: Vec<Told>,
+}
+
+impl Story {
+    /// The leaves of the group.
+    pub fn leaves(&self) -> [(DeviceId, Role); 2] {
+        [(self.human, Role::Human), (self.agent, Role::Agent)]
+    }
+
+    /// A fresh view of the group: the hub's without `key`, a device's with it.
+    pub fn view(&self, key: bool) -> View {
+        View::new(self.group, &self.leaves(), key.then_some(STORY_KEY))
+    }
+}
+
+/// Tells the story with keys and nonces from `entropy`.
+pub fn story<E: Entropy>(entropy: &mut E) -> Result<Story, Error> {
+    let human = SigningKey::generate(entropy)?;
+    let agent = SigningKey::generate(entropy)?;
+    let (human_id, agent_id) = (DeviceId::new(human.public()), DeviceId::new(agent.public()));
+    let session = SessionId::new([2; 16]);
+    let group = GroupId::session(ROOM, session);
+    let mut story = Story {
+        group,
+        human: human_id,
+        agent: agent_id,
+        told: Vec::new(),
+    };
+    // Both devices see every envelope at once: one view serves as the state either seals against.
+    let mut view = story.view(true);
+    let mut hub = story.view(false);
+    let (mut human_chain, mut agent_chain) = (OwnChain::new(), OwnChain::new());
+    let mut registers_seen = Registers::new();
+    let (mut human_ids, mut agent_ids) = (OwnIds::new(), OwnIds::new());
+
+    let mut tell = |what: &'static str,
+                    by_agent: bool,
+                    draft: Draft,
+                    payload: &[u8],
+                    view: &mut View,
+                    entropy: &mut E|
+     -> Result<Hash32, Error> {
+        let time = STORY_START + 1000 * story.told.len() as u64;
+        let (signer, chain, id) = if by_agent {
+            (&agent, &mut agent_chain, agent_id)
+        } else {
+            (&human, &mut human_chain, human_id)
+        };
+        let sealed = seal_next(
+            view,
+            &view.chains,
+            &view.objects,
+            chain,
+            &draft,
+            group,
+            signer,
+            time,
+            entropy,
+        )?;
+        let bytes = sealed.envelope.encode()?;
+        let taken = hub_take(&hub, &hub, &hub.chains, &hub.objects, &id, &bytes, time)?;
+        hub.store(&taken)?;
+        let receipt = receive(
+            view,
+            view,
+            &view.chains,
+            &view.objects,
+            &id,
+            &bytes,
+            &Served::Stored,
+            Mode::InOrder,
+            time,
+        )?;
+        view.store(&receipt)?;
+        story.told.push(Told {
+            what,
+            sender: id,
+            bytes,
+            hash: sealed.hash,
+            payload: payload.to_vec(),
+            time,
+        });
+        Ok(sealed.hash)
+    };
+
+    let zero = Hash32::ZERO.to_base64url();
+    let card = format!(
+        r#"{{"schema_version":2,"card_type":"decision","title":"Ship?","options":[{{"key":"yes","label":"Yes"}},{{"key":"no","label":"No"}}],"object_version":1,"previous_version_hash":"{zero}"}}"#
+    );
+    let draft = Draft::first_version(ObjectType::Card, Urgency::High, card.as_bytes())?.with_push();
+    let card_hash = tell(
+        "card version 1",
+        true,
+        draft,
+        card.as_bytes(),
+        &mut view,
+        entropy,
+    )?;
+    let (card_id, _) = view
+        .objects
+        .iter()
+        .next()
+        .ok_or(Error::Internal("no card"))?;
+    let card_id = *card_id;
+
+    let chat = br#"{"schema_version":2,"content_type":"message","text":"Looking at it"}"#;
+    let draft = Draft::session_chat(session, agent_id, chat);
+    tell("chat to the agent", false, draft, chat, &mut view, entropy)?;
+
+    let answer = br#"{"schema_version":2,"answer_action":"answer","choices":["yes"]}"#;
+    let bind = AnswerBind {
+        object_id: card_id,
+        version_hash: card_hash,
+        choices: vec![b"yes".to_vec()],
+    };
+    let draft = Draft::answer(bind, false, Urgency::High, agent_id, answer);
+    let answer_hash = tell("answer", false, draft, answer, &mut view, entropy)?;
+
+    let back = br#"{"schema_version":2}"#;
+    let bind = TakeBackBind {
+        object_id: card_id,
+        previous_hash: answer_hash,
+        version_hash: card_hash,
+    };
+    let draft = Draft::take_back(bind, Urgency::High, agent_id, back);
+    tell("take back", false, draft, back, &mut view, entropy)?;
+
+    let answer =
+        br#"{"schema_version":2,"answer_action":"answer","choices":["no"],"note":"Not yet"}"#;
+    let bind = AnswerBind {
+        object_id: card_id,
+        version_hash: card_hash,
+        choices: vec![b"no".to_vec()],
+    };
+    let draft = Draft::answer(bind, false, Urgency::High, agent_id, answer);
+    tell("second answer", false, draft, answer, &mut view, entropy)?;
+
+    let closing = format!(
+        r#"{{"schema_version":2,"card_type":"decision","title":"Ship?","close_summary":"Later","object_version":2,"previous_version_hash":"{}"}}"#,
+        card_hash.to_base64url()
+    );
+    let draft = Draft::later_version(
+        card_id,
+        ObjectType::Card,
+        true,
+        Urgency::High,
+        card_hash,
+        closing.as_bytes(),
+    )?;
+    tell(
+        "closing version",
+        true,
+        draft,
+        closing.as_bytes(),
+        &mut view,
+        entropy,
+    )?;
+
+    let request = br#"{"schema_version":2,"tool_name":"Bash","description":"Run the tests","input_preview":"cargo test"}"#;
+    let expires_at = STORY_START + 600_000;
+    let draft = Draft::request(Urgency::Normal, expires_at, request).with_push();
+    let request_hash = tell(
+        "permission request",
+        true,
+        draft,
+        request,
+        &mut view,
+        entropy,
+    )?;
+    let request_id = view
+        .objects
+        .iter()
+        .map(|(id, _)| *id)
+        .find(|id| *id != card_id)
+        .ok_or(Error::Internal("no request"))?;
+
+    let verdict = br#"{"schema_version":2}"#;
+    let bind = VerdictBind {
+        request_id,
+        request_hash,
+        expires_at,
+        verdict: Verdict::Allow,
+    };
+    let draft = Draft::verdict(bind, Urgency::Normal, agent_id, verdict);
+    tell("verdict", false, draft, verdict, &mut view, entropy)?;
+
+    let chat =
+        br#"{"schema_version":2,"content_type":"message","text":"All green","terminal":"answer"}"#;
+    let draft = Draft::session_chat(session, DeviceId::ZERO, chat);
+    tell("chat from the agent", true, draft, chat, &mut view, entropy)?;
+
+    for (by_agent, name, value) in [
+        (
+            true,
+            "status_line/main",
+            r#"{"label":"Build","state":"done"}"#,
+        ),
+        (
+            false,
+            "goals",
+            r#"{"desk_id":"d","desk_name":"Desk","goals":"Ship"}"#,
+        ),
+    ] {
+        let ids = if by_agent {
+            &mut agent_ids
+        } else {
+            &mut human_ids
+        };
+        let draft = registers::write(&registers_seen, ids, name, Some(value), entropy)?;
+        let payload = registers::Value {
+            name: name.to_owned(),
+            value: Some(value.to_owned()),
+            lamport: registers::next_lamport(registers_seen.largest_lamport())?,
+        }
+        .payload()?;
+        tell(
+            if by_agent {
+                "agent register"
+            } else {
+                "human register"
+            },
+            by_agent,
+            draft,
+            &payload,
+            &mut view,
+            entropy,
+        )?;
+        registers_seen.observe_lamport(registers::next_lamport(registers_seen.largest_lamport())?);
+    }
+    Ok(story)
+}
