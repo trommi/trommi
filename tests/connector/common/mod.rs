@@ -397,7 +397,7 @@ impl Human {
             .device;
         let accepted = invite
             .inviter
-            .accept(&self.key, &request, &device, now_ms())
+            .accept(&self.key, &request, now_ms())
             .expect("the Request is accepted");
         self.hub
             .put(
