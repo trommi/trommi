@@ -113,3 +113,7 @@ path = "connector/trail.rs"
 [[test]]
 name = "connector_html"
 path = "connector/html.rs"
+
+[[test]]
+name = "connector_store"
+path = "connector/store.rs"
