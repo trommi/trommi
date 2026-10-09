@@ -10,31 +10,56 @@ const ZERO = () => ({ cards: new Set(), sessions: new Set(), permissions: new Se
 const URG = { critical: 0, high: 1, normal: 2, low: 3 }
 const hex = n => [...crypto.getRandomValues(new Uint8Array(n / 2))].map(b => b.toString(16).padStart(2, '0')).join('')
 const toMap = obj => new Map(Object.entries(obj ?? {}))
+// A file's key and hash in the form a reference carries them (base64url of 32 bytes). The demo room decrypts
+// nothing (a file's bytes come from its `url`), so every file gets this one; the Scribble Board's merge reads a
+// picture's reference in the wire's form and takes none without them.
+const NO_KEY = 'A'.repeat(43)
+const keyed = a => ({ ...a, file_key: a.file_key || NO_KEY, sha256: a.sha256 || NO_KEY })
 
-class MockClient {
+// The fixture's records as the model has them (app/web/core/types.ts): the fields the fixture does not write get
+// the value they have in a room where nothing of that kind happened. A session's key is its agent's device id here,
+// and that is its session id; what belongs to a session names it by both.
+const sessionOf = s => ({
+  session_id: s.agent_device_id, group_id: null, agent_device_ids: [s.agent_device_id], stale: false, group_archived: false, offline_since: null, link: null,
+  heard_up_to: null, heard_at: null, session_key_epoch: 1, created_by_agent: false, creator_device_id: null, parent_session_id: null,
+  ...s, agent_alerts: [], registers: new Map(), card_ids: [], open_card_ids: [], timeline_key: `chat:session/${s.agent_device_id}`, last_activity_at: 0,
+})
+const memberOf = ({ agent_session_id: _, ...m }) => ({ platform: null, folder: null, host: null, offline_since: null, link: null, fingerprint: m.device_id.slice(0, 16).match(/.{4}/g).join(' '), ...m })
+const answerOf = a => Object.assign(a, { envelope_hash: a.envelope_hash ?? null, by_device_id: a.by_device_id ?? null, taken_back_at: a.taken_back_at ?? null, taken_back_sent_at: a.taken_back_sent_at ?? null, pending: false })
+const cardOf = c => { for (const a of [c.answer, ...c.answers]) if (a) answerOf(a); return Object.assign(c, { session_id: c.session_id ?? c.agent_device_id, state_envelope_number: c.state_envelope_number ?? c.envelope_number ?? 0, unsupported: c.unsupported ?? null }) }
+const requestOf = p => Object.assign(p, { session_id: p.session_id ?? p.agent_device_id })
+const publishedOf = p => Object.assign(p, { session_id: p.session_id ?? p.agent_device_id, artifact_type: p.artifact_type ?? null, content_state: p.content_state ?? 'ok' })
+const noteOf = n => Object.assign(n, { version_hashes: n.version_hashes ?? (n.version_hash ? [n.version_hash] : []), causal: n.causal ?? null, pending: false, unsupported: false })
+/** A board's items with every picture's reference in the form the merge takes (see NO_KEY). */
+const boardItems = items => items.map(it => (it.content?.content_type === 'strokes' && it.content.strokes?.some(e => e.attachment && !(e.attachment.file_key && e.attachment.sha256))
+  ? { ...it, content: { ...it.content, strokes: it.content.strokes.map(e => (e.attachment ? { ...e, attachment: keyed(e.attachment) } : e)) } } : it))
+
+export class MockClient {
   constructor(fixture, { simulate = true } = {}) {
     this.listeners = new Map()
     this.simulate = simulate
     this.store = new Map()          // timeline_key -> every item, oldest first (stands in for storage + hub)
     const f = fixture
-    const sessions = new Map(f.sessions.map(s => [s.agent_device_id, { ...s, agent_alerts: [], registers: new Map(), card_ids: [], open_card_ids: [], timeline_key: `chat:session/${s.agent_device_id}`, last_activity_at: 0 }]))
+    const { last_entry_number = 0, ...room } = f.room
+    this.entries = last_entry_number   // counts the room's member changes (a member's added_entry_number)
     this.model = {
-      room: { ...f.room },
-      members: new Map(f.members.map(m => [m.device_id, { ...m }])),
-      sessions,
-      cards: new Map(f.cards.map(c => [c.object_id, c])),
-      permissions: new Map((f.permissions ?? []).map(p => [p.object_id, p])),
-      notes: new Map((f.notes ?? []).map(m => [m.object_id, m])),
-      published: new Map((f.published ?? []).map(p => [p.object_id, p])),
+      room: { outbox_blocked: null, ...room },
+      members: new Map(f.members.map(m => [m.device_id, memberOf(m)])),
+      sessions: new Map(f.sessions.map(s => [s.agent_device_id, sessionOf(s)])),
+      cards: new Map(f.cards.map(c => [c.object_id, cardOf(c)])),
+      permissions: new Map((f.permissions ?? []).map(p => [p.object_id, requestOf(p)])),
+      notes: new Map((f.notes ?? []).map(n => [n.object_id, noteOf(n)])),
+      published: new Map((f.published ?? []).map(p => [p.object_id, publishedOf(p)])),
       timelines: new Map(),
       human: {
         drafts: toMap(f.human.drafts), snoozes: toMap(f.human.snoozes), ducks: toMap(f.human.ducks), crown: f.human.crown ?? null,
         desks: toMap(f.human.desks), session_settings: toMap(f.human.session_settings), scribble_snapshots: new Map(), raw: new Map(),
       },
       invites: new Map(), alerts: [], outbox: [], stack: [], open_permission_ids: [],
+      newer: { count: 0, what: [], envelope_number: 0 },
     }
-    for (const m of this.model.members.values()) m.fingerprint ??= m.device_id.slice(0, 16).match(/.{4}/g).join(' ')
-    for (const [key, items] of Object.entries(f.timelines ?? {})) this.store.set(key, items)
+    const sessions = this.model.sessions
+    for (const [key, items] of Object.entries(f.timelines ?? {})) this.store.set(key, key.startsWith('scribble:') ? boardItems(items) : items.map(i => ('sender_sequence' in i ? i : { ...i, sender_sequence: null })))
     for (const c of this.model.cards.values()) { this.timeline(c.timeline_key); this.ensureStore(c.timeline_key) }
     for (const s of sessions.values()) { this.timeline(s.timeline_key); this.ensureStore(s.timeline_key) }
     for (const [key, items] of this.store) { const t = this.timeline(key); t.item_count = items.length; t.newest_envelope_number = items.at(-1)?.envelope_number ?? 0; t.has_more = items.length > 0 }
@@ -45,7 +70,7 @@ class MockClient {
     let t = this.model.timelines.get(key)
     if (!t) {
       const [kind, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)]
-      t = { timeline_key: key, timeline_kind: kind, timeline_id: id, object_id: id.split('/')[1], item_count: 0, newest_envelope_number: 0, items: new Map(), loaded_down_to: Infinity, has_more: false }
+      t = { timeline_key: key, timeline_kind: kind, timeline_id: id, object_id: id.split('/')[1], item_count: 0, newest_envelope_number: 0, items: new Map(), loaded_down_to: Infinity, has_more: false, window_open: false }
       this.model.timelines.set(key, t)
     }
     return t
@@ -103,10 +128,11 @@ class MockClient {
   sessionOfCard(id) { return this.model.cards.get(id)?.agent_device_id }
 
   // ---- human actions ----
-  async sendMessage({ agent_device_id, object_id = null, ...content }) {
+  async sendMessage({ agent_device_id = null, session_id = null, object_id = null, ...content }) {
+    agent_device_id ??= session_id   // (a session's id is its agent's device id in this room)
     const key = object_id ? `chat:card/${object_id}` : `chat:session/${agent_device_id}`
     const to = agent_device_id ?? this.sessionOfCard(object_id)
-    const item = { envelope_number: null, local_id: `l-${hex(8)}`, pending: true, envelope_hash: null, sender_device_id: this.model.room.my_device_id, recipient_device_id: to, sent_at: Date.now(), item_state: 'loaded', content_type: 'message', content }
+    const item = { envelope_number: null, local_id: `l-${hex(8)}`, pending: true, envelope_hash: null, sender_device_id: this.model.room.my_device_id, sender_sequence: null, recipient_device_id: to, sent_at: Date.now(), item_state: 'loaded', content_type: 'message', content }
     this.changed(c => {
       this.addItem(key, item, c)
       const card = object_id && this.model.cards.get(object_id)
@@ -120,7 +146,7 @@ class MockClient {
     const card = this.model.cards.get(object_id)
     if (!card) throw Object.assign(new Error('unknown card'), { code: 'not-found' })
     if (card.object_state !== 'open') throw Object.assign(new Error('card already decided'), { code: 'bad-argument' })
-    const answer = { answer_action: 'answer', choices: [], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, ...fields, bound_version_hash: card.version_hash, bound_object_version: card.object_version, envelope_number: this.next(), envelope_hash: hex(64), by_device_id: this.model.room.my_device_id, answered_at: Date.now(), taken_back_at: null }
+    const answer = answerOf({ answer_action: 'answer', choices: [], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, ...fields, bound_version_hash: card.version_hash, bound_object_version: card.object_version, envelope_number: this.next(), envelope_hash: hex(64), by_device_id: this.model.room.my_device_id, answered_at: Date.now(), taken_back_at: null })
     // (as the core: every choice a final option, nothing said beside it and not left to the agent: the answer settles the card)
     const plain = !String(answer.note ?? '').trim() && !Object.values(answer.option_notes ?? {}).some(Boolean) && !answer.attachments.length && !answer.marks.length
     const settled = answer.answer_action === 'answer' && !answer.trusted && plain && answer.choices.length > 0 && answer.choices.every(k => card.options.find(o => o.key === k)?.final === true)
@@ -169,19 +195,22 @@ class MockClient {
   setDesk(id, v) { return this.setRegisters({ [`desk/${id}`]: v }) }
   async saveNote({ object_id = hex(32), ...fields }) {
     const had = this.model.notes.get(object_id)
-    const note = { object_id, by_device_id: this.model.room.my_device_id, text: '', ...had, ...fields, object_version: (had?.object_version ?? 0) + 1, version_hash: hex(64), envelope_number: this.next(), object_state: fields.object_state ?? had?.object_state ?? 'open' }
+    const version_hash = hex(64)
+    const note = noteOf({ object_id, by_device_id: this.model.room.my_device_id, text: '', ...had, ...fields, object_version: (had?.object_version ?? 0) + 1, version_hash, version_hashes: [...(had?.version_hashes ?? []), version_hash], envelope_number: this.next(), object_state: fields.object_state ?? had?.object_state ?? 'open' })
     this.changed(c => { this.model.notes.set(object_id, note); c.notes.add(object_id) })
     return object_id
   }
+  deleteNote(object_id) { return this.saveNote({ object_id, object_state: 'closed' }) }
   async uploadAttachment(bytes, meta) {
     const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type: meta.media_type })
-    return { attachment_id: hex(32), file_key: '', sha256: '', total_size: blob.size, ...meta, url: URL.createObjectURL(blob) }
+    return { attachment_id: hex(32), file_key: NO_KEY, sha256: NO_KEY, total_size: blob.size, ...meta, url: URL.createObjectURL(blob) }
   }
   async attachmentBlob(ref) { return (await fetch(ref.url)).blob() }
   // Share links (Copy link on an artifact): kept in this tab, the form of the real link (the mock has no keys: stand-ins).
   async shareAttachment(ref, { expires_at = Date.now() + 30 * 86400000 - 60000, app_url = location.origin, keep_link = false } = {}) {
     const b64 = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-    const share_id = hex(32), link = `${app_url}/a/${share_id}#${b64()}.${ref.file_key || b64()}.${ref.sha256 || b64()}`
+    const own = v => (v && v !== NO_KEY ? v : b64())
+    const share_id = hex(32), link = `${app_url}/a/${share_id}#${b64()}.${own(ref.file_key)}.${own(ref.sha256)}`
     ;(this.shares ??= new Map()).set(share_id, { attachment_id: ref.attachment_id, expires_at, ...(keep_link ? { link, created_at: Date.now() } : {}) })
     return { share_id, link, expires_at }
   }
@@ -212,9 +241,8 @@ class MockClient {
   addMember(invite) {
     this.changed(c => {
       invite.invite_state = 'joined'; c.invites.add(invite.invite_id)
-      const m = { device_id: invite.newcomer.device_id, device_role: invite.device_role, device_name: invite.newcomer.device_name, is_active: true, added_entry_number: ++this.model.room.last_entry_number, removed_entry_number: null, is_me: false, is_online: true }
-      m.fingerprint = m.device_id.slice(0, 16).match(/.{4}/g).join(' ')
-      this.model.members.set(m.device_id, m); c.members = true
+      const m = { device_id: invite.newcomer.device_id, device_role: invite.device_role, device_name: invite.newcomer.device_name, is_active: true, added_entry_number: ++this.entries, removed_entry_number: null, is_me: false, is_online: true }
+      this.model.members.set(m.device_id, memberOf(m)); c.members = true
     })
   }
   // Storage use, handing a session to an agent: shaped like the core, nothing behind them.
@@ -222,7 +250,7 @@ class MockClient {
   async assignSession() {}
   async removeDevices(ids) {
     this.changed(c => {
-      const entry = ++this.model.room.last_entry_number
+      const entry = ++this.entries
       for (const id of ids) { const m = this.model.members.get(id); if (m) { m.is_active = false; m.removed_entry_number = entry } }
       this.model.room.key_epoch++; c.members = true; c.room = true
     })
@@ -234,7 +262,7 @@ class MockClient {
     if (!s) return
     const key = object_id ? `chat:card/${object_id}` : `chat:session/${agent}`
     const say = (ms, body, after) => setTimeout(() => this.changed(c => {
-      this.addItem(key, { envelope_number: this.next(), local_id: null, pending: false, envelope_hash: hex(64), sender_device_id: agent, recipient_device_id: null, sent_at: Date.now(), item_state: 'loaded', content_type: 'message', content: body }, c)
+      this.addItem(key, { envelope_number: this.next(), local_id: null, pending: false, envelope_hash: hex(64), sender_device_id: agent, sender_sequence: null, recipient_device_id: null, sent_at: Date.now(), item_state: 'loaded', content_type: 'message', content: body }, c)
       s.last_activity_at = Date.now(); c.sessions.add(agent)
       after?.(c)
     }), ms)
@@ -367,7 +395,10 @@ function moved(f) {
 async function loadFixture(kind) {
   if (kind === 'crazy') return crazyFixture()
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
-  const f = moved(fixtureCache)
+  return variantOf(moved(fixtureCache), kind)
+}
+/** The room `kind` names, built from the fixture's own sessions and cards ('1': the fixture as it is). */
+export function variantOf(f, kind) {
   if (kind === 'quiet') return quietDesk(f)
   if (kind === 'fresh' || kind === 'first') return firstRun(quietDesk(f), kind === 'first')
   if (kind === 'many') return manyHelpers(crowded(f))

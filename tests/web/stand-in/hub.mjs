@@ -75,6 +75,7 @@ export const defaultReaders = {
 }
 
 const CHANGES_WINDOW = 20_000
+const TURNS_AFTER_CLOSE = 3
 const FILE_LIMIT = 64 << 20
 const OBJECT_TABLES = { card: 'cards', note: 'notes', request: 'permission_requests', artifact: 'artifacts' }
 const STATES = { open: 1, answered: 2, closed: 3 }
@@ -160,10 +161,13 @@ export async function startFakeHub(opts = {}) {
 
   // ---- the live stream
 
+  /** A stream that was ended (its device was removed, its token ran out) gets nothing more, whatever is still open of it. */
+  const open = s => !s.res.writableEnded && !s.res.destroyed
+  function endStream(s) { streams.delete(s); if (open(s)) s.res.end() }
   function emit(r, name, change, data, group_id = null, except = null) {
     const text = (change === null ? '' : `id: ${change}\n`) + `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`
     for (const s of streams) {
-      if (s.room !== r || s.catching_up || s.device === except) continue
+      if (s.room !== r || s.catching_up || s.device === except || !open(s)) continue
       if (s.who !== 'human' && !(group_id && r.groups.get(group_id)?.leaves.has(s.device))) continue
       s.res.write(text)
     }
@@ -191,7 +195,7 @@ export async function startFakeHub(opts = {}) {
     }
     s.catching_up = false
     // a stream lives as long as the token it was opened with
-    s.end = setTimeout(() => res.end(), Math.max(0, a.expires_at - now()))
+    s.end = setTimeout(() => endStream(s), Math.max(0, a.expires_at - now()))
     s.end.unref()
   }
   function visible(a, item) {
@@ -230,7 +234,7 @@ export async function startFakeHub(opts = {}) {
     for (const d of facts.agents ?? []) r.devices.set(d, 'agent')
     for (const d of facts.removed ?? []) {
       g.leaves.delete(d)
-      if (g.kind === 'room') { r.devices.delete(d); for (const s of streams) if (s.room === r && s.device === d) s.res.end() }
+      if (g.kind === 'room') { r.devices.delete(d); for (const s of [...streams]) if (s.room === r && s.device === d) endStream(s) }
     }
     g.log.push(entry)
     joined(r, g, a.device)
@@ -393,13 +397,18 @@ export async function startFakeHub(opts = {}) {
     if (!account) { if (v === null || v === undefined) return; throw refuse('not-found', 'this room has no account') }
     if (v === null || v === undefined) throw refuse('incomplete', 'new recovery keys come with the account\'s new sealed copies')
     Object.assign(account, { kit_auth: authKey(v.kit), kit_copy: sealedCopy(v.kit, 'sealed_copy') })
-    if (v.password && !v.passkey) { account.password_copy = sealedCopy(v.password, 'sealed_copy'); account.passkeys = [] }
+    // one way in, every other removed: the one used just now with a new copy, or one set anew (hub accounts.rs replace_copies)
+    if (v.password?.auth_key != null && !v.passkey) Object.assign(account, { auth: authKey(v.password), password_copy: sealedCopy(v.password, 'sealed_copy'), kdf: kdfRecord(v.password), passkeys: [] })
+    else if (v.password && !v.passkey) {
+      if (!account.auth) throw refuse('incomplete', 'the account has no password')
+      Object.assign(account, { password_copy: sealedCopy(v.password, 'sealed_copy'), passkeys: [] })
+    } else if (v.passkey?.attestation_object != null && !v.password) Object.assign(account, { passkeys: [passkey(v.passkey)], auth: null, password_copy: null, kdf: null })
     else if (v.passkey && !v.password) {
       const kept = account.passkeys.find(p => p.credential_id === v.passkey.credential_id)
       if (!kept) throw refuse('incomplete', 'the account has no such passkey')
       kept.sealed_copy = sealedCopy(v.passkey, 'sealed_copy')
       Object.assign(account, { passkeys: [kept], auth: null, password_copy: null, kdf: null })
-    } else throw refuse('incomplete', 'one sealed copy under the way in used just now: password or passkey')
+    } else throw refuse('incomplete', 'one sealed copy under one way in: the password or passkey used just now, or one set anew')
     account.revision += 1
   }
 
@@ -447,7 +456,7 @@ export async function startFakeHub(opts = {}) {
   }
   function readableFile(a, file_id) {
     const file = member(a).room.files.get(file_id)
-    const allowed = file && !file.deleted && (file.group ? a.who === 'human' || a.room.groups.get(file.group)?.leaves.has(a.device) : file.uploader === a.device)
+    const allowed = file && !file.deleted && (a.who === 'human' || (file.group ? a.room.groups.get(file.group)?.leaves.has(a.device) : file.uploader === a.device))
     if (!allowed) throw refuse('not-found', 'no such file')
     return file
   }
@@ -652,7 +661,7 @@ export async function startFakeHub(opts = {}) {
       return { key_packages }
     }
     if (is('PUT', 'sealed-keys')) {
-      const a = writer(rq), key = b64(field(body, 'sealed_key'))
+      const a = human(writer(rq)), key = b64(field(body, 'sealed_key'))
       if (!a.room.sealed_keys.some(k => k.sealed_key === key)) a.room.sealed_keys.push({ change: ++a.room.change, sealed_key: key })
       return { stored: true }
     }
@@ -709,10 +718,16 @@ export async function startFakeHub(opts = {}) {
       return { dropped }
     }
     if (is('POST', 'rooms', null, 'recovery-code')) {
-      const a = human(ownRoom(writer(rq), segs[1])), c = commitBody(body), link = b64(field(body, 'recovery_link'))
+      // the Commit's fields come under `commit` (hub-api.md); beside the other members they are not read
+      if (typeof body.commit !== 'object' || body.commit === null) throw refuse('bad-format', 'commit: the room Commit with its GroupInfo and SealedKey')
+      const a = human(ownRoom(writer(rq), segs[1])), c = commitBody(body.commit), link = b64(field(body, 'recovery_link'))
       const g = a.room.groups.get(a.room.room_id), again = g.log.some(e => e.kind === 'commit' && e.bytes === b64(c.commit))
+      if (again) return commit(a.room, g, a, c)
+      // all or nothing (8.6): a Commit that would be refused for its epoch leaves the account as it was
+      if (c.epoch !== g.epoch) return commit(a.room, g, a, c)
+      replaceCopies(a.room, body.account)
       const answer = commit(a.room, g, a, c)
-      if (!again) { a.room.links.push({ room_epoch: answer.epoch, change: ++a.room.change, recovery_link: link }); replaceCopies(a.room, body.account) }
+      a.room.links.push({ room_epoch: answer.epoch, change: ++a.room.change, recovery_link: link })
       return answer
     }
 
@@ -940,6 +955,10 @@ export async function startFakeHub(opts = {}) {
   async function close() {
     for (const s of sockets) s.destroy()
     await new Promise(resolve => server.close(resolve))
+    // A client in this same process (the tests' fetch keeps its connections alive) learns that its connections were
+    // cut only when the event loop comes round to them. Until then it would send its next request into a dead one,
+    // which no client of a hub in another process does: the hub is "stopped" once that has happened.
+    for (let turn = 0; turn < TURNS_AFTER_CLOSE; turn++) await new Promise(resolve => setImmediate(resolve))
   }
   await listen(opts.port ?? 0)
 
@@ -952,8 +971,10 @@ export async function startFakeHub(opts = {}) {
     async stop() { this.port = server.address().port; await close() },
     async start() { await listen(this.port) },
     /** Writes raw text into every open stream of a room: for events a real hub would never send. */
-    push(room_id, text) { for (const s of streams) if (s.room.room_id === room_id) s.res.write(text) },
+    push(room_id, text) { for (const s of streams) if (s.room.room_id === room_id && open(s)) s.res.write(text) },
     dropStreams() { for (const s of streams) s.res.destroy() },
+    /** Cuts every connection without a word, as a hub that died does; clients that kept one alive find out when they use it. */
+    dropConnections() { for (const s of sockets) s.destroy() },
     get streams() { return streams.size },
     /** A room set up without a founding: its room group at epoch 0 with these human devices as leaves. */
     seedRoom(room_id, devices, more = {}) {

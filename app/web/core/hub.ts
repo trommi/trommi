@@ -10,7 +10,8 @@
 //
 // Three outcomes of a request must never be confused, because the engine voids an outbox entry only on the first:
 //   refused     the hub said `{ error, message }` with a code and its status of spec/v2.md 16 → HubError, `transient` false
-//   not reached no answer, a broken answer, a deadline                    → HubError `offline`, status 0
+//   not reached no answer (after one more try at once, for a request that is safe to repeat: `REPEATABLE`), a
+//               broken answer, a deadline                                 → HubError `offline`, status 0
 //   not now     5xx (`overloaded`, `internal`), `rate-limited`, `too-many` (a limit that may free up), a proxy's own
 //               error (any status whose body is not a refusal this protocol knows), an answer that does not parse,
 //               a sign-in that has to be made again                       → HubError, `transient` true
@@ -67,6 +68,24 @@ const STATUS_OF: Record<string, number> = Object.fromEntries(Object.entries({
 const NOT_NOW = new Set(['rate-limited', 'too-many', 'unauthorised', 'bad-challenge', 'client-too-old'])
 const TOKEN = /^[A-Za-z0-9_-]{16,200}$/
 const PATH = /^\/v2(\/[A-Za-z0-9_-]{1,128}){1,8}$/
+/**
+ * The requests that may go a second time at once when the first met no answer at all (the connection was dead: a hub
+ * that restarted leaves kept-alive connections behind, and not every platform's fetch takes a fresh one by itself as
+ * browsers do). A request that got no answer may still have been carried out, so only these: every GET, and the
+ * writes the hub answers alike when the same bytes come again (hub-api.md "Decided" 7 and 13), and the logins and
+ * challenges, which change nothing. NOT among them, because a second arrival is refused or done twice: a claim of
+ * KeyPackages, a relayed message, a request or a reject, opening a recovery, the sign-in's token (its challenge is
+ * used up), a passkey login and a new passkey (their challenge too), sign-up, a new password or kit (the revision
+ * moved), push, and every DELETE.
+ */
+const REPEATABLE = [
+  /^GET /,
+  /^PUT \/v2\/(files\/[^/]+|key-packages|sealed-keys|invites\/[^/]+\/reveal)$/,
+  /^POST \/v2\/(rooms|groups|envelopes|invites|shares|account\/login|account\/recover|account\/passkey\/challenge|account\/passkeys\/challenge)$/,
+  /^POST \/v2\/groups\/[^/]+\/(commits|messages|archive)$/,
+  /^POST \/v2\/rooms\/[^/]+\/(recovery-code|recovery\/[^/]+\/(commits|finish))$/,
+  /^POST \/v2\/invites\/[^/]+\/request$/,
+]
 const QUERY_VALUE = /^[A-Za-z0-9_.-]{0,512}$/
 
 /** A request that did not end in the answer the protocol promises. `code` is the hub's (v2.md 16) or one of this
@@ -171,12 +190,15 @@ export interface NewAccount {
   password?: { auth_key: Uint8Array; sealed_copy: Uint8Array; kdf: Kdf }
   passkey?: PasskeyRegistration
 }
-/** The account's new sealed copies that come with new recovery keys (v2.md 8.6, 8.7): a new kit and the copy under
- *  the way in used just now. */
+/** The account's new sealed copies that come with new recovery keys (v2.md 8.6, 8.7): a new kit and ONE way in;
+ *  the hub removes every other. Either the way in used just now, with a new copy under it (`password: { sealed_copy }`,
+ *  the login key stays; `passkey: { credential_id, sealed_copy }`), or one set anew, after a recovery with the kit's
+ *  words or the bare code: a password with its login key and `kdf`, or a passkey registered as in sign-up (its
+ *  challenge is the account's, or one of `passkeyChallenge()`, which needs no token). */
 export interface AccountCopies {
   kit: { auth_key: Uint8Array; sealed_copy: Uint8Array }
-  password?: { sealed_copy: Uint8Array }
-  passkey?: { credential_id: Uint8Array; sealed_copy: Uint8Array }
+  password?: { sealed_copy: Uint8Array } | { auth_key: Uint8Array; sealed_copy: Uint8Array; kdf: Kdf }
+  passkey?: { credential_id: Uint8Array; sealed_copy: Uint8Array } | PasskeyRegistration
 }
 export interface AccountView {
   email: string; revision: number; has_password: boolean; kdf: Kdf | null
@@ -423,8 +445,8 @@ function copiesBody(a: AccountCopies | null): Record<string, unknown> | null {
   if (!a) return null
   return {
     kit: { auth_key: enc(a.kit.auth_key), sealed_copy: enc(a.kit.sealed_copy) },
-    ...(a.password ? { password: { sealed_copy: enc(a.password.sealed_copy) } } : {}),
-    ...(a.passkey ? { passkey: { credential_id: enc(a.passkey.credential_id), sealed_copy: enc(a.passkey.sealed_copy) } } : {}),
+    ...(a.password ? { password: 'auth_key' in a.password ? { auth_key: enc(a.password.auth_key), sealed_copy: enc(a.password.sealed_copy), kdf: a.password.kdf } : { sealed_copy: enc(a.password.sealed_copy) } } : {}),
+    ...(a.passkey ? { passkey: 'attestation_object' in a.passkey ? passkeyBody(a.passkey) : { credential_id: enc(a.passkey.credential_id), sealed_copy: enc(a.passkey.sealed_copy) } } : {}),
   }
 }
 
@@ -453,8 +475,22 @@ function accountCopiesOf(account: Uint8Array): AccountCopies | null {
   try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(account)) } catch { wrong('the account\'s copies: not what accountCopiesBytes writes') }
   const o = members(parsed, 'kit', 'password', 'passkey'), kit = members(o.kit, 'auth_key', 'sealed_copy')
   const copies: AccountCopies = { kit: { auth_key: part(kit.auth_key, 'kit.auth_key', 32), sealed_copy: part(kit.sealed_copy, 'kit.sealed_copy', 61) } }
-  if (o.password !== undefined) copies.password = { sealed_copy: part(members(o.password, 'sealed_copy').sealed_copy, 'password.sealed_copy', 61) }
-  if (o.passkey !== undefined) {
+  const has = (v: unknown, name: string): boolean => typeof v === 'object' && v !== null && Object.hasOwn(v, name)
+  if (o.password !== undefined && o.passkey !== undefined) wrong('the account\'s copies: one way in')
+  if (has(o.password, 'auth_key')) {
+    const w = members(o.password, 'auth_key', 'sealed_copy', 'kdf'), k = Object.entries(members(w.kdf, 'alg', 'v', 'm', 't', 'p'))
+    if (k.some(([, x]) => typeof x !== 'string' && typeof x !== 'number')) wrong('the account\'s copies: password.kdf')
+    copies.password = { auth_key: part(w.auth_key, 'password.auth_key', 32), sealed_copy: part(w.sealed_copy, 'password.sealed_copy', 61), kdf: Object.fromEntries(k) as Kdf }
+  } else if (o.password !== undefined) copies.password = { sealed_copy: part(members(o.password, 'sealed_copy').sealed_copy, 'password.sealed_copy', 61) }
+  if (has(o.passkey, 'attestation_object')) {
+    const k = members(o.passkey, 'attestation_object', 'client_data_json', 'sealed_copy', 'transports')
+    const transports = k.transports
+    if (transports !== undefined && !(Array.isArray(transports) && transports.length <= 8 && transports.every(x => typeof x === 'string' && /^[a-z-]{1,16}$/.test(x)))) wrong('the account\'s copies: passkey.transports')
+    copies.passkey = {
+      attestation_object: part(k.attestation_object, 'passkey.attestation_object', 1, 8192), client_data_json: part(k.client_data_json, 'passkey.client_data_json', 1, 4096),
+      sealed_copy: part(k.sealed_copy, 'passkey.sealed_copy', 61), ...(transports !== undefined ? { transports: transports as string[] } : {}),
+    }
+  } else if (o.passkey !== undefined) {
     const k = members(o.passkey, 'credential_id', 'sealed_copy')
     copies.passkey = { credential_id: part(k.credential_id, 'passkey.credential_id', 1, 1023), sealed_copy: part(k.sealed_copy, 'passkey.sealed_copy', 61) }
   }
@@ -551,6 +587,8 @@ interface Send {
   headers?: Record<string, string> | undefined
   signal?: AbortSignal | undefined
   timeout_ms?: number
+  /** Never sent a second time by itself, whatever its route (a relayed message). */
+  once?: boolean
 }
 
 export class Hub {
@@ -687,7 +725,7 @@ export class Hub {
   }
 
   /** Sends one request and returns its 2xx answer, unread. Signs in again once when the token is refused. */
-  private async exchange(method: string, path: string, o: Send, watch: Watch, retried = false): Promise<Response> {
+  private async exchange(method: string, path: string, o: Send, watch: Watch, retried = false, resent = false): Promise<Response> {
     const headers: Record<string, string> = { ...o.headers }
     if (this.client_name) headers['trommi-client'] = this.client_name
     let token: string | null = null
@@ -710,6 +748,8 @@ export class Hub {
     let res: Response
     try { res = await this.fetch(url, init) } catch {
       const failure = watch.failure('the hub was not reached')
+      // no answer at all, and time left: once more at once, on a connection of its own, where that is safe
+      if (failure instanceof HubError && !watch.signal.aborted && !resent && !o.once && REPEATABLE.some(r => r.test(`${method} ${path}`))) return this.exchange(method, path, o, watch, retried, true)
       if (failure instanceof HubError) this.down = true
       throw failure
     }
@@ -725,7 +765,7 @@ export class Hub {
     if (refusal.code === 'unauthorised' && o.auth && !retried && this.signer) {
       // the hub forgot the token (it restarted) or ended it early: sign in again, once
       if (this.token === token) this.token = null
-      return this.exchange(method, path, o, watch, true)
+      return this.exchange(method, path, o, watch, true, resent)
     }
     throw refusal
   }
@@ -876,7 +916,8 @@ export class Hub {
   /** `POST /v2/rooms/{room}/recovery-code` (8.6): the room Commit with new recovery keys, its RecoveryLink and the
    *  account's new copies, all or nothing. */
   async postRecoveryCode(room_id: Uint8Array, c: CommitParts, recovery_link: Uint8Array, account: AccountCopies | null): Promise<{ epoch: number; change: number }> {
-    const json = { ...commitBody(c), recovery_link: enc(recovery_link), account: copiesBody(account) }
+    // the Commit goes nested under `commit`, as hub-api.md writes the route
+    const json = { commit: commitBody(c), recovery_link: enc(recovery_link), account: copiesBody(account) }
     return this.committed(await this.send('POST', `/v2/rooms/${own(room_id, 'room_id', 32)}/recovery-code`, json), c.epoch)
   }
 
@@ -909,9 +950,10 @@ export class Hub {
    * (`useSigner` with the core's `recoverySignIn`): the room group, every SealedKey and RecoveryLink, the GroupInfo
    * of the anchor's epoch, every live session group, main sessions before helper sessions. `anchorOf` is the core's
    * `recoveryAnchor(code, room, rows)`: it names the epoch whose GroupInfo is fetched. Nothing in the answer is
-   * trusted (the core verifies all of it); here it is only checked for its shape and its size.
+   * trusted (the core verifies all of it); here it is only checked for its shape and its size. `served` is the
+   * binding's `ServedRoom`; `session_groups` names the group of each of `served.sessions`, in the same order.
    */
-  async servedRoom(opts: { anchorOf: (rows: Uint8Array[]) => { group: Uint8Array; epoch: number } }): Promise<ServedRoom> {
+  async servedRoom(opts: { anchorOf: (rows: Uint8Array[]) => { group: Uint8Array; epoch: number } }): Promise<{ served: ServedRoom; session_groups: Uint8Array[] }> {
     if (!this.signer) wrong('this hub client has no signer: useSigner first')
     const room = this.signer.room_id, budget = { bytes: CAP_SERVED }
     const spend = (b: Uint8Array): Uint8Array => { if ((budget.bytes -= b.length) < 0) bad('a room larger than a device takes'); return b }
@@ -928,9 +970,11 @@ export class Hub {
     if (!same(anchor.group, this.signer.room)) wrong('the anchor is an epoch of the room group')
     const anchored = spend((await this.groupInfo(room, ownInt(anchor.epoch, 'the anchor\'s epoch'))).group_info)
     const live = (await this.roomGroups()).filter(g => g.live && g.kind !== 'room')
-    const sessions: ServedGroup[] = []
-    for (const kind of ['main', 'helper'] as const) for (const g of live) if (g.kind === kind) sessions.push(await this.servedGroup(g.group, budget))
-    return { room, group, anchor: anchored, rows, links, sessions }
+    const sessions: ServedGroup[] = [], session_groups: Uint8Array[] = []
+    for (const kind of ['main', 'helper'] as const) {
+      for (const g of live) if (g.kind === kind) { sessions.push(await this.servedGroup(g.group, budget)); session_groups.push(g.group) }
+    }
+    return { served: { room, group, anchor: anchored, rows, links, sessions }, session_groups }
   }
 
   // ---- groups: the MLS delivery service
@@ -980,7 +1024,7 @@ export class Hub {
   /** `POST /v2/groups/{group}/messages`: an application message; `relay`: passed on, not stored (7.2). */
   async postMessage(group: Uint8Array, epoch: number, message: Uint8Array, relay: boolean): Promise<{ n: number | null }> {
     const json = { epoch: ownInt(epoch, 'epoch'), message: enc(message), ...(relay ? { relay: true } : {}) }
-    const o = obj(await this.send('POST', `/v2/groups/${own(group, 'group', ...GROUP)}/messages`, json), 'a message answer')
+    const o = obj(await this.call('POST', `/v2/groups/${own(group, 'group', ...GROUP)}/messages`, { json, auth: true, once: relay }), 'a message answer')
     return { n: relay ? (o.n === null ? null : bad('n of a relayed message')) : int(o.n, 'n', 1) }
   }
   /** `GET /v2/groups/{group}/info?epoch=`: the GroupInfo of that epoch, or of the current one. */

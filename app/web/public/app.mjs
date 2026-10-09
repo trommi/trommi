@@ -400,7 +400,7 @@ const SESSION_ID_LEN = 12
 // A session's id on the board (its address /s/<id>): the start of the agent's device id, known from the first envelope
 // on and never changing. (The hub's agent_session_id is random hex and arrives later, with GET devices: it would move
 // the address. A readable one, as the mock room has, is kept.)
-// A session's key in the core's model: its session_id (v1.1, R6), or the agent's device id (the mock room, v1).
+// A session's key in the core's model: its session_id (in the demo room that is its agent's device id).
 const sessionKey = s => s.session_id ?? s.agent_device_id
 // The sessions as the board shows them: one per key (a stored copy filed under an older key is not a second session).
 const sessionsOf = m => [...m.sessions].filter(([k, s]) => k === sessionKey(s)).map(([, s]) => s)
@@ -410,7 +410,10 @@ const keyOf = o => o.session_id ?? o.agent_device_id
 // closes the card (close_card, withdraw, merge; also a second close) ends it and is no revision: the card's "Done"
 // line says what became of it, so it never shows as "Question revised" or as a new "Version n".
 const revisionsOf = c => (c?.versions ?? []).filter(v => v.object_version === 1 || v.object_state === 'open')
-/** How the core addresses a session for a send: { session_id } (v1.1) or { agent_device_id } (the mock, v1). */
+/** The name of the picture a selection of the Scribble Board is sent under (whiteboard.mjs): a Chat message of a
+ *  person whose one picture has it stands in the conversation as a scribble card. */
+export const SCRIBBLE_FILE = 'selection.png'
+/** How the core addresses a session for a send: { session_id }; { agent_device_id } for a record without one. */
 export const addressOf = (model, key) => (model.sessions.get(key)?.session_id ? { session_id: key } : { agent_device_id: key })
 // The parent a session names (profile.parent_session), as core model.parentSessionOf rules: a child session an agent
 // opened itself counts only under a session that agent (or the agent a human handed the child to) is assigned to; any other claim counts as it stands (display only).
@@ -788,7 +791,7 @@ export class BoardState {
       const kind = i.content_type ?? 'message'
       // Written by a newer Trommi (a content type or schema this version does not know): a placeholder in its place.
       const newer = i.item_state === 'unsupported' || i.item_state === 'newer_schema'
-      if (kind !== 'message' && kind !== 'selection_sent' && !newer) continue
+      if (kind !== 'message' && !newer) continue
       const human = i.sender_device_id === me || this.humans.has(i.sender_device_id)
       const c = i.content ?? {}
       const msg = {
@@ -798,7 +801,7 @@ export class BoardState {
       }
       if (newer) { msg.attachments = []; msg.unsupported = true; out.push(msg); continue }
       // A selection of the Scribble Board sent to the session: shown as a scribble card.
-      if (kind === 'selection_sent') msg.attachments = msg.attachments.map(x => ({ ...x, kind: 'scribble' }))
+      if (human && c.attachments?.length === 1 && c.attachments[0].file_name === SCRIBBLE_FILE) msg.attachments = msg.attachments.map(x => ({ ...x, kind: 'scribble' }))
       if (cardId) msg.card_id = cardId
       if (c.details) msg.details = c.details
       if (c.html) msg.html = c.html
@@ -1094,7 +1097,7 @@ function hubFacade(client, board) {
         return { ok: true, desk: { id: did, goals: text } }
       }
       if (id) { await client.setDesk(id, { ...(m().human.desks.get(id) ?? {}), name }); return { ok: true, desk: { id, name } } }
-      const made = [...crypto.getRandomValues(new Uint8Array(4))].map(b => b.toString(16).padStart(2, '0')).join('')
+      const made = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('')
       if (!m().human.desks.size) await client.setDesk('main', { name: 'Desk', created_at: Date.now() - 1 })
       await client.setDesk(made, { name: String(name ?? '').trim().slice(0, 40) || 'Desk', created_at: Date.now() })
       return { ok: true, desk: { id: made, name } }
@@ -1885,20 +1888,20 @@ const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catc
 const write = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v) } catch {} }
 
 
-// The core runs in a Web Worker (core/core-worker.ts): the room is verified, decrypted, reduced and stored there, and
-// the page holds an exact copy of the model (core/remote.ts). A page whose worker does not come up opens the room
-// itself. ?core=page (kept for the tab session) opens it in the page, for comparing.
+// The core runs in a Web Worker (core/core-worker.ts) and nowhere else: the room is verified, decrypted, reduced and
+// stored there, and the page holds an exact copy of the model (core/remote.ts).
 /* global __TROMMI_CORE_WORKER__ */
 const CORE_WORKER = typeof __TROMMI_CORE_WORKER__ === 'string' ? __TROMMI_CORE_WORKER__ : '/gen/vendor/core-worker.mjs'
-const inWorker = () => typeof Worker === 'function' && ses('trommi-core', new URLSearchParams(location.search).get('core')) !== 'page'
-/** The stored room in the core worker: a RemoteClient, null (no room stored), or undefined (no worker here: open it in the page). */
-async function openInWorker() {
-  if (!inWorker()) return undefined
+/** A share page: `/a/<share id>` (22 characters of base64url; 32 hex in the links of before). */
+const SHARE_PAGE = /^\/a\/(?:[0-9a-f]{32}|[A-Za-z0-9_-]{22})$/
+/** The stored room in the core worker: a RemoteClient, or null (no room stored). A browser without workers, or a
+ *  worker that does not come up, fails with `worker-failed` / `worker-timeout`: the account screens word it. */
+export async function openInWorker() {
+  if (typeof Worker !== 'function') throw Object.assign(new Error('this browser runs no workers'), { code: 'worker-failed' })
   // (core-start.mjs, loaded before this module by index.html, started the worker already: taken over once)
   const started = globalThis.__trommiCore ?? null
   globalThis.__trommiCore = null
-  try { return await (await import('./gen/vendor/remote.mjs')).openRemote({ url: CORE_WORKER, storage: { name: 'trommi', prefix: 'room/' }, client: CLIENT, early: started }) }
-  catch (err) { if (err?.code !== 'worker-failed' && err?.code !== 'worker-timeout') throw err; console.warn('core worker:', err.message, '(the room opens in the page)'); return undefined }
+  return (await import('./gen/vendor/remote.mjs')).openRemote({ url: CORE_WORKER, storage: { name: 'trommi' }, client: CLIENT, early: started })
 }
 
 /** The core worker, started at the top of boot (not for the demo or a share page). */
@@ -1906,7 +1909,7 @@ let early = null
 function startEarly() {
   let demo = false
   try { const q = new URLSearchParams(location.search); demo = q.has('mock') ? q.get('mock') !== '0' : Boolean(sessionStorage.getItem('trommi-mock')) } catch {}
-  if (demo || /^\/a\/[0-9a-f]{32}$/.test(location.pathname)) return null
+  if (demo || SHARE_PAGE.test(location.pathname)) return null
   const p = openInWorker()
   p.catch(() => {})   // (awaited in openClient)
   return p
@@ -1916,13 +1919,7 @@ async function openClient() {
   if (mock) return (await import('./demo/demo.mjs')).openRoom({ mock })
   const remote = await (early ?? openInWorker())
   early = null
-  if (remote !== undefined) return remote
-  const c = await core()
-  const storage = c.idbStorage({ name: 'trommi', prefix: 'room/' })
-  // Several tabs of this browser: one writes (a Web Lock), the others read on their own and hand it their actions
-  // (core/tabs.ts). Every tab stays usable; when the writing tab closes, the next one takes over.
-  try { return await c.openRoomInTabs({ storage, makeStorage: () => c.idbStorage({ name: 'trommi', prefix: 'room/' }), client: CLIENT }) }
-  catch (err) { await storage.close().catch(() => {}); throw err }   // a Log out from the error screen deletes the database
+  return remote
 }
 
 async function start(client, { fresh = false } = {}) {
@@ -2132,7 +2129,7 @@ async function boot() {
   if (params.has('mock')) { params.delete('mock'); history.replaceState(history.state, '', `${location.pathname}${params.size ? `?${params}` : ''}${location.hash}`) }
   document.documentElement.classList.toggle('is-demo', Boolean(mock))
   // A link for someone outside the room (/a/<share_id>#…): its own small page, no room needed.
-  if (/^\/a\/[0-9a-f]{32}$/.test(location.pathname)) return (await view('media')).showShare()
+  if (SHARE_PAGE.test(location.pathname)) return (await view('media')).showShare()
   // A room that is stored but does not open is never shown as "not logged in": the start page would offer Log in, which
   // this storage refuses (it holds a room). The room screen says what failed and offers Retry and Log out of this device.
   // (the demo's account screens, /screens: ?mock=1&onboard=<state> draws one of them; no account, nothing sent)
@@ -2144,23 +2141,9 @@ async function boot() {
   if (client) { keepStorage(); await start(client) }
   // (the core's self test needs no room: by its address it opens on a device that is not logged in too)
   else if (PROOF_PATH.test(location.pathname)) { fontsAfterPaint(); (await view('proof')).proofScreen() }
-  else { fontsAfterPaint(); await (await view('auth')).roomScreen({ start: async (c, o) => { keepStorage(); return start(await adopt(c), o) }, hub: hubUrl(), openError }) }
+  else { fontsAfterPaint(); await (await view('auth')).roomScreen({ start: async (c, o) => { keepStorage(); return start(c, o) }, hub: hubUrl(), openError }) }
 }
 if (typeof window !== 'undefined') boot()
-
-/** A room made in this tab (account created, device joined or logged in): this tab writes it; later tabs follow. */
-async function adopt(c) {
-  if (mock) return c
-  if (c?.worker instanceof Worker) return c   // made in the core worker already (account-remote.mjs)
-  // The core worker takes the room over from storage (this client stops first: it flushes and frees the room's lock).
-  if (inWorker()) {
-    await c.stop()
-    const remote = await openInWorker()
-    if (remote) return remote
-  }
-  const k = await core()
-  return k.adoptInTabs(c, { makeStorage: () => k.idbStorage({ name: 'trommi', prefix: 'room/' }), client: CLIENT })
-}
 
 /** Ask the browser to keep this origin's storage (no eviction under storage pressure; Safari weighs it too). */
 function keepStorage() { try { navigator.storage?.persist?.().catch(() => {}) } catch {} }
