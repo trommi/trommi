@@ -2,7 +2,8 @@
 // Activity"; the widget is Sources/TrommiLive). The hub starts, updates and ends it by push; the app only hands it the
 // tokens: the push-to-start token once per room (with a random tag of this phone for that room, which the activity's
 // attributes carry back), and each running activity's own token to the hub whose tag it carries. iOS wakes the app in the
-// background to deliver an activity's token when the hub started it. Off when Push is off (Settings · Devices).
+// background to deliver an activity's token when the hub started it. Off when Push is off (Settings · Devices: the
+// tokens go from the hub, a running activity ends) and while Live Activities are off in the system's settings.
 #if canImport(ActivityKit) && os(iOS)
 import ActivityKit
 import Foundation
@@ -15,6 +16,7 @@ private let log = Logger(subsystem: "com.trommi.ios", category: "live")
 @MainActor
 enum LiveActivities {
   private static var watching = false
+  private static var observing = false
   private static var seen = Set<String>()
   /** The tokens this run got (kind, token, tag), to hand over again when Push is turned off or on. */
   private static var tokens: [(kind: String, token: String, tag: String?)] = []
@@ -30,6 +32,11 @@ enum LiveActivities {
 
   /** Start listening for tokens (at launch, also a launch in the background). */
   static func watch() {
+    // turned on later in the system's settings: the tokens then
+    if !observing {
+      observing = true
+      Task { @MainActor in for await on in ActivityAuthorizationInfo().activityEnablementUpdates where on { watch() } }
+    }
     guard !watching, ActivityAuthorizationInfo().areActivitiesEnabled else { return }
     watching = true
     Task { @MainActor in
@@ -76,6 +83,8 @@ enum LiveActivities {
     for k in UserDefaults.standard.dictionaryRepresentation().keys where k.hasPrefix("live.") { UserDefaults.standard.removeObject(forKey: k) }
     let again = tokens
     Task { @MainActor in for t in again { await register(token: t.token, kind: t.kind, tag: t.tag) } }
+    // off: the hub forgets the tokens and can no longer end what runs, so it ends here
+    if Push.level == "off" { endAll() }
     watch()
   }
 

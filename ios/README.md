@@ -262,7 +262,9 @@ session of the desk on screen (`notify/live.sealed` in the App Group, under its 
 push-to-start push when agents begin to work, updates it with the two counts, and ends it when none works (README
 "Live Activity"). The app only hands over tokens: its push-to-start token to every room's hub with a random tag per room
 (`POST live_activity { kind: start, tag }`), and each running activity's token to the hub whose tag its attributes
-carry (`kind: activity`); iOS wakes the app in the background for that. Push off (Settings · Devices) removes them.
+carry (`kind: activity`); iOS wakes the app in the background for that. Push off (Settings · Devices) removes them
+and ends what runs; signing out ends it too. Live Activities off in the system's settings: no tokens until they are on
+again. Past the push's stale date the widget dims the counts and says "Not up to date".
 `NSSupportsLiveActivities` is in `Info.plist`.
 
 **Universal links** (`Links.swift`): `https://app.trommi.com/card/<Nr. or id>`, `/s/<session>`, `/s/<session>/card/<ref>`,
