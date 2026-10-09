@@ -1731,3 +1731,66 @@ fn a_recovery_whose_answers_were_lost_is_answered_again_like_the_first_time() {
         w.hub.epoch(&w.room).unwrap()
     );
 }
+
+#[test]
+fn first_contact_verifies_a_helper_session_from_its_founding() {
+    // 5.2.6: a human device that joined a helper session by Welcome checks that the founding Commit was made
+    // by the main session's agent leaf of that time, from the founding GroupInfo through every Commit.
+    let mut w = world(true);
+    w.write_epochs(1);
+    let served = trommi_tests::fetch_group(&w.hub, &w.side);
+    for device in [&w.a, &w.b] {
+        assert_eq!(
+            served.served(|served| device.verify_founding(&w.side, served)),
+            Ok(())
+        );
+    }
+    // The log of another group, a log cut short, a founding that is not this group's, a Commit left out.
+    let other = trommi_tests::fetch_group(&w.hub, &w.main);
+    assert_eq!(
+        other.served(|served| w.a.verify_founding(&w.side, served)),
+        Err(Error::BadGroup)
+    );
+    let mut short = served.clone();
+    short.commits.pop();
+    assert_eq!(
+        short.served(|served| w.a.verify_founding(&w.side, served)),
+        Err(Error::BadGroup)
+    );
+    short.current = w
+        .hub
+        .group_info_at(&w.side, w.hub.epoch(&w.side).unwrap() - 1)
+        .unwrap()
+        .clone();
+    assert_eq!(
+        short.served(|served| w.a.verify_founding(&w.side, served)),
+        Err(Error::GroupBehind)
+    );
+    let mut grafted = served.clone();
+    grafted.founding = other.founding.clone();
+    assert_eq!(
+        grafted.served(|served| w.a.verify_founding(&w.side, served)),
+        Err(Error::BadGroup)
+    );
+    let mut holed = served.clone();
+    holed.commits.remove(1);
+    assert_eq!(
+        holed.served(|served| w.a.verify_founding(&w.side, served)),
+        Err(Error::BadGroup)
+    );
+    // A device whose record of the room begins after the founding cannot tell, and says so.
+    let mut late = new_device();
+    add_human(&mut w.hub, &mut w.a, &mut late);
+    publish_some(&mut w.hub, &mut late, 0);
+    trommi_tests::add_to_session(&mut w.hub, &mut w.a, &mut late, &w.side);
+    trommi_tests::settle_joining(&w.hub, &mut late);
+    let served = trommi_tests::fetch_group(&w.hub, &w.side);
+    assert_eq!(
+        served.served(|served| late.verify_founding(&w.side, served)),
+        Err(Error::RoomBehind)
+    );
+    assert_eq!(
+        served.served(|served| late.verify_founding(&w.room, served)),
+        Err(Error::NotFound)
+    );
+}
