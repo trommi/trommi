@@ -641,8 +641,9 @@ pub fn check_session_commit(
                 !human && !room.is_agent(added) && !history.is_revoked(added, room.epoch);
             helper_device || (founding && human)
         } else if helper {
-            // A human device adds human devices, and after a takeover the main session's agent leaf.
-            human || (matches!(parent, Parent::Seat(Some(_))) && allowed.is_opener(added))
+            // A human device adds human devices, and after a takeover the main session's agent leaf; a
+            // verifier that does not follow the main session takes any agent device for it.
+            human || allowed.is_opener(added)
         } else {
             human || allowed.allows(added)
         };
