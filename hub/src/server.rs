@@ -51,7 +51,9 @@ pub fn spawn_jobs(app: &Arc<App>) {
     });
     every(app, app.cfg.sweep_every_ms, 30_000, |a| a.sweep());
     every(app, 30_000, 30_000, |a| a.db.maintain());
-    every(app, app.cfg.ping_ms, app.cfg.ping_ms, |a| a.live.ping());
+    every(app, app.cfg.ping_ms, app.cfg.ping_ms, |a| {
+        a.live.ping(crate::util::now())
+    });
     let beat = app.clone();
     tokio::spawn(async move {
         let mut tick =

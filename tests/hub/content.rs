@@ -579,12 +579,46 @@ fn only_the_allowed_sender_writes_each_item() {
         ),
     ));
 
+    // a refused envelope of another session that names this card or its Chat does not show up among them
+    let mut other_agent = s.w.enrol_agent();
+    let room = s.w.room;
+    s.w.catch_up(&mut s.bea, &room);
+    let (_, other_group) = s.w.found_main(&mut [&mut s.bea], Some(&mut other_agent));
+    let hub = &s.w.hub;
+    forbidden(other_agent.send(hub, &other_group, &card_chat(card_id, ZERO32)));
+    forbidden(other_agent.send(
+        hub,
+        &other_group,
+        &object(
+            wire::KIND_VERSION,
+            card_id,
+            wire::TYPE_CARD,
+            wire::STATE_CLOSED,
+            2,
+            v1,
+            ZERO32,
+        ),
+    ));
+    let in_chat = s
+        .bea
+        .get(hub, &format!("/v2/chats/card/{}/items", hex(&card_id)))
+        .ok();
+    assert!(in_chat["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|i| envelope_of(i).header.group_id == s.group));
     // every envelope of the card, in order, void ones with their code
     let all = s.bea.get(hub, &format!("/v2/cards/{}", hex(&card_id))).ok();
     assert_eq!(
         (all["state"].as_u64(), all["owner"].as_str()),
         (Some(3), Some(b64(&s.agent.id()).as_str()))
     );
+    assert!(all["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|i| envelope_of(i).header.group_id == s.group));
     let kinds: Vec<(u8, bool)> = all["items"]
         .as_array()
         .unwrap()

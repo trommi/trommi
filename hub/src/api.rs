@@ -198,8 +198,12 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
         return http::refusal(&refuse("overloaded", "the hub is restarting").retry(1));
     }
     let (parts, body) = req.into_parts();
-    // the longest legal upload decides how long an unread body is drained
-    let drain = Duration::from_secs(60 + app.cfg.file_limit / 16_384);
+    // an unread body is drained for as long as its announced length needs, never longer than the longest legal
+    // upload; without a length, for a minute
+    let announced: u64 = http::header(&parts.headers, "content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let drain = Duration::from_secs(60 + announced.min(app.cfg.file_limit) / 16_384);
     let mut body = ReqBody::new(body, conn.clone(), drain);
     let path: Vec<String> = parts
         .uri
@@ -251,6 +255,7 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
     let streamed = match (&parts.method, &segs[1..]) {
         (&Method::GET, ["stream"]) => Some(
             stream(
+                &conn,
                 &app,
                 bearer.as_deref(),
                 &query,
@@ -323,9 +328,10 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
         body: parsed,
     };
     let worker = app.clone();
-    let result = tokio::task::spawn_blocking(move || route(&worker, &rq)).await;
+    let result =
+        tokio::task::spawn_blocking(move || route(&worker, &rq).map(|v| v.to_string())).await;
     match result {
-        Ok(Ok(v)) => http::json(200, &v),
+        Ok(Ok(text)) => http::json_text(200, text),
         Ok(Err(r)) => {
             if r.code == "internal" {
                 crate::log::warn("internal_error", json!({ "message": r.message }));
@@ -423,7 +429,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
                 if store::standing(x.c, &room, &device)? != Some(Who::Human) {
                     return Err(wrong());
                 }
-                content::envelope_at(x.c, &room, change, false)?.ok_or_else(wrong)
+                // an envelope beyond a Cut is served on the chain route only
+                content::envelope_at(x.c, &room, change, false)?.filter(|item| item["cut"] != true).ok_or_else(wrong)
             })
         }
 
@@ -661,7 +668,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("GET", [kind @ ("cards" | "notes" | "permission-requests" | "artifacts"), object]) => {
             let object = id::<16>(object)?;
             let table = if *kind == "permission-requests" { "permission_requests" } else { kind };
-            app.read(|x| content::object_envelopes(x.c, &rq.auth(app, x.c)?, table, &object))
+            let (after, limit) = (rq.q_int("after")?, rq.q_int("limit")?);
+            app.read(|x| content::object_envelopes(x.c, &rq.auth(app, x.c)?, table, &object, after, limit))
         }
         ("GET", ["changes"]) => {
             let (after, limit) = (rq.q_int("after")?.unwrap_or(0), rq.q_int("limit")?);
@@ -994,14 +1002,16 @@ impl Drop for StreamGuard {
 
 /// `GET /v2/stream?after=`: server-sent events; resumes by change number (`after`, or `Last-Event-ID`).
 async fn stream(
+    conn: &Conn,
     app: &Arc<App>,
     bearer: Option<&str>,
     query: &[(String, String)],
     last_event_id: Option<&str>,
 ) -> Res<Answer> {
     let (a, bearer) = (app.clone(), bearer.map(str::to_string));
-    let auth =
-        blocking(move || a.read(|x| a.sessions.authorise(x.c, bearer.as_deref(), x.now))).await?;
+    let (auth, until) =
+        blocking(move || a.read(|x| a.sessions.authorise_until(x.c, bearer.as_deref(), x.now)))
+            .await?;
     if auth.who == Who::Spent {
         return Err(refuse("not-member", "this recovery key was replaced"));
     }
@@ -1012,10 +1022,13 @@ async fn stream(
         .or(last_event_id)
         .and_then(|v| v.parse().ok())
         .filter(|v| *v >= 0);
+    // the stream lives as long as the token it was opened with; the device resumes with a new one
     let Some((s, rx)) = app.live.open(
         auth,
         app.cfg.streams_per_device,
         app.cfg.stream_buffer_bytes,
+        until,
+        Some(conn.cut.clone()),
     ) else {
         return Err(refuse(
             "too-many",
@@ -1222,14 +1235,22 @@ async fn upload(
     let announced: Option<u64> =
         http::header(headers, "content-length").and_then(|v| v.parse().ok());
     let (a, bearer) = (app.clone(), bearer.map(str::to_string));
-    let auth = blocking(move || {
+    let (auth, used, again) = blocking(move || {
         a.read(|x| {
             let auth = a.sessions.authorise(x.c, bearer.as_deref(), x.now)?;
-            files::admit(x, &auth, &file, announced)?;
-            Ok(auth)
+            let (used, again) = files::admit(x, &auth, &file, announced)?;
+            Ok((auth, used, again))
         })
     })
     .await?;
+    let limit = app.cfg.file_limit;
+    // Room for the bytes is reserved before the first one is read, and given back however the upload ends: what
+    // is being uploaded counts against the room's quota like what is stored.
+    let _reserved = app.reserve_upload(
+        &auth.room,
+        if again { 0 } else { announced.unwrap_or(limit) },
+        used,
+    )?;
     let io = |e: std::io::Error| {
         crate::log::warn(
             "file_write_failed",
@@ -1240,9 +1261,8 @@ async fn upload(
     let mut up =
         tokio::task::block_in_place(|| files::Upload::begin(&app.files, &auth.room, &file))
             .map_err(io)?;
-    let limit = app.cfg.file_limit;
     let deadline = Duration::from_secs(60 + announced.unwrap_or(limit) / 16_384);
-    let received = tokio::time::timeout(deadline, async {
+    tokio::time::timeout(deadline, async {
         loop {
             match tokio::time::timeout(Duration::from_secs(30), body.frame()).await {
                 Err(_) => return Err(refuse("bad-format", "the upload stalled")),
@@ -1260,46 +1280,27 @@ async fn upload(
         }
     })
     .await
-    .unwrap_or_else(|_| Err(refuse("bad-format", "the upload took too long")));
-    if let Err(r) = received {
-        up.discard();
-        return Err(r);
-    }
-    let sha256 = match tokio::task::block_in_place(|| up.seal()) {
-        Ok(h) => h,
-        Err(e) => {
-            up.discard();
-            return Err(io(e));
-        }
-    };
+    .unwrap_or_else(|_| Err(refuse("bad-format", "the upload took too long")))?;
+    let sha256 = tokio::task::block_in_place(|| up.seal()).map_err(io)?;
     let size = up.size;
     let a = app.clone();
-    let recorded = blocking(move || {
+    // The row and the file's place in one transaction: a deletion of the row cannot come between the two, and a
+    // device removed during the upload stores nothing.
+    blocking(move || {
         a.write_as(&auth, Lease::Needed(lease), |x, _| {
-            files::record(x, &auth, &file, size, &sha256)
+            if let files::Stored::New = files::record(x, &auth, &file, size, &sha256)? {
+                up.place().map_err(|e| {
+                    crate::log::warn(
+                        "file_write_failed",
+                        json!({ "error": e.kind().to_string() }),
+                    );
+                    refuse("internal", "internal error")
+                })?;
+            }
+            Ok(())
         })
     })
-    .await;
-    match recorded {
-        Ok(files::Stored::New) => {
-            if let Err(e) = tokio::task::block_in_place(|| up.place()) {
-                // the row without its bytes would be a file that cannot be read: take it back
-                let a = app.clone();
-                let _ = blocking(move || {
-                    a.write(|x, fx| {
-                        content::delete_file(x.c, &auth.room, &file, size as i64, x.now, fx)
-                    })
-                })
-                .await;
-                return Err(io(e));
-            }
-        }
-        Ok(files::Stored::Again) => up.discard(),
-        Err(r) => {
-            up.discard();
-            return Err(r);
-        }
-    }
+    .await?;
     Ok(http::json(
         200,
         &json!({ "file_id": b64(&file), "size": size, "sha256": b64(&sha256) }),

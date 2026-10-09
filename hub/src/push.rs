@@ -73,7 +73,9 @@ pub struct Network {
 
 impl Network {
     pub fn new() -> Result<Self, String> {
+        // a push service that answers with a redirect is not followed anywhere
         let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| e.to_string())?;
@@ -88,10 +90,17 @@ impl Transport for Network {
             call = call.header(k, v);
         }
         Box::pin(async move {
-            let answer = call.send().await.map_err(|e| e.without_url().to_string())?;
+            let mut answer = call.send().await.map_err(|e| e.without_url().to_string())?;
             let status = answer.status().as_u16();
-            let text = answer.text().await.unwrap_or_default();
-            let reason = serde_json::from_str::<Value>(&text)
+            // of the answer only a short reason is read
+            let mut text = Vec::new();
+            while let Ok(Some(chunk)) = answer.chunk().await {
+                text.extend_from_slice(&chunk[..chunk.len().min(4096 - text.len())]);
+                if text.len() >= 4096 {
+                    break;
+                }
+            }
+            let reason = serde_json::from_slice::<Value>(&text)
                 .ok()
                 .and_then(|v| v["reason"].as_str().map(str::to_string))
                 .unwrap_or_default();
@@ -170,19 +179,36 @@ pub fn endpoint_origin(endpoint: &str, extra: &[String]) -> Option<String> {
     {
         return None;
     }
+    // Only what every URL parser reads the same way: a backslash, for one, is a path character to some and a
+    // separator to others.
+    let plain = |b: u8| b.is_ascii_alphanumeric() || b"-._~:/?#[]@!$&'()*+,;=%".contains(&b);
+    if !endpoint.bytes().all(plain) {
+        return None;
+    }
     let (scheme, rest) = endpoint.split_once("://")?;
     let authority = rest.split(['/', '?', '#']).next()?;
-    if authority.contains('@') || authority.is_empty() {
+    let (host, port) = match authority.split_once(':') {
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    let host_ok = !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-');
+    let port_ok =
+        port.is_none_or(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()));
+    if !host_ok || !port_ok {
         return None;
     }
     if extra.iter().any(|h| h == authority) {
         return matches!(scheme, "https" | "http").then(|| format!("{scheme}://{authority}"));
     }
-    let host = authority.split(':').next()?;
     let known = PUSH_HOSTS
         .iter()
         .any(|h| host == *h || host.ends_with(&format!(".{h}")));
-    (scheme == "https" && known).then(|| format!("https://{authority}"))
+    // a push service is called on the port of https
+    (scheme == "https" && known && port.is_none_or(|p| p == "443"))
+        .then(|| format!("https://{authority}"))
 }
 
 /// RFC 8291: `plain` encrypted for one subscription (aes128gcm, one record).
