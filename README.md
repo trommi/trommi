@@ -136,7 +136,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>connector-rs/</code> · 36 files</summary>
+<details><summary><code>connector-rs/</code> · 37 files</summary>
 
 ```
 ├── src/
@@ -153,6 +153,8 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   │   ├── bytes.rs
 │   │   ├── grants.rs
 │   │   └── mod.rs
+│   ├── keychain/
+│   │   └── security_cli.rs
 │   ├── agent.rs
 │   ├── bridge.rs
 │   ├── client.rs
@@ -330,7 +332,7 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 
 </details>
 
-<details><summary><code>dev/</code> · 57 files</summary>
+<details><summary><code>dev/</code> · 59 files</summary>
 
 ```
 ├── deploy/
@@ -392,6 +394,9 @@ Every tracked file per main folder (`git ls-files`; generated files are not in g
 │   ├── rotation.mjs
 │   ├── tempo.mjs
 │   └── worker.mjs
+├── migrate/
+│   ├── scribble-first-format.js
+│   └── test.mjs
 ├── cdp.mjs
 ├── guard.mjs
 ├── ios-extra-vectors.mjs
