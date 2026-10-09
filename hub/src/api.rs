@@ -886,7 +886,14 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             )?;
             Ok(json!({ "deleted": n }))
         }),
-        ("POST", ["live-activity"]) => human_write(app, rq, |x, auth| live_activity_register(app, x, auth, &rq.body)),
+        ("POST", ["live-activity"]) => {
+            let auth = read_auth()?;
+            auth.human()?;
+            let answer = app.write_as(&auth, rq.lease, |x, _| live_activity_register(app, x, &auth, &rq.body))?;
+            // a token that is new has been sent nothing: once it is stored, a round sends it the counts
+            app.live_soon(auth.room);
+            Ok(answer)
+        }
         ("POST", ["link"]) => {
             let auth = read_auth()?;
             // not under the room's recovery lock (a lease must be kept alive through a recovery), but under the
@@ -988,7 +995,7 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
         let known = accounts::knows_source(x.c, row.account(), &source)?;
         Ok((row, known))
     })?;
-    let (account, revision) = (row.account(), row.revision());
+    let revision = row.revision();
     // The slow hash is made on the pool with no database connection held. The attempt is admitted there, at the
     // moment its check starts: time spent waiting for the pool lets nobody check faster than the throttle says.
     let checked = app.pooled(|| -> Res<Checked> {
@@ -998,25 +1005,39 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
                 .check_login(row)
                 .map_or(Checked::Wrong, |(a, copy)| Checked::Found(a, copy)));
         }
-        let t = now();
+        // (the time is taken under the write lock: waiting for it lets nobody start sooner than the line says)
+        let finish = |attempt: i64, found: &Option<(i64, Vec<u8>)>| {
+            app.db.write(|c| match found {
+                Some(_) => throttle::succeeded(c, account_key, &source, attempt),
+                None => throttle::failed(c, account_key, &source, attempt, now()),
+            })
+        };
         match app
             .db
-            .write(|c| throttle::admit(c, account_key, &source, known, account.is_some(), t))?
+            .write(|c| throttle::admit(c, account_key, &source, known, now()))?
         {
             Verdict::Own(wait) => Ok(Checked::Wait(wait)),
-            Verdict::Line { wait, early: false } => {
+            Verdict::Line { wait, early: None } => {
                 // the same work as a check
                 app.accounts.spend(&row);
                 Ok(Checked::Wait(wait))
             }
-            Verdict::Line { wait, early: true } => match app.accounts.check_login(row) {
-                Some((a, copy)) => {
-                    app.db
-                        .write(|c| throttle::early_succeeded(c, account_key, &source))?;
-                    Ok(Checked::Found(a, copy))
-                }
-                None => Ok(Checked::Wait(wait)),
-            },
+            Verdict::Line {
+                wait,
+                early: Some(attempt),
+            } => {
+                // a source the account knows: checked on record; a wrong credential is told to wait its turn
+                let mut checking = Checking {
+                    app,
+                    account: account_key,
+                    source: &source,
+                    attempt: Some(attempt),
+                };
+                let found = app.accounts.check_login(row);
+                finish(attempt, &found)?;
+                checking.attempt = None;
+                Ok(found.map_or(Checked::Wait(wait), |(a, copy)| Checked::Found(a, copy)))
+            }
             Verdict::Check { attempt } => {
                 let mut checking = Checking {
                     app,
@@ -1025,10 +1046,7 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
                     attempt: Some(attempt),
                 };
                 let found = app.accounts.check_login(row);
-                app.db.write(|c| match found {
-                    Some(_) => throttle::succeeded(c, account_key, &source, attempt),
-                    None => throttle::failed(c, account_key, &source, attempt, now()),
-                })?;
+                finish(attempt, &found)?;
                 checking.attempt = None;
                 Ok(found.map_or(Checked::Wrong, |(a, copy)| Checked::Found(a, copy)))
             }
@@ -1221,8 +1239,6 @@ fn live_activity_register(app: &Arc<App>, x: &delivery::Ctx, auth: &Auth, v: &Va
            {column} = excluded.{column}"
     ))?
     .execute(rusqlite::params![&auth.room[..], &auth.device[..], environment, topic, tag, token, x.now as i64])?;
-    // a token that is new has been sent nothing: the next round sends it the counts
-    app.live_soon(auth.room);
     Ok(json!({ "registered": true }))
 }
 

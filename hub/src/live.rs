@@ -44,8 +44,9 @@ impl Stream {
     /// its connection is cut.
     fn overflow(&self) {
         if !self.ended.swap(true, Ordering::Relaxed) {
-            let _ = self.tx.send(Msg::End);
-            if let Some(cut) = &self.cut {
+            let closed = self.tx.send(Msg::End).is_err();
+            // (a stream whose body is gone holds no connection any more)
+            if let (Some(cut), false) = (&self.cut, closed) {
                 cut.notify_one();
             }
         }
@@ -129,7 +130,8 @@ impl Stream {
         self.overflow();
         // a stream that had ended already (its reader stalled before the end) still holds a connection: cut
         // whatever happened before; what was queued is dropped by the body, which knows the time
-        if let Some(cut) = &self.cut {
+        // (a stream whose body is gone holds no connection any more: that connection may serve someone else)
+        if let (Some(cut), false) = (&self.cut, self.tx.is_closed()) {
             cut.notify_one();
         }
     }
