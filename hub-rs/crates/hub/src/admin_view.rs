@@ -650,6 +650,9 @@ fn account_detail(src: &Source, c: &Connection, room: &str, has: &dyn Fn(&str, O
         let rows = ask(src, c, "SELECT level, sum(endpoint NOT LIKE 'apns:%'), sum(endpoint LIKE 'apns:%') FROM push_subscriptions WHERE room_id = ? GROUP BY level ORDER BY level", &[room]);
         more.push(("push registrations", if rows.is_empty() { "0".into() } else { rows.iter().map(|r| format!("{}: {} Web Push, {} APNs", esc(&text_of(r.first())), esc(&num(r.get(1))), esc(&num(r.get(2))))).collect::<Vec<_>>().join("<br>") }));
     }
+    if has("live_activities", None) {
+        more.push(("Live Activity registrations", esc(&num(one("SELECT count(*) FROM live_activities WHERE room_id = ?").first()))));
+    }
     if has("invites", None) {
         more.push(("open invites", esc(&num(one("SELECT count(*) FROM invites WHERE room_id = ? AND used_at IS NULL AND burned_at IS NULL").first()))));
     }

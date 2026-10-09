@@ -312,6 +312,8 @@ try {
       }
     }
     assert.equal(classOf('envelopes', 'encrypted_body'), 'e2e');
+    // Readable by the hub, and still never shown in full: the secrets it needs to send a push.
+    for (const col of ['endpoint', 'subscription', 'start_token', 'activity_token', 'email']) assert.ok(isOpaque(col), `${col} is masked`);
     assert.equal(classOf('settings', 'key'), 'none');
     // hub-rs carries the same table and stylesheet, generated: it must be the current one.
     const check = spawnSync(process.execPath, [new URL('../hub-rs/crates/hub/gen-admin-assets.mjs', import.meta.url).pathname, '--check'], { encoding: 'utf8' });
@@ -492,6 +494,7 @@ try {
       assert.match(account, /<span class="mono">envelopes\.encrypted_body<\/span>/);
       assert.match(account, /<span class="mono">sealed_room_keys\.key_sealed<\/span>/);
       assert.match(account, /No account: this room has no email sign-in/);
+      assert.match(account, /<dt>Live Activity registrations<\/dt><dd>0<\/dd>/);
       // The test-account cleanup end to end: the hub's own action, a backup, the room gone.
       hub.db.prepare('INSERT INTO accounts (room_id, email, created_at, updated_at, revision, auth_salt, auth_hash, key_wrapped, kdf) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(roomId, 'e2e@example.org', 1, 1, 1, Buffer.alloc(16), Buffer.alloc(32), Buffer.alloc(61), '{}');
