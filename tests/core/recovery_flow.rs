@@ -716,7 +716,7 @@ fn the_code_is_replaced_as_one_request_and_the_new_one_reads_everything() {
     assert!(!w.b.holds_recovery_mac());
     assert_eq!(w.b.update(&w.main, true, now()), Err(Error::NoKey));
     let asked = w.a.send_recovery_auth(&w.b.id()).unwrap();
-    assert_eq!(w.a.outbox()[0].id, asked);
+    assert_eq!(Some(w.a.outbox()[0].id), asked);
     post_ok(&mut w.hub, &mut w.a);
     let processed = settle(&w.hub, &mut w.b);
     // The one sent to all reaches it with the log, and the one it asked for brings nothing new.
@@ -1486,4 +1486,247 @@ fn what_a_thief_of_recovery_mac_can_and_cannot_do() {
     assert_eq!(real.key, w.a.content_key(&w.main, later).unwrap());
     assert!(real.confirmed);
     assert_eq!(checked.anchor.epoch, w.hub.epoch(&w.room).unwrap());
+}
+
+// ---- what the second review found ----
+
+#[test]
+fn a_row_for_an_epoch_a_group_has_not_reached_poisons_no_key() {
+    // The hub knows the epoch a join will lead to and serves a row of its own for it, sealed to the public
+    // recovery key: the device would hold the hub's key where its own group state derives the real one.
+    let mut w = world(true);
+    let keys = test_keys();
+    let state = w.hub.history().unwrap().newest().clone();
+    let plant = |hub: &Hub, group: GroupId, mac: bool| {
+        let epoch = hub.epoch(&group).unwrap() + 1;
+        SealedKey::seal(
+            &mut SystemEntropy,
+            &Sealing {
+                context: KeyContext::of(&group, epoch, b"some group info").unwrap(),
+                room_epoch: state.epoch,
+                recovery_hpke_key: &state.room.recovery_hpke_key,
+                writer: w.a.id(),
+                content_key: &Secret::new([0x99; 32]),
+            },
+            mac.then(|| Secret::new([1; 32])).as_ref(),
+        )
+        .unwrap()
+        .to_bytes()
+        .unwrap()
+    };
+    let mut c = new_device();
+    let mut fetched = fetch(&w.hub, &keys);
+    for group in w.groups() {
+        fetched.rows.push(plant(&w.hub, group, false));
+        fetched.rows.push(plant(&w.hub, group, true));
+    }
+    let checked = fetched.served(|served| check_room(&keys, served)).unwrap();
+    assert!(!checked
+        .keys
+        .iter()
+        .any(|key| key.key == Secret::new([0x99; 32])));
+    fetched
+        .served(|served| c.join_room_with_code(&keys, served, now()))
+        .unwrap();
+    post_ok(&mut w.hub, &mut c);
+    for group in [w.main, w.side] {
+        join_session(&w.hub, &mut c, &keys, &group).unwrap();
+        post_ok(&mut w.hub, &mut c);
+    }
+    w.settle_all();
+    for group in w.groups() {
+        let epoch = w.hub.epoch(&group).unwrap();
+        assert_eq!(
+            c.content_key(&group, epoch).unwrap(),
+            w.a.content_key(&group, epoch).unwrap()
+        );
+        assert!(c.key_is_confirmed(&group, epoch));
+    }
+}
+
+#[test]
+fn the_log_decides_a_join_whose_answer_never_came() {
+    let mut w = world(true);
+    let keys = test_keys();
+    // The hub took the join and the answer was lost; the room went on.
+    let mut c = new_device();
+    let built = join_room(&w.hub, &mut c, &keys).unwrap();
+    let entry = c.outbox().remove(0);
+    w.hub.post(&c.id(), &entry).unwrap();
+    w.settle_all();
+    w.a.update(&w.room, true, now()).unwrap().unwrap();
+    post_ok(&mut w.hub, &mut w.a);
+    // The log brings the join by: the copy becomes the real state there, and the Commit behind it is
+    // processed as a member. Nothing is passed over.
+    let processed: Vec<Processed> = sync(&w.hub, &mut c)
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert!(processed.contains(&Processed::OwnCommit));
+    assert!(matches!(processed.last(), Some(Processed::Commit { .. })));
+    assert!(c.is_human() && c.outbox().is_empty());
+    let epoch = w.hub.epoch(&w.room).unwrap();
+    assert_eq!(c.group(&w.room).unwrap().epoch, epoch);
+    assert_eq!(
+        c.content_key(&w.room, epoch).unwrap(),
+        w.a.content_key(&w.room, epoch).unwrap()
+    );
+    assert_eq!(
+        c.outbox_accepted(built.outbox[0], Default::default()),
+        Err(Error::NotFound)
+    );
+
+    // Another Commit took the epoch a join was built on: the join is dropped and built again.
+    let mut d = new_device();
+    let built = join_room(&w.hub, &mut d, &keys).unwrap();
+    w.a.update(&w.room, true, now()).unwrap().unwrap();
+    post_ok(&mut w.hub, &mut w.a);
+    assert_eq!(post_refused(&mut w.hub, &mut d), [Error::EpochTaken]);
+    let mut e = new_device();
+    let built_e = join_room(&w.hub, &mut e, &keys).unwrap();
+    w.a.update(&w.room, true, now()).unwrap().unwrap();
+    post_ok(&mut w.hub, &mut w.a);
+    let processed = sync(&w.hub, &mut e);
+    assert!(processed.contains(&Ok(Processed::JoinSuperseded {
+        superseded: built_e.outbox[0]
+    })));
+    assert!(e.outbox().is_empty() && e.room().is_none());
+    assert!(d.outbox().is_empty() && built.outbox.len() == 1);
+    join_room(&w.hub, &mut e, &keys).unwrap();
+    post_ok(&mut w.hub, &mut e);
+    assert!(e.is_human());
+}
+
+#[test]
+fn a_recovery_mac_that_was_asked_for_is_sent_again_after_wrong_epoch() {
+    let mut w = world(true);
+    // The message is made, and before it is posted another device's Commit ends its epoch.
+    let sent = w.a.send_recovery_auth(&w.b.id()).unwrap();
+    assert!(sent.is_some());
+    w.b.update(&w.room, true, now()).unwrap().unwrap();
+    post_ok(&mut w.hub, &mut w.b);
+    let entry = w.a.outbox().remove(0);
+    assert_eq!(w.hub.post(&w.a.id(), &entry), Err(Error::WrongEpoch));
+    // 7.0: process the log, encrypt again. The device still owes it and does so by itself.
+    settle(&w.hub, &mut w.a);
+    w.a.outbox_refused(entry.id, &Error::WrongEpoch).unwrap();
+    let again = w.a.outbox();
+    assert_eq!(again.len(), 1);
+    assert_ne!(again[0].parts, entry.parts);
+    post_ok(&mut w.hub, &mut w.a);
+    let processed = settle(&w.hub, &mut w.b);
+    assert!(matches!(
+        processed.last(),
+        Some(Processed::Message(Received::RecoveryAuth {
+            new: false,
+            ..
+        }))
+    ));
+    // While a Commit of its own is pending it waits for that Commit and goes out behind it.
+    w.a.update(&w.room, true, now()).unwrap().unwrap();
+    assert_eq!(w.a.send_recovery_auth(&w.b.id()), Ok(None));
+    assert_eq!(w.a.outbox().len(), 1);
+    post_ok(&mut w.hub, &mut w.a);
+    let processed = settle(&w.hub, &mut w.b);
+    assert!(matches!(
+        processed.last(),
+        Some(Processed::Message(Received::RecoveryAuth {
+            new: false,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn no_row_is_posted_alone_for_a_stale_or_archived_session() {
+    let mut w = world(true);
+    let info = w.hub.group_info(&w.side).unwrap().clone();
+    // A row made while the session was live, posted after a removal made it stale.
+    w.b.post_sealed_key(&w.side, &info, &w.hub.rows())
+        .unwrap()
+        .unwrap();
+    let entry = w.b.outbox().remove(0);
+    w.a.remove_human_devices(&[Cut::none(w.b.id())], now())
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.a);
+    let refusal = w.hub.post(&w.b.id(), &entry).unwrap_err();
+    assert!(
+        matches!(refusal, Error::Forbidden | Error::RoomBehind),
+        "{refusal:?}"
+    );
+    // The remaining human device builds none while the group is stale.
+    assert_eq!(
+        w.a.post_sealed_key(&w.side, &info, &w.hub.rows()),
+        Err(Error::StaleSession)
+    );
+    for group in [w.main, w.side] {
+        let cuts = trommi_tests::cuts_for(&w.a, &group);
+        w.a.clean_session(&group, &cuts, None, now()).unwrap();
+        post_ok(&mut w.hub, &mut w.a);
+    }
+    // Nor for an archived one. The opener makes an epoch whose row has no mac.
+    for device in [&mut w.a, &mut w.agent, &mut w.helper] {
+        settle(&w.hub, device);
+    }
+    let mut another = new_device();
+    observe(&w.hub, &mut another);
+    let package = another.key_package(now()).unwrap();
+    w.agent
+        .add_to_session(&w.side, &another.id(), &package, now())
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.agent);
+    settle(&w.hub, &mut w.a);
+    let info = w.hub.group_info(&w.side).unwrap().clone();
+    let built = w.a.post_sealed_key(&w.side, &info, &w.hub.rows()).unwrap();
+    assert!(built.is_some());
+    w.hub.archive(&w.side);
+    assert_eq!(post_refused(&mut w.hub, &mut w.a), [Error::Gone]);
+    w.a.archive(&w.side).unwrap();
+    assert_eq!(
+        w.a.post_sealed_key(&w.side, &info, &w.hub.rows()),
+        Err(Error::Gone)
+    );
+}
+
+#[test]
+fn a_recovery_whose_answers_were_lost_is_answered_again_like_the_first_time() {
+    let mut w = world(true);
+    let keys = test_keys();
+    let store = MemoryStorage::new();
+    let handle = store.handle();
+    let mut device = new_device_on(store);
+    w.hub.open_recovery(&device.id()).unwrap();
+    let fetched = fetch(&w.hub, &keys);
+    // While it runs, every reader sees the state from before, whatever it asks.
+    let before = (w.hub.change(), w.hub.epoch(&w.room), w.hub.rows().len());
+    recover(&mut w.hub, &mut device, &keys, &fetched).unwrap();
+    let entries = device.outbox();
+    let mut answers = Vec::new();
+    for entry in &entries {
+        // Every part is posted twice: the answer to the first post was lost.
+        let answer = w.hub.post(&device.id(), entry).unwrap();
+        assert_eq!(w.hub.post(&device.id(), entry), Ok(answer));
+        if entry.kind == OutboxKind::RecoveryCommit {
+            assert_eq!(
+                (w.hub.change(), w.hub.epoch(&w.room), w.hub.rows().len()),
+                before
+            );
+            assert_eq!(fetch(&w.hub, &keys), fetched);
+        }
+        answers.push(answer);
+    }
+    assert!(!w.hub.recovery_runs());
+    // The device crashed before it heard any of it: it posts all again and adopts on the finish.
+    drop(device);
+    let mut device = reopen(handle.reopened()).unwrap();
+    assert!(!device.is_human() && device.outbox().len() == entries.len());
+    for (entry, answer) in device.outbox().iter().zip(answers) {
+        assert_eq!(w.hub.post(&device.id(), entry), Ok(answer));
+        device.outbox_accepted(entry.id, answer).unwrap();
+    }
+    assert!(device.is_human() && device.outbox().is_empty());
+    assert_eq!(
+        device.group(&w.room).unwrap().epoch,
+        w.hub.epoch(&w.room).unwrap()
+    );
 }
