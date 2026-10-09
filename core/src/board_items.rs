@@ -18,11 +18,14 @@
 //! different writers arrived in. The items of one writer come in the order of its chain; [`Board::apply`]
 //! skips what a writer's applied number already covers.
 
+use crate::board::ShapeId;
+use crate::chain::{Head, HeadsWire};
 use crate::crypto::SecretBytes;
+use crate::envelope::MAX_PAYLOAD_LEN;
 use crate::error::Error;
 use crate::files::FileRef;
-use crate::ids::{self, DeviceId, Hash32};
-use serde::de::{self, Deserializer, MapAccess, Visitor};
+use crate::ids::{self, DeviceId};
+use serde::de::{self, Deserializer, Visitor};
 use serde::ser::{SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -37,8 +40,6 @@ pub const QUANTUM: i32 = 16;
 pub const SCHEMA_VERSION: u64 = 2;
 /// The version a snapshot file names.
 pub const SNAPSHOT_VERSION: u64 = 3;
-/// The most bytes of an item's payload (section 16).
-pub const MAX_ITEM_LEN: usize = 60_000;
 /// The most bytes of a snapshot file's JSON: the largest file of section 11.1.
 pub const MAX_SNAPSHOT_LEN: usize = 64 * 1024 * 1024;
 /// The most points of one stroke, and of one piece of a stroke in progress.
@@ -60,64 +61,6 @@ pub const MAX_WIDTH: i32 = 1_000 * QUANTUM;
 
 const FLAG_TILT: u8 = 1;
 const FLAG_SIMULATED: u8 = 2;
-
-// ---- shape ids ----
-
-/// The id of one shape: `<sender>/<envelope number>/<index>`, the sender in base64url, the two numbers in
-/// decimal without leading zeros. Erase, move and send away name shapes by it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ShapeId {
-    /// The device that drew the shape.
-    pub sender: DeviceId,
-    /// The number, in the sender's chain in the room group, of the envelope that carries it.
-    pub seq: u64,
-    /// Its place among the shapes of that envelope, from 0.
-    pub index: u32,
-}
-
-/// A whole number as this format writes it: digits only, no sign, no leading zero.
-fn decimal<T: std::str::FromStr>(text: &str) -> Result<T, Error> {
-    let canonical = !text.is_empty()
-        && text.bytes().all(|b| b.is_ascii_digit())
-        && (text == "0" || !text.starts_with('0'));
-    if !canonical {
-        return Err(Error::BadFormat);
-    }
-    text.parse().map_err(|_| Error::BadFormat)
-}
-
-impl ShapeId {
-    /// The shape id this text names; `bad-format` for anything but its one canonical form.
-    pub fn parse(text: &str) -> Result<Self, Error> {
-        let mut parts = text.split('/');
-        let (Some(sender), Some(seq), Some(index), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            return Err(Error::BadFormat);
-        };
-        let seq: u64 = decimal(seq)?;
-        if seq == 0 {
-            return Err(Error::BadFormat);
-        }
-        Ok(Self {
-            sender: DeviceId::from_base64url(sender)?,
-            seq,
-            index: decimal(index)?,
-        })
-    }
-}
-
-impl fmt::Display for ShapeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}/{}/{}",
-            self.sender.to_base64url(),
-            self.seq,
-            self.index
-        )
-    }
-}
 
 // ---- the points of a stroke ----
 
@@ -897,7 +840,7 @@ impl ItemBody {
     }
 
     /// The payload of the item: JSON. `bad-format` if a value is outside what this module reads back,
-    /// `too-large` above [`MAX_ITEM_LEN`] bytes. The bytes may hold file keys.
+    /// `too-large` above [`MAX_PAYLOAD_LEN`] bytes. The bytes may hold file keys.
     pub fn encode(&self) -> Result<SecretBytes, Error> {
         self.check()?;
         let ids = |shapes: &[ShapeId]| Some(shapes.iter().map(ShapeId::to_string).collect());
@@ -915,15 +858,15 @@ impl ItemBody {
             shape_ids,
             offset,
         };
-        to_json(&body, MAX_ITEM_LEN)
+        to_json(&body, MAX_PAYLOAD_LEN)
     }
 
-    /// The body a payload holds. `too-large` above [`MAX_ITEM_LEN`] bytes; `newer-version` for a
+    /// The body a payload holds. `too-large` above [`MAX_PAYLOAD_LEN`] bytes; `newer-version` for a
     /// `schema_version` above 2 (tell the board with [`Board::skip_newer`]); `bad-format` for everything else
     /// that [`ItemBody::encode`] would not have written, except fields this version does not know, which are
     /// ignored.
     pub fn decode(payload: &[u8]) -> Result<Self, Error> {
-        if payload.len() > MAX_ITEM_LEN {
+        if payload.len() > MAX_PAYLOAD_LEN {
             return Err(Error::TooLarge);
         }
         let version: VersionIn = serde_json::from_slice(payload).map_err(|_| Error::BadFormat)?;
@@ -995,9 +938,6 @@ pub enum Applied {
     /// the board (erased before, or not yet there) is not listed.
     Changed(Vec<ShapeId>),
 }
-
-/// Per writer, the number and hash of its last envelope in the room group that a snapshot covers (10.2).
-pub type Frontier = BTreeMap<DeviceId, (u64, Hash32)>;
 
 /// One Scribble Board: what its items add up to.
 ///
@@ -1135,23 +1075,21 @@ impl Board {
 
     /// The snapshot file of the board as it is now (10.2): JSON, to be compressed and stored as a file by the
     /// caller. `frontier` names, per writer, the last envelope in the room group that the caller accepted, and
-    /// so everything this board has taken into account: `bad-format` if it is behind the board for any writer.
+    /// so everything this board has taken into account; it is also what the register `board_snapshot/<board>`
+    /// names. `bad-format` if it is behind the board for any writer, or names a writer twice or a number 0.
     /// `newer-version` if an item was skipped as newer; `too-large` above [`MAX_SNAPSHOT_LEN`] bytes. The bytes
     /// may hold file keys.
-    pub fn snapshot(&self, frontier: &Frontier) -> Result<SecretBytes, Error> {
+    pub fn snapshot(&self, frontier: &[(DeviceId, Head)]) -> Result<SecretBytes, Error> {
         if self.newer_skipped {
             return Err(Error::NewerVersion);
         }
-        let covered = |id: &ShapeId| {
-            frontier
-                .get(&id.sender)
-                .is_some_and(|(seq, _)| id.seq <= *seq)
-        };
+        let heads: BTreeMap<DeviceId, Head> = frontier.iter().copied().collect();
+        let covered = |id: &ShapeId| heads.get(&id.sender).is_some_and(|head| id.seq <= head.seq);
         let behind = self
             .applied
             .iter()
-            .any(|(sender, seq)| frontier.get(sender).is_none_or(|(head, _)| head < seq));
-        if behind || frontier.values().any(|(seq, _)| *seq == 0) {
+            .any(|(sender, seq)| heads.get(sender).is_none_or(|head| head.seq < *seq));
+        if behind || heads.len() != frontier.len() || heads.values().any(|head| head.seq == 0) {
             return Err(Error::BadFormat);
         }
         let file = SnapshotOut {
@@ -1162,9 +1100,9 @@ impl Board {
                     .map(|(id, shape)| (Some(id), shape))
                     .collect(),
             ),
-            frontier: frontier
+            frontier: heads
                 .iter()
-                .map(|(sender, (seq, hash))| (sender.to_base64url(), (*seq, hash.to_base64url())))
+                .map(|(sender, head)| (sender.to_base64url(), (head.seq, head.hash.to_base64url())))
                 .collect(),
             gone: self
                 .gone_ahead
@@ -1182,12 +1120,13 @@ impl Board {
         to_json(&file, MAX_SNAPSHOT_LEN)
     }
 
-    /// The board a snapshot file holds, and its frontier. Items the frontier covers are skipped by
+    /// The board a snapshot file holds. `frontier` is what the register `board_snapshot/<board>` names beside
+    /// the file, ascending by writer: the file must name the same. Items the frontier covers are skipped by
     /// [`Board::apply`] from then on. `newer-version` for a `v` above 3; `too-large` above
-    /// [`MAX_SNAPSHOT_LEN`] bytes; `bad-format` for everything else that [`Board::snapshot`] would not have
-    /// written: a shape beyond the frontier, an id twice or out of order, something kept for a shape the
-    /// frontier covers.
-    pub fn from_snapshot(file: &[u8]) -> Result<(Self, Frontier), Error> {
+    /// [`MAX_SNAPSHOT_LEN`] bytes; `bad-format` for another frontier and for everything else that
+    /// [`Board::snapshot`] would not have written: a shape beyond the frontier, an id twice or out of order,
+    /// something kept for a shape the frontier covers.
+    pub fn from_snapshot(file: &[u8], frontier: &[(DeviceId, Head)]) -> Result<Self, Error> {
         if file.len() > MAX_SNAPSHOT_LEN {
             return Err(Error::TooLarge);
         }
@@ -1199,17 +1138,14 @@ impl Board {
             _ => return Err(Error::BadFormat),
         }
         let file: SnapshotIn = serde_json::from_slice(file).map_err(|_| Error::BadFormat)?;
-
-        let mut frontier = Frontier::new();
-        let mut board = Self::new();
-        for (sender, (seq, hash)) in &file.frontier.0 {
-            let sender = DeviceId::from_base64url(sender)?;
-            let head = (*seq, Hash32::from_base64url(hash)?);
-            if *seq == 0 || frontier.insert(sender, head).is_some() {
-                return Err(Error::BadFormat);
-            }
-            board.applied.insert(sender, *seq);
+        if file.frontier.heads()? != frontier {
+            return Err(Error::BadFormat);
         }
+        let mut board = Self::new();
+        board.applied = frontier
+            .iter()
+            .map(|(sender, head)| (*sender, head.seq))
+            .collect();
 
         let mut before = None;
         for mut entry in file.shapes {
@@ -1236,7 +1172,7 @@ impl Board {
             }
             board.moved_ahead.insert(id, offset);
         }
-        Ok((board, frontier))
+        Ok(board)
     }
 }
 
@@ -1255,33 +1191,10 @@ struct SnapshotVersionIn {
     v: u64,
 }
 
-/// The entries of the frontier as they stand in the file, so that a writer named twice shows.
-struct HeadsIn(Vec<(String, (u64, String))>);
-
-impl<'de> Deserialize<'de> for HeadsIn {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Heads;
-        impl<'de> Visitor<'de> for Heads {
-            type Value = HeadsIn;
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("a frontier")
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<HeadsIn, A::Error> {
-                let mut heads = Vec::new();
-                while let Some(head) = map.next_entry()? {
-                    heads.push(head);
-                }
-                Ok(HeadsIn(heads))
-            }
-        }
-        deserializer.deserialize_map(Heads)
-    }
-}
-
 #[derive(Deserialize)]
 struct SnapshotIn {
     shapes: Vec<EntryIn>,
-    frontier: HeadsIn,
+    frontier: HeadsWire,
     gone: Vec<String>,
     moved: Vec<(String, Units, Units)>,
 }
