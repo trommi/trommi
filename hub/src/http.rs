@@ -24,12 +24,46 @@ use crate::live::Msg;
 #[derive(Clone)]
 pub struct Conn {
     pub peer: SocketAddr,
+    /// wakes the connection's task to look whether it is to be cut
     pub cut: Arc<Notify>,
+    /// the number of the request the connection serves now (HTTP/1: one after another)
+    pub serving: Arc<std::sync::atomic::AtomicU64>,
+    /// the highest request number whose answer asked for the cut
+    pub cut_for: Arc<std::sync::atomic::AtomicU64>,
+    /// this request's number
+    pub request: u64,
 }
 
 impl Conn {
+    pub fn new(peer: SocketAddr) -> Self {
+        Conn {
+            peer,
+            cut: Arc::new(Notify::new()),
+            serving: Default::default(),
+            cut_for: Default::default(),
+            request: 0,
+        }
+    }
+
+    /// The same connection, serving its next request.
+    pub fn next_request(&self) -> Self {
+        let request = self.serving.fetch_add(1, Ordering::SeqCst) + 1;
+        Conn {
+            request,
+            ..self.clone()
+        }
+    }
+
+    /// Cuts the connection under this request's answer. A connection that has gone on to a later request is
+    /// left alone: the cut is this answer's, not the next one's.
     pub fn destroy(&self) {
+        self.cut_for.fetch_max(self.request, Ordering::SeqCst);
         self.cut.notify_one();
+    }
+
+    /// Asked by the connection's task when it is woken: is the request it serves now the one to be cut?
+    pub fn is_cut(&self) -> bool {
+        self.cut_for.load(Ordering::SeqCst) == self.serving.load(Ordering::SeqCst)
     }
 }
 
