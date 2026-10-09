@@ -35,7 +35,70 @@ fn parse(md: &str) -> BTreeMap<String, String> {
     out
 }
 
+/// Standard base64, as a PEM body is written.
+fn base64(text: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    let (mut bits, mut count) = (0u32, 0u8);
+    for c in text.bytes() {
+        let value = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => continue,
+        };
+        bits = (bits << 6) | u32::from(value);
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            out.push((bits >> count) as u8);
+            bits &= (1 << count) - 1;
+        }
+    }
+    out
+}
+
+/// What `src/update.rs` holds a release against, written to OUT_DIR/release.rs: the release public key from
+/// release/public-key.pem (the last 32 bytes of its SubjectPublicKeyInfo are the Ed25519 key), the target this
+/// binary is built for, and the release number CI builds it as (TROMMI_RELEASE_VERSION; 0 for any other build).
+fn release_constants(dir: &std::path::Path) {
+    let pem_file = dir.join("../release/public-key.pem");
+    println!("cargo:rerun-if-changed={}", pem_file.display());
+    println!("cargo:rerun-if-env-changed=TROMMI_RELEASE_VERSION");
+    let pem = std::fs::read_to_string(&pem_file).expect("release/public-key.pem");
+    let body: String = pem
+        .lines()
+        .filter(|line| !line.starts_with("-----"))
+        .collect();
+    let der = base64(&body);
+    // SubjectPublicKeyInfo of an Ed25519 key: 12 bytes of header, then the key.
+    assert!(
+        der.len() == 44
+            && der[..12]
+                == [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00],
+        "release/public-key.pem is not an Ed25519 public key"
+    );
+    let version: u64 = match std::env::var("TROMMI_RELEASE_VERSION") {
+        Ok(text) if !text.is_empty() => text
+            .parse()
+            .expect("TROMMI_RELEASE_VERSION is a whole number"),
+        _ => 0,
+    };
+    let code = format!(
+        "/// The release public key: `release/public-key.pem` of this repository, as it was when this was built.\npub const RELEASE_KEY: [u8; 32] = {:?};\n/// The target this binary was built for.\npub const TARGET: &str = {:?};\n/// The release number this binary was built as; 0 for a build that is no release.\npub const RELEASE_VERSION: u64 = {};\n",
+        &der[12..],
+        std::env::var("TARGET").expect("TARGET"),
+        version
+    );
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    std::fs::write(out.join("release.rs"), code).expect("OUT_DIR/release.rs");
+}
+
 fn main() {
+    release_constants(&std::path::PathBuf::from(
+        std::env::var("CARGO_MANIFEST_DIR").unwrap(),
+    ));
     let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let prompt = dir.join("prompt.md");
     let tools = dir.join("tools.json");

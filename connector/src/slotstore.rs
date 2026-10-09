@@ -16,6 +16,9 @@ pub struct SlotStore {
     journal: Journal,
     /// The client at work on this state, once there is one: from then on it alone commits.
     client: Mutex<Weak<Client>>,
+    /// Values set and not yet written, by name: a writer takes whatever is newest when its turn comes, so an
+    /// older value never lands after a newer one.
+    waiting: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
 }
 
 /// Where a slot's state lives: beside its key file, `<name>.state/`.
@@ -29,6 +32,7 @@ impl SlotStore {
         Ok(Arc::new(SlotStore {
             journal: Journal::open(&state_dir(key_file))?,
             client: Mutex::new(Weak::new()),
+            waiting: Arc::new(Mutex::new(Default::default())),
         }))
     }
 
@@ -64,10 +68,21 @@ impl SlotStore {
             .upgrade();
         match client {
             Some(client) => {
-                let name = name.to_string();
+                self.waiting
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(name.to_string(), value);
+                let waiting = self.waiting.clone();
                 tokio::spawn(async move {
                     let mut core = client.core.lock().await;
-                    core.kv_set(&name, &value);
+                    let newest =
+                        std::mem::take(&mut *waiting.lock().unwrap_or_else(|e| e.into_inner()));
+                    if newest.is_empty() {
+                        return;
+                    }
+                    for (name, value) in &newest {
+                        core.kv_set(name, value);
+                    }
                     if let Err(fault) = core.commit() {
                         eprintln!("[trommi] state not written: {}", fault.code);
                     }

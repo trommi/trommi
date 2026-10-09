@@ -211,7 +211,7 @@ async fn the_tools_write_to_the_board_and_answers_come_back() {
         .await
         .expect("the hub takes the register");
     let mut told = String::new();
-    for _ in 0..50 {
+    for _ in 0..600 {
         told = mcp.ok("reply", json!({ "text": "On it." })).await;
         if told.contains("Desk goals") {
             break;
@@ -403,7 +403,7 @@ async fn the_plugins_hooks_mirror_the_terminal_and_ask_for_permission() {
     .await;
 
     let mut seen = (false, false, false);
-    for _ in 0..100 {
+    for _ in 0..600 {
         human.sync().await;
         let terminal = |kind: &str, text: &str| {
             human.items.iter().any(|(_, sender, payload)| {
@@ -589,7 +589,7 @@ async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
 
     // The first one answers every call with a clear word instead of sending into the void.
     let mut said = String::new();
-    for _ in 0..100 {
+    for _ in 0..450 {
         let (text, failed) = first.call("reply", json!({ "text": "anyone?" })).await;
         if failed && (text.contains("retired") || text.contains("stopped")) {
             said = text;

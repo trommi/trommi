@@ -21,7 +21,8 @@ tls_codec = "=0.5.0"
 trommi-core-swift = { path = "../core/swift" }
 # the hub and what its test clients need (tests/hub/…)
 trommi-hub = { path = "../hub" }
-# the hub's updater and what its tests sign with (tests/deploy/…)
+# the hub's updater and what its tests sign with (tests/deploy/…); ed25519-dalek also makes the throwaway release
+# key of tests/connector/update.rs
 trommi-hub-updater = { path = "../hub/updater" }
 ed25519-dalek = "=2.2.0"
 tokio = { version = "=1.53.2", features = ["rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }
@@ -249,6 +250,10 @@ path = "connector/html.rs"
 [[test]]
 name = "connector_store"
 path = "connector/store.rs"
+
+[[test]]
+name = "connector_update"
+path = "connector/update.rs"
 
 [[test]]
 name = "deploy_updater"

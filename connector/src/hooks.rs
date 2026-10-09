@@ -104,7 +104,8 @@ pub fn preview_of(tool_input: &Value) -> (String, String) {
         Some(Value::String(d)) => d.clone(),
         _ => String::new(),
     };
-    (clip(&desc, 300), clip(&preview, 600))
+    // Sent to the board without anyone looking at it first: secrets are taken out before it is cut.
+    (clip(&redact(&desc), 300), clip(&redact(&preview), 600))
 }
 /// The line the board gets for a denial.
 pub fn denied_text(tool_name: &str, reason: &str, tool_input: &Value) -> String {

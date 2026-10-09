@@ -3024,6 +3024,7 @@ name = "trommi-connector"
 version = "0.2.0"
 dependencies = [
  "bytes",
+ "ed25519-dalek",
  "fancy-regex",
  "futures-util",
  "regex",
