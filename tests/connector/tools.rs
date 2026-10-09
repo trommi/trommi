@@ -513,3 +513,49 @@ async fn a_connector_killed_at_work_is_the_same_member_when_it_starts_again() {
     assert_eq!(texts, said);
     mcp.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn say_and_whoami_work_without_a_running_server() {
+    let (_hub, mut human, seat, group) = joined().await;
+    let me = human.vault.seat(&group).expect("the agent");
+    let run = |args: &'static [&'static str]| {
+        let mut command = seat.command(args);
+        async move {
+            let output = command
+                .stdin(std::process::Stdio::null())
+                .output()
+                .await
+                .expect("the command runs");
+            (
+                output.status.success(),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            )
+        }
+    };
+    let (ok, out, err) = run(&["say", "The build machine is out of disk."]).await;
+    assert!(ok, "{out}\n{err}");
+    human.sync().await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+    assert!(human.items.iter().any(|(_, sender, payload)| *sender == me
+        && payload["text"] == "The build machine is out of disk."));
+
+    let (ok, out, _) = run(&["whoami"]).await;
+    assert!(ok);
+    let who: Value = serde_json::from_str(&out).expect("JSON");
+    assert_eq!(who["room_id"], human.room.to_base64url());
+    assert_eq!(who["has_key"], true);
+
+    // A second process cannot hold the same state: the server owns it, `say` goes through its door.
+    let mut mcp = seat.serve().await;
+    mcp.ready().await;
+    let (ok, out, err) = run(&["say", "Said through the running connector."]).await;
+    assert!(ok, "{out}\n{err}");
+    human.sync().await;
+    assert!(human
+        .items
+        .iter()
+        .any(|(_, _, payload)| payload["text"] == "Said through the running connector."));
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+    mcp.close().await;
+}
