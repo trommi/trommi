@@ -80,6 +80,7 @@ path = "core/groups_lifetimes.rs"
 name = "core_groups_cost"
 path = "core/groups_cost.rs"
 
+[[test]]
 name = "core_content_board"
 path = "core/content_board.rs"
 
