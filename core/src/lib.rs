@@ -5,7 +5,7 @@
 //! # Layers
 //!
 //! - **Foundation**: [`error`], [`ids`], [`codec`], [`crypto`], [`store`]. They know nothing of the rest.
-//! - **Pure modules**: [`envelope`], [`chain`], [`objects`], [`registers`], [`board`], [`files`], [`invite`],
+//! - **Pure modules**: [`envelope`], [`chain`], [`objects`], [`registers`], [`board`], [`board_items`], [`trail`], [`files`], [`invite`],
 //!   [`hub_auth`], [`push`], [`account`], [`recovery`]. Bytes and state in, bytes and state out: no store, no
 //!   OpenMLS group. Where one needs a fact about a group, it declares a small trait for exactly that fact.
 //! - **MLS**: [`mls`] wraps OpenMLS.
@@ -29,6 +29,7 @@
 
 pub mod account;
 pub mod board;
+pub mod board_items;
 pub mod chain;
 pub mod codec;
 pub mod crypto;
@@ -45,6 +46,7 @@ pub mod push;
 pub mod recovery;
 pub mod registers;
 pub mod store;
+pub mod trail;
 
 pub use error::Error;
 
