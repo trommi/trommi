@@ -34,7 +34,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `PUT /v2/key-packages` | `{ single_use: [..], last_resort? }` → `{ unused }` | 14.2; `bad-key-package` |
 | `POST /v2/key-packages/claim` | `{ devices: [..] }` → `{ key_packages: { device: bytes } }` | one each, all or nothing; the last-resort one when none is left; none uploaded more than 90 days ago |
 | `GET /v2/rooms/{room}/groups` | → `[ { group_id, kind, session_id, parent, epoch, live, stale, leaves } ]` | what the asker may see: a human device all, another device its own groups and the room group |
-| `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, more }` | 8.3; reading: human devices and the recovery key |
+| `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
 | `POST /v2/requests` · `GET /v2/requests` | `{ kind: readmit \| handover \| session, group?, key_package? }` | an unsigned wish of the signed-in device to the human devices (5.2.7, 5.3.5, 7.1, 13.4); nothing follows from it without a Commit |
 | **Content** | | |
 | `POST /v2/envelopes` | `{ envelope }` → `{ change }` or a refusal with `voided` | every stored item (9); the hub files it by its header |
@@ -128,12 +128,17 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   its next attempt at that e-mail (`rate-limited` with `retry-after`); a success ends it. That is at most 13
   guesses in the first hour and 4 an hour after, per source and account. Per account: 100 attempts an hour from
   sources that never signed in to it; past that, such sources are served one every two seconds in the order they
-  came (each is told its turn by `retry-after` and is checked when it comes back then): at most 1 900 guesses an
-  hour per account from unknown sources, however many they are. A source the account knows (one of the last 16
+  came (each is told its turn by `retry-after` and is checked when it comes back then, never sooner than two
+  seconds after the one before): at most 1 900 guesses an hour per account from unknown sources, however many
+  they are. The line is ten minutes long; a source that finds it full is told to ask again in a minute. A source the account knows (one of the last 16
   it was signed in to from; the hub keeps a keyed hash, not the address) is never put in that line, and a
   correct credential is never refused on account of others: it is checked at once, or in its turn. The password
   and the Emergency Kit are counted apart; an e-mail without an account behaves the same. One answer and one
-  cost for every failure, as before.
+  cost for every failure, as before. A source has one attempt at an account being checked at a time. One IPv6
+  network (/64) is one source. Not covered by an address-based rule, and left so: someone guessing from the
+  owner's own address (the same NAT) slows the owner's attempts from there down as well.
+- A successful login is answered only if the account still is as the check found it (its revision); a password,
+  kit or passkey replaced meanwhile makes the login start over (`overloaded`).
 - Other limits: 30 logins per address in ten minutes; 20 passkeys per account. A passkey challenge of an account
   is bound to the account's revision.
 
@@ -167,8 +172,9 @@ encrypted.
     days and leave holes in `n`, Commits never. `GET …/info?epoch=0` is kept as long as the group is.
 11. A Welcome is deleted when its device first writes in the group or leaves it. Requests: a device keeps its 16
     newest for seven days; a `reject` (14.7) is a leaf's and appears among them with its `committer`.
-12. A single-use KeyPackage that was handed out is never handed out again, also when it is uploaded again (its
-    reference is kept for good). A claim
+12. A single-use KeyPackage that was handed out is never handed out again, in any room of the hub, also when
+    it is uploaded again or its device is removed (its reference is kept for good). A KeyPackage is handed out
+    no longer than its own lifetime says. A claim
     names a device once. A helper device claims none. Leaves and KeyPackages carry exactly the capabilities of
     v2.md section 3; a GroupInfo is at most 96 KiB.
 13. A repeated post of the same bytes gets the first answer for: a founding, a Commit, an application message, an
@@ -228,17 +234,25 @@ encrypted.
     deleted file's id, an archived group and a void record stay): 50 000 file ids, zero-byte and deleted ones too
     (`quota-exceeded`); 20 000 register ids (`too-many`, the envelope takes no number); 100 000 void records
     (past that, a refusal that would be a void comes without `voided` and uses no number); 5 000 groups,
-    archived ones too (`too-many`); 10 000 helper devices ever seen (`too-many`). Nothing is deleted to make
-    room.
+    archived ones too (`too-many`); 10 000 helper devices ever seen and 10 000 human and agent devices ever
+    had (`too-many`). Nothing is deleted to make room.
 30. **Busy.** Verifying a Commit or a GroupInfo, validating KeyPackages and the slow hash of a login key run on a
     bounded pool outside the database's write lock; the write then takes their result only if the group, the
     asker's standing and the account stand where they stood, else it answers `overloaded` (503) with
-    `retry-after` and the client sends the same bytes again. The same answer when the pool's queue or the hub's
-    number of requests at work (256) is full. One device makes at most ten such requests a second (bursts of
+    `retry-after` and the client sends the same bytes again. The same answer when the pool's queue (served in
+    the order of arrival, nobody waits longer than ten seconds) or the hub's number of requests at work (256 in
+    all, 32 of one address) is full. One device makes at most ten such requests a second (bursts of
     60, `rate-limited`).
 31. An agent's lease that ran out is noticed by a timer, not by its stream closing: it no longer counts as
     working, and after a further minute without a stream the human devices are told once ("An agent lost its
     connection.", `presence` with `lost`).
 32. `GET /v2/changes` looks at most 20 000 change numbers ahead per call; `more` says that the cursor has not
     reached the room's newest change.
+33. Numbers of the wire (`uint64`: epochs, sequence numbers, times) above 2^63 − 1 are refused (`bad-format`);
+    cursors in a query are decimal numbers of at most 18 digits.
+34. The update cadence of v2.md 5.2.9 is the clients'; the hub neither asks for an own-leaf update nor refuses
+    one for coming early (it counts among a device's expensive requests, point 30).
+35. Stroke pieces: 20 within any second per device. A stream whose token ran out is cut at that moment; what was
+    queued for it is not sent.
+36. Every failure of `POST /v2/account/passkey/login` is `wrong-login`, a malformed request too.
 28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
