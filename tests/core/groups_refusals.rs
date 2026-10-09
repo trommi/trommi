@@ -5,10 +5,11 @@
 //! trail step without a number.
 
 use trommi_core::codec;
-use trommi_core::device::{log_finding, LogFinding, Processed, Received};
-use trommi_core::ids::{BoardId, GroupId, Hash32, TurnId};
-use trommi_core::mls::message::TrommiMessage;
-use trommi_core::mls::profile::{CommitNote, Cut};
+use trommi_core::crypto::Secret;
+use trommi_core::device::{log_finding, LogFinding, Processed, Received, WelcomeExpectation};
+use trommi_core::ids::{BoardId, DeviceId, GroupId, Hash32, RoomId, TurnId};
+use trommi_core::mls::message::{EpochKey, TrommiMessage};
+use trommi_core::mls::profile::{CommitNote, Cut, TrommiRoom};
 use trommi_core::Error;
 use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
@@ -131,33 +132,28 @@ fn an_agent_device_committing_in_the_room_group() {
 
 #[test]
 fn an_opener_removing_a_human_leaf() {
-    for checks in [true, false] {
-        let World {
-            mut hub,
-            mut a,
-            mut b,
-            mut agent,
-            main,
-            ..
-        } = world(checks);
-        let helper = found_helper(&mut hub, &mut agent, &main, &mut []);
-        settle(&hub, &mut a);
-        settle(&hub, &mut b);
-        let mut device = new_device();
-        let package = device.key_package(now()).unwrap();
-        agent
-            .readmit_helper(&helper, Cut::none(b.id()), &device.id(), &package, now())
-            .unwrap();
-        if checks {
-            assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
-            assert_eq!(hub.epoch(&helper), Some(1));
-        } else {
-            post_ok(&mut hub, &mut agent);
-            refuse(&hub, &mut [&mut a, &mut b], &Error::BadCommit);
-            assert_eq!(b.group(&helper).unwrap().epoch, 1);
-            assert!(b.group(&helper).unwrap().leaves.contains(&b.id()));
-        }
-    }
+    // No operation of the opener builds it: the one that removes a leaf replaces a helper device.
+    // (`rules.rs`, helper_session_commits_follow_5_2_3_to_5_2_5: the opener removes no human leaf.)
+    let World {
+        mut hub,
+        mut a,
+        mut b,
+        mut agent,
+        main,
+        ..
+    } = world(true);
+    let helper = found_helper(&mut hub, &mut agent, &main, &mut []);
+    settle(&hub, &mut a);
+    settle(&hub, &mut b);
+    let mut device = new_device();
+    let package = device.key_package(now()).unwrap();
+    assert_eq!(
+        agent.readmit_helper(&helper, Cut::none(b.id()), &device.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
+    assert!(agent.outbox().is_empty());
+    assert_eq!(hub.epoch(&helper), Some(1));
+    assert!(b.group(&helper).unwrap().leaves.contains(&b.id()));
 }
 
 #[test]
@@ -507,4 +503,67 @@ fn a_work_trail_step_without_a_number() {
         last(&hub, &mut a),
         Ok(Processed::Message(Received::Dropped))
     );
+    // So is a key handover from a helper device (7.1): keys come from a human device or the opener.
+    let handover = TrommiMessage::KeyHandover {
+        recipient: a.id(),
+        keys: vec![EpochKey {
+            group: helper,
+            epoch: 0,
+            content_key: Secret::new([7; 32]),
+        }],
+        last: true,
+    };
+    forger.post_message(&mut hub, &mut forged, &codec::encode(&handover).unwrap());
+    assert_eq!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::Dropped))
+    );
+    assert_eq!(a.content_key(&helper, 0), Err(Error::NoKey));
+}
+
+#[test]
+fn a_welcome_into_a_room_with_too_many_devices() {
+    // No device builds one: the Add of a 33rd human device and the enrolment of a 257th agent device are
+    // refused where they are built and where they are judged (`rules.rs`). A founder that obeys MLS only
+    // makes such rooms, and the device it adds refuses the Welcome (section 16).
+    let room = |agents: usize| TrommiRoom {
+        recovery_signature_key: [0xE1; 32],
+        recovery_hpke_key: [0xE2; 32],
+        // Ascending: the first two bytes count up.
+        agents: (0..agents)
+            .map(|at| {
+                let mut id = [0x70; 32];
+                id[0] = (at >> 8) as u8;
+                id[1] = at as u8;
+                DeviceId::new(id)
+            })
+            .collect(),
+    };
+    for (humans, agents, fits) in [(31, 256, true), (32, 0, false), (1, 257, false)] {
+        let founder = Forger::new();
+        let group = GroupId::room(RoomId::new([humans as u8; 32]));
+        let extension = room(agents);
+        assert_eq!(extension.agents.len(), agents);
+        let mut forged = founder.found_room(&group, &extension);
+        let mut c = new_device();
+        let mut packages: Vec<Vec<u8>> = (1..humans).map(|_| Forger::new().key_package()).collect();
+        packages.push(c.key_package(now()).unwrap());
+        let welcome = founder
+            .commit(&mut forged, b"", &packages)
+            .welcome
+            .expect("a Welcome");
+        let expected = WelcomeExpectation {
+            room: group.room_id(),
+            committer: Some(founder.id()),
+        };
+        let joined = c.join_welcome(&welcome, &expected, now());
+        if fits {
+            let joined = joined.expect("32 human devices and 256 agent devices fit");
+            assert_eq!(c.group(&joined.group).unwrap().leaves.len(), 32);
+        } else {
+            assert_eq!(joined, Err(Error::TooMany), "{humans} and {agents}");
+            assert!(c.groups().unwrap().is_empty());
+            assert_eq!(c.room(), None);
+        }
+    }
 }

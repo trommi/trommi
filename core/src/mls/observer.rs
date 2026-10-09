@@ -141,6 +141,15 @@ fn damaged() -> Error {
     Error::Storage("an observer entry does not decode".into())
 }
 
+/// The refusal of a founding whose first tree holds a leaf that is not the profile's: `bad-commit`, as for
+/// such a leaf in any Commit.
+fn founding(error: Error) -> Error {
+    match error {
+        Error::BadGroup => Error::BadCommit,
+        other => other,
+    }
+}
+
 /// A GroupInfo as it travels, parsed.
 pub(crate) fn parse_group_info(bytes: &[u8]) -> Result<VerifiableGroupInfo, Error> {
     if bytes.len() > MAX_COMMIT_REQUEST_LEN {
@@ -175,7 +184,8 @@ impl Observer {
             .ok_or_else(damaged)
     }
 
-    /// Starts from a GroupInfo with its tree: OpenMLS verifies the tree, every leaf and the GroupInfo's signature.
+    /// Starts from a GroupInfo with its tree: OpenMLS verifies the tree, every leaf and the GroupInfo's
+    /// signature (`bad-signature`), and every leaf must be the profile's (`bad-group`).
     fn start(group_info: &[u8]) -> Result<(Provider, PublicGroup, GroupId, GroupKind), Error> {
         let verifiable = parse_group_info(group_info)?;
         let tree = verifiable
@@ -196,6 +206,12 @@ impl Observer {
             ProposalStore::new(),
         )
         .map_err(|_| Error::BadSignature)?;
+        // OpenMLS takes any credential and any capabilities: that each leaf is the profile's is checked here.
+        rules::profile_leaves(&public)?;
+        // An epoch no group reaches by Commits: such a state is not stored, since it would not open again.
+        if public.group_context().epoch().as_u64() > profile::MAX_STORED_EPOCH {
+            return Err(Error::BadGroup);
+        }
         let (group, kind) = profile::kind_of_context(public.group_context())?;
         Ok((provider, public, group, kind))
     }
@@ -235,6 +251,38 @@ impl Observer {
         ))
     }
 
+    /// An observer of the room group from the public state a leaf of it holds (`public`: the entries of
+    /// [`provider::public_entries`]) and that leaf's record of the roles, whose newest state must be the one
+    /// the public state stands in. For a device that is removed from the room group and follows it from there:
+    /// nothing is verified again, the leaf verified all of it.
+    pub(crate) fn from_member(
+        public: MlsEntries,
+        group: GroupId,
+        history: RoomHistory,
+    ) -> Result<Self, Error> {
+        provider::validate_entries(&public)?;
+        let observer = Self::assemble(
+            Provider::without_entropy(public)?,
+            group,
+            Followed::Room(history),
+        );
+        let held = observer.public()?;
+        let leaves = rules::leaves_of(held.members())?;
+        let stands = rules::room_state_of(held.group_context(), &leaves)?;
+        match &observer.followed {
+            Followed::Room(history) if *history.newest() == stands => Ok(observer),
+            _ => Err(damaged()),
+        }
+    }
+
+    /// The room's roles per epoch, for the holder that takes them over when it becomes a leaf of the room group.
+    pub(crate) fn into_history(self) -> Option<RoomHistory> {
+        match self.followed {
+            Followed::Room(history) => Some(history),
+            Followed::Session(_) => None,
+        }
+    }
+
     /// Follows a session group from a GroupInfo of any epoch, as a helper device follows its main session's
     /// group. What happened before is unknown to it.
     pub fn follow_session(group_info: &[u8], room: &RoomState) -> Result<Self, Error> {
@@ -259,7 +307,7 @@ impl Observer {
         sealed_key: &[u8],
         recovery: &dyn RecoveryRules,
     ) -> Result<(Self, DeviceId), Error> {
-        let observer = Self::follow_room(group_info, None)?;
+        let observer = Self::follow_room(group_info, None).map_err(founding)?;
         let Followed::Room(history) = &observer.followed else {
             return Err(Error::Internal("room observer"));
         };

@@ -3,18 +3,23 @@
 //! do not belong together, and bytes that are no Commit.
 
 use std::collections::BTreeMap;
-use trommi_core::device::{log_finding, LogEntry, LogFinding, LogKind, Processed};
-use trommi_core::ids::{DeviceId, GroupId};
+use trommi_core::crypto::{Secret, SystemEntropy};
+use trommi_core::device::{
+    log_finding, Device, LogEntry, LogFinding, LogKind, Processed, WelcomeExpectation,
+};
+use trommi_core::ids::{DeviceId, GroupId, RoomId};
 use trommi_core::mls::observer::{Context, NoSessions, Observer};
-use trommi_core::mls::profile::Cut;
+use trommi_core::mls::profile::{Cut, TrommiRoom};
 use trommi_core::mls::rules::Parent;
-use trommi_core::recovery::PublicRules;
-use trommi_core::store::{Batch, Entry, OutboxKind};
+use trommi_core::recovery::{KeyContext, PublicRules, SealedKey, Sealing};
+use trommi_core::store::{table, Batch, Entry, OutboxKind};
 use trommi_core::Error;
+use trommi_tests::forge::Forger as Founder;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, enrol, found_helper, found_main, found_room_on, new_device, now, observe, post_ok,
-    post_refused, publish_some, settle, sync, sync_ok, TestDevice,
+    add_forger, add_human, enrol, found_helper, found_main, found_room_on, join_room, join_session,
+    new_device, now, observe, post_ok, post_refused, process, publish_some, reopen, settle,
+    settle_joining, sync, sync_ok, test_keys, MemoryStorage, TestDevice,
 };
 
 struct World {
@@ -341,13 +346,6 @@ fn forgeries() -> Vec<(&'static str, Forgery)> {
                 (Forger::Agent, w.main, Error::BadCommit)
             },
         ),
-        ("an opener removes a human leaf", |w| {
-            let (device, package) = stranger();
-            w.agent
-                .readmit_helper(&w.helper, Cut::none(w.b.id()), &device, &package, now())
-                .unwrap();
-            (Forger::Agent, w.helper, Error::BadCommit)
-        }),
         ("an opener adds an enrolled agent device", |w| {
             let package = w.other.key_package(now()).unwrap();
             w.agent
@@ -358,12 +356,6 @@ fn forgeries() -> Vec<(&'static str, Forgery)> {
         ("a helper device commits", |w| {
             let (device, package) = stranger();
             w.h1.add_to_session(&w.helper, &device, &package, now())
-                .unwrap();
-            (Forger::Helper, w.helper, Error::BadCommit)
-        }),
-        ("a helper device removes the opener", |w| {
-            let (device, package) = stranger();
-            w.h1.readmit_helper(&w.helper, Cut::none(w.agent.id()), &device, &package, now())
                 .unwrap();
             (Forger::Helper, w.helper, Error::BadCommit)
         }),
@@ -487,8 +479,21 @@ fn what_no_device_builds() {
         b,
         room_group,
         main,
+        helper,
         ..
     } = world(true);
+    // The opener removes no human leaf, and a helper device removes nobody: the one operation that replaces
+    // a leaf is the opener's, for a helper device. (The rule on the wire: `rules.rs`,
+    // helper_session_commits_follow_5_2_3_to_5_2_5.)
+    let (device, package) = stranger();
+    assert_eq!(
+        agent.readmit_helper(&helper, Cut::none(b.id()), &device, &package, now()),
+        Err(Error::BadCommit)
+    );
+    assert_eq!(
+        h1.readmit_helper(&helper, Cut::none(agent.id()), &device, &package, now()),
+        Err(Error::Forbidden)
+    );
     // Agent and helper devices commit nothing in the room group (5.1.4): they are no leaves of it, and no
     // operation of theirs makes such a Commit. (The rule on the wire: `rules.rs`, room_commits_follow_5_1.)
     let (device, package) = stranger();
@@ -541,6 +546,500 @@ fn what_no_device_builds() {
         Err(Error::BadFormat)
     );
     assert!(a.outbox().is_empty());
+}
+
+/// A room with one human device and a main session with its agent device.
+fn room_for_joins() -> (Hub, TestDevice, TestDevice, GroupId, GroupId) {
+    let (mut a, mut agent) = (new_device(), new_device());
+    let mut hub = Hub::new(true);
+    let room_group = found_room_on(&mut hub, &mut a);
+    enrol(&mut hub, &mut a, &mut agent);
+    publish_some(&mut hub, &mut agent, 1);
+    let main = found_main(&mut hub, &mut a, &agent.id());
+    settle(&hub, &mut agent);
+    (hub, a, agent, room_group, main)
+}
+
+#[test]
+fn a_join_from_outside_that_lost_its_epoch_is_decided_by_the_log() {
+    let (mut hub, mut a, _agent, room_group, main) = room_for_joins();
+    let keys = test_keys();
+    let mut c = new_device();
+
+    // Another Commit takes the epoch the join was built on. The join is held back like a member's Commit:
+    // out of the outbox, its copy kept, until the log shows which Commit took the epoch.
+    let lost = join_room(&hub, &mut c, &keys).unwrap().outbox[0];
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    assert_eq!(post_refused(&mut hub, &mut c), [Error::EpochTaken]);
+    assert!(c.outbox().is_empty());
+    assert_eq!(join_room(&hub, &mut c, &keys).err(), Some(Error::Busy));
+    // It was the other device's: the join is dropped and said so.
+    let processed = settle(&hub, &mut c);
+    assert_eq!(
+        processed.last(),
+        Some(&Processed::JoinSuperseded {
+            superseded: lost,
+            observed: None
+        })
+    );
+    assert!(!c.is_human() && c.groups().unwrap().is_empty() && c.room().is_none());
+
+    // Built again on the new epoch, the hub takes it and loses its answer; a hub that forgot the post says
+    // `epoch-taken` to the retry. The log shows the device's own Commit: the copy becomes the real state.
+    let mut c = new_device();
+    let id = join_room(&hub, &mut c, &keys).unwrap().outbox[0];
+    let entry = c.outbox().remove(0);
+    hub.post(&c.id(), &entry).unwrap();
+    c.outbox_refused(id, &Error::EpochTaken).unwrap();
+    assert!(c.outbox().is_empty() && !c.is_human());
+    assert_eq!(settle(&hub, &mut c).last(), Some(&Processed::OwnCommit));
+    assert!(c.is_human() && c.outbox().is_empty());
+    assert_eq!(c.group(&room_group).unwrap().epoch, 3);
+    assert_eq!(c.cursor(), hub.change());
+    sync_ok(&hub, &mut a);
+    assert_eq!(
+        a.content_key(&room_group, 3).unwrap(),
+        c.content_key(&room_group, 3).unwrap()
+    );
+
+    // The same in a session group: the join is dropped for the Commit that took its epoch.
+    let lost = join_session(&hub, &mut c, &keys, &main).unwrap();
+    a.update(&main, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    assert_eq!(post_refused(&mut hub, &mut c), [Error::EpochTaken]);
+    assert_eq!(
+        sync_ok(&hub, &mut c),
+        [Processed::JoinSuperseded {
+            superseded: lost,
+            observed: None
+        }]
+    );
+    join_session(&hub, &mut c, &keys, &main).unwrap();
+    post_ok(&mut hub, &mut c);
+    sync_ok(&hub, &mut a);
+    assert_eq!(
+        a.content_key(&main, 3).unwrap(),
+        c.content_key(&main, 3).unwrap()
+    );
+}
+
+/// The keys of `store` that belong to an observer, and those of the device's own record of the room's roles.
+fn role_entries(store: &MemoryStorage) -> (usize, usize) {
+    let entries = store.entries();
+    let of = |sub: u8| {
+        entries
+            .iter()
+            .filter(|entry| entry.key.starts_with(&[table::ROOM_STATE, sub]))
+            .count()
+    };
+    (of(1), of(0))
+}
+
+#[test]
+fn an_observer_that_becomes_a_leaf_keeps_what_it_verified() {
+    let (mut hub, mut a, _agent, room_group, _) = room_for_joins();
+    // A device follows the room group from here and will join by Welcome. Another will sign in with the
+    // code: it follows nothing before, and takes the room's roles from its founding on.
+    let stores = [MemoryStorage::new(), MemoryStorage::new()];
+    let handles = [stores[0].handle(), stores[1].handle()];
+    let on = |store: MemoryStorage| -> TestDevice {
+        Device::create(store, Box::new(SystemEntropy)).unwrap()
+    };
+    let [first, second] = stores;
+    let (mut c, mut d) = (on(first), on(second));
+    observe(&hub, &mut d);
+    settle(&hub, &mut d);
+    // A human device comes and is removed again: its key is revoked, and both observers saw it.
+    let mut x = new_device();
+    add_human(&mut hub, &mut a, &mut x);
+    a.remove_human_devices(&[Cut::none(x.id())], now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let revoked_at = hub.epoch(&room_group).unwrap();
+    sync_ok(&hub, &mut d);
+    assert!(d.room_history().unwrap().is_revoked(&x.id(), revoked_at));
+    let (observer, own) = role_entries(&handles[1]);
+    assert!(observer > 0 && own == 0);
+
+    // One joins with the code, the other is added and joins by Welcome.
+    join_room(&hub, &mut c, &test_keys()).unwrap();
+    post_ok(&mut hub, &mut c);
+    sync_ok(&hub, &mut a);
+    sync_ok(&hub, &mut d);
+    let package = d.key_package(now()).unwrap();
+    a.add_human_device(&d.id(), &package, now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    assert_eq!(settle_joining(&hub, &mut d).len(), 1);
+    sync_ok(&hub, &mut c);
+
+    let package = x.key_package(now()).unwrap();
+    let by_welcome = d.id();
+    for (device, handle) in [(&mut c, &handles[0]), (&mut d, &handles[1])] {
+        assert!(device.is_human());
+        // The history it followed is its own now, from the epoch it began to follow, with the revocation
+        // (4.2); the observer and everything stored of it is gone, in the write of the join.
+        let roles = device.room_history().unwrap();
+        assert_eq!(roles.newest(), hub.history().unwrap().newest());
+        assert!(roles.is_revoked(&x.id(), revoked_at));
+        let first = roles.states().next().unwrap().epoch;
+        assert_eq!(first, u64::from(device.id() == by_welcome));
+        let (observer, own) = role_entries(handle);
+        assert_eq!(observer, 0);
+        assert_eq!(own as u64, roles.newest().epoch + 1 - first);
+        // So it builds no Add of the revoked key.
+        assert_eq!(
+            device.add_human_device(&x.id(), &package, now()),
+            Err(Error::BadCommit)
+        );
+        // A restart finds the same device.
+        let twin = reopen(handle.reopened()).unwrap();
+        assert_eq!(twin.room_history(), device.room_history());
+        assert_eq!(twin.groups().unwrap(), device.groups().unwrap());
+    }
+
+    // Commits of the room group reach the group it is a leaf of: it stands where the others stand and holds
+    // the key of every epoch from its join on.
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    let epoch = hub.epoch(&room_group).unwrap();
+    for device in [&mut c, &mut d] {
+        assert!(matches!(
+            sync_ok(&hub, device)[..],
+            [Processed::Commit { removed: false, .. }]
+        ));
+        assert_eq!(device.group(&room_group).unwrap().epoch, epoch);
+        assert_eq!(
+            device.content_key(&room_group, epoch).unwrap(),
+            a.content_key(&room_group, epoch).unwrap()
+        );
+        assert_eq!(
+            device.room_history().unwrap().newest(),
+            hub.history().unwrap().newest()
+        );
+    }
+}
+
+#[test]
+fn a_welcome_must_agree_with_what_the_observer_verified() {
+    let (mut hub, mut a, _agent, room_group, _) = room_for_joins();
+    let anyone = WelcomeExpectation {
+        room: room_group.room_id(),
+        committer: None,
+    };
+    // A Welcome into the room group beyond what the device followed comes too early: nothing is used up,
+    // and once the device processed the log up to the Commit that added it, the Welcome is taken.
+    let mut d = new_device();
+    observe(&hub, &mut d);
+    let from = hub.change();
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    let package = d.key_package(now()).unwrap();
+    a.add_human_device(&d.id(), &package, now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let welcome = hub.welcomes.last().unwrap().bytes.clone();
+    assert_eq!(
+        d.join_welcome(&welcome, &anyone, now()),
+        Err(Error::RoomBehind)
+    );
+    assert!(d.groups().unwrap().is_empty() && !d.is_human());
+    for item in hub.log_after(from) {
+        process(&mut d, &item).unwrap();
+    }
+    let joined = d.join_welcome(&welcome, &anyone, now()).unwrap();
+    assert_eq!(joined.epoch, hub.epoch(&room_group).unwrap());
+    assert!(d.is_human());
+
+    // A Welcome is taken at its place in the log. A device that followed the room group past the Commit
+    // that added it does not go back to it: what it verified since stays, the Welcome is refused.
+    let mut late = new_device();
+    observe(&hub, &mut late);
+    let from = hub.change();
+    let package = late.key_package(now()).unwrap();
+    a.add_human_device(&late.id(), &package, now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let welcome = hub.welcomes.last().unwrap().bytes.clone();
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    for item in hub.log_after(from) {
+        process(&mut late, &item).unwrap();
+    }
+    let followed = late.room_history().unwrap().clone();
+    assert_eq!(
+        late.join_welcome(&welcome, &anyone, now()),
+        Err(Error::WrongEpoch)
+    );
+    assert!(late.groups().unwrap().is_empty());
+    assert_eq!(late.room_history(), Some(&followed));
+
+    // A member that obeys MLS only adds a device that follows the room together with a key the room
+    // revoked. The observer did not judge that Commit; its result brings a revoked key back (4.2).
+    let mut open = Hub::new(false);
+    let (mut a, mut x, mut d) = (new_device(), new_device(), new_device());
+    let room_group = found_room_on(&mut open, &mut a);
+    add_human(&mut open, &mut a, &mut x);
+    a.remove_human_devices(&[Cut::none(x.id())], now()).unwrap();
+    post_ok(&mut open, &mut a);
+    let member = Founder::new();
+    let mut forged = add_forger(&mut open, &mut a, &member);
+    observe(&open, &mut d);
+    assert!(d.room_history().unwrap().newest().epoch >= 3);
+    let adds = [d.key_package(now()).unwrap(), x.key_package(now()).unwrap()];
+    let welcome = member
+        .commit(&mut forged, b"", &adds)
+        .welcome
+        .expect("a Welcome");
+    let anyone = WelcomeExpectation {
+        room: room_group.room_id(),
+        committer: None,
+    };
+    // The observer began after the removal and does not know of it: nothing it verified is contradicted.
+    let joined = d.join_welcome(&welcome, &anyone, now()).unwrap();
+    assert!(d.group(&joined.group).unwrap().leaves.contains(&x.id()));
+    // One that followed the removal refuses the same Welcome.
+    let mut open = Hub::new(false);
+    let (mut a, mut x, mut d) = (new_device(), new_device(), new_device());
+    let room_group = found_room_on(&mut open, &mut a);
+    add_human(&mut open, &mut a, &mut x);
+    observe(&open, &mut d);
+    let from = open.change();
+    a.remove_human_devices(&[Cut::none(x.id())], now()).unwrap();
+    post_ok(&mut open, &mut a);
+    let member = Founder::new();
+    let mut forged = add_forger(&mut open, &mut a, &member);
+    for item in open.log_after(from) {
+        process(&mut d, &item).unwrap();
+    }
+    let followed = d.room_history().unwrap().clone();
+    assert!(followed.is_revoked(&x.id(), followed.newest().epoch));
+    let adds = [d.key_package(now()).unwrap(), x.key_package(now()).unwrap()];
+    let welcome = member
+        .commit(&mut forged, b"", &adds)
+        .welcome
+        .expect("a Welcome");
+    let anyone = WelcomeExpectation {
+        room: room_group.room_id(),
+        committer: None,
+    };
+    assert_eq!(
+        d.join_welcome(&welcome, &anyone, now()),
+        Err(Error::BadGroup)
+    );
+    assert!(d.groups().unwrap().is_empty() && !d.is_human());
+    assert_eq!(d.room_history(), Some(&followed));
+}
+
+#[test]
+fn a_welcome_under_the_rooms_id_from_another_group() {
+    let (mut hub, mut a, _agent, room_group, _) = room_for_joins();
+    let anyone = WelcomeExpectation {
+        room: room_group.room_id(),
+        committer: None,
+    };
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    // A founder that obeys MLS only makes another group under the room's id and adds a device that follows
+    // the real room. The state its Welcome brings is not the one the device verified at that epoch; and a
+    // Welcome for an epoch before the one the device stands in is out of place.
+    let mut e = new_device();
+    observe(&hub, &mut e);
+    let followed = e.room_history().unwrap().clone();
+    let epoch = followed.newest().epoch;
+    assert!(epoch > 1);
+    for at in [epoch, 1] {
+        let founder = Founder::new();
+        let mut other = founder.found_room(&room_group, &followed.newest().room);
+        for _ in 1..at {
+            founder.commit(&mut other, b"", &[]);
+        }
+        let package = e.key_package(now()).unwrap();
+        let welcome = founder
+            .commit(&mut other, b"", &[package])
+            .welcome
+            .expect("a Welcome");
+        // Behind what the device followed nothing verified is given up: such a Welcome is out of place.
+        let refusal = if at == epoch {
+            Error::BadGroup
+        } else {
+            Error::WrongEpoch
+        };
+        assert_eq!(
+            e.join_welcome(&welcome, &anyone, now()),
+            Err(refusal),
+            "a Welcome at epoch {at}"
+        );
+        assert!(e.groups().unwrap().is_empty() && !e.is_human());
+        assert_eq!(e.room_history(), Some(&followed));
+    }
+    // It still follows the real room.
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    assert!(matches!(
+        process(&mut e, hub.log.last().unwrap()),
+        Ok(Processed::Observed(_))
+    ));
+}
+
+#[test]
+fn a_first_tree_with_a_leaf_outside_the_profile_is_refused() {
+    type Change = fn(&mut Founder);
+    let changes: [(&str, bool, Change); 3] = [
+        ("the profile's leaf", true, |_| {}),
+        (
+            "a credential that is not the signature key",
+            false,
+            |forger| forger.identity = vec![7; 32],
+        ),
+        ("a capability beside the profile's", false, |forger| {
+            forger.extra_extension = Some(0xF0F0)
+        }),
+    ];
+    let room = TrommiRoom {
+        recovery_signature_key: [0xE1; 32],
+        recovery_hpke_key: [0xE2; 32],
+        agents: Vec::new(),
+    };
+    for (at, (name, fits, change)) in changes.into_iter().enumerate() {
+        let group = GroupId::room(RoomId::new([at as u8 + 1; 32]));
+        let anyone = WelcomeExpectation {
+            room: group.room_id(),
+            committer: None,
+        };
+        // The founder's own leaf: the hub at the founding (14.1).
+        let mut odd = Founder::new();
+        change(&mut odd);
+        let founded = odd.found_room(&group, &room);
+        let info = odd.group_info(&founded);
+        let sealed = SealedKey::seal(
+            &mut SystemEntropy,
+            &Sealing {
+                context: KeyContext::of(&group, 0, &info).unwrap(),
+                room_epoch: 0,
+                recovery_hpke_key: &room.recovery_hpke_key,
+                writer: odd.id(),
+                content_key: &Secret::new([1; 32]),
+            },
+            Some(&Secret::new([2; 32])),
+        )
+        .unwrap()
+        .to_bytes()
+        .unwrap();
+        let at_the_hub = Observer::found_room(&info, &sealed, &PublicRules);
+        assert_eq!(
+            at_the_hub.err(),
+            (!fits).then_some(Error::BadCommit),
+            "{name}"
+        );
+
+        // The leaf of a device that a founder with the profile's leaf added: an observer that starts from a
+        // later GroupInfo, a device told to follow the room from it, and a device added by Welcome, for
+        // which the odd leaf is neither its own nor the one of the device that added it.
+        let founder = Founder::new();
+        let mut forged = founder.found_room(&group, &room);
+        founder.commit(&mut forged, b"", &[odd.key_package()]);
+        let info = founder.group_info(&forged);
+        let follower = Observer::follow_room(&info, None);
+        assert_eq!(follower.err(), (!fits).then_some(Error::BadGroup), "{name}");
+        let mut told = new_device();
+        assert_eq!(
+            told.observe_room(&info, None).err(),
+            (!fits).then_some(Error::BadGroup),
+            "{name}"
+        );
+        assert_eq!(told.room().is_some(), fits, "{name}");
+        let mut added = new_device();
+        let package = added.key_package(now()).unwrap();
+        let welcome = founder
+            .commit(&mut forged, b"", &[package])
+            .welcome
+            .expect("a Welcome");
+        let joined = added.join_welcome(&welcome, &anyone, now());
+        if fits {
+            assert_eq!(joined.unwrap().added_by, founder.id(), "{name}");
+            assert_eq!(added.group(&group).unwrap().leaves.len(), 3);
+        } else {
+            assert_eq!(joined, Err(Error::BadGroup), "{name}");
+            assert!(added.groups().unwrap().is_empty(), "{name}");
+            assert_eq!(added.room(), None, "{name}");
+            assert_eq!(added.content_key(&group, 2), Err(Error::NoKey), "{name}");
+        }
+    }
+}
+
+#[test]
+fn a_group_info_names_its_signers_own_leaf() {
+    let room = TrommiRoom {
+        recovery_signature_key: [0xE1; 32],
+        recovery_hpke_key: [0xE2; 32],
+        agents: Vec::new(),
+    };
+    let group = GroupId::room(RoomId::new([0x27; 32]));
+    let (founder, other) = (Founder::new(), Founder::new());
+    let mut forged = founder.found_room(&group, &room);
+    founder.commit(&mut forged, b"", &[other.key_package()]);
+    let info = founder.group_info(&forged);
+    let observer = Observer::follow_room(&info, None).unwrap();
+    assert_eq!(observer.check_group_info(&info, &founder.id()), Ok(()));
+    assert_eq!(
+        observer.check_group_info(&info, &other.id()),
+        Err(Error::Incomplete)
+    );
+
+    // A GroupInfo ends in the signer's leaf index and the signature over everything before it. Signed
+    // again by hand it is the same bytes: Ed25519 signs the same content the same way.
+    const SIGNATURE_FIELD: usize = 2 + 64;
+    let signed_by_hand = |bytes: &mut Vec<u8>| {
+        let end = bytes.len() - SIGNATURE_FIELD;
+        let signature =
+            trommi_core::crypto::sign_with_label(&founder.key, "GroupInfoTBS", &bytes[4..end])
+                .unwrap();
+        bytes.truncate(end + 2);
+        bytes.extend_from_slice(&signature);
+    };
+    let mut again = info.clone();
+    signed_by_hand(&mut again);
+    assert_eq!(again, info);
+    // The committer signs a GroupInfo that names the other leaf as its signer: whoever joins with it looks
+    // the key up by that index and refuses it. It is not the GroupInfo of the committer.
+    let mut renamed = info.clone();
+    let signer_at = renamed.len() - SIGNATURE_FIELD - 4;
+    assert_eq!(renamed[signer_at..signer_at + 4], [0, 0, 0, 0]);
+    renamed[signer_at + 3] = 1;
+    signed_by_hand(&mut renamed);
+    assert_eq!(
+        observer.check_group_info(&renamed, &founder.id()),
+        Err(Error::Incomplete)
+    );
+    assert_eq!(
+        observer.check_group_info(&renamed, &other.id()),
+        Err(Error::Incomplete)
+    );
+
+    // A GroupInfo that names an epoch no group reaches by Commits, signed by a leaf: nothing starts from
+    // it and nothing is built on it. The epoch stands behind the message's and the context's first fields
+    // and the group id.
+    const EPOCH_AT: usize = 4 + 4 + 1 + 32;
+    let at_epoch = |epoch: u64| {
+        let mut moved = info.clone();
+        moved[EPOCH_AT..EPOCH_AT + 8].copy_from_slice(&epoch.to_be_bytes());
+        signed_by_hand(&mut moved);
+        moved
+    };
+    assert_eq!(info[EPOCH_AT..EPOCH_AT + 8], 1u64.to_be_bytes());
+    assert_eq!(
+        Observer::follow_room(&at_epoch(7), None).unwrap().epoch(),
+        Ok(7)
+    );
+    for epoch in [u64::MAX, u64::MAX / 2 + 1] {
+        assert_eq!(
+            Observer::follow_room(&at_epoch(epoch), None).err(),
+            Some(Error::BadGroup)
+        );
+        let mut told = new_device();
+        assert_eq!(
+            told.observe_room(&at_epoch(epoch), None),
+            Err(Error::BadGroup)
+        );
+    }
 }
 
 #[test]
