@@ -211,8 +211,15 @@ impl Hub {
 
     /// Takes one outbox entry of `from`. A repeated post of the same bytes gets the first answer again.
     pub fn post(&mut self, from: &DeviceId, entry: &OutboxEntry) -> Result<Accepted, Error> {
+        // The same request: the same sender, kind, group and bytes.
         let mut request = entry.parts.clone();
         request.push(vec![entry.kind as u8]);
+        request.push(from.as_bytes().to_vec());
+        request.push(
+            entry
+                .group
+                .map_or(Vec::new(), |group| group.as_bytes().to_vec()),
+        );
         if let Some(answer) = self.answers.get(&request) {
             return answer.clone();
         }
