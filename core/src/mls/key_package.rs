@@ -147,6 +147,31 @@ pub(crate) fn make(
     Ok((bytes, info))
 }
 
+/// The device of the KeyPackage whose private part the provider's storage holds under this reference: the
+/// signature key of its leaf. None when the storage holds none; `Error::Storage` when it does not load.
+pub(crate) fn stored_device(
+    provider: &Provider,
+    reference: &Hash32,
+) -> Result<Option<DeviceId>, Error> {
+    use openmls_traits::storage::StorageProvider as _;
+    let damaged = || Error::Storage("a key package does not load".into());
+    let reference: openmls::prelude::KeyPackageRef =
+        openmls::prelude::KeyPackageRef::tls_deserialize_exact(
+            [&[32u8][..], reference.as_bytes()].concat(),
+        )
+        .map_err(|_| damaged())?;
+    let bundle: Option<openmls::prelude::KeyPackageBundle> = provider
+        .storage()
+        .key_package(&reference)
+        .map_err(|_| damaged())?;
+    bundle
+        .map(|bundle| {
+            DeviceId::from_slice(bundle.key_package().leaf_node().signature_key().as_slice())
+                .map_err(|_| damaged())
+        })
+        .transpose()
+}
+
 /// Removes the private part of the KeyPackage with this reference from the provider's storage.
 pub(crate) fn forget(provider: &Provider, reference: &Hash32) -> Result<(), Error> {
     use openmls_traits::storage::StorageProvider as _;
