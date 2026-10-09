@@ -338,3 +338,115 @@ async fn helper_sessions_and_assets() {
     assert!(human.findings.is_empty(), "{:?}", human.findings);
     mcp.close().await;
 }
+
+/// A hub, a human, and a connector in its session, not yet served.
+async fn joined() -> (HubProc, Human, Seat, GroupId) {
+    let hub = HubProc::start().await;
+    let mut human = Human::found(&hub.url).await;
+    let seat = Seat::new(&hub.url);
+    let mut invite = human.invite(None).await;
+    let link = invite.link.clone();
+    let join = seat.join(&link);
+    let admit = async {
+        let admitted = human.admit(&mut invite).await;
+        human.found_session(&admitted).await
+    };
+    let ((joined, log), group) = tokio::join!(join, admit);
+    assert!(joined, "the join failed:\n{log}");
+    (hub, human, seat, group)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_plugins_hooks_mirror_the_terminal_and_ask_for_permission() {
+    let (_hub, mut human, seat, _group) = joined().await;
+    let mut mcp = seat.serve_as_plugin().await;
+    mcp.ready().await;
+    let me = human.vault.seat(&_group).expect("the agent");
+
+    // The human types into the terminal; the agent works; its final answer ends the turn.
+    let turn =
+        json!({ "session_id": "s1", "prompt_id": "p1", "cwd": seat.folder.display().to_string() });
+    let with = |more: Value| {
+        let mut all = turn.as_object().cloned().expect("an object");
+        all.extend(more.as_object().cloned().expect("an object"));
+        Value::Object(all)
+    };
+    seat.hook(
+        "prompt",
+        &with(json!({ "hook_event_name": "UserPromptSubmit", "prompt": "Please run the tests." })),
+    )
+    .await;
+    seat.hook("trail", &with(json!({ "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": "t1", "tool_input": { "command": "cargo test", "description": "Run the tests" } }))).await;
+    seat.hook("trail", &with(json!({ "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_use_id": "t1", "tool_input": { "command": "cargo test" }, "tool_response": { "stdout": "ok", "exit_code": 0 } }))).await;
+    seat.hook(
+        "stop",
+        &with(json!({ "hook_event_name": "Stop", "last_assistant_message": "All tests pass." })),
+    )
+    .await;
+
+    let mut seen = (false, false, false);
+    for _ in 0..100 {
+        human.sync().await;
+        let terminal = |kind: &str, text: &str| {
+            human.items.iter().any(|(_, sender, payload)| {
+                *sender == me && payload["terminal"] == kind && payload["text"] == text
+            })
+        };
+        seen = (
+            terminal("input", "Please run the tests."),
+            terminal("answer", "All tests pass."),
+            human
+                .trail
+                .iter()
+                .any(|(_, number, step)| *number >= 1 && step["tool"] == "Bash"),
+        );
+        if seen == (true, true, true) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        seen,
+        (true, true, true),
+        "prompt, answer and trail reached the board: {:?} {:?}",
+        human.trail,
+        human.findings
+    );
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+
+    // Claude Code asks for a permission: a request on the board, the human's verdict back to Claude Code.
+    mcp.notify(
+        "notifications/claude/channel/permission_request",
+        json!({ "request_id": "abcde", "tool_name": "Bash", "description": "Push the branch", "input_preview": "git push" }),
+    )
+    .await;
+    let request = loop {
+        human.sync().await;
+        if let Some(id) = human
+            .objects
+            .keys()
+            .find(|id| human.has_request(id))
+            .cloned()
+        {
+            break id;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    };
+    assert!(human
+        .items
+        .iter()
+        .any(|(_, _, payload)| payload["tool_name"] == "Bash"
+            && payload["input_preview"] == "git push"));
+    human
+        .verdict(&request, true)
+        .await
+        .expect("the verdict is taken");
+    let verdict = mcp
+        .notification("notifications/claude/channel/permission")
+        .await;
+    assert_eq!(
+        verdict,
+        json!({ "request_id": "abcde", "behavior": "allow" })
+    );
+    mcp.close().await;
+}

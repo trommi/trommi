@@ -97,3 +97,19 @@ path = "connector/e2e.rs"
 [[test]]
 name = "connector_tools"
 path = "connector/tools.rs"
+
+[[test]]
+name = "connector_line"
+path = "connector/line.rs"
+
+[[test]]
+name = "connector_mirror"
+path = "connector/mirror.rs"
+
+[[test]]
+name = "connector_trail"
+path = "connector/trail.rs"
+
+[[test]]
+name = "connector_html"
+path = "connector/html.rs"

@@ -1443,7 +1443,18 @@ impl Client {
             command.object_id = Some(hex(fields.object_id.as_bytes()));
         }
         match decision {
-            Decision::Refused(_) | Decision::Done => return Ok(()),
+            Decision::Done => return Ok(()),
+            Decision::Refused(refusal) => {
+                // Not acted on (9.0.9). Said without content: which rule held it back.
+                if !matches!(
+                    refusal,
+                    trommi_core::objects::Refusal::NotAddressed
+                        | trommi_core::objects::Refusal::NotACommand
+                ) {
+                    eprintln!("[trommi] a human's envelope was not acted on: {refusal:?}");
+                }
+                return Ok(());
+            }
             Decision::Uncertain => {
                 // Started before a crash and never finished: reported, not repeated.
                 command.command = "unsupported".into();
