@@ -344,13 +344,20 @@ pub struct BoardItem {
     pub payload: SecretBytes,
 }
 
-/// A snapshot file with the frontier its register names (10.2).
-#[derive(Debug, Clone, Copy)]
+/// A snapshot file with the frontier its register names (10.2). The file may hold the keys of files: it is
+/// not printed.
+#[derive(Clone, Copy)]
 pub struct BoardSnapshot<'a> {
     /// The file's JSON, decompressed. It may hold file keys.
     pub file: &'a [u8],
     /// The frontier of the register `board_snapshot/<board>`, ascending by writer.
     pub frontier: &'a [(DeviceId, Head)],
+}
+
+impl std::fmt::Debug for BoardSnapshot<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BoardSnapshot({} bytes, <redacted>)", self.file.len())
+    }
 }
 
 /// The Scribble Board's merge (10.7), without state: the board that `items` make of `snapshot`, written as
@@ -420,14 +427,27 @@ fn extra_of(header: &Header, body: &Body, keeps_cards: bool) -> Vec<u8> {
 
 /// An envelope the command gate has to decide on, with the state of its object just before it.
 struct Candidate {
-    decided: bool,
+    state: Asked,
     before: Option<Object>,
     envelope: Vec<u8>,
 }
 
+/// What the gate said about a candidate so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    /// It was not asked yet.
+    No = 0,
+    /// It refused.
+    Refused = 1,
+    /// It let the command through, and the command was recorded as started.
+    Started = 2,
+    /// The command's effect is complete.
+    Finished = 3,
+}
+
 impl Encode for Candidate {
     fn write(&self, writer: &mut Writer) -> Result<(), Error> {
-        writer.u8(u8::from(self.decided));
+        writer.u8(self.state as u8);
         writer.u8(u8::from(self.before.is_some()));
         if let Some(before) = &self.before {
             writer.value(before)?;
@@ -443,14 +463,20 @@ impl Decode for Candidate {
             1 => Ok(true),
             _ => Err(Error::BadFormat),
         };
-        let decided = flag(reader.u8()?)?;
+        let state = match reader.u8()? {
+            0 => Asked::No,
+            1 => Asked::Refused,
+            2 => Asked::Started,
+            3 => Asked::Finished,
+            _ => return Err(Error::BadFormat),
+        };
         let before = if flag(reader.u8()?)? {
             Some(reader.value()?)
         } else {
             None
         };
         Ok(Self {
-            decided,
+            state,
             before,
             envelope: reader.opaque()?.to_vec(),
         })
@@ -572,6 +598,19 @@ impl<S: Storage> Device<S> {
             let chains = this.chains(&group)?;
             let objects = this.object_states(&group)?;
             let mut own = this.own_chain(&group)?;
+            // The own chain never stands behind what this device accepted of itself or still has to send.
+            let queued = this
+                .memory
+                .outbox
+                .values()
+                .filter(|entry| entry.kind == OutboxKind::Envelope && entry.group == Some(group))
+                .filter_map(|entry| Envelope::decode(entry.parts.first()?).ok())
+                .map(|envelope| envelope.header.seq)
+                .max()
+                .unwrap_or(0);
+            if own.head().seq < chains.head(&this.id).seq.max(queued) {
+                return Err(damaged("the own chain"));
+            }
             let mut own_ids = None;
             let mut heads = None;
             let inner = match draft {
@@ -1016,7 +1055,23 @@ impl<S: Storage> Device<S> {
                 .ok_or(Error::NotFound)?;
             let snapshot = board::Snapshot::parse(value)?;
             let applied = this.board_frontier(board)?;
-            let heads = this.chains(&room)?.heads();
+            let chains_held = this.chains(&room)?;
+            // The snapshot's frontier is held against the chains this device verified itself: it has read
+            // each writer's chain that far (`withheld` otherwise), and holds the very envelope the frontier
+            // names (`equivocation`).
+            for (writer, named) in &snapshot.frontier {
+                let held = chains_held.head(writer);
+                if held.seq < named.seq {
+                    return Err(Error::Withheld);
+                }
+                let same = this
+                    .record(&room, writer, named.seq)?
+                    .is_none_or(|record| record.hash == named.hash);
+                if !same {
+                    return Err(Error::Equivocation);
+                }
+            }
+            let heads = chains_held.heads();
             let mut cuts = Vec::new();
             let mut chains = Vec::new();
             for (writer, head) in &heads {
@@ -1121,11 +1176,17 @@ impl<S: Storage> Device<S> {
                 Mode::ReadingBack
             };
             let served = void_code.map_or(Served::Stored, |code| Served::Void(code.clone()));
+            // An envelope that comes behind later ones of its group is judged at its own place.
+            let objects = if change < this.group_state(&group)?.max_change {
+                this.objects_before(&group, change)?
+            } else {
+                this.object_states(&group)?
+            };
             let received = chain::receive(
                 &Facts(this),
                 &Facts(this),
                 &this.chains(&group)?,
-                &this.object_states(&group)?,
+                &objects,
                 &this.id,
                 bytes,
                 &served,
@@ -1190,6 +1251,7 @@ impl<S: Storage> Device<S> {
             change,
             hash,
             status: Status::Taken,
+            fresh: Facts(self).processed_epoch(&group)? == Some(header.epoch),
             code: None,
             header: header.clone(),
             extra: Vec::new(),
@@ -1198,9 +1260,12 @@ impl<S: Storage> Device<S> {
         match outcome {
             Outcome::Taken { transition, body } => {
                 if let Some(transition) = transition {
-                    let mut objects = self.object_states(&group)?;
-                    objects.apply(&transition)?;
-                    self.put_objects(batch, &group, &objects)?;
+                    // Behind later envelopes the whole state is built again below.
+                    if !behind {
+                        let mut objects = self.object_states(&group)?;
+                        objects.apply(&transition)?;
+                        self.put_objects(batch, &group, &objects)?;
+                    }
                     received.object_after = Some((transition.object_id, transition.after));
                     before = transition.before;
                 }
@@ -1303,7 +1368,7 @@ impl<S: Storage> Device<S> {
             && !self.is_human()
         {
             let candidate = Candidate {
-                decided: false,
+                state: Asked::No,
                 before,
                 envelope: bytes.to_vec(),
             };
@@ -1407,6 +1472,13 @@ impl<S: Storage> Device<S> {
             }
             let header = &envelope.header;
             let group = header.group;
+            // The envelope still counts: a Cut or a rebuilt state may have taken it out since.
+            let counts = this
+                .record_by_hash(&group, envelope_hash)?
+                .is_some_and(|record| record.status == Status::Taken);
+            if !counts {
+                return Err(Error::NotFound);
+            }
             let mut log = this.gate_log()?;
             let decision = {
                 let facts = Facts(this);
@@ -1457,11 +1529,21 @@ impl<S: Storage> Device<S> {
                 };
                 objects::command_gate(&facts, &mut log, &this.id, &opened, &own, now_ms)?
             };
-            if matches!(decision, Decision::Act(_)) {
-                this.put_stored(batch, gate_log_key(), log.to_bytes()?);
-            }
-            if !candidate.decided {
-                candidate.decided = true;
+            let asked = match &decision {
+                // The gate lets a command through once. If its own record says nothing of a command that
+                // was let through before, that record is damaged, and nothing is acted on again.
+                Decision::Act(_) if candidate.state != Asked::No => {
+                    return Err(damaged("the record of started commands"));
+                }
+                Decision::Act(_) => {
+                    this.put_stored(batch, gate_log_key(), log.to_bytes()?);
+                    Asked::Started
+                }
+                Decision::Refused(_) => Asked::Refused,
+                Decision::Done | Decision::Uncertain => candidate.state,
+            };
+            if asked != candidate.state {
+                candidate.state = asked;
                 this.put_stored(batch, key, codec::encode(&candidate)?);
             }
             Ok(decision)
@@ -1476,20 +1558,57 @@ impl<S: Storage> Device<S> {
             let mut log = this.gate_log()?;
             log.finish(envelope_hash)?;
             this.put_stored(batch, gate_log_key(), log.to_bytes()?);
+            let key = candidate_key(envelope_hash);
+            if let Some(stored) = this.stored(&key) {
+                let mut candidate: Candidate =
+                    codec::decode(stored, stored.len()).map_err(|_| damaged("a command record"))?;
+                candidate.state = Asked::Finished;
+                this.put_stored(batch, key, codec::encode(&candidate)?);
+            }
             Ok(())
         })
+    }
+
+    /// Drops what the gate was not yet asked about in `group`: the state those envelopes were kept with was
+    /// built again.
+    pub(super) fn drop_undecided(
+        &mut self,
+        batch: &mut Batch,
+        group: &GroupId,
+    ) -> Result<(), Error> {
+        let prefix = store::key(table::COMMAND, &[&[SUB_CANDIDATE]]);
+        for (key, value) in self.stored_under(&prefix) {
+            let candidate: Candidate =
+                codec::decode(&value, value.len()).map_err(|_| damaged("a command record"))?;
+            let of_group = Envelope::decode(&candidate.envelope)
+                .is_ok_and(|envelope| envelope.header.group == *group);
+            if candidate.state == Asked::No && of_group {
+                self.delete_stored(batch, key);
+            }
+        }
+        Ok(())
     }
 
     /// The envelopes [`Device::command`] was not asked about yet, by hash: after a restart, what arrived
     /// and was stored before the caller could decide on it.
     pub fn commands_pending(&self) -> Result<Vec<Hash32>, Error> {
+        self.candidates(Asked::No)
+    }
+
+    /// The commands the gate let through that were never reported as finished: after a restart, those whose
+    /// effect is uncertain. They are reported to the human, not repeated (9.0.9).
+    pub fn commands_uncertain(&self) -> Result<Vec<Hash32>, Error> {
+        self.candidates(Asked::Started)
+    }
+
+    fn candidates(&self, state: Asked) -> Result<Vec<Hash32>, Error> {
         self.owner()?;
         let prefix = store::key(table::COMMAND, &[&[SUB_CANDIDATE]]);
         let mut pending = Vec::new();
         for (key, value) in self.stored_under(&prefix) {
             let candidate: Candidate =
                 codec::decode(&value, value.len()).map_err(|_| damaged("a command record"))?;
-            if !candidate.decided {
+            if candidate.state == state {
                 let hash = key.get(prefix.len()..).unwrap_or_default();
                 pending.push(Hash32::from_slice(hash).map_err(|_| damaged("a command record"))?);
             }

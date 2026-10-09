@@ -27,6 +27,7 @@ use crate::registers::Registers;
 use crate::store::{self, table, Batch, Storage};
 use openmls::prelude::LeafNodeIndex;
 use std::collections::{BTreeMap, BTreeSet};
+use zeroize::Zeroizing;
 
 /// The parts of the table of chains.
 pub(super) const SUB_EPOCH: u8 = 0;
@@ -145,8 +146,9 @@ pub(super) enum Status {
     Reserved = 5,
 }
 
-/// One accepted envelope, under its group, sender and number.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One accepted envelope, under its group, sender and number. What it keeps of a body may hold the keys of
+/// files: it is not printed.
+#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Record {
     /// The hub's change number it came under.
     pub change: u64,
@@ -154,6 +156,9 @@ pub(super) struct Record {
     pub hash: Hash32,
     /// What became of it.
     pub status: Status,
+    /// Whether it named its group's newest epoch when it came. One that check 7 refused never met check 8;
+    /// only such a one may count after all when the group's state is built again.
+    pub fresh: bool,
     /// The code it was refused or voided with, or why its body did not open.
     pub code: Option<Error>,
     /// Its header.
@@ -168,6 +173,7 @@ impl Encode for Record {
         writer.u64(self.change);
         writer.fixed(self.hash.as_bytes());
         writer.u8(self.status as u8);
+        writer.u8(u8::from(self.fresh));
         writer.opaque(self.code.as_ref().map_or("", Error::code).as_bytes())?;
         writer.opaque(&codec::encode(&self.header)?)?;
         writer.opaque(&self.extra)
@@ -186,6 +192,11 @@ impl Decode for Record {
             5 => Status::Reserved,
             _ => return Err(Error::BadFormat),
         };
+        let fresh = match reader.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::BadFormat),
+        };
         let code = match reader.opaque()? {
             [] => None,
             code => Some(
@@ -201,6 +212,7 @@ impl Decode for Record {
             change,
             hash,
             status,
+            fresh,
             code,
             header,
             extra: reader.opaque()?.to_vec(),
@@ -318,7 +330,7 @@ pub(super) struct Merging {
 pub(super) struct Transient {
     /// The entries of the content tables written or removed since they were last read from the store, so
     /// that a later step of the same operation reads what an earlier one wrote.
-    written: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    written: BTreeMap<Vec<u8>, Option<Zeroizing<Vec<u8>>>>,
     /// The Commit being merged.
     pub merging: Option<Merging>,
     /// The Cuts of the own Commit just built.
@@ -382,7 +394,7 @@ impl<S: Storage> Device<S> {
     /// The stored value under `key`, as the running operation left it.
     pub(super) fn stored(&self, key: &[u8]) -> Option<&[u8]> {
         match self.memory.wire.written.get(key) {
-            Some(written) => written.as_deref(),
+            Some(written) => written.as_ref().map(|value| value.as_slice()),
             None => self.mirror.get(key).map(Vec::as_slice),
         }
     }
@@ -390,11 +402,16 @@ impl<S: Storage> Device<S> {
     /// Writes an entry of the content tables into `batch`.
     pub(super) fn put_stored(&mut self, batch: &mut Batch, key: Vec<u8>, value: Vec<u8>) {
         batch.put(key.clone(), value.clone());
-        self.memory.wire.written.insert(key, Some(value));
+        self.memory
+            .wire
+            .written
+            .insert(key, Some(Zeroizing::new(value)));
     }
 
     /// Removes an entry of the content tables in `batch`.
     pub(super) fn delete_stored(&mut self, batch: &mut Batch, key: Vec<u8>) {
+        // A batch applies its deletions first: what this operation put under the key before goes.
+        batch.put.retain(|entry| entry.key != key);
         batch.delete(key.clone());
         self.memory.wire.written.insert(key, None);
     }
@@ -415,7 +432,7 @@ impl<S: Storage> Device<S> {
             .range(prefix.to_vec()..)
             .take_while(|(key, _)| key.starts_with(prefix))
         {
-            found.insert(key, value.as_deref());
+            found.insert(key, value.as_ref().map(|value| value.as_slice()));
         }
         found
             .into_iter()
@@ -426,7 +443,10 @@ impl<S: Storage> Device<S> {
     /// Begins an operation of the content layer: what earlier operations wrote is in the store by now.
     pub(super) fn begin(&mut self, now_ms: u64) {
         self.memory.wire.written.clear();
-        self.memory.wire.now_ms = now_ms;
+        // An operation that is told no time leaves the clock as it was last told.
+        if now_ms != 0 {
+            self.memory.wire.now_ms = now_ms;
+        }
     }
 
     // ---- epochs ----
@@ -583,23 +603,30 @@ impl<S: Storage> Device<S> {
         });
     }
 
-    /// This device's own Commit with the outbox entry `outbox`, made at `time`, is being merged. Its own
-    /// clock at the making stands for the moment it processed the Commit: an earlier moment, so the two
-    /// minutes of check 8 end no later than they should.
-    pub(super) fn merging_own(&mut self, group: &GroupId, outbox: u64, time: u64) {
+    /// This device's own Commit with the outbox entry `outbox`, made at `time`, is being merged. The moment
+    /// it processes the Commit is the latest clock it was told, and no earlier than the making. The Cuts are
+    /// the ones kept with that outbox entry: `Error::Storage` when they are not there, since a Commit that
+    /// removes a leaf must end its chain.
+    pub(super) fn merging_own(
+        &mut self,
+        group: &GroupId,
+        outbox: u64,
+        time: u64,
+    ) -> Result<(), Error> {
         let cuts = self
             .stored(&group_key(table::CHAIN, SUB_OWN_CUTS, group, &[]))
             .and_then(|value| codec::decode::<OwnCuts>(value, value.len()).ok())
             .filter(|own| own.outbox == outbox)
             .map(|own| own.cuts)
-            .unwrap_or_default();
+            .ok_or_else(|| damaged("the Cuts of an own Commit"))?;
         self.memory.wire.merging = Some(Merging {
             end: EpochEnd {
-                processed_at: time,
+                processed_at: time.max(self.memory.wire.now_ms),
                 time,
             },
             cuts,
         });
+        Ok(())
     }
 
     /// A Commit of this device was built with these Cuts: they are kept until it is put in the outbox or
@@ -796,6 +823,24 @@ impl<S: Storage> Device<S> {
         Ok(records)
     }
 
+    /// The object states of `group` as they stood just before the change number `change`: for an envelope
+    /// that comes behind later ones of its group, which is judged at its own place (9.2.1).
+    pub(super) fn objects_before(&self, group: &GroupId, change: u64) -> Result<Objects, Error> {
+        let facts = Facts(self);
+        let mut objects = Objects::new();
+        for record in self.records(group)? {
+            if record.change >= change || record.status != Status::Taken {
+                continue;
+            }
+            match objects::judge(&facts, &objects, &record.header, &record.hash) {
+                Ok(Some(transition)) => objects.apply(&transition)?,
+                Ok(None) | Err(Error::Forbidden) => {}
+                Err(fault) => return Err(fault),
+            }
+        }
+        Ok(objects)
+    }
+
     /// Builds the object states and registers of `group` again from the records the device holds, in the
     /// hub's order (9.2.1): after a Cut dropped envelopes it had applied (9.0.10), and after an envelope
     /// was accepted behind later ones of its group. Each envelope is judged against the state just before
@@ -813,6 +858,11 @@ impl<S: Storage> Device<S> {
                     continue;
                 }
                 let status = match objects::judge(&facts, &objects, &record.header, &record.hash) {
+                    // What check 7 refused where it came and that was of an ended epoch stays refused:
+                    // it never met check 8.
+                    Ok(_) if record.status == Status::Forbidden && !record.fresh => {
+                        Status::Forbidden
+                    }
                     Ok(transition) => {
                         if let Some(transition) = transition {
                             objects.apply(&transition)?;
@@ -835,6 +885,8 @@ impl<S: Storage> Device<S> {
         for record in changed {
             self.put_envelope_record(batch, group, &record)?;
         }
+        // What the gate was not yet asked about was kept with a state of its object that no longer holds.
+        self.drop_undecided(batch, group)?;
         self.put_objects(batch, group, &objects)?;
         self.put_registers(batch, group, &registers)
     }
