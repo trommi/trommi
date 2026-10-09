@@ -858,20 +858,15 @@ impl Vault {
         Ok(())
     }
 
-    /// Forgets what was received in `group` (chains, objects, registers and the accepted hashes), keeping this
-    /// device's own chain, its register ids and the ledger: the group's envelopes are then read again from the
+    /// Forgets what was received in `group` (chains, objects, registers), keeping this device's own chain, its
+    /// register ids, the ledger, and the hash of every envelope it accepted (what is read again must be the
+    /// same envelopes): the group's envelopes are then read again from the
     /// hub's first, as after a key handover that opened what could not be read before.
     pub fn forget_received(&mut self, group: &GroupId) -> Result<()> {
         if let Some(state) = self.content.get_mut(group) {
             state.chains = Chains::new();
             state.objects = Objects::new();
             state.registers = Registers::new();
-        }
-        for (key, _) in self
-            .journal
-            .scan(&side_key(TAG_ACCEPTED, &[group.as_bytes()]))
-        {
-            self.journal.delete(key);
         }
         self.stage_content(group)
     }
@@ -922,14 +917,27 @@ impl ContentDevice for Vault {
     }
 
     fn receive(&mut self, bytes: &[u8], served: &Served, mode: Mode, now_ms: u64) -> Result<Taken> {
-        let group = trommi_core::envelope::Envelope::decode(bytes)?.header.group;
+        let envelope = trommi_core::envelope::Envelope::decode(bytes)?;
+        let group = envelope.header.group;
         let me = self.me();
+        // An envelope this device signed, under a number beyond what this state has signed: the state is
+        // older than what the device already sent (a restored copy, a lost write). Checked before the chain,
+        // so that a hub cannot hide it behind a gap; signing on would put a second envelope under a used
+        // number.
+        if envelope.header.sender == me
+            && envelope.header.seq > self.own_head(&group).seq
+            && envelope.verify().is_ok()
+        {
+            return Err(Fault::new(
+                "state-rolled-back",
+                "this connector's stored state is older than what it already sent",
+            ));
+        }
         let facts = Facts {
             device: &self.device,
             ledgers: &self.ledgers,
         };
         let state = self.content.entry(group).or_default();
-        let own_before = state.own.head();
         let receipt = chain::receive(
             &facts,
             &Accepted(&self.journal),
@@ -942,14 +950,18 @@ impl ContentDevice for Vault {
             now_ms,
         )?;
         let header = &receipt.envelope().header;
-        if header.sender == me && header.seq > own_before.seq {
-            // The hub holds an envelope of this device that this state has not signed yet: the state is older
-            // than what the device already sent (a restored copy, a lost write). Signing on would put a
-            // second envelope under a used number.
-            return Err(Fault::new(
-                "state-rolled-back",
-                "this connector's stored state is older than what it already sent",
-            ));
+        // What was accepted under this place before (kept across a reading-again) must be this very envelope:
+        // another one is a fork, and is not taken in its stead.
+        if let Some(before) = self
+            .journal
+            .get(&accepted_key(&group, &header.sender, header.seq))
+        {
+            if before.as_slice() != receipt.hash().as_bytes() {
+                return Err(Fault::new(
+                    "equivocation",
+                    "a second envelope under a number this device had accepted another one for",
+                ));
+            }
         }
         state.chains.apply(receipt.advance())?;
         let mut register = None;

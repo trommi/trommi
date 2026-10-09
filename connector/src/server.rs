@@ -99,14 +99,33 @@ pub fn channel_tag(params: &Value) -> String {
         .and_then(|m| m.as_object())
         .map(|m| {
             m.iter()
-                .map(|(k, v)| format!(" {k}=\"{}\"", js_string(v).replace('"', "&quot;")))
+                .map(|(k, v)| {
+                    format!(
+                        " {k}=\"{}\"",
+                        channel_text(&js_string(v)).replace('"', "&quot;")
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
     format!(
         "<channel source=\"board\"{meta}>\n{}\n</channel>",
-        params.get("content").map(js_string).unwrap_or_default()
+        channel_text(&params.get("content").map(js_string).unwrap_or_default())
     )
+}
+/// Board content as it stands inside a `<channel>` tag: it cannot close the tag or open another, and carries no
+/// control or direction-changing characters (line breaks and tabs stay). What it says remains data.
+pub fn channel_text(text: &str) -> String {
+    // Every tag-like opening, not only the channel's own: board words name no tag of the harness either.
+    let tags = regex::Regex::new(r"<([A-Za-z/!?])").unwrap();
+    let cleaned: String = text
+        .chars()
+        .filter(|c| {
+            (*c == '\n' || *c == '\t' || !c.is_control())
+                && !matches!(*c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}')
+        })
+        .collect();
+    tags.replace_all(&cleaned, "&lt;$1").into_owned()
 }
 pub(crate) fn clean_name(v: &Value) -> String {
     let s = if v.is_null() {
@@ -128,6 +147,17 @@ pub(crate) fn clean_name(v: &Value) -> String {
 fn wire(mut params: Value) -> Value {
     if let Some(o) = params.as_object_mut() {
         o.remove("echo");
+        // Claude Code builds the tag from these: what the board said goes in cleaned, as in `channel_tag`.
+        if let Some(Value::String(content)) = o.get_mut("content") {
+            *content = channel_text(content);
+        }
+        if let Some(Value::Object(meta)) = o.get_mut("meta") {
+            for value in meta.values_mut() {
+                if let Value::String(text) = value {
+                    *text = channel_text(text);
+                }
+            }
+        }
     }
     params
 }
@@ -1410,6 +1440,13 @@ impl member::Host for ConnHost {
 
 fn spawn_witness(cfg: &Cfg) {
     use std::os::unix::process::CommandExt;
+    // With a release key pinned, a binary at this path that CI did not sign is not run, not even for this.
+    if matches!(
+        crate::update::verify_file(&self_path()),
+        crate::update::Release::Refused(_)
+    ) {
+        return;
+    }
     let mut cmd = std::process::Command::new(self_path());
     cmd.args(["witness", &cfg.session])
         .current_dir(&cfg.folder)
@@ -1764,13 +1801,13 @@ pub async fn main_server() {
                 // A new binary stands at this connector's path. With a release key pinned, only a binary
                 // that CI signed is announced (update.rs); without one, the announcement says so.
                 let release = crate::update::verify_file(&path);
-                if release == crate::update::Release::Refused {
-                    eprintln!("[trommi] a new binary is at the connector's path, but {}: it is not announced as an update", crate::update::standing(release));
+                if let crate::update::Release::Refused(_) = release {
+                    eprintln!("[trommi] a new binary is at the connector's path: {}. It is not announced as an update", crate::update::standing(&release));
                     continue;
                 }
                 eprintln!(
                     "[trommi] a new connector binary is in place ({})",
-                    crate::update::standing(release)
+                    crate::update::standing(&release)
                 );
                 c.on_update(&disk, true).await;
             }

@@ -543,6 +543,8 @@ pub fn set_slot_aside(p: &SlotPaths, stamp: Option<String>) -> PathBuf {
         .to_string_lossy()
         .to_string();
     let _ = fs::remove_dir_all(crate::slotstore::state_dir(&p.key_file));
+    // What was downloaded and decrypted for this device goes too.
+    let _ = fs::remove_dir_all(&p.cache);
     let _ = fs::remove_file(&p.key_file);
     if let Ok(rd) = fs::read_dir(&p.dir) {
         for e in rd.filter_map(|e| e.ok()) {

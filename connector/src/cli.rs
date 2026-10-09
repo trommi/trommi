@@ -467,7 +467,7 @@ pub async fn run(argv: &[String]) -> i32 {
                 crate::server::SERVER_VERSION,
                 crate::CLIENT,
                 crate::server::disk_version(),
-                crate::update::standing(crate::update::verify_file(&crate::server::self_path()))
+                crate::update::standing(&crate::update::verify_file(&crate::server::self_path()))
             );
             0
         }

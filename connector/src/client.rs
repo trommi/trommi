@@ -43,6 +43,8 @@ const TAG_PENDING: u8 = b'q';
 const TAG_MODEL: u8 = b'm';
 const TAG_KV: u8 = b'k';
 const TAG_CUTS: u8 = b'u';
+/// Commands the gate let through that are not yet noted as handed to the agent, by envelope hash.
+const TAG_COMMAND: u8 = b'd';
 
 /// How far one page of the hub's order may move the cursor beyond its last item: the hub looks at most 20 000
 /// numbers ahead per call.
@@ -64,8 +66,12 @@ pub async fn sleep(ms: u64) {
 }
 
 /// A command of a human for the agent, after the core's gate (9.0.9).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Command {
+    /// It was let through before this process started and never noted as handed over: the agent may or may
+    /// not have had it (9.0.9: reported, not repeated).
+    pub uncertain: bool,
     /// `message`, `answer`, `trust`, `read`, `shred`, `decide_again`, `verdict`, `unsupported`.
     pub command: String,
     pub session_id: Option<String>,
@@ -635,6 +641,19 @@ impl Client {
             let mut core = self.core.lock().await;
             self.refresh_groups(&mut core).await?;
         }
+        // Commands that were let through before this process started and never noted as handed over.
+        let left: Vec<Command> = {
+            let core = self.core.lock().await;
+            core.journal
+                .scan(&side_key(TAG_COMMAND, &[])[..2])
+                .iter()
+                .filter_map(|(_, value)| serde_json::from_slice::<Command>(value).ok())
+                .collect()
+        };
+        for mut command in left {
+            command.uncertain = true;
+            self.emit(ClientEvent::Command(Box::new(command)));
+        }
         let first = self.go_online().await;
         if let Err(fault) = &first {
             if !is_transient(fault) {
@@ -967,6 +986,8 @@ impl Client {
         self.vault
             .call(move |v: &mut Vault| v.gate_finish(&hash))
             .await??;
+        core.journal
+            .delete(side_key(TAG_COMMAND, &[envelope_hash.as_bytes()]));
         core.commit()
     }
 
@@ -1159,6 +1180,7 @@ impl Client {
         let mut changes = Vec::new();
         let mut after = 0u64;
         loop {
+            let asked_after = after;
             let page = self
                 .hub
                 .get(&format!(
@@ -1183,6 +1205,10 @@ impl Client {
                 out.push((unb64(item, "bytes")?, auth));
                 changes.push(item.get("change").and_then(Value::as_u64).unwrap_or(0));
                 after = after.max(item.get("n").and_then(Value::as_u64).unwrap_or(after));
+            }
+            // A log that says there is more and does not move on, or that is longer than any group's, ends.
+            if after == asked_after || out.len() > 1_000_000 {
+                return Ok((out, changes));
             }
             if page.get("more") != Some(&Value::Bool(true)) || items.is_empty() {
                 return Ok((out, changes));
@@ -1237,10 +1263,12 @@ impl Client {
     async fn publish_key_packages(&self, core: &mut Core) -> Result<()> {
         // What the hub still holds is not asked for: uploading again is harmless, and the device makes new
         // ones only when its own count says so. A device that never uploaded has none there.
-        let unused = core
-            .kv_get("key_packages_unused")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+        // An upload of none is answered with how many single-use ones the hub still holds.
+        let held = self
+            .hub
+            .put("/v2/key-packages", &json!({ "single_use": [] }))
+            .await?;
+        let unused = held.get("unused").and_then(Value::as_u64).unwrap_or(0) as usize;
         let now = now_ms();
         self.vault
             .call(move |v: &mut Vault| v.device.key_packages_to_upload(unused, now))
@@ -1269,6 +1297,13 @@ impl Client {
             if change <= core.cursor {
                 continue;
             }
+            if change > core.cursor.saturating_add(CURSOR_REACH) {
+                // The number is the hub's word. One that lies beyond anything a page can reach would carry
+                // the cursor past everything to come: the item is not taken, and the cursor stays.
+                eprintln!("[trommi] finding: an item of the hub's order names a change far beyond the last one; not taken");
+                stopped_early = true;
+                break;
+            }
             let kind = item.get("kind").and_then(Value::as_str).unwrap_or("");
             let step = if kind == "envelope" {
                 self.take_envelope(core, item, change, &mut commands).await
@@ -1276,14 +1311,22 @@ impl Client {
                 self.take_log(core, item, change, kind == "commit").await
             };
             match step {
-                Ok(true) => core.cursor = change,
+                Ok(true) => {
+                    // One record per entry (13.2): the state after it, what was derived from it, the cursor.
+                    core.cursor = change;
+                    core.commit()?;
+                }
                 Ok(false) => {
                     stopped_early = true;
                     break;
                 }
                 Err(fault) => {
-                    // What was processed before stands, and its commands are handed out all the same.
-                    core.commit()?;
+                    // What was processed before is written, and its commands are handed out all the same.
+                    // If the failing entry left changes behind, they belong to no whole step: nothing of
+                    // them is written, and this process starts again from the files.
+                    if core.journal.is_dirty() {
+                        core.journal.poison();
+                    }
                     self.deliver(std::mem::take(&mut commands)).await;
                     return Err(fault);
                 }
@@ -1418,11 +1461,13 @@ impl Client {
                 put_room_record(&core.journal, &core.room);
             }
             LogOutcome::Enrolled(false) => {
-                core.halted = Some("bad-invite".into());
-                return Err(Fault::new(
+                let fault = Fault::new(
                     "bad-invite",
                     "this device was enrolled by another device than the one that invited it",
-                ));
+                );
+                core.cursor = change;
+                self.halt(core, &fault)?;
+                return Err(fault);
             }
             LogOutcome::Unenrolled => {
                 core.cursor = change;
@@ -1450,12 +1495,11 @@ impl Client {
                         &json!({ "n": n }),
                     )
                     .await;
-                core.halted = Some("bad-group".into());
                 let fault = Fault::new(
                     "bad-group",
                     format!("the hub handed out a group change this device cannot take ({code}); the human looks at the room in the Trommi app and reconnects this session"),
                 );
-                self.emit(ClientEvent::Error(fault.clone()));
+                self.halt(core, &fault)?;
                 return Err(fault);
             }
         }
@@ -1829,6 +1873,16 @@ impl Client {
                     .unwrap_or_default();
             }
         }
+        // Stored with the gate's record: a crash between this write and the hand-over is found at the next
+        // start, and the command is reported then, marked as uncertain.
+        if !command.envelope_hash.is_empty() {
+            if let Ok(bytes) = serde_json::to_vec(&command) {
+                core.journal.put(
+                    side_key(TAG_COMMAND, &[command.envelope_hash.as_bytes()]),
+                    bytes,
+                );
+            }
+        }
         commands.push(command);
         Ok(())
     }
@@ -1842,15 +1896,10 @@ impl Client {
         if !core.groups.contains_key(&session) {
             return Ok(());
         }
-        self.vault
-            .call(move |v: &mut Vault| v.forget_received(&group))
-            .await??;
-        for name in core.model.forget_session(&session) {
-            core.journal.delete(side_key(TAG_MODEL, &[name.as_bytes()]));
-        }
+        // Everything is fetched first: nothing is forgotten before what replaces it is in hand.
         let upto = core.cursor;
         let mut after = 0u64;
-        let mut unused = Vec::new();
+        let mut fetched: Vec<(u64, Vec<u8>, Served)> = Vec::new();
         loop {
             let answer = self
                 .hub
@@ -1881,32 +1930,43 @@ impl Client {
                     ),
                     None => Served::Stored,
                 };
-                if let Err(fault) = self
-                    .receive(
-                        core,
-                        bytes,
-                        served,
-                        Some(Mode::ReadingBack),
-                        change,
-                        &session,
-                        &mut unused,
-                    )
-                    .await
-                {
-                    if fault.as_core().is_none() || fault.code == "storage" {
-                        return Err(fault);
-                    }
-                    eprintln!(
-                        "[trommi] finding: {} (reading a session's history)",
-                        fault.code
-                    );
-                }
+                fetched.push((change, bytes, served));
             }
             let next = answer.get("change").and_then(Value::as_u64).unwrap_or(upto);
             if answer.get("more") != Some(&Value::Bool(true)) || next >= upto || next <= after {
                 break;
             }
             after = next;
+        }
+        self.vault
+            .call(move |v: &mut Vault| v.forget_received(&group))
+            .await??;
+        for name in core.model.forget_session(&session) {
+            core.journal.delete(side_key(TAG_MODEL, &[name.as_bytes()]));
+        }
+        let mut unused = Vec::new();
+        for (change, bytes, served) in fetched {
+            if let Err(fault) = self
+                .receive(
+                    core,
+                    bytes,
+                    served,
+                    Some(Mode::ReadingBack),
+                    change,
+                    &session,
+                    &mut unused,
+                )
+                .await
+            {
+                if fault.as_core().is_none() || fault.code == "storage" || fault.code == "internal"
+                {
+                    return Err(fault);
+                }
+                eprintln!(
+                    "[trommi] finding: {} (reading a session's history)",
+                    fault.code
+                );
+            }
         }
         core.commit()
     }
@@ -1934,12 +1994,14 @@ impl Client {
             {
                 continue;
             }
-            core.kv_set(&name, &json!(value));
             let spec = Spec::Register {
                 name: "heads".into(),
-                value: Some(value),
+                value: Some(value.clone()),
             };
-            self.seal(core, group, spec, Vec::new()).await?;
+            // A group that takes no envelope now (stale, no key yet) gets its heads another time.
+            if self.seal(core, group, spec, Vec::new()).await.is_ok() {
+                core.kv_set(&name, &json!(value));
+            }
         }
         core.commit()?;
         if send {
