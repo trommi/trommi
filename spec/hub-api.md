@@ -137,9 +137,11 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   - *Per account:* 100 checks in an hour (the hour begins with the first of them). Past that, sources stand in
     line: turns are given out two seconds apart in the order sources came, each told by `retry-after`. A turn is
     its source's alone and good for one check, from its time until five seconds after; nobody else can take it,
-    and nobody waits for anybody. Who comes later asks for a new turn. The line is ten minutes long; a source
-    that finds it full is told to ask again in a minute. That is at most 2 000 checks per account in any hour,
-    however many sources there are (1 800 turns, and the 100 twice where two of its hours meet), beside the
+    and nobody waits for anybody; a request that came in that time keeps the turn while it waits for the hub's
+    pool. Who comes later asks for a new turn. The line is ten minutes long; a source
+    that finds it full is told to ask again in a minute. That is at most 2 010 checks per account in any hour,
+    however many sources there are (1 800 turns of that hour, the few given out before it that are still good,
+    and the 100 twice where two of its hours meet), beside the
     early checks of the sources it knows (below). The time of a check is the moment it starts.
   - *The owner always gets in.* A source the account knows (one of the last 16 it was signed in to from, by
     password, kit or passkey; the hub keeps a keyed hash, not the address) is checked at once also while it
@@ -153,13 +155,16 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   - *Kept and bounded.* The state lies in the database (hashes, no address, no e-mail): a restart resets
     nothing. An account keeps a record of at most 5 000 sources, the hub of 500 000 in all, and the hours of
     200 000 e-mails. A full table forgets the record whose wait ran out longest ago (that source starts again
-    at one second; the account's 2 000 an hour hold all the same); a record that still waits is never
+    at one second: the thirteen and four hold while its record does; the account's 2 010 an hour hold all the
+    same); a record that still waits is never
     forgotten, and if all do, a wrong credential is told to ask again in a minute, from a known source as from
-    any other (a right one from a known source gets in). A full table of hours forgets the oldest hour, with
-    its line, whoever's it is: the 2 000 an hour hold while fewer than 200 000 e-mails are tried within the
+    any other, also when it asks again (a right one from a known source gets in; the records of the sources
+    accounts know, at most 16 each, come on top of the 500 000). A full table of hours forgets the oldest hour, with
+    its line, whoever's it is: the 2 010 an hour hold while fewer than 200 000 e-mails are tried within the
     hour. A record is deleted a day after its wait ran out.
-  - Not covered, and left so: someone guessing from the owner's own address (the same NAT) slows the owner's
-    wrong attempts from there down as well. And a guesser at an address the account knows can find that out
+  - Not covered, and left so: someone guessing from the owner's own address (the same NAT) slows that address
+    down for the owner too, the right password included, while its back-off runs. A source that finds the line
+    full has no place in it: against a crowd that keeps the line full, a new device has no promise of a turn. And a guesser at an address the account knows can find that out
     with some effort: after about six wrong guesses in line its back-off is longer than its turn is away, and
     it is told the back-off.
 - A successful login is answered only if the account still is as the check found it (its revision); a password,
