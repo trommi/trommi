@@ -1032,7 +1032,9 @@ impl<S: Storage> Device<S> {
 
     /// Whether this device is a human device now: a leaf of the room group in the newest room state it
     /// knows. A device that processed its own removal from the room group follows that group as an observer
-    /// from then on and is no human device; operations in the room group answer `forbidden`.
+    /// from then on and is no human device; operations in the room group answer `forbidden`. Should that
+    /// observer not start, the device holds no record of the roles at all ([`Device::room_history`] is none)
+    /// until it is told to follow the room again ([`Device::observe_room`]).
     pub fn is_human(&self) -> bool {
         self.room_history()
             .is_some_and(|history| history.newest().is_human(&self.id))
@@ -2862,9 +2864,13 @@ impl<S: Storage> Device<S> {
             return Err(Error::BadGroup);
         };
         // A device removed from the room group goes on as an observer of it, so that it knows the room
-        // state that removed it and judges its remaining session groups against it.
-        let follower = if id.is_room() && staged.self_removed() {
-            Some(self.follow_after_removal(&group, commit, recovery_auth, &known)?)
+        // state that removed it and judges its remaining session groups against it. Where the observer
+        // cannot be started (it checks the lifetime of every leaf, a member does not), the removal stands
+        // all the same and the device keeps no record of the roles.
+        let leaving = id.is_room() && staged.self_removed();
+        let follower = if leaving {
+            self.follow_after_removal(&group, commit, recovery_auth, &known)
+                .ok()
         } else {
             None
         };
@@ -2886,7 +2892,7 @@ impl<S: Storage> Device<S> {
         }
         let removed = !group.is_active();
         self.settle(batch, id, &group, room_epoch)?;
-        if let Some(observer) = follower {
+        if leaving {
             // The roles are the observer's from here on: the device's own record of them goes.
             for state in self
                 .memory
@@ -2897,7 +2903,9 @@ impl<S: Storage> Device<S> {
             {
                 batch.delete(history_key(state.epoch));
             }
-            self.memory.observers.insert(*id, observer);
+            if let Some(observer) = follower {
+                self.memory.observers.insert(*id, observer);
+            }
         }
         Ok(Processed::Commit {
             facts,
