@@ -1783,7 +1783,7 @@ impl<S: Storage> Device<S> {
     /// Merges this device's pending Commit of `group` and settles the new epoch.
     fn merge_own(&mut self, batch: &mut Batch, id: &GroupId) -> Result<(), Error> {
         let pending = self.meta(id)?.pending.take().ok_or(Error::NotFound)?;
-        self.merging_own(id, pending.outbox, pending.time);
+        self.merging_own(id, pending.outbox, pending.time)?;
         let commit = self
             .memory
             .outbox
@@ -2427,6 +2427,7 @@ impl<S: Storage> Device<S> {
                     sealed,
                 ],
             )?;
+            device.keep_own_cuts(batch, &group_id, outbox)?;
             device.memory.groups.insert(
                 group_id,
                 GroupMeta {
@@ -3058,6 +3059,7 @@ impl<S: Storage> Device<S> {
         expected_state: Option<&Hash32>,
     ) -> Result<(), Error> {
         self.transact(|this, batch| {
+            this.observing_as_invited(expected_state)?;
             let observer = Observer::follow_room(group_info, expected_state)?;
             let group = observer.group();
             let known_room = this.memory.record.room;

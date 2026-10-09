@@ -1219,3 +1219,50 @@ fn a_board_is_loaded_from_its_snapshot_and_the_items_after_it() {
     let reopened = b.board_load(&board_id, &served);
     assert_eq!(reopened, Err(Error::Replay));
 }
+
+#[test]
+fn an_envelope_that_comes_behind_later_ones_is_judged_at_its_own_place() {
+    let (mut w, mut other) = world_of_two();
+    let made = write(
+        &mut w.hub,
+        &mut w.agent,
+        &Draft::CardFirst {
+            session: w.session,
+            urgency: Urgency::Normal,
+            push: false,
+            payload: card("Late", ZERO_HASH),
+        },
+    );
+    let card_id = made.object_id.unwrap();
+    sync_all(&w.hub, &mut w.human);
+    sync_all(&w.hub, &mut w.agent);
+    let answered = write(
+        &mut w.hub,
+        &mut w.human,
+        &Draft::Answer {
+            session: w.session,
+            object_id: card_id,
+            choices: vec!["no".into()],
+            closes: false,
+            payload: json(r#"{"answer_action":"answer"}"#),
+        },
+    );
+    // The hub hands the other device the answer before the card it answers.
+    let card_stored = w.hub.chain_of(&w.group, &w.agent.id(), 0).remove(0);
+    let answer_stored = w.hub.chain_of(&w.group, &w.human.id(), 0).remove(0);
+    let early = take_envelope(&mut other, &answer_stored);
+    assert_eq!(early.envelope_hash, answered.envelope_hash);
+    assert_eq!(
+        (early.outcome, early.code),
+        (EnvelopeOutcome::Chained, Some(Error::Forbidden))
+    );
+    // The card comes behind it: it is judged where it stands in the hub's order, and the group's state is
+    // built again, with the answer in its place.
+    let late = take_envelope(&mut other, &card_stored);
+    assert_eq!(late.outcome, EnvelopeOutcome::Applied);
+    assert!(late.replayed);
+    let state = other.object(&w.group, &card_id).unwrap().unwrap();
+    assert_eq!(state.state, ObjectState::Answered);
+    assert_eq!(Some(&state), w.hub.objects(&w.group).get(&card_id));
+    assert_eq!(late.object_after.unwrap().1, state);
+}
