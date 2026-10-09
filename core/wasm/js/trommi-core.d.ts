@@ -25,9 +25,11 @@ export type ErrorCode =
 
 /** What every call fails with. `message` is for a log and never holds key material. */
 export class TrommiError extends Error {
-  constructor(code: ErrorCode, message?: string)
+  constructor(code: ErrorCode, message?: string, cause?: unknown)
   readonly name: 'TrommiError'
   readonly code: ErrorCode
+  /** For `storage`: what the store threw. A StoreConflict means another tab or worker has, or wrote to, the state. */
+  readonly cause?: unknown
 }
 
 /** What a store's `apply` throws when the stored revision is not the one the write names, and `load` when another

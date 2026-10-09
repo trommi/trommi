@@ -10,7 +10,9 @@ export class IdbStore implements Store {
   constructor(name: string, options?: { wait?: boolean })
   load(): Promise<StoredState>
   apply(write: StoreWrite): Promise<void>
-  close(): void
+  /** Resolves once the lock is released: the state can be opened again without waiting. A `load` still waiting
+   *  for the lock is given up. */
+  close(): Promise<void>
   /** Deletes a stored state for good. StoreConflict while a device has it open. */
   static destroy(name: string): Promise<void>
 }
