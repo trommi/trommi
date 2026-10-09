@@ -182,6 +182,7 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer
     let origin = http::header(req.headers(), "origin")
         .filter(|o| allowed_origin(&app, o))
         .map(str::to_string);
+    let hsts = app.cfg.hsts;
     let mut answer = respond(app, req, conn).await;
     if let Some(origin) = origin {
         let h = answer.headers_mut();
@@ -199,6 +200,14 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer
     answer
         .headers_mut()
         .insert("x-content-type-options", "nosniff".parse().expect("static"));
+    if hsts {
+        answer.headers_mut().insert(
+            "strict-transport-security",
+            "max-age=63072000; includeSubDomains; preload"
+                .parse()
+                .expect("static"),
+        );
+    }
     answer
 }
 

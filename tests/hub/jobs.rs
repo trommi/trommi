@@ -30,10 +30,10 @@ fn the_timers_do_their_work() {
         ("HUB_PING_MS", "50"),
         ("HUB_LIVE_MS", "20"),
         ("HUB_LIVE_BEAT_MS", "600000"),
-        ("APNS_KEY", &key),
-        ("APNS_KEY_ID", "KEYID12345"),
-        ("APNS_TEAM_ID", "TEAMID1234"),
-        ("APNS_TOPIC", "com.trommi.app"),
+        ("APPLE_APNS_KEY", &key),
+        ("APPLE_APNS_KEY_ID", "KEYID12345"),
+        ("APPLE_TEAM_ID", "TEAMID1234"),
+        ("APPLE_APNS_TOPIC", "com.trommi.app"),
     ]);
     let mut w = World::on(hub);
     let room = w.room;
