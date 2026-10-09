@@ -233,4 +233,4 @@ macro_rules! list {
 }
 pub(crate) use list;
 
-list!(Vec<u8>, u64, String);
+list!(Vec<u8>, u64, u32, String);

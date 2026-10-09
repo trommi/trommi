@@ -162,6 +162,27 @@
       "arguments": [],
       "returns": "bytes"
     },
+    "boardReduce": {
+      "arguments": [
+        {
+          "name": "snapshot",
+          "type": "optional<bytes>"
+        },
+        {
+          "name": "snapshotFrontier",
+          "type": "list<WriterHead>"
+        },
+        {
+          "name": "items",
+          "type": "list<BoardItem>"
+        },
+        {
+          "name": "frontier",
+          "type": "list<WriterHead>"
+        }
+      ],
+      "returns": "bytes"
+    },
     "logFinding": {
       "arguments": [
         {
@@ -270,6 +291,28 @@
         }
       ],
       "returns": "void"
+    },
+    "inviteLinkParse": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        }
+      ],
+      "returns": "InviteLinkParts"
+    },
+    "checkEmoji": {
+      "arguments": [],
+      "returns": "list<EmojiWord>"
+    },
+    "hubAddress": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        }
+      ],
+      "returns": "text"
     },
     "keyPackageInfo": {
       "arguments": [
@@ -459,7 +502,7 @@
         ],
         "returns": "GroupSummary"
       },
-      "contentKey": {
+      "holdsKey": {
         "arguments": [
           {
             "name": "group",
@@ -470,7 +513,7 @@
             "type": "number"
           }
         ],
-        "returns": "bytes"
+        "returns": "bool"
       },
       "outbox": {
         "arguments": [],
@@ -968,6 +1011,268 @@
         ],
         "returns": "CodeJoin"
       },
+      "seal": {
+        "arguments": [
+          {
+            "name": "draft",
+            "type": "Draft"
+          },
+          {
+            "name": "recipient",
+            "type": "optional<bytes>"
+          },
+          {
+            "name": "fileIds",
+            "type": "list<bytes>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "Sealed"
+      },
+      "outboxVoided": {
+        "arguments": [
+          {
+            "name": "id",
+            "type": "number"
+          }
+        ],
+        "returns": "void"
+      },
+      "envelopeAbandon": {
+        "arguments": [
+          {
+            "name": "id",
+            "type": "number"
+          }
+        ],
+        "returns": "void"
+      },
+      "receiveEnvelope": {
+        "arguments": [
+          {
+            "name": "envelope",
+            "type": "bytes"
+          },
+          {
+            "name": "change",
+            "type": "number"
+          },
+          {
+            "name": "ordered",
+            "type": "bool"
+          },
+          {
+            "name": "voidCode",
+            "type": "optional<ErrorCode>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "ReceivedEnvelope"
+      },
+      "receiveRelay": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "message",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "optional<ReceivedMessage>"
+      },
+      "headsDue": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "optional<bytes>"
+      },
+      "compareHeads": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "writer",
+            "type": "bytes"
+          }
+        ],
+        "returns": "list<HeadStanding>"
+      },
+      "cutOf": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "device",
+            "type": "bytes"
+          }
+        ],
+        "returns": "Cut"
+      },
+      "chainHead": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "sender",
+            "type": "bytes"
+          }
+        ],
+        "returns": "ChainHead"
+      },
+      "chainCut": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "device",
+            "type": "bytes"
+          }
+        ],
+        "returns": "optional<ChainHead>"
+      },
+      "object": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "objectId",
+            "type": "bytes"
+          }
+        ],
+        "returns": "optional<ObjectView>"
+      },
+      "objects": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          }
+        ],
+        "returns": "list<ObjectView>"
+      },
+      "objectOwner": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "objectId",
+            "type": "bytes"
+          }
+        ],
+        "returns": "optional<bytes>"
+      },
+      "register": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "name",
+            "type": "text"
+          }
+        ],
+        "returns": "optional<bytes>"
+      },
+      "registerOf": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "name",
+            "type": "text"
+          },
+          {
+            "name": "sender",
+            "type": "bytes"
+          }
+        ],
+        "returns": "optional<bytes>"
+      },
+      "boardLoad": {
+        "arguments": [
+          {
+            "name": "board",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "list<ServedItem>"
+          }
+        ],
+        "returns": "BoardLoaded"
+      },
+      "command": {
+        "arguments": [
+          {
+            "name": "envelopeHash",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "CommandDecision"
+      },
+      "commandFinished": {
+        "arguments": [
+          {
+            "name": "envelopeHash",
+            "type": "bytes"
+          }
+        ],
+        "returns": "void"
+      },
+      "commandsPending": {
+        "arguments": [],
+        "returns": "list<bytes>"
+      },
+      "commandsUncertain": {
+        "arguments": [],
+        "returns": "list<bytes>"
+      },
+      "findings": {
+        "arguments": [],
+        "returns": "list<Finding>"
+      },
+      "findingsRead": {
+        "arguments": [],
+        "returns": "void"
+      },
       "inviteOpen": {
         "arguments": [
           {
@@ -1001,15 +1306,7 @@
           },
           {
             "name": "request",
-            "type": "bytes"
-          },
-          {
-            "name": "mac",
-            "type": "bytes"
-          },
-          {
-            "name": "signature",
-            "type": "bytes"
+            "type": "SignedRequest"
           },
           {
             "name": "nowMs",
@@ -1086,11 +1383,7 @@
           },
           {
             "name": "offer",
-            "type": "bytes"
-          },
-          {
-            "name": "offerSignature",
-            "type": "bytes"
+            "type": "SignedOffer"
           },
           {
             "name": "nowMs",
@@ -1103,11 +1396,7 @@
         "arguments": [
           {
             "name": "reveal",
-            "type": "bytes"
-          },
-          {
-            "name": "revealSignature",
-            "type": "bytes"
+            "type": "SignedReveal"
           }
         ],
         "returns": "CheckCode"
@@ -1209,6 +1498,143 @@
       "authKey": "bytes",
       "wrapKey": "bytes"
     },
+    "Draft": {
+      "kind": "DraftKind",
+      "session": "optional<bytes>",
+      "card": "optional<bytes>",
+      "board": "optional<bytes>",
+      "group": "optional<bytes>",
+      "name": "optional<text>",
+      "value": "optional<bytes>",
+      "objectId": "optional<bytes>",
+      "requestId": "optional<bytes>",
+      "choices": "optional<list<text>>",
+      "closes": "optional<bool>",
+      "closed": "optional<bool>",
+      "allow": "optional<bool>",
+      "urgency": "optional<Urgency>",
+      "push": "optional<bool>",
+      "expiresAt": "optional<number>",
+      "payload": "optional<bytes>"
+    },
+    "Sealed": {
+      "outboxId": "number",
+      "envelopeHash": "bytes",
+      "seq": "number",
+      "group": "bytes",
+      "objectId": "optional<bytes>",
+      "time": "number"
+    },
+    "TimelineRef": {
+      "kind": "TimelineKind",
+      "id": "bytes"
+    },
+    "ObjectHeader": {
+      "objectId": "bytes",
+      "objectType": "ObjectType",
+      "objectState": "ObjectState",
+      "urgency": "Urgency",
+      "answeredAt": "number",
+      "objectRef": "bytes"
+    },
+    "EnvelopeHeader": {
+      "group": "bytes",
+      "sessionId": "optional<bytes>",
+      "epoch": "number",
+      "sender": "bytes",
+      "seq": "number",
+      "prev": "bytes",
+      "recipient": "optional<bytes>",
+      "time": "number",
+      "kind": "EnvelopeKind",
+      "push": "bool",
+      "timeline": "optional<TimelineRef>",
+      "registerId": "optional<bytes>",
+      "object": "optional<ObjectHeader>",
+      "fileIds": "list<bytes>"
+    },
+    "Bind": {
+      "kind": "BindKind",
+      "objectId": "optional<bytes>",
+      "requestId": "optional<bytes>",
+      "versionHash": "optional<bytes>",
+      "previousHash": "optional<bytes>",
+      "requestHash": "optional<bytes>",
+      "choices": "list<text>",
+      "expiresAt": "number",
+      "allow": "bool"
+    },
+    "ObjectView": {
+      "objectId": "bytes",
+      "objectType": "ObjectType",
+      "owner": "bytes",
+      "objectState": "ObjectState",
+      "current": "bytes",
+      "answer": "optional<bytes>"
+    },
+    "RegisterChange": {
+      "name": "text",
+      "of": "optional<bytes>",
+      "current": "bool"
+    },
+    "ReceivedEnvelope": {
+      "change": "number",
+      "envelopeHash": "bytes",
+      "header": "EnvelopeHeader",
+      "outcome": "EnvelopeOutcome",
+      "code": "optional<ErrorCode>",
+      "finding": "optional<ErrorCode>",
+      "payload": "optional<bytes>",
+      "bind": "optional<Bind>",
+      "objectAfter": "optional<ObjectView>",
+      "register": "optional<RegisterChange>",
+      "confirmed": "optional<bool>",
+      "dropped": "optional<ErrorCode>",
+      "replayed": "bool",
+      "command": "bool"
+    },
+    "ChainHead": {
+      "seq": "number",
+      "hash": "bytes"
+    },
+    "WriterHead": {
+      "writer": "bytes",
+      "seq": "number",
+      "hash": "bytes"
+    },
+    "HeadStanding": {
+      "sender": "bytes",
+      "standing": "Standing",
+      "have": "number"
+    },
+    "ServedItem": {
+      "sender": "bytes",
+      "seq": "number",
+      "hash": "bytes"
+    },
+    "BoardLoaded": {
+      "frontier": "list<WriterHead>",
+      "fresh": "list<number>",
+      "covered": "list<number>"
+    },
+    "CommandDecision": {
+      "gate": "Gate",
+      "command": "optional<CommandKind>",
+      "action": "optional<AnswerKind>",
+      "choices": "list<text>",
+      "allow": "optional<bool>",
+      "refusal": "optional<text>"
+    },
+    "Finding": {
+      "group": "bytes",
+      "sender": "bytes",
+      "code": "ErrorCode"
+    },
+    "BoardItem": {
+      "sender": "bytes",
+      "seq": "number",
+      "payload": "bytes"
+    },
     "FileRef": {
       "fileId": "bytes",
       "fileKey": "bytes",
@@ -1244,7 +1670,30 @@
       "link": "text",
       "expiresAt": "number",
       "offer": "bytes",
-      "offerSignature": "bytes"
+      "signature": "bytes"
+    },
+    "SignedOffer": {
+      "offer": "bytes",
+      "signature": "bytes"
+    },
+    "SignedRequest": {
+      "request": "bytes",
+      "mac": "bytes",
+      "signature": "bytes"
+    },
+    "SignedReveal": {
+      "reveal": "bytes",
+      "signature": "bytes"
+    },
+    "InviteLinkParts": {
+      "app": "text",
+      "hub": "text",
+      "roomId": "bytes",
+      "inviteId": "bytes"
+    },
+    "EmojiWord": {
+      "emoji": "text",
+      "word": "text"
     },
     "CheckCode": {
       "numbers": "bytes",
@@ -1255,7 +1704,7 @@
       "newDevice": "bytes",
       "code": "CheckCode",
       "reveal": "bytes",
-      "revealSignature": "bytes",
+      "signature": "bytes",
       "requestHash": "bytes"
     },
     "InviteConfirmed": {
@@ -1279,7 +1728,11 @@
       "signature": "bytes",
       "role": "InviteRole",
       "inviter": "bytes",
-      "expiresAt": "number"
+      "expiresAt": "number",
+      "sessionId": "optional<bytes>",
+      "roomId": "bytes",
+      "roomEpoch": "number",
+      "roomState": "bytes"
     },
     "PushNote": {
       "roomId": "bytes",
@@ -1463,6 +1916,90 @@
       "password": "password",
       "kit": "kit",
       "passkey": "passkey"
+    },
+    "Urgency": {
+      "low": "low",
+      "normal": "normal",
+      "high": "high",
+      "critical": "critical"
+    },
+    "ObjectType": {
+      "card": "card",
+      "note": "note",
+      "request": "request",
+      "artifact": "artifact"
+    },
+    "ObjectState": {
+      "open": "open",
+      "answered": "answered",
+      "closed": "closed"
+    },
+    "DraftKind": {
+      "sessionChat": "sessionChat",
+      "cardChat": "cardChat",
+      "boardItem": "boardItem",
+      "register": "register",
+      "noteFirst": "noteFirst",
+      "noteVersion": "noteVersion",
+      "answer": "answer",
+      "takeBack": "takeBack",
+      "verdict": "verdict",
+      "cardFirst": "cardFirst",
+      "cardVersion": "cardVersion",
+      "permissionRequest": "permissionRequest",
+      "artifactFirst": "artifactFirst",
+      "artifactVersion": "artifactVersion"
+    },
+    "EnvelopeKind": {
+      "item": "item",
+      "version": "version",
+      "answer": "answer",
+      "request": "request",
+      "verdict": "verdict",
+      "register": "register",
+      "takeBack": "takeBack",
+      "reserved": "reserved"
+    },
+    "TimelineKind": {
+      "sessionChat": "sessionChat",
+      "cardChat": "cardChat",
+      "board": "board"
+    },
+    "BindKind": {
+      "answer": "answer",
+      "request": "request",
+      "verdict": "verdict",
+      "takeBack": "takeBack"
+    },
+    "EnvelopeOutcome": {
+      "applied": "applied",
+      "chained": "chained",
+      "void": "void",
+      "provisional": "provisional",
+      "refused": "refused"
+    },
+    "Standing": {
+      "held": "held",
+      "behind": "behind",
+      "equivocation": "equivocation",
+      "unknown": "unknown"
+    },
+    "Gate": {
+      "act": "act",
+      "refused": "refused",
+      "done": "done",
+      "uncertain": "uncertain"
+    },
+    "CommandKind": {
+      "chat": "chat",
+      "answer": "answer",
+      "verdict": "verdict",
+      "takeBack": "takeBack"
+    },
+    "AnswerKind": {
+      "answer": "answer",
+      "read": "read",
+      "shred": "shred"
     },
     "ErrorCode": {
       "badFormat": "bad-format",

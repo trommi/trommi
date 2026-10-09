@@ -5,7 +5,9 @@
     "Devices are named by a letter; A, B and C are human devices (C comes with the recovery code), G is an agent",
     "device. Groups are named 'room' or by the name a session was founded under. The hub is a stand-in that orders and stores and verifies nothing: the",
     "devices do. A step with 'refused' must fail with that code; every other step must succeed. The room is always",
-    "served with its session groups: the deepest thing a call takes. R is a new device that recovers the room alone."
+    "served with its session groups: the deepest thing a call takes. R is a new device that recovers the room alone.",
+    "same_key: every device named stands in the same epoch of the group and holds its key. A sync with 'chat' must",
+    "bring an applied envelope with that text; 'fetch' hands a device the newest envelope out of order, before its turn."
   ],
   "steps": [
     { "do": "create", "device": "A" },
@@ -23,6 +25,11 @@
     { "do": "same_key", "devices": ["A", "B"], "group": "room" },
     { "do": "sign_in", "device": "B" },
 
+    { "do": "board", "writer": "A", "reader": "B" },
+    { "do": "stroke", "device": "A" },
+    { "do": "post", "device": "A" },
+    { "do": "relay", "device": "B" },
+
     { "do": "invite", "by": "A", "device": "G", "role": "agent" },
     { "do": "post", "device": "A" },
     { "do": "sync", "device": "B" },
@@ -31,6 +38,12 @@
     { "do": "sync", "device": "B" },
     { "do": "sync", "device": "G" },
     { "do": "same_key", "devices": ["A", "B", "G"], "group": "main" },
+
+    { "do": "chat", "device": "A", "group": "main", "text": "the first message" },
+    { "do": "post", "device": "A" },
+    { "do": "fetch", "device": "B", "text": "the first message" },
+    { "do": "sync", "device": "B", "chat": "the first message", "confirmed": true },
+    { "do": "sync", "device": "G", "chat": "the first message" },
 
     { "do": "work_trail", "device": "G", "group": "main", "number": 1, "text": "{\"step\":\"reading the brief\"}" },
     { "do": "post", "device": "G" },

@@ -799,6 +799,16 @@ fn what_fails_checks_seven_to_nine_is_chained_and_never_applied() {
         (EnvelopeOutcome::Chained, Some(Error::Pruned))
     );
     assert!(got.object_after.is_some());
+    // Fetched in full later, its body is taken after all.
+    let full = f
+        .reader
+        .receive_envelope(&note.encode().unwrap(), 0, false, None, now())
+        .unwrap();
+    assert_eq!(
+        (full.outcome, full.code.clone()),
+        (EnvelopeOutcome::Applied, None)
+    );
+    assert!(full.body.is_some() && full.object_after.is_some());
     // A kind of a newer Trommi is chained and nothing else.
     let mut newer = f.pen.sign(&claim, &note_draft(), &Objects::new(), now());
     newer.header.subject = Subject::Reserved {
@@ -1265,4 +1275,33 @@ fn an_envelope_that_comes_behind_later_ones_is_judged_at_its_own_place() {
     assert_eq!(state.state, ObjectState::Answered);
     assert_eq!(Some(&state), w.hub.objects(&w.group).get(&card_id));
     assert_eq!(late.object_after.unwrap().1, state);
+}
+
+#[test]
+fn a_relayed_stroke_piece_is_taken_without_the_log() {
+    use trommi_core::device::Received;
+    let (mut w, mut other) = world_of_two();
+    let piece = br#"{"stroke":"AAAAAAAAAAAAAAAAAAAAAA","number":1}"#;
+    w.human
+        .send_stroke_piece(&BoardId::ALL_DESKS, piece)
+        .unwrap();
+    post_ok(&mut w.hub, &mut w.human);
+    let (group, relayed) = w.hub.relayed.last().unwrap().clone();
+    let cursor = other.cursor();
+    let got = other.receive_relay(&group, &relayed, now()).unwrap();
+    assert_eq!(
+        got,
+        Some(Received::StrokePiece {
+            from: w.human.id(),
+            board: BoardId::ALL_DESKS,
+            piece: piece.to_vec(),
+        })
+    );
+    assert_eq!(other.cursor(), cursor);
+    // It opens once, and an agent device, no leaf of the room group, gets nothing.
+    assert_eq!(other.receive_relay(&group, &relayed, now()).unwrap(), None);
+    assert_eq!(
+        w.agent.receive_relay(&group, &relayed, now()).unwrap(),
+        None
+    );
 }
