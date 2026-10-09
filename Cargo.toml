@@ -29,8 +29,18 @@ opt-level = "s"
 strip = true
 
 # Tests and local builds: the dependencies (OpenMLS, the ciphers) as they ship, optimised and without their debug
-# assertions, the workspace's own crates not. The scenario tests with hundreds of Commits then run in seconds, and a
-# damaged stored state meets the error a shipped build returns where OpenMLS has a debug assertion in front of it.
+# assertions; the workspace's own crates keep theirs. The scenario tests with hundreds of Commits then run in
+# seconds.
+#
+# `debug-assertions = false` hides exactly one thing the tests meet: OpenMLS 0.9.1 has
+# `debug_assert_eq!(new_owned_encryption_keys.len(), epoch_keypairs.len())` in
+# `src/group/mls_group/staged_commit.rs` (line 769), directly in front of the `if` that returns a `LibraryError` for
+# the same condition. It fires when a member merges a Commit while its stored list of private keys for the tree
+# nodes it owns lacks one: a damaged store, which decodes and which the core cannot tell from a whole one without
+# OpenMLS's private tree arithmetic. A release build has no debug assertions, so a shipped device gets the error
+# (`bad-group`, its state kept); with this line the tests run that same path instead of the assertion's panic.
+# `tests/core/groups_hardening_state.rs`, a_stored_group_that_lacks_a_private_key_it_owns_fails_with_an_error, shows
+# the error; run with `--config 'profile.dev.package."*".debug-assertions=true'` it stops at the assertion.
 [profile.dev.package."*"]
 opt-level = 2
 debug-assertions = false

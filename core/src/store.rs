@@ -183,6 +183,17 @@ pub trait Storage {
     fn apply(&mut self, expected_revision: u64, batch: Batch) -> Result<(), StorageError>;
 }
 
+/// A store behind a box is a store: a binding hands the device whatever the platform gives it.
+impl<T: Storage + ?Sized> Storage for Box<T> {
+    fn load(&mut self) -> Result<Loaded, StorageError> {
+        (**self).load()
+    }
+
+    fn apply(&mut self, expected_revision: u64, batch: Batch) -> Result<(), StorageError> {
+        (**self).apply(expected_revision, batch)
+    }
+}
+
 /// What an outbox entry asks the hub for. The parts of each kind, in order; a part a request does not have is
 /// empty.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

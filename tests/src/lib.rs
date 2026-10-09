@@ -4,22 +4,27 @@
 
 pub mod content;
 pub mod forge;
+pub mod forge_content;
 pub mod hub;
 pub mod room;
 pub mod seal;
 pub mod store;
 
+use hub::content::{Change, StoredEnvelope};
 use hub::{Hub, LogItem};
 use std::time::{SystemTime, UNIX_EPOCH};
 pub use store::MemoryStorage;
+use trommi_core::crypto::SecretBytes;
 use trommi_core::crypto::{Secret, SystemEntropy};
 use trommi_core::device::{
     log_finding, Accepted, CodeJoin, Device, Joined, LogEntry, LogFinding, LogKind, Processed,
     WelcomeExpectation,
 };
+use trommi_core::device::{Draft, ReceivedEnvelope, Sealed};
 use trommi_core::ids::{DeviceId, GroupId};
 use trommi_core::mls::profile::Cut;
 use trommi_core::recovery::{select_anchor, RecoveryKeys, ServedCommit, ServedGroup, ServedRoom};
+use trommi_core::store::OutboxKind;
 use trommi_core::Error;
 
 /// The recovery code of every room the tests found.
@@ -62,29 +67,61 @@ pub fn reopen(store: MemoryStorage) -> Result<TestDevice, Error> {
 /// (the `recovery_mac` a device owes after its Add was accepted, 7.4). Returns the answers in order.
 pub fn post_all(hub: &mut Hub, device: &mut TestDevice) -> Vec<Result<Accepted, Error>> {
     let mut answers = Vec::new();
+    let mut kept = std::collections::BTreeSet::new();
     for _ in 0..8 {
         let outbox = device.outbox();
-        if outbox.is_empty() {
+        if outbox.iter().all(|entry| kept.contains(&entry.id)) {
             break;
         }
         for entry in outbox {
             // A refusal may have taken other entries with it (a recovery goes whole).
-            if !device.outbox().iter().any(|held| held.id == entry.id) {
+            if !device.outbox().iter().any(|held| held.id == entry.id) || kept.contains(&entry.id) {
                 continue;
             }
             let answer = hub.post(&device.id(), &entry);
             match &answer {
-                Ok(accepted) => device
-                    .outbox_accepted(entry.id, *accepted)
-                    .expect("the accepted entry is applied"),
-                Err(code) => device
-                    .outbox_refused(entry.id, code)
-                    .expect("the refused entry is undone"),
+                Ok(accepted) => {
+                    device
+                        .outbox_accepted(entry.id, *accepted)
+                        .expect("the accepted entry is applied");
+                    // An accepted Commit is merged where the log shows it: the device processes the log
+                    // up to it, as a client does that follows the hub's stream.
+                    let commit = matches!(
+                        entry.kind,
+                        OutboxKind::Commit | OutboxKind::GroupFounding | OutboxKind::RecoveryCode
+                    );
+                    if let Some(place) = accepted.change.filter(|_| commit) {
+                        process_up_to(hub, device, place);
+                    }
+                }
+                // 9.0.8: an envelope refused with `voided: true` keeps its number; refused otherwise, it
+                // stays in the outbox, and is not posted again in this round.
+                Err(_) if hub.voided(&entry) => device
+                    .outbox_voided(entry.id)
+                    .expect("the voided entry goes"),
+                Err(code) => {
+                    device
+                        .outbox_refused(entry.id, code)
+                        .expect("the refused entry is undone");
+                    kept.insert(entry.id);
+                }
             }
             answers.push(answer);
         }
     }
     answers
+}
+
+/// Processes the hub's log after the device's cursor up to the entry with the change number `place`, taking
+/// the Welcomes on the way. An entry that does not process is left to the test, which sees its effect.
+pub fn process_up_to(hub: &Hub, device: &mut TestDevice, place: u64) {
+    for item in hub.log_after(device.cursor()) {
+        if item.change > place {
+            break;
+        }
+        let _ = process(device, &item);
+        take_welcomes(hub, device, item.change);
+    }
 }
 
 /// Posts the outbox and expects every entry to be accepted.
@@ -104,11 +141,14 @@ pub fn process(device: &mut TestDevice, item: &LogItem) -> Result<Processed, Err
     } else {
         LogKind::Message { bytes: &item.bytes }
     };
-    device.process_log_entry(&LogEntry {
-        change: item.change,
-        group: item.group,
-        kind,
-    })
+    device.process_log_entry(
+        &LogEntry {
+            change: item.change,
+            group: item.group,
+            kind,
+        },
+        now(),
+    )
 }
 
 /// Processes the hub's log after the device's cursor, in order, and takes every Welcome that is for the device
@@ -137,11 +177,19 @@ pub fn take_welcomes(hub: &Hub, device: &mut TestDevice, change: u64) -> Vec<Joi
         room,
         committer: None,
     };
-    hub.welcomes
+    let joined: Vec<Joined> = hub
+        .welcomes
         .iter()
         .filter(|welcome| welcome.change == change)
         .filter_map(|welcome| device.join_welcome(&welcome.bytes, &expected, now()).ok())
-        .collect()
+        .collect();
+    // The Commit that made the Welcome is handed again: it gives the join its place in the hub's order.
+    if !joined.is_empty() {
+        for item in hub.log.iter().filter(|item| item.change == change) {
+            let _ = process(device, item);
+        }
+    }
+    joined
 }
 
 fn hub_room(hub: &Hub) -> trommi_core::ids::RoomId {
@@ -524,4 +572,53 @@ pub fn sign_in(hub: &mut Hub, device: &mut TestDevice) {
         join_session(hub, device, &keys, &group).expect("the join is built");
         post_ok(hub, device);
     }
+}
+
+/// Hands `device` everything of the room above its cursor in the hub's order: the log's entries, the Welcomes
+/// at their place, and the envelopes. Returns what became of each envelope.
+pub fn sync_all(hub: &Hub, device: &mut TestDevice) -> Vec<ReceivedEnvelope> {
+    let mut received = Vec::new();
+    for change in hub.changes_after(device.cursor()) {
+        match change {
+            Change::Log(item) => {
+                if let Err(error) = process(device, &item) {
+                    assert_eq!(
+                        log_finding(&error),
+                        LogFinding::Duplicate,
+                        "the entry processes: {error:?}"
+                    );
+                }
+                take_welcomes(hub, device, item.change);
+            }
+            Change::Envelope(stored) => received.push(take_envelope(device, &stored)),
+        }
+    }
+    received
+}
+
+/// Hands one envelope to a device as the hub serves it in its order.
+pub fn take_envelope(device: &mut TestDevice, stored: &StoredEnvelope) -> ReceivedEnvelope {
+    device
+        .receive_envelope(
+            &stored.bytes,
+            stored.change,
+            true,
+            stored.void_code.as_ref(),
+            now(),
+        )
+        .expect("the device takes the envelope")
+}
+
+/// Seals `draft` on `device`, posts it, and expects the hub to accept it. Returns what sealing made.
+pub fn write(hub: &mut Hub, device: &mut TestDevice, draft: &Draft) -> Sealed {
+    let sealed = device
+        .seal(draft, None, &[], now())
+        .expect("the item seals");
+    post_ok(hub, device);
+    sealed
+}
+
+/// A JSON payload as a draft takes it.
+pub fn json(text: &str) -> SecretBytes {
+    SecretBytes::new(text.as_bytes().to_vec())
 }
