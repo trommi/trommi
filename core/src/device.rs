@@ -250,6 +250,22 @@ fn handshake_group(bytes: &[u8]) -> Option<GroupId> {
     }
 }
 
+/// Whether a refusal of the hub says nothing about the request it answers, so that the same request is sent
+/// again unchanged: `internal`, `overloaded`, `rate-limited`, `unauthorised` and `bad-challenge` (sign in
+/// again), `client-too-old`, `lease-lost` (take the lease again). Every other code judges the request.
+pub fn refusal_is_passing(code: &Error) -> bool {
+    matches!(
+        code,
+        Error::Internal(_)
+            | Error::Overloaded
+            | Error::RateLimited
+            | Error::Unauthorised
+            | Error::BadChallenge
+            | Error::ClientTooOld
+            | Error::LeaseLost
+    )
+}
+
 /// Sorts an error of [`Device::process_log_entry`].
 pub fn log_finding(error: &Error) -> LogFinding {
     match error {
@@ -1660,7 +1676,14 @@ impl<S: Storage> Device<S> {
         Ok(())
     }
 
-    /// The hub refused the outbox entry `id` with `code`. `epoch-taken` for a Commit or a join from outside:
+    /// The hub refused the outbox entry `id` with `code`.
+    ///
+    /// A refusal that does not judge the request ([`refusal_is_passing`]: the hub failed, is busy, wants a
+    /// new sign-in, a newer client or the lease) changes nothing, for every kind of entry: the entry stays
+    /// and the same bytes are sent again. An envelope stays after every refusal (see
+    /// [`Device::outbox_voided`], [`Device::envelope_abandon`]). Every other refusal is final for its entry:
+    ///
+    /// `epoch-taken` for a Commit or a join from outside:
     /// it is held back, and the caller processes the log, which decides it. Any other refusal undoes what the
     /// entry was for: the pending Commit is cleared, a founding's group or a staged join is dropped, the
     /// KeyPackages' private parts go.
@@ -1672,6 +1695,10 @@ impl<S: Storage> Device<S> {
                 .get(&id)
                 .cloned()
                 .ok_or(Error::NotFound)?;
+            // A refusal that says nothing about the request leaves it to be sent again.
+            if refusal_is_passing(code) {
+                return Ok(());
+            }
             match (entry.kind, entry.group) {
                 (OutboxKind::Commit | OutboxKind::RecoveryCode, Some(group)) => {
                     if *code == Error::EpochTaken {
