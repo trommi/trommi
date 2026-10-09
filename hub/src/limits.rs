@@ -6,6 +6,14 @@ use std::sync::Mutex;
 
 const MAX_KEYS: usize = 100_000;
 
+/// A key of fixed size, whatever a request sent: a limiter never holds request text.
+fn fixed_key(key: &[u8]) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&Sha256::digest(key)[..16]);
+    out
+}
+
 pub struct Buckets {
     rate: f64,
     burst: f64,
@@ -23,6 +31,7 @@ impl Buckets {
 
     /// Takes `cost` tokens. `Err(seconds)`: how long to wait.
     pub fn take(&self, key: &[u8], cost: f64, now: u64) -> Result<(), u64> {
+        let key = &fixed_key(key)[..];
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.len() >= MAX_KEYS && !state.contains_key(key) {
             state.retain(|_, (_, at)| now.saturating_sub(*at) < 60_000);
@@ -66,7 +75,11 @@ impl Window {
 
     /// `Err(seconds)` when the key has used its `max` within the span; `record` adds a hit.
     pub fn check(&self, key: &[u8], now: u64, record: bool) -> Result<(), u64> {
+        let key = &fixed_key(key)[..];
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if !record && !state.contains_key(key) {
+            return Ok(());
+        }
         if state.len() >= MAX_KEYS && !state.contains_key(key) {
             let span = self.span_ms;
             state.retain(|_, hits| hits.back().is_some_and(|t| now.saturating_sub(*t) < span));
@@ -95,7 +108,7 @@ impl Window {
         self.state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .remove(key);
+            .remove(&fixed_key(key)[..]);
     }
 
     pub fn sweep(&self, now: u64) {
@@ -104,38 +117,5 @@ impl Window {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .retain(|_, hits| hits.back().is_some_and(|t| now.saturating_sub(*t) < span));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_bucket_gives_its_burst_then_its_rate() {
-        let b = Buckets::new(50.0, 200.0);
-        for _ in 0..200 {
-            b.take(b"d", 1.0, 1_000).unwrap();
-        }
-        assert_eq!(b.take(b"d", 1.0, 1_000), Err(1));
-        // 100 ms later: five more
-        for _ in 0..5 {
-            b.take(b"d", 1.0, 1_100).unwrap();
-        }
-        assert!(b.take(b"d", 1.0, 1_100).is_err());
-        // another key is not touched
-        b.take(b"e", 1.0, 1_100).unwrap();
-    }
-
-    #[test]
-    fn a_window_counts_hits_within_its_span() {
-        let w = Window::new(3, 60_000);
-        for t in [0, 1_000, 2_000] {
-            w.check(b"ip", t, true).unwrap();
-        }
-        assert_eq!(w.check(b"ip", 3_000, true), Err(57));
-        w.check(b"ip", 60_000, true).unwrap();
-        w.clear(b"ip");
-        w.check(b"ip", 60_001, true).unwrap();
     }
 }

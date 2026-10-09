@@ -271,7 +271,8 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
             "sealed_copy": copy(3), "transports": ["internal"],
         })
     };
-    let account = json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(9) }, "passkey": passkey(&key, &challenge, ORIGIN, RP) });
+    let handle: [u8; 32] = random();
+    let account = json!({ "email": "ada@example.org", "user_handle": b64(&handle), "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(9) }, "passkey": passkey(&key, &challenge, ORIGIN, RP) });
     hub.post(
         "/v2/rooms",
         &json!({ "group_info": b64(&info), "sealed_key": b64(&sealed), "account": account }),
@@ -322,6 +323,22 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
         assert_eq!(f.body, failures[0].body);
     }
 
+    // the handle the authenticator returns must be the account's, if one is sent at all
+    let with_handle = |handle: &[u8]| {
+        let challenge = unb64(
+            hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let client = Authenticator::client_data("webauthn.get", &challenge, ORIGIN);
+        let (data, signature) = key.assertion(RP, UP_UV, &client);
+        hub.post("/v2/account/passkey/login", &json!({ "credential_id": b64(&key.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature), "user_handle": b64(handle) }))
+    };
+    with_handle(&handle).ok();
+    with_handle(&[7; 32]).refused(401, "wrong-login");
+    with_handle(b"short").refused(401, "wrong-login");
+
     // a second passkey, added by a human device of the room with a challenge for that account
     ada.sign_in(&hub, &room).ok();
     let second = Authenticator::new();
@@ -350,6 +367,30 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
         &passkey(&second, &scoped, ORIGIN, RP),
     )
     .ok();
+    // a passkey prepared before the account changed is not registered after
+    let third = Authenticator::new();
+    let stale = unb64(
+        ada.post(&hub, "/v2/account/passkeys/challenge", &json!({}))
+            .ok()["challenge"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let revision = ada.get(&hub, "/v2/account").ok()["revision"]
+        .as_i64()
+        .unwrap();
+    ada.put(
+        &hub,
+        "/v2/account/kit",
+        &json!({ "auth_key": b64(&random::<32>()), "sealed_copy": copy(6), "revision": revision }),
+    )
+    .ok();
+    ada.post(
+        &hub,
+        "/v2/account/passkeys",
+        &passkey(&third, &stale, ORIGIN, RP),
+    )
+    .refused(400, "bad-passkey");
     // a credential id is registered once
     let scoped = unb64(
         ada.post(&hub, "/v2/account/passkeys/challenge", &json!({}))
