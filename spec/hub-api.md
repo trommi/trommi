@@ -27,7 +27,7 @@ KeyPackage, an envelope and every struct of v2.md travel as their TLS-encoded by
 | `POST /v2/groups/{group}/archive` | | 5.2.10; human devices |
 | `GET /v2/groups/{group}/log?after=&limit=` | → `{ items: [ { n, change, epoch, at, kind: "commit", bytes, recovery_auth? } \| { n, change, epoch, at, kind: "message", bytes } ], more }` | the ordered log (5.4.1, 7.0); `gone` when `after` is older than what is kept |
 | `POST /v2/groups/{group}/messages` | `{ epoch, message, relay? }` → `{ n }` | application message; `relay: true`: passed on, not stored (7.2); `wrong-epoch` |
-| `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | current; for the room group every epoch is kept |
+| `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | current, and epoch 0 (the founding) of every group; for the room group every epoch is kept |
 | `GET /v2/welcomes` | → `[ { group_id, welcome, at } ]` | for the asking device; deleted when it has joined |
 | `PUT /v2/key-packages` | `{ single_use: [..], last_resort? }` → `{ unused }` | 14.2; `bad-key-package` |
 | `POST /v2/key-packages/claim` | `{ devices: [..] }` → `{ key_packages: { device: bytes } }` | one each, all or nothing; the last-resort one when none is left; none uploaded more than 90 days ago |
@@ -45,7 +45,7 @@ KeyPackage, an envelope and every struct of v2.md travel as their TLS-encoded by
 | `GET /v2/stream?after=` | server-sent events: `envelope`, `log` (group, n), `relay`, `welcome`, `request`, `presence`, `file_evicted` | live; resumes by change number |
 | **Files, shares, push, presence** | | |
 | `PUT /v2/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; `quota-exceeded` |
-| `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5 |
+| `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5; `expires_at` at most 180 days ahead |
 | `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | Offer + signature; Reveal + signature | human devices |
 | `POST /v2/push` · `GET` · `DELETE` | `{ web_push \| apns, level }` | 15 |
 | `POST /v2/live-activity` | `{ kind: start \| activity, token, tag, environment, topic }` | 15.3 |
