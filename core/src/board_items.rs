@@ -244,8 +244,8 @@ impl Ink {
 
     /// The points this text holds; `bad-format` for anything but canonical base64url of a packed form.
     pub fn from_base64url(text: &str) -> Result<Self, Error> {
-        // Six bytes of text carry at least four packed bytes, and a point has at least four.
-        if text.len() > MAX_POINTS.saturating_mul(12) {
+        // A point has at most eighteen packed bytes, which are twenty-four of text.
+        if text.len() > MAX_POINTS.saturating_mul(24).saturating_add(2) {
             return Err(Error::BadFormat);
         }
         Self::unpack(&ids::base64url_decode(text)?)
@@ -862,7 +862,7 @@ impl ItemBody {
     }
 
     /// The body a payload holds. `too-large` above [`MAX_PAYLOAD_LEN`] bytes; `newer-version` for a
-    /// `schema_version` above 2 (tell the board with [`Board::skip_newer`]); `bad-format` for everything else
+    /// `schema_version` above 2 (tell the board with [`Board::skip_unread`]); `bad-format` for everything else
     /// that [`ItemBody::encode`] would not have written, except fields this version does not know, which are
     /// ignored.
     pub fn decode(payload: &[u8]) -> Result<Self, Error> {
@@ -939,6 +939,15 @@ pub enum Applied {
     Changed(Vec<ShapeId>),
 }
 
+/// Why a device could not read a board item that its writer's chain holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unread {
+    /// The body has a `schema_version` above this core's: "needs a newer Trommi".
+    Newer,
+    /// The device does not hold the content key of the item's epoch.
+    NoKey,
+}
+
 /// One Scribble Board: what its items add up to.
 ///
 /// Besides the shapes it holds, per writer, the number of that writer's last envelope it has taken into
@@ -952,6 +961,7 @@ pub struct Board {
     gone_ahead: BTreeSet<ShapeId>,
     moved_ahead: BTreeMap<ShapeId, [i32; 2]>,
     newer_skipped: bool,
+    key_missing: bool,
 }
 
 impl Board {
@@ -992,9 +1002,18 @@ impl Board {
             seq,
             index: u32::MAX,
         };
-        self.gone_ahead.retain(|id| !(first..=last).contains(id));
-        self.moved_ahead
-            .retain(|id, _| !(first..=last).contains(id));
+        let covered: Vec<ShapeId> = self.gone_ahead.range(first..=last).copied().collect();
+        for id in covered {
+            self.gone_ahead.remove(&id);
+        }
+        let covered: Vec<ShapeId> = self
+            .moved_ahead
+            .range(first..=last)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in covered {
+            self.moved_ahead.remove(&id);
+        }
     }
 
     /// Merges the body of the board item that `sender` signed under envelope number `seq`. The caller hands in
@@ -1058,30 +1077,42 @@ impl Board {
         Ok(Applied::Changed(changed.into_iter().collect()))
     }
 
-    /// Notes that the board item `sender` signed under number `seq` has a body of a newer version
-    /// ([`ItemBody::decode`] answered `newer-version`). Nothing of it is shown, and from now on this board
-    /// writes no snapshot: it would lack what that item did.
-    pub fn skip_newer(&mut self, sender: DeviceId, seq: u64) {
+    /// Notes that this device could not read the board item `sender` signed under number `seq`, though the
+    /// item took its place in the writer's chain. Nothing of it is shown, and from now on this board writes no
+    /// snapshot: it would lack what that item did. To take the item in later (its key arrived), the device
+    /// builds the board again.
+    pub fn skip_unread(&mut self, sender: DeviceId, seq: u64, why: Unread) {
         if seq > self.applied(&sender) {
             self.advance(sender, seq);
-            self.newer_skipped = true;
+            match why {
+                Unread::Newer => self.newer_skipped = true,
+                Unread::NoKey => self.key_missing = true,
+            }
         }
     }
 
-    /// Whether an item of a newer version was skipped, so that this board is not all of the board.
-    pub fn needs_newer(&self) -> bool {
-        self.newer_skipped
+    /// Why this board is not all of the board, if an item was skipped; a newer version before a missing key.
+    pub fn unread(&self) -> Option<Unread> {
+        if self.newer_skipped {
+            Some(Unread::Newer)
+        } else if self.key_missing {
+            Some(Unread::NoKey)
+        } else {
+            None
+        }
     }
 
     /// The snapshot file of the board as it is now (10.2): JSON, to be compressed and stored as a file by the
     /// caller. `frontier` names, per writer, the last envelope in the room group that the caller accepted, and
     /// so everything this board has taken into account; it is also what the register `board_snapshot/<board>`
     /// names. `bad-format` if it is behind the board for any writer, or names a writer twice or a number 0.
-    /// `newer-version` if an item was skipped as newer; `too-large` above [`MAX_SNAPSHOT_LEN`] bytes. The bytes
+    /// `newer-version` or `no-key` if an item was skipped as unread; `too-large` above [`MAX_SNAPSHOT_LEN`] bytes. The bytes
     /// may hold file keys.
     pub fn snapshot(&self, frontier: &[(DeviceId, Head)]) -> Result<SecretBytes, Error> {
-        if self.newer_skipped {
-            return Err(Error::NewerVersion);
+        match self.unread() {
+            Some(Unread::Newer) => return Err(Error::NewerVersion),
+            Some(Unread::NoKey) => return Err(Error::NoKey),
+            None => {}
         }
         let heads: BTreeMap<DeviceId, Head> = frontier.iter().copied().collect();
         let covered = |id: &ShapeId| heads.get(&id.sender).is_some_and(|head| id.seq <= head.seq);
