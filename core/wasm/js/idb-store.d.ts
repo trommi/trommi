@@ -11,6 +11,6 @@ export class IdbStore implements Store {
   load(): Promise<StoredState>
   apply(write: StoreWrite): Promise<void>
   close(): void
-  /** Deletes a stored state for good. Nothing may have it open. */
+  /** Deletes a stored state for good. StoreConflict while a device has it open. */
   static destroy(name: string): Promise<void>
 }

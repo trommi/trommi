@@ -46,40 +46,56 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 thread_local! {
-    /// Whether this thread is inside a call of a guarded object: what a panic there says is not printed.
-    static INSIDE_A_CALL: Cell<bool> = const { Cell::new(false) };
+    /// How many calls into the core this thread is inside of, one within another: what a panic there says is
+    /// not printed.
+    static INSIDE_CALLS: Cell<u32> = const { Cell::new(0) };
 }
 
-/// A panic inside a guarded call prints where it happened and nothing else: its message could quote what the
-/// call was working on. Panics anywhere else print as before.
-fn quiet_panics() {
-    static HOOK: Once = Once::new();
-    HOOK.call_once(|| {
-        let before = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            if INSIDE_A_CALL.with(Cell::get) {
-                if let Some(place) = info.location() {
-                    eprintln!("trommi-core: a fault at {}:{}", place.file(), place.line());
+/// The time a thread spends inside the core on behalf of the edge. A panic in that time prints where it
+/// happened and nothing else: its message could quote what the call was working on. Panics anywhere else
+/// print as before. The hook that does this is the process's one panic hook, wrapped once; a host that sets
+/// another afterwards takes this over.
+pub(crate) struct Quiet;
+
+impl Quiet {
+    /// Starts such a time; it ends when the value is dropped.
+    pub(crate) fn enter() -> Self {
+        static HOOK: Once = Once::new();
+        HOOK.call_once(|| {
+            let before = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                if INSIDE_CALLS.with(Cell::get) > 0 {
+                    if let Some(place) = info.location() {
+                        eprintln!("trommi-core: a fault at {}:{}", place.file(), place.line());
+                    }
+                } else {
+                    before(info);
                 }
-            } else {
-                before(info);
-            }
-        }));
-    });
+            }));
+        });
+        INSIDE_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
+        Quiet
+    }
+}
+
+impl Drop for Quiet {
+    fn drop(&mut self) {
+        INSIDE_CALLS.with(|calls| calls.set(calls.get().saturating_sub(1)));
+    }
 }
 
 /// The time one caller is inside the object: the lock on the slot, and this thread's marks.
 struct Entry<'a, T> {
     slot: MutexGuard<'a, Slot<T>>,
+    _quiet: Quiet,
     #[cfg(not(target_arch = "wasm32"))]
     inside: &'a Mutex<Option<std::thread::ThreadId>>,
 }
 
 impl<T> Drop for Entry<'_, T> {
-    /// The marks go before the lock does (the fields are dropped after this): the next caller, who sets its own
+    /// The mark goes before the lock does (the fields are dropped after this): the next caller, who sets its own
     /// mark once it holds the lock, cannot have it cleared by this one.
     fn drop(&mut self) {
-        INSIDE_A_CALL.with(|inside| inside.set(false));
         #[cfg(not(target_arch = "wasm32"))]
         {
             *locked(self.inside) = None;
@@ -90,7 +106,6 @@ impl<T> Drop for Entry<'_, T> {
 impl<T> Guarded<T> {
     /// Guards `value`.
     pub(crate) fn new(value: T) -> Self {
-        quiet_panics();
         Self {
             slot: Mutex::new(Slot {
                 value: Some(value),
@@ -112,9 +127,9 @@ impl<T> Guarded<T> {
         }
         let slot = locked(&self.slot);
         *locked(&self.inside) = Some(me);
-        INSIDE_A_CALL.with(|inside| inside.set(true));
         Ok(Entry {
             slot,
+            _quiet: Quiet::enter(),
             inside: &self.inside,
         })
     }
@@ -125,8 +140,10 @@ impl<T> Guarded<T> {
         let slot = self.slot.try_lock().map_err(|_| {
             CoreError::internal("the object was called from inside its own callback")
         })?;
-        INSIDE_A_CALL.with(|inside| inside.set(true));
-        Ok(Entry { slot })
+        Ok(Entry {
+            slot,
+            _quiet: Quiet::enter(),
+        })
     }
 
     fn refusal(closed: Option<Closed>) -> CoreError {

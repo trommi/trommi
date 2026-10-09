@@ -8,9 +8,9 @@ use trommi_core::store::{table, Entry};
 use trommi_core::Error;
 use trommi_tests::hub::{Hub, LogItem};
 use trommi_tests::{
-    add_human, enrol, found_helper, found_main, found_room, new_device, new_device_on, now,
-    observe, post_ok, process, publish_some, reopen, settle, MemoryStorage, TestDevice,
-    TEST_RECOVERY_AUTH,
+    add_human, enrol, found_helper, found_main, found_room, join_room, new_device, new_device_on,
+    now, observe, post_ok, process, publish_some, reopen, settle, test_keys, MemoryStorage,
+    TestDevice,
 };
 
 /// The labels OpenMLS's storage puts in front of its keys.
@@ -334,11 +334,7 @@ fn a_damaged_entry_is_a_storage_error_or_a_device_that_still_answers() {
     let store = MemoryStorage::new();
     let joiner_store = store.handle();
     let mut joiner = new_device_on(store);
-    observe(&hub, &mut joiner);
-    let info = hub.group_info(&room_group).unwrap().clone();
-    joiner
-        .join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec()))
-        .unwrap();
+    join_room(&hub, &mut joiner, &test_keys()).unwrap();
     drop(joiner);
 
     damage_everything("a human device", &human_store, &hub, &groups);

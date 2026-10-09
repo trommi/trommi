@@ -8,11 +8,9 @@ description = "trommi-core for the browser: the shared facade (core/swift/src) a
 [lib]
 crate-type = ["cdylib"]
 
-[features]
-# Development only: see core/swift/Cargo.toml.
-stand-in-recovery = ["trommi-core-swift/stand-in-recovery"]
-
-[dependencies]
+# Only for the browser's target: a build of the whole workspace for another machine (cargo test) leaves this
+# crate empty, and so does not switch the shared facade to its browser form for everyone else.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 # The facade, in its browser form: no UniFFI, records as plain JavaScript objects.
 trommi-core-swift = { path = "../swift", default-features = false, features = ["js"] }
 # The exact version: the wasm-bindgen command that writes the JavaScript must be the same one.
