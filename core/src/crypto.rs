@@ -10,7 +10,7 @@
 //! | [`sign_with_label`], [`verify_with_label`] | 5.1.2 | `sign`, `verify_signature` (Ed25519, strict) |
 //! | [`encrypt_with_label`], [`decrypt_with_label`] | 5.1.3 | see below; `hpke_open` |
 //! | [`derive_hpke_keypair`] | RFC 9180 7.1.3 | `derive_hpke_keypair` |
-//! | [`aead_seal`], [`aead_open`] | the suite's AEAD | `aead_encrypt`, `aead_decrypt` |
+//! | [`aead_seal`], [`aead_open`], [`aead_open_secret`] | the suite's AEAD | `aead_encrypt`; opening calls the provider's own crate in place, see [`aead_open`] |
 //! | [`hmac_sha256`], [`hmac_verify`] | | `hmac` |
 //!
 //! `MLS-Exporter` is not here: OpenMLS computes it from a group.
@@ -22,22 +22,22 @@
 //! Two places in the libraries below draw from the system on their own, and neither can be given a source:
 //!
 //! - `RustCrypto::default()`, the only constructor of the provider, seeds a generator of its own from the system
-//!   and panics when the system gives nothing. [`rust_crypto`] therefore asks the system first and returns
+//!   and panics when the system gives nothing. `rust_crypto` therefore asks the system first and returns
 //!   `Error::Entropy` instead of constructing; it keeps one provider for the process. That generator serves only
 //!   the provider's `signature_key_gen` and its `OpenMlsRand`, which this crate does not use.
 //! - `hpke-rs` seeds a generator from the system whenever an HPKE configuration is built, which the provider does
 //!   in every `hpke_seal`, `hpke_open` and `derive_hpke_keypair`, and it panics when that fails. Nothing is drawn
-//!   from it except by `hpke_seal`. The check in [`rust_crypto`] comes first; a source that answered once and
+//!   from it except by `hpke_seal`. The check in `rust_crypto` comes first; a source that answered once and
 //!   fails later still ends in that panic.
 //!
 //! `OpenMlsCrypto::hpke_seal` takes its ephemeral key from that hidden generator. A shipped build seals through it
-//! and through nothing else: [`hpke_seal`] first asks its [`Entropy`] for 32 bytes, so that a failing source is an
+//! and through nothing else: `hpke_seal` first asks its [`Entropy`] for 32 bytes, so that a failing source is an
 //! error and not a panic, and then calls the provider. The provider's output cannot be reproduced, which the
 //! generator of the vectors needs. Only under the cargo feature `vectors` (and in this module's tests) a second
-//! path is compiled, [`hpke_seal_with`]: RFC 9180's `Encap` for DHKEM(X25519, HKDF-SHA256) written out with the
+//! path is compiled, `hpke_seal_with`: RFC 9180's `Encap` for DHKEM(X25519, HKDF-SHA256) written out with the
 //! randomness given (`DeriveKeyPair` and HKDF by the provider, X25519 by the provider's own HPKE back end), then
 //! `hpke-rs`'s key schedule and sealing. The tests hold it against RFC 9180's vector A.2.1 and open its output
-//! with the provider's `hpke_open`. With that feature [`hpke_seal`] takes this path. It is never part of a
+//! with the provider's `hpke_open`. With that feature `hpke_seal` takes this path. It is never part of a
 //! shipped build.
 //!
 //! # Lengths
@@ -611,21 +611,45 @@ pub fn aead_seal(
 }
 
 /// ChaCha20-Poly1305: the plaintext, or `decrypt-failed`.
+///
+/// What is called: `ChaCha20Poly1305::decrypt_in_place_detached` of the `chacha20poly1305` crate, the crate
+/// and version the OpenMLS provider itself opens with, on one buffer that becomes the plaintext. The
+/// provider's own `aead_decrypt` runs the same function and then copies the plaintext into a second buffer,
+/// leaving the first one unwiped in freed memory; that copy of every opened body, file chunk and push payload
+/// is what this avoids. The tag is checked before anything is decrypted, as in the provider. The plaintext is
+/// returned as plain bytes for callers that wrap it themselves; [`aead_open_secret`] returns it wiped on drop.
 pub fn aead_open(
     key: &Secret<32>,
     nonce: &[u8; NONCE_LEN],
     aad: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, Error> {
-    rust_crypto()?
-        .aead_decrypt(
-            CIPHERSUITE.aead_algorithm(),
-            key.expose(),
-            ciphertext,
-            nonce,
-            aad,
-        )
-        .map_err(|_| Error::DecryptFailed)
+    use chacha20poly1305::aead::{AeadInPlace as _, KeyInit as _};
+    let (body, tag) = ciphertext
+        .len()
+        .checked_sub(TAG_LEN)
+        .and_then(|at| ciphertext.split_at_checked(at))
+        .ok_or(Error::DecryptFailed)?;
+    let cipher = chacha20poly1305::ChaCha20Poly1305::new(key.expose().into());
+    let mut buffer = body.to_vec();
+    match cipher.decrypt_in_place_detached(nonce.into(), aad, &mut buffer, tag.into()) {
+        Ok(()) => Ok(buffer),
+        Err(_) => {
+            buffer.zeroize();
+            Err(Error::DecryptFailed)
+        }
+    }
+}
+
+/// As [`aead_open`], with the plaintext in a buffer that is wiped when dropped: for a caller that treats what
+/// it opens as secret.
+pub fn aead_open_secret(
+    key: &Secret<32>,
+    nonce: &[u8; NONCE_LEN],
+    aad: &[u8],
+    ciphertext: &[u8],
+) -> Result<SecretBytes, Error> {
+    aead_open(key, nonce, aad, ciphertext).map(SecretBytes::new)
 }
 
 /// HMAC-SHA-256.
@@ -1041,6 +1065,28 @@ mod tests {
             hex("1ae10b594f09e26a7e902ecbd0600691")
         );
         assert_eq!(aead_open(&key, &nonce, &aad, &sealed).unwrap(), plaintext);
+        // Opened in place it is what the provider opens.
+        let provider = rust_crypto()
+            .unwrap()
+            .aead_decrypt(
+                CIPHERSUITE.aead_algorithm(),
+                key.expose(),
+                &sealed,
+                &nonce,
+                &aad,
+            )
+            .unwrap();
+        assert_eq!(provider, plaintext);
+        assert_eq!(
+            aead_open_secret(&key, &nonce, &aad, &sealed)
+                .unwrap()
+                .expose(),
+            plaintext
+        );
+        assert_eq!(
+            aead_open(&key, &nonce, &aad, &sealed[..TAG_LEN - 1]),
+            Err(Error::DecryptFailed)
+        );
 
         assert_eq!(
             aead_open(&Secret::new([0; 32]), &nonce, &aad, &sealed),

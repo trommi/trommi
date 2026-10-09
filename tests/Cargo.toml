@@ -169,3 +169,23 @@ path = "core/device_gate.rs"
 [[test]]
 name = "core_device_invite"
 path = "core/device_invite.rs"
+
+[[test]]
+name = "core_groups_hardening_merge"
+path = "core/groups_hardening_merge.rs"
+
+[[test]]
+name = "core_groups_hardening_rules"
+path = "core/groups_hardening_rules.rs"
+
+[[test]]
+name = "core_groups_hardening_state"
+path = "core/groups_hardening_state.rs"
+
+[[test]]
+name = "core_groups_reproducible"
+path = "core/groups_reproducible.rs"
+
+[[test]]
+name = "core_groups_hardening_content"
+path = "core/groups_hardening_content.rs"
