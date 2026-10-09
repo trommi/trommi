@@ -224,6 +224,38 @@ public struct DeskUnit: Identifiable {
   public var subs: [String] = []
 }
 
+/**
+ * A main session's helpers as the web's sidebar shows them (sidebar.mjs row, app.mjs summary): folded into one stack
+ * under their main until he unfolds it. `lie`: the helpers whose drawings lie in the stack, in their order; more than
+ * `edges` of them: the stopped ones first, then cut to `edges`. `whole`: the main with its helpers counted in (what
+ * waits on him, whether one is connected, works, knocks or is stopped), which is what the main's row says.
+ */
+public struct UnitStack {
+  public static let edges = 7
+  public var lie: [DeskUnit]
+  public var count: Int
+  /** Helpers at work. */
+  public var working: Int
+  /** Helpers with something for him: stopped, an open question, or words he has not read. */
+  public var waiting: Int
+  public var whole: DeskUnit
+  public init(main: DeskUnit, subs: [DeskUnit], unread: (Agent) -> Bool = { _ in false }) {
+    lie = subs.count > UnitStack.edges ? Array((subs.filter { $0.blocked != nil } + subs.filter { $0.blocked == nil }).prefix(UnitStack.edges)) : subs
+    count = subs.count
+    working = subs.filter { $0.online && $0.running }.count
+    waiting = subs.filter { $0.blocked != nil || $0.open > 0 || unread($0.agent) }.count
+    var w = main
+    for s in subs {
+      w.open += s.open
+      w.running = (w.online && w.running) || (s.online && s.running)
+      w.online = w.online || s.online
+      w.stuck = w.stuck || s.stuck
+      if w.blocked == nil { w.blocked = s.blocked }
+    }
+    whole = w
+  }
+}
+
 public struct Task1 { public var agent: String; public var id: String; public var label: String; public var state: String?; public var detail: String?; public var cardId: String?; public var updated: UInt64 }
 
 public struct DeskDesc: Identifiable, Equatable {

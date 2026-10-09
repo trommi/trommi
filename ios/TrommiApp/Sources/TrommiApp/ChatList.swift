@@ -1,7 +1,9 @@
 // ChatList.swift: the Chat page's list (his pick, 9 October). The hierarchy: on All desks each desk is a section head
 // (its drawing, its name, how many are at work); a top session is the prominent row (drawing with the crown, name, one
-// line of what it does); its helpers lie under it, smaller and set in to the name: the ones at work, or with something
-// waiting on him, first; the idle ones folded into one row with their drawings stacked ("19 idle"), a tap unfolds them.
+// line of what it does); its helpers lie under it folded into one stack, as in the web's sidebar (sidebar.mjs row,
+// TrommiClient UnitStack): their drawings stacked (seven at most, the stopped ones first), how many they are, how many
+// wait on him or are at work; the main's row says what waits in the whole stack. A tap on the stack unfolds the helpers
+// (the ones at work, or with something waiting on him, first); which stacks are open is this phone's own and kept.
 // No hairlines; the end of the list clears the floating tab bar.
 // TROMMI_CHATLIST=1 at launch opens this page on a crowded demo room (DemoMode.swift ChatListDemo) for screenshots.
 import SwiftUI
@@ -10,8 +12,14 @@ import TrommiCore
 
 struct ChatsScreen: View {
   @EnvironmentObject var model: BoardModel
-  /** The parents whose idle helpers are unfolded. */
-  @State private var openIdle = Set<String>()
+  /** The mains whose stack is unfolded, one id per line, kept on this phone (the web's localStorage "trommi-crowns-open"). */
+  @AppStorage("trommi-stacks-open") private var openRaw = ""
+  private var openStacks: Set<String> { Set(openRaw.split(separator: "\n").map(String.init)) }
+  private func toggle(_ id: String) {
+    var open = openStacks
+    if open.contains(id) { open.remove(id) } else { open.insert(id) }
+    openRaw = open.sorted().joined(separator: "\n")
+  }
 
   private struct DeskGroup: Identifiable { let id: String; let name: String?; let tops: [DeskUnit]; let working: Int }
 
@@ -79,15 +87,18 @@ struct ChatsScreen: View {
 
   @ViewBuilder private func block(_ u: DeskUnit, byId: [String: DeskUnit]) -> some View {
     let subs = u.subs.compactMap { byId[$0] }
-    let busy = subs.filter(lively).sorted { ($0.online && $0.running ? 0 : 1, $1.agent.active) < ($1.online && $1.running ? 0 : 1, $0.agent.active) }
-    let idle = subs.filter { !lively($0) }.sorted { ($0.online ? 0 : 1, $1.agent.active) < ($1.online ? 0 : 1, $0.agent.active) }
-    let folded = !openIdle.contains(u.id)
-    topRow(u)
-    ForEach(busy) { s in helperRow(s) }
-    if !idle.isEmpty {
-      idleRow(u.id, idle, folded: folded)
-      if !folded { ForEach(idle) { s in helperRow(s) } }
+    if subs.isEmpty { topRow(u, shown: u) } else {
+      let stack = UnitStack(main: u, subs: subs, unread: { model.unread($0) })
+      let folded = !openStacks.contains(u.id)
+      topRow(u, shown: stack.whole)
+      stackRow(u, stack, folded: folded)
+      if !folded { ForEach(unfolded(subs)) { s in helperRow(s) } }
     }
+  }
+  /** An unfolded stack's helpers: at work first, then with something waiting on him, the connected, the rest; each by what happened last. */
+  private func unfolded(_ subs: [DeskUnit]) -> [DeskUnit] {
+    func rank(_ s: DeskUnit) -> Int { s.online && s.running ? 0 : lively(s) ? 1 : s.online ? 2 : 3 }
+    return subs.sorted { a, b in rank(a) != rank(b) ? rank(a) < rank(b) : a.agent.active > b.agent.active }
   }
 
   private func rowLook<V: View>(_ v: V, top: CGFloat, bottom: CGFloat) -> some View {
@@ -96,7 +107,8 @@ struct ChatsScreen: View {
       .listRowSeparator(.hidden)
   }
 
-  private func topRow(_ u: DeskUnit) -> some View {
+  /** shown: what the row says waits and works: the session itself, or it with its helpers counted in (the web's "whole"). */
+  private func topRow(_ u: DeskUnit, shown: DeskUnit) -> some View {
     let a = u.agent
     return rowLook(Button { model.chatPath = [.session(u.id)] } label: {
       HStack(spacing: 12) {
@@ -106,7 +118,7 @@ struct ChatsScreen: View {
           if !line(u).isEmpty { Text(line(u)).font(Face.text(14)).foregroundStyle(Ink.muted).lineLimit(1) }
         }
         Spacer(minLength: 6)
-        trailing(u)
+        trailing(shown)
       }
       .frame(minHeight: 56)
       .contentShape(Rectangle())
@@ -139,26 +151,35 @@ struct ChatsScreen: View {
     else if model.unread(u.agent) { Circle().fill(Ink.stDone).frame(width: 8, height: 8).accessibilityLabel("New message") }
   }
 
-  /** The idle helpers folded: their drawings lie stacked, the count beside them; a tap unfolds them. */
-  private func idleRow(_ id: String, _ idle: [DeskUnit], folded: Bool) -> some View {
-    rowLook(Button { withAnimation(.snappy) { if folded { openIdle.insert(id) } else { openIdle.remove(id) } } } label: {
+  /** A main's helpers as one stack: their drawings lie stacked (a stopped one marked), how many they are, how many wait
+   *  on him or are at work; a tap unfolds them. */
+  private func stackRow(_ u: DeskUnit, _ stack: UnitStack, folded: Bool) -> some View {
+    let words = stack.count == 1 ? "1 helper" : "\(stack.count) helpers"
+    let state = stack.waiting > 0 ? "\(stack.waiting) waiting" : stack.working > 0 ? "\(stack.working) at work" : ""
+    return rowLook(Button { withAnimation(.snappy) { toggle(u.id) } } label: {
       HStack(spacing: 10) {
         HStack(spacing: -9) {
-          ForEach(Array(idle.prefix(5).enumerated()), id: \.offset) { i, s in
+          ForEach(Array(stack.lie.enumerated()), id: \.element.id) { i, s in
             AgentMark(agent: s.agent, size: 20, crown: false)
+              .opacity(s.online ? 0.9 : 0.5)
               .padding(2).background(Circle().fill(Ink.bg))
-              .opacity(s.online ? 0.9 : 0.5).zIndex(Double(5 - i))
+              .overlay(alignment: .topTrailing) {
+                if s.blocked != nil { Circle().fill(Ink.urgCritical).frame(width: 7, height: 7).overlay(Circle().stroke(Ink.bg, lineWidth: 1.5)) }
+              }
+              .zIndex(Double(UnitStack.edges - i))
           }
         }
-        Text("\(idle.count) idle").font(Face.text(15, .medium)).foregroundStyle(Ink.muted)
+        Text(words).font(Face.text(15, .medium)).foregroundStyle(Ink.muted).lineLimit(1).layoutPriority(1)
         Spacer(minLength: 6)
+        if !state.isEmpty { Text(state).font(Face.text(13, .medium)).foregroundStyle(stack.waiting > 0 ? Ink.urgHigh : Ink.muted).lineLimit(1) }
         Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold)).foregroundStyle(Ink.faint)
           .rotationEffect(.degrees(folded ? 0 : 180))
       }
       .padding(.leading, 49)
       .frame(minHeight: 44)
       .contentShape(Rectangle())
-    }.buttonStyle(.plain), top: 1, bottom: 4)
-    .accessibilityLabel(folded ? "Show \(idle.count) idle helpers" : "Hide \(idle.count) idle helpers")
+    }.buttonStyle(.plain), top: 0, bottom: 4)
+    .accessibilityLabel("\(u.agent.name): \(words)\(state.isEmpty ? "" : ", \(state)")")
+    .accessibilityHint(folded ? "Unfolds them" : "Folds them")
   }
 }
