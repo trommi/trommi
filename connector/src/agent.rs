@@ -275,6 +275,11 @@ impl Client {
                 .cards
                 .get(object_id)
                 .ok_or_else(|| Fault::plain(format!("no card {object_id}")))?;
+            if card.content_unknown {
+                return Err(Fault::plain(format!(
+                    "card {object_id} has a newer version this connector could not read; it cannot be changed from here"
+                )));
+            }
             (
                 card.content.clone(),
                 card.session_id.clone(),
@@ -510,6 +515,7 @@ impl Client {
     pub async fn open_child_session(&self, profile: Map<String, Value>) -> Result<String> {
         let session = {
             let mut core = self.core.lock().await;
+            self.active(&core)?;
             let main = core
                 .session_id()
                 .ok_or_else(|| Fault::new("no-session", "this agent has no session yet"))?;
@@ -580,6 +586,7 @@ impl Client {
         key_package: Vec<u8>,
     ) -> Result<()> {
         let mut core = self.core.lock().await;
+        self.active(&core)?;
         let group = core.group_of(Some(session_id))?;
         let now = now_ms();
         let outbox_id = self
@@ -605,6 +612,7 @@ impl Client {
         key_package: Vec<u8>,
     ) -> Result<()> {
         let mut core = self.core.lock().await;
+        self.active(&core)?;
         let group = core.group_of(Some(session_id))?;
         let now = now_ms();
         let (outbox_id, cut) = self
@@ -645,6 +653,7 @@ impl Client {
         step: &Value,
     ) -> Result<()> {
         let mut core = self.core.lock().await;
+        self.active(&core)?;
         let group = core.group_of(session_id)?;
         // The step's body as the core writes and checks it (`{ text, tool? }`, with its limits).
         let step = trommi_core::trail::WorkStep {

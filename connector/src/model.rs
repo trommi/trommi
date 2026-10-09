@@ -144,9 +144,14 @@ pub struct Card {
     pub in_revision: Option<InRevision>,
     /// The content fields of the current version (`card_type`, `title`, `body`, `options`, …).
     pub content: Map<String, Value>,
-    /// The current version's payload as it was sealed: what the command gate holds an answer against.
+    /// The current version's payload as it was sealed: what the command gate holds an answer against. Empty
+    /// when the current version's body did not open.
     #[serde(default)]
     pub payload: String,
+    /// Whether the current version's content is not known (its body did not open): `content` is then what an
+    /// earlier version said, for showing only.
+    #[serde(default)]
+    pub content_unknown: bool,
 }
 
 impl Card {
@@ -478,8 +483,13 @@ impl Model {
                         .unwrap_or(card.object_version + 1);
                     card.content = content.clone();
                     card.payload = seen.raw.to_string();
+                    card.content_unknown = false;
                 } else {
+                    // The body did not open (pruned, or no key): the version counts, its content is not
+                    // known, and what the version before said is no longer the card.
                     card.object_version += 1;
+                    card.payload = String::new();
+                    card.content_unknown = true;
                 }
                 if fields.state == ObjectState::Closed {
                     card.closed_how = Some(
