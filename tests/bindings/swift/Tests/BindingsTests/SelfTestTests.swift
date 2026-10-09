@@ -9,7 +9,7 @@ final class SelfTestTests: XCTestCase {
       XCTAssertTrue(step.ok, "\(step.name): \(step.detail)")
     }
     XCTAssertTrue(report.ok)
-    XCTAssertEqual(report.steps.count, 11)
+    XCTAssertEqual(report.steps.count, 12)
     XCTAssertEqual(report.versions, versions())
     XCTAssertEqual(report.versions.openmls, "0.9.1")
   }
@@ -23,5 +23,19 @@ final class SelfTestTests: XCTestCase {
     XCTAssertEqual(errorCodeFromText(text: "epoch-taken"), .epochTaken)
     XCTAssertNil(errorCodeFromText(text: "no-such-code"))
     XCTAssertEqual(logFinding(code: .roomBehind), .early)
+  }
+
+  func testRecordsWithKeysPrintNothingOfThem() throws {
+    let encryptor = try FileEncryptor()
+    _ = try encryptor.update(plaintext: Data(repeating: 1, count: 10))
+    let end = try encryptor.finish()
+    XCTAssertEqual("\(end.file)", "FileRef(<redacted>)")
+    XCTAssertEqual(String(reflecting: end), "FileEnd(<redacted>)")
+    XCTAssertTrue(Mirror(reflecting: end.file).children.isEmpty)
+    var dumped = ""
+    dump(end, to: &dumped)
+    XCTAssertFalse(dumped.contains("fileKey"))
+    // A file object that was used up refuses.
+    XCTAssertThrowsError(try encryptor.finish())
   }
 }
