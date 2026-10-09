@@ -24,8 +24,8 @@ use crate::error::Error;
 use crate::hub_auth::{self, HubAddress, SignedHubAuth, CHALLENGE_LEN};
 use crate::ids::{DeviceId, GroupId, Hash32, InviteId, SessionId};
 use crate::invite::{
-    self, CheckCode, InviteLink, InviteTerms, Inviter, Joiner, Role, SignedOffer, SignedRequest,
-    SignedReveal, CONFIRM_MS, INVITE_LIFE_MS,
+    self, CheckCode, InviteLink, InviteTerms, Inviter, Joiner, Request, Role, SignedOffer,
+    SignedRequest, SignedReveal, CONFIRM_MS, INVITE_LIFE_MS,
 };
 use crate::mls::group;
 use crate::mls::key_package;
@@ -89,8 +89,12 @@ struct FollowUp {
     session_id: SessionId,
     /// The KeyPackage of the confirmed Request.
     key_package: Vec<u8>,
-    /// Whether the key handover was sent.
-    handed_over: bool,
+    /// The groups the key handover was sent in.
+    handed: Vec<GroupId>,
+    /// The inviter chose a takeover without history (5.3.2): no handover is asked for.
+    no_history: bool,
+    /// The hub's list of the session's helper sessions was held against the groups of this device.
+    checked: bool,
 }
 
 impl FollowUp {
@@ -99,7 +103,8 @@ impl FollowUp {
         writer.u8(self.role as u8);
         writer.fixed(self.new_device.as_bytes());
         writer.fixed(self.session_id.as_bytes());
-        writer.u8(u8::from(self.handed_over));
+        writer.u8(u8::from(self.no_history) | (u8::from(self.checked) << 1));
+        writer.vector(&self.handed)?;
         writer.opaque(&self.key_package)?;
         Ok(writer.into_bytes())
     }
@@ -113,11 +118,12 @@ impl FollowUp {
         };
         let new_device = reader.value()?;
         let session_id = reader.value()?;
-        let handed_over = match reader.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(Error::BadFormat),
-        };
+        let flags = reader.u8()?;
+        if flags > 3 {
+            return Err(Error::BadFormat);
+        }
+        let (no_history, checked) = (flags & 1 != 0, flags & 2 != 0);
+        let handed = reader.vector()?;
         let key_package = reader.opaque()?.to_vec();
         reader.finish()?;
         Ok(Self {
@@ -125,7 +131,9 @@ impl FollowUp {
             new_device,
             session_id,
             key_package,
-            handed_over,
+            handed,
+            no_history,
+            checked,
         })
     }
 }
@@ -233,8 +241,8 @@ pub enum InviteStep {
     /// The Commit that lets the device in was dropped for another one that took its epoch: build it again
     /// with [`Device::invite_recommit`].
     Commit,
-    /// Send the key handover (7.1, 5.3.2) with [`Device::invite_handover`]; or, for a takeover without
-    /// history, drop the step with [`Device::invite_forget`].
+    /// Send the key handover in this group (7.1, 5.3.2) with [`Device::invite_handover`]; for a takeover
+    /// without history, [`Device::invite_forget`] drops these steps.
     Handover {
         /// The group it is sent in.
         group: GroupId,
@@ -257,18 +265,29 @@ pub enum InviteStep {
         /// Its KeyPackage.
         key_package: Vec<u8>,
     },
-    /// Take the session over (5.3.1) with [`Device::clean_session`]: these Cuts, and this device with this
-    /// KeyPackage as the replacement. The helper sessions of that session follow by the same call, each
-    /// with a KeyPackage claimed at the hub.
+    /// A takeover has nothing more to do in the groups this device holds. 5.3.1 (c) asks the hub for the
+    /// list of the session's helper sessions until none is stale: fetch the room's groups, take the Welcomes
+    /// still waiting, and hand the helper sessions the hub lists under this session to
+    /// [`Device::invite_checked`], which finishes the invite when this device holds them all.
+    CheckHelpers {
+        /// The main session that was taken over.
+        session: SessionId,
+    },
+    /// Take the session over in this group (5.3.1) with [`Device::clean_session`]: these Cuts, and the agent
+    /// device as the replacement. There is one such step for the main session's group, and once that Commit
+    /// was merged one for every live helper session under it, where the new device becomes the opener; a
+    /// helper session whose old opener another device already removed has no Cuts, and the same call adds the
+    /// new opener.
     TakeOver {
-        /// The main session's group.
+        /// The session group.
         group: GroupId,
         /// The leaves to remove, each with its Cut.
         cuts: Vec<Cut>,
         /// The agent device that takes over.
         agent: DeviceId,
-        /// Its KeyPackage.
-        key_package: Vec<u8>,
+        /// For the main session, the KeyPackage of the confirmed Request. None for a helper session: the
+        /// confirmed KeyPackage is used up there, and a fresh one of the agent device is claimed at the hub.
+        key_package: Option<Vec<u8>>,
     },
 }
 
@@ -475,7 +494,7 @@ impl<S: Storage> Device<S> {
                     .transpose()
                     .map_err(|_| damaged("an invite's record"))?
                 {
-                    if this.next_step(&follow_up)? != Some(InviteStep::Commit) {
+                    if this.steps(&follow_up)?.first() != Some(&InviteStep::Commit) {
                         return Err(Error::InviteUsed);
                     }
                     let outbox_id = this.commit_invited(batch, &follow_up, now_ms)?;
@@ -499,8 +518,19 @@ impl<S: Storage> Device<S> {
                 new_device: *confirmed.new_device(),
                 session_id: *confirmed.session_id(),
                 key_package: confirmed.key_package().to_vec(),
-                handed_over: false,
+                handed: Vec::new(),
+                no_history: false,
+                checked: false,
             };
+            // One takeover of a session at a time.
+            let racing = !follow_up.session_id.is_zero()
+                && this
+                    .follow_ups()?
+                    .iter()
+                    .any(|(_, other)| other.session_id == follow_up.session_id);
+            if racing {
+                return Err(Error::Busy);
+            }
             let outbox_id = this.commit_invited(batch, &follow_up, now_ms)?;
             inviter.finish()?;
             this.put_inviter(batch, Stage::Done, &inviter)?;
@@ -559,29 +589,46 @@ impl<S: Storage> Device<S> {
         self.transact(|this, batch| {
             this.begin(now_ms);
             let follow_up = this.follow_up(invite_id)?;
-            if this.next_step(&follow_up)? != Some(InviteStep::Commit) {
+            if this.steps(&follow_up)?.first() != Some(&InviteStep::Commit) {
                 return Err(Error::Busy);
             }
             this.commit_invited(batch, &follow_up, now_ms)
         })
     }
 
-    /// What is to do next for every device this one committed by link, until all of it is done. The steps
-    /// are read from the state of the groups: a step that was taken is not named again.
-    pub fn invite_steps(&self) -> Result<Vec<(InviteId, InviteStep)>, Error> {
+    /// What is left to do for every device this one committed by link. The steps are read from the state of
+    /// the groups, so they are the same after a crash and a restart, and a step that was taken is not named
+    /// again. An invite with nothing left is finished: its record goes in this call and it is listed no more.
+    /// That is, for a human device: the handover was sent and every live session group this device holds
+    /// has its leaf. For an agent device with a new main session: that session's founding was merged. For a
+    /// takeover: the main session's group and every live helper session under it hold the new agent leaf, and
+    /// the handover was sent in each (or dropped by [`Device::invite_forget`]).
+    pub fn invite_steps(&mut self) -> Result<Vec<(InviteId, InviteStep)>, Error> {
         self.owner()?;
-        let mut steps = Vec::new();
+        let mut listed = Vec::new();
+        let mut finished = Vec::new();
         for (invite, follow_up) in self.follow_ups()? {
-            if let Some(step) = self.next_step(&follow_up)? {
-                steps.push((invite, step));
+            let steps = self.steps(&follow_up)?;
+            if steps.is_empty() {
+                finished.push(invite);
             }
+            listed.extend(steps.into_iter().map(|step| (invite, step)));
         }
-        Ok(steps)
+        if !finished.is_empty() {
+            self.transact(|this, batch| {
+                this.begin(0);
+                for invite in &finished {
+                    this.delete_stored(batch, follow_up_key(invite));
+                }
+                Ok(())
+            })?;
+        }
+        Ok(listed)
     }
 
-    fn next_step(&self, invited: &FollowUp) -> Result<Option<InviteStep>, Error> {
+    fn steps(&self, invited: &FollowUp) -> Result<Vec<InviteStep>, Error> {
         let Some(room_id) = self.memory.record.room else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let room_group = GroupId::room(room_id);
         let history = self.history()?;
@@ -598,31 +645,35 @@ impl<S: Storage> Device<S> {
             Role::Agent => room.is_agent(&device),
         };
         if !is_in {
-            // Out again for good: nothing is left to do for it.
+            // Out again for good, or this device is no human device any more: nothing is left to do.
             if history.is_revoked(&device, room.epoch) || !self.is_human() {
-                return Ok(None);
+                return Ok(Vec::new());
             }
-            return Ok(Some(if waits(&room_group) {
+            return Ok(vec![if waits(&room_group) {
                 InviteStep::Wait
             } else {
                 InviteStep::Commit
-            }));
+            }]);
         }
+        let handed = |group: &GroupId| {
+            invited.no_history
+                || invited.handed.contains(group)
+                || self.memory.sent.contains(&(device, *group))
+        };
+        let mut steps = Vec::new();
+        let mut waiting = false;
         match invited.role {
             Role::Human => {
-                let handed =
-                    invited.handed_over || self.memory.sent.contains(&(device, room_group));
-                if !handed {
-                    return Ok(Some(if waits(&room_group) {
-                        InviteStep::Wait
+                if !handed(&room_group) {
+                    if waits(&room_group) {
+                        waiting = true;
                     } else {
-                        InviteStep::Handover {
+                        steps.push(InviteStep::Handover {
                             group: room_group,
                             device,
-                        }
-                    }));
+                        });
+                    }
                 }
-                let mut waiting = false;
                 for (group, meta) in &self.memory.groups {
                     if meta.session.is_none() || meta.removed || meta.archived || meta.distrusted {
                         continue;
@@ -633,71 +684,115 @@ impl<S: Storage> Device<S> {
                     if waits(group) {
                         waiting = true;
                     } else {
-                        return Ok(Some(InviteStep::AddToSession {
+                        steps.push(InviteStep::AddToSession {
                             group: *group,
                             device,
-                        }));
+                        });
                     }
                 }
-                Ok(waiting.then_some(InviteStep::Wait))
             }
             Role::Agent if invited.session_id.is_zero() => {
-                let mut founding = false;
+                let mut seated = false;
                 for (group, meta) in &self.memory.groups {
                     let main = meta.session.is_some_and(|session| session.parent.is_zero());
                     if !main || meta.removed || meta.archived {
                         continue;
                     }
                     if meta.founding {
-                        founding = true;
+                        waiting = true;
                     } else if self.leaves_now(group)?.contains(&device) {
-                        return Ok(None);
+                        seated = true;
                     }
                 }
-                Ok(Some(if founding {
-                    InviteStep::Wait
-                } else {
-                    InviteStep::FoundSession {
+                if !seated && !waiting {
+                    steps.push(InviteStep::FoundSession {
                         agent: device,
                         key_package: invited.key_package.clone(),
-                    }
-                }))
+                    });
+                }
             }
             Role::Agent => {
-                let group = GroupId::session(room_id, invited.session_id);
-                let Some(meta) = self.memory.groups.get(&group).filter(|meta| !meta.removed) else {
-                    return Ok(None);
-                };
-                if self.leaves_now(&group)?.contains(&device) {
-                    return Ok((!invited.handed_over
-                        && !self.memory.sent.contains(&(device, group)))
-                    .then_some(InviteStep::Handover { group, device }));
+                // 5.3.1: (b) the main session's group, then (c) every live helper session under it.
+                let main = GroupId::session(room_id, invited.session_id);
+                let seated = self.leaves_now(&main)?.contains(&device);
+                // Another agent device the room allows sits there: another takeover won, this one is over.
+                let taken = self
+                    .seat_now(&invited.session_id)
+                    .is_some_and(|seat| seat != device && room.is_agent(&seat));
+                if taken {
+                    return Ok(Vec::new());
                 }
-                if waits(&group) {
-                    return Ok(Some(InviteStep::Wait));
-                }
-                let chains = self.chains(&group)?;
-                let leaves = self.leaves_now(&group)?;
-                let cuts = self
-                    .disallowed(meta, &leaves, &self.known())
-                    .into_iter()
-                    .map(|leaf| {
-                        let head = chains.head(&leaf);
-                        Cut {
-                            device: leaf,
-                            seq: head.seq,
-                            hash: head.hash,
-                        }
+                let helpers = self
+                    .memory
+                    .groups
+                    .iter()
+                    .filter(|(_, meta)| {
+                        meta.session
+                            .is_some_and(|session| session.parent == invited.session_id)
                     })
-                    .collect();
-                Ok(Some(InviteStep::TakeOver {
-                    group,
-                    cuts,
-                    agent: device,
-                    key_package: invited.key_package.clone(),
-                }))
+                    .map(|(group, _)| *group);
+                for group in std::iter::once(main).chain(helpers) {
+                    let Some(meta) = self
+                        .memory
+                        .groups
+                        .get(&group)
+                        .filter(|meta| !meta.removed && !meta.archived)
+                    else {
+                        continue;
+                    };
+                    let leaves = self.leaves_now(&group)?;
+                    if leaves.contains(&device) {
+                        if !handed(&group) {
+                            if waits(&group) {
+                                waiting = true;
+                            } else {
+                                steps.push(InviteStep::Handover { group, device });
+                            }
+                        }
+                        continue;
+                    }
+                    // The new device is a helper session's opener only once it is the main session's
+                    // agent leaf (5.2.3).
+                    if group != main && !seated {
+                        waiting = true;
+                        continue;
+                    }
+                    if waits(&group) {
+                        waiting = true;
+                        continue;
+                    }
+                    let chains = self.chains(&group)?;
+                    let cuts = self
+                        .disallowed(meta, &leaves, &self.known())
+                        .into_iter()
+                        .map(|leaf| {
+                            let head = chains.head(&leaf);
+                            Cut {
+                                device: leaf,
+                                seq: head.seq,
+                                hash: head.hash,
+                            }
+                        })
+                        .collect();
+                    steps.push(InviteStep::TakeOver {
+                        group,
+                        cuts,
+                        agent: device,
+                        key_package: (group == main).then(|| invited.key_package.clone()),
+                    });
+                }
             }
         }
+        if steps.is_empty() && waiting {
+            steps.push(InviteStep::Wait);
+        }
+        let takeover = invited.role == Role::Agent && !invited.session_id.is_zero();
+        if steps.is_empty() && takeover && !invited.checked {
+            steps.push(InviteStep::CheckHelpers {
+                session: invited.session_id,
+            });
+        }
+        Ok(steps)
     }
 
     /// The leaves of `group` in the epoch this device stands in.
@@ -711,16 +806,25 @@ impl<S: Storage> Device<S> {
             .unwrap_or_default())
     }
 
-    /// Sends the key handover that [`InviteStep::Handover`] names (7.1, 5.3.2), and notes that it was sent.
-    /// Returns the outbox ids of its messages.
+    /// Sends the key handover of the first [`InviteStep::Handover`] of the invite (7.1, 5.3.2), and notes
+    /// that it was sent. Returns the outbox ids of its messages. `busy` when no handover is to be sent now.
     pub fn invite_handover(&mut self, invite_id: &InviteId) -> Result<Vec<u64>, Error> {
         self.owner()?;
         let mut follow_up = self.follow_up(invite_id)?;
-        let Some(InviteStep::Handover { group, device }) = self.next_step(&follow_up)? else {
+        let next = self
+            .steps(&follow_up)?
+            .into_iter()
+            .find_map(|step| match step {
+                InviteStep::Handover { group, device } => Some((group, device)),
+                _ => None,
+            });
+        let Some((group, device)) = next else {
             return Err(Error::Busy);
         };
+        // The handover's own record of what was sent keeps the step from being named again if the second
+        // write does not happen.
         let sent = self.send_handover(&group, &device)?;
-        follow_up.handed_over = true;
+        follow_up.handed.push(group);
         self.transact(|this, batch| {
             this.begin(0);
             this.put_stored(batch, follow_up_key(invite_id), follow_up.encode()?);
@@ -729,12 +833,43 @@ impl<S: Storage> Device<S> {
         Ok(sent)
     }
 
-    /// Drops what was left to do for an invite: a takeover without history sends no handover (5.3.2).
+    /// Answers [`InviteStep::CheckHelpers`]: `helpers` are the live helper sessions the hub lists under the
+    /// session that was taken over. `group-behind` when this device does not hold one of them (its Welcome
+    /// is still to be taken); `busy` when a step other than the check is left. Otherwise the takeover is
+    /// complete as far as the hub shows, and the next [`Device::invite_steps`] finishes the invite unless a
+    /// group needs something again.
+    pub fn invite_checked(
+        &mut self,
+        invite_id: &InviteId,
+        helpers: &[GroupId],
+    ) -> Result<(), Error> {
+        self.transact(|this, batch| {
+            this.begin(0);
+            let mut follow_up = this.follow_up(invite_id)?;
+            let only_check = matches!(
+                this.steps(&follow_up)?.as_slice(),
+                [InviteStep::CheckHelpers { .. }]
+            );
+            if !only_check {
+                return Err(Error::Busy);
+            }
+            if !helpers.iter().all(|group| this.is_leaf_of(group)) {
+                return Err(Error::GroupBehind);
+            }
+            follow_up.checked = true;
+            this.put_stored(batch, follow_up_key(invite_id), follow_up.encode()?);
+            Ok(())
+        })
+    }
+
+    /// A takeover without history (5.3.2): no handover is sent for this invite, now or in a helper session
+    /// taken over later. Only the handover steps go; a takeover that is still to do stays listed.
     pub fn invite_forget(&mut self, invite_id: &InviteId) -> Result<(), Error> {
         self.transact(|this, batch| {
             this.begin(0);
-            this.follow_up(invite_id)?;
-            this.delete_stored(batch, follow_up_key(invite_id));
+            let mut follow_up = this.follow_up(invite_id)?;
+            follow_up.no_history = true;
+            this.put_stored(batch, follow_up_key(invite_id), follow_up.encode()?);
             Ok(())
         })
     }
@@ -941,14 +1076,33 @@ impl<S: Storage> Device<S> {
     // ---- signing in to the hub ----
 
     /// Answers the hub's `challenge` (12.3) with this device's key, for the room it belongs to at `hub`.
-    /// `no-room` for a device without a room.
+    ///
+    /// A device that is joining by link has no room yet and still needs a token, to fetch its Welcome or the
+    /// room's GroupInfo and Commits; the hub gives one once the inviter's Commit names its key (12.3.2). Once
+    /// the Reveal was checked ([`Device::join_reveal`]) it signs for the room of the stored Offer, at the hub
+    /// its Request named and no other (`bad-invite`). Nothing else follows from a stored Offer. `no-room` for
+    /// a device without a room and without a checked Reveal.
     pub fn hub_sign_in(
         &self,
         hub: &HubAddress,
         challenge: [u8; CHALLENGE_LEN],
     ) -> Result<SignedHubAuth, Error> {
         self.owner()?;
-        let room = self.memory.record.room.ok_or(Error::NoRoom)?;
+        let joining = self.joining_by_link()?.filter(|joining| joining.revealed);
+        if let Some(joining) = &joining {
+            let named = Request::decode(&joining.joiner.signed_request().request)
+                .map_err(|_| damaged("a join by link"))?
+                .hub;
+            if named != *hub {
+                return Err(Error::BadInvite);
+            }
+        }
+        let room = self
+            .memory
+            .record
+            .room
+            .or(joining.map(|joining| joining.joiner.offer().room_id))
+            .ok_or(Error::NoRoom)?;
         hub_auth::sign(&self.key, room, hub, challenge)
     }
 }
