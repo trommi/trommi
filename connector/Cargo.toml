@@ -23,6 +23,8 @@ bytes = "=1.12.1"
 # Process ids, signals, the host name: the safe wrappers, so that this crate has no unsafe code.
 rustix = { version = "=1.1.5", features = ["process", "system", "fs"] }
 zeroize = "=1.9.1"
+# The release signature: plain Ed25519 over the manifest, as `openssl pkeyutl -rawin` makes it. The version the core pins.
+ed25519-dalek = { version = "=2.2.0", default-features = false }
 # Data. serde_json is the version the core pins; `raw_value` only adds a type (the tool list keeps its order).
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["raw_value"] }

@@ -1,4 +1,4 @@
-//! What the connector's end-to-end tests share: the real v2 hub as a child process, and a stand-in for the
+//! What the connector's end-to-end tests share: the real v2 hub (this workspace's `hub/`) as a child process, and a stand-in for the
 //! human's device. The stand-in is built on `trommi-core` through the connector's own vault (the device, its
 //! journal, the content chains), and speaks to the hub through the
 //! connector's hub client; everything a human's app does in these tests is here, step by step.
@@ -52,15 +52,12 @@ impl Drop for TempDir {
     }
 }
 
-/// Where the hub's binary is: `TROMMI_HUB_BIN`, or the place the connector's build of branch `v2-hub` puts it.
+/// The hub's binary: `TROMMI_HUB_BIN`, or the hub of this workspace, built beside the tests.
 pub fn hub_binary() -> PathBuf {
-    if let Some(path) = std::env::var_os("TROMMI_HUB_BIN") {
-        return PathBuf::from(path);
+    match std::env::var_os("TROMMI_HUB_BIN") {
+        Some(path) => PathBuf::from(path),
+        None => process::built("trommi-hub", "trommi-hub"),
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    home.join(".cache/trommi-work/v2/connector-target/hub/debug/trommi-hub")
 }
 
 /// The real hub, running for one test.
@@ -83,7 +80,7 @@ impl HubProc {
         let binary = hub_binary();
         assert!(
             binary.is_file(),
-            "no hub binary at {}: build branch v2-hub (cargo build -p trommi-hub) or set TROMMI_HUB_BIN",
+            "no hub binary at {}: cargo build -p trommi-hub, or set TROMMI_HUB_BIN",
             binary.display()
         );
         let port = if port != 0 {

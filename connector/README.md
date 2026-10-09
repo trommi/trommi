@@ -46,12 +46,19 @@ that does not read, or that is older than what the device already sent, is said 
 the human reconnects the session in the app. When the human reconnects the session on another machine, the
 connector here learns it from the Commit, wipes the slot and says that it is retired.
 
-## Updates
+## Updates and releases
 
 Nothing is loaded into a running process. A new binary at the connector's path is announced once
-(`kind="update"`); `reload_connector` answers with the restart line. Releases are built and signed in CI; a
-connector checks a new binary against the release key compiled into it. **No key is pinned yet**
-(`update.rs`, `RELEASE_KEY`): until one is, the check answers "not yet enforced" and says so.
+(`kind="update"`); `reload_connector` answers with the restart line.
+
+Releases are built and signed in CI: GitHub releases `connector-v<N>` of `trommi/trommi` with the four binaries,
+the plugin's archive, `manifest.json` and `manifest.json.sig` (`release/manifest.sh`, `release/sign.sh`: Ed25519 over
+the manifest's exact bytes). The connector holds the public key (`release/public-key.pem`, compiled in by
+`build.rs`) and checks a binary against a manifest that lies beside it (`src/update.rs`): the signature, then
+product, repository, tag and version (never older than the one running; CI compiles the release number in with
+`TROMMI_RELEASE_VERSION`), then the binary's size and SHA-256 under its release name. `--version` says where a
+binary stands: verified with its release, not verified (no manifest beside it), or refused. A refused binary is
+never announced as an update.
 
 ## Build and tests
 
@@ -62,5 +69,5 @@ cargo test -p trommi-tests                 # tests/connector/*: units, and scena
 ```
 
 The four targets are static Linux (`x86_64`, `aarch64`, musl, linked with `rust-lld`, ring's C compiled by clang)
-and macOS (`aarch64`, `x86_64`, `cargo zigbuild`, no Apple SDK). The scenario tests start the hub of branch
-`v2-hub` as a child process (`TROMMI_HUB_BIN`, see `tests/connector/common/mod.rs`) and the built connector over MCP.
+and macOS (`aarch64`, `x86_64`, `cargo zigbuild`, no Apple SDK). The scenario tests start this repository's hub as a child process (built beside the tests, or `TROMMI_HUB_BIN`)
+and the built connector over MCP.
