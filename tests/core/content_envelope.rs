@@ -10,7 +10,7 @@ use trommi_core::objects;
 use trommi_core::Error;
 use trommi_tests::content::{story, Dice, Story, Told, View, STORY_KEY};
 use trommi_tests::seal;
-use trommi_tests::vectors::envelope::NAME;
+use trommi_tests::vectors::envelope::{result_text, Verifier, NAME};
 use trommi_tests::vectors::{entropy, hex, read, unhex};
 
 fn list<'a>(file: &'a Value, key: &str) -> &'a Vec<Value> {
@@ -380,6 +380,56 @@ fn the_vectors_read_back() {
             (seq + 1, text(case, "envelope_hash").to_owned()),
         );
     }
+    // The parts are the format's: the header is the associated data, the padded body the plaintext, and the
+    // envelope built from them by hand is the envelope of the file.
+    for case in list(&file, "envelopes") {
+        let full = Envelope::decode(&unhex(text(case, "full")).unwrap()).unwrap();
+        let header = unhex(text(case, "header")).unwrap();
+        assert_eq!(trommi_core::codec::encode(&full.header).unwrap(), header);
+        let nonce: [u8; 12] = unhex(text(case, "nonce")).unwrap().try_into().unwrap();
+        let padded = unhex(text(case, "padded_body")).unwrap();
+        let sealed = trommi_core::crypto::aead_seal(&key, &nonce, &header, &padded).unwrap();
+        assert_eq!(
+            hex(trommi_core::crypto::sha256(&sealed).unwrap().as_bytes()),
+            text(case, "ciphertext_sha256")
+        );
+        let signature: [u8; 64] = unhex(text(case, "signature")).unwrap().try_into().unwrap();
+        let rebuilt = Envelope {
+            header: full.header.clone(),
+            nonce,
+            content: Content::Full(sealed),
+            signature,
+        };
+        assert_eq!(hex(&rebuilt.encode().unwrap()), text(case, "full"));
+        let bind = unhex(text(case, "bind")).unwrap();
+        assert_eq!(
+            seal::bind_bytes(full.open(&key).unwrap().bind()).unwrap(),
+            bind
+        );
+        let body = seal::body_bytes(2, &bind, text(case, "payload").as_bytes()).unwrap();
+        assert_eq!(seal::padded(&body), padded);
+        // The signature is the labelled one over the envelope hash.
+        assert_eq!(
+            trommi_core::crypto::verify_with_label(
+                full.header.sender.as_bytes(),
+                "TrommiEnvelope",
+                &unhex(text(case, "envelope_hash")).unwrap(),
+                &signature
+            ),
+            Ok(())
+        );
+    }
+    let binds: Vec<&str> = list(&file, "envelopes")
+        .iter()
+        .map(|case| text(case, "bind"))
+        .filter(|bind| !bind.is_empty())
+        .collect();
+    assert_eq!(
+        binds.len(),
+        5,
+        "two answers, a take back, a request, a verdict"
+    );
+
     for case in list(&file, "refused") {
         let bytes = unhex(text(case, "bytes")).unwrap();
         let result = match text(case, "at") {
@@ -393,6 +443,72 @@ fn the_vectors_read_back() {
             text(case, "why")
         );
     }
+}
+
+#[test]
+fn the_checks_of_the_vectors_end_as_the_file_says() {
+    let file = read(NAME).unwrap();
+    let cases = list(&file["checks"], "cases");
+    let mut results = std::collections::BTreeSet::new();
+    for case in cases {
+        let verifier = Verifier::from_json(&case["verifier"]).expect("a verifier");
+        assert_eq!(verifier.to_json(), case["verifier"]);
+        let envelope = unhex(text(case, "envelope")).unwrap();
+        let result = result_text(&verifier.check(&envelope));
+        assert_eq!(result, text(case, "result"), "{}", text(case, "why"));
+        results.insert((case["check"].as_u64().unwrap(), result));
+    }
+    // One case for every code a check can end in, and for what the hub checks beside them.
+    let by_check = [
+        (1, "wrong-room"),
+        (2, "group-behind"),
+        (3, "not-member"),
+        (4, "removed-sender"),
+        (4, "equivocation"),
+        (5, "bad-signature"),
+        (6, "replay"),
+        (6, "equivocation"),
+        (6, "gap"),
+        (6, "chain-break"),
+        (7, "chained: forbidden"),
+        (8, "chained: wrong-epoch"),
+        (0, "wrong-sender"),
+        (0, "bad-format"),
+        (0, "chained: stale-session"),
+        (0, "chained: epoch-full"),
+        (0, "chained: too-large"),
+        (0, "void: forbidden"),
+        (0, "void: forbidden, finding: hub-voided-other"),
+        (0, "void: too-large, finding: hub-voided-other"),
+        (0, "taken"),
+    ];
+    for (check, result) in by_check {
+        assert!(
+            results.contains(&(check, result.to_owned())),
+            "check {check}: {result}"
+        );
+    }
+    // The first half of check 1, the encoding, is the file's list of bytes that are no envelope.
+    let no_envelope: Vec<&str> = list(&file, "refused")
+        .iter()
+        .map(|case| text(case, "code"))
+        .collect();
+    assert!(no_envelope.contains(&"bad-format") && no_envelope.contains(&"newer-version"));
+
+    // A void record is the pruned form of what the hub refused: the same hash, no body.
+    let forbidden = cases
+        .iter()
+        .find(|case| text(case, "result") == "chained: forbidden")
+        .unwrap();
+    let void = cases
+        .iter()
+        .find(|case| text(case, "result") == "void: forbidden")
+        .unwrap();
+    let full = Envelope::decode(&unhex(text(forbidden, "envelope")).unwrap()).unwrap();
+    let pruned = Envelope::decode(&unhex(text(void, "envelope")).unwrap()).unwrap();
+    assert!(pruned.is_pruned());
+    assert_eq!(full.prune().unwrap(), pruned);
+    assert_eq!(full.verify().unwrap(), pruned.verify().unwrap());
 }
 
 /// The envelope's format, binds, padding, hash and signature, case by case (section 9).
