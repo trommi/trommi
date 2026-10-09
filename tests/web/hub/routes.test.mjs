@@ -263,3 +263,64 @@ test('archive: a session group is archived and then takes no envelope; the room 
   await assert.rejects(hub.archiveGroup(room_id), e => e.code === 'forbidden')
   assert.deepEqual((await hub.roomGroups()).map(g => [g.kind, g.live]), [['room', true], ['main', false]])
 })
+
+test('servedRoom: what a device with the code needs, in the core\'s shape, from the recovery key\'s token', async t => {
+  const { fake, hub, room_id, device, room } = await scene(t)
+  const session = (parent = null) => ({ session_id: id(16), parent })
+  const found = async (s, name) => {
+    const group = new Uint8Array([...room_id, ...s.session_id])
+    await hub.foundGroup({ group_info_0: utf8({ group, epoch: 0, leaves: [device], session: s, name }), sealed_key_0: utf8(`${name}-s0`), commit: utf8(`${name}-c0`), group_info: utf8(`${name}-i1`), sealed_key: utf8(`${name}-s1`) })
+    return group
+  }
+  const main = session()
+  const helper_group = await found(session(main.session_id), 'helper')      // founded first: the order served is by kind
+  const main_group = await found(main, 'main'), gone = await found(session(), 'archived')
+  await hub.archiveGroup(gone)
+  for (let epoch = 0; epoch < 3; epoch++) await hub.postCommit(room_id, { epoch, commit: utf8(`c${epoch}`), group_info: utf8(`i${epoch + 1}`), sealed_key: utf8(`s${epoch}`), ...(epoch === 1 ? { recovery_auth: utf8('auth') } : {}) })
+  await hub.postMessage(room_id, 3, utf8('a message is no part of it'), false)
+  await hub.postRecoveryCode(room_id, { epoch: 3, commit: utf8('c3'), group_info: utf8('i4'), sealed_key: utf8('s3') }, utf8('link'), null)
+
+  const key = id(32)
+  room.recovery_keys.add(txt(key))
+  const reader = client(fake, room_id, key)
+  let asked = null
+  const served = await reader.servedRoom({ anchorOf: rows => { asked = rows; return { group: room_id, epoch: 2 } } })
+  assert.equal(reader.role, 'recovery')
+  assert.deepEqual(served.room, room_id)
+  assert.deepEqual(served.group.founding, utf8('{}'))
+  assert.deepEqual(served.group.current, utf8('i4'))
+  assert.deepEqual(served.group.commits.map(c => [new TextDecoder().decode(c.commit), c.recoveryAuth && new TextDecoder().decode(c.recoveryAuth)]), [['c0', null], ['c1', 'auth'], ['c2', null], ['c3', null]])
+  assert.ok(served.group.commits.every((c, i, all) => c.change > (all[i - 1]?.change ?? 0)))
+  assert.deepEqual(served.anchor, utf8('i2'))
+  assert.equal(asked, served.rows)
+  assert.deepEqual(served.rows.map(r => new TextDecoder().decode(r)).sort(), ['archived-s0', 'archived-s1', 'helper-s0', 'helper-s1', 'main-s0', 'main-s1', 's0', 's1', 's2', 's3'])
+  assert.deepEqual(served.links, [utf8('link')])
+  assert.deepEqual(served.sessions.map(g => [JSON.parse(new TextDecoder().decode(g.founding)).name, g.commits.length, new TextDecoder().decode(g.current)]), [['main', 1, 'main-i1'], ['helper', 1, 'helper-i1']])
+  assert.ok(received(fake, /\/log$/).filter(r => r.device === txt(key)).every(r => r.query.kind === 'commit'))
+  assert.deepEqual(await reader.servedGroup(main_group), served.sessions[0])
+  assert.equal(helper_group.length, 48)
+
+  // pages: a log and sealed keys longer than one answer
+  fake.faults.add({ path: /\/log$/, times: 9, answer: a => ({ items: a.items.slice(0, 1), more: a.items.length > 1 }) })
+  assert.deepEqual((await reader.servedGroup(room_id)).commits, served.group.commits)
+  assert.equal(received(fake, `/v2/groups/${txt(room_id)}/log`).slice(-4).map(r => r.query.after).join(), '0,1,2,3')
+
+  fake.faults.clear()
+  // a Commit accepted while the room is being read lies beyond the current GroupInfo and is left out
+  fake.faults.add({ path: `/v2/groups/${txt(room_id)}/info`, answer: a => ({ ...a, epoch: 3, group_info: Buffer.from('i3').toString('base64url') }) })
+  const racing = await reader.servedGroup(room_id)
+  assert.deepEqual([racing.commits.length, racing.current], [3, utf8('i3')])
+
+  for (const [what, path, answer] of [
+    ['a Commit is missing', /\/log$/, a => ({ ...a, items: a.items.filter(i => i.epoch !== 1) })],
+    ['the log ends early', /\/log$/, a => ({ items: a.items.slice(0, 2), more: false })],
+    ['a message among the Commits', /\/log$/, a => ({ ...a, items: a.items.map(i => ({ ...i, kind: 'message' })) })],
+    ['more, and nothing', /\/log$/, () => ({ items: [], more: true })],
+  ]) {
+    fake.faults.add({ path, answer })
+    await assert.rejects(reader.servedGroup(room_id), e => e.code === 'bad-answer', what)
+  }
+  await assert.rejects(reader.servedRoom({ anchorOf: () => ({ group: main_group, epoch: 0 }) }), { code: 'bad-argument' })
+  await assert.rejects(reader.servedRoom({ anchorOf: () => ({ group: room_id, epoch: 99 }) }), e => e.code === 'not-found')
+})
+

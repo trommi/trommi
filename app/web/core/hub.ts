@@ -23,7 +23,7 @@
 //
 // Nothing here writes a log line: tokens, bodies and share secrets never leave this module but in a request.
 import { b64u, hex, unb64u } from './ids.ts'
-import type { LogEntry, OutboxEntry, SignedHubAuth } from './core-api.ts'
+import type { LogEntry, OutboxEntry, ServedGroup, ServedRoom, SignedHubAuth } from './core-api.ts'
 
 const MIB = 1 << 20
 /** Most a JSON answer may hold: a small one; a list (the hub's 8 MiB of envelopes, the one item that may exceed it,
@@ -42,6 +42,9 @@ const MAX_ENVELOPE = 128 << 10
 const MAX_MLS = MIB
 const MAX_KEY_PACKAGE = 16 << 10
 const MAX_SMALL_STRUCT = 1024
+/** Most a room may weigh as it is served to a device that comes with the code (`servedRoom`): every Commit of the
+ *  room group and of each live session group, their GroupInfos, every SealedKey and RecoveryLink. */
+const CAP_SERVED = 256 * MIB
 /** A signature or a MAC: 64 and 32 bytes in v2.md; their exact form is the core's to check, here only that they are small. */
 const MAX_TAG = 128
 /** hub-api.md "Decided for the first hub" 32: one catch-up answer looks at most so many change numbers ahead. */
@@ -199,6 +202,17 @@ export interface OutboxAnswer {
   /** The room's change number the hub gave the write; null for a kind that takes none. */
   change: number | null
   epoch?: number; n?: number | null; room_id?: Uint8Array; group_id?: Uint8Array; unused?: number
+  /** Of a recovery: a part was kept; the finish published, from which change, and the device that joined. */
+  kept?: boolean; published?: boolean; first_change?: number; device?: Uint8Array
+}
+/** What `postOutbox` needs beside the entry. */
+export interface OutboxOptions {
+  /** `recoveryCode`, `recoveryFinish`: the account's new copies in place of the bytes the entry carries (null: a
+   *  room without an account). Left out: what the entry carries (`accountCopiesBytes`). */
+  account?: AccountCopies | null
+  /** `recoveryCommit`, `recoveryFinish`: the recovery they belong to, as `openRecovery` answered. Whoever runs the
+   *  recovery opens it (under the recovery key's token) and keeps its id until the finish was answered. */
+  recovery_id?: Uint8Array
 }
 /** The device's `hubSignIn` for one room: `HubAuth` and its signature over the hub's challenge (12.3). */
 export type Signer = (hub: string, challenge: Uint8Array) => Promise<SignedHubAuth>
@@ -412,6 +426,39 @@ function copiesBody(a: AccountCopies | null): Record<string, unknown> | null {
     ...(a.password ? { password: { sealed_copy: enc(a.password.sealed_copy) } } : {}),
     ...(a.passkey ? { passkey: { credential_id: enc(a.passkey.credential_id), sealed_copy: enc(a.passkey.sealed_copy) } } : {}),
   }
+}
+
+/**
+ * The account's new sealed copies as the bytes the core keeps with a `recoveryCode` or `recoveryFinish` outbox entry
+ * (its `replaceCode` and `recover` take them as `account`): the JSON of the hub's body, UTF-8. A room without an
+ * account: no bytes. `postOutbox` reads them back into the request.
+ */
+export function accountCopiesBytes(copies: AccountCopies | null): Uint8Array {
+  return copies ? new TextEncoder().encode(JSON.stringify(copiesBody(copies))) : new Uint8Array(0)
+}
+/** The reverse, strict: exactly the members `accountCopiesBytes` writes, each a byte string of the hub's length. */
+function accountCopiesOf(account: Uint8Array): AccountCopies | null {
+  if (account.length === 0) return null
+  const part = (v: unknown, name: string, min: number, max = min): Uint8Array => {
+    let out: Uint8Array | null = null
+    try { out = unb64u(v as string) } catch { /* refused below */ }
+    if (!out || out.length < min || out.length > max) wrong(`the account's copies: ${name}`)
+    return out
+  }
+  const members = (v: unknown, ...names: string[]): Record<string, unknown> => {
+    if (typeof v !== 'object' || v === null || Array.isArray(v) || Object.keys(v).some(k => !names.includes(k))) wrong('the account\'s copies: not what accountCopiesBytes writes')
+    return v as Record<string, unknown>
+  }
+  let parsed: unknown
+  try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(account)) } catch { wrong('the account\'s copies: not what accountCopiesBytes writes') }
+  const o = members(parsed, 'kit', 'password', 'passkey'), kit = members(o.kit, 'auth_key', 'sealed_copy')
+  const copies: AccountCopies = { kit: { auth_key: part(kit.auth_key, 'kit.auth_key', 32), sealed_copy: part(kit.sealed_copy, 'kit.sealed_copy', 61) } }
+  if (o.password !== undefined) copies.password = { sealed_copy: part(members(o.password, 'sealed_copy').sealed_copy, 'password.sealed_copy', 61) }
+  if (o.passkey !== undefined) {
+    const k = members(o.passkey, 'credential_id', 'sealed_copy')
+    copies.passkey = { credential_id: part(k.credential_id, 'passkey.credential_id', 1, 1023), sealed_copy: part(k.sealed_copy, 'passkey.sealed_copy', 61) }
+  }
+  return copies
 }
 
 /**
@@ -727,11 +774,12 @@ export class Hub {
    * Resolves with the hub's answer; a refusal throws HubError. A repeated post of the same bytes gets the first
    * answer again, so an entry whose answer was lost is simply posted again. (`relayMessage` is the exception: the
    * hub passes it on each time, hub delivery.rs `message`; a stroke piece must be harmless when it arrives twice.)
-   * `account`: for `recoveryCode` (and a recovery's `finish`) the account's new sealed copies; null for a room
-   * without an account. A founding that makes the account in the same transaction goes through `foundRoom`; an
-   * external commit that is a part of a recovery (8.7) through `recoveryCommit`.
+   * The account's new copies travel in the entry (`recoveryCode`, `recoveryFinish`: its last part, written by
+   * `accountCopiesBytes`) and are read back into the request here. A founding that makes the account in the same
+   * transaction goes through `foundRoom`. The parts of a recovery (8.7) are posted under the recovery key's token,
+   * with `opts.recovery_id`; a join with the code (`externalCommit`) under that token too, on the group's own route.
    */
-  async postOutbox(entry: OutboxEntry, opts: { account?: AccountCopies | null } = {}): Promise<OutboxAnswer> {
+  async postOutbox(entry: OutboxEntry, opts: OutboxOptions = {}): Promise<OutboxAnswer> {
     const p = entry.parts
     const part = (i: number): Uint8Array => p[i]?.length ? p[i] : wrong(`outbox ${entry.kind}: part ${i} is missing`)
     const count = (n: number): void => { if (p.length !== n) wrong(`outbox ${entry.kind}: ${n} parts, not ${p.length}`) }
@@ -760,11 +808,24 @@ export class Hub {
       }
       case 'sealedKey': count(1); await this.putSealedKey(part(0)); return { change: null }
       case 'recoveryCode': {
-        count(4)
-        if (opts.account === undefined) wrong('outbox recoveryCode: the account\'s new copies, or null for a room without an account')
-        return this.postRecoveryCode(group(), { epoch: entry.epoch, commit: part(0), group_info: part(1), sealed_key: part(2) }, part(3), opts.account)
+        count(5)
+        const account = opts.account !== undefined ? opts.account : accountCopiesOf(p[4] as Uint8Array)
+        return this.postRecoveryCode(group(), { epoch: entry.epoch, commit: part(0), group_info: part(1), sealed_key: part(2) }, part(3), account)
       }
-      default: return wrong('an outbox kind this client does not know')
+      case 'recoveryCommit': {
+        count(5)
+        const c = { epoch: entry.epoch, commit: part(0), group_info: part(1), welcome: p[2] ?? null, sealed_key: part(3), recovery_auth: p[4] ?? null }
+        return { change: null, ...await this.recoveryCommit(opts.recovery_id ?? wrong('outbox recoveryCommit: the recovery it belongs to'), group(), c) }
+      }
+      case 'recoveryFinish': {
+        count(2)
+        const account = opts.account !== undefined ? opts.account : accountCopiesOf(p[1] as Uint8Array)
+        return this.finishRecovery(opts.recovery_id ?? wrong('outbox recoveryFinish: the recovery it belongs to'), part(0), account)
+      }
+      default: {
+        const unknown: never = entry.kind       // a kind the binding grew: this line stops compiling
+        return wrong(`an outbox kind this client does not know: ${String(unknown)}`)
+      }
     }
   }
 
@@ -817,6 +878,59 @@ export class Hub {
   async postRecoveryCode(room_id: Uint8Array, c: CommitParts, recovery_link: Uint8Array, account: AccountCopies | null): Promise<{ epoch: number; change: number }> {
     const json = { ...commitBody(c), recovery_link: enc(recovery_link), account: copiesBody(account) }
     return this.committed(await this.send('POST', `/v2/rooms/${own(room_id, 'room_id', 32)}/recovery-code`, json), c.epoch)
+  }
+
+  /**
+   * One group as a device verifies it from its founding (8.4): the founding GroupInfo, every Commit in the hub's
+   * order, the GroupInfo the hub offers as current. Nothing in it is trusted, the core checks it; here only that the
+   * Commits are the group's, one per epoch from 0 up to the current one.
+   */
+  async servedGroup(group: Uint8Array, budget = { bytes: CAP_SERVED }): Promise<ServedGroup> {
+    const spend = (b: Uint8Array): Uint8Array => { if ((budget.bytes -= b.length) < 0) bad('a room larger than a device takes'); return b }
+    // the current GroupInfo first: a Commit accepted while the log is read lies beyond it and is left out
+    const current = await this.groupInfo(group)
+    const founding = current.epoch === 0 ? current : await this.groupInfo(group, 0)
+    const commits: ServedGroup['commits'] = []
+    for (let after = 0, more = current.epoch > 0; more;) {
+      const page = await this.groupLog(group, { after, limit: 1000, commits_only: true })
+      for (const item of page.items) {
+        if (item.kind !== 'commit' || item.epoch !== commits.length) bad('a log that is not one Commit per epoch')
+        if (item.epoch < current.epoch) commits.push({ change: item.change, commit: spend(item.bytes), recoveryAuth: item.recovery_auth })
+        after = item.n
+      }
+      more = page.more && commits.length < current.epoch
+      if (page.more && page.items.length === 0) bad('more to come, and no step forward')
+    }
+    if (commits.length !== current.epoch) bad('a log that does not reach the current epoch')
+    return { founding: spend(founding.group_info), commits, current: spend(current.group_info) }
+  }
+  /**
+   * The room as a device that holds the recovery code needs it (8.4, 8.5, 8.7), under the recovery key's token
+   * (`useSigner` with the core's `recoverySignIn`): the room group, every SealedKey and RecoveryLink, the GroupInfo
+   * of the anchor's epoch, every live session group, main sessions before helper sessions. `anchorOf` is the core's
+   * `recoveryAnchor(code, room, rows)`: it names the epoch whose GroupInfo is fetched. Nothing in the answer is
+   * trusted (the core verifies all of it); here it is only checked for its shape and its size.
+   */
+  async servedRoom(opts: { anchorOf: (rows: Uint8Array[]) => { group: Uint8Array; epoch: number } }): Promise<ServedRoom> {
+    if (!this.signer) wrong('this hub client has no signer: useSigner first')
+    const room = this.signer.room_id, budget = { bytes: CAP_SERVED }
+    const spend = (b: Uint8Array): Uint8Array => { if ((budget.bytes -= b.length) < 0) bad('a room larger than a device takes'); return b }
+    const group = await this.servedGroup(room, budget)
+    const rows: Uint8Array[] = [], links: Uint8Array[] = []
+    for (let after = 0, more = true; more;) {
+      const page = await this.sealedKeys(after, 2000)
+      for (const r of page.rows) rows.push(spend(r.sealed_key))
+      for (const l of page.links) links.push(spend(l.recovery_link))
+      after = page.change
+      more = page.more
+    }
+    const anchor = opts.anchorOf(rows)
+    if (!same(anchor.group, this.signer.room)) wrong('the anchor is an epoch of the room group')
+    const anchored = spend((await this.groupInfo(room, ownInt(anchor.epoch, 'the anchor\'s epoch'))).group_info)
+    const live = (await this.roomGroups()).filter(g => g.live && g.kind !== 'room')
+    const sessions: ServedGroup[] = []
+    for (const kind of ['main', 'helper'] as const) for (const g of live) if (g.kind === kind) sessions.push(await this.servedGroup(g.group, budget))
+    return { room, group, anchor: anchored, rows, links, sessions }
   }
 
   // ---- groups: the MLS delivery service
