@@ -205,3 +205,53 @@ fn after_five_thousand_stroke_pieces_in_an_epoch_the_sender_updates() {
     ));
     assert_eq!(b.update(&room_group, false, now()), Ok(None));
 }
+
+#[test]
+fn a_stored_group_that_lacks_a_private_key_it_owns_fails_with_an_error() {
+    // OpenMLS keeps the private keys of the tree nodes a member owns as one list per group and epoch. A
+    // list that decodes and lacks one of them cannot be told from a whole one without OpenMLS's own tree
+    // arithmetic; OpenMLS finds it when a Commit is merged, and returns an error. (In front of that error
+    // it has a debug assertion, which the workspace's profile leaves out for dependencies, as a shipped
+    // build does.)
+    let store = MemoryStorage::new();
+    let handle = store.handle();
+    let (mut a, mut b, mut c) = (new_device(), new_device_on(store), new_device());
+    let (mut hub, room_group) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    add_human(&mut hub, &mut a, &mut c);
+    for device in [&mut b, &mut c] {
+        settle(&hub, device);
+    }
+    // Every device commits once, so that each owns nodes above its leaf.
+    c.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut c);
+    sync_ok(&hub, &mut b);
+    b.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut b);
+    sync_ok(&hub, &mut a);
+    sync_ok(&hub, &mut c);
+    let mut entries = snapshot(&handle);
+    let lists: Vec<Vec<u8>> = entries
+        .keys()
+        .filter(|key| key.first() == Some(&table::MLS) && key[1..].starts_with(b"EpochKeyPairs"))
+        .cloned()
+        .collect();
+    assert_eq!(lists.len(), 1);
+    let mut pairs: Vec<serde_json::Value> = serde_json::from_slice(&entries[&lists[0]]).unwrap();
+    assert!(pairs.len() > 1, "{} key pairs", pairs.len());
+    pairs.remove(0);
+    entries.insert(lists[0].clone(), serde_json::to_vec(&pairs).unwrap());
+    drop(b);
+    let mut b = reopen(store_of(&entries)).unwrap();
+    let epoch = b.group(&room_group).unwrap().epoch;
+
+    // Another device's Commit: the damaged device does not merge it, says so, and keeps its state.
+    c.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut c);
+    let results = trommi_tests::sync(&hub, &mut b);
+    assert!(
+        matches!(results.last(), Some(Err(Error::BadGroup))),
+        "{results:?}"
+    );
+    assert_eq!(b.group(&room_group).unwrap().epoch, epoch);
+}
