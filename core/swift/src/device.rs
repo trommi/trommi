@@ -226,7 +226,13 @@ impl CoreDevice {
     /// it seals is written with [`CoreDevice::seal`] and opened by [`CoreDevice::receive_envelope`], after the
     /// checks of the sender's chain.
     pub fn holds_key(&self, group: Vec<u8>, epoch: u64) -> Result<bool, CoreError> {
-        self.read(|device| Ok(device.content_key(&group_id(&group)?, epoch).is_ok()))
+        self.read(
+            |device| match device.content_key(&group_id(&group)?, epoch) {
+                Ok(_) => Ok(true),
+                Err(trommi_core::Error::NoKey) => Ok(false),
+                Err(error) => Err(error.into()),
+            },
+        )
     }
 
     /// Everything waiting to be sent, in the order to send it. An entry stays until the hub's answer was
@@ -790,7 +796,7 @@ impl CoreDevice {
         now_ms: u64,
     ) -> Result<ReceivedEnvelope, CoreError> {
         self.write(|device| {
-            let void = content::void_code(void_code);
+            let void = content::void_code(void_code)?;
             Ok(device
                 .receive_envelope(&envelope, change, ordered, void.as_ref(), now_ms)?
                 .into())
@@ -1182,21 +1188,23 @@ impl CoreDevice {
     }
 }
 
-/// Whether `code` can be a hub's answer to a request: the codes of the account's own checks and the ones that
-/// only a device says of itself cannot.
+/// Whether `code` can be a hub's answer to a request (the table of section 16). What only a client finds
+/// (`withheld`, `no-key`, `decrypt-failed` and the like), the account's own checks and what a device says only of
+/// itself are no hub's answer; `equivocation` and `newer-version` are both.
 fn is_hub_code(code: ErrorCode) -> bool {
-    !matches!(
-        code,
-        ErrorCode::Storage
-            | ErrorCode::Entropy
-            | ErrorCode::Busy
-            | ErrorCode::BadEmail
-            | ErrorCode::WeakPassword
-            | ErrorCode::BadKdf
-            | ErrorCode::BadRecoveryWords
-            | ErrorCode::BadRecoveryCode
-            | ErrorCode::NoPrf
-    )
+    crate::error::is_core_code(code)
+        && !matches!(
+            code,
+            ErrorCode::Withheld
+                | ErrorCode::HubVoidedOther
+                | ErrorCode::BadGroup
+                | ErrorCode::NoKey
+                | ErrorCode::Pruned
+                | ErrorCode::DecryptFailed
+                | ErrorCode::CodeNotConfirmed
+                | ErrorCode::HashMismatch
+                | ErrorCode::Cut
+        )
 }
 
 /// What a refusal of [`CoreDevice::process_log_entry`] with `code` means for the caller.

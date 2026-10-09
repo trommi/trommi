@@ -237,6 +237,23 @@ pub(crate) fn core_error(code: ErrorCode) -> Error {
     }
 }
 
+/// Whether the core itself has an error for `code`: the account's own codes and the ones a device says only of
+/// itself have none that a hub could mean.
+pub(crate) fn is_core_code(code: ErrorCode) -> bool {
+    !matches!(
+        code,
+        ErrorCode::Storage
+            | ErrorCode::Entropy
+            | ErrorCode::Busy
+            | ErrorCode::BadEmail
+            | ErrorCode::WeakPassword
+            | ErrorCode::BadKdf
+            | ErrorCode::BadRecoveryWords
+            | ErrorCode::BadRecoveryCode
+            | ErrorCode::NoPrf
+    )
+}
+
 /// The spelling of `code` in the specification and on the wire.
 #[cfg_attr(feature = "uniffi", uniffi::export)]
 pub fn error_code_text(code: ErrorCode) -> String {
