@@ -83,9 +83,9 @@ fn a_file_is_written_once_and_read_by_those_who_may() {
     assert_eq!(upload(&s.w.hub, &s.agent, &file, &bytes).ok(), stored);
     upload(&s.w.hub, &s.agent, &file, b"other bytes").refused(409, "replay");
     upload(&s.w.hub, &s.bea, &file, &bytes).refused(409, "replay");
-    // no envelope names it yet: only its uploader reads it
+    // no envelope names it yet: its uploader reads it, and human devices (11.3)
     assert_eq!(fetch(&s.w.hub, &s.agent, &file, None).body, bytes);
-    fetch(&s.w.hub, &s.bea, &file, None).refused(404, "not-found");
+    assert_eq!(fetch(&s.w.hub, &s.bea, &file, None).body, bytes);
     // an envelope of another device does not claim it
     let mut by_bea = chat(&s.session, s.agent.id(), "look");
     by_bea.file_ids = vec![file];
