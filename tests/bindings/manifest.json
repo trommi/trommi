@@ -1,0 +1,1385 @@
+{
+  "functions": {
+    "normaliseEmail": {
+      "arguments": [
+        {
+          "name": "email",
+          "type": "text"
+        }
+      ],
+      "returns": "text"
+    },
+    "checkPassword": {
+      "arguments": [
+        {
+          "name": "password",
+          "type": "text"
+        }
+      ],
+      "returns": "void"
+    },
+    "kdfRecord": {
+      "arguments": [],
+      "returns": "text"
+    },
+    "passwordKeys": {
+      "arguments": [
+        {
+          "name": "email",
+          "type": "text"
+        },
+        {
+          "name": "password",
+          "type": "text"
+        },
+        {
+          "name": "kdf",
+          "type": "optional<text>"
+        }
+      ],
+      "returns": "AccountKeys"
+    },
+    "kitKeys": {
+      "arguments": [
+        {
+          "name": "email",
+          "type": "text"
+        },
+        {
+          "name": "words",
+          "type": "text"
+        }
+      ],
+      "returns": "AccountKeys"
+    },
+    "passkeyWrapKey": {
+      "arguments": [
+        {
+          "name": "prf",
+          "type": "bytes"
+        },
+        {
+          "name": "roomId",
+          "type": "bytes"
+        },
+        {
+          "name": "credentialId",
+          "type": "bytes"
+        }
+      ],
+      "returns": "bytes"
+    },
+    "passkeyPrfInput": {
+      "arguments": [],
+      "returns": "bytes"
+    },
+    "sealRecoveryCode": {
+      "arguments": [
+        {
+          "name": "wrapKey",
+          "type": "bytes"
+        },
+        {
+          "name": "roomId",
+          "type": "bytes"
+        },
+        {
+          "name": "wayIn",
+          "type": "AccountWay"
+        },
+        {
+          "name": "credentialId",
+          "type": "optional<bytes>"
+        },
+        {
+          "name": "recoveryCode",
+          "type": "bytes"
+        }
+      ],
+      "returns": "bytes"
+    },
+    "openRecoveryCode": {
+      "arguments": [
+        {
+          "name": "wrapKey",
+          "type": "bytes"
+        },
+        {
+          "name": "roomId",
+          "type": "bytes"
+        },
+        {
+          "name": "wayIn",
+          "type": "AccountWay"
+        },
+        {
+          "name": "credentialId",
+          "type": "optional<bytes>"
+        },
+        {
+          "name": "sealed",
+          "type": "bytes"
+        }
+      ],
+      "returns": "bytes"
+    },
+    "generateRecoveryCode": {
+      "arguments": [],
+      "returns": "bytes"
+    },
+    "formatRecoveryCode": {
+      "arguments": [
+        {
+          "name": "recoveryCode",
+          "type": "bytes"
+        }
+      ],
+      "returns": "text"
+    },
+    "parseRecoveryCode": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        }
+      ],
+      "returns": "bytes"
+    },
+    "generateKitWords": {
+      "arguments": [],
+      "returns": "text"
+    },
+    "parseKitWords": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        }
+      ],
+      "returns": "text"
+    },
+    "generateUserHandle": {
+      "arguments": [],
+      "returns": "bytes"
+    },
+    "logFinding": {
+      "arguments": [
+        {
+          "name": "code",
+          "type": "ErrorCode"
+        }
+      ],
+      "returns": "LogFinding"
+    },
+    "errorCodeText": {
+      "arguments": [
+        {
+          "name": "code",
+          "type": "ErrorCode"
+        }
+      ],
+      "returns": "text"
+    },
+    "errorCodeFromText": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        }
+      ],
+      "returns": "optional<ErrorCode>"
+    },
+    "fileLayout": {
+      "arguments": [
+        {
+          "name": "storedLen",
+          "type": "number"
+        }
+      ],
+      "returns": "FileLayout"
+    },
+    "fileChunk": {
+      "arguments": [
+        {
+          "name": "storedLen",
+          "type": "number"
+        },
+        {
+          "name": "index",
+          "type": "number"
+        }
+      ],
+      "returns": "FileChunk"
+    },
+    "openFileChunk": {
+      "arguments": [
+        {
+          "name": "fileKey",
+          "type": "bytes"
+        },
+        {
+          "name": "fileId",
+          "type": "bytes"
+        },
+        {
+          "name": "index",
+          "type": "number"
+        },
+        {
+          "name": "last",
+          "type": "bool"
+        },
+        {
+          "name": "sealed",
+          "type": "bytes"
+        }
+      ],
+      "returns": "bytes"
+    },
+    "shareLinkCreate": {
+      "arguments": [
+        {
+          "name": "app",
+          "type": "text"
+        },
+        {
+          "name": "file",
+          "type": "FileRef"
+        }
+      ],
+      "returns": "ShareLink"
+    },
+    "shareLinkParse": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        }
+      ],
+      "returns": "ShareLink"
+    },
+    "checkShareExpiry": {
+      "arguments": [
+        {
+          "name": "expiresAt",
+          "type": "number"
+        },
+        {
+          "name": "nowMs",
+          "type": "number"
+        }
+      ],
+      "returns": "void"
+    },
+    "keyPackageInfo": {
+      "arguments": [
+        {
+          "name": "keyPackage",
+          "type": "bytes"
+        }
+      ],
+      "returns": "KeyPackageInfo"
+    },
+    "roomGroupId": {
+      "arguments": [
+        {
+          "name": "room",
+          "type": "bytes"
+        }
+      ],
+      "returns": "bytes"
+    },
+    "sessionGroupId": {
+      "arguments": [
+        {
+          "name": "room",
+          "type": "bytes"
+        },
+        {
+          "name": "session",
+          "type": "bytes"
+        }
+      ],
+      "returns": "bytes"
+    },
+    "base64urlEncode": {
+      "arguments": [
+        {
+          "name": "bytes",
+          "type": "bytes"
+        }
+      ],
+      "returns": "text"
+    },
+    "base64urlDecode": {
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text"
+        }
+      ],
+      "returns": "bytes"
+    },
+    "generatePushKey": {
+      "arguments": [],
+      "returns": "bytes"
+    },
+    "openApnsPush": {
+      "arguments": [
+        {
+          "name": "key",
+          "type": "bytes"
+        },
+        {
+          "name": "sealed",
+          "type": "bytes"
+        }
+      ],
+      "returns": "PushNote"
+    },
+    "readWebPush": {
+      "arguments": [
+        {
+          "name": "payload",
+          "type": "bytes"
+        }
+      ],
+      "returns": "PushNote"
+    },
+    "recoveryAnchor": {
+      "arguments": [
+        {
+          "name": "recoveryCode",
+          "type": "bytes"
+        },
+        {
+          "name": "room",
+          "type": "bytes"
+        },
+        {
+          "name": "rows",
+          "type": "list<bytes>"
+        }
+      ],
+      "returns": "Anchor"
+    },
+    "recoverySignIn": {
+      "arguments": [
+        {
+          "name": "recoveryCode",
+          "type": "bytes"
+        },
+        {
+          "name": "room",
+          "type": "bytes"
+        },
+        {
+          "name": "hub",
+          "type": "text"
+        },
+        {
+          "name": "challenge",
+          "type": "bytes"
+        }
+      ],
+      "returns": "SignedHubAuth"
+    },
+    "versions": {
+      "arguments": [],
+      "returns": "Versions"
+    },
+    "selfTest": {
+      "arguments": [
+        {
+          "name": "nowMs",
+          "type": "number"
+        }
+      ],
+      "returns": "SelfTestReport"
+    }
+  },
+  "objects": {
+    "CoreDevice": {
+      "create": {
+        "arguments": [
+          {
+            "name": "store",
+            "type": "CoreStore"
+          }
+        ],
+        "returns": "self"
+      },
+      "open": {
+        "arguments": [
+          {
+            "name": "store",
+            "type": "CoreStore"
+          }
+        ],
+        "returns": "self"
+      },
+      "close": {
+        "arguments": [],
+        "returns": "void"
+      },
+      "id": {
+        "arguments": [],
+        "returns": "bytes"
+      },
+      "room": {
+        "arguments": [],
+        "returns": "optional<bytes>"
+      },
+      "cursor": {
+        "arguments": [],
+        "returns": "number"
+      },
+      "isHuman": {
+        "arguments": [],
+        "returns": "bool"
+      },
+      "isOwner": {
+        "arguments": [],
+        "returns": "bool"
+      },
+      "roomRoles": {
+        "arguments": [],
+        "returns": "optional<RoomRoles>"
+      },
+      "groups": {
+        "arguments": [],
+        "returns": "list<GroupSummary>"
+      },
+      "group": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          }
+        ],
+        "returns": "GroupSummary"
+      },
+      "contentKey": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "epoch",
+            "type": "number"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "outbox": {
+        "arguments": [],
+        "returns": "list<OutboxEntry>"
+      },
+      "outboxAccepted": {
+        "arguments": [
+          {
+            "name": "id",
+            "type": "number"
+          },
+          {
+            "name": "change",
+            "type": "optional<number>"
+          }
+        ],
+        "returns": "void"
+      },
+      "outboxRefused": {
+        "arguments": [
+          {
+            "name": "id",
+            "type": "number"
+          },
+          {
+            "name": "code",
+            "type": "ErrorCode"
+          }
+        ],
+        "returns": "void"
+      },
+      "keyPackagesToUpload": {
+        "arguments": [
+          {
+            "name": "unusedAtHub",
+            "type": "number"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "optional<number>"
+      },
+      "keyPackage": {
+        "arguments": [
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "foundRoom": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "foundSession": {
+        "arguments": [
+          {
+            "name": "agent",
+            "type": "bytes"
+          },
+          {
+            "name": "keyPackages",
+            "type": "list<bytes>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "foundHelper": {
+        "arguments": [
+          {
+            "name": "parent",
+            "type": "bytes"
+          },
+          {
+            "name": "keyPackages",
+            "type": "list<bytes>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "addHumanDevice": {
+        "arguments": [
+          {
+            "name": "device",
+            "type": "bytes"
+          },
+          {
+            "name": "keyPackage",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "addToSession": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "device",
+            "type": "bytes"
+          },
+          {
+            "name": "keyPackage",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "changeAgents": {
+        "arguments": [
+          {
+            "name": "enrol",
+            "type": "list<bytes>"
+          },
+          {
+            "name": "remove",
+            "type": "list<bytes>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "removeHumanDevices": {
+        "arguments": [
+          {
+            "name": "cuts",
+            "type": "list<Cut>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "cleanSession": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "cuts",
+            "type": "list<Cut>"
+          },
+          {
+            "name": "replacement",
+            "type": "optional<Replacement>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "readmitHelper": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "old",
+            "type": "Cut"
+          },
+          {
+            "name": "device",
+            "type": "bytes"
+          },
+          {
+            "name": "keyPackage",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "update": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "forced",
+            "type": "bool"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "optional<number>"
+      },
+      "archive": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          }
+        ],
+        "returns": "void"
+      },
+      "joinWelcome": {
+        "arguments": [
+          {
+            "name": "welcome",
+            "type": "bytes"
+          },
+          {
+            "name": "room",
+            "type": "bytes"
+          },
+          {
+            "name": "committer",
+            "type": "optional<bytes>"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "Joined"
+      },
+      "observeRoom": {
+        "arguments": [
+          {
+            "name": "groupInfo",
+            "type": "bytes"
+          },
+          {
+            "name": "expectedState",
+            "type": "optional<bytes>"
+          }
+        ],
+        "returns": "void"
+      },
+      "observeSession": {
+        "arguments": [
+          {
+            "name": "groupInfo",
+            "type": "bytes"
+          }
+        ],
+        "returns": "void"
+      },
+      "processLogEntry": {
+        "arguments": [
+          {
+            "name": "entry",
+            "type": "LogEntry"
+          }
+        ],
+        "returns": "Processed"
+      },
+      "sendHandover": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "recipient",
+            "type": "bytes"
+          }
+        ],
+        "returns": "list<number>"
+      },
+      "handoversSent": {
+        "arguments": [],
+        "returns": "list<HandoverSent>"
+      },
+      "handoverRead": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "recipient",
+            "type": "bytes"
+          }
+        ],
+        "returns": "void"
+      },
+      "sendStrokePiece": {
+        "arguments": [
+          {
+            "name": "board",
+            "type": "bytes"
+          },
+          {
+            "name": "piece",
+            "type": "bytes"
+          }
+        ],
+        "returns": "number"
+      },
+      "sendWorkTrail": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "turn",
+            "type": "bytes"
+          },
+          {
+            "name": "number",
+            "type": "number"
+          },
+          {
+            "name": "step",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "holdsRecoveryMac": {
+        "arguments": [],
+        "returns": "bool"
+      },
+      "keyIsConfirmed": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "epoch",
+            "type": "number"
+          }
+        ],
+        "returns": "bool"
+      },
+      "sendRecoveryAuth": {
+        "arguments": [
+          {
+            "name": "recipient",
+            "type": "bytes"
+          }
+        ],
+        "returns": "optional<number>"
+      },
+      "postSealedKey": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "groupInfo",
+            "type": "bytes"
+          },
+          {
+            "name": "listed",
+            "type": "list<bytes>"
+          }
+        ],
+        "returns": "optional<number>"
+      },
+      "verifyFounding": {
+        "arguments": [
+          {
+            "name": "group",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedGroup"
+          }
+        ],
+        "returns": "void"
+      },
+      "joinRoomWithCode": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedRoom"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "CodeJoin"
+      },
+      "joinSessionWithCode": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedGroup"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "newRecoveryCode": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "replaceCode": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "account",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "prepareRecovery": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedRoom"
+          }
+        ],
+        "returns": "RecoveryPlan"
+      },
+      "recover": {
+        "arguments": [
+          {
+            "name": "recoveryCode",
+            "type": "bytes"
+          },
+          {
+            "name": "served",
+            "type": "ServedRoom"
+          },
+          {
+            "name": "cuts",
+            "type": "list<GroupCut>"
+          },
+          {
+            "name": "account",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "CodeJoin"
+      },
+      "hubSignIn": {
+        "arguments": [
+          {
+            "name": "room",
+            "type": "bytes"
+          },
+          {
+            "name": "hub",
+            "type": "text"
+          },
+          {
+            "name": "challenge",
+            "type": "bytes"
+          }
+        ],
+        "returns": "SignedHubAuth"
+      }
+    },
+    "FileEncryptor": {
+      "new": {
+        "arguments": [],
+        "returns": "self"
+      },
+      "fileId": {
+        "arguments": [],
+        "returns": "bytes"
+      },
+      "update": {
+        "arguments": [
+          {
+            "name": "plaintext",
+            "type": "bytes"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "close": {
+        "arguments": [],
+        "returns": "void"
+      },
+      "finish": {
+        "arguments": [],
+        "returns": "FileEnd"
+      }
+    },
+    "FileDecryptor": {
+      "new": {
+        "arguments": [
+          {
+            "name": "file",
+            "type": "FileRef"
+          }
+        ],
+        "returns": "self"
+      },
+      "close": {
+        "arguments": [],
+        "returns": "void"
+      },
+      "update": {
+        "arguments": [
+          {
+            "name": "stored",
+            "type": "bytes"
+          }
+        ],
+        "returns": "bytes"
+      },
+      "finish": {
+        "arguments": [],
+        "returns": "bytes"
+      }
+    }
+  },
+  "records": {
+    "AccountKeys": {
+      "authKey": "bytes",
+      "wrapKey": "bytes"
+    },
+    "FileRef": {
+      "fileId": "bytes",
+      "fileKey": "bytes",
+      "sha256": "bytes"
+    },
+    "FileEnd": {
+      "stored": "bytes",
+      "file": "FileRef",
+      "plainLen": "number",
+      "storedLen": "number"
+    },
+    "FileLayout": {
+      "chunks": "number",
+      "plainLen": "number",
+      "storedLen": "number"
+    },
+    "FileChunk": {
+      "offset": "number",
+      "length": "number",
+      "last": "bool"
+    },
+    "ShareLink": {
+      "text": "text",
+      "app": "text",
+      "shareId": "bytes",
+      "secret": "text",
+      "secretHash": "bytes",
+      "fileKey": "bytes",
+      "sha256": "bytes"
+    },
+    "PushNote": {
+      "roomId": "bytes",
+      "change": "number",
+      "urgency": "number",
+      "ticket": "bytes"
+    },
+    "SessionInfo": {
+      "roomId": "bytes",
+      "sessionId": "bytes",
+      "parent": "bytes"
+    },
+    "GroupSummary": {
+      "group": "bytes",
+      "session": "optional<SessionInfo>",
+      "epoch": "number",
+      "leaves": "list<bytes>",
+      "disallowed": "list<bytes>",
+      "archived": "bool",
+      "pending": "bool"
+    },
+    "RoomRoles": {
+      "epoch": "number",
+      "state": "bytes",
+      "humans": "list<bytes>",
+      "agents": "list<bytes>",
+      "recoverySignatureKey": "bytes",
+      "recoveryHpkeKey": "bytes"
+    },
+    "OutboxEntry": {
+      "id": "number",
+      "kind": "OutboxKind",
+      "group": "optional<bytes>",
+      "epoch": "number",
+      "parts": "list<bytes>"
+    },
+    "Cut": {
+      "device": "bytes",
+      "seq": "number",
+      "hash": "bytes"
+    },
+    "Replacement": {
+      "device": "bytes",
+      "keyPackage": "bytes"
+    },
+    "Joined": {
+      "group": "bytes",
+      "epoch": "number",
+      "addedBy": "bytes",
+      "offending": "list<bytes>"
+    },
+    "LogEntry": {
+      "change": "number",
+      "group": "bytes",
+      "kind": "LogEntryKind",
+      "bytes": "bytes",
+      "recoveryAuth": "optional<bytes>"
+    },
+    "CommitSummary": {
+      "group": "bytes",
+      "epoch": "number",
+      "committer": "bytes",
+      "external": "bool",
+      "adds": "list<bytes>",
+      "removes": "list<bytes>",
+      "cuts": "list<Cut>",
+      "agents": "optional<list<bytes>>",
+      "roomEpoch": "optional<number>",
+      "time": "optional<number>"
+    },
+    "ReceivedMessage": {
+      "kind": "ReceivedKind",
+      "from": "optional<bytes>",
+      "keysTaken": "number",
+      "last": "bool",
+      "board": "optional<bytes>",
+      "turn": "optional<bytes>",
+      "number": "number",
+      "time": "number",
+      "payload": "bytes"
+    },
+    "Processed": {
+      "kind": "ProcessedKind",
+      "commit": "optional<CommitSummary>",
+      "superseded": "optional<number>",
+      "removed": "bool",
+      "message": "optional<ReceivedMessage>"
+    },
+    "HandoverSent": {
+      "recipient": "bytes",
+      "group": "bytes"
+    },
+    "KeyPackageInfo": {
+      "device": "bytes",
+      "lastResort": "bool",
+      "reference": "bytes",
+      "notAfterMs": "number"
+    },
+    "SignedHubAuth": {
+      "auth": "bytes",
+      "signature": "bytes"
+    },
+    "ServedCommit": {
+      "change": "number",
+      "commit": "bytes",
+      "recoveryAuth": "optional<bytes>"
+    },
+    "ServedGroup": {
+      "founding": "bytes",
+      "commits": "list<ServedCommit>",
+      "current": "bytes"
+    },
+    "ServedRoom": {
+      "room": "bytes",
+      "group": "ServedGroup",
+      "anchor": "bytes",
+      "rows": "list<bytes>",
+      "links": "list<bytes>",
+      "sessions": "list<ServedGroup>"
+    },
+    "UnverifiedSession": {
+      "index": "number",
+      "code": "ErrorCode"
+    },
+    "CodeJoin": {
+      "outbox": "list<number>",
+      "missingLink": "optional<bytes>",
+      "unverified": "list<UnverifiedSession>"
+    },
+    "GroupCut": {
+      "group": "bytes",
+      "cut": "Cut"
+    },
+    "Removals": {
+      "group": "bytes",
+      "devices": "list<bytes>"
+    },
+    "RecoveryPlan": {
+      "newCode": "bytes",
+      "removals": "list<Removals>"
+    },
+    "Anchor": {
+      "group": "bytes",
+      "epoch": "number",
+      "groupInfo": "bytes"
+    },
+    "Versions": {
+      "core": "text",
+      "openmls": "text",
+      "provider": "text",
+      "binding": "text"
+    },
+    "SelfTestStep": {
+      "name": "text",
+      "ok": "bool",
+      "micros": "number",
+      "detail": "text"
+    },
+    "SelfTestReport": {
+      "ok": "bool",
+      "steps": "list<SelfTestStep>",
+      "micros": "number",
+      "versions": "Versions"
+    },
+    "StoreEntry": {
+      "key": "bytes",
+      "value": "bytes"
+    },
+    "StoredState": {
+      "revision": "number",
+      "entries": "list<StoreEntry>"
+    },
+    "StoreWrite": {
+      "expectedRevision": "number",
+      "put": "list<StoreEntry>",
+      "delete": "list<bytes>"
+    }
+  },
+  "enums": {
+    "AccountWay": {
+      "password": "password",
+      "kit": "kit",
+      "passkey": "passkey"
+    },
+    "ErrorCode": {
+      "badFormat": "bad-format",
+      "newerVersion": "newer-version",
+      "badCommit": "bad-commit",
+      "badSignature": "bad-signature",
+      "badInvite": "bad-invite",
+      "badKeyPackage": "bad-key-package",
+      "wrongRoom": "wrong-room",
+      "incomplete": "incomplete",
+      "chainBreak": "chain-break",
+      "unauthorised": "unauthorised",
+      "badChallenge": "bad-challenge",
+      "wrongLogin": "wrong-login",
+      "wrongRecovery": "wrong-recovery",
+      "forbidden": "forbidden",
+      "notMember": "not-member",
+      "removedSender": "removed-sender",
+      "wrongSender": "wrong-sender",
+      "notFound": "not-found",
+      "noRoom": "no-room",
+      "gone": "gone",
+      "inviteExpired": "invite-expired",
+      "inviteBurned": "invite-burned",
+      "epochTaken": "epoch-taken",
+      "wrongEpoch": "wrong-epoch",
+      "roomBehind": "room-behind",
+      "groupBehind": "group-behind",
+      "staleSession": "stale-session",
+      "epochFull": "epoch-full",
+      "replay": "replay",
+      "gap": "gap",
+      "equivocation": "equivocation",
+      "roomExists": "room-exists",
+      "inviteUsed": "invite-used",
+      "leaseLost": "lease-lost",
+      "accountExists": "account-exists",
+      "lastWayIn": "last-way-in",
+      "tooLarge": "too-large",
+      "quotaExceeded": "quota-exceeded",
+      "clientTooOld": "client-too-old",
+      "tooMany": "too-many",
+      "rateLimited": "rate-limited",
+      "overloaded": "overloaded",
+      "withheld": "withheld",
+      "hubVoidedOther": "hub-voided-other",
+      "badGroup": "bad-group",
+      "noKey": "no-key",
+      "pruned": "pruned",
+      "decryptFailed": "decrypt-failed",
+      "codeNotConfirmed": "code-not-confirmed",
+      "hashMismatch": "hash-mismatch",
+      "cut": "cut",
+      "badEmail": "bad-email",
+      "weakPassword": "weak-password",
+      "badKdf": "bad-kdf",
+      "badRecoveryWords": "bad-recovery-words",
+      "badRecoveryCode": "bad-recovery-code",
+      "noPrf": "no-prf",
+      "internal": "internal",
+      "storage": "storage",
+      "entropy": "entropy",
+      "busy": "busy"
+    },
+    "OutboxKind": {
+      "roomFounding": "roomFounding",
+      "groupFounding": "groupFounding",
+      "commit": "commit",
+      "externalCommit": "externalCommit",
+      "message": "message",
+      "relayMessage": "relayMessage",
+      "envelope": "envelope",
+      "keyPackages": "keyPackages",
+      "sealedKey": "sealedKey",
+      "recoveryCode": "recoveryCode",
+      "recoveryCommit": "recoveryCommit",
+      "recoveryFinish": "recoveryFinish"
+    },
+    "LogEntryKind": {
+      "commit": "commit",
+      "message": "message"
+    },
+    "ReceivedKind": {
+      "keys": "keys",
+      "strokePiece": "strokePiece",
+      "workTrail": "workTrail",
+      "recoveryAuth": "recoveryAuth",
+      "recoveryAuthConflict": "recoveryAuthConflict",
+      "dropped": "dropped",
+      "newerVersion": "newerVersion"
+    },
+    "ProcessedKind": {
+      "commit": "commit",
+      "ownCommit": "ownCommit",
+      "observed": "observed",
+      "joinSuperseded": "joinSuperseded",
+      "message": "message",
+      "skipped": "skipped"
+    },
+    "LogFinding": {
+      "early": "early",
+      "duplicate": "duplicate",
+      "badGroup": "badGroup",
+      "local": "local"
+    }
+  }
+}
