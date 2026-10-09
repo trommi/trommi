@@ -892,6 +892,16 @@ fn links_and_references_do_not_print_their_secrets() {
 }
 
 #[test]
+fn more_than_the_largest_file_is_refused_without_room_being_made_for_it() {
+    let head = FileHead { file_id: FILE }.encode();
+    let mut decryptor = Decryptor::new(&naming(&head));
+    assert_eq!(decryptor.update(&head), Ok(vec![]));
+    let beyond = vec![0u8; MAX_STORED_LEN as usize];
+    assert_eq!(decryptor.update(&beyond), Err(Error::TooLarge));
+    assert_eq!(decryptor.update(&[]), Err(Error::TooLarge));
+}
+
+#[test]
 fn the_vectors_read_back() {
     use trommi_tests::vectors::files::{plaintext, reference_of, NAME};
     use trommi_tests::vectors::{hex, read, unhex};
