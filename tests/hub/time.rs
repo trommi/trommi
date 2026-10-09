@@ -390,6 +390,10 @@ fn lifetimes_and_retention() {
         .ada
         .get(hub, &format!("/v2/cards/{}", hex(&closed_card)))
         .ok();
+    assert_eq!(
+        closed_before["items"].as_array().unwrap().len(),
+        closed_after["items"].as_array().unwrap().len()
+    );
     for (before, after) in closed_before["items"]
         .as_array()
         .unwrap()
@@ -424,6 +428,30 @@ fn lifetimes_and_retention() {
     w.ada
         .raw(hub, "GET", &format!("/v2/files/{}", b64(&named)), &[], &[])
         .refused(404, "not-found");
+    // what arrives later for a card whose bodies were pruned is pruned with the next run
+    let late_chat = Item {
+        subject: Subject::Item {
+            timeline_kind: 1,
+            timeline_scope: 1,
+            timeline_ref: closed_card,
+        },
+        ..chat(&ZERO16, agent.id(), "long after")
+    };
+    bea.send(hub, &group, &late_chat).ok();
+    assert_eq!(
+        hub.post("/v2/__test/retention", &json!({})).ok()["pruned"],
+        1
+    );
+    let chat_items = w
+        .ada
+        .get(hub, &format!("/v2/chats/card/{}/items", hex(&closed_card)))
+        .ok();
+    assert_eq!(chat_items["items"].as_array().unwrap().len(), 2);
+    assert!(chat_items["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|i| envelope_of(i).body.is_none()));
     // untouched: the open card, the reopened card, the Note (never pruned), the session's Chat, the open Artifact
     for (kind, id) in [
         ("cards", open_card),

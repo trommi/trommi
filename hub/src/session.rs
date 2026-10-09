@@ -117,6 +117,16 @@ impl Sessions {
     /// The asker behind a token, checked against the device's present standing (12.3.1): a revoked device's and
     /// a replaced recovery key's tokens end at once.
     pub fn authorise(&self, c: &Connection, bearer: Option<&str>, now: u64) -> Res<Auth> {
+        self.authorise_until(c, bearer, now).map(|(auth, _)| auth)
+    }
+
+    /// As `authorise`, with the time the token runs out.
+    pub fn authorise_until(
+        &self,
+        c: &Connection,
+        bearer: Option<&str>,
+        now: u64,
+    ) -> Res<(Auth, u64)> {
         let unauthorised = || refuse("unauthorised", "sign in");
         let token = bearer
             .and_then(|h| h.strip_prefix("Bearer "))
@@ -130,17 +140,17 @@ impl Sessions {
             return Err(unauthorised());
         }
         let key = key_of(token);
-        let (room, device) = {
+        let (room, device, until) = {
             let s = self.lock();
             let t = s
                 .tokens
                 .get(&key)
                 .filter(|t| t.expires_at > now)
                 .ok_or_else(unauthorised)?;
-            (t.room, t.device)
+            (t.room, t.device, t.expires_at)
         };
         match store::standing(c, &room, &device)? {
-            Some(who) => Ok(Auth { room, device, who }),
+            Some(who) => Ok((Auth { room, device, who }, until)),
             None => {
                 // A recovery that was just finished replaced the key this token was signed in with. Its device may
                 // still ask for the answer of that finish, and for nothing else (`Auth::spent`).
@@ -148,11 +158,14 @@ impl Sessions {
                     .prepare_cached("SELECT 1 FROM recoveries WHERE room_id = ?1 AND recovery_key = ?2 AND finished_at IS NOT NULL AND expires_at > ?3")?
                     .exists(rusqlite::params![&room[..], &device[..], now as i64])?;
                 if finished {
-                    return Ok(Auth {
-                        room,
-                        device,
-                        who: Who::Spent,
-                    });
+                    return Ok((
+                        Auth {
+                            room,
+                            device,
+                            who: Who::Spent,
+                        },
+                        until,
+                    ));
                 }
                 // the token is of no use any more; it is told why until it runs out
                 Err(refuse("not-member", "this device is no longer in the room"))

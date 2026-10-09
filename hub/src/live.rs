@@ -3,12 +3,12 @@
 //! queue: a reader that does not keep up is cut and resumes by change number.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 use crate::observer::Device;
 use crate::store::{Audience, Auth, Event, Room, Who};
@@ -21,7 +21,8 @@ pub enum Msg {
 enum Phase {
     /// catching up from the database: live events wait here, with their change number
     CatchingUp(Vec<(Option<i64>, Bytes)>),
-    Live,
+    /// live; the highest change number sent so far: an event at or below it was sent by the catch-up
+    Live(i64),
 }
 
 pub struct Stream {
@@ -31,13 +32,32 @@ pub struct Stream {
     pub queued: Arc<AtomicUsize>,
     phase: Mutex<Phase>,
     limit: usize,
+    /// when the token it was opened with runs out: the stream ends then, and the device resumes with a new one
+    pub expires_at: u64,
+    ended: AtomicBool,
+    /// cuts the connection under the stream: a reader that stalls never reads the end of its stream
+    cut: Option<Arc<Notify>>,
 }
 
 impl Stream {
-    /// Queues bytes for the client. `false`: the stream is over its buffer and was ended.
-    fn push(&self, chunk: Bytes) -> bool {
-        if self.queued.fetch_add(chunk.len(), Ordering::Relaxed) + chunk.len() > self.limit {
+    /// Over its buffer: the stream is over for good. Nothing more is queued for it, what waited is dropped, and
+    /// its connection is cut.
+    fn overflow(&self) {
+        if !self.ended.swap(true, Ordering::Relaxed) {
             let _ = self.tx.send(Msg::End);
+            if let Some(cut) = &self.cut {
+                cut.notify_one();
+            }
+        }
+    }
+
+    /// Queues bytes for the client. `false`: the stream is over.
+    fn push(&self, chunk: Bytes) -> bool {
+        if self.ended.load(Ordering::Relaxed) {
+            return false;
+        }
+        if self.queued.fetch_add(chunk.len(), Ordering::Relaxed) + chunk.len() > self.limit {
+            self.overflow();
             return false;
         }
         self.tx.send(Msg::Chunk(chunk)).is_ok()
@@ -49,39 +69,57 @@ impl Stream {
     }
 
     fn deliver(&self, change: Option<i64>, chunk: Bytes) -> bool {
+        if self.ended.load(Ordering::Relaxed) {
+            return false;
+        }
         let mut phase = self.phase.lock().unwrap_or_else(|e| e.into_inner());
         match &mut *phase {
             Phase::CatchingUp(pending) => {
                 let held: usize = pending.iter().map(|(_, c)| c.len()).sum();
                 if held + chunk.len() > self.limit {
-                    let _ = self.tx.send(Msg::End);
+                    pending.clear();
+                    drop(phase);
+                    self.overflow();
                     return false;
                 }
                 pending.push((change, chunk));
                 true
             }
-            Phase::Live => self.push(chunk),
+            Phase::Live(sent) => {
+                if let Some(c) = change {
+                    if c <= *sent {
+                        return true;
+                    }
+                    *sent = c;
+                }
+                self.push(chunk)
+            }
         }
     }
 
     /// The catch-up reached `sent`: what arrived meanwhile and lies above it follows, then the stream is live.
     pub fn go_live(&self, sent: i64) {
         let mut phase = self.phase.lock().unwrap_or_else(|e| e.into_inner());
-        if let Phase::CatchingUp(pending) = std::mem::replace(&mut *phase, Phase::Live) {
+        let mut high = sent;
+        if let Phase::CatchingUp(pending) = std::mem::replace(&mut *phase, Phase::Live(sent)) {
             for (change, chunk) in pending {
-                if change.is_none_or(|c| c > sent) {
+                if change.is_none_or(|c| c > high) {
+                    high = change.unwrap_or(high);
                     self.push(chunk);
                 }
             }
         }
+        *phase = Phase::Live(high);
     }
 
     pub fn end(&self) {
-        let _ = self.tx.send(Msg::End);
+        if !self.ended.swap(true, Ordering::Relaxed) {
+            let _ = self.tx.send(Msg::End);
+        }
     }
 
     pub fn is_closed(&self) -> bool {
-        self.tx.is_closed()
+        self.ended.load(Ordering::Relaxed) || self.tx.is_closed()
     }
 }
 
@@ -112,6 +150,8 @@ impl Live {
         auth: Auth,
         per_device: usize,
         buffer: usize,
+        expires_at: u64,
+        cut: Option<Arc<Notify>>,
     ) -> Option<(Arc<Stream>, mpsc::UnboundedReceiver<Msg>)> {
         let mut rooms = self.lock();
         let list = rooms.entry(auth.room).or_default();
@@ -127,6 +167,9 @@ impl Live {
             queued: Arc::new(AtomicUsize::new(0)),
             phase: Mutex::new(Phase::CatchingUp(Vec::new())),
             limit: buffer,
+            expires_at,
+            ended: AtomicBool::new(false),
+            cut,
         });
         list.push(stream.clone());
         Some((stream, rx))
@@ -189,12 +232,18 @@ impl Live {
         }
     }
 
-    pub fn ping(&self) {
+    /// The keep-alive of every stream; and the end of those whose token ran out or that are over.
+    pub fn ping(&self, now: u64) {
         let chunk = Bytes::from_static(b"event: ping\ndata: {}\n\n");
-        for list in self.lock().values() {
-            for s in list {
-                s.deliver(None, chunk.clone());
+        for list in self.lock().values_mut() {
+            for s in list.iter() {
+                if s.expires_at <= now {
+                    s.end();
+                } else {
+                    s.deliver(None, chunk.clone());
+                }
             }
+            list.retain(|s| !s.is_closed());
         }
     }
 

@@ -95,7 +95,7 @@ fn save_object(c: &Connection, room: &Room, object_id: &[u8; 16], o: &Object) ->
          ON CONFLICT (room_id, object_id) DO UPDATE SET state = excluded.state, urgency = excluded.urgency, answered_at = excluded.answered_at,
            owner = excluded.owner, head_change = excluded.head_change, version_hash = excluded.version_hash, version_change = excluded.version_change,
            settled_at = excluded.settled_at, closed_at = excluded.closed_at,
-           pruned_at = CASE WHEN excluded.settled_at IS NULL THEN NULL ELSE pruned_at END"
+           pruned_at = NULL"
     ))?
     .execute(params![
         &room[..],
@@ -198,6 +198,9 @@ pub fn step(
             o.version_hash = *hash;
             o.version_change = change;
             o.urgency = *urgency;
+            if *object_state == wire::STATE_OPEN {
+                o.answered_at = 0;
+            }
             settle(&mut o, *object_state);
             if note {
                 o.settled_at = None;
@@ -533,8 +536,7 @@ pub fn post_envelope(x: &Ctx, auth: &Auth, bytes: &[u8], fx: &mut Effects) -> Re
         ));
     }
     let padded = body.len().saturating_sub(16);
-    let oversized = body.len() > MAX_CIPHERTEXT;
-    if !oversized && (padded < 256 || !padded.is_power_of_two()) {
+    if body.len() > MAX_CIPHERTEXT || padded < 256 || !padded.is_power_of_two() {
         return Err(refuse(
             "bad-format",
             "the padded body is 256, 512 … 65536 bytes",
@@ -870,6 +872,11 @@ fn apply_index(
                  ON CONFLICT (room_id, timeline) DO UPDATE SET item_count = item_count + 1, last_change = excluded.last_change"
             ))?
             .execute(params![&room[..], timeline_key(h), h.group_id, change])?;
+            // a message in the Chat of a card whose bodies were pruned: the card is due again
+            if let Some(card) = object_of(h) {
+                c.prepare_cached("UPDATE cards SET pruned_at = NULL WHERE room_id = ?1 AND object_id = ?2 AND pruned_at IS NOT NULL")?
+                    .execute(params![&room[..], &card[..]])?;
+            }
         }
         Subject::Register { register_id } => {
             c.prepare_cached(
@@ -1005,14 +1012,33 @@ pub fn cut_chain(
         }
         // a file first named beyond the Cut is unclaimed again (and goes with the next sweep); its shares end
         for file_id in &h.file_ids {
+            // named before, by an envelope of the same device that stays? (the list is 16-byte entries: an id
+            // is compared entry by entry, never as a run of bytes across two of them)
+            let earlier: Vec<Vec<u8>> = {
+                let mut s = c.prepare_cached(
+                    "SELECT file_ids FROM envelopes WHERE group_id = ?1 AND sender = ?2 AND cut = 0 AND void_code IS NULL
+                       AND change < ?3 AND instr(file_ids, ?4) > 0",
+                )?;
+                let rows = s
+                    .query_map(
+                        params![group_id, &cut.device[..], change, &file_id[..]],
+                        |r| r.get(0),
+                    )?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows
+            };
+            if earlier
+                .iter()
+                .any(|list| list.chunks(16).any(|entry| entry == file_id))
+            {
+                continue;
+            }
             let n = c
                 .prepare_cached(
                     "UPDATE files SET group_id = NULL, object_id = NULL, referenced_at = NULL
-                     WHERE room_id = ?1 AND file_id = ?2 AND uploader = ?3 AND referenced_at IS NOT NULL
-                       AND NOT EXISTS (SELECT 1 FROM envelopes e WHERE e.group_id = ?4 AND e.sender = ?3 AND e.cut = 0 AND e.void_code IS NULL
-                                       AND e.change < ?5 AND instr(e.file_ids, ?2) > 0)",
+                     WHERE room_id = ?1 AND file_id = ?2 AND uploader = ?3 AND referenced_at IS NOT NULL",
                 )?
-                .execute(params![&room[..], &file_id[..], &cut.device[..], group_id, change])?;
+                .execute(params![&room[..], &file_id[..], &cut.device[..]])?;
             if n > 0 {
                 c.prepare_cached("DELETE FROM shares WHERE room_id = ?1 AND file_id = ?2")?
                     .execute(params![&room[..], &file_id[..]])?;
@@ -1031,7 +1057,9 @@ const ENVELOPE_COLUMNS: &str =
 /// One envelope as served: its bytes (pruned form when there is no body or the asker gets no bodies), the
 /// change it came at, and its `void_code` if it is a void record.
 fn envelope_item(r: &rusqlite::Row, pruned: bool) -> rusqlite::Result<Value> {
-    let body: Option<Vec<u8>> = if pruned { None } else { r.get(5)? };
+    // what lies beyond a Cut is evidence: its header, never its body
+    let cut = r.get::<_, i64>(7)? == 1;
+    let body: Option<Vec<u8>> = if pruned || cut { None } else { r.get(5)? };
     let bytes = wire::encode_envelope(
         &r.get::<_, Vec<u8>>(1)?,
         &r.get::<_, Vec<u8>>(2)?,
@@ -1061,6 +1089,24 @@ fn clamp(limit: Option<i64>, default: i64, max: i64) -> i64 {
     limit.unwrap_or(default).clamp(1, max)
 }
 
+/// What one answer may hold of envelopes: an answer is built in memory, and a reader that asks for much gets
+/// `more` and asks again.
+pub const ANSWER_BYTES: usize = 8 << 20;
+
+/// Collects envelopes of a query up to `limit` items and `ANSWER_BYTES`; says whether more remain.
+fn collect(rows: &mut rusqlite::Rows, limit: i64, pruned: bool) -> Res<(Vec<Value>, bool)> {
+    let (mut items, mut bytes) = (Vec::new(), 0usize);
+    while let Some(r) = rows.next()? {
+        if items.len() as i64 == limit || (bytes > ANSWER_BYTES && !items.is_empty()) {
+            return Ok((items, true));
+        }
+        let item = envelope_item(r, pruned)?;
+        bytes += item["envelope"].as_str().map_or(0, str::len);
+        items.push(item);
+    }
+    Ok((items, false))
+}
+
 /// `GET /v2/desk`: the open objects with their current version, every writer's newest value per register, and
 /// the groups, in what the asker may read.
 pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
@@ -1072,6 +1118,7 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
             .is_none_or(|g| g.iter().any(|x| x == group))
     };
     let mut out = json!({});
+    let (mut desk_bytes, mut truncated) = (0usize, false);
     for (table, _) in OBJECT_TABLES {
         let mut s = c.prepare_cached(&format!(
             "SELECT o.object_id, o.group_id, o.state, o.urgency, o.answered_at, o.owner, o.first_change, o.head_change, o.version_change
@@ -1080,11 +1127,21 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
         let mut rows = s.query([&auth.room[..]])?;
         let mut items = Vec::new();
         while let Some(r) = rows.next()? {
+            // a Desk with more open objects of a kind than this, or more bytes, is cut short and says so
+            if items.len() >= 1000 || desk_bytes > ANSWER_BYTES {
+                truncated = true;
+                break;
+            }
             let group: Vec<u8> = r.get(1)?;
             if !sees(&group) {
                 continue;
             }
             let version_change: i64 = r.get(8)?;
+            let version = envelope_at(c, &auth.room, version_change, false)?;
+            desk_bytes += version
+                .as_ref()
+                .and_then(|v| v["envelope"].as_str())
+                .map_or(0, str::len);
             items.push(json!({
                 "object_id": b64(&r.get::<_, Vec<u8>>(0)?),
                 "group_id": b64(&group),
@@ -1094,7 +1151,7 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
                 "owner": b64(&r.get::<_, Vec<u8>>(5)?),
                 "first_change": r.get::<_, i64>(6)?,
                 "head_change": r.get::<_, i64>(7)?,
-                "version": envelope_at(c, &auth.room, version_change, false)?,
+                "version": version,
             }));
         }
         out[table] = Value::Array(items);
@@ -1106,13 +1163,21 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
              WHERE r.room_id = ?1 ORDER BY r.head_change"
         ))?;
         let mut rows = s.query([&auth.room[..]])?;
+        let mut register_bytes = 0usize;
         while let Some(r) = rows.next()? {
+            if registers.len() >= 20_000 || register_bytes > ANSWER_BYTES {
+                truncated = true;
+                break;
+            }
             if sees(&r.get::<_, Vec<u8>>(10)?) {
-                registers.push(envelope_item(r, false)?);
+                let item = envelope_item(r, false)?;
+                register_bytes += item["envelope"].as_str().map_or(0, str::len);
+                registers.push(item);
             }
         }
     }
     out["registers"] = Value::Array(registers);
+    out["truncated"] = json!(truncated);
     out["groups"] = Value::Array(crate::delivery::group_list(c, auth)?);
     out["change"] = json!(store::room_row(c, &auth.room)?.change);
     Ok(out)
@@ -1157,20 +1222,22 @@ pub fn chat_items(
 ) -> Res<Value> {
     auth.member()?;
     let limit = clamp(limit, 50, 200);
-    if timeline_group(c, auth, "chats", key)?.is_none() {
+    let Some(group) = timeline_group(c, auth, "chats", key)? else {
         return Ok(json!({ "items": [], "more": false }));
-    }
+    };
+    // only the envelopes of the timeline's own group: a refused envelope of another group may name it
     let mut s = c.prepare_cached(&format!(
-        "SELECT {ENVELOPE_COLUMNS} FROM envelopes WHERE room_id = ?1 AND timeline = ?2 AND change < ?3 AND cut = 0 ORDER BY change DESC LIMIT ?4"
+        "SELECT {ENVELOPE_COLUMNS} FROM envelopes WHERE room_id = ?1 AND timeline = ?2 AND change < ?3 AND cut = 0 AND group_id = ?5
+         ORDER BY change DESC LIMIT ?4"
     ))?;
-    let mut items = s
-        .query_map(
-            params![&auth.room[..], key, before.unwrap_or(i64::MAX), limit + 1],
-            |r| envelope_item(r, false),
-        )?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let more = items.len() as i64 > limit;
-    items.truncate(limit as usize);
+    let mut rows = s.query(params![
+        &auth.room[..],
+        key,
+        before.unwrap_or(i64::MAX),
+        limit + 1,
+        group
+    ])?;
+    let (items, more) = collect(&mut rows, limit, false)?;
     Ok(json!({ "items": items, "more": more }))
 }
 
@@ -1185,25 +1252,34 @@ pub fn board_items(
     auth.member()?;
     let key = [&[wire::TIMELINE_BOARD, wire::SCOPE_DESK][..], &board[..]].concat();
     let limit = clamp(limit, 500, 2000);
-    if timeline_group(c, auth, "boards", &key)?.is_none() {
+    let Some(group) = timeline_group(c, auth, "boards", &key)? else {
         return Ok(json!({ "items": [], "more": false }));
-    }
+    };
     let mut s = c.prepare_cached(&format!(
-        "SELECT {ENVELOPE_COLUMNS} FROM envelopes WHERE room_id = ?1 AND timeline = ?2 AND change > ?3 AND cut = 0 ORDER BY change LIMIT ?4"
+        "SELECT {ENVELOPE_COLUMNS} FROM envelopes WHERE room_id = ?1 AND timeline = ?2 AND change > ?3 AND cut = 0 AND group_id = ?5
+         ORDER BY change LIMIT ?4"
     ))?;
-    let mut items = s
-        .query_map(
-            params![&auth.room[..], key, after.unwrap_or(0), limit + 1],
-            |r| envelope_item(r, false),
-        )?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let more = items.len() as i64 > limit;
-    items.truncate(limit as usize);
+    let mut rows = s.query(params![
+        &auth.room[..],
+        key,
+        after.unwrap_or(0),
+        limit + 1,
+        group
+    ])?;
+    let (items, more) = collect(&mut rows, limit, false)?;
     Ok(json!({ "items": items, "more": more }))
 }
 
-/// `GET /v2/cards/{object}` and its siblings: every envelope of the object, pruned ones in pruned form.
-pub fn object_envelopes(c: &Connection, auth: &Auth, table: &str, object: &[u8; 16]) -> Res<Value> {
+/// `GET /v2/cards/{object}?after=&limit=` and its siblings: every envelope of the object in the order of their
+/// change numbers, pruned ones in pruned form; `more` when the answer was cut short.
+pub fn object_envelopes(
+    c: &Connection,
+    auth: &Auth,
+    table: &str,
+    object: &[u8; 16],
+    after: Option<i64>,
+    limit: Option<i64>,
+) -> Res<Value> {
     auth.member()?;
     let id = *object;
     let missing = || refuse("not-found", "no such object");
@@ -1215,17 +1291,23 @@ pub fn object_envelopes(c: &Connection, auth: &Auth, table: &str, object: &[u8; 
     if store::sight(c, auth, &row)? != Sight::Leaf {
         return Err(missing());
     }
+    let limit = clamp(limit, 500, 2000);
     let mut s = c.prepare_cached(&format!(
-        "SELECT {ENVELOPE_COLUMNS} FROM envelopes WHERE room_id = ?1 AND object_id = ?2 AND cut = 0 ORDER BY change"
+        "SELECT {ENVELOPE_COLUMNS} FROM envelopes WHERE room_id = ?1 AND object_id = ?2 AND cut = 0 AND group_id = ?3 AND change > ?4
+         ORDER BY change LIMIT ?5"
     ))?;
-    let items = s
-        .query_map(params![&auth.room[..], &id[..]], |r| {
-            envelope_item(r, false)
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut rows = s.query(params![
+        &auth.room[..],
+        &id[..],
+        object.group_id,
+        after.unwrap_or(0),
+        limit + 1
+    ])?;
+    let (items, more) = collect(&mut rows, limit, false)?;
     Ok(json!({
         "object_id": b64(&id), "group_id": b64(&object.group_id), "state": object.state, "urgency": object.urgency,
         "owner": b64(&object.owner), "first_change": object.first_change, "head_change": object.head_change, "items": items,
+        "more": more,
     }))
 }
 
@@ -1285,6 +1367,7 @@ pub fn changes(c: &Connection, auth: &Auth, after: i64, limit: Option<i64>) -> R
     let mut cursor = after;
     let mut reached = head;
     let mut rounds = 0;
+    let mut answer_bytes = 0usize;
     'outer: while cursor < head {
         // an asker that sees little of a busy room is not served by one endless scan: after some rounds it
         // gets what was found and the cursor to go on from
@@ -1353,10 +1436,14 @@ pub fn changes(c: &Connection, auth: &Auth, after: i64, limit: Option<i64>) -> R
         batch_items.retain(|(change, _)| *change <= safe);
         batch_items.sort_by_key(|(change, _)| *change);
         for item in batch_items {
-            if merged.len() as i64 == limit {
+            if merged.len() as i64 == limit || (answer_bytes > ANSWER_BYTES && !merged.is_empty()) {
                 reached = merged.last().map_or(cursor, |(c, _)| *c);
                 break 'outer;
             }
+            answer_bytes += item.1["envelope"]
+                .as_str()
+                .or(item.1["bytes"].as_str())
+                .map_or(0, str::len);
             merged.push(item);
         }
         cursor = safe;
