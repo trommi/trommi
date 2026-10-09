@@ -15,7 +15,7 @@
 import { Client, ClientError, engineMeta } from './client.ts'
 import type { Core, Device, Store } from './core-api.ts'
 import { Engine } from './engine.ts'
-import type { EngineTiming, InviteDevice } from './engine.ts'
+import type { EngineTiming } from './engine.ts'
 import { accountCopiesBytes, Hub, HubError, hubAddress } from './hub.ts'
 import type { AccountCopies, NewAccount } from './hub.ts'
 import { b64u, hex, unb64u, unhex } from './ids.ts'
@@ -58,6 +58,7 @@ export interface Rooms {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((v, i) => v === b[i])
 const codeText = (numbers: readonly number[]): string => numbers.map(n => String(n).padStart(2, '0')).join('-')
 
 export function roomsOn(env: RoomEnv): Rooms {
@@ -165,16 +166,15 @@ export function roomsOn(env: RoomEnv): Rooms {
       const device = await fresh(o, core)
       let engine: Engine | null = null
       try {
-        const joiner = device as unknown as InviteDevice
         const invite = await hub.getInvite(link.inviteId)
-        const request = await joiner.joinRequest(o.link, { offer: invite.offer, signature: invite.signature }, Date.now())
+        const request = await device.joinRequest(o.link, { offer: invite.offer, signature: invite.signature }, Date.now())
         await hub.postInviteRequest(link.inviteId, { request: request.request, mac: request.mac, signature: request.signature })
         // the inviter's Reveal: with it both sides hold the same six numbers
         let reveal = null
         while (!reveal) {
           try { reveal = await hub.getReveal(link.inviteId) } catch (e) { if (!(e instanceof HubError) || (e.code !== 'not-found' && !e.transient)) throw e; await wait() }
         }
-        tellCode(codeText(await joiner.joinReveal(reveal)))
+        tellCode(codeText(await device.joinReveal(reveal)))
         // Let in once the person confirmed on the inviter's side: from then on the hub knows this device's key.
         hub.useSigner(link.roomId, (address, challenge) => device.hubSignIn(link.roomId, address, challenge))
         for (;;) {
@@ -229,13 +229,27 @@ export function roomsOn(env: RoomEnv): Rooms {
         const plan = await held.prepareRecovery(code, served)
         let copies: Uint8Array
         try { copies = accountCopiesBytes(o.account ? await o.account(plan.newCode) as AccountCopies | null : null) } finally { plan.newCode.fill(0) }
-        // A removed device's chain ends at its Cut for everyone (9.0.10). The Cut is the last envelope of a chain
-        // this device VERIFIED; the core cannot verify stored content yet, so only a device that wrote nothing is
-        // cut here (at nothing). Cutting a chain unseen would take a person's notes and answers away.
+        // A removed device's chain ends at its Cut for everyone (9.0.10): the last envelope of its chain as this
+        // device VERIFIED it. A device that wrote nothing is cut at nothing; a chain is verified by the core
+        // (`chainCut`, provisional: the binding refuses with `core-missing`, and so does this recovery then, since
+        // cutting a chain unseen would take a person's notes and answers away).
+        // (a served room does not name its sessions' groups: they come in the order of the hub's list, main
+        // sessions first; a list that changed meanwhile fails the core's check of the chain)
+        const live = (await hub.roomGroups()).filter(g => g.live && g.kind !== 'room')
+        const sessionIds = [...live.filter(g => g.kind === 'main'), ...live.filter(g => g.kind === 'helper')].map(g => g.group)
         const cuts = []
-        for (const removal of plan.removals) for (const gone of removal.devices) {
-          if ((await hub.chain(removal.group, gone, { limit: 1 })).items.length) throw new ClientError('core-missing', 'a recovery removes devices that wrote content, and the core cannot verify their chains yet')
-          cuts.push({ group: removal.group, cut: { device: gone, seq: 0, hash: new Uint8Array(32) } })
+        for (const removal of plan.removals) {
+          const group = [served.group, ...served.sessions][[room, ...sessionIds].findIndex(g => sameBytes(g, removal.group))]
+          for (const gone of removal.devices) {
+            const chain: Uint8Array[] = []
+            for (let more = true; more;) {
+              const page = await hub.chain(removal.group, gone, { after: chain.length, limit: 500 })
+              for (const link of page.items) chain.push(link.envelope)
+              more = page.more && page.items.length > 0
+            }
+            if (chain.length && !group) throw new ClientError('bad-answer', 'the hub names a group in a recovery that it did not serve')
+            cuts.push({ group: removal.group, cut: chain.length ? await held.chainCut(group!, gone, chain) : { device: gone, seq: 0, hash: new Uint8Array(32) } })
+          }
         }
         const recovery = await hub.openRecovery()
         try {
