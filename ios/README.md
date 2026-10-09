@@ -123,7 +123,10 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
   conversation hides the keyboard. The Chat tab always opens on the list (a tap on it pops an open chat). A chat
   opens at the newest message and stays there while it is at the end: when a message comes in, a picture loads, the
   keyboard rises or the composer grows (`SessionScreen`: `onScrollGeometryChange`); only his own scrolling takes it
-  away, and earlier pages load by themselves only after he has scrolled.
+  away, and earlier pages load by themselves only after he has scrolled. What is attached lies inside the field
+  above the text line, as in Messages (`PendingFiles`, the same in a card's "Ask … something"): a picture as itself
+  (140 pt tall at most), a video as its first frame with a play sign, any other file as a small tile with its kind
+  and name, each with a round × at its corner; the field grows and the chat's bottom inset with it.
 - **Chat list:** a main session's helpers lie folded in one stack under it, as in the web's sidebar (`UnitStack` in
   `TrommiClient/Desk.swift`): seven drawings at most, the stopped ones first and marked, the count, how many wait on
   him or are at work; the main's row counts its helpers in. A tap unfolds a stack; which are open is kept on the phone.
