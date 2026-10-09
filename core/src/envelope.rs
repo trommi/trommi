@@ -957,7 +957,7 @@ pub fn object_id(group: &GroupId, sender: &DeviceId, seq: u64) -> Result<ObjectI
 }
 
 /// The place of a new envelope: its group and epoch, and its sender's next number with the hash before it.
-/// [`crate::chain::OwnChain::slot`] hands it out.
+/// `chain::OwnChain::slot` hands it out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Slot {
     /// The group.
