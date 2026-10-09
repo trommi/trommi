@@ -27,6 +27,9 @@ pub struct Config {
     /// who may found a room: `open` (anyone, within the limits), `token` (whoever brings `HUB_FOUND_TOKEN`),
     /// `closed` (nobody)
     pub founding: Founding,
+    /// `strict-transport-security` on every answer, two years with subdomains and `preload` (`HUB_HSTS=on`).
+    /// Off unless switched on: it binds the whole domain to HTTPS in every browser that saw it.
+    pub hsts: bool,
     /// whether failed logins slow their source down (`throttle.rs`); `off` leaves the per-address limit only
     pub login_throttle: bool,
     pub test_control: bool,
@@ -96,6 +99,39 @@ fn number<T: std::str::FromStr>(env: &HashMap<String, String>, name: &str, defau
         .unwrap_or(default)
 }
 
+/// A PEM key as a secret store hands it over: with its line breaks, with `\n` written out, or with spaces where
+/// the line breaks were. The PEM is built again from the base64 body between its two marker lines.
+pub fn pem(given: &str) -> String {
+    let text = given.replace("\\n", "\n");
+    let mut label = "PRIVATE KEY".to_string();
+    let mut body = String::new();
+    // the markers go, whatever stands between their dashes; what is left is the body
+    let mut rest = text.as_str();
+    while let Some(start) = rest.find("-----") {
+        body.push_str(&rest[..start]);
+        let after = &rest[start + 5..];
+        let Some(end) = after.find("-----") else {
+            rest = after;
+            break;
+        };
+        if let Some(name) = after[..end].strip_prefix("BEGIN ") {
+            label = name.trim().to_string();
+        }
+        rest = &after[end + 5..];
+    }
+    body.push_str(rest);
+    let body: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    let lines: Vec<&str> = body
+        .as_bytes()
+        .chunks(64)
+        .map(|l| std::str::from_utf8(l).unwrap_or(""))
+        .collect();
+    format!(
+        "-----BEGIN {label}-----\n{}\n-----END {label}-----\n",
+        lines.join("\n")
+    )
+}
+
 fn list(env: &HashMap<String, String>, name: &str) -> Vec<String> {
     env.get(name)
         .map(|v| {
@@ -155,9 +191,11 @@ impl Config {
                 .unwrap_or_else(|| default.to_string())
         };
         let optional = |name: &str| env.get(name).filter(|v| !v.is_empty()).cloned();
-        let apns_key_pem = optional("APNS_KEY")
-            .map(|k| k.replace("\\n", "\n"))
-            .or_else(|| optional("APNS_KEY_FILE").and_then(|f| std::fs::read_to_string(f).ok()));
+        let apns_key_pem = optional("APPLE_APNS_KEY")
+            .or_else(|| {
+                optional("APPLE_APNS_KEY_FILE").and_then(|f| std::fs::read_to_string(f).ok())
+            })
+            .map(|k| pem(&k));
         let apns_hosts = optional("HUB_APNS_HOSTS")
             .and_then(|j| serde_json::from_str::<HashMap<String, String>>(&j).ok())
             .unwrap_or_else(|| {
@@ -192,6 +230,7 @@ impl Config {
                 _ => Founding::Open,
             },
             login_throttle: text("HUB_LOGIN_THROTTLE", "on") != "off",
+            hsts: text("HUB_HSTS", "off") == "on",
             test_control: env.get("HUB_TEST_CONTROL").is_some_and(|v| v == "1"),
             quiet: env.get("HUB_QUIET").is_some_and(|v| v == "1"),
             test_heavy_ms: number(env, "HUB_TEST_HEAVY_MS", 0),
@@ -262,12 +301,12 @@ impl Config {
             lease_watch_ms: number(env, "HUB_LEASE_WATCH_MS", 5_000),
             stream_buffer_bytes: number(env, "HUB_STREAM_BUFFER_BYTES", 4 << 20),
 
-            push_subject: text("HUB_PUSH_SUBJECT", "https://trommi.com"),
+            push_subject: text("HUB_WEB_PUSH_SUBJECT", "https://trommi.com"),
             push_hosts: list(env, "HUB_PUSH_HOSTS"),
             apns_key_pem,
-            apns_key_id: optional("APNS_KEY_ID"),
-            apns_team_id: optional("APNS_TEAM_ID"),
-            apns_topics: list(env, "APNS_TOPIC"),
+            apns_key_id: optional("APPLE_APNS_KEY_ID"),
+            apns_team_id: optional("APPLE_TEAM_ID"),
+            apns_topics: list(env, "APPLE_APNS_TOPIC"),
             apns_hosts,
         }
     }
