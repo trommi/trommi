@@ -74,6 +74,15 @@ const SUB_OWED: u8 = 7;
 const SUB_MAC: u8 = 0;
 const SUB_UNCONFIRMED: u8 = 1;
 const SUB_UNBOUND: u8 = 6;
+mod content;
+mod facts;
+
+pub use content::{
+    board_reduce, BoardItem, BoardSnapshot, Confirmation, Draft, EnvelopeOutcome, ReceivedEnvelope,
+    RegisterChange, Sealed, HEADS_EVERY_MS,
+};
+pub use facts::Finding;
+
 const SUB_OWN_HISTORY: u8 = 0;
 const SUB_OBSERVER: u8 = 1;
 
@@ -527,7 +536,8 @@ impl Drop for Staged {
 
 impl Staged {
     /// Whether the copy touches only what a join or a recovery writes: OpenMLS's entries, content keys, the
-    /// room's roles, the recovery keys, the records of groups and the device record. Never the device's key,
+    /// room's roles, the recovery keys, the records of groups and of their epochs with what a Cut does to
+    /// chains and objects, and the device record. Never the device's key,
     /// its KeyPackages, the outbox or another staged copy.
     fn in_scope(&self) -> bool {
         let allowed = |key: &Vec<u8>| {
@@ -536,7 +546,13 @@ impl Staged {
                 [table::DEVICE, SUB_RECORD]
                     | [table::DEVICE, SUB_GROUP, ..]
                     | [
-                        table::MLS | table::CONTENT_KEY | table::ROOM_STATE | table::RECOVERY,
+                        table::MLS
+                            | table::CONTENT_KEY
+                            | table::ROOM_STATE
+                            | table::RECOVERY
+                            | table::CHAIN
+                            | table::OBJECT
+                            | table::REGISTER,
                         ..
                     ]
             )
@@ -634,6 +650,8 @@ pub struct CodeJoin {
 /// Everything the device holds in memory that is rebuilt from the store.
 #[derive(Default)]
 struct Memory {
+    /// What the content layer holds between the steps of one operation.
+    wire: facts::Transient,
     record: Record,
     outbox: BTreeMap<u64, OutboxEntry>,
     keys: BTreeMap<(GroupId, u64), Secret<32>>,
@@ -926,8 +944,8 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                 let entry = OutboxEntry::from_entry(&Entry::new(key.clone(), value.clone()))?;
                 memory.outbox.insert(entry.id, entry);
             }
-            // The tables of the modules that are composed on top keep their entries untouched.
-            _ => {}
+            // The tables of stored content are read where they are used; here they are only checked.
+            _ => facts::check_entry(key, value)?,
         }
     }
     provider::validate_entries(&mls)?;
@@ -1618,7 +1636,14 @@ impl<S: Storage> Device<S> {
             // The cursor moves past the own entry only when nothing lies between: an entry of another
             // device that the hub ordered before it is still to be processed (5.4.1), and the log then
             // brings the own one by again.
-            let next = device.memory.record.cursor.checked_add(1);
+            // An own envelope is not passed: it takes effect on this device's view when it comes back
+            // from the hub at its place, like everyone's.
+            let next = device
+                .memory
+                .record
+                .cursor
+                .checked_add(1)
+                .filter(|_| entry.kind != OutboxKind::Envelope);
             if let Some(change) = answer.change.filter(|change| Some(*change) == next) {
                 device.advance(batch, change)?;
             }
@@ -1697,6 +1722,9 @@ impl<S: Storage> Device<S> {
                         }
                     }
                 }
+                // The hub took no number, and this device signs no other envelope under the one it
+                // used (9.0.1): the entry stays and the same bytes are sent again.
+                (OutboxKind::Envelope, _) => return Ok(()),
                 (OutboxKind::KeyPackages, _) => {
                     // The refusal may be for the KeyPackages themselves: they are not verified here.
                     for part in entry.parts.iter().filter(|part| !part.is_empty()) {
@@ -1724,6 +1752,7 @@ impl<S: Storage> Device<S> {
     /// Merges this device's pending Commit of `group` and settles the new epoch.
     fn merge_own(&mut self, batch: &mut Batch, id: &GroupId) -> Result<(), Error> {
         let pending = self.meta(id)?.pending.take().ok_or(Error::NotFound)?;
+        self.merging_own(id, pending.outbox, pending.time);
         let commit = self
             .memory
             .outbox
@@ -1770,6 +1799,7 @@ impl<S: Storage> Device<S> {
     ) -> Result<(), Error> {
         let leaves = rules::leaves_of(group.members())?;
         if !group.is_active() {
+            self.record_epoch(batch, id, group.epoch().as_u64(), &leaves, room_epoch)?;
             return self.leave(batch, id);
         }
         let key = group::content_key(&self.provider, group)?;
@@ -1794,6 +1824,7 @@ impl<S: Storage> Device<S> {
                 }
             }
         }
+        self.record_epoch(batch, id, group.epoch().as_u64(), &leaves, room_epoch)?;
         self.put_group(batch, id)
     }
 
@@ -2149,7 +2180,7 @@ impl<S: Storage> Device<S> {
     /// The `SealedKey` of the group and epoch `of`, sealed to the recovery key `to.1` of the room epoch `to.0` (8.2). A human
     /// device sets the `mac` with the `recovery_mac` of that key: `given` for a key that only now comes into
     /// force, else the one it holds. Without it, it founds nothing and commits nothing (7.4): `no-key`.
-    fn seal(
+    fn seal_key(
         &mut self,
         of: (&GroupId, u64),
         content_key: &Secret<32>,
@@ -2212,7 +2243,7 @@ impl<S: Storage> Device<S> {
             let info = group::group_info(&device.provider, &device.key, &group)?;
             let key = group::content_key(&device.provider, &group)?;
             device.hold_mac(batch, keys.mac_key())?;
-            let sealed = device.seal(
+            let sealed = device.seal_key(
                 (&group_id, 0),
                 &key,
                 &info,
@@ -2233,6 +2264,7 @@ impl<S: Storage> Device<S> {
                 },
             );
             device.put_group(batch, &group_id)?;
+            device.record_epoch(batch, &group_id, 0, &leaves, 0)?;
             device.enqueue(
                 batch,
                 OutboxKind::RoomFounding,
@@ -2321,7 +2353,7 @@ impl<S: Storage> Device<S> {
             let info_0 = group::group_info(&device.provider, &device.key, &group)?;
             let key_0 = group::content_key(&device.provider, &group)?;
             let hpke = room.room.recovery_hpke_key;
-            let sealed_0 = device.seal(
+            let sealed_0 = device.seal_key(
                 (&group_id, 0),
                 &key_0,
                 &info_0,
@@ -2341,7 +2373,7 @@ impl<S: Storage> Device<S> {
                 ..Change::default()
             };
             let built = group::commit(&device.provider, &device.key, &mut group, &note, change)?;
-            let sealed = device.seal(
+            let sealed = device.seal_key(
                 (&group_id, 1),
                 &built.next_key,
                 &built.group_info,
@@ -2382,6 +2414,8 @@ impl<S: Storage> Device<S> {
                 },
             );
             device.put_group(batch, &group_id)?;
+            let founder = rules::leaves_of(group.members())?;
+            device.record_epoch(batch, &group_id, 0, &founder, room.epoch)?;
             Ok(session.session_id)
         })
     }
@@ -2441,6 +2475,7 @@ impl<S: Storage> Device<S> {
             context: kind.as_ref(),
         };
         let built = group::commit(&self.provider, &self.key, &mut group, &note, change)?;
+        self.built_cuts(&note.cuts);
         // 8.2: a room Commit that replaces the recovery keys seals its new epoch to the new key, and its row
         // names the new room epoch.
         let (sealed_epoch, hpke, given) = match &kind {
@@ -2456,7 +2491,7 @@ impl<S: Storage> Device<S> {
             welcome,
             next_key,
         } = built;
-        let sealed = self.seal(
+        let sealed = self.seal_key(
             (id, epoch.saturating_add(1)),
             &next_key,
             &group_info,
@@ -2508,6 +2543,7 @@ impl<S: Storage> Device<S> {
             ),
         };
         let outbox = self.enqueue(batch, kind, Some(group), epoch, parts)?;
+        self.keep_own_cuts(batch, &group, outbox)?;
         self.meta(&group)?.pending = Some(Pending {
             outbox,
             room_epoch,
@@ -2550,6 +2586,7 @@ impl<S: Storage> Device<S> {
             .merge_pending_commit(&self.provider)
             .map_err(mls_fault)?;
         self.meta(id)?.own_leaf_ms = now_ms;
+        self.merging_now(now_ms);
         self.settle(batch, id, &group, posting.room_epoch)?;
         Ok(posting)
     }
@@ -2924,6 +2961,9 @@ impl<S: Storage> Device<S> {
         self.keep_key(batch, &id, epoch, key);
         self.memory.groups.insert(id, meta);
         self.put_group(batch, &id)?;
+        // The Commit that began this epoch is not known to the joiner: the roles are those of the newest
+        // room state it holds.
+        self.record_epoch(batch, &id, epoch, &leaves, u64::MAX)?;
         // The KeyPackage's private part is gone from OpenMLS's storage unless it is the last-resort one.
         let used: Vec<Hash32> = self
             .memory
@@ -3072,7 +3112,7 @@ impl<S: Storage> Device<S> {
             joiner: self.id,
         };
         let recovery_auth = keys.authorise(&join, &built.commit)?;
-        let sealed = self.seal(
+        let sealed = self.seal_key(
             (&id, built.epoch.saturating_add(1)),
             &built.next_key,
             &built.group_info,
@@ -3464,7 +3504,7 @@ impl<S: Storage> Device<S> {
             observer::signer_of(state.public_group(), group_info)?;
             let key = this.content_key(group, epoch)?;
             let room = this.history()?.newest().clone();
-            let sealed = this.seal(
+            let sealed = this.seal_key(
                 (group, epoch),
                 &key,
                 group_info,
@@ -3506,8 +3546,16 @@ impl<S: Storage> Device<S> {
     /// An entry called a message whose bytes are a handshake message (a `PublicMessage`) of a group this
     /// device is a leaf of or follows, by the group the message itself names, is refused (`bad-format`, the
     /// finding `bad-group`) and the cursor stays: it is not passed over as a message that does not open.
-    pub fn process_log_entry(&mut self, entry: &LogEntry<'_>) -> Result<Processed, Error> {
+    ///
+    /// `now_ms` is this device's clock: when it processed the Commit that ended an epoch decides how long
+    /// an envelope of that epoch is still taken (9.0.5, check 8).
+    pub fn process_log_entry(
+        &mut self,
+        entry: &LogEntry<'_>,
+        now_ms: u64,
+    ) -> Result<Processed, Error> {
         let (processed, adopted) = self.transact(|this, batch| {
+            this.begin(now_ms);
             let mut adopted = false;
             // 5.4.1: every entry once, in the hub's order. One at or below the cursor was processed, or was
             // passed when a later one was: it is a duplicate. The one exception is the next Commit of a
@@ -3790,6 +3838,7 @@ impl<S: Storage> Device<S> {
             self.meta(id)?.distrusted = !clean;
         }
         let removed = !group.is_active();
+        self.merging_foreign(facts.note.as_ref());
         self.settle(batch, id, &group, room_epoch)?;
         if let Some(observer) = follower {
             // The roles are the observer's from here on: the device's own record of them goes.
