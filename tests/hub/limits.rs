@@ -378,17 +378,18 @@ fn sizes() {
             .refused(413, "too-large")["voided"],
         true
     );
-    // 16: a padded body is at most 64 KiB: 65 536 is taken, the next size is no envelope (`bad-format`, no number)
+    // 16: a padded body is at most 64 KiB: 65 536 is taken, the next size is a `too-large` void (9.0.5)
     let board = |n: usize| Item {
         payload: vec![b'x'; n],
         ..board_item(&random())
     };
     w.ada.send(hub, &room, &board(65536 - 6)).ok();
-    let before = w.ada.chain(&room).0;
-    w.ada
-        .send(hub, &room, &board(65536 - 5))
-        .refused(400, "bad-format");
-    assert_eq!(w.ada.chain(&room).0, before);
+    assert_eq!(
+        w.ada
+            .send(hub, &room, &board(65536 - 5))
+            .refused(413, "too-large")["voided"],
+        true
+    );
     // 9: at most 255 file ids
     let files = |n: usize| Item {
         file_ids: vec![[9; 16]; n],
