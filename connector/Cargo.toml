@@ -1,0 +1,32 @@
+# The Trommi connector: one static binary, `trommi-connector`. It is the MCP server the Trommi plugin for Claude
+# Code runs, and an agent device of a room on protocol v2: every key and every check comes from `trommi-core`.
+[package]
+name = "trommi-connector"
+version = "0.2.0"
+edition.workspace = true
+license-file.workspace = true
+publish.workspace = true
+description = "The Trommi connector: an MCP server for Claude Code that is an agent device of a Trommi room"
+
+[lib]
+name = "trommi_connector"
+path = "src/lib.rs"
+
+[dependencies]
+trommi-core = { path = "../core" }
+# Runtime and transport. TLS is rustls with ring: no system library, so the four targets link statically.
+tokio = { version = "=1.53.2", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "io-std", "net", "process", "signal", "fs"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "stream", "http2"] }
+futures-util = { version = "=0.3.34", default-features = false, features = ["std"] }
+bytes = "=1.12.1"
+# Process ids, signals, the host name: the safe wrappers, so that this crate has no unsafe code.
+rustix = { version = "=1.1.5", features = ["process", "system"] }
+zeroize = "=1.9.1"
+# Data. serde_json is the version the core pins; `raw_value` only adds a type (the tool list keeps its order).
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["raw_value"] }
+regex = "1"
+fancy-regex = "0.14"
+
+[build-dependencies]
+serde_json = "=1.0.151"
