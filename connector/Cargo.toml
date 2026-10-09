@@ -7,6 +7,7 @@ edition.workspace = true
 license-file.workspace = true
 publish.workspace = true
 description = "The Trommi connector: an MCP server for Claude Code that is an agent device of a Trommi room"
+build = "build.rs"
 
 [lib]
 name = "trommi_connector"

@@ -92,6 +92,8 @@ pub struct Answer {
     pub attachments: Value,
     pub marks: Value,
     pub trusted: bool,
+    /// The card's version the answer was given to.
+    pub bound_object_version: u64,
     pub envelope_number: Option<u64>,
     pub envelope_hash: Option<String>,
     pub by_device_id: Option<String>,
@@ -572,6 +574,7 @@ impl Model {
                     attachments: field("attachments"),
                     marks: field("marks"),
                     trusted: content.get("trusted").is_some_and(truthy),
+                    bound_object_version: card.object_version,
                     envelope_number: Some(seen.change),
                     envelope_hash: Some(hash),
                     by_device_id: Some(sender),
