@@ -31,7 +31,6 @@ declare const __TROMMI_CORE_WASM_SHA256__: string
 const MISSING_ON_DEVICE: Record<keyof ProvisionalDevice, true> = {
   seal: true, receiveEnvelope: true, headsDue: true, cutOf: true,
   inviteOpen: true, inviteAccept: true, inviteConfirm: true, joinRequest: true, joinReveal: true,
-  recoverySignIn: true, joinWithCode: true, replaceRecoveryCode: true, sendRecoveryAuth: true,
 }
 const MISSING_STATELESS: Record<keyof ProvisionalStateless, true> = { inviteLinkParse: true, checkEmoji: true, hubAddress: true, boardReduce: true }
 
