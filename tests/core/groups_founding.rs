@@ -3,13 +3,15 @@
 use trommi_core::device::Processed;
 use trommi_core::ids::GroupId;
 use trommi_tests::hub::Hub;
-use trommi_tests::{new_device, now, post_ok, publish_key_packages, sync_ok, take_welcomes};
+use trommi_tests::{
+    added_at, new_device, now, post_ok, publish_key_packages, sync_ok, take_welcomes, test_keys,
+};
 
 #[test]
 fn a_room_and_a_session_are_founded_and_shared() {
     let mut hub = Hub::new(true);
     let mut a = new_device();
-    let room = a.found_room([0xE1; 32], [0xE2; 32], now()).unwrap();
+    let room = a.found_room(&test_keys(), now()).unwrap();
     let room_group = GroupId::room(room);
     post_ok(&mut hub, &mut a);
     assert_eq!(hub.epoch(&room_group), Some(0));
@@ -21,7 +23,7 @@ fn a_room_and_a_session_are_founded_and_shared() {
     a.add_human_device(&b.id(), &package, now()).unwrap();
     post_ok(&mut hub, &mut a);
     assert_eq!(hub.epoch(&room_group), Some(1));
-    let joined = take_welcomes(&hub, &mut b, hub.change());
+    let joined = take_welcomes(&hub, &mut b, added_at(&hub));
     assert_eq!(joined.len(), 1);
     assert_eq!(joined[0].added_by, a.id());
     assert_eq!(

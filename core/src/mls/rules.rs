@@ -253,6 +253,9 @@ pub struct JoinClaim<'a> {
     pub note: &'a CommitNote,
     /// The Commit as posted.
     pub commit: &'a [u8],
+    /// The hash of the GroupInfo posted for the epoch the Commit builds on, for a verifier that holds that
+    /// GroupInfo: the hub. A member holds none.
+    pub base_group_info: Option<&'a Hash32>,
     /// The `recovery_signature_key` of the room state at the note's `room_epoch`.
     pub recovery_signature_key: &'a [u8; RECOVERY_KEY_LEN],
     /// The `RecoveryAuth` that came with the Commit, if any.
@@ -329,6 +332,8 @@ pub struct Judged<'a> {
     pub commit: &'a [u8],
     /// The `RecoveryAuth` posted with it, if any.
     pub recovery_auth: Option<&'a [u8]>,
+    /// The hash of the GroupInfo posted for the epoch it builds on, where the verifier holds it.
+    pub base_group_info: Option<&'a Hash32>,
 }
 
 /// A session group before a Commit.
@@ -421,6 +426,7 @@ pub fn check_room_commit(verifier: &Verifier<'_>, judged: &Judged<'_>) -> Result
             joiner: &facts.committer,
             note,
             commit: judged.commit,
+            base_group_info: judged.base_group_info,
             recovery_signature_key: &before.room.recovery_signature_key,
             recovery_auth: judged.recovery_auth,
         })?;
@@ -625,6 +631,7 @@ pub fn check_session_commit(
             joiner: committer,
             note,
             commit: judged.commit,
+            base_group_info: judged.base_group_info,
             recovery_signature_key: &room.room.recovery_signature_key,
             recovery_auth: judged.recovery_auth,
         })?;

@@ -8,13 +8,13 @@ use trommi_core::ids::{DeviceId, GroupId};
 use trommi_core::mls::observer::{Context, NoSessions, Observer};
 use trommi_core::mls::profile::Cut;
 use trommi_core::mls::rules::Parent;
+use trommi_core::recovery::PublicRules;
 use trommi_core::store::{Batch, Entry, OutboxKind};
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, enrol, found_helper, found_main, found_room_on, new_device, new_device_with, now,
-    observe, post_ok, post_refused, publish_some, settle, sync, sync_ok, TestDevice, TestRecovery,
-    TEST_RECOVERY_AUTH,
+    add_human, enrol, found_helper, found_main, found_room_on, new_device, now, observe, post_ok,
+    post_refused, publish_some, settle, sync, sync_ok, TestDevice,
 };
 
 struct World {
@@ -185,7 +185,7 @@ fn an_observer_is_stored_and_read_back() {
         main,
         ..
     } = world(true);
-    let recovery = TestRecovery::default();
+    let recovery = PublicRules;
     let context = Context {
         room: None,
         sessions: &NoSessions,
@@ -541,234 +541,6 @@ fn what_no_device_builds() {
         Err(Error::BadFormat)
     );
     assert!(a.outbox().is_empty());
-}
-
-/// A room whose devices and hub hold the stand-in that authorises joins from outside, or not.
-fn room_for_joins(joins: bool) -> (Hub, TestDevice, TestDevice, GroupId, GroupId) {
-    let recovery = TestRecovery {
-        joins,
-        ..TestRecovery::default()
-    };
-    let (mut a, mut agent) = (new_device_with(recovery), new_device_with(recovery));
-    let mut hub = Hub::new(true);
-    hub.recovery = recovery;
-    let room_group = found_room_on(&mut hub, &mut a);
-    enrol(&mut hub, &mut a, &mut agent);
-    publish_some(&mut hub, &mut agent, 1);
-    let main = found_main(&mut hub, &mut a, &agent.id());
-    settle(&hub, &mut agent);
-    (hub, a, agent, room_group, main)
-}
-
-#[test]
-fn a_signature_key_alone_opens_no_group() {
-    let (mut hub, mut a, mut agent, room_group, main) = room_for_joins(false);
-    let mut thief = new_device();
-    observe(&hub, &mut thief);
-
-    // A join from outside whose RecoveryAuth is anything but the recovery signature is refused by the hub.
-    let info = hub.group_info(&room_group).unwrap().clone();
-    let id = thief
-        .join_from_outside(&info, now(), &mut |_, _| Ok(b"not a signature".to_vec()))
-        .unwrap();
-    assert_eq!(thief.outbox()[0].kind, OutboxKind::ExternalCommit);
-    assert_eq!(thief.outbox()[0].id, id);
-    assert_eq!(post_refused(&mut hub, &mut thief), [Error::BadSignature]);
-    assert!(thief.outbox().is_empty() && thief.groups().unwrap().is_empty());
-    assert!(!thief.is_human());
-    assert_eq!(hub.epoch(&room_group), Some(1));
-    // So is one into a session group, and one with the stand-in's bytes on a hub that takes no join.
-    let session_info = hub.group_info(&main).unwrap().clone();
-    thief
-        .join_from_outside(&session_info, now(), &mut |_, _| {
-            Ok(TEST_RECOVERY_AUTH.to_vec())
-        })
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut thief), [Error::BadCommit]);
-    thief
-        .join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec()))
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut thief), [Error::BadSignature]);
-    // A device that cannot make the RecoveryAuth builds nothing.
-    assert_eq!(
-        thief.join_from_outside(&info, now(), &mut |_, _| Err(Error::WrongRecovery)),
-        Err(Error::WrongRecovery)
-    );
-    assert!(thief.outbox().is_empty());
-
-    // On a hub that checks nothing the Commit is stored, and the members refuse it themselves.
-    let (mut open, mut a2, mut agent2, room_2, main_2) = {
-        let recovery = TestRecovery::default();
-        let (mut a, mut agent) = (new_device_with(recovery), new_device_with(recovery));
-        let mut hub = Hub::new(false);
-        let room_group = found_room_on(&mut hub, &mut a);
-        enrol(&mut hub, &mut a, &mut agent);
-        publish_some(&mut hub, &mut agent, 1);
-        let main = found_main(&mut hub, &mut a, &agent.id());
-        settle(&hub, &mut agent);
-        (hub, a, agent, room_group, main)
-    };
-    let mut thief = new_device();
-    observe(&open, &mut thief);
-    let info = open.group_info(&main_2).unwrap().clone();
-    thief
-        .join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec()))
-        .unwrap();
-    post_ok(&mut open, &mut thief);
-    for device in [&mut a2, &mut agent2] {
-        let results = sync(&open, device);
-        let error = results.last().unwrap().as_ref().unwrap_err();
-        assert_eq!(error, &Error::BadCommit);
-        assert_eq!(log_finding(error), LogFinding::BadGroup);
-        assert_eq!(device.group(&main_2).unwrap().epoch, 1);
-    }
-    let info = open.group_info(&room_2).unwrap().clone();
-    let mut second = new_device();
-    observe(&open, &mut second);
-    second
-        .join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec()))
-        .unwrap();
-    post_ok(&mut open, &mut second);
-    let results = sync(&open, &mut a2);
-    let error = results.last().unwrap().as_ref().unwrap_err();
-    assert_eq!(error, &Error::BadSignature);
-    assert_eq!(log_finding(error), LogFinding::BadGroup);
-    assert_eq!(a2.group(&room_2).unwrap().epoch, 1);
-    // The agent device, which follows the room group as an observer, refuses it too.
-    let results = sync(&open, &mut agent2);
-    assert_eq!(results.last().unwrap(), &Err(Error::BadSignature));
-
-    // Nothing of this touched the first room.
-    sync_ok(&hub, &mut a);
-    settle(&hub, &mut agent);
-    assert_eq!(a.group(&room_group).unwrap().leaves.len(), 1);
-}
-
-#[test]
-fn a_join_from_outside_replaces_the_real_state_only_when_accepted() {
-    let (mut hub, mut a, mut agent, room_group, main) = room_for_joins(true);
-    let joins = TestRecovery {
-        joins: true,
-        ..TestRecovery::default()
-    };
-    let mut c = new_device_with(joins);
-    observe(&hub, &mut c);
-    let info = hub.group_info(&room_group).unwrap().clone();
-    let mut seen = Vec::new();
-    let id = c
-        .join_from_outside(&info, now(), &mut |commit, note| {
-            seen.push((commit.to_vec(), note.clone()));
-            Ok(TEST_RECOVERY_AUTH.to_vec())
-        })
-        .unwrap();
-    // The RecoveryAuth is made over the Commit as it is posted and its note, which names a join.
-    let entry = c.outbox().remove(0);
-    assert_eq!(
-        (entry.id, entry.kind, entry.epoch),
-        (id, OutboxKind::ExternalCommit, 1)
-    );
-    assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0].0, entry.parts[0]);
-    assert!(seen[0].1.join && seen[0].1.cuts.is_empty());
-    assert_eq!(seen[0].1.room_epoch, 1);
-    assert_eq!(entry.parts[3], TEST_RECOVERY_AUTH);
-
-    // Built on a copy: until the hub answers, the device holds no group and no key, and is no human device.
-    assert!(c.groups().unwrap().is_empty());
-    assert!(!c.is_human());
-    assert_eq!(c.content_key(&room_group, 2), Err(Error::NoKey));
-    assert_eq!(
-        c.join_from_outside(&info, now(), &mut |_, _| Ok(Vec::new())),
-        Err(Error::Busy)
-    );
-
-    // Refused, the copy is dropped and nothing of it stays.
-    c.outbox_refused(id, &Error::Overloaded).unwrap();
-    assert!(c.outbox().is_empty() && c.groups().unwrap().is_empty());
-    assert_eq!(c.content_key(&room_group, 2), Err(Error::NoKey));
-    assert_eq!(hub.epoch(&room_group), Some(1));
-
-    // Built again and accepted, the copy becomes the real state: the device is a human device.
-    c.join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec()))
-        .unwrap();
-    post_ok(&mut hub, &mut c);
-    assert_eq!(hub.epoch(&room_group), Some(2));
-    assert!(c.is_human());
-    let summary = c.group(&room_group).unwrap();
-    assert_eq!((summary.epoch, summary.pending), (2, false));
-    assert_eq!(summary.leaves, [a.id(), c.id()].into_iter().collect());
-    assert!(hub.history().unwrap().newest().is_human(&c.id()));
-
-    // The member follows the join, which the log carries with its RecoveryAuth.
-    let item = hub.log.last().unwrap();
-    assert_eq!(item.recovery_auth.as_deref(), Some(TEST_RECOVERY_AUTH));
-    let processed = sync_ok(&hub, &mut a);
-    let [Processed::Commit { facts, .. }] = &processed[..] else {
-        panic!("one Commit: {processed:?}");
-    };
-    assert!(facts.external && facts.committer == c.id() && facts.external_inits == 1);
-    assert_eq!(
-        a.content_key(&room_group, 2).unwrap(),
-        c.content_key(&room_group, 2).unwrap()
-    );
-
-    // It then joins the session group the same way: it is in H(r) now.
-    settle(&hub, &mut agent);
-    let session_info = hub.group_info(&main).unwrap().clone();
-    c.join_from_outside(&session_info, now(), &mut |_, _| {
-        Ok(TEST_RECOVERY_AUTH.to_vec())
-    })
-    .unwrap();
-    assert_eq!(c.group(&main).err(), Some(Error::NotFound));
-    post_ok(&mut hub, &mut c);
-    for device in [&mut a, &mut agent] {
-        settle(&hub, device);
-        assert_eq!(
-            device.content_key(&main, 2).unwrap(),
-            c.content_key(&main, 2).unwrap()
-        );
-    }
-    assert_eq!(
-        c.group(&main).unwrap().leaves,
-        [a.id(), agent.id(), c.id()].into_iter().collect()
-    );
-    // And is a full member: its own Commit is followed by the others.
-    c.update(&main, true, now()).unwrap().unwrap();
-    post_ok(&mut hub, &mut c);
-    sync_ok(&hub, &mut a);
-    assert_eq!(
-        a.content_key(&main, 3).unwrap(),
-        c.content_key(&main, 3).unwrap()
-    );
-
-    // A device that is a leaf joins no second time from outside: that would be the return of a device that
-    // lost its state under its old key (4.3), with a Remove of its own leaf and no Cut.
-    for group in [room_group, main] {
-        let info = hub.group_info(&group).unwrap().clone();
-        assert_eq!(
-            c.join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec())),
-            Err(Error::BadCommit)
-        );
-    }
-    assert!(c.outbox().is_empty());
-    // Nor does a join from outside reopen a session this device archived (5.2.10).
-    a.archive(&main).unwrap();
-    let session_info = hub.group_info(&main).unwrap().clone();
-    assert_eq!(
-        a.join_from_outside(&session_info, now(), &mut |_, _| Ok(
-            TEST_RECOVERY_AUTH.to_vec()
-        )),
-        Err(Error::Gone)
-    );
-    assert!(a.outbox().is_empty());
-
-    // An agent device does not become a human device this way (4.2), and a member's Commit carries no
-    // RecoveryAuth.
-    let info = hub.group_info(&room_group).unwrap().clone();
-    agent
-        .join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec()))
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
 }
 
 #[test]
