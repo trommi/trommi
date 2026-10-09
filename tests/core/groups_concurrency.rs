@@ -97,8 +97,9 @@ fn a_lost_answer_is_met_with_the_same_bytes_and_the_same_answer() {
     assert_eq!(hub.post(&a.id(), &entry), Ok(accepted));
     assert_eq!((hub.epoch(&room_group), hub.log.len()), (Some(2), log_len));
     a.outbox_accepted(id, accepted).unwrap();
+    // The Commit is accepted and waits for its place in the log.
     let summary = a.group(&room_group).unwrap();
-    assert_eq!((summary.epoch, summary.pending), (2, false));
+    assert_eq!((summary.epoch, summary.pending), (1, true));
     assert!(a.outbox().is_empty());
     // An answer for an entry that is gone changes nothing.
     assert_eq!(a.outbox_accepted(id, accepted), Err(Error::NotFound));
@@ -106,7 +107,10 @@ fn a_lost_answer_is_met_with_the_same_bytes_and_the_same_answer() {
         a.outbox_refused(id, &Error::EpochTaken),
         Err(Error::NotFound)
     );
-    // The log brings the own Commit by again: nothing more happens.
+    // The log brings the own Commit: it is merged there, once.
+    assert_eq!(sync_ok(&hub, &mut a), [Processed::OwnCommit]);
+    let summary = a.group(&room_group).unwrap();
+    assert_eq!((summary.epoch, summary.pending), (2, false));
     assert_eq!(sync_ok(&hub, &mut a), [] as [Processed; 0]);
     sync_ok(&hub, &mut b);
     assert_eq!(
@@ -562,8 +566,11 @@ fn a_takeover_races_with_a_helper_founding() {
     // Tried again on the new room state it is refused for good: the device is no agent device any more.
     settle(&hub, &mut old);
     let packages = hub.claim(&[a.id()]).unwrap();
-    old.found_helper(&parent, &packages, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut old), [Error::BadCommit]);
+    assert_eq!(
+        old.found_helper(&parent, &packages, now()),
+        Err(Error::BadCommit)
+    );
+    assert!(old.outbox().is_empty());
     let package = new.key_package(now()).unwrap();
     a.clean_session(
         &main,
@@ -669,10 +676,13 @@ fn a_welcome_taken_late_is_caught_up_from_its_place_in_the_log() {
     let joined = b.join_welcome(&welcome, &expected, now()).unwrap();
     assert_eq!((joined.group, joined.epoch), (group, 2));
     let again: Vec<_> = log.iter().map(|item| process(&mut b, item)).collect();
+    // The first one is the Commit that added the device: it gives the join its place in the hub's order, by
+    // which the Commits behind it are judged against the room state of their own place (5.2.1): the first
+    // names the room epoch before the room's update, the second the one after it.
     assert!(matches!(
         &again[..],
         [
-            Err(Error::WrongEpoch),
+            Ok(Processed::Skipped),
             Ok(Processed::Commit { .. }),
             Err(Error::WrongEpoch),
             Ok(Processed::Commit { .. })
