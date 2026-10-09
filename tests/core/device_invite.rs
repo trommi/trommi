@@ -114,6 +114,25 @@ fn a_human_device_joins_by_link_and_is_taken_into_every_live_session() {
         ),
         Err(Error::InviteUsed)
     );
+    // The Commit is lost (refused for good, or dropped for another one that took its epoch): the same
+    // confirmation builds it again.
+    let lost = a.outbox().remove(0);
+    a.outbox_refused(lost.id, &Error::BadCommit).unwrap();
+    assert_eq!(
+        a.invite_steps().unwrap(),
+        vec![(opened.invite_id, InviteStep::Commit)]
+    );
+    let again = a
+        .invite_confirm(
+            &opened.invite_id,
+            &code,
+            &accepted.request_hash,
+            true,
+            now(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.new_device, b.id());
     post_ok(&mut hub, &mut a);
 
     // The new device takes the Welcome as the invite said, and with it the recovery_mac the inviter owed.
