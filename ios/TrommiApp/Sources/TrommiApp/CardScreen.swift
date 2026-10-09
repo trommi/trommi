@@ -284,8 +284,10 @@ struct CardScreen: View {
       .buttonStyle(PressStyle())
       .accessibilityLabel("\(o.label)\(advised ? ", recommended by the agent" : "")\(o.final ? " (settles it)" : "")")
      }
-     .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Ink.surface))
-     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(advised || on ? Ink.fg : Tone.color(hue: hue, .edge), lineWidth: advised || on ? 2 : 1))
+     // ticked (several can hold): the same flat look as a chosen answer, the accent's wash and one accent line
+     .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(on ? Ink.accentSoft : Ink.surface))
+     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(on ? Ink.accent : advised ? Ink.fg : Tone.color(hue: hue, .edge), lineWidth: on ? 1.5 : advised ? 2 : 1))
       if noting == o.key || notes[o.key]?.isEmpty == false {
         HStack(spacing: 8) {
           Sketch("pen", color: Ink.muted).frame(width: 16, height: 16)
@@ -309,8 +311,8 @@ struct CardScreen: View {
       if !detail.isEmpty { Text(detail).font(Face.text(15)).foregroundStyle(Ink.muted) }
     }
     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 14).fill(Ink.surface))
-    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(picked ? Ink.fg : Ink.lineStrong, lineWidth: picked ? 2 : 1))
+    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(picked ? Ink.accentSoft : Ink.surface))
+    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(picked ? Ink.accent : Ink.lineStrong, lineWidth: picked ? 1.5 : 1))
   }
   @ViewBuilder private func done(_ c: DeskCard, _ a: Agent?) -> some View {
     let pickedLabels = c.options.filter { c.choices.contains($0.key) }.map { $0.label }.joined(separator: ", ")
@@ -332,7 +334,7 @@ struct CardScreen: View {
     } else {
       let said = c.status == "shredded" ? "Shredded" : c.kind == "info" ? "Read" : c.trusted ? "\(Words.trust)\(c.advisedLabels.isEmpty ? "" : ": \(c.advisedLabels)")" : pickedLabels.isEmpty ? "Withdrawn by the agent" : pickedLabels
       if c.status != "shredded" && c.kind != "info" && !c.trusted && !pickedLabels.isEmpty {
-        // as the desktop: every option stays in its place, the chosen one pressed in, the others dimmed
+        // as the desktop: every option stays in its place, the chosen one in the accent's wash, the others dimmed
         ForEach(c.options, id: \.key) { o in
           let on = c.choices.contains(o.key)
           let noteOn = c.optionNotes[o.key] ?? ""
@@ -353,8 +355,9 @@ struct CardScreen: View {
       }
     }
   }
-  /** An option of an answered card (card.css .tc-opt.is-still, .is-picked): the chosen one pressed in (sunken, the
-   *  accent's line and word, a tick), the others dimmed. */
+  /** An option of an answered card (card.css .tc-opt.is-still, .is-picked): the chosen one flat in the accent's light
+   *  wash with ONE accent line, the accent's word and a tick; the others dimmed. Never pressed in (no shade inside, no
+   *  second line, not smaller: his word, 9 October). */
   private func answered(_ label: String, _ detail: String, on: Bool) -> some View {
     HStack(alignment: .top, spacing: 10) {
       VStack(alignment: .leading, spacing: 4) {
@@ -365,20 +368,20 @@ struct CardScreen: View {
       if on { Sketch("tick", color: Ink.accent).frame(width: 20, height: 20) }
     }
     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(on ? Ink.sunken : Ink.surface))
-    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(on ? Ink.accent : Ink.line, lineWidth: on ? 2 : 1))
-    // pressed in: a shade inside its top edge, a hair smaller
-    .overlay(alignment: .top) { if on { LinearGradient(colors: [.black.opacity(0.18), .clear], startPoint: .top, endPoint: .bottom).frame(height: 8).clipShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous)).padding(2).allowsHitTesting(false) } }
-    .scaleEffect(on ? 0.985 : 1)
+    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(on ? Ink.accentSoft : Ink.surface))
+    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(on ? Ink.accent : Ink.line, lineWidth: on ? 1.5 : 1))
     .opacity(on ? 1 : 0.45)
     .accessibilityElement(children: .combine)
     .accessibilityLabel(on ? "\(label), your answer" : "\(label), not chosen")
   }
 }
 
+/** The finger on an option: a little darker and a hair smaller (0.97), flat; never a shade inside. */
 struct PressStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label.scaleEffect(configuration.isPressed ? 0.98 : 1).animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    configuration.label
+      .background(Ink.fg.opacity(configuration.isPressed ? 0.07 : 0))
+      .scaleEffect(configuration.isPressed ? 0.97 : 1).animation(.easeOut(duration: 0.1), value: configuration.isPressed)
   }
 }
 struct QuietWay: ButtonStyle {

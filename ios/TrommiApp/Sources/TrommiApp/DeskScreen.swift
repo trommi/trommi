@@ -416,7 +416,9 @@ private struct TileBody: View {
       .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(fill))
       .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Ink.surface))
       .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(!lead && scheme == .dark ? Ink.lineStrong : .clear, lineWidth: 1))
-      .scaleEffect(configuration.isPressed ? 0.96 : 1)
+      // the finger on it: a little darker (a quiet tile: a little more of its wash) and a hair smaller, flat
+      .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(lead ? Color.black.opacity(0.14) : Ink.accent.opacity(0.12)).opacity(configuration.isPressed ? 1 : 0).allowsHitTesting(false))
+      .scaleEffect(configuration.isPressed ? 0.97 : 1)
       .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
   }
 }
