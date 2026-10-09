@@ -165,3 +165,7 @@ path = "core/groups_hardening_rules.rs"
 [[test]]
 name = "core_groups_hardening_state"
 path = "core/groups_hardening_state.rs"
+
+[[test]]
+name = "core_groups_reproducible"
+path = "core/groups_reproducible.rs"
