@@ -99,14 +99,32 @@ pub fn channel_tag(params: &Value) -> String {
         .and_then(|m| m.as_object())
         .map(|m| {
             m.iter()
-                .map(|(k, v)| format!(" {k}=\"{}\"", js_string(v).replace('"', "&quot;")))
+                .map(|(k, v)| {
+                    format!(
+                        " {k}=\"{}\"",
+                        channel_text(&js_string(v)).replace('"', "&quot;")
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default();
     format!(
         "<channel source=\"board\"{meta}>\n{}\n</channel>",
-        params.get("content").map(js_string).unwrap_or_default()
+        channel_text(&params.get("content").map(js_string).unwrap_or_default())
     )
+}
+/// Board content as it stands inside a `<channel>` tag: it cannot close the tag or open another, and carries no
+/// control or direction-changing characters (line breaks and tabs stay). What it says remains data.
+pub fn channel_text(text: &str) -> String {
+    let tags = regex::Regex::new(r"(?i)<(/?\s*channel)").unwrap();
+    let cleaned: String = text
+        .chars()
+        .filter(|c| {
+            (*c == '\n' || *c == '\t' || !c.is_control())
+                && !matches!(*c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}')
+        })
+        .collect();
+    tags.replace_all(&cleaned, "&lt;$1").into_owned()
 }
 pub(crate) fn clean_name(v: &Value) -> String {
     let s = if v.is_null() {
@@ -1410,6 +1428,10 @@ impl member::Host for ConnHost {
 
 fn spawn_witness(cfg: &Cfg) {
     use std::os::unix::process::CommandExt;
+    // With a release key pinned, a binary at this path that CI did not sign is not run, not even for this.
+    if crate::update::verify_file(&self_path()) == crate::update::Release::Refused {
+        return;
+    }
     let mut cmd = std::process::Command::new(self_path());
     cmd.args(["witness", &cfg.session])
         .current_dir(&cfg.folder)

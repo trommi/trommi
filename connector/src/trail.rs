@@ -333,9 +333,9 @@ pub fn hook_request(input: &Value, ancestors: &[u32], level: Level) -> Option<Va
         } else {
             put(
                 "title",
-                json!(one_line(str_of(args, "description"), TITLE_MAX)),
+                json!(one_line(&redact(str_of(args, "description")), TITLE_MAX)),
             );
-            put("subject", json!(subject(tool, args, cwd)));
+            put("subject", json!(redact(&subject(tool, args, cwd))));
         }
         Some(())
     };
@@ -392,7 +392,10 @@ pub fn hook_request(input: &Value, ancestors: &[u32], level: Level) -> Option<Va
         "SubagentStart" => {
             put(
                 "title",
-                json!(one_line(str_of(input, "task_description"), TITLE_MAX)),
+                json!(one_line(
+                    &redact(str_of(input, "task_description")),
+                    TITLE_MAX
+                )),
             );
             "agent_start"
         }

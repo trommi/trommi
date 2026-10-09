@@ -343,6 +343,9 @@ pub fn hook_request(kind: &str, input: &Value, ancestors: &[u32]) -> Option<Valu
     } else {
         None
     };
+    // What comes beside the text is bounded, so that cutting the text always gets the line under its limit.
+    let prompt_id: String = prompt_id.chars().take(200).collect();
+    let pictures = pictures.filter(|dir| dir.len() <= 4096);
     loop {
         let mut r = json!({ "op": "terminal", "kind": what, "text": text, "prompt_id": prompt_id, "ancestors": ancestors });
         if let Some(d) = &pictures {
@@ -354,6 +357,9 @@ pub fn hook_request(kind: &str, input: &Value, ancestors: &[u32]) -> Option<Valu
             return Some(r);
         }
         let t = text.take().unwrap_or_default();
+        if t.is_empty() {
+            return None;
+        }
         text = Some(cut_to(&t, t.len() / 2));
     }
 }
