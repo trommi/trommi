@@ -59,13 +59,7 @@ public struct ShareRequest: Codable, Equatable, Identifiable, Sendable {
   }
   /** The words of the share for a note or a message: the typed text, then every link and text item, one per line. */
   public var words: String {
-    var parts = [String]()
-    let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !t.isEmpty { parts.append(t) }
-    for i in items where i.kind == .url || i.kind == .text {
-      if let s = i.text?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty, !parts.contains(s) { parts.append(s) }
-    }
-    return parts.joined(separator: "\n")
+    ShareIntake.joined([ShareItem(kind: .text, name: "text", type: "text/plain", text: text)] + items)
   }
 }
 
