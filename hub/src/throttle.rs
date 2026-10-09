@@ -8,8 +8,9 @@
 //! - **Per account**: an account takes 100 checks in an hour. Past that, sources stand in line: turns are given
 //!   out two seconds apart, in the order sources came, and a turn is good for one check, from its time until
 //!   five seconds after. Nobody else can take it; who comes later than that asks for a new one. That is at most
-//!   2 000 checks per account in any hour on record, however many sources there are (twice the 100 where two of
-//!   its hours meet, 1 800 turns), beside the early checks of the few sources it knows.
+//!   2 010 checks per account in any hour on record, however many sources there are (1 800 turns of that hour,
+//!   the few given out before it that are still good, twice the 100 where two of its hours meet), beside the
+//!   early checks of the few sources it knows.
 //! - **The rightful owner always gets in.** From a source the account knows, a credential is checked at once
 //!   also while the source stands in line (an early check): the right one gets in whatever others do. From a
 //!   new source it is checked at its turn, at most ten minutes later.
@@ -37,7 +38,8 @@ pub const TURN_GOOD_MS: u64 = 5_000;
 /// Sources an account keeps a record of. One more makes it forget the one whose wait ran out longest ago; if
 /// none has run out, a source it has no record of waits. The sources an account knows always have theirs.
 pub const SOURCES_PER_ACCOUNT: i64 = 5_000;
-/// The same over all accounts, and e-mails that have none.
+/// The same over all accounts, and e-mails that have none (beside the records of sources an account knows:
+/// at most 16 for each account).
 pub const SOURCES: i64 = 500_000;
 /// E-mails whose hour is on record. One more makes the hub forget the oldest hour.
 pub const ACCOUNTS: i64 = 200_000;
@@ -85,18 +87,38 @@ fn count(c: &Connection, column: &str, by: i64) -> Res<()> {
     Ok(())
 }
 
-fn own_state(c: &Connection, a: &Key, s: &Key, now: u64) -> Res<(bool, Option<u64>)> {
-    let row: Option<(i64, Option<i64>)> = c
+struct Own {
+    on_record: bool,
+    wait: Option<u64>,
+    /// the record was made while the tables were full
+    over: bool,
+}
+
+fn own_state(c: &Connection, a: &Key, s: &Key, now: u64) -> Res<Own> {
+    let row: Option<(i64, Option<i64>, bool)> = c
         .prepare_cached(
-            "SELECT next_at, checking FROM login_sources WHERE account = ?1 AND source = ?2",
+            "SELECT next_at, checking, over FROM login_sources WHERE account = ?1 AND source = ?2",
         )?
-        .query_row(params![&a[..], &s[..]], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_row(params![&a[..], &s[..]], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
         .optional()?;
     Ok(match row {
-        Some((_, Some(_))) => (true, Some(1)),
-        Some((next_at, None)) if now < next_at as u64 => (true, Some(secs(next_at as u64 - now))),
-        Some(_) => (true, None),
-        None => (false, None),
+        Some((_, Some(_), over)) => Own {
+            on_record: true,
+            wait: Some(1),
+            over,
+        },
+        Some((next_at, None, over)) => Own {
+            on_record: true,
+            wait: (now < next_at as u64).then(|| secs(next_at as u64 - now)),
+            over,
+        },
+        None => Own {
+            on_record: false,
+            wait: None,
+            over: false,
+        },
     })
 }
 
@@ -109,11 +131,26 @@ pub fn own_wait(c: &Connection, account: &[u8], source: &[u8], now: u64) -> Res<
             "SELECT 1 FROM login_turns WHERE account = ?1 AND source = ?2 AND good_until >= ?3",
         )?
         .exists(params![&a[..], &s[..], now as i64])?;
-    Ok(if in_line {
-        None
-    } else {
-        own_state(c, &a, &s, now)?.1
-    })
+    let own = own_state(c, &a, &s, now)?;
+    Ok(if in_line || own.over { None } else { own.wait })
+}
+
+/// A request arrived whose source holds a turn that has come: the turn stays good while the request waits for
+/// the pool (`wait_ms`: the longest that takes), so that who came in time is checked.
+pub fn arrived(c: &Connection, account: &[u8], source: &[u8], now: u64, wait_ms: u64) -> Res<()> {
+    let (a, s) = (key(account), key(source));
+    c.prepare_cached(
+        "UPDATE login_turns SET good_until = max(good_until, ?4) WHERE account = ?1 AND source = ?2 AND turn <= ?3 AND good_until >= ?3",
+    )?
+    .execute(params![&a[..], &s[..], now as i64, (now + wait_ms) as i64])?;
+    Ok(())
+}
+
+/// Whether the source holds a turn that has come (read only: `arrived` is called only then).
+pub fn turn_due(c: &Connection, account: &[u8], source: &[u8], now: u64) -> Res<bool> {
+    let (a, s) = (key(account), key(source));
+    Ok(c.prepare_cached("SELECT 1 FROM login_turns WHERE account = ?1 AND source = ?2 AND turn <= ?3 AND good_until >= ?3")?
+        .exists(params![&a[..], &s[..], now as i64])?)
 }
 
 /// Room for one more source on record, by forgetting one whose wait has run out. `false`: there is none.
@@ -171,7 +208,19 @@ fn room_for_account(c: &Connection) -> Res<()> {
 pub fn admit(c: &Connection, account: &[u8], source: &[u8], known: bool, now: u64) -> Res<Verdict> {
     let (a, s) = (key(account), key(source));
     // the source's own state: one check at a time, and its back-off
-    let (on_record, own) = own_state(c, &a, &s, now)?;
+    let Own {
+        on_record,
+        wait: own,
+        over,
+    } = own_state(c, &a, &s, now)?;
+    // a record made while the tables were full answers its waits as a full table does (at the cost of a hash):
+    // nothing about it tells that the account knows this source
+    if over && own.is_some() {
+        return Ok(Verdict::Line {
+            wait: 60,
+            early: None,
+        });
+    }
     // every check is on record: without room for the record there is no check for a source the account does
     // not know. One it knows is checked all the same and, if wrong, answered like the other.
     let full = !on_record && !room_for_source(c, &a, now)?;
@@ -258,10 +307,10 @@ pub fn admit(c: &Connection, account: &[u8], source: &[u8], known: bool, now: u6
     };
     let record = |attempt: i64| -> Res<()> {
         c.prepare_cached(
-            "INSERT INTO login_sources (account, source, failures, next_at, checking) VALUES (?1, ?2, 0, 0, ?3)
-             ON CONFLICT (account, source) DO UPDATE SET checking = excluded.checking",
+            "INSERT INTO login_sources (account, source, failures, next_at, checking, over) VALUES (?1, ?2, 0, 0, ?3, ?4)
+             ON CONFLICT (account, source) DO UPDATE SET checking = excluded.checking, over = excluded.over",
         )?
-        .execute(params![&a[..], &s[..], attempt])?;
+        .execute(params![&a[..], &s[..], attempt, full])?;
         if !on_record {
             count(c, "sources", 1)?;
         }

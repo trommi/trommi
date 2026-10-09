@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::{Connection, OpenFlags};
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 pub const SCHEMA: &str = r#"
 -- ---- accounts: a way into a room. The hub checks the login; the sealed copies of the recovery code are opaque.
@@ -64,6 +64,8 @@ CREATE TABLE login_sources (
   next_at        INTEGER NOT NULL,
   -- the attempt being checked now
   checking       INTEGER,
+  -- made while the tables were full (only for a source the account knows): its waits are answered as theirs
+  over           INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (account, source)
 ) STRICT;
 CREATE INDEX login_sources_by_wait ON login_sources(next_at);
