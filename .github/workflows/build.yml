@@ -1,33 +1,180 @@
-# Runs on every commit on main: builds each part and hands what was built to that part's deploy workflow.
-# Only the web part exists so far; the other parts get a job of the same shape.
+# On every commit on main and on every pull request: find which parts changed, test and build those, and (on main
+# only) hand each built part to its deploy workflow.
+#
+# A part counts as changed when its own folder changed, or core/, or what pins the build (Cargo.toml, Cargo.lock,
+# rust-toolchain.toml). A run started by hand counts every part as changed.
+#
+# How a part is wired in (the web app is the first; hub, connector and ios follow the same three steps):
+#   1. `changes`: one more `part <name> '<its own paths>'` line and one more output.
+#   2. a job named after the part: tests, builds, uploads ONE artifact named `<part>-release`.
+#   3. a job `deploy_<part>` that calls `.github/workflows/deploy_<part>.yml` with
+#        version:  the number of this run (github.run_number): a whole number that only grows, the same for every
+#                  part built by one run
+#        commit:   the commit that was built
+#        artifact: `<part>-release`
+#      and `secrets: inherit`. The deploy workflow alone uses the environment `production`.
 name: build
 
 on:
   push:
     branches: [main]
+  pull_request:
+  workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
+# One run per branch at a time. On main nothing running is cut off; of several waiting runs the newest stays.
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  web:
-    runs-on: ubuntu-latest
+  changes:
+    name: Which parts changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      web: ${{ steps.find.outputs.web }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The placeholder has no build step: its files are the release.
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find the changed parts
+        id: find
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+          base=
+          case "$EVENT" in
+            push) base=$BEFORE ;;
+            pull_request) base=$(git merge-base "$PR_BASE" HEAD || true) ;;
+          esac
+          # no known commit to compare with (a run by hand, a first push, a rewritten branch): everything changed
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            all=0
+            git diff --name-only "$base" HEAD > "$RUNNER_TEMP/files"
+            echo "compared with $base: $(wc -l < "$RUNNER_TEMP/files") file(s) changed"
+          else
+            all=1
+            : > "$RUNNER_TEMP/files"
+            echo "nothing to compare with: every part counts as changed"
+          fi
+          shared='core/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|\.github/workflows/build\.yml$'
+          part() {
+            if [ "$all" = 1 ] || grep -Eq "^($2|$shared)" "$RUNNER_TEMP/files"; then value=true; else value=false; fi
+            echo "$1=$value" >> "$GITHUB_OUTPUT"
+            echo "$1: $value"
+            echo "- $1: $value" >> "$GITHUB_STEP_SUMMARY"
+          }
+          # (connector/tools.json and prompt.md, demo/: the app's build reads them)
+          part web 'app/web/|app/shell/|tests/web/|tests/shell/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
+
+  web:
+    name: Web app (test and build)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # What is built. `shell`: the stand-in page of app/shell (the core's self test under the app's worker and
+      # headers), while the real app does not build yet. THE ONE LINE TO CHANGE when it does: `app`; then
+      # app/shell and tests/shell are deleted.
+      WEB_ENTRY: shell
+      # The hub the app speaks to. The build is checked against it: the page's policy must name this hub and no other.
+      WEB_HUB_URL: https://hub.trommi.com
+      # Strict-Transport-Security with preload on every answer: `on` once the owner says so. Not to be taken back
+      # quickly: browsers then refuse plain http for app.trommi.com and what lies under it for two years.
+      WEB_HSTS: 'off'
+      VERSION: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Compiler (rust-toolchain.toml)
+        run: |
+          rustup toolchain install || rustup show
+          rustc --version
+          echo "WASM_BINDGEN=$(sed -n 's/^wasm-bindgen = "=\(.*\)"$/\1/p' core/wasm/Cargo.toml)" >> "$GITHUB_ENV"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: web-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ runner.os }}-${{ env.WASM_BINDGEN }}-${{ hashFiles('rust-toolchain.toml') }}
+      # the command must be the version of the crate in Cargo.lock (core/wasm/build.sh checks it)
+      - name: wasm-bindgen
+        if: steps.bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN" --locked
+      - name: Packages
+        run: npm ci --no-audit --no-fund
+      - name: The Rust core for the browser
+        run: sh core/wasm/build.sh
+      - name: Test and build (shell)
+        if: env.WEB_ENTRY == 'shell'
+        run: |
+          set -eu
+          node app/shell/build.mjs "$RUNNER_TEMP/public"
+          node tests/shell/check.mjs "$RUNNER_TEMP/public"
+          echo "PUBLIC=$RUNNER_TEMP/public" >> "$GITHUB_ENV"
+      - name: Test and build (app)
+        if: env.WEB_ENTRY == 'app'
+        run: |
+          set -eu
+          npm test
+          node tests/web/build/build.test.mjs
+          node app/web/dev/build.mjs --write
+          echo "PUBLIC=app/web/public" >> "$GITHUB_ENV"
+      # What is delivered: the files, the worker, its settings, and the manifest that names every file.
+      - name: Put the release together
+        run: |
+          set -eu
+          node .github/scripts/web_release.mjs "$PUBLIC" out
+          (cd out && sha256sum -c --quiet checksums.txt)
+          # the settings are tried as wrangler reads them; nothing is sent
+          npm ci --no-audit --no-fund --ignore-scripts --prefix .github/tools/wrangler
+          (cd out && WRANGLER_SEND_METRICS=false ../.github/tools/wrangler/node_modules/.bin/wrangler deploy --dry-run --outdir "$RUNNER_TEMP/dry")
+          {
+            echo "### Web app, build $VERSION"
+            echo
+            echo "entry \`$WEB_ENTRY\`, hub \`$WEB_HUB_URL\`, HSTS \`$WEB_HSTS\`, $(jq '.files | length' out/manifest.json) files, manifest \`$(sha256sum out/manifest.json | cut -d' ' -f1)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-release
-          path: app/hello/public
+          path: out/
           if-no-files-found: error
+          retention-days: 30
 
   deploy_web:
-    needs: web
+    name: Web app
+    needs: [changes, web]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.web == 'true'
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
     uses: ./.github/workflows/deploy_web.yml
     with:
+      version: ${{ github.run_number }}
+      commit: ${{ github.sha }}
       artifact: web-release
     secrets: inherit
