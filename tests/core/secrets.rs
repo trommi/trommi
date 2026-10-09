@@ -1,7 +1,7 @@
 //! No copy of a secret is left behind in memory that was given back: every buffer a key, a link's secret or a
 //! sealed body's plaintext passed through is wiped before it is freed. The allocator of this test program looks
-//! into every block as it is freed, and into every block that is moved to grow, for the marks of the secrets
-//! the test uses.
+//! into every block as it is freed, and into every block that is moved to grow, for two marks of the one
+//! secret the test uses. It watches the paths the test walks, and no others.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -41,11 +41,12 @@ fn holds_a_mark(block: &[u8]) -> bool {
         .any(|mark| block.windows(mark.len()).any(|window| window == *mark))
 }
 
-// SAFETY: every call is passed on to the system allocator with the arguments it was given; a block is only
-// read, within the size it was allocated with, before it is given back.
+// SAFETY: every block comes from the system allocator with the layout asked for, zeroed, so that all of it
+// may be read; a block is read within its size before it is given back; a block that grows is a new block
+// with the old bytes copied over, and the old one is given back like any other.
 unsafe impl GlobalAlloc for Watching {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe { System.alloc(layout) }
+        unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn dealloc(&self, block: *mut u8, layout: Layout) {
@@ -56,11 +57,18 @@ unsafe impl GlobalAlloc for Watching {
     }
 
     unsafe fn realloc(&self, block: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        // A block that grows may move, and the system frees the old one unseen: it counts as freed here.
-        if holds_a_mark(unsafe { std::slice::from_raw_parts(block, layout.size()) }) {
-            LEFT_BEHIND.fetch_add(1, Ordering::SeqCst);
+        // A block that changes its size always moves here, so that the old one is seen as it is freed.
+        let Ok(new_layout) = Layout::from_size_align(new_size, layout.align()) else {
+            return std::ptr::null_mut();
+        };
+        let moved = unsafe { self.alloc(new_layout) };
+        if !moved.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(block, moved, layout.size().min(new_size));
+                self.dealloc(block, layout);
+            }
         }
-        unsafe { System.realloc(block, layout, new_size) }
+        moved
     }
 }
 

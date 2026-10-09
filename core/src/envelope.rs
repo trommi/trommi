@@ -638,8 +638,12 @@ impl Bind {
                 }
                 writer.fixed(bind.object_id.as_bytes());
                 writer.fixed(bind.version_hash.as_bytes());
-                let choices: Vec<Opaque> = bind.choices.iter().cloned().map(Opaque).collect();
-                writer.vector(&choices)?;
+                // Each choice behind its length, all of them behind theirs: no copy of a choice is made.
+                let mut choices = Writer::new();
+                for choice in &bind.choices {
+                    choices.opaque(choice)?;
+                }
+                writer.opaque(&Zeroizing::new(choices.into_bytes()))?;
             }
             Self::Request(bind) => {
                 writer.fixed(bind.request_id.as_bytes());
@@ -809,6 +813,9 @@ impl fmt::Debug for Body {
 impl Drop for Body {
     fn drop(&mut self) {
         self.payload.zeroize();
+        if let Bind::Answer(answer) = &mut self.bind {
+            answer.choices.iter_mut().for_each(Zeroize::zeroize);
+        }
     }
 }
 
@@ -849,13 +856,14 @@ impl Body {
 
     /// `Body ‖ zero bytes` up to the next of 256, 512, … 65536 bytes; `too-large` beyond.
     fn pad(&self) -> Result<Zeroizing<Vec<u8>>, Error> {
-        let bind = self.bind.encode()?;
+        let bind = Zeroizing::new(self.bind.encode()?);
         // The body is written into a buffer that has its padded length from the start: growing it would
-        // leave the payload behind in the buffer it outgrew.
-        let unpadded = BODY_OVERHEAD
+        // leave the payload behind in the buffer it outgrew. The estimate may lie a few bytes above the
+        // body; whether the body fits is judged by its own length.
+        let estimate = BODY_OVERHEAD
             .saturating_add(bind.len())
             .saturating_add(self.payload.len());
-        let mut writer = Writer::with_capacity(bucket(unpadded).ok_or(Error::TooLarge)?);
+        let mut writer = Writer::with_capacity(bucket(estimate).unwrap_or(MAX_PADDED_LEN));
         writer.u8(VERSION);
         writer.opaque(&bind)?;
         writer.opaque(&self.payload)?;

@@ -1343,6 +1343,41 @@ mod format {
     }
 
     #[test]
+    fn a_body_of_exactly_the_largest_padded_size_is_sealed() {
+        // Version (1), the bind behind two bytes of length, the payload behind four: 65 536 bytes in all.
+        let bind = AnswerBind {
+            object_id: ObjectId::new([7; 16]),
+            version_hash: Hash32::new([9; 32]),
+            choices: vec![vec![b'c'; 250]; 22],
+        };
+        let bind_len = seal::bind_bytes(&Bind::Answer(bind.clone())).unwrap().len();
+        let payload_len = MAX_PADDED_LEN - 1 - 2 - bind_len - 4;
+        let payload = |len: usize| format!("{{\"t\":\"{}\"}}", "a".repeat(len - 8));
+        let slot = slot(session_group(), 1, 1, Hash32::ZERO);
+        let seal_with = |len: usize| {
+            let draft = Draft::answer(
+                bind.clone(),
+                false,
+                Urgency::Low,
+                device(2),
+                payload(len).as_bytes(),
+            );
+            seal(&draft, &slot, &key(3), &signer(1), &mut seeded(1))
+        };
+        let sealed = seal_with(payload_len).unwrap();
+        let Content::Full(ciphertext) = &sealed.envelope.content else {
+            panic!("full form");
+        };
+        assert_eq!(ciphertext.len(), MAX_PADDED_LEN + crypto::TAG_LEN);
+        assert_eq!(
+            sealed.envelope.open(&key(3)).unwrap().payload(),
+            payload(payload_len).as_bytes()
+        );
+        // One byte more does not fit.
+        assert_eq!(seal_with(payload_len + 1), Err(Error::TooLarge));
+    }
+
+    #[test]
     fn nonces_are_fresh_and_the_wrong_key_or_header_opens_nothing() {
         let draft = Draft::board_item(BoardId::ALL_DESKS, &payload("x"));
         let slot = slot(room_group(), 1, 1, Hash32::ZERO);

@@ -1362,7 +1362,15 @@ mod loading {
             verify_load(&BOARD, &held, &[], &scene.snapshot, &served, &chains).err(),
             Some(Error::HashMismatch)
         );
+        // At the frontier's own number the finding is the frontier's.
         assert_eq!(at.seq, 3);
+        let mut served = scene.served.clone();
+        served[0].hash = Hash32::new([9; 32]);
+        assert_eq!(served[0].seq, 3);
+        assert_eq!(
+            verify_load(&BOARD, &held, &[], &scene.snapshot, &served, &chains).err(),
+            Some(Error::Equivocation)
+        );
     }
 
     #[test]

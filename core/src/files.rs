@@ -506,14 +506,18 @@ impl Decryptor {
         self.open_pending(out, true)
     }
 
+    /// Runs a step that hands out at most `most` bytes of plaintext more than are pending. The buffer has
+    /// room for all of them from the start: plaintext is never left behind in a buffer it outgrew.
     fn guarded(
         &mut self,
+        most: usize,
         step: impl FnOnce(&mut Self, &mut Vec<u8>) -> Result<(), Error>,
     ) -> Result<Vec<u8>, Error> {
         if let Some(error) = &self.failed {
             return Err(error.clone());
         }
-        let mut out = Zeroizing::new(Vec::new());
+        let room = self.pending.len().saturating_add(most);
+        let mut out = Zeroizing::new(Vec::with_capacity(room));
         match step(self, &mut out) {
             Ok(()) => Ok(std::mem::take(&mut *out)),
             Err(error) => {
@@ -527,7 +531,7 @@ impl Decryptor {
     /// `bad-format` for a head that is none, `decrypt-failed` for a head of another file or a chunk that does not
     /// open at its place, `too-large` beyond the largest file.
     pub fn update(&mut self, stored: &[u8]) -> Result<Vec<u8>, Error> {
-        self.guarded(|this, out| this.take(stored, out))
+        self.guarded(stored.len(), |this, out| this.take(stored, out))
     }
 
     /// Ends the file: the plaintext of the final chunk. `bad-format` when the bytes end before a chunk could,
@@ -535,7 +539,7 @@ impl Decryptor {
     /// SHA-256 names, or what came last is not the file's final chunk: the file was cut, or something was
     /// appended.
     pub fn finish(mut self) -> Result<Vec<u8>, Error> {
-        self.guarded(|this, out| this.end(out))
+        self.guarded(0, |this, out| this.end(out))
     }
 }
 
@@ -563,10 +567,13 @@ pub fn decrypt_file(file: &FileRef, stored: &[u8]) -> Result<Vec<u8>, Error> {
     let mut hasher = FileHasher::new();
     hasher.update(stored);
     hasher.verify(&file.sha256)?;
-    Layout::of_stored(stored_len)?;
+    let layout = Layout::of_stored(stored_len)?;
 
     let mut decryptor = Decryptor::start(file, None);
-    let mut plain = Zeroizing::new(decryptor.update(stored)?);
+    // Room for the whole file, so that the plaintext is written once and never moved.
+    let room = usize::try_from(layout.plain_len()).map_err(|_| Error::TooLarge)?;
+    let mut plain = Zeroizing::new(Vec::with_capacity(room));
+    plain.extend_from_slice(&Zeroizing::new(decryptor.update(stored)?));
     plain.extend_from_slice(&Zeroizing::new(decryptor.finish()?));
     Ok(std::mem::take(&mut *plain))
 }
