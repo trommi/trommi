@@ -1,15 +1,18 @@
 //! Removal of a human device (5.2.8): the room Commit, the stale session groups, and whoever comes next
 //! finishing the Removes. Nothing is taken from or for the removed device in between.
 
+use trommi_core::codec;
 use trommi_core::device::{Processed, Received};
 use trommi_core::ids::{GroupId, TurnId};
+use trommi_core::mls::message::TrommiMessage;
 use trommi_core::mls::profile::Cut;
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, cuts_for, enrol, found_main, found_room, found_room_on, new_device, new_device_on,
-    now, post_ok, post_refused, publish_some, reopen, settle, sync, sync_ok, MemoryStorage,
-    TestDevice,
+    add_forger, add_human, cuts_for, enrol, found_main, found_room, found_room_on, new_device,
+    new_device_on, now, post_ok, post_refused, publish_some, reopen, settle, sync, sync_ok,
+    MemoryStorage, TestDevice,
 };
 
 struct Room {
@@ -134,9 +137,9 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
     );
 
     // The removed device learns of its removal from the log: it derives no key of the new room epoch and
-    // holds the room group no more. Open point: it cannot compute the room state of the epoch that removed it
-    // (OpenMLS gives a removed member no full group context), so its record of the roles ends one epoch
-    // earlier and `is_human` stays true; what it then builds names that older room epoch and is refused.
+    // holds the room group no more. It follows the room group as an observer from there: it knows the room
+    // state that removed it, in which its key is revoked, and is no human device.
+    assert!(x.is_human());
     let processed = sync(&hub, &mut x);
     assert!(matches!(
         processed[..],
@@ -146,11 +149,20 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
             ..
         })]
     ));
+    assert!(!x.is_human());
+    let roles = x.room_history().unwrap();
+    assert_eq!(roles.newest(), hub.history().unwrap().newest());
+    assert_eq!(roles.newest().epoch, 4);
+    assert!(roles.is_revoked(&x.id(), 4) && !roles.is_revoked(&x.id(), 3));
+    assert!(roles.at(3).is_some(), "what it verified before stays");
     assert_eq!(x.content_key(&room_group, 4), Err(Error::NoKey));
     assert_eq!(x.group(&room_group).err(), Some(Error::NotFound));
-    assert_eq!(x.update(&room_group, true, now()), Err(Error::NotFound));
-    x.update(&group, true, now()).unwrap().unwrap();
-    assert_eq!(post_refused(&mut hub, &mut x), [Error::RoomBehind]);
+    // It builds nothing more: not in the room group, and not in the session group it is still a leaf of.
+    assert_eq!(x.update(&room_group, true, now()), Err(Error::Forbidden));
+    assert_eq!(x.update(&group, true, now()), Err(Error::Forbidden));
+    assert_eq!(x.send_handover(&group, &agent.id()), Err(Error::Forbidden));
+    assert_eq!(x.group(&group).unwrap().disallowed, [x.id()]);
+    assert!(x.outbox().is_empty());
 
     // Another human device than the remover finishes: the Remove with the Cut in the session group.
     b.clean_session(&group, &cuts_for(&b, &group), None, now())
@@ -169,11 +181,15 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
         [a.id(), b.id(), agent.id()].into_iter().collect()
     );
 
-    // The removed device derives no key of the session's new epoch; what it read, it keeps.
-    sync(&hub, &mut x);
+    // The removed device processes its removal from the session group too, which names the room epoch that
+    // removed it: it derives no key of the session's new epoch; what it read, it keeps.
+    let processed = sync_ok(&hub, &mut x);
+    assert!(matches!(
+        &processed[..],
+        [Processed::Commit { facts, removed: true, .. }] if facts.removes == [x.id()]
+    ));
+    assert_eq!(x.group(&group).err(), Some(Error::NotFound));
     assert_eq!(x.content_key(&group, 2), Err(Error::NoKey));
-    x.send_handover(&group, &agent.id()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut x), [Error::WrongEpoch]);
     assert_eq!(x.content_key(&room_group, 3).unwrap(), old_room_key);
     assert_eq!(x.content_key(&group, 1).unwrap(), old_session_key);
     assert_eq!(a.content_key(&group, 1).unwrap(), old_session_key);
@@ -215,6 +231,71 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
     assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
     assert!(!a.group(&group).unwrap().pending);
     assert_eq!(hub.epoch(&group), Some(2));
+}
+
+#[test]
+fn a_removed_human_device_is_no_sender_of_a_work_trail() {
+    // A hub that checks nothing stores what a removed device still posts in a stale session group.
+    let (mut a, mut agent) = (new_device(), new_device());
+    let mut hub = Hub::new(false);
+    found_room_on(&mut hub, &mut a);
+    enrol(&mut hub, &mut a, &mut agent);
+    publish_some(&mut hub, &mut agent, 1);
+    let group = found_main(&mut hub, &mut a, &agent.id());
+    // A human device that sends what no device sends, in the room and in the session.
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    a.add_to_session(&group, &forger.id(), &forger.key_package(), now())
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    let mut forged = forger.join(&hub.welcomes.last().unwrap().bytes);
+    settle(&hub, &mut agent);
+    let step = |number: u32| {
+        codec::encode(&TrommiMessage::WorkTrail {
+            turn: TurnId::new([7; 16]),
+            number,
+            time: now(),
+            step: b"{}".to_vec(),
+        })
+        .unwrap()
+    };
+    let last = |hub: &Hub, device: &mut TestDevice| sync(hub, device).pop().unwrap();
+
+    // A step from a human device is dropped; one from the agent device is taken (7.3).
+    forger.post_message(&mut hub, &mut forged, &step(1));
+    assert_eq!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::Dropped))
+    );
+    agent
+        .send_work_trail(&group, &TurnId::new([7; 16]), 1, b"{}", now())
+        .unwrap();
+    post_ok(&mut hub, &mut agent);
+    assert!(matches!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::WorkTrail { from, .. })) if from == agent.id()
+    ));
+
+    // Removed from the room group, the device is no human device any more, and its leaf is still in the
+    // session group. It is none of the session's agent or helper devices either: its key is revoked.
+    a.remove_human_devices(&[Cut::none(forger.id())], now())
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    assert_eq!(a.group(&group).unwrap().disallowed, [forger.id()]);
+    forger.post_message(&mut hub, &mut forged, &step(2));
+    assert_eq!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::Dropped))
+    );
+    // The agent device's steps are still taken.
+    agent
+        .send_work_trail(&group, &TurnId::new([7; 16]), 2, b"{}", now())
+        .unwrap();
+    post_ok(&mut hub, &mut agent);
+    assert!(matches!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::WorkTrail { from, number: 2, .. })) if from == agent.id()
+    ));
 }
 
 #[test]
