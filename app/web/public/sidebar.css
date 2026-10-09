@@ -544,6 +544,12 @@ body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cu
 .corner-note-ghost p { max-height: 170px; overflow: hidden; overflow-wrap: anywhere; }
 .corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: var(--s-3) var(--s-3) var(--s-2); }
 .corner-note-field { max-height: 50vh; }
+/* a wide window: the open note is a square sheet (his word, 9 October: "40 % größer und quadratisch"), 448px a side,
+   smaller where the window is; the words fill it, the paperclip, the bin and the envelope stay at its foot */
+@media (min-width: 861px) {
+  .corner-note-box.is-open .corner-note-body { --note-side: min(448px, calc(100vw - 32px), calc(100dvh - 32px)); box-sizing: border-box; width: var(--note-side); height: var(--note-side); grid-template-rows: minmax(0, 1fr) auto auto; }
+  .corner-note-box.is-open .corner-note-field { height: 100% !important; min-height: 0; max-height: none; }
+}
 /* In a conversation on a wide window the note keeps its corner too: the composer's line (the composer and the filter)
    ends before it, however narrow the window (session.css .session-compose). */
 /* a card on a narrow window: the field to write in (which stays at the window's foot once the page scrolls, card.css
