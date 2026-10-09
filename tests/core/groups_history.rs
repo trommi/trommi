@@ -1,13 +1,17 @@
 //! History for a device that comes later (6.2, 6.3, 7.1): old content keys travel in a key handover, are
 //! taken once, never replace a held key and never reach a device they are not for.
 
+use trommi_core::codec;
+use trommi_core::crypto::Secret;
 use trommi_core::device::{Processed, Received};
-use trommi_core::ids::GroupId;
+use trommi_core::ids::{GroupId, RoomId, SessionId};
+use trommi_core::mls::message::{EpochKey, TrommiMessage};
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, add_to_session, enrol, found_main, found_room, new_device, now, post_ok, process,
-    publish_some, settle, sync_ok, TestDevice,
+    add_forger, add_human, add_to_session, enrol, found_main, found_room, new_device, now, post_ok,
+    process, publish_some, settle, sync_ok, TestDevice,
 };
 
 /// A room of one human device with one main session, each group some epochs old.
@@ -228,4 +232,86 @@ fn a_session_handover_carries_that_groups_keys_only() {
         agent.send_handover(&room_group, &a.id()),
         Err(Error::NotFound)
     );
+}
+
+#[test]
+fn a_handed_key_is_bound_by_what_the_device_knows_of_its_group() {
+    let (mut hub, mut a, _agent, room_group, group) = room_with_history();
+    let mut b = new_device();
+    add_human(&mut hub, &mut a, &mut b);
+    // A human device that hands over what no device hands over.
+    let forger = Forger::new();
+    let mut forged = add_forger(&mut hub, &mut a, &forger);
+    sync_ok(&hub, &mut b);
+    let room_epoch = hub.epoch(&room_group).unwrap();
+    let joins_at = hub.epoch(&group).unwrap() + 1;
+    let key = |byte: u8| Secret::new([byte; 32]);
+    let mut hand = |hub: &mut Hub, b: &mut TestDevice, keys: Vec<(GroupId, u64, u8)>| {
+        let message = TrommiMessage::KeyHandover {
+            recipient: b.id(),
+            keys: keys
+                .into_iter()
+                .map(|(group, epoch, byte)| EpochKey {
+                    group,
+                    epoch,
+                    content_key: key(byte),
+                })
+                .collect(),
+            last: true,
+        };
+        forger.post_message(hub, &mut forged, &codec::encode(&message).unwrap());
+        let processed = sync_ok(hub, b);
+        match processed.last() {
+            Some(Processed::Message(Received::Keys { taken, .. })) => *taken,
+            other => panic!("a handover: {other:?}"),
+        }
+    };
+
+    // The device is no leaf of the session group yet: it cannot tell how far that group is, and takes its
+    // keys as they come (7.1: a newcomer is handed every key before it is added to the sessions). Of a
+    // group it holds it takes no key beyond its own epoch, and none of a group of another room.
+    let never_joined = GroupId::session(room_group.room_id(), SessionId::new([9; 16]));
+    let elsewhere = GroupId::session(RoomId::new([8; 32]), SessionId::new([9; 16]));
+    let taken = hand(
+        &mut hub,
+        &mut b,
+        vec![
+            (group, 0, 1),
+            (group, joins_at, 2),
+            (group, joins_at + 5, 3),
+            (never_joined, u64::MAX, 4),
+            (elsewhere, 0, 5),
+            (room_group, room_epoch + 1, 6),
+        ],
+    );
+    assert_eq!(taken, 4);
+    assert_eq!(b.content_key(&group, joins_at).unwrap(), key(2));
+    assert_eq!(b.content_key(&elsewhere, 0), Err(Error::NoKey));
+    assert_eq!(
+        b.content_key(&room_group, room_epoch + 1),
+        Err(Error::NoKey)
+    );
+
+    // It joins the session group. The key of the epoch it joined at is the one it derived, not the one it
+    // was handed, and the handed keys of later epochs, which the group had not reached, are gone. What was
+    // handed for earlier epochs stays: it opens something or nothing (content is signed).
+    add_to_session(&mut hub, &mut a, &mut b, &group);
+    settle(&hub, &mut b);
+    assert_eq!(b.group(&group).unwrap().epoch, joins_at);
+    assert_eq!(
+        b.content_key(&group, joins_at).unwrap(),
+        a.content_key(&group, joins_at).unwrap()
+    );
+    assert_eq!(b.content_key(&group, joins_at + 5), Err(Error::NoKey));
+    assert_eq!(b.content_key(&group, 0).unwrap(), key(1));
+    assert_eq!(b.content_key(&never_joined, u64::MAX).unwrap(), key(4));
+    // From here on the group bounds what the device takes for it.
+    let taken = hand(
+        &mut hub,
+        &mut b,
+        vec![(group, joins_at + 1, 7), (group, joins_at - 1, 8)],
+    );
+    assert_eq!(taken, 1);
+    assert_eq!(b.content_key(&group, joins_at + 1), Err(Error::NoKey));
+    assert_eq!(b.content_key(&group, joins_at - 1).unwrap(), key(8));
 }

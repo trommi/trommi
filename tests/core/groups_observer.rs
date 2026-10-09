@@ -7,9 +7,9 @@ use trommi_core::crypto::SystemEntropy;
 use trommi_core::device::{
     log_finding, Device, LogEntry, LogFinding, LogKind, Processed, WelcomeExpectation,
 };
-use trommi_core::ids::{DeviceId, GroupId};
+use trommi_core::ids::{DeviceId, GroupId, RoomId};
 use trommi_core::mls::observer::{Context, NoSessions, Observer};
-use trommi_core::mls::profile::Cut;
+use trommi_core::mls::profile::{Cut, TrommiRoom};
 use trommi_core::mls::rules::Parent;
 use trommi_core::store::{table, Batch, Entry, OutboxKind};
 use trommi_core::Error;
@@ -1030,6 +1030,132 @@ fn a_welcome_must_agree_with_what_the_observer_verified() {
         process(&mut e, hub.log.last().unwrap()),
         Ok(Processed::Observed(_))
     ));
+}
+
+#[test]
+fn a_first_tree_with_a_leaf_outside_the_profile_is_refused() {
+    type Change = fn(&mut Founder);
+    let changes: [(&str, bool, Change); 3] = [
+        ("the profile's leaf", true, |_| {}),
+        (
+            "a credential that is not the signature key",
+            false,
+            |forger| forger.identity = vec![7; 32],
+        ),
+        ("a capability beside the profile's", false, |forger| {
+            forger.extra_extension = Some(0xF0F0)
+        }),
+    ];
+    let room = TrommiRoom {
+        recovery_signature_key: [0xE1; 32],
+        recovery_hpke_key: [0xE2; 32],
+        agents: Vec::new(),
+    };
+    for (at, (name, fits, change)) in changes.into_iter().enumerate() {
+        let group = GroupId::room(RoomId::new([at as u8 + 1; 32]));
+        let anyone = WelcomeExpectation {
+            room: group.room_id(),
+            committer: None,
+        };
+        // The founder's own leaf: the hub at the founding (14.1).
+        let mut odd = Founder::new();
+        change(&mut odd);
+        let founded = odd.found_room(&group, &room);
+        let sealed = format!("test sealed key {group} 0 0");
+        let at_the_hub = Observer::found_room(
+            &odd.group_info(&founded),
+            sealed.as_bytes(),
+            &TestRecovery::default(),
+        );
+        assert_eq!(
+            at_the_hub.err(),
+            (!fits).then_some(Error::BadCommit),
+            "{name}"
+        );
+
+        // The leaf of a device that a founder with the profile's leaf added: an observer that starts from a
+        // later GroupInfo, a device told to follow the room from it, and a device added by Welcome, for
+        // which the odd leaf is neither its own nor the one of the device that added it.
+        let founder = Founder::new();
+        let mut forged = founder.found_room(&group, &room);
+        founder.commit(&mut forged, b"", &[odd.key_package()]);
+        let info = founder.group_info(&forged);
+        let follower = Observer::follow_room(&info, None);
+        assert_eq!(follower.err(), (!fits).then_some(Error::BadGroup), "{name}");
+        let mut told = new_device();
+        assert_eq!(
+            told.observe_room(&info, None).err(),
+            (!fits).then_some(Error::BadGroup),
+            "{name}"
+        );
+        assert_eq!(told.room().is_some(), fits, "{name}");
+        let mut added = new_device();
+        let package = added.key_package(now()).unwrap();
+        let welcome = founder
+            .commit(&mut forged, b"", &[package])
+            .welcome
+            .expect("a Welcome");
+        let joined = added.join_welcome(&welcome, &anyone, now());
+        if fits {
+            assert_eq!(joined.unwrap().added_by, founder.id(), "{name}");
+            assert_eq!(added.group(&group).unwrap().leaves.len(), 3);
+        } else {
+            assert_eq!(joined, Err(Error::BadGroup), "{name}");
+            assert!(added.groups().unwrap().is_empty(), "{name}");
+            assert_eq!(added.room(), None, "{name}");
+            assert_eq!(added.content_key(&group, 2), Err(Error::NoKey), "{name}");
+        }
+    }
+}
+
+#[test]
+fn a_group_info_names_its_signers_own_leaf() {
+    let room = TrommiRoom {
+        recovery_signature_key: [0xE1; 32],
+        recovery_hpke_key: [0xE2; 32],
+        agents: Vec::new(),
+    };
+    let group = GroupId::room(RoomId::new([0x27; 32]));
+    let (founder, other) = (Founder::new(), Founder::new());
+    let mut forged = founder.found_room(&group, &room);
+    founder.commit(&mut forged, b"", &[other.key_package()]);
+    let info = founder.group_info(&forged);
+    let observer = Observer::follow_room(&info, None).unwrap();
+    assert_eq!(observer.check_group_info(&info, &founder.id()), Ok(()));
+    assert_eq!(
+        observer.check_group_info(&info, &other.id()),
+        Err(Error::Incomplete)
+    );
+
+    // A GroupInfo ends in the signer's leaf index and the signature over everything before it. Signed
+    // again by hand it is the same bytes: Ed25519 signs the same content the same way.
+    const SIGNATURE_FIELD: usize = 2 + 64;
+    let signed_by_hand = |bytes: &mut Vec<u8>| {
+        let end = bytes.len() - SIGNATURE_FIELD;
+        let signature =
+            trommi_core::crypto::sign_with_label(&founder.key, "GroupInfoTBS", &bytes[4..end])
+                .unwrap();
+        bytes.truncate(end + 2);
+        bytes.extend_from_slice(&signature);
+    };
+    let mut again = info.clone();
+    signed_by_hand(&mut again);
+    assert_eq!(again, info);
+    // The committer signs a GroupInfo that names the other leaf as its signer: whoever joins with it looks
+    // the key up by that index and refuses it. It is not the GroupInfo of the committer.
+    let mut renamed = info.clone();
+    let signer_at = renamed.len() - SIGNATURE_FIELD - 4;
+    assert_eq!(renamed[signer_at..signer_at + 4], [0, 0, 0, 0]);
+    renamed[signer_at + 3] = 1;
+    signed_by_hand(&mut renamed);
+    assert_eq!(
+        observer.check_group_info(&renamed, &founder.id()),
+        Err(Error::Incomplete)
+    );
+    assert_eq!(
+        observer.check_group_info(&renamed, &other.id()),
+        Err(Error::Incomplete)
+    );
 }
 
 #[test]
