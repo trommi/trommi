@@ -1,0 +1,22 @@
+[package]
+name = "trommi-proof-keys"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Feasibility proof: MLS distributes keys only, through a dumb delivery service"
+
+[workspace]
+
+[dependencies]
+openmls = "=0.9.1"
+openmls_rust_crypto = "=0.6.0"
+openmls_basic_credential = "=0.6.0"
+openmls_traits = "=0.6.0"
+tls_codec = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ed25519-dalek = "2"
+
+[profile.test]
+opt-level = 2
