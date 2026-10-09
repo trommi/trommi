@@ -32,7 +32,7 @@ node dev/perf.mjs                       # the very big demo room (?mock=crazy), 
 ## Layout
 
 ```
-worker.js              http -> https, /connect (the connect script), the connector's release from R2
+worker.js              http -> https, /connect (the connect script), the connector's release from R2, the universal links' file
 wrangler.jsonc  dev/   serve, build, check, verify, e2e, e2e-mobile, look, perf, make-fixture (cdp: the repository's dev/cdp.mjs)
 public/
   index.html  sw.js  manifest.webmanifest  _headers  connect.sh  frame.html (the sandbox a published page runs in)
@@ -45,6 +45,7 @@ public/
   desk  card  session  sidebar  notes  media  agents  whiteboard   (.mjs + .css each)
   demo/                the demo room (demo.mjs, fixture.json, files/), also the "Demo" desk
   fonts/  icons/  drawings.json
+  apple-app-site-association.json   the iOS app's universal links, served at /.well-known/apple-app-site-association
   gen/                 generated at deploy time by dev/build.mjs, not in git: app/ (the bundle: app-<hash>.mjs and its
                        chunks), vendor/tools-reference.mjs (for the help page), bundle.<hash>.css, build.txt
 ```
