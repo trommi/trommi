@@ -143,18 +143,6 @@ impl RoomHistory {
         self.states.get(&epoch)
     }
 
-    /// This history up to `epoch`, with the revocations that happened until then; none when it holds no state
-    /// of that epoch. What a holder keeps that goes back to that epoch.
-    pub fn until(&self, epoch: u64) -> Option<Self> {
-        self.at(epoch)?;
-        let mut states = self.states.values().filter(|state| state.epoch <= epoch);
-        let mut kept = Self::new(states.next()?.clone());
-        for state in states {
-            kept.record(state.clone()).ok()?;
-        }
-        Some(kept)
-    }
-
     /// Every state held, ascending by epoch.
     pub fn states(&self) -> impl Iterator<Item = &RoomState> {
         self.states.values()
@@ -714,12 +702,11 @@ pub fn check_session_commit(
         refuse(helper && opener, Error::BadCommit)?;
     }
     if !helper {
-        // 5.3.1: a takeover replaces an agent device that the room holds no more: its removal from `agents`
-        // comes first. An agent leaf may go and leave the seat empty (5.2.2) while its device is enrolled;
-        // another agent device takes the seat in the same Commit only once the old one is out of `A(r)`.
-        let seats_another = facts.adds.iter().any(|added| !room.is_human(added));
+        // 5.2.8, 5.3.1: the leaf of an agent device goes only after the room Commit that took the device
+        // out of `agents`, for a takeover or an empty seat. While the room holds the device its leaf stays:
+        // otherwise a Remove and a later Add would put another device in the seat of one still enrolled.
         let unseats_enrolled = facts.removes.iter().any(|gone| room.is_agent(gone));
-        refuse(seats_another && unseats_enrolled, Error::BadCommit)?;
+        refuse(unseats_enrolled, Error::BadCommit)?;
     }
 
     // 5.2.8: a leaf the room state does not allow makes the group stale. Only the Commit that removes every

@@ -273,6 +273,36 @@ const LABELS: &[(&[u8], Kind)] = &[
     (b"OwnLeafNodes", Kind::LeafNodes),
 ];
 
+/// The labels of the entries that make a group's public state, which is what an observer of the group holds.
+const PUBLIC_LABELS: [&[u8]; 4] = [
+    b"Tree",
+    b"GroupContext",
+    b"InterimTranscriptHash",
+    b"ConfirmationTag",
+];
+
+/// The version OpenMLS's storage ends its keys with.
+const STORAGE_VERSION: u16 = 1;
+
+/// The entries of `group`'s public state among `entries`: its tree, group context, interim transcript hash and
+/// confirmation tag, under the keys OpenMLS's memory storage gives them (label, the group id as JSON, the
+/// version). A member's storage holds them beside its secrets; an observer started from them stands where the
+/// member stands, with what the member verified. `Error::Storage` when one is missing.
+pub(crate) fn public_entries(
+    entries: &MlsEntries,
+    group: &openmls::prelude::GroupId,
+) -> Result<MlsEntries, Error> {
+    let id = serde_json::to_vec(group).map_err(|_| damaged())?;
+    PUBLIC_LABELS
+        .iter()
+        .map(|label| {
+            let key = [label, id.as_slice(), &STORAGE_VERSION.to_be_bytes()].concat();
+            let value = entries.get(&key).ok_or_else(damaged)?.clone();
+            Ok((key, value))
+        })
+        .collect()
+}
+
 /// The serialised form of OpenMLS's own key pair of a leaf or path node, which it does not export: the same
 /// fields with the same types, so that a value that decodes here decodes there.
 #[derive(serde::Deserialize)]
