@@ -5,6 +5,7 @@
 use crate::account::{generate_recovery_code, password_keys};
 use crate::device::CoreDevice;
 use crate::files::{FileDecryptor, FileEncryptor};
+use crate::invite::{InviteRole, InviteStepKind};
 use crate::records::{
     Cut, LogEntry, LogEntryKind, LogFinding, OutboxKind, ProcessedKind, ReceivedKind,
 };
@@ -224,6 +225,54 @@ impl Relay {
         Ok(())
     }
 
+    /// One invite from its opening to its Commit: the new device asks, both compute the same code, the inviter
+    /// confirms it and posts the Commit. An agent device starts to follow the room before that Commit.
+    fn invite(
+        &mut self,
+        inviter: &CoreDevice,
+        newcomer: &CoreDevice,
+        role: InviteRole,
+        now_ms: u64,
+    ) -> Result<(), CoreError> {
+        let hub = "https://hub.example".to_owned();
+        let app = "https://app.example".to_owned();
+        let opened = inviter.invite_open(role, None, app, hub, now_ms)?;
+        let asked = newcomer.join_request(
+            opened.link.clone(),
+            opened.offer.clone(),
+            opened.offer_signature.clone(),
+            now_ms,
+        )?;
+        let accepted = inviter.invite_accept(
+            opened.invite_id.clone(),
+            asked.request,
+            asked.mac,
+            asked.signature,
+            now_ms,
+        )?;
+        let shown =
+            newcomer.join_reveal(accepted.reveal.clone(), accepted.reveal_signature.clone())?;
+        expect(
+            shown == accepted.code && shown.emoji.len() == 6,
+            "the two sides show different codes",
+        )?;
+        if role == InviteRole::Agent {
+            newcomer.join_observe(self.room_infos.last().cloned().unwrap_or_default())?;
+        }
+        let confirmed = inviter.invite_confirm(
+            opened.invite_id.clone(),
+            accepted.code.numbers.clone(),
+            accepted.request_hash.clone(),
+            true,
+            now_ms,
+        )?;
+        expect(
+            confirmed.is_some(),
+            "the confirmed invite was not committed",
+        )?;
+        self.post(inviter)
+    }
+
     /// A group as the hub serves it to a device that verifies it from its founding.
     fn served(&self, group: &[u8], founding: &[u8], current: &[u8]) -> ServedGroup {
         ServedGroup {
@@ -276,7 +325,7 @@ impl Relay {
         let mut done = Vec::new();
         let cursor = device.cursor()?;
         for entry in self.log.iter().filter(|entry| entry.change > cursor) {
-            match device.process_log_entry(entry.clone()) {
+            match device.process_log_entry(entry.clone(), now_ms) {
                 Ok(processed) => done.push(processed),
                 Err(error) if log_finding(error.code()) == LogFinding::Duplicate => {}
                 Err(error) => return Err(error),
@@ -354,18 +403,26 @@ fn scenario<C: Fn() -> u64>(run: &mut Run<C>, now_ms: u64) {
         room = first.found_room(code.clone(), now_ms)?;
         relay.post(first)
     });
-    run.step("it adds the second, which joins by its Welcome", || {
-        let package = second.key_package(now_ms)?;
-        first.add_human_device(second.id()?, package, now_ms)?;
-        relay.post(first)?;
-        let welcome = relay.welcomes.last().map(|(_, welcome)| welcome.clone());
-        let welcome = welcome.ok_or_else(|| CoreError::internal("no Welcome was made"))?;
-        let joined = second.join_welcome(welcome, room.clone(), Some(first.id()?), now_ms)?;
-        expect(
-            joined.offending.is_empty(),
-            "the room holds a leaf that does not belong",
-        )
-    });
+    run.step(
+        "it invites the second by link, which joins by its Welcome",
+        || {
+            relay.invite(first, second, InviteRole::Human, now_ms)?;
+            let welcome = relay.welcomes.last().map(|(_, welcome)| welcome.clone());
+            let welcome = welcome.ok_or_else(|| CoreError::internal("no Welcome was made"))?;
+            let joined = second.join_invited(welcome, now_ms)?;
+            expect(
+                joined.offending.is_empty(),
+                "the room holds a leaf that does not belong",
+            )?;
+            // What follows an invite: the history is handed over.
+            for step in first.invite_steps()? {
+                if step.kind == InviteStepKind::Handover {
+                    first.invite_handover(step.invite_id)?;
+                }
+            }
+            relay.post(first)
+        },
+    );
     run.step("both hold the same key for the room", || {
         let epoch = first.group(room.clone())?.epoch;
         expect(
@@ -374,11 +431,15 @@ fn scenario<C: Fn() -> u64>(run: &mut Run<C>, now_ms: u64) {
         )
     });
     run.step("an agent device is enrolled and a session founded", || {
-        first.change_agents(vec![agent.id()?], Vec::new(), now_ms)?;
-        relay.post(first)?;
-        agent.observe_room(relay.room_infos.last().cloned().unwrap_or_default(), None)?;
+        relay.invite(first, agent, InviteRole::Agent, now_ms)?;
         relay.sync(second, &room, now_ms)?;
-        let packages = vec![second.key_package(now_ms)?, agent.key_package(now_ms)?];
+        let found = first
+            .invite_steps()?
+            .into_iter()
+            .find(|step| step.kind == InviteStepKind::FoundSession)
+            .and_then(|step| step.key_package)
+            .ok_or_else(|| CoreError::internal("the invite does not ask for a session"))?;
+        let packages = vec![second.key_package(now_ms)?, found];
         let session = first.found_session(agent.id()?, packages, now_ms)?;
         relay.post(first)?;
         session_group = session_group_id(room.clone(), session)?;
@@ -446,8 +507,7 @@ fn scenario<C: Fn() -> u64>(run: &mut Run<C>, now_ms: u64) {
             again.id()? == id && again.content_key(session_group.clone(), epoch)? == key,
             "the device opened from its store is another",
         )?;
-        let signed =
-            again.hub_sign_in(room.clone(), "https://hub.example".to_owned(), vec![9; 32])?;
+        let signed = again.hub_sign_in("https://hub.example".to_owned(), vec![9; 32])?;
         let hub = HubAddress::parse("https://hub.example")?;
         let issued = IssuedChallenge {
             challenge: [9; 32],

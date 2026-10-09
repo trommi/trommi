@@ -17,8 +17,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
-use trommi_core::crypto::Secret;
-use trommi_core::store::{table, Batch, Entry, Loaded, Storage, StorageError};
+use trommi_core::store::{Batch, Entry, Loaded, Storage, StorageError};
 
 record! {
     /// One stored entry. The store treats key and value as opaque; the value may be a private key.
@@ -293,57 +292,15 @@ impl Storage for MemoryStore {
     }
 }
 
-/// The seed of the device's signature key, as the device's store holds it.
-pub(crate) type Seed = Arc<Mutex<Option<Secret<32>>>>;
-
-/// Any store as the one type a facade device is built on. It also notes the seed of the device's signature key
-/// as it passes by, for the one thing the core's device does not do itself yet: signing the hub's challenge.
-pub(crate) struct AnyStore {
-    inner: Box<dyn Storage + Send>,
-    seed: Seed,
-}
-
-impl AnyStore {
-    /// `inner` as the facade's store, and where the seed will be found.
-    pub(crate) fn new(inner: Box<dyn Storage + Send>) -> (Self, Seed) {
-        let seed = Seed::default();
-        let store = Self {
-            inner,
-            seed: Arc::clone(&seed),
-        };
-        (store, seed)
-    }
-
-    /// Keeps the seed if `key` is where the device stores it: table `DEVICE`, entry 0.
-    fn note(&self, key: &[u8], value: &[u8]) {
-        if key == [table::DEVICE, 0] {
-            if let Ok(seed) = Secret::from_slice(value) {
-                *self.seed.lock().unwrap_or_else(PoisonError::into_inner) = Some(seed);
-            }
-        }
-    }
-}
+/// Any store as the one type a facade device is built on.
+pub(crate) struct AnyStore(pub(crate) Box<dyn Storage + Send>);
 
 impl Storage for AnyStore {
     fn load(&mut self) -> Result<Loaded, StorageError> {
-        let loaded = self.inner.load()?;
-        for entry in &loaded.entries {
-            self.note(&entry.key, &entry.value);
-        }
-        Ok(loaded)
+        self.0.load()
     }
 
     fn apply(&mut self, expected_revision: u64, batch: Batch) -> Result<(), StorageError> {
-        let seed = batch
-            .put
-            .iter()
-            .rev()
-            .find(|entry| entry.key == [table::DEVICE, 0])
-            .map(|entry| entry.value.clone());
-        self.inner.apply(expected_revision, batch)?;
-        if let Some(seed) = seed {
-            self.note(&[table::DEVICE, 0], &seed);
-        }
-        Ok(())
+        self.0.apply(expected_revision, batch)
     }
 }
