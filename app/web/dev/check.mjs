@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 const pub = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const VIEWS = ['auth', 'desk', 'card', 'session', 'sidebar', 'notes', 'media', 'agents', 'whiteboard']
-const FILES = new Set(['index.html', 'help.html', 'frame.html', 'sw.js', 'manifest.webmanifest', '_headers', 'connect.sh', 'drawings.json',
+const FILES = new Set(['index.html', 'help.html', 'frame.html', 'sw.js', 'manifest.webmanifest', '_headers', 'connect.sh', 'drawings.json', 'apple-app-site-association.json',
   ...['app', 'ui', ...VIEWS].flatMap(v => [`${v}.mjs`, `${v}.css`]).filter(f => f !== 'ui.css'), 'demo/demo.mjs', 'demo/fixture.json', 'demo/screens.css'])
 const FOLDERS = ['gen/', 'fonts/', 'icons/', 'demo/files/']
 const problems = []
