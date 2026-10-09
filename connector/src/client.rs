@@ -469,6 +469,16 @@ impl Client {
         let _ = self.events.send(event);
     }
 
+    /// Resolves once this device is a leaf of its main session; returns the session id.
+    pub async fn when_session(&self) -> String {
+        loop {
+            if let Some(session) = self.core.lock().await.session_id() {
+                return session;
+            }
+            sleep(300).await;
+        }
+    }
+
     /// Whether the hub was reached when it was last tried.
     pub fn is_online(&self) -> bool {
         self.online.load(Ordering::SeqCst)

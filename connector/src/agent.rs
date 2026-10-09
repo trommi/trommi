@@ -437,6 +437,25 @@ impl Client {
         Ok(last)
     }
 
+    /// Writes this device's label (`device/<id>`: name, platform, folder, host) into its main session, unless
+    /// it stands there already.
+    pub async fn ensure_device_register(&self, info: &Value) -> Result<()> {
+        let name = format!("device/{}", self.me());
+        let group = self.core.lock().await.group_of(None)?;
+        let me = self.device_id();
+        let lookup = name.clone();
+        let held = self
+            .vault
+            .call(move |v: &mut Vault| v.register_of(&group, &lookup, &me))
+            .await?;
+        if held.as_deref() == Some(info.to_string().as_str()) {
+            return Ok(());
+        }
+        let mut values = Map::new();
+        values.insert(name, info.clone());
+        self.set_status(values, None).await.map(|_| ())
+    }
+
     /// Notes up to which change of a human's messages this agent has been handed them.
     pub async fn mark_heard(&self, up_to: u64, session_id: Option<String>) -> Result<bool> {
         let sid = {

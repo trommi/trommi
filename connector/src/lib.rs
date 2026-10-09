@@ -3,14 +3,29 @@
 #![forbid(unsafe_code)]
 
 pub mod agent;
+pub mod bridge;
+pub mod cli;
 pub mod client;
+pub mod door;
 pub mod error;
+pub mod hooks;
+pub mod html;
 pub mod hub;
 pub mod join;
 pub mod keeper;
+pub mod line;
+pub mod mcp;
+pub mod member;
+pub mod mirror;
 pub mod model;
+pub mod prompt;
 pub mod recovery;
+pub mod server;
+pub mod slots;
+pub mod slotstore;
 pub mod store;
+pub mod trail;
+pub mod update;
 pub mod util;
 pub mod vault;
 

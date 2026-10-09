@@ -486,6 +486,14 @@ impl Vault {
             .map(str::to_owned)
     }
 
+    /// The value a device holds under one of the names of which each device has its own (`device/<id>`).
+    pub fn register_of(&self, group: &GroupId, name: &str, device: &DeviceId) -> Option<String> {
+        self.content
+            .get(group)
+            .and_then(|state| state.registers.get_of(name, device))
+            .map(str::to_owned)
+    }
+
     /// Every chain accepted in `group`, as the value of the `heads` register (9.0.7).
     pub fn heads_value(&self, group: &GroupId) -> Result<Option<String>> {
         match self.content.get(group) {
