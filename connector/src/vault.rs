@@ -18,7 +18,7 @@
 //!   learns as the trait asks, from the group's founding GroupInfo and its Commits, which the hub keeps
 //!   ([`Vault::learn_past`]): they are followed with the core's observer against a room history that is itself
 //!   followed from the room's founding and must arrive at the room state this device was invited at. Until
-//!   that has happened for a group, it answers for earlier epochs with the leaves of the epoch it joined at.
+//!   that has happened for a group, nobody was a leaf of its earlier epochs as far as this device answers.
 use crate::error::{Fault, Result};
 use crate::recovery::AgentRecovery;
 use crate::store::{CoreStore, Journal, SIDE};
@@ -107,9 +107,10 @@ struct Ledger {
 }
 
 impl Ledger {
+    /// The leaves of `epoch` with their roles; none for an epoch this device has neither seen nor learned
+    /// (`Vault::learn_past`): it then answers as if the group stood before that epoch.
     fn roles(&self, epoch: u64) -> Option<&BTreeMap<String, StoredRole>> {
-        self.epochs
-            .get(&epoch.max(self.known_from.unwrap_or(self.first)))
+        self.epochs.get(&epoch)
     }
 }
 
@@ -196,15 +197,6 @@ impl GroupFacts for Facts<'_> {
         let Some(ledger) = self.ledgers.get(group) else {
             return Ok(None);
         };
-        if epoch < ledger.first && !ledger.ends.contains_key(&epoch) {
-            // An epoch that ended before this device joined, and whose Commit it has not learned: it ended at
-            // the latest then, and the time its Commit named is not known, so an envelope of it is never
-            // judged late by that time.
-            return Ok(Some(EpochEnd {
-                processed_at: ledger.joined_at,
-                time: u64::MAX / 2,
-            }));
-        }
         Ok(ledger
             .ends
             .get(&epoch)
@@ -429,6 +421,26 @@ impl Vault {
                 read.map_err(|_| damaged("a group's content state"))?;
             }
         }
+        // A group's five parts are written together: one of them missing is damage, never a fresh start (an
+        // empty own chain would sign number 1 again).
+        for group in content.keys() {
+            for tag in [
+                TAG_CHAINS,
+                TAG_OBJECTS,
+                TAG_REGISTERS,
+                TAG_OWN_CHAIN,
+                TAG_OWN_IDS,
+            ] {
+                if journal.get(&side_key(tag, &[group.as_bytes()])).is_none() {
+                    return Err(damaged("a group's content state is incomplete"));
+                }
+            }
+        }
+        for group in ledgers.keys() {
+            if !content.contains_key(group) {
+                return Err(damaged("a group without its content state"));
+            }
+        }
         let gate = match journal.get(&side_key(TAG_GATE, &[])) {
             Some(bytes) => GateLog::from_bytes(&bytes).map_err(|_| damaged("the command log"))?,
             None => GateLog::new(),
@@ -486,6 +498,14 @@ impl Vault {
             self.journal.put(side_key(tag, &[group.as_bytes()]), bytes);
         }
         Ok(())
+    }
+
+    /// Whether the epochs of `group` before this device joined it are known (it founded the group, joined at
+    /// its first epoch, or learned its past).
+    pub fn past_known(&self, group: &GroupId) -> bool {
+        self.ledgers
+            .get(group)
+            .is_some_and(|ledger| ledger.first == 0 || ledger.known_from == Some(0))
     }
 
     /// The epoch this device joined `group` at, if it knows the group.
@@ -657,6 +677,8 @@ impl Vault {
             side_key(TAG_LEDGER, &[group.as_bytes()]),
             serde_json::to_vec(ledger)?,
         );
+        // A group that has a ledger has its content state, from its first epoch on.
+        self.content.entry(*group).or_default();
         self.stage_content(group)?;
         Ok(findings)
     }
@@ -865,6 +887,7 @@ impl ContentDevice for Vault {
             ledgers: &self.ledgers,
         };
         let state = self.content.entry(group).or_default();
+        let own_before = state.own.head();
         let receipt = chain::receive(
             &facts,
             &Accepted(&self.journal),
@@ -876,8 +899,17 @@ impl ContentDevice for Vault {
             mode,
             now_ms,
         )?;
-        state.chains.apply(receipt.advance())?;
         let header = &receipt.envelope().header;
+        if header.sender == me && header.seq > own_before.seq {
+            // The hub holds an envelope of this device that this state has not signed yet: the state is older
+            // than what the device already sent (a restored copy, a lost write). Signing on would put a
+            // second envelope under a used number.
+            return Err(Fault::new(
+                "state-rolled-back",
+                "this connector's stored state is older than what it already sent",
+            ));
+        }
+        state.chains.apply(receipt.advance())?;
         let mut register = None;
         if let chain::Outcome::Taken { transition, body } = receipt.outcome() {
             if let Some(transition) = transition {

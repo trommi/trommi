@@ -179,6 +179,10 @@ pub struct Pending {
     /// The change number the hub gave it, once it took it.
     #[serde(default)]
     pub change: Option<u64>,
+    /// The hub voided it for its epoch: it is sealed again under a new number, and until then it stays here
+    /// so that the wish to send it survives a crash.
+    #[serde(default)]
+    pub rebuild: bool,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -209,7 +213,6 @@ pub struct Core {
     pub outbox: Vec<Pending>,
     /// The highest change number processed.
     pub cursor: u64,
-    next_id: u64,
     pub room: RoomRecord,
     /// The session groups this device is a leaf of, by session id as hex.
     pub groups: BTreeMap<String, GroupId>,
@@ -283,7 +286,7 @@ impl Core {
         }
         let record = SyncRecord {
             cursor: self.cursor,
-            next_id: self.next_id,
+            next_id: 0,
             halted: self.halted.clone(),
             heads_at: self.heads_at,
         };
@@ -302,10 +305,60 @@ impl Core {
                 .put(side_key(TAG_PENDING, &[&pending.id.to_be_bytes()]), bytes);
         }
     }
+    /// Reads the outbox again from the journal: what a step staged there is found even if the step did not
+    /// live to note it in memory.
+    fn reload_outbox(&mut self) {
+        let mut outbox: Vec<Pending> = self
+            .journal
+            .scan(&side_key(TAG_PENDING, &[])[..2])
+            .iter()
+            .filter_map(|(_, value)| serde_json::from_slice(value).ok())
+            .collect();
+        outbox.sort_by_key(|pending: &Pending| pending.id);
+        self.outbox = outbox;
+    }
     fn drop_pending(&mut self, id: u64) {
         self.outbox.retain(|pending| pending.id != id);
         self.journal
             .delete(side_key(TAG_PENDING, &[&id.to_be_bytes()]));
+    }
+}
+
+/// The lock on the [`Core`]. A step takes it, changes the state and commits before it lets go.
+pub struct CoreLock(tokio::sync::Mutex<Core>);
+
+/// The held lock. If it is let go while changes are staged and not written (a step that was given up half
+/// way: its future was dropped, or it failed between a change and its commit), the journal is poisoned: what
+/// is in memory no longer matches any state that may be written, so nothing more is, and the process starts
+/// over from the files.
+pub struct Held<'a>(tokio::sync::MutexGuard<'a, Core>);
+
+impl CoreLock {
+    /// Waits for the lock.
+    pub async fn lock(&self) -> Held<'_> {
+        Held(self.0.lock().await)
+    }
+}
+
+impl std::ops::Deref for Held<'_> {
+    type Target = Core;
+    fn deref(&self) -> &Core {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Held<'_> {
+    fn deref_mut(&mut self) -> &mut Core {
+        &mut self.0
+    }
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        if self.0.journal.is_dirty() {
+            eprintln!("[trommi] a step ended between its changes and its write: nothing more is written by this process");
+            self.0.journal.poison();
+        }
     }
 }
 
@@ -325,7 +378,7 @@ pub fn put_room_record(journal: &Journal, record: &RoomRecord) {
 
 /// This device at work. See the module's documentation.
 pub struct Client {
-    pub core: tokio::sync::Mutex<Core>,
+    pub core: CoreLock,
     pub(crate) vault: Keeper<Vault>,
     pub(crate) hub: Arc<Hub>,
     events: tokio::sync::mpsc::UnboundedSender<ClientEvent>,
@@ -425,11 +478,10 @@ impl Client {
         outbox.sort_by_key(|pending| pending.id);
         let (events, rx) = tokio::sync::mpsc::unbounded_channel();
         let client = Arc::new(Client {
-            core: tokio::sync::Mutex::new(Core {
+            core: CoreLock(tokio::sync::Mutex::new(Core {
                 model,
                 outbox,
                 cursor: sync.cursor,
-                next_id: sync.next_id.max(1),
                 room,
                 groups: BTreeMap::new(),
                 main: None,
@@ -440,7 +492,7 @@ impl Client {
                 asked_readmit: Vec::new(),
                 failed: BTreeMap::new(),
                 files: Vec::new(),
-            }),
+            })),
             vault,
             hub,
             events,
@@ -584,16 +636,78 @@ impl Client {
     }
 
     async fn set_removed(&self, replaced: bool) {
+        let mut core = self.core.lock().await;
+        self.set_removed_in(&mut core, replaced);
+    }
+
+    /// Notes that this device is out, for a caller that holds the core.
+    fn set_removed_in(&self, core: &mut Core, replaced: bool) {
         if self.removed.swap(true, Ordering::SeqCst) {
             return;
         }
         let _ = self.stop_signal.send(true);
-        {
-            let mut core = self.core.lock().await;
-            core.model.room.connection = "removed".into();
-            core.model.room.replaced = replaced;
-        }
+        core.model.room.connection = "removed".into();
+        core.model.room.replaced = replaced;
         self.emit(ClientEvent::Removed { replaced });
+    }
+
+    /// The fault that says why nothing is processed or sent any more, if so.
+    fn halted(core: &Core) -> Result<()> {
+        match core.halted.as_deref() {
+            None => Ok(()),
+            Some(code) => Err(Fault::new(
+                code,
+                "this connector stopped working on its room; the human reconnects this session in the Trommi app",
+            )),
+        }
+    }
+
+    /// Stops for good: the state on disk is not one this device may go on from.
+    fn halt(&self, core: &mut Core, fault: &Fault) -> Result<()> {
+        core.halted = Some(fault.code.clone());
+        core.model.room.outbox_blocked = Some(fault.code.clone());
+        core.commit()?;
+        self.emit(ClientEvent::Error(fault.clone()));
+        Ok(())
+    }
+
+    /// The rollback guard: the hub's copy of this device's own chains must not be ahead of what this state
+    /// has signed. If it is, the state is older than what the device already sent (a restored copy of the
+    /// directory, a write the disk lost), and signing on would put a second envelope under a used number.
+    async fn guard_rollback(&self, core: &mut Core) -> Result<()> {
+        let groups: Vec<GroupId> = core.groups.values().copied().collect();
+        for group in groups {
+            let own = self
+                .vault
+                .call(move |v: &mut Vault| v.own_head(&group))
+                .await?;
+            let ahead = self
+                .hub
+                .get(&format!(
+                    "/v2/groups/{}/chains/{}?after={}&limit=1",
+                    b64(group.as_bytes()),
+                    self.me.to_base64url(),
+                    own.seq
+                ))
+                .await;
+            let ahead = match ahead {
+                Ok(page) => page
+                    .get("items")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| !items.is_empty()),
+                Err(fault) if fault.code == "not-found" => false,
+                Err(fault) => return Err(fault),
+            };
+            if ahead {
+                let fault = Fault::new(
+                    "state-rolled-back",
+                    "this connector's stored state is older than what it already sent; nothing is signed with it",
+                );
+                self.halt(core, &fault)?;
+                return Err(fault);
+            }
+        }
+        Ok(())
     }
 
     /// One round of being online: lease, room group, Welcomes, KeyPackages, the outbox, the hub's order.
@@ -605,9 +719,22 @@ impl Client {
             .clone();
         self.hub.link(&self.process, &report).await?;
         let mut core = self.core.lock().await;
+        Self::halted(&core)?;
         self.observe_room(&mut core).await?;
+        self.guard_rollback(&mut core).await?;
         self.catch_up(&mut core).await?;
         self.take_welcomes(&mut core, false).await?;
+        // A group whose past could not be learned when it was joined (the hub was away) is tried again.
+        let groups: Vec<GroupId> = core.groups.values().copied().collect();
+        for group in groups {
+            let known = self
+                .vault
+                .call(move |v: &mut Vault| v.past_known(&group))
+                .await?;
+            if !known && self.learn_past(&mut core, group).await.is_ok() {
+                core.reread.push(group);
+            }
+        }
         self.publish_key_packages(&mut core).await?;
         self.pump(&mut core).await?;
         self.catch_up(&mut core).await?;
@@ -787,6 +914,7 @@ impl Client {
 
     /// Fetches everything above the cursor and processes it, until the hub has no more.
     pub(crate) async fn catch_up(&self, core: &mut Core) -> Result<()> {
+        Self::halted(core)?;
         loop {
             let answer = self
                 .hub
@@ -888,6 +1016,7 @@ impl Client {
                 Err(fault) => {
                     // 3.7: a Welcome that does not open used up its KeyPackage: ask to be added again.
                     eprintln!("[trommi] a Welcome was refused: {}", fault.code);
+                    core.commit()?;
                     if !core.asked_readmit.contains(&group) && fault.code != "replay" {
                         core.asked_readmit.push(group);
                         let body = json!({ "kind": "readmit", "group": b64(group.as_bytes()) });
@@ -1018,7 +1147,9 @@ impl Client {
                     break;
                 }
                 Err(fault) => {
+                    // What was processed before stands, and its commands are handed out all the same.
                     core.commit()?;
+                    self.deliver(std::mem::take(&mut commands)).await;
                     return Err(fault);
                 }
             }
@@ -1148,7 +1279,7 @@ impl Client {
             LogOutcome::Unenrolled => {
                 core.cursor = change;
                 core.commit()?;
-                self.set_removed(false).await;
+                self.set_removed_in(core, false);
             }
             LogOutcome::RemovedFrom(group) => {
                 let was_main = core.session_of_group(&group) == core.main;
@@ -1156,7 +1287,7 @@ impl Client {
                 core.commit()?;
                 if was_main {
                     // 13.5: another connector continues the session. This one stops.
-                    self.set_removed(true).await;
+                    self.set_removed_in(core, true);
                 } else {
                     self.refresh_groups(core).await?;
                 }
@@ -1219,6 +1350,10 @@ impl Client {
         {
             Err(fault) if fault.code == "group-behind" => Ok(false),
             Err(fault) if fault.code == "replay" => Ok(true),
+            Err(fault) if fault.code == "state-rolled-back" => {
+                self.halt(core, &fault)?;
+                Err(fault)
+            }
             Err(fault)
                 if fault.as_core().is_some()
                     && fault.code != "storage"
@@ -1276,7 +1411,7 @@ impl Client {
             if let Some(id) = core
                 .outbox
                 .iter()
-                .find(|pending| pending.hash == hash_text)
+                .find(|pending| pending.hash == hash_text && !pending.rebuild)
                 .map(|pending| pending.id)
             {
                 core.drop_pending(id);
@@ -1654,6 +1789,22 @@ impl Client {
     }
 
     async fn pump_once(&self, core: &mut Core) -> Result<()> {
+        // Nothing is posted that is not written: a journal whose last write failed refuses here.
+        core.commit()?;
+        core.reload_outbox();
+        // An envelope the hub voided for its epoch is sealed again, in the epoch the group stands in now.
+        let again: Vec<Pending> = core.outbox.iter().filter(|p| p.rebuild).cloned().collect();
+        for old in again {
+            let group = b64_group(&old.group)?;
+            let sealed = self
+                .seal(core, group, old.spec.clone(), old.files.clone())
+                .await;
+            core.drop_pending(old.id);
+            if let Err(fault) = sealed {
+                core.failed.insert(old.id, fault);
+            }
+            core.commit()?;
+        }
         let entries = self.vault.call(|v: &mut Vault| v.device.outbox()).await?;
         for entry in entries {
             let id = entry.id;
@@ -1737,7 +1888,7 @@ impl Client {
         let waiting: Vec<Pending> = core
             .outbox
             .iter()
-            .filter(|pending| pending.change.is_none())
+            .filter(|pending| pending.change.is_none() && !pending.rebuild)
             .cloned()
             .collect();
         for pending in waiting {
@@ -1764,21 +1915,21 @@ impl Client {
                 }
                 Err(fault) if fault.extra.get("voided") == Some(&Value::Bool(true)) => {
                     // 9.0.8: the number is used up, the chain goes on. What an epoch change voided is sealed
-                    // again in the new epoch; anything else is the sender's to hear.
-                    core.drop_pending(pending.id);
+                    // again in the new epoch: the wish stays in the outbox, marked, until the new envelope
+                    // is written in its place. Anything else is the sender's to hear.
                     if fault.code == "wrong-epoch" {
-                        self.catch_up(core).await?;
-                        let group = b64_group(&pending.group)?;
-                        let again = self
-                            .seal(core, group, pending.spec.clone(), pending.files.clone())
-                            .await;
-                        if let Err(fault) = again {
-                            core.failed.insert(pending.id, fault);
+                        if let Some(kept) = core.outbox.iter_mut().find(|p| p.id == pending.id) {
+                            kept.rebuild = true;
+                            let kept = kept.clone();
+                            core.put_pending(&kept);
                         }
+                        core.commit()?;
+                        self.catch_up(core).await?;
                     } else {
+                        core.drop_pending(pending.id);
                         core.failed.insert(pending.id, fault);
+                        core.commit()?;
                     }
-                    core.commit()?;
                     return Box::pin(self.pump(core)).await;
                 }
                 Err(fault) if fault.code == "group-behind" => {
@@ -1887,37 +2038,47 @@ impl Client {
                 format!("the hub refused an earlier envelope of this session for good ({code})"),
             ));
         }
+        Self::halted(core)?;
         let session = core
             .session_of_group(&group)
             .ok_or_else(|| Fault::new("forbidden", "an agent writes into session groups only"))?;
         let draft_spec = crate::agent::resolve(core, &session, &spec)?;
-        let file_ids = files.clone();
         let now = now_ms();
-        let seat = core
-            .model
-            .sessions
-            .get(&session)
-            .and_then(|s| s.agent_device_id.clone());
-        let sealed = self
+        // Sealed and put into the outbox in one go on the vault's thread: the chain's step and the envelope it
+        // was for are staged together, whatever becomes of this call.
+        let pending = self
             .vault
-            .call(move |v: &mut Vault| -> Result<crate::vault::Sealed> {
-                let draft =
-                    crate::agent::draft(v, &group, &draft_spec, seat.as_deref(), &file_ids)?;
-                v.seal(&group, &draft, now)
+            .call(move |v: &mut Vault| -> Result<Pending> {
+                let draft = crate::agent::draft(v, &group, &draft_spec, None, &files)?;
+                let sealed = v.seal(&group, &draft, now)?;
+                let prefix = side_key(TAG_PENDING, &[]);
+                let id = v
+                    .journal()
+                    .scan(&prefix[..2])
+                    .iter()
+                    .filter_map(|(_, value)| serde_json::from_slice::<Pending>(value).ok())
+                    .map(|pending| pending.id)
+                    .max()
+                    .unwrap_or(0)
+                    + 1;
+                let pending = Pending {
+                    id,
+                    group: b64(group.as_bytes()),
+                    spec,
+                    files,
+                    bytes: b64(&sealed.bytes),
+                    hash: sealed.hash.to_base64url(),
+                    seq: sealed.seq,
+                    change: None,
+                    rebuild: false,
+                };
+                v.journal().put(
+                    side_key(TAG_PENDING, &[&id.to_be_bytes()]),
+                    serde_json::to_vec(&pending)?,
+                );
+                Ok(pending)
             })
             .await??;
-        let pending = Pending {
-            id: core.next_id,
-            group: b64(group.as_bytes()),
-            spec,
-            files,
-            bytes: b64(&sealed.bytes),
-            hash: sealed.hash.to_base64url(),
-            seq: sealed.seq,
-            change: None,
-        };
-        core.next_id += 1;
-        core.put_pending(&pending);
         core.outbox.push(pending.clone());
         Ok(pending)
     }

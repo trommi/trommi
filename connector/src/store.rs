@@ -9,8 +9,12 @@
 //!
 //! **A write is one record**: `u32 length ‖ payload ‖ SHA-256(payload)`, appended and synced before the write
 //! returns. A record is whole or absent: opening cuts a last record that is short or whose hash is wrong (a
-//! crash while it was written; nothing was acknowledged for it), and refuses a damaged record that is followed
-//! by another ([`StoreError::Damaged`]). When the log outgrows the snapshot, the state is written whole to a
+//! crash while it was written; nothing was acknowledged for it) and keeps the cut bytes beside the log as
+//! `state.log.torn`. Everything else that does not read is damage ([`StoreError::Damaged`]) and is left as it
+//! is: a damaged record that is followed by another, a length no record has, a record whose hash is right and
+//! whose content is not a record. A torn tail cannot be told from a last record that was damaged later; the
+//! client's check against the hub's copy of this device's chains (`client.rs`, the rollback guard) catches the
+//! case that matters, a state that is behind what this device already sent. When the log outgrows the snapshot, the state is written whole to a
 //! temporary file, synced, renamed over the snapshot, and the log emptied; a crash in between leaves records the
 //! snapshot already holds, which opening skips by their number.
 //!
@@ -27,7 +31,7 @@
 //! and compared on every `apply`, as the core's `Storage` contract asks.
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -128,15 +132,37 @@ impl std::fmt::Debug for Journal {
     }
 }
 
-fn private_file(path: &Path, truncate: bool) -> std::io::Result<File> {
+/// The largest snapshot or log that is read: far above anything the connector writes.
+const MAX_FILE_LEN: u64 = 1 << 30;
+
+/// Opens a file of the state for reading and appending, mode 0600, never through a symbolic link. `fresh`
+/// makes a new file and fails if the name exists.
+fn private_file(path: &Path, fresh: bool) -> std::io::Result<File> {
     let file = OpenOptions::new()
         .read(true)
-        .write(true)
-        .create(true)
-        .truncate(truncate)
+        .append(true)
+        .create(!fresh)
+        .create_new(fresh)
         .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
         .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
     // The mode of a file that was there already is put right too.
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+/// Opens a file of the state that must be there already; its mode is put right.
+fn private_file_existing(path: &Path) -> std::io::Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
     file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     Ok(file)
 }
@@ -297,11 +323,23 @@ impl Journal {
     /// Opens the state in `dir`, creating the directory and empty files if there is nothing. Takes the lock first:
     /// [`StoreError::Locked`] while another process holds it.
     pub fn open(dir: &Path) -> Result<Journal, StoreError> {
+        let existed = dir.exists();
         std::fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
             .create(dir)?;
+        if !std::fs::symlink_metadata(dir)?.is_dir() {
+            return Err(StoreError::Io(
+                "the state directory is not a directory".into(),
+            ));
+        }
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        if !existed {
+            // The new directory's own entry is made durable too.
+            if let Some(parent) = dir.parent() {
+                sync_dir(parent)?;
+            }
+        }
         let lock = private_file(&dir.join(LOCK_FILE), false)?;
         match lock.try_lock() {
             Ok(()) => {}
@@ -311,22 +349,34 @@ impl Journal {
         // A snapshot that was being written when the process died was never the state.
         let _ = std::fs::remove_file(dir.join(format!("{SNAP_FILE}.tmp")));
 
+        let read_whole = |name: &str| -> Result<Option<Zeroizing<Vec<u8>>>, StoreError> {
+            let mut file = match private_file_existing(&dir.join(name)) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(error.into()),
+            };
+            if file.metadata()?.len() > MAX_FILE_LEN {
+                return Err(StoreError::Damaged(format!(
+                    "{name} is larger than a state is"
+                )));
+            }
+            let mut bytes = Zeroizing::new(Vec::new());
+            file.read_to_end(&mut bytes)?;
+            Ok(Some(bytes))
+        };
         let (mut seq, mut core_revision, mut entries, snap_len) =
-            match std::fs::read(dir.join(SNAP_FILE)) {
-                Ok(bytes) => {
-                    let bytes = Zeroizing::new(bytes);
+            match read_whole(SNAP_FILE).map(|found| found.ok_or(std::io::ErrorKind::NotFound)) {
+                Err(damage) => return Err(damage),
+                Ok(Ok(bytes)) => {
                     let (seq, revision, entries) = decode_snapshot(&bytes)?;
                     (seq, revision, entries, bytes.len() as u64)
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    (0, 0, Entries::new(), 0)
-                }
-                Err(error) => return Err(error.into()),
+                Ok(Err(_)) => (0, 0, Entries::new(), 0),
             };
 
-        let mut log = private_file(&dir.join(LOG_FILE), false)?;
-        let mut bytes = Zeroizing::new(Vec::new());
-        log.read_to_end(&mut bytes)?;
+        let log = private_file(&dir.join(LOG_FILE), false)?;
+        let bytes = read_whole(LOG_FILE)?.unwrap_or_default();
+        let damaged = |what: &str| StoreError::Damaged(format!("{LOG_FILE}: {what}"));
         let mut at = 0usize;
         // Where the last whole record ends: everything after it is a write that never finished.
         let mut good = 0usize;
@@ -335,43 +385,47 @@ impl Journal {
             let Some(len) = header.map(|b: [u8; 4]| u32::from_le_bytes(b) as usize) else {
                 break;
             };
-            let end = at
-                .checked_add(4 + 32)
-                .and_then(|n| n.checked_add(len))
-                .filter(|_| len <= MAX_RECORD_LEN);
-            let Some(end) = end.filter(|end| *end <= bytes.len()) else {
+            if len > MAX_RECORD_LEN {
+                // No write of this connector starts with such a length, torn or not.
+                return Err(damaged("a record's length is none"));
+            }
+            let end = at + 4 + 32 + len;
+            if end > bytes.len() {
                 break;
-            };
+            }
             let payload = &bytes[at + 4..at + 4 + len];
-            let record = (crate::util::sha256(payload) == bytes[at + 4 + len..end])
-                .then(|| decode_record(payload))
-                .flatten();
-            let Some((record_seq, core_batches, ops)) = record else {
+            if crate::util::sha256(payload) != bytes[at + 4 + len..end] {
                 if end == bytes.len() {
                     break;
                 }
-                return Err(StoreError::Damaged(format!(
-                    "{LOG_FILE}: a record in the middle is damaged"
-                )));
+                return Err(damaged("a record in the middle is damaged"));
+            }
+            let Some((record_seq, core_batches, ops)) = decode_record(payload) else {
+                return Err(damaged("a record with a right checksum does not read"));
             };
             if record_seq > seq {
-                if record_seq != seq + 1 {
-                    return Err(StoreError::Damaged(format!(
-                        "{LOG_FILE}: record {record_seq} follows record {seq}"
-                    )));
+                if seq.checked_add(1) != Some(record_seq) {
+                    return Err(damaged("a record does not follow the one before it"));
                 }
                 apply_ops(&mut entries, ops);
                 seq = record_seq;
-                core_revision += core_batches;
+                core_revision = core_revision
+                    .checked_add(core_batches)
+                    .ok_or_else(|| damaged("the revision overflows"))?;
             }
             at = end;
             good = end;
         }
         if good < bytes.len() {
+            // Kept for whoever wants to know what was cut; it is never read again.
+            let torn = dir.join(format!("{LOG_FILE}.torn"));
+            let _ = std::fs::remove_file(&torn);
+            if let Ok(mut kept) = private_file(&torn, true) {
+                let _ = kept.write_all(&bytes[good..]);
+            }
             log.set_len(good as u64)?;
             log.sync_all()?;
         }
-        log.seek(SeekFrom::End(0))?;
         sync_dir(dir)?;
         Ok(Journal {
             inner: Arc::new(Mutex::new(Inner {
@@ -391,8 +445,12 @@ impl Journal {
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
-        // A panic while the lock was held leaves the data as it was: every change is one assignment.
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+        // A panic while the lock was held may have left a change half made: nothing more is written.
+        self.inner.lock().unwrap_or_else(|poisoned| {
+            let mut inner = poisoned.into_inner();
+            inner.poisoned = true;
+            inner
+        })
     }
 
     /// The directory.
@@ -446,7 +504,14 @@ impl Journal {
 
     /// Whether anything is staged and not yet written.
     pub fn is_dirty(&self) -> bool {
-        !self.lock().staged.is_empty()
+        let inner = self.lock();
+        !inner.staged.is_empty() || inner.staged_core_batches > 0
+    }
+
+    /// Marks the journal as no longer trustworthy in memory: a step was given up between its changes and its
+    /// write. Nothing more is written or read through it; the state on disk is as the last commit left it.
+    pub fn poison(&self) {
+        self.lock().poisoned = true;
     }
 
     /// Writes everything staged as one record and returns once it is on disk. After a failure the journal is
@@ -456,10 +521,23 @@ impl Journal {
         if inner.poisoned {
             return Err(StoreError::Poisoned);
         }
-        if inner.staged.is_empty() {
+        if inner.staged.is_empty() && inner.staged_core_batches == 0 {
             return Ok(());
         }
-        let payload = encode_record(inner.seq + 1, inner.staged_core_batches, &inner.staged);
+        let next = inner.seq.checked_add(1);
+        let revision = inner.core_revision.checked_add(inner.staged_core_batches);
+        let (Some(next), Some(_)) = (next, revision) else {
+            inner.poisoned = true;
+            return Err(StoreError::Io("the state's counters are used up".into()));
+        };
+        let payload = encode_record(next, inner.staged_core_batches, &inner.staged);
+        if payload.len() > MAX_RECORD_LEN {
+            // Never written: a record the reader would refuse must not be acknowledged.
+            inner.poisoned = true;
+            return Err(StoreError::Io(
+                "one write is larger than a record may be".into(),
+            ));
+        }
         let mut record = Zeroizing::new(Vec::with_capacity(payload.len() + 36));
         put_u32(&mut record, payload.len());
         record.extend_from_slice(&payload);
@@ -495,7 +573,7 @@ impl Journal {
         inner.staged.clear();
         inner.log.set_len(0)?;
         inner.log.sync_all()?;
-        for name in [SNAP_FILE, LOG_FILE] {
+        for name in [SNAP_FILE, LOG_FILE, "state.log.torn"] {
             match std::fs::remove_file(inner.dir.join(name)) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                     return Err(error.into())
@@ -511,14 +589,15 @@ impl Journal {
 fn compact(inner: &mut Inner) -> std::io::Result<()> {
     let snapshot = encode_snapshot(inner.seq, inner.core_revision, &inner.entries);
     let tmp = inner.dir.join(format!("{SNAP_FILE}.tmp"));
+    let _ = std::fs::remove_file(&tmp);
     let mut file = private_file(&tmp, true)?;
     file.write_all(&snapshot)?;
     file.sync_all()?;
     std::fs::rename(&tmp, inner.dir.join(SNAP_FILE))?;
     sync_dir(&inner.dir)?;
     // From here the snapshot holds every record of the log; a crash before the next line leaves them to be skipped.
+    // The log is opened for appending: the next record lands at its end wherever that is.
     inner.log.set_len(0)?;
-    inner.log.seek(SeekFrom::Start(0))?;
     inner.log.sync_all()?;
     inner.snap_len = snapshot.len() as u64;
     inner.log_len = 0;
