@@ -1111,7 +1111,11 @@ impl<S: Storage> Device<S> {
                 _ => {}
             }
             device.drop_outbox(batch, id);
-            if let Some(change) = answer.change {
+            // The cursor moves past the own entry only when nothing lies between: an entry of another
+            // device that the hub ordered before it is still to be processed (5.4.1), and the log then
+            // brings the own one by again.
+            let next = device.memory.record.cursor.checked_add(1);
+            if let Some(change) = answer.change.filter(|change| Some(*change) == next) {
                 device.advance(batch, change)?;
             }
             Ok(())
