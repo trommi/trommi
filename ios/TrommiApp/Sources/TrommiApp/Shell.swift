@@ -63,6 +63,7 @@ struct BoardShell: View {
     .safeAreaInset(edge: .top, spacing: 0) { UpdateBanner() }
     .overlay { UpdateRequired() }
     .background(Ink.bg.ignoresSafeArea())
+    .modifier(StatusBarUnderIsland())
   }
   private var stack: some View {
     NavigationStack(path: $model.deskPath) {
@@ -369,17 +370,23 @@ struct DashedRule: View {
 
 // ---- toast, update line --------------------------------------------------------------------------------------
 
-/**
- * The passing word. iPhone: one glass pill at the top right, just below the ⋯ button: an Undo is the undo arrow in a
- * ring that runs down in 5 s (a second Undo while it runs counts up: "3"), any other word a short line; swipe it away;
- * it never covers more than itself; VoiceOver reads it out. iPad: the bar at the bottom.
- */
-/** The pill's growth out of the island: only sideways, from the island's width to its own. */
-struct IslandGrow: ViewModifier {
-  let x: CGFloat
-  func body(content: Content) -> some View { content.scaleEffect(x: x, y: 1, anchor: .center) }
+/** While the island's shape is open over the status bar's place the status bar is hidden, as under the system's own
+ *  expanded island: no clock or battery inside the black. */
+struct StatusBarUnderIsland: ViewModifier {
+  #if canImport(UIKit)
+  @ObservedObject private var island = IslandWindow.shared
+  func body(content: Content) -> some View { content.statusBarHidden(island.covering) }
+  #else
+  func body(content: Content) -> some View { content }
+  #endif
 }
 
+/**
+ * The passing word. iPhone with a Dynamic Island: the island itself says it (IslandWindow.swift) and nothing is drawn
+ * here. iPhone without one: one clear glass capsule under the status bar, the words at the left, an Undo as the undo
+ * arrow in a ring that runs down in 5 s at the right (a second Undo while it runs counts up: "3"); swipe it away; it
+ * never covers more than itself; VoiceOver reads it out. iPad: the bar at the bottom.
+ */
 struct ToastHost: View {
   @EnvironmentObject var model: BoardModel
   var top = false
@@ -431,16 +438,6 @@ struct ToastHost: View {
       }
     }
   }
-  /** The island's pill on this phone (nil without a Dynamic Island): IslandPill.of with the window's width and safe area. */
-  private var island: IslandPill? {
-    #if canImport(UIKit)
-    let w = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
-    guard let win = w else { return nil }
-    return IslandPill.of(width: win.bounds.width, safeTop: win.safeAreaInsets.top)
-    #else
-    return nil
-    #endif
-  }
   private func ring(_ white: Bool, size: CGFloat) -> some View {
     let ink: Color = white ? .white : Ink.fg
     return ZStack {
@@ -461,34 +458,33 @@ struct ToastHost: View {
     return false
     #endif
   }
-  @ViewBuilder private func phoneFallback(_ t: Toast) -> some View {
-    Group {
-      if let undo = t.undo {
-        // no island: a round glass pill at the top right, the arrow in its ring, the count beside
-        Button { model.toast = nil; count = 1; Task { await undo() } } label: {
-          ring(false, size: 30).padding(8).glass(Circle(), interactive: true)
-            .overlay(alignment: .topTrailing) {
-              if count > 1 { Text("\(count)").font(Face.text(12, .bold)).foregroundStyle(Ink.bg).frame(minWidth: 20, minHeight: 20).background(Circle().fill(Ink.fg)).offset(x: 4, y: -4) }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Undo: \(t.head)")
-      } else {
-        HStack(spacing: 8) {
-          if t.alert { Image(systemName: "exclamationmark.circle").foregroundStyle(Ink.urgCritical) }
-          VStack(alignment: .leading, spacing: 1) {
-            Text(t.head).font(Face.text(14, .semibold)).foregroundStyle(t.alert ? Ink.urgCritical : Ink.fg).lineLimit(1)
-            if !t.line.isEmpty { Text(t.line).font(Face.text(12)).foregroundStyle(Ink.muted).lineLimit(2) }
-          }
-        }
-        .padding(.horizontal, 14).padding(.vertical, 9)
-        .frame(maxWidth: 280, alignment: .leading)
-        .glass(Capsule())
-        .onTapGesture { withAnimation { model.toast = nil } }
+  /** No island: one clear glass capsule under the status bar, the words left, the undo arrow in its ring right. */
+  private func phoneFallback(_ t: Toast) -> some View {
+    HStack(spacing: 10) {
+      if t.alert { Image(systemName: "exclamationmark.circle").foregroundStyle(Ink.urgCritical) }
+      (Text(t.head).font(Face.text(15, .semibold)).foregroundColor(t.alert ? Ink.urgCritical : Ink.fg)
+        + Text(t.line.isEmpty ? "" : "  \(t.line)").font(Face.text(14)).foregroundColor(Ink.muted))
+        .lineLimit(1).truncationMode(.tail)
+      if t.undo != nil {
+        Spacer(minLength: 4)
+        if count > 1 { Text("\(count)").font(Face.text(14, .semibold)).foregroundStyle(Ink.muted) }
+        ring(false, size: 28)
       }
     }
-    .padding(.trailing, 14).padding(.top, safeTop + (t.undo == nil ? 50 : 4))
-    .frame(maxWidth: .infinity, alignment: .trailing)
+    .padding(.leading, 18).padding(.trailing, t.undo != nil ? 8 : 18).frame(minHeight: 44)
+    .glass(Capsule(), interactive: true)
+    .contentShape(Capsule())
+    .onTapGesture {
+      let undo = t.undo
+      withAnimation { model.toast = nil; count = 1 }
+      if let u = undo { Task { await u() } }
+    }
+    .accessibilityElement(children: .ignore)
+    .accessibilityAddTraits(.isButton)
+    .accessibilityLabel(t.undo != nil ? "Undo: \(t.head)" : [t.head, t.line].filter { !$0.isEmpty }.joined(separator: ". "))
+    .frame(maxWidth: 360)
+    .padding(.horizontal, 16).padding(.top, safeTop + 6)
+    .frame(maxWidth: .infinity, alignment: .center)
     .offset(x: drag.width, y: min(0, drag.height))
     .gesture(dismissGesture())
     .transition(.move(edge: .top).combined(with: .opacity))

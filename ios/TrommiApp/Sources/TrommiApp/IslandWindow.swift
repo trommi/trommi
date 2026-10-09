@@ -1,8 +1,12 @@
 // IslandWindow.swift: the app's passing words (an answer with its Undo, a failure, a note) at the Dynamic Island: ONE
-// place, no second toast (his word, 9 October). The pill in a window of its own above the app (window level alert +
-// 1), framed exactly to the pill in screen coordinates: sheets and panels never cover it, it takes no touch outside
-// itself. Its frame comes from the scene: the screen's width and the app window's safe area top (IslandPill); a
-// phone without an island (safe area top below 51 pt) gets none and the toast host shows its glass pill instead.
+// place, no second toast (his word, 9 October). It imitates the system's expanded island: a black shape that starts as
+// the island's own capsule and springs open to 11 pt from the screen's edges, corners concentric with the display, one
+// row of content under the sensor row; it falls back into the island when the word goes. While it is open the status
+// bar is hidden (BoardShell reads `covering`), so no clock or battery stands inside the black.
+// The shape lives in a window of its own above the app (window level alert + 1), framed exactly to the grown shape in
+// screen coordinates: sheets and panels never cover it, it takes no touch outside itself, and being smaller than the
+// screen it does not take the status bar's appearance from the app. A phone without an island (safe area top below
+// 51 pt) gets none and the toast host shows its glass capsule instead.
 import SwiftUI
 import TrommiClient
 #if canImport(UIKit)
@@ -10,13 +14,23 @@ import UIKit
 
 final class IslandUIWindow: UIWindow {}
 
-@MainActor final class IslandWindow {
-  static let shared = IslandWindow()
-  private var window: IslandUIWindow?
-  private var host: UIHostingController<AnyView>?
-  private var shownId: UUID?
+/** What the shape shows now; `open` is the grown state (false: the island's own capsule). */
+@MainActor final class IslandState: ObservableObject {
+  @Published var toast: Toast?
+  @Published var count = 1
+  @Published var open = false
+}
 
-  /** The island's pill on this device now, or nil (no island, no active scene). */
+@MainActor final class IslandWindow: ObservableObject {
+  static let shared = IslandWindow()
+  /** The shape is open over the status bar's place: the app hides its status bar meanwhile. */
+  @Published private(set) var covering = false
+  private let state = IslandState()
+  private var window: IslandUIWindow?
+  /** How long the fall back into the island takes before the window goes. */
+  private static let fall: Double = 0.42
+
+  /** The island's shapes on this device now, or nil (no island, no active scene). */
   func geometry() -> (pill: IslandPill, scene: UIWindowScene)? {
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
     guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first,
@@ -25,55 +39,57 @@ final class IslandUIWindow: UIWindow {}
     return (p, scene)
   }
 
-  /** The grown island: from the island's top and centre, wider and one line taller (the words stand under the island). */
-  static func grown(_ p: IslandPill, screen: CGFloat) -> CGRect {
-    let w = min(screen - 24, 370)
-    return CGRect(x: ((screen - w) / 2).rounded(), y: p.island.minY, width: w, height: p.island.height + 44)
-  }
-
-  /** Show (or update) the pill for this toast: every passing word of the app is said here, an undo with its arrow.
-   *  Returns false when this device has no island. */
+  /** Show this toast in the shape: it grows out of the island, or, when it is open already, the new word takes the
+   *  old one's place inside the same shape. Returns false when this device has no island. */
   @discardableResult func show(_ t: Toast, count: Int, model: BoardModel) -> Bool {
     guard let (p, scene) = geometry() else { return false }
-    let frame = Self.grown(p, screen: scene.screen.bounds.width)
-    let view = AnyView(IslandPillView(toast: t, count: count, pill: p, size: frame.size, close: { [weak self] in self?.hide(t.id) }).environmentObject(model))
-    if let h = host, let w = window, w.windowScene === scene {
-      h.rootView = view
-    } else {
+    if window == nil || window?.windowScene !== scene {
       let w = IslandUIWindow(windowScene: scene)
       w.windowLevel = .alert + 1
       w.backgroundColor = .clear
-      let h = UIHostingController(rootView: view)
+      let h = UIHostingController(rootView: AnyView(IslandShape(state: state, pill: p, close: { [weak self] in self?.hide() }).environmentObject(model)))
       h.view.backgroundColor = .clear
-      // the window lies in the status bar's area: its safe area would push the pill down below the island (build 18:
-      // a black capsule over the header). Screen coordinates, no safe area: the pill's top is the island's top.
+      // the window lies in the status bar's area: its safe area would push the shape down below the island (build 18:
+      // a black capsule over the header). Screen coordinates, no safe area: the shape's top is its own top.
       h.safeAreaRegions = []
       w.rootViewController = h
-      window = w; host = h
+      window = w
     }
-    window?.frame = frame
+    window?.frame = p.grown
+    state.toast = t
+    state.count = count
+    let fresh = window?.isHidden ?? true
     window?.isHidden = false
-    shownId = t.id
+    // (a fresh window draws the island's capsule first, then grows: one turn of the run loop between the two)
+    if fresh { DispatchQueue.main.async { [weak self] in self?.open() } } else { open() }
     return true
   }
+  private func open() {
+    guard state.toast != nil else { return }
+    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) { state.open = true; covering = true }
+  }
+  /** The word goes: the shape falls back into the island, then the window goes. A toast shown meanwhile keeps it. */
   func hide(_ id: UUID? = nil) {
-    if let id = id, id != shownId { return }
-    window?.isHidden = true
-    shownId = nil
+    if let id = id, id != state.toast?.id { return }
+    guard let gone = state.toast?.id else { return }
+    withAnimation(.spring(response: 0.36, dampingFraction: 0.9)) { state.open = false; covering = false }
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.fall) { [weak self] in
+      guard let self = self, self.state.toast?.id == gone, !self.state.open else { return }
+      self.window?.isHidden = true
+      self.state.toast = nil
+    }
   }
 }
 
-/** The pill itself: black, laid over the island and growing out of it, sideways and one line down. Under the island
- *  the words (an answer short: "→ <what he chose>"), at the right the undo arrow in its 5 s ring, the count of undos
- *  beside the island; a tap undoes (or lets a plain word go), a swipe up lets it go; VoiceOver reads it out. */
-struct IslandPillView: View {
+/** The shape itself: black, the island's capsule that springs open to the grown shape and back. In the row under the
+ *  sensors the words at the left (an answer short: "→ <what he chose>"), at the right the round undo button in its
+ *  5 s ring (the count of undos held beside it); nothing stands in the sensor row. A tap undoes (or lets a plain word
+ *  go), a swipe up lets it go; VoiceOver reads it out. */
+struct IslandShape: View {
   @EnvironmentObject var model: BoardModel
-  let toast: Toast
-  let count: Int
+  @ObservedObject var state: IslandState
   let pill: IslandPill
-  let size: CGSize
   let close: () -> Void
-  @State private var grown = false
   @State private var progress: CGFloat = 1
   /** The words: an undo says what was done, short (the part after the arrow of "title → choice"); else head and line. */
   static func words(_ t: Toast) -> (head: String, line: String) {
@@ -84,63 +100,75 @@ struct IslandPillView: View {
     return (t.head, t.line)
   }
   var body: some View {
-    let w = Self.words(toast)
-    let island = IslandPill.islandSize
-    Button {
-      let undo = toast.undo
-      model.toast = nil
-      close()
-      if let u = undo { Task { await u() } }
-    } label: {
-      ZStack(alignment: .top) {
-        RoundedRectangle(cornerRadius: grown ? 26 : island.height / 2, style: .continuous).fill(.black)
-          .frame(width: grown ? size.width : island.width, height: grown ? size.height : island.height)
-        VStack(spacing: 0) {
-          // beside the island: how many undos are held
-          HStack {
-            Group { if count > 1 { Text("\(count)").font(.system(size: 14, weight: .bold, design: .rounded)).foregroundStyle(.white) } }
-              .frame(width: max(0, (size.width - island.width) / 2))
-            Spacer(minLength: 0)
-          }
-          .frame(height: island.height)
-          HStack(spacing: 10) {
-            if toast.alert { Image(systemName: "exclamationmark.circle.fill").font(.system(size: 15)).foregroundStyle(Color(hex: 0xff6b5e)) }
-            (Text(w.head).font(Face.text(15, .semibold)).foregroundColor(toast.alert ? Color(hex: 0xff8a7f) : .white)
-              + Text(w.line.isEmpty ? "" : "  \(w.line)").font(Face.text(14)).foregroundColor(.white.opacity(0.7)))
-              .lineLimit(1).truncationMode(.tail)
-            Spacer(minLength: 0)
-            if toast.undo != nil {
-              ZStack {
-                Circle().stroke(Color.white.opacity(0.25), lineWidth: 2.2)
-                Circle().trim(from: 0, to: progress).stroke(Color.white, style: StrokeStyle(lineWidth: 2.2, lineCap: .round)).rotationEffect(.degrees(-90))
-                Image(systemName: "arrow.uturn.backward").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
-              }
-              .frame(width: 26, height: 26)
-            }
-          }
-          .padding(.leading, 18).padding(.trailing, 12)
-          .frame(height: size.height - island.height - 6)
-        }
-        .frame(width: size.width, height: size.height, alignment: .top)
-        .opacity(grown ? 1 : 0)
+    let open = state.open
+    let size = pill.grown.size
+    let island = pill.island
+    // the island's capsule in this window's coordinates (the window is the grown shape's frame)
+    let w = open ? size.width : island.width, h = open ? size.height : island.height
+    let y = open ? 0 : island.minY - pill.grown.minY
+    ZStack(alignment: .top) {
+      RoundedRectangle(cornerRadius: open ? IslandPill.grownRadius : island.height / 2, style: .continuous).fill(.black)
+        .frame(width: w, height: h)
+        .offset(y: y)
+      if let t = state.toast {
+        row(t)
+          .frame(width: size.width, height: pill.content.height)
+          .offset(y: pill.content.minY)
+          .opacity(open ? 1 : 0)
+          .scaleEffect(open ? 1 : 0.7, anchor: .top)
+          .id(t.id)
+          .transition(.opacity)
       }
-      .frame(width: size.width, height: size.height, alignment: .top)
-      .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
-    .buttonStyle(.plain)
+    .frame(width: size.width, height: size.height, alignment: .top)
+    .contentShape(RoundedRectangle(cornerRadius: IslandPill.grownRadius, style: .continuous))
+    .onTapGesture { act() }
     .gesture(DragGesture(minimumDistance: 6).onEnded { v in if v.translation.height < -12 { model.toast = nil; close() } })
-    .accessibilityLabel(toast.undo != nil ? (count > 1 ? "Undo: \(toast.head), \(count) actions" : "Undo: \(toast.head)") : [toast.head, toast.line].filter { !$0.isEmpty }.joined(separator: ". "))
-    .onAppear {
-      withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { grown = true }
-      progress = 1
-      withAnimation(.linear(duration: ToastHost.undoSeconds)) { progress = 0 }
-    }
-    .onChange(of: toast.id) { _, _ in
+    .accessibilityElement(children: .ignore)
+    .accessibilityAddTraits(.isButton)
+    .accessibilityLabel(label)
+    .onChange(of: state.toast?.id, initial: true) { _, id in
+      guard id != nil else { return }
       progress = 1
       withAnimation(.linear(duration: ToastHost.undoSeconds)) { progress = 0 }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .ignoresSafeArea()
+  }
+  private var label: String {
+    guard let t = state.toast else { return "" }
+    if t.undo != nil { return state.count > 1 ? "Undo: \(t.head), \(state.count) actions" : "Undo: \(t.head)" }
+    return [t.head, t.line].filter { !$0.isEmpty }.joined(separator: ". ")
+  }
+  private func act() {
+    let undo = state.toast?.undo
+    model.toast = nil
+    close()
+    if let u = undo { Task { await u() } }
+  }
+  /** The row under the sensors: the words at the left, the round undo button at the right, centred in the row. */
+  private func row(_ t: Toast) -> some View {
+    let w = Self.words(t)
+    return HStack(spacing: 10) {
+      if t.alert { Image(systemName: "exclamationmark.circle.fill").font(.system(size: 16)).foregroundStyle(Color(hex: 0xff6b5e)) }
+      (Text(w.head).font(Face.text(16, .semibold)).foregroundColor(t.alert ? Color(hex: 0xff8a7f) : .white)
+        + Text(w.line.isEmpty ? "" : "  \(w.line)").font(Face.text(15)).foregroundColor(.white.opacity(0.65)))
+        .lineLimit(1).truncationMode(.tail)
+      Spacer(minLength: 0)
+      if t.undo != nil {
+        if state.count > 1 { Text("\(state.count)").font(.system(size: 15, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.7)) }
+        ZStack {
+          Circle().fill(Color.white.opacity(0.16))
+          Circle().trim(from: 0, to: progress).stroke(Color.white, style: StrokeStyle(lineWidth: 2, lineCap: .round)).rotationEffect(.degrees(-90)).padding(1)
+          Image(systemName: "arrow.uturn.backward").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
+        }
+        .frame(width: 32, height: 32)
+      }
+    }
+    // (the shape's corners are 44 pt round: the words start and the button ends clear of them)
+    .padding(.leading, 26).padding(.trailing, 18)
+    // the row's own middle lies a little high in the round foot of the shape: 3 pt up reads as centred
+    .padding(.bottom, 6)
   }
 }
 #endif
