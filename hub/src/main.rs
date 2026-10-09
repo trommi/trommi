@@ -55,7 +55,7 @@ fn main() {
         .build()
         .expect("the runtime");
     runtime.block_on(async {
-        // without push credentials nothing is sent anywhere: requests are built and dropped
+        // pushes go out over HTTPS; if no client can be built, they are recorded and dropped
         let transport: Arc<dyn Transport> = match Network::new() {
             Ok(n) => Arc::new(n),
             Err(e) => {

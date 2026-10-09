@@ -79,8 +79,8 @@ CREATE TABLE devices (
   PRIMARY KEY (room_id, device)
 ) STRICT, WITHOUT ROWID;
 
--- Who is, and was, a leaf of which group; with the Cut once removed (9.0.10). A key that left a group does not
--- come back to it.
+-- Who is, and was, a leaf of which group; with the Cut once removed (9.0.10). A key comes back to a group only
+-- if nothing it wrote lies beyond its Cut; its row is then its present membership.
 CREATE TABLE group_members (
   group_id       BLOB NOT NULL REFERENCES groups(group_id),
   device         BLOB NOT NULL,
@@ -203,6 +203,7 @@ CREATE TABLE recovery_links (
   sealed             BLOB NOT NULL,
   PRIMARY KEY (room_id, room_epoch)
 ) STRICT, WITHOUT ROWID;
+CREATE UNIQUE INDEX recovery_links_by_change ON recovery_links(room_id, change);
 
 -- A recovery in progress (8.7): its parts are kept apart and published at `finish`, all or none.
 CREATE TABLE recoveries (
@@ -391,6 +392,7 @@ CREATE TABLE registers (
   head_change    INTEGER NOT NULL,
   PRIMARY KEY (group_id, writer, register_id)
 ) STRICT, WITHOUT ROWID;
+CREATE INDEX registers_by_room ON registers(room_id, head_change);
 
 -- ---- files and share links
 CREATE TABLE files (
@@ -461,6 +463,8 @@ CREATE TABLE requests (
   device         BLOB NOT NULL,
   kind           TEXT NOT NULL CHECK (kind IN ('readmit', 'handover', 'session', 'reject')),
   group_id       BLOB,
+  -- of a reject: the device that made the Commit
+  committer      BLOB,
   key_package    BLOB,
   n              INTEGER,
   at             INTEGER NOT NULL
@@ -652,10 +656,12 @@ impl Db {
         let _ = c.execute_batch("PRAGMA incremental_vacuum(2048); PRAGMA wal_checkpoint(PASSIVE);");
     }
 
+    /// At shutdown: only if no write holds the connection; a WAL that was not checkpointed is replayed at the
+    /// next start.
     pub fn checkpoint(&self) {
-        let _ = self
-            .writer()
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        if let Ok(c) = self.writer.try_lock() {
+            let _ = c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
     }
 }
 

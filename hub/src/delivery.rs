@@ -825,6 +825,10 @@ fn commit_in(
     )?;
     store_sealed_key(x.c, &room, &key, &body.sealed_key)?;
 
+    // a device that commits in a group has joined it
+    if matches!(facts.by, By::Member(_)) {
+        joined(x.c, group_id, &committer)?;
+    }
     // the leaves
     for cut in &note.cuts {
         crate::content::cut_chain(x.c, &room, group_id, cut, fx)?;
@@ -954,16 +958,21 @@ pub fn message(
     }
     let d = digest(bytes);
     if !relay {
-        if let Some(n) =
-            x.c.prepare_cached(
-                "SELECT n FROM group_log WHERE group_id = ?1 AND digest = ?2 AND sender = ?3",
-            )?
-            .query_row(params![group_id, &d[..], &auth.device[..]], |r| {
-                r.get::<_, i64>(0)
+        if let Some(n) = x
+            .c
+            .prepare_cached("SELECT n, sender FROM group_log WHERE group_id = ?1 AND digest = ?2")?
+            .query_row(params![group_id, &d[..]], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
             })
             .optional()?
         {
-            return Ok(json!({ "n": n }));
+            let (n, sender) = n;
+            // a repeated post of the same bytes by the same device: the first answer again
+            return if same(&sender, &auth.device) {
+                Ok(json!({ "n": n }))
+            } else {
+                Err(refuse("replay", "these bytes are in the log"))
+            };
         }
     }
     if in_epoch != row.epoch || epoch != row.epoch {
@@ -982,6 +991,7 @@ pub fn message(
         if row.kind != GroupKind::Room {
             return Err(refuse("forbidden", "only the room group relays"));
         }
+        joined(x.c, group_id, &auth.device)?;
         fx.events.push(Event {
             room: auth.room,
             audience: Audience { humans: true, others: vec![], except: Some(auth.device) },
@@ -1045,12 +1055,21 @@ pub fn log(
          WHERE group_id = ?1 AND n > ?2 AND (?3 = 0 OR kind = 'commit') ORDER BY n LIMIT ?4",
     )?;
     let mut rows = s.query(params![group_id, after, only_commits, limit + 1])?;
-    let mut items = Vec::new();
+    let (mut items, mut bytes, mut more) = (Vec::new(), 0usize, false);
     while let Some(r) = rows.next()? {
-        items.push(log_item(group_id, r)?);
+        if items.len() as i64 == limit {
+            more = true;
+            break;
+        }
+        let item = log_item(group_id, r)?;
+        bytes += item["bytes"].as_str().map_or(0, str::len);
+        // an answer holds at most 8 MiB; the first entry always goes in
+        if bytes > crate::content::ANSWER_BYTES && !items.is_empty() {
+            more = true;
+            break;
+        }
+        items.push(item);
     }
-    let more = items.len() as i64 > limit;
-    items.truncate(limit as usize);
     Ok(json!({ "items": items, "more": more }))
 }
 
@@ -1165,8 +1184,11 @@ pub fn archive(x: &Ctx, auth: &Auth, group_id: &[u8], fx: &mut Effects) -> Res<V
 pub fn reject(x: &Ctx, auth: &Auth, group_id: &[u8], n: i64, fx: &mut Effects) -> Res<Value> {
     auth.member()?;
     let row = store::group(x.c, &auth.room, group_id)?;
-    if store::sight(x.c, auth, &row)? == Sight::None {
+    if !store::is_leaf(x.c, group_id, &auth.device)? {
         return Err(refuse("not-found", "no such group"));
+    }
+    if !row.live {
+        return Err(refuse("gone", "the session is archived"));
     }
     let committer: Vec<u8> =
         x.c.prepare_cached(
@@ -1292,6 +1314,9 @@ pub fn put_sealed_key(x: &Ctx, auth: &Auth, bytes: &[u8]) -> Res<Value> {
             "a SealedKey is posted by its writer",
         ));
     }
+    if !row.live {
+        return Err(refuse("gone", "the session is archived"));
+    }
     let human = auth.who == Who::Human;
     if !human && !store::is_leaf(x.c, &row.group_id, &auth.device)? {
         return Err(refuse(
@@ -1330,6 +1355,10 @@ pub fn put_sealed_key(x: &Ctx, auth: &Auth, bytes: &[u8]) -> Res<Value> {
             "the SealedKey names an older room epoch",
         ));
     }
+    // 5.2.8: the hub takes nothing for a stale group but the Commit that repairs it, with its SealedKey
+    if store::is_stale(x.c, &view, &row)? {
+        return Err(refuse("stale-session", "the group waits for a Remove"));
+    }
     let hash: Option<Vec<u8>> =
         x.c.prepare_cached("SELECT hash FROM group_infos WHERE group_id = ?1 AND epoch = ?2")?
             .query_row(
@@ -1361,9 +1390,9 @@ pub fn sealed_keys(c: &Connection, auth: &Auth, after: i64, limit: i64) -> Res<V
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let more = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
-    let mut s = c.prepare_cached("SELECT room_epoch, change, sealed FROM recovery_links WHERE room_id = ?1 ORDER BY room_epoch")?;
+    let mut s = c.prepare_cached("SELECT room_epoch, change, sealed FROM recovery_links WHERE room_id = ?1 AND change > ?2 ORDER BY change LIMIT 1000")?;
     let links: Vec<Value> = s
-        .query_map([&auth.room[..]], |r| {
+        .query_map(params![&auth.room[..], after], |r| {
             Ok(json!({ "room_epoch": r.get::<_, i64>(0)?, "change": r.get::<_, i64>(1)?, "recovery_link": b64(&r.get::<_, Vec<u8>>(2)?) }))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -1401,8 +1430,9 @@ pub fn add_request(
          (SELECT id FROM requests WHERE room_id = ?1 AND device = ?2 ORDER BY id DESC LIMIT 15)",
     )?
     .execute(params![&auth.room[..], &auth.device[..]])?;
-    x.c.prepare_cached("INSERT INTO requests (room_id, device, kind, group_id, key_package, n, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?
-        .execute(params![&auth.room[..], &auth.device[..], kind, group_id, key_package, n, x.now as i64])?;
+    let committer = extra["committer"].as_str().and_then(crate::util::unb64);
+    x.c.prepare_cached("INSERT INTO requests (room_id, device, kind, group_id, key_package, n, at, committer) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)")?
+        .execute(params![&auth.room[..], &auth.device[..], kind, group_id, key_package, n, x.now as i64, committer])?;
     let id = x.c.last_insert_rowid();
     extra["id"] = json!(id);
     extra["kind"] = json!(kind);
@@ -1427,7 +1457,7 @@ pub fn requests(c: &Connection, auth: &Auth) -> Res<Value> {
     auth.member()?;
     // human devices see every wish of the room, another device its own
     let mut s = c.prepare_cached(
-        "SELECT id, device, kind, group_id, key_package, n, at FROM requests WHERE room_id = ?1 AND (?2 = 1 OR device = ?3) ORDER BY id",
+        "SELECT id, device, kind, group_id, key_package, n, at, committer FROM requests WHERE room_id = ?1 AND (?2 = 1 OR device = ?3) ORDER BY id",
     )?;
     let rows = s
         .query_map(
@@ -1441,6 +1471,7 @@ pub fn requests(c: &Connection, auth: &Auth) -> Res<Value> {
                     "key_package": r.get::<_, Option<Vec<u8>>>(4)?.map(|g| b64(&g)),
                     "n": r.get::<_, Option<i64>>(5)?,
                     "at": r.get::<_, i64>(6)?,
+                    "committer": r.get::<_, Option<Vec<u8>>>(7)?.map(|g| b64(&g)),
                 }))
             },
         )?
@@ -1471,6 +1502,11 @@ pub fn recovery_open(x: &Ctx, auth: &Auth) -> Res<Value> {
     if open_recovery_of(x.c, &auth.room, x.now)?.is_some() {
         return Err(refuse("too-many", "a recovery of this room is running"));
     }
+    // what an earlier recovery that ran out left behind
+    x.c.prepare_cached(
+        "DELETE FROM recoveries WHERE room_id = ?1 AND finished_at IS NULL AND expires_at <= ?2",
+    )?
+    .execute(params![&auth.room[..], x.now as i64])?;
     let id: [u8; 16] = crate::util::random();
     let expires = x.now + 600_000;
     x.c.prepare_cached("INSERT INTO recoveries (recovery_id, room_id, recovery_key, opened_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)")?
@@ -1598,7 +1634,9 @@ pub fn recovery_rehearse(
             "SELECT coalesce(sum(length(body)), 0) FROM recovery_parts WHERE recovery_id = ?1",
         )?
         .query_row([id], |r| r.get(0))?;
-    if count >= MAX_RECOVERY_PARTS || bytes >= MAX_RECOVERY_BYTES {
+    if count >= MAX_RECOVERY_PARTS
+        || bytes + body_json(group_id, body).len() as i64 > MAX_RECOVERY_BYTES
+    {
         return Err(refuse(
             "too-many",
             "a recovery has at most 8192 parts and 64 MiB",
