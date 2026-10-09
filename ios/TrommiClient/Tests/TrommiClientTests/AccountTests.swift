@@ -80,7 +80,7 @@ final class AccountTools: CoreTools {
   }
   func isFinalRefusal(_ code: String) -> Bool { base.isFinalRefusal(code) }
   func recoverySigner(code: Bytes) throws -> CoreSigner { AccountSigner(id: fold([code], 32)) }
-  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, groupInfos: [(group: GroupId, groupInfo: Bytes)], sealedKeys: [Bytes], nowMs: UInt64) throws -> Bytes { joinedWith = code; return [7] }
+  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (missingLink: Bytes?, notJoined: [(group: GroupId, code: String)]) { joinedWith = code; return (nil, []) }
 
   // ---- everything else: FakeCore.swift -------------------------------------------------------------------------
   var version: String { base.version }

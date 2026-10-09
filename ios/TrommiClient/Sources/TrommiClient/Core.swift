@@ -64,6 +64,7 @@ public protocol CoreStorage: AnyObject {
 /** What an outbox entry asks the hub for; the parts of each kind in the order core/src/store.rs names. */
 public enum OutboxKind: UInt8 {
   case roomFounding = 1, groupFounding, commit, externalCommit, message, relayMessage, envelope, keyPackages, sealedKey, recoveryCode
+  case recoveryCommit, recoveryFinish
 }
 public struct OutboxEntry: Equatable {
   public var id: UInt64
@@ -124,6 +125,8 @@ public enum ReceivedMessage: Equatable {
   case strokePiece(from: DeviceId, board: BoardId, piece: Bytes)
   case workTrail(from: DeviceId, turn: Bytes, number: UInt32, time: UInt64, step: Bytes)
   case recoveryAuth(from: DeviceId)
+  /** A second, different key for the sealed keys under a recovery key this device holds one for: `equivocation`. */
+  case recoveryAuthConflict(from: DeviceId)
   case dropped
   case newerVersion(from: DeviceId)
 }
@@ -310,9 +313,17 @@ public protocol CoreDevice: CoreSigner {
   /** "They don't match": the invite is burned. */
   func burnInvite(invite: Bytes) throws
 
-  // awaited: recovery (section 8; core `recovery` is planned)
-  /** Replaces the recovery code (8.6): the new code's 32 bytes; the Commit is in the outbox. */
-  func replaceRecoveryCode(nowMs: UInt64) throws -> Bytes
+  // recovery (section 8): built
+  /** Whether this device holds the key that authenticates the room's sealed keys under the code in force (8.3). */
+  func holdsRecoveryMac() throws -> Bool
+  /** Whether the content key of that epoch is vouched for; content of an unconfirmed epoch is shown as such (8.5). */
+  func keyIsConfirmed(group: GroupId, epoch: UInt64) throws -> Bool
+  /** Sends that key to one human device, or to all with nil (7.4); nil while an own room Commit is pending. */
+  func sendRecoveryAuth(recipient: DeviceId?) throws -> UInt64?
+  /** A new code to replace the one in force (8.6); nothing is stored or sent until `replaceCode`. */
+  func newRecoveryCode(current: Bytes) throws -> Bytes
+  /** Puts that new code in force: one `recoveryCode` entry whose fifth part is `account` (the JSON of the hub's `account` object). */
+  func replaceCode(current: Bytes, account: Bytes, nowMs: UInt64) throws -> UInt64
 }
 
 public struct OpenedInvite: Equatable {
@@ -453,7 +464,7 @@ public protocol CoreTools: AnyObject {
    * old content keys from the sealed copies. The Commits are in the device's outbox as `externalCommit`, in the
    * order to post them; the `RecoveryLink` for `finish` is returned.
    */
-  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, groupInfos: [(group: GroupId, groupInfo: Bytes)], sealedKeys: [Bytes], nowMs: UInt64) throws -> Bytes
+  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (missingLink: Bytes?, notJoined: [(group: GroupId, code: String)])
 }
 
 /** Who signs a hub challenge (12.3): a device, or the recovery key while it joins. */

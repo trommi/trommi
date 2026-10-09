@@ -126,29 +126,8 @@ extension Room {
     do {
       let hub = try HubClient(hubURL: hubURL, room: room, signer: try tools.recoverySigner(code: code))
       _ = try await hub.signIn(challenge: challenge)
-      // What the recovery key may read: the groups, each one's GroupInfo, the sealed keys.
-      var infos = [(group: GroupId, groupInfo: Bytes)]()
-      for g in try await hub.groups() where g["live"] as? Bool != false {
-        guard let id = (g["group_id"] as? String).flatMap({ try? unb64u($0) }) else { continue }
-        let info = try await hub.groupInfo(id)
-        guard let bytes = (info["group_info"] as? String).flatMap({ try? unb64u($0) }) else { throw TrommiError("incomplete", "the hub gave no GroupInfo for a group") }
-        infos.append((id, bytes))
-      }
-      var sealed = [Bytes](), after: UInt64 = 0
-      while true {
-        let page = try await hub.request("GET", "/sealed-keys", query: ["after": String(after)])
-        sealed += (page["rows"] as? [JSON] ?? []).compactMap { ($0["sealed_key"] as? String).flatMap { try? unb64u($0) } }
-        guard page["more"] as? Bool == true, let next = Wire.uint(page["change"]), next > after else { break }
-        after = next
-      }
-      _ = try tools.joinWithRecoveryCode(device: made.device, code: code, groupInfos: infos, sealedKeys: sealed, nowMs: nowMs())
-      // Each join from outside goes to its group's Commit route with its RecoveryAuth, under the recovery key's
-      // token, the room group first (the core queued them in that order). A refused one stops the sign-in; what was
-      // taken before it stands, and the device is found again by the next sign-in's fresh join.
-      for e in made.device.outbox() where e.kind == .externalCommit {
-        let r = try await hub.post(e)
-        try made.device.outboxAccepted(e.id, change: Wire.uint(r["change"]))
-      }
+      // The core reads the room from the hub under the recovery key's token, checks it, and posts the joins.
+      _ = try await tools.joinWithRecoveryCode(device: made.device, code: code, hub: hub, nowMs: nowMs())
       let record = RoomRecord(hubURL: hubURL, roomId: roomId, myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false)
       try made.store.save(record)
       return try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)

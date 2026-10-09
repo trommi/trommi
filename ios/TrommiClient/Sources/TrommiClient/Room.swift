@@ -342,7 +342,8 @@ public final class Room {
     var change = Change()
     try await takeWelcomes(&change)
     try await readChanges(&report, &change)
-    try await publishKeyPackages()
+    // (stocking KeyPackages is upkeep: a failure there does not keep the board from showing; the next sync tries again)
+    try? await publishKeyPackages()
     synced = true
     Task { await self.refreshPresence() }
     board.project()
@@ -369,9 +370,14 @@ public final class Room {
 
   /** Keeps the hub stocked with this device's KeyPackages (spec 14.2). */
   func publishKeyPackages() async throws {
-    // How many are unused at the hub comes with its answer to an upload (`unused`), nowhere else: before the first
-    // answer of a run the device is told "none", and makes a batch if its own records say one is due.
-    let unused = keyPackagesAtHub ?? 0
+    // How many are unused at the hub comes with its answer to an upload (`unused`). Before the first answer of a
+    // run the hub is asked with an upload of nothing: a device told "none" while the hub holds a full set would make
+    // a batch the hub refuses (`too-many`).
+    if keyPackagesAtHub == nil {
+      let r = try await noted { try await hub.request("PUT", "/key-packages", body: ["single_use": [String]()]) }
+      keyPackagesAtHub = Wire.int(r["unused"])
+    }
+    guard let unused = keyPackagesAtHub else { return }
     _ = try await onCore { try $0.keyPackagesToUpload(unusedAtHub: unused, nowMs: nowMs()) }
   }
 
@@ -547,7 +553,7 @@ public final class Room {
       onStrokePiece?(hex(from), "desk/\(hex(boardId))", piece)
     case .newerVersion(let from):
       board.pushAlert(&change, code: "newer-version", message: Compat.UPDATE_MESSAGE, sender: hex(from))
-    case .keys, .recoveryAuth, .dropped: break
+    case .keys, .recoveryAuth, .recoveryAuthConflict, .dropped: break
     }
   }
   /** A piece of a stroke another device is drawing (relayed, never stored): sender, board timeline id, the piece's JSON. */
@@ -741,6 +747,8 @@ public final class Room {
     case .groupFounding: return r["group_id"] is String ? .some(nil) : nil
     case .roomFounding: return r["room_id"] is String ? .some(nil) : nil
     case .sealedKey: return .some(nil)
+    case .recoveryCommit: return r["kept"] as? Bool == true ? .some(nil) : nil
+    case .recoveryFinish: return Wire.uint(r["change"]).map { .some($0) }
     }
   }
   /**
