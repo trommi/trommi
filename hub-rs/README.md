@@ -73,11 +73,11 @@ Last run (8 October 2026, this machine, release build):
 
 | Check | Node hub | hub-rs |
 | --- | --- | --- |
-| `cargo test` (vectors.json, units) | | 12 passed (8 vector sections, 2 quota, 2 admin formatting) |
+| `cargo test` (vectors.json, units) | | 13 passed (8 vector sections, 2 quota, 3 admin: formatting, Berlin time, column classes cover the schema) |
 | `hub/test.mjs` | 28 of 28 | 28 of 28 |
 | `hub/ops/test.mjs` | 11 of 11 | 11 of 11 |
 | `hub/accounts-test.mjs` | all passed | all passed |
-| `hub/admin-test.mjs` | 21 passed | 21 passed |
+| `hub/admin-test.mjs` | 24 passed | 24 passed |
 | `dev/interop/hub-diff.mjs` (10,000 requests) | | 0 differences in status, error code, JSON keys; texts equal |
 | `dev/interop/run.mjs` (js-js, js-swift, swift-js, snapshot, presence) | 70 passed | 70 passed |
 | `dev/interop/run.mjs --switch-hub-cmd` (63 hub restarts) | Node↔Node: 54 passed, 9 failed | Node↔Rust: 52 passed, 11 failed (below) |
@@ -144,7 +144,7 @@ Status: **done** = the same behaviour, checked by the named suite against hub-rs
 | A download whose client takes no bytes for 30 s | differs | cut after 30 s, as the README's Limits say ("any request with no bytes moving for 30 s is closed"); the Node hub serves it to the end however long the client pauses (its socket timeout does not see a blocked pipe) |
 | `hub.db` schema, migrations (`referenced_at`, `void_code`, `level`, schema 2 moved aside), WAL, incremental vacuum, leases kept across restarts | done | hub/test.mjs restart, switchover |
 | WAL keeper, metrics port (`/metrics`, `/metrics/history`), `metrics.db` minutes | done (Node-only figures see below) | ops/test.mjs, admin-test |
-| Admin page: Tailscale login + password, sessions, CSRF, rate limits, password change, overview, data browser, row detail with decoded header | done | admin-test |
+| Admin page: Tailscale login + password, sessions, CSRF, rate limits, password change, overview, data browser, row detail with decoded header, column marks (`COLUMN_CLASSES`), accounts (knows / cannot see), schema page, fonts | done | admin-test, cargo test |
 | Test accounts page: @example.org rooms deleted after a gzipped backup, one transaction per room, `deletions.log` (`hub/ops/delete-room.mjs`) | done | admin-test, ops/test.mjs |
 | Graceful close (in-flight finish, idle connections closed, no late 503) | done | hub/test.mjs F14, fuzz restarts |
 | Backups (`VACUUM INTO`, `hub/deploy-backup.sh`) and healthcheck | done | image smoke test |

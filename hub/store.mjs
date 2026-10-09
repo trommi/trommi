@@ -98,6 +98,83 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 ) WITHOUT ROWID;
 `
 
+// What each column of hub.db holds, as the admin page marks it (hub/admin-view.mjs; hub-rs gets the same table
+// through hub-rs/crates/hub/gen-admin-assets.mjs). The one place: a column added to any CREATE TABLE of the hub
+// (above, accounts.mjs, server.mjs shares, ops/test-rooms.mjs, hub-rs db.rs) needs a line here, or the tests fail
+// (hub/admin-test.mjs, cargo test column_classes).
+//   e2e    end-to-end encrypted: ciphertext or a sealed key that only the members' devices can open
+//   plain  the hub reads it: ids, numbers, times, roles, signed (not encrypted) records, addresses
+//   hash   a hash, salt or signature: derived, says nothing of the content by itself
+const P = 'plain', H = 'hash', E = 'e2e'
+export const COLUMN_CLASSES = {
+  rooms: { room_id: [P, 'room identifier'], founded_at: [P, ''], last_entry_number: [P, ''], last_envelope_number: [P, ''] },
+  member_entries: {
+    room_id: [P, ''], entry_number: [P, ''], previous_entry_hash: [H, 'chain link'], entry_hash: [H, ''], entry_action: [P, ''], signer_device_id: [P, ''],
+    signed_entry: [P, 'signed member entry (devices, roles, public keys): not encrypted'], received_at: [P, ''],
+  },
+  devices: {
+    room_id: [P, ''], device_id: [P, ''], device_role: [P, 'human or agent'], key_signing_public: [P, 'public key'], key_exchange_public: [P, 'public key'],
+    added_entry_number: [P, ''], removed_entry_number: [P, ''], removal_cut_sequence: [P, ''], removal_cut_hash: [H, ''],
+  },
+  sealed_room_keys: { room_id: [P, ''], key_epoch: [P, ''], device_id: [P, 'the recipient'], key_sealed: [E, 'room key sealed for one device'] },
+  key_back_links: { room_id: [P, ''], key_epoch: [P, ''], key_back_link: [E, 'the previous room key under the next one'] },
+  session_grants: {
+    room_id: [P, ''], session_id: [P, ''], grant_number: [P, ''], previous_grant_hash: [H, 'chain link'], grant_hash: [H, ''], session_key_epoch: [P, ''],
+    signer_device_id: [P, ''], signed_grant: [P, 'signed grant (ids, epoch, assigned agents, commitments): not encrypted'], received_at: [P, ''],
+  },
+  sealed_session_keys: { room_id: [P, ''], session_id: [P, ''], session_key_epoch: [P, ''], device_id: [P, 'the recipient'], key_sealed: [E, 'session key sealed for one device'] },
+  session_key_back_links: { room_id: [P, ''], session_id: [P, ''], session_key_epoch: [P, ''], key_back_link: [E, 'the previous session key under the next one'] },
+  invites: {
+    room_id: [P, ''], invite_id: [P, ''], device_role: [P, ''], inviter_device_id: [P, ''], signed_offer: [P, 'signed offer: never the secret of the link'],
+    expires_at: [P, ''], signed_reveal: [P, 'signed answer of the inviter'], answered_request_hash: [H, ''], used_at: [P, ''], added_device_id: [P, ''], burned_at: [P, ''],
+  },
+  join_requests: { room_id: [P, ''], invite_id: [P, ''], request_hash: [H, ''], device_id: [P, ''], signed_request: [P, 'signed request of the newcomer'], received_at: [P, ''] },
+  envelopes: {
+    room_id: [P, ''], envelope_number: [P, ''], sender_device_id: [P, ''], sender_sequence: [P, ''], previous_envelope_hash: [H, 'chain link'], envelope_hash: [H, ''],
+    key_epoch: [P, ''], recipient_device_id: [P, ''], object_id: [P, ''], object_state: [P, 'open, answered, closed'], urgency: [P, ''], answered_at: [P, ''],
+    envelope_kind: [P, ''], timeline_kind: [P, ''], timeline_id: [P, ''], send_push: [P, ''], attachment_ids: [P, ''], padded_size: [P, 'size after padding'],
+    sent_at: [P, ''], received_at: [P, ''], envelope_header: [P, 'cleartext header, signed: the hub routes by it'], envelope_nonce: [P, 'AES-GCM nonce'],
+    encrypted_body: [E, 'what is written and drawn: messages, card titles, options and answers, canvases, names of sessions, desks and devices'], encrypted_body_hash: [H, 'SHA-256 of the ciphertext'],
+    envelope_signature: [H, 'signature of the sender'], void_code: [P, 'why a refused envelope was kept void'],
+  },
+  objects: {
+    room_id: [P, ''], object_id: [P, ''], object_state: [P, ''], urgency: [P, ''], answered_at: [P, ''], owner_device_id: [P, ''],
+    first_envelope_number: [P, ''], latest_head_envelope_number: [P, ''],
+  },
+  timelines: { room_id: [P, ''], timeline_kind: [P, ''], timeline_id: [P, ''], last_envelope_number: [P, ''], item_count: [P, ''] },
+  attachments: {
+    room_id: [P, ''], attachment_id: [P, ''], object_id: [P, ''], uploader_device_id: [P, ''], total_size: [P, 'bytes of the encrypted file'], chunk_count: [P, ''],
+    stored_at: [P, ''], referenced_at: [P, ''],
+  },
+  agent_leases: { room_id: [P, ''], device_id: [P, ''], process_instance: [P, 'random id of the running connector'], lease_generation: [P, ''], expires_at: [P, ''] },
+  push_subscriptions: {
+    room_id: [P, ''], device_id: [P, ''], endpoint: [P, 'address at the push service, with the device token: a secret'],
+    subscription: [P, 'the keys the hub needs to send a push: a secret'], created_at: [P, ''], level: [P, 'all or knocking'],
+  },
+  shares: {
+    share_id: [P, ''], room_id: [P, ''], attachment_id: [P, ''], share_secret_hash: [H, 'SHA-256 of the secret in the link'], expires_at: [P, ''],
+    created_by_device_id: [P, ''], created_at: [P, ''],
+  },
+  test_rooms: { room_id: [P, ''], expires_at: [P, ''] },
+  accounts: {
+    room_id: [P, ''], email: [P, 'the address in plaintext'], email_verified_at: [P, ''], created_at: [P, ''], updated_at: [P, ''], revision: [P, ''],
+    auth_salt: [H, 'salt'], auth_hash: [H, 'scrypt of the client\'s auth key, never the password'],
+    key_wrapped: [E, 'the room\'s recovery code under a key only the password gives'], kdf: [P, 'KDF parameters'],
+    recovery_salt: [H, 'salt'], recovery_hash: [H, 'scrypt of the Emergency Kit\'s auth key'], recovery_wrapped: [E, 'the recovery code under the Emergency Kit words'],
+    code_salt: [H, 'salt'], code_hash: [H, 'salted SHA-256 of the pending email code'], code_expires_at: [P, ''], code_attempts: [P, ''],
+  },
+}
+// One line per table where the columns alone would mislead.
+export const TABLE_NOTES = {
+  envelopes: 'Truth. The hub reads the header (who, when, which card, how big) and never the body.',
+  member_entries: 'Truth. The signed member list: who is in the room, with which public keys.',
+  objects: 'Derived from signed header fields of envelopes; can be rebuilt at any time.',
+  timelines: 'Derived from signed header fields of envelopes; can be rebuilt at any time.',
+  attachments: 'Bookkeeping only. The files are encrypted on the client and lie beside hub.db, not in it.',
+  accounts: 'Sign-in by email. The hub can check a login, it cannot open the room with it.',
+  push_subscriptions: 'What the hub needs to ring a device. A push carries room, envelope number and urgency, never content.',
+}
+
 /**
  * Open (or create) HUB_DATA/hub.db. A database of an older schema (pre-launch: test rooms only, unreadable
  * under the v1.1 bytes) is moved aside to hub.db.v<old>-<date>, with its attachments, and a fresh one begins.

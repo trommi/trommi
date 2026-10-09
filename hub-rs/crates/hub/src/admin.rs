@@ -193,6 +193,12 @@ fn resp(status: u16, body: impl Into<Bytes>, ty: &str, extra: &[(&str, String)])
     r
 }
 const HTML: &str = "text/html; charset=utf-8";
+// The web app's three fonts (latin), in the binary: /fonts/<name>.woff2, the only files this listener serves.
+const FONTS: [(&str, &[u8]); 3] = [
+    ("/fonts/display.woff2", include_bytes!("../../../../app/web/public/fonts/f1.woff2")),
+    ("/fonts/sans.woff2", include_bytes!("../../../../app/web/public/fonts/f7.woff2")),
+    ("/fonts/mono.woff2", include_bytes!("../../../../app/web/public/fonts/f3.woff2")),
+];
 const TEXT: &str = "text/plain; charset=utf-8";
 fn cookie(value: &str, max_age: i64) -> String { format!("{COOKIE}={value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={max_age}") }
 fn redirect(to: &str, extra: &[(&str, String)]) -> Response<Body> {
@@ -271,6 +277,12 @@ impl Admin {
         let path = parts.uri.path().to_string();
         let method = parts.method.as_str().to_string();
         let params = crate::util::query_pairs(parts.uri.query());
+        // The fonts need the Tailscale login only: the login form is set in them too. They are public files of the web app.
+        if method == "GET" || method == "HEAD" {
+            if let Some((_, font)) = FONTS.iter().find(|f| f.0 == path) {
+                return resp(200, if method == "HEAD" { Bytes::new() } else { Bytes::from_static(font) }, "font/woff2", &[("cache-control", "private, max-age=604800".to_string())]);
+            }
+        }
         if path == "/login" && method == "POST" {
             if self.limited(&login) {
                 return resp(429, "too many attempts, try again later\n", TEXT, &[("retry-after", (FAIL_WINDOW_MS / 1000).to_string())]);
@@ -378,8 +390,18 @@ impl Admin {
             return resp(200, if head { String::new() } else { view::render_test_accounts(&self.test_accounts(), &login, &csrf, self.can_delete(), "", None) }, HTML, &[]);
         }
         let wants_data = path == "/data" || (path == "/" && params.iter().any(|(k, _)| k == "table"));
+        let notice = |status: u16, title: &str, text: &str| resp(status, if head { String::new() } else { view::render_notice(title, text, &login, &csrf) }, HTML, &[]);
+        if path == "/accounts" {
+            return match view::render_accounts(&self.src, &params, &login, &csrf) {
+                Some(p) => resp(200, if head { String::new() } else { p }, HTML, &[]),
+                None => notice(404, "No such room", "There is no room with this id."),
+            };
+        }
+        if path == "/schema" {
+            return resp(200, if head { String::new() } else { view::render_schema(&self.src, &login, &csrf) }, HTML, &[]);
+        }
         if path != "/" && path != "/data" {
-            return resp(404, "not found\n", TEXT, &[]);
+            return notice(404, "Not found", "There is no page at this address.");
         }
         let src = &self.src;
         let started = self.started_at;
@@ -387,7 +409,7 @@ impl Admin {
             // (the connection's guard must be gone before render_data takes it again)
             let exists = src.db().is_some();
             if !exists {
-                return resp(503, "hub.db does not exist yet\n", TEXT, &[]);
+                return notice(503, "No database yet", "hub.db does not exist yet. It is made when the hub first starts.");
             }
             view::render_data(src, &params, &login, &csrf)
         } else {

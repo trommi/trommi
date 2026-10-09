@@ -28,7 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { CSP, renderLoginPage, renderPasswordPage, renderOverview, renderData, renderTestAccounts } from './admin-view.mjs';
+import { CSP, renderLoginPage, renderPasswordPage, renderOverview, renderData, renderTestAccounts, renderSchema, renderNotice, renderAccounts } from './admin-view.mjs';
 import { testAccounts } from './ops/delete-room.mjs';
 
 const scryptAsync = promisify(crypto.scrypt);
@@ -39,6 +39,11 @@ const FAIL_WINDOW_MS = 15 * 60 * 1000;
 const FAILS_PER_LOGIN = 5;
 const FAILS_GLOBAL = 20;
 export const PASSWORD_FILE = 'admin-password-hash';
+// The web app's three fonts (latin), read once: /fonts/<name>.woff2, the only files this listener serves.
+const FONT_DIR = new URL('../app/web/public/fonts/', import.meta.url);
+const FONTS = Object.fromEntries(Object.entries({ display: 'f1', sans: 'f7', mono: 'f3' }).map(([name, file]) => {
+  try { return [`/fonts/${name}.woff2`, fs.readFileSync(new URL(`${file}.woff2`, FONT_DIR))]; } catch { return [`/fonts/${name}.woff2`, null]; }
+}));
 
 // ---------- password hashing ----------
 // Format: scrypt:<N>:<r>:<p>:<salt b64url>:<hash b64url>  (no "$", so it is safe in a compose .env file)
@@ -190,6 +195,8 @@ export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, ho
 
       const url = new URL(req.url, 'http://admin.invalid');
       const method = req.method;
+      // The fonts need the Tailscale login only: the login form is set in them too. They are public files of the web app.
+      if (FONTS[url.pathname] && (method === 'GET' || method === 'HEAD')) return send(res, 200, method === 'HEAD' ? '' : FONTS[url.pathname], 'font/woff2', { 'cache-control': 'private, max-age=604800' });
 
       if (url.pathname === '/login' && method === 'POST') {
         if (limited(login)) return send(res, 429, 'too many attempts, try again later\n', 'text/plain; charset=utf-8', { 'retry-after': String(FAIL_WINDOW_MS / 1000) });
@@ -253,9 +260,15 @@ export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, ho
       if (url.pathname === '/test-accounts') return send(res, 200, method === 'HEAD' ? '' : renderTestAccounts(testAccounts(openDb()), { login, csrf: session.csrf, canDelete: !!actions.deleteTestRooms }), html);
       // /: overview (old links /?table=… still open the data view); /data: the data browser.
       const wantsData = url.pathname === '/data' || (url.pathname === '/' && url.searchParams.has('table'));
-      if (url.pathname !== '/' && url.pathname !== '/data') return send(res, 404, 'not found\n');
+      const notice = (status, title, text) => send(res, status, method === 'HEAD' ? '' : renderNotice(title, text, { login, csrf: session.csrf }), html);
+      if (url.pathname === '/accounts') {
+        const page = renderAccounts(openDb(), url.searchParams, { login, csrf: session.csrf });
+        return page ? send(res, 200, method === 'HEAD' ? '' : page, html) : notice(404, 'No such room', 'There is no room with this id.');
+      }
+      if (url.pathname === '/schema') return send(res, 200, method === 'HEAD' ? '' : renderSchema(openDb(), { login, csrf: session.csrf }), html);
+      if (url.pathname !== '/' && url.pathname !== '/data') return notice(404, 'Not found', 'There is no page at this address.');
       const database = openDb();
-      if (wantsData && !database) return send(res, 503, 'hub.db does not exist yet\n');
+      if (wantsData && !database) return notice(503, 'No database yet', 'hub.db does not exist yet. It is made when the hub first starts.');
       const page = wantsData
         ? renderData(database, url.searchParams, { login, csrf: session.csrf })
         : renderOverview({ db: database, dbPath, dataDir, metrics, startedAt, range: url.searchParams.get('range'), now: now(), login, csrf: session.csrf });

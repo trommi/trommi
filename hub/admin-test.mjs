@@ -11,6 +11,9 @@ import { startAdmin as startAdminHere, hashPassword, verifyPassword, renderCell,
 // HUB_CMD=<a hub binary>: the page of that hub (its `admin` command, hub/external.mjs); the helpers above stay JavaScript's.
 const startAdmin = process.env.HUB_CMD ? (await import('./external.mjs')).startAdmin : startAdminHere;
 import { hubMetrics, openSeries } from './ops/metrics.mjs';
+import { COLUMN_CLASSES } from './store.mjs';
+import { isOpaque, classOf } from './admin-view.mjs';
+import { spawnSync } from 'node:child_process';
 
 const LOGIN = 'admin@example.com';
 const PASSWORD = 'correct horse battery staple 42';
@@ -242,13 +245,77 @@ try {
     assert.match(html, new RegExp(`f.timeline_id=card%2F${'c'.repeat(32)}`));
     assert.match(html, /first envelope number/);
     html = await get(`/data?t=accounts&k.room_id=${ROOM}`);
-    assert.match(html, /<dt>email<\/dt><dd><span class="opaque">/);
+    assert.match(html, /<dt>email<span class="cm cm-plain" title="Server-readable">.*?readable<\/span><\/dt><dd><span class="opaque">/);
+    assert.match(html, /<dt>auth_hash<span class="cm cm-hash" title="Hash or proof">/);
     assert.doesNotMatch(html, /someone@example\.com/);
     html = await get(`/data?t=accounts&k.email=${encodeURIComponent('someone@example.com')}`);
     assert.doesNotMatch(html, /<aside class="detail"/, 'opaque columns are no row keys');
     html = await get('/data?t=envelopes&rowid=99999');
     assert.match(html, /does not exist/);
-    assert.equal((await request('/data/x', { cookie })).status, 404);
+    const missing = await request('/data/x', { cookie });
+    assert.equal(missing.status, 404);
+    assert.match(await missing.text(), /<h1>Not found<\/h1>/);
+  });
+
+  await test('what a column holds: marks in the table head, the summary line, /schema with the legend; fonts from this listener', async () => {
+    const { cookie } = await signIn();
+    let html = await (await request('/data?t=envelopes', { cookie })).text();
+    assert.match(html, /<th>encrypted_body<span class="cm cm-e2e" title="End-to-end encrypted"><svg aria-hidden="true"><use href="#c-e2e"\/><\/svg>E2E encrypted<\/span><\/th>/);
+    assert.match(html, /envelope_number<\/a><span class="cm cm-plain" title="Server-readable">/);
+    assert.match(html, /<div class="sum"><span><b>1<\/b> <span class="cm cm-e2e"/);
+    assert.match(html, /<symbol id="c-e2e"/);
+    html = await (await request('/schema', { cookie })).text();
+    assert.match(html, /<h1>Schema<\/h1>/);
+    assert.match(html, /<ul class="legend"><li><span class="cm cm-e2e"/);
+    assert.match(html, /<section class="card schema" id="t-envelopes">/);
+    assert.match(html, /<td class="mono">encrypted_body<\/td><td class="mono muted">BLOB<\/td><td><span class="cm cm-e2e"[^>]*>.*?End-to-end encrypted<\/span><\/td><td class="muted">masked: size \+ 16 bytes<\/td>/);
+    assert.match(html, /<td class="mono">key<\/td><td class="mono muted">TEXT<\/td><td><span class="cm cm-none"/, 'a table the schema does not name is marked as not classified');
+    assert.doesNotMatch(html, /SECRET|someone@example\.com/);
+    for (const name of ['display', 'sans', 'mono']) {
+      const font = await request(`/fonts/${name}.woff2`);     // no session: the login form uses them
+      assert.equal(font.status, 200, name);
+      assert.equal(font.headers.get('content-type'), 'font/woff2');
+      assert.equal(Buffer.from(await font.arrayBuffer()).subarray(0, 4).toString(), 'wOF2', name);
+    }
+    assert.equal((await request('/fonts/display.woff2', { login: null })).status, 403);
+    assert.match((await request('/', { cookie })).headers.get('content-security-policy'), /font-src 'self'/);
+  });
+
+  await test('accounts: the rooms with counts, one room as "the hub knows" beside "the hub cannot see"; emails stay masked', async () => {
+    const { cookie } = await signIn();
+    let html = await (await request('/accounts', { cookie })).text();
+    assert.match(html, /<h1>Accounts<\/h1><span class="muted">2 rooms/);
+    assert.match(html, new RegExp(`<tr data-href="/accounts\\?room=${ROOM}">`));
+    assert.match(html, /<span class="opaque">19 B · 736f6d656f6e65406578616d706c652e…<\/span> <span class="tag">not verified<\/span>/);
+    assert.match(html, /<span class="null">no account<\/span>/);
+    assert.doesNotMatch(html, /someone@example\.com|SECRET/);
+    const one = await request(`/accounts?room=${ROOM}`, { cookie });
+    assert.equal(one.status, 200);
+    html = await one.text();
+    assert.match(html, /<h2>The hub knows<\/h2>/);
+    assert.match(html, /<h2>The hub cannot see<\/h2>/);
+    assert.match(html, /<dt>envelopes ever<\/dt><dd>120<\/dd>/);
+    assert.match(html, /<td>answered<\/td><td class="num">1<\/td><td class="num">1<\/td>/);
+    assert.match(html, /<dt>email<\/dt><dd><span class="opaque">/);
+    assert.doesNotMatch(html, /someone@example\.com|SECRET|78787878/);
+    assert.equal((await request(`/accounts?room=${'c'.repeat(64)}`, { cookie })).status, 404);
+    assert.equal((await request('/accounts?room=%27', { cookie })).status, 404);
+    assert.equal((await request('/accounts')).status, 403);
+  });
+
+  await test('COLUMN_CLASSES: only the three classes; whatever is end-to-end encrypted is masked', async () => {
+    for (const [table, cols] of Object.entries(COLUMN_CLASSES)) {
+      for (const [col, [cls, note]] of Object.entries(cols)) {
+        assert.ok(['e2e', 'plain', 'hash'].includes(cls), `${table}.${col}: ${cls}`);
+        assert.equal(typeof note, 'string');
+        if (cls === 'e2e') assert.ok(isOpaque(col), `${table}.${col} is end-to-end encrypted and must be masked`);
+      }
+    }
+    assert.equal(classOf('envelopes', 'encrypted_body'), 'e2e');
+    assert.equal(classOf('settings', 'key'), 'none');
+    // hub-rs carries the same table and stylesheet, generated: it must be the current one.
+    const check = spawnSync(process.execPath, [new URL('../hub-rs/crates/hub/gen-admin-assets.mjs', import.meta.url).pathname, '--check'], { encoding: 'utf8' });
+    assert.equal(check.status, 0, check.stderr || check.stdout);
   });
 
   await test('overview graphs: tiles, charts from the ring and from the persisted minutes (1 h / 24 h / 7 d)', async () => {
@@ -386,6 +453,22 @@ try {
       assert.ok(fs.existsSync(path.join(hubDir, 'metrics.db')), 'the hub keeps metrics.db');
       const data = await (await request('/data', { cookie }, server)).text();
       assert.match(data, /class="tree"/);
+      // The hub's own schema: every column of every table has a class in COLUMN_CLASSES (hub/store.mjs), and
+      // COLUMN_CLASSES names nothing the schema does not have. A new column without a class fails here.
+      const schema = {};
+      for (const { name } of hub.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
+        schema[name] = hub.db.prepare(`PRAGMA table_info("${name}")`).all().map((c) => c.name);
+        for (const col of schema[name]) assert.ok(COLUMN_CLASSES[name]?.[col], `${name}.${col} has no class in COLUMN_CLASSES (hub/store.mjs)`);
+      }
+      for (const [table, cols] of Object.entries(COLUMN_CLASSES)) {
+        assert.ok(schema[table], `COLUMN_CLASSES names the table ${table}, which the hub does not make`);
+        for (const col of Object.keys(cols)) assert.ok(schema[table].includes(col), `COLUMN_CLASSES names ${table}.${col}, which the schema does not have`);
+      }
+      const schemaPage = await (await request('/schema', { cookie }, server)).text();
+      assert.doesNotMatch(schemaPage, /class="cm cm-none"/, 'nothing unclassified in a hub\'s own database');
+      assert.match(schemaPage, /id="t-accounts"/);
+      const emptyList = await (await request('/accounts', { cookie }, server)).text();
+      assert.match(emptyList, /<h1>Accounts<\/h1>/);
       // A real room: the founding envelope's cleartext header decodes; its body stays size + hex.
       const { foundRoom, memoryStorage } = await import('../shared/index.ts');
       const { client } = await foundRoom({ hub_url: `http://127.0.0.1:${hub.port}`, storage: memoryStorage(), device_name: 'Admin test phone' });
@@ -401,7 +484,14 @@ try {
       assert.doesNotMatch(detail, /does not decode/);
       assert.match(detail, /<dt>sender<\/dt><dd><a class="id"/);
       assert.match(detail, /<dt>kind<\/dt>/);
-      if (row.encrypted_body) assert.match(detail, new RegExp(`<dt>encrypted_body</dt><dd><span class="opaque">${row.encrypted_body.byteLength} B · ${Buffer.from(row.encrypted_body).subarray(0, 16).toString('hex')}…`));
+      if (row.encrypted_body) assert.match(detail, new RegExp(`<dt>encrypted_body<span class="cm cm-e2e"[^>]*>.*?</span></dt><dd><span class="opaque">${row.encrypted_body.byteLength} B · ${Buffer.from(row.encrypted_body).subarray(0, 16).toString('hex')}…`));
+      // The same room as an account: counted on one side, what is ciphertext named on the other (out of COLUMN_CLASSES).
+      const account = await (await request(`/accounts?room=${roomId}`, { cookie }, server)).text();
+      assert.match(account, /<h4>Envelopes by kind<\/h4>/);
+      assert.match(account, /<td>human<\/td><td class="num">1<\/td><td class="num">0<\/td>/);
+      assert.match(account, /<span class="mono">envelopes\.encrypted_body<\/span>/);
+      assert.match(account, /<span class="mono">sealed_room_keys\.key_sealed<\/span>/);
+      assert.match(account, /No account: this room has no email sign-in/);
       // The test-account cleanup end to end: the hub's own action, a backup, the room gone.
       hub.db.prepare('INSERT INTO accounts (room_id, email, created_at, updated_at, revision, auth_salt, auth_hash, key_wrapped, kdf) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(roomId, 'e2e@example.org', 1, 1, 1, Buffer.alloc(16), Buffer.alloc(32), Buffer.alloc(61), '{}');

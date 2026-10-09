@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { hostStats, openSeries } from './ops/metrics.mjs';
+import { COLUMN_CLASSES, TABLE_NOTES } from './store.mjs';
 import { peekEnvelope, joinEnvelope } from '../shared/crypto/zcrypto.mjs';
 import { KIND_NAME, OBJECT_STATE_NAME, URGENCY_NAME, TIMELINE_KIND_NAME } from '../shared/codec.ts';
 
@@ -113,146 +114,191 @@ function cached(db, key, ms, fn) {
 // ---------- page frame ----------
 
 const CSS = `
-:root{color-scheme:light;--bg:#f5f5f3;--panel:#fff;--panel2:#fafaf8;--line:#e4e3df;--line2:#efeeea;--text:#1c1c1a;--muted:#6c6b66;--faint:#9a9993;
---accent:#2a78d6;--accent-ink:#1d5fae;--accent-weak:#e9f1fb;--hover:#f2f1ed;--bad:#c4372d;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
-@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141413;--panel:#1c1c1b;--panel2:#191918;--line:#302f2c;--line2:#262624;--text:#ebeae6;--muted:#a3a29b;--faint:#73726c;
---accent:#3987e5;--accent-ink:#7db2f0;--accent-weak:#1c2a3c;--hover:#242422;--bad:#f08a80}}
+/* The look of the web app: colours, type, radii and the ink focus ring are copied from app/web/public/app.css
+   (:root and :root[data-theme="dark"]), the three fonts are its fonts/f1, f7, f3 (served by this listener as
+   /fonts/*.woff2). Copied, not linked: the page stays one stylesheet pinned by hash. Dark follows the system here. */
+@font-face{font-family:"Bricolage Grotesque";font-weight:600 800;font-display:swap;src:url(/fonts/display.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:400 600;font-display:swap;src:url(/fonts/sans.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Mono";font-weight:400;font-display:swap;src:url(/fonts/mono.woff2) format("woff2")}
+:root{color-scheme:light;--bg:#f5f6f2;--surface:#fff;--surface-2:#fafbf8;--sunken:#eceee8;--fg:#141c18;--muted:#5c6862;--faint:#8a958f;--line:#e1e5df;--line-strong:#c9d0c8;
+--accent:#1b6a57;--accent-soft:#dcefe8;--warn:#b4551b;--bad:#b3261e;--bad-soft:#fbe0de;
+--display:"Bricolage Grotesque","Avenir Next","Segoe UI",sans-serif;--font:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0e1311;--surface:#171d1a;--surface-2:#1c2420;--sunken:#111715;--fg:#e9eeea;--muted:#9aa8a0;--faint:#6c7a73;--line:#252f2a;--line-strong:#35423b;
+--accent:#6fd0b5;--accent-soft:#17332b;--warn:#f2a56c;--bad:#ff8a80;--bad-soft:#41191a}}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-a{color:var(--accent-ink);text-decoration:none}a:hover{text-decoration:underline}
-h1,h2,h3,h4{margin:0;font-weight:600}h2{font-size:16px}h3{font-size:14px}
-h4{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--font);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+h1,h2,h3,h4,p{margin:0}
+h1{font:800 1.7rem/1.15 var(--display);letter-spacing:-.01em}
+h2{font:700 1.2rem/1.2 var(--display)}
+h3{font:600 .95rem/1.3 var(--font)}
+h4{font:600 .72rem/1.3 var(--font);letter-spacing:.07em;text-transform:uppercase;color:var(--faint);margin:22px 0 8px}
 button,input,select{font:inherit;color:inherit}
-input[type=search],input[type=password],input[type=text]{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:5px 9px;min-width:0}
-input:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-button{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:5px 11px;cursor:pointer}
-button:hover{background:var(--hover)}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.mono,.id,.opaque,code{font-family:var(--mono);font-size:12px}
-.muted{color:var(--muted)}.null{color:var(--faint);font-style:italic}.opaque{color:var(--muted)}.err{color:var(--bad)}
-.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:6px;height:48px;padding:0 16px;background:var(--panel);border-bottom:1px solid var(--line)}
-.brand{display:flex;align-items:center;gap:6px;font-weight:650;margin-right:14px;white-space:nowrap}
-.brand svg{width:20px;height:20px;color:var(--accent)}
-.brand small{font-weight:500;color:var(--muted)}
-.top nav{display:flex;gap:2px}
-.top nav a{padding:5px 10px;border-radius:7px;color:var(--text)}
-.top nav a:hover{background:var(--hover);text-decoration:none}
-.top nav a.on{background:var(--accent-weak);color:var(--accent-ink);font-weight:550}
-.who{margin-left:auto;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--muted);white-space:nowrap}
-.who form{margin:0}.who button{padding:3px 9px;font-size:12px}
-.page{max-width:1440px;margin:0 auto;padding:18px 16px 40px}
-.head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-.head h1{font-size:18px}
-.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
-.seg a{padding:4px 12px;color:var(--text);font-size:13px}.seg a+a{border-left:1px solid var(--line)}
-.seg a.on{background:var(--accent-weak);color:var(--accent-ink);font-weight:600}.seg a:hover{text-decoration:none;background:var(--hover)}
-.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;margin-bottom:16px}
-.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px 8px;min-width:0}
-.tile .k{font-size:12px;color:var(--muted)}
-.tile .v{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.01em;line-height:1.25;white-space:nowrap}
-.tile .v small{font-size:13px;font-weight:500;color:var(--muted);margin-left:3px}
-.tile .s{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.spark{display:block;width:100%;height:30px;margin-top:6px}
-.line{fill:none;stroke:var(--accent);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
-.area{fill:var(--accent);opacity:.12;stroke:none}
-.grid line{stroke:var(--line2);stroke-width:1}
-.hair{stroke:var(--muted);stroke-width:1;visibility:hidden}
-.dot{stroke:var(--accent);stroke-width:9;stroke-linecap:round;visibility:hidden}
+input[type=search],input[type=password],input[type=text]{background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;padding:7px 11px;min-width:0}
+input::placeholder{color:var(--faint)}
+:focus{outline:none}
+:is(a,button,input,summary,label):focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+button{min-height:36px;background:var(--surface);border:1px solid var(--line-strong);border-radius:999px;padding:0 16px;font-size:.84rem;font-weight:600;cursor:pointer;white-space:nowrap}
+button:hover{border-color:var(--fg)}
+button.primary{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+button.danger{background:var(--bad);border-color:var(--bad);color:var(--surface)}button.danger:hover{filter:brightness(1.08)}
+::selection{background:var(--accent-soft)}
+.mono,.id,.opaque,code{font-family:var(--mono);font-size:.8rem}
+.muted{color:var(--muted)}.null{color:var(--faint)}.opaque{color:var(--muted)}.err{color:var(--bad)}.ok{color:var(--accent)}
+p.err{padding:9px 14px;border-radius:12px;background:var(--bad-soft);font-size:.84rem;font-weight:500;margin:0 0 14px}
+.sprite{position:absolute;width:0;height:0}
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:8px;height:52px;padding:0 20px;background:var(--surface);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:8px;margin-right:16px;white-space:nowrap}
+.brand svg{width:26px;height:26px;color:var(--accent)}
+.brand b{font:800 1.1rem/1 var(--display)}
+.brand small{font-size:.72rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+.top nav{display:flex;gap:2px;min-width:0}
+.top nav a{padding:6px 12px;border-radius:999px;color:var(--muted);font-size:.9rem;font-weight:500;white-space:nowrap}
+.top nav a:hover{color:var(--fg);background:var(--sunken);text-decoration:none}
+.top nav a.on{background:var(--sunken);color:var(--fg);font-weight:600}
+.who{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:.84rem;color:var(--muted);white-space:nowrap}
+.who form{margin:0}.who button{min-height:32px;padding:0 13px}
+.page{max-width:1280px;margin:0 auto;padding:28px 24px 56px}
+.head{display:flex;align-items:baseline;gap:6px 14px;flex-wrap:wrap;margin-bottom:20px}
+.head .seg{align-self:center}
+.seg{display:inline-flex;padding:3px;border-radius:999px;background:var(--sunken)}
+.seg a{padding:3px 14px;border-radius:999px;color:var(--muted);font-size:.84rem;font-weight:600}
+.seg a:hover{color:var(--fg);text-decoration:none}
+.seg a.on{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgb(20 30 25/.14)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:12px}
+.tile,.chart,.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;min-width:0}
+.tile{padding:14px 16px 12px}
+.tile .k{font-size:.72rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--faint)}
+.tile .v{font:800 1.7rem/1.3 var(--display);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tile .v small{font:500 .84rem var(--font);color:var(--muted);margin-left:4px}
+.tile .s{font-size:.78rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spark{display:block;width:100%;height:28px;margin-top:8px}
+.line{fill:none;stroke:var(--accent);stroke-width:1.75;stroke-linejoin:round;stroke-linecap:round}
+.area{fill:var(--accent);opacity:.1;stroke:none}
+.grid line{stroke:var(--line);stroke-width:1}
+.hair{stroke:var(--faint);stroke-width:1;visibility:hidden}
+.dot{stroke:var(--accent);stroke-width:8;stroke-linecap:round;visibility:hidden}
 .hover .hair,.hover .dot{visibility:visible}
-.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:10px}
-.chart{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px 10px;min-width:0}
-.chart header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px}
-.chart h3{font-size:13px}
-.readout{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
-.hover .readout{color:var(--text)}
-.plotwrap{position:relative;margin-left:52px}
+.charts{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:12px}
+.chart{margin:0;padding:14px 16px 12px}
+.chart header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px}
+.readout{font-size:.78rem;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.hover .readout{color:var(--fg)}
+.plotwrap{position:relative;margin-left:54px}
 .plot{display:block;width:100%;height:150px;touch-action:pan-y;cursor:crosshair}
-.ylab{position:absolute;left:-52px;width:46px;text-align:right;font-size:11px;color:var(--faint);transform:translateY(-50%);font-variant-numeric:tabular-nums;white-space:nowrap}
+.ylab{position:absolute;left:-54px;width:48px;text-align:right;font-size:.7rem;color:var(--faint);transform:translateY(-50%);font-variant-numeric:tabular-nums;white-space:nowrap}
 .y100{top:0}.y50{top:50%}.y0{top:100%}
-.xlabs{display:flex;justify-content:space-between;margin:4px 0 0 52px;font-size:11px;color:var(--faint)}
-.empty{display:flex;align-items:center;justify-content:center;height:150px;color:var(--faint);font-size:13px;border:1px dashed var(--line);border-radius:8px}
-.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:10px;margin-top:16px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
-.card h3{margin-bottom:8px}
-.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin:0;font-size:13px}
+.xlabs{display:flex;justify-content:space-between;margin:6px 0 0 54px;font-size:.7rem;color:var(--faint)}
+.empty{display:flex;align-items:center;justify-content:center;height:150px;padding:0 12px;text-align:center;color:var(--faint);font-size:.84rem;border:1px dashed var(--line-strong);border-radius:8px}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:12px;margin-top:12px}
+.card{padding:16px 18px}
+.card+.card{margin-top:12px}.cols .card+.card{margin-top:0}
+.card h3{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:10px}
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;margin:0;font-size:.84rem}
 .kv dt{color:var(--muted)}.kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
-.tlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:2px 14px;margin:0;padding:0;list-style:none;font-size:13px}
-.tlist a{display:flex;justify-content:space-between;gap:8px;padding:3px 6px;border-radius:6px;color:var(--text)}
-.tlist a:hover{background:var(--hover);text-decoration:none}
-.n{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px}
-.data{display:grid;grid-template-columns:272px minmax(0,1fr);height:calc(100dvh - 48px)}
-.data.with-detail{grid-template-columns:272px minmax(0,1fr) minmax(320px,400px)}
-.tree{overflow:auto;background:var(--panel2);border-right:1px solid var(--line);padding:10px 8px 30px;font-size:13px}
+.tlist{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:0 18px;margin:0 -8px;padding:0;list-style:none;font-size:.84rem}
+.tlist a{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:4px 8px;border-radius:8px;color:var(--fg)}
+.tlist a:hover{background:var(--sunken);text-decoration:none}
+.n{color:var(--faint);font-variant-numeric:tabular-nums;font-size:.78rem;font-weight:500}
+.cm{display:inline-flex;align-items:center;gap:4px;font:600 .72rem/1.3 var(--font);letter-spacing:0;text-transform:none;white-space:nowrap;color:var(--muted)}
+.cm svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.cm-e2e{color:var(--accent)}.cm-plain{color:var(--warn)}.cm-none{color:var(--bad)}
+.grid th .cm,.kv dt .cm{display:flex;margin-top:2px;font-weight:500}
+.sum{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;font-size:.78rem;color:var(--muted)}
+.sum b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+.legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px 28px;margin:0;padding:0;list-style:none;font-size:.84rem;color:var(--muted)}
+.legend .cm{display:flex;font-size:.9rem;margin-bottom:3px}.legend .cm svg{width:17px;height:17px}
+.schema{scroll-margin-top:64px}
+.schema header{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.schema h2 a{color:var(--fg)}
+.schema .scroll{margin-top:10px}
+.schema .grid th{position:static}.schema .grid td{white-space:normal;max-width:none}.schema .grid td:nth-child(-n+4){white-space:nowrap}
+.schema .grid tr:last-child td{border-bottom:0}
+.data{display:grid;grid-template-columns:280px minmax(0,1fr);height:calc(100dvh - 52px)}
+.data.with-detail{grid-template-columns:280px minmax(0,1fr) minmax(330px,420px)}
+.tree{overflow:auto;background:var(--surface-2);border-right:1px solid var(--line);padding:8px 10px 32px;font-size:.84rem}
 .tree ul{list-style:none;margin:0;padding:0}
-.tree ul ul{margin-left:9px;padding-left:7px;border-left:1px solid var(--line)}
-.tree .grp{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:12px 6px 4px}
-.tree .lbl{font-size:12px;color:var(--muted);padding:6px 6px 2px}
-.tree a.node{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:3px 6px;border-radius:6px;color:var(--text);white-space:nowrap}
+.tree ul ul{margin-left:11px;padding-left:7px;border-left:1px solid var(--line-strong)}
+.tree .grp{font-size:.72rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);padding:14px 8px 5px}
+.tree .lbl{font-size:.78rem;color:var(--faint);padding:8px 8px 2px}
+.tree a.node{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:4px 8px;border-radius:8px;color:var(--fg);white-space:nowrap}
 .tree a.node span:first-child{overflow:hidden;text-overflow:ellipsis}
-.tree a.node:hover{background:var(--hover);text-decoration:none}
-.tree a.node.on{background:var(--accent-weak);color:var(--accent-ink);font-weight:550}
-.tree a.node.on .n{color:var(--accent-ink)}
+.tree a.node:hover{background:var(--sunken);text-decoration:none}
+.tree a.node.on{background:var(--accent-soft);font-weight:600}
+.tree a.node.on .n{color:var(--muted)}
 .tree summary{list-style:none;cursor:pointer}.tree summary::-webkit-details-marker{display:none}
-.tree summary a.node::before{content:"▸";color:var(--faint);font-size:10px;margin-right:-2px}
-.tree details[open]>summary a.node::before{content:"▾"}
-.tree summary a.node{justify-content:flex-start}.tree summary a.node .n{margin-left:auto}
-.tree .find{display:flex;gap:6px;padding:4px 4px 2px}.tree .find input{flex:1;font-size:12px;padding:4px 8px}
+.tree summary a.node{justify-content:flex-start;font-weight:600}.tree summary a.node .n{margin-left:auto}
+.tree summary a.node::before{content:"";align-self:center;flex:none;border:4px solid transparent;border-left:5px solid var(--faint);border-right:0;margin-right:-1px}
+.tree details[open]>summary a.node::before{transform:rotate(90deg)}
+.tree .find{display:flex;padding:2px 4px 6px}.tree .find input{flex:1;font-size:.8rem;padding:5px 10px}
 .pane{display:flex;flex-direction:column;min-width:0;min-height:0}
-.panehead{padding:12px 16px 10px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;gap:8px}
-.crumbs{font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px}
-.crumbs span+span::before{content:"›";margin-right:4px;color:var(--faint)}
-.titlerow{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.panehead{padding:16px 20px 12px;border-bottom:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:10px}
+.crumbs{font-size:.78rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:5px}
+.crumbs span+span::before{content:"/";margin-right:5px;color:var(--faint)}
+.titlerow{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}.titlerow .muted{font-size:.84rem}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
-.chip{display:inline-flex;gap:6px;align-items:center;background:var(--accent-weak);color:var(--accent-ink);border-radius:999px;padding:1px 4px 1px 10px;font-size:12px;max-width:100%}
+.chip{display:inline-flex;gap:4px;align-items:center;background:var(--accent-soft);border-radius:999px;padding:2px 4px 2px 12px;font-size:.78rem;font-weight:500;max-width:100%}
 .chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chip a{color:inherit;padding:0 6px;border-radius:999px}.chip a:hover{background:var(--panel);text-decoration:none}
-.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.tools form{display:flex;gap:6px;margin:0;flex:1 1 220px;max-width:420px}.tools input[type=search]{flex:1}
-.pager{display:flex;gap:6px;align-items:center;margin-left:auto;font-size:12px;color:var(--muted);white-space:nowrap}
-.pager a,.pager .off{border:1px solid var(--line);border-radius:7px;padding:3px 9px;background:var(--panel);color:var(--text)}
-.pager a:hover{background:var(--hover);text-decoration:none}.pager .off{color:var(--faint)}
-.tablewrap{flex:1;min-height:0;overflow:auto;background:var(--panel)}
-table.grid{border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:100%}
-.grid th{position:sticky;top:0;z-index:2;background:var(--panel2);border-bottom:1px solid var(--line);text-align:left;font-weight:600;padding:6px 10px;white-space:nowrap;font-size:12px}
-.grid th a{color:var(--text)}.grid th a.on{color:var(--accent-ink)}
-.grid td{padding:4px 10px;border-bottom:1px solid var(--line2);white-space:nowrap;max-width:24em;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
-.grid tr[data-href]{cursor:pointer}.grid tbody tr:hover td{background:var(--hover)}
-.grid tr.sel td{background:var(--accent-weak)}
+.chip a{color:var(--fg);padding:0 7px;border-radius:999px}.chip a:hover{background:var(--surface);text-decoration:none}
+.tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.tools form{display:flex;gap:6px;margin:0;flex:1 1 240px;max-width:440px}.tools input[type=search]{flex:1;padding:6px 11px;font-size:.84rem}
+.pager{display:flex;gap:6px;align-items:center;margin-left:auto;font-size:.78rem;color:var(--muted);white-space:nowrap}
+.pager a,.pager .off{border:1px solid var(--line-strong);border-radius:999px;padding:4px 12px;background:var(--surface);color:var(--fg);font-weight:600}
+.pager a:hover{border-color:var(--fg);text-decoration:none}.pager .off{color:var(--faint);border-color:var(--line)}
+.tablewrap{flex:1;min-height:0;overflow:auto;background:var(--surface)}
+table.grid{border-collapse:separate;border-spacing:0;font-size:.84rem;min-width:100%}
+.grid th{position:sticky;top:0;z-index:2;background:var(--surface);border-bottom:1.5px solid var(--fg);text-align:left;font-weight:600;padding:8px 12px 7px;white-space:nowrap;vertical-align:bottom}
+.grid th a{color:var(--fg)}.grid th a.on{color:var(--accent)}
+.grid td{padding:6px 12px;border-bottom:1px solid var(--line);white-space:nowrap;max-width:24em;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
+.grid tr[data-href]{cursor:pointer}.grid tbody tr[data-href]:hover td{background:var(--surface-2)}
+.grid tr.sel td,.grid tbody tr.sel:hover td{background:var(--accent-soft)}
 .grid td.num{text-align:right;font-variant-numeric:tabular-nums}
-.grid td.open{padding:4px 2px 4px 10px;color:var(--faint)}
-.tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:5px;background:var(--line2);color:var(--muted)}
-.detail{overflow:auto;border-left:1px solid var(--line);background:var(--panel);padding:12px 16px 30px}
+.grid td.open{padding-right:2px}.grid td.open a{color:var(--faint)}
+.grid td.none{padding:44px 12px;text-align:center;color:var(--faint);border-bottom:0}
+.tag{display:inline-block;font-size:.72rem;font-weight:600;padding:1px 8px;border-radius:999px;background:var(--sunken);color:var(--muted)}
+.detail{overflow:auto;border-left:1px solid var(--line);background:var(--surface);padding:16px 20px 32px}
 .detail header{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.detail .close{font-size:18px;line-height:1;padding:2px 8px;border-radius:6px;color:var(--muted)}.detail .close:hover{background:var(--hover);text-decoration:none}
-.detail .kv{font-size:12.5px}.detail .kv dt{font-family:var(--mono);font-size:11.5px}
-.rel{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:13px}
-.rel a{display:block;padding:3px 6px;border-radius:6px}.rel a:hover{background:var(--hover);text-decoration:none}
-.note{font-size:12px;color:var(--muted);margin:6px 0 0}
+.detail .close{font-size:1.3rem;line-height:1;padding:3px 9px;border-radius:999px;color:var(--muted)}.detail .close:hover{background:var(--sunken);color:var(--fg);text-decoration:none}
+.detail .kv{gap:8px 16px}.detail .kv dt{font-family:var(--mono);font-size:.76rem;color:var(--fg)}
+.rel{list-style:none;margin:0 -8px;padding:0;display:flex;flex-direction:column;font-size:.84rem}
+.rel a{display:block;padding:4px 8px;border-radius:8px}.rel a:hover{background:var(--sunken);text-decoration:none}
+.note{font-size:.78rem;color:var(--muted);margin:8px 0 0}
 .treetoggle{display:none}
 #tt{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
-.login{max-width:380px;margin:12vh auto 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px}
-.login h1{font-size:17px;margin-bottom:4px}.login form{display:flex;flex-direction:column;gap:10px;margin-top:14px}
-.login label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
-.scroll{overflow:auto;margin:10px 0 0}
-.confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.confirm input{width:7em}
-button.danger{background:var(--bad);border-color:var(--bad);color:#fff}button.danger:hover{filter:brightness(1.08);background:var(--bad)}
-.ok{color:var(--accent-ink)}
-.form{max-width:440px;display:flex;flex-direction:column;gap:12px}.form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.login{max-width:400px;margin:14vh auto 0;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:28px}
+.login .brand{margin:0 0 20px}
+.login h1{font-size:1.35rem;margin-bottom:4px}.login form{display:flex;flex-direction:column;gap:14px;margin-top:18px}
+.login label,.form label{display:flex;flex-direction:column;gap:5px;font-size:.84rem;font-weight:500;color:var(--muted)}
+.notice{max-width:460px;margin:12vh auto 0;text-align:center}.notice h1{margin-bottom:8px}.notice p{color:var(--muted);margin-bottom:18px}
+.scroll{overflow:auto}
+.two{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:12px;align-items:start}.two .card+.card{margin-top:0}
+.mini th:not(:first-child){text-align:right}.card .tools{margin-top:12px}.card .grid th{position:static}.card .grid tr:last-child td{border-bottom:0}.card h4:first-of-type{margin-top:14px}
+.side{display:flex;align-items:center;gap:8px;margin-bottom:2px}.side .cm svg{width:20px;height:20px}.side .cm{font-size:0}
+.unseen{list-style:none;margin:10px 0 0;padding:0;font-size:.84rem}
+.unseen li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:10px 0;border-top:1px solid var(--line)}
+.unseen li b{font-weight:600}.unseen li .mono{grid-column:1/-1;color:var(--faint);font-size:.74rem}
+@media (max-width:820px){.two{grid-template-columns:minmax(0,1fr)}}
+.confirm{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:18px}.confirm input{width:7em}
+.form{max-width:460px;display:flex;flex-direction:column;gap:14px}
 @media (max-width:820px){
 .cols{grid-template-columns:minmax(0,1fr)}
-.top{padding:0 8px;gap:2px}.brand small,.brand b,.who .login-name{display:none}.brand{margin-right:2px}
-.top nav{overflow-x:auto;scrollbar-width:none}.top nav a{padding:5px 7px;font-size:13px;white-space:nowrap}.who button{padding:3px 7px}
-.page{padding:14px 12px 30px}
-.tile .v{font-size:21px}.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+.top{padding:0 10px;gap:4px}.brand small,.brand b,.who .login-name{display:none}.brand{margin-right:2px}
+.top nav{overflow-x:auto;scrollbar-width:none}.top nav a{padding:6px 9px;font-size:.84rem}.who{gap:6px;padding-left:4px}.who button{padding:0 11px}
+.page{padding:20px 16px 40px}
+h1{font-size:1.35rem}
+.tile .v{font-size:1.35rem}.tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.tile{padding:12px 13px 10px}
 .data,.data.with-detail{display:flex;flex-direction:column;height:auto}
-.treetoggle{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--panel2);font-size:13px;cursor:pointer}
-.treetoggle::after{content:"▾";color:var(--muted)}
+.treetoggle{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line);background:var(--surface-2);font-size:.84rem;cursor:pointer}
+.treetoggle::after{content:"";flex:none;border:5px solid transparent;border-top:6px solid var(--muted);border-bottom:0}
 .tree{display:none;border-right:0;border-bottom:1px solid var(--line);max-height:60vh}
 #tt:checked~.data .tree,.tree:target{display:block}.tree:focus{outline:none}
 .plot,.empty{height:120px}
-.detail{order:1;border-left:0;border-bottom:1px solid var(--line)}
-.pane{order:2}
+.detail{order:1;border-left:0;border-bottom:1px solid var(--line);padding:16px 16px 24px}
+.pane{order:2}.panehead{padding:14px 16px 12px}
 .tablewrap{max-height:75vh}
 .pager{margin-left:0}
+.card{padding:14px}
+.login{margin:8vh 16px 0;padding:22px}
 }`;
 
 // Hover on charts (hairline + readout), whole table rows clickable, live filter of the room list.
@@ -264,21 +310,24 @@ for(const tr of document.querySelectorAll('tr[data-href]'))tr.addEventListener('
 const rf=document.getElementById('roomfilter');if(rf)rf.addEventListener('input',()=>{const q=rf.value.trim().toLowerCase();for(const li of document.querySelectorAll('[data-room]'))li.hidden=!!q&&!li.dataset.room.startsWith(q)})})();`;
 
 const sha = (text) => crypto.createHash('sha256').update(text).digest('base64');
-export const CSP = `default-src 'none'; style-src 'sha256-${sha(CSS)}'; script-src 'sha256-${sha(JS)}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`;
+export const CSP = `default-src 'none'; style-src 'sha256-${sha(CSS)}'; script-src 'sha256-${sha(JS)}'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`;
 
-const BELL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17h16"/><path d="M6 17a6 6 0 0 1 12 0"/><path d="M12 11v-1"/><circle cx="12" cy="8.6" r="1.1"/><path d="M3 20h18"/></svg>';
+// The app's counter bell (the strokes of app/web/public/icons/trommi.svg).
+const BELL = '<svg viewBox="1.5 2.5 23 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.1 19Q12.3 18.6 16.7 19L21 19.3"/><path d="M4.8 18.9Q5.2 15.1 5.7 13.7Q6.2 12.3 7.5 11.3Q8.7 10.3 10.3 9.5Q12 8.8 13.7 9.3Q15.3 9.8 16.4 11Q17.5 12.2 18.1 13.7Q18.6 15.2 18.8 17L18.9 18.8"/><path d="M11.8 8.6L12.2 6.9"/><path d="M10 6.6Q11.8 6 12.8 6.4L13.8 6.8"/><path d="M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5"/><path d="M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5"/></svg>';
+// The marks of what a column holds: a closed lock (end-to-end encrypted), an open eye (the hub reads it), a hash sign, a dashed ring (not classified).
+const SPRITE = '<svg class="sprite" aria-hidden="true"><symbol id="c-e2e" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9.5" rx="2"/><path d="M8.2 11V8a3.8 3.8 0 0 1 7.6 0v3"/></symbol><symbol id="c-plain" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/></symbol><symbol id="c-hash" viewBox="0 0 24 24"><path d="M9.5 4 7.5 20M16.5 4l-2 16M4.5 9.2h16M3.5 14.8h16"/></symbol><symbol id="c-none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke-dasharray="3 3.2"/><path d="M12 8v4.5M12 16v.1"/></symbol></svg>';
 
-export const head = (title) => `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${esc(title)}</title><style>${CSS}</style></head><body>`;
+export const head = (title) => `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${esc(title)}</title><style>${CSS}</style></head><body>${SPRITE}`;
 const foot = `<script>${JS}</script></body></html>`;
 
 export function topBar(login, csrf, on = '') {
   const tab = (href, label, key) => `<a href="${href}"${on === key ? ' class="on"' : ''}>${label}</a>`;
-  return `<header class="top"><span class="brand">${BELL}<b>Trommi</b> <small>hub admin</small></span><nav>${tab('/', 'Übersicht', 'overview')}${tab('/data', 'Daten', 'data')}${tab('/test-accounts', 'Test accounts', 'tests')}${tab('/password', 'Passwort ändern', 'password')}</nav>
+  return `<header class="top"><span class="brand">${BELL}<b>Trommi</b> <small>hub admin</small></span><nav>${tab('/', 'Übersicht', 'overview')}${tab('/data', 'Daten', 'data')}${tab('/accounts', 'Konten', 'accounts')}${tab('/schema', 'Schema', 'schema')}${tab('/test-accounts', 'Test accounts', 'tests')}${tab('/password', 'Passwort ändern', 'password')}</nav>
 <div class="who"><span class="login-name">${esc(login)}</span><form method="post" action="/logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button>Abmelden</button></form></div></header>`;
 }
 
 export function renderLoginPage(login, message = '') {
-  return `${head('Trommi hub admin')}<div class="login"><h1>Trommi hub admin</h1><p class="muted">Tailscale login: <span class="mono">${esc(login)}</span></p>${message ? `<p class="err">${esc(message)}</p>` : ''}
+  return `${head('Trommi hub admin')}<div class="login"><span class="brand">${BELL}<b>Trommi</b> <small>hub admin</small></span><h1>Sign in</h1><p class="muted">Tailscale login: <span class="mono">${esc(login)}</span></p>${message ? `<p class="err">${esc(message)}</p>` : ''}
 <form method="post" action="/login"><label>Admin password <input type="password" name="password" autocomplete="current-password" required autofocus></label><button class="primary">Anmelden</button></form></div></body></html>`;
 }
 
@@ -315,6 +364,178 @@ function bindFor(table, col, value) {
   if (type.includes('BLOB') && /^([0-9a-f]{2})+$/i.test(value)) return Buffer.from(value, 'hex');
   if (type.includes('INT') && /^-?\d{1,15}$/.test(value)) return Number(value);
   return value;
+}
+
+// ---------- what a column holds (COLUMN_CLASSES in hub/store.mjs, beside the schema) ----------
+
+// class -> [name, short name under a column head, what it means]
+const CLASS_LABEL = {
+  e2e: ['End-to-end encrypted', 'E2E encrypted', 'Ciphertext or a sealed key. Only the members\' devices can open it; the hub cannot.'],
+  plain: ['Server-readable', 'readable', 'Ids, numbers, times, roles, addresses and signed records. The hub reads them to route and to answer.'],
+  hash: ['Hash or proof', 'hash', 'A hash, salt or signature. It links or proves something and says nothing of the content.'],
+  none: ['Not classified', 'unclassified', 'A column the hub\'s schema does not name (a table from before). Take it as readable.'],
+};
+const CLASS_ORDER = ['e2e', 'plain', 'hash', 'none'];
+export const classOf = (table, column) => COLUMN_CLASSES[table]?.[column]?.[0] ?? 'none';
+/** The mark of a class: its drawing and its name in words (never colour alone). */
+const classMark = (cls, long = false) => `<span class="cm cm-${cls}" title="${esc(CLASS_LABEL[cls][0])}"><svg aria-hidden="true"><use href="#c-${cls}"/></svg>${esc(CLASS_LABEL[cls][long ? 0 : 1])}</span>`;
+/** A table's columns counted by class, each count with its mark (a class without a column is left out). */
+function classSummary(table) {
+  const n = { e2e: 0, plain: 0, hash: 0, none: 0 };
+  for (const c of table.columns) n[classOf(table.name, c.name)] += 1;
+  return CLASS_ORDER.filter((k) => n[k]).map((k) => `<span><b>${n[k]}</b> ${classMark(k, true)}</span>`).join('');
+}
+/** Whether this page shows a column's values as size + first bytes only (renderCell). */
+const isMasked = (c) => isOpaque(c.name) || (String(c.type || '').toUpperCase().includes('BLOB') && !DEVICE_COLUMN.test(c.name));
+
+/** /schema: every table of hub.db with its columns, each marked with what it holds; the legend on top. */
+export function renderSchema(db, { login = '', csrf = '' } = {}) {
+  const tables = db ? tableInfo(db) : [];
+  const total = { e2e: 0, plain: 0, hash: 0, none: 0 };
+  const cards = tables.map((t) => {
+    const rows = t.columns.map((c) => {
+      const cls = classOf(t.name, c.name);
+      total[cls] += 1;
+      return `<tr><td class="mono">${esc(c.name)}</td><td class="mono muted">${esc(c.type || '')}</td><td>${classMark(cls, true)}</td><td class="muted">${isMasked(c) ? 'masked: size + 16 bytes' : 'shown'}</td><td class="muted">${esc(COLUMN_CLASSES[t.name]?.[c.name]?.[1] || '')}</td></tr>`;
+    }).join('');
+    return `<section class="card schema" id="t-${esc(t.name)}"><header><h2><a href="${esc(dataHref({ table: t.name }))}">${esc(t.name)}</a></h2><span class="n">${esc(fmtNum(totalCount(db, t.name)))} rows</span></header>
+<div class="sum">${classSummary(t)}</div>${TABLE_NOTES[t.name] ? `<p class="note">${esc(TABLE_NOTES[t.name])}</p>` : ''}
+<div class="scroll"><table class="grid"><thead><tr><th>Column</th><th>Type</th><th>Holds</th><th>On this page</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  });
+  const columns = CLASS_ORDER.reduce((a, k) => a + total[k], 0);
+  const legend = CLASS_ORDER.filter((k) => k !== 'none' || total.none).map((k) => `<li>${classMark(k, true)}${esc(CLASS_LABEL[k][2])} <span class="n">${total[k]} column${total[k] === 1 ? '' : 's'}</span></li>`).join('');
+  return `${head('Schema · Trommi hub admin')}${login ? topBar(login, csrf, 'schema') : ''}<main class="page">
+<div class="head"><h1>Schema</h1><span class="muted">${tables.length} tables · ${columns} columns in hub.db</span></div>
+<section class="card"><h3>What the hub can read</h3><ul class="legend">${legend}</ul>
+<p class="note">Masked values are shown as size and first 16 bytes only and can be neither searched, filtered nor sorted. Nothing here is decrypted: the hub holds no key that could.</p></section>
+${cards.join('\n') || '<section class="card"><p class="muted">hub.db does not exist yet. It is made when the hub first starts.</p></section>'}
+</main></body></html>`;
+}
+
+// ---------- accounts: what the hub knows of one user, and what it cannot see ----------
+//
+// One account belongs to one room, and a room is one user's whole board. Everything here is a count, a size or a
+// time out of the hub's own tables; the email stays masked as everywhere. Every query is bound to one room and
+// answered from an index; the one sum over a room's envelopes reads its newest SCAN_CAP only.
+const SCAN_CAP = 50000;
+function ask(db, sql, ...args) {
+  return cached(db, `ask:${args.join(',')}:${sql}`, 10000, () => { try { return db.prepare(sql).all(...args).map((r) => Object.values(r)); } catch { return []; } });
+}
+const num = (v) => fmtNum(Number(v ?? 0));
+const when = (t) => (typeof t === 'number' && t > 0 ? dateFmt.format(t) : '–');
+const miniTable = (heads, rows) => `<div class="scroll"><table class="grid mini"><thead><tr>${heads.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td${i ? ' class="num"' : ''}>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+const kvList = (pairs) => `<dl class="kv">${pairs.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('')}</dl>`;
+
+function accountDetail(db, room, has) {
+  const one = (sql, ...args) => ask(db, sql, ...args)[0] ?? [];
+  const known = [];
+  const section = (title, html) => { if (html) known.push(`<h4>${esc(title)}</h4>${html}`); };
+
+  const [founded, lastNumber] = one('SELECT founded_at, last_envelope_number FROM rooms WHERE room_id = ?', room);
+  const [lastAt] = has('envelopes') ? one('SELECT received_at FROM envelopes WHERE room_id = ? ORDER BY envelope_number DESC LIMIT 1', room) : [];
+  let account = null;
+  if (has('accounts')) { try { account = db.prepare('SELECT * FROM accounts WHERE room_id = ?').get(room) ?? null; } catch { account = null; } }
+  section('Account', account
+    ? kvList([['email', renderCell('email', account.email)], ['verified', esc(account.email_verified_at ? when(account.email_verified_at) : 'not verified')], ['created', esc(when(account.created_at))],
+      ['changed', esc(when(account.updated_at))], ['Emergency Kit', account.recovery_hash ? 'set' : 'not set']])
+    : '<p class="muted">No account: this room has no email sign-in, only its devices.</p>');
+  const entries = has('member_entries') ? one('SELECT count(*) FROM member_entries WHERE room_id = ?', room)[0] : null;
+  section('Room', kvList([['founded', esc(when(founded))], ['last envelope received', esc(when(lastAt))], ['envelopes ever', esc(num(lastNumber))], ...(entries == null ? [] : [['member entries', esc(num(entries))]])]));
+
+  if (has('devices')) {
+    const rows = ask(db, 'SELECT device_role, sum(removed_entry_number IS NULL), sum(removed_entry_number IS NOT NULL) FROM devices WHERE room_id = ? GROUP BY device_role ORDER BY device_role', room);
+    section('Devices', rows.length ? miniTable(['Role', 'Active', 'Removed'], rows.map(([role, a, r]) => [esc(String(role)), esc(num(a)), esc(num(r))])) : '');
+  }
+  let bodies = 0; let padded = 0;
+  if (has('envelopes')) {
+    const rows = ask(db, `SELECT envelope_kind, count(*), sum(b), sum(padded_size) FROM (SELECT envelope_kind, encrypted_body IS NOT NULL AS b, padded_size FROM envelopes WHERE room_id = ? ORDER BY envelope_number DESC LIMIT ${SCAN_CAP}) GROUP BY envelope_kind ORDER BY envelope_kind`, room);
+    for (const r of rows) { bodies += Number(r[2] ?? 0); padded += Number(r[3] ?? 0); }
+    const capped = Number(lastNumber ?? 0) > SCAN_CAP;
+    section('Envelopes by kind', rows.length ? `${miniTable(['Kind', 'Envelopes', 'Body kept', 'Padded size'], rows.map(([k, n, b, size]) => [esc(enumName('envelope_kind', k) ?? String(k)), esc(num(n)), esc(num(b)), esc(formatBytes(Number(size ?? 0)))]))}
+<p class="note">${capped ? `The newest ${fmtNum(SCAN_CAP)} envelopes only. ` : ''}The kind, the sender device, the time, the card and its state and urgency stand in each envelope's cleartext header. Bodies are padded, so a size is a step, not a length. A body is dropped 30 days after its card is done.</p>` : '');
+  }
+  if (has('timelines')) {
+    const rows = ask(db, "SELECT timeline_kind, CASE WHEN instr(timeline_id, '/') > 0 THEN substr(timeline_id, 1, instr(timeline_id, '/')) ELSE '' END, count(*), sum(item_count) FROM timelines WHERE room_id = ? GROUP BY 1, 2 ORDER BY 1, 2", room);
+    section('Timelines', rows.length ? `${miniTable(['Kind', 'Id begins with', 'Timelines', 'Items'], rows.map(([k, prefix, n, items]) => [esc(enumName('timeline_kind', k) ?? String(k)), `<span class="mono">${esc(String(prefix || '–'))}</span>`, esc(num(n)), esc(num(items))]))}
+<p class="note">A timeline's id is cleartext and begins with what it hangs on (a card, a session, a desk), so the hub can tell chats from boards and count them. What is written or drawn in them it cannot read.</p>` : '');
+  }
+  if (has('objects')) {
+    const rows = ask(db, 'SELECT object_state, count(*), sum(urgency >= 2) FROM objects WHERE room_id = ? GROUP BY object_state ORDER BY object_state', room);
+    section('Cards and other objects', rows.length ? miniTable(['State', 'Objects', 'High or critical'], rows.map(([st, n, u]) => [esc(enumName('object_state', st) ?? String(st)), esc(num(n)), esc(num(u))])) : '');
+  }
+  const more = [];
+  if (has('session_grants')) more.push(['agent sessions', esc(num(one('SELECT count(DISTINCT session_id) FROM session_grants WHERE room_id = ?', room)[0]))]);
+  let files = 0; let fileBytes = 0;
+  if (has('attachments')) {
+    [files = 0, fileBytes = 0] = one('SELECT count(*), sum(total_size) FROM attachments WHERE room_id = ?', room);
+    more.push(['attachments', `${esc(num(files))} · ${esc(formatBytes(Number(fileBytes ?? 0)))}`]);
+  }
+  if (has('shares')) more.push(['shared links', esc(num(one('SELECT count(*) FROM shares WHERE room_id = ?', room)[0]))]);
+  if (has('push_subscriptions')) {
+    const rows = ask(db, "SELECT level, sum(endpoint NOT LIKE 'apns:%'), sum(endpoint LIKE 'apns:%') FROM push_subscriptions WHERE room_id = ? GROUP BY level ORDER BY level", room);
+    more.push(['push registrations', rows.length ? rows.map(([level, web, apns]) => `${esc(String(level))}: ${esc(num(web))} Web Push, ${esc(num(apns))} APNs`).join('<br>') : '0']);
+  }
+  if (has('invites')) more.push(['open invites', esc(num(one('SELECT count(*) FROM invites WHERE room_id = ? AND used_at IS NULL AND burned_at IS NULL', room)[0]))]);
+  if (has('agent_leases')) more.push(['running agents', esc(num(one('SELECT count(*) FROM agent_leases WHERE room_id = ?', room)[0]))]);
+  section('Counted', more.length ? kvList(more) : '');
+
+  // The other side comes out of COLUMN_CLASSES: every end-to-end encrypted column of a table with a room_id, and how many of it this room has.
+  const unseen = [];
+  for (const [table, cols] of Object.entries(COLUMN_CLASSES)) {
+    if (!has(table) || !cols.room_id) continue;
+    for (const [col, [cls, note]] of Object.entries(cols)) {
+      if (cls !== 'e2e' || !has(table, col)) continue;
+      const n = table === 'envelopes' && col === 'encrypted_body' ? bodies : Number(one(`SELECT count(*) FROM ${quoteIdent(table)} WHERE room_id = ? AND ${quoteIdent(col)} IS NOT NULL`, room)[0] ?? 0);
+      if (!n) continue;
+      const size = table === 'envelopes' && col === 'encrypted_body' ? ` · ${formatBytes(padded)} padded` : '';
+      unseen.push(`<li><b>${esc(note.charAt(0).toUpperCase() + note.slice(1))}</b><span class="n">${esc(fmtNum(n))} stored${esc(size)}</span><span class="mono">${esc(table)}.${esc(col)}</span></li>`);
+    }
+  }
+  if (Number(files) > 0) unseen.push(`<li><b>What is in the files, and what they are called</b><span class="n">${esc(num(files))} files · ${esc(formatBytes(Number(fileBytes ?? 0)))}</span><span class="mono">attachments/ beside hub.db: encrypted on the device before upload</span></li>`);
+  return `<div class="two"><section class="card"><div class="side">${classMark('plain', true)}<h2>The hub knows</h2></div><p class="muted">Counts, sizes and times from its own tables.</p>${known.join('')}</section>
+<section class="card"><div class="side">${classMark('e2e', true)}<h2>The hub cannot see</h2></div><p class="muted">Ciphertext it stores and has no key for.</p>
+${unseen.length ? `<ul class="unseen">${unseen.join('')}</ul>` : '<p class="note">Nothing encrypted is stored for this room yet.</p>'}
+<p class="note">So: no message text, no card title, option or answer, no drawing, no name of a session, desk or device, no file. How many there are, how big, when and from which device stands on the left, because that the hub does know.</p></section></div>`;
+}
+
+/** /accounts: the rooms with their account, 50 per page; /accounts?room=<id>: one of them. null: no such room. */
+export function renderAccounts(db, params, { login = '', csrf = '' } = {}) {
+  const tables = db ? tableInfo(db) : [];
+  const has = (table, col) => { const t = tables.find((x) => x.name === table); return !!t && (col === undefined || t.names.has(col)); };
+  const frame = (body) => `${head('Konten · Trommi hub admin')}${login ? topBar(login, csrf, 'accounts') : ''}<main class="page">${body}</main>${foot}`;
+  if (!has('rooms')) return frame('<div class="head"><h1>Accounts</h1></div><section class="card"><p class="muted">hub.db has no rooms yet. They come with the first sign-up.</p></section>');
+  const room = params.get('room') || '';
+  if (room) {
+    if (!ROOM_RE.test(room) || !ask(db, 'SELECT 1 FROM rooms WHERE room_id = ?', room).length) return null;
+    return frame(`<div class="crumbs"><span><a href="/accounts">Accounts</a></span><span>room <span class="mono">${esc(short(room, 12))}</span></span></div>
+<div class="head"><h1>One account</h1><span class="muted">room <span class="mono">${esc(short(room, 16))}</span> · <a href="${esc(dataHref({ room, table: 'envelopes' }))}">its rows</a></span></div>${accountDetail(db, room, has)}`);
+  }
+  const page = Math.max(0, Math.min(1_000_000, Number.parseInt(params.get('page') || '', 10) || 0));
+  const total = totalCount(db, 'rooms') ?? 0;
+  const list = ask(db, `SELECT room_id, founded_at, last_envelope_number FROM rooms ORDER BY last_envelope_number DESC, room_id LIMIT ${PAGE_SIZE + 1} OFFSET ${page * PAGE_SIZE}`);
+  const more = list.length > PAGE_SIZE;
+  const rows = list.slice(0, PAGE_SIZE).map(([id, founded, last]) => {
+    let account = null;
+    if (has('accounts')) { try { account = db.prepare('SELECT * FROM accounts WHERE room_id = ?').get(id) ?? null; } catch { account = null; } }
+    const roles = Object.fromEntries(has('devices') ? ask(db, 'SELECT device_role, count(*) FROM devices WHERE room_id = ? AND removed_entry_number IS NULL GROUP BY device_role', id) : []);
+    const [files, bytes] = has('attachments') ? ask(db, 'SELECT count(*), sum(total_size) FROM attachments WHERE room_id = ?', id)[0] ?? [] : [];
+    const [lastAt] = has('envelopes') ? ask(db, 'SELECT received_at FROM envelopes WHERE room_id = ? ORDER BY envelope_number DESC LIMIT 1', id)[0] ?? [] : [];
+    const href = `/accounts?room=${id}`;
+    return `<tr data-href="${esc(href)}"><td><a class="id" href="${esc(href)}" title="${esc(id)}">${esc(short(String(id), 12))}</a></td>
+<td>${account ? `${renderCell('email', account.email)} <span class="tag">${account.email_verified_at ? 'verified' : 'not verified'}</span>` : '<span class="null">no account</span>'}</td>
+<td class="num">${esc(num(roles.human))}</td><td class="num">${esc(num(roles.agent))}</td><td class="num">${esc(num(last))}</td><td class="num">${esc(num(files))} · ${esc(formatBytes(Number(bytes ?? 0)))}</td><td>${esc(when(founded))}</td><td>${esc(when(lastAt))}</td></tr>`;
+  });
+  const prev = page > 0 ? `<a href="/accounts${page > 1 ? `?page=${page - 1}` : ''}">‹ prev</a>` : '<span class="off">‹ prev</span>';
+  const next = more ? `<a href="/accounts?page=${page + 1}">next ›</a>` : '<span class="off">next ›</span>';
+  return frame(`<div class="head"><h1>Accounts</h1><span class="muted">${esc(fmtNum(total))} room${total === 1 ? '' : 's'} · one account belongs to one room, a room is one user's whole board</span></div>
+<section class="card">${rows.length ? `<div class="scroll"><table class="grid"><thead><tr><th>Room</th><th>Account</th><th>Humans</th><th>Agents</th><th>Envelopes</th><th>Attachments</th><th>Founded</th><th>Last activity</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+<div class="tools"><div class="pager"><span>${fmtNum(page * PAGE_SIZE + 1)}–${fmtNum(page * PAGE_SIZE + rows.length)} of ${fmtNum(total)}</span>${prev}${next}</div></div>` : '<p class="muted">No rooms on this page.</p>'}
+<p class="note">Open a row for everything the hub can count of that room, and for what it stores without being able to read it. Emails stay masked here as everywhere.</p></section>`);
+}
+
+/** A page that only says something (not found, no database yet), in the page's frame. */
+export function renderNotice(title, text, { login = '', csrf = '' } = {}) {
+  return `${head(`${title} · Trommi hub admin`)}${login ? topBar(login, csrf) : ''}<main class="page notice"><h1>${esc(title)}</h1><p>${esc(text)}</p><a href="/">Back to the overview</a></main></body></html>`;
 }
 
 // ---------- the data view's state (all from the query string, all validated) ----------
@@ -569,7 +790,7 @@ function crumbs(s) {
 
 function renderTablePane(db, s) {
   const table = s.table;
-  if (!table) return '<section class="pane"><div class="panehead"><p class="muted">No tables yet.</p></div></section>';
+  if (!table) return '<section class="pane"><div class="panehead"><h2>No tables yet</h2><p class="muted">hub.db has no tables. They are made when the hub first starts.</p></div></section>';
   const { where, args } = whereOf(table, s);
   const order = s.sort ? [`${quoteIdent(s.sort)} ${s.dir.toUpperCase()}`, ...defaultOrder(table)] : defaultOrder(table);
   const select = table.rowid ? 'SELECT rowid AS __rowid, *' : 'SELECT *';
@@ -587,6 +808,7 @@ function renderTablePane(db, s) {
   const base = { room: s.room, table, filters: s.filters, q: s.q, sort: s.sort, dir: s.dir };
   const out = ['<section class="pane"><div class="panehead">', crumbs(s)];
   out.push(`<div class="titlerow"><h2>${esc(table.name)}</h2><span class="muted">${fmtNum(count)}${capped ? '+' : ''} rows${s.room && !roomIgnored ? ' in this room' : ''}${roomIgnored ? ' (no room_id: room filter ignored)' : ''}</span></div>`);
+  out.push(`<div class="sum">${classSummary(table)}<a href="/schema#t-${esc(table.name)}">What the marks mean</a></div>`);
   const chips = s.filters.map(([c, v]) => {
     const rest = s.filters.filter(([x]) => x !== c);
     return `<span class="chip" title="${esc(`${c} = ${v}`)}"><span>${esc(filterLabel(c, v))}</span><a href="${esc(dataHref({ ...base, filters: rest }))}" aria-label="remove filter">×</a></span>`;
@@ -609,10 +831,11 @@ function renderTablePane(db, s) {
   // Inside a room its room_id is the same on every row: left out of the table (the row detail has it).
   const shown = s.room && !roomIgnored ? table.columns.filter((c) => c.name !== 'room_id') : table.columns;
   for (const c of shown) {
-    if (isOpaque(c.name)) { out.push(`<th>${esc(c.name)}</th>`); continue; }
+    const mark = classMark(classOf(table.name, c.name));
+    if (isOpaque(c.name)) { out.push(`<th>${esc(c.name)}${mark}</th>`); continue; }
     const on = s.sort === c.name;
     const dir = on && s.dir === 'desc' ? 'asc' : 'desc';
-    out.push(`<th><a${on ? ' class="on"' : ''} href="${esc(dataHref({ room: s.room, table, filters: s.filters, q: s.q, sort: c.name, dir }))}" title="sort">${esc(c.name)}${on ? (s.dir === 'desc' ? ' ↓' : ' ↑') : ''}</a></th>`);
+    out.push(`<th><a${on ? ' class="on"' : ''} href="${esc(dataHref({ room: s.room, table, filters: s.filters, q: s.q, sort: c.name, dir }))}" title="sort">${esc(c.name)}${on ? (s.dir === 'desc' ? ' ↓' : ' ↑') : ''}</a>${mark}</th>`);
   }
   out.push('</tr></thead><tbody>');
   const selected = s.key.map(([k, v]) => `${k}=${v}`).join('&');
@@ -628,7 +851,7 @@ function renderTablePane(db, s) {
     }
     out.push('</tr>');
   }
-  if (!rows.length) out.push(`<tr><td></td><td colspan="${shown.length}" class="muted">No rows.</td></tr>`);
+  if (!rows.length) out.push(`<tr><td class="none" colspan="${shown.length + 1}">${where ? 'No rows match.' : 'This table is empty.'}</td></tr>`);
   out.push('</tbody></table></div></section>');
   return out.join('');
 }
@@ -734,7 +957,7 @@ function renderDetail(db, s) {
       if (isTime(c.name, v)) html += ` <span class="muted">${esc(dateFmt.format(v))}</span>`;
     }
     const link = cellLink(table, c.name, v, s);
-    out.push(`<dt>${esc(c.name)}</dt><dd>${link ? `<a href="${esc(link)}">${html}</a>` : html}</dd>`);
+    out.push(`<dt>${esc(c.name)}${classMark(classOf(table.name, c.name))}</dt><dd>${link ? `<a href="${esc(link)}">${html}</a>` : html}</dd>`);
   }
   out.push('</dl></aside>');
   return out.join('');
@@ -914,7 +1137,7 @@ export function renderOverview({ db, dbPath, dataDir, metrics, startedAt, range:
 <div class="tiles">${tiles.join('')}</div>
 <div class="charts">${charts.join('')}</div>
 <div class="cols"><section class="card"><h3>Hub</h3><dl class="kv">${hub.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></section>
-<section class="card"><h3>Tables <a class="n" href="/data">open data browser →</a></h3>${tablesHtml}</section></div>
+<section class="card"><h3>Tables <span><a href="/data">Data browser</a> · <a href="/schema">Schema</a></span></h3>${tablesHtml}</section></div>
 </main>${foot}`;
 }
 
