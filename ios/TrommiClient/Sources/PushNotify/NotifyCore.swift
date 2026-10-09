@@ -34,9 +34,17 @@ public struct NotifyEnvelope: Equatable {
   public var urgency: UInt8?
   /** The body's payload: one UTF-8 JSON object. */
   public var payload: [UInt8]
-  public init(group: [UInt8], epoch: UInt64, sender: [UInt8], kind: UInt8, objectId: [UInt8]?, objectType: UInt8?, urgency: UInt8?, payload: [UInt8]) {
+  /** The signed header's push flag, its time (the sender's clock, ms) and the object's state (1 is open). */
+  public var push: Bool
+  public var time: UInt64
+  public var objectState: UInt8?
+  /** The envelope's hash (32 bytes): what tells it from every other one. */
+  public var hash: [UInt8]
+  public init(group: [UInt8], epoch: UInt64, sender: [UInt8], kind: UInt8, objectId: [UInt8]?, objectType: UInt8?, urgency: UInt8?, payload: [UInt8],
+              push: Bool = true, time: UInt64 = 0, objectState: UInt8? = nil, hash: [UInt8] = []) {
     self.group = group; self.epoch = epoch; self.sender = sender; self.kind = kind
     self.objectId = objectId; self.objectType = objectType; self.urgency = urgency; self.payload = payload
+    self.push = push; self.time = time; self.objectState = objectState; self.hash = hash
   }
 }
 

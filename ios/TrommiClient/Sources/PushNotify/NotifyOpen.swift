@@ -26,12 +26,21 @@ public enum NotifyOpen {
   static let kindVersion: UInt8 = 2, kindRequest: UInt8 = 4, typeCard: UInt8 = 1
 
   /** Steps 1 to 4. `fetch` gets the hub's address for the envelope and returns the answer's body, nil on any failure. */
-  public static func card(e: String, context: NotifyContext, core: NotifyCore, fetch: (URL) async -> Data?) async -> (card: NotifyCard, room: NotifyRoom)? {
+  /**
+   * `nowMs` and `shownBefore` are the freshness the hub cannot be believed about (it holds the push key and names
+   * the change number itself): the envelope must carry the signed push flag, be an open object, be signed at most
+   * `maxAge` ago, and not have been shown by this extension before (`shownBefore` is asked with its hash and
+   * remembers it). What is shown is still a preview: the app, which follows the chains, shows what counts.
+   */
+  public static func card(e: String, context: NotifyContext, core: NotifyCore, nowMs: UInt64 = UInt64(Date().timeIntervalSince1970 * 1000),
+                          shownBefore: ([UInt8]) -> Bool = { _ in false }, fetch: (URL) async -> Data?) async -> (card: NotifyCard, room: NotifyRoom)? {
     guard let (push, room) = push(e, context: context, core: core), let url = envelopeURL(room: room, ticket: push.ticket),
           let answer = await fetch(url), let bytes = envelope(fromAnswer: answer, change: push.change),
-          let card = card(bytes, room: room, core: core) else { return nil }
+          let card = card(bytes, room: room, core: core, nowMs: nowMs, shownBefore: shownBefore) else { return nil }
     return (card, room)
   }
+  /** An envelope older than this (by its signed time) rings no title. */
+  public static let maxAge: UInt64 = 48 * 3600 * 1000
 
   /** `e` opened with the context's push key, and the room it names; nil when it does not open or the room is not in the context. */
   static func push(_ e: String, context: NotifyContext, core: NotifyCore) -> (ApnsPush, NotifyRoom)? {
@@ -56,11 +65,13 @@ public enum NotifyOpen {
   }
 
   /** Verify and open a card's envelope with the room's keys; nil when anything does not hold. */
-  static func card(_ bytes: [UInt8], room: NotifyRoom, core: NotifyCore) -> NotifyCard? {
+  static func card(_ bytes: [UInt8], room: NotifyRoom, core: NotifyCore, nowMs: UInt64 = UInt64(Date().timeIntervalSince1970 * 1000), shownBefore: ([UInt8]) -> Bool = { _ in false }) -> NotifyCard? {
     let opened = try? core.openEnvelope(bytes) { group, epoch in room.key(group: group, epoch: epoch).flatMap { NotifyText.unb64u($0.key) } }
     // The key is looked up again from what the verified header says: the session and its agents belong to that key.
     guard let env = opened, let key = room.key(group: env.group, epoch: env.epoch), key.agents.contains(NotifyText.hex(env.sender)),
           let objectId = env.objectId, objectId.count == 16,
+          env.push, env.objectState ?? 1 == 1, env.time == 0 || (env.time <= nowMs + 300_000 && nowMs - min(nowMs, env.time) <= maxAge),
+          env.hash.isEmpty || !shownBefore(env.hash),
           let o = (try? JSONSerialization.jsonObject(with: Data(env.payload))) as? [String: Any] else { return nil }
     var title: String
     let permission = env.kind == kindRequest

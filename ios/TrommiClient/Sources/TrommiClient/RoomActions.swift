@@ -165,7 +165,8 @@ extension Room {
       let v = values[k] ?? .null
       // (a value of null deletes the name; the 4 KiB limit is the register's, 9.3.5)
       let value: Bytes? = v.isNull ? nil : try wire(v, maxBytes: 4096).payload
-      try await send { .register(group: group, name: k, value: value) }
+      let name = Records.registerName(k, toWire: true)
+      try await send { .register(group: group, name: name, value: value) }
     }
   }
   public func setDraft(cardId: String, _ draft: JV?) async throws { try await setRegisters(["draft/\(cardId)": draft ?? .null]) }
@@ -237,13 +238,13 @@ extension Room {
   /** A file's plain bytes from its reference in a body; checked against the reference's hash by the core. */
   public func fetchAttachment(_ ref: JV) async throws -> Bytes {
     guard let id = ref["attachment_id"].string, let fileId = try? unhex(id), let key = ref["file_key"].string, let sha = ref["sha256"].string else { throw TrommiError("bad-argument", "attachment reference") }
-    if let hit = attachmentCache[id] { return hit }
+    // (kept by the whole reference: another key or hash for the same id is another file to check)
+    let cacheId = "\(id)/\(sha)"
+    if let hit = attachmentCache[cacheId] { return hit }
     let stored = try await noted { try await hub.getFile(fileId) }
     let k = try unb64u(key), s = try unb64u(sha)
     let bytes = try await Task.detached(priority: .userInitiated) { try Core.tools.decryptFile(fileId: fileId, fileKey: k, sha256: s, stored: stored) }.value
-    attachmentCache[id] = bytes
-    attachmentOrder.append(id)
-    if attachmentOrder.count > 48 { attachmentCache.removeValue(forKey: attachmentOrder.removeFirst()) }
+    keepAttachment(cacheId, bytes)
     return bytes
   }
   /** Encrypt and upload a file; the attachment reference for a body. */
@@ -254,8 +255,16 @@ extension Room {
                              "file_name": .str(fileName), "media_type": .str(mediaType)]
     if let w = width { ref["width"] = .n(w) }
     if let h = height { ref["height"] = .n(h) }
-    attachmentCache[hex(a.fileId)] = bytes
+    keepAttachment("\(hex(a.fileId))/\(b64u(a.sha256))", bytes)
     return .obj(ref)
+  }
+  /** The plain bytes of files shown lately: at most 48 of them and 96 MB. */
+  private func keepAttachment(_ id: String, _ bytes: Bytes) {
+    if attachmentCache[id] == nil { attachmentOrder.append(id) }
+    attachmentCache[id] = bytes
+    while attachmentOrder.count > 48 || attachmentCache.values.reduce(0, { $0 + $1.count }) > 96 << 20, attachmentOrder.count > 1 {
+      attachmentCache.removeValue(forKey: attachmentOrder.removeFirst())
+    }
   }
 
   // ---- the Scribble Board (spec/v2.md section 10) --------------------------------------------------------
@@ -302,7 +311,9 @@ extension Room {
     var changed = Set<String>()
     guard let t = board.timelines[key] else { return changed }
     for n in t.items.keys.sorted() {
-      guard let it = t.items[n], it.itemState == "loaded", let c = it.content, let seq = it.senderSequence else { continue }
+      // (a provisional item, fetched ahead of its chain, is not drawn: applying it would move the writer's frontier
+      // past items that have not come)
+      guard let it = t.items[n], it.itemState == "loaded", !it.pending, let c = it.content, let seq = it.senderSequence else { continue }
       let role = board.members[it.senderDeviceId]?.deviceRole ?? "human"
       if let got = st.apply(sender: it.senderDeviceId, seq: seq, hash: it.envelopeHash, envelopeNumber: n, content: c, senderRole: role) { changed.formUnion(got) }
     }
@@ -337,18 +348,21 @@ extension Room {
       return (n, b, j["void_code"] as? String)
     }
     guard !parsed.isEmpty else { return }
-    let got: [(UInt64, ReceivedEnvelope?)] = try await onCore { device in
-      parsed.map { p in (p.change, try? device.receiveEnvelope(p.bytes, change: p.change, source: .page, voidCode: p.void, nowMs: nowMs())) }
+    let got: [(UInt64, Result<ReceivedEnvelope, Error>)] = try await onCore { device in
+      parsed.map { p in (p.change, Result { try device.receiveEnvelope(p.bytes, change: p.change, source: .page, voidCode: p.void, nowMs: nowMs()) }) }
     }
-    for (n, e) in got {
-      guard let e = e, let rec = Records.record(e, change: n, sessionId: sessionIdOfGroup[hex(e.header.group)]), rec.timelineId.map({ timelineKeyOf(rec.timelineKind ?? "", $0) }) == key else { continue }
+    for (n, r) in got {
+      // What the core refuses of a page is a finding about the hub (a forged or swapped item), shown and not applied.
+      if case .failure(let error) = r { board.pushAlert(&ch, code: Room.codeOf(error), message: "an older item from the hub was refused", envelopeNumber: Int(n)); continue }
+      guard case .success(let e) = r, let rec = Records.record(e, change: n, sessionId: sessionIdOfGroup[hex(e.header.group)]), rec.timelineId.map({ timelineKeyOf(rec.timelineKind ?? "", $0) }) == key else { continue }
       let had = t.items[Int(n)]
       if had == nil || had?.itemState == "header" || had?.itemState == "undecryptable" {
         var item = Board.itemOf(rec)
         item.pending = rec.pending
         t.items[Int(n)] = item
         if !t.numbers.contains(Int(n)) { t.numbers.append(Int(n)); t.numbers.sort() }
-        if rec.contentState == "ok" { log[n] = rec; cacheSoon(n) }
+        // Only what the chain already holds goes into the cache; a provisional item is shown and nothing more.
+        if rec.contentState == "ok" && !rec.pending { log[n] = rec; cacheSoon(n) }
       }
       ch.timelines.insert(key)
     }
