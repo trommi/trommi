@@ -1410,3 +1410,238 @@ fn the_emoji_are_those_of_the_web_app_in_its_order() {
         CHECK_EMOJI.iter().map(|(emoji, _)| *emoji).collect();
     assert_eq!(distinct.len(), 64);
 }
+
+#[test]
+fn the_vectors_read_back() {
+    use trommi_tests::vectors::invite::NAME;
+    use trommi_tests::vectors::{hex, read, unhex};
+
+    let file = read(NAME).unwrap();
+    let text = |value: &serde_json::Value, key: &str| value[key].as_str().expect(key).to_owned();
+    let bytes = |value: &serde_json::Value, key: &str| unhex(&text(value, key)).unwrap();
+    let number = |value: &serde_json::Value, key: &str| value[key].as_u64().expect(key);
+    let hub = HubAddress::parse(&text(&file, "hub")).unwrap();
+    let invites = file["invites"].as_array().unwrap();
+    let roles: Vec<u64> = invites
+        .iter()
+        .map(|invite| number(invite, "role"))
+        .collect();
+    assert_eq!(roles, [1, 2], "a human device, an agent device");
+
+    for invite in invites {
+        let inviter_key =
+            SigningKey::from_seed(Secret::from_slice(&bytes(invite, "inviter_seed")).unwrap());
+        let new_key =
+            SigningKey::from_seed(Secret::from_slice(&bytes(invite, "new_device_seed")).unwrap());
+        let (inviter_id, new_id) = (
+            DeviceId::new(inviter_key.public()),
+            DeviceId::new(new_key.public()),
+        );
+        assert_eq!(hex(inviter_id.as_bytes()), text(invite, "inviter"));
+        assert_eq!(hex(new_id.as_bytes()), text(invite, "new_device"));
+        let room = RoomId::from_slice(&bytes(invite, "room_id")).unwrap();
+
+        // The link and what follows from its secret.
+        let link = InviteLink::parse(&text(invite, "link")).unwrap();
+        assert_eq!((link.app(), &link.hub, link.room_id), (APP, &hub, room));
+        assert_eq!(link.to_text().expose(), text(invite, "link").as_bytes());
+        assert_eq!(
+            hex(link.invite_id().unwrap().as_bytes()),
+            text(invite, "invite_id")
+        );
+        let secret = Secret::<32>::from_slice(&bytes(invite, "secret")).unwrap();
+        let remade = InviteLink::new(APP, hub.clone(), room, secret.duplicate()).unwrap();
+        assert_eq!(remade, link);
+        assert_eq!(hex(mac_key(&link).expose()), text(invite, "mac_key"));
+
+        // The Offer: signed by the inviter, committing to the nonce.
+        let offer = SignedOffer {
+            offer: bytes(invite, "offer"),
+            signature: bytes(invite, "offer_signature"),
+        };
+        let decoded = hub_check_offer(&offer).unwrap();
+        assert_eq!(codec::encode(&decoded).unwrap(), offer.offer);
+        assert_eq!(decoded.inviter, inviter_id);
+        assert_eq!(decoded.role as u64, number(invite, "role"));
+        assert_eq!(
+            hex(decoded.session_id.as_bytes()),
+            text(invite, "session_id")
+        );
+        assert_eq!(decoded.expires_at, number(invite, "expires_at"));
+        assert_eq!(
+            decoded.expires_at,
+            number(invite, "opened_at") + INVITE_LIFE_MS
+        );
+        assert_eq!(decoded.room_epoch, number(invite, "room_epoch"));
+        assert_eq!(
+            hex(decoded.room_state.as_bytes()),
+            text(invite, "room_state")
+        );
+        let nonce: [u8; 32] = bytes(invite, "nonce").try_into().unwrap();
+        let committed = [decoded.invite_id.as_bytes().as_slice(), &nonce].concat();
+        assert_eq!(
+            crypto::ref_hash("Trommi Invite Commitment", &committed).unwrap(),
+            decoded.commitment
+        );
+        assert_eq!(
+            hex(decoded.commitment.as_bytes()),
+            text(invite, "commitment")
+        );
+        let offer_hash = crypto::ref_hash("Trommi Invite Offer", &offer.offer).unwrap();
+        assert_eq!(hex(offer_hash.as_bytes()), text(invite, "offer_hash"));
+
+        // The Request: MAC, signature of the new device, hash.
+        let request = SignedRequest {
+            request: bytes(invite, "request"),
+            mac: bytes(invite, "mac"),
+            signature: bytes(invite, "request_signature"),
+        };
+        let asked = Request::decode(&request.request).unwrap();
+        assert_eq!(codec::encode(&asked).unwrap(), request.request);
+        assert_eq!(asked.key_package, bytes(invite, "key_package"));
+        assert_eq!(asked.offer_hash, offer_hash);
+        assert_eq!((asked.room_id, &asked.hub), (room, &hub));
+        assert_eq!(
+            crypto::hmac_sha256(&mac_key(&link), &request.request)
+                .unwrap()
+                .as_slice(),
+            request.mac
+        );
+        assert_eq!(
+            crypto::verify_with_label(
+                new_id.as_bytes(),
+                SIGN_REQUEST,
+                &request_with_mac(&request),
+                &request.signature
+            ),
+            Ok(())
+        );
+        let hash = request_hash(&request).unwrap();
+        assert_eq!(hex(hash.as_bytes()), text(invite, "request_hash"));
+
+        // The Reveal and the code, on both sides, from their stored state.
+        let reveal = SignedReveal {
+            reveal: bytes(invite, "reveal"),
+            signature: bytes(invite, "reveal_signature"),
+        };
+        let revealed = Reveal::decode(&reveal.reveal).unwrap();
+        assert_eq!(
+            (revealed.invite_id, revealed.nonce, revealed.request_hash),
+            (decoded.invite_id, nonce, hash)
+        );
+        let numbers: Vec<u8> = invite["code"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_u64().unwrap() as u8)
+            .collect();
+        let code = CheckCode::from_numbers(numbers.clone().try_into().unwrap()).unwrap();
+        assert_eq!(check_code(&offer.offer, &request, &nonce), code);
+        let listed = |key: &str| -> Vec<String> {
+            invite[key]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry.as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(code.emoji().to_vec(), listed("emoji"));
+        assert_eq!(code.words().to_vec(), listed("words"));
+
+        let joiner = Joiner::from_stored(&bytes(invite, "joiner_stored")).unwrap();
+        assert_eq!(joiner.signed_request(), &request);
+        assert_eq!(joiner.offer(), &decoded);
+        assert_eq!(joiner.reveal(&reveal), Ok(code));
+
+        let stored = bytes(invite, "inviter_stored");
+        let inviter = Inviter::from_stored(&stored).unwrap();
+        assert_eq!(inviter.signed_offer(), &offer);
+        assert_eq!(inviter.to_stored().unwrap().expose(), stored);
+        let accepted = inviter.accepted(&inviter_key).unwrap().expect("accepted");
+        assert_eq!(accepted.reveal, reveal);
+        assert_eq!(accepted.code, code);
+        assert_eq!(accepted.request_hash, hash);
+        assert_eq!(accepted.new_device, new_id);
+
+        // 12.1.4: nothing commits without the code and the Request the person compared.
+        let mut results = Vec::new();
+        for case in invite["confirmations"].as_array().unwrap() {
+            let mut asked = Inviter::from_stored(&stored).unwrap();
+            if case["after_they_dont_match"].as_bool().unwrap() {
+                asked.burn();
+            }
+            let given: Vec<u8> = case["code"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| n.as_u64().unwrap() as u8)
+                .collect();
+            let given = CheckCode::from_numbers(given.try_into().unwrap()).unwrap();
+            let named = Hash32::from_slice(&bytes(case, "request_hash")).unwrap();
+            let result = match asked.confirm(&given, &named, number(case, "now")) {
+                Ok(confirmed) => {
+                    assert_eq!(confirmed.new_device(), &new_id);
+                    assert_eq!(confirmed.inviter(), &inviter_id);
+                    assert_eq!(confirmed.key_package(), asked_key_package(&request));
+                    assert_eq!(confirmed.request_hash(), &hash);
+                    assert_eq!(asked.check_confirmed(&confirmed), Ok(()));
+                    "confirmed"
+                }
+                Err(error) => error.code(),
+            };
+            assert_eq!(result, text(case, "result"), "{}", text(case, "why"));
+            results.push(result);
+        }
+        assert_eq!(
+            results,
+            [
+                "confirmed",
+                "code-not-confirmed",
+                "code-not-confirmed",
+                "invite-expired",
+                "invite-burned"
+            ]
+        );
+
+        // What verifies the KeyPackage holds it against the clock: these steps pass while it is valid.
+        let not_after = number(invite, "key_package_not_after");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(not_after > number(invite, "opened_at"));
+        if now < not_after {
+            assert_eq!(hub_check_request(&offer, &request, &hub), Ok(new_id));
+            let outcome =
+                hub_check_reveal(&offer, &reveal, std::slice::from_ref(&request)).unwrap();
+            assert_eq!(outcome.new_device(), &new_id);
+            assert_eq!(outcome.request_hash(), &hash);
+            assert_eq!(
+                outcome.check_outcome(&inviter_id, decoded.role, &asked.key_package),
+                Ok(())
+            );
+            assert_eq!(
+                outcome.check_enrolment(&inviter_id, &new_id).is_ok(),
+                decoded.role == Role::Agent
+            );
+            // The whole exchange again, with the randomness the stored inviter kept, gives the same bytes.
+            let (again, same_request) = Joiner::request(
+                &link,
+                &offer,
+                &new_key,
+                &asked.key_package,
+                number(invite, "requested_at"),
+            )
+            .unwrap();
+            assert_eq!(same_request, request);
+            assert_eq!(again.to_stored().unwrap(), bytes(invite, "joiner_stored"));
+        }
+    }
+}
+
+/// The KeyPackage a Request carries.
+fn asked_key_package(request: &SignedRequest) -> Vec<u8> {
+    Request::decode(&request.request)
+        .expect("decodes")
+        .key_package
+}

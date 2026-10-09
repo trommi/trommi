@@ -295,3 +295,72 @@ fn a_challenge_is_fresh_random_bytes_with_two_minutes() {
         Err(Error::Entropy)
     );
 }
+
+#[test]
+fn the_vectors_read_back() {
+    use trommi_tests::vectors::hub_auth::NAME;
+    use trommi_tests::vectors::{hex, read, unhex};
+
+    let file = read(NAME).unwrap();
+    let text = |value: &serde_json::Value, key: &str| value[key].as_str().expect(key).to_owned();
+    let bytes = |value: &serde_json::Value, key: &str| unhex(&text(value, key)).unwrap();
+    let key = SigningKey::from_seed(Secret::from_slice(&bytes(&file, "seed")).unwrap());
+    assert_eq!(hex(&key.public()), text(&file, "device"));
+    let room = RoomId::from_slice(&bytes(&file, "room_id")).unwrap();
+    let hub = HubAddress::parse(&text(&file, "hub")).unwrap();
+    let challenge: [u8; CHALLENGE_LEN] = bytes(&file, "challenge").try_into().unwrap();
+    let issued = IssuedChallenge {
+        challenge,
+        expires_at: file["expires_at"].as_u64().unwrap(),
+    };
+    assert_eq!(
+        issued.expires_at,
+        file["issued_at"].as_u64().unwrap() + CHALLENGE_LIFE_MS
+    );
+
+    // The device signs the same bytes again.
+    let signed = sign(&key, room, &hub, challenge).unwrap();
+    assert_eq!(hex(&signed.auth), text(&file, "auth"));
+    assert_eq!(hex(&signed.signature), text(&file, "signature"));
+    let auth = HubAuth::decode(&signed.auth).unwrap();
+    assert_eq!(
+        (auth.room_id, auth.hub.as_str(), auth.device, auth.challenge),
+        (room, hub.as_str(), DeviceId::new(key.public()), challenge)
+    );
+    assert_eq!(
+        crypto::verify_with_label(
+            &key.public(),
+            "TrommiHubAuth",
+            &signed.auth,
+            &signed.signature
+        ),
+        Ok(())
+    );
+
+    let mut results = std::collections::BTreeSet::new();
+    for case in file["cases"].as_array().unwrap() {
+        let signed = SignedHubAuth {
+            auth: bytes(case, "auth"),
+            signature: bytes(case, "signature"),
+        };
+        let posted_for = RoomId::from_slice(&bytes(case, "room_id")).unwrap();
+        let posted_to = HubAddress::parse(&text(case, "hub")).unwrap();
+        let now = case["now"].as_u64().unwrap();
+        let result = match verify(&signed, &posted_for, &posted_to, &issued, now) {
+            Ok(device) => format!("signed in: {}", hex(device.as_bytes())),
+            Err(error) => error.code().to_owned(),
+        };
+        assert_eq!(result, text(case, "result"), "{}", text(case, "why"));
+        results.insert(result);
+    }
+    for code in [
+        "wrong-room",
+        "unauthorised",
+        "bad-challenge",
+        "bad-signature",
+        "bad-format",
+    ] {
+        assert!(results.contains(code), "{code}");
+    }
+    assert!(results.contains(&format!("signed in: {}", text(&file, "device"))));
+}

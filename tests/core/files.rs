@@ -890,3 +890,114 @@ fn links_and_references_do_not_print_their_secrets() {
     assert!(!printed.contains("1111"));
     assert!(printed.contains("redacted"));
 }
+
+#[test]
+fn the_vectors_read_back() {
+    use trommi_tests::vectors::files::{plaintext, reference_of, NAME};
+    use trommi_tests::vectors::{hex, read, unhex};
+
+    let file = read(NAME).unwrap();
+    let text = |value: &serde_json::Value, key: &str| value[key].as_str().expect(key).to_owned();
+    let mut two_chunks = Vec::new();
+    for case in file["files"].as_array().unwrap() {
+        let stored = unhex(&text(case, "stored")).unwrap();
+        let named = reference_of(case).unwrap();
+        let plain_len = case["plain_len"].as_u64().unwrap();
+        let plain = plaintext(plain_len as usize);
+        assert_eq!(
+            hex(crypto::sha256(&plain).unwrap().as_bytes()),
+            text(case, "plaintext_sha256")
+        );
+        // The reference's fields as a body's JSON carries them.
+        let through_text = FileRef::from_base64url(
+            &named.file_id.to_base64url(),
+            std::str::from_utf8(named.file_key_base64url().expose()).unwrap(),
+            &named.sha256.to_base64url(),
+        )
+        .unwrap();
+        assert_eq!(through_text, named);
+        assert_eq!(crypto::sha256(&stored).unwrap(), named.sha256);
+
+        // Whole, as a stream in pieces, and chunk by chunk.
+        assert_eq!(decrypt_file(&named, &stored).unwrap(), plain);
+        let mut decryptor = Decryptor::new(&named);
+        let mut streamed = Vec::new();
+        for piece in stored.chunks(4_999) {
+            streamed.extend(decryptor.update(piece).unwrap());
+        }
+        streamed.extend(decryptor.finish().unwrap());
+        assert_eq!(streamed, plain);
+        let layout = Layout::of_stored(stored.len() as u64).unwrap();
+        assert_eq!(layout.plain_len(), plain_len);
+        assert_eq!(layout.chunks(), case["chunks"].as_u64().unwrap());
+        assert_eq!(layout.stored_len(), case["stored_len"].as_u64().unwrap());
+        let mut by_chunk = Vec::new();
+        for index in 0..layout.chunks() {
+            let (offset, len) = layout.stored_range(index).unwrap();
+            let sealed = &stored[offset as usize..(offset + len) as usize];
+            by_chunk.extend(
+                open_chunk(
+                    &named.file_key,
+                    &named.file_id,
+                    index,
+                    layout.is_last(index),
+                    sealed,
+                )
+                .unwrap(),
+            );
+        }
+        assert_eq!(by_chunk, plain);
+        assert_eq!(
+            FileHead::decode(&stored[..HEAD_LEN]).unwrap().file_id,
+            named.file_id
+        );
+        if layout.chunks() == 2 {
+            two_chunks = stored;
+        }
+    }
+    assert_eq!(file["files"].as_array().unwrap().len(), 3);
+
+    for case in file["refused"].as_array().unwrap() {
+        let named = reference_of(&case["reference"]).unwrap();
+        let stored = match case["stored_is_the_first_bytes_of_the_file_of_two_chunks"].as_u64() {
+            Some(len) => two_chunks[..len as usize].to_vec(),
+            None => unhex(&text(case, "stored")).unwrap(),
+        };
+        let code = text(case, "code");
+        let why = text(case, "why");
+        assert_eq!(
+            decrypt_file(&named, &stored).unwrap_err().code(),
+            code,
+            "{why}"
+        );
+        // A stream fails too, at the chunk concerned or at its end, whatever it handed out before.
+        let mut decryptor = Decryptor::new(&named);
+        let streamed = decryptor.update(&stored).and_then(|_| decryptor.finish());
+        assert!(streamed.is_err(), "{why}");
+    }
+
+    let share = &file["share_link"];
+    let link = ShareLink::parse(&text(share, "link")).unwrap();
+    assert_eq!(link.app(), text(share, "app"));
+    assert_eq!(hex(link.share_id.as_bytes()), text(share, "share_id"));
+    assert_eq!(hex(link.secret.expose()), text(share, "secret"));
+    assert_eq!(hex(link.file_key.expose()), text(share, "file_key"));
+    assert_eq!(hex(link.sha256.as_bytes()), text(share, "sha256"));
+    assert_eq!(link.to_text().expose(), text(share, "link").as_bytes());
+    let registered = link.secret_hash().unwrap();
+    assert_eq!(hex(registered.as_bytes()), text(share, "secret_sha256"));
+    let presented = String::from_utf8(link.secret_base64url().expose().to_vec()).unwrap();
+    assert_eq!(share_secret_matches(&presented, &registered), Ok(true));
+    assert_eq!(
+        share_secret_matches(&presented, &Hash32::new([1; 32])),
+        Ok(false)
+    );
+    // The link opens the small file once it was fetched.
+    let small = &file["files"][1];
+    let file_id = FileId::from_slice(&unhex(&text(share, "file_id")).unwrap()).unwrap();
+    let stored = unhex(&text(small, "stored")).unwrap();
+    assert_eq!(
+        decrypt_file(&link.file(file_id), &stored).unwrap(),
+        plaintext(300)
+    );
+}
