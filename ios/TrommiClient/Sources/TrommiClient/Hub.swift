@@ -114,6 +114,7 @@ public final class HubClient: @unchecked Sendable {
    * posts is the exact bytes of an outbox entry or an idempotent write.
    */
   private func send(_ req: URLRequest, cap: Int) async throws -> (Data, HTTPURLResponse?) {
+    guard !lock.withLock({ shut }) else { throw HubError(status: 0, code: "closed", message: "this hub client was closed") }
     do { return try await lock.withLock({ transport }).send(req, cap: cap) }
     catch let f as Transport.Failure {
       if f.tooLarge { throw HubError(status: 0, code: "too-large", message: "the hub's answer is larger than this client takes") }
@@ -132,9 +133,18 @@ public final class HubClient: @unchecked Sendable {
     guard let fresh = tokenNow(validFor: 0) else { throw TrommiError("unauthorised", "the hub gave no token") }
     return fresh
   }
+  /**
+   * Ends this client for good (its room was closed): what is in flight is cancelled, nothing more is sent, and a
+   * late answer installs no token.
+   */
+  public func shutdown() {
+    let t = lock.withLock { () -> Transport in shut = true; token = nil; tokenExpiresAt = 0; return transport }
+    t.cancel()
+  }
+  private var shut = false
   public func forgetToken() { setToken(nil, expiresAt: 0) }
   private func tokenNow(validFor ms: UInt64) -> String? { lock.withLock { token.flatMap { nowMs() + ms < tokenExpiresAt ? $0 : nil } } }
-  private func setToken(_ t: String?, expiresAt: UInt64) { lock.withLock { token = t; tokenExpiresAt = expiresAt } }
+  private func setToken(_ t: String?, expiresAt: UInt64) { lock.withLock { if !shut || t == nil { token = t; tokenExpiresAt = expiresAt } } }
 
   /**
    * A challenge signed by this device for this hub and room, traded for a token of ten minutes. `challenge`: one the
@@ -331,13 +341,22 @@ final class Transport: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     if !HubClient.transportForTests.isEmpty { cfg.protocolClasses = HubClient.transportForTests }
     session = URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
   }
-  func end() { session.finishTasksAndInvalidate() }
+  private var ended = false
+  /** No new requests; those in flight finish. */
+  func end() { lock.withLock { ended = true }; session.finishTasksAndInvalidate() }
+  /** Ends every request in flight as well. */
+  func cancel() { lock.withLock { ended = true }; session.invalidateAndCancel() }
 
   func send(_ req: URLRequest, cap: Int) async throws -> (Data, HTTPURLResponse?) {
     try await withCheckedThrowingContinuation { cont in
-      let task = session.dataTask(with: req)
-      lock.withLock { pending[task.taskIdentifier] = Pending(cap: cap, done: cont) }
-      task.resume()
+      // (made and registered under the lock: a session that was ended makes no task)
+      let task = lock.withLock { () -> URLSessionDataTask? in
+        if ended { return nil }
+        let t = session.dataTask(with: req)
+        pending[t.taskIdentifier] = Pending(cap: cap, done: cont)
+        return t
+      }
+      if let task = task { task.resume() } else { cont.resume(throwing: Failure(message: "the connection pool was closed")) }
     }
   }
   func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {

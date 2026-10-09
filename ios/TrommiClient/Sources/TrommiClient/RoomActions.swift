@@ -239,7 +239,7 @@ extension Room {
   public func fetchAttachment(_ ref: JV) async throws -> Bytes {
     guard let id = ref["attachment_id"].string, let fileId = try? unhex(id), let key = ref["file_key"].string, let sha = ref["sha256"].string else { throw TrommiError("bad-argument", "attachment reference") }
     // (kept by the whole reference: another key or hash for the same id is another file to check)
-    let cacheId = "\(id)/\(sha)"
+    let cacheId = "\(id)/\(key)/\(sha)"
     if let hit = attachmentCache[cacheId] { return hit }
     let stored = try await noted { try await hub.getFile(fileId) }
     let k = try unb64u(key), s = try unb64u(sha)
@@ -255,7 +255,7 @@ extension Room {
                              "file_name": .str(fileName), "media_type": .str(mediaType)]
     if let w = width { ref["width"] = .n(w) }
     if let h = height { ref["height"] = .n(h) }
-    keepAttachment("\(hex(a.fileId))/\(b64u(a.sha256))", bytes)
+    keepAttachment("\(hex(a.fileId))/\(b64u(a.fileKey))/\(b64u(a.sha256))", bytes)
     return .obj(ref)
   }
   /** The plain bytes of files shown lately: at most 48 of them and 96 MB. */
