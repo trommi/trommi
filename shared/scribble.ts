@@ -28,6 +28,11 @@ import type { AttachmentRef } from './types.ts'
 export * from './ink.ts'       // one import for the app: the format, the shape and the palette
 export * from './palette.ts'
 
+/** The room's one Scribble Board (since 8 October 2026: one board per room, no board per desk). Its timeline is the
+ *  one the 'main' desk's board had (desk/ and 'main' folded into 32 hex), so what was drawn there stays on it; the
+ *  other desks' old boards were moved onto it once (dev/migrate/scribble-first-format.js). */
+export const ROOM_BOARD = 'desk/6d61696e000000000000000000000004'
+
 // ---- shapes ----
 // A shape is the board's own form of one element: { id, by, tool, pts (board units), z, group, … }.
 //   stroke: pts = its points with the transform baked in, t, f, az, al, sim (ink.mjs), color, width
