@@ -515,6 +515,8 @@ pub struct Member {
     host: Mutex<Option<Arc<dyn Host>>>,
     op: tokio::sync::Mutex<()>,
     moving: std::sync::atomic::AtomicBool,
+    /// Whether the removal this process learned of was verified: it processed the Commit itself.
+    verified: std::sync::atomic::AtomicBool,
     self_ref: Mutex<std::sync::Weak<Member>>,
 }
 
@@ -542,6 +544,7 @@ impl Member {
             host: Mutex::new(None),
             op: tokio::sync::Mutex::new(()),
             moving: std::sync::atomic::AtomicBool::new(false),
+            verified: std::sync::atomic::AtomicBool::new(false),
             self_ref: Mutex::new(std::sync::Weak::new()),
         });
         *m.self_ref.lock().unwrap() = Arc::downgrade(&m);
@@ -593,28 +596,54 @@ impl Member {
 
     fn out_text(was: &Value) -> String {
         let kf = was["key_file"].as_str().unwrap_or("");
-        if was["replaced"] == Value::Bool(true) {
+        if was["verified"] == Value::Bool(false) {
+            format!("This connector stopped: the hub no longer takes its device. Either the human removed it or let another connector continue this Trommi session while this one was away, or the hub is wrong. Its state is kept ({kf}); nothing sent from here reaches the board. To use Trommi again here, the human reconnects this session in the Trommi app (a new invite link), then `trommi-connector connect '<link>'` here.")
+        } else if was["replaced"] == Value::Bool(true) {
             format!("This connector is retired: the human let another connector continue this Trommi session (a new invite link for the same session), and this key ({kf}) no longer belongs to the room; it is put aside, and no other usable key is left in this folder. Nothing sent from here reaches the board. If this Claude Code session should use Trommi again, the human invites this session again in the Trommi app.")
         } else {
             format!("This connector is retired: the human removed its key ({kf}) from the Trommi room; it is put aside, and no other usable key is left in this folder. Nothing sent from here reaches the board. To use Trommi again here, the human invites this session again in the Trommi app.")
         }
     }
-    /// The slot this process holds is out: its key and state go aside, the slot is given back.
-    fn put_out(&self, replaced: bool) {
+    /// The slot this process holds is out. A removal this device verified itself (it processed the Commit)
+    /// wipes the slot's state (13.5) and gives the slot back; returns true. One that only the hub asserts
+    /// (it refuses the device as no member) stops this process and leaves the state where it is, because a
+    /// hub's word must not destroy a membership; returns false.
+    fn put_out(&self, replaced: bool) -> bool {
+        let verified = self
+            .verified
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
         let mut me = self.me.lock().unwrap();
-        let Some(p) = me.paths.clone() else { return };
-        let was = json!({ "replaced": replaced, "key_file": p.key_file.display().to_string(), "at": now_ms(), "owner": owner_of(&p) });
+        let Some(p) = me.paths.clone() else {
+            return verified;
+        };
+        let was = json!({ "replaced": replaced, "verified": verified, "key_file": p.key_file.display().to_string(), "at": now_ms(), "owner": owner_of(&p) });
+        if !verified {
+            me.storage = None;
+            unlock_slot(&p);
+            me.paths = None;
+            me.out = Some(was);
+            me.out_told = false;
+            eprintln!("[trommi] slot {}: the hub no longer takes this device; this connector stops, its state stays where it is", p.slot);
+            return false;
+        }
         let _ = write_private(&out_file(&p), &was.to_string());
         // 13.5: a device that is out keeps nothing of its session.
-        if let Some(storage) = me.storage.take() {
-            let _ = storage.journal().wipe();
-        }
+        let wiped = match me.storage.take() {
+            Some(storage) => storage.journal().wipe().is_ok(),
+            None => true,
+        };
         let aside = set_slot_aside(&p, None);
+        let gone = !crate::slotstore::state_dir(&p.key_file).exists();
         unlock_slot(&p);
         me.paths = None;
         me.out = Some(was);
         me.out_told = false;
-        eprintln!("[trommi] slot {}: {}; its state is wiped (what is left is put aside as {}), looking for another usable key", p.slot, if replaced { "another connector continues its session, its device is retired" } else { "its device was removed from the room" }, aside.display());
+        if wiped && gone {
+            eprintln!("[trommi] slot {}: {}; its state is wiped (what is left is put aside as {}), looking for another usable key", p.slot, if replaced { "another connector continues its session, its device is retired" } else { "its device was removed from the room" }, aside.display());
+        } else {
+            eprintln!("[trommi] slot {}: its device is out of the room, but its state could NOT be wiped: delete {} by hand", p.slot, crate::slotstore::state_dir(&p.key_file).display());
+        }
+        true
     }
 
     /// Start the client, take the lease, wait for a session; commands flow once the host is ready.
@@ -648,7 +677,9 @@ impl Member {
                         }
                         let _ = cmd_tx.send(*cmd);
                     }
-                    ClientEvent::Removed { replaced } => {
+                    ClientEvent::Removed { replaced, verified } => {
+                        me.verified
+                            .store(verified, std::sync::atomic::Ordering::SeqCst);
                         if me.phase() != "ready" {
                             let _ = out_tx.send(replaced);
                         } else {
@@ -833,12 +864,28 @@ impl Member {
                     }
                     self.me.lock().unwrap().client = None;
                     client.stop().await;
-                    self.put_out(
-                        e.extra
-                            .get("replaced")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                    );
+                    let replaced = e
+                        .extra
+                        .get("replaced")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if !self.put_out(replaced) {
+                        // Unverified: the state stays, and this process does not try the same slot again.
+                        let tell = {
+                            let mut me = self.me.lock().unwrap();
+                            me.phase = "retired".into();
+                            me.error = me.out.as_ref().map(Self::out_text);
+                            !std::mem::replace(&mut me.out_told, true)
+                        };
+                        if tell {
+                            eprintln!(
+                                "[trommi] {}",
+                                self.me.lock().unwrap().error.clone().unwrap_or_default()
+                            );
+                            self.host().on_retired().await;
+                        }
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -860,7 +907,17 @@ impl Member {
             }
             client.stop().await;
             me.host().on_dropped().await;
-            me.put_out(replaced);
+            if !me.put_out(replaced) {
+                {
+                    let mut m = me.me.lock().unwrap();
+                    m.phase = "retired".into();
+                    m.error = m.out.as_ref().map(Self::out_text);
+                    m.out_told = true;
+                }
+                me.host().on_retired().await;
+                me.moving.store(false, std::sync::atomic::Ordering::SeqCst);
+                return;
+            }
             me.set_phase("starting");
             if let Err(e) = me.open(false).await {
                 let mut m = me.me.lock().unwrap();
@@ -1092,6 +1149,18 @@ impl Member {
             (me.phase.clone(), keyless)
         };
         if phase != "asleep" && !keyless && phase != "retired" {
+            return;
+        }
+        // A device the hub refuses (unverified) stays stopped in this process: its state is kept, and trying
+        // again is a restart's or a new invite's.
+        let refused = self
+            .me
+            .lock()
+            .unwrap()
+            .out
+            .as_ref()
+            .is_some_and(|out| out["verified"] == Value::Bool(false));
+        if phase == "retired" && refused {
             return;
         }
         {
