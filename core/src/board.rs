@@ -82,8 +82,9 @@ pub fn snapshot_name(board: &BoardId) -> String {
     format!("{BOARD_SNAPSHOT}{}", board.to_base64url())
 }
 
-/// The value of `board_snapshot/<board>` (section 10.2).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The value of `board_snapshot/<board>` (section 10.2). The attachment holds the snapshot file's key and is
+/// never printed.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Snapshot {
     /// The attachment reference of the snapshot file (section 9.1.1), as JSON text. It holds the file's key.
     pub attachment: String,
@@ -92,6 +93,16 @@ pub struct Snapshot {
     pub frontier: Vec<(DeviceId, Head)>,
     /// The hub's change number that the snapshot's writer had processed.
     pub change: u64,
+}
+
+impl fmt::Debug for Snapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Snapshot")
+            .field("attachment", &"<redacted>")
+            .field("frontier", &self.frontier)
+            .field("change", &self.change)
+            .finish()
+    }
 }
 
 #[derive(Deserialize)]
@@ -412,6 +423,7 @@ mod tests {
         };
         let value = snapshot.value().unwrap();
         assert_eq!(Snapshot::parse(&value).unwrap(), snapshot);
+        assert!(!format!("{snapshot:?}").contains("BBBB"));
         assert_eq!(snapshot.items_after_change(), 4000);
         assert_eq!(snapshot.frontier_of(&device(2)), head(9, 2));
         assert_eq!(snapshot.frontier_of(&device(3)), Head::START);

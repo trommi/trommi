@@ -212,7 +212,8 @@ impl Chains {
     }
 
     /// Chains that start at these heads instead of number 1: the frontier of a board snapshot (section 10.3),
-    /// the one shortcut around verifying a chain from its first envelope.
+    /// the one shortcut around verifying a chain from its first envelope. It stands for the board's items only:
+    /// the state of the group's objects is still replayed from all of their envelopes.
     pub fn from_frontier(frontier: &[(DeviceId, Head)]) -> Self {
         Self {
             heads: frontier.iter().copied().collect(),
@@ -755,8 +756,10 @@ fn open(facts: &dyn GroupFacts, envelope: &Envelope) -> Result<Body, Error> {
 /// its sender's chain: the caller applies [`Receipt::advance`] and, for [`Outcome::Taken`], the transition, and
 /// stores both with the envelope in one write, whatever [`Receipt::outcome`] says.
 ///
-/// `chains` and `objects` are the state of the envelope's group. `me` is this device. `mode` says whether the
-/// envelope comes in the hub's order or is read back; a pruned envelope is checked like a full one and ends
+/// `chains` and `objects` are the state of the envelope's group. `me` is this device. The envelopes of a group
+/// are handed in by ascending change number, the hub's order, by whichever route they came: an object's state
+/// is judged against the envelopes before it in that order, and a sender's numbers ascend with it. `mode` says
+/// whether the group state in `facts` is the one of the envelope's place in that order or a later one; a pruned envelope is checked like a full one and ends
 /// with the body `pruned`. This device's own envelopes come back through here like everyone's.
 #[allow(clippy::too_many_arguments)]
 pub fn receive(

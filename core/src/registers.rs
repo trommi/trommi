@@ -15,6 +15,7 @@ use crate::error::Error;
 use crate::ids::{DeviceId, RegisterId};
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::fmt;
 
 /// The longest value, in bytes of compact JSON.
 pub const MAX_VALUE_LEN: usize = 4096;
@@ -29,8 +30,9 @@ pub const BOARD_SNAPSHOT: &str = "board_snapshot/";
 /// The largest stored state this module reads.
 const MAX_STATE_LEN: usize = 1 << 28;
 
-/// One register value as it stands in a payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One register value as it stands in a payload. A value may hold the key of a file (a board snapshot's
+/// attachment), so no value is ever printed.
+#[derive(Clone, PartialEq, Eq)]
 pub struct Value {
     /// The name.
     pub name: String,
@@ -38,6 +40,24 @@ pub struct Value {
     pub value: Option<String>,
     /// The writer's lamport: one above every lamport it had seen in the group.
     pub lamport: u64,
+}
+
+/// `value` as `Debug` shows it: present or not, never its text.
+fn redacted(value: &Option<String>) -> &'static str {
+    match value {
+        Some(_) => "<redacted>",
+        None => "null",
+    }
+}
+
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Value")
+            .field("name", &self.name)
+            .field("value", &redacted(&self.value))
+            .field("lamport", &self.lamport)
+            .finish()
+    }
 }
 
 #[derive(Deserialize)]
@@ -203,14 +223,14 @@ pub fn may_write(name: &str, in_room: bool, role: Role, sender: &DeviceId) -> bo
 }
 
 /// The value held for one name (for a name each device writes: for one name and sender).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct Held {
     stamp: Stamp,
     value: Option<String>,
 }
 
 /// What one register envelope changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Update {
     /// The name.
     pub name: String,
@@ -226,8 +246,20 @@ pub struct Update {
     largest: u64,
 }
 
+impl fmt::Debug for Update {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Update")
+            .field("name", &self.name)
+            .field("of", &self.of)
+            .field("value", &redacted(&self.value))
+            .field("current", &self.current)
+            .field("stamp", &self.stamp)
+            .finish()
+    }
+}
+
 /// The registers of one group as a reader holds them.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct Registers {
     /// The largest counted lamport seen in the group.
     largest: u64,
@@ -235,6 +267,15 @@ pub struct Registers {
     /// The name each writer uses a register id for, and the id it uses for each name.
     names: BTreeMap<(DeviceId, RegisterId), String>,
     ids: BTreeMap<(DeviceId, String), RegisterId>,
+}
+
+impl fmt::Debug for Registers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Registers")
+            .field("largest", &self.largest)
+            .field("names", &self.values.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 fn corrupt(_: Error) -> Error {
@@ -605,6 +646,13 @@ mod tests {
             parsed,
             json!({ "name": "crown", "value": { "a": 1 }, "lamport": 3 })
         );
+        // No value is printed.
+        let secret = Value {
+            name: "board_snapshot/x".into(),
+            value: Some(r#"{"file_key":"c2VjcmV0"}"#.into()),
+            lamport: 1,
+        };
+        assert!(!format!("{secret:?}").contains("c2VjcmV0"));
         // A reader ignores fields it does not know.
         let extra = br#"{"name":"crown","value":1,"lamport":2,"schema_version":2,"x":[]}"#;
         assert_eq!(Value::parse(extra).unwrap().value.as_deref(), Some("1"));
@@ -1096,6 +1144,7 @@ mod tests {
         reader.set(2, room(), "heads", Some("{}"), 3).unwrap();
         reader.set(1, room(), "heads", Some("{}"), 4).unwrap();
         let registers = reader.registers(&room());
+        assert!(!format!("{registers:?}").contains("{}"));
         let bytes = registers.to_bytes().unwrap();
         assert_eq!(Registers::from_bytes(&bytes).unwrap(), registers);
         assert_eq!(
