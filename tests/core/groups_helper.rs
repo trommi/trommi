@@ -1,14 +1,15 @@
 //! Helper sessions (5.2.3 to 5.2.6, 5.3.3, 5.3.5): founded by the main session's agent leaf, their opener,
 //! with every human device and up to seven helper devices; what the hub refuses; first contact.
 
-use trommi_core::device::{Joined, Processed, Received};
+use trommi_core::device::{Joined, Processed, Received, WelcomeExpectation};
 use trommi_core::ids::{GroupId, SessionId, TurnId};
-use trommi_core::mls::profile::Cut;
+use trommi_core::mls::profile::{Cut, TrommiSession};
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device, now, observe,
-    post_ok, post_refused, publish_some, settle, settle_joining, sync_ok, TestDevice,
+    add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
+    now, observe, post_ok, post_refused, publish_some, settle, settle_joining, sync_ok, TestDevice,
 };
 
 struct Room {
@@ -131,15 +132,11 @@ fn the_opener_founds_a_helper_session_with_every_human_device() {
         h2.content_key(&group, 0).unwrap(),
         agent.content_key(&group, 0).unwrap()
     );
-    // A human device takes keys from the opener of a helper session; a helper device's handover is dropped.
+    // A human device takes keys from the opener of a helper session; a helper device sends no handover
+    // (`groups_refusals.rs`, a_work_trail_step_without_a_number: one sent all the same is dropped).
     settle(&hub, &mut h1);
-    h1.send_handover(&group, &a.id()).unwrap();
-    post_ok(&mut hub, &mut h1);
-    let processed = sync_ok(&hub, &mut a);
-    assert_eq!(
-        processed.last(),
-        Some(&Processed::Message(Received::Dropped))
-    );
+    assert_eq!(h1.send_handover(&group, &a.id()), Err(Error::Forbidden));
+    sync_ok(&hub, &mut a);
     assert_eq!(a.content_key(&group, 0), Err(Error::NoKey));
     agent.send_handover(&group, &a.id()).unwrap();
     post_ok(&mut hub, &mut agent);
@@ -210,11 +207,34 @@ fn a_helper_device_that_lost_its_state_is_readmitted_by_the_opener() {
         Some(Processed::Commit { removed: true, .. })
     ));
     assert_eq!(h1.content_key(&group, 2), Err(Error::NoKey));
-    // A human device readmits nobody.
+    // A human device readmits nobody, and neither does a helper device: only the opener.
     assert_eq!(
         a.readmit_helper(&group, Cut::none(again.id()), &h1.id(), &package, now()),
         Err(Error::Forbidden)
     );
+    let mut third = helper_device(&hub);
+    let package = third.key_package(now()).unwrap();
+    assert_eq!(
+        again.readmit_helper(&group, Cut::none(agent.id()), &third.id(), &package, now()),
+        Err(Error::Forbidden)
+    );
+    // A helper device hands no key over either (7.1): a human device or the opener does.
+    assert_eq!(again.send_handover(&group, &a.id()), Err(Error::Forbidden));
+    assert!(again.outbox().is_empty());
+    // The device that comes back has a new key (4.3), and the leaf that goes is a helper device's: not a
+    // human device's and not the opener's own.
+    let same_key = again.key_package(now()).unwrap();
+    assert_eq!(
+        agent.readmit_helper(&group, Cut::none(again.id()), &again.id(), &same_key, now()),
+        Err(Error::BadCommit)
+    );
+    for kept in [a.id(), agent.id()] {
+        assert_eq!(
+            agent.readmit_helper(&group, Cut::none(kept), &third.id(), &package, now()),
+            Err(Error::BadCommit)
+        );
+    }
+    assert!(agent.outbox().is_empty());
 }
 
 #[test]
@@ -265,13 +285,13 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
         .unwrap();
     assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
 
-    // The opener removes no human leaf.
+    // The opener removes no human leaf: it builds no such Commit.
     let mut h2 = helper_device(&hub);
     let package = h2.key_package(now()).unwrap();
-    agent
-        .readmit_helper(&group, Cut::none(b.id()), &h2.id(), &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
+    assert_eq!(
+        agent.readmit_helper(&group, Cut::none(b.id()), &h2.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
     // The opener adds no enrolled agent device and no human device.
     let of_other = other.key_package(now()).unwrap();
     agent
@@ -537,6 +557,21 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
         assert_eq!(device.group(&group).unwrap().disallowed, [other.id()]);
         // It writes nothing into the group.
         assert_eq!(device.update(&group, true, now()), Err(Error::StaleSession));
+        assert_eq!(
+            device.send_handover(&group, &other.id()),
+            Err(Error::BadGroup)
+        );
+    }
+    // What is sent in the group it does not open: neither a step of the device that made the session nor a
+    // handover of the other human device, which a hub that checks nothing stores.
+    let turn = TurnId::new([9; 16]);
+    other
+        .send_work_trail(&group, &turn, 1, b"{}", now())
+        .unwrap();
+    post_ok(&mut hub, &mut other);
+    for device in [&mut a, &mut b] {
+        assert_eq!(sync_ok(&hub, device), [Processed::Skipped]);
+        assert_eq!(device.content_key(&group, 1), Err(Error::NoKey));
     }
 
     // It removes the offending leaf. Open point: 5.2.6 says such a session's content is never opened; a
@@ -549,5 +584,53 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
         let summary = device.group(&group).unwrap();
         assert_eq!((summary.epoch, summary.disallowed.len()), (2, 0));
         assert_eq!(summary.leaves, [a.id(), b.id()].into_iter().collect());
+    }
+}
+
+#[test]
+fn first_contact_finds_more_helper_devices_than_a_helper_session_holds() {
+    let Room {
+        mut hub,
+        mut a,
+        mut b,
+        agent,
+        main,
+        parent,
+        ..
+    } = room(false);
+    // A human device that builds what no device builds: a helper session of its own making with eight
+    // helper devices, which it adds the other human devices and the main session's agent to.
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_ok(&hub, &mut b);
+    let session = TrommiSession {
+        room_id: main.room_id(),
+        session_id: SessionId::new([5; 16]),
+        parent,
+    };
+    let helpers: Vec<Forger> = (0..8).map(|_| Forger::new()).collect();
+    let mut packages = hub.claim(&[a.id(), b.id(), agent.id()]).unwrap();
+    packages.extend(helpers.iter().map(Forger::key_package));
+    let mut group = forger.found_session(&session);
+    let welcome = forger
+        .commit(&mut group, b"", &packages)
+        .welcome
+        .expect("a Welcome");
+    let expected = WelcomeExpectation {
+        room: main.room_id(),
+        committer: None,
+    };
+    let mut many: Vec<_> = helpers.iter().map(Forger::id).collect();
+    many.sort_unstable();
+    for device in [&mut a, &mut b] {
+        // Each human device finds the helper devices, seven at most by 5.2.3, and opens nothing of it.
+        let joined = device.join_welcome(&welcome, &expected, now()).unwrap();
+        assert_eq!(joined.group, session.group_id());
+        assert_eq!(joined.offending, many);
+        assert_eq!(device.content_key(&joined.group, 1), Err(Error::NoKey));
+        assert_eq!(
+            device.send_handover(&joined.group, &agent.id()),
+            Err(Error::BadGroup)
+        );
     }
 }

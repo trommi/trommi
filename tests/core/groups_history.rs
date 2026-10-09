@@ -130,9 +130,12 @@ fn a_handover_is_for_its_recipient_only() {
         c.content_key(&room_group, 0).unwrap(),
         a.content_key(&room_group, 0).unwrap()
     );
-    // The sender cannot open its own message (3.6): the log has it, and it is skipped.
-    let own = hub.log.last().unwrap().clone();
+    // The hub's answer moved the sender's cursor past its own message: met again it is a duplicate. Where
+    // the log brings it by above the cursor, the sender cannot open it (3.6) and skips it.
+    let mut own = hub.log.last().unwrap().clone();
     assert!(!own.commit);
+    assert_eq!(process(&mut a, &own), Err(Error::WrongEpoch));
+    own.change = a.cursor() + 1;
     assert_eq!(process(&mut a, &own), Ok(Processed::Skipped));
 }
 
@@ -153,6 +156,10 @@ fn a_key_for_an_epoch_its_group_has_not_reached_is_not_taken() {
     let [commit, handover] = &hub.log_after(b.cursor())[..] else {
         panic!("a Commit and a message");
     };
+    // The two change places: as if the hub had ordered the message before the Commit.
+    let (mut commit, mut handover) = (commit.clone(), handover.clone());
+    std::mem::swap(&mut commit.change, &mut handover.change);
+    let (commit, handover) = (&commit, &handover);
 
     // Handed the message before the Commit, the device takes the keys up to its own epoch of each group:
     // room epochs 0 to 3 and session epochs 0 to 3, not the session's epoch 5.
