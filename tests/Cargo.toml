@@ -155,6 +155,22 @@ name = "core_secrets"
 path = "core/secrets.rs"
 
 [[test]]
+name = "core_device_content"
+path = "core/device_content.rs"
+
+[[test]]
+name = "core_device_crash"
+path = "core/device_crash.rs"
+
+[[test]]
+name = "core_device_gate"
+path = "core/device_gate.rs"
+
+[[test]]
+name = "core_device_invite"
+path = "core/device_invite.rs"
+
+[[test]]
 name = "core_groups_hardening_merge"
 path = "core/groups_hardening_merge.rs"
 
@@ -169,3 +185,7 @@ path = "core/groups_hardening_state.rs"
 [[test]]
 name = "core_groups_reproducible"
 path = "core/groups_reproducible.rs"
+
+[[test]]
+name = "core_groups_hardening_content"
+path = "core/groups_hardening_content.rs"
