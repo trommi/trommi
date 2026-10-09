@@ -219,8 +219,9 @@ pub struct CommitFacts {
 /// A main session as a verifier of a helper session's Commit sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Parent {
-    /// The verifier does not follow that session (an agent or helper device that is no leaf of it): what
-    /// depends on it is not checked.
+    /// The verifier does not follow that session, and so does not know its agent leaf. This grants nothing:
+    /// no device is taken for the opener, and a Commit of the helper session is not judged (`room-behind`:
+    /// the verifier processes the main session first, as a leaf of it or as an observer).
     Unknown,
     /// No live main session of this room has that id.
     NotAMainSession,
@@ -231,7 +232,8 @@ pub enum Parent {
 /// What a verifier knows of the room's other sessions.
 pub trait SessionFacts {
     /// The main session `session` at the place of a Commit naming `room_epoch`: its agent leaf after the last of
-    /// its Commits whose `room_epoch` is not above that one.
+    /// its Commits whose `room_epoch` is not above that one. A verifier that processes the hub's order holds
+    /// no later Commit of it at that place, so this is the main session's state there (5.2.1).
     fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent;
 
     /// The live main session whose agent leaf `agent` is now, if the verifier knows one.
@@ -323,8 +325,12 @@ pub struct Verifier<'a> {
     /// does, whatever is given here: a join from outside, and in a room that holds more than 32 a Commit
     /// that adds nobody.
     pub max_human_devices: usize,
-    /// Whether the Commit is being posted: the hub takes it only if it names the newest room epoch (5.2.1).
-    pub posting: bool,
+    /// The room epoch that was current at the Commit's place in the hub's order (5.2.1, 5.4.1): a session
+    /// Commit names exactly this one. For the hub that takes a post, and for whoever processes the log in the
+    /// hub's order, it is the newest epoch of `history`. A device that is handed an entry behind its cursor
+    /// (the log of a group it joined late) gives the epoch its room group stood in at that entry's change
+    /// number.
+    pub room_epoch: u64,
 }
 
 /// A Commit with what was posted beside it.
@@ -347,8 +353,8 @@ pub struct SessionBefore {
     pub session: TrommiSession,
     /// Its leaves.
     pub leaves: BTreeSet<DeviceId>,
-    /// The `room_epoch` of its previous Commit; 0 before the first, and for a member that joined later until
-    /// it processed one.
+    /// The `room_epoch` of its previous Commit; 0 before the first. A member that joined later takes the room
+    /// epoch at the place of the Commit that added it, once the log showed it that Commit.
     pub previous_room_epoch: u64,
 }
 
@@ -508,12 +514,12 @@ impl Allowed<'_> {
         !self.session.parent.is_zero()
     }
 
-    /// The opener of a helper session, where the verifier knows it.
+    /// The opener of a helper session: the main session's agent leaf, as the verifier knows it. A verifier
+    /// that does not know the main session takes no device for the opener.
     fn is_opener(&self, device: &DeviceId) -> bool {
         match self.parent {
             Parent::Seat(seat) => seat == Some(*device) && self.room.is_agent(device),
-            Parent::Unknown => self.room.is_agent(device),
-            Parent::NotAMainSession => false,
+            Parent::Unknown | Parent::NotAMainSession => false,
         }
     }
 
@@ -599,7 +605,8 @@ pub fn helper_devices(
     allowed.others(leaves).copied().collect()
 }
 
-/// Judges a Commit of a session group (5.2, 5.3) against the group before it and the room state it names.
+/// Judges a Commit of a session group (5.2, 5.3) against the group before it and the room state at its place
+/// in the hub's order, which it must name (`room-behind` otherwise, whether it names an older or a newer one).
 pub fn check_session_commit(
     verifier: &Verifier<'_>,
     before: &SessionBefore,
@@ -616,12 +623,11 @@ pub fn check_session_commit(
     // A session group's extension never changes.
     refuse(facts.context != ContextChange::None, Error::BadCommit)?;
 
-    // 5.2.1: the room epoch is known, its state is the one named, and it does not run backwards.
-    let newest = history.newest().epoch;
+    // 5.2.1: the Commit names the room epoch that was current at its place in the hub's order, neither an
+    // older one nor one the verifier has not reached; that epoch's state is the one named, and it is not
+    // below the one the group's previous Commit named.
     refuse(
-        note.room_epoch > newest
-            || note.room_epoch < before.previous_room_epoch
-            || (verifier.posting && note.room_epoch != newest),
+        note.room_epoch != verifier.room_epoch || note.room_epoch < before.previous_room_epoch,
         Error::RoomBehind,
     )?;
     let room = history.at(note.room_epoch).ok_or(Error::RoomBehind)?;
@@ -642,6 +648,9 @@ pub fn check_session_commit(
         helper && parent == Parent::NotAMainSession,
         Error::BadCommit,
     )?;
+    // 5.2.3: who the opener is follows from the main session's state at this place. A verifier that does not
+    // know it judges nothing of the helper session until it does.
+    refuse(parent == Parent::Unknown, Error::RoomBehind)?;
     let allowed = Allowed {
         history,
         room,
@@ -686,8 +695,7 @@ pub fn check_session_commit(
                 !human && !room.is_agent(added) && !history.is_revoked(added, room.epoch);
             helper_device || (founding && human)
         } else if helper {
-            // A human device adds human devices, and after a takeover the main session's agent leaf; a
-            // verifier that does not follow the main session takes any agent device for it.
+            // A human device adds human devices, and after a takeover the main session's agent leaf.
             human || allowed.is_opener(added)
         } else {
             human || allowed.allows(added)
@@ -703,8 +711,7 @@ pub fn check_session_commit(
             // 5.2.3: while the main session has no agent leaf, only leaves the room no longer allows go.
             refuse(allowed.allows(gone), Error::BadCommit)?;
         }
-        // 5.2.3: the opener is a leaf for as long as it is the main session's agent leaf. A verifier that
-        // does not follow the main session cannot tell and does not judge this.
+        // 5.2.3: the opener is a leaf for as long as it is the main session's agent leaf.
         let opener = parent == Parent::Seat(Some(*gone)) && room.is_agent(gone);
         refuse(helper && opener, Error::BadCommit)?;
     }
@@ -763,6 +770,28 @@ pub fn check_session_commit(
         }
     }
     Ok(())
+}
+
+/// Judges a session Commit that is read from the hub's log, where the hub stored it, as
+/// [`check_session_commit`] does. `room-behind` then means only that the Commit came too early: it names a
+/// room epoch the verifier has not reached, or the verifier does not know the helper session's main session
+/// yet. A stored Commit that names a room epoch behind its place, or below the group's previous Commit's, is
+/// never taken, by no member: it is `bad-group` (14.7), as the hub should have refused it (5.2.8).
+pub fn check_stored_session_commit(
+    verifier: &Verifier<'_>,
+    before: &SessionBefore,
+    judged: &Judged<'_>,
+) -> Result<(), Error> {
+    check_session_commit(verifier, before, judged).map_err(|error| {
+        let behind_its_place = judged.facts.note.as_ref().is_some_and(|note| {
+            note.room_epoch < verifier.room_epoch || note.room_epoch < before.previous_room_epoch
+        });
+        if error == Error::RoomBehind && behind_its_place {
+            Error::BadGroup
+        } else {
+            error
+        }
+    })
 }
 
 /// Judges the founding of a room (5.1.1, 8.1) from its first state: one leaf, the founder; recovery keys that
