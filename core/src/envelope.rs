@@ -13,13 +13,16 @@ use crate::error::Error;
 use crate::ids::{
     base64url_decode, BoardId, DeviceId, FileId, GroupId, Hash32, ObjectId, RegisterId, SessionId,
 };
-use serde::de::IgnoredAny;
+use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::fmt;
 use zeroize::{Zeroize, Zeroizing};
 
 /// The version of the header and of the body.
 pub const VERSION: u8 = 2;
+/// The `schema_version` of a payload.
+pub const SCHEMA_VERSION: u64 = 2;
 /// The longest JSON payload, in bytes.
 pub const MAX_PAYLOAD_LEN: usize = 60_000;
 /// The largest padded body, in bytes.
@@ -185,14 +188,18 @@ pub struct ObjectFields {
 
 impl ObjectFields {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
-        Ok(Self {
+        let fields = Self {
             object_id: reader.value()?,
             object_type: ObjectType::from_byte(reader.u8()?)?,
             state: ObjectState::from_byte(reader.u8()?)?,
             urgency: Urgency::from_byte(reader.u8()?)?,
             answered_at: reader.u64()?,
             object_ref: reader.value()?,
-        })
+        };
+        if fields.state == ObjectState::Open && fields.answered_at != 0 {
+            return Err(Error::BadFormat);
+        }
+        Ok(fields)
     }
 
     fn write(&self, writer: &mut Writer) {
@@ -698,10 +705,84 @@ struct VersionPayload {
     previous_version_hash: String,
 }
 
-/// Whether `bytes` are one JSON object in UTF-8 and nothing else.
+/// Any JSON value in which no object names a key twice, at any depth. Two readers then never see two
+/// different values under one key.
+struct NoKeyTwice;
+
+impl<'de> Deserialize<'de> for NoKeyTwice {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Walk;
+
+        impl<'de> Visitor<'de> for Walk {
+            type Value = NoKeyTwice;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("JSON without a repeated key")
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<NoKeyTwice, E> {
+                Ok(NoKeyTwice)
+            }
+
+            fn visit_i64<E>(self, _: i64) -> Result<NoKeyTwice, E> {
+                Ok(NoKeyTwice)
+            }
+
+            fn visit_u64<E>(self, _: u64) -> Result<NoKeyTwice, E> {
+                Ok(NoKeyTwice)
+            }
+
+            fn visit_f64<E>(self, _: f64) -> Result<NoKeyTwice, E> {
+                Ok(NoKeyTwice)
+            }
+
+            fn visit_str<E>(self, _: &str) -> Result<NoKeyTwice, E> {
+                Ok(NoKeyTwice)
+            }
+
+            fn visit_unit<E>(self) -> Result<NoKeyTwice, E> {
+                Ok(NoKeyTwice)
+            }
+
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<NoKeyTwice, A::Error> {
+                while seq.next_element::<NoKeyTwice>()?.is_some() {}
+                Ok(NoKeyTwice)
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<NoKeyTwice, A::Error> {
+                let mut keys = BTreeSet::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if !keys.insert(key) {
+                        return Err(serde::de::Error::custom("a key twice"));
+                    }
+                    map.next_value::<NoKeyTwice>()?;
+                }
+                Ok(NoKeyTwice)
+            }
+        }
+
+        deserializer.deserialize_any(Walk)
+    }
+}
+
+/// Whether `bytes` are one JSON object in UTF-8 and nothing else, with no key twice in any object.
 pub(crate) fn is_json_object(bytes: &[u8]) -> bool {
     let first = bytes.iter().find(|b| !b" \t\n\r".contains(b));
-    first == Some(&b'{') && serde_json::from_slice::<IgnoredAny>(bytes).is_ok()
+    first == Some(&b'{') && serde_json::from_slice::<NoKeyTwice>(bytes).is_ok()
+}
+
+/// The fields of any payload that every reader looks at.
+#[derive(Deserialize)]
+struct CommonPayload {
+    #[serde(default)]
+    schema_version: Option<u64>,
+}
+
+/// The fields of an answer's payload that repeat its bind.
+#[derive(Deserialize)]
+struct AnswerChoices {
+    #[serde(default)]
+    choices: Option<Vec<String>>,
 }
 
 /// The encrypted part of an envelope: what it is bound to, and its JSON payload. The payload may hold the keys
@@ -726,13 +807,22 @@ impl Drop for Body {
 
 impl Body {
     /// A body of this bind and payload. `too-large` above [`MAX_PAYLOAD_LEN`]; `bad-format` unless the payload
-    /// is a JSON object in UTF-8.
+    /// is a JSON object in UTF-8 that names no key twice; `newer-version` for a `schema_version` above 2 (a
+    /// payload without one is read as 2).
     pub fn new(bind: Bind, payload: &[u8]) -> Result<Self, Error> {
         if payload.len() > MAX_PAYLOAD_LEN {
             return Err(Error::TooLarge);
         }
         if !is_json_object(payload) {
             return Err(Error::BadFormat);
+        }
+        let common: CommonPayload =
+            serde_json::from_slice(payload).map_err(|_| Error::BadFormat)?;
+        if common
+            .schema_version
+            .is_some_and(|version| version > SCHEMA_VERSION)
+        {
+            return Err(Error::NewerVersion);
         }
         Ok(Self {
             bind,
@@ -785,7 +875,8 @@ impl Body {
     }
 
     /// Whether this body is one the header may carry: the bind is the kind's and names the header's object and
-    /// reference, and a version's payload names the same predecessor as the header. `bad-format` otherwise.
+    /// reference, a version's payload names the same predecessor as the header, and an answer's choices are
+    /// UTF-8 and those of its payload, if it names any. `bad-format` otherwise.
     fn fits(&self, header: &Header) -> Result<(), Error> {
         let agrees = match (&header.subject, &self.bind) {
             (Subject::Item(_) | Subject::Register(_), Bind::None) => true,
@@ -796,7 +887,17 @@ impl Body {
                     == fields.object_ref.as_bytes()
             }
             (Subject::Answer(fields), Bind::Answer(bind)) => {
-                bind.object_id == fields.object_id && bind.version_hash == fields.object_ref
+                let named: AnswerChoices =
+                    serde_json::from_slice(&self.payload).map_err(|_| Error::BadFormat)?;
+                let choices = bind
+                    .choices
+                    .iter()
+                    .map(|choice| std::str::from_utf8(choice))
+                    .collect::<Result<Vec<&str>, _>>()
+                    .map_err(|_| Error::BadFormat)?;
+                bind.object_id == fields.object_id
+                    && bind.version_hash == fields.object_ref
+                    && named.choices.is_none_or(|named| named == choices)
             }
             (Subject::Request(fields), Bind::Request(bind)) => bind.request_id == fields.object_id,
             (Subject::Verdict(fields), Bind::Verdict(bind)) => {
@@ -1731,6 +1832,29 @@ mod tests {
             open(item, &padded(&raw_body(2, &[], long.as_bytes()))),
             Err(Error::BadFormat)
         );
+        // A key twice, at any depth; a schema this version does not know.
+        for payload in [
+            &br#"{"a":1,"a":2}"#[..],
+            br#"{"a":{"b":1,"b":1}}"#,
+            br#"{"a":[{"b":1,"b":2}]}"#,
+            br#"{"schema_version":"2"}"#,
+            br#"{"schema_version":-1}"#,
+        ] {
+            assert_eq!(
+                open(item, &padded(&raw_body(2, &[], payload))),
+                Err(Error::BadFormat),
+                "{payload:?}"
+            );
+        }
+        assert_eq!(
+            open(item, &padded(&raw_body(2, &[], br#"{"schema_version":3}"#))),
+            Err(Error::NewerVersion)
+        );
+        assert!(open(
+            item,
+            &padded(&raw_body(2, &[], br#"{"schema_version":2,"a":{"a":1}}"#))
+        )
+        .is_ok());
         // An item carries no bind.
         assert_eq!(
             open(item, &padded(&raw_body(2, &[0; 24], b"{}"))),
@@ -1782,6 +1906,29 @@ mod tests {
         let body = open(Subject::TakeBack(block), &Bind::TakeBack(take_back)).unwrap();
         assert_eq!(body.bind(), &Bind::TakeBack(take_back));
 
+        // An answer whose choices are not text, or not those its payload names.
+        let with_payload = |bind: &AnswerBind, payload: &[u8]| {
+            let body = raw_body(2, &Bind::Answer(bind.clone()).encode().unwrap(), payload);
+            with_plaintext(Subject::Answer(block), &padded(&body)).open(&key(3))
+        };
+        assert!(with_payload(&answer, br#"{"choices":["a"]}"#).is_ok());
+        assert_eq!(
+            with_payload(&answer, br#"{"choices":["b"]}"#).err(),
+            Some(Error::BadFormat)
+        );
+        assert_eq!(
+            with_payload(&answer, br#"{"choices":[]}"#).err(),
+            Some(Error::BadFormat)
+        );
+        assert_eq!(
+            with_payload(&answer, br#"{"choices":"a"}"#).err(),
+            Some(Error::BadFormat)
+        );
+        let not_text = AnswerBind {
+            choices: vec![vec![0xFF]],
+            ..answer.clone()
+        };
+        assert_eq!(with_payload(&not_text, b"{}").err(), Some(Error::BadFormat));
         // A bind of another kind, or none.
         assert_eq!(
             open(Subject::Answer(block), &Bind::TakeBack(take_back)),
@@ -2212,6 +2359,15 @@ mod tests {
         for value in 1..=3u8 {
             assert!(raw(189, value).is_ok());
         }
+        // `answered_at` is 0 while open.
+        let mut answered = encoded.clone();
+        answered[198] = 1;
+        assert_eq!(
+            codec::decode::<Header>(&answered, 4096),
+            Err(Error::BadFormat)
+        );
+        answered[189] = 2;
+        assert!(codec::decode::<Header>(&answered, 4096).is_ok());
         for value in 0..=3u8 {
             assert!(raw(190, value).is_ok());
         }

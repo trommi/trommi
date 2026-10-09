@@ -174,8 +174,11 @@ pub enum NameOwner {
 }
 
 /// The owner of `name` in a room group (`in_room`) or a session group, by the table of section 9.3.3; `None`
-/// for a name the table does not have there, which nobody may write.
+/// for a name the table does not have there, or one above [`MAX_NAME_LEN`], which nobody may write.
 pub fn name_owner(name: &str, in_room: bool) -> Option<NameOwner> {
+    if name.len() > MAX_NAME_LEN {
+        return None;
+    }
     let has_prefix = |prefixes: &[&str]| {
         prefixes.iter().any(|prefix| {
             name.strip_prefix(prefix)
@@ -229,6 +232,9 @@ struct Held {
     value: Option<String>,
 }
 
+/// The longest name, in bytes.
+pub const MAX_NAME_LEN: usize = 255;
+
 /// What one register envelope changes.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Update {
@@ -243,6 +249,10 @@ pub struct Update {
     pub current: bool,
     stamp: Stamp,
     register: RegisterId,
+    /// The largest lamport seen and the stamp held for the name when the envelope was judged, and the
+    /// largest lamport seen with it.
+    seen: u64,
+    replaces: Option<Stamp>,
     largest: u64,
 }
 
@@ -353,10 +363,8 @@ impl Registers {
             sender: header.sender,
             seq: header.seq,
         };
-        let current = self
-            .values
-            .get(&(name.clone(), of))
-            .is_none_or(|held| held.stamp < stamp);
+        let replaces = self.values.get(&(name.clone(), of)).map(|held| held.stamp);
+        let current = replaces.is_none_or(|held| held < stamp);
         Ok(Update {
             name,
             of,
@@ -364,12 +372,26 @@ impl Registers {
             current,
             stamp,
             register,
+            seen: self.largest,
+            replaces,
             largest: self.largest.max(counted),
         })
     }
 
-    /// Takes the change of one register envelope.
-    pub fn apply(&mut self, update: &Update) {
+    /// Notes a lamport seen elsewhere in the group: the `lamport` of a Note version's payload (section 9.2.1),
+    /// which counts by the same rule. A writer's next lamport lies above it.
+    pub fn observe_lamport(&mut self, lamport: u64) {
+        self.largest = self.largest.max(counted_lamport(lamport, self.largest));
+    }
+
+    /// Takes the change of one register envelope. `Error::Internal`, and no change, if the registers no
+    /// longer stand as the envelope was judged: an update is applied once, before the next register envelope
+    /// of the group is judged.
+    pub fn apply(&mut self, update: &Update) -> Result<(), Error> {
+        let held = self.values.get(&(update.name.clone(), update.of));
+        if self.largest != update.seen || held.map(|held| held.stamp) != update.replaces {
+            return Err(Error::Internal("a register update applied out of turn"));
+        }
         self.largest = update.largest;
         let sender = update.stamp.sender;
         self.names
@@ -385,6 +407,7 @@ impl Registers {
                 },
             );
         }
+        Ok(())
     }
 
     /// The stored form.
@@ -591,7 +614,7 @@ mod tests {
             let registers = self.registers.entry(group).or_default();
             let update =
                 registers.judge(&self.world.fake, opened.header(), opened.body().payload())?;
-            registers.apply(&update);
+            registers.apply(&update)?;
             Ok(update)
         }
 
@@ -865,6 +888,13 @@ mod tests {
         let me = device(1);
         let own = format!("device/{}", me.to_base64url());
         let other = format!("device/{}", device(2).to_base64url());
+        let long_name = format!("status_line/{}", "a".repeat(MAX_NAME_LEN));
+        assert!(may_write(
+            &long_name[..MAX_NAME_LEN],
+            false,
+            Role::Agent,
+            &me
+        ));
         // (name, room: human, session: human, session: agent, session: helper)
         let table = [
             ("desk/x", true, false, false, false),
@@ -894,6 +924,7 @@ mod tests {
             ("device/short", false, false, false, false),
             ("Heads", false, false, false, false),
             ("room_snapshot", false, false, false, false),
+            (long_name.as_str(), false, false, false, false),
         ];
         for (name, room_human, session_human, session_agent, session_helper) in table {
             assert_eq!(
@@ -974,6 +1005,24 @@ mod tests {
             leaves.insert(device(6), Role::Agent);
         });
         assert!(reader.set(6, session(), "profile", Some("9"), 3).is_ok());
+    }
+
+    #[test]
+    fn an_update_is_applied_once_and_a_notes_lamport_counts() {
+        let mut reader = Scene::new();
+        let update = reader.set(1, room(), "crown", Some("1"), 5).unwrap();
+        let mut registers = reader.registers(&room());
+        // The same update again: the registers have moved on since it was judged.
+        assert!(matches!(registers.apply(&update), Err(Error::Internal(_))));
+        assert_eq!(registers, reader.registers(&room()));
+        assert!(!format!("{update:?}").contains("\"1\""));
+        // A Note version's lamport moves the largest seen, by the same bounds.
+        registers.observe_lamport(9);
+        assert_eq!(registers.largest_lamport(), 9);
+        registers.observe_lamport(3);
+        registers.observe_lamport(10 + MAX_LAMPORT_JUMP);
+        assert_eq!(registers.largest_lamport(), 9);
+        assert_eq!(next_lamport(registers.largest_lamport()), Ok(10));
     }
 
     #[test]

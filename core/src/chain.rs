@@ -26,6 +26,14 @@ pub const LIVE_GRACE_MS: u64 = 120_000;
 pub const READ_BACK_GRACE_MS: u64 = 300_000;
 /// How many envelopes one group takes in one epoch.
 pub const MAX_ENVELOPES_PER_EPOCH: u64 = 1 << 24;
+/// The codes a void record may carry (section 9.0.8).
+const VOID_CODES: [Error; 5] = [
+    Error::Forbidden,
+    Error::WrongEpoch,
+    Error::StaleSession,
+    Error::EpochFull,
+    Error::TooLarge,
+];
 /// The largest stored chain state this module reads.
 const MAX_STATE_LEN: usize = 1 << 26;
 
@@ -126,17 +134,19 @@ pub trait GroupFacts {
 
     /// The Cut of `device` in `group`: present once the verifier has processed a Commit of `group` that removed
     /// the device's leaf, and equal to the entry for that device in that Commit's `CommitNote.cuts` (number 0
-    /// and hash zeros if the remover had accepted nothing). `None` while the device is a leaf of the group in
-    /// the verifier's newest state, and if it never was one. If a device was removed twice (it cannot return,
-    /// section 4.2, so this does not happen), the first Cut stands.
+    /// and hash zeros if the remover had accepted nothing). `None` only if no processed Commit of `group` ever
+    /// removed the device. A Cut is for ever: it stays the answer even if the same key is a leaf of the group
+    /// again later, and if the key was removed more than once, the first Cut stands.
     fn cut(&self, group: &GroupId, device: &DeviceId) -> Result<Option<Head>, Error>;
 
     /// The Commit that ended `epoch` of `group` (the one that began `epoch + 1`): when the verifier processed
     /// it and the `time` of its `CommitNote`. `None` if `epoch` is the newest processed epoch or above it.
     fn epoch_end(&self, group: &GroupId, epoch: u64) -> Result<Option<EpochEnd>, Error>;
 
-    /// Whether `group` is stale in the verifier's newest state (section 5.2.8): a session group with a leaf
-    /// that the newest processed room state does not allow. Always `false` for the room group.
+    /// Whether `group` is stale in the verifier's newest state (section 5.2.8): a session group that has a leaf
+    /// the newest processed room state does not allow (a revoked key), or a helper session group whose opener
+    /// leaf is not the agent leaf of its main session in that session's newest processed state. Both are
+    /// judged at the verifier's place in the hub's order across groups. Always `false` for the room group.
     fn is_stale(&self, group: &GroupId) -> Result<bool, Error>;
 
     /// Whether `device` is a human device now: a leaf of the room group in the newest room state the verifier
@@ -240,11 +250,17 @@ impl Chains {
         self.counts.get(&epoch).copied().unwrap_or(0)
     }
 
-    /// Takes an accepted envelope into its sender's chain.
-    pub fn apply(&mut self, advance: &Advance) {
+    /// Takes an accepted envelope into its sender's chain. `Error::Internal`, and no change, if the chain no
+    /// longer stands where the envelope was checked: a step is applied once, before the next envelope of the
+    /// group is checked.
+    pub fn apply(&mut self, advance: &Advance) -> Result<(), Error> {
+        if self.head(&advance.sender) != advance.prev {
+            return Err(Error::Internal("a chain step applied out of turn"));
+        }
         self.heads.insert(advance.sender, advance.head);
         let count = self.counts.entry(advance.epoch).or_insert(0);
         *count = count.saturating_add(1);
+        Ok(())
     }
 
     /// Ends a removed sender's chain at its Cut.
@@ -294,7 +310,8 @@ impl Chains {
 
 /// This device's own chain in one group: the last envelope it signed there. It runs ahead of the device's entry
 /// in [`Chains`], which advances when the envelope comes back from the hub at its place in the hub's order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// There is one per device and group, and no way to copy it: [`seal_next`] moves it on as it signs.
+#[derive(Debug, PartialEq, Eq)]
 pub struct OwnChain {
     head: Head,
 }
@@ -353,17 +370,13 @@ impl OwnChain {
     }
 }
 
-/// A new envelope of this device together with the chain state that has used up its number.
+/// A new envelope of this device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outgoing {
     /// The envelope to post.
     pub envelope: Envelope,
     /// Its hash.
     pub hash: Hash32,
-    /// The device's chain after it. The caller stores this, in the same write as the envelope's outbox entry,
-    /// before the envelope leaves (section 13.2): a number is then never signed twice, and a retry sends the
-    /// stored bytes.
-    pub own: OwnChain,
 }
 
 /// Seals this device's next envelope in `group`, in the group's current epoch, as number `own.head().seq + 1`.
@@ -371,14 +384,18 @@ pub struct Outgoing {
 /// Refuses, before anything is signed, what the hub would refuse: `group-behind` for a group the device does
 /// not know, `not-member` when it is no leaf, `stale-session`, `epoch-full`, `forbidden` when 9.2 does not let
 /// this device write the item against the object state it has, `no-key` without the epoch's content key; and
-/// what [`envelope::seal`] refuses. A refusal uses up no number. On success the number is used up by storing
-/// [`Outgoing::own`]; `own` itself is not changed.
+/// what [`envelope::seal`] refuses. A refusal uses up no number and leaves `own` as it was.
+///
+/// On success `own` has moved on: the number is used up, and a second call signs the next one. The caller
+/// stores `own` in the same write as the envelope's outbox entry, before the envelope leaves (section 13.2); a
+/// retry sends the stored bytes. If that write fails, the envelope is dropped unsent and the stored chain is
+/// loaded again: a number is signed twice only for an envelope that never left.
 #[allow(clippy::too_many_arguments)]
 pub fn seal_next(
     facts: &dyn GroupFacts,
     chains: &Chains,
     objects: &Objects,
-    own: &OwnChain,
+    own: &mut OwnChain,
     draft: &Draft,
     group: GroupId,
     signer: &SigningKey,
@@ -405,13 +422,11 @@ pub fn seal_next(
     objects::judge(facts, objects, &header, &Hash32::ZERO)?;
     let key = facts.content_key(&group, epoch)?.ok_or(Error::NoKey)?;
     let sealed = envelope::seal(draft, &slot, &key, signer, entropy)?;
+    own.head = Head {
+        seq: slot.seq,
+        hash: sealed.hash,
+    };
     Ok(Outgoing {
-        own: OwnChain {
-            head: Head {
-                seq: slot.seq,
-                hash: sealed.hash,
-            },
-        },
         envelope: sealed.envelope,
         hash: sealed.hash,
     })
@@ -446,6 +461,8 @@ pub enum Served {
 pub struct Advance {
     /// The sender.
     pub sender: DeviceId,
+    /// Its last envelope before this one: the state the envelope was checked against.
+    pub prev: Head,
     /// Its new last envelope.
     pub head: Head,
     /// The epoch the envelope names.
@@ -470,7 +487,8 @@ pub enum Outcome {
     /// `epoch-full`, `too-large`. It is chained and never applied; the hub stores it as a void record.
     Refused(Error),
     /// The hub served it as a void record: chained, never applied. `finding` is `hub-voided-other` when the
-    /// record is another sender's and its reason cannot be checked again from the header and the group state.
+    /// record is another sender's and its reason cannot be checked again from the header and the group state,
+    /// and for any code that is none of the five a void record may carry.
     Void {
         /// The hub's `void_code`.
         code: Error,
@@ -481,21 +499,38 @@ pub enum Outcome {
     Reserved,
 }
 
-/// An envelope that passed checks 1 to 6: it has its place in the chain, whatever else became of it.
+/// An envelope that passed checks 1 to 6: it has its place in the chain, whatever else became of it. Only
+/// [`receive`] and [`hub_take`] make one, so that what reaches the command gate has been through the checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Receipt {
-    /// The envelope.
-    pub envelope: Envelope,
-    /// Its hash.
-    pub hash: Hash32,
-    /// The step of the sender's chain: the caller applies it to its [`Chains`] and stores it together with
-    /// the envelope, under the envelope's group, sender and number.
-    pub advance: Advance,
-    /// What became of the envelope.
-    pub outcome: Outcome,
+    pub(crate) envelope: Envelope,
+    pub(crate) hash: Hash32,
+    pub(crate) advance: Advance,
+    pub(crate) outcome: Outcome,
 }
 
 impl Receipt {
+    /// The envelope.
+    pub fn envelope(&self) -> &Envelope {
+        &self.envelope
+    }
+
+    /// Its hash.
+    pub fn hash(&self) -> Hash32 {
+        self.hash
+    }
+
+    /// The step of the sender's chain: the caller applies it to its [`Chains`] and stores it together with
+    /// the envelope, under the envelope's group, sender and number.
+    pub fn advance(&self) -> &Advance {
+        &self.advance
+    }
+
+    /// What became of the envelope.
+    pub fn outcome(&self) -> &Outcome {
+        &self.outcome
+    }
+
     /// The envelope as the command gate takes it (section 9.0.9): present only if it passed all nine checks.
     pub fn opened(&self) -> Option<Opened<'_>> {
         match &self.outcome {
@@ -661,10 +696,11 @@ fn recheck_void(
 ) -> Result<Option<Error>, Error> {
     let header = &verified.envelope.header;
     let holds = match code {
-        Error::Forbidden => matches!(
-            objects::judge(facts, objects, header, &verified.hash),
-            Err(Error::Forbidden)
-        ),
+        Error::Forbidden => match objects::judge(facts, objects, header, &verified.hash) {
+            Ok(_) => false,
+            Err(Error::Forbidden) => true,
+            Err(fault) => return Err(fault),
+        },
         // The hub's two minutes cannot be measured again; that the epoch has ended can.
         Error::WrongEpoch => header.epoch < verified.current,
         Error::StaleSession => mode == Mode::InOrder && facts.is_stale(&header.group)?,
@@ -693,11 +729,13 @@ fn take(
     let head = link(records, chains, header, &verified.hash)?;
     let advance = Advance {
         sender: header.sender,
+        prev: chains.head(&header.sender),
         head,
         epoch: header.epoch,
     };
     let outcome = if let Served::Void(code) = served {
-        let finding = if me == Some(&header.sender) {
+        let own = me == Some(&header.sender) && VOID_CODES.contains(code);
+        let finding = if own {
             None
         } else {
             recheck_void(facts, chains, objects, &verified, code, mode)?
@@ -829,8 +867,11 @@ pub fn hub_take(
 /// Where an envelope fetched out of order stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Standing {
-    /// Its sender's chain has reached its number with this very envelope.
+    /// Its sender's chain reached its number with this very envelope, which passed checks 7 and 8 there.
     Accepted,
+    /// Its sender's chain already holds this very envelope. Whether it was taken or refused there is in the
+    /// receiver's record of that envelope.
+    Chained,
     /// The chain has not reached it, or no record of that number is kept: it may be shown, marked as not yet
     /// confirmed, and no command is executed on it.
     Provisional,
@@ -850,27 +891,35 @@ pub struct Provisional {
 }
 
 impl Provisional {
-    /// The standing after the sender's chain took the step `advance`: `Accepted` when the chain reached this
-    /// envelope's number with its hash, `hash-mismatch` when it reached the number with another envelope,
-    /// unchanged otherwise.
-    pub fn confirm(&self, advance: &Advance) -> Result<Standing, Error> {
+    /// The standing after the sender's chain took the envelope of `receipt`: unchanged if that is another
+    /// place of the chain; `hash-mismatch` if the chain reached this envelope's number with another envelope;
+    /// `Accepted` if it reached it with this one and took it. If the chain refused it there, or the hub served
+    /// it as a void record, the error is that code: the envelope is dropped from what is shown.
+    pub fn confirm(&self, receipt: &Receipt) -> Result<Standing, Error> {
         let header = &self.envelope.header;
-        if advance.sender != header.sender || advance.head.seq != header.seq {
+        let advance = &receipt.advance;
+        if receipt.envelope.header.group != header.group
+            || advance.sender != header.sender
+            || advance.head.seq != header.seq
+        {
             return Ok(self.standing);
         }
-        if advance.head.hash == self.hash {
-            Ok(Standing::Accepted)
-        } else {
-            Err(Error::HashMismatch)
+        if advance.head.hash != self.hash {
+            return Err(Error::HashMismatch);
+        }
+        match &receipt.outcome {
+            Outcome::Taken { .. } => Ok(Standing::Accepted),
+            Outcome::Refused(code) | Outcome::Void { code, .. } => Err(code.clone()),
+            Outcome::Reserved => Err(Error::NewerVersion),
         }
     }
 }
 
 /// Checks an envelope fetched out of order: checks 1 to 5, the sender's right to write such an item (check 7,
 /// as far as it follows from the sender's role in the envelope's epoch; the object's state is judged when the
-/// chain arrives), freshness as when reading back (check 8) and the body (check 9). Each failure is its check's
-/// code. `hash-mismatch` when the sender's chain already holds another envelope under that number. The chain is
-/// not touched.
+/// chain arrives, since it depends on the envelopes before it in the hub's order), freshness as when reading
+/// back (check 8) and the body (check 9). Each failure is its check's code. `hash-mismatch` when the sender's
+/// chain already holds another envelope under that number. The chain is not touched.
 pub fn provisional(
     facts: &dyn GroupFacts,
     records: &dyn ChainRecords,
@@ -897,7 +946,7 @@ pub fn provisional(
         None
     };
     let standing = match accepted {
-        Some(accepted) if accepted == verified.hash => Standing::Accepted,
+        Some(accepted) if accepted == verified.hash => Standing::Chained,
         Some(_) => return Err(Error::HashMismatch),
         None => Standing::Provisional,
     };
@@ -1391,13 +1440,18 @@ pub(crate) mod testing {
             self.chains
                 .entry(group)
                 .or_default()
-                .apply(&receipt.advance);
+                .apply(&receipt.advance)
+                .unwrap();
             if let Outcome::Taken {
                 transition: Some(transition),
                 ..
             } = &receipt.outcome
             {
-                self.objects.entry(group).or_default().apply(transition);
+                self.objects
+                    .entry(group)
+                    .or_default()
+                    .apply(transition)
+                    .unwrap();
             }
             self.fake.accepted.insert(
                 (group, receipt.advance.sender, receipt.advance.head.seq),
@@ -1467,6 +1521,10 @@ mod tests {
                 receipt.advance,
                 Advance {
                     sender: device(2),
+                    prev: Head {
+                        seq: seq - 1,
+                        hash: prev
+                    },
                     head: Head {
                         seq,
                         hash: receipt.hash
@@ -2068,6 +2126,22 @@ mod tests {
             }
         );
 
+        // A code no void record may carry is a finding even on the receiver's own envelope.
+        let mut own = World::new();
+        own.me = device(2);
+        let sealed = own.sign(2, session(), &chat("x"));
+        assert_eq!(
+            void(
+                &mut own,
+                &sealed.envelope,
+                Error::BadSignature,
+                Mode::InOrder
+            ),
+            Outcome::Void {
+                code: Error::BadSignature,
+                finding: finding.clone()
+            }
+        );
         // The receiver's own voided envelope is no finding: the hub told it why.
         let mut own = World::new();
         own.me = device(2);
@@ -2231,21 +2305,21 @@ mod tests {
         assert_eq!(world.chains(&session()), Chains::new());
 
         let first = world.take(&one.envelope).unwrap();
-        assert_eq!(page.confirm(&first.advance), Ok(Standing::Provisional));
+        assert_eq!(page.confirm(&first), Ok(Standing::Provisional));
         let second = world.take(&two.envelope).unwrap();
-        assert_eq!(page.confirm(&second.advance), Ok(Standing::Accepted));
+        assert_eq!(page.confirm(&second), Ok(Standing::Accepted));
         // Fetched again later, it is accepted at once.
         assert_eq!(
             fetch(&world, &two.envelope).unwrap().standing,
-            Standing::Accepted
+            Standing::Chained
         );
         assert_eq!(
             fetch(&world, &one.envelope).unwrap().standing,
-            Standing::Accepted
+            Standing::Chained
         );
         // Another sender's step says nothing about it.
         let other = world.post(3, session(), &agent_chat("x"));
-        assert_eq!(page.confirm(&other.advance), Ok(Standing::Provisional));
+        assert_eq!(page.confirm(&other), Ok(Standing::Provisional));
     }
 
     #[test]
@@ -2281,7 +2355,7 @@ mod tests {
         let page = fetch(&world, &other_two.envelope).unwrap();
         world.take(&one.envelope).unwrap();
         let second = world.take(&two.envelope).unwrap();
-        assert_eq!(page.confirm(&second.advance), Err(Error::HashMismatch));
+        assert_eq!(page.confirm(&second), Err(Error::HashMismatch));
         // Fetched after the chain passed that number: the same finding, for the last number and an earlier one.
         assert_eq!(
             fetch(&world, &other_two.envelope).err(),
@@ -2526,9 +2600,8 @@ mod tests {
     #[test]
     fn the_sender_never_gives_one_number_twice() {
         let world = World::new();
-        let own = OwnChain::new();
         let mut entropy = crate::envelope::testing::TestEntropy(5);
-        let mut seal = |own: &OwnChain, draft: &Draft, n: u8| {
+        let mut seal = |own: &mut OwnChain, draft: &Draft, n: u8| {
             seal_next(
                 &world.fake,
                 &Chains::new(),
@@ -2541,51 +2614,64 @@ mod tests {
                 &mut entropy,
             )
         };
-        let first = seal(&own, &chat("one"), 2).unwrap();
+        let mut own = OwnChain::new();
+        let first = seal(&mut own, &chat("one"), 2).unwrap();
         assert_eq!(first.envelope.header.seq, 1);
         assert_eq!(first.envelope.header.prev, Hash32::ZERO);
         assert_eq!(first.envelope.header.epoch, 0);
         assert_eq!(first.envelope.header.time, NOW);
+        // Signing moved the chain on: the same call again signs the next number.
         assert_eq!(
-            first.own.head(),
+            own.head(),
             Head {
                 seq: 1,
                 hash: first.hash
             }
         );
         // The stored state is what the next envelope builds on.
-        let stored = OwnChain::from_bytes(&first.own.to_bytes().unwrap()).unwrap();
-        let second = seal(&stored, &chat("two"), 2).unwrap();
+        let mut stored = OwnChain::from_bytes(&own.to_bytes().unwrap()).unwrap();
+        assert_eq!(stored, own);
+        let second = seal(&mut stored, &chat("two"), 2).unwrap();
         assert_eq!(second.envelope.header.seq, 2);
         assert_eq!(second.envelope.header.prev, first.hash);
+        let third = seal(&mut stored, &chat("two"), 2).unwrap();
+        assert_eq!(third.envelope.header.seq, 3);
         // A receiver accepts them in order.
         let mut receiver = World::new();
-        receiver.take(&first.envelope).unwrap();
-        receiver.take(&second.envelope).unwrap();
+        for outgoing in [&first, &second, &third] {
+            receiver.take(&outgoing.envelope).unwrap();
+        }
 
-        // Refusals use up nothing: the caller still holds `own`.
-        assert_eq!(seal(&own, &card(), 2).err(), Some(Error::Forbidden));
-        assert_eq!(seal(&own, &chat("x"), 5).err(), Some(Error::NotMember));
+        // Refusals use up nothing.
+        let before = stored.head();
+        assert_eq!(seal(&mut stored, &card(), 2).err(), Some(Error::Forbidden));
+        assert_eq!(
+            seal(&mut stored, &chat("x"), 5).err(),
+            Some(Error::NotMember)
+        );
         let too_long = Draft::session_chat(SESSION, device(3), &payload(&"a".repeat(60_000)));
-        assert_eq!(seal(&own, &too_long, 2).err(), Some(Error::TooLarge));
+        assert_eq!(seal(&mut stored, &too_long, 2).err(), Some(Error::TooLarge));
+        assert_eq!(stored.head(), before);
     }
 
     #[test]
     fn the_sender_refuses_what_the_hub_would_void() {
         let mut world = World::new();
         let seal = |world: &World, chains: &Chains, group: GroupId, entropy: &mut dyn Entropy| {
-            seal_next(
+            let mut own = OwnChain::new();
+            let result = seal_next(
                 &world.fake,
                 chains,
                 &Objects::new(),
-                &OwnChain::new(),
+                &mut own,
                 &chat("x"),
                 group,
                 &signer(2),
                 NOW,
                 entropy,
-            )
-            .map(|_| ())
+            );
+            assert_eq!(own, OwnChain::new());
+            result.map(|_| ())
         };
         let mut entropy = crate::envelope::testing::TestEntropy(5);
         assert_eq!(
@@ -2621,6 +2707,85 @@ mod tests {
             seal(&world, &Chains::new(), session(), &mut entropy),
             Err(Error::NoKey)
         );
+    }
+
+    #[test]
+    fn a_step_is_applied_once_and_in_turn() {
+        let mut world = World::new();
+        let one = world.sign(2, session(), &chat("one"));
+        let card = world.sign(3, session(), &card());
+        let receipt = receive(
+            &world.fake,
+            &world.fake,
+            &Chains::new(),
+            &Objects::new(),
+            &device(1),
+            &one.envelope.encode().unwrap(),
+            &Served::Stored,
+            Mode::InOrder,
+            NOW,
+        )
+        .unwrap();
+        let mut chains = Chains::new();
+        chains.apply(&receipt.advance).unwrap();
+        assert!(matches!(
+            chains.apply(&receipt.advance),
+            Err(Error::Internal(_))
+        ));
+        assert_eq!(chains.count(0), 1);
+        // A transition judged against a state that has moved on since.
+        let receipt = world.take(&card.envelope).unwrap();
+        let Outcome::Taken {
+            transition: Some(transition),
+            ..
+        } = &receipt.outcome
+        else {
+            panic!("taken");
+        };
+        let mut objects = world.objects(&session());
+        assert!(matches!(objects.apply(transition), Err(Error::Internal(_))));
+        assert_eq!(objects, world.objects(&session()));
+    }
+
+    #[test]
+    fn a_provisional_envelope_that_its_chain_refuses_is_dropped() {
+        let mut world = World::new();
+        // An answer to a version that is not current passes what a page can check of 9.2, and is refused when
+        // the chain brings it.
+        let v1 = world.post(3, session(), &card());
+        let id = v1.envelope.header.subject.object().unwrap().object_id;
+        let bind = envelope::AnswerBind {
+            object_id: id,
+            version_hash: Hash32::new([9; 32]),
+            choices: Vec::new(),
+        };
+        let draft = Draft::answer(bind, false, Urgency::Normal, device(3), b"{}");
+        let sealed = world.sign(2, session(), &draft);
+        let fetch = |world: &World, envelope: &Envelope| {
+            provisional(
+                &world.fake,
+                &world.fake,
+                &world.chains(&session()),
+                &envelope.encode().unwrap(),
+                NOW,
+            )
+            .unwrap()
+        };
+        let page = fetch(&world, &sealed.envelope);
+        assert_eq!(page.standing, Standing::Provisional);
+        let receipt = world.take(&sealed.envelope).unwrap();
+        assert_eq!(page.confirm(&receipt), Err(Error::Forbidden));
+        // The same for one the hub serves as a void record.
+        let sealed = world.sign(2, session(), &chat("x"));
+        let page = fetch(&world, &sealed.envelope);
+        let receipt = world
+            .take_as(
+                &sealed.envelope.prune().unwrap().encode().unwrap(),
+                &Served::Void(Error::WrongEpoch),
+                Mode::InOrder,
+            )
+            .unwrap();
+        assert_eq!(page.confirm(&receipt), Err(Error::WrongEpoch));
     }
 
     #[test]
