@@ -76,12 +76,16 @@ const SUB_UNCONFIRMED: u8 = 1;
 const SUB_UNBOUND: u8 = 6;
 mod content;
 mod facts;
+mod invite;
 
 pub use content::{
     board_reduce, BoardItem, BoardSnapshot, Confirmation, Draft, EnvelopeOutcome, ReceivedEnvelope,
     RegisterChange, Sealed, HEADS_EVERY_MS,
 };
 pub use facts::Finding;
+pub use invite::{
+    InviteAccepted, InviteConfirmed, InviteOpened, InviteStep, JoinRequest, MAX_OPEN_INVITES,
+};
 
 const SUB_OWN_HISTORY: u8 = 0;
 const SUB_OBSERVER: u8 = 1;
@@ -2599,44 +2603,55 @@ impl<S: Storage> Device<S> {
         Ok(GroupId::room(room))
     }
 
-    /// Adds the human device `device` to the room group with its KeyPackage (5.1.2, 12.1.5), which must verify
-    /// and be that device's (4.5). The caller then hands the history over ([`Device::send_handover`]) and adds
-    /// it to every live session group ([`Device::add_to_session`]).
+    /// Adds a human device to the room group without an invite. Only under the cargo feature `vectors`, for
+    /// the scenario tests and the generator of the vectors, whose subject is not the invite; in a shipped
+    /// build a human device is added by [`Device::invite_confirm`] alone (12.1.4).
+    #[cfg(feature = "vectors")]
     pub fn add_human_device(
         &mut self,
         device: &DeviceId,
         key_package: &[u8],
         now_ms: u64,
     ) -> Result<u64, Error> {
-        self.transact(|this, batch| {
-            let group = this.room_group()?;
-            let history = this.history()?;
-            let room = history.newest();
-            if room.is_agent(device) || history.is_revoked(device, room.epoch) {
-                return Err(Error::BadCommit);
-            }
-            if room.humans.len() >= MAX_HUMAN_DEVICES {
-                return Err(Error::TooMany);
-            }
-            key_package::verify_key_package_of(key_package, device)?;
-            let (package, _) = key_package::validated(key_package)?;
-            let recovery_hpke_key = room.room.recovery_hpke_key;
-            let outbox = this.commit(batch, &group, vec![package], &[], None, now_ms)?;
-            // 7.4: the newcomer is owed the recovery_mac, written with the Commit that adds it.
-            let recovery_mac = this
-                .memory
-                .macs
-                .get(&recovery_hpke_key)
-                .ok_or(Error::NoKey)?
-                .duplicate();
-            let owed = Owed {
-                recovery_hpke_key,
-                recovery_mac,
-                bound: true,
-            };
-            this.put_owed(batch, outbox, *device, owed)?;
-            Ok(outbox)
-        })
+        self.transact(|this, batch| this.add_human(batch, device, key_package, now_ms))
+    }
+
+    /// Commits the Add of the human device `device` to the room group with its KeyPackage (5.1.2, 12.1.5),
+    /// which must verify and be that device's (4.5).
+    fn add_human(
+        &mut self,
+        batch: &mut Batch,
+        device: &DeviceId,
+        key_package: &[u8],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        let group = self.room_group()?;
+        let history = self.history()?;
+        let room = history.newest();
+        if room.is_agent(device) || history.is_revoked(device, room.epoch) {
+            return Err(Error::BadCommit);
+        }
+        if room.humans.len() >= MAX_HUMAN_DEVICES {
+            return Err(Error::TooMany);
+        }
+        key_package::verify_key_package_of(key_package, device)?;
+        let (package, _) = key_package::validated(key_package)?;
+        let recovery_hpke_key = room.room.recovery_hpke_key;
+        let outbox = self.commit(batch, &group, vec![package], &[], None, now_ms)?;
+        // 7.4: the newcomer is owed the recovery_mac, written with the Commit that adds it.
+        let recovery_mac = self
+            .memory
+            .macs
+            .get(&recovery_hpke_key)
+            .ok_or(Error::NoKey)?
+            .duplicate();
+        let owed = Owed {
+            recovery_hpke_key,
+            recovery_mac,
+            bound: true,
+        };
+        self.put_owed(batch, outbox, *device, owed)?;
+        Ok(outbox)
     }
 
     /// Adds `device` to the session group `group` with its KeyPackage: a human device missing from a live
@@ -2658,27 +2673,45 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// Changes the room's enrolled agent devices (5.1.2): `enrol` are added to `agents`, `remove` taken out.
-    /// Removing one makes its main session and the helper sessions it opened stale (5.3.1).
+    /// Takes agent devices out of the room's `agents` (5.1.2). Removing one makes its main session and the
+    /// helper sessions it opened stale (5.3.1). An agent device is enrolled by [`Device::invite_confirm`]
+    /// alone (12.1.4).
+    pub fn remove_agents(&mut self, remove: &[DeviceId], now_ms: u64) -> Result<u64, Error> {
+        self.transact(|this, batch| this.set_agents(batch, &[], remove, now_ms))
+    }
+
+    /// Changes the room's enrolled agent devices without an invite. Only under the cargo feature `vectors`,
+    /// like [`Device::add_human_device`].
+    #[cfg(feature = "vectors")]
     pub fn change_agents(
         &mut self,
         enrol: &[DeviceId],
         remove: &[DeviceId],
         now_ms: u64,
     ) -> Result<u64, Error> {
-        self.transact(|this, batch| {
-            let group = this.room_group()?;
-            let mut room = this.history()?.newest().room.clone();
-            let mut agents: BTreeSet<DeviceId> = room.agents.iter().copied().collect();
-            for gone in remove {
-                if !agents.remove(gone) {
-                    return Err(Error::NotMember);
-                }
+        self.transact(|this, batch| this.set_agents(batch, enrol, remove, now_ms))
+    }
+
+    /// Commits a change of the room's enrolled agent devices (5.1.2): `enrol` are added to `agents`, `remove`
+    /// taken out.
+    fn set_agents(
+        &mut self,
+        batch: &mut Batch,
+        enrol: &[DeviceId],
+        remove: &[DeviceId],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        let group = self.room_group()?;
+        let mut room = self.history()?.newest().room.clone();
+        let mut agents: BTreeSet<DeviceId> = room.agents.iter().copied().collect();
+        for gone in remove {
+            if !agents.remove(gone) {
+                return Err(Error::NotMember);
             }
-            agents.extend(enrol.iter().copied());
-            room.agents = agents.into_iter().collect();
-            this.commit(batch, &group, Vec::new(), &[], Some(room), now_ms)
-        })
+        }
+        agents.extend(enrol.iter().copied());
+        room.agents = agents.into_iter().collect();
+        self.commit(batch, &group, Vec::new(), &[], Some(room), now_ms)
     }
 
     /// Removes human devices from the room group (5.2.8), each with its Cut there. This is the first Commit of
@@ -2911,6 +2944,7 @@ impl<S: Storage> Device<S> {
         let mut offending = Vec::new();
         match kind {
             GroupKind::Room(_) => {
+                self.invited(batch, &id, &added_by, welcome)?;
                 let state = rules::room_state_of(staged.group_context(), &leaves)?;
                 // Section 16: a device is added to a room of at most 32 human and 256 agent devices.
                 if state.humans.len() > MAX_HUMAN_DEVICES
@@ -2927,6 +2961,7 @@ impl<S: Storage> Device<S> {
                 self.put_record(batch)?;
             }
             GroupKind::Session(session) => {
+                self.enrolment_verified()?;
                 if let Some(observer) = self.retire_observer(batch, &id) {
                     Self::adopt_session_record(&mut meta, &observer, epoch, &devices)?;
                 }
@@ -3615,6 +3650,7 @@ impl<S: Storage> Device<S> {
                     }
                 }
             };
+            this.enrolled_by_inviter(batch, &processed)?;
             this.advance(batch, entry.change)?;
             Ok((processed, adopted))
         })?;

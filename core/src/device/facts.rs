@@ -340,6 +340,7 @@ pub(super) fn check_entry(key: &[u8], value: &[u8]) -> Result<(), Error> {
         }
         table::OBJECT => Objects::from_bytes(value).map(|_| ()),
         table::BOARD => super::content::check_board(value),
+        table::INVITE => super::invite::check_entry(key.get(1..).unwrap_or_default(), value),
         table::COMMAND => super::content::check_command(key.get(1..).unwrap_or_default(), value),
         table::REGISTER => match rest.u8().map_err(|_| damaged("a key"))? {
             SUB_REGISTERS => Registers::from_bytes(value).map(|_| ()),
