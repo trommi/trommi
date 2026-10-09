@@ -7,7 +7,8 @@
 //!   check at an account running at a time, however long it takes. Other sources are not touched.
 //! - **Per account**: an account takes 100 checks in an hour. Past that, sources stand in line: turns are given
 //!   out two seconds apart, in the order sources came, and a turn is good for one check, from its time until
-//!   five seconds after. Nobody else can take it; who comes later than that asks for a new one. That is at most
+//!   five seconds after, for a request that reaches the hub in that time (it may then wait for the hub's pool).
+//!   Nobody else can take it; who comes later than that asks for a new one. That is at most
 //!   2 010 checks per account in any hour on record, however many sources there are (1 800 turns of that hour,
 //!   the few given out before it that are still good, twice the 100 where two of its hours meet), beside the
 //!   early checks of the few sources it knows.
@@ -35,6 +36,8 @@ pub const SLOW_LANE_MS: u64 = 2_000;
 pub const LANE_HORIZON_MS: u64 = 600_000;
 /// how long after its time a turn is good (the answer's whole seconds, a slow network)
 pub const TURN_GOOD_MS: u64 = 5_000;
+/// how long a request that came in time may wait inside the hub and still have its turn
+pub const HELD_MS: u64 = crate::memo::GATE_WAIT_MS + 1_000;
 /// Sources an account keeps a record of. One more makes it forget the one whose wait ran out longest ago; if
 /// none has run out, a source it has no record of waits. The sources an account knows always have theirs.
 pub const SOURCES_PER_ACCOUNT: i64 = 5_000;
@@ -135,42 +138,24 @@ pub fn own_wait(c: &Connection, account: &[u8], source: &[u8], now: u64) -> Res<
     Ok(if in_line || own.over { None } else { own.wait })
 }
 
-/// A request arrived whose source holds a turn that has come: the turn stays good while the request waits for
-/// the pool (`wait_ms`: the longest that takes), so that who came in time is checked.
-pub fn arrived(c: &Connection, account: &[u8], source: &[u8], now: u64, wait_ms: u64) -> Res<()> {
-    let (a, s) = (key(account), key(source));
-    c.prepare_cached(
-        "UPDATE login_turns SET good_until = max(good_until, ?4) WHERE account = ?1 AND source = ?2 AND turn <= ?3 AND good_until >= ?3",
-    )?
-    .execute(params![&a[..], &s[..], now as i64, (now + wait_ms) as i64])?;
-    Ok(())
-}
-
-/// Whether the source holds a turn that has come (read only: `arrived` is called only then).
-pub fn turn_due(c: &Connection, account: &[u8], source: &[u8], now: u64) -> Res<bool> {
-    let (a, s) = (key(account), key(source));
-    Ok(c.prepare_cached("SELECT 1 FROM login_turns WHERE account = ?1 AND source = ?2 AND turn <= ?3 AND good_until >= ?3")?
-        .exists(params![&a[..], &s[..], now as i64])?)
-}
-
 /// Room for one more source on record, by forgetting one whose wait has run out. `false`: there is none.
-fn room_for_source(c: &Connection, a: &Key, now: u64) -> Res<bool> {
+fn room_for_source(c: &Connection, a: &Key, asker: &Key, now: u64) -> Res<bool> {
     let forget = |of_account: bool| -> Res<bool> {
         let sql = if of_account {
             "DELETE FROM login_sources WHERE rowid = (SELECT rowid FROM login_sources INDEXED BY login_sources_by_account_wait
-             WHERE account = ?1 AND checking IS NULL AND next_at <= ?2 ORDER BY next_at LIMIT 1)"
+             WHERE account = ?1 AND checking IS NULL AND next_at <= ?2 AND source != ?3 ORDER BY next_at LIMIT 1)"
         } else {
             "DELETE FROM login_sources WHERE rowid = (SELECT rowid FROM login_sources INDEXED BY login_sources_by_wait
-             WHERE ?1 IS NOT NULL AND checking IS NULL AND next_at <= ?2 ORDER BY next_at LIMIT 1)"
+             WHERE ?1 IS NOT NULL AND checking IS NULL AND next_at <= ?2 AND source != ?3 ORDER BY next_at LIMIT 1)"
         };
         let gone = c
             .prepare_cached(sql)?
-            .execute(params![&a[..], now as i64])?;
+            .execute(params![&a[..], now as i64, &asker[..]])?;
         count(c, "sources", -(gone as i64))?;
         Ok(gone > 0)
     };
     let held: i64 = c
-        .prepare_cached("SELECT count(*) FROM login_sources WHERE account = ?1")?
+        .prepare_cached("SELECT count(*) FROM login_sources WHERE account = ?1 AND over = 0")?
         .query_row([&a[..]], |r| r.get(0))?;
     if held >= SOURCES_PER_ACCOUNT && !forget(true)? {
         return Ok(false);
@@ -204,8 +189,23 @@ fn room_for_account(c: &Connection) -> Res<()> {
 }
 
 /// May this source's attempt at this account be checked now? `known`: the account has seen a successful sign-in
-/// from this source before. Called when the check is about to start, with the time of that moment.
-pub fn admit(c: &Connection, account: &[u8], source: &[u8], known: bool, now: u64) -> Res<Verdict> {
+/// from this source before. Called when the check is about to start, with the time of that moment (`now`) and
+/// the time its request reached the hub (`arrived`): a turn is kept by coming in time, whatever the request
+/// then waits for inside the hub (at most `HELD_MS`, the pool's longest wait).
+pub fn admit(
+    c: &Connection,
+    account: &[u8],
+    source: &[u8],
+    known: bool,
+    now: u64,
+    arrived: u64,
+) -> Res<Verdict> {
+    // (a request that says it came later than now, or longer ago than a request can wait, came now)
+    let arrived = if arrived > now || arrived + HELD_MS < now {
+        now
+    } else {
+        arrived
+    };
     let (a, s) = (key(account), key(source));
     // the source's own state: one check at a time, and its back-off
     let Own {
@@ -213,17 +213,16 @@ pub fn admit(c: &Connection, account: &[u8], source: &[u8], known: bool, now: u6
         wait: own,
         over,
     } = own_state(c, &a, &s, now)?;
-    // a record made while the tables were full answers its waits as a full table does (at the cost of a hash):
-    // nothing about it tells that the account knows this source
-    if over && own.is_some() {
+    // A record made while the tables were full (only a source the account knows has one) stands outside them:
+    // it is asked about room like a source without a record, and while there is none it is answered as a full
+    // table answers, whatever its own state — nothing tells that the account knows this source.
+    let full = (!on_record || over) && !room_for_source(c, &a, &s, now)?;
+    if full && own.is_some() {
         return Ok(Verdict::Line {
             wait: 60,
             early: None,
         });
     }
-    // every check is on record: without room for the record there is no check for a source the account does
-    // not know. One it knows is checked all the same and, if wrong, answered like the other.
-    let full = !on_record && !room_for_source(c, &a, now)?;
     // the account's hour, and its line
     let held: Option<(u64, i64, u64)> = c
         .prepare_cached(
@@ -271,8 +270,13 @@ pub fn admit(c: &Connection, account: &[u8], source: &[u8], known: bool, now: u6
     } else {
         // The line. Turns are two seconds apart; a turn is the source's alone and good from its time for five
         // seconds. One that ran out is replaced by a new one at the end.
-        c.prepare_cached("DELETE FROM login_turns WHERE account = ?1 AND good_until < ?2")?
-            .execute(params![&a[..], now as i64])?;
+        // (a turn is cleared away only when no request that came in time can still be waiting inside the hub)
+        c.prepare_cached("DELETE FROM login_turns WHERE account = ?1 AND good_until + ?3 < ?2")?
+            .execute(params![&a[..], now as i64, HELD_MS as i64])?;
+        c.prepare_cached(
+            "DELETE FROM login_turns WHERE account = ?1 AND source = ?2 AND good_until < ?3",
+        )?
+        .execute(params![&a[..], &s[..], arrived as i64])?;
         let mine: Option<i64> = c
             .prepare_cached("SELECT turn FROM login_turns WHERE account = ?1 AND source = ?2")?
             .query_row(params![&a[..], &s[..]], |r| r.get(0))
@@ -405,7 +409,7 @@ pub fn sweep(c: &Connection, now: u64) -> Res<()> {
         params![DAY_MS as i64, now as i64],
     )?;
     c.execute(
-        "DELETE FROM login_turns WHERE good_until < ?1",
+        "DELETE FROM login_turns WHERE good_until + 11000 < ?1",
         [now as i64],
     )?;
     c.execute(
