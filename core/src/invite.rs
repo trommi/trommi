@@ -48,6 +48,9 @@ pub const MAC_LEN: usize = 32;
 /// The length of the inviter's nonce.
 pub const NONCE_LEN: usize = 32;
 
+/// The longest hub address as base64url, and the length of a 32-byte secret as base64url.
+const MAX_HUB_PART_LEN: usize = (512usize * 4).div_ceil(3);
+const SECRET_PART_LEN: usize = 43;
 /// The version a link names.
 const LINK_VERSION: &str = "2";
 /// The path of a join link under the app's origin.
@@ -416,9 +419,10 @@ fn offer_hash(offer: &[u8]) -> Result<Hash32, Error> {
 }
 
 /// `Request ‖ mac`: what the new device signs and what the request hash covers. `bad-format` unless the MAC has
-/// its 32 bytes, so that the two parts cannot be cut elsewhere.
+/// its 32 bytes, so that the two parts cannot be cut elsewhere, and the Request is no longer than one can be,
+/// so that nothing larger is copied.
 fn request_with_mac(request: &SignedRequest) -> Result<Vec<u8>, Error> {
-    if request.mac.len() != MAC_LEN {
+    if request.mac.len() != MAC_LEN || request.request.len() > MAX_REQUEST_LEN {
         return Err(Error::BadFormat);
     }
     Ok([request.request.as_slice(), &request.mac].concat())
@@ -518,6 +522,10 @@ impl InviteLink {
         else {
             return Err(Error::BadFormat);
         };
+        // Parts of another length than theirs are refused unread.
+        if hub.len() > MAX_HUB_PART_LEN || secret.len() != SECRET_PART_LEN {
+            return Err(Error::BadFormat);
+        }
         Self::new(
             app,
             HubAddress::from_bytes(&ids::base64url_decode(hub)?)?,
@@ -533,7 +541,9 @@ impl InviteLink {
 
     /// The link as text. It holds the secret: it is for the person to hand to the new device, never for a log.
     pub fn to_text(&self) -> SecretBytes {
-        let mut text = Zeroizing::new(String::new());
+        // Room for the whole link, so that no shorter copy of it is left behind while it grows.
+        let capacity = self.app.len() + self.hub.as_str().len() * 2 + 128;
+        let mut text = Zeroizing::new(String::with_capacity(capacity));
         text.push_str(&self.app);
         text.push_str(LINK_PATH);
         text.push_str("#v");
@@ -823,6 +833,29 @@ impl Inviter {
         })
     }
 
+    /// Whether `confirmed` still stands: the invite is neither burned nor finished, and the Request it stands
+    /// accepted for is the confirmed one. Whatever commits the new device calls this first, and stores
+    /// [`Inviter::finish`] in the same write as the commit, so that a confirmation is acted on once and never
+    /// after "they don't match". `invite-burned`, `invite-used`, `bad-invite` (no Request stands accepted),
+    /// `code-not-confirmed` (it is the confirmation of another invite or Request).
+    pub fn check_confirmed(&self, confirmed: &ConfirmedInvite) -> Result<(), Error> {
+        match &self.state {
+            InviterState::Accepted { request, .. } => {
+                let same = confirmed.invite_id == self.offer.invite_id
+                    && confirmed.inviter == self.offer.inviter
+                    && confirmed.request_hash == request_hash(request)?;
+                if same {
+                    Ok(())
+                } else {
+                    Err(Error::CodeNotConfirmed)
+                }
+            }
+            InviterState::Open => Err(Error::BadInvite),
+            InviterState::Burned => Err(Error::InviteBurned),
+            InviterState::Done => Err(Error::InviteUsed),
+        }
+    }
+
     /// The person said the codes do not match, or gave up: the invite is burned and accepts and confirms nothing
     /// any more. An invite whose device was committed stays as it is.
     pub fn burn(&mut self) {
@@ -954,7 +987,8 @@ impl Inviter {
 
 /// The proof that the person confirmed the check code for one accepted Request. Only [`Inviter::confirm`] makes
 /// one, and only from the code and request hash it computes itself; it cannot be built, copied or read from
-/// bytes. The functions that commit a device invited by link take it, and commit exactly what it names.
+/// bytes. The functions that commit a device invited by link take it, and commit exactly what it names, after
+/// [`Inviter::check_confirmed`] said that the invite it came from still stands.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ConfirmedInvite {
     room_id: RoomId,
@@ -1207,28 +1241,23 @@ pub fn hub_check_request(
 }
 
 /// What an invite came to, as the hub knows it once the inviter revealed: the one device that may now be added
-/// (12.1.7).
+/// (12.1.7). Only [`hub_check_reveal`] makes one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Revealed {
-    /// The room.
-    pub room_id: RoomId,
-    /// The invite.
-    pub invite_id: InviteId,
-    /// The inviter: the only device whose Commit may carry the outcome.
-    pub inviter: DeviceId,
-    /// The invited role.
-    pub role: Role,
-    /// Zeros; or, for an agent, the session it shall take over.
-    pub session_id: SessionId,
-    /// The KeyPackage of the Request the inviter revealed to.
-    pub key_package: Vec<u8>,
-    /// The hash of that Request.
-    pub request_hash: Hash32,
+    room_id: RoomId,
+    invite_id: InviteId,
+    inviter: DeviceId,
+    role: Role,
+    session_id: SessionId,
+    key_package: Vec<u8>,
+    request_hash: Hash32,
 }
 
 /// Hub side, `PUT /v2/invites/{id}/reveal`: the Reveal for the stored `offer`, against the Requests the hub
 /// holds for that invite. `bad-format` (not a Reveal); `bad-signature` (not signed by the Offer's inviter);
-/// `bad-invite` (another invite, a nonce the Offer did not commit to, or a Request the hub does not hold).
+/// `bad-invite` (another invite, a nonce the Offer did not commit to, or a Request the hub does not hold or that
+/// does not answer this Offer). The Requests are those that passed [`hub_check_request`] for this Offer: their
+/// signatures are not verified again here.
 pub fn hub_check_reveal(
     offer: &SignedOffer,
     reveal: &SignedReveal,
@@ -1247,13 +1276,21 @@ pub fn hub_check_reveal(
     }
     for request in requests {
         if request_hash(request)? == decoded.request_hash {
+            let answered = Request::decode(&request.request)?;
+            if answered.room_id != stored.room_id
+                || answered.invite_id != stored.invite_id
+                || answered.role != stored.role
+                || answered.offer_hash != offer_hash(&offer.offer)?
+            {
+                return Err(Error::BadInvite);
+            }
             return Ok(Revealed {
                 room_id: stored.room_id,
                 invite_id: stored.invite_id,
                 inviter: stored.inviter,
                 role: stored.role,
                 session_id: stored.session_id,
-                key_package: Request::decode(&request.request)?.key_package,
+                key_package: answered.key_package,
                 request_hash: decoded.request_hash,
             });
         }
@@ -1262,6 +1299,41 @@ pub fn hub_check_reveal(
 }
 
 impl Revealed {
+    /// The room.
+    pub fn room_id(&self) -> &RoomId {
+        &self.room_id
+    }
+
+    /// The invite.
+    pub fn invite_id(&self) -> &InviteId {
+        &self.invite_id
+    }
+
+    /// The inviter: the only device whose Commit may carry the outcome.
+    pub fn inviter(&self) -> &DeviceId {
+        &self.inviter
+    }
+
+    /// The invited role.
+    pub fn role(&self) -> Role {
+        self.role
+    }
+
+    /// Zeros; or, for an agent, the session it shall take over.
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    /// The KeyPackage of the Request the inviter revealed to.
+    pub fn key_package(&self) -> &[u8] {
+        &self.key_package
+    }
+
+    /// The hash of that Request.
+    pub fn request_hash(&self) -> &Hash32 {
+        &self.request_hash
+    }
+
     /// Hub side, 12.1.7: whether a Commit by `committer` may add the device of `key_package` in `role` as the
     /// outcome of this invite: `bad-invite` unless it is the inviter's Commit, the invited role and the very
     /// KeyPackage of the revealed Request. For an agent device the hub compares the key added to `agents` with
@@ -1414,7 +1486,10 @@ mod tests {
             Err(Error::BadInvite)
         );
 
+        // The commit asks whether the confirmation still stands, and finishes the invite with it.
+        assert_eq!(inviter.check_confirmed(&confirmed), Ok(()));
         inviter.finish().expect("finishes");
+        assert_eq!(inviter.check_confirmed(&confirmed), Err(Error::InviteUsed));
         assert_eq!(
             inviter
                 .confirm(&read_back, &accepted.request_hash, NOW + 61_000)
@@ -2093,7 +2168,16 @@ mod tests {
         let accepted = inviter
             .accept(&key(1), &request, &device(2), NOW)
             .expect("accepts");
+        // A confirmation given before the person changed their mind stands no longer.
+        let confirmed = inviter
+            .confirm(&accepted.code, &accepted.request_hash, NOW)
+            .expect("confirms");
+        assert_eq!(inviter.check_confirmed(&confirmed), Ok(()));
         inviter.burn();
+        assert_eq!(
+            inviter.check_confirmed(&confirmed),
+            Err(Error::InviteBurned)
+        );
         assert_eq!(
             inviter
                 .confirm(&accepted.code, &accepted.request_hash, NOW)
@@ -2103,6 +2187,17 @@ mod tests {
         assert_eq!(
             inviter.accept(&key(1), &request, &device(2), NOW).err(),
             Some(Error::InviteBurned)
+        );
+        // Nor does it stand for another invite.
+        let mut other = opened(Role::Human);
+        assert_eq!(other.check_confirmed(&confirmed), Err(Error::BadInvite));
+        let (_, other_request) = requested(&other, b"kp");
+        other
+            .accept(&key(1), &other_request, &device(2), NOW)
+            .expect("accepts");
+        assert_eq!(
+            other.check_confirmed(&confirmed),
+            Err(Error::CodeNotConfirmed)
         );
         assert_eq!(inviter.accepted(&key(1)), Ok(None));
         assert_eq!(inviter.finish(), Err(Error::BadInvite));
@@ -2453,6 +2548,36 @@ mod tests {
         );
         assert_eq!(
             hub_check_reveal(&offer, &accepted.reveal, &[]).err(),
+            Some(Error::BadInvite)
+        );
+        assert_eq!(revealed.room_id(), &ROOM);
+        assert_eq!(revealed.invite_id(), &inviter.offer().invite_id);
+        assert_eq!(revealed.inviter(), &device(1));
+        assert_eq!(revealed.role(), Role::Human);
+        assert!(revealed.session_id().is_zero());
+        assert_eq!(revealed.key_package(), b"kp");
+        assert_eq!(revealed.request_hash(), &accepted.request_hash);
+        // A Request longer than one can be is refused before anything is copied or hashed.
+        let huge = SignedRequest {
+            request: vec![0; MAX_REQUEST_LEN + 1],
+            ..request.clone()
+        };
+        assert_eq!(request_hash(&huge), Err(Error::BadFormat));
+        assert_eq!(
+            hub_check_request(&offer, &huge, &hub(), &device(2)).err(),
+            Some(Error::BadFormat)
+        );
+        // A Request the hub holds for another Offer names that Offer, whatever a Reveal says of its hash.
+        let (_, elsewhere_request) = requested(&other, b"kp");
+        let mut pointing = Reveal::decode(&accepted.reveal.reveal).expect("decodes");
+        pointing.request_hash = request_hash(&elsewhere_request).expect("hashes");
+        let bytes = codec::encode(&pointing).expect("encodes");
+        let pointing = SignedReveal {
+            signature: crypto::sign_with_label(&key(1), SIGN_REVEAL, &bytes).expect("signs"),
+            reveal: bytes,
+        };
+        assert_eq!(
+            hub_check_reveal(&offer, &pointing, &[elsewhere_request]).err(),
             Some(Error::BadInvite)
         );
         assert_eq!(
