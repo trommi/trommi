@@ -24,8 +24,8 @@ use crate::error::Error;
 use crate::hub_auth::{self, HubAddress, SignedHubAuth, CHALLENGE_LEN};
 use crate::ids::{DeviceId, GroupId, Hash32, InviteId, SessionId};
 use crate::invite::{
-    self, CheckCode, InviteLink, InviteTerms, Inviter, Joiner, Role, SignedOffer, SignedRequest,
-    SignedReveal, CONFIRM_MS, INVITE_LIFE_MS,
+    self, CheckCode, InviteLink, InviteTerms, Inviter, Joiner, Request, Role, SignedOffer,
+    SignedRequest, SignedReveal, CONFIRM_MS, INVITE_LIFE_MS,
 };
 use crate::mls::group;
 use crate::mls::key_package;
@@ -941,14 +941,33 @@ impl<S: Storage> Device<S> {
     // ---- signing in to the hub ----
 
     /// Answers the hub's `challenge` (12.3) with this device's key, for the room it belongs to at `hub`.
-    /// `no-room` for a device without a room.
+    ///
+    /// A device that is joining by link has no room yet and still needs a token, to fetch its Welcome or the
+    /// room's GroupInfo and Commits; the hub gives one once the inviter's Commit names its key (12.3.2). Once
+    /// the Reveal was checked ([`Device::join_reveal`]) it signs for the room of the stored Offer, at the hub
+    /// its Request named and no other (`bad-invite`). Nothing else follows from a stored Offer. `no-room` for
+    /// a device without a room and without a checked Reveal.
     pub fn hub_sign_in(
         &self,
         hub: &HubAddress,
         challenge: [u8; CHALLENGE_LEN],
     ) -> Result<SignedHubAuth, Error> {
         self.owner()?;
-        let room = self.memory.record.room.ok_or(Error::NoRoom)?;
+        let joining = self.joining_by_link()?.filter(|joining| joining.revealed);
+        if let Some(joining) = &joining {
+            let named = Request::decode(&joining.joiner.signed_request().request)
+                .map_err(|_| damaged("a join by link"))?
+                .hub;
+            if named != *hub {
+                return Err(Error::BadInvite);
+            }
+        }
+        let room = self
+            .memory
+            .record
+            .room
+            .or(joining.map(|joining| joining.joiner.offer().room_id))
+            .ok_or(Error::NoRoom)?;
         hub_auth::sign(&self.key, room, hub, challenge)
     }
 }
