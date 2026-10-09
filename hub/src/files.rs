@@ -69,25 +69,35 @@ impl Upload {
         Ok(self.hash.clone().finalize().into())
     }
 
-    /// Puts the file at its place. A hard link fails if something is there: a stored file is never overwritten.
-    pub fn place(self) -> std::io::Result<()> {
-        let result = std::fs::hard_link(&self.temp, &self.target);
-        let _ = std::fs::remove_file(&self.temp);
-        match result {
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-            other => other,
+    /// Puts the file at its place. Called inside the transaction that writes its row, so that no deletion of
+    /// that row can come between the two. Something lying there without a row is a leftover of a crash and
+    /// gives way; a stored file with its row is never overwritten (the row is checked before).
+    pub fn place(&mut self) -> std::io::Result<()> {
+        let mut result = std::fs::hard_link(&self.temp, &self.target);
+        if matches!(&result, Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists) {
+            std::fs::remove_file(&self.target)?;
+            result = std::fs::hard_link(&self.temp, &self.target);
         }
-    }
-
-    pub fn discard(self) {
+        result?;
         let _ = std::fs::remove_file(&self.temp);
+        self.temp = PathBuf::new();
+        Ok(())
     }
 }
 
-/// Before the bytes: may this device upload under this id, and is there room. `Ok(Some(size))`: the id holds a
-/// file of this uploader already; the bytes decide whether this is a repeat (answered like the first time) or
-/// other bytes (`replay`).
-pub fn admit(x: &Ctx, auth: &Auth, file_id: &[u8; 16], announced: Option<u64>) -> Res<()> {
+/// An upload that ends in any other way leaves no temporary file behind.
+impl Drop for Upload {
+    fn drop(&mut self) {
+        if !self.temp.as_os_str().is_empty() {
+            let _ = std::fs::remove_file(&self.temp);
+        }
+    }
+}
+
+/// Before the bytes: may this device upload under this id. Returns the bytes the room's files hold, and whether
+/// the id holds a file of this uploader already (then the bytes decide: a repeat is answered like the first
+/// time and needs no room, other bytes are `replay`).
+pub fn admit(x: &Ctx, auth: &Auth, file_id: &[u8; 16], announced: Option<u64>) -> Res<(u64, bool)> {
     auth.member()?;
     if announced.is_some_and(|n| n > x.cfg.file_limit) {
         return Err(refuse("too-large", "a file is at most 64 MiB"));
@@ -97,7 +107,7 @@ pub fn admit(x: &Ctx, auth: &Auth, file_id: &[u8; 16], announced: Option<u64>) -
         .prepare_cached("SELECT uploader, deleted_at IS NOT NULL FROM files WHERE room_id = ?1 AND file_id = ?2")?
         .query_row(params![&auth.room[..], &file_id[..]], |r| Ok((r.get(0)?, r.get(1)?)))
         .optional()?;
-    match held {
+    let again = match held {
         Some((_, true)) => {
             return Err(refuse(
                 "gone",
@@ -107,16 +117,15 @@ pub fn admit(x: &Ctx, auth: &Auth, file_id: &[u8; 16], announced: Option<u64>) -
         Some((uploader, false)) if !same(&uploader, &auth.device) => {
             return Err(refuse("replay", "this file id is used"))
         }
-        _ => {}
-    }
-    let room = store::room_row(x.c, &auth.room)?;
-    if room.file_bytes + announced.unwrap_or(0) > x.cfg.room_quota {
-        return Err(
-            refuse("quota-exceeded", "the room's files are at their limit")
-                .with(json!({ "used": room.file_bytes, "quota": x.cfg.room_quota })),
-        );
-    }
-    Ok(())
+        Some(_) => true,
+        None => false,
+    };
+    Ok((store::room_row(x.c, &auth.room)?.file_bytes, again))
+}
+
+pub fn over_quota(used: u64, quota: u64) -> crate::error::Refused {
+    refuse("quota-exceeded", "the room's files are at their limit")
+        .with(json!({ "used": used, "quota": quota }))
 }
 
 pub enum Stored {
@@ -307,21 +316,25 @@ pub fn share(
             format!("a Share link expires within {} days", x.cfg.share_days),
         ));
     }
-    if let Some((held_room, held_hash, held_file)) =
-        x.c.prepare_cached("SELECT room_id, secret_hash, file_id FROM shares WHERE share_id = ?1")?
-            .query_row([&share_id[..]], |r| {
-                Ok((
-                    r.get::<_, Vec<u8>>(0)?,
-                    r.get::<_, Vec<u8>>(1)?,
-                    r.get::<_, Vec<u8>>(2)?,
-                ))
-            })
-            .optional()?
+    if let Some((held_room, held_hash, held_file, held_expires)) =
+        x.c.prepare_cached(
+            "SELECT room_id, secret_hash, file_id, expires_at FROM shares WHERE share_id = ?1",
+        )?
+        .query_row([&share_id[..]], |r| {
+            Ok((
+                r.get::<_, Vec<u8>>(0)?,
+                r.get::<_, Vec<u8>>(1)?,
+                r.get::<_, Vec<u8>>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })
+        .optional()?
     {
         // never replaced: the same registration again is answered like the first time
         let again = same(&held_room, &auth.room)
             && same(&held_hash, secret_hash)
-            && same(&held_file, file_id);
+            && same(&held_file, file_id)
+            && held_expires as u64 == expires_at;
         return if again {
             Ok(json!({ "share_id": b64(share_id), "expires_at": expires_at }))
         } else {

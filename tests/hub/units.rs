@@ -1125,9 +1125,15 @@ mod live_tests {
     #[test]
     fn events_reach_only_their_audience() {
         let live = Live::default();
-        let (h, mut hrx) = live.open(auth(1, Who::Human), 8, 1 << 20).unwrap();
-        let (a, mut arx) = live.open(auth(2, Who::Agent), 8, 1 << 20).unwrap();
-        let (r, mut rrx) = live.open(auth(3, Who::Recovery), 8, 1 << 20).unwrap();
+        let (h, mut hrx) = live
+            .open(auth(1, Who::Human), 8, 1 << 20, u64::MAX, None)
+            .unwrap();
+        let (a, mut arx) = live
+            .open(auth(2, Who::Agent), 8, 1 << 20, u64::MAX, None)
+            .unwrap();
+        let (r, mut rrx) = live
+            .open(auth(3, Who::Recovery), 8, 1 << 20, u64::MAX, None)
+            .unwrap();
         for s in [&h, &a, &r] {
             s.go_live(0);
         }
@@ -1155,7 +1161,9 @@ mod live_tests {
     #[test]
     fn what_arrives_during_the_catch_up_follows_it_once() {
         let live = Live::default();
-        let (s, mut rx) = live.open(auth(1, Who::Human), 8, 1 << 20).unwrap();
+        let (s, mut rx) = live
+            .open(auth(1, Who::Human), 8, 1 << 20, u64::MAX, None)
+            .unwrap();
         live.publish(&event(Some(7), true, vec![], None), &json!({ "n": 7 }));
         live.publish(&event(Some(9), true, vec![], None), &json!({ "n": 9 }));
         live.publish(&event(None, true, vec![], None), &json!({ "relay": true }));
@@ -1172,10 +1180,17 @@ mod live_tests {
         let live = Live::default();
         let mut keep = vec![];
         for _ in 0..2 {
-            keep.push(live.open(auth(1, Who::Human), 2, 64).unwrap());
+            keep.push(
+                live.open(auth(1, Who::Human), 2, 64, u64::MAX, None)
+                    .unwrap(),
+            );
         }
-        assert!(live.open(auth(1, Who::Human), 2, 64).is_none());
-        assert!(live.open(auth(2, Who::Human), 2, 64).is_some());
+        assert!(live
+            .open(auth(1, Who::Human), 2, 64, u64::MAX, None)
+            .is_none());
+        assert!(live
+            .open(auth(2, Who::Human), 2, 64, u64::MAX, None)
+            .is_some());
         let (s, rx) = &mut keep[0];
         s.go_live(0);
         live.publish(
@@ -1183,6 +1198,15 @@ mod live_tests {
             &json!({ "pad": "x".repeat(100) }),
         );
         assert_eq!(drain(rx), vec!["END"]);
+        // over for good: nothing more is queued for it, however much is published
+        assert!(s.is_closed());
+        for n in 0..50 {
+            live.publish(
+                &event(Some(2 + n), true, vec![], None),
+                &json!({ "pad": "x".repeat(100) }),
+            );
+        }
+        assert!(drain(rx).is_empty());
         live.end_where(&[1; 32], |a| a.device == [1; 32]);
         // the second stream was still catching up: it overflowed its waiting room, and is ended again by name
         assert!(drain(&mut keep[1].1).iter().all(|m| m == "END"));
@@ -1341,6 +1365,11 @@ mod push_tests {
             "http://127.0.0.1:9998/p",
             "https://notfcm.googleapis.com.example",
             "file:///etc/passwd",
+            // a backslash is a path character to one URL parser and a separator to another
+            "https://attacker.example\\.fcm.googleapis.com/push",
+            "https://fcm.googleapis.com:8443/x",
+            "https://fcm.googleapis.com:/x",
+            "https://FCM.googleapis.com/x",
         ] {
             assert_eq!(endpoint_origin(bad, &extra), None, "{bad}");
         }

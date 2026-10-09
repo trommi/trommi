@@ -121,7 +121,11 @@ impl HttpBody for Body {
 pub type Answer = Response<Body>;
 
 pub fn json(status: u16, value: &Value) -> Answer {
-    let bytes = value.to_string();
+    json_text(status, value.to_string())
+}
+
+/// An answer whose JSON is already text.
+pub fn json_text(status: u16, bytes: String) -> Answer {
     Response::builder()
         .status(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
         .header("content-type", "application/json; charset=utf-8")
@@ -156,6 +160,9 @@ pub struct ReqBody {
 }
 
 impl ReqBody {
+    /// `within`: how long an unread rest may take to arrive before the connection is cut: a minute, and for a
+    /// body of announced length the time that length needs at 16 KiB/s. A body without a length that a route
+    /// refused gets the minute.
     pub fn new(inner: Incoming, conn: Conn, within: Duration) -> Self {
         ReqBody {
             inner: Some(inner),

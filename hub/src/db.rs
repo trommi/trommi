@@ -551,7 +551,7 @@ impl Db {
             )));
         }
         let mut readers = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..8 {
             let r = Connection::open_with_flags(
                 path,
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -625,8 +625,19 @@ impl Db {
         &self,
         f: impl FnOnce(&Connection) -> Result<T, E>,
     ) -> Result<T, E> {
-        let i = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.readers.len();
-        let c = self.readers[i].lock().unwrap_or_else(|e| e.into_inner());
+        // a reader that is free, if there is one: a long read on one connection does not hold up the others
+        let start = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let free = (0..self.readers.len()).find_map(|k| {
+            self.readers[(start + k) % self.readers.len()]
+                .try_lock()
+                .ok()
+        });
+        let c = match free {
+            Some(c) => c,
+            None => self.readers[start % self.readers.len()]
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        };
         if !c.is_autocommit() {
             let _ = c.execute_batch("ROLLBACK");
         }

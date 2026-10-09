@@ -51,6 +51,8 @@ pub struct App {
     pub closing: AtomicBool,
     pub in_flight: AtomicUsize,
     live_due: Mutex<HashSet<Room>>,
+    /// per room: the bytes and the number of uploads in progress
+    uploads: Mutex<HashMap<Room, (u64, usize)>>,
     lost_since: Mutex<HashMap<(Room, [u8; 32]), u64>>,
     pub started_at: u64,
 }
@@ -139,9 +141,34 @@ impl App {
             closing: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
             live_due: Mutex::new(HashSet::new()),
+            uploads: Mutex::new(HashMap::new()),
             lost_since: Mutex::new(HashMap::new()),
             started_at: util::now(),
         }))
+    }
+
+    /// Reserves room for an upload of `bytes` in a room whose files hold `used`: refused when stored and
+    /// arriving bytes together pass the quota, or when the room has 16 uploads in progress.
+    pub fn reserve_upload(self: &Arc<Self>, room: &Room, bytes: u64, used: u64) -> Res<UploadSlot> {
+        let mut uploads = self.uploads.lock().unwrap_or_else(|e| e.into_inner());
+        let (arriving, count) = uploads.get(room).copied().unwrap_or((0, 0));
+        if count >= 16 {
+            return Err(
+                refuse("too-many", "this room has its limit of uploads in progress").retry(5),
+            );
+        }
+        if bytes > 0 && used + arriving + bytes > self.cfg.room_quota {
+            return Err(crate::files::over_quota(
+                used + arriving,
+                self.cfg.room_quota,
+            ));
+        }
+        uploads.insert(*room, (arriving + bytes, count + 1));
+        Ok(UploadSlot {
+            app: self.clone(),
+            room: *room,
+            bytes,
+        })
     }
 
     /// One transaction of writes; what follows from it happens only if it was committed. Its live events are
@@ -500,6 +527,7 @@ impl App {
                 _ => started_at,
             };
             let mut dead = false;
+            let mut delivered = token.is_none() && event != "start";
             if let Some(token) = &token {
                 if let Some(request) = apns.live_activity(
                     &environment,
@@ -514,8 +542,14 @@ impl App {
                 ) {
                     if let Ok((status, reason)) = self.transport.send(request).await {
                         dead = push::gone(status, &reason);
+                        delivered = status < 300;
                     }
                 }
+            }
+            // what was not delivered is not recorded as sent: the next round tries again (a start without a
+            // token to start with never counts as started)
+            if !delivered && !dead {
+                continue;
             }
             let column = if event == "start" {
                 "start_token"
@@ -525,7 +559,7 @@ impl App {
             let _ = self.db.write(|c| {
                 c.execute(
                     "UPDATE live_activities SET started_at = ?1, sent_working = ?2, sent_waiting = ?3, sent_at = ?4 WHERE room_id = ?5 AND device = ?6",
-                    params![started, working as i64, waiting as i64, now as i64, &room[..], &device[..]],
+                    params![if delivered { started } else { started_at }, working as i64, waiting as i64, now as i64, &room[..], &device[..]],
                 )?;
                 if dead {
                     c.execute(&format!("UPDATE live_activities SET {column} = NULL WHERE room_id = ?1 AND device = ?2"), params![&room[..], &device[..]])?;
@@ -753,6 +787,26 @@ impl App {
                 "sweep",
                 json!({ "pending_files_deleted": files, "stale_parts_removed": parts }),
             );
+        }
+    }
+}
+
+/// The room for one upload in progress; given back when dropped.
+pub struct UploadSlot {
+    app: Arc<App>,
+    room: Room,
+    bytes: u64,
+}
+
+impl Drop for UploadSlot {
+    fn drop(&mut self) {
+        let mut uploads = self.app.uploads.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((arriving, count)) = uploads.get(&self.room).copied() {
+            if count <= 1 {
+                uploads.remove(&self.room);
+            } else {
+                uploads.insert(self.room, (arriving.saturating_sub(self.bytes), count - 1));
+            }
         }
     }
 }
