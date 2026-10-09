@@ -89,7 +89,7 @@ jobs:
           say() { echo "$1"; echo "- $1" >> "$GITHUB_STEP_SUMMARY"; }
           tailscale ping --timeout 10s --c 3 "$SERVER" >/dev/null 2>&1 && say "the server answers a Tailscale ping" || say "the server does not answer a Tailscale ping (the policy may allow only the deploy port)"
           # the deploy port: open to the CI by the policy; nothing listens there before the first install
-          out=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "http://$SERVER:9443/" 2>&1); code=$?
+          out=$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "http://$SERVER:9443/" 2>&1) && code=0 || code=$?
           case "$code" in
             0) say "port 9443 answers (HTTP $out): the updater is there" ;;
             7) say "port 9443 is reached and refused: the path works, the updater is not installed yet" ;;
