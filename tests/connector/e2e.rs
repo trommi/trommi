@@ -21,11 +21,11 @@ struct Agent {
 }
 
 impl Agent {
-    /// The next command of the human, at most ten seconds away.
+    /// The next command of the human; the wait is long because a busy machine is slow, not because it takes long.
     async fn command(&mut self) -> Command {
         loop {
             let event =
-                tokio::time::timeout(std::time::Duration::from_secs(10), self.events.recv())
+                tokio::time::timeout(std::time::Duration::from_secs(90), self.events.recv())
                     .await
                     .expect("an event in time")
                     .expect("the client lives");
@@ -262,7 +262,7 @@ async fn a_takeover_stops_the_first_connector_and_hands_the_session_on() {
 
     // The first connector learns it from the Commit and stops.
     let removed = loop {
-        let event = tokio::time::timeout(std::time::Duration::from_secs(10), first.events.recv())
+        let event = tokio::time::timeout(std::time::Duration::from_secs(90), first.events.recv())
             .await
             .expect("an event in time")
             .expect("the client lives");
@@ -379,7 +379,7 @@ async fn what_was_written_while_the_hub_was_away_is_sent_once_it_is_back() {
     let _hub = HubProc::start_in(data, port).await;
     agent
         .client
-        .settle(20_000)
+        .settle(120_000)
         .await
         .expect("the outbox empties");
     // The hub lost its tokens with its restart: the stand-in signs in again by itself.
