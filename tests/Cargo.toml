@@ -117,3 +117,19 @@ path = "core/content_chain.rs"
 [[test]]
 name = "core_content_flow"
 path = "core/content_flow.rs"
+
+[[test]]
+name = "core_files"
+path = "core/files.rs"
+
+[[test]]
+name = "core_hub_auth"
+path = "core/hub_auth.rs"
+
+[[test]]
+name = "core_push"
+path = "core/push.rs"
+
+[[test]]
+name = "core_account"
+path = "core/account.rs"
