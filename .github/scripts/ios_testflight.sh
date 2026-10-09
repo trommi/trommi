@@ -52,7 +52,9 @@ asc prepare "$BUNDLE_ID"
 echo "== 2. Version and build number =="
 version=$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' "$appstore/project.yml")
 [ -n "$version" ] || { echo "::error::no MARKETING_VERSION in project.yml"; exit 1; }
-# unique and rising whatever ran before, here or on another machine: one more than the highest App Store Connect has
+# One more than the highest App Store Connect has: rising whatever was shipped before, from here or from another
+# machine. Not reserved: two uploads started at the same moment from two places take the same number, and App
+# Store Connect refuses the second (start it again). Deliveries from this workflow run one after another.
 build=$(asc next-build)
 printf '%s' "$build" | grep -Eq '^[1-9][0-9]*$' || { echo "::error::no build number from App Store Connect"; exit 1; }
 short=$(printf '%s' "$COMMIT" | cut -c1-7)
@@ -82,8 +84,11 @@ echo "$(plist CFBundleIdentifier) $(plist CFBundleShortVersionString) ($(plist C
 for extension in TrommiShare TrommiNotify TrommiLive; do
   [ -d "$app/PlugIns/$extension.appex" ] || { echo "::error::the app extension $extension is missing"; exit 1; }
 done
-codesign -d --entitlements :- "$app" > "$RUNNER_TEMP/entitlements.plist" 2>/dev/null
-[ "$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$RUNNER_TEMP/entitlements.plist")" = production ] || { echo "::error::the archive does not carry the production push entitlement"; exit 1; }
+# (the archive is signed for development; the export signs for distribution, with the entitlements file's
+# aps-environment production)
+if codesign -d --entitlements :- "$app" > "$RUNNER_TEMP/entitlements.plist" 2>/dev/null; then
+  echo "aps-environment of the archive: $(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$RUNNER_TEMP/entitlements.plist" 2>/dev/null || echo none)"
+fi
 
 echo "== 6. Export and upload =="
 cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF

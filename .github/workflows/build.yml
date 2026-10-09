@@ -28,9 +28,10 @@ on:
 
 permissions: {}
 
-# One run per branch at a time. On main nothing running is cut off; of several waiting runs the newest stays.
+# A pull request: one run at a time, a newer commit cuts the older run off. On main every run is its own group:
+# each compares with the commit before it, so a run dropped while waiting would be a change never built.
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
