@@ -146,14 +146,16 @@ encrypted.
    whose Welcome failed); its chain goes on where it was cut.
 6. One room Commit holds at most one Add. New recovery keys are taken only on `…/recovery-code` or in a recovery;
    on `…/commits` they are `incomplete`.
-7. An archived group answers every write with `gone` (410); an envelope for it takes no chain number.
+7. An archived group answers every write with `gone` (410); an envelope for it takes no chain number. Archiving
+   again, and a repeated post of what was accepted before, get their first answer.
 8. A removed device's token is answered `not-member` until it runs out; its streams end with the Commit.
 9. Every write of an agent device except `POST /v2/link` carries `Trommi-Lease`.
 10. `GET …/log?kind=commit` gives the Commits alone, for any reader; application messages are deleted after 30
     days and leave holes in `n`, Commits never. `GET …/info?epoch=0` is kept as long as the group is.
 11. A Welcome is deleted when its device first writes in the group or leaves it. Requests: a device keeps its 16
-    newest for seven days; a `reject` (14.7) appears among them with its `committer`.
-12. A single-use KeyPackage that was handed out is never handed out again, also when it is uploaded again. A claim
+    newest for seven days; a `reject` (14.7) is a leaf's and appears among them with its `committer`.
+12. A single-use KeyPackage that was handed out is never handed out again, also when it is uploaded again (its
+    reference is kept for good). A claim
     names a device once. A helper device claims none. Leaves and KeyPackages carry exactly the capabilities of
     v2.md section 3; a GroupInfo is at most 96 KiB.
 13. A repeated post of the same bytes gets the first answer for: a founding, a Commit, an application message, an
