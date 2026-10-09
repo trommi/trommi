@@ -30,13 +30,15 @@
 //!   from it except by `hpke_seal`. The check in [`rust_crypto`] comes first; a source that answered once and
 //!   fails later still ends in that panic.
 //!
-//! `OpenMlsCrypto::hpke_seal` takes its ephemeral key from that hidden generator, so its output cannot be
-//! reproduced. [`hpke_seal`] is the same operation with the randomness given: RFC 9180's `Encap` for
-//! DHKEM(X25519, HKDF-SHA256) written out here (`DeriveKeyPair` and HKDF by the provider, X25519 by the provider's
-//! own HPKE back end), then `hpke-rs`'s key schedule and sealing. The tests hold it against RFC 9180's vector A.2.1
-//! and open its output with the provider's `hpke_open`. An OpenMLS provider that must be reproducible delegates
-//! everything to [`rust_crypto`] except `hpke_seal`, which it answers with [`hpke_seal`], and draws its
-//! `OpenMlsRand` bytes and signature key seeds from its [`Entropy`].
+//! `OpenMlsCrypto::hpke_seal` takes its ephemeral key from that hidden generator. A shipped build seals through it
+//! and through nothing else: [`hpke_seal`] first asks its [`Entropy`] for 32 bytes, so that a failing source is an
+//! error and not a panic, and then calls the provider. The provider's output cannot be reproduced, which the
+//! generator of the vectors needs. Only under the cargo feature `vectors` (and in this module's tests) a second
+//! path is compiled, [`hpke_seal_with`]: RFC 9180's `Encap` for DHKEM(X25519, HKDF-SHA256) written out with the
+//! randomness given (`DeriveKeyPair` and HKDF by the provider, X25519 by the provider's own HPKE back end), then
+//! `hpke-rs`'s key schedule and sealing. The tests hold it against RFC 9180's vector A.2.1 and open its output
+//! with the provider's `hpke_open`. With that feature [`hpke_seal`] takes this path. It is never part of a
+//! shipped build.
 //!
 //! # Lengths
 //!
@@ -46,17 +48,13 @@
 use crate::codec::{Decode, Encode, Reader, Writer};
 use crate::error::Error;
 use crate::ids::Hash32;
-use hpke_rs::{Hpke, Mode};
-use hpke_rs_crypto::types::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm};
-use hpke_rs_crypto::HpkeCrypto;
-use hpke_rs_rust_crypto::HpkeRustCrypto;
 use openmls_rust_crypto::RustCrypto;
 use openmls_traits::crypto::OpenMlsCrypto;
 use openmls_traits::types::{Ciphersuite, CryptoError, HpkeCiphertext as ProviderCiphertext};
 use std::fmt;
 use std::sync::OnceLock;
 use subtle::ConstantTimeEq;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 /// The suite of every group and of every construct here. Nothing is negotiated.
 pub(crate) const CIPHERSUITE: Ciphersuite =
@@ -64,10 +62,6 @@ pub(crate) const CIPHERSUITE: Ciphersuite =
 
 /// What RFC 9420's labelled functions put before a label.
 const LABEL_PREFIX: &str = "MLS 1.0 ";
-/// RFC 9180: the version in every labelled HKDF input, and the suite id of DHKEM(X25519, HKDF-SHA256).
-const HPKE_VERSION: &[u8] = b"HPKE-v1";
-const KEM_SUITE_ID: &[u8] = b"KEM\x00\x20";
-
 /// The length of an AEAD nonce.
 pub const NONCE_LEN: usize = 12;
 /// How much longer an AEAD ciphertext is than its plaintext.
@@ -395,32 +389,119 @@ impl Decode for HpkeCiphertext {
     }
 }
 
-/// RFC 9180's `LabeledExtract` and `LabeledExpand` for the KEM, on the provider's HKDF.
-fn kem_extract_and_expand(dh: &[u8], kem_context: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
-    let provider = rust_crypto()?;
-    let hash = CIPHERSUITE.hash_algorithm();
-    let labelled_ikm = Zeroizing::new([HPKE_VERSION, KEM_SUITE_ID, b"eae_prk", dh].concat());
-    let prk = provider
-        .hkdf_extract(hash, &[], &labelled_ikm)
-        .map_err(provider_fault)?;
-    let length = [0x00, 0x20];
-    let labelled_info = [
-        &length,
-        HPKE_VERSION,
-        KEM_SUITE_ID,
-        b"shared_secret",
-        kem_context,
-    ]
-    .concat();
-    let shared = provider
-        .hkdf_expand(hash, prk.as_slice(), &labelled_info, 32)
-        .map_err(provider_fault)?;
-    Ok(Zeroizing::new(shared.as_slice().to_vec()))
-}
+/// The sealing with the randomness given, for the vectors and the tests only: see the module documentation.
+#[cfg(any(test, feature = "vectors"))]
+mod given {
+    use super::{
+        derive_hpke_keypair, provider_fault, rust_crypto, Error, HpkeCiphertext, Secret,
+        CIPHERSUITE,
+    };
+    use hpke_rs::{Hpke, Mode};
+    use hpke_rs_crypto::types::{AeadAlgorithm, KdfAlgorithm, KemAlgorithm};
+    use hpke_rs_crypto::HpkeCrypto;
+    use hpke_rs_rust_crypto::HpkeRustCrypto;
+    use openmls_traits::crypto::OpenMlsCrypto;
+    use zeroize::Zeroizing;
 
-/// HPKE single-shot sealing in base mode (RFC 9180 section 6.1) to `public_key`, the ephemeral key derived from 32
-/// bytes of `entropy`. The same bytes as the provider's `hpke_seal` would give with that randomness.
-/// `bad-format` for a public key that is not 32 bytes or is a point of small order.
+    /// RFC 9180: the version in every labelled HKDF input, and the suite id of DHKEM(X25519, HKDF-SHA256).
+    const HPKE_VERSION: &[u8] = b"HPKE-v1";
+    const KEM_SUITE_ID: &[u8] = b"KEM\x00\x20";
+
+    /// RFC 9180's `LabeledExtract` and `LabeledExpand` for the KEM, on the provider's HKDF.
+    fn kem_extract_and_expand(dh: &[u8], kem_context: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
+        let provider = rust_crypto()?;
+        let hash = CIPHERSUITE.hash_algorithm();
+        let labelled_ikm = Zeroizing::new([HPKE_VERSION, KEM_SUITE_ID, b"eae_prk", dh].concat());
+        let prk = provider
+            .hkdf_extract(hash, &[], &labelled_ikm)
+            .map_err(provider_fault)?;
+        let length = [0x00, 0x20];
+        let labelled_info = [
+            &length,
+            HPKE_VERSION,
+            KEM_SUITE_ID,
+            b"shared_secret",
+            kem_context,
+        ]
+        .concat();
+        let shared = provider
+            .hkdf_expand(hash, prk.as_slice(), &labelled_info, 32)
+            .map_err(provider_fault)?;
+        Ok(Zeroizing::new(shared.as_slice().to_vec()))
+    }
+
+    fn hpke() -> Hpke<HpkeRustCrypto> {
+        Hpke::new(
+            Mode::Base,
+            KemAlgorithm::DhKem25519,
+            KdfAlgorithm::HkdfSha256,
+            AeadAlgorithm::ChaCha20Poly1305,
+        )
+    }
+
+    /// `Encap(pkR)` with `skE, pkE = DeriveKeyPair(ikm)`: `dh = DH(skE, pkR)`, `enc = pkE`,
+    /// `shared_secret = ExtractAndExpand(dh, enc ‖ pkR)`. Returns `enc` and the shared secret.
+    fn encap(ikm: &Secret<32>, public_key: &[u8]) -> Result<([u8; 32], Zeroizing<Vec<u8>>), Error> {
+        let ephemeral = derive_hpke_keypair(ikm)?;
+        let dh = HpkeRustCrypto::dh(
+            KemAlgorithm::DhKem25519,
+            public_key,
+            ephemeral.private.expose(),
+        )
+        .map(Zeroizing::new)
+        .map_err(|_| Error::BadFormat)?;
+        let kem_context = [ephemeral.public.as_slice(), public_key].concat();
+        Ok((ephemeral.public, kem_extract_and_expand(&dh, &kem_context)?))
+    }
+
+    /// HPKE single-shot sealing in base mode (RFC 9180 section 6.1) to `public_key`, the ephemeral key derived
+    /// from `ikm`: the bytes the provider's `hpke_seal` gives when its generator yields `ikm`.
+    pub(crate) fn hpke_seal_with(
+        ikm: &Secret<32>,
+        public_key: &[u8],
+        info: &[u8],
+        aad: &[u8],
+        plaintext: &[u8],
+    ) -> Result<HpkeCiphertext, Error> {
+        let (kem_output, shared_secret) = encap(ikm, public_key)?;
+        let ciphertext = hpke()
+            .key_schedule(&shared_secret, info, &[], &[])
+            .and_then(|mut context| context.seal(aad, plaintext))
+            .map_err(|_| Error::Internal("hpke seal"))?;
+        Ok(HpkeCiphertext {
+            kem_output: kem_output.to_vec(),
+            ciphertext,
+        })
+    }
+
+    /// HPKE's secret export in base mode (RFC 9180 section 6.2) to `public_key` with the ephemeral key derived
+    /// from `ikm`: the encapsulated key and the exported secret, as the provider's
+    /// `hpke_setup_sender_and_export` gives them when its generator yields `ikm`.
+    #[cfg(feature = "vectors")]
+    pub(crate) fn hpke_export_with(
+        ikm: &Secret<32>,
+        public_key: &[u8],
+        info: &[u8],
+        exporter_context: &[u8],
+        length: usize,
+    ) -> Result<(Vec<u8>, Zeroizing<Vec<u8>>), Error> {
+        let (kem_output, shared_secret) = encap(ikm, public_key)?;
+        let exported = hpke()
+            .key_schedule(&shared_secret, info, &[], &[])
+            .and_then(|context| context.export(exporter_context, length))
+            .map_err(|_| Error::Internal("hpke export"))?;
+        Ok((kem_output.to_vec(), Zeroizing::new(exported)))
+    }
+}
+#[cfg(feature = "vectors")]
+pub(crate) use given::hpke_export_with;
+#[cfg(any(test, feature = "vectors"))]
+pub(crate) use given::hpke_seal_with;
+
+/// HPKE single-shot sealing in base mode (RFC 9180 section 6.1) to `public_key`, by the provider. `entropy` is
+/// asked for 32 bytes first: a source that fails is `Error::Entropy` here and no panic below. `bad-format` for a
+/// public key that is not 32 bytes or is a point of small order.
+#[cfg(not(feature = "vectors"))]
 pub(crate) fn hpke_seal(
     entropy: &mut dyn Entropy,
     public_key: &[u8],
@@ -428,31 +509,30 @@ pub(crate) fn hpke_seal(
     aad: &[u8],
     plaintext: &[u8],
 ) -> Result<HpkeCiphertext, Error> {
-    // Encap(pkR): skE, pkE = DeriveKeyPair(random); dh = DH(skE, pkR); enc = pkE;
-    // shared_secret = ExtractAndExpand(dh, enc ‖ pkR).
-    let ephemeral = derive_hpke_keypair(&Secret::random(entropy)?)?;
-    let dh = HpkeRustCrypto::dh(
-        KemAlgorithm::DhKem25519,
-        public_key,
-        ephemeral.private.expose(),
-    )
-    .map(Zeroizing::new)
-    .map_err(|_| Error::BadFormat)?;
-    let kem_context = [ephemeral.public.as_slice(), public_key].concat();
-    let shared_secret = kem_extract_and_expand(&dh, &kem_context)?;
-    let ciphertext = Hpke::<HpkeRustCrypto>::new(
-        Mode::Base,
-        KemAlgorithm::DhKem25519,
-        KdfAlgorithm::HkdfSha256,
-        AeadAlgorithm::ChaCha20Poly1305,
-    )
-    .key_schedule(&shared_secret, info, &[], &[])
-    .and_then(|mut context| context.seal(aad, plaintext))
-    .map_err(|_| Error::Internal("hpke seal"))?;
+    Secret::<32>::random(entropy)?;
+    if public_key.len() != 32 {
+        return Err(Error::BadFormat);
+    }
+    let sealed = rust_crypto()?
+        .hpke_seal(CIPHERSUITE.hpke_config(), public_key, info, aad, plaintext)
+        .map_err(|_| Error::BadFormat)?;
     Ok(HpkeCiphertext {
-        kem_output: ephemeral.public.to_vec(),
-        ciphertext,
+        kem_output: sealed.kem_output.as_slice().to_vec(),
+        ciphertext: sealed.ciphertext.as_slice().to_vec(),
     })
+}
+
+/// The sealing of the vector generator: the ephemeral key is derived from 32 bytes of `entropy`, so a seeded
+/// source repeats it. Not part of a shipped build.
+#[cfg(feature = "vectors")]
+pub(crate) fn hpke_seal(
+    entropy: &mut dyn Entropy,
+    public_key: &[u8],
+    info: &[u8],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<HpkeCiphertext, Error> {
+    hpke_seal_with(&Secret::random(entropy)?, public_key, info, aad, plaintext)
 }
 
 /// HPKE single-shot opening in base mode with `private_key`; `decrypt-failed` when it does not open.
@@ -730,7 +810,8 @@ mod tests {
         let info = hex("4f6465206f6e2061204772656369616e2055726e");
         let aad = hex("436f756e742d30");
         let plaintext = hex("4265617574792069732074727574682c20747275746820626561757479");
-        let sealed = hpke_seal(&mut Fixed(ikm_e), &pk_r, &info, &aad, &plaintext).unwrap();
+        let ikm_e = Secret::from_slice(&ikm_e).unwrap();
+        let sealed = hpke_seal_with(&ikm_e, &pk_r, &info, &aad, &plaintext).unwrap();
         assert_eq!(
             sealed.kem_output,
             hex("1afa08d3dec047a643885163f1180476fa7ddb54c6a8029ea33f95796bf2ac4a")
