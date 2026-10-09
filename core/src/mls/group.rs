@@ -222,7 +222,8 @@ pub(crate) fn external_commit(
 }
 
 /// Opens a Welcome without joining yet, so that the group can be checked first. The single-use KeyPackage it
-/// was for is used up whether or not this succeeds (3.7); `bad-group` when it does not open or verify.
+/// was for is used up whether or not this succeeds (3.7); `bad-group` when it does not open or verify, `replay`
+/// when the device holds the group already.
 pub(crate) fn stage_welcome(provider: &Provider, welcome: &[u8]) -> Result<StagedWelcome, Error> {
     let welcome = match MlsMessageIn::tls_deserialize_exact(welcome).map(MlsMessageIn::extract) {
         Ok(MlsMessageBodyIn::Welcome(welcome)) => welcome,
@@ -230,6 +231,14 @@ pub(crate) fn stage_welcome(provider: &Provider, welcome: &[u8]) -> Result<Stage
     };
     let processed = ProcessedWelcome::new_from_welcome(provider, &profile::join_config(), welcome)
         .map_err(|_| Error::BadGroup)?;
+    // A Welcome for a group the device holds is one met again (`replay`), not a group that does not verify.
+    let held = processed.unverified_group_info().group_context().group_id();
+    if MlsGroup::load(provider.storage(), held)
+        .map_err(mls_fault)?
+        .is_some()
+    {
+        return Err(Error::Replay);
+    }
     JoinBuilder::new(provider, processed)
         .skip_lifetime_validation()
         .build()
