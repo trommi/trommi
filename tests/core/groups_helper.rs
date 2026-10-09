@@ -537,6 +537,21 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
         assert_eq!(device.group(&group).unwrap().disallowed, [other.id()]);
         // It writes nothing into the group.
         assert_eq!(device.update(&group, true, now()), Err(Error::StaleSession));
+        assert_eq!(
+            device.send_handover(&group, &other.id()),
+            Err(Error::BadGroup)
+        );
+    }
+    // What is sent in the group it does not open: neither a step of the device that made the session nor a
+    // handover of the other human device, which a hub that checks nothing stores.
+    let turn = TurnId::new([9; 16]);
+    other
+        .send_work_trail(&group, &turn, 1, b"{}", now())
+        .unwrap();
+    post_ok(&mut hub, &mut other);
+    for device in [&mut a, &mut b] {
+        assert_eq!(sync_ok(&hub, device), [Processed::Skipped]);
+        assert_eq!(device.content_key(&group, 1), Err(Error::NoKey));
     }
 
     // It removes the offending leaf. Open point: 5.2.6 says such a session's content is never opened; a

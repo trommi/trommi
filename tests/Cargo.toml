@@ -11,6 +11,12 @@ path = "src/lib.rs"
 [dependencies]
 trommi-core = { path = "../core", features = ["vectors"] }
 serde_json = "=1.0.151"
+# OpenMLS itself, for the member of `src/forge.rs` that builds what no device builds.
+openmls = { workspace = true }
+openmls_rust_crypto = { workspace = true }
+openmls_basic_credential = { workspace = true }
+openmls_traits = { workspace = true }
+tls_codec = "=0.5.0"
 
 [[test]]
 name = "core_groups_founding"
@@ -65,5 +71,19 @@ name = "core_groups_refusals"
 path = "core/groups_refusals.rs"
 
 [[test]]
+name = "core_groups_crash"
+path = "core/groups_crash.rs"
+
+[[test]]
+name = "core_groups_storage"
+path = "core/groups_storage.rs"
+
+[[test]]
+name = "core_groups_lifetimes"
+path = "core/groups_lifetimes.rs"
+
+[[test]]
+name = "core_groups_cost"
+path = "core/groups_cost.rs"
 name = "core_recovery_construct"
 path = "core/recovery_construct.rs"
