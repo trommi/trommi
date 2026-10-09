@@ -194,8 +194,10 @@ encrypted.
    leave it not stale, and only a human device repairs one.
 4. A key has one role in a room for ever (human, agent or helper device). A recovery key is never a key that has
    or had a role, and no device comes in under the room's recovery signature key.
-5. A key that left a group is added to it again only if nothing it wrote lies beyond its Cut (3.7: the device
-   whose Welcome failed); its chain goes on where it was cut.
+5. A key that left a session group is added to it again only if nothing it wrote lies beyond its Cut (3.7: the
+   device whose Welcome failed, removed and added in one Commit); its chain goes on where it was cut, with
+   envelopes of the epoch that added it or a later one (an older epoch's: `not-member`). Into the room group a
+   removed key never returns (4.2).
 6. One room Commit holds at most one Add. New recovery keys are taken only on `…/recovery-code` or in a recovery;
    on `…/commits` they are `incomplete`.
 7. An archived group answers every write with `gone` (410); an envelope for it takes no chain number. Archiving
