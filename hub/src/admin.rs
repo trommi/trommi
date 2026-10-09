@@ -1,38 +1,65 @@
 //! The hub's admin page: one read-only page for whoever runs the hub. It listens on 127.0.0.1 (`HUB_ADMIN_HOST`
-//! for a container, whose port is then published to the host's loopback only), on a port of its own, and only when a password hash is configured (`HUB_ADMIN_PASSWORD_HASH`); it is never part of the
-//! public port. It shows what the hub can see and nothing else: rooms and accounts with their counts, the hub's
-//! tables with what kind of data each holds, the running version and health. No content: the hub has none.
+//! for a container, whose port is then published to the host's loopback only), on a port of its own, and only when
+//! a password hash is configured (`HUB_ADMIN_PASSWORD_HASH`); it is never part of the public port. It shows what
+//! the hub can see and nothing else: rooms and accounts with their counts, the hub's tables with what kind of
+//! data each holds, the running version and health. No content: the hub has none.
+//!
+//! Sign-in is HTTP Basic (any user name, the one password). A browser keeps such a credential for the page's own
+//! origin, port included, and sends it nowhere else — a cookie would also go to every other port of the host.
+//! The page takes `GET /` and nothing else: there is nothing to change, so nothing another site could make a
+//! browser do.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, Limited};
+use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 
 use crate::app::App;
 use crate::error::Refused;
-use crate::util::{b64, now, random, same};
+use crate::util::{now, random, sha256};
 
-/// how long a sign-in lasts
+/// how long a checked credential is taken without checking it again
 const SESSION_MS: u64 = 12 * 3_600_000;
 const MAX_SESSIONS: usize = 16;
 /// the longest wait after wrong passwords
 const BACKOFF_MAX_MS: u64 = 60_000;
-const COOKIE: &str = "trommi_admin";
+/// the page is computed once for all who ask within this time
+const PAGE_MS: u64 = 5_000;
+/// connections the admin listener holds at a time, and how long one may last
+pub const MAX_CONNECTIONS: usize = 16;
+pub const CONNECTION_MS: u64 = 60_000;
 
-/// Sign-ins and the page's own throttle: after each wrong password the page takes no other for 1 s, 2 s, 4 s …
-/// up to a minute, whoever asks (it has one user), and it checks one password at a time.
-#[derive(Default)]
+/// Checked credentials and the page's own throttle: after each wrong password the page takes no other for 1 s,
+/// 2 s, 4 s … up to a minute, whoever asks (it has one user), and it checks one password at a time.
 pub struct Admin {
     state: Mutex<State>,
+    /// keys the fingerprints of checked credentials: new at every start
+    key: [u8; 32],
+    /// the page as last computed, and whether it is being computed now
+    page: Mutex<Option<(u64, String)>>,
+    computing: AtomicBool,
+}
+
+impl Default for Admin {
+    fn default() -> Self {
+        Admin {
+            state: Default::default(),
+            key: random(),
+            page: Default::default(),
+            computing: AtomicBool::new(false),
+        }
+    }
 }
 
 #[derive(Default)]
 struct State {
+    /// fingerprints of credentials that were checked and right, with the time until which they are taken
     sessions: HashMap<[u8; 32], u64>,
     failures: u32,
     next_at: u64,
@@ -48,12 +75,9 @@ pub fn hash_password(password: &str) -> String {
         .to_string()
 }
 
-fn verify(hash: &str, password: &str) -> bool {
-    PasswordHash::new(hash).is_ok_and(|parsed| {
-        Argon2::default()
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok()
-    })
+fn verify(hash: &str, password: &[u8]) -> bool {
+    PasswordHash::new(hash)
+        .is_ok_and(|parsed| Argon2::default().verify_password(password, &parsed).is_ok())
 }
 
 fn esc(text: &str) -> String {
@@ -63,11 +87,10 @@ fn esc(text: &str) -> String {
         .replace('"', "&quot;")
 }
 
-fn page(status: StatusCode, title: &str, body: &str) -> Response<Full<Bytes>> {
+fn page(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
     let html = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-<title>{title}</title><style>{STYLE}</style></head><body><main>{body}</main></body></html>",
-        title = esc(title)
+<title>Trommi hub</title><style>{STYLE}</style></head><body><main>{body}</main></body></html>"
     );
     Response::builder()
         .status(status)
@@ -75,9 +98,10 @@ fn page(status: StatusCode, title: &str, body: &str) -> Response<Full<Bytes>> {
         .header("cache-control", "no-store")
         .header("x-content-type-options", "nosniff")
         .header("referrer-policy", "no-referrer")
+        .header("cross-origin-resource-policy", "same-origin")
         .header(
             "content-security-policy",
-            "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+            "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'",
         )
         .body(Full::new(Bytes::from(html)))
         .expect("a valid response")
@@ -88,59 +112,69 @@ main{max-width:1100px;margin:0 auto;padding:24px 16px}h1{font-size:20px;margin:0
 p{margin:4px 0}.muted{color:#6b6a64}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:5px 10px 5px 0;\
 border-bottom:1px solid #e4e1d8;vertical-align:top}th{font-weight:600;color:#6b6a64;font-size:12px}td.n,th.n{text-align:right;\
 font-variant-numeric:tabular-nums}code{font:12px ui-monospace,monospace}.scroll{overflow-x:auto}\
-input,button{font:inherit;padding:6px 10px;border:1px solid #b9b6ab;border-radius:6px;background:#fff;color:inherit}\
-form.out{float:right}\
-@media(prefers-color-scheme:dark){body{color:#e9e7e0;background:#171715}th,.muted{color:#9a988f}th,td{border-color:#33322e}\
-input,button{background:#22221f;border-color:#55534c}}";
+@media(prefers-color-scheme:dark){body{color:#e9e7e0;background:#171715}th,.muted{color:#9a988f}th,td{border-color:#33322e}}";
 
-fn redirect(cookie: Option<String>) -> Response<Full<Bytes>> {
-    let mut answer = Response::builder()
-        .status(StatusCode::SEE_OTHER)
-        .header("location", "/")
-        .header("cache-control", "no-store");
-    if let Some(cookie) = cookie {
-        answer = answer.header("set-cookie", cookie);
-    }
+/// Asks the browser for the password.
+fn ask(note: &str) -> Response<Full<Bytes>> {
+    let mut answer = page(
+        StatusCode::UNAUTHORIZED,
+        &format!("<h1>Trommi hub</h1><p class=\"muted\">{}</p>", esc(note)),
+    );
+    answer.headers_mut().insert(
+        "www-authenticate",
+        "Basic realm=\"Trommi hub admin\", charset=\"UTF-8\""
+            .parse()
+            .expect("static"),
+    );
     answer
-        .body(Full::new(Bytes::new()))
-        .expect("a valid response")
 }
 
-fn login_page(status: StatusCode, note: &str) -> Response<Full<Bytes>> {
-    page(
-        status,
-        "Trommi hub",
-        &format!(
-            "<h1>Trommi hub</h1><p class=\"muted\">{}</p>\
-<form method=\"post\" action=\"/login\"><p><input type=\"password\" name=\"password\" autocomplete=\"current-password\" autofocus required> \
-<button>Sign in</button></p></form>",
-            esc(note)
-        ),
-    )
+fn wait(seconds: u64) -> Response<Full<Bytes>> {
+    let mut answer = page(
+        StatusCode::TOO_MANY_REQUESTS,
+        &format!("<h1>Trommi hub</h1><p class=\"muted\">Too many attempts. Try again in {seconds} s.</p>"),
+    );
+    answer.headers_mut().insert("retry-after", seconds.into());
+    answer
 }
 
-fn session_of(req: &Request<Incoming>) -> Option<[u8; 32]> {
-    let cookies = req.headers().get("cookie")?.to_str().ok()?;
-    cookies.split(';').find_map(|c| {
-        let (name, value) = c.trim().split_once('=')?;
-        (name == COOKIE)
-            .then(|| crate::util::unb64(value))
-            .flatten()?
-            .try_into()
-            .ok()
-    })
+/// The password of an `authorization: Basic` header (what follows the first colon), and the header's fingerprint.
+fn credential(app: &App, req: &Request<Incoming>) -> Option<(Vec<u8>, [u8; 32])> {
+    let header = req.headers().get("authorization")?.as_bytes();
+    if header.len() > 1024 {
+        return None;
+    }
+    let text = std::str::from_utf8(header).ok()?;
+    let encoded = text
+        .strip_prefix("Basic ")
+        .or_else(|| text.strip_prefix("basic "))?;
+    let decoded = base64_standard(encoded.trim())?;
+    let colon = decoded.iter().position(|b| *b == b':')?;
+    let fingerprint = sha256(&[&app.admin.key[..], header].concat());
+    Some((decoded[colon + 1..].to_vec(), fingerprint))
+}
+
+/// Base64 as Basic authentication writes it: the standard alphabet, with padding.
+fn base64_standard(text: &str) -> Option<Vec<u8>> {
+    let url: String = text
+        .trim_end_matches('=')
+        .chars()
+        .map(|c| match c {
+            '+' => '-',
+            '/' => '_',
+            '-' | '_' => '!',
+            c => c,
+        })
+        .collect();
+    crate::util::unb64(&url)
 }
 
 impl Admin {
-    fn signed_in(&self, session: Option<[u8; 32]>) -> bool {
-        let Some(session) = session else {
-            return false;
-        };
+    fn known(&self, fingerprint: &[u8; 32]) -> bool {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let t = now();
         s.sessions.retain(|_, until| *until > t);
-        // (compared in constant time: the cookie is the secret)
-        s.sessions.keys().any(|held| same(held, &session))
+        s.sessions.contains_key(fingerprint)
     }
 
     /// May a password be checked now? `Err(seconds)`: when to come back.
@@ -157,163 +191,132 @@ impl Admin {
         Ok(())
     }
 
-    fn checked(&self, right: bool) -> Option<[u8; 32]> {
+    /// The check is over: `Some(right)`, or `None` if nothing was checked.
+    fn checked(&self, outcome: Option<bool>, fingerprint: &[u8; 32]) {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         s.checking = false;
-        if !right {
-            s.failures = (s.failures + 1).min(30);
-            s.next_at = now() + (1000u64 << (s.failures - 1).min(16)).min(BACKOFF_MAX_MS);
-            return None;
-        }
-        (s.failures, s.next_at) = (0, 0);
-        if s.sessions.len() >= MAX_SESSIONS {
-            let oldest = s
-                .sessions
-                .iter()
-                .min_by_key(|(_, until)| **until)
-                .map(|(k, _)| *k);
-            if let Some(oldest) = oldest {
-                s.sessions.remove(&oldest);
+        match outcome {
+            None => {}
+            Some(false) => {
+                s.failures = (s.failures + 1).min(30);
+                s.next_at = now() + (1000u64 << (s.failures - 1).min(16)).min(BACKOFF_MAX_MS);
+            }
+            Some(true) => {
+                (s.failures, s.next_at) = (0, 0);
+                if s.sessions.len() >= MAX_SESSIONS {
+                    let oldest = s
+                        .sessions
+                        .iter()
+                        .min_by_key(|(_, until)| **until)
+                        .map(|(k, _)| *k);
+                    if let Some(oldest) = oldest {
+                        s.sessions.remove(&oldest);
+                    }
+                }
+                s.sessions.insert(*fingerprint, now() + SESSION_MS);
             }
         }
-        let session = random::<32>();
-        s.sessions.insert(session, now() + SESSION_MS);
-        Some(session)
     }
+}
 
-    fn sign_out(&self, session: Option<[u8; 32]>) {
-        if let Some(session) = session {
-            self.state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .sessions
-                .retain(|held, _| !same(held, &session));
-        }
+/// A password check that ends in `checked` whatever becomes of the request or the thread.
+struct Checking {
+    app: Arc<App>,
+    fingerprint: [u8; 32],
+    outcome: Option<bool>,
+}
+
+impl Drop for Checking {
+    fn drop(&mut self) {
+        self.app.admin.checked(self.outcome, &self.fingerprint);
     }
 }
 
 /// One request to the admin listener.
 pub async fn handle(app: Arc<App>, req: Request<Incoming>) -> Response<Full<Bytes>> {
     let Some(hash) = app.cfg.admin_password_hash.clone() else {
-        return page(StatusCode::NOT_FOUND, "Trommi hub", "<p>Not found.</p>");
+        return page(StatusCode::NOT_FOUND, "<p>Not found.</p>");
     };
-    let session = session_of(&req);
-    let path = req.uri().path().to_string();
-    match (req.method().clone(), path.as_str()) {
-        (Method::GET, "/") => {
-            if !app.admin.signed_in(session) {
-                return login_page(
-                    StatusCode::OK,
-                    "The admin page of this hub. It shows what the hub can see: no content.",
-                );
-            }
-            let shown = app.clone();
-            match tokio::task::spawn_blocking(move || overview(&shown)).await {
-                Ok(Ok(html)) => page(StatusCode::OK, "Trommi hub", &html),
-                _ => page(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Trommi hub",
-                    "<p>The database did not answer.</p>",
-                ),
-            }
-        }
-        (Method::POST, "/login") => {
-            // a form posted from another site signs nobody in
-            if req
-                .headers()
-                .get("sec-fetch-site")
-                .is_some_and(|v| v != "same-origin" && v != "none")
-            {
-                return login_page(StatusCode::FORBIDDEN, "Sign in on this page.");
-            }
-            let Ok(body) = Limited::new(req.into_body(), 4096).collect().await else {
-                return login_page(StatusCode::BAD_REQUEST, "That was not a sign-in.");
-            };
-            let body = body.to_bytes();
-            let password = form_value(&body, "password").unwrap_or_default();
-            if let Err(seconds) = app.admin.admit() {
-                let mut answer = login_page(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    &format!("Too many attempts. Try again in {seconds} s."),
-                );
-                answer.headers_mut().insert("retry-after", seconds.into());
-                return answer;
-            }
-            // the slow hash runs on the hub's pool; if the pool is busy, nothing was checked
-            let pool = app.clone();
-            let right =
-                tokio::task::spawn_blocking(move || pool.pooled(|| verify(&hash, &password))).await;
-            match right {
-                Ok(Ok(right)) => match app.admin.checked(right) {
-                    Some(session) => {
-                        crate::log::info("admin_signed_in", serde_json::json!({}));
-                        redirect(Some(format!(
-                            "{COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
-                            b64(&session),
-                            SESSION_MS / 1000
-                        )))
-                    }
-                    None => {
-                        crate::log::info("admin_wrong_password", serde_json::json!({}));
-                        login_page(StatusCode::UNAUTHORIZED, "Wrong password.")
-                    }
-                },
-                _ => {
-                    app.admin
-                        .state
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .checking = false;
-                    login_page(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "The hub is busy. Try again in a moment.",
-                    )
-                }
-            }
-        }
-        (Method::POST, "/logout") => {
-            app.admin.sign_out(session);
-            redirect(Some(format!(
-                "{COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
-            )))
-        }
-        _ => page(StatusCode::NOT_FOUND, "Trommi hub", "<p>Not found.</p>"),
+    if req.method() != Method::GET || req.uri().path() != "/" {
+        return page(StatusCode::NOT_FOUND, "<p>Not found.</p>");
     }
-}
-
-/// One value of an `application/x-www-form-urlencoded` body.
-fn form_value(body: &[u8], name: &str) -> Option<String> {
-    let text = std::str::from_utf8(body).ok()?;
-    text.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        (key == name).then(|| percent_decode(value))
+    let Some((password, fingerprint)) = credential(&app, &req) else {
+        return ask("The admin page of this hub. It shows what the hub can see: no content.");
+    };
+    if !app.admin.known(&fingerprint) {
+        if let Err(seconds) = app.admin.admit() {
+            return wait(seconds);
+        }
+        // The slow hash runs on the hub's pool, and the job itself ends the check: a request that goes away
+        // meanwhile leaves nothing open. If the pool is busy, nothing was checked.
+        let mut checking = Checking {
+            app: app.clone(),
+            fingerprint,
+            outcome: None,
+        };
+        let right = tokio::task::spawn_blocking(move || {
+            checking.outcome = checking.app.pooled(|| verify(&hash, &password)).ok();
+            checking.outcome
+        })
+        .await;
+        match right {
+            Ok(Some(true)) => crate::log::info("admin_signed_in", serde_json::json!({})),
+            Ok(Some(false)) => {
+                crate::log::info("admin_wrong_password", serde_json::json!({}));
+                return ask("Wrong password.");
+            }
+            _ => {
+                return page(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "<p>The hub is busy. Try again in a moment.</p>",
+                )
+            }
+        }
+    }
+    // the page is computed by one request at a time and kept for a few seconds: it reads every table
+    let t = now();
+    let cached = |fresh: bool| {
+        let held = app.admin.page.lock().unwrap_or_else(|e| e.into_inner());
+        held.as_ref()
+            .filter(|(at, _)| !fresh || t < at + PAGE_MS)
+            .map(|(_, html)| html.clone())
+    };
+    if let Some(html) = cached(true) {
+        return page(StatusCode::OK, &html);
+    }
+    if app.admin.computing.swap(true, Ordering::SeqCst) {
+        return match cached(false) {
+            Some(html) => page(StatusCode::OK, &html),
+            None => page(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "<p>The page is being put together. Try again in a moment.</p>",
+            ),
+        };
+    }
+    let shown = app.clone();
+    let computed = tokio::task::spawn_blocking(move || {
+        struct Done(Arc<App>);
+        impl Drop for Done {
+            fn drop(&mut self) {
+                self.0.admin.computing.store(false, Ordering::SeqCst);
+            }
+        }
+        let done = Done(shown);
+        let html = overview(&done.0);
+        if let Ok(html) = &html {
+            *done.0.admin.page.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((now(), html.clone()));
+        }
+        html
     })
-}
-
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' => out.push(b' '),
-            b'%' if bytes.get(i + 1..i + 3).is_some() => {
-                match std::str::from_utf8(&bytes[i + 1..i + 3])
-                    .ok()
-                    .and_then(|h| u8::from_str_radix(h, 16).ok())
-                {
-                    Some(b) => {
-                        out.push(b);
-                        i += 2;
-                    }
-                    None => out.push(b'%'),
-                }
-            }
-            b => out.push(b),
-        }
-        i += 1;
+    .await;
+    match computed {
+        Ok(Ok(html)) => page(StatusCode::OK, &html),
+        _ => page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "<p>The database did not answer.</p>",
+        ),
     }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// What each table holds, as spec/hub-api.md "Tables" has it: what the hub reads, and what lies in it sealed.
@@ -399,8 +402,7 @@ fn overview(app: &App) -> Result<String, Refused> {
         let (rooms, accounts) = (one("SELECT count(*) FROM rooms")?, one("SELECT count(*) FROM accounts")?);
         let (at_work, waiting) = app.gate.load();
         out.push_str(&format!(
-            "<form class=\"out\" method=\"post\" action=\"/logout\"><button>Sign out</button></form>\
-<h1>Trommi hub</h1><p class=\"muted\">version <code>{}</code> · protocol 2 · {} · database answers · {} rooms · {} accounts · \
+            "<h1>Trommi hub</h1><p class=\"muted\">version <code>{}</code> · protocol 2 · {} · database answers · {} rooms · {} accounts · \
 {} streams open · {} requests at work · pool {} at work, {} waiting · push to Apple {}</p>",
             esc(&app.cfg.commit),
             esc(&app.cfg.url),
