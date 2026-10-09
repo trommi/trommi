@@ -906,3 +906,201 @@ fn first_contact_finds_a_helper_session_that_its_main_sessions_agent_did_not_fou
     assert_eq!(late.content_key(&group, epoch), Err(Error::NoKey));
     assert_eq!(late.findings().unwrap().len(), 1);
 }
+
+fn erase() -> Draft {
+    Draft::BoardItem {
+        board: BoardId::ALL_DESKS,
+        payload: json(
+            r#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+        ),
+    }
+}
+
+#[test]
+fn a_chain_that_begins_at_a_snapshots_frontier_goes_on_and_is_verified_from_number_one_later() {
+    use trommi_core::board::{self, ServedItem, Snapshot};
+
+    let (mut a, mut b, mut c) = (new_device(), new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    add_human(&mut hub, &mut a, &mut c);
+    for device in [&mut a, &mut b] {
+        sync_all(&hub, device);
+    }
+    let board_id = BoardId::ALL_DESKS;
+    // One device draws three items; another writes the board's snapshot, which covers them.
+    for _ in 0..3 {
+        write(&mut hub, &mut a, &erase());
+    }
+    write(&mut hub, &mut a, &desk(&room, "of the drawer"));
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let covered = b.chain_head(&room, &a.id()).unwrap();
+    assert_eq!(covered.seq, 4);
+    let snapshot = Snapshot {
+        attachment: r#"{"file_id":"AAAAAAAAAAAAAAAAAAAAAA"}"#.into(),
+        frontier: vec![(a.id(), covered)],
+        change: b.cursor(),
+    };
+    write(
+        &mut hub,
+        &mut b,
+        &Draft::Register {
+            group: room,
+            name: board::snapshot_name(&board_id),
+            value: Some(json(&snapshot.value().unwrap())),
+        },
+    );
+    let fifth = write(&mut hub, &mut a, &erase());
+
+    // The third device holds the snapshot writer's chain and nothing of the drawer.
+    for stored in hub.chain_of(&room, &b.id(), 0) {
+        let got = c
+            .receive_envelope(&stored.bytes, stored.change, true, None, now())
+            .unwrap();
+        assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+    }
+    let of_drawer = hub.chain_of(&room, &a.id(), 0);
+    let take = |device: &mut TestDevice, stored: &StoredEnvelope| {
+        device
+            .receive_envelope(&stored.pruned(), stored.change, true, None, now())
+            .unwrap()
+    };
+    assert_eq!(take(&mut c, &of_drawer[4]).code, Some(Error::Gap));
+    // The load finds the item after the frontier missing from the drawer's chain, and the chain begun.
+    let served = [ServedItem {
+        sender: a.id(),
+        seq: fifth.seq,
+        hash: fifth.envelope_hash,
+    }];
+    assert_eq!(c.board_load(&board_id, &served), Err(Error::Withheld));
+    assert_eq!(c.chain_head(&room, &a.id()).unwrap(), covered);
+    assert_eq!(
+        take(&mut c, &of_drawer[4]).outcome,
+        EnvelopeOutcome::Chained
+    );
+    let loaded = c.board_load(&board_id, &served).unwrap();
+    assert_eq!(loaded.fresh, vec![0]);
+    assert!(loaded
+        .frontier
+        .contains(&(a.id(), c.chain_head(&room, &a.id()).unwrap())));
+    // The chain goes on.
+    let sixth = write(&mut hub, &mut a, &erase());
+    let stored = hub.chain_of(&room, &a.id(), 5).remove(0);
+    let got = c
+        .receive_envelope(&stored.bytes, stored.change, true, None, now())
+        .unwrap();
+    assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+    assert_eq!(
+        c.chain_head(&room, &a.id()).unwrap().hash,
+        sixth.envelope_hash
+    );
+    // What the drawer wrote up to the frontier is not held: its register value is unknown here.
+    assert!(c.register(&room, DESK).unwrap().is_none());
+    // An envelope at the frontier that is fetched out of order is shown unconfirmed.
+    let fetched = c
+        .receive_envelope(&of_drawer[3].bytes, of_drawer[3].change, false, None, now())
+        .unwrap();
+    assert_eq!(fetched.outcome, EnvelopeOutcome::Provisional);
+
+    // Later the chain is read from number 1: in its order, up to the frontier's envelope.
+    assert_eq!(take(&mut c, &of_drawer[1]).code, Some(Error::Gap));
+    for stored in &of_drawer[..4] {
+        let got = take(&mut c, stored);
+        assert_eq!(
+            (got.outcome, got.code),
+            (EnvelopeOutcome::Chained, Some(Error::Pruned))
+        );
+    }
+    assert_eq!(take(&mut c, &of_drawer[3]).code, Some(Error::Replay));
+    assert_eq!(
+        c.chain_head(&room, &a.id()).unwrap().hash,
+        sixth.envelope_hash
+    );
+    // With the bodies, the device holds what the others hold.
+    for stored in &of_drawer[..4] {
+        let got = c
+            .receive_envelope(&stored.bytes, stored.change, false, None, now())
+            .unwrap();
+        assert_eq!(got.outcome, EnvelopeOutcome::Applied);
+    }
+    sync_all(&hub, &mut a);
+    assert_eq!(
+        c.register(&room, DESK).unwrap().unwrap().expose(),
+        a.register(&room, DESK).unwrap().unwrap().expose()
+    );
+    assert_eq!(c.board_load(&board_id, &[]), Err(Error::Replay));
+}
+
+#[test]
+fn a_frontier_that_the_chain_does_not_lead_to_is_a_finding() {
+    use trommi_core::board::{self, Snapshot};
+
+    let (mut a, mut b) = (new_device(), new_device());
+    let (mut hub, room) = found_room(&mut a);
+    add_human(&mut hub, &mut a, &mut b);
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    sync_all(&hub, &mut a);
+    sync_all(&hub, &mut b);
+    let epoch = a.group(&room).unwrap().epoch;
+    let claim = Claim {
+        group: room,
+        epoch,
+        role: Role::Human,
+        seat: None,
+        key: a.content_key(&room, epoch).unwrap(),
+    };
+    let item = envelope::Draft::board_item(
+        BoardId::ALL_DESKS,
+        br#"{"content_type":"erase","shape_ids":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/1/0"]}"#,
+    );
+    // A writer signs two envelopes under number 2: the snapshot's writer saw one, the hub serves the other.
+    let mut pen = Pen::new(&forger.key);
+    let one = pen.sign(&claim, &item, &Objects::new(), now());
+    let mut branch = pen.fork();
+    let two = pen.sign(&claim, &item, &Objects::new(), now());
+    let other_two = branch.sign(&claim, &item, &Objects::new(), now() + 1);
+    let other_three = branch.sign(&claim, &item, &Objects::new(), now() + 1);
+    let snapshot = Snapshot {
+        attachment: r#"{"file_id":"AAAAAAAAAAAAAAAAAAAAAA"}"#.into(),
+        frontier: vec![(
+            pen.id(),
+            trommi_core::chain::Head {
+                seq: 2,
+                hash: other_two.hash().unwrap(),
+            },
+        )],
+        change: a.cursor(),
+    };
+    write(
+        &mut hub,
+        &mut a,
+        &Draft::Register {
+            group: room,
+            name: board::snapshot_name(&BoardId::ALL_DESKS),
+            value: Some(json(&snapshot.value().unwrap())),
+        },
+    );
+    sync_all(&hub, &mut b);
+    let mut at = b.cursor();
+    let mut take = |device: &mut TestDevice, envelope: &envelope::Envelope| {
+        at += 1;
+        device
+            .receive_envelope(&envelope.encode().unwrap(), at, true, None, now())
+            .unwrap()
+    };
+    assert_eq!(b.board_load(&BoardId::ALL_DESKS, &[]).map(|_| ()), Ok(()));
+    assert_eq!(take(&mut b, &other_three).outcome, EnvelopeOutcome::Applied);
+    // Read from number 1, the chain the hub serves does not lead to the frontier.
+    assert_eq!(take(&mut b, &one).outcome, EnvelopeOutcome::Applied);
+    let got = take(&mut b, &two);
+    assert_eq!(
+        (got.outcome, got.code),
+        (EnvelopeOutcome::Refused, Some(Error::Equivocation))
+    );
+    assert_eq!(b.chain_head(&room, &pen.id()).unwrap().seq, 3);
+    // The envelope the frontier names completes it.
+    assert_eq!(take(&mut b, &other_two).outcome, EnvelopeOutcome::Applied);
+    assert_eq!(take(&mut b, &other_two).code, Some(Error::Replay));
+}

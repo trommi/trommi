@@ -1043,11 +1043,48 @@ impl<S: Storage> Device<S> {
     /// items the snapshot covers and which are to be added to it ([`board_reduce`]). The refusals are those
     /// of [`board::verify_load`]: `withheld`, `hash-mismatch`, `equivocation`, `replay`, `removed-sender`,
     /// `gap`, `chain-break`, `forbidden`; `not-found` without a snapshot.
+    ///
+    /// A writer this device holds nothing of begins at the snapshot's frontier (10.3, the one shortcut of
+    /// 9.0.6): the envelope after the frontier is the next one [`Device::receive_envelope`] takes of it.
+    /// That beginning is written also when the load itself is refused: after `withheld` the caller reads
+    /// the writers' chains after the frontier and loads again.
+    /// What that writer wrote up to the frontier (its Note versions and register values too) is not held
+    /// until its chain is read from number 1, which works at any time later: those envelopes are taken
+    /// along the chain like any read back, the one at the frontier's number must be the frontier's
+    /// (`equivocation`, the finding that the snapshot and the chain disagree), and a snapshot that stands
+    /// below a frontier a chain began at is `gap` until then.
     pub fn board_load(
         &mut self,
         board: &BoardId,
         served: &[board::ServedItem],
     ) -> Result<board::Loaded, Error> {
+        // First the one shortcut: a writer this device holds nothing of begins at the snapshot's
+        // frontier. That stands whatever the load says next, so that the chain after the frontier can
+        // be read and the board loaded then.
+        self.transact(|this, batch| {
+            this.begin(0);
+            let room = GroupId::room(this.memory.record.room.ok_or(Error::NoRoom)?);
+            let registers = this.registers(&room)?;
+            let value = registers
+                .get(&board::snapshot_name(board))
+                .ok_or(Error::NotFound)?;
+            let snapshot = board::Snapshot::parse(value)?;
+            let mut chains = this.chains(&room)?;
+            let mut began = false;
+            for (writer, named) in &snapshot.frontier {
+                // A frontier beyond a removed writer's Cut is no start: the load refuses it.
+                let cut = this.cut(&room, writer)?;
+                let within = cut.is_none_or(|cut| named.seq <= cut.seq);
+                if chains.head(writer).seq == 0 && named.seq > 0 && within {
+                    chains.start_at(*writer, *named)?;
+                    began = true;
+                }
+            }
+            if began {
+                this.put_chains(batch, &room, &chains)?;
+            }
+            Ok(())
+        })?;
         self.transact(|this, batch| {
             this.begin(0);
             let room = GroupId::room(this.memory.record.room.ok_or(Error::NoRoom)?);
@@ -1073,9 +1110,17 @@ impl<S: Storage> Device<S> {
                 let at_frontier = if held.seq == named.seq {
                     held.hash
                 } else {
-                    this.record(&room, writer, named.seq)?
-                        .ok_or_else(|| damaged("a chain record"))?
-                        .hash
+                    match (
+                        this.record(&room, writer, named.seq)?,
+                        chains_held.started_at(writer),
+                    ) {
+                        (Some(record), _) => record.hash,
+                        // Of a chain that began at a frontier, that frontier is held and what lies
+                        // below it is not, until it was read from number 1.
+                        (None, Some(began)) if named.seq == began.seq => began.hash,
+                        (None, Some(began)) if named.seq < began.seq => continue,
+                        (None, _) => return Err(damaged("a chain record")),
+                    }
                 };
                 if at_frontier != named.hash {
                     return Err(Error::Equivocation);
@@ -1101,6 +1146,11 @@ impl<S: Storage> Device<S> {
                     .map_or(snapshot.frontier_of(writer).seq, |(_, held)| {
                         held.seq.min(cut.unwrap_or(u64::MAX))
                     });
+                // Of a chain that began at a frontier nothing is held between what was read from number
+                // 1 and that frontier: a snapshot that stands in between finds a `gap` there.
+                if let Some(began) = chains_held.started_at(writer) {
+                    seq = seq.max(began.seq);
+                }
                 while seq < head.seq {
                     seq = seq.saturating_add(1);
                     let record = this
@@ -1431,10 +1481,13 @@ impl<S: Storage> Device<S> {
             received.body = Some(body);
             return Ok(received);
         }
-        // The chain holds this very envelope: its record says what became of it there.
-        let record = self
-            .record(&group, &sender, seq)?
-            .ok_or(Error::Internal("a chained envelope without its record"))?;
+        // The chain holds this very envelope: its record says what became of it there. The envelope a
+        // chain began at (10.3) has none until the chain was read from number 1: it is shown unconfirmed.
+        let Some(record) = self.record(&group, &sender, seq)? else {
+            received.outcome = EnvelopeOutcome::Provisional;
+            received.body = Some(body);
+            return Ok(received);
+        };
         let mut record = record;
         if record.status == Status::Taken && record.code.is_some() {
             // It took its place without its body (pruned as served then, or its key came later): the body
