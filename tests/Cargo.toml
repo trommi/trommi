@@ -26,3 +26,7 @@ path = "core/rules.rs"
 [[test]]
 name = "core_profile"
 path = "core/profile.rs"
+
+[[test]]
+name = "core_groups_session"
+path = "core/groups_session.rs"
