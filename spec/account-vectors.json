@@ -1,0 +1,520 @@
+{
+  "about": "Known answers for the Trommi account (app/web/core/account.ts; the Swift client checks the same file). Hex unless a name ends in B64u. Regenerate with: node app/web/core/account-test.mjs --write-vectors",
+  "labels": {
+    "rule": "Every label is followed by one 0x00 byte where it is used, and has one use.",
+    "salt": "trommi/v1/account-salt",
+    "auth": "trommi/v1/account-auth",
+    "wrapKey": "trommi/v1/account-wrap-key",
+    "recoveryAuth": "trommi/v1/recovery-auth",
+    "recoveryWrapKey": "trommi/v1/recovery-wrap-key",
+    "wrapAad": "trommi/v1/account-wrap",
+    "passkeyWrapKey": "trommi/v1/passkey-wrap-key"
+  },
+  "password": {
+    "email": "  Owner@Example.COM ",
+    "normalisedEmail": "owner@example.com",
+    "password": "Zu\u0308rich-cafe\u0301-correct-horse",
+    "passwordNfcUtf8": "5ac3bc726963682d636166c3a92d636f72726563742d686f727365",
+    "kdf": {
+      "alg": "argon2id",
+      "v": 1,
+      "m": 65536,
+      "t": 3,
+      "p": 1
+    },
+    "salt": "8619a69b3a700c6594c2eae5398c06e6a06482a24135ad533977e4e4b7e684eb",
+    "master": "1733e46927c16f8938ee0b75eac18f43bffca01af59c3867ec23cbee2a3a9715",
+    "authKeyB64u": "6iZvnruDBxLlWh30jotXailf6_0Sh1IKloUPCxjrrx8",
+    "wrapKey": "53a003c1eee12de2e117d15f4b9a762ba0ac5844b4d228e560f00b164fe8b6b3",
+    "roomId": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+    "code": "810M-4GT4-8N34-EJ29-995M-RKAE-9X85-2MJK-AHAN-CNTR-B5D5-PQ2X-BSFG",
+    "codeRaw": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "nonce": "c1c1c1c1c1c1c1c1c1c1c1c1",
+    "aad": "74726f6d6d692f76312f6163636f756e742d7772617000a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a770617373776f7264",
+    "keyWrappedB64u": "AsHBwcHBwcHBwcHBwX7pO6RI6hWhNpxVH9gra8XZ73VbxUara2AHH-uplAxGcOWyIlt-df-OFoLcv4f_zA"
+  },
+  "recovery": {
+    "words": "acorn velvet tidy hamper oxford banjo cradle dolphin eagle fabric gallery harbor",
+    "wordsAsTyped": "1. Acorn\n2. Velvet\n3. Tidy\n4. Hamper\n5. Oxford\n6. Banjo\n7. Cradle\n8. Dolphin\n9. Eagle\n10. Fabric\n11. Gallery\n12. Harbor",
+    "recoveryAuthB64u": "J-6R3Aw7-340Azmnc-xHNYsavRFcqpVMwPrpnd3Da0M",
+    "wrapKey": "b1cbe95438675d29fdbe19f43f6e96c9731213f97a8803c7230daaffa3e0b2d7",
+    "nonce": "c2c2c2c2c2c2c2c2c2c2c2c2",
+    "aad": "74726f6d6d692f76312f6163636f756e742d7772617000a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a77265636f76657279",
+    "recoveryWrappedB64u": "AsLCwsLCwsLCwsLCwpv23_WuGg_MzLajcZBAdDwsCLkTqen0ixGfnh4bVNQY9LKlSFQESkp83iVXjaH2kg"
+  },
+  "passkey": {
+    "rule": "wrap key = HKDF-SHA-256(ikm = prf output, salt = room id, info = \"trommi/v1/passkey-wrap-key\" 0x00 credential id, 32 bytes); aad = \"trommi/v1/account-wrap\" 0x00 room id \"passkey\" credential id; the copy as the others: 0x02, nonce, AES-256-GCM",
+    "prfInput": "trommi/v1/passkey-prf",
+    "prfOutput": "9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f9f",
+    "credentialId": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3",
+    "roomId": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7",
+    "wrapKey": "6bdca8da4b4ee0355fa4c4b0c2c3bb00a09d12233e6f7b2fc6cce9bb88d27162",
+    "nonce": "c3c3c3c3c3c3c3c3c3c3c3c3",
+    "aad": "74726f6d6d692f76312f6163636f756e742d7772617000a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7706173736b6579d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3",
+    "keyWrappedB64u": "AsPDw8PDw8PDw8PDw159aENJ-xDbBNKxETCkx7rNFaL37rWsiNDUkkV0t3Jg3eml6oNKOIKHRYmb3qY6-g"
+  },
+  "email": {
+    "rule": "1. drop leading and trailing U+0020 and U+0009..U+000D. 2. every character left is U+0021..U+007E, else bad-email (nothing is mapped or normalised). 3. A-Z become a-z. 4. at most 254 characters; exactly one \"@\"; 1 to 64 characters before it; after it a \".\" with 1 to 190 characters before and 2 to 63 after.",
+    "cases": [
+      {
+        "input": "owner@example.com",
+        "normalised": "owner@example.com",
+        "why": "as it is"
+      },
+      {
+        "input": "  Owner@Example.COM ",
+        "normalised": "owner@example.com",
+        "why": "capitals, spaces around it"
+      },
+      {
+        "input": "\t\r\n\u000b\fAda.Lovelace+Notes@Sub.Example.ORG\n",
+        "normalised": "ada.lovelace+notes@sub.example.org",
+        "why": "every dropped character around it; dots and a plus kept"
+      },
+      {
+        "input": "O'Brien_{x}|~!#$%&*/=?^`@example.org",
+        "normalised": "o'brien_{x}|~!#$%&*/=?^`@example.org",
+        "why": "printable ASCII in the local part is kept as it is"
+      },
+      {
+        "input": "user@xn--mller-kva.example.org",
+        "normalised": "user@xn--mller-kva.example.org",
+        "why": "a domain in punycode"
+      },
+      {
+        "input": "a@example..com",
+        "normalised": "a@example..com",
+        "why": "two dots: the rule asks for one dot with enough on both sides"
+      },
+      {
+        "input": "a@example.com.",
+        "normalised": "a@example.com.",
+        "why": "a dot at the end: the dot before \"com.\" counts"
+      },
+      {
+        "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.org",
+        "normalised": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.org",
+        "why": "64 characters before the @"
+      },
+      {
+        "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com",
+        "normalised": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com",
+        "why": "254 characters"
+      },
+      {
+        "input": "x@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com",
+        "normalised": "x@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com",
+        "why": "190 characters before the first dot"
+      },
+      {
+        "input": "x@a.777777777777777777777777777777777777777777777777777777777777777",
+        "normalised": "x@a.777777777777777777777777777777777777777777777777777777777777777",
+        "why": "63 characters after the dot"
+      },
+      {
+        "input": "A@B.CD",
+        "normalised": "a@b.cd",
+        "why": "the shortest"
+      },
+      {
+        "input": "",
+        "error": "bad-email",
+        "why": "empty"
+      },
+      {
+        "input": "   ",
+        "error": "bad-email",
+        "why": "only spaces"
+      },
+      {
+        "input": "owner",
+        "error": "bad-email",
+        "why": "no @"
+      },
+      {
+        "input": "owner@example",
+        "error": "bad-email",
+        "why": "no dot after the @"
+      },
+      {
+        "input": "@example.com",
+        "error": "bad-email",
+        "why": "nothing before the @"
+      },
+      {
+        "input": "owner@@example.com",
+        "error": "bad-email",
+        "why": "two @"
+      },
+      {
+        "input": "a@b@example.com",
+        "error": "bad-email",
+        "why": "two @"
+      },
+      {
+        "input": "owner@.com",
+        "error": "bad-email",
+        "why": "nothing before the dot"
+      },
+      {
+        "input": "owner@example.c",
+        "error": "bad-email",
+        "why": "one character after the dot"
+      },
+      {
+        "input": "own er@example.com",
+        "error": "bad-email",
+        "why": "a space inside"
+      },
+      {
+        "input": "owner@exam\tple.com",
+        "error": "bad-email",
+        "why": "a tab inside"
+      },
+      {
+        "input": "owner@example.com\u0000",
+        "error": "bad-email",
+        "why": "a control character"
+      },
+      {
+        "input": "owner@example.com",
+        "error": "bad-email",
+        "why": "DEL"
+      },
+      {
+        "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.org",
+        "error": "bad-email",
+        "why": "65 characters before the @"
+      },
+      {
+        "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com",
+        "error": "bad-email",
+        "why": "255 characters"
+      },
+      {
+        "input": "x@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com",
+        "error": "bad-email",
+        "why": "191 characters and more before every dot"
+      },
+      {
+        "input": "x@a.7777777777777777777777777777777777777777777777777777777777777777",
+        "error": "bad-email",
+        "why": "64 characters after the dot"
+      },
+      {
+        "input": "m\u00fcller@example.com",
+        "error": "bad-email",
+        "why": "a letter outside ASCII (composed)"
+      },
+      {
+        "input": "mu\u0308ller@example.com",
+        "error": "bad-email",
+        "why": "the same letter decomposed"
+      },
+      {
+        "input": "user@m\u00fcller.example.org",
+        "error": "bad-email",
+        "why": "a domain outside ASCII: write it as punycode"
+      },
+      {
+        "input": "\u00a0owner@example.com",
+        "error": "bad-email",
+        "why": "a no-break space is not dropped"
+      },
+      {
+        "input": "owner@example.com\ufeff",
+        "error": "bad-email",
+        "why": "a byte order mark is not dropped"
+      },
+      {
+        "input": "owner@example.com\u2028",
+        "error": "bad-email",
+        "why": "a line separator is not dropped"
+      },
+      {
+        "input": "owner\uff20example.com",
+        "error": "bad-email",
+        "why": "a fullwidth @"
+      },
+      {
+        "input": "\u0130stanbul@example.com",
+        "error": "bad-email",
+        "why": "a capital outside ASCII is not lowercased"
+      },
+      {
+        "input": "owner@example.com\ud83d\ude00",
+        "error": "bad-email",
+        "why": "an emoji"
+      },
+      {
+        "input": "owner@example\u3002com",
+        "error": "bad-email",
+        "why": "an ideographic full stop is no dot"
+      }
+    ]
+  },
+  "passwordRule": {
+    "min": 12,
+    "rule": "a password may be used if its NFC form has at least 12 code points",
+    "cases": [
+      {
+        "password": "abcdefghijkl",
+        "ok": true
+      },
+      {
+        "password": "abcdefghijk",
+        "ok": false
+      },
+      {
+        "password": "",
+        "ok": false
+      },
+      {
+        "password": "e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301",
+        "ok": false,
+        "why": "11 letters, each with a combining accent: 11 code points in NFC"
+      },
+      {
+        "password": "e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301",
+        "ok": true
+      },
+      {
+        "password": "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67",
+        "ok": true,
+        "why": "three family emoji: 15 code points (3 on screen)"
+      },
+      {
+        "password": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+        "ok": false,
+        "why": "11 emoji: 11 code points (22 UTF-16 units)"
+      }
+    ]
+  },
+  "kdf": {
+    "rule": "A record is accepted only if alg, v, m, t and p are exactly those of pinned (other fields are ignored); no record (null) means pinned. Everything in refused is bad-kdf: nothing is derived with it.",
+    "pinned": {
+      "alg": "argon2id",
+      "v": 1,
+      "m": 65536,
+      "t": 3,
+      "p": 1
+    },
+    "accepted": [
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "note": "another field"
+      },
+      null
+    ],
+    "refused": [
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 19456,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 8,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65535,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65537,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 2097152,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 4294967295,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 1,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 2,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 4,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 20,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 2
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 8
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 0
+      },
+      {
+        "alg": "argon2id",
+        "v": 2,
+        "m": 65536,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 0,
+        "m": 65536,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2i",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2d",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "scrypt",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "Argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": "65536",
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": "3",
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": true
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536.5,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": null,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "t": 3,
+        "p": 1
+      },
+      {
+        "alg": "argon2id",
+        "v": 1,
+        "m": 65536,
+        "t": 3
+      },
+      {
+        "v": 1,
+        "m": 65536,
+        "t": 3,
+        "p": 1
+      },
+      {},
+      [],
+      "argon2id",
+      1,
+      true
+    ]
+  },
+  "refused": {
+    "oldAuthKeyB64u": "QEydMKCi4smLGq2_NaGIHQ9VcJsyfoq_igjhVP7l81I",
+    "keyWrappedOldFormatB64u": "AcHBwcHBwcHBwcHBwRN-VAHb3KAAjqPnlYD_uIXB5zlvrZz0mKzYDiRzZfL6ghQYL7IBicY_G72LqAjyCQ",
+    "keyWrappedOldKeyB64u": "AsHBwcHBwcHBwcHBwRN-VAHb3KAAjqPnlYD_uIXB5zlvrZz0mKzYDiRzZfL6ghQYL7IBicY_G72LqAjyCQ",
+    "keyWrappedVersion1B64u": "AcHBwcHBwcHBwcHBwX7pO6RI6hWhNpxVH9gra8XZ73VbxUara2AHH-uplAxGcOWyIlt-df-OFoLcv4f_zA"
+  }
+}

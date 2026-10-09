@@ -1,0 +1,32 @@
+{
+  "name": "trommi",
+  "version": "1.0.0",
+  "description": "Chat and decision cards between a person and their Claude Code sessions, end-to-end encrypted",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "26.8.2"
+  },
+  "//": [
+    "test: everything that runs in this repository as it is (no hub, no connector, no browser).",
+    "test:needs-hub: the client core against a real hub (hub/server.mjs). The hub is not in this repository yet: these wait for its move and fail until then.",
+    "The browser tests (app/web/core/browser-test.mjs, tabs-test.mjs, app/web/dev/e2e.mjs, e2e-mobile.mjs) need a hub and Chromium and are run by hand."
+  ],
+  "scripts": {
+    "test": "npm run typecheck && npm run test:app && npm run test:crypto && npm run test:core",
+    "typecheck": "tsc -p .",
+    "test:app": "node app/web/dev/check.mjs",
+    "test:demo": "node demo/check.mjs",
+    "test:crypto": "node app/web/core/crypto/crypto-test.mjs --no-bench && node app/web/core/crypto/session-grants-test.mjs",
+    "test:core": "node app/web/core/account-test.mjs && node app/web/core/scribble-test.mjs",
+    "test:needs-hub": "node app/web/core/test.mjs && node app/web/core/mirror-test.mjs",
+    "build": "node app/web/dev/build.mjs",
+    "serve": "node app/web/dev/serve.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "esbuild": "0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
