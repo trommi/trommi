@@ -93,6 +93,8 @@ struct FollowUp {
     handed: Vec<GroupId>,
     /// The inviter chose a takeover without history (5.3.2): no handover is asked for.
     no_history: bool,
+    /// The hub's list of the session's helper sessions was held against the groups of this device.
+    checked: bool,
 }
 
 impl FollowUp {
@@ -101,7 +103,7 @@ impl FollowUp {
         writer.u8(self.role as u8);
         writer.fixed(self.new_device.as_bytes());
         writer.fixed(self.session_id.as_bytes());
-        writer.u8(u8::from(self.no_history));
+        writer.u8(u8::from(self.no_history) | (u8::from(self.checked) << 1));
         writer.vector(&self.handed)?;
         writer.opaque(&self.key_package)?;
         Ok(writer.into_bytes())
@@ -116,11 +118,11 @@ impl FollowUp {
         };
         let new_device = reader.value()?;
         let session_id = reader.value()?;
-        let no_history = match reader.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(Error::BadFormat),
-        };
+        let flags = reader.u8()?;
+        if flags > 3 {
+            return Err(Error::BadFormat);
+        }
+        let (no_history, checked) = (flags & 1 != 0, flags & 2 != 0);
         let handed = reader.vector()?;
         let key_package = reader.opaque()?.to_vec();
         reader.finish()?;
@@ -131,6 +133,7 @@ impl FollowUp {
             key_package,
             handed,
             no_history,
+            checked,
         })
     }
 }
@@ -261,6 +264,14 @@ pub enum InviteStep {
         agent: DeviceId,
         /// Its KeyPackage.
         key_package: Vec<u8>,
+    },
+    /// A takeover has nothing more to do in the groups this device holds. 5.3.1 (c) asks the hub for the
+    /// list of the session's helper sessions until none is stale: fetch the room's groups, take the Welcomes
+    /// still waiting, and hand the helper sessions the hub lists under this session to
+    /// [`Device::invite_checked`], which finishes the invite when this device holds them all.
+    CheckHelpers {
+        /// The main session that was taken over.
+        session: SessionId,
     },
     /// Take the session over in this group (5.3.1) with [`Device::clean_session`]: these Cuts, and the agent
     /// device as the replacement. There is one such step for the main session's group, and once that Commit
@@ -509,7 +520,17 @@ impl<S: Storage> Device<S> {
                 key_package: confirmed.key_package().to_vec(),
                 handed: Vec::new(),
                 no_history: false,
+                checked: false,
             };
+            // One takeover of a session at a time.
+            let racing = !follow_up.session_id.is_zero()
+                && this
+                    .follow_ups()?
+                    .iter()
+                    .any(|(_, other)| other.session_id == follow_up.session_id);
+            if racing {
+                return Err(Error::Busy);
+            }
             let outbox_id = this.commit_invited(batch, &follow_up, now_ms)?;
             inviter.finish()?;
             this.put_inviter(batch, Stage::Done, &inviter)?;
@@ -694,6 +715,13 @@ impl<S: Storage> Device<S> {
                 // 5.3.1: (b) the main session's group, then (c) every live helper session under it.
                 let main = GroupId::session(room_id, invited.session_id);
                 let seated = self.leaves_now(&main)?.contains(&device);
+                // Another agent device the room allows sits there: another takeover won, this one is over.
+                let taken = self
+                    .seat_now(&invited.session_id)
+                    .is_some_and(|seat| seat != device && room.is_agent(&seat));
+                if taken {
+                    return Ok(Vec::new());
+                }
                 let helpers = self
                     .memory
                     .groups
@@ -758,6 +786,12 @@ impl<S: Storage> Device<S> {
         if steps.is_empty() && waiting {
             steps.push(InviteStep::Wait);
         }
+        let takeover = invited.role == Role::Agent && !invited.session_id.is_zero();
+        if steps.is_empty() && takeover && !invited.checked {
+            steps.push(InviteStep::CheckHelpers {
+                session: invited.session_id,
+            });
+        }
         Ok(steps)
     }
 
@@ -797,6 +831,35 @@ impl<S: Storage> Device<S> {
             Ok(())
         })?;
         Ok(sent)
+    }
+
+    /// Answers [`InviteStep::CheckHelpers`]: `helpers` are the live helper sessions the hub lists under the
+    /// session that was taken over. `group-behind` when this device does not hold one of them (its Welcome
+    /// is still to be taken); `busy` when a step other than the check is left. Otherwise the takeover is
+    /// complete as far as the hub shows, and the next [`Device::invite_steps`] finishes the invite unless a
+    /// group needs something again.
+    pub fn invite_checked(
+        &mut self,
+        invite_id: &InviteId,
+        helpers: &[GroupId],
+    ) -> Result<(), Error> {
+        self.transact(|this, batch| {
+            this.begin(0);
+            let mut follow_up = this.follow_up(invite_id)?;
+            let only_check = matches!(
+                this.steps(&follow_up)?.as_slice(),
+                [InviteStep::CheckHelpers { .. }]
+            );
+            if !only_check {
+                return Err(Error::Busy);
+            }
+            if !helpers.iter().all(|group| this.is_leaf_of(group)) {
+                return Err(Error::GroupBehind);
+            }
+            follow_up.checked = true;
+            this.put_stored(batch, follow_up_key(invite_id), follow_up.encode()?);
+            Ok(())
+        })
     }
 
     /// A takeover without history (5.3.2): no handover is sent for this invite, now or in a helper session

@@ -355,6 +355,12 @@ fn an_agent_device_joins_by_link_and_takes_a_session_over() {
     );
     a.invite_handover(&opened.invite_id).unwrap();
     post_ok(&mut hub, &mut a);
+    // The hub lists no helper session under it: the takeover is complete.
+    assert_eq!(
+        a.invite_steps().unwrap(),
+        vec![(opened.invite_id, InviteStep::CheckHelpers { session })]
+    );
+    a.invite_checked(&opened.invite_id, &[]).unwrap();
     assert!(a.invite_steps().unwrap().is_empty());
 
     new.join_observe(&offered).unwrap();
@@ -776,6 +782,18 @@ fn a_takeover_reaches_every_helper_session_and_survives_a_restart() {
     assert_eq!(a.invite_steps().unwrap(), vec![(id, InviteStep::Wait)]);
     post_ok(&mut hub, &mut a);
     sync_all(&hub, &mut a);
+    // What the hub lists under the session is held against this device's groups: one it does not hold
+    // keeps the invite open (5.3.1 c).
+    assert_eq!(
+        a.invite_steps().unwrap(),
+        vec![(id, InviteStep::CheckHelpers { session })]
+    );
+    let unseen = GroupId::session(room.room_id(), trommi_core::ids::SessionId::new([8; 16]));
+    assert_eq!(
+        a.invite_checked(&id, &[helper, unseen]),
+        Err(Error::GroupBehind)
+    );
+    a.invite_checked(&id, &[helper]).unwrap();
     // Finished: nothing is listed, and the invite's record is gone.
     assert!(a.invite_steps().unwrap().is_empty());
     assert_eq!(a.invite_forget(&id), Err(Error::NotFound));
