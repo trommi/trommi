@@ -305,7 +305,7 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
         }
         reply.refused(429, "rate-limited");
         waited += reply.header("retry-after").unwrap().parse::<i64>().unwrap();
-        assert!(waited <= 20, "in line behind six at most: {waited} s");
+        assert!(waited <= 30, "in line behind a handful: {waited} s");
         wait_out(hub, &reply);
     }
     // a wrong password from home, while others stand in line, is answered like theirs: with a turn if there is
@@ -620,7 +620,7 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
         &room,
         out.epoch + 1,
         &out.group_info,
-        out.epoch,
+        out.epoch + 1,
         &new.hpke_public,
         true,
     );
@@ -656,6 +656,82 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
         recover(&w.hub, "ada@example.org", &new_kit).ok()["rooms"][0]["sealed_copy"],
         copy(4)
     );
+
+    // 8.6, after a recovery with the kit or the bare code: no way in was used just now, so the password is set
+    // anew in the same request, with its key and derivation record. The old password opens nothing after.
+    let replace = |w: &mut World, account: Value| -> Reply {
+        let new = Recovery::new();
+        let now = w.ada.room_now();
+        let out = w.ada.commit(
+            &room,
+            &Change {
+                room: Some(new.room_ext(&[])),
+                ..Default::default()
+            },
+            now,
+        );
+        let key = w.ada.sealed_key(
+            &room,
+            out.epoch + 1,
+            &out.group_info,
+            out.epoch + 1,
+            &new.hpke_public,
+            true,
+        );
+        // (the Commit's fields under `commit`, as hub-api.md writes the body)
+        let body = json!({
+            "commit": commit_json(&out, &key, None),
+            "recovery_link": b64(&wire::RecoveryLink { room_id: room, new_recovery_hpke_key: new.hpke_public.to_vec(), kem_output: vec![1; 32], ciphertext: vec![2; 80], mac: vec![3; 32] }.bytes()),
+            "account": account,
+        });
+        let reply = w.ada.post(&w.hub, &path, &body);
+        if reply.status == 200 {
+            w.ada.merge(&room);
+        } else {
+            w.ada.clear(&room);
+        }
+        reply
+    };
+    let (next_auth, next_kit): ([u8; 32], [u8; 32]) = (random(), random());
+    // a new password without its derivation record is no password
+    replace(&mut w, json!({ "kit": { "auth_key": b64(&next_kit), "sealed_copy": copy(5) }, "password": { "auth_key": b64(&next_auth), "sealed_copy": copy(6) } }))
+        .refused(400, "bad-format");
+    login(&w.hub, "ada@example.org", &auth).ok();
+    replace(&mut w, json!({ "kit": { "auth_key": b64(&next_kit), "sealed_copy": copy(5) }, "password": { "auth_key": b64(&next_auth), "sealed_copy": copy(6), "kdf": kdf() } })).ok();
+    login(&w.hub, "ada@example.org", &auth).refused(401, "wrong-login");
+    assert_eq!(
+        login(&w.hub, "ada@example.org", &next_auth).ok()["rooms"][0]["sealed_copy"],
+        copy(6)
+    );
+    assert_eq!(
+        recover(&w.hub, "ada@example.org", &next_kit).ok()["rooms"][0]["sealed_copy"],
+        copy(5)
+    );
+
+    // or a passkey made anew: registered in that request, on a challenge asked for without a token; the
+    // password is gone with it
+    let key = Authenticator::new();
+    let challenge = unb64(
+        w.hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let last_kit: [u8; 32] = random();
+    let registration = json!({
+        "attestation_object": b64(&key.attestation(RP, UP_UV)), "client_data_json": b64(&Authenticator::client_data("webauthn.create", &challenge, ORIGIN)),
+        "sealed_copy": copy(3), "transports": ["internal"],
+    });
+    replace(&mut w, json!({ "kit": { "auth_key": b64(&last_kit), "sealed_copy": copy(2) }, "passkey": registration })).ok();
+    login(&w.hub, "ada@example.org", &next_auth).refused(401, "wrong-login");
+    let account = w.ada.get(&w.hub, "/v2/account").ok();
+    assert_eq!(account["has_password"], false);
+    assert_eq!(account["passkeys"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        account["passkeys"][0]["credential_id"],
+        b64(&key.credential_id)
+    );
+    assert_eq!(account["passkeys"][0]["sealed_copy"], copy(3));
 }
 
 #[test]

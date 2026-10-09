@@ -4,6 +4,7 @@
 #
 # Type=notify: the updater says when it is up. A new updater on trial that does not say so within the start time, or
 # ends, is started again by systemd, and the pre-start script then puts the previous one back.
+# The updater also starts the hub (after settling a deploy that was cut off): the hub's unit is not enabled by itself.
 [Unit]
 Description=Trommi hub updater (deploy endpoint)
 After=network-online.target tailscaled.service
@@ -18,7 +19,8 @@ ExecStartPre=-/bin/sh /usr/local/lib/trommi/updater-prestart.sh /srv/trommi
 ExecStart=/srv/trommi/updater/trommi-hub-updater serve
 Restart=always
 RestartSec=3
-TimeoutStartSec=60
+# settling a cut-off deploy (two health checks at most) and waiting for the tailnet address happen before "up"
+TimeoutStartSec=240
 # a deploy that runs gets two minutes to finish before the updater stops; one that is cut off (a reboot) is undone
 # at the next start
 TimeoutStopSec=120
