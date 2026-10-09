@@ -7,8 +7,6 @@
 # Everything it writes is build output and not in the repository: lib/<platform>/libtrommi_core_ffi.a,
 # Sources/TrommiCoreFFI/include/TrommiCoreFFI.h, Sources/TrommiCoreRust/TrommiCoreRust.swift. A script that ships
 # the app from a clean checkout runs `build.sh ios` first.
-# TROMMI_STAND_IN_RECOVERY=1 builds with the stand-in for the recovery construct (src/recovery.rs): for
-# development only, never for a release. Without it no room can be founded yet.
 # Needs the Rust targets (rustup target add aarch64-apple-ios); no Apple SDK and no Apple linker: a static library is
 # an archive of object files, which rustc writes itself. (`cargo build` would also try the cdylib, which needs a linker
 # for iOS: hence `cargo rustc --crate-type staticlib`.)
@@ -21,18 +19,13 @@ cd "$here"
 # Paths of this machine stay out of the library (they would sit in the texts of panics).
 RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=$(cd "$here/../.." && pwd)=/trommi --remap-path-prefix=$(rustc --print sysroot)=/rust"
 export RUSTFLAGS
-features=
-if [ "${TROMMI_STAND_IN_RECOVERY:-}" = 1 ]; then
-  features="--features stand-in-recovery"
-  echo "WARNING: built with the recovery stand-in. Rooms founded with this build cannot be recovered. Not for release." >&2
-fi
 
 staticlib() {   # staticlib <rust target or ""> <folder under lib/>
   if [ -n "$1" ]; then
-    cargo rustc --release --locked --target "$1" --crate-type staticlib $features
+    cargo rustc --release --locked --target "$1" --crate-type staticlib
     from=$target/$1/release
   else
-    cargo rustc --release --locked --crate-type staticlib $features
+    cargo rustc --release --locked --crate-type staticlib
     from=$target/release
   fi
   mkdir -p "$package/lib/$2"
@@ -40,7 +33,7 @@ staticlib() {   # staticlib <rust target or ""> <folder under lib/>
 }
 
 # The bindings are read from a host build of the library (a cdylib), whatever they are for.
-cargo build --release --locked $features
+cargo build --release --locked
 cargo build --release --locked --manifest-path bindgen/Cargo.toml
 generated=$(mktemp -d "${TMPDIR:-/tmp}/trommi-uniffi.XXXXXX")
 lib=$target/release/libtrommi_core_ffi.so

@@ -25,6 +25,8 @@ struct Step: Decodable {
   var removed: Bool?
   var refused: String?
   var epoch_of: String?
+  var like: String?
+  var epoch: UInt64?
 }
 
 struct Scenario: Decodable {
@@ -42,32 +44,50 @@ func check(_ holds: Bool, _ what: String) throws {
 
 func now() -> UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
 
-/// The least a hub does: one change counter, the ordered log, the Welcomes, the room's newest GroupInfo.
+/// The least a hub does: one change counter, the ordered log, the Welcomes, and what it serves a device that
+/// comes with the recovery code (every GroupInfo of the room group, every SealedKey, the links).
 final class Hub {
   var change: UInt64 = 0
   var log: [LogEntry] = []
   var welcomes: [(change: UInt64, bytes: Data)] = []
-  var roomGroupInfo = Data()
+  /// The room group's GroupInfo of every epoch, from its founding.
+  var roomInfos: [Data] = []
+  /// Per session group: its founding GroupInfo and its newest.
+  var sessions: [Data: (founding: Data, current: Data)] = [:]
+  var rows: [Data] = []
+  var links: [Data] = []
 
   /// Posts everything in the device's outbox and reports each as accepted.
   func post(_ device: CoreDevice) throws {
     for entry in try device.outbox() {
       func part(_ at: Int) -> Data { at < entry.parts.count ? entry.parts[at] : Data() }
-      // Where the Commit, its GroupInfo and its Welcome stand among the parts of each kind.
-      var commit: (Data, Data, Data)?
-      if entry.kind == .groupFounding { commit = (part(2), part(3), part(4)) }
-      if entry.kind == .commit { commit = (part(0), part(1), part(2)) }
+      // Where the Commit, its GroupInfo, its Welcome, its SealedKey and its RecoveryAuth stand among the parts.
+      var commit: (bytes: Data, groupInfo: Data, welcome: Data, sealedKey: Data, recoveryAuth: Data?)?
+      switch entry.kind {
+      case .groupFounding:
+        rows.append(part(1))
+        sessions[entry.group ?? Data()] = (part(0), part(0))
+        commit = (part(2), part(3), part(4), part(5), nil)
+      case .commit: commit = (part(0), part(1), part(2), part(3), nil)
+      case .externalCommit: commit = (part(0), part(1), Data(), part(2), part(3))
+      case .recoveryCode:
+        commit = (part(0), part(1), Data(), part(2), nil)
+        links.append(part(3))
+      default: break
+      }
       var accepted: UInt64?
       if entry.kind == .roomFounding {
-        roomGroupInfo = part(0)
+        roomInfos.append(part(0))
+        rows.append(part(1))
         change += 1
         accepted = change
-      } else if let (bytes, groupInfo, welcome) = commit, let group = entry.group {
+      } else if let commit, let group = entry.group {
         change += 1
         accepted = change
-        if group.count == 32 { roomGroupInfo = groupInfo }
-        if !welcome.isEmpty { welcomes.append((change, welcome)) }
-        log.append(LogEntry(change: change, group: group, kind: .commit, bytes: bytes, recoveryAuth: nil))
+        rows.append(commit.sealedKey)
+        if group.count == 32 { roomInfos.append(commit.groupInfo) } else { sessions[group]?.current = commit.groupInfo }
+        if !commit.welcome.isEmpty { welcomes.append((change, commit.welcome)) }
+        log.append(LogEntry(change: change, group: group, kind: .commit, bytes: commit.bytes, recoveryAuth: commit.recoveryAuth))
       } else if entry.kind == .message, let group = entry.group {
         change += 1
         accepted = change
@@ -75,6 +95,21 @@ final class Hub {
       }
       try device.outboxAccepted(id: entry.id, change: accepted)
     }
+  }
+
+  /// A group as the hub serves it to a device that verifies it from its founding.
+  func served(_ group: Data, founding: Data, current: Data) -> ServedGroup {
+    let commits = log.filter { $0.kind == .commit && $0.group == group }
+      .map { ServedCommit(change: $0.change, commit: $0.bytes, recoveryAuth: $0.recoveryAuth) }
+    return ServedGroup(founding: founding, commits: commits, current: current)
+  }
+
+  /// The room as the hub serves it to a device that comes with the recovery code.
+  func servedRoom(_ room: Data, code: Data) throws -> ServedRoom {
+    let anchor = try recoveryAnchor(recoveryCode: code, room: room, rows: rows)
+    return ServedRoom(
+      room: room, group: served(room, founding: roomInfos[0], current: roomInfos[roomInfos.count - 1]),
+      anchor: roomInfos[Int(anchor.epoch)], rows: rows, links: links, sessions: [])
   }
 
   /// Hands the device the log after its cursor, with every Welcome at its place. Returns what the entries did.
@@ -103,6 +138,8 @@ final class ScenarioTests: XCTestCase {
   var groups: [String: Data] = [:]
   var remembered: [String: [OutboxEntry]] = [:]
   var room = Data()
+  /// The recovery code in force.
+  var code = Data()
   var folder = URL(fileURLWithPath: NSTemporaryDirectory())
 
   override func setUpWithError() throws {
@@ -145,7 +182,8 @@ final class ScenarioTests: XCTestCase {
       devices[step.device!] = device
       stores[step.device!] = store
     case "found_room":
-      room = try device(step.device).foundRoom(recoveryCode: generateRecoveryCode(), nowMs: now())
+      code = try generateRecoveryCode()
+      room = try device(step.device).foundRoom(recoveryCode: code, nowMs: now())
       groups["room"] = try roomGroupId(room: room)
     case "post":
       try hub.post(device(step.device))
@@ -169,7 +207,7 @@ final class ScenarioTests: XCTestCase {
     case "enrol":
       _ = try device(step.by).changeAgents(enrol: [device(step.device).id()], remove: [], nowMs: now())
     case "observe":
-      try device(step.device).observeRoom(groupInfo: hub.roomGroupInfo, expectedState: nil)
+      try device(step.device).observeRoom(groupInfo: hub.roomInfos[hub.roomInfos.count - 1], expectedState: nil)
     case "sync":
       let done = try hub.sync(device(step.device), room: room)
       if let expected = step.message {
@@ -213,6 +251,26 @@ final class ScenarioTests: XCTestCase {
       let id = try group(step.group)
       let cuts = try device(step.by).group(group: id).disallowed.map { Cut(device: $0, seq: 0, hash: Data(count: 32)) }
       _ = try device(step.by).cleanSession(group: id, cuts: cuts, replacement: nil, nowMs: now())
+    case "join_with_code":
+      let joined = try device(step.device).joinRoomWithCode(recoveryCode: code, served: hub.servedRoom(room, code: code), nowMs: now())
+      try check(joined.outbox.count == 1 && joined.unverified.isEmpty && joined.missingLink == nil, "the room did not verify whole")
+    case "join_session_with_code":
+      let id = try group(step.group)
+      guard let session = hub.sessions[id] else { throw Unexpected("the hub has no such session") }
+      _ = try device(step.device).joinSessionWithCode(
+        recoveryCode: code, served: hub.served(id, founding: session.founding, current: session.current), nowMs: now())
+    case "earlier_key":
+      let id = try group(step.group)
+      let mine = try device(step.device).contentKey(group: id, epoch: step.epoch!)
+      let theirs = try device(step.like).contentKey(group: id, epoch: step.epoch!)
+      try check(mine == theirs && (try device(step.device).keyIsConfirmed(group: id, epoch: step.epoch!)), "the code did not open the earlier key")
+    case "replace_code":
+      let next = try device(step.device).newRecoveryCode(recoveryCode: code)
+      try check(next.count == 32 && next != code, "the new code is not a new code")
+      _ = try device(step.device).replaceCode(recoveryCode: code, account: Data("the account's sealed copies".utf8), nowMs: now())
+      code = next
+    case "holds_recovery_mac":
+      try check(try device(step.device).holdsRecoveryMac(), "the device does not hold the key of the code in force")
     case "no_key":
       let epoch = try key(step.epoch_of!, step.group).epoch
       _ = try device(step.device).contentKey(group: group(step.group), epoch: epoch)
@@ -249,6 +307,30 @@ final class ScenarioTests: XCTestCase {
     try check(refused == .decryptFailed, "a changed file was not refused")
   }
 
+  /// A process that dies runs no orderly close. Here the first device is left as it is, alive and unclosed, and
+  /// only the operating system's part is played: its lock goes. The next device finds the request that was
+  /// written and not sent, byte for byte; and a store object in use cannot be handed to a second device.
+  func testADeviceThatDiedLeavesItsRequestToTheNext() throws {
+    let (first, store) = try start("K", create: true)
+    _ = try first.foundRoom(recoveryCode: generateRecoveryCode(), nowMs: now())
+    let before = try first.outbox()
+    XCTAssertEqual(before.count, 1)
+    // The store object belongs to the first device: a second open with it fails and leaves the first its lock.
+    XCTAssertThrowsError(try CoreDevice.open(store: store))
+    XCTAssertThrowsError(try start("K", create: false)) { error in
+      guard case let CoreError.Refused(code, _) = error else { return XCTFail("\(error)") }
+      XCTAssertEqual(code, .storage)
+    }
+    store.close()
+    let (next, _) = try start("K", create: false)
+    XCTAssertEqual(try next.outbox(), before)
+    XCTAssertEqual(try next.id(), try first.id())
+    // The one that "died" wrote nothing more; if it did, it would find out that it is the owner no longer.
+    _ = try next.keyPackage(nowMs: now())
+    XCTAssertThrowsError(try first.keyPackage(nowMs: now()))
+    next.close()
+  }
+
   func testTheScenario() throws {
     let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../scenario.json")
     let scenario = try JSONDecoder().decode(Scenario.self, from: Data(contentsOf: file))
@@ -269,6 +351,6 @@ final class ScenarioTests: XCTestCase {
       ran += 1
     }
     XCTAssertEqual(ran, scenario.steps.count)
-    XCTAssertGreaterThan(ran, 50)
+    XCTAssertGreaterThan(ran, 70)
   }
 }

@@ -9,8 +9,9 @@ use trommi_core::store::{Batch, Loaded, Storage, StorageError};
 use trommi_core_ffi::{
     base64url_decode, error_code_from_text, error_code_text, format_recovery_code,
     generate_kit_words, generate_recovery_code, kit_keys, log_finding, open_recovery_code,
-    parse_recovery_code, seal_recovery_code, self_test, versions, AccountWay, CoreDevice,
-    CoreError, ErrorCode, FileDecryptor, FileEncryptor, LogFinding,
+    parse_recovery_code, recovery_anchor, recovery_sign_in, seal_recovery_code, self_test,
+    versions, AccountWay, CoreDevice, CoreError, Cut, ErrorCode, FileDecryptor, FileEncryptor,
+    GroupCut, LogFinding, OutboxKind, ServedGroup, ServedRoom,
 };
 use trommi_tests::{now, MemoryStorage};
 
@@ -36,7 +37,7 @@ fn the_self_test_passes_and_names_its_steps() {
         assert!(step.ok, "{}: {}", step.name, step.detail);
     }
     assert!(report.ok);
-    assert_eq!(report.steps.len(), 11);
+    assert_eq!(report.steps.len(), 12);
     assert_eq!(report.versions, versions());
 }
 
@@ -141,6 +142,8 @@ fn only_a_refusal_for_good_undoes_an_outbox_entry() {
         ErrorCode::Overloaded,
         ErrorCode::RateLimited,
         ErrorCode::Unauthorised,
+        ErrorCode::QuotaExceeded,
+        ErrorCode::ClientTooOld,
         ErrorCode::Storage,
         ErrorCode::WeakPassword,
     ] {
@@ -182,6 +185,105 @@ fn a_second_owner_is_found_out_and_the_first_signs_nothing_more() {
         ErrorCode::Storage
     );
     assert!(first.outbox().expect("the outbox").is_empty());
+}
+
+#[test]
+fn a_recovery_is_prepared_and_built_on_a_new_device() {
+    // The room, as its one device leaves it at the hub: the founding GroupInfo and its SealedKey.
+    let lost = CoreDevice::create_on(Box::new(MemoryStorage::new())).expect("a new device");
+    let code = generate_recovery_code().expect("a code");
+    let room = lost.found_room(code.clone(), now()).expect("the room");
+    let founding = lost.outbox().expect("the outbox").remove(0);
+    lost.outbox_accepted(founding.id, Some(1))
+        .expect("accepted");
+    let lost_id = lost.id().expect("an id");
+    lost.close();
+    let group = ServedGroup {
+        founding: founding.parts[0].clone(),
+        commits: Vec::new(),
+        current: founding.parts[0].clone(),
+    };
+    let served = ServedRoom {
+        room: room.clone(),
+        group,
+        anchor: founding.parts[0].clone(),
+        rows: vec![founding.parts[1].clone()],
+        links: Vec::new(),
+        sessions: Vec::new(),
+    };
+    let anchor =
+        recovery_anchor(code.clone(), room.clone(), served.rows.clone()).expect("an anchor");
+    assert_eq!((anchor.group, anchor.epoch), (room.clone(), 0));
+    assert_eq!(
+        code_of(recovery_anchor(
+            vec![9; 32],
+            room.clone(),
+            served.rows.clone()
+        )),
+        ErrorCode::WrongRecovery
+    );
+
+    let device = CoreDevice::create_on(Box::new(MemoryStorage::new())).expect("a new device");
+    // Nothing was prepared: nothing is built.
+    assert_eq!(
+        code_of(device.recover(code.clone(), served.clone(), Vec::new(), Vec::new(), now())),
+        ErrorCode::Incomplete
+    );
+    let plan = device
+        .prepare_recovery(code.clone(), served.clone())
+        .expect("the recovery is prepared");
+    assert_eq!(plan.new_code.len(), 32);
+    assert_ne!(plan.new_code, code);
+    assert_eq!(plan.removals.len(), 1);
+    assert_eq!(plan.removals[0].devices, vec![lost_id.clone()]);
+    assert_eq!(format!("{plan:?}"), "RecoveryPlan(<redacted>)");
+    let cuts = vec![GroupCut {
+        group: room.clone(),
+        cut: Cut {
+            device: lost_id,
+            seq: 0,
+            hash: vec![0; 32],
+        },
+    }];
+    let built = device
+        .recover(code.clone(), served, cuts, b"sealed copies".to_vec(), now())
+        .expect("the recovery is built");
+    assert!(built.unverified.is_empty());
+    let outbox = device.outbox().expect("the outbox");
+    assert_eq!(
+        outbox.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        built.outbox
+    );
+    assert_eq!(
+        outbox.last().expect("a finish").kind,
+        OutboxKind::RecoveryFinish
+    );
+    // The device's state changes only when the hub accepted the finish.
+    assert_eq!(device.room().expect("asked"), None);
+    let mut change = 1;
+    for entry in &outbox {
+        let given = (entry.kind == OutboxKind::RecoveryCommit).then(|| {
+            change += 1;
+            change
+        });
+        device.outbox_accepted(entry.id, given).expect("accepted");
+    }
+    assert_eq!(device.room().expect("asked"), Some(room));
+    assert!(device.is_human().expect("asked"));
+    assert!(device.holds_recovery_mac().expect("asked"));
+    let roles = device
+        .room_roles()
+        .expect("asked")
+        .expect("the room's roles");
+    assert_eq!(roles.humans, vec![device.id().expect("an id")]);
+    // The sign-in under the code is the code's, not a device's.
+    let signed = recovery_sign_in(
+        code,
+        roles.state.clone(),
+        "https://hub.example".into(),
+        vec![2; 32],
+    );
+    assert_eq!(signed.expect("signed").signature.len(), 64);
 }
 
 /// A store that does what a test plans for its next write.

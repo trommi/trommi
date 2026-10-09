@@ -5,7 +5,8 @@
 // (tests/bindings/manifest.json, in the repository), and compares with it:
 //   - the Rust sources themselves: a call that changed without the manifest fails here, so a change is deliberate;
 //   - the TypeScript declarations (core/wasm/js/trommi-core.d.ts): the same calls, argument names and types;
-//   - the JavaScript layer (core/wasm/js/trommi-core.js) and the wasm-bindgen exports (core/wasm/src/lib.rs);
+//   - the JavaScript layer (core/wasm/js/trommi-core.js: the names) and the wasm-bindgen exports
+//     (core/wasm/src/lib.rs: the names and the order of the arguments);
 //   - the generated Swift (core/swift/TrommiCoreRust/Sources/TrommiCoreRust/TrommiCoreRust.swift), if it was built.
 //
 //   node tests/bindings/manifest.mjs            check
@@ -188,7 +189,7 @@ for (const [name, cases] of Object.entries(manifest.enums)) {
   if (!same(typings.enums[name], Object.values(cases))) problem(`trommi-core.d.ts: the enum ${name} differs from the facade's`)
 }
 
-// The JavaScript layer and the wasm-bindgen exports: the same names (their arguments pass through unchanged).
+// The JavaScript layer: the same names (it hands the arguments on as they come).
 const layer = read('core/wasm/js/trommi-core.js')
 const exported = [...layer.matchAll(/^export const (\w+) = plain\('(\w+)'\)$/gm)]
 for (const [, name, raw] of exported) if (camel(raw) !== name) problem(`trommi-core.js exports ${name} for ${raw}`)
@@ -197,11 +198,18 @@ if (!same(layerFunctions, Object.keys(manifest.functions).sort())) problem('trom
 const deviceCalls = [.../const DEVICE_CALLS = \[(.*?)\]/s.exec(layer)[1].matchAll(/'(\w+)'/g)].map(([, name]) => camel(name)).sort()
 const deviceMethods = Object.keys(manifest.objects.CoreDevice).filter(name => !['create', 'open', 'close'].includes(name)).sort()
 if (!same(deviceCalls, deviceMethods)) problem('trommi-core.js does not list exactly the device\'s calls')
+// The wasm-bindgen exports hand their arguments on by position: the same names in the same order as the facade's.
 const wasm = read('core/wasm/src/lib.rs')
-const wasmFunctions = [.../functions! \{(.*?)\n\}/s.exec(wasm)[1].matchAll(/(?:plain|fallible) (\w+)\(/g)].map(([, name]) => camel(name)).sort()
-if (!same(wasmFunctions, Object.keys(manifest.functions).sort())) problem('core/wasm/src/lib.rs does not export exactly the facade\'s functions')
-const wasmDevice = [.../methods!\(RawDevice \{(.*?)\}\);/s.exec(wasm)[1].matchAll(/(\w+)\(/g)].map(([, name]) => camel(name)).sort()
-if (!same(wasmDevice, deviceMethods)) problem('core/wasm/src/lib.rs does not export exactly the device\'s calls')
+const listed = block => Object.fromEntries([...block.matchAll(/(?:plain |fallible )?(\w+)\(([^)]*)\);/g)].map(([, name, args]) => [camel(name), split(args).map(camel)]))
+const names = declared => Object.fromEntries(Object.entries(declared).map(([name, { arguments: args }]) => [name, args.map(argument => argument.name)]))
+const sorted = object => Object.fromEntries(Object.entries(object).sort(([a], [b]) => a < b ? -1 : 1))
+if (!same(sorted(listed(/functions! \{(.*?)\n\}/s.exec(wasm)[1])), sorted(names(manifest.functions)))) problem('core/wasm/src/lib.rs does not export exactly the facade\'s functions with their arguments in order')
+for (const [object, rawName, left] of [['CoreDevice', 'RawDevice', ['create', 'open', 'close']], ['FileEncryptor', 'RawFileEncryptor', ['new', 'close']], ['FileDecryptor', 'RawFileDecryptor', ['new', 'close']]]) {
+  const exported = listed(new RegExp(`methods!\\(${rawName} \\{(.*?)\\}\\);`, 's').exec(wasm)[1])
+  const declared = names(manifest.objects[object])
+  for (const name of left) delete declared[name]
+  if (!same(sorted(exported), sorted(declared))) problem(`core/wasm/src/lib.rs does not export exactly the calls of ${object} with their arguments in order`)
+}
 
 // Swift, as UniFFI generated it.
 const swiftFile = 'core/swift/TrommiCoreRust/Sources/TrommiCoreRust/TrommiCoreRust.swift'
@@ -238,6 +246,10 @@ if (fs.existsSync(path.join(repo, swiftFile))) {
       else if (call(found[name]) !== call(wanted)) problem(`Swift: ${object}.${name}${call(found[name])}, the facade has ${call(wanted)}`)
     }
   }
+  // The store a Swift host implements: the three calls of core/swift/src/store.rs.
+  const protocol = /^public protocol CoreStore: .*?\n(.*?)^\}/ms.exec(swift)?.[1] ?? ''
+  const storeCalls = [...protocol.matchAll(/^\s*func (\w+)\(([^)]*)\)/gm)].map(([, name, args]) => `${name}(${args})`)
+  if (!same(storeCalls, ['load()', 'apply(write: StoreWrite)', 'close()'])) problem(`Swift: the protocol CoreStore is ${storeCalls}`)
   for (const [name, fields] of Object.entries(manifest.records)) {
     const body = new RegExp(`^public struct ${name}: .*?\\n(.*?)^    public init`, 'ms').exec(swift)?.[1]
     const found = body && Object.fromEntries([...body.matchAll(/^    public var `?(\w+)`?: (.*)$/gm)].map(([, field, type]) => [field, fromSwift(type)]))

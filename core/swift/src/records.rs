@@ -161,8 +161,14 @@ choice! {
         KeyPackages = "keyPackages",
         /// A SealedKey posted on its own: the SealedKey.
         SealedKey = "sealedKey",
-        /// The replacing of the recovery code: Commit, GroupInfo, SealedKey, RecoveryLink.
+        /// The replacing of the recovery code: Commit, GroupInfo, SealedKey, RecoveryLink, the account's new
+        /// sealed copies.
         RecoveryCode = "recoveryCode",
+        /// One Commit of a recovery, posted into its transaction: Commit, GroupInfo, Welcome, SealedKey,
+        /// RecoveryAuth.
+        RecoveryCommit = "recoveryCommit",
+        /// The finish of a recovery: RecoveryLink, the account's new sealed copies.
+        RecoveryFinish = "recoveryFinish",
     }
 }
 
@@ -199,6 +205,8 @@ impl From<CoreOutboxEntry> for OutboxEntry {
                 CoreOutboxKind::KeyPackages => OutboxKind::KeyPackages,
                 CoreOutboxKind::SealedKey => OutboxKind::SealedKey,
                 CoreOutboxKind::RecoveryCode => OutboxKind::RecoveryCode,
+                CoreOutboxKind::RecoveryCommit => OutboxKind::RecoveryCommit,
+                CoreOutboxKind::RecoveryFinish => OutboxKind::RecoveryFinish,
             },
             group: entry.group.map(|group| group.as_bytes().to_vec()),
             epoch: entry.epoch,
@@ -362,8 +370,12 @@ choice! {
         StrokePiece = "strokePiece",
         /// A step of an agent's turn: `turn`, `number`, `time`, and the JSON step in `payload`.
         WorkTrail = "workTrail",
-        /// The room's recovery authentication key, from a human device.
+        /// The key that authenticates the room's sealed keys, from a human device: this device holds it now.
+        /// `last` says whether it was new to it.
         RecoveryAuth = "recoveryAuth",
+        /// A second, different such key for a recovery key this device holds one for: the finding
+        /// `equivocation`. Nothing was replaced.
+        RecoveryAuthConflict = "recoveryAuthConflict",
         /// A message this device may not take from that sender in that group, or that is for another device.
         Dropped = "dropped",
         /// A message of a newer version: it opened and is not read; the device is to be updated.
@@ -437,9 +449,12 @@ impl From<core::Received> for ReceivedMessage {
                 payload: step,
                 ..Self::of(ReceivedKind::WorkTrail, Some(&from))
             },
-            // The key itself stays inside: it is wiped here, where the core hands it out.
-            core::Received::RecoveryAuth { from, .. } => {
-                Self::of(ReceivedKind::RecoveryAuth, Some(&from))
+            core::Received::RecoveryAuth { from, new, .. } => Self {
+                last: new,
+                ..Self::of(ReceivedKind::RecoveryAuth, Some(&from))
+            },
+            core::Received::RecoveryAuthConflict { from, .. } => {
+                Self::of(ReceivedKind::RecoveryAuthConflict, Some(&from))
             }
             core::Received::Dropped => Self::of(ReceivedKind::Dropped, None),
             core::Received::NewerVersion { from } => {

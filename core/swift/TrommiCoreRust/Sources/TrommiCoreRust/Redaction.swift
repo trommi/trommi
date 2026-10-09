@@ -23,3 +23,4 @@ extension ShareLink: Redacted {}
 extension ReceivedMessage: Redacted {}
 extension Processed: Redacted {}
 extension PushNote: Redacted {}
+extension RecoveryPlan: Redacted {}

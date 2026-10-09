@@ -111,6 +111,8 @@ functions! {
     fallible generate_push_key();
     fallible open_apns_push(key, sealed);
     fallible read_web_push(payload);
+    fallible recovery_anchor(recovery_code, room, rows);
+    fallible recovery_sign_in(recovery_code, room, hub, challenge);
 }
 
 /// The methods of a facade object that return a `Result`, by name and arguments.
@@ -201,6 +203,17 @@ methods!(RawDevice {
     handover_read(group, recipient);
     send_stroke_piece(board, piece);
     send_work_trail(group, turn, number, step, now_ms);
+    holds_recovery_mac();
+    key_is_confirmed(group, epoch);
+    send_recovery_auth(recipient);
+    post_sealed_key(group, group_info, listed);
+    verify_founding(group, served);
+    join_room_with_code(recovery_code, served, now_ms);
+    join_session_with_code(recovery_code, served, now_ms);
+    new_recovery_code(recovery_code);
+    replace_code(recovery_code, account, now_ms);
+    prepare_recovery(recovery_code, served);
+    recover(recovery_code, served, cuts, account, now_ms);
     hub_sign_in(room, hub, challenge);
 });
 
