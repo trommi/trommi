@@ -405,7 +405,7 @@ struct MessageView: View {
         MarksLine(marks: m.marks)
         if m.noteWritten != nil {
           VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) { Sketch("page", color: Ink.noteInk).frame(width: 14, height: 14); Text("Note").font(Face.text(12, .bold)); if let w = m.noteWritten!, w > 0 { Text("written \(clockOf(w))").font(Face.text(12)) } }
+            HStack(spacing: 6) { PenMark("sidebar:NOTE_ICON").frame(width: 17, height: 17); Text("Note").font(Face.text(12, .bold)); if let w = m.noteWritten!, w > 0 { Text("written \(clockOf(w))").font(Face.text(12)) } }
               .foregroundStyle(Ink.noteInk.opacity(0.8))
             Text(m.text).font(Face.text(16)).foregroundStyle(Ink.noteInk)
             // its pictures and files on the slip (a tap: full screen)
@@ -667,9 +667,10 @@ struct Pending: Identifiable {
   var thumb: UIImage? = nil
   static func preview(_ data: Data, type: String, name: String) async -> UIImage? {
     if type.hasPrefix("image/") {
+      // ImageIO's thumbnail (Thumb): every format the system reads, upright, standard range; UIKit as the fallback
+      if let t = Thumb.image(data, maxPixel: 660) { return t }
       guard let img = UIImage(data: data), img.size.width > 0, img.size.height > 0 else { return nil }
-      let s = min(1, 420 / img.size.height, 660 / img.size.width)
-      return img.preparingThumbnail(of: CGSize(width: (img.size.width * s).rounded(), height: (img.size.height * s).rounded())) ?? img
+      return img.preparingForDisplay() ?? img
     }
     if type.hasPrefix("video/") {
       // (the frame is read from a file: written to the app's temporary folder for that moment, then removed)
@@ -861,7 +862,7 @@ struct Composer: View {
   private func add(_ p: Pending) {
     withAnimation(.snappy) { files.append(p) }
     #if canImport(UIKit)
-    Task {
+    Task { @MainActor in
       let t = await Pending.preview(p.data, type: p.type, name: p.name)
       if let t, let i = files.firstIndex(where: { $0.id == p.id }) { files[i].thumb = t }
     }

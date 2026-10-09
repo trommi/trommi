@@ -91,8 +91,8 @@ final class BoardModel: ObservableObject {
   @Published var chatPath: [Route] = []
   /** The stack of the page in front. */
   var path: [Route] {
-    get { tab == .chat ? chatPath : deskPath }
-    set { if tab == .chat { chatPath = newValue } else { deskPath = newValue } }
+    get { tabs.page == .chat ? chatPath : deskPath }
+    set { if tabs.page == .chat { chatPath = newValue } else { deskPath = newValue } }
   }
   /** What he read of each session: the newest agent envelope he saw there (kept on this device). */
   private var readMarks: [String: Int] = (UserDefaults.standard.dictionary(forKey: "trommi-read") as? [String: Int]) ?? [:]
@@ -119,8 +119,15 @@ final class BoardModel: ObservableObject {
     deskPath = [.session(id)]
   }
   /** The iPhone's pages (the capsule at the bottom). */
-  enum Tab { case chat, desk, note }
-  @Published var tab: Tab = .desk
+  typealias Tab = ShellTab
+  /** Which item of the bar is lit and which page lies in front (ShellTabs, TrommiClient: the note is no page, it
+   *  lies over the page he came from). Every way to the note goes through it, so the bar is lit on Note for all. */
+  @Published var tabs = ShellTabs()
+  /** The lit item. Set to .note it opens the note over the page in front; set to a page it goes there. */
+  var tab: Tab {
+    get { tabs.lit }
+    set { tabs.select(newValue) }
+  }
   /** TROMMI_PERF: bumps to scroll the Desk down and up (Perf.swift). */
   @Published var perfScroll = 0
 
