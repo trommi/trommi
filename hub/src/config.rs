@@ -63,11 +63,21 @@ pub struct Config {
 }
 
 fn number<T: std::str::FromStr>(env: &HashMap<String, String>, name: &str, default: T) -> T {
-    env.get(name).filter(|v| !v.is_empty()).and_then(|v| v.parse().ok()).unwrap_or(default)
+    env.get(name)
+        .filter(|v| !v.is_empty())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn list(env: &HashMap<String, String>, name: &str) -> Vec<String> {
-    env.get(name).map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default()
+    env.get(name)
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// v1 §8.1: `https://` + lowercase host [+ `:port`]; `http://` only for localhost and 127.0.0.1. Anything else is
@@ -83,7 +93,10 @@ pub fn canonical_address(url: &str) -> bool {
         None => (rest, None),
     };
     if let Some(p) = port {
-        let ok = !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()) && !p.starts_with('0');
+        let ok = !p.is_empty()
+            && p.len() <= 5
+            && p.bytes().all(|b| b.is_ascii_digit())
+            && !p.starts_with('0');
         if !ok {
             return false;
         }
@@ -94,7 +107,9 @@ pub fn canonical_address(url: &str) -> bool {
     !host.is_empty()
         && host.split('.').all(|label| {
             !label.is_empty()
-                && label.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
                 && !label.starts_with('-')
                 && !label.ends_with('-')
         })
@@ -106,7 +121,12 @@ impl Config {
     }
 
     pub fn from_map(env: &HashMap<String, String>) -> Self {
-        let text = |name: &str, default: &str| env.get(name).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| default.to_string());
+        let text = |name: &str, default: &str| {
+            env.get(name)
+                .filter(|v| !v.is_empty())
+                .cloned()
+                .unwrap_or_else(|| default.to_string())
+        };
         let optional = |name: &str| env.get(name).filter(|v| !v.is_empty()).cloned();
         let apns_key_pem = optional("APNS_KEY")
             .map(|k| k.replace("\\n", "\n"))
@@ -115,8 +135,14 @@ impl Config {
             .and_then(|j| serde_json::from_str::<HashMap<String, String>>(&j).ok())
             .unwrap_or_else(|| {
                 HashMap::from([
-                    ("production".to_string(), "https://api.push.apple.com".to_string()),
-                    ("sandbox".to_string(), "https://api.sandbox.push.apple.com".to_string()),
+                    (
+                        "production".to_string(),
+                        "https://api.push.apple.com".to_string(),
+                    ),
+                    (
+                        "sandbox".to_string(),
+                        "https://api.sandbox.push.apple.com".to_string(),
+                    ),
                 ])
             });
         let port = number(env, "HUB_PORT", 8790u16);
@@ -142,10 +168,18 @@ impl Config {
             pieces_per_second: number(env, "HUB_LIMIT_PIECES_PER_SECOND", 20.0),
             epoch_envelopes: number(env, "HUB_LIMIT_EPOCH_ENVELOPES", 1 << 24),
             streams_per_device: number(env, "HUB_LIMIT_STREAMS_PER_DEVICE", 8),
-            open_requests_per_ip_minute: number(env, "HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE", 600.0),
+            open_requests_per_ip_minute: number(
+                env,
+                "HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE",
+                600.0,
+            ),
             foundings_per_ip_hour: number(env, "HUB_LIMIT_FOUND_PER_IP_HOUR", 10),
             logins_per_ip_10min: number(env, "HUB_LIMIT_LOGINS_PER_IP_10MIN", 30),
-            login_failures_per_email_hour: number(env, "HUB_LIMIT_LOGIN_FAILURES_PER_EMAIL_HOUR", 10),
+            login_failures_per_email_hour: number(
+                env,
+                "HUB_LIMIT_LOGIN_FAILURES_PER_EMAIL_HOUR",
+                10,
+            ),
             max_rooms: number(env, "HUB_MAX_ROOMS", 1000),
             humans: 32,
             agents: 256,
@@ -184,7 +218,12 @@ mod tests {
 
     #[test]
     fn only_canonical_hub_addresses_pass() {
-        for good in ["https://hub.trommi.com", "https://hub.example.org:8443", "http://localhost:8790", "http://127.0.0.1"] {
+        for good in [
+            "https://hub.trommi.com",
+            "https://hub.example.org:8443",
+            "http://localhost:8790",
+            "http://127.0.0.1",
+        ] {
             assert!(canonical_address(good), "{good}");
         }
         for bad in [
@@ -204,8 +243,14 @@ mod tests {
 
     #[test]
     fn empty_or_broken_numbers_mean_the_default() {
-        let env = HashMap::from([("HUB_LIMIT_JSON".to_string(), "".to_string()), ("HUB_PORT".to_string(), "x".to_string())]);
+        let env = HashMap::from([
+            ("HUB_LIMIT_JSON".to_string(), "".to_string()),
+            ("HUB_PORT".to_string(), "x".to_string()),
+        ]);
         let c = Config::from_map(&env);
-        assert_eq!((c.json_limit, c.port, c.share_days, c.retention_days), (1 << 20, 8790, 180, 30));
+        assert_eq!(
+            (c.json_limit, c.port, c.share_days, c.retention_days),
+            (1 << 20, 8790, 180, 30)
+        );
     }
 }

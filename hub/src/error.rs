@@ -14,21 +14,27 @@ pub struct Refused {
 pub type Res<T> = Result<T, Refused>;
 
 pub fn refuse(code: &'static str, message: impl Into<String>) -> Refused {
-    Refused { code, message: message.into(), extra: None, retry_after: None }
+    Refused {
+        code,
+        message: message.into(),
+        extra: None,
+        retry_after: None,
+    }
 }
 
 pub fn status_of(code: &str) -> u16 {
     match code {
-        "bad-format" | "newer-version" | "bad-commit" | "bad-signature" | "bad-invite" | "bad-key-package" | "wrong-room"
-        | "incomplete" | "chain-break" | "bad-email" | "bad-passkey" => 400,
+        "bad-format" | "newer-version" | "bad-commit" | "bad-signature" | "bad-invite"
+        | "bad-key-package" | "wrong-room" | "incomplete" | "chain-break" | "bad-email"
+        | "bad-passkey" => 400,
         "unauthorised" | "bad-challenge" | "wrong-login" | "wrong-recovery" => 401,
         "forbidden" | "not-member" | "removed-sender" | "wrong-sender" => 403,
         "not-found" | "no-room" => 404,
         "method-not-allowed" => 405,
         "gone" | "invite-expired" | "invite-burned" => 410,
-        "epoch-taken" | "wrong-epoch" | "room-behind" | "group-behind" | "stale-session" | "epoch-full" | "replay" | "gap"
-        | "equivocation" | "room-exists" | "invite-used" | "lease-lost" | "account-exists" | "last-way-in"
-        | "account-changed" => 409,
+        "epoch-taken" | "wrong-epoch" | "room-behind" | "group-behind" | "stale-session"
+        | "epoch-full" | "replay" | "gap" | "equivocation" | "room-exists" | "invite-used"
+        | "lease-lost" | "account-exists" | "last-way-in" | "account-changed" => 409,
         "too-large" | "quota-exceeded" => 413,
         "range" => 416,
         "client-too-old" => 426,
@@ -63,8 +69,17 @@ impl Refused {
 
 impl From<rusqlite::Error> for Refused {
     fn from(e: rusqlite::Error) -> Self {
-        // The text of a database error never reaches a client; it is logged where the answer is made.
-        Refused { code: "internal", message: format!("database: {e}"), extra: None, retry_after: None }
+        // The text of a database error never reaches a client: it is logged here, the answer is generic.
+        crate::log::warn(
+            "database_error",
+            serde_json::json!({ "error": e.to_string() }),
+        );
+        Refused {
+            code: "internal",
+            message: "internal error".into(),
+            extra: None,
+            retry_after: None,
+        }
     }
 }
 
