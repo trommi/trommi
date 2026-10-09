@@ -125,5 +125,53 @@ name = "core_vectors_recovery"
 path = "core/vectors_recovery.rs"
 
 [[test]]
+name = "core_content_chain"
+path = "core/content_chain.rs"
+
+[[test]]
+name = "core_content_flow"
+path = "core/content_flow.rs"
+
+[[test]]
+name = "core_files"
+path = "core/files.rs"
+
+[[test]]
+name = "core_hub_auth"
+path = "core/hub_auth.rs"
+
+[[test]]
+name = "core_push"
+path = "core/push.rs"
+
+[[test]]
+name = "core_account"
+path = "core/account.rs"
+
+[[test]]
+name = "core_join_invite"
+path = "core/join_invite.rs"
+
+[[test]]
+name = "core_secrets"
+path = "core/secrets.rs"
+
+[[test]]
+name = "core_device_content"
+path = "core/device_content.rs"
+
+[[test]]
+name = "core_device_crash"
+path = "core/device_crash.rs"
+
+[[test]]
+name = "core_device_gate"
+path = "core/device_gate.rs"
+
+[[test]]
+name = "core_device_invite"
+path = "core/device_invite.rs"
+
+[[test]]
 name = "bindings_facade"
 path = "bindings/facade.rs"

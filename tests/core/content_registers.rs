@@ -280,3 +280,758 @@ fn no_bytes_make_the_reader_panic_and_what_is_read_is_written_the_same() {
     );
     assert_eq!(Value::parse(long.as_bytes()).err(), Some(Error::TooLarge));
 }
+
+/// Register values, the lamport rule, names and their owners, case by case (section 9.3).
+mod rules {
+    use serde_json::json;
+    use std::collections::BTreeMap;
+    use trommi_core::chain::{Receipt, Role};
+    use trommi_core::crypto::SeededEntropy;
+    use trommi_core::envelope::{self, Draft, Subject};
+    use trommi_core::ids::{GroupId, RegisterId};
+    use trommi_core::registers::*;
+    use trommi_core::Error;
+    use trommi_tests::room::*;
+
+    fn value(name: &str, value: Option<&str>, lamport: u64) -> Vec<u8> {
+        Value {
+            name: name.into(),
+            value: value.map(Into::into),
+            lamport,
+        }
+        .payload()
+        .unwrap()
+    }
+
+    /// A receiver with the registers it has taken, per group.
+    struct Scene {
+        world: World,
+        registers: BTreeMap<GroupId, Registers>,
+    }
+
+    impl Scene {
+        fn new() -> Self {
+            Self {
+                world: World::new(),
+                registers: BTreeMap::new(),
+            }
+        }
+
+        fn registers(&self, group: &GroupId) -> Registers {
+            self.registers.get(group).cloned().unwrap_or_default()
+        }
+
+        /// A register envelope of device `n` through the chain and into the registers.
+        fn set_with_id(
+            &mut self,
+            n: u8,
+            group: GroupId,
+            id: RegisterId,
+            payload: &[u8],
+        ) -> Result<Update, Error> {
+            let draft = Draft::register(id, payload);
+            let receipt: Receipt = self.world.post(n, group, &draft);
+            let opened = receipt.opened().ok_or(Error::Forbidden)?;
+            let registers = self.registers.entry(group).or_default();
+            let update =
+                registers.judge(&self.world.fake, opened.header(), opened.body().payload())?;
+            registers.apply(&update)?;
+            Ok(update)
+        }
+
+        /// The same, with one register id per sender and name.
+        fn set(
+            &mut self,
+            n: u8,
+            group: GroupId,
+            name: &str,
+            text: Option<&str>,
+            lamport: u64,
+        ) -> Result<Update, Error> {
+            let hash = trommi_core::crypto::sha256(format!("{n}{name}").as_bytes()).unwrap();
+            let id = RegisterId::from_slice(&hash.as_bytes()[..16]).unwrap();
+            self.set_with_id(n, group, id, &value(name, text, lamport))
+        }
+    }
+
+    #[test]
+    fn a_value_round_trips_through_its_payload() {
+        let cases = [
+            Value {
+                name: "desk/abc".into(),
+                value: Some(r#"{"name":"Work","order":2}"#.into()),
+                lamport: 7,
+            },
+            Value {
+                name: "crown".into(),
+                value: None,
+                lamport: 0,
+            },
+            Value {
+                name: "kit".into(),
+                value: Some("[1,2,3]".into()),
+                lamport: MAX_LAMPORT,
+            },
+            Value {
+                name: "heard".into(),
+                value: Some("\"text\"".into()),
+                lamport: u64::MAX,
+            },
+        ];
+        for case in cases {
+            let payload = case.payload().unwrap();
+            assert_eq!(Value::parse(&payload).unwrap(), case);
+            assert!(envelope::Body::new(envelope::Bind::None, &payload).is_ok());
+        }
+        // The payload is the object the format names.
+        let payload = value("crown", Some(r#"{ "a" : 1 }"#), 3);
+        let parsed: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(
+            parsed,
+            json!({ "name": "crown", "value": { "a": 1 }, "lamport": 3 })
+        );
+        // No value is printed.
+        let secret = Value {
+            name: "board_snapshot/x".into(),
+            value: Some(r#"{"file_key":"c2VjcmV0"}"#.into()),
+            lamport: 1,
+        };
+        assert!(!format!("{secret:?}").contains("c2VjcmV0"));
+        // A reader ignores fields it does not know.
+        let extra = br#"{"name":"crown","value":1,"lamport":2,"schema_version":2,"x":[]}"#;
+        assert_eq!(Value::parse(extra).unwrap().value.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn a_payload_that_is_no_register_value_is_refused() {
+        let cases: [&[u8]; 14] = [
+            b"",
+            b"[]",
+            br#"["crown",1,2]"#,
+            b"{}",
+            br#"{"name":"crown","lamport":1}"#,
+            br#"{"name":"crown","value":1}"#,
+            br#"{"value":1,"lamport":1}"#,
+            br#"{"name":7,"value":1,"lamport":1}"#,
+            br#"{"name":"crown","value":1,"lamport":-1}"#,
+            br#"{"name":"crown","value":1,"lamport":1.5}"#,
+            br#"{"name":"crown","value":1,"lamport":"1"}"#,
+            br#"{"name":"crown","value":1,"lamport":18446744073709551616}"#,
+            br#"{"name":"crown","name":"kit","value":1,"lamport":1}"#,
+            br#"{"name":"crown","value":1,"lamport":1} x"#,
+        ];
+        for payload in cases {
+            assert_eq!(
+                Value::parse(payload),
+                Err(Error::BadFormat),
+                "{}",
+                String::from_utf8_lossy(payload)
+            );
+        }
+        // A writer's value that is not JSON.
+        let bad = Value {
+            name: "crown".into(),
+            value: Some("{".into()),
+            lamport: 1,
+        };
+        assert_eq!(bad.payload(), Err(Error::BadFormat));
+    }
+
+    #[test]
+    fn a_value_is_at_most_four_kibibytes() {
+        let text = |len: usize| format!("\"{}\"", "a".repeat(len - 2));
+        let at_limit = Value {
+            name: "crown".into(),
+            value: Some(text(MAX_VALUE_LEN)),
+            lamport: 1,
+        };
+        let payload = at_limit.payload().unwrap();
+        assert_eq!(Value::parse(&payload).unwrap(), at_limit);
+        let over = Value {
+            value: Some(text(MAX_VALUE_LEN + 1)),
+            ..at_limit.clone()
+        };
+        assert_eq!(over.payload(), Err(Error::TooLarge));
+        // A reader holds a received value to the same limit.
+        let raw = format!(
+            r#"{{"name":"crown","value":{},"lamport":1}}"#,
+            text(MAX_VALUE_LEN + 1)
+        );
+        assert_eq!(Value::parse(raw.as_bytes()), Err(Error::TooLarge));
+        // The two names that list one head per sender are bounded by the payload alone.
+        for name in ["heads", "board_snapshot/abc"] {
+            let long = Value {
+                name: name.into(),
+                value: Some(text(3 * MAX_VALUE_LEN)),
+                lamport: 1,
+            };
+            assert_eq!(Value::parse(&long.payload().unwrap()).unwrap(), long);
+        }
+    }
+
+    #[test]
+    fn the_lamport_counts_within_its_bounds_only() {
+        assert_eq!(counted_lamport(0, 0), 0);
+        assert_eq!(counted_lamport(1, 0), 1);
+        assert_eq!(counted_lamport(MAX_LAMPORT_JUMP, 0), MAX_LAMPORT_JUMP);
+        assert_eq!(counted_lamport(MAX_LAMPORT_JUMP + 1, 0), 0);
+        assert_eq!(
+            counted_lamport(100 + MAX_LAMPORT_JUMP, 100),
+            100 + MAX_LAMPORT_JUMP
+        );
+        assert_eq!(counted_lamport(101 + MAX_LAMPORT_JUMP, 100), 0);
+        // Below the largest seen is fine: it is an older value.
+        assert_eq!(counted_lamport(5, 1_000_000_000), 5);
+        // 2^48 counts, one above does not, however much was seen.
+        assert_eq!(counted_lamport(MAX_LAMPORT, MAX_LAMPORT - 1), MAX_LAMPORT);
+        assert_eq!(counted_lamport(MAX_LAMPORT + 1, MAX_LAMPORT), 0);
+        assert_eq!(counted_lamport(u64::MAX, u64::MAX), 0);
+        assert_eq!(counted_lamport(u64::MAX, 0), 0);
+
+        assert_eq!(next_lamport(0), Ok(1));
+        assert_eq!(next_lamport(MAX_LAMPORT - 1), Ok(MAX_LAMPORT));
+        assert_eq!(next_lamport(MAX_LAMPORT), Err(Error::TooMany));
+        assert_eq!(next_lamport(u64::MAX), Err(Error::TooMany));
+    }
+
+    #[test]
+    fn the_current_value_has_the_highest_lamport_then_sender_then_number() {
+        let mut reader = Scene::new();
+        let get = |reader: &Scene| reader.registers(&room()).get("crown").map(str::to_owned);
+        assert_eq!(get(&reader), None);
+        assert!(
+            reader
+                .set(1, room(), "crown", Some("1"), 1)
+                .unwrap()
+                .current
+        );
+        assert_eq!(get(&reader).as_deref(), Some("1"));
+        // A higher lamport wins, whoever writes and whenever it arrives.
+        assert!(
+            reader
+                .set(2, room(), "crown", Some("2"), 5)
+                .unwrap()
+                .current
+        );
+        assert!(
+            !reader
+                .set(1, room(), "crown", Some("3"), 4)
+                .unwrap()
+                .current
+        );
+        assert_eq!(get(&reader).as_deref(), Some("2"));
+        // The same lamport: the higher sender id wins.
+        let (low, high) = if device(1) < device(2) {
+            (1, 2)
+        } else {
+            (2, 1)
+        };
+        assert!(
+            reader
+                .set(high, room(), "crown", Some("4"), 9)
+                .unwrap()
+                .current
+        );
+        assert!(
+            !reader
+                .set(low, room(), "crown", Some("5"), 9)
+                .unwrap()
+                .current
+        );
+        assert_eq!(get(&reader).as_deref(), Some("4"));
+        // The same lamport and sender: the higher envelope number wins.
+        assert!(
+            reader
+                .set(high, room(), "crown", Some("6"), 9)
+                .unwrap()
+                .current
+        );
+        assert_eq!(get(&reader).as_deref(), Some("6"));
+        // A null deletes, and is itself the current value.
+        assert!(reader.set(low, room(), "crown", None, 10).unwrap().current);
+        assert_eq!(get(&reader), None);
+        assert!(
+            !reader
+                .set(high, room(), "crown", Some("7"), 9)
+                .unwrap()
+                .current
+        );
+        assert_eq!(get(&reader), None);
+        assert_eq!(reader.registers(&room()).largest_lamport(), 10);
+        // Names do not touch each other.
+        reader.set(1, room(), "kit", Some("\"k\""), 1).unwrap();
+        assert_eq!(reader.registers(&room()).get("kit"), Some("\"k\""));
+        assert_eq!(get(&reader), None);
+    }
+
+    #[test]
+    fn a_lamport_out_of_bounds_counts_as_zero() {
+        let mut reader = Scene::new();
+        reader.set(1, room(), "crown", Some("1"), 3).unwrap();
+        // A jump of more than 2^24 above the largest seen: counts as 0, so it loses against lamport 3.
+        let update = reader
+            .set(2, room(), "crown", Some("2"), 4 + MAX_LAMPORT_JUMP)
+            .unwrap();
+        assert!(!update.current);
+        assert_eq!(reader.registers(&room()).get("crown"), Some("1"));
+        assert_eq!(reader.registers(&room()).largest_lamport(), 3);
+        // Exactly 2^24 above counts.
+        assert!(
+            reader
+                .set(2, room(), "crown", Some("3"), 3 + MAX_LAMPORT_JUMP)
+                .unwrap()
+                .current
+        );
+        assert_eq!(
+            reader.registers(&room()).largest_lamport(),
+            3 + MAX_LAMPORT_JUMP
+        );
+        // Above 2^48: 0.
+        assert!(
+            !reader
+                .set(1, room(), "crown", Some("4"), MAX_LAMPORT + 1)
+                .unwrap()
+                .current
+        );
+        // A value that counts as 0 is still the current one of a name nobody wrote before.
+        assert!(
+            reader
+                .set(1, room(), "kit", Some("5"), u64::MAX)
+                .unwrap()
+                .current
+        );
+        assert_eq!(reader.registers(&room()).get("kit"), Some("5"));
+        assert!(reader.set(1, room(), "kit", Some("6"), 1).unwrap().current);
+    }
+
+    #[test]
+    fn each_name_belongs_to_a_role_and_a_kind_of_group() {
+        let me = device(1);
+        let own = format!("device/{}", me.to_base64url());
+        let other = format!("device/{}", device(2).to_base64url());
+        let long_name = format!("status_line/{}", "a".repeat(MAX_NAME_LEN));
+        assert!(may_write(
+            &long_name[..MAX_NAME_LEN],
+            false,
+            Role::Agent,
+            &me
+        ));
+        // (name, room: human, session: human, session: agent, session: helper)
+        let table = [
+            ("desk/x", true, false, false, false),
+            ("session/x", true, false, false, false),
+            ("crown", true, false, false, false),
+            ("kit", true, false, false, false),
+            ("draft/x", true, false, false, false),
+            ("snooze/x", true, false, false, false),
+            ("duck/x", true, false, false, false),
+            ("read/session/x", true, false, false, false),
+            ("board_snapshot/x", true, false, false, false),
+            (own.as_str(), true, true, true, true),
+            (other.as_str(), false, false, false, false),
+            ("heads", true, true, true, true),
+            ("profile", false, false, true, true),
+            ("status_line/x", false, false, true, true),
+            ("heard", false, false, true, true),
+            ("alert/x", false, false, true, true),
+            ("goals", false, true, false, false),
+            // Names the table does not have.
+            ("", false, false, false, false),
+            ("desk/", false, false, false, false),
+            ("desk", false, false, false, false),
+            ("crown/x", false, false, false, false),
+            ("status_line/", false, false, false, false),
+            ("device/", false, false, false, false),
+            ("device/short", false, false, false, false),
+            ("Heads", false, false, false, false),
+            ("room_snapshot", false, false, false, false),
+            (long_name.as_str(), false, false, false, false),
+        ];
+        for (name, room_human, session_human, session_agent, session_helper) in table {
+            assert_eq!(
+                may_write(name, true, Role::Human, &me),
+                room_human,
+                "{name}"
+            );
+            assert_eq!(
+                may_write(name, false, Role::Human, &me),
+                session_human,
+                "{name}"
+            );
+            assert_eq!(
+                may_write(name, false, Role::Agent, &me),
+                session_agent,
+                "{name}"
+            );
+            assert_eq!(
+                may_write(name, false, Role::Opener, &me),
+                session_agent,
+                "{name}"
+            );
+            assert_eq!(
+                may_write(name, false, Role::Helper, &me),
+                session_helper,
+                "{name}"
+            );
+        }
+        assert_eq!(name_owner("heads", true), Some(NameOwner::EachDevice));
+        assert_eq!(name_owner(&own, false), Some(NameOwner::NamedDevice(me)));
+        assert_eq!(name_owner("goals", true), None);
+        assert_eq!(name_owner("profile", true), None);
+    }
+
+    #[test]
+    fn a_reader_takes_a_name_only_from_the_role_that_owns_it() {
+        let mut reader = Scene::new();
+        // In a session group any leaf writes register envelopes (9.2); the name decides whose count.
+        assert_eq!(
+            reader.set(2, session(), "profile", Some("1"), 1).err(),
+            Some(Error::Forbidden)
+        );
+        assert_eq!(
+            reader.set(3, session(), "goals", Some("1"), 1).err(),
+            Some(Error::Forbidden)
+        );
+        assert_eq!(
+            reader.set(3, session(), "desk/x", Some("1"), 1).err(),
+            Some(Error::Forbidden)
+        );
+        assert_eq!(
+            reader.set(3, session(), "no such name", Some("1"), 1).err(),
+            Some(Error::Forbidden)
+        );
+        assert!(reader.set(3, session(), "profile", Some("1"), 1).is_ok());
+        assert!(reader.set(2, session(), "goals", Some("2"), 1).is_ok());
+        assert!(reader
+            .set(4, helper_session(), "status_line/a", Some("3"), 1)
+            .is_ok());
+        // A forbidden value moves nothing, not even the largest lamport seen.
+        assert_eq!(
+            reader.set(2, session(), "heard", Some("1"), 1000).err(),
+            Some(Error::Forbidden)
+        );
+        assert_eq!(reader.registers(&session()).largest_lamport(), 1);
+        assert_eq!(reader.registers(&session()).get("heard"), None);
+        // A device's own name: only that device.
+        let name = |n: u8| format!("device/{}", device(n).to_base64url());
+        assert!(reader.set(3, session(), &name(3), Some("1"), 2).is_ok());
+        assert_eq!(
+            reader.set(2, session(), &name(3), Some("2"), 3).err(),
+            Some(Error::Forbidden)
+        );
+        assert_eq!(reader.registers(&session()).get(&name(3)), Some("1"));
+        // The role is the one of the envelope's epoch: a device that became the agent later.
+        reader.world.fake.commit(&session(), NOW, NOW, |leaves| {
+            leaves.remove(&device(3));
+            leaves.insert(device(6), Role::Agent);
+        });
+        assert!(reader.set(6, session(), "profile", Some("9"), 3).is_ok());
+    }
+
+    #[test]
+    fn an_update_is_applied_once_and_a_notes_lamport_counts() {
+        let mut reader = Scene::new();
+        let update = reader.set(1, room(), "crown", Some("1"), 5).unwrap();
+        let mut registers = reader.registers(&room());
+        // The same update again: the registers have moved on since it was judged.
+        assert!(matches!(registers.apply(&update), Err(Error::Internal(_))));
+        assert_eq!(registers, reader.registers(&room()));
+        assert!(!format!("{update:?}").contains("\"1\""));
+        // A Note version's lamport moves the largest seen, by the same bounds.
+        registers.observe_lamport(9);
+        assert_eq!(registers.largest_lamport(), 9);
+        registers.observe_lamport(3);
+        registers.observe_lamport(10 + MAX_LAMPORT_JUMP);
+        assert_eq!(registers.largest_lamport(), 9);
+        assert_eq!(next_lamport(registers.largest_lamport()), Ok(10));
+    }
+
+    #[test]
+    fn heads_are_kept_per_device() {
+        let mut reader = Scene::new();
+        reader
+            .set(2, session(), "heads", Some(r#"{"a":1}"#), 1)
+            .unwrap();
+        // The agent's later value does not replace the human's.
+        let update = reader
+            .set(3, session(), "heads", Some(r#"{"b":2}"#), 2)
+            .unwrap();
+        assert_eq!((update.of, update.current), (Some(device(3)), true));
+        let registers = reader.registers(&session());
+        assert_eq!(registers.get_of("heads", &device(2)), Some(r#"{"a":1}"#));
+        assert_eq!(registers.get_of("heads", &device(3)), Some(r#"{"b":2}"#));
+        assert_eq!(registers.get_of("heads", &device(1)), None);
+        assert_eq!(registers.get("heads"), None);
+        // A device's own newer value replaces its older one.
+        reader
+            .set(2, session(), "heads", Some(r#"{"a":3}"#), 3)
+            .unwrap();
+        assert_eq!(
+            reader.registers(&session()).get_of("heads", &device(2)),
+            Some(r#"{"a":3}"#)
+        );
+    }
+
+    #[test]
+    fn a_writer_keeps_one_register_id_per_name() {
+        let mut reader = Scene::new();
+        reader
+            .set_with_id(
+                1,
+                room(),
+                RegisterId::new([7; 16]),
+                &value("crown", Some("1"), 1),
+            )
+            .unwrap();
+        // The same id for another name; another id for the same name.
+        assert_eq!(
+            reader
+                .set_with_id(
+                    1,
+                    room(),
+                    RegisterId::new([7; 16]),
+                    &value("kit", Some("1"), 2)
+                )
+                .err(),
+            Some(Error::BadFormat)
+        );
+        assert_eq!(
+            reader
+                .set_with_id(
+                    1,
+                    room(),
+                    RegisterId::new([8; 16]),
+                    &value("crown", Some("2"), 2)
+                )
+                .err(),
+            Some(Error::BadFormat)
+        );
+        assert_eq!(reader.registers(&room()).get("crown"), Some("1"));
+        assert_eq!(reader.registers(&room()).get("kit"), None);
+        // Another writer may use the same bytes for its own name.
+        reader
+            .set_with_id(
+                2,
+                room(),
+                RegisterId::new([7; 16]),
+                &value("kit", Some("3"), 2),
+            )
+            .unwrap();
+        // And the first writer goes on under its id.
+        reader
+            .set_with_id(
+                1,
+                room(),
+                RegisterId::new([7; 16]),
+                &value("crown", Some("4"), 3),
+            )
+            .unwrap();
+        assert_eq!(reader.registers(&room()).get("crown"), Some("4"));
+        // An envelope that is no register carries no register value.
+        let sealed = reader.world.sign(
+            1,
+            room(),
+            &Draft::board_item(trommi_core::ids::BoardId::ALL_DESKS, b"{}"),
+        );
+        assert_eq!(
+            Registers::new()
+                .judge(&reader.world.fake, &sealed.envelope.header, b"{}")
+                .err(),
+            Some(Error::BadFormat)
+        );
+    }
+
+    #[test]
+    fn a_device_writes_with_its_next_lamport_and_its_own_ids() {
+        let mut reader = Scene::new();
+        reader.set(2, room(), "crown", Some("1"), 41).unwrap();
+        let registers = reader.registers(&room());
+        let mut own = OwnIds::new();
+        let mut entropy = seeded(3);
+        let draft = write(
+            &registers,
+            &mut own,
+            "crown",
+            Some(r#"{"x":1}"#),
+            &mut entropy,
+        )
+        .unwrap();
+        let receipt = reader.world.post(1, room(), &draft);
+        let opened = receipt.opened().unwrap();
+        let sent = Value::parse(opened.body().payload()).unwrap();
+        assert_eq!(
+            sent,
+            Value {
+                name: "crown".into(),
+                value: Some(r#"{"x":1}"#.into()),
+                lamport: 42
+            }
+        );
+        let Subject::Register(first_id) = opened.header().subject else {
+            panic!("a register");
+        };
+        // The same name again: the same id. Another name: another id.
+        let id = |own: &mut OwnIds, entropy: &mut SeededEntropy, name: &str| {
+            let draft = write(&registers, own, name, None, entropy).unwrap();
+            let slot = World::new().slot(1, room(), 0);
+            match draft.header(&slot).unwrap().subject {
+                Subject::Register(id) => id,
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(id(&mut own, &mut entropy, "crown"), first_id);
+        let kit = id(&mut own, &mut entropy, "kit");
+        assert_ne!(kit, first_id);
+        let stored = OwnIds::from_bytes(&own.to_bytes().unwrap()).unwrap();
+        assert_eq!(stored, own);
+        let mut stored = stored;
+        assert_eq!(id(&mut stored, &mut entropy, "kit"), kit);
+        assert!(matches!(
+            OwnIds::from_bytes(&[5, 1]),
+            Err(Error::Storage(_))
+        ));
+
+        // Without randomness no id, and nothing is remembered.
+        let mut fresh = OwnIds::new();
+        assert_eq!(
+            write(&registers, &mut fresh, "crown", None, &mut NoEntropy).err(),
+            Some(Error::Entropy)
+        );
+        assert_eq!(fresh, OwnIds::new());
+        assert_eq!(
+            write(&registers, &mut fresh, "crown", Some("{"), &mut entropy).err(),
+            Some(Error::BadFormat)
+        );
+    }
+
+    #[test]
+    fn register_state_round_trips_and_refuses_damage() {
+        let mut reader = Scene::new();
+        reader.set(1, room(), "crown", Some("1"), 1).unwrap();
+        reader.set(2, room(), "kit", None, 2).unwrap();
+        reader.set(2, room(), "heads", Some("{}"), 3).unwrap();
+        reader.set(1, room(), "heads", Some("{}"), 4).unwrap();
+        let registers = reader.registers(&room());
+        assert!(!format!("{registers:?}").contains("{}"));
+        let bytes = registers.to_bytes().unwrap();
+        assert_eq!(Registers::from_bytes(&bytes).unwrap(), registers);
+        assert_eq!(
+            Registers::from_bytes(&Registers::new().to_bytes().unwrap()).unwrap(),
+            Registers::new()
+        );
+        for len in 0..bytes.len() {
+            assert!(
+                matches!(Registers::from_bytes(&bytes[..len]), Err(Error::Storage(_))),
+                "cut at {len}"
+            );
+        }
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(matches!(
+            Registers::from_bytes(&longer),
+            Err(Error::Storage(_))
+        ));
+    }
+
+    #[test]
+    fn goals_keep_to_twenty_lines_of_two_hundred_characters() {
+        let lines = |n: usize, len: usize| vec!["ä".repeat(len); n].join("\n");
+        let desk = |goals: &str| json!({ "name": "Desk", "order": 1, "goals": goals }).to_string();
+        let handed = |goals: &str| {
+            json!({ "desk_id": "d", "desk_name": "Desk", "goals": goals }).to_string()
+        };
+        let registers = Registers::new();
+        let write_as = |name: &str, value: &str| {
+            write(
+                &registers,
+                &mut OwnIds::new(),
+                name,
+                Some(value),
+                &mut seeded(1),
+            )
+            .map(|_| ())
+        };
+        // What a reader makes of the same value, written by a device that does not keep the limits.
+        let read_as = |name: &str, value: &str| {
+            let payload = format!(r#"{{"name":"{name}","value":{value},"lamport":1}}"#);
+            Value::parse(payload.as_bytes()).map(|_| ())
+        };
+        for name in ["desk/abc", "goals"] {
+            let value: &dyn Fn(&str) -> String = if name == "goals" { &handed } else { &desk };
+            for fits in [
+                lines(20, 40),
+                lines(1, 200),
+                lines(1, 0),
+                "Ship it".to_owned(),
+            ] {
+                assert_eq!(write_as(name, &value(&fits)), Ok(()), "{name}");
+                assert_eq!(read_as(name, &value(&fits)), Ok(()), "{name}");
+            }
+            for beyond in [lines(21, 1), lines(1, 201), lines(20, 1) + "\n"] {
+                assert_eq!(
+                    write_as(name, &value(&beyond)),
+                    Err(Error::TooLarge),
+                    "{name}"
+                );
+                assert_eq!(
+                    read_as(name, &value(&beyond)),
+                    Err(Error::TooLarge),
+                    "{name}"
+                );
+            }
+            // No Goals: null, or no field. Goals that are no text are no value of the name.
+            for none in [
+                r#"{"name":"Desk","goals":null}"#,
+                r#"{"name":"Desk"}"#,
+                "null",
+            ] {
+                assert_eq!(read_as(name, none), Ok(()), "{name}");
+            }
+            assert_eq!(write_as(name, r#"{"goals":null}"#), Ok(()));
+            for odd in [
+                r#"{"goals":["a","b"]}"#,
+                r#"{"goals":7}"#,
+                r#"{"goals":{}}"#,
+            ] {
+                assert_eq!(write_as(name, odd), Err(Error::BadFormat), "{name}");
+                assert_eq!(read_as(name, odd), Err(Error::BadFormat), "{name}");
+            }
+        }
+        // Two hundred characters, not bytes: the line above is 400 bytes long. And only Goals are held to it.
+        assert_eq!(lines(1, 200).len(), 400);
+        // The limit of every value holds beside it: twenty full lines fit in 4 KiB as plain letters and not
+        // as letters of two bytes.
+        let full = vec!["a".repeat(200); 20].join("\n");
+        assert_eq!(write_as("goals", &handed(&full)), Ok(()));
+        assert_eq!(read_as("goals", &handed(&full)), Ok(()));
+        assert!(handed(&lines(20, 200)).len() > MAX_VALUE_LEN);
+        assert_eq!(
+            write_as("goals", &handed(&lines(20, 200))),
+            Err(Error::TooLarge)
+        );
+        assert_eq!(write_as("session/abc", &desk(&lines(30, 1))), Ok(()));
+        assert_eq!(read_as("profile", &desk(&lines(1, 300))), Ok(()));
+        assert_eq!((MAX_GOALS_LINES, MAX_GOALS_LINE_LEN), (20, 200));
+
+        // A reader does not take such a value: the Goals an agent reads stay the ones before it.
+        let mut scene = Scene::new();
+        let payload = |goals: &str, lamport: u64| {
+            format!(
+                r#"{{"name":"goals","value":{},"lamport":{lamport}}}"#,
+                handed(goals)
+            )
+        };
+        let id = RegisterId::new([4; 16]);
+        assert!(scene
+            .set_with_id(1, session(), id, payload("Ship it", 1).as_bytes())
+            .is_ok());
+        assert_eq!(
+            scene
+                .set_with_id(1, session(), id, payload(&lines(21, 1), 2).as_bytes())
+                .err(),
+            Some(Error::TooLarge)
+        );
+        let kept = scene.registers[&session()].get("goals").unwrap().to_owned();
+        assert_eq!(kept, handed("Ship it"));
+    }
+}
