@@ -89,7 +89,7 @@ jobs:
           cd release
           sha256sum -c --quiet checksums.txt
           # nothing lies in the release that the list does not name
-          find . -type f ! -name checksums.txt | sed 's|^\./||' | sort > "$RUNNER_TEMP/there"
+          find . -type f ! -path ./checksums.txt | sed 's|^\./||' | sort > "$RUNNER_TEMP/there"
           cut -d' ' -f3- checksums.txt | sort > "$RUNNER_TEMP/named"
           diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files checksums.txt does not name"; exit 1; }
           jq -e --arg r "$GITHUB_REPOSITORY" '.product == "trommi-web" and .repository == $r and .worker == "trommi-app" and .host == "app.trommi.com"' manifest.json > /dev/null \
@@ -157,7 +157,7 @@ jobs:
           cd release
           jq -r '.files[] | "\(.sha256)  \(.name)"' manifest.json > "$RUNNER_TEMP/manifest-sums"
           sha256sum -c --quiet "$RUNNER_TEMP/manifest-sums"
-          find . -type f ! -name checksums.txt ! -name manifest.json | sed 's|^\./||' | sort > "$RUNNER_TEMP/there"
+          find . -type f ! -path ./checksums.txt ! -path ./manifest.json | sed 's|^\./||' | sort > "$RUNNER_TEMP/there"
           jq -r '.files[].name' manifest.json | sort > "$RUNNER_TEMP/named"
           diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files the attested manifest does not name"; exit 1; }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
