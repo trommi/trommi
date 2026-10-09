@@ -3029,6 +3029,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "trommi-hub-updater"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "ed25519-dalek",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "trommi-tests"
 version = "0.0.0"
 dependencies = [

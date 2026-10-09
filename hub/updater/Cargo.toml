@@ -1,0 +1,28 @@
+[package]
+name = "trommi-hub-updater"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "Runs on the hub's server: fetches a signed hub release from GitHub, verifies it, swaps, checks health, rolls back."
+
+[lib]
+name = "trommi_hub_updater"
+path = "src/lib.rs"
+
+[[bin]]
+name = "trommi-hub-updater"
+path = "src/main.rs"
+
+# Nothing here that the hub does not already build: the same versions, from the same lockfile.
+[dependencies]
+tokio = { version = "=1.53.2", features = ["rt-multi-thread", "net", "macros", "sync", "time", "signal"] }
+hyper = { version = "=1.12.0", features = ["server", "http1"] }
+hyper-util = { version = "=0.1.21", features = ["tokio"] }
+http-body-util = "=0.1.5"
+bytes = "=1.12.1"
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "=0.10.9"
+base64 = "=0.22.1"
+ed25519-dalek = "=2.2.0"
