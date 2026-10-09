@@ -20,7 +20,6 @@
 //!   followed from the room's founding and must arrive at the room state this device was invited at. Until
 //!   that has happened for a group, nobody was a leaf of its earlier epochs as far as this device answers.
 use crate::error::{Fault, Result};
-use crate::recovery::AgentRecovery;
 use crate::store::{CoreStore, Journal, SIDE};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -28,12 +27,13 @@ use trommi_core::chain::{
     self, ChainRecords, Chains, EpochEnd, GroupFacts, Head, Mode, OwnChain, Receipt, Role, Served,
 };
 use trommi_core::crypto::{Secret, SigningKey, SystemEntropy};
-use trommi_core::device::{Device, DeviceRecovery};
+use trommi_core::device::Device;
 use trommi_core::envelope::{Draft, Subject};
 use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId};
 use trommi_core::mls::observer::{Context, NoSessions, Observer};
 use trommi_core::mls::profile::Cut;
 use trommi_core::objects::{self, Decision, GateLog, Objects, OwnRecord};
+use trommi_core::recovery::PublicRules;
 use trommi_core::registers::{self, OwnIds, Registers};
 use trommi_core::store::table;
 use trommi_core::Error;
@@ -272,6 +272,10 @@ pub struct Past {
     pub info: Vec<u8>,
     /// The group's Commits.
     pub commits: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// The room's change number of each of the group's Commits, in the same order.
+    pub changes: Vec<u64>,
+    /// The GroupInfo the hub offers as the group's current one.
+    pub current: Vec<u8>,
 }
 
 /// A register value an envelope set, as the model takes it.
@@ -359,15 +363,10 @@ fn group_of_key(key: &[u8]) -> Option<GroupId> {
 impl Vault {
     /// A new device in an empty journal, written before this returns.
     pub fn create(journal: Journal) -> Result<Vault> {
-        Self::create_with(journal, Box::new(AgentRecovery))
-    }
-
-    /// A new device with another recovery construct than an agent's: what a test's human stand-in runs on.
-    pub fn create_with(journal: Journal, recovery: Box<dyn DeviceRecovery>) -> Result<Vault> {
         if !journal.is_empty() {
             return Err(damaged("a new device needs an empty state"));
         }
-        let device = Device::create(journal.core_store(), Box::new(SystemEntropy), recovery)?;
+        let device = Device::create(journal.core_store(), Box::new(SystemEntropy))?;
         let mut vault = Self::around(journal, device)?;
         vault.commit()?;
         Ok(vault)
@@ -376,12 +375,8 @@ impl Vault {
     /// The device a journal holds. `state-damaged` when anything in it does not read: the human then
     /// reconnects the session; nothing is re-keyed here.
     pub fn open(journal: Journal) -> Result<Vault> {
-        let device = Device::open(
-            journal.core_store(),
-            Box::new(SystemEntropy),
-            Box::new(AgentRecovery),
-        )
-        .map_err(|error| damaged(&Fault::from(error).text()))?;
+        let device = Device::open(journal.core_store(), Box::new(SystemEntropy))
+            .map_err(|error| damaged(&Fault::from(error).text()))?;
         Self::around(journal, device)
     }
 
@@ -683,6 +678,36 @@ impl Vault {
         Ok(findings)
     }
 
+    /// First contact with a session joined by Welcome (5.2.6), as the core's device checks it: the group is
+    /// verified from its founding through its Commits against the room states this device holds, and must end
+    /// in the state this device stands in. `Ok(false)` when this device's record of the room does not reach
+    /// back to the founding (a session that is older than this device's enrolment), which is no finding;
+    /// `bad-group` is one: the session's content is then not opened.
+    pub fn first_contact(&self, group: &GroupId, past: &Past) -> Result<bool> {
+        let commits: Vec<trommi_core::recovery::ServedCommit<'_>> = past
+            .commits
+            .iter()
+            .zip(&past.changes)
+            .map(
+                |((commit, auth), change)| trommi_core::recovery::ServedCommit {
+                    change: *change,
+                    commit,
+                    recovery_auth: auth.as_deref(),
+                },
+            )
+            .collect();
+        let served = trommi_core::recovery::ServedGroup {
+            founding: &past.info,
+            commits: &commits,
+            current: &past.current,
+        };
+        match self.device.verify_founding(group, &served) {
+            Ok(()) => Ok(true),
+            Err(Error::RoomBehind | Error::GroupBehind) => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Learns the epochs of `group` before this device joined it (`chain::GroupFacts::processed_epoch`): who
     /// its leaves were and in which role, when each epoch ended, which Cuts its Commits named.
     ///
@@ -709,7 +734,7 @@ impl Vault {
                 format!("the group's past does not fit: {what}"),
             )
         };
-        let recovery = AgentRecovery;
+        let recovery = PublicRules;
         let sessions = NoSessions;
 
         let mut room = Observer::follow_room(&past.room_info, None)?;

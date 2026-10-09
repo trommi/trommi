@@ -19,7 +19,6 @@ pub mod member;
 pub mod mirror;
 pub mod model;
 pub mod prompt;
-pub mod recovery;
 pub mod server;
 pub mod slots;
 pub mod slotstore;
