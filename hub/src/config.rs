@@ -37,6 +37,7 @@ pub struct Config {
     pub heavy_waiting: usize,
     /// requests worked on at a time; more are told to come back
     pub admitted: usize,
+    pub admitted_per_address: usize,
     pub quiet: bool,
 
     pub json_limit: usize,
@@ -198,6 +199,7 @@ impl Config {
             ),
             heavy_waiting: number(env, "HUB_HEAVY_WAITING", 64),
             admitted: number(env, "HUB_ADMITTED", 256),
+            admitted_per_address: number(env, "HUB_ADMITTED_PER_ADDRESS", 32),
 
             json_limit: number(env, "HUB_LIMIT_JSON", 1 << 20),
             commit_limit: number(env, "HUB_LIMIT_COMMIT", 1 << 20),
