@@ -734,6 +734,22 @@ async fn a_deploy_cut_off_after_the_new_hub_was_in_place_and_well_counts_as_done
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_release_already_found_not_well_is_never_taken_at_a_later_start() {
+    // the updater went down while it was putting hub-v5 back; hub-v6 would answer as well by now
+    let b = cut_off("rejected", true).await;
+    std::fs::write(
+        b.root.join("deploy-journal.json"),
+        br#"{"tag":"hub-v6","old":"hub-v5","old_previous":null,"rejected":true}"#,
+    )
+    .unwrap();
+    b.updater().started().await;
+    assert_eq!(b.link("current").as_deref(), Some("hub-v5"));
+    assert_eq!(b.hub_commit(), Some(commit_of(5)));
+    assert!(!b.root.join("deploy-journal.json").exists());
+    assert!(!b.root.join("releases/hub-v6").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_cut_off_deploy_is_settled_before_the_next_one_begins() {
     let b = cut_off("cutnext", false).await;
     b.publish(make(7).release());
@@ -766,6 +782,12 @@ async fn while_a_new_updater_is_on_trial_no_further_deploy_is_taken() {
     assert_eq!(b.link("updater").as_deref(), Some("hub-v6"));
     assert_eq!(b.link("updater-previous").as_deref(), Some("hub-v5"));
     assert_eq!(b.link("current").as_deref(), Some("hub-v6"));
+    // the old updater, started once more for whatever reason, does not end a trial that is not its own
+    let old = b.updater();
+    assert_eq!(b.link("updater").as_deref(), Some("hub-v6"));
+    updater.confirm();
+    assert!(b.root.join("updater-trial").exists());
+    drop(old);
     // once the new updater is up, the next release is taken
     prestart(&b.root);
     let new = b.updater();

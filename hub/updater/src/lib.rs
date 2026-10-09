@@ -380,6 +380,9 @@ struct Journal {
     tag: String,
     old: Option<String>,
     old_previous: Option<String>,
+    /// set once the new release was found not well: it is never taken after that, whatever it answers later
+    #[serde(default)]
+    rejected: bool,
 }
 
 pub fn log(event: &str, fields: Value) {
@@ -926,7 +929,13 @@ impl Updater {
         }
         log("deploy", json!({ "tag": tag }));
         // a swap that was cut off earlier is settled before a new one begins
-        self.settle().await;
+        if !self.settle().await {
+            return Outcome::new(
+                "failed",
+                tag,
+                "an earlier deploy was cut off and could not be undone yet (see the updater's log); nothing was changed",
+            );
+        }
         let mut outcome = self.deploy_locked(tag, version).await;
         outcome.running = self.linked("current");
         outcome.updater = self.updater_state();
@@ -983,10 +992,11 @@ impl Updater {
 
         // from here on nothing older is taken, also when this release turns out not to be well
         let old = running.as_ref().map(|r| r.tag.clone());
-        let journal = Journal {
+        let mut journal = Journal {
             tag: tag.to_string(),
             old: old.clone(),
             old_previous: self.linked("previous"),
+            rejected: false,
         };
         let noted = (|| -> std::io::Result<()> {
             if version > state.high_water {
@@ -1030,7 +1040,13 @@ impl Updater {
             return outcome;
         }
 
-        // not well: back to what ran before
+        // not well: back to what ran before. The verdict is written down first, so that a start of the updater
+        // in the middle of this does not take the release after all.
+        journal.rejected = true;
+        let _ = write_whole(
+            &self.cfg.root.join("deploy-journal.json"),
+            &serde_json::to_vec(&journal).expect("a journal"),
+        );
         let why = health.detail.clone();
         outcome.health = Some(health);
         let old_commit = running
@@ -1088,15 +1104,15 @@ impl Updater {
     /// Settles a swap that was cut off (the updater or the machine went down in the middle): when the release the
     /// note names is the one in place and it runs and is well, the deploy counts as done; otherwise the release
     /// before is put back.
-    async fn settle(&self) {
+    /// False when the swap could not be settled (the note is still there): no new deploy begins on top of it.
+    async fn settle(&self) -> bool {
         let path = self.cfg.root.join("deploy-journal.json");
         let Ok(bytes) = std::fs::read(&path) else {
-            return;
+            return !path.exists();
         };
         let Ok(journal) = serde_json::from_slice::<Journal>(&bytes) else {
             // unreadable: nothing to go by; the hub runs whatever `current` names
-            let _ = remove_whole(&path);
-            return;
+            return remove_whole(&path).is_ok();
         };
         let commit_of = |tag: &Option<String>| {
             tag.as_ref()
@@ -1104,12 +1120,15 @@ impl Updater {
                 .map(|m| m.commit)
         };
         let new = Some(journal.tag.clone());
-        if self.linked("current") == new && self.proved(&self.releases().join(&journal.tag), &journal.tag).is_ok() {
+        let in_place = self.linked("current") == new
+            && self
+                .proved(&self.releases().join(&journal.tag), &journal.tag)
+                .is_ok();
+        if in_place && !journal.rejected {
             if let Some(commit) = commit_of(&new) {
-                if self.started_healthy(Some(&commit)).await.ok {
-                    let _ = remove_whole(&path);
+                if self.started_healthy(Some(&commit)).await.ok && remove_whole(&path).is_ok() {
                     log("deploy-completed", json!({ "cut_off": journal.tag }));
-                    return;
+                    return true;
                 }
             }
         }
@@ -1118,6 +1137,11 @@ impl Updater {
             "deploy-undone",
             json!({ "cut_off": journal.tag, "back_to": journal.old, "health": health }),
         );
+        let settled = !path.exists();
+        if settled {
+            self.prune();
+        }
+        settled
     }
 
     /// The release asked for is the one that runs: nothing is fetched or swapped. A hub that is well is left alone,
@@ -1227,7 +1251,11 @@ impl Updater {
     /// Called once the updater is up and listening: ends a trial of this very program.
     pub fn confirm(&self) {
         let root = &self.cfg.root;
-        if root.join("updater-trial").exists() {
+        // the note says whose trial it is ("1 hub-v124"): only that updater ends it
+        let on_trial = std::fs::read_to_string(root.join("updater-trial"))
+            .ok()
+            .and_then(|note| note.split_whitespace().nth(1).map(str::to_string));
+        if on_trial.is_some() && on_trial == self.own_release {
             let _ = remove_whole(&root.join("updater-trial"));
             log("updater-confirmed", json!({ "release": self.own_release }));
         }
@@ -1241,10 +1269,11 @@ impl Updater {
 
     /// After a start: undoes a hub swap that was cut off halfway (the updater or the machine went down during a
     /// deploy), and makes sure the hub runs.
-    pub async fn recover(&self) {
+    /// False when another process held the deploy lock all the while: the caller tries again.
+    pub async fn recover(&self) -> bool {
         let _turn = self.gate.lock().await;
         let Ok(_lock) = self.file_lock().await else {
-            return;
+            return false;
         };
         self.settle().await;
         if self.linked("current").is_some() {
@@ -1253,12 +1282,13 @@ impl Updater {
             }
         }
         self.tidy();
+        true
     }
 
-    /// Both steps of a start, in order.
+    /// Both steps of a start, in the order the program takes them.
     pub async fn started(&self) {
-        self.confirm();
         self.recover().await;
+        self.confirm();
     }
 
     /// Waits until no deploy runs (before the updater stops).

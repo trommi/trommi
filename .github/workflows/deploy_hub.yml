@@ -158,9 +158,10 @@ jobs:
 
   deliver:
     name: Deliver to the server
-    needs: publish
-    # also when nothing had to be signed and published (a release delivered again)
-    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
+    needs: [sign, publish]
+    # after a release was signed and published, or when nothing had to be (a release delivered again): never after
+    # a signing or publishing that failed
+    if: ${{ !cancelled() && ((needs.sign.result == 'success' && needs.publish.result == 'success') || (needs.sign.result == 'skipped' && needs.publish.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
