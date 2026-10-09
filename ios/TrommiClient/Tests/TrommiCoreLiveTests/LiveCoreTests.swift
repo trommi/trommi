@@ -1,10 +1,10 @@
 // LiveCore and LiveDevice on the real Rust library, on Linux. That this file links and runs under `swift test` is the
 // proof that the static library of core/swift/build.sh, UniFFI's Swift file and the package's linker settings fit
-// together. Everything here needs a library built with TROMMI_STAND_IN_RECOVERY=1: without it no room is founded.
+// together. Recovery (spec/v2.md section 8) runs here without a hub: `PocketHub` below keeps what a hub would.
 import Foundation
 import XCTest
 import TrommiClient
-import TrommiCoreLive
+@testable import TrommiCoreLive
 
 /// A folder of its own under the temp directory, removed when the test ends.
 func scratchFolder(_ test: XCTestCase) throws -> URL {
@@ -46,7 +46,8 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertFalse(tools.version.isEmpty)
     XCTAssertEqual(tools.version, try cargoVersion())
     XCTAssertEqual(tools.buildVersions.openmls, "0.9.1")
-    XCTAssertTrue(tools.recoveryState.hasPrefix("stand-in"), "these tests need a library built with TROMMI_STAND_IN_RECOVERY=1")
+    XCTAssertFalse(tools.buildVersions.provider.isEmpty)
+    XCTAssertFalse(tools.buildVersions.binding.isEmpty)
   }
 
   /// The app reaches the core only through `Core.tools`.
@@ -61,26 +62,28 @@ final class LiveCoreTests: XCTestCase {
   func testSelfTestPassesBothSuites() {
     let steps = tools.selfTest()
     for step in steps { XCTAssertTrue(step.ok, "\(step.suite) / \(step.name): \(step.detail)") }
-    XCTAssertEqual(steps.filter { $0.suite == "core" }.count, 11)
+    XCTAssertEqual(steps.filter { $0.suite == "core" }.count, 12)
     XCTAssertEqual(steps.filter { $0.suite == "swift" }.count, 4)
-    XCTAssertEqual(steps.count, 15)
+    XCTAssertEqual(steps.count, 16)
     XCTAssertTrue(steps.allSatisfy { !$0.name.isEmpty })
     XCTAssertTrue(steps.contains { $0.micros > 0 })
   }
 
   /// What the binding does not have refuses by name, and never pretends. One call of each stubbed block.
   func testAStubSaysItIsAStub() throws {
-    XCTAssertThrowsError(try tools.recoverySigner(code: [])) { error in
+    XCTAssertThrowsError(try tools.parseInviteLink("https://app.trommi.com/#x")) { error in
       XCTAssertEqual((error as? TrommiError)?.code, LiveCore.notBuiltCode)
-      XCTAssertEqual((error as? TrommiError)?.message, "recoverySigner(code:): not in this build of the core binding")
+      XCTAssertEqual((error as? TrommiError)?.message, "parseInviteLink(_:): not in this build of the core binding")
     }
-    XCTAssertEqual(refusedCode { _ = try self.tools.parseInviteLink("https://app.trommi.com/#x") }, "not-built")
+    // The two calls Core.swift guessed for recovery: the core cannot serve them in that shape (LiveRecovery.swift).
+    let fresh = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
+    XCTAssertEqual(refusedCode { _ = try self.tools.joinWithRecoveryCode(device: fresh, code: ZERO32, groupInfos: [], sealedKeys: [], nowMs: nowMs()) }, "not-built")
     XCTAssertEqual(tools.checkEmoji([1, 2]).map(\.word), ["not-built", "not-built"])
     let device = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
     XCTAssertEqual(refusedCode { _ = try device.sendEnvelope(.boardItem(board: ZERO16, payload: [], files: []), nowMs: nowMs()) }, "not-built")
     XCTAssertEqual(refusedCode { _ = try device.receiveEnvelope([], change: 1, source: .live, voidCode: nil, nowMs: nowMs()) }, "not-built")
     XCTAssertEqual(refusedCode { _ = try device.openInvite(role: ROLE.HUMAN, session: nil, app: "", hub: "", nowMs: nowMs()) }, "not-built")
-    XCTAssertEqual(refusedCode { _ = try device.replaceRecoveryCode(nowMs: nowMs()) }, "not-built")
+    XCTAssertEqual(refusedCode { _ = try (device as? LiveDevice)?.replaceRecoveryCode(nowMs: nowMs()) }, "not-built")
     // A stubbed call is the device's fault, never the entry's: the caller stops instead of passing an item over.
     XCTAssertEqual(device.logFinding(TrommiError("not-built")), .local)
   }
@@ -131,8 +134,9 @@ final class LiveCoreTests: XCTestCase {
       XCTAssertEqual(LiveCore.isFinalRefusal(code), answer == "not-found", code)
       if answer == "bad-format" { sendAgain.append(code) }
     }
-    XCTAssertEqual(sendAgain.sorted(), ["bad-email", "bad-kdf", "bad-recovery-code", "bad-recovery-words", "busy", "entropy", "internal", "no-prf",
-                                        "overloaded", "rate-limited", "storage", "unauthorised", "weak-password"])
+    XCTAssertEqual(sendAgain.sorted(), ["bad-challenge", "bad-email", "bad-kdf", "bad-recovery-code", "bad-recovery-words", "busy", "client-too-old",
+                                        "entropy", "gap", "internal", "no-prf", "overloaded", "quota-exceeded", "rate-limited", "storage", "too-many",
+                                        "unauthorised", "weak-password"])
     // A code this core does not know (a newer hub's, or the client's own "http-502") is never a refusal for good.
     XCTAssertFalse(LiveCore.isFinalRefusal("http-502"))
     XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "http-502", voided: false) }, "bad-format")
@@ -294,6 +298,14 @@ final class LiveCoreTests: XCTestCase {
     }
     XCTAssertEqual(try b.processLogEntry(addEntry), .skipped)
     XCTAssertEqual(b.cursor, change)
+
+    // With the Add accepted, A sends B the key that authenticates the room's sealed keys (7.4), unasked: a stored
+    // message of the room group, in the epoch the Add led to. B came by Welcome, not with the code, and has none.
+    XCTAssertEqual(try (b as? LiveDevice)?.holdsRecoveryMac(), false)
+    let auth = try accept(a, .message, &change)
+    XCTAssertEqual(auth.epoch, 1)
+    XCTAssertEqual(try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: auth.parts[0]))), .message(.recoveryAuth(from: a.id)))
+    XCTAssertEqual(try (b as? LiveDevice)?.holdsRecoveryMac(), true)
 
     // A's next Commit reaches B through the log: both stand at epoch 2 with one key.
     _ = try XCTUnwrap(try a.update(group: room, forced: true, nowMs: nowMs()))

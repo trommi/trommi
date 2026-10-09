@@ -7,26 +7,31 @@
 //   real, CoreTools     version, selfTest, createDevice, openDevice,
 //                       normaliseEmail, checkPassword, passwordKeys, kitAuthKey, generateKitWords, parseKitWords,
 //                       generateRecoveryCode, formatRecoveryCode, parseRecoveryCode, sealCode, openCode,
-//                       encryptFile, decryptFile, generatePushKey
-//   real, CoreDevice    id, room, cursor, isOwner, groups, contentKey, keyPackagesToUpload, keyPackage,
+//                       encryptFile, decryptFile, createShareLink, generatePushKey, isFinalRefusal,
+//                       recoverySigner
+//   real, CoreDevice    id, room, cursor, isOwner, groups, contentKey, keyPackagesToUpload, keyPackage, foundRoom,
 //                       foundSession, addHumanDevice, addToSession, changeAgents, removeHumanDevices, cleanSession,
 //                       update, archive, joinWelcome, processLogEntry, logFinding, sendHandover, sendStrokePiece,
-//                       outbox, outboxAccepted, outboxRefused, signHubAuth, close; CoreTools: createShareLink, isFinalRefusal
+//                       outbox, outboxAccepted, outboxRefused, signHubAuth, close
 //   real by a detour    The core has the thing, the binding has no call of that shape; each asks the core itself.
 //                       canonicalHub         the binding checks a hub's address only inside `hubSignIn`: a device in
 //                                            memory signs a challenge of zeros for it and the signature is dropped
-//   stubbed, CoreTools  parseInviteLink, inviteRequest, inviteReveal, checkEmoji, recoverySigner,
-//                       joinWithRecoveryCode
+//                       recoverySigner's id  the recovery key's public half is read out of a `HubAuth` it signed
+//   real, and not in    Recovery (section 8) as the core has it, which Core.swift's two awaited calls cannot say
+//   Core.swift yet      (LiveRecovery.swift): LiveCore.recoveryAnchor, LiveCore.joinWithRecoveryCode(device:code:
+//                       hub:nowMs:); LiveDevice.joinRoomWithCode, joinSessionWithCode, newRecoveryCode, replaceCode,
+//                       prepareRecovery, recover, holdsRecoveryMac, keyIsConfirmed, sendRecoveryAuth, postSealedKey,
+//                       verifyFounding, heldBack. Also LiveDevice.isHuman, disallowed, roomRoles.
+//   stubbed, CoreTools  parseInviteLink, inviteRequest, inviteReveal, checkEmoji,
+//                       joinWithRecoveryCode(device:code:groupInfos:sealedKeys:nowMs:)   (the core needs more of the
+//                                            hub than this call hands over, and the hub's answer between its steps)
 //   stubbed, CoreDevice sendEnvelope, receiveEnvelope, register, cut, processRelay, openInvite,
-//                       acceptInviteRequest, confirmInvite, burnInvite, replaceRecoveryCode
+//                       acceptInviteRequest, confirmInvite, burnInvite,
+//                       replaceRecoveryCode(nowMs:)   (the core needs the code in force and the account's new copies)
 //
 // A stubbed call throws `TrommiError("not-built", "<call>: not in this build of the core binding")`; the one that
 // cannot throw (`checkEmoji`) returns a value that says the same. To make a call real, replace the body of its line
 // with the call into TrommiCoreRust and move its name up in the list above.
-//
-// RECOVERY IS A STAND-IN in every build made with TROMMI_STAND_IN_RECOVERY=1, until the core carries section 8: a
-// room founded with it cannot be recovered. Without that variable no room can be founded at all (`internal`).
-// `recoveryState` says which one this build has.
 import Foundation
 import TrommiClient
 import TrommiCoreRust
@@ -38,18 +43,16 @@ open class LiveCore: CoreTools {
   // ---- real -----------------------------------------------------------------------------------------------
 
   public var version: String { versions().core }
-  /// The state of the recovery construct in this build, in the core's words: "built", or why it is not.
-  public var recoveryState: String { versions().recovery }
   /// What the build is made of, for the information screen: core, OpenMLS, its crypto provider, the binding.
   public var buildVersions: (core: String, openmls: String, provider: String, binding: String) {
     let v = versions()
     return (v.core, v.openmls, v.provider, v.binding)
   }
 
-  /// Two suites. "core": the Rust core's own check of its main paths, with devices in memory inside the library.
-  /// "swift": the same device through this file's adapter and a store written in Swift, which the first suite
-  /// never touches. A suite stops at its first failed step. The last step of "core" is the slow one (Argon2id over
-  /// 64 MiB): call this off the main thread.
+  /// Two suites. "core": the Rust core's own check of its main paths (twelve steps, recovery among them), with
+  /// devices in memory inside the library. "swift": a device through this file's adapter and a store written in
+  /// Swift, which the first suite never touches. A suite stops at its first failed step. The last step of "core" is
+  /// the slow one (Argon2id over 64 MiB): call this off the main thread.
   public func selfTest() -> [TrommiClient.SelfTestStep] {
     let report = TrommiCoreRust.selfTest(nowMs: nowMs())
     return report.steps.map { TrommiClient.SelfTestStep(suite: "core", name: $0.name, ok: $0.ok, micros: $0.micros, detail: $0.detail) } + swiftSuite()
@@ -99,6 +102,7 @@ open class LiveCore: CoreTools {
   public func encryptFile(_ plain: Bytes) throws -> SealedFile {
     try core {
       let encryptor = try FileEncryptor()
+      defer { encryptor.close() }   // wipes the file's key, also when a step below refused
       var stored = try encryptor.update(plaintext: plain.data)
       let end = try encryptor.finish()
       stored.append(end.stored)
@@ -109,6 +113,7 @@ open class LiveCore: CoreTools {
   public func decryptFile(fileId: FileId, fileKey: Bytes, sha256: Bytes, stored: Bytes) throws -> Bytes {
     try core {
       let decryptor = try FileDecryptor(file: FileRef(fileId: fileId.data, fileKey: fileKey.data, sha256: sha256.data))
+      defer { decryptor.close() }
       var plain = try decryptor.update(stored: stored.data)
       plain.append(try decryptor.finish())
       return plain
@@ -124,13 +129,16 @@ open class LiveCore: CoreTools {
 
   /// Whether a code of the hub is its last word on an outbox entry, so that `outboxRefused` takes it. Not final,
   /// and the entry is sent again unchanged: the hub could not answer (`internal`, `overloaded`, `rate-limited`), it
-  /// asks to sign in again (`unauthorised`), or the code is none this core knows. The rest of the list are codes
-  /// no hub sends. The table is the core's (core/swift/src/device.rs `is_refusal`); a test holds the two together.
+  /// asks to sign in again (`unauthorised`, `bad-challenge`), it refuses for a reason that passes while the request
+  /// stays the same (`quota-exceeded`, `too-many`, `client-too-old`, `gap`), or the code is none this core knows.
+  /// The rest of the list are codes no hub sends. The table is the core's (core/swift/src/device.rs `is_refusal`);
+  /// a test holds the two together.
   public func isFinalRefusal(_ code: String) -> Bool { Self.isFinalRefusal(code) }
   public static func isFinalRefusal(_ code: String) -> Bool {
     errorCodeFromText(text: code) != nil && !notFinal.contains(code)
   }
-  static let notFinal: Set<String> = ["internal", "overloaded", "rate-limited", "unauthorised", "storage", "entropy", "busy",
+  static let notFinal: Set<String> = ["internal", "overloaded", "rate-limited", "unauthorised", "bad-challenge", "quota-exceeded", "too-many",
+                                      "client-too-old", "gap", "storage", "entropy", "busy",
                                       "bad-email", "weak-password", "bad-kdf", "bad-recovery-words", "bad-recovery-code", "no-prf"]
 
   // ---- real by a detour: the core answers, through a device in memory ---------------------------------------
@@ -155,8 +163,7 @@ open class LiveCore: CoreTools {
   public func inviteReveal(joiner: Bytes, reveal: Bytes, signature: Bytes) throws -> [UInt8] { try notBuilt() }
   public func checkEmoji(_ numbers: [UInt8]) -> [(emoji: String, word: String)] { numbers.map { _ in (emoji: "?", word: Self.notBuiltCode) } }
 
-  // recovery (section 8)
-  public func recoverySigner(code: Bytes) throws -> CoreSigner { try notBuilt() }
+  // recovery (section 8): the call the core cannot serve in this shape. The real ones are in LiveRecovery.swift.
   public func joinWithRecoveryCode(device: TrommiClient.CoreDevice, code: Bytes, groupInfos: [(group: GroupId, groupInfo: Bytes)], sealedKeys: [Bytes], nowMs: UInt64) throws -> Bytes { try notBuilt() }
 
   /// The code every stubbed call refuses with.

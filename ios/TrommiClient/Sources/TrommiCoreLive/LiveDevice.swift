@@ -4,22 +4,33 @@
 // THREADS. The binding's device is safe to call from any thread: inside the core one caller is in at a time and a
 // second waits; a call made from the store's own callback is refused instead of waiting for itself; a panic inside
 // the core is caught and closes the device for good (every later call is `internal`, and the stored state is opened
-// again). This class adds no lock and keeps no state of its own besides the device id, which never changes. The
-// client calls a device from one serial queue (Room.swift), which the core does not need but which keeps the order
-// of its operations.
+// again). This class keeps two things of its own: the device id, which never changes, and the last finding
+// Core.swift has no word for (`recoveryAuthConflict`, behind a lock). The client calls a device from one serial
+// queue (Room.swift), which the core does not need but which keeps the order of its operations.
 //
 // WHERE Core.swift CANNOT SAY WHAT THE CORE SAYS (each is in the report to the owner of Core.swift):
 //   - `room`, `cursor`, `isOwner`, `outbox()` cannot throw there and can in the core (a closed or failed device).
 //     Here: nil, 0, false, [].
 //   - `Processed` has no case for a join from outside that lost its epoch; here it is `.commit` with `superseded`.
-//   - `GroupSummary` has no `disallowed`, `Joined` no `offending`: both are dropped here.
+//   - `Joined` has no `offending`: it is dropped here.
+//   - `OutboxKind` has no `recoveryCommit` and `recoveryFinish` (11 and 12 in core/src/store.rs), which only a whole
+//     recovery (`recover`, LiveRecovery.swift) makes. `outbox()` ends in front of the first entry whose kind
+//     Core.swift cannot name, so that nothing is posted to a wrong route or out of order; the entry stays stored,
+//     and `heldBack()` lists what waits. Once Core.swift has the two cases (with those numbers) they pass through.
+//   - `ReceivedMessage` has no `recoveryAuthConflict` (a second, different key for the sealed keys under one
+//     recovery key: the finding `equivocation`). Here it is `.dropped`, and `recoveryAuthConflict` names its sender.
 import Foundation
 import TrommiClient
 import TrommiCoreRust
 
 public final class LiveDevice: TrommiClient.CoreDevice {
-  private let device: TrommiCoreRust.CoreDevice
+  let device: TrommiCoreRust.CoreDevice
   public let id: DeviceId
+  private let lock = NSLock()
+  private var conflictFrom: DeviceId?
+  /// The human device that last sent this device a second, different key for the room's sealed keys under a recovery
+  /// key it already holds one for (the finding `equivocation`; nothing was replaced). nil: none since it was opened.
+  public var recoveryAuthConflict: DeviceId? { lock.withLock { conflictFrom } }
 
   init(store: CoreStorage, create: Bool) throws {
     let adapter = StoreAdapter(store)
@@ -49,7 +60,7 @@ public final class LiveDevice: TrommiClient.CoreDevice {
                                    agents: group.leaves.filter(enrolled.contains).map(\.bytes))
         }
         return TrommiClient.GroupSummary(group: group.group.bytes, session: session, epoch: group.epoch, leaves: group.leaves.map(\.bytes),
-                                         archived: group.archived, pending: group.pending)
+                                         disallowed: group.disallowed.map(\.bytes), archived: group.archived, pending: group.pending)
       }
     }
   }
@@ -128,7 +139,9 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     case .ownCommit: return .ownCommit
     case .observed: return .observed
     case .joinSuperseded: return commit(superseded: done.superseded, removed: false)
-    case .message: return .message(done.message.map(Self.message) ?? .dropped)
+    case .message:
+      if done.message?.kind == .recoveryAuthConflict { lock.withLock { conflictFrom = done.message?.from?.bytes } }
+      return .message(done.message.map(Self.message) ?? .dropped)
     case .skipped: return .skipped
     }
   }
@@ -140,6 +153,7 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     case .strokePiece: return .strokePiece(from: from, board: m.board?.bytes ?? [], piece: m.payload.bytes)
     case .workTrail: return .workTrail(from: from, turn: m.turn?.bytes ?? [], number: m.number, time: m.time, step: m.payload.bytes)
     case .recoveryAuth: return .recoveryAuth(from: from)
+    case .recoveryAuthConflict: return .recoveryAuthConflict(from: from)
     case .dropped: return .dropped
     case .newerVersion: return .newerVersion(from: from)
     }
@@ -169,30 +183,46 @@ public final class LiveDevice: TrommiClient.CoreDevice {
 
   // ---- real: the outbox -----------------------------------------------------------------------------------
 
+  /// What waits to be sent, in order, up to the first entry whose kind Core.swift cannot name (see the head of this
+  /// file): that one and all behind it stay stored and are listed by `heldBack()`.
   public func outbox() -> [TrommiClient.OutboxEntry] {
-    ((try? device.outbox()) ?? []).map { entry in
-      TrommiClient.OutboxEntry(id: entry.id, kind: Self.kind(entry.kind), group: entry.group?.bytes, epoch: entry.epoch, parts: entry.parts.map(\.bytes))
+    var named = [TrommiClient.OutboxEntry]()
+    for entry in (try? device.outbox()) ?? [] {
+      guard let kind = TrommiClient.OutboxKind(rawValue: Self.number(entry.kind)) else { break }
+      named.append(TrommiClient.OutboxEntry(id: entry.id, kind: kind, group: entry.group?.bytes, epoch: entry.epoch, parts: entry.parts.map(\.bytes)))
     }
+    return named
   }
-  private static func kind(_ kind: TrommiCoreRust.OutboxKind) -> TrommiClient.OutboxKind {
+  /// The entries `outbox()` does not hand out, in order, with the kind's number of core/src/store.rs (11: one Commit
+  /// of a recovery, 12: its finish). Empty once Core.swift's `OutboxKind` names every kind of the core.
+  public func heldBack() -> [(id: UInt64, kind: UInt8, group: GroupId?, epoch: UInt64, parts: [Bytes])] {
+    let all = (try? device.outbox()) ?? []
+    guard let first = all.firstIndex(where: { TrommiClient.OutboxKind(rawValue: Self.number($0.kind)) == nil }) else { return [] }
+    return all[first...].map { ($0.id, Self.number($0.kind), $0.group?.bytes, $0.epoch, $0.parts.map(\.bytes)) }
+  }
+  /// The number core/src/store.rs gives the kind, which is also the raw value of Core.swift's `OutboxKind`.
+  private static func number(_ kind: TrommiCoreRust.OutboxKind) -> UInt8 {
     switch kind {
-    case .roomFounding: return .roomFounding
-    case .groupFounding: return .groupFounding
-    case .commit: return .commit
-    case .externalCommit: return .externalCommit
-    case .message: return .message
-    case .relayMessage: return .relayMessage
-    case .envelope: return .envelope
-    case .keyPackages: return .keyPackages
-    case .sealedKey: return .sealedKey
-    case .recoveryCode: return .recoveryCode
+    case .roomFounding: return 1
+    case .groupFounding: return 2
+    case .commit: return 3
+    case .externalCommit: return 4
+    case .message: return 5
+    case .relayMessage: return 6
+    case .envelope: return 7
+    case .keyPackages: return 8
+    case .sealedKey: return 9
+    case .recoveryCode: return 10
+    case .recoveryCommit: return 11
+    case .recoveryFinish: return 12
     }
   }
   public func outboxAccepted(_ id: UInt64, change: UInt64?) throws { try core { try device.outboxAccepted(id: id, change: change) } }
 
   /// Only for the hub's last word on those bytes. `LiveCore.isFinalRefusal(_:)` says which codes are; for any other
-  /// (the hub could not answer, asks to sign in again, or names a code this core does not know) this throws
-  /// `bad-format` and changes nothing: the entry stays and is sent again unchanged.
+  /// (the hub could not answer, asks to sign in again, refuses for a reason that passes, or names a code this core
+  /// does not know) this throws `bad-format` and changes nothing: the entry stays and is sent again unchanged.
+  /// `voided` is not passed on: the binding has no stored content yet, and so no number of an envelope to void.
   public func outboxRefused(_ id: UInt64, code: String, voided: Bool) throws {
     guard let known = errorCodeFromText(text: code) else {
       throw TrommiError("bad-format", "outboxRefused: a code this core does not know is not a refusal for good: send the entry again")
@@ -215,6 +245,7 @@ public final class LiveDevice: TrommiClient.CoreDevice {
   /// Whether this device is a human device now.
   public func isHuman() throws -> Bool { try core { try device.isHuman() } }
   /// The leaves of a group that the newest room state does not allow: not empty means the session is stale.
+  /// (`groups()` carries the same per group; this asks for one.)
   public func disallowed(group: GroupId) throws -> [DeviceId] { try core { try device.group(group: group.data) }.disallowed.map(\.bytes) }
   /// The room's human devices and enrolled agent devices at its newest epoch; nil before the device follows a room.
   public func roomRoles() throws -> (epoch: UInt64, humans: [DeviceId], agents: [DeviceId])? {
@@ -242,7 +273,8 @@ public final class LiveDevice: TrommiClient.CoreDevice {
   public func confirmInvite(invite: Bytes, numbers: [UInt8], nowMs: UInt64) throws -> UInt64 { try notBuilt() }
   public func burnInvite(invite: Bytes) throws { try notBuilt() as Void }
 
-  // recovery (section 8)
+  // recovery (section 8): the call the core cannot serve in this shape (it needs the code in force and the account's
+  // new sealed copies). The real ones are `newRecoveryCode(current:)` and `replaceCode(current:account:nowMs:)`.
   public func replaceRecoveryCode(nowMs: UInt64) throws -> Bytes { try notBuilt() }
 }
 

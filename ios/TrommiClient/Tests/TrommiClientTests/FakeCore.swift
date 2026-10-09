@@ -186,7 +186,11 @@ final class FakeDevice: CoreDevice {
   func acceptInviteRequest(invite: Bytes, request: Bytes, mac: Bytes, signature: Bytes, nowMs: UInt64) throws -> InviteAccepted { throw TrommiError("not-built") }
   func confirmInvite(invite: Bytes, numbers: [UInt8], nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
   func burnInvite(invite: Bytes) throws {}
-  func replaceRecoveryCode(nowMs: UInt64) throws -> Bytes { throw TrommiError("not-built") }
+  func holdsRecoveryMac() throws -> Bool { true }
+  func keyIsConfirmed(group: GroupId, epoch: UInt64) throws -> Bool { true }
+  func sendRecoveryAuth(recipient: DeviceId?) throws -> UInt64? { throw TrommiError("not-built") }
+  func newRecoveryCode(current: Bytes) throws -> Bytes { throw TrommiError("not-built") }
+  func replaceCode(current: Bytes, account: Bytes, nowMs: UInt64) throws -> UInt64 { throw TrommiError("not-built") }
 }
 
 final class FakeTools: CoreTools {
@@ -216,7 +220,7 @@ final class FakeTools: CoreTools {
   func createShareLink(app: String, fileId: FileId, fileKey: Bytes, sha256: Bytes) throws -> ShareLinkParts { ShareLinkParts(link: app + "/a/x", shareId: systemRandom(16), secretHash: [3]) }
   func generatePushKey() throws -> Bytes { systemRandom(32) }
   func recoverySigner(code: Bytes) throws -> CoreSigner { throw TrommiError("not-built") }
-  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, groupInfos: [(group: GroupId, groupInfo: Bytes)], sealedKeys: [Bytes], nowMs: UInt64) throws -> Bytes { throw TrommiError("not-built") }
+  func joinWithRecoveryCode(device: CoreDevice, code: Bytes, hub: HubClient, nowMs: UInt64) async throws -> (missingLink: Bytes?, notJoined: [(group: GroupId, code: String)]) { throw TrommiError("not-built") }
 }
 
 /** The hub's routes, answered in the process: one room, a change counter, what was posted in order. */
@@ -250,6 +254,7 @@ final class FakeHub: URLProtocol, @unchecked Sendable {
       case ("GET", _) where path.hasSuffix("/challenge"): return (200, ["challenge": b64u(Bytes(repeating: 9, count: 32))])
       case ("POST", _) where path.hasSuffix("/tokens"): return (200, ["token": "t", "expires_at": nowMs() + 600_000, "role": "human"])
       case ("GET", "/v2/welcomes"): return (200, [Any]())
+      case ("PUT", "/v2/key-packages"): return (200, ["unused": 100])
       case ("GET", "/v2/changes"):
         let after = UInt64(query["after"] ?? "0") ?? 0
         let limit = Int(query["limit"] ?? "500") ?? 500
