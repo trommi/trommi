@@ -179,6 +179,8 @@ public struct DeskCard: Identifiable {
   public var snoozedUntil: UInt64?
   public var snoozedAt: UInt64?
   public var unsnoozed: UInt64?
+  /** Its agent closed it after his answer (close_card): What?? asks about what it did. */
+  public var finished = false
   public var mergedInto: String?
   public var mergedFrom: [String] = []
   public var noteAttachments: [JV] = []
@@ -443,6 +445,7 @@ public final class DeskModel {
     if let sn = h.snoozes[c.objectId], status == "open", let until = sn["until"].double {
       if UInt64(max(0, until)) > now { d.snoozedUntil = UInt64(until); d.snoozedAt = UInt64(max(0, sn["at"].double ?? 0)) } else { d.unsnoozed = UInt64(max(0, until)) }
     }
+    if status == "done" && c.closedHow == "closed", let a = a, !a.pending, a.answerAction != "read", a.answerAction != "shred" { d.finished = true }
     d.mergedInto = c.mergedIntoObjectId
     d.mergedFrom = c.mergedFromObjectIds
     if c.unsupported || c.contentState == "newer_schema" { d.unsupported = true }

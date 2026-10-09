@@ -822,6 +822,9 @@ body:has(.tc-page.is-full) :is(.corner-note-box, .curl, #phone-bar, #agents, .to
 }
 .tc-page.is-full .tc-card > .tc-left, .tc-page.is-full .tc-card .tc-lead { background: var(--bg); }
 
+/* a card its agent finished (card.mjs cardAnswer): What?? under what it says it did */
+.tc-done-what { display: flex; align-items: center; justify-content: center; align-self: flex-start; min-width: 96px; min-height: 56px; margin-top: var(--s-2); }
+.tc-tile.tc-done-what .sketch-what { width: 72px; height: 26px; }
 .tc-answer > .tc-options-said { margin: 0 0 var(--s-3); }
 
 /* ---- a tall picture stands whole (his word, 8 October: "ich sehe nicht das Ende vom Screenshot"): on the card it is

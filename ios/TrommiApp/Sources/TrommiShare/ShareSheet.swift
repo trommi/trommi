@@ -125,11 +125,12 @@ struct ShareRoot: View {
   private var actions: some View {
     HStack(spacing: 10) {
       Button { typing = false; model.go(.note) } label: {
-        Label(L("Keep in Note", "In die Notiz"), systemImage: "note.text.badge.plus")
-          .font(SFace.text(16, .medium))
-          .padding(.horizontal, 14).frame(height: 44)
-          .background(Capsule().strokeBorder(SInk.noteInk.opacity(0.55), lineWidth: 1.2))
+        Image(systemName: "square.and.arrow.down").font(.system(size: 19, weight: .semibold)).foregroundStyle(SInk.noteInk)
+          .frame(width: 46, height: 46)
+          .background(Circle().strokeBorder(SInk.noteInk.opacity(0.55), lineWidth: 1.2))
+          .contentShape(Circle())
       }
+      .accessibilityLabel(L("Save to note", "In die Notiz sichern"))
       .disabled(!model.canKeep).opacity(model.canKeep ? 1 : 0.4)
       Spacer()
       Button { typing = false; model.go(.send) } label: {

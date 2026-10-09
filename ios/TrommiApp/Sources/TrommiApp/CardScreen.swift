@@ -334,6 +334,12 @@ struct CardScreen: View {
       if c.settled { still("✓ \(Words.settled)", "\(a?.name ?? "The agent") marked this answer as final: nothing follows from it.") }
       if let w = model.board?.cards[c.id]?.withdrawReason, !w.isEmpty { still("Why it was withdrawn", w) }
       else if !c.summary.isEmpty { still("Done by the agent", c.summary) }
+      // done by its agent: What?? asks the session about what it did
+      if c.finished {
+        Button { model.what(c) } label: { PenMark("sketch:what", color: Ink.fg).frame(width: 70, height: 24).frame(maxWidth: .infinity, minHeight: 56) }
+          .buttonStyle(TileStyle(lead: false, hue: a?.hue ?? 162))
+          .accessibilityLabel("\(Words.what): ask the session about what it did")
+      }
       if c.status == "shredded" || !c.choices.isEmpty || c.trusted || (c.kind == "info" && c.read != nil) {
         // a quiet text action, no pill
         Button { model.reopen(c.id) } label: { Text(Words.takeBack).font(Face.text(15, .medium)).underline().foregroundStyle(Ink.muted).frame(minHeight: 44).contentShape(Rectangle()) }
