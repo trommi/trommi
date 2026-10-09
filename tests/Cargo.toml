@@ -85,3 +85,27 @@ path = "core/groups_lifetimes.rs"
 [[test]]
 name = "core_groups_cost"
 path = "core/groups_cost.rs"
+
+[[test]]
+name = "core_content_board"
+path = "core/content_board.rs"
+
+[[test]]
+name = "core_content_trail"
+path = "core/content_trail.rs"
+
+[[test]]
+name = "core_content_board_flow"
+path = "core/content_board_flow.rs"
+
+[[test]]
+name = "core_content_envelope"
+path = "core/content_envelope.rs"
+
+[[test]]
+name = "core_content_objects"
+path = "core/content_objects.rs"
+
+[[test]]
+name = "core_content_registers"
+path = "core/content_registers.rs"
