@@ -450,3 +450,48 @@ async fn the_plugins_hooks_mirror_the_terminal_and_ask_for_permission() {
     );
     mcp.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_connector_killed_at_work_is_the_same_member_when_it_starts_again() {
+    let (_hub, mut human, seat, group) = joined().await;
+    let me = human.vault.seat(&group).expect("the agent");
+    let mut said = Vec::new();
+    for round in 0..3 {
+        let mut mcp = seat.serve().await;
+        mcp.ready().await;
+        for n in 0..3 {
+            let text = format!("round {round}, message {n}");
+            mcp.ok("reply", json!({ "text": text })).await;
+            said.push(text);
+        }
+        // One more is on its way when the process is killed: it may have reached the hub or not, but
+        // whatever was signed is either sent as it was or never existed.
+        let racing = format!("round {round}, the one that raced the kill");
+        let call = mcp.call("reply", json!({ "text": racing }));
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_millis(15 * (round + 1)), call).await;
+        mcp.child.start_kill().expect("kill -9");
+        let _ = mcp.child.wait().await;
+    }
+    let mut mcp = seat.serve().await;
+    mcp.ready().await;
+    mcp.ok("reply", json!({ "text": "still the same member" }))
+        .await;
+    said.push("still the same member".into());
+
+    human.sync().await;
+    assert!(
+        human.findings.is_empty(),
+        "no gap, no second envelope under one number: {:?}",
+        human.findings
+    );
+    let texts: Vec<String> = human
+        .items
+        .iter()
+        .filter(|(_, sender, _)| *sender == me)
+        .filter_map(|(_, _, payload)| payload["text"].as_str().map(String::from))
+        .filter(|text| !text.contains("raced the kill"))
+        .collect();
+    assert_eq!(texts, said);
+    mcp.close().await;
+}
