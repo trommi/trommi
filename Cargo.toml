@@ -27,3 +27,8 @@ codegen-units = 1
 inherits = "release"
 opt-level = "s"
 strip = true
+
+# Tests and local builds: the dependencies (OpenMLS, the ciphers) optimised, the workspace's own crates not, so that
+# the scenario tests with hundreds of Commits run in seconds.
+[profile.dev.package."*"]
+opt-level = 2
