@@ -6,15 +6,24 @@ import Foundation
 extension Room {
   public enum JoinEvent { case requested, checkCode(String), joined }
 
-  /** A new device over an empty folder of that room. A folder left by a join that never finished is cleared first. */
+  /**
+   * A new device in a new folder. Folders an earlier join or founding left without a room are cleared first (never
+   * one whose state is open: the lock says so). Refused when this device is in that room already.
+   */
   private static func newDevice(base: URL, roomId: String?) throws -> (store: Store, state: DeviceStore, device: CoreDevice) {
-    // Before the room is known (founding) the device lives under a name of its own and is moved once the room has one.
-    let store = Store(base: base, roomId: roomId ?? "founding-\(hex(systemRandom(8)))")
-    if FileManager.default.fileExists(atPath: store.dir.appendingPathComponent("room.json").path) { throw TrommiError("room-exists", "this device is already in that room") }
-    store.wipe()
-    let state = try store.openState()
+    Store.lifecycle.lock(); defer { Store.lifecycle.unlock() }
+    if let id = roomId, Store(base: base, roomId: id) != nil { throw TrommiError("room-exists", "this device is already in that room") }
+    Store.sweep(base: base)
+    let store = try Store.new(base: base)
+    let state = try store.openState(create: true)
     do { return (store, state, try Core.tools.createDevice(store: state)) }
     catch { state.close(); store.wipe(); throw error }
+  }
+  /** Gives up a device that never came into a room. */
+  private static func abandon(_ made: (store: Store, state: DeviceStore, device: CoreDevice)) {
+    Store.lifecycle.lock(); defer { Store.lifecycle.unlock() }
+    made.state.close()
+    made.store.wipe()
   }
 
   /**
@@ -57,7 +66,7 @@ extension Room {
         try await Task.sleep(nanoseconds: pollMs * 1_000_000)
       }
       throw TrommiError("invite-expired", "the invite ran out before it was confirmed")
-    } catch { made.state.close(); made.store.wipe(); throw error }
+    } catch { abandon(made); throw error }
   }
 
   /** Once the inviter committed: the token (only a leaf gets one), the Welcome, the room record. nil: not yet. */
@@ -89,25 +98,26 @@ extension Room {
       let keys = try tools.recoveryPublicKeys(code: code)
       let room = try made.device.foundRoom(recoverySignatureKey: keys.signatureKey, recoveryHpkeKey: keys.hpkeKey, nowMs: nowMs())
       guard let entry = made.device.outbox().first(where: { $0.kind == .roomFounding }) else { throw TrommiError("internal", "the core made no founding") }
-      let r = try await HubClient(hubURL: hubURL).post(entry, account: try account?(room, code), foundToken: foundToken)
+      // The same bytes again while no answer comes: the hub answers a repeated founding with its first answer. If
+      // none comes at all, this device is given up; had the hub taken the founding after all, the account it made
+      // signs in like on any new device.
+      let hub = try HubClient(hubURL: hubURL), body = try account?(room, code)
+      var r: JSON = [:]
+      for attempt in 0..<3 {
+        do { r = try await hub.post(entry, account: body, foundToken: foundToken); break }
+        catch let e as HubError where e.isOffline && attempt < 2 { try await Task.sleep(nanoseconds: 1_500_000_000) }
+      }
       guard (r["room_id"] as? String).flatMap({ try? unb64u($0) }) == room else { throw TrommiError("wrong-room", "the hub named another room id") }
       try made.device.outboxAccepted(entry.id, change: nil)
-      // The folder takes the room's name; the state's lock is given back for the move and taken again.
-      made.state.close()
-      let store = Store(base: base, roomId: hex(room))
-      try? FileManager.default.removeItem(at: store.dir)
-      try FileManager.default.moveItem(at: made.store.dir, to: store.dir)
-      try LocalKey.move(from: made.store.dir, to: store.dir)
       let record = RoomRecord(hubURL: hubURL, roomId: hex(room), myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false)
-      try store.save(record)
-      return (try Room.open(base: base, roomId: hex(room)), code)
-    } catch { made.state.close(); made.store.wipe(); throw error }
+      try made.store.save(record)
+      return (try Room(store: made.store, record: record, deviceStore: made.state, device: made.device), code)
+    } catch { abandon(made); throw error }
   }
 
   /**
-   * Sign in on this device with the recovery code (8.4, 8.7): the code's key signs in to the hub, this device joins
-   * the room group and every live session group from outside, authorised by that key, and the hub publishes all of
-   * it or nothing. Every other human device sees the new leaf. `challenge`: one a login answer carried.
+   * Sign in on this device with the recovery code (8.4): the code's key signs in to the hub, and this device joins
+   * the room group and every live session group from outside, authorised by that key. Every other human device sees the new leaf. `challenge`: one a login answer carried.
    */
   public static func joinWithRecoveryCode(hubURL: String, roomId: String, code: Bytes, base: URL = Store.defaultBase(), challenge: Bytes? = nil) async throws -> Room {
     let tools = Core.tools
@@ -132,26 +142,17 @@ extension Room {
         guard page["more"] as? Bool == true, let next = (page["change"] as? NSNumber)?.uint64Value, next > after else { break }
         after = next
       }
-      let link = try tools.joinWithRecoveryCode(device: made.device, code: code, groupInfos: infos, sealedKeys: sealed, nowMs: nowMs())
-      // One transaction at the hub: nothing is visible to others until `finish`.
-      let opened = try await hub.request("POST", "/rooms/\(b64u(room))/recovery")
-      guard let rid = opened["recovery_id"] as? String else { throw TrommiError("bad-format", "the hub opened no recovery") }
-      do {
-        for e in made.device.outbox() where e.kind == .externalCommit {
-          guard e.parts.count >= 3, let group = e.group else { continue }
-          var body: JSON = ["group_id": b64u(group), "epoch": e.epoch, "commit": b64u(e.parts[0]), "group_info": b64u(e.parts[1]), "sealed_key": b64u(e.parts[2])]
-          if e.parts.count > 3, !e.parts[3].isEmpty { body["recovery_auth"] = b64u(e.parts[3]) }
-          let r = try await hub.request("POST", "/rooms/\(b64u(room))/recovery/\(rid)/commits", body: body)
-          try made.device.outboxAccepted(e.id, change: (r["change"] as? NSNumber)?.uint64Value)
-        }
-        try await hub.request("POST", "/rooms/\(b64u(room))/recovery/\(rid)/finish", body: ["recovery_link": b64u(link)])
-      } catch {
-        _ = try? await hub.request("DELETE", "/rooms/\(b64u(room))/recovery/\(rid)")
-        throw error
+      _ = try tools.joinWithRecoveryCode(device: made.device, code: code, groupInfos: infos, sealedKeys: sealed, nowMs: nowMs())
+      // Each join from outside goes to its group's Commit route with its RecoveryAuth, under the recovery key's
+      // token, the room group first (the core queued them in that order). A refused one stops the sign-in; what was
+      // taken before it stands, and the device is found again by the next sign-in's fresh join.
+      for e in made.device.outbox() where e.kind == .externalCommit {
+        let r = try await hub.post(e)
+        try made.device.outboxAccepted(e.id, change: (r["change"] as? NSNumber)?.uint64Value)
       }
       let record = RoomRecord(hubURL: hubURL, roomId: roomId, myDeviceId: hex(made.device.id), role: "human", deviceRegisterSent: false)
       try made.store.save(record)
       return try Room(store: made.store, record: record, deviceStore: made.state, device: made.device)
-    } catch { made.state.close(); made.store.wipe(); throw error }
+    } catch { abandon(made); throw error }
   }
 }

@@ -1,7 +1,7 @@
 // NotifyGroup: where the context lives on the phone. It holds keys, so it is not a file: it is ONE Keychain item (a
 // generic password) that the app writes and the Notification Service Extension reads. The item is
 // kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly: readable after the first unlock since the phone started (a push
-// arrives while the phone is locked), never in a backup, never on another device. The system keeps it encrypted;
+// arrives while the phone is locked), never on another device. The system keeps it encrypted;
 // nothing is sealed in Swift here.
 //
 // The item's access group is the App Group that the app and the extension share (on iOS an App Group is also a

@@ -203,11 +203,12 @@ extension Room {
   public func leaveRoom() async throws {
     _ = try? await flush(timeoutMs: 3000)
     _ = try? await hub.request("DELETE", "/push")
-    forgetHere()
+    await shutdown()
+    Store.lifecycle.withLock { store.wipe() }
   }
   /** Forget this room on this device only. */
   public func forgetHere() {
     close()
-    store.wipe()
+    Store.lifecycle.withLock { store.wipe() }
   }
 }
