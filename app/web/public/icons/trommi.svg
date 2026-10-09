@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- The app icon: the counter bell of the page's own icon (index.html) on the green square, without
+     rounded corners (the phone rounds them itself). Placed by its optical weight (the bell body and its rays), not its box. The PNGs beside it and the iOS AppIcon are rendered from this (rsvg-convert). -->
+<rect width="24" height="24" fill="#1b6a57"/>
+<g transform="translate(12.3 11.5) scale(.8) translate(-13 -12.2)" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+<path d="M3.1 19Q12.3 18.6 16.7 19L21 19.3"/>
+<path d="M4.8 18.9Q5.2 15.1 5.7 13.7Q6.2 12.3 7.5 11.3Q8.7 10.3 10.3 9.5Q12 8.8 13.7 9.3Q15.3 9.8 16.4 11Q17.5 12.2 18.1 13.7Q18.6 15.2 18.8 17L18.9 18.8"/>
+<path d="M11.8 8.6L12.2 6.9"/>
+<path d="M10 6.6Q11.8 6 12.8 6.4L13.8 6.8"/>
+<path d="M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5"/>
+<path d="M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5"/>
+</g>
+</svg>

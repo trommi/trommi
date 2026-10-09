@@ -1,0 +1,77 @@
+{
+  "about": "Signing in to the hub (spec/v2.md section 12.3): HubAuth = room_id, hub<V>, device, challenge, and SignWithLabel(device's key, \"TrommiHubAuth\", HubAuth). The hub handed the challenge out at issued_at, good until expires_at. cases: what the hub answers when the sign-in (auth, signature) is posted for room_id to the hub of that address at now: 'signed in: <device>' or the code, by the order of its checks.",
+  "auth": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
+  "cases": [
+    {
+      "auth": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
+      "hub": "https://hub.example.org",
+      "now": 1790000120000,
+      "result": "signed in: 6063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99",
+      "room_id": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e7",
+      "signature": "0f44826dcc6899a486765201f91613d3c8e66d2ea79d3e1ebd7b580fdf11a557bb347523baa35bc09178fb2d3458e2931fcecace6a7b3cbad63d6854e64d9e06",
+      "why": "the sign-in, at the challenge's last moment"
+    },
+    {
+      "auth": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
+      "hub": "https://hub.example.org",
+      "now": 1790000000000,
+      "result": "wrong-room",
+      "room_id": "0909090909090909090909090909090909090909090909090909090909090909",
+      "signature": "0f44826dcc6899a486765201f91613d3c8e66d2ea79d3e1ebd7b580fdf11a557bb347523baa35bc09178fb2d3458e2931fcecace6a7b3cbad63d6854e64d9e06",
+      "why": "posted for another room"
+    },
+    {
+      "auth": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
+      "hub": "https://hub.example.com",
+      "now": 1790000000000,
+      "result": "unauthorised",
+      "room_id": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e7",
+      "signature": "0f44826dcc6899a486765201f91613d3c8e66d2ea79d3e1ebd7b580fdf11a557bb347523baa35bc09178fb2d3458e2931fcecace6a7b3cbad63d6854e64d9e06",
+      "why": "posted to a hub of another address"
+    },
+    {
+      "auth": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e990909090909090909090909090909090909090909090909090909090909090909",
+      "hub": "https://hub.example.org",
+      "now": 1790000000000,
+      "result": "bad-challenge",
+      "room_id": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e7",
+      "signature": "90da0afa16b2d88f52e4ae46b6687d95779520a9094d8b8faf293d4eaf6a038ca4f22a4456c61178caa2000a058f8ce96734a156179ef059f4367e002f878608",
+      "why": "answers another challenge"
+    },
+    {
+      "auth": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
+      "hub": "https://hub.example.org",
+      "now": 1790000120001,
+      "result": "bad-challenge",
+      "room_id": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e7",
+      "signature": "0f44826dcc6899a486765201f91613d3c8e66d2ea79d3e1ebd7b580fdf11a557bb347523baa35bc09178fb2d3458e2931fcecace6a7b3cbad63d6854e64d9e06",
+      "why": "a moment after the challenge ran out"
+    },
+    {
+      "auth": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
+      "hub": "https://hub.example.org",
+      "now": 1790000000000,
+      "result": "bad-signature",
+      "room_id": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e7",
+      "signature": "b4ed516e05d3ee0a57f56cebfc2be08fd2fc028ccb7d380c347448711590f67415d5bd67f5f5ac788dd05cdd49b038f129ad08a62a023615dc6a0b5922734006",
+      "why": "signed by another key than the device named"
+    },
+    {
+      "auth": "2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e71768747470733a2f2f6875622e6578616d706c652e6f72676063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
+      "hub": "https://hub.example.org",
+      "now": 1790000000000,
+      "result": "bad-format",
+      "room_id": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e7",
+      "signature": "0f44826dcc6899a486765201f91613d3c8e66d2ea79d3e1ebd7b580fdf11a557bb347523baa35bc09178fb2d3458e2931fcecace6a7b3cbad63d6854e64d9e06",
+      "why": "a byte of the HubAuth missing"
+    }
+  ],
+  "challenge": "744965aac31ba7258ba736a976503be2df190cdadf6b33ffb39db91f4c1e7853",
+  "device": "6063f69033a180d670378c320e38eda59f334fcd6ccc0e5cdf2d00f73be87e99",
+  "expires_at": 1790000120000,
+  "hub": "https://hub.example.org",
+  "issued_at": 1790000000000,
+  "room_id": "2e2c3450449aa88633c9662f4141754d386aef06766927abbe7b453e933f58e7",
+  "seed": "5325ed5dad24ee18827061081a9d180e0ee5f5f6764fa3447a29af42ab7df9db",
+  "signature": "0f44826dcc6899a486765201f91613d3c8e66d2ea79d3e1ebd7b580fdf11a557bb347523baa35bc09178fb2d3458e2931fcecace6a7b3cbad63d6854e64d9e06"
+}
