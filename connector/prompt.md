@@ -6,7 +6,7 @@ Everything the agent reads from the Trommi connector. Edit the words here; nothi
   paragraph under "# With the terminal mirror" (a plugin session: its hooks mirror the terminal, README "The terminal
   mirror") or under "# Without the terminal mirror" (any other session, or TROMMI_TERMINAL_MIRROR=off).
 - Under "# Tools" every tool has one section "## <tool name>" with its description, at most 2,048 characters each.
-  A tool without a section, or a section without a tool, fails the tests (node connector/test.mjs).
+  A tool without a section, or a section without a tool, fails the build (connector/build.rs).
 - Line breaks and blank lines inside a section are free: the text is read as one paragraph.
 
 # Instructions
@@ -113,7 +113,7 @@ Close a child session when its helper (subagent) is done: its status lines are c
 
 ## share_asset
 
-Release one of your assets for someone outside the board, or take the release back. A released asset gets a second link, /r/<id>#<key>, with a plain page for the recipient that shows nothing of the board. Release only what the human asked to be passed on. Returns the link.
+Release one of your assets for someone outside the board, or take the release back. A released asset gets a Share link, /a/<id>#<secret>.<key>.<hash>, that lasts at most 180 days, with a plain page for the recipient that shows nothing of the board. Release only what the human asked to be passed on. Returns the link.
 
 ## reload_connector
 
