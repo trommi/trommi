@@ -555,7 +555,8 @@ pub fn post_envelope(x: &Ctx, auth: &Auth, bytes: &[u8], fx: &mut Effects) -> Re
         ));
     }
     let padded = body.len().saturating_sub(16);
-    if body.len() > MAX_CIPHERTEXT || padded < 256 || !padded.is_power_of_two() {
+    // (a sealed body beyond the largest padded size is `too-large`, a void record: check 8 below)
+    if body.len() <= MAX_CIPHERTEXT && (padded < 256 || !padded.is_power_of_two()) {
         return Err(refuse(
             "bad-format",
             "the padded body is 256, 512 … 65536 bytes",
