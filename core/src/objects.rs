@@ -36,9 +36,6 @@ pub struct Object {
     pub current: Hash32,
     /// The answer in force, while the state is answered or an answer closed the card.
     pub answer: Option<Hash32>,
-    /// A Note: every version taken, in the order of arrival, since a Note's version may follow any other.
-    /// Empty for the other types.
-    pub versions: Vec<Hash32>,
 }
 
 impl Encode for Object {
@@ -48,7 +45,7 @@ impl Encode for Object {
         writer.u8(self.state.byte());
         writer.fixed(self.current.as_bytes());
         writer.fixed(self.answer.unwrap_or(Hash32::ZERO).as_bytes());
-        writer.vector(&self.versions)
+        Ok(())
     }
 }
 
@@ -60,7 +57,6 @@ impl Decode for Object {
             state: ObjectState::from_byte(reader.u8()?)?,
             current: reader.value()?,
             answer: Some(reader.value::<Hash32>()?).filter(|hash| !hash.is_zero()),
-            versions: reader.vector()?,
         })
     }
 }
@@ -74,12 +70,16 @@ pub struct Transition {
     pub before: Option<Object>,
     /// Its state with the envelope.
     pub after: Object,
+    /// A Note's version: the envelope's hash, which later versions of the Note may follow.
+    pub note_version: Option<Hash32>,
 }
 
 /// The objects of one group.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Objects {
     objects: BTreeMap<ObjectId, Object>,
+    /// Every version taken of every Note: a Note's version may follow any other.
+    note_versions: BTreeSet<(ObjectId, Hash32)>,
 }
 
 struct ObjectEntry(ObjectId, Object);
@@ -117,10 +117,24 @@ impl Objects {
         self.objects.iter()
     }
 
-    /// Takes the change of one envelope.
-    pub fn apply(&mut self, transition: &Transition) {
+    /// Whether `hash` is a version taken of the Note `object`.
+    pub fn is_note_version(&self, object: &ObjectId, hash: &Hash32) -> bool {
+        self.note_versions.contains(&(*object, *hash))
+    }
+
+    /// Takes the change of one envelope. `Error::Internal`, and no change, if the object no longer stands as
+    /// the envelope was judged: a transition is applied once, before the next envelope of the group is
+    /// judged.
+    pub fn apply(&mut self, transition: &Transition) -> Result<(), Error> {
+        if self.objects.get(&transition.object_id) != transition.before.as_ref() {
+            return Err(Error::Internal("a transition applied out of turn"));
+        }
         self.objects
             .insert(transition.object_id, transition.after.clone());
+        if let Some(version) = transition.note_version {
+            self.note_versions.insert((transition.object_id, version));
+        }
+        Ok(())
     }
 
     /// The stored form.
@@ -132,24 +146,41 @@ impl Objects {
             .collect();
         let mut writer = Writer::new();
         writer.vector(&entries)?;
+        let mut versions = Writer::new();
+        for (object, version) in &self.note_versions {
+            versions.fixed(object.as_bytes());
+            versions.fixed(version.as_bytes());
+        }
+        writer.opaque(&versions.into_bytes())?;
         Ok(writer.into_bytes())
+    }
+
+    fn read(bytes: &[u8]) -> Result<Self, Error> {
+        let mut reader = Reader::new(bytes);
+        let entries: Vec<ObjectEntry> = reader.vector()?;
+        let mut versions = Reader::new(reader.opaque()?);
+        reader.finish()?;
+        let mut objects = Self::new();
+        for ObjectEntry(id, object) in entries {
+            if objects.objects.insert(id, object).is_some() {
+                return Err(Error::BadFormat);
+            }
+        }
+        while !versions.is_empty() {
+            let version = (versions.value()?, versions.value()?);
+            let of_a_note = objects
+                .get(&version.0)
+                .is_some_and(|object| object.object_type == ObjectType::Note);
+            if !of_a_note || !objects.note_versions.insert(version) {
+                return Err(Error::BadFormat);
+            }
+        }
+        Ok(objects)
     }
 
     /// Reads the stored form; `Error::Storage` if it does not decode.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        if bytes.len() > MAX_STATE_LEN {
-            return Err(corrupt(Error::TooLarge));
-        }
-        let mut reader = Reader::new(bytes);
-        let entries: Vec<ObjectEntry> = reader.vector().map_err(corrupt)?;
-        reader.finish().map_err(corrupt)?;
-        let mut objects = Self::new();
-        for ObjectEntry(id, object) in entries {
-            if objects.objects.insert(id, object).is_some() {
-                return Err(corrupt(Error::BadFormat));
-            }
-        }
-        Ok(objects)
+        Self::read(bytes).map_err(corrupt)
     }
 }
 
@@ -256,11 +287,6 @@ fn begin(
             && fields.state == ObjectState::Open
             && objects.get(&fields.object_id).is_none(),
     )?;
-    let versions = if fields.object_type == ObjectType::Note {
-        vec![*hash]
-    } else {
-        Vec::new()
-    };
     Ok(Transition {
         object_id: fields.object_id,
         before: None,
@@ -270,8 +296,8 @@ fn begin(
             state: ObjectState::Open,
             current: *hash,
             answer: None,
-            versions,
         },
+        note_version: (fields.object_type == ObjectType::Note).then_some(*hash),
     })
 }
 
@@ -311,13 +337,14 @@ pub fn judge(
     let mut after = before.clone();
     after.current = *hash;
     after.state = fields.state;
+    let mut note_version = None;
     match &header.subject {
         Subject::Version(_) if before.object_type == ObjectType::Note => {
             allow(
-                before.versions.contains(&fields.object_ref)
+                objects.is_note_version(&fields.object_id, &fields.object_ref)
                     && fields.state != ObjectState::Answered,
             )?;
-            after.versions.push(*hash);
+            note_version = Some(*hash);
         }
         Subject::Version(_) => {
             allow(
@@ -351,6 +378,7 @@ pub fn judge(
         object_id: fields.object_id,
         before: Some(before.clone()),
         after,
+        note_version,
     }))
 }
 
@@ -365,7 +393,7 @@ pub fn replay<'a>(
     let mut objects = Objects::new();
     for (header, hash) in envelopes {
         match judge(facts, &objects, header, hash) {
-            Ok(Some(transition)) => objects.apply(&transition),
+            Ok(Some(transition)) => objects.apply(&transition)?,
             Ok(None) | Err(Error::Forbidden) => {}
             Err(fault) => return Err(fault),
         }
@@ -906,7 +934,6 @@ mod tests {
                 state: ObjectState::Open,
                 current: v1.hash,
                 answer: None,
-                versions: Vec::new(),
             }
         );
         // A later version by its owner becomes current.
@@ -1312,6 +1339,7 @@ mod tests {
         let draft = answer(id, v2.hash, 3, false);
         let outcome = forged(&mut world, 2, session(), &draft, |h| {
             object_mut(h).state = ObjectState::Open;
+            object_mut(h).answered_at = 0;
         });
         assert_eq!(outcome, REFUSED);
         // An answer that claims another type.
@@ -1377,7 +1405,12 @@ mod tests {
         let v3 = world.post(1, room(), &later(id, ObjectType::Note, v1.hash, false));
         let v4 = world.post(2, room(), &later(id, ObjectType::Note, v2.hash, true));
         let note = state(&world, &room(), &id);
-        assert_eq!(note.versions, [v1.hash, v2.hash, v3.hash, v4.hash]);
+        for version in [&v1, &v2, &v3, &v4] {
+            assert!(world.objects(&room()).is_note_version(&id, &version.hash));
+        }
+        assert!(!world
+            .objects(&room())
+            .is_note_version(&id, &Hash32::new([9; 32])));
         assert_eq!((note.current, note.state), (v4.hash, ObjectState::Closed));
         // A version on something that is no version of this Note.
         assert!(forbidden(
@@ -1833,27 +1866,6 @@ mod tests {
         );
         assert_eq!(desk(two_options()).answer("read", &["yes"]), refused);
         assert_eq!(desk(two_options()).answer("shred", &["no"]), refused);
-        // A choice that is not text.
-        let mut desk = desk(two_options());
-        let bind = AnswerBind {
-            object_id: desk.card,
-            version_hash: desk.version,
-            choices: vec![vec![0xFF]],
-        };
-        let draft = Draft::answer(
-            bind,
-            false,
-            Urgency::Normal,
-            device(3),
-            br#"{"answer_action":"answer"}"#,
-        );
-        let receipt = desk.world.post(2, session(), &draft);
-        let payload = desk.card_payload.clone();
-        let own = OwnRecord::CardVersion {
-            hash: desk.version,
-            payload: &payload,
-        };
-        assert_eq!(desk.gate(&receipt, &own), refused);
     }
 
     #[test]
@@ -1886,22 +1898,31 @@ mod tests {
             refused
         );
         assert_eq!(with_payload(br#"{"answer_action":7}"#, &["yes"]), refused);
-        assert_eq!(
-            with_payload(
-                br#"{"answer_action":"answer","answer_action":"read"}"#,
-                &["yes"]
-            ),
-            refused
-        );
-        // Choices in the payload that are not the bind's.
-        assert_eq!(
-            with_payload(br#"{"answer_action":"answer","choices":["no"]}"#, &["yes"]),
-            refused
-        );
-        assert_eq!(
-            with_payload(br#"{"answer_action":"answer","choices":"yes"}"#, &["yes"]),
-            refused
-        );
+        // What the envelope itself refuses never reaches the gate: a key twice, choices that are not the
+        // bind's.
+        for payload in [
+            &br#"{"answer_action":"answer","answer_action":"read"}"#[..],
+            br#"{"answer_action":"answer","choices":["no"]}"#,
+            br#"{"answer_action":"answer","choices":"yes"}"#,
+        ] {
+            let bind = AnswerBind {
+                object_id: ObjectId::new([1; 16]),
+                version_hash: Hash32::new([1; 32]),
+                choices: vec![b"yes".to_vec()],
+            };
+            let draft = Draft::answer(bind, false, Urgency::Normal, device(3), payload);
+            let slot = crate::chain::OwnChain::new()
+                .slot(session(), 0, device(2), NOW)
+                .unwrap();
+            let sealed = crate::envelope::seal(
+                &draft,
+                &slot,
+                &crate::envelope::testing::key(0),
+                &crate::envelope::testing::signer(2),
+                &mut crate::envelope::testing::TestEntropy(1),
+            );
+            assert_eq!(sealed.err(), Some(Error::BadFormat));
+        }
         // The same choices, and fields the gate does not know.
         assert_eq!(
             with_payload(

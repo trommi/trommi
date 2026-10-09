@@ -116,6 +116,9 @@ impl Snapshot {
     /// The snapshot a register value names; `bad-format` unless the text is a JSON object with an `attachment`
     /// object, a `frontier` of the shape `{ "<writer>": [seq, envelope_hash] }` and a whole `change`.
     pub fn parse(value: &str) -> Result<Self, Error> {
+        if !crate::envelope::is_json_object(value.as_bytes()) {
+            return Err(Error::BadFormat);
+        }
         let wire: SnapshotWire = serde_json::from_str(value).map_err(|_| Error::BadFormat)?;
         Ok(Self {
             attachment: serde_json::to_string(&wire.attachment).map_err(|_| Error::BadFormat)?,
@@ -223,13 +226,17 @@ pub struct Loaded {
 /// The loading rule of section 10.3, as a check of what the hub served.
 ///
 /// `applied` is the frontier of the snapshot this device applied last for the board (empty the first time),
-/// `snapshot` the newest snapshot (the current value of the register by 9.3.2), `served` the board's items the
+/// `cuts` the Cut in the room group of every removed device the snapshot's frontier names
+/// ([`crate::chain::GroupFacts::cut`]), `snapshot` the newest snapshot (the current value of the register by 9.3.2), `served` the board's items the
 /// hub gave from [`Snapshot::items_after_change`] on, and `chains` per writer its envelopes after the snapshot's
 /// frontier in ascending order, each verified by the receiver's checks 1 to 5 before it is handed in here
 /// ([`Link::of`]). A writer without a chain here is taken to have written nothing since.
 ///
 /// Refuses with: `replay` if the snapshot's frontier lies before the applied one for some writer, and
-/// `equivocation` if it names another envelope under the same number; `gap` or `chain-break` if a writer's chain
+/// `equivocation` if it names another envelope under the same number; `removed-sender` if the frontier lies
+/// beyond a removed writer's Cut (the snapshot holds shapes that are to vanish: a device loads an older one or
+/// reads the chains), and `equivocation` if it names another envelope at the Cut's number or a served item
+/// contradicts the applied frontier or a Cut; `gap` or `chain-break` if a writer's chain
 /// after the frontier does not link; `withheld` if an envelope of a chain names this board and was not served, or
 /// a served item lies beyond what its writer's chain shows; `hash-mismatch` if a served item is not the envelope
 /// its writer's chain has under that number; `equivocation` if a served item at the frontier's number has
@@ -238,6 +245,7 @@ pub struct Loaded {
 pub fn verify_load(
     board: &BoardId,
     applied: &[(DeviceId, Head)],
+    cuts: &[(DeviceId, Head)],
     snapshot: &Snapshot,
     served: &[ServedItem],
     chains: &[(DeviceId, Vec<Link>)],
@@ -251,6 +259,21 @@ pub fn verify_load(
             return Err(Error::Equivocation);
         }
     }
+    for (writer, cut) in cuts {
+        let now = snapshot.frontier_of(writer);
+        if now.seq > cut.seq {
+            return Err(Error::RemovedSender);
+        }
+        if now.seq == cut.seq && now.hash != cut.hash {
+            return Err(Error::Equivocation);
+        }
+    }
+    // What the device knows of a writer's chain under one number: the applied frontier and the Cut.
+    let known: BTreeMap<(DeviceId, u64), Hash32> = applied
+        .iter()
+        .chain(cuts)
+        .map(|(writer, head)| ((*writer, head.seq), head.hash))
+        .collect();
 
     let mut frontier: BTreeMap<DeviceId, Head> = snapshot.frontier.iter().copied().collect();
     let mut links: BTreeMap<(DeviceId, u64), &Link> = BTreeMap::new();
@@ -286,6 +309,12 @@ pub fn verify_load(
             return Err(Error::BadFormat);
         }
         let start = snapshot.frontier_of(&item.sender);
+        if known
+            .get(&(item.sender, item.seq))
+            .is_some_and(|hash| *hash != item.hash)
+        {
+            return Err(Error::Equivocation);
+        }
         if item.seq < start.seq {
             covered.push(index);
         } else if item.seq == start.seq {
@@ -447,6 +476,7 @@ mod tests {
         let refused = [
             "{}".to_string(),
             "[]".to_string(),
+            r#"[{},{},1]"#.to_string(),
             r#"{"attachment":{},"frontier":{}}"#.to_string(),
             r#"{"attachment":{},"change":1}"#.to_string(),
             r#"{"frontier":{},"change":1}"#.to_string(),
@@ -543,7 +573,7 @@ mod tests {
 
     impl Scene {
         fn load(&self) -> Result<Loaded, Error> {
-            verify_load(&BOARD, &[], &self.snapshot, &self.served, &self.chains)
+            verify_load(&BOARD, &[], &[], &self.snapshot, &self.served, &self.chains)
         }
     }
 
@@ -581,9 +611,10 @@ mod tests {
             frontier: Vec::new(),
             change: 0,
         };
-        let loaded = verify_load(&BOARD, &[], &empty, &[], &[]).unwrap();
+        let loaded = verify_load(&BOARD, &[], &[], &empty, &[], &[]).unwrap();
         assert_eq!((loaded.frontier.len(), loaded.fresh.len()), (0, 0));
-        let loaded = verify_load(&BOARD, &[], &scene.snapshot, &scene.served[..1], &[]).unwrap();
+        let loaded =
+            verify_load(&BOARD, &[], &[], &scene.snapshot, &scene.served[..1], &[]).unwrap();
         assert_eq!(loaded.frontier, scene.snapshot.frontier);
         assert_eq!(loaded.covered, [0]);
     }
@@ -684,6 +715,7 @@ mod tests {
             verify_load(
                 &BOARD,
                 applied,
+                &[],
                 &scene.snapshot,
                 &scene.served,
                 &scene.chains,
@@ -709,9 +741,55 @@ mod tests {
             ..scene.snapshot.clone()
         };
         assert_eq!(
-            verify_load(&BOARD, &next, &older, &[], &[]).err(),
+            verify_load(&BOARD, &next, &[], &older, &[], &[]).err(),
             Some(Error::Replay)
         );
+    }
+
+    #[test]
+    fn a_snapshot_beyond_a_cut_and_a_fork_under_a_known_number_are_refused() {
+        let scene = scene();
+        let (writer, at) = scene.snapshot.frontier[0];
+        let load =
+            |applied: &[(DeviceId, Head)], cuts: &[(DeviceId, Head)], served: &[ServedItem]| {
+                verify_load(
+                    &BOARD,
+                    applied,
+                    cuts,
+                    &scene.snapshot,
+                    served,
+                    &scene.chains,
+                )
+                .map(|loaded| loaded.covered)
+            };
+        // The writer was removed and the remover had accepted less than the snapshot covers.
+        assert_eq!(
+            load(&[], &[(writer, head(2, 5))], &scene.served),
+            Err(Error::RemovedSender)
+        );
+        assert_eq!(
+            load(&[], &[(writer, Head::START)], &scene.served),
+            Err(Error::RemovedSender)
+        );
+        // The Cut names another envelope under the frontier's number.
+        assert_eq!(
+            load(&[], &[(writer, head(3, 5))], &scene.served),
+            Err(Error::Equivocation)
+        );
+        // A Cut at or beyond the frontier.
+        assert!(load(&[], &[(writer, at)], &scene.served).is_ok());
+        // An item served under a number the device had applied with another hash.
+        let mut served = scene.served.clone();
+        served.push(ServedItem {
+            sender: writer,
+            seq: 2,
+            hash: Hash32::new([9; 32]),
+        });
+        assert_eq!(
+            load(&[(writer, head(2, 5))], &[], &served),
+            Err(Error::Equivocation)
+        );
+        assert_eq!(load(&[(writer, head(2, 9))], &[], &served).unwrap(), [0, 4]);
     }
 
     #[test]
@@ -738,10 +816,10 @@ mod tests {
         // The void record carries the chain and need not be served; served as an item it is refused.
         let served = vec![item(&first), item(&last)];
         let chains = vec![(device(1), links)];
-        assert!(verify_load(&BOARD, &[], &snapshot, &served, &chains).is_ok());
+        assert!(verify_load(&BOARD, &[], &[], &snapshot, &served, &chains).is_ok());
         let served = vec![item(&first), item(&record), item(&last)];
         assert_eq!(
-            verify_load(&BOARD, &[], &snapshot, &served, &chains),
+            verify_load(&BOARD, &[], &[], &snapshot, &served, &chains),
             Err(Error::Forbidden)
         );
     }
@@ -781,7 +859,7 @@ mod tests {
             .collect();
         let chains = vec![(device(1), receipts.iter().map(Link::of).collect())];
         let served: Vec<ServedItem> = receipts.iter().map(item).collect();
-        let loaded = verify_load(&BOARD, &[], &snapshot, &served, &chains).unwrap();
+        let loaded = verify_load(&BOARD, &[], &[], &snapshot, &served, &chains).unwrap();
         assert_eq!(loaded.fresh, [0, 1]);
         assert_eq!(loaded.frontier, reader.chains(&room()).heads());
     }

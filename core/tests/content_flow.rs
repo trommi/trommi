@@ -41,17 +41,17 @@ impl View {
 
     /// Stores what a receipt changes, as one write.
     fn store(&mut self, receipt: &Receipt) {
-        self.chains.apply(&receipt.advance);
+        self.chains.apply(receipt.advance()).unwrap();
         if let Outcome::Taken {
             transition: Some(transition),
             ..
-        } = &receipt.outcome
+        } = receipt.outcome()
         {
-            self.objects.apply(transition);
+            self.objects.apply(transition).unwrap();
         }
         self.accepted.insert(
-            (receipt.advance.sender, receipt.advance.head.seq),
-            receipt.hash,
+            (receipt.advance().sender, receipt.advance().head.seq),
+            receipt.hash(),
         );
     }
 }
@@ -132,11 +132,12 @@ fn a_card_is_answered_through_the_hub_and_the_gate() {
     );
     let draft =
         Draft::first_version(ObjectType::Card, Urgency::High, card_payload.as_bytes()).unwrap();
+    let mut agent_chain = OwnChain::new();
     let card = seal_next(
         &at_agent,
         &at_agent.chains,
         &at_agent.objects,
-        &OwnChain::new(),
+        &mut agent_chain,
         &draft.with_push(),
         session(),
         &agent,
@@ -144,7 +145,6 @@ fn a_card_is_answered_through_the_hub_and_the_gate() {
         &mut entropy,
     )
     .unwrap();
-    let agent_chain = card.own;
     let bytes = card.envelope.encode().unwrap();
 
     // The hub takes it without reading it, and files it by its header.
@@ -159,13 +159,13 @@ fn a_card_is_answered_through_the_hub_and_the_gate() {
     )
     .unwrap();
     assert!(matches!(
-        receipt.outcome,
+        receipt.outcome(),
         Outcome::Taken {
             body: Err(Error::NoKey),
             ..
         }
     ));
-    assert!(trommi_core::objects::push_honoured(&hub, &receipt.envelope.header).unwrap());
+    assert!(trommi_core::objects::push_honoured(&hub, &receipt.envelope().header).unwrap());
     hub.store(&receipt);
     let object_id = *hub.objects.iter().next().unwrap().0;
     assert_eq!(
@@ -201,7 +201,7 @@ fn a_card_is_answered_through_the_hub_and_the_gate() {
             NOW,
         )
         .unwrap();
-        assert_eq!(receipt.hash, card.hash);
+        assert_eq!(receipt.hash(), card.hash);
         view.store(&receipt);
     }
 
@@ -222,7 +222,7 @@ fn a_card_is_answered_through_the_hub_and_the_gate() {
         &at_human,
         &at_human.chains,
         &at_human.objects,
-        &OwnChain::new(),
+        &mut OwnChain::new(),
         &draft,
         session(),
         &human,
@@ -278,7 +278,7 @@ fn a_card_is_answered_through_the_hub_and_the_gate() {
     at_agent.store(&receipt);
     let again = command_gate(&at_agent, &mut log, &agent_id, &opened, &own, NOW + 2000).unwrap();
     assert_eq!(again, Decision::Uncertain);
-    log.finish(&receipt.hash).unwrap();
+    log.finish(&receipt.hash()).unwrap();
     let again = command_gate(&at_agent, &mut log, &agent_id, &opened, &own, NOW + 2000).unwrap();
     assert_eq!(again, Decision::Done);
 
@@ -297,7 +297,7 @@ fn a_card_is_answered_through_the_hub_and_the_gate() {
         &at_agent,
         &at_agent.chains,
         &at_agent.objects,
-        &agent_chain,
+        &mut agent_chain,
         &draft,
         session(),
         &agent,
@@ -324,7 +324,7 @@ fn a_card_is_answered_through_the_hub_and_the_gate() {
     let update = registers_at_human
         .judge(&at_human, opened.header(), opened.body().payload())
         .unwrap();
-    registers_at_human.apply(&update);
+    registers_at_human.apply(&update).unwrap();
     assert_eq!(
         registers_at_human.get("status_line/main"),
         Some(r#"{"label":"Build","state":"done"}"#)
