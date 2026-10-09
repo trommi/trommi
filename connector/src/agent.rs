@@ -571,6 +571,29 @@ impl Client {
         Ok(session)
     }
 
+    /// Adds a helper device to a helper session this agent opened (5.2.4), with the KeyPackage the device
+    /// handed over outside the hub: a subagent that runs a connector of its own.
+    pub async fn admit_helper(
+        &self,
+        session_id: &str,
+        device: DeviceId,
+        key_package: Vec<u8>,
+    ) -> Result<()> {
+        let mut core = self.core.lock().await;
+        let group = core.group_of(Some(session_id))?;
+        let now = now_ms();
+        let outbox_id = self
+            .vault
+            .call(move |v: &mut Vault| v.device.add_to_session(&group, &device, &key_package, now))
+            .await??;
+        core.commit()?;
+        self.pump(&mut core).await?;
+        match Self::take_refusal(&mut core, outbox_id) {
+            Some(fault) => Err(fault),
+            None => Ok(()),
+        }
+    }
+
     /// Lets a helper device that lost its state back into a helper session (5.3.5): the opener removes the
     /// old leaf with its Cut, adds the new device with the KeyPackage it handed over outside the hub, and
     /// hands it the session's keys.
@@ -623,7 +646,16 @@ impl Client {
     ) -> Result<()> {
         let mut core = self.core.lock().await;
         let group = core.group_of(session_id)?;
-        let step = serde_json::to_vec(step)?;
+        // The step's body as the core writes and checks it (`{ text, tool? }`, with its limits).
+        let step = trommi_core::trail::WorkStep {
+            text: step
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            tool: step.get("tool").and_then(Value::as_str).map(str::to_owned),
+        }
+        .encode()?;
         let now = now_ms();
         self.vault
             .call(move |v: &mut Vault| {
