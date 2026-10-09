@@ -210,3 +210,131 @@ async fn the_tools_write_to_the_board_and_answers_come_back() {
     assert!(human.findings.is_empty(), "{:?}", human.findings);
     mcp.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn helper_sessions_and_assets() {
+    let (_hub, mut human, seat, mut mcp, _group) = seated().await;
+
+    // open_session: the agent founds the helper's group itself, with every human device.
+    let opened = mcp
+        .ok(
+            "open_session",
+            json!({ "name": "Design", "task": "drawing the logo" }),
+        )
+        .await;
+    assert!(opened.starts_with("child session opened"), "{opened}");
+    assert!(mcp
+        .ok(
+            "reply",
+            json!({ "session": "Design", "text": "Three drafts ready." })
+        )
+        .await
+        .starts_with("sent"));
+    mcp.ok(
+        "set_status",
+        json!({ "session": "Design", "id": "logo", "label": "Logo", "state": "working" }),
+    )
+    .await;
+    let made = mcp
+        .ok(
+            "create_decision",
+            json!({ "session": "Design", "title": "Which draft?", "options": [{ "key": "a", "label": "A" }, { "key": "b", "label": "B" }] }),
+        )
+        .await;
+    let card = made
+        .split_whitespace()
+        .nth(1)
+        .expect("the card's id")
+        .to_string();
+
+    human.sync().await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+    let groups = human.vault.device.groups().expect("groups");
+    let helper = groups
+        .iter()
+        .find(|g| g.session.is_some_and(|s| !s.parent.is_zero()))
+        .expect("the human device is a leaf of the helper session");
+    let helper_sid =
+        trommi_connector::util::hex(helper.session.expect("a session").session_id.as_bytes());
+    assert!(human
+        .items
+        .iter()
+        .any(|(session, _, payload)| *session == helper_sid
+            && payload["text"] == "Three drafts ready."));
+
+    // The human's answer in the helper session arrives with its name.
+    human
+        .answer(
+            &card,
+            json!({ "answer_action": "answer", "choices": ["b"] }),
+            &["b"],
+            false,
+        )
+        .await
+        .expect("taken");
+    let event = mcp.event("decision").await;
+    assert_eq!(event["meta"]["session"], "Design", "{event}");
+    assert_eq!(event["meta"]["choice"], "b", "{event}");
+
+    let again = mcp.ok("open_session", json!({ "name": "Design" })).await;
+    assert!(again.starts_with("child session already open"), "{again}");
+    let closed = mcp
+        .ok(
+            "close_session",
+            json!({ "name": "Design", "summary": "Draft B it is." }),
+        )
+        .await;
+    assert!(closed.contains("closed"), "{closed}");
+
+    // publish_asset, list_assets, share_asset, revoke_asset
+    let page = seat.folder.join("report.html");
+    std::fs::write(&page, "<h1>Report</h1><p>All good.</p>").expect("a file");
+    let published = mcp
+        .ok(
+            "publish_asset",
+            json!({ "path": page.display().to_string(), "title": "Weekly report" }),
+        )
+        .await;
+    let asset = published
+        .strip_prefix("published as ")
+        .and_then(|rest| rest.split(':').next())
+        .expect("the asset's id")
+        .to_string();
+    let listed: Value =
+        serde_json::from_str(&mcp.ok("list_assets", json!({})).await).expect("JSON");
+    assert_eq!(listed[0]["id"], asset.as_str());
+    assert_eq!(listed[0]["title"], "Weekly report");
+    let shared = mcp
+        .ok("share_asset", json!({ "id": asset, "expires_hours": 2 }))
+        .await;
+    let link = shared
+        .lines()
+        .find_map(|line| line.strip_prefix("Link for the recipient: "))
+        .expect("a link");
+    trommi_core::files::ShareLink::parse(link).expect("a Share link of the protocol");
+    let too_long = mcp
+        .call(
+            "share_asset",
+            json!({ "id": asset, "expires_hours": 181 * 24 }),
+        )
+        .await;
+    assert!(
+        too_long.1 && too_long.0.contains("180 days"),
+        "{too_long:?}"
+    );
+    assert!(mcp
+        .ok("share_asset", json!({ "id": asset, "release": false }))
+        .await
+        .contains("taken back"));
+    assert!(mcp
+        .ok("revoke_asset", json!({ "id": asset }))
+        .await
+        .starts_with("revoked"));
+    let listed: Value =
+        serde_json::from_str(&mcp.ok("list_assets", json!({})).await).expect("JSON");
+    assert_eq!(listed, json!([]));
+
+    human.sync().await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+    mcp.close().await;
+}
