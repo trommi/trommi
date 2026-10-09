@@ -1551,7 +1551,9 @@
       "timeline": "optional<TimelineRef>",
       "registerId": "optional<bytes>",
       "object": "optional<ObjectHeader>",
-      "fileIds": "list<bytes>"
+      "fileIds": "list<bytes>",
+      "reservedKind": "optional<number>",
+      "reservedBlock": "optional<bytes>"
     },
     "Bind": {
       "kind": "BindKind",
