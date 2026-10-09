@@ -59,7 +59,7 @@ use openmls::prelude::{KeyPackage, ProcessedMessageContent, ProtocolMessage, Sen
 use openmls_traits::OpenMlsProvider as _;
 use std::collections::{BTreeMap, BTreeSet};
 use tls_codec::{Deserialize as _, Serialize as _};
-use zeroize::{Zeroize as _, Zeroizing};
+use zeroize::{Zeroize, Zeroizing};
 
 /// A human device updates its leaf in a live group when the leaf is older than this (5.2.9).
 pub const UPDATE_AFTER_MS: u64 = 7 * 24 * 60 * 60 * 1000;
@@ -730,12 +730,45 @@ impl SessionFacts for Known {
     }
 }
 
+/// What the store holds, entry for entry. Among it are the signature key's seed, the content keys, the
+/// `recovery_mac` keys and OpenMLS's private state: every value is wiped when it is replaced, removed or
+/// dropped.
+#[derive(Default)]
+struct Mirror(BTreeMap<Vec<u8>, Vec<u8>>);
+
+impl Mirror {
+    fn put(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        if let Some(mut replaced) = self.0.insert(key, value) {
+            replaced.zeroize();
+        }
+    }
+
+    fn remove(&mut self, key: &[u8]) {
+        if let Some(mut removed) = self.0.remove(key) {
+            removed.zeroize();
+        }
+    }
+}
+
+impl std::ops::Deref for Mirror {
+    type Target = BTreeMap<Vec<u8>, Vec<u8>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Drop for Mirror {
+    fn drop(&mut self) {
+        self.0.values_mut().for_each(Zeroize::zeroize);
+    }
+}
+
 /// One device. Exactly one object works on a stored state at a time (see [`crate::store`]).
 pub struct Device<S: Storage> {
     store: S,
     revision: u64,
-    /// What the store holds, entry for entry.
-    mirror: BTreeMap<Vec<u8>, Vec<u8>>,
+    mirror: Mirror,
     key: SigningKey,
     id: DeviceId,
     provider: Provider,
@@ -1038,11 +1071,10 @@ impl<S: Storage> Device<S> {
         batch.put(device_key(SUB_SEED, &[]), key.seed().expose().to_vec());
         batch.put(device_key(SUB_RECORD, &[]), codec::encode(&record)?);
         store.apply(0, batch.clone())?;
-        let mirror = batch
-            .put
-            .iter()
-            .map(|entry| (entry.key.clone(), entry.value.clone()))
-            .collect();
+        let mut mirror = Mirror::default();
+        for entry in &batch.put {
+            mirror.put(entry.key.clone(), entry.value.clone());
+        }
         Ok(Self {
             store,
             revision: 1,
@@ -1065,11 +1097,10 @@ impl<S: Storage> Device<S> {
     /// in an epoch above [`profile::MAX_STORED_EPOCH`].
     pub fn open(mut store: S, entropy: Box<dyn Entropy + Send>) -> Result<Self, Error> {
         let loaded = store.load()?;
-        let mirror: BTreeMap<Vec<u8>, Vec<u8>> = loaded
-            .entries
-            .iter()
-            .map(|entry| (entry.key.clone(), entry.value.clone()))
-            .collect();
+        let mut mirror = Mirror::default();
+        for entry in &loaded.entries {
+            mirror.put(entry.key.clone(), entry.value.clone());
+        }
         let (memory, mls, seed) = rebuild(&mirror)?;
         let key = SigningKey::from_seed(seed);
         let mut device = Self {
@@ -1362,7 +1393,7 @@ impl<S: Storage> Device<S> {
             self.mirror.remove(key);
         }
         for entry in &batch.put {
-            self.mirror.insert(entry.key.clone(), entry.value.clone());
+            self.mirror.put(entry.key.clone(), entry.value.clone());
         }
         Ok(())
     }

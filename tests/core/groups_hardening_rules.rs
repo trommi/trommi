@@ -261,3 +261,24 @@ fn a_device_that_joined_by_welcome_knows_the_place_of_its_join() {
     assert!(cuts_for(&late, &main).is_empty());
     assert_eq!(sync_ok(&hub, &mut late), [] as [Processed; 0]);
 }
+
+#[test]
+fn a_key_package_valid_for_longer_than_the_profile_allows_is_refused() {
+    let (hub, mut a, _, _, _, _) = room(true);
+    let mut forger = Forger::new();
+    let ten_years = 10 * 365 * 24 * 60 * 60;
+    forger.lifetime_s = Some(ten_years);
+    assert!(trommi_core::device::key_package_info(&forger.key_package()).is_ok());
+    forger.lifetime_s = Some(ten_years + 60);
+    let package = forger.key_package();
+    assert_eq!(
+        trommi_core::device::key_package_info(&package).err(),
+        Some(Error::BadKeyPackage)
+    );
+    assert_eq!(
+        a.add_human_device(&forger.id(), &package, now()),
+        Err(Error::BadKeyPackage)
+    );
+    assert!(a.outbox().is_empty());
+    drop(hub);
+}
