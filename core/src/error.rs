@@ -116,6 +116,9 @@ pub enum Error {
     Storage(String),
     /// The system gave no randomness.
     Entropy,
+    /// The device still waits for the hub's answer to an earlier request on this group, or is no longer active
+    /// in it: report the answer, or process the log, and call again.
+    Busy,
 }
 
 /// Variant and code of every error that carries no data, in the order of the enum.
@@ -180,6 +183,7 @@ impl Error {
             Error::Internal(_) => "internal",
             Error::Storage(_) => "storage",
             Error::Entropy => "entropy",
+            Error::Busy => "busy",
             other => CODES
                 .iter()
                 .find(|(error, _)| error == other)
