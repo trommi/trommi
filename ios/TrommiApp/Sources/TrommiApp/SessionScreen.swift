@@ -407,7 +407,7 @@ struct MessageView: View {
         MarksLine(marks: m.marks)
         if m.noteWritten != nil {
           VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) { PenMark("sidebar:NOTE_ICON").frame(width: 17, height: 17); Text("Note").font(Face.text(12, .bold)); if let w = m.noteWritten!, w > 0 { Text("written \(clockOf(w))").font(Face.text(12)) } }
+            HStack(spacing: 6) { NoteGlyph(color: Ink.noteInk, written: true).frame(width: 17, height: 17); Text("Note").font(Face.text(12, .bold)); if let w = m.noteWritten!, w > 0 { Text("written \(clockOf(w))").font(Face.text(12)) } }
               .foregroundStyle(Ink.noteInk.opacity(0.8))
             Text(m.text).font(Face.text(16)).foregroundStyle(Ink.noteInk)
             // its pictures and files on the slip (a tap: full screen)

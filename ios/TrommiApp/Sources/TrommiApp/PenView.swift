@@ -232,6 +232,9 @@ struct PenInks {
   var duck = false                          // the duck in yellow
   /** The water the yellow duck swims on (default: the stroke colour, the button's own ink). */
   var water: Color? = nil
+  /** The note as a plain outline (a bar item, a label): no yellow paper, every line in the stroke's ink; its written
+   *  lines only when `true` (something is on the note), none when `false`. nil: the note in its own colours. */
+  var plainNote: Bool? = nil
 }
 
 /** One mark of the pen, by its pen.json key, sized by its frame. */
@@ -273,6 +276,7 @@ enum PenDraw {
     for it in d.items {
       let p = it.path.applying(t)
       let c = it.classes.union(docCls)
+      if let written = inks.plainNote, c.contains("note-fill") || (c.contains("note-lines") && !written) { continue }
       // a drawing with a coloured fill (the yellow duck, the yellow note) keeps dark ink in dark mode too; only a drawing
       // standing on the page's ground takes the page's ink (as the web: --duck-ink, the note's ink)
       let onColour = inks.duck
@@ -296,6 +300,7 @@ enum PenDraw {
       if c.contains("note-ink") { stroke = Ink.fg; width = inks.width ?? 1.55 }
       // (drawn heavier, as a bar item: the written lines a little finer than the outline, they lie close together)
       if c.contains("note-lines") { stroke = Ink.noteInk; width = inks.width.map { $0 * 0.7 } ?? 1.55 }
+      if inks.plainNote != nil && (c.contains("note-ink") || c.contains("note-lines")) { stroke = inks.stroke }
       if c.contains("clamp-plate") { fill = Color.dyn(0xc9ccc6, 0x59605b) }
       if c.contains("brand-mark-ring") { stroke = Ink.accent }
       if it.attrs["fill"] != nil && it.attrs["fill"] != "none" { fill = stroke }
@@ -362,6 +367,18 @@ enum PenDraw {
 // ---- the marks the screens use ---------------------------------------------------------------------------
 
 /** A sketch icon of the pen ("later", "tick", "duck", …) in the current ink. */
+/**
+ * The note as a plain ink outline, in the shape of the web's corner note (sidebar.mjs NOTE_ICON: the square sheet with
+ * its folded corner), without its yellow: the empty sheet while the note is empty, with its written lines when
+ * something is on it. For the bar's Note item and the note's label in a chat.
+ */
+struct NoteGlyph: View {
+  var color: Color = Ink.fg
+  var width: CGFloat? = nil
+  var written: Bool
+  var body: some View { PenMark(doc: PenStore.doc("sidebar:NOTE_ICON"), inks: PenInks(stroke: color, width: width, plainNote: written)) }
+}
+
 struct Sketch: View {
   let name: String
   var color: Color = Ink.fg

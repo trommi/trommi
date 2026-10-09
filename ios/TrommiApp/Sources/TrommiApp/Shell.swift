@@ -124,8 +124,9 @@ struct TabPill: View {
       HStack(spacing: 0) {
         item(.chat, on, "sketch:bubble", 39, 24, "Chat")
         item(.desk, on, "sketch:desk", 34, 24, waiting > 0 ? "Desk, \(waiting) waiting" : "Desk")
-        // the web's corner note (sidebar.mjs NOTE_ICON): one note drawing on both
-        item(.note, on, "sidebar:NOTE_ICON", 38, 52, hasNote ? "Note, written" : "Note")
+        // the web's corner note in shape only (NoteGlyph): a plain outline as the other two, empty while the note is
+        // empty, with its lines when something is written on it (his word on build 22)
+        item(.note, on, "sidebar:NOTE_ICON", 36, 52, hasNote ? "Note, written" : "Note")
       }
       // the lens: one capsule that is always there, moved to the lit item (no view that comes and goes, no matched
       // geometry: nothing that can be left behind on the item before)
@@ -149,15 +150,16 @@ struct TabPill: View {
   private func item(_ t: BoardModel.Tab, _ on: BoardModel.Tab, _ key: String, _ side: CGFloat, _ box: CGFloat, _ label: String) -> some View {
     let sel = on == t
     return Button { tap(t) } label: {
-      // the note keeps its own inks (yellow paper, the page's ink), so it is muted as a whole
-      PenMark(key, color: Ink.fg.opacity(sel || t == .note ? 1 : 0.6), width: 2.4 * box / side).frame(width: side, height: side)
-        .opacity(t == .note && !sel ? 0.6 : 1)
+      Group {
+        if t == .note { NoteGlyph(color: Ink.fg.opacity(sel ? 1 : 0.6), width: 2.4 * box / side, written: hasNote) }
+        else { PenMark(key, color: Ink.fg.opacity(sel ? 1 : 0.6), width: 2.4 * box / side) }
+      }
+      .frame(width: side, height: side)
         .frame(width: wide, height: 50)
         .overlay {
           if t == .desk && waiting > 0 {
             Text("\(waiting)").font(Face.text(11, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18).background(Capsule().fill(Ink.fg)).offset(x: 18, y: -13)
           }
-          if t == .note && hasNote { Circle().fill(Ink.fg).frame(width: 7, height: 7).offset(x: -17, y: -15) }
         }
         .contentShape(Capsule())
     }
