@@ -382,6 +382,9 @@ struct Pending {
     accepted: bool,
     /// What the device knows its own Commit in the log by ([`posted_as`]).
     commit: Hash32,
+    /// The cursor when it was built: the hub puts it behind everything this device had processed then, so
+    /// its place lies above this.
+    built: u64,
 }
 
 /// What a device knows its own Commit in the log by: the SHA-256 of the Commit as it posted it. A pending
@@ -461,6 +464,7 @@ impl Encode for GroupMeta {
         writer.u64(pending.map_or(0, |pending| pending.room_epoch));
         writer.u64(pending.map_or(0, |pending| pending.time));
         writer.value(&pending.map_or(Hash32::ZERO, |pending| pending.commit))?;
+        writer.u64(pending.map_or(0, |pending| pending.built));
         writer.u64(self.joined_epoch);
         writer.u64(self.passed);
         writer.u64(self.place);
@@ -489,6 +493,7 @@ impl Decode for GroupMeta {
         let room_epoch = reader.u64()?;
         let time = reader.u64()?;
         let commit: Hash32 = reader.value()?;
+        let built = reader.u64()?;
         let pending = (outbox != 0).then_some(Pending {
             outbox,
             room_epoch,
@@ -497,6 +502,7 @@ impl Decode for GroupMeta {
             renews_leaf: flags & (1 << 5) != 0,
             accepted: flags & (1 << 6) != 0,
             commit,
+            built,
         });
         Ok(Self {
             session: None,
@@ -748,21 +754,28 @@ struct Known {
     /// The main sessions this device holds as archived: no live session has their id (5.2.10). Their agent
     /// leaf over time is kept for a replay of what happened while they were live.
     closed: BTreeMap<SessionId, Vec<(u64, Option<DeviceId>)>>,
+    /// Whether the facts are asked for a replay of a session's history from its founding: a main session
+    /// that is archived now was a main session at the places replayed, with the agent leaf it had there.
+    replay: bool,
 }
 
 impl Known {
-    /// The same for a replay of a session's history from its founding: a main session that is archived now
-    /// was a main session at the places replayed, with the agent leaf it had there.
+    /// The same for a replay. Which live main session an agent device sits in is still asked of the live
+    /// ones alone.
     fn historical(mut self) -> Self {
-        self.seats.append(&mut self.closed);
+        self.replay = true;
         self
     }
 }
 
 impl SessionFacts for Known {
     fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
-        if self.closed.contains_key(session) {
-            return Parent::NotAMainSession;
+        if let Some(seats) = self.closed.get(session) {
+            return if self.replay {
+                Parent::Seat(observer::seat_at(seats, room_epoch))
+            } else {
+                Parent::NotAMainSession
+            };
         }
         match self.seats.get(session) {
             Some(seats) => Parent::Seat(observer::seat_at(seats, room_epoch)),
@@ -1391,8 +1404,8 @@ impl<S: Storage> Device<S> {
                 group,
                 &[],
             ));
-            if recorded && !own_chain {
-                return Err(contradicts("the own chain"));
+            if !recorded || !own_chain {
+                return Err(contradicts("an epoch's record"));
             }
         }
         // What names an outbox entry.
@@ -1729,6 +1742,7 @@ impl<S: Storage> Device<S> {
             seats: BTreeMap::new(),
             helpers: BTreeMap::new(),
             closed: BTreeMap::new(),
+            replay: false,
         };
         for meta in self.memory.groups.values() {
             let Some(session) = meta.session.as_ref() else {
@@ -2197,9 +2211,9 @@ impl<S: Storage> Device<S> {
 
     /// Merges this device's pending Commit of `group`, which the log shows at this place, and settles the new
     /// epoch. Its outbox entry goes, if the hub's answer has not taken it yet.
-    fn merge_own(&mut self, batch: &mut Batch, id: &GroupId) -> Result<(), Error> {
+    fn merge_own(&mut self, batch: &mut Batch, id: &GroupId, noted: &[Cut]) -> Result<(), Error> {
         let pending = self.meta(id)?.pending.take().ok_or(Error::NotFound)?;
-        self.merging_own(id, pending.outbox, pending.time)?;
+        self.merging_own(id, pending.outbox, pending.time, noted)?;
         let mut group = group::load(&self.provider, id)?;
         group
             .merge_pending_commit(&self.provider)
@@ -2855,6 +2869,7 @@ impl<S: Storage> Device<S> {
                         renews_leaf: false,
                         accepted: false,
                         commit: first_commit,
+                        built: device.memory.record.cursor,
                     }),
                     ..GroupMeta::default()
                 },
@@ -2885,9 +2900,16 @@ impl<S: Storage> Device<S> {
         public: MlsEntries,
         commit: &[u8],
         place: Option<u64>,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<(Vec<u8>, Vec<Cut>), Error> {
         let (facts, leaves, after) = observer::read_commit(public, id, commit)?;
-        let known = self.known();
+        let mut known = self.known();
+        // Where the log shows it, the group it founds is among the groups this device holds: it is not
+        // counted against itself (5.2.5: 32 live helper sessions).
+        if let (Some(_), Some((session, _))) = (place, session) {
+            if let Some(count) = known.helpers.get_mut(&session.parent) {
+                *count = count.saturating_sub(1);
+            }
+        }
         let history = self.history()?;
         let verifier = Verifier {
             history,
@@ -2920,7 +2942,8 @@ impl<S: Storage> Device<S> {
                 }
             }
         }
-        Ok(after)
+        let cuts = facts.note.map(|note| note.cuts).unwrap_or_default();
+        Ok((after, cuts))
     }
 
     /// Builds one Commit in `group` and leaves it pending in OpenMLS. `cuts` name the leaves it removes;
@@ -3062,6 +3085,7 @@ impl<S: Storage> Device<S> {
             renews_leaf,
             accepted: false,
             commit: commit_hash,
+            built: self.memory.record.cursor,
         });
         self.put_group(batch, &group)?;
         Ok(outbox)
@@ -3794,6 +3818,13 @@ impl<S: Storage> Device<S> {
         if self.joining(&checked.observer.group()) {
             return Err(Error::Busy);
         }
+        // What this device verified as an observer of the group is not given up for a history that ends
+        // before it: the join builds on a state at least as far as the one it follows.
+        if let Some(own) = self.memory.observers.get(&checked.observer.group()) {
+            if checked.observer.epoch()? < own.epoch()? {
+                return Err(Error::WrongEpoch);
+            }
+        }
         let seats = checked.observer.seats().to_vec();
         let (posting, copy) = self
             .shadow(|this, batch| this.join_built(batch, keys, served.current, &seats, now_ms))?;
@@ -4142,7 +4173,7 @@ impl<S: Storage> Device<S> {
                 LogKind::Commit {
                     bytes,
                     recovery_auth,
-                } => match this.decide_staged(batch, entry, bytes)? {
+                } => match this.decide_staged(batch, entry, bytes, recovery_auth)? {
                     Some(StagedVerdict::Own) => {
                         adopted = true;
                         Processed::OwnCommit
@@ -4206,6 +4237,7 @@ impl<S: Storage> Device<S> {
         batch: &mut Batch,
         entry: &LogEntry<'_>,
         commit: &[u8],
+        recovery_auth: Option<&[u8]>,
     ) -> Result<Option<StagedVerdict>, Error> {
         let group = &entry.group;
         let waiting = self.memory.outbox.values().find(|entry| {
@@ -4231,12 +4263,20 @@ impl<S: Storage> Device<S> {
             // 5.2.1: a join into a session group names the room epoch at its place, like any Commit
             // there; one that the hub stored behind a later room Commit is taken by no member, and is
             // not adopted. Its `RecoveryAuth` names what the Commit's note names (8.4).
+            // The log shows it with the `RecoveryAuth` this device made for it: every other reader verifies
+            // the one the log shows (8.4), and takes the join with no other.
+            let made = self
+                .memory
+                .outbox
+                .get(&outbox)
+                .and_then(|entry| entry.parts.get(3))
+                .cloned();
+            if made.as_deref() != recovery_auth {
+                return Err(Error::BadGroup);
+            }
             if !group.is_room() {
-                let named = self
-                    .memory
-                    .outbox
-                    .get(&outbox)
-                    .and_then(|entry| entry.parts.get(3))
+                let named = made
+                    .as_deref()
                     .and_then(|auth| recovery::RecoveryAuth::from_bytes(auth).ok())
                     .map(|auth| auth.join.room_epoch);
                 if named != Some(self.room_epoch_at(entry.change)?) {
@@ -4303,13 +4343,18 @@ impl<S: Storage> Device<S> {
             let stands = group::load(&self.provider, &entry.group)
                 .ok()
                 .map(|group| group.epoch().as_u64());
+            if entry.group.is_room() && named < meta.joined_epoch {
+                // A room Commit that led to an epoch whose state this device holds without its place:
+                // the one it joined at, or one its own recovery made.
+                let led_to = named.saturating_add(1);
+                return self
+                    .room_history()
+                    .is_some_and(|history| history.at(led_to).is_some())
+                    && !self.memory.room_places.contains_key(&led_to);
+            }
             if named.checked_add(1) == Some(meta.joined_epoch) {
                 // The Commit that led to the epoch joined at, as long as the join has no place yet.
-                return if entry.group.is_room() {
-                    !self.memory.room_places.contains_key(&meta.joined_epoch)
-                } else {
-                    stands == Some(meta.joined_epoch)
-                };
+                return stands == Some(meta.joined_epoch);
             }
             if !own && entry.change > meta.passed {
                 return false;
@@ -4470,8 +4515,13 @@ impl<S: Storage> Device<S> {
                 let session = meta
                     .session
                     .map(|session| (session, meta.previous_room_epoch));
-                let after = self.judge_own(id, session, public, commit, Some(change))?;
-                self.merge_own(batch, id)?;
+                // The hub put it behind everything this device had processed when it built it: a place at
+                // or before that is not its place, and would have it judged against what came later.
+                if change <= pending.built {
+                    return Err(Error::BadGroup);
+                }
+                let (after, cuts) = self.judge_own(id, session, public, commit, Some(change))?;
+                self.merge_own(batch, id, &cuts)?;
                 // What OpenMLS held as the pending Commit is the Commit the log shows: merged, it leads
                 // to the group context that Commit leads to for everyone. Anything else is a stored
                 // state that was not this Commit's.
