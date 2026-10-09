@@ -131,15 +131,11 @@ fn the_opener_founds_a_helper_session_with_every_human_device() {
         h2.content_key(&group, 0).unwrap(),
         agent.content_key(&group, 0).unwrap()
     );
-    // A human device takes keys from the opener of a helper session; a helper device's handover is dropped.
+    // A human device takes keys from the opener of a helper session; a helper device sends no handover
+    // (`groups_refusals.rs`, a_work_trail_step_without_a_number: one sent all the same is dropped).
     settle(&hub, &mut h1);
-    h1.send_handover(&group, &a.id()).unwrap();
-    post_ok(&mut hub, &mut h1);
-    let processed = sync_ok(&hub, &mut a);
-    assert_eq!(
-        processed.last(),
-        Some(&Processed::Message(Received::Dropped))
-    );
+    assert_eq!(h1.send_handover(&group, &a.id()), Err(Error::Forbidden));
+    sync_ok(&hub, &mut a);
     assert_eq!(a.content_key(&group, 0), Err(Error::NoKey));
     agent.send_handover(&group, &a.id()).unwrap();
     post_ok(&mut hub, &mut agent);
@@ -210,11 +206,34 @@ fn a_helper_device_that_lost_its_state_is_readmitted_by_the_opener() {
         Some(Processed::Commit { removed: true, .. })
     ));
     assert_eq!(h1.content_key(&group, 2), Err(Error::NoKey));
-    // A human device readmits nobody.
+    // A human device readmits nobody, and neither does a helper device: only the opener.
     assert_eq!(
         a.readmit_helper(&group, Cut::none(again.id()), &h1.id(), &package, now()),
         Err(Error::Forbidden)
     );
+    let mut third = helper_device(&hub);
+    let package = third.key_package(now()).unwrap();
+    assert_eq!(
+        again.readmit_helper(&group, Cut::none(agent.id()), &third.id(), &package, now()),
+        Err(Error::Forbidden)
+    );
+    // A helper device hands no key over either (7.1): a human device or the opener does.
+    assert_eq!(again.send_handover(&group, &a.id()), Err(Error::Forbidden));
+    assert!(again.outbox().is_empty());
+    // The device that comes back has a new key (4.3), and the leaf that goes is a helper device's: not a
+    // human device's and not the opener's own.
+    let same_key = again.key_package(now()).unwrap();
+    assert_eq!(
+        agent.readmit_helper(&group, Cut::none(again.id()), &again.id(), &same_key, now()),
+        Err(Error::BadCommit)
+    );
+    for kept in [a.id(), agent.id()] {
+        assert_eq!(
+            agent.readmit_helper(&group, Cut::none(kept), &third.id(), &package, now()),
+            Err(Error::BadCommit)
+        );
+    }
+    assert!(agent.outbox().is_empty());
 }
 
 #[test]
@@ -265,13 +284,13 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
         .unwrap();
     assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
 
-    // The opener removes no human leaf.
+    // The opener removes no human leaf: it builds no such Commit.
     let mut h2 = helper_device(&hub);
     let package = h2.key_package(now()).unwrap();
-    agent
-        .readmit_helper(&group, Cut::none(b.id()), &h2.id(), &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
+    assert_eq!(
+        agent.readmit_helper(&group, Cut::none(b.id()), &h2.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
     // The opener adds no enrolled agent device and no human device.
     let of_other = other.key_package(now()).unwrap();
     agent
