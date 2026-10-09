@@ -1,10 +1,11 @@
-// ChatList.swift: the Chat page's list (his pick, 9 October). The hierarchy: on All desks each desk is a section head
-// (its drawing, its name, how many are at work); a top session is the prominent row (drawing with the crown, name, one
-// line of what it does); its helpers lie under it folded into one stack, as in the web's sidebar (sidebar.mjs row,
-// TrommiClient UnitStack): their drawings stacked (seven at most, the stopped ones first), how many they are, how many
-// wait on him or are at work; the main's row says what waits in the whole stack. A tap on the stack unfolds the helpers
-// (the ones at work, or with something waiting on him, first); which stacks are open is this phone's own and kept.
-// No hairlines; the end of the list clears the floating tab bar.
+// ChatList.swift: the Chat page's list, calm as Messages' and WhatsApp's (his word, 9 October). One row per session:
+// its drawing in a round tinted field (the crown as a small badge on it, a green dot while it works), its name and the
+// time of what was said last on one line, under it two lines at most of what was said last (TrommiClient ChatTeaser),
+// and at the right only what needs him: how many questions wait, the raised hand when it is stopped, a dot for unread
+// words. A main's helpers are not rows at rest: their drawings (four at most, the stopped ones first, UnitStack) and
+// "+N" stand at the end of the teaser's line; a tap there unfolds them as set-in rows of the same kind (smaller), a
+// second tap folds them; which are open is this phone's own and kept. The main's row counts its helpers in. On All
+// desks each desk is a quiet section head. Hairlines set in to where the text starts.
 // TROMMI_CHATLIST=1 at launch opens this page on a crowded demo room (DemoMode.swift ChatListDemo) for screenshots.
 import SwiftUI
 import TrommiClient
@@ -12,7 +13,7 @@ import TrommiCore
 
 struct ChatsScreen: View {
   @EnvironmentObject var model: BoardModel
-  /** The mains whose stack is unfolded, one id per line, kept on this phone (the web's localStorage "trommi-crowns-open"). */
+  /** The mains whose helpers are unfolded, one id per line, kept on this phone (the web's localStorage "trommi-crowns-open"). */
   @AppStorage("trommi-stacks-open") private var openRaw = ""
   private var openStacks: Set<String> { Set(openRaw.split(separator: "\n").map(String.init)) }
   private func toggle(_ id: String) {
@@ -34,7 +35,7 @@ struct ChatsScreen: View {
       ForEach(groups) { g in
         if let n = g.name {
           deskHead(n, working: g.working)
-            .padding(.top, g.id == groups.first?.id ? 4 : 22).padding(.bottom, 2)
+            .padding(.top, g.id == groups.first?.id ? 6 : 20).padding(.bottom, 4)
             .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
             .listRowBackground(Color.clear).listRowSeparator(.hidden)
         }
@@ -65,20 +66,15 @@ struct ChatsScreen: View {
     }
   }
 
-  /** At work, or something waits on him there: these helpers stay in view. */
+  /** At work, or something waits on him there. */
   private func lively(_ u: DeskUnit) -> Bool { (u.online && u.running) || u.open > 0 || u.blocked != nil || model.unread(u.agent) }
-  /** One line under the name: what it works on now, else its task. */
-  private func line(_ u: DeskUnit) -> String {
-    if u.online && u.running, let t = model.desk?.tasks.first(where: { $0.agent == u.id && $0.state == "working" }) { return t.label }
-    return u.agent.task
-  }
 
+  /** A desk as a quiet section head: its name, and small at the right how many are at work there. */
   private func deskHead(_ name: String, working: Int) -> some View {
-    HStack(spacing: 10) {
-      PenMark("sketch:desk", color: Ink.fg).frame(width: 22, height: 22)
-      Text(name).font(Face.display(22, .bold)).foregroundStyle(Ink.fg).lineLimit(1)
+    HStack(spacing: 8) {
+      Text(name).font(Face.text(13, .semibold, relativeTo: .footnote)).kerning(0.3).foregroundStyle(Ink.muted).lineLimit(1)
       Spacer(minLength: 8)
-      if working > 0 { Text("\(working) at work").font(Face.text(13, .medium)).foregroundStyle(Ink.muted) }
+      if working > 0 { Text("\(working) at work").font(Face.text(12, relativeTo: .caption)).foregroundStyle(Ink.faint).lineLimit(1) }
     }
     .accessibilityElement(children: .combine)
     .accessibilityAddTraits(.isHeader)
@@ -86,99 +82,133 @@ struct ChatsScreen: View {
 
   @ViewBuilder private func block(_ u: DeskUnit, byId: [String: DeskUnit]) -> some View {
     let subs = u.subs.compactMap { byId[$0] }
-    if subs.isEmpty { topRow(u, shown: u) } else {
+    if subs.isEmpty { ChatRow(unit: u, shown: u) } else {
       let stack = UnitStack(main: u, subs: subs, unread: { model.unread($0) })
       let folded = !openStacks.contains(u.id)
-      topRow(u, shown: stack.whole)
-      stackRow(u, stack, folded: folded)
-      if !folded { ForEach(unfolded(subs)) { s in helperRow(s) } }
+      ChatRow(unit: u, shown: stack.whole, stack: stack, folded: folded, news: stack.waiting > 0) { withAnimation(.snappy) { toggle(u.id) } }
+      if !folded { ForEach(unfolded(subs)) { s in ChatRow(unit: s, shown: s, small: true) } }
     }
   }
-  /** An unfolded stack's helpers: at work first, then with something waiting on him, the connected, the rest; each by what happened last. */
+  /** Unfolded helpers: at work first, then with something waiting on him, the connected, the rest; each by what happened last. */
   private func unfolded(_ subs: [DeskUnit]) -> [DeskUnit] {
     func rank(_ s: DeskUnit) -> Int { s.online && s.running ? 0 : lively(s) ? 1 : s.online ? 2 : 3 }
     return subs.sorted { a, b in rank(a) != rank(b) ? rank(a) < rank(b) : a.agent.active > b.agent.active }
   }
+}
 
-  private func rowLook<V: View>(_ v: V, top: CGFloat, bottom: CGFloat) -> some View {
-    v.listRowInsets(EdgeInsets(top: top, leading: 20, bottom: bottom, trailing: 20))
-      .listRowBackground(Color.clear)
-      .listRowSeparator(.hidden)
-  }
+/**
+ * One session in the Chat list. unit: the session (a tap opens its chat). shown: what the row says waits and works:
+ * the session itself, or a main with its helpers counted in. stack: a main's helpers, drawn at the end of the teaser;
+ * unfold: the tap on them. small: a helper under its unfolded main (a smaller field, set in, one line of teaser).
+ */
+struct ChatRow: View {
+  @EnvironmentObject var model: BoardModel
+  @Environment(\.dynamicTypeSize) private var type
+  let unit: DeskUnit
+  let shown: DeskUnit
+  var stack: UnitStack? = nil
+  var folded = true
+  /** One of the helpers has something for him (unread words count too). */
+  var news = false
+  var small = false
+  var unfold: (() -> Void)? = nil
 
-  /** shown: what the row says waits and works: the session itself, or it with its helpers counted in (the web's "whole"). */
-  private func topRow(_ u: DeskUnit, shown: DeskUnit) -> some View {
-    let a = u.agent
-    return rowLook(Button { model.chatPath = [.session(u.id)] } label: {
-      HStack(spacing: 12) {
-        AgentMark(agent: a, size: 40).opacity(u.online ? 1 : 0.6)
-        VStack(alignment: .leading, spacing: 2) {
-          Text(a.name).font(Face.text(17, .semibold)).foregroundStyle(u.online ? Ink.fg : Ink.muted).lineLimit(1)
-          if !line(u).isEmpty { Text(line(u)).font(Face.text(14)).foregroundStyle(Ink.muted).lineLimit(1) }
-        }
-        Spacer(minLength: 6)
-        trailing(shown)
-      }
-      .frame(minHeight: 56)
-      .contentShape(Rectangle())
-    }.buttonStyle(.plain), top: 8, bottom: 6)
-  }
-
-  private func helperRow(_ s: DeskUnit) -> some View {
-    let a = s.agent
-    let working = s.online && s.running
-    return rowLook(Button { model.chatPath = [.session(s.id)] } label: {
-      HStack(spacing: 10) {
-        AgentMark(agent: a, size: 24, crown: false).opacity(s.online ? 1 : 0.55)
-        VStack(alignment: .leading, spacing: 1) {
-          Text(a.name).font(Face.text(15, .medium)).foregroundStyle(s.online ? Ink.fg : Ink.muted).lineLimit(1)
-          if working { Text(line(s)).font(Face.text(13)).foregroundStyle(Ink.muted).lineLimit(1) }
-        }
-        Spacer(minLength: 6)
-        trailing(s)
-      }
-      .padding(.leading, 52)
-      .frame(minHeight: 44)
-      .contentShape(Rectangle())
-    }.buttonStyle(.plain), top: 1, bottom: 1)
-  }
-
-  /** On the right: what waits on him (tally, raised hand), else the breathing dot while it works, else a dot for news. */
-  @ViewBuilder private func trailing(_ u: DeskUnit) -> some View {
-    if u.blocked != nil || u.open > 0 { Badge(unit: u) }
-    else if u.online && u.running { PulseDot() }
-    else if model.unread(u.agent) { Circle().fill(Ink.stDone).frame(width: 8, height: 8).accessibilityLabel("New message") }
-  }
-
-  /** A main's helpers as one stack: their drawings lie stacked (a stopped one marked), how many they are, how many wait
-   *  on him or are at work; a tap unfolds them. */
-  private func stackRow(_ u: DeskUnit, _ stack: UnitStack, folded: Bool) -> some View {
-    let words = stack.count == 1 ? "1 helper" : "\(stack.count) helpers"
-    let state = stack.waiting > 0 ? "\(stack.waiting) waiting" : stack.working > 0 ? "\(stack.working) at work" : ""
-    return rowLook(Button { withAnimation(.snappy) { toggle(u.id) } } label: {
-      HStack(spacing: 10) {
-        HStack(spacing: -9) {
-          ForEach(Array(stack.lie.enumerated()), id: \.element.id) { i, s in
-            AgentMark(agent: s.agent, size: 20, crown: false)
-              .opacity(s.online ? 0.9 : 0.5)
-              .padding(2).background(Circle().fill(Ink.bg))
-              .overlay(alignment: .topTrailing) {
-                if s.blocked != nil { Circle().fill(Ink.urgCritical).frame(width: 7, height: 7).overlay(Circle().stroke(Ink.bg, lineWidth: 1.5)) }
-              }
-              .zIndex(Double(UnitStack.edges - i))
+  var body: some View {
+    let _ = model.version
+    let a = unit.agent
+    let side: CGFloat = small ? 36 : 50
+    let inset: CGFloat = small ? 62 : 0
+    let teaser = ChatTeaser.of(model.desk?.messagesOf(agent: unit.id) ?? [], task: a.task)
+    let when = teaser.ts.map { ChatTeaser.stamp($0) } ?? ""
+    let working = shown.online && shown.running
+    HStack(spacing: 12) {
+      Button { model.chatPath = [.session(unit.id)] } label: {
+        HStack(spacing: 12) {
+          picture(a, side: side, working: working)
+          VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+              Text(a.name).font(Face.text(small ? 16 : 17, .semibold)).foregroundStyle(unit.online ? Ink.fg : Ink.muted).lineLimit(1)
+              Spacer(minLength: 4)
+              Text(when).font(Face.text(13, relativeTo: .footnote)).foregroundStyle(Ink.faint).lineLimit(1).layoutPriority(1)
+            }
+            Text(teaser.text.isEmpty ? " " : teaser.text).font(Face.text(15, relativeTo: .subheadline)).foregroundStyle(Ink.muted)
+              .lineLimit(small || type > .xxLarge ? 1 : 2).multilineTextAlignment(.leading)
+              .frame(maxWidth: .infinity, alignment: .leading)
           }
         }
-        Text(words).font(Face.text(15, .medium)).foregroundStyle(Ink.muted).lineLimit(1).layoutPriority(1)
-        Spacer(minLength: 6)
-        if !state.isEmpty { Text(state).font(Face.text(13, .medium)).foregroundStyle(stack.waiting > 0 ? Ink.urgHigh : Ink.muted).lineLimit(1) }
-        Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold)).foregroundStyle(Ink.faint)
-          .rotationEffect(.degrees(folded ? 0 : 180))
+        .contentShape(Rectangle())
       }
-      .padding(.leading, 49)
-      .frame(minHeight: 44)
+      .buttonStyle(.plain)
+      .accessibilityLabel(label(a, teaser, when, working))
+      if let s = stack, let unfold { helpers(s, unfold) }
+      needs
+    }
+    .padding(.leading, inset)
+    .frame(minHeight: small ? 56 : 76)
+    .listRowInsets(EdgeInsets(top: 2, leading: 20, bottom: 2, trailing: 20))
+    .listRowBackground(Color.clear)
+    .listRowSeparatorTint(Ink.line)
+    .listRowSeparator(.hidden, edges: .top)
+    // the hairline starts where the text starts, as in iOS lists
+    .alignmentGuide(.listRowSeparatorLeading) { _ in inset + side + 12 }
+  }
+
+  /** The session's drawing as its picture: a round field in its tone; the crown and the working dot as small badges on it. */
+  private func picture(_ a: Agent, side: CGFloat, working: Bool) -> some View {
+    AgentMark(agent: a, size: side * 0.58, crown: false)
+      .frame(width: side, height: side)
+      .background(Circle().fill(Tone.color(hue: a.hue, .wash)))
+      .opacity(unit.online ? 1 : 0.6)
+      .overlay(alignment: .topLeading) {
+        if a.starred { PenMark("crown").frame(width: side * 0.4, height: side * 0.29).rotationEffect(.degrees(-14)).offset(x: -3, y: -4) }
+      }
+      .overlay(alignment: .bottomTrailing) {
+        if working { Circle().fill(Ink.stDone).frame(width: 11, height: 11).overlay(Circle().stroke(Ink.bg, lineWidth: 2)).offset(x: -1, y: -1) }
+      }
+      .accessibilityHidden(true)
+  }
+
+  /** A main's helpers at the end of its teaser: four small drawings at most (a stopped one marked), "+N" for the rest,
+   *  a small chevron; a tap unfolds them under the row. */
+  private func helpers(_ s: UnitStack, _ unfold: @escaping () -> Void) -> some View {
+    let cut = s.inline(4)
+    return Button(action: unfold) {
+      HStack(spacing: 3) {
+        HStack(spacing: -6) {
+          ForEach(Array(cut.shown.enumerated()), id: \.element.id) { i, h in
+            AgentMark(agent: h.agent, size: 15, crown: false)
+              .opacity(h.online ? 0.9 : 0.5)
+              .padding(1.5).background(Circle().fill(Ink.bg))
+              .overlay(alignment: .topTrailing) {
+                if h.blocked != nil { Circle().fill(Ink.urgCritical).frame(width: 6, height: 6).overlay(Circle().stroke(Ink.bg, lineWidth: 1)) }
+              }
+              .zIndex(Double(4 - i))
+          }
+        }
+        if cut.more > 0 { Text("+\(cut.more)").font(Face.text(12, .medium, relativeTo: .caption)).foregroundStyle(Ink.muted).lineLimit(1).fixedSize() }
+        Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(Ink.faint).rotationEffect(.degrees(folded ? 0 : 180))
+      }
+      .frame(minHeight: 44, alignment: .bottom).padding(.bottom, 4)
       .contentShape(Rectangle())
-    }.buttonStyle(.plain), top: 0, bottom: 4)
-    .accessibilityLabel("\(u.agent.name): \(words)\(state.isEmpty ? "" : ", \(state)")")
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(s.count == 1 ? "1 helper" : "\(s.count) helpers")
     .accessibilityHint(folded ? "Unfolds them" : "Folds them")
+  }
+
+  /** At the right, only what needs him: the raised hand when it is stopped, how many questions wait, a dot for unread words. */
+  @ViewBuilder private var needs: some View {
+    if shown.blocked != nil { Badge(unit: shown) }
+    else if shown.open > 0 {
+      Text("\(shown.open)").font(Face.text(13, .bold, relativeTo: .footnote)).foregroundStyle(Ink.bg).monospacedDigit()
+        .padding(.horizontal, 6).frame(minWidth: 22, minHeight: 22).background(Capsule().fill(Ink.fg))
+        .accessibilityLabel(shown.open == 1 ? "1 question waits" : "\(shown.open) questions wait")
+    } else if model.unread(unit.agent) || news {
+      Circle().fill(Ink.accent).frame(width: 10, height: 10).accessibilityLabel("New message")
+    }
+  }
+
+  private func label(_ a: Agent, _ t: ChatTeaser, _ when: String, _ working: Bool) -> String {
+    [a.name + (a.starred ? ", main session" : ""), working ? "working" : unit.online ? "" : "not connected", t.text, when].filter { !$0.isEmpty }.joined(separator: ". ")
   }
 }
