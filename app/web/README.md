@@ -165,8 +165,14 @@ approached and kept under the Desk (`app.mjs` `keepPad`); the Desk under the boa
 the pad (`whiteboard.mjs` mountPad) as large as the main area; select or frame something and **Send to…** a session.
 One drawing on it is a scribble.
 
-What is drawn is the room's one scribble timeline (`ROOM_BOARD` in the core's `scribble.ts`, which is also the wire
-format): one board per room, the same whatever desk is in view.
+What is drawn is the board of the desk in view (`boardOf` in `whiteboard.mjs`; the ids are the core's `scribble.ts`
+`deskBoard(desk id)`, `ALL_BOARD` and `MAIN_BOARD`, which is also the wire format): one board per desk, one for
+"All desks", and a room without desks draws on the `main` desk's. On "All desks" the page shows All's own board, and
+at its left a column of small cards, one per desk: the desk's drawing and name, its board as a live thumbnail and how
+much is on it (`whiteboardDesks`, controller `whiteboard` `thumbs`: each card's board is opened with `openCanvas` and
+painted small); a click opens that desk's board (`/scribble-board?desk=<id>` switches the desk and stays on the
+board). On a desk the page shows that desk's board with one quiet line at the top left: back to All desks, and the
+desk's name. A room with one desk or none shows neither.
 
 ## The account (what a person sees)
 

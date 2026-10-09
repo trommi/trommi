@@ -218,3 +218,31 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-tool[data-tool="marker"]::before { border-radius: 3px; }
 .pad-tool:is([data-tool="pen"], [data-tool="marker"])[aria-pressed="true"]::before { box-shadow: 0 0 0 1.5px var(--accent); outline: 1.5px solid var(--accent-fg); outline-offset: 1.5px; }
 .pad[data-cursor="text"] .pad-canvas { cursor: text; }
+
+/* ---- the boards beside the one in view (whiteboard.mjs whiteboardDesks) ----
+   On "All desks": a column of small cards at the left, one per desk, each a little sheet drawn by hand (an uneven
+   pen line, a slight turn) with its board small on it, the desk's drawing, its name and how much is on it. On a
+   desk: one quiet line, the way back to All desks and the desk's name. The paper under them stays drawable. */
+.board-desks { position: absolute; z-index: 3; top: max(14px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); display: flex; flex-direction: column; gap: 14px; max-height: calc(100% - 190px); padding: 4px 6px 8px 4px; overflow-y: auto; scrollbar-width: none; pointer-events: none; }
+.board-desks > * { pointer-events: auto; }
+.board-card { display: block; width: 148px; padding: 5px 5px 6px; color: var(--fg); text-decoration: none; background: var(--surface); border: 1.6px solid color-mix(in srgb, var(--fg) 78%, transparent); border-radius: 14px 5px 12px 6px / 6px 13px 5px 14px; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 14%, transparent); rotate: -1.2deg; transition: rotate 140ms ease-out, translate 140ms ease-out; }
+.board-card:nth-child(even) { rotate: 1deg; border-radius: 6px 13px 5px 12px / 13px 5px 14px 6px; }
+.board-card:nth-child(3n) { rotate: -.4deg; }
+@media (hover: hover) { .board-card:hover { rotate: 0deg; translate: 2px -1px; } }
+.board-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.board-card-thumb { display: block; width: 100%; height: auto; aspect-ratio: 264 / 156; border-radius: 9px 3px 8px 4px / 4px 8px 3px 9px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.board-card-name { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 3px 0; font: 600 var(--t-sm)/1.2 var(--font); }
+.board-card-name .sketch { width: 18px; height: 18px; }
+.board-card-name b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.board-card-n { flex: none; color: var(--muted); font: 500 var(--t-xs, 11px)/1 var(--font); font-variant-numeric: tabular-nums; }
+.board-desks.is-desk { flex-direction: row; align-items: center; gap: 10px; padding: 0; color: var(--muted); font: 500 var(--t-sm)/1.2 var(--font); }
+.board-back { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 10px 0 6px; color: var(--muted); text-decoration: none; border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface) 82%, transparent); }
+.board-back .sketch, .board-here .sketch { width: 18px; height: 18px; }
+@media (hover: hover) { .board-back:hover { color: var(--fg); background: var(--sunken); } }
+.board-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.board-here { display: inline-flex; align-items: center; gap: 6px; color: var(--fg); font-weight: 600; }
+@media (max-width: 860px) {
+  .board-desks:not(.is-desk) { flex-direction: row; right: 12px; max-height: none; overflow: auto hidden; gap: 10px; padding-bottom: 10px; }
+  .board-card { flex: none; width: 112px; }
+  .board-back { min-height: 44px; }
+}

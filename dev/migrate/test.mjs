@@ -7,7 +7,7 @@ import path from 'node:path'
 import assert from 'node:assert/strict'
 import { startHub, LIMITS } from '../../hub/server.mjs'
 import { foundRoom, memoryStorage } from '../../shared/index.ts'
-import { CanvasState, ROOM_BOARD } from '../../shared/scribble.ts'
+import { CanvasState, MAIN_BOARD as ROOM_BOARD } from '../../shared/scribble.ts'
 await import('./scribble-first-format.js')
 const { core, lib } = globalThis.trommiMigrateScribble
 assert.equal(globalThis.trommiMigrateScribble.ROOM_BOARD, ROOM_BOARD)

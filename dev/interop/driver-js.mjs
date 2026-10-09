@@ -178,14 +178,14 @@ const H = {
   /** A stroke on the room's Scribble Board: `entry` as a strokes item carries it (README "Scribble strokes"), default the
    *  first sample of dev/interop/fixtures/strokes.json. */
   async scribble_draw({ entry = null }) {
-    const timeline_id = (await import('../../shared/scribble.ts')).ROOM_BOARD
+    const timeline_id = (await import('../../shared/scribble.ts')).MAIN_BOARD
     await need().sendStrokes({ timeline_id, strokes: [entry ?? STROKES.strokes[0].entry] })
     await settle(); return {}
   },
   /** The shapes on the room's Scribble Board as this core decodes them (scribble.mjs shapeOf). */
   async scribble_shapes() {
     const S = await import('../../shared/scribble.ts')
-    const timeline_id = S.ROOM_BOARD
+    const timeline_id = S.MAIN_BOARD
     const items = await need().loadTimelineAfter(`scribble:${timeline_id}`, 0)
     const out = []
     for (const i of items.items ?? items) for (const [k, e] of (i.content?.strokes ?? []).entries()) {

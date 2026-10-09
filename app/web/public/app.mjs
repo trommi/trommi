@@ -1386,11 +1386,10 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
         if (fresh?.childNodes.length && host) host.prepend(...fresh.childNodes)
       }
       if (part && key === 'pad' && part.html !== html && padCanvas(part.html0) === padCanvas(html)) {
-        // The same drawing: the mounted pad stays; only its list of sessions is brought up to date.
+        // The same drawing: the mounted pad stays; only its list of sessions and the boards beside it are brought up to date.
         const t = document.createElement('template')
         t.innerHTML = html
-        const fresh = t.content.querySelector('#whiteboard-sessions')
-        if (fresh) document.getElementById('whiteboard-sessions')?.replaceWith(fresh)
+        for (const id of ['whiteboard-sessions', 'whiteboard-desks']) { const fresh = t.content.getElementById(id); if (fresh) document.getElementById(id)?.replaceWith(fresh) }
         part.html = html
       }
       if (part && (key === 'says' || part.html === html)) {
@@ -1922,6 +1921,8 @@ async function start(client, { fresh = false } = {}) {
   const desks = { register: t => {
     t.get(/^\/$/, ({ res, url }) => { const d = url.searchParams.get('desk'); if (d == null) return false; desk = d; write('trommi-desk', d); if (d !== ALL_DESKS) write('trommi-desk-last', d); t.redirect(res, '/') })
     t.get(/^\/desk\/([\w-]+)$/, ({ res, match }) => { desk = match[1]; write('trommi-desk', desk); t.redirect(res, '/') })
+    // (the Scribble Board's own switch, whiteboard.mjs: a desk's card on All desks, and the way back; the board stays open)
+    t.get(/^\/scribble-board$/, ({ res, url }) => { const d = url.searchParams.get('desk'); if (d == null) return false; desk = d; write('trommi-desk', d); if (d !== ALL_DESKS) write('trommi-desk-last', d); t.redirect(res, '/scribble-board') })
   } }
   // (the demo only: the review page of all screens, and ?state= hooks: demo/demo.mjs)
   const demo = mock ? await import('./demo/demo.mjs') : null
