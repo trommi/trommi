@@ -66,6 +66,8 @@ pub struct Live {
     pub link: HashMap<String, LinkEntry>,
     /// A Live Activity round is due (live_soon): at most one per HUB_LIVE_MS.
     pub live_due: bool,
+    /// The beat of a running Live Activity is scheduled (live_beat): the same counts again every HUB_LIVE_BEAT_MS.
+    pub live_beat: bool,
 }
 pub struct Room {
     pub id: String,
@@ -433,6 +435,22 @@ impl Hub {
             hub.live_now(&room).await;
         });
     }
+    fn live_beat(self: &Arc<Self>, r: &Arc<Room>) {
+        {
+            let mut live = r.live.lock();
+            if live.live_beat {
+                return;
+            }
+            live.live_beat = true;
+        }
+        let (hub, room) = (self.clone(), r.clone());
+        let ms = self.cfg.live_beat_ms;
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            room.live.lock().live_beat = false;
+            hub.live_now(&room).await;
+        });
+    }
     fn live_counts(&self, r: &Room) -> (i64, i64) {
         let agents: std::collections::HashSet<String> = self
             .db
@@ -451,16 +469,16 @@ impl Hub {
             .unwrap_or(0);
         (working, waiting)
     }
-    async fn live_now(&self, r: &Room) {
+    async fn live_now(self: &Arc<Self>, r: &Arc<Room>) {
         let Some(apns) = &self.apns else { return };
-        type Row = (String, String, String, String, Option<String>, Option<String>, Option<i64>, Option<String>);
+        type Row = (String, String, String, String, Option<String>, Option<String>, Option<i64>, Option<String>, Option<i64>);
         let rows: Vec<Row> = {
             let c = self.db.w();
             c.prepare_cached(
-                "SELECT l.device_id, l.environment, l.topic, l.tag, l.start_token, l.activity_token, l.started_at, l.sent FROM live_activities l
+                "SELECT l.device_id, l.environment, l.topic, l.tag, l.start_token, l.activity_token, l.started_at, l.sent, l.sent_at FROM live_activities l
       JOIN devices d ON d.room_id = l.room_id AND d.device_id = l.device_id WHERE l.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL",
             )
-            .and_then(|mut s| s.query_map([&r.id], |x| Ok((x.get(0)?, x.get(1)?, x.get(2)?, x.get(3)?, x.get(4)?, x.get(5)?, x.get(6)?, x.get(7)?)))?.collect())
+            .and_then(|mut s| s.query_map([&r.id], |x| Ok((x.get(0)?, x.get(1)?, x.get(2)?, x.get(3)?, x.get(4)?, x.get(5)?, x.get(6)?, x.get(7)?, x.get(8)?)))?.collect())
             .unwrap_or_default()
         };
         if rows.is_empty() {
@@ -468,6 +486,12 @@ impl Hub {
         }
         let (working, waiting) = self.live_counts(r);
         let key = format!("{working}:{waiting}");
+        let beat = self.cfg.live_beat_ms as i64;
+        let stale_s = (3 * beat + 999) / 1000;
+        let stale_s = stale_s.max(60);
+        if working > 0 {
+            self.live_beat(r);
+        }
         let log = |m: &str| self.log(m);
         let set = |dev: &str, sql: &str, p: &[&dyn rusqlite::ToSql]| {
             let mut all: Vec<&dyn rusqlite::ToSql> = p.to_vec();
@@ -475,25 +499,26 @@ impl Hub {
             all.push(&dev);
             let _ = self.db.w().execute(&format!("UPDATE live_activities SET {sql} WHERE room_id = ? AND device_id = ?"), all.as_slice());
         };
-        let sends = rows.iter().map(|(dev, env, topic, tag, start, act, started, sent)| {
+        let sends = rows.iter().map(|(dev, env, topic, tag, start, act, started, sent, sent_at)| {
             let (key, log, set) = (&key, &log, &set);
             async move {
                 let reg = |tok: &str| json!({ "token": tok, "environment": env, "topic": topic });
                 if let Some(act) = act {
                     if working == 0 {
-                        apns.send_live(&reg(act), "end", working, waiting, "", false, log).await;
-                        return set(dev, "activity_token = NULL, started_at = NULL, sent = NULL", &[]);
+                        apns.send_live(&reg(act), "end", working, waiting, "", false, stale_s, log).await;
+                        return set(dev, "activity_token = NULL, started_at = NULL, sent = NULL, sent_at = NULL", &[]);
                     }
-                    if sent.as_deref() == Some(key.as_str()) {
+                    // the same counts go out again only as the beat (to move the stale date)
+                    if sent.as_deref() == Some(key.as_str()) && (now() - sent_at.unwrap_or(0)) * 10 < beat * 9 {
                         return;
                     }
                     let before: i64 = sent.as_deref().and_then(|s| s.split(':').nth(1)).and_then(|w| w.parse().ok()).unwrap_or(0);
-                    let status = apns.send_live(&reg(act), "update", working, waiting, "", waiting > before, log).await;
-                    return if status == 410 { set(dev, "activity_token = NULL, started_at = NULL, sent = NULL", &[]) } else { set(dev, "sent = ?", &[key]) };
+                    let status = apns.send_live(&reg(act), "update", working, waiting, "", waiting > before, stale_s, log).await;
+                    return if status == 410 { set(dev, "activity_token = NULL, started_at = NULL, sent = NULL, sent_at = NULL", &[]) } else { set(dev, "sent = ?, sent_at = ?", &[key, &now()]) };
                 }
                 if working == 0 {
                     if started.is_some() {
-                        set(dev, "started_at = NULL, sent = NULL", &[]);
+                        set(dev, "started_at = NULL, sent = NULL, sent_at = NULL", &[]);
                     }
                     return;
                 }
@@ -501,11 +526,11 @@ impl Hub {
                 if started.is_some_and(|t| now() - t < 8 * 3_600_000) {
                     return;
                 }
-                let status = apns.send_live(&reg(start), "start", working, waiting, tag, false, log).await;
+                let status = apns.send_live(&reg(start), "start", working, waiting, tag, false, stale_s, log).await;
                 if status == 410 {
                     set(dev, "start_token = NULL", &[]);
                 } else if status == 200 {
-                    set(dev, "started_at = ?, sent = ?", &[&now(), key]);
+                    set(dev, "started_at = ?, sent = ?, sent_at = ?", &[&now(), key, &now()]);
                 }
             }
         });
