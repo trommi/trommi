@@ -110,7 +110,13 @@ Apple ID, the phone in your hand); after that, building and shipping are command
 As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard, the system's behaviour not fought.
 
 - **All screens:** the keyboard goes away by dragging the content down (`.scrollDismissesKeyboard(.interactively)`)
-  or by a tap in the content. The system tab bar hides while the keyboard is up and comes back after.
+  or by a tap in the content. The tab bar hides while the keyboard is up and comes back after.
+- **Tab bar (iPhone):** our own glass pill at the bottom (`TabPill` in `Shell.swift`, a safe area inset), not the
+  system tab bar: Chat · Desk · Note as pen drawings (about 26 pt, the line 2.4 pt). The page he is on has full ink on
+  a raised lens, the others are a little muted; while the note is open the lens is on Note, closed it is back on the
+  page under it. Shown on the two lists only (no pushed screen, no selection on the Desk).
+- **Top of the lists (iPhone):** no navigation bar. The place pill (the menu) floats at the top left, the Desk's duck
+  and Blitz at the top right, each a glass capsule on the content (`topPills`); no band, hairline or scroll edge blur.
 - **Chat:** no tab bar inside a chat (Messages, WhatsApp); it returns on the list. The composer (attach, send) is
   always at the bottom, a bottom bar (`safeAreaBar`, a safe area inset before iOS 26): a tap in it brings the keyboard,
   it rides on the keyboard and reserves its height, so the last message scrolls clear of it. A tap in the

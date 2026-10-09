@@ -1,5 +1,5 @@
-// Shell.swift: the frame around every board screen (sidebar.mjs, app.mjs): on the iPhone the system tab bar (Chat ·
-// Desk · Note as icons, Note as a sheet) and the place pill (the menu) at the top left; on the iPad the sessions as a
+// Shell.swift: the frame around every board screen (sidebar.mjs, app.mjs): on the iPhone the glass pill at the bottom (Chat ·
+// Desk · Note as drawings, Note as a panel over the page) and the place pill (the menu) at the top left; on the iPad the sessions as a
 // sidebar column beside the stack. The passing toast with its Undo, the calm line when the hub asks for a newer app.
 import SwiftUI
 import TrommiClient
@@ -9,7 +9,9 @@ struct BoardShell: View {
   @EnvironmentObject var model: BoardModel
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var columns = NavigationSplitViewVisibility.all
-  @State private var noteOpen = false
+  /** The page under the open note: the tab he came from, selected again when the note closes. */
+  @State private var noteUnder = BoardModel.Tab.desk
+  @State private var keyboard = false
   private var hasNote: Bool { !(model.desk?.notes.filter { $0.held.isNull && (!$0.text.isEmpty || !$0.attachments.isEmpty) }.isEmpty ?? true) }
   /** Chat always opens on its list (a chat has no tab bar: opened into one, there was no way back to the bar). */
   private func openTab(_ t: BoardModel.Tab) {
@@ -29,34 +31,30 @@ struct BoardShell: View {
           stack
         }
       } else {
-        // iPhone (his picks, 8 October): the system tab bar (Liquid Glass on iOS 26; insets, keyboard, Dynamic Type and
-        // VoiceOver as every app): Chat · Desk · Note as icons. Note does not switch the page: it opens the note as a
-        // sheet over the page (medium, the tab bar stays reachable). A pushed screen hides the bar where it has its own
-        // controls at the bottom; the place pill at the top left is the menu, the ⋯ at the top right the screen's actions.
-        TabView(selection: Binding(get: { model.tab }, set: { t in
-          // Note is no page: the system tab bar has already switched to it, so the selection goes there and straight
-          // back (a set that leaves the value as it was is not seen, and the bar stayed on an empty page, build 18)
-          if t == .note {
-            let back = model.tab == .note ? .desk : model.tab
-            model.tab = .note
-            DispatchQueue.main.async { model.tab = back; noteOpen = true }
-          } else { noteOpen = false; if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) } }
-        })) {
-          Tab(value: BoardModel.Tab.chat) {
-            // the bar only on the list: a chat has its composer at the bottom (decided on the stack itself, where it
-            // is not overridden: a pushed page's own .hidden lost against the stack's, build 18)
-            chats.toolbar(model.chatPath.isEmpty ? .automatic : .hidden, for: .tabBar).modifier(NotePanel(open: $noteOpen))
-          } label: { PenImage.of("sketch:bubble", size: 24).accessibilityLabel("Chat") }
-          Tab(value: BoardModel.Tab.desk) {
-            stack.toolbar(model.selected.isEmpty && model.deskPath.isEmpty ? .automatic : .hidden, for: .tabBar).modifier(NotePanel(open: $noteOpen))
-          } label: { PenImage.of("sketch:desk", size: 24).accessibilityLabel("Desk") }
-          .badge(model.view?.fresh.count ?? 0)
-          Tab(value: BoardModel.Tab.note) {
-            // shown only for the moment before the selection goes back (or if it does not): the note itself, not black
-            NavigationStack { NoteScreen(onDone: { model.tab = .desk }) }
-          } label: { PenImage.of("sketch:page", size: 24, dot: hasNote).accessibilityLabel(hasNote ? "Note, written" : "Note") }
+        // iPhone: Chat · Desk · Note as drawings in one glass pill at the bottom (TabPill). Our own bar, not the system
+        // tab bar (his words on build 20, 9 October): its selection is a grey capsule that reads as pressed in, it
+        // cannot light Note while the note is open (Note is no page), and it draws custom images small. Here the lit
+        // item is a raised lens, and it is on Note while the note lies over the page he came from; closed, it is back
+        // on that page. The bar shows on the two lists only: a pushed screen has its own controls at the bottom, and
+        // the keyboard takes its place. Both pages stay alive, so each keeps its scroll position.
+        let page = model.tab == .note ? noteUnder : model.tab
+        let showBar = !keyboard && model.selected.isEmpty && (page == .chat ? model.chatPath.isEmpty : model.deskPath.isEmpty)
+        ZStack {
+          stack.opacity(page == .desk ? 1 : 0).allowsHitTesting(page == .desk).accessibilityHidden(page != .desk)
+          chats.opacity(page == .chat ? 1 : 0).allowsHitTesting(page == .chat).accessibilityHidden(page != .chat)
         }
-        .modifier(TabBarLook())
+        .modifier(NotePanel(open: Binding(get: { model.tab == .note }, set: { if !$0 && model.tab == .note { model.tab = noteUnder } })))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+          if showBar {
+            TabPill(on: model.tab, waiting: model.view?.fresh.count ?? 0, hasNote: hasNote) { t in
+              if t == .note {
+                if model.tab == .note { model.tab = noteUnder } else { noteUnder = model.tab; model.tab = .note }
+              } else if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) }
+            }
+          }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboard = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboard = false }
       }
     }
     .overlay(alignment: hSize == .regular ? .bottom : .top) { ToastHost(top: hSize != .regular).ignoresSafeArea(edges: hSize == .regular ? [] : .top) }
@@ -67,12 +65,12 @@ struct BoardShell: View {
   }
   private var stack: some View {
     NavigationStack(path: $model.deskPath) {
-      DeskScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar).modifier(BarFor(route: r)) }
+      DeskScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar) }
     }
   }
   private var chats: some View {
     NavigationStack(path: $model.chatPath) {
-      ChatsScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar).modifier(BarFor(route: r)) }
+      ChatsScreen().toolbarBackground(.hidden, for: .navigationBar).navigationDestination(for: Route.self) { r in Self.destination(r).toolbarBackground(.hidden, for: .navigationBar) }
     }
   }
   @ViewBuilder static func destination(_ r: Route) -> some View {
@@ -90,17 +88,71 @@ struct BoardShell: View {
   }
 }
 
-/** The tab bar's look: it shrinks while he scrolls down (iOS 26). */
-struct TabBarLook: ViewModifier {
-  func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) { content.tabBarMinimizeBehavior(.onScrollDown).tint(Ink.fg) } else { content.tint(Ink.fg) }
+/**
+ * The iPhone's bar: Chat · Desk · Note in one clear glass pill. The drawings at a system tab icon's size and weight
+ * (about 26 pt, the line 2.4 pt: an SF Symbol's medium to semibold); the three fill their 24-unit box differently, so
+ * each has its own scale and the line is the same on all. The page he is on: full ink on a raised lens (brighter than
+ * the pill, a soft shadow below it, nothing sunk in); the others a little muted.
+ */
+struct TabPill: View {
+  let on: BoardModel.Tab
+  let waiting: Int
+  let hasNote: Bool
+  let tap: (BoardModel.Tab) -> Void
+  @Namespace private var ns
+  var body: some View {
+    HStack(spacing: 0) {
+      item(.chat, "sketch:bubble", 39, "Chat")
+      item(.desk, "sketch:desk", 34, waiting > 0 ? "Desk, \(waiting) waiting" : "Desk")
+      item(.note, "sketch:page", 36, hasNote ? "Note, written" : "Note")
+    }
+    .padding(4)
+    .glass(Capsule())
+    .animation(.snappy, value: on)
+    .padding(.top, 6).padding(.bottom, 2)
+    .accessibilityElement(children: .contain).accessibilityAddTraits(.isTabBar)
+  }
+  private func item(_ t: BoardModel.Tab, _ key: String, _ side: CGFloat, _ label: String) -> some View {
+    let sel = on == t
+    return Button { tap(t) } label: {
+      PenMark(key, color: Ink.fg.opacity(sel ? 1 : 0.6), width: 2.4 * 24 / side).frame(width: side, height: side)
+        .frame(width: 84, height: 50)
+        .overlay {
+          if t == .desk && waiting > 0 {
+            Text("\(waiting)").font(Face.text(11, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18).background(Capsule().fill(Ink.fg)).offset(x: 18, y: -13)
+          }
+          if t == .note && hasNote { Circle().fill(Ink.fg).frame(width: 7, height: 7).offset(x: -14, y: -14) }
+        }
+        .background {
+          if sel {
+            Capsule().fill(Ink.tabLens).shadow(color: .black.opacity(0.18), radius: 7, y: 2)
+              .overlay(Capsule().strokeBorder(Ink.fg.opacity(0.08), lineWidth: 0.5))
+              .matchedGeometryEffect(id: "lens", in: ns)
+          }
+        }
+        .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(label).accessibilityAddTraits(sel ? .isSelected : [])
   }
 }
-/** A pushed screen hides the tab bar (its own controls at the bottom); a chat too, its composer stays at the bottom
- *  (Messages, WhatsApp). Back to the list, the bar returns. */
-struct BarFor: ViewModifier {
-  let route: Route
-  func body(content: Content) -> some View { content.toolbar(.hidden, for: .tabBar) }
+
+/** The pills at the top of the iPhone's root pages (his word, 9 October): the place pill at the left, the page's own
+ *  buttons at the right, each a clear glass capsule floating on the content. No navigation bar, no band, no hairline,
+ *  no scroll edge blur: the content scrolls under them up to the status bar. */
+extension View {
+  func topPills<T: View>(@ViewBuilder _ trailing: () -> T) -> some View {
+    self.toolbar(.hidden, for: .navigationBar)
+      .safeAreaInset(edge: .top, spacing: 0) {
+        HStack(spacing: 10) { MenuPill(); Spacer(minLength: 8); trailing() }.padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 6)
+      }
+      .modifier(NoTopEdge())
+  }
+}
+struct NoTopEdge: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) { content.scrollEdgeEffectHidden(true, for: .top) } else { content }
+  }
 }
 
 /**
@@ -561,8 +613,8 @@ struct UpdateRequired: View {
 
 
 /**
- * The note as a panel over the page, ABOVE the tab bar (his word, 8 October: a sheet covered the bar): inside the tab's
- * content, so its bottom is the bar's top and the keyboard lifts it as it lifts the content. The page stays visible,
+ * The note as a panel over the page, ABOVE the tab bar (his word, 8 October: a sheet covered the bar): inside the
+ * bar's safe area, so its bottom is the bar's top and the keyboard lifts it as it lifts the content. The page stays visible,
  * dimmed; a tap beside it or a swipe down closes it; the draft stays (NoteScreen keeps it on the note object).
  */
 struct NotePanel: ViewModifier {
@@ -573,7 +625,7 @@ struct NotePanel: ViewModifier {
       if open {
         GeometryReader { geo in
           ZStack(alignment: .bottom) {
-            Color.black.opacity(0.28).ignoresSafeArea(edges: .top)
+            Color.black.opacity(0.28).ignoresSafeArea()
               .onTapGesture { withAnimation(.snappy) { open = false } }
               .transition(.opacity)
             VStack(spacing: 0) {

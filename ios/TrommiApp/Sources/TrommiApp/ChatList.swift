@@ -47,8 +47,7 @@ struct ChatsScreen: View {
     // the last row ends clear of the floating tab bar
     .contentMargins(.bottom, 24, for: .scrollContent)
     .background(Ink.bg)
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar { ToolbarItem(placement: .principal) { MenuPill() } }
+    .topPills { EmptyView() }
     .refreshable { await model.refresh() }
   }
 

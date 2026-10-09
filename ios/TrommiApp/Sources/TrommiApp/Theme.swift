@@ -36,6 +36,8 @@ enum Ink {
   static let surface2 = Color.dyn(0xfafbf8, 0x1c2420)
   static let sunken = Color.dyn(0xeceee8, 0x111715)
   static let fg = Color.dyn(0x141c18, 0xe9eeea)
+  /** The raised lens under the tab pill's selected drawing: paper white, in dark a lit glass. */
+  static let tabLens = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.18) : .white })
   static let muted = Color.dyn(0x5c6862, 0x9aa8a0)
   static let faint = Color.dyn(0x8a958f, 0x6c7a73)
   static let line = Color.dyn(0xe1e5df, 0x252f2a)
