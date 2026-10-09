@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use serde_json::Value;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::mpsc;
 
 use crate::observer::Device;
 use crate::store::{Audience, Auth, Event, Room, Who};
@@ -36,7 +36,7 @@ pub struct Stream {
     pub expires_at: u64,
     ended: AtomicBool,
     /// cuts the connection under the stream: a reader that stalls never reads the end of its stream
-    cut: Option<Arc<Notify>>,
+    cut: Option<crate::http::Conn>,
 }
 
 impl Stream {
@@ -46,8 +46,8 @@ impl Stream {
         if !self.ended.swap(true, Ordering::Relaxed) {
             let closed = self.tx.send(Msg::End).is_err();
             // (a stream whose body is gone holds no connection any more)
-            if let (Some(cut), false) = (&self.cut, closed) {
-                cut.notify_one();
+            if let (Some(conn), false) = (&self.cut, closed) {
+                conn.destroy();
             }
         }
     }
@@ -131,8 +131,8 @@ impl Stream {
         // a stream that had ended already (its reader stalled before the end) still holds a connection: cut
         // whatever happened before; what was queued is dropped by the body, which knows the time
         // (a stream whose body is gone holds no connection any more: that connection may serve someone else)
-        if let (Some(cut), false) = (&self.cut, self.tx.is_closed()) {
-            cut.notify_one();
+        if let (Some(conn), false) = (&self.cut, self.tx.is_closed()) {
+            conn.destroy();
         }
     }
 
@@ -175,7 +175,7 @@ impl Live {
         per_device: usize,
         buffer: usize,
         expires_at: u64,
-        cut: Option<Arc<Notify>>,
+        cut: Option<crate::http::Conn>,
     ) -> Option<(Arc<Stream>, mpsc::UnboundedReceiver<Msg>)> {
         let mut rooms = self.lock();
         let list = rooms.entry(auth.room).or_default();
