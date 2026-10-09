@@ -3,13 +3,18 @@ name = "trommi-core-wasm"
 version = "0.0.0"
 edition.workspace = true
 publish.workspace = true
-description = "trommi-core for the browser: a plain ES module and a .wasm file (wasm-bindgen --target web)."
+description = "trommi-core for the browser: the shared facade (core/swift/src) as a plain ES module and a .wasm file (wasm-bindgen --target web), under a hand-written JavaScript layer with its TypeScript declarations (js/)."
 
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# Development only: see core/swift/Cargo.toml.
+stand-in-recovery = ["trommi-core-swift/stand-in-recovery"]
+
 [dependencies]
-trommi-core = { path = ".." }
+# The facade, in its browser form: no UniFFI, records as plain JavaScript objects.
+trommi-core-swift = { path = "../swift", default-features = false, features = ["js"] }
 # The exact version: the wasm-bindgen command that writes the JavaScript must be the same one.
 wasm-bindgen = "=0.2.129"
 js-sys = "=0.3.106"
