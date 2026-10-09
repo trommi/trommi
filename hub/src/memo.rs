@@ -254,7 +254,9 @@ struct GateState {
 
 pub struct Permit<'a>(&'a Gate);
 
-const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// the longest a request waits for a place in the pool
+pub const GATE_WAIT_MS: u64 = 10_000;
+const GATE_WAIT: std::time::Duration = std::time::Duration::from_millis(GATE_WAIT_MS);
 
 impl Gate {
     pub fn new(permits: usize, waiting: usize) -> Self {

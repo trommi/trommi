@@ -984,7 +984,7 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
     // the source as the account knows it: a keyed hash of the address
     let source = crate::push::source_hash(&app.ticket_key, &rq.ip);
     let throttled = app.cfg.login_throttle;
-    let (row, known) = app.read(|x| {
+    let (row, known, due) = app.read(|x| {
         // a source waiting out its own failures is told so before anything is spent on it
         if throttled {
             if let Some(wait) = throttle::own_wait(x.c, account_key, &source, x.now)? {
@@ -993,8 +993,15 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
         }
         let row = app.accounts.login_row(x.c, &rq.body, kit)?;
         let known = accounts::knows_source(x.c, row.account(), &source)?;
-        Ok((row, known))
+        let due = throttled && throttle::turn_due(x.c, account_key, &source, x.now)?;
+        Ok((row, known, due))
     })?;
+    // who comes back at its turn keeps it while the request waits for the pool
+    if due {
+        app.db.write(|c| {
+            throttle::arrived(c, account_key, &source, now(), crate::memo::GATE_WAIT_MS)
+        })?;
+    }
     let revision = row.revision();
     // The slow hash is made on the pool with no database connection held. The attempt is admitted there, at the
     // moment its check starts: time spent waiting for the pool lets nobody check faster than the throttle says.
@@ -1291,7 +1298,7 @@ async fn stream(
         app.cfg.streams_per_device,
         app.cfg.stream_buffer_bytes,
         until,
-        Some(conn.cut.clone()),
+        Some(conn.clone()),
     ) else {
         return Err(refuse(
             "too-many",

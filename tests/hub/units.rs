@@ -1160,34 +1160,58 @@ mod live_tests {
 
     #[test]
     fn a_stream_whose_token_runs_out_is_cut_even_if_it_had_ended_before() {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .unwrap();
-        let cut = std::sync::Arc::new(tokio::sync::Notify::new());
+        use trommi_hub::http::Conn;
+        // a connection serving its first request: the stream
+        let conn = Conn::new("127.0.0.1:1".parse().unwrap()).next_request();
         let live = Live::default();
         let (s, mut rx) = live
-            .open(auth(1, Who::Human), 8, 1 << 20, u64::MAX, Some(cut.clone()))
+            .open(
+                auth(1, Who::Human),
+                8,
+                1 << 20,
+                u64::MAX,
+                Some(conn.clone()),
+            )
             .unwrap();
         s.go_live(0);
         live.publish(&event(Some(1), true, vec![], None), &json!({ "n": 1 }));
         // the stream ends in the ordinary way (its device was removed), with a reader that reads nothing
         s.end();
-        let waits = rt.block_on(async {
-            tokio::time::timeout(std::time::Duration::from_millis(50), cut.notified())
-                .await
-                .is_err()
-        });
-        assert!(waits, "an ordinary end leaves the connection to the reader");
+        assert!(
+            !conn.is_cut(),
+            "an ordinary end leaves the connection to the reader"
+        );
         // its token runs out: the connection is cut all the same
         s.expire();
-        rt.block_on(async {
-            tokio::time::timeout(std::time::Duration::from_secs(1), cut.notified()).await
-        })
-        .expect("cut at expiry");
+        assert!(conn.is_cut(), "cut at expiry");
         // and nothing is queued after that
         live.publish(&event(Some(2), true, vec![], None), &json!({ "n": 2 }));
         assert_eq!(drain(&mut rx).len(), 2, "the event from before and the end");
+
+        // A stream that was read to its end leaves its connection to the next request. Its expiry, whenever
+        // its timer gets to run, cuts nothing then: a cut is its own request's.
+        let conn = Conn::new("127.0.0.1:1".parse().unwrap()).next_request();
+        let (s, rx) = live
+            .open(
+                auth(2, Who::Human),
+                8,
+                1 << 20,
+                u64::MAX,
+                Some(conn.clone()),
+            )
+            .unwrap();
+        s.end();
+        let later = conn.next_request();
+        s.expire();
+        drop(rx);
+        s.expire();
+        assert!(
+            !later.is_cut() && !conn.is_cut(),
+            "the later request is not cut"
+        );
+        // the later request's own cut is obeyed
+        later.destroy();
+        assert!(later.is_cut());
     }
 
     #[test]
@@ -1958,7 +1982,7 @@ mod throttle_tests {
     }
 
     #[test]
-    fn however_many_sources_an_account_takes_2000_guesses_an_hour_and_the_owner_always_gets_in() {
+    fn however_many_sources_an_account_takes_2010_guesses_an_hour_and_the_owner_always_gets_in() {
         let t = fresh();
         let start = 5_000_000;
         // a botnet: a new source every 200 ms for two minutes and one every two seconds after that, for two
@@ -1992,13 +2016,13 @@ mod throttle_tests {
             owner_refused, 0,
             "the owner at a known place is never kept out by what others did"
         );
-        // any sixty minutes on end: at most 2 000 checks
+        // any sixty minutes on end: at most 2 010 checks (1 800 turns, those still good from before, 100 twice)
         let worst = per_minute
             .windows(60)
             .map(|w| w.iter().sum::<usize>())
             .max()
             .unwrap();
-        assert!(worst <= 2000, "{worst} guesses were checked within an hour");
+        assert!(worst <= 2010, "{worst} guesses were checked within an hour");
         let all: usize = per_minute.iter().sum();
         assert!(all >= 3500, "the line kept moving: {all} in two hours");
         // the owner at a new place: at the turn it is told, within the line's ten minutes and a little
@@ -2078,6 +2102,26 @@ mod throttle_tests {
             }
         }
         assert_eq!(checked, 300);
+        // one whose request came in time and then waited for the pool keeps its turn meanwhile
+        let end = t1 + 700_000;
+        assert_eq!(t.guess(ACCOUNT, b"before", false, end), Ok(()));
+        assert_eq!(t.guess(ACCOUNT, b"slow", false, end), Err(2));
+        let arrive = |source: &[u8], at: u64| {
+            t.db.read(|c| turn_due(c, ACCOUNT, source, at))
+                .map_err(|e: Refused| e.message)
+                .unwrap()
+                && t.db
+                    .write(|c| arrived(c, ACCOUNT, source, at, 10_000))
+                    .map_err(|e: Refused| e.message)
+                    .is_ok()
+        };
+        assert!(!arrive(b"slow", end + 1500), "not before its turn");
+        assert!(arrive(b"slow", end + 3000));
+        assert_eq!(
+            t.guess(ACCOUNT, b"slow", false, end + 12_500),
+            Ok(()),
+            "nine and a half seconds in the queue"
+        );
     }
 
     #[test]
@@ -2267,6 +2311,21 @@ mod throttle_tests {
         // a source it knows is checked all the same; a wrong credential from it is answered like the other's
         assert_eq!(t.guess(ACCOUNT, b"home", true, now), Err(60));
         assert_eq!(t.checks.get(), 1);
+        // and so is its next probe, while its failure waits: the same minute and the same work as for the other,
+        // also where the hub looks before it spends anything
+        assert_eq!(
+            t.admit(ACCOUNT, b"home", true, now + 100),
+            Verdict::Line {
+                wait: 60,
+                early: None
+            }
+        );
+        assert_eq!(
+            t.db.read(|c| own_wait(c, ACCOUNT, b"home", now + 100))
+                .map_err(|e: Refused| e.message)
+                .unwrap(),
+            None
+        );
         assert_eq!(t.right(ACCOUNT, b"home", true, now + 1000), Ok(()));
         // another account is not touched
         assert_eq!(

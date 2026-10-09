@@ -98,13 +98,10 @@ pub async fn serve(app: Arc<App>, listener: TcpListener, stop: Arc<Notify>) {
         let app = app.clone();
         let mut shutdown = shutdown_rx.clone();
         tokio::spawn(async move {
-            let conn = Conn {
-                peer,
-                cut: Arc::new(Notify::new()),
-            };
-            let cut = conn.cut.clone();
+            let conn = Conn::new(peer);
+            let (cut, whole) = (conn.cut.clone(), conn.clone());
             let service = service_fn(move |req| {
-                let (app, conn) = (app.clone(), conn.clone());
+                let (app, conn) = (app.clone(), conn.next_request());
                 async move {
                     app.in_flight.fetch_add(1, Ordering::Relaxed);
                     let guard = InFlight(app.clone());
@@ -125,7 +122,13 @@ pub async fn serve(app: Arc<App>, listener: TcpListener, stop: Arc<Notify>) {
             loop {
                 tokio::select! {
                     _ = &mut serving => return,
-                    _ = cut.notified() => return,
+                    // a cut is its request's: one asked for by an answer that is over, on a connection that
+                    // serves another request by now, is not obeyed
+                    _ = cut.notified() => {
+                        if whole.is_cut() {
+                            return;
+                        }
+                    }
                     changed = shutdown.changed(), if !closing => {
                         if changed.is_err() {
                             return;
