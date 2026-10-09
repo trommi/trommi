@@ -121,3 +121,7 @@ path = "core/recovery_flow.rs"
 [[test]]
 name = "core_vectors_recovery"
 path = "core/vectors_recovery.rs"
+
+[[test]]
+name = "core_device_content"
+path = "core/device_content.rs"
