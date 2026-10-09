@@ -16,7 +16,7 @@ use crate::error::Error;
 use crate::ids::{self, RoomId};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// The associated data of the APNs sealing.
 const APNS_AAD: &[u8] = b"trommi apns v2";
@@ -90,14 +90,18 @@ fn check_numbers(change: u64, urgency: u8) -> Result<(), Error> {
     Ok(())
 }
 
+/// The JSON of a payload, written into one buffer large enough for the longest: it holds the ticket and is
+/// not moved while it grows. The caller wipes it.
 fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {
-    serde_json::to_vec(value).map_err(|_| Error::Internal("push json"))
+    let mut json = Vec::with_capacity(MAX_APNS_LEN);
+    serde_json::to_writer(&mut json, value).map_err(|_| Error::Internal("push json"))?;
+    Ok(json)
 }
 
 /// Parses `bytes` as `T` and accepts it only if writing `T` again gives the same bytes.
 fn from_json<T: Serialize + for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T, Error> {
     let value: T = serde_json::from_slice(bytes).map_err(|_| Error::BadFormat)?;
-    if to_json(&value)? != bytes {
+    if *Zeroizing::new(to_json(&value)?) != bytes {
         return Err(Error::BadFormat);
     }
     Ok(value)
@@ -136,25 +140,31 @@ impl ApnsPush {
         if self.ticket.len() > MAX_TICKET_LEN {
             return Err(Error::TooLarge);
         }
-        to_json(&ApnsPushJson {
+        let mut fields = ApnsPushJson {
             room_id: self.room_id.to_base64url(),
             change: self.change,
             urgency: self.urgency,
             ticket: ids::base64url_encode(&self.ticket),
-        })
+        };
+        let json = to_json(&fields);
+        fields.ticket.zeroize();
+        json
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, Error> {
-        let json: ApnsPushJson = from_json(bytes)?;
-        check_numbers(json.change, json.urgency)?;
-        let ticket = ids::base64url_decode(&json.ticket)?;
+        let mut fields: ApnsPushJson = from_json(bytes)?;
+        let ticket = ids::base64url_decode(&fields.ticket);
+        fields.ticket.zeroize();
+        check_numbers(fields.change, fields.urgency)?;
+        let mut ticket = ticket?;
         if ticket.len() > MAX_TICKET_LEN {
+            ticket.zeroize();
             return Err(Error::BadFormat);
         }
         Ok(Self {
-            room_id: RoomId::from_base64url(&json.room_id)?,
-            change: json.change,
-            urgency: json.urgency,
+            room_id: RoomId::from_base64url(&fields.room_id)?,
+            change: fields.change,
+            urgency: fields.urgency,
             ticket,
         })
     }
