@@ -21,7 +21,6 @@ trommi-connector whoami | allow-tools | --version
 | --- | --- |
 | `src/store.rs` | the state on disk: one directory per slot (0700), a lock, a snapshot and a log of checksummed records; one record per step |
 | `src/vault.rs`, `src/keeper.rs` | the core's `Device` over that journal on a thread of its own; the content chains, objects and registers beside it (`ContentDevice`); what it knows of each group's past (`learn_past`) |
-| `src/recovery.rs` | the `SealedKey` an opener posts and the public checks of section 8, until the core's own module is merged |
 | `src/hub.rs` | the hub's routes (`spec/hub-api.md`): JSON, sign-in by signed challenge, the lease header, the stream |
 | `src/client.rs` | the device at work: the hub's order, Welcomes, the command gate, the outbox, lease, removal, the rollback guard |
 | `src/agent.rs` | what an agent writes: Chat, cards, registers, permission requests, Artifacts and files, helper sessions, the work trail |

@@ -97,7 +97,10 @@ fn sizes_and_times_for_groups_of_3_10_and_30_leaves() {
         let entry = committer.outbox().remove(0);
         post_ok(&mut hub, committer);
         let start = Instant::now();
-        assert_eq!(take_welcomes(&hub, &mut newcomer, hub.change()).len(), 1);
+        assert_eq!(
+            take_welcomes(&hub, &mut newcomer, trommi_tests::added_at(&hub)).len(),
+            1
+        );
         let add = row("add, join by Welcome", &entry, build, start.elapsed());
         assert!(add.2 > 0);
         sync_ok(&hub, other);

@@ -136,6 +136,7 @@ fn room_verdict_with(
             facts,
             commit: b"commit",
             recovery_auth,
+            base_group_info: None,
         },
     )
 }
@@ -168,6 +169,7 @@ fn session_verdict(
             facts,
             commit: b"commit",
             recovery_auth: None,
+            base_group_info: None,
         },
     )
 }
@@ -354,6 +356,7 @@ fn a_join_from_outside_needs_the_recovery_signature() {
             joiner: &device(0x13),
             note: join.note.as_ref().unwrap(),
             commit: b"",
+            base_group_info: None,
             recovery_signature_key: &[0; 32],
             recovery_auth: Some(b"signed"),
         }),
@@ -396,6 +399,7 @@ fn the_thirty_third_human_device_comes_by_a_join_from_outside_only() {
                 facts,
                 commit: b"commit",
                 recovery_auth: facts.external.then_some(&b"signed"[..]),
+                base_group_info: None,
             },
         )
     };
@@ -527,13 +531,34 @@ fn main_session_commits_follow_5_2() {
         session_verdict(&after_removal, &SESSIONS, &live, &takeover),
         Ok(())
     );
-    // The agent leaf of an enrolled device may go and leave the seat empty (5.2.2).
+    // Nor does its leaf go alone while the room holds the device (5.2.8): a Remove now and an Add later
+    // would be the same takeover in two Commits. Once it left `agents`, the Remove alone leaves the seat
+    // empty (5.2.2), and a later Commit seats another device.
     assert_eq!(
         session_verdict(
             &history,
             &SESSIONS,
             &live,
             &removing(update.clone(), &[AGENT])
+        ),
+        Err(Error::BadCommit)
+    );
+    assert_eq!(
+        session_verdict(
+            &after_removal,
+            &SESSIONS,
+            &live,
+            &removing(facts(group, 3, H1, 3), &[AGENT])
+        ),
+        Ok(())
+    );
+    let empty = before(main, &[H1, H2], 3);
+    assert_eq!(
+        session_verdict(
+            &after_removal,
+            &SESSIONS,
+            &empty,
+            &adding(facts(group, 4, H1, 3), &[OTHER_AGENT])
         ),
         Ok(())
     );
