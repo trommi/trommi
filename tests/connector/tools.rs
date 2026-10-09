@@ -559,3 +559,58 @@ async fn say_and_whoami_work_without_a_running_server() {
     assert!(human.findings.is_empty(), "{:?}", human.findings);
     mcp.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
+    let (_hub, mut human, first_seat, group) = joined().await;
+    let mut first = first_seat.serve().await;
+    first.ready().await;
+    first
+        .ok("reply", json!({ "text": "from the first machine" }))
+        .await;
+    let old = human.vault.seat(&group).expect("the first agent device");
+
+    // The human reconnects the session on "another machine".
+    let second_seat = Seat::new(&first_seat.hub_url);
+    let mut invite = human.invite(group.session_id()).await;
+    let link = invite.link.clone();
+    let join = second_seat.join(&link);
+    let admit = async {
+        let admitted = human.admit(&mut invite).await;
+        human.take_over(&group, old, &admitted).await;
+    };
+    let ((joined, log), ()) = tokio::join!(join, admit);
+    assert!(joined, "the second connector joins the session:\n{log}");
+    let mut second = second_seat.serve().await;
+    second.ready().await;
+    second
+        .ok("reply", json!({ "text": "from the second machine" }))
+        .await;
+
+    // The first one answers every call with a clear word instead of sending into the void.
+    let mut said = String::new();
+    for _ in 0..100 {
+        let (text, failed) = first.call("reply", json!({ "text": "anyone?" })).await;
+        if failed && (text.contains("retired") || text.contains("stopped")) {
+            said = text;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    assert!(
+        said.contains("reconnect") || said.contains("invite"),
+        "the first connector says what happened and what to do: {said}"
+    );
+    human.sync().await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+    assert!(!human
+        .items
+        .iter()
+        .any(|(_, _, payload)| payload["text"] == "anyone?"));
+    assert!(human
+        .items
+        .iter()
+        .any(|(_, _, payload)| payload["text"] == "from the second machine"));
+    first.close().await;
+    second.close().await;
+}

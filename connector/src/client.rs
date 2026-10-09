@@ -44,6 +44,11 @@ const TAG_MODEL: u8 = b'm';
 const TAG_KV: u8 = b'k';
 const TAG_CUTS: u8 = b'u';
 
+/// How far one page of the hub's order may move the cursor beyond its last item: the hub looks at most 20 000
+/// numbers ahead per call.
+const CURSOR_REACH: u64 = 100_000;
+/// How often an envelope the hub voided for its epoch is sealed again before the sender hears of it.
+const RESEALS: u8 = 3;
 /// How many items one catch-up request asks for.
 const CHANGES_LIMIT: u64 = 500;
 /// The hub pings every 25 s; a stream that is silent for this long is dead.
@@ -93,7 +98,9 @@ pub enum ClientEvent {
     /// A human's command.
     Command(Box<Command>),
     /// This device is out of the room or of its session: removed, or another connector took the session over.
-    Removed { replaced: bool },
+    /// `verified`: it processed the Commit that removed it. Otherwise the hub says so (it ends a removed
+    /// device's access at once, so the Commit may never reach it): the device stops, and keeps its state.
+    Removed { replaced: bool, verified: bool },
     /// Something the owner must know: `lease-lost`, `client-too-old`, `bad-group`, …
     Error(Fault),
     /// This device is a leaf of its main session now.
@@ -183,6 +190,11 @@ pub struct Pending {
     /// so that the wish to send it survives a crash.
     #[serde(default)]
     pub rebuild: bool,
+    /// How often it was sealed again, and the id of the first envelope it stands in for.
+    #[serde(default)]
+    pub resealed: u8,
+    #[serde(default)]
+    pub first: Option<u64>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -226,6 +238,13 @@ pub struct Core {
     reread: Vec<GroupId>,
     /// Groups a re-admission was asked for in this process.
     asked_readmit: Vec<GroupId>,
+    /// The hub's list of Welcomes for this device, as asked for while the current batch is processed.
+    welcomes: Option<Value>,
+    /// Envelopes that were sealed again after the hub voided them for their epoch, by the first one's id.
+    replaced: BTreeMap<u64, Pending>,
+    /// Groups a reading-again was asked for since this client last went online (a gap, another device's
+    /// heads): once each.
+    reread_asked: Vec<GroupId>,
     /// Envelopes of this device the hub voided or refused for good, by pending id.
     failed: BTreeMap<u64, Fault>,
     /// Files this process uploaded or fetched, by file id: the newest few.
@@ -303,6 +322,13 @@ impl Core {
         if let Ok(bytes) = serde_json::to_vec(pending) {
             self.journal
                 .put(side_key(TAG_PENDING, &[&pending.id.to_be_bytes()]), bytes);
+        }
+    }
+    /// Asks for a group's envelopes to be read again, at most once per time online.
+    fn ask_reread(&mut self, group: GroupId) {
+        if !self.reread_asked.contains(&group) {
+            self.reread_asked.push(group);
+            self.reread.push(group);
         }
     }
     /// Reads the outbox again from the journal: what a step staged there is found even if the step did not
@@ -490,6 +516,9 @@ impl Client {
                 heads_at: sync.heads_at,
                 reread: Vec::new(),
                 asked_readmit: Vec::new(),
+                welcomes: None,
+                replaced: BTreeMap::new(),
+                reread_asked: Vec::new(),
                 failed: BTreeMap::new(),
                 files: Vec::new(),
             })),
@@ -635,20 +664,36 @@ impl Client {
         }
     }
 
+    /// The hub refuses this device as no member: unverified, the state stays.
     async fn set_removed(&self, replaced: bool) {
         let mut core = self.core.lock().await;
-        self.set_removed_in(&mut core, replaced);
+        self.set_removed_in(&mut core, replaced, false);
     }
 
     /// Notes that this device is out, for a caller that holds the core.
-    fn set_removed_in(&self, core: &mut Core, replaced: bool) {
+    fn set_removed_in(&self, core: &mut Core, replaced: bool, verified: bool) {
         if self.removed.swap(true, Ordering::SeqCst) {
             return;
         }
         let _ = self.stop_signal.send(true);
         core.model.room.connection = "removed".into();
         core.model.room.replaced = replaced;
-        self.emit(ClientEvent::Removed { replaced });
+        self.emit(ClientEvent::Removed { replaced, verified });
+    }
+
+    /// Whether this client may still sign, post and hand out: not stopped (its lease was lost, or its owner
+    /// stopped it), not out of the room, not halted.
+    pub(crate) fn active(&self, core: &Core) -> Result<()> {
+        if self.removed.load(Ordering::SeqCst) {
+            return Err(Fault::new("removed", "this device is out of the room"));
+        }
+        if self.stopped.load(Ordering::SeqCst) {
+            return Err(Fault::new(
+                "stopped",
+                "this connector stopped working on its room",
+            ));
+        }
+        Self::halted(core)
     }
 
     /// The fault that says why nothing is processed or sent any more, if so.
@@ -690,11 +735,23 @@ impl Client {
                     own.seq
                 ))
                 .await;
+            let me = self.me;
             let ahead = match ahead {
+                // Only an envelope this device signed itself, in this group, under a number beyond its own
+                // chain, is evidence: the hub's word alone halts nothing.
                 Ok(page) => page
                     .get("items")
                     .and_then(Value::as_array)
-                    .is_some_and(|items| !items.is_empty()),
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| unb64(item, "envelope").ok())
+                    .filter_map(|bytes| Envelope::decode(&bytes).ok())
+                    .any(|envelope| {
+                        envelope.header.sender == me
+                            && envelope.header.group == group
+                            && envelope.header.seq > own.seq
+                            && envelope.verify().is_ok()
+                    }),
                 Err(fault) if fault.code == "not-found" => false,
                 Err(fault) => return Err(fault),
             };
@@ -719,11 +776,12 @@ impl Client {
             .clone();
         self.hub.link(&self.process, &report).await?;
         let mut core = self.core.lock().await;
-        Self::halted(&core)?;
+        self.active(&core)?;
+        core.reread_asked.clear();
         self.observe_room(&mut core).await?;
         self.guard_rollback(&mut core).await?;
         self.catch_up(&mut core).await?;
-        self.take_welcomes(&mut core, false).await?;
+        self.take_welcomes(&mut core, None).await?;
         // A group whose past could not be learned when it was joined (the hub was away) is tried again.
         let groups: Vec<GroupId> = core.groups.values().copied().collect();
         for group in groups {
@@ -887,7 +945,7 @@ impl Client {
                     self.deliver(commands).await;
                 }
                 "welcome" => {
-                    self.take_welcomes(&mut core, false).await?;
+                    self.take_welcomes(&mut core, None).await?;
                     self.catch_up(&mut core).await?;
                 }
                 _ => {}
@@ -941,9 +999,11 @@ impl Client {
                 .cloned()
                 .unwrap_or_default();
             let upto = answer.get("change").and_then(Value::as_u64);
+            let before = core.cursor;
             let commands = self.process_items(core, &items, upto).await?;
             self.deliver(commands).await;
-            if answer.get("more") != Some(&Value::Bool(true)) {
+            // A page that says there is more and moves nothing is not followed again and again.
+            if answer.get("more") != Some(&Value::Bool(true)) || core.cursor == before {
                 break;
             }
         }
@@ -964,12 +1024,13 @@ impl Client {
     pub(crate) fn take_welcomes<'a>(
         &'a self,
         core: &'a mut Core,
-        at_item: bool,
+        only: Option<GroupId>,
     ) -> BoxFut<'a, Result<()>> {
-        Box::pin(self.take_welcomes_now(core, at_item))
+        Box::pin(self.take_welcomes_now(core, only))
     }
 
-    async fn take_welcomes_now(&self, core: &mut Core, at_item: bool) -> Result<()> {
+    async fn take_welcomes_now(&self, core: &mut Core, only: Option<GroupId>) -> Result<()> {
+        let at_item = only.is_some();
         let list = self.hub.get("/v2/welcomes").await?;
         let room = self.room;
         let mut joined_any = false;
@@ -980,6 +1041,13 @@ impl Client {
             let (Ok(group), Ok(welcome)) = (group_of_item(&row), unb64(&row, "welcome")) else {
                 continue;
             };
+            // An agent device is never a leaf of the room group (5.1), and at an item's place only that
+            // item's group is joined: another Welcome waits for its own place.
+            if group.is_room() || only.is_some_and(|wanted| wanted != group) {
+                continue;
+            }
+            let invited = core.room.invited_session.clone();
+            let has_main = core.main.is_some();
             let now = now_ms();
             let outcome = self
                 .vault
@@ -992,6 +1060,21 @@ impl Client {
                         committer: None,
                     };
                     let joined = v.device.join_welcome(&welcome, &expected, now)?;
+                    // The hub named the group; the Welcome says which it is. And a first main session is
+                    // the one the invite was for, if it was for one (12.1.6).
+                    let session = v.device.group(&joined.group)?.session;
+                    let other_session = session.is_some_and(|s| {
+                        s.parent.is_zero()
+                            && !has_main
+                            && !invited.is_empty()
+                            && hex(s.session_id.as_bytes()) != invited
+                    });
+                    if joined.group != group || joined.group.is_room() || other_session {
+                        return Err(Fault::new(
+                            "bad-welcome",
+                            "a Welcome was for another group than the hub said",
+                        ));
+                    }
                     v.note_epoch(&group, None, &[], now)?;
                     Ok(Some(joined.offending))
                 })
@@ -1001,7 +1084,8 @@ impl Client {
                 Ok(Some(offending)) => {
                     joined_any = true;
                     if !offending.is_empty() {
-                        eprintln!("[trommi] a session this device was added to has {} leaf(s) the room does not allow: its content is not opened until a human device removes them", offending.len());
+                        let me = self.me;
+                        eprintln!("[trommi] finding: a session this device was added to has {} leaf(s) the room does not allow{}: its content is not opened until a human device removes them", offending.len(), if offending.contains(&me) { " (this device among them)" } else { "" });
                     }
                     if let Err(fault) = self.learn_past(core, group).await {
                         // The epochs before this device joined stay unknown: what devices wrote that left
@@ -1018,6 +1102,13 @@ impl Client {
                         }
                     }
                     core.reread.push(group);
+                }
+                Err(fault) if fault.code == "bad-welcome" => {
+                    // The device joined something it must not hold. Nothing of it is written: this process
+                    // gives its state up as it is in memory and starts again from the files.
+                    core.journal.poison();
+                    self.emit(ClientEvent::Error(fault.clone()));
+                    return Err(fault);
                 }
                 Err(fault) => {
                     // 3.7: a Welcome that does not open used up its KeyPackage: ask to be added again.
@@ -1037,6 +1128,26 @@ impl Client {
             core.commit()?;
         }
         Ok(())
+    }
+
+    /// Whether a Welcome for `group` waits at the hub and an entry the hub took at `at` is not from before it:
+    /// then that entry's place is where the Welcome is taken. The list of Welcomes is asked for once per
+    /// batch of entries. The times are the hub's; a wrong one can only cost the join, which the core then
+    /// finds out at first contact.
+    async fn welcome_due(&self, core: &mut Core, group: &GroupId, at: u64) -> Result<bool> {
+        if core.welcomes.is_none() {
+            core.welcomes = Some(self.hub.get("/v2/welcomes").await?);
+        }
+        let wanted = b64(group.as_bytes());
+        let since = core
+            .welcomes
+            .as_ref()
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|row| row.get("group_id").and_then(Value::as_str) == Some(wanted.as_str()))
+            .map(|row| row.get("at").and_then(Value::as_u64).unwrap_or(0));
+        Ok(since.is_some_and(|since| at >= since))
     }
 
     /// Every Commit of a group's log, in order, with the `RecoveryAuth` beside a join from outside.
@@ -1149,6 +1260,7 @@ impl Client {
         if core.halted.is_some() {
             return Ok(commands);
         }
+        core.welcomes = None;
         let mut stopped_early = false;
         for item in items {
             let Some(change) = item.get("change").and_then(Value::as_u64) else {
@@ -1181,8 +1293,12 @@ impl Client {
                 break;
             }
         }
+        // The page's own end is the hub's word (numbers without items lie between): taken within the reach
+        // of one page only, so that a wrong number cannot carry the cursor past everything to come.
         if let (false, Some(upto)) = (stopped_early, upto) {
-            core.cursor = core.cursor.max(upto);
+            if upto <= core.cursor.saturating_add(CURSOR_REACH) {
+                core.cursor = core.cursor.max(upto);
+            }
         }
         core.commit()?;
         Ok(commands)
@@ -1208,8 +1324,12 @@ impl Client {
                 .session_of_group(&group)
                 .is_some_and(|sid| !core.groups.contains_key(&sid))
         {
-            // A group this device does not hold yet: its Welcome comes first (5.4.1).
-            self.take_welcomes(core, true).await?;
+            // A group this device does not hold. If a Welcome waits for it and this entry is not from before
+            // it, this is the Welcome's place in the hub's order (5.4.1): everything before is processed.
+            let at = item.get("at").and_then(Value::as_u64).unwrap_or(u64::MAX);
+            if self.welcome_due(core, &group, at).await? {
+                self.take_welcomes(core, Some(group)).await?;
+            }
         }
         let me = self.me;
         let inviter = core.room.inviter.clone();
@@ -1240,8 +1360,8 @@ impl Client {
                             .note
                             .map(|note| (note.time, note.cuts))
                             .unwrap_or((now, Vec::new()));
-                        let findings = v.note_epoch(&group, Some(time), &cuts, now)?;
-                        Ok(LogOutcome::Epoch(findings.len()))
+                        let (findings, dropped) = v.note_epoch(&group, Some(time), &cuts, now)?;
+                        Ok(LogOutcome::Epoch(findings.len(), dropped.then_some(group)))
                     }
                     Ok(Processed::Observed(facts)) if group.is_room() => {
                         let enrolled = v
@@ -1275,9 +1395,14 @@ impl Client {
         match outcome {
             LogOutcome::Nothing => {}
             LogOutcome::Early => return Ok(false),
-            LogOutcome::Epoch(findings) => {
+            LogOutcome::Epoch(findings, dropped) => {
                 if findings > 0 {
                     eprintln!("[trommi] finding: equivocation at a removed device's Cut");
+                }
+                if let Some(group) = dropped {
+                    // 9.0.10: what lay beyond the Cut never came. Everything derived from the group's
+                    // envelopes is built again from what the hub still serves.
+                    core.reread.push(group);
                 }
                 self.refresh_groups(core).await?;
             }
@@ -1302,7 +1427,7 @@ impl Client {
             LogOutcome::Unenrolled => {
                 core.cursor = change;
                 core.commit()?;
-                self.set_removed_in(core, false);
+                self.set_removed_in(core, false, true);
             }
             LogOutcome::RemovedFrom(group) => {
                 let was_main = core.session_of_group(&group) == core.main;
@@ -1310,7 +1435,7 @@ impl Client {
                 core.commit()?;
                 if was_main {
                     // 13.5: another connector continues the session. This one stops.
-                    self.set_removed_in(core, true);
+                    self.set_removed_in(core, true, true);
                 } else {
                     self.refresh_groups(core).await?;
                 }
@@ -1354,16 +1479,25 @@ impl Client {
         };
         // The header says which group; nothing of it is trusted before the checks.
         let Ok(header) = Envelope::decode(&bytes).map(|envelope| envelope.header) else {
-            eprintln!("[trommi] finding: an envelope that does not decode (change {change})");
-            return Ok(true);
+            // 13.4: what the hub hands out here is no envelope (it may be something else under a wrong name).
+            // The cursor stays: nothing is passed over that could not be read.
+            eprintln!("[trommi] finding: bad-format (the item at change {change} is no envelope); waiting for the hub to serve it right");
+            return Ok(false);
         };
         let group = header.group;
         let Some(session) = core.session_of_group(&group) else {
             return Ok(true);
         };
         if !core.groups.contains_key(&session) {
-            self.take_welcomes(core, true).await?;
+            let at = item
+                .get("received_at")
+                .and_then(Value::as_u64)
+                .unwrap_or(u64::MAX);
+            if self.welcome_due(core, &group, at).await? {
+                self.take_welcomes(core, Some(group)).await?;
+            }
             if !core.groups.contains_key(&session) {
+                // An envelope of a group this device is no leaf of (yet): from before its Welcome.
                 return Ok(true);
             }
         }
@@ -1373,6 +1507,13 @@ impl Client {
         {
             Err(fault) if fault.code == "group-behind" => Ok(false),
             Err(fault) if fault.code == "replay" => Ok(true),
+            Err(fault) if fault.code == "gap" => {
+                // An envelope before this one was not taken. The group's envelopes are read again from the
+                // hub's first, once per time online; if the gap is still there, it is a finding that stays.
+                eprintln!("[trommi] finding: gap (an envelope at change {change} does not follow its sender's last)");
+                core.ask_reread(group);
+                Ok(true)
+            }
             Err(fault) if fault.code == "state-rolled-back" => {
                 self.halt(core, &fault)?;
                 Err(fault)
@@ -1425,6 +1566,7 @@ impl Client {
                 v.receive(&bytes, &served, mode, now)
             })
             .await??;
+        let taken_heads = taken.heads;
         let receipt = &taken.receipt;
         let header = receipt.envelope().header.clone();
         let hash = receipt.hash();
@@ -1524,15 +1666,28 @@ impl Client {
                 }
             }
             Outcome::Reserved => {
+                // 9.0.4: a kind this build does not know. It is no command, whoever sent it: said once as a
+                // notice that a newer connector is needed.
                 if !mine && !reading_back {
-                    commands.push(Command {
-                        command: "unsupported".into(),
-                        what: Some("a newer kind of item".into()),
-                        session_id: Some(session.to_string()),
-                        envelope_number: change,
-                        ..Default::default()
-                    });
+                    self.emit(ClientEvent::Error(Fault::new(
+                        "newer-version",
+                        "an item of a newer Trommi arrived that this connector cannot read",
+                    )));
                 }
+            }
+        }
+        if let (Some((behind, equivocation)), false) = (taken_heads, reading_back) {
+            if equivocation {
+                self.emit(ClientEvent::Error(Fault::new(
+                    "equivocation",
+                    "another device accepted a different envelope under a number this agent holds",
+                )));
+            }
+            if behind {
+                // 9.0.7: another device holds envelopes this one was not served. Read the group again; what
+                // is still missing then was withheld.
+                eprintln!("[trommi] finding: withheld (another device's heads name envelopes this agent was not served)");
+                core.ask_reread(header.group);
             }
         }
         Ok(())
@@ -1565,6 +1720,10 @@ impl Client {
                     .as_ref()
                     .and_then(|r| Hash32::from_base64url(&r.version_hash).ok());
                 let own = match (&taken.receipt.envelope().header.subject, &before, &request) {
+                    // A version whose body did not open leaves no payload to hold an answer against.
+                    (Subject::Answer(_), Some(card), _) if card.payload.is_empty() => {
+                        OwnRecord::None
+                    }
                     (Subject::Answer(_), Some(card), _) => match card_hash {
                         Some(hash) => OwnRecord::CardVersion {
                             hash,
@@ -1810,19 +1969,40 @@ impl Client {
     }
 
     async fn pump_once(&self, core: &mut Core) -> Result<()> {
-        // Nothing is posted that is not written: a journal whose last write failed refuses here.
+        // Nothing is posted that is not written: a journal whose last write failed refuses here. And nothing
+        // by a client that stopped.
+        self.active(core)?;
         core.commit()?;
         core.reload_outbox();
         // An envelope the hub voided for its epoch is sealed again, in the epoch the group stands in now.
         let again: Vec<Pending> = core.outbox.iter().filter(|p| p.rebuild).cloned().collect();
         for old in again {
             let group = b64_group(&old.group)?;
-            let sealed = self
-                .seal(core, group, old.spec.clone(), old.files.clone())
-                .await;
+            let sealed = if old.resealed >= RESEALS {
+                Err(Fault::new(
+                    "wrong-epoch",
+                    "the hub keeps refusing this envelope for its epoch",
+                ))
+            } else {
+                self.seal(core, group, old.spec.clone(), old.files.clone())
+                    .await
+            };
             core.drop_pending(old.id);
-            if let Err(fault) = sealed {
-                core.failed.insert(old.id, fault);
+            let first = old.first.unwrap_or(old.id);
+            match sealed {
+                Ok(mut new) => {
+                    // What the first one's sender is told of is the envelope that stands in its place.
+                    new.resealed = old.resealed + 1;
+                    new.first = Some(first);
+                    core.put_pending(&new);
+                    if let Some(kept) = core.outbox.iter_mut().find(|p| p.id == new.id) {
+                        *kept = new.clone();
+                    }
+                    core.replaced.insert(first, new);
+                }
+                Err(fault) => {
+                    core.failed.insert(first, fault);
+                }
             }
             core.commit()?;
         }
@@ -2061,7 +2241,7 @@ impl Client {
                 format!("the hub refused an earlier envelope of this session for good ({code})"),
             ));
         }
-        Self::halted(core)?;
+        self.active(core)?;
         let session = core
             .session_of_group(&group)
             .ok_or_else(|| Fault::new("forbidden", "an agent writes into session groups only"))?;
@@ -2094,6 +2274,8 @@ impl Client {
                     seq: sealed.seq,
                     change: None,
                     rebuild: false,
+                    resealed: 0,
+                    first: None,
                 };
                 v.journal().put(
                     side_key(TAG_PENDING, &[&id.to_be_bytes()]),
@@ -2118,9 +2300,6 @@ impl Client {
         let group = core.group_of(session_id)?;
         let pending = self.seal(&mut core, group, spec, files).await?;
         core.commit()?;
-        let object_id = trommi_core::envelope::object_id(&group, &self.me, pending.seq)
-            .ok()
-            .map(|id| hex(id.as_bytes()));
         let sent = async {
             self.pump(&mut core).await?;
             self.catch_up(&mut core).await
@@ -2137,6 +2316,12 @@ impl Client {
         if let Some(fault) = core.failed.remove(&pending.id) {
             return Err(fault);
         }
+        // If the hub voided it for its epoch, another envelope stands in its place, under another number:
+        // that one is what the caller is told of.
+        let pending = core.replaced.remove(&pending.id).unwrap_or(pending);
+        let object_id = trommi_core::envelope::object_id(&group, &self.me, pending.seq)
+            .ok()
+            .map(|id| hex(id.as_bytes()));
         let envelope_number = match core.outbox.iter().find(|p| p.id == pending.id) {
             Some(still) => still.change.filter(|change| *change > 0),
             None => Some(core.cursor),
@@ -2209,8 +2394,9 @@ impl Client {
 enum LogOutcome {
     Nothing,
     Early,
-    /// A Commit of a group this device is in was merged; how many findings its Cuts brought.
-    Epoch(usize),
+    /// A Commit of a group this device is in was merged; how many findings its Cuts brought, and the group
+    /// if a Cut dropped envelopes this device had accepted.
+    Epoch(usize, Option<GroupId>),
     Keys(GroupId),
     Newer,
     /// The room enrolled this device; whether its inviter did.

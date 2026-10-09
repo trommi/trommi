@@ -298,6 +298,9 @@ pub struct Taken {
     pub receipt: Receipt,
     /// For a register envelope whose value was taken: the change.
     pub register: Option<RegisterChange>,
+    /// For another device's `heads` (9.0.7): whether it names envelopes this device does not hold, and whether
+    /// it names another envelope under a number this device holds.
+    pub heads: Option<(bool, bool)>,
 }
 
 /// A new envelope of this device, sealed and numbered.
@@ -567,14 +570,16 @@ impl Vault {
     /// Records the epoch `group` stands in now, with its leaves and their roles: after joining or founding it,
     /// and after every Commit processed. `ended` is the `time` of the Commit that ended the epoch before, and
     /// `cuts` what that Commit says of the leaves it removed; each Cut ends its sender's chain here (9.0.10).
-    /// Returns the findings (`equivocation`) the Cuts brought.
+    /// Returns the findings (`equivocation`) the Cuts brought, and whether a Cut dropped envelopes this device had
+    /// accepted: what was derived from them (object states, registers, the model) is then built again from
+    /// what the hub still serves.
     pub fn note_epoch(
         &mut self,
         group: &GroupId,
         ended: Option<u64>,
         cuts: &[Cut],
         now_ms: u64,
-    ) -> Result<Vec<Error>> {
+    ) -> Result<(Vec<Error>, bool)> {
         let summary = self.device.group(group)?;
         let me = self.me();
         let history = self.device.room_history();
@@ -621,6 +626,7 @@ impl Vault {
             ledger.ends.entry(before).or_insert((now_ms, time));
         }
         let mut findings = Vec::new();
+        let mut dropped = false;
         for cut in cuts {
             // The first Cut of a device stands for ever.
             let head = Head {
@@ -644,6 +650,7 @@ impl Vault {
             )?;
             state.chains.apply_cut(&effect);
             if let Some(from) = effect.drop_from {
+                dropped = true;
                 // What lies beyond the Cut is no longer an accepted envelope of this group.
                 let last = self.journal.scan(&side_key(
                     TAG_ACCEPTED,
@@ -675,7 +682,7 @@ impl Vault {
         // A group that has a ledger has its content state, from its first epoch on.
         self.content.entry(*group).or_default();
         self.stage_content(group)?;
-        Ok(findings)
+        Ok((findings, dropped))
     }
 
     /// First contact with a session joined by Welcome (5.2.6), as the core's device checks it: the group is
@@ -813,11 +820,21 @@ impl Vault {
                 roles_at(&session.leaves()?, note.room_epoch),
             );
         }
-        if session.epoch()? != first
-            || (summary.epoch == first && session.leaves()? != summary.leaves)
-        {
+        // It must arrive at the leaves this device recorded from its own group when it joined.
+        let own_leaves: Option<std::collections::BTreeSet<String>> = self
+            .ledgers
+            .get(group)
+            .and_then(|ledger| ledger.epochs.get(&first))
+            .map(|roles| roles.keys().cloned().collect());
+        let learned: std::collections::BTreeSet<String> = session
+            .leaves()?
+            .iter()
+            .map(DeviceId::to_base64url)
+            .collect();
+        if session.epoch()? != first || own_leaves.as_ref() != Some(&learned) {
             return Err(unfit("it does not arrive at this device's group"));
         }
+        let _ = summary;
         let ledger = self
             .ledgers
             .get_mut(group)
@@ -936,6 +953,7 @@ impl ContentDevice for Vault {
         }
         state.chains.apply(receipt.advance())?;
         let mut register = None;
+        let mut heads = None;
         if let chain::Outcome::Taken { transition, body } = receipt.outcome() {
             if let Some(transition) = transition {
                 state.objects.apply(transition)?;
@@ -945,6 +963,26 @@ impl ContentDevice for Vault {
                 // nothing; the envelope keeps its place in the chain.
                 if let Ok(update) = state.registers.judge(&facts, header, body.payload()) {
                     state.registers.apply(&update)?;
+                    if let (registers::HEADS, Some(value), false) =
+                        (update.name.as_str(), &update.value, header.sender == me)
+                    {
+                        // What another device says it accepted, held against what this one did.
+                        if let Ok(named) = chain::parse_heads(value) {
+                            let standings = chain::compare_heads(
+                                &Accepted(&self.journal),
+                                &state.chains,
+                                &group,
+                                &named,
+                            )?;
+                            let is = |want: fn(&chain::HeadStanding) -> bool| {
+                                standings.iter().any(|(_, standing)| want(standing))
+                            };
+                            heads = Some((
+                                is(|s| matches!(s, chain::HeadStanding::Behind { .. })),
+                                is(|s| matches!(s, chain::HeadStanding::Equivocation)),
+                            ));
+                        }
+                    }
                     register = Some(RegisterChange {
                         name: update.name.clone(),
                         of: update.of,
@@ -959,7 +997,11 @@ impl ContentDevice for Vault {
             receipt.hash().as_bytes().to_vec(),
         );
         self.stage_content(&group)?;
-        Ok(Taken { receipt, register })
+        Ok(Taken {
+            receipt,
+            register,
+            heads,
+        })
     }
 
     fn gate(&mut self, receipt: &Receipt, own: &OwnRecord<'_>, now_ms: u64) -> Result<Decision> {
