@@ -33,6 +33,10 @@ const BACKOFF_MAX_MS: u64 = 60_000;
 const PAGE_MS: u64 = 5_000;
 /// connections the admin listener holds at a time, and how long one may last
 pub const MAX_CONNECTIONS: usize = 16;
+/// the longest password `admin-hash` takes, and the longest credential header the page reads (a user name of
+/// some hundred bytes beside such a password, in base64)
+pub const MAX_PASSWORD: usize = 1024;
+const MAX_HEADER: usize = 2048;
 pub const CONNECTION_MS: u64 = 60_000;
 
 /// Checked credentials and the page's own throttle: after each wrong password the page takes no other for 1 s,
@@ -141,13 +145,15 @@ fn wait(seconds: u64) -> Response<Full<Bytes>> {
 /// The password of an `authorization: Basic` header (what follows the first colon), and the header's fingerprint.
 fn credential(app: &App, req: &Request<Incoming>) -> Option<(Vec<u8>, [u8; 32])> {
     let header = req.headers().get("authorization")?.as_bytes();
-    if header.len() > 1024 {
+    if header.len() > MAX_HEADER {
         return None;
     }
     let text = std::str::from_utf8(header).ok()?;
-    let encoded = text
-        .strip_prefix("Basic ")
-        .or_else(|| text.strip_prefix("basic "))?;
+    // (the scheme's name in any case, RFC 9110)
+    let (scheme, encoded) = text.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("Basic") {
+        return None;
+    }
     let decoded = base64_standard(encoded.trim())?;
     let colon = decoded.iter().position(|b| *b == b':')?;
     let fingerprint = sha256(&[&app.admin.key[..], header].concat());
@@ -275,23 +281,23 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>) -> Response<Full<Byte
     }
     // the page is computed by one request at a time and kept for a few seconds: it reads every table
     let t = now();
-    let cached = |fresh: bool| {
-        let held = app.admin.page.lock().unwrap_or_else(|e| e.into_inner());
-        held.as_ref()
-            .filter(|(at, _)| !fresh || t < at + PAGE_MS)
-            .map(|(_, html)| html.clone())
-    };
-    if let Some(html) = cached(true) {
+    let cached = app
+        .admin
+        .page
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .filter(|(at, _)| t < at + PAGE_MS)
+        .map(|(_, html)| html.clone());
+    if let Some(html) = cached {
         return page(StatusCode::OK, &html);
     }
     if app.admin.computing.swap(true, Ordering::SeqCst) {
-        return match cached(false) {
-            Some(html) => page(StatusCode::OK, &html),
-            None => page(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "<p>The page is being put together. Try again in a moment.</p>",
-            ),
-        };
+        // (an older page is not shown as the hub's state of now)
+        return page(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "<p>The page is being put together. Try again in a moment.</p>",
+        );
     }
     let shown = app.clone();
     let computed = tokio::task::spawn_blocking(move || {
