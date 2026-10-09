@@ -260,7 +260,35 @@ public struct Task1 { public var agent: String; public var id: String; public va
 
 public struct DeskDesc: Identifiable, Equatable {
   public var id: String; public var name: String; public var created: UInt64; public var order: Int?; public var crown: JV?
-  public init(id: String, name: String, created: UInt64, order: Int?, crown: JV?) { self.id = id; self.name = name; self.created = created; self.order = order; self.crown = crown }
+  /** The desk's goals (register field goals): cleaned, "" when it has none. */
+  public var goals: String
+  public init(id: String, name: String, created: UInt64, order: Int?, crown: JV?, goals: String = "") { self.id = id; self.name = name; self.created = created; self.order = order; self.crown = crown; self.goals = goals }
+}
+
+/** A desk's goals (app/web/public/app.mjs cleanGoals, desk.mjs deskGoals): his own short note under the Desk's greeting,
+ *  kept in the desk's register desk/<id> as the field goals (a human register: end-to-end encrypted like the name, on
+ *  every device of his). At most GOALS_LINES lines of at most 200 characters (UTF-16 units, as the web counts; never
+ *  half a character), no spaces at a line's end, no blank lines at either end. */
+public let GOALS_LINES = 5
+public func cleanGoals(_ text: String) -> String {
+  var lines = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").split(separator: "\n", omittingEmptySubsequences: false).map { raw -> String in
+    var l = Substring(raw)
+    while let c = l.last, c.isWhitespace || c == "\u{feff}" { l.removeLast() }
+    var out = "", n = 0
+    for c in l { n += c.utf16.count; if n > 200 { break }; out.append(c) }
+    return out
+  }
+  while lines.first == "" { lines.removeFirst() }
+  while lines.last == "" { lines.removeLast() }
+  return lines.prefix(GOALS_LINES).joined(separator: "\n")
+}
+/** The register a desk has after its goals were written (app.mjs hub.desk({ id, goals })): every other field kept, the
+ *  field gone when the text is empty; a desk that is not there yet starts as "Desk". */
+public func deskRegister(_ have: JV?, goals: String, now: UInt64 = nowMs()) -> JV {
+  var v = have?.object ?? ["name": .str("Desk"), "created_at": .n(now - 1)]
+  let text = cleanGoals(goals)
+  v["goals"] = text.isEmpty ? nil : .str(text)
+  return .obj(v)
 }
 
 public let ALL_DESKS = "all"
@@ -314,7 +342,7 @@ public final class DeskModel {
     var d = m.human.desks.compactMap { (id, v) -> DeskDesc? in
       guard v.object != nil else { return nil }
       let name = (v["name"].string ?? "").trimmingCharacters(in: .whitespaces)
-      return DeskDesc(id: id, name: name.isEmpty ? "Desk" : name, created: UInt64(max(0, v["created_at"].double ?? 0)), order: v["order"].int, crown: v.has("crown") ? v["crown"] : nil)
+      return DeskDesc(id: id, name: name.isEmpty ? "Desk" : name, created: UInt64(max(0, v["created_at"].double ?? 0)), order: v["order"].int, crown: v.has("crown") ? v["crown"] : nil, goals: cleanGoals(v["goals"].string ?? ""))
     }
     let ordered = d.contains { $0.order != nil }
     d.sort { a, b in
@@ -439,6 +467,7 @@ public final class DeskModel {
     public var knocking: Int
     public var working: Int
     public var allFreshCount: Int
+    public var goals: String = ""            // this desk's goals; none on All desks
     public func deskCards() -> [DeskCard] {
       func rank(_ c: DeskCard) -> Int { c.urgency == "critical" ? 2 : c.isKnock ? 1 : 0 }
       var out = fresh
@@ -522,7 +551,8 @@ public final class DeskModel {
     let cut = units.filter { u in u.link?.state == "cut" && !(u.parent.flatMap { ix[$0] }.map { units[$0].link?.state == "cut" && units[$0].agent.agentDeviceId == u.agent.agentDeviceId } ?? false) }
     let name = all ? "All desks" : desks.first { $0.id == deskId }?.name ?? "Desk"
     return View(deskId: deskId, all: all, deskName: name, here: here, fresh: fresh, reads: reads, revising: revising, snoozed: snoozed, landed: landed, done: done, units: units, cut: cut,
-                unheard: units.reduce(0) { $0 + $1.unheard }, knocking: fresh.filter { $0.isKnock }.count, working: units.filter { $0.online && $0.running }.count, allFreshCount: allFresh.count)
+                unheard: units.reduce(0) { $0 + $1.unheard }, knocking: fresh.filter { $0.isKnock }.count, working: units.filter { $0.online && $0.running }.count, allFreshCount: allFresh.count,
+                goals: all ? "" : desks.first { $0.id == deskId }?.goals ?? "")
   }
 
   /** agent: why the session is stopped, or nil (app.mjs blockedOf). */

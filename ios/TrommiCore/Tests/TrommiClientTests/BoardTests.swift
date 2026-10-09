@@ -77,6 +77,38 @@ final class BoardTests: XCTestCase {
     b.apply(early, change: &ch)
     XCTAssertEqual(b.human.desks["x"]?["name"], "Second", "the causally later write wins, even when it came first")
   }
+
+  /** A desk's goals as the web keeps them (app.mjs cleanGoals; the expected values are what that function returns). */
+  func testGoalsAreCleanedAsOnTheWeb() {
+    XCTAssertEqual(cleanGoals("\n\n 1. Ship iOS  \r\n2. Sleep\t\n\n"), " 1. Ship iOS\n2. Sleep")
+    XCTAssertEqual(cleanGoals("a\n\nb\n"), "a\n\nb", "a blank line inside stays")
+    XCTAssertEqual(cleanGoals("1\n2\n3\n4\n5\n6"), "1\n2\n3\n4\n5")
+    XCTAssertEqual(cleanGoals(String(repeating: "x", count: 250)).count, 200)
+    XCTAssertEqual(cleanGoals(String(repeating: "😀", count: 101)).utf16.count, 200, "200 UTF-16 units, as the web counts")
+    XCTAssertEqual(cleanGoals("   "), "")
+    XCTAssertEqual(cleanGoals("a\rb"), "a\nb")
+  }
+
+  /** The goals come with the desk's register (a human status envelope) and show on that desk only. */
+  func testDeskGoalsFromTheRegister() {
+    let b = Board()
+    let h = String(repeating: "1", count: 64)
+    var ch = Change()
+    b.apply(rec(2, kind: KIND.STATUS, from: h, role: "human", content: ["values": ["desk/main": ["name": "Trommi", "created_at": 5, "goals": "1. Launch\n2. iOS parity\n\n"], "desk/web": ["name": "Website", "created_at": 9]]]), change: &ch)
+    let d = DeskModel(board: b)
+    XCTAssertEqual(d.desks.map { $0.goals }, ["1. Launch\n2. iOS parity", ""])
+    XCTAssertEqual(d.view(desk: "main").goals, "1. Launch\n2. iOS parity")
+    XCTAssertEqual(d.view(desk: "web").goals, "")
+    XCTAssertEqual(d.view(desk: ALL_DESKS).goals, "", "none on All desks")
+    // the write keeps every other field; an empty text takes the field away
+    let kept = deskRegister(b.human.desks["main"], goals: "Ship\n")
+    XCTAssertEqual(kept["goals"], "Ship"); XCTAssertEqual(kept["name"], "Trommi"); XCTAssertEqual(kept["created_at"].double, 5)
+    let cleared = deskRegister(kept, goals: " \n")
+    XCTAssertFalse(cleared.has("goals")); XCTAssertEqual(cleared["name"], "Trommi")
+    // no desk yet: the first one is made for them
+    let first = deskRegister(nil, goals: "One", now: 100)
+    XCTAssertEqual(first["name"], "Desk"); XCTAssertEqual(first["created_at"].double, 99); XCTAssertEqual(first["goals"], "One")
+  }
 }
 
 /** The Scribble Board's stroke format against the shared fixture (dev/interop/fixtures/strokes.json). */
