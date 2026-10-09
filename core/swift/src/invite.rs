@@ -47,8 +47,98 @@ record! {
         /// The Offer to publish.
         pub offer: Vec<u8>,
         /// The inviter's signature over the Offer.
-        pub offer_signature: Vec<u8>,
+        pub signature: Vec<u8>,
     }
+}
+
+record! {
+    /// An Offer as the hub takes and serves it.
+    pub struct SignedOffer {
+        /// The Offer.
+        pub offer: Vec<u8>,
+        /// The inviter's signature over it.
+        pub signature: Vec<u8>,
+    }
+}
+
+record! {
+    /// A Request as the hub takes and serves it.
+    pub struct SignedRequest {
+        /// The Request.
+        pub request: Vec<u8>,
+        /// Its MAC under the link's secret.
+        pub mac: Vec<u8>,
+        /// The new device's signature over both.
+        pub signature: Vec<u8>,
+    }
+}
+
+record! {
+    /// A Reveal as the hub takes and serves it.
+    pub struct SignedReveal {
+        /// The Reveal.
+        pub reveal: Vec<u8>,
+        /// The inviter's signature over it.
+        pub signature: Vec<u8>,
+    }
+}
+
+record! {
+    /// An invite link, taken apart. The link's secret is not among the parts.
+    pub struct InviteLinkParts {
+        /// The app's origin.
+        pub app: String,
+        /// The hub's canonical address.
+        pub hub: String,
+        /// The room, 32 bytes.
+        pub room_id: Vec<u8>,
+        /// The invite, as the hub knows it: 16 bytes.
+        pub invite_id: Vec<u8>,
+    }
+}
+
+/// The parts of an invite link; `bad-format` for anything but the exact form, `newer-version` for a link of a
+/// newer Trommi.
+#[cfg_attr(feature = "uniffi", uniffi::export)]
+pub fn invite_link_parse(text: String) -> Result<InviteLinkParts, CoreError> {
+    let link = invite::InviteLink::parse(&text)?;
+    Ok(InviteLinkParts {
+        app: link.app().to_owned(),
+        hub: link.hub.as_str().to_owned(),
+        room_id: link.room_id.as_bytes().to_vec(),
+        invite_id: link.invite_id()?.as_bytes().to_vec(),
+    })
+}
+
+record! {
+    /// One of the 64 emoji of the check code, with its word.
+    pub struct EmojiWord {
+        /// The emoji.
+        pub emoji: String,
+        /// Its word, for a screen reader and for reading aloud.
+        pub word: String,
+    }
+}
+
+/// The 64 emoji of the check code with their words, in the order of their numbers.
+#[cfg_attr(feature = "uniffi", uniffi::export)]
+pub fn check_emoji() -> Vec<EmojiWord> {
+    invite::CHECK_EMOJI
+        .iter()
+        .map(|(emoji, word)| EmojiWord {
+            emoji: (*emoji).to_owned(),
+            word: (*word).to_owned(),
+        })
+        .collect()
+}
+
+/// A hub's address, if `text` spells it in the one canonical form; `bad-format` for any other spelling. It is
+/// never normalised.
+#[cfg_attr(feature = "uniffi", uniffi::export)]
+pub fn hub_address(text: String) -> Result<String, CoreError> {
+    Ok(trommi_core::hub_auth::HubAddress::parse(&text)?
+        .as_str()
+        .to_owned())
 }
 
 record! {
@@ -93,7 +183,7 @@ record! {
         /// The Reveal to publish.
         pub reveal: Vec<u8>,
         /// The inviter's signature over the Reveal.
-        pub reveal_signature: Vec<u8>,
+        pub signature: Vec<u8>,
         /// The hash of the accepted Request, 32 bytes: with the code, what the person's confirmation names.
         pub request_hash: Vec<u8>,
     }
@@ -105,7 +195,7 @@ impl From<core::InviteAccepted> for InviteAccepted {
             new_device: accepted.new_device.as_bytes().to_vec(),
             code: CheckCode::from(&accepted.code),
             reveal: accepted.signed_reveal.reveal,
-            reveal_signature: accepted.signed_reveal.signature,
+            signature: accepted.signed_reveal.signature,
             request_hash: accepted.request_hash.as_bytes().to_vec(),
         }
     }
@@ -239,12 +329,28 @@ record! {
         pub inviter: Vec<u8>,
         /// The last moment the Request is accepted, in milliseconds.
         pub expires_at: u64,
+        /// For an agent device, the session its invite takes over: 16 bytes.
+        pub session_id: Option<Vec<u8>>,
+        /// The room the Offer is for, 32 bytes.
+        pub room_id: Vec<u8>,
+        /// The room epoch the Offer names: an agent device starts to follow the room group at the GroupInfo of
+        /// this epoch (`join_observe`).
+        pub room_epoch: u64,
+        /// The hash that names the room's state at that epoch, 32 bytes.
+        pub room_state: Vec<u8>,
     }
 }
 
-impl From<core::JoinRequest> for JoinRequest {
-    fn from(request: core::JoinRequest) -> Self {
+impl JoinRequest {
+    /// The Request with what its Offer says of the room.
+    pub(crate) fn of(request: core::JoinRequest, offer: &invite::Offer) -> Self {
         Self {
+            session_id: Some(offer.session_id)
+                .filter(|session| !session.is_zero())
+                .map(|session| session.as_bytes().to_vec()),
+            room_id: offer.room_id.as_bytes().to_vec(),
+            room_epoch: offer.room_epoch,
+            room_state: offer.room_state.as_bytes().to_vec(),
             invite_id: request.invite_id.as_bytes().to_vec(),
             request: request.signed_request.request,
             mac: request.signed_request.mac,

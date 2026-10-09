@@ -25,3 +25,6 @@ extension Processed: Redacted {}
 extension PushNote: Redacted {}
 extension RecoveryPlan: Redacted {}
 extension InviteOpened: Redacted {}
+extension Draft: Redacted {}
+extension ReceivedEnvelope: Redacted {}
+extension BoardItem: Redacted {}
