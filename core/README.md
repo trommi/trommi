@@ -32,10 +32,16 @@ adding; what exists is kept.
 **How a client uses it.** Open the device over its store (`Device::open`, one owner per stored state). Every
 operation writes its new state and everything to send in one batch; nothing is handed back for sending except
 through `outbox()`. Post each outbox entry, then report the hub's answer with `outbox_accepted` or
-`outbox_refused`; after a restart the same entries are there again and are sent again unchanged. Feed the hub's
-log to `process_log_entry` in the hub's order, each entry once: an entry at or below `cursor()` is a duplicate,
-except the next Commit of a group the device holds or follows. Take a Welcome at its place in that order, with
-the Commit that made it; one taken later is caught up by handing the group's entries again from that place.
+`outbox_refused`; after a restart the same entries are there again and are sent again unchanged. An accepted
+Commit is not merged by the answer: it stays pending, the group stands in its old epoch (`busy` for more), and
+the Commit is merged when `process_log_entry` is handed it, at its place in the hub's order. Feed the hub's
+log to `process_log_entry` in the hub's order, across groups, each entry once: an entry at or below `cursor()`
+is a duplicate. Take a Welcome at its place in that order and hand the Commit that made it again after joining:
+it gives the join its place. A Welcome taken later is caught up by handing the group's entries again from that
+Commit on; nothing else is taken behind the cursor but the device's own pending Commit. A session Commit must
+name the room epoch that was current at its change number, so the room group's log is processed up to there
+first (`room-behind`). A helper session is joined, judged and written only by a device that is a leaf of its
+main session or follows it (`observe_session`): `room-behind` until then.
 
 **Stored content.** `seal` signs the device's next envelope in a group and writes it into the outbox with the
 advanced chain; what it does to the device's own view happens when it comes back from the hub. Hand every

@@ -9,7 +9,7 @@ use trommi_core::Error;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
     add_human, cuts_for, enrol, found_main, found_room, new_device, now, observe, post_ok,
-    post_refused, publish_some, settle, sync_ok, TestDevice,
+    publish_some, settle, sync_ok, TestDevice,
 };
 
 struct Room {
@@ -244,8 +244,10 @@ fn a_replaced_agent_device_is_revoked_for_good() {
     let room_epoch = hub.epoch(&room_group).unwrap();
 
     // It is never enrolled again.
-    a.change_agents(&[old.id()], &[], now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.change_agents(&[old.id()], &[], now()),
+        Err(Error::BadCommit)
+    );
     assert!(!a.group(&room_group).unwrap().pending);
     // It is never a human device.
     let package = old.key_package(now()).unwrap();
@@ -254,18 +256,22 @@ fn a_replaced_agent_device_is_revoked_for_good() {
         Err(Error::BadCommit)
     );
     // It is never added to a session group again, by an Add or as the device that takes over.
-    a.add_to_session(&group, &old.id(), &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
-    a.clean_session(&group, &[], Some((&old.id(), &package)), now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.add_to_session(&group, &old.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
+    assert_eq!(
+        a.clean_session(&group, &[], Some((&old.id(), &package)), now()),
+        Err(Error::BadCommit)
+    );
     // It founds nothing and is given no session.
     publish_some(&mut hub, &mut old, 1);
     let packages = hub.claim(&[b.id(), old.id()]).unwrap();
     let before = a.groups().unwrap().len();
-    a.found_session(&old.id(), &packages, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.found_session(&old.id(), &packages, now()),
+        Err(Error::BadCommit)
+    );
     assert_eq!(a.groups().unwrap().len(), before);
 
     // Nothing of this changed a group.
@@ -354,8 +360,10 @@ fn an_agent_device_is_the_agent_leaf_of_one_live_main_session() {
 
     // A second main session for the same agent device is refused.
     let packages = hub.claim(&[b.id(), old.id()]).unwrap();
-    a.found_session(&old.id(), &packages, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.found_session(&old.id(), &packages, now()),
+        Err(Error::BadCommit)
+    );
     assert_eq!(a.groups().unwrap().len(), 2);
 
     // So is taking a second session over: another agent's session, emptied, does not take it either.
@@ -367,9 +375,10 @@ fn an_agent_device_is_the_agent_leaf_of_one_live_main_session() {
     post_ok(&mut hub, &mut a);
     let package = old.key_package(now()).unwrap();
     let cuts = cuts_for(&a, &second);
-    a.clean_session(&second, &cuts, Some((&old.id(), &package)), now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.clean_session(&second, &cuts, Some((&old.id(), &package)), now()),
+        Err(Error::BadCommit)
+    );
     assert_eq!(hub.stale_leaves(&second).unwrap(), [other.id()]);
 
     // Once its session is archived, the device may be given a new one.
