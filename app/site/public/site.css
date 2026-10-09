@@ -1,0 +1,319 @@
+/* The site's one stylesheet. No request to another origin.
+
+   The look is the app's: the tokens below are the ones the site uses of app/web/public/app.css (":root" and
+   ':root[data-theme="dark"]': surfaces, text, lines, brand, shadows, shape, type), the fonts are three files of
+   app/web/public/fonts (f1 Bricolage Grotesque, f7 IBM Plex Sans, f3 IBM Plex Mono: the latin files; SIL Open Font
+   License, app/web/THIRD-PARTY.md) with the fallback faces of fonts/fallback.css there. When the app's tokens
+   change, copy them again.
+   One difference: the app is light unless a person picks dark; the site follows the system unless a person picks
+   Light or Dark with the switch in the head (theme.js sets <html data-theme="system|light|dark"> before the first
+   paint). So the dark values stand twice, word for word: for a dark system that was not overruled with "light",
+   and for a picked "dark". Without the script there is no data-theme, and the system decides. */
+:root {
+  --bg: #f5f6f2; --surface: #ffffff; --sunken: #eceee8;
+  --fg: #141c18; --muted: #5c6862; --faint: #8a958f;
+  --line: #e1e5df; --line-strong: #c9d0c8;
+  --accent: #1b6a57; --accent-hover: #155646; --accent-soft: #dcefe8;
+  --urg-high: #b4551b;
+  --shadow-sm: 0 1px 2px rgb(20 30 25 / .06);
+  --shadow-md: 0 1px 2px rgb(20 30 25 / .06), 0 8px 24px -10px rgb(20 30 25 / .16);
+  --shadow-lg: 0 2px 4px rgb(20 30 25 / .06), 0 24px 48px -16px rgb(20 30 25 / .28);
+  --r-sm: 8px; --r-md: 12px; --r-lg: 18px;
+  --display: "Bricolage Grotesque", "Trommi Display Fallback", "Avenir Next", "Segoe UI", sans-serif;
+  --font: "IBM Plex Sans", "Trommi Sans Fallback", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", "Trommi Mono Fallback", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --marker: .26;
+  --shadow-head: 0 10px 18px -16px rgb(20 30 25 / .45);
+  --head-h: 76px;
+  --cta: #1b6a57; --cta-hover: #155646; --cta-fg: #ffffff; --bezel: #141c18;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1311; --surface: #171d1a; --sunken: #111715;
+    --fg: #e9eeea; --muted: #9aa8a0; --faint: #6c7a73;
+    --line: #252f2a; --line-strong: #35423b;
+    --accent: #6fd0b5; --accent-hover: #8adcc5; --accent-soft: #17332b;
+    --urg-high: #f2a56c;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / .4);
+    --shadow-md: 0 1px 2px rgb(0 0 0 / .4), 0 10px 28px -12px rgb(0 0 0 / .7);
+    --shadow-lg: 0 2px 4px rgb(0 0 0 / .4), 0 28px 56px -18px rgb(0 0 0 / .85);
+    --marker: .34;
+    --shadow-head: 0 10px 18px -14px rgb(0 0 0 / .9);
+    --cta: #e9eeea; --cta-hover: #ffffff; --cta-fg: #0e1311; --bezel: #323d37;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1311; --surface: #171d1a; --sunken: #111715;
+  --fg: #e9eeea; --muted: #9aa8a0; --faint: #6c7a73;
+  --line: #252f2a; --line-strong: #35423b;
+  --accent: #6fd0b5; --accent-hover: #8adcc5; --accent-soft: #17332b;
+  --urg-high: #f2a56c;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / .4);
+  --shadow-md: 0 1px 2px rgb(0 0 0 / .4), 0 10px 28px -12px rgb(0 0 0 / .7);
+  --shadow-lg: 0 2px 4px rgb(0 0 0 / .4), 0 28px 56px -18px rgb(0 0 0 / .85);
+  --marker: .34;
+  --shadow-head: 0 10px 18px -14px rgb(0 0 0 / .9);
+  --cta: #e9eeea; --cta-hover: #ffffff; --cta-fg: #0e1311; --bezel: #323d37;
+  color-scheme: dark;
+}
+
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 600 800; font-stretch: 100%; font-display: swap; src: url(/fonts/f1.woff2) format('woff2'); }
+@font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400 600; font-stretch: 100%; font-display: swap; src: url(/fonts/f7.woff2) format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url(/fonts/f3.woff2) format('woff2'); }
+@font-face { font-family: 'Trommi Display Fallback'; src: local('Arial Bold'), local('Arial-BoldMT'), local('Liberation Sans Bold'), local('Arial'); font-weight: 600 800; size-adjust: 93.70%; ascent-override: 99.25%; descent-override: 28.81%; line-gap-override: 0%; }
+@font-face { font-family: 'Trommi Sans Fallback'; src: local('Arial'), local('ArialMT'), local('Liberation Sans'); font-weight: 400 600; size-adjust: 101.57%; ascent-override: 100.92%; descent-override: 27.07%; line-gap-override: 0%; }
+@font-face { font-family: 'Trommi Mono Fallback'; src: local('Courier New'), local('CourierNewPSMT'), local('Liberation Mono'); font-weight: 400 500; size-adjust: 99.98%; ascent-override: 102.52%; descent-override: 27.50%; line-gap-override: 0%; }
+
+/* ---- base ---- */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 1.0625rem/1.6 var(--font); }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.08; letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+p, ul, ol, dl, dd, figure { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+img, svg { display: block; max-width: 100%; }
+img { height: auto; }
+a { color: var(--accent); text-underline-offset: .18em; text-decoration-thickness: 1px; }
+a:hover { color: var(--accent-hover); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+/* the head stays at the top: what is jumped to, or focused, comes to rest under it */
+html { scroll-padding-top: var(--head-h); }
+[id] { scroll-margin-top: 24px; }
+.hid { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+code, pre { font-family: var(--mono); font-size: .9em; }
+
+.wrap { width: min(1080px, 100% - 40px); margin-inline: auto; }
+.skip { position: absolute; z-index: 30; left: 12px; top: -60px; padding: 8px 14px; background: var(--surface); color: var(--fg); border: 1px solid var(--line-strong); border-radius: var(--r-sm); }
+.skip:focus { top: 12px; }
+
+/* ---- the head: the bell and the name at the left; at the right one group in one height: two places to go,
+   the theme button, the way in ----
+   It stays at the top as a bar of its own, a sheet lying on the paper, as wide as the text; once the page has moved,
+   its shadow grows (scroll-driven where a browser can). */
+.head { position: sticky; top: 0; z-index: 20; padding-top: 12px; pointer-events: none; }
+/* the paper above the bar and behind its upper half: what passes comes out from under the bar, not over it */
+.head::before { content: ""; position: absolute; inset: 0 0 50% 0; background: var(--bg); }
+.head-in { position: relative; }
+.head-in { pointer-events: auto; display: flex; align-items: center; gap: 12px; height: calc(var(--head-h) - 12px); padding: 0 12px 0 16px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-sm); }
+@supports (animation-timeline: scroll()) {
+  .head-in { animation: head-rule linear both; animation-timeline: scroll(root block); animation-range: 0 48px; }
+}
+@keyframes head-rule { to { box-shadow: var(--shadow-md), var(--shadow-head); } }
+.brand { display: inline-flex; align-items: center; gap: 12px; margin-right: auto; color: var(--fg); text-decoration: none; font: 800 1.7rem/1 var(--display); letter-spacing: -.025em; }
+.brand:hover { color: var(--fg); }
+.brand svg { width: 38px; height: 38px; border-radius: 11px; flex: none; }
+/* everything at the right is 40px high and stands on one line */
+.head nav { display: flex; align-items: center; gap: 4px; margin-right: 8px; }
+.head nav a, .apps-btn { height: 40px; padding: 0 14px; display: inline-flex; align-items: center; background: none; border: 0; border-radius: 10px; color: var(--muted); font: 500 1rem/1 var(--font); text-decoration: none; cursor: pointer; }
+.head nav a:hover, .apps-btn:hover, .head:has(.apps:popover-open) .apps-btn, .head nav a[aria-current] { color: var(--fg); }
+.head nav a:hover, .apps-btn:hover, .head:has(.apps:popover-open) .apps-btn { background: var(--sunken); }
+.head .btn { height: 40px; padding: 0 18px; display: inline-flex; align-items: center; border-radius: 10px; font-size: 1rem; line-height: 1; white-space: nowrap; }
+
+/* The theme: one quiet button of the same height. Its mark is the theme that is set (<html data-theme>, so right
+   on the first paint); a press goes on to the next. Without the script (no data-theme) it is not shown. */
+.theme-btn { display: none; position: relative; width: 40px; height: 40px; padding: 0; place-items: center; background: none; border: 0; border-radius: 10px; color: var(--muted); cursor: pointer; }
+:root[data-theme] .theme-btn { display: grid; }
+.theme-btn:hover { background: var(--sunken); color: var(--fg); }
+.theme-btn svg { display: none; width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.theme-btn svg .ink { fill: currentColor; stroke: none; }
+:root[data-theme="system"] .t-system, :root[data-theme="light"] .t-light, :root[data-theme="dark"] .t-dark { display: block; }
+/* what is set, said under the button while the pointer or the keyboard is on it */
+.theme-btn::after { content: attr(data-tip); position: absolute; top: calc(100% + 8px); left: 50%; translate: -50% 0; padding: 6px 10px; background: var(--fg); color: var(--bg); border-radius: var(--r-sm); font: 500 .8rem/1 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms var(--ease-out); }
+.theme-btn:hover::after, .theme-btn:focus-visible::after { opacity: 1; }
+.theme-btn:focus-visible, .apps-btn:focus-visible, .head nav a:focus-visible, .head .btn:focus-visible { outline-offset: 2px; border-radius: 10px; }
+
+/* On a phone the head keeps the bell, the theme button and the way in; the two places to go stand in a slim row
+   under it, which moves away with the page (and they are in the foot). */
+.sub { display: none; }
+
+/* Where Trommi runs: a popover under the head (no "display" here: closed, the browser hides it). */
+.apps { position: fixed; inset: calc(var(--head-h) + 8px) max(20px, calc((100vw - 1080px) / 2)) auto auto; width: min(430px, calc(100vw - 40px)); margin: 0; padding: 16px; background: var(--surface); color: var(--fg); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-lg); }
+.apps { pointer-events: auto; }
+.apps::backdrop { background: transparent; }
+.apps h2 { max-width: none; margin: 2px 8px 8px; color: var(--faint); font: 500 .76rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.apps li > * { display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 4px 12px; padding: 10px 8px; border-radius: var(--r-sm); color: inherit; text-decoration: none; }
+.apps li > a:hover { background: var(--sunken); color: inherit; }
+.apps svg { width: 26px; height: 26px; fill: none; stroke: var(--fg); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.apps b { display: block; font-weight: 600; line-height: 1.3; }
+.apps small { display: block; color: var(--muted); font-size: .88rem; line-height: 1.35; }
+.apps i { color: var(--accent); font-style: normal; font-size: .88rem; font-weight: 500; white-space: nowrap; }
+.apps > p { margin: 8px 8px 2px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: .88rem; }
+@supports not selector(:popover-open) { .apps, .apps-btn { display: none; } }
+
+/* ---- the opening: everything in the middle. The words, the two ways in, then one wide picture ---- */
+.open { padding-block: clamp(32px, 5vw, 52px) 0; }
+.open.centre { text-align: center; }
+.open h1 { font-size: clamp(2.8rem, 7.4vw, 5.6rem); font-weight: 800; letter-spacing: -.026em; line-height: 1; }
+.open .kicker { margin-bottom: 20px; }
+/* A word underlined by hand: the app's stroke under a greeting's last word (app.css "rich-under"). */
+.under { position: relative; display: inline-block; }
+.under svg { position: absolute; left: -1%; bottom: -.13em; width: 102%; height: .16em; overflow: visible; fill: none; stroke: var(--accent); stroke-width: 2.6; stroke-linecap: round; }
+.under svg path { vector-effect: non-scaling-stroke; }
+.lede { max-width: 43ch; margin-top: 28px; color: var(--muted); font-size: clamp(1.1rem, 2.1vw, 1.32rem); line-height: 1.5; }
+.centre .lede { max-width: none; }
+.lede strong { color: var(--fg); font-weight: 500; }
+.acts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 30px; }
+.centre .acts { justify-content: center; }
+.open-note { margin-top: 16px; color: var(--faint); font-size: .9rem; }
+.btn { display: inline-block; padding: 13px 22px; background: var(--cta); color: var(--cta-fg); border-radius: var(--r-md); font-weight: 600; text-decoration: none; box-shadow: var(--shadow-sm); transition: background 140ms var(--ease-out); }
+.btn:hover { background: var(--cta-hover); color: var(--cta-fg); }
+.btn.quiet { background: var(--surface); color: var(--fg); box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+.btn.quiet:hover { background: var(--sunken); color: var(--fg); }
+
+/* The app itself, as it is, in one wide picture: the Desk in a window in the middle, and the phone standing before
+   its lower left corner, over the sidebar; the questions and their answer tiles stay in view. */
+.stage { position: relative; margin-top: clamp(40px, 5vw, 56px); padding-bottom: 3%; }
+.shot { background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-lg); overflow: hidden; }
+.shot img { width: 100%; }
+.stage .wide { width: 90%; margin-inline: auto; }
+.stage .hand { position: absolute; left: 0; bottom: 0; width: 20.5%; padding: 5px; background: var(--bezel); border: 0; border-radius: clamp(22px, 2.6vw, 34px); box-shadow: var(--shadow-lg), 0 0 0 1px var(--line-strong); }
+.stage .hand img { border-radius: clamp(18px, 2.2vw, 29px); }
+.cap { margin-top: 14px; color: var(--faint); font-size: .84rem; }
+
+/* ---- sections ---- */
+main > section { padding-block: clamp(64px, 10vw, 120px) 0; }
+.kicker { margin-bottom: 14px; color: var(--accent); font: 500 .8rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+h2 { font-size: clamp(1.9rem, 4.6vw, 3rem); max-width: 20ch; }
+.intro { max-width: 58ch; margin-top: 18px; color: var(--muted); font-size: 1.12rem; }
+
+/* The loop: the drawing, and under it the four steps in words. */
+.loop-draw { max-width: 820px; margin-top: 44px; padding: clamp(14px, 3vw, 30px); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.loop-draw svg { width: 100%; height: auto; fill: none; stroke: var(--fg); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.loop-draw .d-arrow, .loop-draw .d-back { stroke: var(--accent); }
+.loop-draw .d-tick { stroke: var(--accent); stroke-width: 3; }
+.loop-draw .d-fill { fill: var(--accent-soft); stroke: none; }
+.steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; margin-top: 34px; counter-reset: step; }
+.steps li { counter-increment: step; padding-top: 14px; border-top: 1.5px solid var(--fg); }
+.steps li::before { content: counter(step); display: block; margin-bottom: 8px; color: var(--accent); font: 800 1.5rem/1 var(--display); }
+.steps h3 { font-size: 1.12rem; letter-spacing: -.01em; line-height: 1.2; }
+.steps p { margin-top: 8px; color: var(--muted); font-size: .97rem; line-height: 1.5; }
+/* the same rows without numbers: three things side by side */
+.steps.plain { grid-template-columns: repeat(3, 1fr); margin-top: 40px; }
+.steps.plain li::before { content: none; }
+
+/* A card: the picture beside what it holds. */
+.split { display: grid; grid-template-columns: 1.25fr 1fr; gap: clamp(28px, 5vw, 64px); align-items: start; margin-top: 44px; }
+.prose > * + * { margin-top: 18px; }
+.prose { color: var(--muted); }
+.facts li { position: relative; padding: 13px 0 13px 26px; border-top: 1px solid var(--line-strong); color: var(--muted); }
+.facts li:last-child { border-bottom: 1px solid var(--line-strong); }
+.facts li::before { content: ""; position: absolute; left: 2px; top: 1.45em; width: 11px; height: 2px; background: var(--accent); border-radius: 2px; rotate: -4deg; }
+.facts b { color: var(--fg); font-weight: 600; }
+/* the agent's advice in the app: a swipe of a highlighter behind the words */
+mark { background: color-mix(in srgb, var(--urg-high) calc(var(--marker) * 100%), transparent); color: inherit; padding: 0 .15em; border-radius: 2px; }
+
+/* Encryption: two lists side by side, what stays sealed and what the server sees. */
+.ledger { display: grid; grid-template-columns: 1fr 1fr; margin-top: 44px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-lg); }
+.ledger > div { padding: clamp(22px, 3.4vw, 38px); }
+.ledger > div + div { border-left: 1px solid var(--line-strong); }
+.ledger h3 { display: flex; align-items: center; gap: 10px; min-height: 30px; font-size: 1.3rem; }
+.ledger h3 svg { width: 30px; height: 30px; flex: none; fill: none; stroke: var(--accent); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ledger .sub { margin-top: 8px; color: var(--muted); font-size: .95rem; }
+.ledger ul { margin-top: 18px; }
+.ledger li { padding: 10px 0; border-top: 1px solid var(--line); font-size: .97rem; line-height: 1.45; }
+.ledger li span { color: var(--muted); }
+.notes { display: grid; grid-template-columns: 1fr 1fr; gap: 20px clamp(28px, 5vw, 64px); margin-top: 34px; color: var(--muted); font-size: .98rem; }
+.notes b { color: var(--fg); font-weight: 600; }
+
+/* The pieces: a plain list of terms. */
+.pieces { margin-top: 40px; border-top: 1.5px solid var(--fg); }
+.pieces > div { display: grid; grid-template-columns: 220px 1fr; gap: 8px 32px; padding: 20px 0; border-bottom: 1px solid var(--line-strong); }
+.pieces dt { font: 700 1.15rem/1.25 var(--display); letter-spacing: -.01em; }
+.pieces dt small { display: block; margin-top: 5px; color: var(--faint); font: 400 .8rem/1.3 var(--mono); letter-spacing: 0; }
+.pieces dd { color: var(--muted); max-width: 62ch; }
+
+/* How to start. */
+.start { margin-top: 40px; counter-reset: go; max-width: 780px; }
+.start > li { counter-increment: go; position: relative; padding: 0 0 28px 54px; }
+.start > li::before { content: counter(go); position: absolute; left: 0; top: -3px; width: 34px; height: 34px; display: grid; place-items: center; border: 1.5px solid var(--fg); border-radius: 50%; font: 700 1rem/1 var(--display); }
+.start h3 { font-size: 1.2rem; letter-spacing: -.01em; }
+.start p { margin-top: 6px; color: var(--muted); }
+.cmd { margin-top: 12px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-md); overflow-x: auto; font-size: .86rem; line-height: 1.5; white-space: pre; color: var(--fg); }
+.cmd i { color: var(--faint); font-style: normal; }
+.aside { max-width: 780px; margin-top: 8px; padding: 16px 18px; border: 1.5px dashed var(--line-strong); border-radius: var(--r-md); color: var(--muted); font-size: .97rem; }
+
+/* ---- the foot: the name and its line, then two short groups of links ---- */
+.foot { margin-top: clamp(72px, 11vw, 130px); border-top: 1px solid var(--line-strong); color: var(--muted); font-size: .92rem; }
+.foot-in { display: flex; flex-wrap: wrap; gap: 26px clamp(40px, 8vw, 96px); padding-block: 34px 48px; }
+.foot-brand { margin-right: auto; color: var(--faint); }
+.foot-brand b { display: block; margin-bottom: 4px; color: var(--fg); font: 800 1.15rem/1 var(--display); letter-spacing: -.02em; }
+.foot-h { margin-bottom: 10px; color: var(--faint); font: 500 .76rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.foot li + li { margin-top: 6px; }
+.foot a, .foot button { padding: 0; background: none; border: 0; color: var(--muted); font: inherit; text-decoration: none; cursor: pointer; }
+.foot a:hover, .foot button:hover { color: var(--fg); text-decoration: underline; }
+
+/* ---- the legal pages and the 404 ---- */
+.page { max-width: 68ch; padding-block: clamp(32px, 6vw, 64px) 0; }
+.page h1 { font-size: clamp(2rem, 5vw, 3rem); }
+.page > * + * { margin-top: 18px; }
+.page p { color: var(--muted); }
+.page h2 { margin-top: 48px; max-width: none; font-size: clamp(1.4rem, 3vw, 1.7rem); letter-spacing: -.015em; }
+.page h3 { margin-top: 30px; font-size: 1.12rem; letter-spacing: -.01em; line-height: 1.25; }
+.page .updated { margin-top: 12px; color: var(--faint); font: 400 .8rem/1.4 var(--mono); }
+
+/* ---- pricing: one price card in the middle of the page, and one quiet line under it ---- */
+.page.price { max-width: none; text-align: center; }
+.price .lede { max-width: none; margin-top: 14px; }
+.pcard { width: min(420px, 100%); margin: 40px auto 0; padding: 32px 32px 30px; text-align: left; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-md); }
+.pcard h2 { margin: 0; max-width: none; color: var(--accent); font: 500 .8rem/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.pcard-price { display: flex; align-items: baseline; gap: 10px; margin-top: 16px; color: var(--muted); font-size: .97rem; }
+.pcard-price b { color: var(--fg); font: 800 4.2rem/.9 var(--display); letter-spacing: -.03em; }
+.pcard-sub { margin-top: 12px; color: var(--muted); }
+.ticks { margin-top: 24px; border-top: 1px solid var(--line); }
+.ticks li { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--fg); line-height: 1.4; }
+.ticks svg { flex: none; width: 20px; height: 20px; margin-top: 2px; fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.pcard .btn { display: block; margin-top: 26px; text-align: center; }
+.pcard-demo { margin-top: 14px; text-align: center; font-size: .95rem; }
+.price .quiet-line { margin-top: 26px; color: var(--faint); font-size: .92rem; }
+.price .quiet-line a { color: var(--muted); }
+/* Name, address, contact: a term and what stands for it, one line each. */
+.lines { border-top: 1.5px solid var(--fg); }
+.lines > div { display: grid; grid-template-columns: 220px 1fr; gap: 4px 32px; padding: 14px 0; border-bottom: 1px solid var(--line-strong); }
+.lines dt { color: var(--fg); font-weight: 600; }
+.lines dd { color: var(--muted); }
+
+/* ---- narrow windows ---- */
+@media (max-width: 860px) {
+  .steps { grid-template-columns: 1fr 1fr; }
+  .steps.plain { grid-template-columns: 1fr; gap: 20px; }
+  .split, .ledger, .notes { grid-template-columns: 1fr; }
+  .ledger > div + div { border-left: 0; border-top: 1px solid var(--line-strong); }
+  .pieces > div, .lines > div { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  body { font-size: 1rem; }
+  .wrap { width: calc(100% - 32px); }
+  /* the head on a phone: the bell and the name, the theme button, the way in */
+  :root { --head-h: 64px; }
+  .head { padding-top: 8px; }
+  .head .wrap { width: calc(100% - 20px); }
+  .head-in { gap: 6px; height: calc(var(--head-h) - 8px); padding: 0 8px 0 10px; }
+  .head nav { display: none; }
+  .brand { gap: 10px; font-size: 1.45rem; }
+  .brand svg { width: 34px; height: 34px; border-radius: 10px; }
+  .head .btn { padding: 0 14px; font-size: .95rem; }
+  .sub { display: block; }
+  .sub .wrap { display: flex; justify-content: center; gap: 26px; padding-top: 4px; }
+  .sub a, .sub button { height: 40px; padding: 0; display: inline-flex; align-items: center; background: none; border: 0; color: var(--muted); font: 500 .95rem/1 var(--font); text-decoration: none; cursor: pointer; }
+  .sub a[aria-current] { color: var(--fg); }
+  .apps { inset: var(--head-h) 0 auto 0; width: auto; max-width: none; max-height: calc(100dvh - var(--head-h)); overflow-y: auto; padding: 12px 10px 16px; border-width: 0 0 1px; border-radius: 0 0 var(--r-lg) var(--r-lg); }
+  .pcard { padding: 26px 22px 24px; }
+  .foot-brand { flex-basis: 100%; }
+  .steps { grid-template-columns: 1fr; gap: 20px; }
+  /* a phone shows the phone: the wide picture would be too small to read */
+  .stage { width: min(290px, 76%); margin: 40px auto 0; padding-bottom: 0; }
+  .stage .wide { display: none; }
+  .stage .hand { position: static; width: 100%; }
+  .acts .btn { flex: 1 1 auto; text-align: center; }
+  .split figure { width: min(320px, 84%); margin-inline: auto; }
+  .split .cap { text-align: center; }
+  .start > li { padding-left: 46px; }
+}
+/* the narrowest phones: the way in says "Open" */
+@media (max-width: 350px) {
+  .to-app span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
