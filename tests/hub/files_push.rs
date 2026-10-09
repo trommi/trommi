@@ -592,6 +592,31 @@ fn an_iphone_gets_a_sealed_number_and_a_ticket_for_that_one_envelope() {
             .iter()
             .any(|a| a["event"] == "update" && a["content-state"]["waiting"] == 2)
     });
+    // Apple says the activity's token is gone, for an update with new counts: the token is forgotten, and the
+    // counts are not taken for sent. The token registered next is sent them.
+    hub.recorder
+        .answers
+        .lock()
+        .unwrap()
+        .push(("ef".repeat(32), 410, "Unregistered".to_string()));
+    card(&mut s, 1, 0);
+    let hub = &s.w.hub;
+    hub.eventually("the update that Apple refuses", || {
+        live(hub, &"ef".repeat(32))
+            .iter()
+            .any(|a| a["event"] == "update" && a["content-state"]["waiting"] == 3)
+    });
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let next = "12".repeat(32);
+    s.w.ada.post(hub, "/v2/live-activity", &json!({ "kind": "activity", "token": next, "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
+    hub.eventually(
+        "the new token is sent the counts the old one never got",
+        || {
+            live(hub, &next)
+                .iter()
+                .any(|a| a["event"] == "update" && a["content-state"]["waiting"] == 3)
+        },
+    );
 }
 
 #[test]

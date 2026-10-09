@@ -1206,7 +1206,7 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
             .is_none_or(|g| g.iter().any(|x| x == group))
     };
     let mut out = json!({});
-    let (mut desk_bytes, mut truncated) = (0usize, false);
+    let (mut desk_bytes, mut truncated, mut any) = (0usize, false, false);
     for (table, _) in OBJECT_TABLES {
         let mut s = c.prepare_cached(&format!(
             "SELECT o.object_id, o.group_id, o.state, o.urgency, o.answered_at, o.owner, o.first_change, o.head_change, o.version_change
@@ -1230,8 +1230,8 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
                 .as_ref()
                 .and_then(|v| v["envelope"].as_str())
                 .map_or(0, str::len);
-            // the budget is checked before an item goes in; the first one always does
-            if desk_bytes > ANSWER_BYTES && !items.is_empty() {
+            // one budget for the whole Desk, checked before an item goes in; only the very first always does
+            if desk_bytes > ANSWER_BYTES && any {
                 truncated = true;
                 break;
             }
@@ -1246,6 +1246,7 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
                 "head_change": r.get::<_, i64>(7)?,
                 "version": version,
             }));
+            any = true;
         }
         out[table] = Value::Array(items);
     }

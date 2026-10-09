@@ -283,7 +283,8 @@ impl Gate {
         s.queue.push_back(ticket);
         let deadline = std::time::Instant::now() + GATE_WAIT;
         loop {
-            if s.at_work < self.permits && s.queue.front() == Some(&ticket) {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if !left.is_zero() && s.at_work < self.permits && s.queue.front() == Some(&ticket) {
                 s.queue.pop_front();
                 s.at_work += 1;
                 drop(s);
@@ -291,7 +292,6 @@ impl Gate {
                 self.freed.notify_all();
                 return Ok(Permit(self));
             }
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
             if left.is_zero() {
                 s.queue.retain(|t| *t != ticket);
                 drop(s);

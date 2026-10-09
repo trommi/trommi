@@ -283,6 +283,25 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
     part(&rec, &room, &join, &key, Some(&auth)).ok();
     // a repeated part is kept once
     part(&rec, &room, &join, &key, Some(&auth)).ok();
+    // a recovery has at most eight parts for one group (here: seven more are put beside the one, by hand, and
+    // taken away again): the ninth is not even checked
+    {
+        let db = rusqlite::Connection::open(w.hub.dir.join("hub.db")).unwrap();
+        db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let id = unb64(opened["recovery_id"].as_str().unwrap()).unwrap();
+        for n in 100..107 {
+            db.execute(
+                "INSERT INTO recovery_parts (recovery_id, n, group_id, body, body_hash) VALUES (?1, ?2, ?3, 'x', ?4)",
+                rusqlite::params![id, n, &room[..], &random::<32>()[..]],
+            )
+            .unwrap();
+        }
+        let mut other_key = key.clone();
+        *other_key.last_mut().unwrap() ^= 1;
+        part(&rec, &room, &join, &other_key, Some(&auth)).refused(429, "too-many");
+        db.execute("DELETE FROM recovery_parts WHERE body = 'x'", [])
+            .unwrap();
+    }
     // … and the session group, checked against the copy the parts before it left
     let now = neo.room_now();
     let session_join = neo.external_join(&session_base, now);

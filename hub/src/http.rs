@@ -45,6 +45,8 @@ enum Kind {
     Channel {
         rx: mpsc::UnboundedReceiver<Msg>,
         queued: Option<Arc<AtomicUsize>>,
+        /// nothing is handed on from then on: the token the stream was opened with has run out
+        until: u64,
     },
     Bounded(mpsc::Receiver<std::io::Result<Bytes>>),
 }
@@ -62,11 +64,12 @@ impl Body {
             _guards: vec![],
         }
     }
-    pub fn events(rx: mpsc::UnboundedReceiver<Msg>, queued: Arc<AtomicUsize>) -> Self {
+    pub fn events(rx: mpsc::UnboundedReceiver<Msg>, queued: Arc<AtomicUsize>, until: u64) -> Self {
         Body {
             kind: Kind::Channel {
                 rx,
                 queued: Some(queued),
+                until,
             },
             _guards: vec![],
         }
@@ -98,7 +101,8 @@ impl HttpBody for Body {
                     .filter(|b| !b.is_empty())
                     .map(|b| Ok(Frame::data(b))),
             ),
-            Kind::Channel { rx, queued } => match rx.poll_recv(cx) {
+            Kind::Channel { until, .. } if crate::util::now() >= *until => Poll::Ready(None),
+            Kind::Channel { rx, queued, .. } => match rx.poll_recv(cx) {
                 Poll::Ready(Some(Msg::Chunk(b))) => {
                     if let Some(q) = queued {
                         q.fetch_sub(b.len().min(q.load(Ordering::Relaxed)), Ordering::Relaxed);

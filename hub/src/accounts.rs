@@ -389,6 +389,11 @@ impl Accounts {
         }
     }
 
+    /// The work of a check, for an attempt that is told to wait: its answer costs what any answer costs.
+    pub fn spend(&self, row: &LoginRow) {
+        let _ = slow_hash(&row.auth, &self.dummy_salt);
+    }
+
     /// Sign-in with a passkey. An unknown credential is checked against a key nobody holds.
     /// The check reads only; the caller records the use (`passkey_used`) in a short write of its own.
     pub fn passkey_login(

@@ -1550,6 +1550,7 @@ pub fn requests(c: &Connection, auth: &Auth) -> Res<Value> {
 /// A join and a cleaning Commit for each group: enough for 4 000 live sessions.
 pub const MAX_RECOVERY_PARTS: i64 = 8192;
 pub const MAX_RECOVERY_BYTES: i64 = 64 << 20;
+pub const MAX_RECOVERY_PARTS_PER_GROUP: i64 = 8;
 pub const MAX_RECOVERY_MEMO_BYTES: i64 = 512 << 20;
 
 /// A room in recovery takes nothing else (8.7).
@@ -1653,14 +1654,29 @@ fn replay_recovery(
         }
         None => (None, None),
     };
-    let parts: Vec<String> = {
-        let mut s = x.c.prepare_cached(
-            "SELECT body FROM recovery_parts WHERE recovery_id = ?1 AND (?2 IS NULL OR group_id IN (?2, ?3, ?4)) ORDER BY n",
-        )?;
-        let rows = s
-            .query_map(params![id, own, &auth.room[..], parent], |r| r.get(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows
+    let parts: Vec<String> = match &own {
+        // (by the index on the group: the other groups' parts are not read)
+        Some(own) => {
+            let mut s = x.c.prepare_cached(
+                "SELECT n, body FROM recovery_parts INDEXED BY recovery_parts_by_group WHERE recovery_id = ?1 AND group_id IN (?2, ?3, ?4)",
+            )?;
+            let mut rows = s
+                .query_map(params![id, own, &auth.room[..], parent], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get(1)?))
+                })?
+                .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
+            rows.sort_by_key(|(n, _)| *n);
+            rows.into_iter().map(|(_, body)| body).collect()
+        }
+        None => {
+            let mut s = x.c.prepare_cached(
+                "SELECT body FROM recovery_parts WHERE recovery_id = ?1 ORDER BY n",
+            )?;
+            let rows = s
+                .query_map([id], |r| r.get(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        }
     };
     let actor = Auth {
         room: auth.room,
@@ -1693,20 +1709,28 @@ pub fn recovery_rehearse(
     if finished.is_some() {
         return Err(refuse("gone", "the recovery is finished"));
     }
-    let count: i64 =
-        x.c.prepare_cached("SELECT count(*) FROM recovery_parts WHERE recovery_id = ?1")?
-            .query_row([id], |r| r.get(0))?;
-    let bytes: i64 =
-        x.c.prepare_cached(
-            "SELECT coalesce(sum(length(body)), 0) FROM recovery_parts WHERE recovery_id = ?1",
-        )?
-        .query_row([id], |r| r.get(0))?;
+    let (count, bytes): (i64, i64) =
+        x.c.prepare_cached("SELECT parts, bytes FROM recoveries WHERE recovery_id = ?1")?
+            .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
     if count >= MAX_RECOVERY_PARTS
         || bytes + body_json(group_id, body).len() as i64 > MAX_RECOVERY_BYTES
     {
         return Err(refuse(
             "too-many",
             "a recovery has at most 8192 parts and 64 MiB",
+        ));
+    }
+    // A part is checked against the parts it can depend on (see `replay_recovery`): with few parts per group
+    // that is a fixed amount of work, however long the recovery is.
+    let in_group: i64 =
+        x.c.prepare_cached(
+            "SELECT count(*) FROM recovery_parts WHERE recovery_id = ?1 AND group_id = ?2",
+        )?
+        .query_row(params![id, group_id], |r| r.get(0))?;
+    if in_group >= MAX_RECOVERY_PARTS_PER_GROUP {
+        return Err(refuse(
+            "too-many",
+            "a recovery has at most 8 parts for one group",
         ));
     }
     let mut scope = Scope {
@@ -1737,31 +1761,41 @@ pub fn recovery_keep(
     recovery_row(x, auth, id)?;
     // a repeated post of the same part is kept once
     let text = body_json(group_id, body);
-    let held =
-        x.c.prepare_cached("SELECT 1 FROM recovery_parts WHERE recovery_id = ?1 AND body = ?2")?
-            .exists(params![id, text])?;
+    let hash = crate::util::sha256(text.as_bytes());
+    let held = x
+        .c
+        .prepare_cached("SELECT 1 FROM recovery_parts WHERE recovery_id = ?1 AND body_hash = ?2")?
+        .exists(params![id, &hash[..]])?;
     if held {
         return Ok(());
     }
     x.c.prepare_cached(
-        "INSERT INTO recovery_parts (recovery_id, n, group_id, body, commit_key)
-         VALUES (?1, (SELECT coalesce(max(n), 0) + 1 FROM recovery_parts WHERE recovery_id = ?1), ?2, ?3, ?4)",
+        "INSERT INTO recovery_parts (recovery_id, n, group_id, body, body_hash, commit_key)
+         VALUES (?1, (SELECT parts + 1 FROM recoveries WHERE recovery_id = ?1), ?2, ?3, ?4, ?5)",
     )?
-    .execute(params![id, group_id, text, commit_key.map(|k| &k[..])])?;
+    .execute(params![
+        id,
+        group_id,
+        text,
+        &hash[..],
+        commit_key.map(|k| &k[..])
+    ])?;
     // what verifying it gave, for the parts that follow and for `finish`
+    let mut memo_bytes = 0i64;
     for (key, entry) in entries {
         if let Some(value) = entry.encode() {
-            x.c.prepare_cached(
+            let new = x.c.prepare_cached(
                 "INSERT OR IGNORE INTO recovery_memo (recovery_id, key, value) VALUES (?1, ?2, ?3)",
             )?
             .execute(params![id, &key[..], value])?;
+            memo_bytes += (new * value.len()) as i64;
         }
     }
     let held: i64 =
         x.c.prepare_cached(
-            "SELECT coalesce(sum(length(value)), 0) FROM recovery_memo WHERE recovery_id = ?1",
+            "UPDATE recoveries SET parts = parts + 1, bytes = bytes + ?2, memo_bytes = memo_bytes + ?3 WHERE recovery_id = ?1 RETURNING memo_bytes",
         )?
-        .query_row([id], |r| r.get(0))?;
+        .query_row(params![id, text.len() as i64, memo_bytes], |r| r.get(0))?;
     if held > MAX_RECOVERY_MEMO_BYTES {
         return Err(refuse(
             "too-many",
@@ -1785,8 +1819,11 @@ pub fn recovery_has(
         return Err(refuse("gone", "the recovery is finished"));
     }
     Ok(x.c
-        .prepare_cached("SELECT 1 FROM recovery_parts WHERE recovery_id = ?1 AND body = ?2")?
-        .exists(params![id, body_json(group_id, body)])?)
+        .prepare_cached("SELECT 1 FROM recovery_parts WHERE recovery_id = ?1 AND body_hash = ?2")?
+        .exists(params![
+            id,
+            &crate::util::sha256(body_json(group_id, body).as_bytes())[..]
+        ])?)
 }
 
 /// 8.7: publishes all parts or none. The room group and every live session group were joined and cleaned, the

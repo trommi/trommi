@@ -36,7 +36,9 @@ impl Buckets {
         if state.len() >= MAX_KEYS && !state.contains_key(key) {
             state.retain(|_, (_, at)| now.saturating_sub(*at) < 60_000);
             if state.len() >= MAX_KEYS {
-                return Err(60);
+                // full of keys that are all in use: the newcomer is let through unrecorded rather than everyone
+                // refused; those on record keep their limits
+                return Ok(());
             }
         }
         let (tokens, at) = state.entry(key.to_vec()).or_insert((self.burst, now));
@@ -84,7 +86,9 @@ impl Window {
             let span = self.span_ms;
             state.retain(|_, hits| hits.back().is_some_and(|t| now.saturating_sub(*t) < span));
             if state.len() >= MAX_KEYS {
-                return Err(60);
+                // full of keys that are all in use: the newcomer is let through unrecorded rather than everyone
+                // refused; those on record keep their limits
+                return Ok(());
             }
         }
         let hits = state.entry(key.to_vec()).or_default();
