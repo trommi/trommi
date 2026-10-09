@@ -192,12 +192,6 @@ const PKG = here('../../../core/wasm/pkg/trommi-core.js')
 const no_core = !existsSync(PKG) ? 'the core\'s WASM binding is not built (core/wasm/build.sh)' : null
 if (!missing && no_core) console.warn(`\nSKIPPED: nothing ran behind the real hub's sign-in: ${no_core}.\n`)
 const PASSWORD = 'correct horse battery staple 42'
-/** Where the real hub (branch v2-hub) and the real core (the binding) do not agree today. A step that meets one of
- *  these refusals is skipped with it named; any other failure fails. Delete an entry when the two agree. */
-const MISMATCHES = [
-  { test: /the SealedKey of the new epoch: another room epoch/, what: 'spec/v2.md 8.2 (the core\'s): the SealedKey of a room Commit that replaces the recovery keys names the NEW room epoch; the hub wants the epoch the Commit builds on (hub delivery.rs commit_in → check_sealed_key(…, note.room_epoch, …))' },
-]
-
 test('real hub, real core: a room with its account, a second device by the code, a new code, a recovery', { skip: missing ?? no_core ?? false }, async t => {
   const core = await import(PKG)
   const { MemoryStore } = await import(here('../../bindings/stores.mjs'))
@@ -367,7 +361,8 @@ test('real hub, real core: a room with its account, a second device by the code,
     await second_hub.signIn(login.rooms[0].challenge)
     assert.equal(second_hub.role, 'recovery')
     await assert.rejects(second_hub.desk(), refused('forbidden', 403))
-    const served = await second_hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(opened, room, rows) })
+    const { served, session_groups } = await second_hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(opened, room, rows) })
+    assert.deepEqual(session_groups, [])
     assert.deepEqual([served.group.commits.length, served.rows.length, served.links, served.sessions], [1, 2, [], []])
     const joined = await second.joinRoomWithCode(opened, served, Date.now())
     assert.deepEqual([joined.outbox.length, joined.missingLink, joined.unverified], [1, null, []])
@@ -388,17 +383,8 @@ test('real hub, real core: a room with its account, a second device by the code,
     assert.deepEqual((await second.group(group)).epoch, 2)
   })
 
-  /** Skips, loudly, where the hub and the core do not agree yet: that is neither's test to pass here. */
-  const unlessMismatch = async (t2, run) => {
-    try { await run() } catch (e) {
-      const known = MISMATCHES.find(m => m.test.test(String(e.message)))
-      if (!known) throw e
-      console.warn(`\nSKIPPED (the hub and the core disagree): ${t2.name}\n  ${known.what}\n  the hub said: ${e.message}\n`)
-      t2.skip(known.what)
-    }
-  }
   let replaced = false
-  await t.test('the code is replaced: newRecoveryCode, replaceCode with the account\'s copies → recoveryCode → POST …/recovery-code', t2 => unlessMismatch(t2, async () => {
+  await t.test('the code is replaced: newRecoveryCode, replaceCode with the account\'s copies → recoveryCode → POST …/recovery-code', async () => {
     const newer = await first.newRecoveryCode(code)
     const made = copiesOf(room, newer)
     assert.notEqual(await first.replaceCode(code, accountCopiesBytes(made.copies), Date.now()), null)
@@ -419,19 +405,21 @@ test('real hub, real core: a room with its account, a second device by the code,
     kit = made.kit
     code = newer
     replaced = true
-  }))
+  })
 
-  await t.test('a recovery (8.7): a third device with the code prepares it, recovers, posts recoveryCommit … recoveryFinish; the others are out', t2 => unlessMismatch(t2, async () => {
+  await t.test('a recovery (8.7): a third device with the code prepares it, recovers, posts recoveryCommit … recoveryFinish; the others are out', async () => {
     const third = await newDevice('third'), third_hub = newHub()
     third_hub.useSigner(room, byCode(room, code))
-    const served = await third_hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
+    const { served } = await third_hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
     assert.deepEqual([served.group.commits.length, served.links.length], replaced ? [3, 1] : [2, 0])
     const plan = await third.prepareRecovery(code, served)
     assert.equal(plan.newCode.length, 32)
     const cuts = plan.removals.flatMap(r => r.devices.map(device => ({ group: r.group, cut: { device, seq: 0, hash: new Uint8Array(32) } })))
     assert.equal(cuts.length, 2, 'both devices of the room go')
-    const made = copiesOf(room, plan.newCode)
-    const built = await third.recover(code, served, cuts, accountCopiesBytes(made.copies), Date.now())
+    // the person came back with the bare code and sets a password anew: its login key, its copy, its derivation record
+    const fresh = core.passwordKeys(email, PASSWORD + ' anew'), made = copiesOf(room, plan.newCode)
+    const copies = { kit: made.copies.kit, password: { auth_key: fresh.authKey, sealed_copy: core.sealRecoveryCode(fresh.wrapKey, room, 'password', null, plan.newCode), kdf } }
+    const built = await third.recover(code, served, cuts, accountCopiesBytes(copies), Date.now())
     const kinds = (await third.outbox()).map(e => e.kind)
     assert.deepEqual([kinds.at(-1), kinds.slice(0, -1).every(k => k === 'recoveryCommit'), built.outbox.length], ['recoveryFinish', true, kinds.length])
 
@@ -450,7 +438,14 @@ test('real hub, real core: a room with its account, a second device by the code,
     assert.deepEqual((await third_hub.roomGroups())[0].leaves, [await third.id()])
     await assert.rejects(hub.desk(), refused('not-member', 403))
     await assert.rejects(second_hub.desk(), refused('not-member', 403))
-    const login = await outside.login(email, password.authKey)
-    assert.deepEqual(core.openRecoveryCode(password.wrapKey, room, 'password', null, login.rooms[0].sealed_copy), plan.newCode, 'the account opens the code the recovery made')
-  }))
+    await assert.rejects(outside.login(email, password.authKey), refused('wrong-login', 401))
+    const login = await outside.login(email, fresh.authKey)
+    assert.deepEqual(core.openRecoveryCode(fresh.wrapKey, room, 'password', null, login.rooms[0].sealed_copy), plan.newCode, 'the password set anew opens the code the recovery made')
+    assert.deepEqual(core.openRecoveryCode(made.kit.wrapKey, room, 'kit', null, (await outside.recover(email, made.kit.authKey)).rooms[0].sealed_copy), plan.newCode)
+    // what a human device alone may do, and what it may read (hub-api.md "Decided" 39; files 11.3)
+    await third_hub.putSealedKey(served.rows[0]).catch(e => assert.ok(e instanceof HubError && e.code !== 'forbidden', `a human device may post a SealedKey: ${e.code}`))
+    const again = newHub()
+    again.useSigner(room, byCode(room, plan.newCode))
+    await assert.rejects(again.putSealedKey(served.rows[0]), refused('forbidden', 403))
+  })
 })
