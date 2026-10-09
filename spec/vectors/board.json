@@ -1,5 +1,5 @@
 {
-  "about": "The Scribble Board (spec/v2.md section 10). points: packed points of a stroke in hex and what they hold, [x, y, t, force, azimuth, altitude] per point, x and y in 1/16 board unit. points_refused: packed bytes no reader takes. items: payloads of board items; a reader that decodes and encodes one gets the same text; file_ids is what the envelope's header lists. items_with_unknown_fields: payloads that read like the one named in same_as. items_refused, snapshots_refused: with the code of the refusal. history: board items in one order of arrival (sender in hex, envelope number, payload); applied in any order that keeps each sender's own order they give the board whose snapshot file, taken at frontier, is snapshot.",
+  "about": "The Scribble Board (spec/v2.md section 10). points: packed points of a stroke in hex and what they hold, [x, y, t, force, azimuth, altitude] per point, x and y in 1/16 board unit. points_refused: packed bytes no reader takes. items: payloads of board items; a reader that decodes and encodes one gets the same text; file_ids is what the envelope's header lists. items_with_unknown_fields: payloads with fields no reader knows, or without schema_version, that read like the one named in same_as. items_refused, snapshots_refused: with the code of the refusal. history: board items in one order of arrival (sender in hex, envelope number, payload); applied in any order that keeps each sender's own order they give the board whose snapshot file, taken at frontier, is snapshot.",
   "frontier": [
     [
       "1111111111111111111111111111111111111111111111111111111111111111",
@@ -272,11 +272,6 @@
     },
     {
       "code": "bad-format",
-      "payload": "{\"content_type\":\"strokes\",\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":64}]}",
-      "why": "no schema_version"
-    },
-    {
-      "code": "bad-format",
       "payload": "{\"content_type\":\"strokes\",\"schema_version\":1,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":64}]}",
       "why": "schema_version 1"
     },
@@ -534,11 +529,30 @@
       "code": "bad-format",
       "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"attachment\":{\"file_id\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"file_key\":\"\\u0041AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"file_name\":\"a.png\",\"media_type\":\"image/png\",\"sha256\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"total_size\":3},\"rect\":[0,0,160,160],\"tool\":\"image\"}]}",
       "why": "a file key written with an escape"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"later\":{\"x\":1,\"x\":2},\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "a key twice in a field no reader knows"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":null,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "schema_version set to null"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"move\",\"offset\":[-0,2],\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "an offset of minus zero"
     }
   ],
   "items_with_unknown_fields": [
     {
       "payload": "{\"content_type\":\"strokes\",\"later\":[1,2],\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"nw\":null,\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"transform\":[2,0,0,2,100,50],\"width\":64}]}",
+      "same_as": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":64}]}"
+    },
+    {
+      "payload": "{\"content_type\":\"strokes\",\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":64}]}",
       "same_as": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":64}]}"
     }
   ],
