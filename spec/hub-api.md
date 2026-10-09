@@ -138,7 +138,9 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
     line: turns are given out two seconds apart in the order sources came, each told by `retry-after`. A turn is
     its source's alone and good for one check, from its time until five seconds after; nobody else can take it,
     and nobody waits for anybody; a request that reached the hub in that time has the turn, however long it
-    then waits for the hub's pool (ten seconds at most). Who comes later asks for a new turn. The line is ten minutes long; a source
+    then waits for the hub's pool (ten seconds at most). Who comes later is told to come again in a few seconds
+    (eleven at most, while a request of its own that came in time may still be waiting) and is then given a
+    new turn. The line is ten minutes long; a source
     that finds it full is told to ask again in a minute. That is at most 2 010 checks per account in any hour,
     however many sources there are (1 800 turns of that hour, the few given out before it that are still good,
     and the 100 twice where two of its hours meet), beside the
@@ -308,8 +310,11 @@ encrypted.
     (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.
 40. **The admin page** is not part of the API and not on the public port: a second listener on 127.0.0.1:8791
     (`HUB_ADMIN_HOST`, `HUB_ADMIN_PORT`), started only if `HUB_ADMIN_PASSWORD_HASH` is set (Argon2id, PHC text;
-    `trommi-hub admin-hash` makes one from a password on standard input). One read-only page: the version and
-    health, the rooms with the counts the hub keeps (devices by role, sessions, changes, envelopes, file bytes
-    against the quota, push registrations, the account's e-mail), and every table with its number of rows, what
-    the hub reads in it and what lies in it sealed. After a wrong password the page takes no other for 1 s, 2 s
-    … up to a minute; a sign-in lasts twelve hours and lives in memory.
+    `trommi-hub admin-hash` makes one from a password on standard input). It takes `GET /` and nothing else,
+    under HTTP Basic (any user name, that password): no cookie, no form, nothing to change. One read-only page:
+    the version and health, the rooms with the counts the hub keeps (devices by role, sessions, changes,
+    envelopes, file bytes against the quota, push registrations, the account's e-mail), and every table with
+    its number of rows, what the hub reads in it and what lies in it sealed. After a wrong password the page
+    takes no other for 1 s, 2 s … up to a minute; a checked credential is taken for twelve hours without the
+    slow hash (kept in memory). The page is put together by one request at a time and kept five seconds; the
+    listener holds 16 connections, each for a minute at most.
