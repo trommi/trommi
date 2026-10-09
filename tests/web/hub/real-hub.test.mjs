@@ -192,12 +192,6 @@ const PKG = here('../../../core/wasm/pkg/trommi-core.js')
 const no_core = !existsSync(PKG) ? 'the core\'s WASM binding is not built (core/wasm/build.sh)' : null
 if (!missing && no_core) console.warn(`\nSKIPPED: nothing ran behind the real hub's sign-in: ${no_core}.\n`)
 const PASSWORD = 'correct horse battery staple 42'
-/** Where the real hub (branch v2-hub) and the real core (the binding) do not agree today. A step that meets one of
- *  these refusals is skipped with it named; any other failure fails. Delete an entry when the two agree. */
-const MISMATCHES = [
-  { test: /the SealedKey of the new epoch: another room epoch/, what: 'spec/v2.md 8.2 (the core\'s): the SealedKey of a room Commit that replaces the recovery keys names the NEW room epoch; the hub wants the epoch the Commit builds on (hub delivery.rs commit_in → check_sealed_key(…, note.room_epoch, …))' },
-]
-
 test('real hub, real core: a room with its account, a second device by the code, a new code, a recovery', { skip: missing ?? no_core ?? false }, async t => {
   const core = await import(PKG)
   const { MemoryStore } = await import(here('../../bindings/stores.mjs'))
@@ -388,17 +382,8 @@ test('real hub, real core: a room with its account, a second device by the code,
     assert.deepEqual((await second.group(group)).epoch, 2)
   })
 
-  /** Skips, loudly, where the hub and the core do not agree yet: that is neither's test to pass here. */
-  const unlessMismatch = async (t2, run) => {
-    try { await run() } catch (e) {
-      const known = MISMATCHES.find(m => m.test.test(String(e.message)))
-      if (!known) throw e
-      console.warn(`\nSKIPPED (the hub and the core disagree): ${t2.name}\n  ${known.what}\n  the hub said: ${e.message}\n`)
-      t2.skip(known.what)
-    }
-  }
   let replaced = false
-  await t.test('the code is replaced: newRecoveryCode, replaceCode with the account\'s copies → recoveryCode → POST …/recovery-code', t2 => unlessMismatch(t2, async () => {
+  await t.test('the code is replaced: newRecoveryCode, replaceCode with the account\'s copies → recoveryCode → POST …/recovery-code', async () => {
     const newer = await first.newRecoveryCode(code)
     const made = copiesOf(room, newer)
     assert.notEqual(await first.replaceCode(code, accountCopiesBytes(made.copies), Date.now()), null)
@@ -419,9 +404,9 @@ test('real hub, real core: a room with its account, a second device by the code,
     kit = made.kit
     code = newer
     replaced = true
-  }))
+  })
 
-  await t.test('a recovery (8.7): a third device with the code prepares it, recovers, posts recoveryCommit … recoveryFinish; the others are out', t2 => unlessMismatch(t2, async () => {
+  await t.test('a recovery (8.7): a third device with the code prepares it, recovers, posts recoveryCommit … recoveryFinish; the others are out', async () => {
     const third = await newDevice('third'), third_hub = newHub()
     third_hub.useSigner(room, byCode(room, code))
     const served = await third_hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
@@ -452,5 +437,5 @@ test('real hub, real core: a room with its account, a second device by the code,
     await assert.rejects(second_hub.desk(), refused('not-member', 403))
     const login = await outside.login(email, password.authKey)
     assert.deepEqual(core.openRecoveryCode(password.wrapKey, room, 'password', null, login.rooms[0].sealed_copy), plan.newCode, 'the account opens the code the recovery made')
-  }))
+  })
 })
