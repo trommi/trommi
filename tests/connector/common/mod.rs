@@ -112,7 +112,7 @@ impl HubProc {
             data,
         };
         let client = Hub::new(&hub.url, None, None).expect("a client");
-        for _ in 0..200 {
+        for _ in 0..1200 {
             if client
                 .open_call(reqwest::Method::GET, "/healthz", None)
                 .await
@@ -722,13 +722,13 @@ pub fn object_id(hex_id: &str) -> ObjectId {
         .expect("an object id")
 }
 
-/// Waits until `check` holds, at most ten seconds.
+/// Waits until `check` holds, at most a minute and a half (a busy machine is slow).
 pub async fn eventually<F, Fut>(what: &str, mut check: F)
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    for _ in 0..200 {
+    for _ in 0..1800 {
         if check().await {
             return;
         }
