@@ -161,3 +161,7 @@ path = "core/groups_hardening_merge.rs"
 [[test]]
 name = "core_groups_hardening_rules"
 path = "core/groups_hardening_rules.rs"
+
+[[test]]
+name = "core_groups_hardening_state"
+path = "core/groups_hardening_state.rs"

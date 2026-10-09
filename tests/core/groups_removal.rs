@@ -284,19 +284,34 @@ fn a_removed_human_device_is_no_sender_of_a_work_trail() {
         .unwrap();
     post_ok(&mut hub, &mut a);
     assert_eq!(a.group(&group).unwrap().disallowed, [forger.id()]);
+    // The group is stale from the room Commit on: nobody writes into it (5.2.8), and what arrives in it
+    // all the same is dropped unopened, the removed device's step first of all.
     forger.post_message(&mut hub, &mut forged, &step(2));
-    assert_eq!(
-        last(&hub, &mut a),
-        Ok(Processed::Message(Received::Dropped))
-    );
-    // The agent device's steps are still taken.
+    assert_eq!(last(&hub, &mut a), Ok(Processed::Skipped));
+    // The agent device has not seen the removal yet and writes; that is dropped too.
     agent
         .send_work_trail(&group, &TurnId::new([7; 16]), 2, b"{}", now())
         .unwrap();
     post_ok(&mut hub, &mut agent);
+    assert_eq!(last(&hub, &mut a), Ok(Processed::Skipped));
+    // Once it saw the removal it writes nothing there, until the group is cleaned; then its steps are
+    // taken again.
+    settle(&hub, &mut agent);
+    assert_eq!(
+        agent.send_work_trail(&group, &TurnId::new([7; 16]), 3, b"{}", now()),
+        Err(Error::StaleSession)
+    );
+    a.clean_session(&group, &cuts_for(&a, &group), None, now())
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    settle(&hub, &mut agent);
+    agent
+        .send_work_trail(&group, &TurnId::new([7; 16]), 3, b"{}", now())
+        .unwrap();
+    post_ok(&mut hub, &mut agent);
     assert!(matches!(
         last(&hub, &mut a),
-        Ok(Processed::Message(Received::WorkTrail { from, number: 2, .. })) if from == agent.id()
+        Ok(Processed::Message(Received::WorkTrail { from, number: 3, .. })) if from == agent.id()
     ));
 }
 
