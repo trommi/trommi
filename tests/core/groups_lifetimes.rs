@@ -214,6 +214,14 @@ fn a_refused_welcome_uses_up_its_single_use_key_package() {
         d.join_welcome(&package, &anyone, now()),
         Err(Error::BadFormat)
     );
+    // Bytes above the limit of a Commit's request are refused for their size, before they are parsed: also
+    // a Welcome with bytes behind it.
+    let limit = trommi_core::mls::profile::MAX_COMMIT_REQUEST_LEN;
+    let mut long = welcome.clone();
+    long.resize(limit, 0);
+    assert_eq!(d.join_welcome(&long, &anyone, now()), Err(Error::BadFormat));
+    long.push(0);
+    assert_eq!(d.join_welcome(&long, &anyone, now()), Err(Error::TooLarge));
 
     // The last-resort KeyPackage is not used up by a refusal, and a Welcome never replaces a held group.
     let mut e = new_device();

@@ -25,8 +25,8 @@ use crate::mls::key_package::{self, KeyPackageInfo};
 use crate::mls::message::{EpochKey, TrommiMessage, MAX_HANDOVER_KEYS, MAX_MESSAGE_LEN};
 use crate::mls::observer::{self, Context, Observer};
 use crate::mls::profile::{
-    self, CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession, MAX_HUMAN_DEVICES,
-    RECOVERY_KEY_LEN,
+    self, CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession, MAX_COMMIT_REQUEST_LEN,
+    MAX_HUMAN_DEVICES, RECOVERY_KEY_LEN,
 };
 use crate::mls::provider::{self, DeviceSigner, MlsEntries, Provider};
 use crate::mls::rules::{
@@ -1364,6 +1364,8 @@ impl<S: Storage> Device<S> {
             },
             seats: std::mem::take(&mut meta.seats),
             joined_epoch: staged.epoch,
+            // 5.2.10: what was archived stays archived.
+            archived: meta.archived,
             ..GroupMeta::default()
         };
         if staged.group.is_room() {
@@ -1972,7 +1974,7 @@ impl<S: Storage> Device<S> {
 
     /// Joins the group a Welcome is for (12.1.5, 5.2.6). The Welcome must be for one of this device's
     /// KeyPackages, for a group of the expected room that this device does not hold, and committed by the
-    /// expected device. A Welcome that is refused or does not open still uses up its single-use KeyPackage
+    /// expected device; one above [`MAX_COMMIT_REQUEST_LEN`] is `too-large` and is not parsed. A Welcome that is refused or does not open still uses up its single-use KeyPackage
     /// (3.7): the device then asks to be added again.
     pub fn join_welcome(
         &mut self,
@@ -1981,6 +1983,10 @@ impl<S: Storage> Device<S> {
         now_ms: u64,
     ) -> Result<Joined, Error> {
         self.transact(|this, batch| {
+            // Section 16: nothing above the limit of a Commit's request is parsed.
+            if welcome.len() > MAX_COMMIT_REQUEST_LEN {
+                return Err(Error::TooLarge);
+            }
             let own: Vec<Hash32> = group::welcome_recipients(welcome)?
                 .iter()
                 .filter_map(|reference| Hash32::from_slice(reference).ok())
@@ -2161,7 +2167,8 @@ impl<S: Storage> Device<S> {
     }
 
     /// Builds a join from outside into the group of `group_info` (3.4, 8.4) on a copy of the state: nothing
-    /// of the real state changes until the hub accepted it. `authorise` is handed the Commit as it will be
+    /// of the real state changes until the hub accepted it. Refused before anything is built: a group this
+    /// device archived (`gone`), and a GroupInfo whose tree holds a leaf of this device's key (`bad-commit`). `authorise` is handed the Commit as it will be
     /// posted and the note it carries, and returns the `RecoveryAuth` to post with it. The device must follow
     /// the room group, as an observer or a member, so that the note names a room state it verified.
     pub fn join_from_outside(
@@ -2180,6 +2187,20 @@ impl<S: Storage> Device<S> {
             }
             if this.memory.staged.values().any(|staged| staged.group == id) {
                 return Err(Error::Busy);
+            }
+            // 5.2.10: an archived session is not reopened.
+            if this
+                .memory
+                .groups
+                .get(&id)
+                .is_some_and(|meta| meta.archived)
+            {
+                return Err(Error::Gone);
+            }
+            // 4.3: a device that lost its state comes back under a new key. With a leaf of this key in the
+            // tree the join would remove that leaf, and a Remove needs the Cut that only the others hold.
+            if group::tree_holds(&verifiable, &this.id) {
+                return Err(Error::BadCommit);
             }
             let note = CommitNote {
                 room_epoch: room.epoch,
