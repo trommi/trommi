@@ -18,8 +18,8 @@ const art = name => raw(['phone', 'house'].includes(name) ? doodleSvg(`draw:${na
 const has = (o, fn) => typeof o?.[fn] === 'function'
 
 // ---- passkeys: the ceremonies ----
-// WebAuthn runs here, on the page; the core (core/account.ts) gets what a ceremony returned, as bytes. A passkey
-// opens the account through the 32 bytes of its `prf` extension over a fixed input; they go to the core and nowhere else.
+// WebAuthn runs here, on the page; the core worker (core/account.ts) gets what a ceremony returned, as bytes. A passkey
+// opens the account through the 32 bytes of its `prf` extension over a fixed input; they go to the worker and nowhere else.
 const pkBytes = v => new Uint8Array(v instanceof ArrayBuffer ? v.slice(0) : v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength))
 const unb64u = text => Uint8Array.from(atob(String(text).replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0))
 const b64u = b => btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -32,6 +32,8 @@ const pkFail = err => (typeof err?.code === 'string' ? err : err?.name === 'Abor
 const pkPrf = cred => { const r = cred.getClientExtensionResults?.()?.prf?.results?.first; return r ? pkBytes(r) : null }
 const pkList = ids => ids.map(id => ({ type: 'public-key', id }))
 /** A passkey that came to nothing (no account, or it cannot unlock): tell its store to drop it, where the browser can. */
+/** Did the step certainly leave no passkey registered? Not when the hub was not reached or did not answer as it should, the worker went away, or the core says the passkey was kept: it may be a way in then, and stays in its store. */
+const cameToNothing = err => err?.passkey_kept !== true && err?.transient !== true && !['offline', 'bad-answer', 'worker-failed', 'worker-timeout'].includes(err?.code)
 const passkeyForget = id => { try { Promise.resolve(window.PublicKeyCredential?.signalUnknownCredential?.({ rpId: pkRpId(), credentialId: b64u(id) })).catch(() => {}) } catch {} }
 /**
  * What this device can do with passkeys, before anything is tried (whether its passkeys have prf is known only once one is made: passkeyMake):
@@ -91,15 +93,6 @@ async function passkeyUnlock(st) {
   if (!got.prf) throw pkError('no-prf', 'this passkey gives no key here')
   return { credential_id: got.credential_id, prf: got.prf }
 }
-// A passkey's name, for the person: where it is kept, read from the id its store gave (AAGUID; public, the hub lists
-// it). Stores that say nothing (security keys, with attestation "none") are "Passkey". No name is stored anywhere.
-const PASSKEY_STORES = {
-  fbfc3007154e4ecc8c0b6e020557d7bd: 'iCloud Keychain', dd4ec289e01d41c9bb8970fa845d4bf2: 'iCloud Keychain', ea9b8d664d011d213ce4b6b48cb575d4: 'Google Password Manager',
-  '08987058cadc51b281e167f8f00d8e1d': 'Windows Hello', '9ddd1817af5a4672a2b93e3dd95000a9': 'Windows Hello', '6028b017b1d44c02b4b3afcdafc96bb2': 'Windows Hello',
-  adce000235bcc60a648b0b25f1f05503: 'Chrome on Mac', bada5566a7aa401fbd9645619a55120d: '1Password', d548826e79b4db40a3d811116f7e8349: 'Bitwarden',
-  '531126d6e717415c93203d9aa6981239': 'Dashlane', '50726f746f6e5061737350726f746f6e': 'Proton Pass',
-}
-const passkeyName = p => PASSKEY_STORES[p.aaguid] ?? 'Passkey'
 const NO_PRF = 'This passkey can\'t unlock Trommi. Use a password.'
 /** Said once, quietly, where a browser has no WebAuthn at all: the password is the way then. */
 const NO_PASSKEYS = html`<p class="ob-alt ob-way ob-none" id="no-passkeys">No passkeys in this browser. A password works everywhere.</p>`
@@ -390,18 +383,15 @@ ${setRow({ href: '/settings/proof', icon: sk('tick'), word: 'MLS proof', detail:
         : st === undefined ? html`<p class="room-wait">${room.account_error ? `Not reachable: ${room.account_error}` : 'Loading…'}</p>`
           : st === null ? html`<p class="room-lead">This account was made before email and password. Add a login, so a new device gets in with email and password. You need the recovery code shown when you started.</p>
 ${form('/settings/account', html`<label>Email<input type="email" name="email" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>${pwField()}<label>Recovery code<input name="recovery_code" required autocomplete="off" spellcheck="false" class="room-mono" placeholder="XXXX-XXXX-…"></label>`, 'Add login', 'account-add')}`
-            : html`<p class="room-lead">Logged in as <b id="account-email">${st.email}</b>${st.email_verified_at ? html` <span class="room-ok">· confirmed</span>` : ''}</p>
-${st.email_verified_at ? '' : html`<details class="room-more" id="email-confirm"><summary>Confirm your email</summary><p class="room-meta">We send a six-digit code to ${st.email}.</p>
-<form method="post" action="/settings/account/code" class="room-inline"><button type="submit">Send code</button></form>
-${form('/settings/account/verify', html`<label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required class="room-code-input"></label>`, 'Confirm', 'verify-form')}</details>`}
+            : html`<p class="room-lead">Logged in as <b id="account-email">${st.email}</b></p>
 <h4 class="room-sub">Emergency Kit</h4>
 ${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now.${first ? '' : ' The old kit no longer works.'}</p>${kitBox(st.email, kit, true)}`
   : html`<p class="room-lead">${st.has_recovery ? 'Made.' : 'Not made yet.'} ${st.has_password === false ? 'It opens your account if you lose your passkey.' : 'With it you can set a new password if you forget yours.'}</p>
 <details class="room-more" id="kit-new"><summary>${st.has_recovery ? 'Make a new kit' : 'Make my Emergency Kit'}</summary>${form('/settings/kit', unlockField(st), 'Make the kit', 'kit-form')}</details>`}
 <h4 class="room-sub">Passkeys</h4>
 ${(st.passkeys ?? []).length ? html`<ul class="room-devices room-passkeys" id="passkeys">${st.passkeys.map(p => html`<li class="room-device room-passkey" id="passkey-${p.credential_id.slice(0, 12)}">
-<span class="room-device-name"><b>${passkeyName(p)}</b><small>${p.backup_eligible ? 'Synced' : 'This device only'} · added ${day(p.created_at)} · ${p.last_used_at ? `used ${day(p.last_used_at)}` : 'not used yet'}</small></span>
-<form method="post" action="/settings/passkeys/remove" class="room-remove"><input type="hidden" name="id" value="${p.credential_id}"><details><summary>Remove</summary><p>${passkeyName(p)} no longer opens your account after this.</p><button type="submit" class="room-danger">Remove passkey</button></details></form></li>`)}</ul>`
+<span class="room-device-name"><b>Passkey</b><small>added ${day(p.created_at)} · ${p.last_used_at ? `used ${day(p.last_used_at)}` : 'not used yet'}</small></span>
+<form method="post" action="/settings/passkeys/remove" class="room-remove"><input type="hidden" name="id" value="${p.credential_id}"><details><summary>Remove</summary><p>Passkey no longer opens your account after this.</p><button type="submit" class="room-danger">Remove passkey</button></details></form></li>`)}</ul>`
   : html`<p class="room-lead" id="passkeys-none">None yet. A passkey logs you in without a password.</p>`}
 ${st.has_password !== false && (st.passkeys ?? []).length ? html`<p class="room-meta" id="password-still">Your password still opens this account.</p>` : ''}
 ${canPasskey ? html`<details class="room-more" id="passkey-new"><summary>Add passkey</summary>${form('/settings/passkeys', unlockField(st), 'Add passkey', 'passkey-form')}</details>` : html`<p class="room-meta" id="passkey-cannot">This browser makes no passkeys.</p>`}
@@ -417,7 +407,7 @@ ${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="a
 ${link ? html`<details class="room-section room-more" id="advanced"><summary>Advanced</summary><p class="room-lead">The address of this account, for the old recovery code (app.trommi.com/recover). On its own it opens nothing.</p>${copyBox(link, 'Address')}
 <p class="room-meta">${room.room_id.slice(0, 16)}… · key epoch ${room.key_epoch} · hub ${room.hub_url}</p></details>` : ''}`, 'Your login, and what this device keeps.')
     }
-    const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', sent: 'Code sent.', confirmed: 'Email confirmed.', 'passkey-added': 'Passkey added.', 'passkey-removed': 'Passkey removed.', 'password-added': 'Password added.' }
+    const DONE = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', 'passkey-added': 'Passkey added.', 'passkey-removed': 'Passkey removed.', 'password-added': 'Password added.' }
     // (whether this browser can make a passkey: asked once, the page refreshes when it is known)
     let canPasskey = false
     passkeyOffer().then(o => { canPasskey = o.get; if (canPasskey && m().room.account) client._setRoom?.({ account: { ...m().room.account } }) })
@@ -448,7 +438,7 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
       const st = await A.accountStatus(client), unlock = await unlockOf(f, st)
       await A.checkUnlock(client, unlock)
       const passkey = await passkeyMake({ challenge: await A.passkeyChallengeFor(client), user_handle: unb64u(st.user_handle), email: st.email, exclude: (st.passkeys ?? []).map(p => unb64u(p.credential_id)) })
-      try { await A.addPasskey(client, { unlock, passkey }) } catch (err) { passkeyForget(passkey.credential_id); throw err }
+      try { await A.addPasskey(client, { unlock, passkey }) } catch (err) { if (cameToNothing(err)) passkeyForget(passkey.credential_id); throw err }
     }, 'passkey-added')
     accountPost(/^\/settings\/passkeys\/remove$/, async (f, A) => {
       const id = String(f.get('id'))
@@ -461,8 +451,6 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
       client._setRoom({ account: { ...m().room.account, has_recovery: true } })
       return { kit: words }
     })
-    accountPost(/^\/settings\/account\/code$/, (f, A) => A.resendEmailCode(client), 'sent')
-    accountPost(/^\/settings\/account\/verify$/, (f, A) => A.verifyEmail(client, String(f.get('code'))), 'confirmed')
 
     // ---- /logout (the Trommi menu and Settings -> Account): asks once, then logOut() ----
     const logoutMain = (error = '') => {
@@ -485,7 +473,7 @@ ${note ? html`<p class="room-lead" id="logout-last">${note}</p>` : ''}<p class="
     t.post(/^\/logout$/, async () => { await logOut(client) })
 
     // A join link opened on a device that is in a room already.
-    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', roomShell('Already logged in', html`<p class="room-lead">This device is logged in already. Invite another device under <a href="/settings" data-nav>Settings</a>.</p><p class="room-meta">Another account? <a href="/logout" data-nav id="login-logout-first">Log out of this device first</a>, then log in.</p><p class="room-meta"><a href="/" data-nav>Open your Desk</a></p>`)))
+    t.get(/^\/(?:join|login)$/, ({ req, res }) => { if (location.hash.length > 1) history.replaceState(null, '', location.pathname); return page(req, res, 'Pair a device', roomShell('Already logged in', html`<p class="room-lead">This device is logged in already. Invite another device under <a href="/settings" data-nav>Settings</a>.</p><p class="room-meta">Another account? <a href="/logout" data-nav id="login-logout-first">Log out of this device first</a>, then log in.</p><p class="room-meta"><a href="/" data-nav>Open your Desk</a></p>`)) })
   }
 }
 
@@ -539,6 +527,8 @@ async function generateInto(button) {
   if (hint) hint.textContent = 'Generated for you. Put it in your password manager or write it down.'
   input.addEventListener('input', () => { button.textContent = 'Generate'; delete button.dataset.generated }, { once: true })
 }
+/** Said by "Create account" for an email that has one (in Settings the same refusal is about this account's login). */
+const EMAIL_TAKEN = 'This email has an account already. Log in instead.'
 const NO_RECOVERY = 'If you lose your password and your Emergency Kit, nobody (not even Trommi) can recover your data.'
 const NO_RECOVERY_PASSKEY = 'If you lose your passkeys and your Emergency Kit, nobody (not even Trommi) can recover your data.'
 /** The Emergency Kit as a text file. */
@@ -569,9 +559,9 @@ const kitBox = (email, words, stim = false) => html`<div class="room-kit" id="ki
 <div class="room-actions room-kit-actions"${stim ? raw(' data-controller="room"') : ''}><button type="button" id="kit-download"${stim ? raw(' data-action="room#download"') : ''} data-room-text-param="${kitText(email, words)}">Download</button><button type="button" id="kit-print"${stim ? raw(' data-action="room#print"') : ''}>Print</button></div>`
 const accountError = err => ({
   'wrong-login': 'Wrong email or password.', 'wrong-recovery': 'Wrong email or words.', 'bad-recovery-words': 'Check the twelve words.',
-  'rate-limited': 'Too many tries. Wait a few minutes.', 'too-many': 'Too many sign-ups with this email. Try tomorrow.', 'weak-password': 'At least 12 characters.', 'bad-email': 'That is not an email address.',
+  'rate-limited': 'Too many tries. Wait a few minutes.', 'too-many': 'Too many. Try again later.', 'weak-password': 'At least 12 characters.', 'bad-email': 'That is not an email address.',
   offline: 'Can\'t reach Trommi. Check your connection.', 'room-exists': 'This browser is logged in already.', 'bad-recovery-code': 'This code does not fit this account.',
-  'account-exists': 'This account has a login already.', 'account-changed': 'Changed on another device. Try again.', 'wrong-code': 'Wrong or expired code.',
+  'account-exists': 'This account has a login already.', 'account-changed': 'Changed on another device. Try again.', 'core-missing': 'This version cannot do that yet.',
   'worker-failed': 'That did not start. Reload and try again.', 'worker-timeout': 'That took too long. Try again.',
   'no-prf': 'This passkey can\'t unlock Trommi here.', 'passkey-cancelled': 'No passkey used.', 'passkey-aborted': 'No passkey used.', 'passkey-exists': 'This passkey is added already.',
   'passkey-failed': 'The passkey did not work. Try again.', 'bad-passkey': 'That passkey was not accepted. Try again.', 'last-way-in': 'This is your only way in. Add a password or another passkey first.',
@@ -794,10 +784,13 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   const loggedOut = demo === 'logged-out' ? '1' : new URLSearchParams(location.search).get('logged_out')
   const wayLogin = new URLSearchParams(location.search).get('way') === 'login'
   if (loggedOut) history.replaceState(null, '', '/')
+  // A join link in the address: its secret leaves the address bar at once, whatever screen comes next.
+  const joinLink = location.pathname === '/join' && location.hash.length > 1 ? location.href : ''
+  if (joinLink) history.replaceState(null, '', '/join')
   // This browser holds an account that did not open: never the start page (Log in would refuse: "signed in already").
   if (demo) return demoFlow(demo)
   if (openError) return brokenFlow(openError)
-  if (location.pathname === '/join' && location.hash.length > 1) return joinFlow()
+  if (joinLink) return joinFlow(joinLink)
   if (location.pathname === '/recover') recoverFlow()
   else if (wayLogin) loginFlow()
   else welcome()
@@ -869,14 +862,14 @@ ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link
       try {
         // (the mark: should this tab close between the account, made with its kit, and the kit's page, the page still comes: kitGate)
         write(KIT_MARK, '1')
-        const { client, kit } = await f.A.createAccount({ hub_url: hub, email: f.email, password: f.password, device_name, storage: await storage(), found_token: foundCode(), client: CLIENT })
+        const { client, kit } = await f.A.createAccount({ hub_url: hub, email: f.email, password: f.password, device_name, found_token: foundCode(), client: CLIENT })
         freshKit = { ...kit, has_password: true }
         await opened(client)
       } catch (err) {
         console.warn(err)
         if (err.code === 'room-exists') return roomExists()
         try { localStorage.removeItem(KIT_MARK) } catch {}
-        idle(form); say(accountError(err))
+        idle(form); say(err.code === 'account-exists' ? EMAIL_TAKEN : accountError(err))
       }
     })
   }
@@ -892,16 +885,17 @@ ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link
       made = await passkeyMake({ challenge: await takeChallenge(), user_handle, email: f.A.normaliseEmail(f.email) })
       busy(form, 'Creating…')
       write(KIT_MARK, '1')
-      const { client, kit } = await f.A.createAccountWithPasskey({ hub_url: hub, email: f.email, passkey: { ...made, user_handle }, device_name, storage: await storage(), found_token: foundCode(), client: CLIENT })
+      const { client, kit } = await f.A.createAccountWithPasskey({ hub_url: hub, email: f.email, passkey: { ...made, user_handle }, device_name, found_token: foundCode(), client: CLIENT })
+      made = null   // (it is the account's way in from here on)
       freshKit = { ...kit, has_password: false }
       await opened(client)
     } catch (err) {
       console.warn(err)
       try { localStorage.removeItem(KIT_MARK) } catch {}
-      if (made) passkeyForget(made.credential_id)   // made, and no account came of it
+      if (made && cameToNothing(err)) passkeyForget(made.credential_id)   // made, and no account came of it
       if (err.code === 'room-exists') return roomExists()
       if (err.code === 'no-prf') return createFlow({ way: 'password', note: NO_PRF })
-      idle(form); say(err.code === 'passkey-cancelled' ? 'No passkey made.' : accountError(err))
+      idle(form); say(err.code === 'passkey-cancelled' ? 'No passkey made.' : err.code === 'account-exists' ? EMAIL_TAKEN : accountError(err))
     }
   }
 
@@ -937,7 +931,7 @@ ${pk ? '' : NO_PASSKEYS}
         if (!a.prf) return loginFlow(NO_PRF_HERE, 'passkey')
         keyBusy('Logging in…')
         say('')
-        const { client } = await (await account()).loginWithPasskey({ hub_url: hub, assertion: a, device_name, storage: await storage(), client: CLIENT })
+        const { client } = await (await account()).loginWithPasskey({ hub_url: hub, assertion: a, device_name, client: CLIENT })
         await done(client)
       } catch (err) {
         if (err.code === 'passkey-aborted' || !root.querySelector('#login-form')) return
@@ -975,7 +969,7 @@ ${pk ? '' : NO_PASSKEYS}
       if (!f) return
       busy(form, 'Logging in…')
       try {
-        const { client } = await f.A.loginWithPassword({ hub_url: hub, email: f.email, password: f.password, device_name, storage: await storage(), client: CLIENT })
+        const { client } = await f.A.loginWithPassword({ hub_url: hub, email: f.email, password: f.password, device_name, client: CLIENT })
         await done(client)
       } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); idle(form); say(accountError(err), form.elements.password) }
     })
@@ -1005,7 +999,7 @@ ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link
         const f = await emailOf(form)
         busy(form, 'Opening…')
         try {
-          const { client } = await f.A.recoverWithKit({ hub_url: hub, email: f.email, words: words.value, device_name, storage: await storage(), client: CLIENT })
+          const { client } = await f.A.recoverWithKit({ hub_url: hub, email: f.email, words: words.value, device_name, client: CLIENT })
           newWayFlow(client, words.value)
         } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); idle(form); say(accountError(err)) }
         return
@@ -1014,12 +1008,16 @@ ${offer.get ? html`<p class="ob-alt ob-way"><button type="button" class="ob-link
       if (!f) return
       busy(form, 'Setting…')
       try {
-        const { client } = await f.A.resetPassword({ hub_url: hub, email: f.email, words: words.value, new_password: f.password, device_name, storage: await storage(), client: CLIENT })
-        await done(client)
-      } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); idle(form); say(accountError(err)) }
+        // (the old kit opens nothing after this: the new one is shown next, as after "Create account")
+        write(KIT_MARK, '1')
+        const { client, kit } = await f.A.resetPassword({ hub_url: hub, email: f.email, words: words.value, new_password: f.password, device_name, client: CLIENT })
+        freshKit = { ...kit, has_password: true }
+        await opened(client)
+      } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); try { localStorage.removeItem(KIT_MARK) } catch {} idle(form); say(accountError(err)) }
     })
   }
   // The words opened the account and this device is in. Now the way in for next time: a new passkey, or a password.
+  // With it the account gets a new Emergency Kit (the old words open nothing after it), shown next.
   // (A reload here opens the board: the device is a member already; Settings → Account offers both again.)
   function newWayFlow(client, words, { way = 'passkey', note = '' } = {}) {
     const passkey = way === 'passkey'
@@ -1037,16 +1035,22 @@ ${obError()}${passkey ? html`<button type="submit" class="ob-go" id="newway-pass
           const st = await A.accountStatus(client)
           made = await passkeyMake({ challenge: await A.passkeyChallengeFor(client), user_handle: unb64u(st.user_handle), email: st.email, exclude: (st.passkeys ?? []).map(p => unb64u(p.credential_id)) })
           busy(form, 'Saving…')
-          await A.addPasskey(client, { unlock: { words }, passkey: made })
-          return await done(client)
+          write(KIT_MARK, '1')
+          const { kit } = await A.addPasskey(client, { unlock: { words }, passkey: made })
+          made = null   // (it is the account's way in from here on)
+          freshKit = { ...kit, has_password: false }
+          return await opened(client)
         }
         if (A.passwordProblem(form.elements.password.value)) return weak(form)
         busy(form, 'Setting…')
-        await A.setPassword(client, { unlock: { words }, next: form.elements.password.value })
-        await done(client)
+        write(KIT_MARK, '1')
+        const { kit } = await A.setPassword(client, { unlock: { words }, next: form.elements.password.value })
+        freshKit = { ...kit, has_password: true }
+        await opened(client)
       } catch (err) {
         console.warn(err)
-        if (made) passkeyForget(made.credential_id)
+        try { localStorage.removeItem(KIT_MARK) } catch {}
+        if (made && cameToNothing(err)) passkeyForget(made.credential_id)
         if (err.code === 'no-prf') return newWayFlow(client, words, { way: 'password', note: NO_PRF })
         idle(form); say(err.code === 'passkey-cancelled' ? 'No passkey made.' : accountError(err))
       }
@@ -1065,7 +1069,7 @@ ${obError()}${passkey ? html`<button type="submit" class="ob-go" id="newway-pass
 <p class="scan-say" id="scan-say" role="status">${SCAN_SAYS[state]}</p>
 <p class="scan-where">On the other device: Settings → Invite a Device</p>
 <details class="ob-paste" id="scan-paste"${paste || state === 'denied' || state === 'none' ? raw(' open') : ''}><summary>Paste the link</summary>
-<form id="paste-form" class="ob-form" novalidate><input name="link" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="The link" placeholder="https://app.trommi.com/join#v1…">
+<form id="paste-form" class="ob-form" novalidate><input name="link" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="The link" placeholder="https://app.trommi.com/join#v2…">
 ${obError()}${obSubmit('Next')}</form></details>
 <p class="ob-alt"><button type="button" class="ob-link" id="alt-login">Back to log in</button><span${state === 'denied' ? '' : raw(' hidden')}> · <button type="button" class="ob-link" id="scan-again">Try the camera</button></span></p>`, { cls: 'ob-scan' }), null)
     on('#alt-login', 'click', () => loginFlow())
@@ -1078,8 +1082,8 @@ ${obError()}${obSubmit('Next')}</form></details>
     const go = text => {
       const hash = joinHash(text)
       if (!hash) return false
-      history.replaceState(null, '', `/join${hash}`)
-      joinFlow()
+      history.replaceState(null, '', '/join')
+      joinFlow(`${location.origin}/join${hash}`)
       return true
     }
     on('#paste-form', 'submit', e => { e.preventDefault(); if (!go(e.target.elements.link.value)) say('That is not a Trommi link.', e.target.elements.link) })
@@ -1116,14 +1120,13 @@ ${obError()}${obSubmit('Next')}</form></details>
     begin()
   }
 
-  // Join with the link in the address: this device makes its keys and asks at once; then the check code (six emoji) to
-  // compare with the other device. Its name is made for it (deviceLabel).
-  async function joinFlow() {
-    const link = location.href
+  // Join with a link (from the address, scanned or pasted; its secret is never left in the address bar): this device
+  // makes its keys and asks at once; then the check code (six emoji) to compare with the other device. Its name is
+  // made for it (deviceLabel).
+  async function joinFlow(link) {
     joinWait()
     try {
-      const join = c.joinRoom({ link, device_name, storage: await storage(), client: CLIENT })
-      history.replaceState(null, '', '/join')   // the secret leaves the address bar
+      const join = c.joinRoom({ link, device_name, client: CLIENT })
       join.check_code.then(code => {
         joinEmoji(code)
         on('#join-cancel', 'click', () => { join.cancel(); history.replaceState(null, '', '/'); scanFlow() })
@@ -1196,9 +1199,9 @@ ${obError(error)}${obSubmit('Recover')}</form>`, { lead: 'For accounts from befo
       busy(e.target, 'Recovering…')
       try {
         const { hub_url, room_id } = parseAddress(f.get('room_link'))
-        // The new code comes before the recovery is posted (the core never loses it): it is on screen from then on.
+        // The new code comes before the recovery is posted: it is on screen from then on.
         const on_recovery_code = fresh => show(obShell('Your new code', html`<p class="room-recovery" id="recovery-code">${fresh}</p><p class="room-wait">Recovering…</p>`, { lead: 'Write it down now. It replaces the old one.', home: false }), null)
-        const { client, recovery_code } = await c.recoverRoom({ hub_url, room_id, code: String(f.get('code')).trim(), device_name, storage: await storage(), client: CLIENT, on_recovery_code })
+        const { client, recovery_code } = await (await account()).recoverWithCode({ hub_url, room_id, code: String(f.get('code')).trim(), device_name, client: CLIENT, on_recovery_code })
         recovery(client, recovery_code)
       } catch (err) { console.error(err); recoverFlow(err.code === 'bad-recovery-code' ? accountError(err) : `Not recovered: ${err.message}`) }
     })
@@ -1353,11 +1356,11 @@ function qrSvg(text, label = 'QR-Code') {
 }
 
 const SCAN_SAYS = { asking: 'Allow the camera to scan.', tap: '', scanning: 'Point at the code on your other device.', denied: 'Camera is off. Paste the link instead.', none: 'No camera here. Paste the link instead.', wrong: 'Not a Trommi code.' }
-/** A join link of this app: this origin, /join, and after the # `v1.` with its three parts. Anything else is no code of ours. */
+/** A join link of this app: this origin, /join, and after the # `v2.` with its three parts (the hub, the room's id and the secret, 32 bytes each). Anything else is no code of ours. */
 const joinHash = text => {
   let u
   try { u = new URL(String(text).trim()) } catch { return null }
-  return u.origin === location.origin && u.pathname === '/join' && /^#v1\.[\w-]{4,}\.[\w-]{43}\.[\w-]{16,}$/.test(u.hash) ? u.hash : null
+  return u.origin === location.origin && u.pathname === '/join' && /^#v2\.[\w-]{4,}\.[\w-]{43}\.[\w-]{43}$/.test(u.hash) ? u.hash : null
 }
 /** The drawn corners over the camera's picture: four pen angles, a little uneven. */
 const SCAN_CORNERS = raw('<svg class="scan-corners" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="M15.2 31.5 Q14.2 21 15.6 15.8 Q22 14.4 31.8 15.3"/><path d="M68.4 14.9 Q79 14.3 84.5 15.5 Q85.9 22.5 84.8 31.9"/><path d="M85.1 68.2 Q85.8 78.6 84.4 84.6 Q77.5 85.8 68 84.9"/><path d="M31.6 85.2 Q21.4 85.9 15.5 84.3 Q14.2 77 15 68.3"/></svg>')
