@@ -73,7 +73,7 @@ struct SessionScreen: View {
             SessionStatus(agent: a, tasks: tasks, messages: all)
             Color.clear.frame(height: 1).id("bottom")
           }
-          .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 8)
+          .padding(.horizontal, 14).padding(.top, 6)
           .frame(maxWidth: 760).frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(.bottom)
@@ -726,6 +726,8 @@ struct Composer: View {
   /** Cards attached to this message (copied_cards). */
   @State private var cards: [String] = []
   @FocusState private var focused: Bool
+  /** The keyboard is up: the composer then sits 8 pt over it, else at the screen's bottom edge (bottomSink). */
+  @State private var keyboard = false
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       if let e = error { Text(e).font(Face.text(13)).foregroundStyle(Ink.urgCritical).padding(.horizontal, 6) }
@@ -754,8 +756,11 @@ struct Composer: View {
         }
       }
       // as Messages on iOS 26: a round glass "+" for files, the field as a glass capsule with the send arrow inside;
-      // what is attached lies in the field above the text line (PendingFiles), the field grows with it
-      HStack(alignment: .bottom, spacing: 8) {
+      // what is attached lies in the field above the text line (PendingFiles), the field grows with it.
+      // Messages' measures (his screenshots, 9 October): the "+" 40 pt, the field 40 pt tall on the same centre, 11 pt
+      // between them, 27 pt from the left edge and 25 pt from the right; the lower edge 26 pt over the screen's bottom
+      // edge (inside the home indicator's area), 8 pt over the keyboard
+      HStack(alignment: .bottom, spacing: 11) {
         Menu {
           Button { pickingPhotos = true } label: { Label("Photo Library", systemImage: "photo.on.rectangle") }
           Button { importing = true } label: { Label("Choose File", systemImage: "doc") }
@@ -763,7 +768,7 @@ struct Composer: View {
           if UIImagePickerController.isSourceTypeAvailable(.camera) { Button { camera = true } label: { Label("Take Photo", systemImage: "camera") } }
           #endif
         } label: {
-          Image(systemName: "plus").font(.system(size: 19, weight: .semibold)).foregroundStyle(Ink.fg).frame(width: 44, height: 44).glass(Circle(), interactive: true)
+          Image(systemName: "plus").font(.system(size: 19, weight: .semibold)).foregroundStyle(Ink.fg).frame(width: 40, height: 40).glass(Circle(), interactive: true)
         }
         .accessibilityLabel("Attach")
         VStack(alignment: .leading, spacing: 0) {
@@ -773,14 +778,14 @@ struct Composer: View {
               .font(Face.text(17))
               .lineLimit(1...7)
               .focused($focused)
-              .padding(.leading, 16).padding(.vertical, 11)
+              .padding(.leading, 16).padding(.vertical, 9)
             Button(action: send) {
               Group {
                 if sending { ProgressView().tint(Ink.accentFg) }
                 else { Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)) }
               }
-              .foregroundStyle(Ink.accentFg).frame(width: 34, height: 34).background(Circle().fill(canSend ? Ink.accent : Ink.faint))
-              .frame(width: 44, height: 44).contentShape(Rectangle())
+              .foregroundStyle(Ink.accentFg).frame(width: 32, height: 32).background(Circle().fill(canSend ? Ink.accent : Ink.faint))
+              .frame(width: 40, height: 40).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!canSend || sending)
@@ -791,7 +796,11 @@ struct Composer: View {
         .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
       }
     }
-    .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 8)
+    .padding(.leading, 27).padding(.trailing, 25).padding(.top, 8).padding(.bottom, keyboard ? 8 : bottomSink(26))
+    #if canImport(UIKit)
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in withAnimation(.easeOut(duration: 0.25)) { keyboard = true } }
+    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in withAnimation(.easeOut(duration: 0.25)) { keyboard = false } }
+    #endif
     .onAppear { if autofocus { focused = true } }
     .sheet(isPresented: $pickingPhotos) { PhotoPicker(limit: MAX_FILES - files.count) { picked in Task { await take(picked) } }.ignoresSafeArea() }
     .sheet(isPresented: $camera) { CameraPicker { data in Task { await take([(data, .jpeg)]) } }.ignoresSafeArea() }

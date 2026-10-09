@@ -114,7 +114,8 @@ struct TabPill: View {
     .padding(4)
     .glass(Capsule())
     .animation(.snappy, value: on)
-    .padding(.top, 6).padding(.bottom, 2)
+    // where the system's tab bar lies: the lower edge 23 pt over the screen's bottom edge (it stood 36 pt over it)
+    .padding(.top, 6).padding(.bottom, bottomSink(23))
     .accessibilityElement(children: .contain).accessibilityAddTraits(.isTabBar)
   }
   private func item(_ t: BoardModel.Tab, _ key: String, _ side: CGFloat, _ label: String) -> some View {
