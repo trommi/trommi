@@ -1160,21 +1160,29 @@ impl Updater {
         self.replaced.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    /// Called once the updater is up and listening. Ends a trial of this very program, and undoes a hub swap that
-    /// was cut off halfway (the updater or the machine went down during a deploy).
-    pub async fn started(&self) {
-        let _turn = self.gate.lock().await;
-        let Ok(_lock) = self.file_lock().await else {
-            return;
-        };
+    /// Called once the updater is up and listening: ends a trial of this very program.
+    pub fn confirm(&self) {
         let root = &self.cfg.root;
         if root.join("updater-trial").exists() {
             let _ = remove_whole(&root.join("updater-trial"));
             log("updater-confirmed", json!({ "release": self.own_release }));
         }
         if let Some(reverted) = self.reverted() {
-            log("updater-reverted", json!({ "did_not_come_up": reverted, "runs": self.own_release }));
+            log(
+                "updater-reverted",
+                json!({ "did_not_come_up": reverted, "runs": self.own_release }),
+            );
         }
+    }
+
+    /// After a start: undoes a hub swap that was cut off halfway (the updater or the machine went down during a
+    /// deploy), and makes sure the hub runs.
+    pub async fn recover(&self) {
+        let _turn = self.gate.lock().await;
+        let Ok(_lock) = self.file_lock().await else {
+            return;
+        };
+        let root = &self.cfg.root;
         let journal = std::fs::read(root.join("deploy-journal.json"))
             .ok()
             .map(|bytes| serde_json::from_slice::<Journal>(&bytes));
@@ -1205,6 +1213,12 @@ impl Updater {
             }
         }
         self.tidy();
+    }
+
+    /// Both steps of a start, in order.
+    pub async fn started(&self) {
+        self.confirm();
+        self.recover().await;
     }
 
     /// Waits until no deploy runs (before the updater stops).
