@@ -170,6 +170,13 @@ final class BoardModel: ObservableObject {
   init() {
     // TROMMI_SCREEN=<id> (dev/interop/fixtures/screens.json): the demo on that screen, no room, no network, nothing stored
     let env = ProcessInfo.processInfo.environment
+    // TROMMI_CHATLIST=1: the chat list on a crowded demo room (DemoMode.swift ChatListDemo), All desks, for screenshots
+    if let style = env["TROMMI_CHATLIST"], !style.isEmpty {
+      if let t = env["TROMMI_THEME"].flatMap(ThemeMode.init(rawValue:)) { _theme = Published(initialValue: t) }
+      startDemo(keep: false)
+      deskId = ALL_DESKS; tab = .chat; chatPath = []
+      return
+    }
     if let screen = env["TROMMI_SCREEN"], !screen.isEmpty {
       if let t = env["TROMMI_THEME"].flatMap(ThemeMode.init(rawValue:)) { _theme = Published(initialValue: t) }
       _deskId = Published(initialValue: nil)
@@ -353,7 +360,8 @@ final class BoardModel: ObservableObject {
 
   /** The web demo's room (Resources/Demo/fixture.json, its times moved to now): his own room rests meanwhile. */
   func startDemo(keep: Bool = true) {
-    guard let data = try? Data(contentsOf: DemoData.url("fixture.json")), let b = try? DemoFixture.board(data) else { error = "The demo is missing in this build."; return }
+    let chatList = !(ProcessInfo.processInfo.environment["TROMMI_CHATLIST"] ?? "").isEmpty
+    guard let raw = try? Data(contentsOf: DemoData.url("fixture.json")), let b = try? DemoFixture.board(chatList ? ChatListDemo.fixture(raw) : raw) else { error = "The demo is missing in this build."; return }
     if keep && !demo { beforeDemo = (room, deskId) }
     liveTask?.cancel(); liveTask = nil
     room?.saveCache()

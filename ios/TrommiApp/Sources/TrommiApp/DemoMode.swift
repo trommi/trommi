@@ -139,3 +139,80 @@ struct AllScreensSheet: View {
     }
   }
 }
+
+/**
+ * A crowded demo room for the chat list (TROMMI_CHATLIST=1 at launch): three desks, "Trommi App" with its crowned session
+ * and 23 helpers (four at work, four offline), "Website" with a crown and two helpers, "Privat" with two sessions.
+ * Built from the web demo's fixture; nothing is sent, nothing kept.
+ */
+enum ChatListDemo {
+  static func fixture(_ data: Data) -> Data {
+    guard var f = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return data }
+    let now = (f["made_at"] as? Double) ?? Double(nowMs())
+    var sessions = (f["sessions"] as? [[String: Any]]) ?? []
+    var human = (f["human"] as? [String: Any]) ?? [:]
+    var desks = (human["desks"] as? [String: Any]) ?? [:]
+    var settings = (human["session_settings"] as? [String: Any]) ?? [:]
+    func dev(_ s: String) -> String {
+      var x: UInt64 = 1469598103934665603
+      for b in s.utf8 { x = (x ^ UInt64(b)) &* 1099511628211 }
+      var h = ""
+      while h.count < 64 { x = x &* 6364136223846793005 &+ 1442695040888963407; h += String(format: "%016llx", x) }
+      return String(h.prefix(64))
+    }
+    func edit(_ id: String, _ change: (inout [String: Any], inout [String: Any]) -> Void) {
+      guard let i = sessions.firstIndex(where: { $0["agent_session_id"] as? String == id }) else { return }
+      var p = (sessions[i]["profile"] as? [String: Any]) ?? [:]
+      var s = sessions[i]
+      change(&s, &p)
+      s["profile"] = p
+      sessions[i] = s
+      if let d = s["agent_device_id"] as? String, let st = s["settings"] { settings[d] = st }
+    }
+    func rename(_ id: String, _ name: String, desk: String, task: String? = nil) {
+      edit(id) { s, p in
+        p["agent_name"] = name; if let t = task { p["task"] = t }
+        s["device_name"] = name
+        var st = (s["settings"] as? [String: Any]) ?? [:]; st["desk"] = desk; s["settings"] = st
+      }
+    }
+    func add(_ id: String, _ name: String, icon: String, parent: String?, desk: String, task: String, online: Bool = true, working: String? = nil, ago: Double = 60) {
+      let d = dev(id)
+      let st: [String: Any] = ["name": "", "desk": desk, "archived": false, "group": NSNull(), "icon": NSNull()]
+      let line: [String: Any] = working.map { ["id": "\(id)-1", "label": $0, "state": "working", "detail": "", "object_id": NSNull(), "updated_at": now - 60_000] }
+        ?? ["id": "\(id)-0", "label": task, "state": "done", "detail": "", "object_id": NSNull(), "updated_at": now - ago * 60_000]
+      let profile: [String: Any] = ["model": "claude-opus-5-5", "task": task, "icon": icon, "agent_name": name, "parent_session": parent ?? NSNull(), "is_main": false]
+      sessions.append(["agent_device_id": d, "agent_session_id": id, "device_name": name, "is_active": true, "is_online": online,
+                       "profile": profile, "status_lines": [line], "settings": st])
+      settings[d] = st
+    }
+    desks["main"] = ["name": "Trommi App", "created_at": now - 9e8] as [String: Any]
+    desks["web"] = ["name": "Website", "created_at": now - 5e8, "crown": ["agent_device_id": dev("web-lead")]] as [String: Any]
+    desks["test"] = ["name": "Privat", "created_at": now - 4e8] as [String: Any]
+    rename("trommi", "Trommi CTO", desk: "main", task: "Chat-Liste: Hierarchie neu")
+    rename("trommi-ui", "Design-Review", desk: "main")
+    rename("trommi-docs", "Docs", desk: "main")
+    rename("crypto", "Krypto-Audit", desk: "main")
+    rename("test-alpha", "Steuer 2026", desk: "test", task: "Belege sortieren")
+    rename("test-beta", "Umzug", desk: "test", task: "Kartons und Termine")
+    edit("trommi-docs") { s, _ in s["is_online"] = true }
+    edit("crypto") { s, p in p["parent_session"] = "trommi"; s["status_lines"] = [Any]() }
+    // the crowned session's helpers (Design-Review, Docs and Krypto-Audit are three of them): Design-Review and three
+    // more at work, four offline, the rest idle
+    let helpers: [(String, String, String?, Bool)] = [
+      ("Tempo", "draw:bolt", "Scroll-Ruckler im Desk", true), ("Server", "", "Deploy auf trommi-hub", true), ("QA", "draw:spiral", "E2E über den Share-Flow", true),
+      ("Karte", "", nil, true), ("Web UI", "draw:blob", nil, true), ("Übernahme", "draw:zigzag", nil, true), ("Connector", "", nil, true),
+      ("Design", "", nil, true), ("iOS", "", nil, true), ("Schlüssel", "draw:waves", nil, true), ("iPhone", "draw:phone", nil, true), ("Push", "draw:bell", nil, true),
+      ("Share", "draw:arrow", nil, true), ("Fuzz", "draw:bug", nil, true), ("Release", "draw:rocket", nil, true), ("Perf", "draw:flame", nil, true),
+      ("Hub", "draw:database", nil, false), ("Notiz", "draw:leaf", nil, false), ("Tests", "draw:flask", nil, false), ("Onboarding", "draw:kite", nil, false)]
+    for (i, h) in helpers.enumerated() {
+      add("h-\(i)", h.0, icon: h.1, parent: "trommi", desk: "main", task: h.2 ?? "\(h.0): fertig", online: h.3, working: h.2, ago: Double(30 + i * 40))
+    }
+    add("web-lead", "Website", icon: "draw:browser", parent: nil, desk: "web", task: "trommi.com: die Startseite")
+    add("web-blog", "Blog", icon: "draw:book", parent: "web-lead", desk: "web", task: "Launch-Artikel", working: "Launch-Artikel: zweiter Entwurf")
+    add("web-seo", "SEO", icon: "draw:eye", parent: "web-lead", desk: "web", task: "Meta-Tags")
+    human["desks"] = desks; human["session_settings"] = settings
+    f["sessions"] = sessions; f["human"] = human
+    return (try? JSONSerialization.data(withJSONObject: f)) ?? data
+  }
+}
