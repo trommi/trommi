@@ -29,6 +29,10 @@ ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["zer
 hpke-rs = { version = "=0.7.0", default-features = false }
 hpke-rs-crypto = "=0.7.0"
 hpke-rs-rust-crypto = "=0.7.0"
+# The account's password key derivation (v1 section 16): Argon2id, in Rust alone.
+argon2 = { version = "=0.5.3", default-features = false, features = ["zeroize"] }
+# The account's password as NFC, as v1 section 16 derives from it.
+unicode-normalization = { version = "=0.1.25", default-features = false }
 rand_chacha = { version = "=0.3.1", default-features = false, optional = true }
 rand_core = { version = "=0.6.4", default-features = false, optional = true }
 
