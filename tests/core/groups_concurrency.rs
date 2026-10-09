@@ -333,10 +333,12 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
     // The second device is away while devices come and go: per round a human device joins the room and three
     // sessions and is handed the history, three other sessions are updated, every other round a session is
     // taken over by a new agent device, and the human device is removed again from the room and its sessions.
+    let mut handovers = 0;
     for round in 0..ROUNDS {
         let mut guest = new_device();
         add_human(&mut hub, &mut a, &mut guest);
-        a.send_handover(&room_group, &guest.id()).unwrap();
+        // The handover grows with the history: beyond 400 keys it takes several messages.
+        handovers += a.send_handover(&room_group, &guest.id()).unwrap().len();
         post_ok(&mut hub, &mut a);
         for offset in 0..3 {
             let group = groups[(round + offset) % SESSIONS];
@@ -372,7 +374,8 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
         }
     }
     let changes = (hub.change() - start) as usize;
-    assert_eq!(changes, ROUNDS * 12 + ROUNDS / 2 * 2);
+    assert_eq!(changes, ROUNDS * 11 + ROUNDS / 2 * 2 + handovers);
+    assert!(changes >= 1000 && handovers > ROUNDS);
     let log = hub.log_after(start);
     assert_eq!(log.len(), changes);
 
@@ -420,7 +423,7 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
     }
     assert!(merged <= SESSIONS + 1);
     assert!(
-        early >= changes - ROUNDS - (SESSIONS + 1),
+        early >= changes - handovers - (SESSIONS + 1),
         "{early} of {changes}"
     );
     for (group, epoch) in epochs(&twin) {
@@ -439,7 +442,7 @@ fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
         .iter()
         .filter(|done| matches!(done, Processed::Message(Received::Dropped)))
         .count();
-    assert_eq!((commits, dropped), (changes - ROUNDS, ROUNDS));
+    assert_eq!((commits, dropped), (changes - handovers, handovers));
     assert_eq!(b.cursor(), hub.change());
 
     // The device stands where the hub and the device that made the changes stand, in all twenty groups.
