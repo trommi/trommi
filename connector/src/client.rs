@@ -1276,14 +1276,22 @@ impl Client {
                 self.take_log(core, item, change, kind == "commit").await
             };
             match step {
-                Ok(true) => core.cursor = change,
+                Ok(true) => {
+                    // One record per entry (13.2): the state after it, what was derived from it, the cursor.
+                    core.cursor = change;
+                    core.commit()?;
+                }
                 Ok(false) => {
                     stopped_early = true;
                     break;
                 }
                 Err(fault) => {
-                    // What was processed before stands, and its commands are handed out all the same.
-                    core.commit()?;
+                    // What was processed before is written, and its commands are handed out all the same.
+                    // If the failing entry left changes behind, they belong to no whole step: nothing of
+                    // them is written, and this process starts again from the files.
+                    if core.journal.is_dirty() {
+                        core.journal.poison();
+                    }
                     self.deliver(std::mem::take(&mut commands)).await;
                     return Err(fault);
                 }
@@ -1418,11 +1426,13 @@ impl Client {
                 put_room_record(&core.journal, &core.room);
             }
             LogOutcome::Enrolled(false) => {
-                core.halted = Some("bad-invite".into());
-                return Err(Fault::new(
+                let fault = Fault::new(
                     "bad-invite",
                     "this device was enrolled by another device than the one that invited it",
-                ));
+                );
+                core.cursor = change;
+                self.halt(core, &fault)?;
+                return Err(fault);
             }
             LogOutcome::Unenrolled => {
                 core.cursor = change;
@@ -1450,12 +1460,11 @@ impl Client {
                         &json!({ "n": n }),
                     )
                     .await;
-                core.halted = Some("bad-group".into());
                 let fault = Fault::new(
                     "bad-group",
                     format!("the hub handed out a group change this device cannot take ({code}); the human looks at the room in the Trommi app and reconnects this session"),
                 );
-                self.emit(ClientEvent::Error(fault.clone()));
+                self.halt(core, &fault)?;
                 return Err(fault);
             }
         }
@@ -1842,15 +1851,10 @@ impl Client {
         if !core.groups.contains_key(&session) {
             return Ok(());
         }
-        self.vault
-            .call(move |v: &mut Vault| v.forget_received(&group))
-            .await??;
-        for name in core.model.forget_session(&session) {
-            core.journal.delete(side_key(TAG_MODEL, &[name.as_bytes()]));
-        }
+        // Everything is fetched first: nothing is forgotten before what replaces it is in hand.
         let upto = core.cursor;
         let mut after = 0u64;
-        let mut unused = Vec::new();
+        let mut fetched: Vec<(u64, Vec<u8>, Served)> = Vec::new();
         loop {
             let answer = self
                 .hub
@@ -1881,32 +1885,43 @@ impl Client {
                     ),
                     None => Served::Stored,
                 };
-                if let Err(fault) = self
-                    .receive(
-                        core,
-                        bytes,
-                        served,
-                        Some(Mode::ReadingBack),
-                        change,
-                        &session,
-                        &mut unused,
-                    )
-                    .await
-                {
-                    if fault.as_core().is_none() || fault.code == "storage" {
-                        return Err(fault);
-                    }
-                    eprintln!(
-                        "[trommi] finding: {} (reading a session's history)",
-                        fault.code
-                    );
-                }
+                fetched.push((change, bytes, served));
             }
             let next = answer.get("change").and_then(Value::as_u64).unwrap_or(upto);
             if answer.get("more") != Some(&Value::Bool(true)) || next >= upto || next <= after {
                 break;
             }
             after = next;
+        }
+        self.vault
+            .call(move |v: &mut Vault| v.forget_received(&group))
+            .await??;
+        for name in core.model.forget_session(&session) {
+            core.journal.delete(side_key(TAG_MODEL, &[name.as_bytes()]));
+        }
+        let mut unused = Vec::new();
+        for (change, bytes, served) in fetched {
+            if let Err(fault) = self
+                .receive(
+                    core,
+                    bytes,
+                    served,
+                    Some(Mode::ReadingBack),
+                    change,
+                    &session,
+                    &mut unused,
+                )
+                .await
+            {
+                if fault.as_core().is_none() || fault.code == "storage" || fault.code == "internal"
+                {
+                    return Err(fault);
+                }
+                eprintln!(
+                    "[trommi] finding: {} (reading a session's history)",
+                    fault.code
+                );
+            }
         }
         core.commit()
     }
@@ -1934,12 +1949,14 @@ impl Client {
             {
                 continue;
             }
-            core.kv_set(&name, &json!(value));
             let spec = Spec::Register {
                 name: "heads".into(),
-                value: Some(value),
+                value: Some(value.clone()),
             };
-            self.seal(core, group, spec, Vec::new()).await?;
+            // A group that takes no envelope now (stale, no key yet) gets its heads another time.
+            if self.seal(core, group, spec, Vec::new()).await.is_ok() {
+                core.kv_set(&name, &json!(value));
+            }
         }
         core.commit()?;
         if send {
