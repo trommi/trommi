@@ -618,3 +618,28 @@ fn a_device_signs_in_to_the_hub_with_its_own_key() {
         Err(Error::NoRoom)
     );
 }
+
+#[test]
+fn a_joining_device_signs_in_for_the_room_of_its_checked_invite() {
+    let (_, room, _, mut a, _) = room();
+    let mut b = new_device();
+    let hub = hub_address();
+    let issued = IssuedChallenge::issue(&mut SystemEntropy, now()).unwrap();
+    let (_, _, accepted) = exchange(&mut a, &mut b, Role::Human, None);
+    // A stored Offer alone is nothing to sign in with.
+    assert_eq!(b.hub_sign_in(&hub, issued.challenge), Err(Error::NoRoom));
+    b.join_reveal(&accepted.signed_reveal).unwrap();
+    let signed = b.hub_sign_in(&hub, issued.challenge).unwrap();
+    assert_eq!(
+        hub_auth::verify(&signed, &room.room_id(), &hub, &issued, now()),
+        Ok(b.id())
+    );
+    // Only at the hub the invite named.
+    let other = HubAddress::parse("https://other.example").unwrap();
+    assert_eq!(
+        b.hub_sign_in(&other, issued.challenge),
+        Err(Error::BadInvite)
+    );
+    // Nothing else follows from the stored Offer: the device has no room and holds no group.
+    assert!(b.room().is_none() && b.groups().unwrap().is_empty() && !b.is_human());
+}
