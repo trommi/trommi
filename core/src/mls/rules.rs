@@ -540,10 +540,15 @@ pub fn disallowed_leaves(
         .copied()
         .collect();
     if !allowed.is_helper_session() {
-        // 5.2.2: one agent leaf at most; of several, none is allowed until one is left.
-        let agents: Vec<DeviceId> = allowed.others(leaves).copied().collect();
+        // 5.2.2: one agent device at most; of several, none is allowed until one is left. A leaf that is
+        // unfit by itself, such as a removed human device, does not count as one.
+        let agents: Vec<DeviceId> = allowed
+            .others(leaves)
+            .filter(|leaf| allowed.allows(leaf))
+            .copied()
+            .collect();
         if agents.len() > 1 {
-            unfit.extend(agents.into_iter().filter(|agent| allowed.allows(agent)));
+            unfit.extend(agents);
             unfit.sort_unstable();
         }
     }
