@@ -113,5 +113,16 @@ name = "core_content_registers"
 path = "core/content_registers.rs"
 
 [[test]]
+name = "core_recovery_construct"
+path = "core/recovery_construct.rs"
+
+[[test]]
+name = "core_recovery_flow"
+path = "core/recovery_flow.rs"
+
+[[test]]
+name = "core_vectors_recovery"
+path = "core/vectors_recovery.rs"
+
 name = "bindings_facade"
 path = "bindings/facade.rs"

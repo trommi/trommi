@@ -7,6 +7,7 @@
 
 pub mod board;
 pub mod envelope;
+pub mod recovery;
 pub mod trail;
 
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ pub type Generate = fn() -> Result<Value, Error>;
 pub const FILES: &[(&str, Generate)] = &[
     (board::NAME, board::generate),
     (envelope::NAME, envelope::generate),
+    (recovery::NAME, recovery::generate),
     (trail::NAME, trail::generate),
 ];
 
