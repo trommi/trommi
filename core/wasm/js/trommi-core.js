@@ -160,7 +160,7 @@ function wipe(entries) {
 
 // The device's calls, by the names the module exports them under.
 const DEVICE_CALLS = [
-  'id', 'room', 'cursor', 'is_human', 'is_owner', 'room_roles', 'groups', 'group', 'content_key',
+  'id', 'room', 'cursor', 'is_human', 'is_owner', 'room_roles', 'groups', 'group', 'holds_key',
   'outbox', 'outbox_accepted', 'outbox_refused', 'key_packages_to_upload', 'key_package',
   'found_room', 'found_session', 'found_helper', 'add_to_session', 'remove_agents',
   'remove_human_devices', 'clean_session', 'readmit_helper', 'update', 'archive',
@@ -170,6 +170,9 @@ const DEVICE_CALLS = [
   'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
   'invite_open', 'invite_accept', 'invite_confirm', 'invite_recommit', 'invite_steps', 'invite_handover', 'invite_forget',
   'join_request', 'join_reveal', 'join_observe', 'join_invited',
+  'seal', 'outbox_voided', 'envelope_abandon', 'receive_envelope', 'receive_relay', 'heads_due', 'compare_heads',
+  'cut_of', 'chain_head', 'chain_cut', 'object', 'objects', 'object_owner', 'register', 'register_of', 'board_load',
+  'command', 'command_finished', 'commands_pending', 'commands_uncertain', 'findings', 'findings_read',
 ]
 
 const CONSTRUCT = Symbol('Device')
@@ -397,3 +400,7 @@ export const openApnsPush = plain('open_apns_push')
 export const readWebPush = plain('read_web_push')
 export const recoveryAnchor = plain('recovery_anchor')
 export const recoverySignIn = plain('recovery_sign_in')
+export const boardReduce = plain('board_reduce')
+export const inviteLinkParse = plain('invite_link_parse')
+export const checkEmoji = plain('check_emoji')
+export const hubAddress = plain('hub_address')
