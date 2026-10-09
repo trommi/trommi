@@ -765,3 +765,556 @@ fn no_bytes_make_a_reader_panic_and_what_is_read_is_written_the_same() {
         check(&bytes);
     }
 }
+
+/// Shape ids, the snapshot register and the loading rule, case by case (sections 10.1 to 10.3).
+mod loading {
+    use trommi_core::board::*;
+    use trommi_core::chain::{Chains, Head, Mode, Receipt, Served};
+    use trommi_core::envelope::{Draft, Envelope};
+    use trommi_core::ids::{BoardId, DeviceId, Hash32};
+    use trommi_core::registers::{may_write, name_owner, NameOwner};
+    use trommi_core::Error;
+    use trommi_tests::room::*;
+
+    #[test]
+    fn the_board_of_all_desks_has_its_fixed_id() {
+        assert_eq!(
+            BoardId::ALL_DESKS.to_string(),
+            "616c6c2d6465736b7300000000000009"
+        );
+        let name = snapshot_name(&BoardId::ALL_DESKS);
+        assert_eq!(
+            name,
+            format!("board_snapshot/{}", BoardId::ALL_DESKS.to_base64url())
+        );
+        assert_eq!(name_owner(&name, true), Some(NameOwner::RoomHumans));
+        assert!(may_write(
+            &name,
+            true,
+            trommi_core::chain::Role::Human,
+            &device(1)
+        ));
+        assert!(!may_write(
+            &name,
+            false,
+            trommi_core::chain::Role::Agent,
+            &device(3)
+        ));
+    }
+
+    #[test]
+    fn a_shape_id_has_one_text() {
+        let id = ShapeId {
+            sender: device(1),
+            seq: 17,
+            index: 3,
+        };
+        let text = id.to_string();
+        assert_eq!(text, format!("{}/17/3", device(1).to_base64url()));
+        assert_eq!(ShapeId::parse(&text).unwrap(), id);
+        let largest = ShapeId {
+            sender: device(2),
+            seq: u64::MAX,
+            index: u32::MAX,
+        };
+        assert_eq!(ShapeId::parse(&largest.to_string()).unwrap(), largest);
+        let zero = ShapeId {
+            sender: device(2),
+            seq: 1,
+            index: 0,
+        };
+        assert_eq!(ShapeId::parse(&zero.to_string()).unwrap(), zero);
+
+        let sender = device(1).to_base64url();
+        let refused = [
+            String::new(),
+            sender.clone(),
+            format!("{sender}/17"),
+            format!("{sender}/17/3/0"),
+            format!("{sender}/17/3/"),
+            format!("/{sender}/17/3"),
+            format!("{sender}/0/3"),
+            format!("{sender}/017/3"),
+            format!("{sender}/17/03"),
+            format!("{sender}/+17/3"),
+            format!("{sender}/-1/3"),
+            format!("{sender}/17/ 3"),
+            format!("{sender}/1e3/3"),
+            format!("{sender}//3"),
+            format!("{sender}/17/"),
+            format!("{sender}/18446744073709551616/3"),
+            format!("{sender}/17/4294967296"),
+            format!("{sender}=/17/3"),
+            "short/17/3".to_string(),
+            format!("{}/17/3", device(1)),
+        ];
+        for text in refused {
+            assert_eq!(ShapeId::parse(&text), Err(Error::BadFormat), "{text}");
+        }
+    }
+
+    fn head(seq: u64, byte: u8) -> Head {
+        Head {
+            seq,
+            hash: Hash32::new([byte; 32]),
+        }
+    }
+
+    #[test]
+    fn a_snapshot_value_round_trips_and_is_read_strictly() {
+        let snapshot = Snapshot {
+            attachment: r#"{"file_id":"AAAA","file_key":"BBBB","total_size":12}"#.into(),
+            frontier: {
+                let mut frontier = vec![(device(1), head(4, 1)), (device(2), head(9, 2))];
+                frontier.sort_by_key(|(writer, _)| *writer);
+                frontier
+            },
+            change: 5000,
+        };
+        let value = snapshot.value().unwrap();
+        assert_eq!(Snapshot::parse(&value).unwrap(), snapshot);
+        assert!(!format!("{snapshot:?}").contains("BBBB"));
+        assert_eq!(snapshot.items_after_change(), 4000);
+        assert_eq!(snapshot.frontier_of(&device(2)), head(9, 2));
+        assert_eq!(snapshot.frontier_of(&device(3)), Head::START);
+        let early = Snapshot {
+            change: 999,
+            frontier: Vec::new(),
+            ..snapshot.clone()
+        };
+        assert_eq!(early.items_after_change(), 0);
+        assert_eq!(Snapshot::parse(&early.value().unwrap()).unwrap(), early);
+        // The value fits a register payload.
+        let register = trommi_core::registers::Value {
+            name: snapshot_name(&BoardId::ALL_DESKS),
+            value: Some(value),
+            lamport: 1,
+        };
+        assert!(register.payload().is_ok());
+
+        let writer = device(1).to_base64url();
+        let hash = Hash32::new([1; 32]).to_base64url();
+        let refused = [
+            "{}".to_string(),
+            "[]".to_string(),
+            r#"[{},{},1]"#.to_string(),
+            r#"{"attachment":{},"frontier":{}}"#.to_string(),
+            r#"{"attachment":{},"change":1}"#.to_string(),
+            r#"{"frontier":{},"change":1}"#.to_string(),
+            r#"{"attachment":"x","frontier":{},"change":1}"#.to_string(),
+            r#"{"attachment":{},"frontier":[],"change":1}"#.to_string(),
+            r#"{"attachment":{},"frontier":{},"change":-1}"#.to_string(),
+            r#"{"attachment":{},"frontier":{},"change":"1"}"#.to_string(),
+            format!(r#"{{"attachment":{{}},"frontier":{{"{writer}":[0,"{hash}"]}},"change":1}}"#),
+            format!(r#"{{"attachment":{{}},"frontier":{{"{writer}":["{hash}"]}},"change":1}}"#),
+            format!(r#"{{"attachment":{{}},"frontier":{{"x":[1,"{hash}"]}},"change":1}}"#),
+            format!(
+                r#"{{"attachment":{{}},"frontier":{{"{writer}":[1,"{hash}"],"{writer}":[2,"{hash}"]}},"change":1}}"#
+            ),
+            format!(r#"{{"attachment":{{}},"frontier":{{"{writer}":[1,"{hash}x"]}},"change":1}}"#),
+        ];
+        for text in refused {
+            assert_eq!(Snapshot::parse(&text), Err(Error::BadFormat), "{text}");
+        }
+        let good =
+            format!(r#"{{"attachment":{{}},"frontier":{{"{writer}":[1,"{hash}"]}},"change":1}}"#);
+        assert_eq!(
+            Snapshot::parse(&good).unwrap().frontier,
+            [(device(1), head(1, 1))]
+        );
+        // A writer's side: an attachment that is no object, a head of number 0.
+        let bad = Snapshot {
+            attachment: "[]".into(),
+            ..snapshot.clone()
+        };
+        assert_eq!(bad.value(), Err(Error::BadFormat));
+        let bad = Snapshot {
+            frontier: vec![(device(1), Head::START)],
+            ..snapshot
+        };
+        assert_eq!(bad.value(), Err(Error::BadFormat));
+    }
+
+    const BOARD: BoardId = BoardId::new([7; 16]);
+    const OTHER_BOARD: BoardId = BoardId::new([8; 16]);
+
+    /// A board with two writers. Device 1 wrote three items before the snapshot and two after it, with an
+    /// item of another board and a register between; device 2 wrote one item after the snapshot.
+    struct Scene {
+        snapshot: Snapshot,
+        served: Vec<ServedItem>,
+        chains: Vec<(DeviceId, Vec<Link>)>,
+    }
+
+    fn item(receipt: &Receipt) -> ServedItem {
+        ServedItem {
+            sender: receipt.envelope().header.sender,
+            seq: receipt.envelope().header.seq,
+            hash: receipt.hash(),
+        }
+    }
+
+    fn scene() -> Scene {
+        let mut world = World::new();
+        let stroke = |board| Draft::board_item(board, &payload("stroke"));
+        let before: Vec<Receipt> = (0..3)
+            .map(|_| world.post(1, room(), &stroke(BOARD)))
+            .collect();
+        let snapshot = Snapshot {
+            attachment: "{}".into(),
+            frontier: world.chains(&room()).heads(),
+            change: 2000,
+        };
+        let after = [
+            world.post(1, room(), &stroke(BOARD)),
+            world.post(1, room(), &stroke(OTHER_BOARD)),
+            world.post(
+                1,
+                room(),
+                &Draft::register(trommi_core::ids::RegisterId::new([1; 16]), &payload("r")),
+            ),
+            world.post(1, room(), &stroke(BOARD)),
+        ];
+        let by_two = world.post(2, room(), &stroke(BOARD));
+        Scene {
+            snapshot,
+            // The hub serves from 1 000 changes before the snapshot: one covered item comes along.
+            served: vec![
+                item(&before[2]),
+                item(&after[0]),
+                item(&after[3]),
+                item(&by_two),
+            ],
+            chains: vec![
+                (device(1), after.iter().map(Link::of).collect()),
+                (device(2), vec![Link::of(&by_two)]),
+            ],
+        }
+    }
+
+    impl Scene {
+        fn load(&self) -> Result<Loaded, Error> {
+            verify_load(&BOARD, &[], &[], &self.snapshot, &self.served, &self.chains)
+        }
+    }
+
+    #[test]
+    fn a_board_loads_when_every_chain_links_and_every_item_was_served() {
+        let scene = scene();
+        let loaded = scene.load().unwrap();
+        assert_eq!(loaded.fresh, [1, 2, 3]);
+        assert_eq!(loaded.covered, [0]);
+        let mut frontier = vec![
+            (
+                device(1),
+                Head {
+                    seq: 7,
+                    hash: scene.chains[0].1[3].hash,
+                },
+            ),
+            (
+                device(2),
+                Head {
+                    seq: 1,
+                    hash: scene.chains[1].1[0].hash,
+                },
+            ),
+        ];
+        frontier.sort_by_key(|(writer, _)| *writer);
+        assert_eq!(loaded.frontier, frontier);
+        // The links say which envelopes are items of which board.
+        let boards: Vec<_> = scene.chains[0].1.iter().map(|link| link.board).collect();
+        assert_eq!(boards, [Some(BOARD), Some(OTHER_BOARD), None, Some(BOARD)]);
+
+        // An empty board, and a snapshot with nothing after it.
+        let empty = Snapshot {
+            attachment: "{}".into(),
+            frontier: Vec::new(),
+            change: 0,
+        };
+        let loaded = verify_load(&BOARD, &[], &[], &empty, &[], &[]).unwrap();
+        assert_eq!((loaded.frontier.len(), loaded.fresh.len()), (0, 0));
+        let loaded =
+            verify_load(&BOARD, &[], &[], &scene.snapshot, &scene.served[..1], &[]).unwrap();
+        assert_eq!(loaded.frontier, scene.snapshot.frontier);
+        assert_eq!(loaded.covered, [0]);
+    }
+
+    #[test]
+    fn an_item_the_hub_did_not_serve_is_withheld() {
+        let mut scene = scene();
+        scene.served.remove(2);
+        assert_eq!(scene.load(), Err(Error::Withheld));
+        // The other writer's only item.
+        let mut scene = self::scene();
+        scene.served.pop();
+        assert_eq!(scene.load(), Err(Error::Withheld));
+        // An item served beyond what its writer's chain shows.
+        let mut scene = self::scene();
+        scene.chains[0].1.pop();
+        assert_eq!(scene.load(), Err(Error::Withheld));
+        let mut scene = self::scene();
+        scene.chains.pop();
+        assert_eq!(scene.load(), Err(Error::Withheld));
+        // An envelope of another board, or a register, need not be served here.
+        let scene = self::scene();
+        assert!(scene.load().is_ok());
+    }
+
+    #[test]
+    fn a_chain_that_does_not_link_is_refused() {
+        // An envelope missing in the middle, and at the start.
+        let mut scene = scene();
+        scene.chains[0].1.remove(1);
+        assert_eq!(scene.load(), Err(Error::Gap));
+        let mut scene = self::scene();
+        scene.chains[0].1.remove(0);
+        assert_eq!(scene.load(), Err(Error::Gap));
+        // Out of order.
+        let mut scene = self::scene();
+        scene.chains[0].1.swap(1, 2);
+        assert_eq!(scene.load(), Err(Error::Gap));
+        // A `prev` that is not the hash before: in the middle, and against the frontier.
+        let mut scene = self::scene();
+        scene.chains[0].1[2].prev = Hash32::new([9; 32]);
+        assert_eq!(scene.load(), Err(Error::ChainBreak));
+        let mut scene = self::scene();
+        scene.snapshot.frontier = vec![(device(1), head(3, 9))];
+        assert_eq!(scene.load(), Err(Error::ChainBreak));
+        // The second writer's chain starts at number 1 with zeros before it.
+        let mut scene = self::scene();
+        scene.chains[1].1[0].prev = Hash32::new([9; 32]);
+        assert_eq!(scene.load(), Err(Error::ChainBreak));
+        let mut scene = self::scene();
+        scene.chains[1].1[0].seq = 2;
+        assert_eq!(scene.load(), Err(Error::Gap));
+        // A writer given twice.
+        let mut scene = self::scene();
+        scene.chains.push((device(2), Vec::new()));
+        assert_eq!(scene.load(), Err(Error::BadFormat));
+    }
+
+    #[test]
+    fn a_served_item_must_be_the_one_its_chain_has() {
+        let mut scene = scene();
+        scene.served[1].hash = Hash32::new([9; 32]);
+        assert_eq!(scene.load(), Err(Error::HashMismatch));
+        // At the frontier's number with another hash than the frontier.
+        let mut scene = self::scene();
+        scene.served[0].hash = Hash32::new([9; 32]);
+        assert_eq!(scene.load(), Err(Error::Equivocation));
+        // The same item twice.
+        let mut scene = self::scene();
+        scene.served.push(scene.served[1]);
+        assert_eq!(scene.load(), Err(Error::BadFormat));
+        // Served as an item of this board what its chain shows as something else: an item of another board, a
+        // register, a void record.
+        for index in [1, 2] {
+            let mut scene = self::scene();
+            let link = scene.chains[0].1[index];
+            scene.served.push(ServedItem {
+                sender: device(1),
+                seq: link.seq,
+                hash: link.hash,
+            });
+            assert_eq!(scene.load(), Err(Error::Forbidden));
+        }
+        // An item before the frontier cannot be checked and stands as covered.
+        let mut scene = self::scene();
+        scene.served.push(ServedItem {
+            sender: device(1),
+            seq: 1,
+            hash: Hash32::new([9; 32]),
+        });
+        assert_eq!(scene.load().unwrap().covered, [0, 4]);
+    }
+
+    #[test]
+    fn a_snapshot_must_stand_at_or_beyond_the_frontier_applied() {
+        let scene = scene();
+        let load = |applied: &[(DeviceId, Head)]| {
+            verify_load(
+                &BOARD,
+                applied,
+                &[],
+                &scene.snapshot,
+                &scene.served,
+                &scene.chains,
+            )
+            .map(|loaded| loaded.frontier)
+        };
+        let at = scene.snapshot.frontier.clone();
+        assert!(load(&at).is_ok());
+        let (writer, snapshot_head) = at[0];
+        // The device had applied less.
+        assert!(load(&[(writer, head(2, 5))]).is_ok());
+        // It had applied more: this snapshot is an older one.
+        assert_eq!(load(&[(writer, head(4, 5))]), Err(Error::Replay));
+        // It had applied another envelope under the same number.
+        assert_eq!(load(&[(writer, head(3, 5))]), Err(Error::Equivocation));
+        assert_eq!(snapshot_head.seq, 3);
+        // A writer the device had applied and the snapshot does not name.
+        assert_eq!(load(&[(device(2), head(1, 5))]), Err(Error::Replay));
+        // What loads becomes the frontier to hold the next snapshot against.
+        let next = load(&at).unwrap();
+        let older = Snapshot {
+            frontier: at.clone(),
+            ..scene.snapshot.clone()
+        };
+        assert_eq!(
+            verify_load(&BOARD, &next, &[], &older, &[], &[]).err(),
+            Some(Error::Replay)
+        );
+    }
+
+    #[test]
+    fn a_snapshot_beyond_a_cut_and_a_fork_under_a_known_number_are_refused() {
+        let scene = scene();
+        let (writer, at) = scene.snapshot.frontier[0];
+        let load =
+            |applied: &[(DeviceId, Head)], cuts: &[(DeviceId, Head)], served: &[ServedItem]| {
+                verify_load(
+                    &BOARD,
+                    applied,
+                    cuts,
+                    &scene.snapshot,
+                    served,
+                    &scene.chains,
+                )
+                .map(|loaded| loaded.covered)
+            };
+        // The writer was removed and the remover had accepted less than the snapshot covers.
+        assert_eq!(
+            load(&[], &[(writer, head(2, 5))], &scene.served),
+            Err(Error::RemovedSender)
+        );
+        assert_eq!(
+            load(&[], &[(writer, Head::START)], &scene.served),
+            Err(Error::RemovedSender)
+        );
+        // The Cut names another envelope under the frontier's number.
+        assert_eq!(
+            load(&[], &[(writer, head(3, 5))], &scene.served),
+            Err(Error::Equivocation)
+        );
+        // A Cut at the frontier: the chain after it is refused.
+        assert_eq!(
+            load(&[], &[(writer, at)], &scene.served),
+            Err(Error::RemovedSender)
+        );
+        // A Cut at the first envelope after the frontier: the chain up to it loads.
+        let first = scene.chains[0].1[0];
+        let at_first = Head {
+            seq: first.seq,
+            hash: first.hash,
+        };
+        let cut_at = |cut: Head, applied: &[(DeviceId, Head)]| {
+            let chains = vec![(writer, vec![first])];
+            verify_load(
+                &BOARD,
+                applied,
+                &[(writer, cut)],
+                &scene.snapshot,
+                &scene.served[..2],
+                &chains,
+            )
+            .map(|loaded| loaded.frontier)
+        };
+        assert_eq!(cut_at(at_first, &[]).unwrap(), [(writer, at_first)]);
+        assert_eq!(cut_at(head(first.seq, 9), &[]), Err(Error::Equivocation));
+        // The device had applied a frontier beyond a Cut that came later: the Cut takes it back.
+        let rolled_back = verify_load(
+            &BOARD,
+            &[(writer, head(7, 5))],
+            &[(writer, at)],
+            &scene.snapshot,
+            &scene.served[..1],
+            &[],
+        );
+        assert_eq!(rolled_back.unwrap().frontier, [(writer, at)]);
+        // An item served under a number the device had applied with another hash.
+        let mut served = scene.served.clone();
+        served.push(ServedItem {
+            sender: writer,
+            seq: 2,
+            hash: Hash32::new([9; 32]),
+        });
+        assert_eq!(
+            load(&[(writer, head(2, 5))], &[], &served),
+            Err(Error::Equivocation)
+        );
+        assert_eq!(load(&[(writer, head(2, 9))], &[], &served).unwrap(), [0, 4]);
+    }
+
+    #[test]
+    fn a_void_record_in_a_chain_is_no_item() {
+        let mut world = World::new();
+        let stroke = Draft::board_item(BOARD, &payload("stroke"));
+        let first = world.post(1, room(), &stroke);
+        let voided = world.sign(1, room(), &stroke);
+        let record = world
+            .take_as(
+                &voided.envelope.prune().unwrap().encode().unwrap(),
+                &Served::Void(Error::WrongEpoch),
+                Mode::InOrder,
+            )
+            .unwrap();
+        let last = world.post(1, room(), &stroke);
+        let links: Vec<Link> = [&first, &record, &last].into_iter().map(Link::of).collect();
+        assert_eq!(links[1].board, None);
+        let snapshot = Snapshot {
+            attachment: "{}".into(),
+            frontier: Vec::new(),
+            change: 0,
+        };
+        // The void record carries the chain and need not be served; served as an item it is refused.
+        let served = vec![item(&first), item(&last)];
+        let chains = vec![(device(1), links)];
+        assert!(verify_load(&BOARD, &[], &[], &snapshot, &served, &chains).is_ok());
+        let served = vec![item(&first), item(&record), item(&last)];
+        assert_eq!(
+            verify_load(&BOARD, &[], &[], &snapshot, &served, &chains),
+            Err(Error::Forbidden)
+        );
+    }
+
+    #[test]
+    fn the_chains_after_a_frontier_come_through_the_receivers_checks() {
+        // A writer and a reader that starts from the snapshot's frontier and reads the rest pruned.
+        let mut writer = World::new();
+        let stroke = Draft::board_item(BOARD, &payload("stroke"));
+        writer.post(1, room(), &stroke);
+        writer.post(1, room(), &stroke);
+        let snapshot = Snapshot {
+            attachment: "{}".into(),
+            frontier: writer.chains(&room()).heads(),
+            change: 0,
+        };
+        let later: Vec<Envelope> = (0..2)
+            .map(|_| writer.sign(1, room(), &stroke).envelope)
+            .collect();
+
+        let mut reader = World::new();
+        reader.me = device(2);
+        reader
+            .chains
+            .insert(room(), Chains::from_frontier(&snapshot.frontier));
+        let receipts: Vec<Receipt> = later
+            .iter()
+            .map(|envelope| {
+                reader
+                    .take_as(
+                        &envelope.prune().unwrap().encode().unwrap(),
+                        &Served::Stored,
+                        Mode::ReadingBack,
+                    )
+                    .unwrap()
+            })
+            .collect();
+        let chains = vec![(device(1), receipts.iter().map(Link::of).collect())];
+        let served: Vec<ServedItem> = receipts.iter().map(item).collect();
+        let loaded = verify_load(&BOARD, &[], &[], &snapshot, &served, &chains).unwrap();
+        assert_eq!(loaded.fresh, [0, 1]);
+        assert_eq!(loaded.frontier, reader.chains(&room()).heads());
+    }
+}
