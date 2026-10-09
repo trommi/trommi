@@ -15,6 +15,8 @@ use crate::crypto::{self, Entropy, Secret, NONCE_LEN, TAG_LEN};
 use crate::error::Error;
 use crate::ids::{self, RoomId};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use zeroize::Zeroizing;
 
 /// The associated data of the APNs sealing.
 const APNS_AAD: &[u8] = b"trommi apns v2";
@@ -40,8 +42,8 @@ pub struct WebPush {
     pub urgency: u8,
 }
 
-/// What an APNs notification carries sealed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What an APNs notification carries sealed. The ticket fetches an envelope for a day: it is not printed.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ApnsPush {
     /// The room something changed in.
     pub room_id: RoomId,
@@ -51,6 +53,17 @@ pub struct ApnsPush {
     pub urgency: u8,
     /// The hub's ticket for `GET /v2/push-envelope`; empty when there is no envelope to fetch.
     pub ticket: Vec<u8>,
+}
+
+impl fmt::Debug for ApnsPush {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ApnsPush")
+            .field("room_id", &self.room_id)
+            .field("change", &self.change)
+            .field("urgency", &self.urgency)
+            .field("ticket", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -160,7 +173,7 @@ pub fn seal(
     push: &ApnsPush,
     entropy: &mut dyn Entropy,
 ) -> Result<Vec<u8>, Error> {
-    let json = push.encode()?;
+    let json = Zeroizing::new(push.encode()?);
     let nonce: [u8; NONCE_LEN] = crypto::random(entropy)?;
     let ciphertext = crypto::aead_seal(key, &nonce, APNS_AAD, &json)?;
     Ok([nonce.as_slice(), &ciphertext].concat())
@@ -179,7 +192,9 @@ pub fn open(key: &Secret<32>, sealed: &[u8]) -> Result<ApnsPush, Error> {
     if ciphertext.len() < TAG_LEN {
         return Err(Error::BadFormat);
     }
-    ApnsPush::decode(&crypto::aead_open(key, nonce, APNS_AAD, ciphertext)?)
+    ApnsPush::decode(&Zeroizing::new(crypto::aead_open(
+        key, nonce, APNS_AAD, ciphertext,
+    )?))
 }
 
 #[cfg(test)]
@@ -310,6 +325,9 @@ mod tests {
     fn apns_seals_and_opens() {
         let sealed = seal(&key(1), &push(), &mut SystemEntropy).expect("seals");
         assert_eq!(open(&key(1), &sealed), Ok(push()));
+        let printed = format!("{:?}", open(&key(1), &sealed));
+        assert!(printed.contains("redacted") && printed.contains("4711"));
+        assert!(!printed.contains("[1, 2, 3"));
 
         let empty_ticket = ApnsPush {
             ticket: vec![],
