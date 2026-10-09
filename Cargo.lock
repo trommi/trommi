@@ -3001,8 +3001,11 @@ dependencies = [
  "openmls_basic_credential",
  "openmls_rust_crypto",
  "openmls_traits",
+ "reqwest",
  "serde_json",
  "tls_codec",
+ "tokio",
+ "trommi-connector",
  "trommi-core",
 ]
 
