@@ -22,7 +22,8 @@ function wanted(): boolean {
     if (q.has('mock') ? q.get('mock') !== '0' : sessionStorage.getItem('trommi-mock')) return false
     if ((q.get('core') ?? sessionStorage.getItem('trommi-core')) === 'page') return false
   } catch {}
-  return !/^\/a\/[0-9a-f]{32}$/.test(location.pathname)
+  // (a share page: `/a/<share id>`, base64url under protocol v2, hex in the links of before)
+  return !/^\/a\/(?:[0-9a-f]{32}|[A-Za-z0-9_-]{22})$/.test(location.pathname)
 }
 
 if (g.__trommiCore === undefined) {
@@ -34,7 +35,7 @@ if (g.__trommiCore === undefined) {
     worker.onmessage = e => { early.messages.push(e) }
     worker.onerror = e => { early.error = e }
     // The room is opened at once; the app's name for the hub (Trommi-Client) follows with remote.ts.
-    worker.postMessage({ t: 'open', id: 0, storage: { name: 'trommi', prefix: 'room/' }, client: null })
+    worker.postMessage({ t: 'open', id: 0, storage: { name: 'trommi' }, client: null })
     g.__trommiCore = early
   }
 }
