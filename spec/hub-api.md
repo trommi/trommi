@@ -120,9 +120,22 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
 - With new recovery keys (8.6, 8.7) `account` is `{ kit: { auth_key, sealed_copy }, password: { sealed_copy } }` or
   `{ kit, passkey: { credential_id, sealed_copy } }`: the copy under the way in used just now and a new kit; every
   other way in is removed in the same transaction. A room without an account sends `null`.
-- Limits: 30 logins per address in ten minutes; ten attempts per e-mail in an hour without a success between,
-  then that e-mail waits (`rate-limited`, known or not; the password and the kit are counted apart); 20 passkeys
-  per account. A passkey challenge of an account is bound to the account's revision.
+- Sign-up is instant: there is no e-mail confirmation and the hub sends no mail (owner, 9 October 2026). Signing
+  up with an e-mail that has an account is `account-exists`.
+- **Failed logins slow down whoever guesses wrong and lock nobody** (owner, 9 October 2026). The source is the
+  client's address (the forwarded one only when the hub is configured to trust its proxy, and only if it is an
+  address). Per source and e-mail: after each failure that source waits 1 s, 2 s, 4 s … up to 15 minutes before
+  its next attempt at that e-mail (`rate-limited` with `retry-after`); a success ends it. That is at most 13
+  guesses in the first hour and 4 an hour after, per source and account. Per account: 100 attempts an hour from
+  sources that never signed in to it; past that, such sources are served one every two seconds in the order they
+  came (each is told its turn by `retry-after` and is checked when it comes back then): at most 1 900 guesses an
+  hour per account from unknown sources, however many they are. A source the account knows (one of the last 16
+  it was signed in to from; the hub keeps a keyed hash, not the address) is never put in that line, and a
+  correct credential is never refused on account of others: it is checked at once, or in its turn. The password
+  and the Emergency Kit are counted apart; an e-mail without an account behaves the same. One answer and one
+  cost for every failure, as before.
+- Other limits: 30 logins per address in ten minutes; 20 passkeys per account. A passkey challenge of an account
+  is bound to the account's revision.
 
 ## Decided for the first hub
 
@@ -202,11 +215,30 @@ encrypted.
 **Operations**
 
 24. `GET /healthz` (outside `/v2/`, for the container) answers `{ ok, commit, protocol_version }`.
-    `HUB_FOUND_TOKEN`, when set, must come as `x-found-token` with `POST /v2/rooms`.
+    Founding a room is open to anyone, ten an hour per address (owner, 9 October 2026). A hub can be set
+    otherwise: `HUB_FOUND_TOKEN` (unset by default) must then come as `x-found-token`; `HUB_FOUNDING=closed`
+    founds none.
 25. A Share link expires within 180 days (owner, 9 October 2026; v2.md 11.5 and section 16 follow on the core's
     branch). A room has at most 1 000 Share links, a device ten push registrations.
 26. A Web Push carries a `Topic` (one waiting notification per room). The ticket of 15.2 is the hub's own
     `room ‖ device ‖ change ‖ expiry ‖ HMAC`; only the hub reads it. One device's envelopes cause at most ten
-    pushes a minute; a push service is called on port 443 and no redirect is followed.
+    pushes a minute (owner, 9 October 2026); a push service is called on port 443 and no redirect is followed.
 27. Uploads in progress count against the room's quota; a room has at most 16 at a time.
+29. **What a room may hold besides its files' bytes** (`hub/src/quota.rs`; counts of things ever made, since a
+    deleted file's id, an archived group and a void record stay): 50 000 file ids, zero-byte and deleted ones too
+    (`quota-exceeded`); 20 000 register ids (`too-many`, the envelope takes no number); 100 000 void records
+    (past that, a refusal that would be a void comes without `voided` and uses no number); 5 000 groups,
+    archived ones too (`too-many`); 10 000 helper devices ever seen (`too-many`). Nothing is deleted to make
+    room.
+30. **Busy.** Verifying a Commit or a GroupInfo, validating KeyPackages and the slow hash of a login key run on a
+    bounded pool outside the database's write lock; the write then takes their result only if the group, the
+    asker's standing and the account stand where they stood, else it answers `overloaded` (503) with
+    `retry-after` and the client sends the same bytes again. The same answer when the pool's queue or the hub's
+    number of requests at work (256) is full. One device makes at most ten such requests a second (bursts of
+    60, `rate-limited`).
+31. An agent's lease that ran out is noticed by a timer, not by its stream closing: it no longer counts as
+    working, and after a further minute without a stream the human devices are told once ("An agent lost its
+    connection.", `presence` with `lost`).
+32. `GET /v2/changes` looks at most 20 000 change numbers ahead per call; `more` says that the cursor has not
+    reached the room's newest change.
 28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
