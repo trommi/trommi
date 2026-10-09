@@ -2084,3 +2084,344 @@ fn what_the_second_review_found_stays_refused() {
     }
     assert!(refused >= 3);
 }
+
+/// spec/v2.md section 19, conformance test 3: removal of a human device across 50 live sessions, with a crash
+/// after the room Commit and another device finishing; nothing is accepted from or for the removed device in
+/// between.
+#[test]
+fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash() {
+    let mut w = World::new();
+    let mut bea = w.add_human();
+    let mut cleo = w.add_human();
+    w.catch_up(&mut bea, &w.room.clone());
+    let mut agent = w.enrol_agent();
+    w.catch_up(&mut bea, &w.room.clone());
+    w.catch_up(&mut cleo, &w.room.clone());
+    let room = w.room;
+    // one main session and 49 more: the agent's, and sessions of spare agents
+    let mut sessions = vec![w.found_main(&mut [&mut bea, &mut cleo], Some(&mut agent))];
+    for _ in 0..49 {
+        w.catch_up(&mut bea, &room);
+        w.catch_up(&mut cleo, &room);
+        sessions.push(w.found_main(&mut [&mut bea, &mut cleo], None));
+    }
+    w.catch_up(&mut cleo, &room);
+    bea.send(
+        &w.hub,
+        &sessions[0].1,
+        &chat(&sessions[0].0, agent.id(), "before"),
+    )
+    .ok();
+    let cut_in_first = Cut {
+        device: bea.id(),
+        seq: bea.chain(&sessions[0].1).0,
+        hash: bea.chain(&sessions[0].1).1,
+    };
+
+    // ada removes bea from the room group and from the first ten sessions, then crashes
+    let now = w.ada.room_now();
+    let out = w.ada.commit(
+        &room,
+        &Change {
+            removes: vec![bea.id()],
+            cuts: vec![Cut {
+                device: bea.id(),
+                seq: 0,
+                hash: ZERO32,
+            }],
+            ..Default::default()
+        },
+        now,
+    );
+    let sealed = w.ada.sealed_key(
+        &room,
+        out.epoch + 1,
+        &out.group_info,
+        out.epoch,
+        &w.recovery.hpke_public,
+        true,
+    );
+    w.ada.post_commit(&w.hub, &out, &sealed).ok();
+    let now = w.ada.room_now();
+    let remove_in = |dev: &mut Dev, hub: &TestHub, group: &[u8], cut: Cut| {
+        let out = dev.commit(
+            group,
+            &Change {
+                removes: vec![cut.device],
+                cuts: vec![cut],
+                ..Default::default()
+            },
+            now,
+        );
+        let key = dev.sealed_key(
+            group,
+            out.epoch + 1,
+            &out.group_info,
+            now.0,
+            &w.recovery.hpke_public,
+            true,
+        );
+        dev.post_commit(hub, &out, &key)
+    };
+    let empty = Cut {
+        device: bea.id(),
+        seq: 0,
+        hash: ZERO32,
+    };
+    remove_in(&mut w.ada, &w.hub, &sessions[0].1, cut_in_first).ok();
+    for (_, group) in &sessions[1..10] {
+        remove_in(&mut w.ada, &w.hub, group, empty.clone()).ok();
+    }
+
+    // in between: nothing from the removed device, nothing for it, nothing into what is still stale
+    bea.get(&w.hub, "/v2/changes").refused(403, "not-member");
+    sign_in_with(&w.hub, &room, &bea.signer, None).refused(403, "not-member");
+    let list = groups(&w, &cleo);
+    assert_eq!(list.iter().filter(|g| g["stale"] == true).count(), 40);
+    assert!(list.iter().all(|g| g["stale"] == true
+        || !g["leaves"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(b64(&bea.id())))));
+    w.catch_up(&mut cleo, &room);
+    let stale_agent = w.agent_of(&sessions[20].1);
+    assert_eq!(
+        cleo.send(
+            &w.hub,
+            &sessions[20].1,
+            &chat(&sessions[20].0, stale_agent, "x")
+        )
+        .refused(409, "stale-session")["voided"],
+        true
+    );
+    w.ada
+        .post(
+            &w.hub,
+            "/v2/key-packages/claim",
+            &json!({ "devices": [b64(&bea.id())] }),
+        )
+        .refused(404, "not-found");
+
+    // cleo sees the stale groups in the hub's list and commits the missing Removes, until none is stale
+    loop {
+        let stale: Vec<Vec<u8>> = groups(&w, &cleo)
+            .iter()
+            .filter(|g| g["stale"] == true)
+            .map(|g| unb64(g["group_id"].as_str().unwrap()).unwrap())
+            .collect();
+        if stale.is_empty() {
+            break;
+        }
+        for group in stale {
+            remove_in(&mut cleo, &w.hub, &group, empty.clone()).ok();
+        }
+    }
+    let list = groups(&w, &cleo);
+    assert_eq!(list.len(), 51);
+    assert!(list.iter().all(|g| g["stale"] == false
+        && !g["leaves"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(b64(&bea.id())))));
+    // the sessions work again, also one that ada cleaned and one that cleo cleaned
+    for i in [0usize, 5, 30] {
+        w.catch_up(&mut cleo, &sessions[i].1);
+        let to = w.agent_of(&sessions[i].1);
+        cleo.send(&w.hub, &sessions[i].1, &chat(&sessions[i].0, to, "after"))
+            .ok();
+    }
+}
+
+/// spec/v2.md section 19, conformance test 4, the hub's side: a catch-up of more than 1 000 changes across 20
+/// groups with devices coming and going is one order in which every session Commit meets the room state it
+/// names; the same log in another order does not.
+#[test]
+fn the_hubs_order_lets_every_session_commit_meet_the_room_state_it_names() {
+    let mut w = World::new();
+    let room = w.room;
+    let mut sessions = vec![];
+    let mut agents = vec![];
+    for _ in 0..19 {
+        let mut agent = w.enrol_agent();
+        sessions.push(w.found_main(&mut [], Some(&mut agent)));
+        agents.push(agent);
+    }
+    // devices come and go while the sessions are written to
+    let mut comers: Vec<Dev> = vec![];
+    for round in 0..12 {
+        for (i, (session, group)) in sessions.iter().enumerate() {
+            catch_up(&w.hub, &mut agents[i], group);
+            for _ in 0..4 {
+                agents[i]
+                    .send(&w.hub, group, &chat(session, ZERO32, "work"))
+                    .ok();
+            }
+        }
+        if round % 3 == 0 {
+            let dev = w.add_human();
+            // the newcomer is added to every live session group (5.2.7)
+            let now = w.ada.room_now();
+            for (_, group) in &sessions {
+                let adds = w.claim(&w.ada, &[dev.id()]);
+                let out = w.ada.commit(
+                    group,
+                    &Change {
+                        adds,
+                        ..Default::default()
+                    },
+                    now,
+                );
+                let key = w.ada.sealed_key(
+                    group,
+                    out.epoch + 1,
+                    &out.group_info,
+                    now.0,
+                    &w.recovery.hpke_public,
+                    true,
+                );
+                w.ada.post_commit(&w.hub, &out, &key).ok();
+            }
+            comers.push(dev);
+        } else if round % 3 == 2 {
+            let gone = comers.pop().unwrap();
+            let now = w.ada.room_now();
+            let cut = Cut {
+                device: gone.id(),
+                seq: 0,
+                hash: ZERO32,
+            };
+            let out = w.ada.commit(
+                &room,
+                &Change {
+                    removes: vec![gone.id()],
+                    cuts: vec![cut.clone()],
+                    ..Default::default()
+                },
+                now,
+            );
+            let sealed = w.ada.sealed_key(
+                &room,
+                out.epoch + 1,
+                &out.group_info,
+                out.epoch,
+                &w.recovery.hpke_public,
+                true,
+            );
+            w.ada.post_commit(&w.hub, &out, &sealed).ok();
+            let now = w.ada.room_now();
+            for (_, group) in &sessions {
+                let out = w.ada.commit(
+                    group,
+                    &Change {
+                        removes: vec![gone.id()],
+                        cuts: vec![cut.clone()],
+                        ..Default::default()
+                    },
+                    now,
+                );
+                let key = w.ada.sealed_key(
+                    group,
+                    out.epoch + 1,
+                    &out.group_info,
+                    now.0,
+                    &w.recovery.hpke_public,
+                    true,
+                );
+                w.ada.post_commit(&w.hub, &out, &key).ok();
+            }
+        }
+    }
+    // the whole catch-up, paged
+    let mut items: Vec<Value> = vec![];
+    let mut cursor = 0;
+    loop {
+        let page = w
+            .ada
+            .get(&w.hub, &format!("/v2/changes?after={cursor}&limit=250"))
+            .ok();
+        items.extend(page["items"].as_array().unwrap().iter().cloned());
+        cursor = page["change"].as_i64().unwrap();
+        if page["more"] != true {
+            break;
+        }
+    }
+    assert!(items.len() > 1000, "{} changes", items.len());
+    assert!(items
+        .windows(2)
+        .all(|p| p[0]["change"].as_i64() < p[1]["change"].as_i64()));
+
+    // A device replays it: per group the Commits come in epoch order without a gap, and each session Commit's
+    // note names the room epoch that the room Commits before it in this order have reached.
+    let replay = |items: &[Value]| -> Result<usize, String> {
+        let mut epochs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        let mut room_epoch = 0u64;
+        let mut commits = 0;
+        for item in items.iter().filter(|i| i["kind"] == "commit") {
+            let group = item["group_id"].as_str().unwrap().to_string();
+            let builds_on = item["epoch"].as_u64().unwrap();
+            let at = epochs.entry(group.clone()).or_insert(0);
+            if builds_on != *at {
+                return Err(format!(
+                    "a Commit on epoch {builds_on} while the group stands at {at}"
+                ));
+            }
+            *at += 1;
+            let note = commit_note(&unb64(item["bytes"].as_str().unwrap()).unwrap());
+            if group == b64(&room) {
+                room_epoch += 1;
+            } else if note.room_epoch != room_epoch {
+                return Err(format!(
+                    "a session Commit names room epoch {} at room epoch {room_epoch}",
+                    note.room_epoch
+                ));
+            }
+            commits += 1;
+        }
+        Ok(commits)
+    };
+    let commits = replay(&items).unwrap();
+    assert!(commits > 150, "{commits} Commits");
+    // the same log in another order is refused: the session groups first, the room group last
+    let mut reordered: Vec<Value> = items
+        .iter()
+        .filter(|i| i["group_id"] != b64(&room))
+        .cloned()
+        .collect();
+    reordered.extend(
+        items
+            .iter()
+            .filter(|i| i["group_id"] == b64(&room))
+            .cloned(),
+    );
+    assert!(replay(&reordered).is_err());
+    // an agent device's catch-up is the same order, cut down to what it may see
+    let mine = agents[3].get(&w.hub, "/v2/changes?after=0&limit=1000").ok();
+    let mine: Vec<i64> = mine["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["change"].as_i64().unwrap())
+        .collect();
+    let all: Vec<i64> = items
+        .iter()
+        .map(|i| i["change"].as_i64().unwrap())
+        .collect();
+    assert!(mine.windows(2).all(|p| p[0] < p[1]) && mine.iter().all(|c| all.contains(c)));
+}
+
+/// The CommitNote of a Commit: the `authenticated_data` of its PublicMessage.
+fn commit_note(commit: &[u8]) -> CommitNote {
+    // MLSMessage: version(2) wire_format(2); PublicMessage: group_id<V> epoch(8) sender; authenticated_data<V>
+    let mut r = wire::Reader::new(&commit[4..]);
+    r.vec().unwrap();
+    r.u64().unwrap();
+    match r.u8().unwrap() {
+        1 => {
+            r.u32().unwrap();
+        }
+        // new_member_commit carries nothing
+        3 => {}
+        other => panic!("sender type {other}"),
+    }
+    CommitNote::parse(r.vec().unwrap()).unwrap()
+}
