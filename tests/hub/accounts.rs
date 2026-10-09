@@ -407,6 +407,13 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
         assert_eq!(f.body, failures[0].body);
     }
 
+    // every failure of this route is the one answer, also a request that lacks a field
+    let incomplete = hub.post(
+        "/v2/account/passkey/login",
+        &json!({ "credential_id": b64(&key.credential_id) }),
+    );
+    incomplete.refused(401, "wrong-login");
+    assert_eq!(incomplete.body, failures[0].body);
     // the handle the authenticator returns must be the account's, if one is sent at all
     let with_handle = |handle: &[u8]| {
         let challenge = unb64(

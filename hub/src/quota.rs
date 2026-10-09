@@ -20,6 +20,8 @@ pub const VOIDS: i64 = 100_000;
 pub const GROUPS: i64 = 5_000;
 /// Helper devices a room has ever seen. `too-many`.
 pub const HELPER_DEVICES: i64 = 10_000;
+/// Human and agent devices a room has ever had (a revoked key stays on record: it never returns). `too-many`.
+pub const DEVICES: i64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Counted {
@@ -28,6 +30,7 @@ pub enum Counted {
     Voids,
     Groups,
     HelperDevices,
+    Devices,
 }
 
 impl Counted {
@@ -38,6 +41,7 @@ impl Counted {
             Counted::Voids => "void_count",
             Counted::Groups => "group_count",
             Counted::HelperDevices => "helper_count",
+            Counted::Devices => "device_count",
         }
     }
 }
@@ -49,6 +53,7 @@ pub struct Quotas {
     pub voids: i64,
     pub groups: i64,
     pub helper_devices: i64,
+    pub devices: i64,
 }
 
 impl Quotas {
@@ -59,6 +64,7 @@ impl Quotas {
             Counted::Voids => self.voids,
             Counted::Groups => self.groups,
             Counted::HelperDevices => self.helper_devices,
+            Counted::Devices => self.devices,
         }
     }
 
@@ -98,6 +104,7 @@ impl Quotas {
             Counted::HelperDevices => {
                 refuse("too-many", "the room has seen its number of helper devices")
             }
+            Counted::Devices => refuse("too-many", "the room has had its number of devices"),
         }
     }
 }

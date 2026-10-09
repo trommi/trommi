@@ -351,7 +351,15 @@ impl Events {
     pub fn ended(&mut self) -> bool {
         while self.next(Duration::from_secs(3)).is_some() {}
         let mut probe = [0u8; 1];
-        matches!(self.reader.read(&mut probe), Ok(0))
+        // closed by the hub: the end of the stream, or a connection that was cut
+        match self.reader.read(&mut probe) {
+            Ok(0) => true,
+            Ok(_) => false,
+            Err(e) => !matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+        }
     }
 }
 

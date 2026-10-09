@@ -75,6 +75,7 @@ CREATE TABLE rooms (
   register_count INTEGER NOT NULL DEFAULT 0,
   void_count     INTEGER NOT NULL DEFAULT 0,
   group_count    INTEGER NOT NULL DEFAULT 1,
+  device_count   INTEGER NOT NULL DEFAULT 1,
   helper_count   INTEGER NOT NULL DEFAULT 0,
   -- read from the room group's public state at its current epoch, kept beside it for the checks of every request
   epoch              INTEGER NOT NULL DEFAULT 0,
@@ -115,14 +116,18 @@ CREATE TABLE key_packages (
   last_resort    INTEGER NOT NULL CHECK (last_resort IN (0, 1)),
   uploaded_at    INTEGER NOT NULL,
   expires_at     INTEGER NOT NULL,
-  -- a single-use package that was handed out: the row stays until it expires, so that the same package cannot
-  -- be uploaded and handed out again
-  claimed_at     INTEGER,
   bytes          BLOB NOT NULL
 ) STRICT;
 -- claim: one device's oldest single-use package, else its last-resort one
-CREATE INDEX key_packages_claim ON key_packages(room_id, device, last_resort, id) WHERE claimed_at IS NULL;
+CREATE INDEX key_packages_claim ON key_packages(room_id, device, last_resort, id);
+-- The references of single-use KeyPackages this hub has handed out, in any room, for good: one is never handed
+-- out twice (14.2), whatever is uploaded, removed or revoked later. 32 bytes each.
+CREATE TABLE spent_key_packages (
+  ref            BLOB PRIMARY KEY,
+  at             INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
 CREATE UNIQUE INDEX key_packages_by_ref ON key_packages(room_id, ref);
+CREATE INDEX key_packages_ref ON key_packages(ref);
 -- exactly one last-resort package per device
 CREATE UNIQUE INDEX key_packages_last_resort ON key_packages(room_id, device) WHERE last_resort = 1;
 

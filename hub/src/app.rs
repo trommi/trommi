@@ -27,7 +27,7 @@ pub type Entries = HashMap<crate::memo::Key, Entry>;
 
 pub struct Limits {
     pub envelopes: Buckets,
-    pub pieces: Buckets,
+    pub pieces: Window,
     pub claims: Buckets,
     pub open_requests: Buckets,
     pub shares: Buckets,
@@ -121,7 +121,7 @@ impl App {
         }
         let limits = Limits {
             envelopes: Buckets::new(cfg.envelopes_per_second, cfg.envelope_burst),
-            pieces: Buckets::new(cfg.pieces_per_second, cfg.pieces_per_second),
+            pieces: Window::new(cfg.pieces_per_second as usize, 1000),
             claims: Buckets::new(2.0, 200.0),
             open_requests: Buckets::new(
                 cfg.open_requests_per_ip_minute / 60.0,
@@ -130,7 +130,7 @@ impl App {
             shares: Buckets::new(1.0, 60.0),
             pushes: Window::new(10, 60_000),
             requests: Buckets::new(0.2, 10.0),
-            heavy: Buckets::new(10.0, 60.0),
+            heavy: Buckets::new(cfg.heavy_per_second, cfg.heavy_burst),
             foundings: Window::new(cfg.foundings_per_ip_hour, 3_600_000),
             logins: Window::new(cfg.logins_per_ip_10min, 600_000),
             login: Default::default(),
@@ -636,8 +636,8 @@ impl App {
             };
             let _ = self.db.write(|c| {
                 c.execute(
-                    "UPDATE live_activities SET started_at = ?1, sent_working = ?2, sent_waiting = ?3, sent_at = ?4 WHERE room_id = ?5 AND device = ?6",
-                    params![if delivered { started } else { started_at }, working as i64, waiting as i64, now as i64, &room[..], &device[..]],
+                    &format!("UPDATE live_activities SET started_at = ?1, sent_working = ?2, sent_waiting = ?3, sent_at = ?4 WHERE room_id = ?5 AND device = ?6 AND {column} IS ?7"),
+                    params![if delivered { started } else { started_at }, working as i64, waiting as i64, now as i64, &room[..], &device[..], token],
                 )?;
                 if dead {
                     // only the token that was refused: a newer one registered meanwhile stays
@@ -715,25 +715,40 @@ impl App {
         for room in expired {
             self.live_soon(room);
         }
-        let lost: Vec<(Room, [u8; 32])> = self
+        // candidates: leases that ran out a while ago and were not told yet
+        let candidates: Vec<(Room, [u8; 32], i64, i64)> = self
             .db
-            .write(|c| {
-                let mut s = c.prepare_cached(
-                    "UPDATE agent_leases SET lost_at = ?1 WHERE lost_at IS NULL AND expires_at + ?2 <= ?1 RETURNING room_id, device",
-                )?;
+            .read(|c| {
+                let mut s = c.prepare_cached("SELECT room_id, device, generation, expires_at FROM agent_leases WHERE lost_at IS NULL AND expires_at + ?2 <= ?1")?;
                 let rows = s
-                    .query_map(params![now as i64, self.cfg.loss_ms as i64], |r| Ok((store::fixed::<32>(r.get(0)?)?, store::fixed::<32>(r.get(1)?)?)))?
+                    .query_map(params![now as i64, self.cfg.loss_ms as i64], |r| {
+                        Ok((store::fixed::<32>(r.get(0)?)?, store::fixed::<32>(r.get(1)?)?, r.get(2)?, r.get(3)?))
+                    })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok::<_, Refused>(rows)
             })
             .unwrap_or_default();
-        for (room, device) in lost {
+        for (room, device, generation, expires_at) in candidates {
+            // an agent with a stream open is not lost; it is looked at again at the next tick
+            if self.live.online(&room, &device) {
+                continue;
+            }
+            // told once, and only if the lease is still the one that ran out (not renewed meanwhile)
+            let claimed = self
+                .db
+                .write(|c| {
+                    Ok::<_, Refused>(c.execute(
+                        "UPDATE agent_leases SET lost_at = ?1 WHERE room_id = ?2 AND device = ?3 AND lost_at IS NULL AND generation = ?4 AND expires_at = ?5",
+                        params![now as i64, &room[..], &device[..], generation, expires_at],
+                    )?)
+                })
+                .unwrap_or(0);
             let standing = self
                 .db
                 .read(|c| store::standing(c, &room, &device))
                 .ok()
                 .flatten();
-            if standing != Some(Who::Agent) || self.live.online(&room, &device) {
+            if claimed != 1 || standing != Some(Who::Agent) {
                 continue;
             }
             crate::log::info(
@@ -844,7 +859,7 @@ impl App {
                 [now.saturating_sub(86_400_000) as i64],
             )?;
             c.execute(
-                "DELETE FROM key_packages WHERE expires_at <= ?1 AND claimed_at IS NULL",
+                "DELETE FROM key_packages WHERE expires_at <= ?1",
                 [now as i64],
             )?;
             Ok::<_, Refused>(())

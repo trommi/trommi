@@ -66,3 +66,7 @@ path = "hub/limits.rs"
 [[test]]
 name = "hub_jobs"
 path = "hub/jobs.rs"
+
+[[test]]
+name = "hub_busy"
+path = "hub/busy.rs"

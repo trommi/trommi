@@ -48,6 +48,9 @@ pub struct Config {
     pub envelopes_per_second: f64,
     pub envelope_burst: f64,
     pub pieces_per_second: f64,
+    /// expensive requests of one device: a second, and at once
+    pub heavy_per_second: f64,
+    pub heavy_burst: f64,
     pub epoch_envelopes: u64,
     pub streams_per_device: usize,
     pub open_requests_per_ip_minute: f64,
@@ -209,6 +212,8 @@ impl Config {
             envelopes_per_second: number(env, "HUB_LIMIT_ENVELOPES_PER_SECOND", 50.0),
             envelope_burst: number(env, "HUB_LIMIT_ENVELOPE_BURST", 200.0),
             pieces_per_second: number(env, "HUB_LIMIT_PIECES_PER_SECOND", 20.0),
+            heavy_per_second: number(env, "HUB_LIMIT_HEAVY_PER_SECOND", 10.0),
+            heavy_burst: number(env, "HUB_LIMIT_HEAVY_BURST", 60.0),
             epoch_envelopes: number(env, "HUB_LIMIT_EPOCH_ENVELOPES", 1 << 24),
             streams_per_device: number(env, "HUB_LIMIT_STREAMS_PER_DEVICE", 8),
             open_requests_per_ip_minute: number(
@@ -244,6 +249,7 @@ impl Config {
                     "HUB_QUOTA_HELPER_DEVICES",
                     crate::quota::HELPER_DEVICES,
                 ),
+                devices: number(env, "HUB_QUOTA_DEVICES", crate::quota::DEVICES),
             },
 
             body_timeout_ms: number(env, "HUB_BODY_TIMEOUT_MS", 15_000),

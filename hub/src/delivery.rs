@@ -891,6 +891,9 @@ fn commit_in(
             if n == 0 {
                 return Err(bad("a key that already has or had a role in the room"));
             }
+            x.cfg
+                .quotas
+                .take(x.c, &room, crate::quota::Counted::Devices)?;
         }
         for device in change
             .humans_removed
@@ -957,9 +960,6 @@ pub fn message(
     if !store::is_leaf(x.c, group_id, &auth.device)? {
         return Err(refuse("not-member", "only a leaf of the group sends in it"));
     }
-    if !row.live {
-        return Err(refuse("gone", "the session is archived"));
-    }
     let (in_group, in_epoch) = x.obs.application_message(bytes)?;
     if in_group != group_id {
         return Err(refuse("bad-format", "a message of another group"));
@@ -982,6 +982,10 @@ pub fn message(
                 Err(refuse("replay", "these bytes are in the log"))
             };
         }
+    }
+    // (a stored message posted again got its first answer above, also for a group archived since)
+    if !row.live {
+        return Err(refuse("gone", "the session is archived"));
     }
     if in_epoch != row.epoch || epoch != row.epoch {
         return Err(refuse(
@@ -1241,6 +1245,23 @@ pub fn put_key_packages(
                 "the last_resort mark does not fit",
             ));
         }
+        // 14.2: a single-use KeyPackage is handed out once, by this hub, in any room, for good
+        if !wanted_last_resort
+            && x.c
+                .prepare_cached("SELECT 1 FROM spent_key_packages WHERE ref = ?1")?
+                .exists([&facts.key_package_ref])?
+        {
+            return Ok(());
+        }
+        // it was valid when it was checked on the pool; it must still be now, and is handed out no longer than
+        // its own lifetime says
+        if facts.not_after <= x.now / 1000 {
+            return Err(refuse(
+                "bad-key-package",
+                "the KeyPackage's lifetime is over",
+            ));
+        }
+        let expires = expires.min((facts.not_after.min(i64::MAX as u64 / 1000) * 1000) as i64);
         if wanted_last_resort {
             x.c.prepare_cached("DELETE FROM key_packages WHERE room_id = ?1 AND device = ?2 AND last_resort = 1 AND ref != ?3")?
                 .execute(params![&auth.room[..], &auth.device[..], facts.key_package_ref])?;
@@ -1259,7 +1280,7 @@ pub fn put_key_packages(
     }
     let unused: i64 = x
         .c
-        .prepare_cached("SELECT count(*) FROM key_packages WHERE room_id = ?1 AND device = ?2 AND last_resort = 0 AND claimed_at IS NULL AND expires_at > ?3")?
+        .prepare_cached("SELECT count(*) FROM key_packages WHERE room_id = ?1 AND device = ?2 AND last_resort = 0 AND expires_at > ?3")?
         .query_row(params![&auth.room[..], &auth.device[..], x.now as i64], |r| r.get(0))?;
     if unused as usize > x.cfg.key_packages {
         return Err(refuse(
@@ -1285,25 +1306,31 @@ pub fn claim_key_packages(x: &Ctx, auth: &Auth, devices: &[Device]) -> Res<Value
         if devices[..i].contains(device) {
             return Err(refuse("bad-format", "a device is named once"));
         }
-        let found: Option<(i64, bool, Vec<u8>)> = x
+        let found: Option<(i64, bool, Vec<u8>, Vec<u8>)> = x
             .c
             .prepare_cached(
-                "SELECT id, last_resort, bytes FROM key_packages WHERE room_id = ?1 AND device = ?2 AND claimed_at IS NULL AND expires_at > ?3
+                "SELECT id, last_resort, bytes, ref FROM key_packages WHERE room_id = ?1 AND device = ?2 AND expires_at > ?3
+                   AND (last_resort = 1 OR ref NOT IN (SELECT ref FROM spent_key_packages))
                  ORDER BY last_resort, id LIMIT 1",
             )?
-            .query_row(params![&auth.room[..], &device[..], x.now as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .query_row(params![&auth.room[..], &device[..], x.now as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
             .optional()?;
-        let Some((id, last_resort, bytes)) = found else {
+        let Some((id, last_resort, bytes, package_ref)) = found else {
             // the transaction is rolled back: what was taken for the others is not used up
             return Err(refuse("not-found", "no KeyPackage for a device")
                 .with(json!({ "device": b64(device) })));
         };
         if !last_resort {
-            // handed out once: the row stays as a mark until it expires, so that the package is not taken again
+            // handed out once: its reference is kept for good, hub-wide, so that the same package is never
+            // handed out again, in this room or another, whatever is uploaded or removed later
             x.c.prepare_cached(
-                "UPDATE key_packages SET claimed_at = ?1, bytes = x'' WHERE id = ?2",
+                "INSERT OR IGNORE INTO spent_key_packages (ref, at) VALUES (?1, ?2)",
             )?
-            .execute(params![x.now as i64, id])?;
+            .execute(params![&package_ref, x.now as i64])?;
+            // it goes from every room that holds it
+            let _ = id;
+            x.c.prepare_cached("DELETE FROM key_packages WHERE ref = ?1 AND last_resort = 0")?
+                .execute([&package_ref])?;
         }
         out.insert(b64(device), json!(b64(&bytes)));
     }
@@ -1321,9 +1348,6 @@ pub fn put_sealed_key(x: &Ctx, auth: &Auth, bytes: &[u8]) -> Res<Value> {
             "wrong-sender",
             "a SealedKey is posted by its writer",
         ));
-    }
-    if !row.live {
-        return Err(refuse("gone", "the session is archived"));
     }
     let human = auth.who == Who::Human;
     if !human && !store::is_leaf(x.c, &row.group_id, &auth.device)? {
@@ -1354,6 +1378,9 @@ pub fn put_sealed_key(x: &Ctx, auth: &Auth, bytes: &[u8]) -> Res<Value> {
                 "this writer filed another key for this epoch",
             ))
         };
+    }
+    if !row.live {
+        return Err(refuse("gone", "the session is archived"));
     }
     let view = store::room_view(x.c, &auth.room)?;
     let room = store::room_row(x.c, &auth.room)?;
@@ -1392,19 +1419,50 @@ pub fn sealed_keys(c: &Connection, auth: &Auth, after: i64, limit: i64) -> Res<V
             "sealed keys are read by human devices and the recovery key",
         ));
     }
-    let mut s = c.prepare_cached("SELECT change, sealed FROM sealed_keys WHERE room_id = ?1 AND change > ?2 ORDER BY change LIMIT ?3")?;
-    let mut rows: Vec<Value> = s
-        .query_map(params![&auth.room[..], after, limit + 1], |r| Ok(json!({ "change": r.get::<_, i64>(0)?, "sealed_key": b64(&r.get::<_, Vec<u8>>(1)?) })))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let more = rows.len() as i64 > limit;
-    rows.truncate(limit as usize);
-    let mut s = c.prepare_cached("SELECT room_epoch, change, sealed FROM recovery_links WHERE room_id = ?1 AND change > ?2 ORDER BY change LIMIT 1000")?;
-    let links: Vec<Value> = s
-        .query_map(params![&auth.room[..], after], |r| {
-            Ok(json!({ "room_epoch": r.get::<_, i64>(0)?, "change": r.get::<_, i64>(1)?, "recovery_link": b64(&r.get::<_, Vec<u8>>(2)?) }))
+    // Sealed keys and RecoveryLinks are two lists under one cursor: each is read up to the limit, and the answer
+    // goes as far as both are complete, so that the next call (`after` = the answer's `change`) misses nothing.
+    let mut q = c.prepare_cached("SELECT change, sealed FROM sealed_keys WHERE room_id = ?1 AND change > ?2 ORDER BY change LIMIT ?3")?;
+    let mut rows: Vec<(i64, Value)> = q
+        .query_map(params![&auth.room[..], after, limit + 1], |r| {
+            let change: i64 = r.get(0)?;
+            Ok((
+                change,
+                json!({ "change": change, "sealed_key": b64(&r.get::<_, Vec<u8>>(1)?) }),
+            ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(json!({ "rows": rows, "links": links, "more": more }))
+    let mut q = c.prepare_cached("SELECT room_epoch, change, sealed FROM recovery_links WHERE room_id = ?1 AND change > ?2 ORDER BY change LIMIT ?3")?;
+    let mut links: Vec<(i64, Value)> = q
+        .query_map(params![&auth.room[..], after, limit + 1], |r| {
+            let change: i64 = r.get(1)?;
+            Ok((change, json!({ "room_epoch": r.get::<_, i64>(0)?, "change": change, "recovery_link": b64(&r.get::<_, Vec<u8>>(2)?) })))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let limit = limit as usize;
+    let mut complete_to = i64::MAX;
+    for list in [&mut rows, &mut links] {
+        if list.len() > limit {
+            list.truncate(limit);
+            complete_to = complete_to.min(list.last().map_or(after, |(change, _)| *change));
+        }
+    }
+    let more = complete_to != i64::MAX;
+    rows.retain(|(change, _)| *change <= complete_to);
+    links.retain(|(change, _)| *change <= complete_to);
+    let cursor = if more {
+        complete_to
+    } else {
+        rows.iter()
+            .chain(links.iter())
+            .map(|(change, _)| *change)
+            .max()
+            .unwrap_or(after)
+    };
+    let (rows, links): (Vec<Value>, Vec<Value>) = (
+        rows.into_iter().map(|(_, v)| v).collect(),
+        links.into_iter().map(|(_, v)| v).collect(),
+    );
+    Ok(json!({ "rows": rows, "links": links, "change": cursor, "more": more }))
 }
 
 // ---- requests: an unsigned wish to the human devices

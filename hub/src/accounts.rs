@@ -124,11 +124,16 @@ pub fn kdf_record(v: &Value) -> Res<String> {
 pub struct LoginRow {
     auth: Vec<u8>,
     held: Option<(i64, Vec<u8>, Vec<u8>, Vec<u8>)>,
+    revision: i64,
 }
 
 impl LoginRow {
     pub fn account(&self) -> Option<i64> {
         self.held.as_ref().map(|h| h.0)
+    }
+    /// The account's revision when its row was read: the answer is given only if it still is that.
+    pub fn revision(&self) -> i64 {
+        self.revision
     }
 }
 
@@ -349,14 +354,17 @@ impl Accounts {
         } else {
             ("auth_salt", "auth_hash", "password_copy")
         };
-        let row: Option<(i64, Option<Vec<u8>>, Option<Vec<u8>>, Option<Vec<u8>>)> = match &email {
+        let row: Option<(i64, Option<Vec<u8>>, Option<Vec<u8>>, Option<Vec<u8>>, i64)> = match &email {
             Some(e) => c
-                .prepare_cached(&format!("SELECT account_id, {salt_col}, {hash_col}, {copy_col} FROM accounts WHERE email = ?1"))?
-                .query_row([e], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .prepare_cached(&format!("SELECT account_id, {salt_col}, {hash_col}, {copy_col}, revision FROM accounts WHERE email = ?1"))?
+                .query_row([e], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
                 .optional()?,
             None => None,
         };
+        let revision = row.as_ref().map_or(0, |r| r.4);
+        let row = row.map(|r| (r.0, r.1, r.2, r.3));
         Ok(LoginRow {
+            revision,
             auth,
             held: match row {
                 Some((account, Some(salt), Some(hash), Some(copy))) => {
@@ -388,15 +396,17 @@ impl Accounts {
         c: &Connection,
         v: &Value,
         now: u64,
-    ) -> Res<Option<(i64, Vec<u8>, Vec<u8>, u32)>> {
+    ) -> Res<Option<(i64, Vec<u8>, Vec<u8>, u32, i64)>> {
         let credential_id = var_bytes(v, "credential_id", 1023)?;
         let authenticator_data = var_bytes(v, "authenticator_data", 1024)?;
         let client_data = var_bytes(v, "client_data_json", 4096)?;
         let signature = var_bytes(v, "signature", 512)?;
-        let row: Option<(i64, Vec<u8>, Vec<u8>, Vec<u8>)> = c
-            .prepare_cached("SELECT p.account_id, p.public_key, p.sealed_copy, a.user_handle FROM passkeys p JOIN accounts a ON a.account_id = p.account_id WHERE p.credential_id = ?1")?
-            .query_row([&credential_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        let row: Option<(i64, Vec<u8>, Vec<u8>, Vec<u8>, i64)> = c
+            .prepare_cached("SELECT p.account_id, p.public_key, p.sealed_copy, a.user_handle, a.revision FROM passkeys p JOIN accounts a ON a.account_id = p.account_id WHERE p.credential_id = ?1")?
+            .query_row([&credential_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
             .optional()?;
+        let revision = row.as_ref().map_or(0, |r| r.4);
+        let row = row.map(|r| (r.0, r.1, r.2, r.3));
         let Ok((challenge, origin)) = webauthn::client_challenge(&client_data, "webauthn.get")
         else {
             return Ok(None);
@@ -422,7 +432,7 @@ impl Accounts {
         };
         match (row, verified, fresh && handle_fits) {
             (Some((account, _, copy, _)), Ok(sign_count), true) => {
-                Ok(Some((account, copy, credential_id, sign_count)))
+                Ok(Some((account, copy, credential_id, sign_count, revision)))
             }
             _ => Ok(None),
         }
@@ -430,10 +440,16 @@ impl Accounts {
 }
 
 /// The counter never goes back; a passkey that is synced between devices reports none.
-pub fn passkey_used(c: &Connection, credential_id: &[u8], sign_count: u32, now: u64) -> Res<()> {
-    c.prepare_cached("UPDATE passkeys SET sign_count = max(sign_count, ?1), last_used_at = ?2 WHERE credential_id = ?3")?
-        .execute(params![sign_count, now as i64, credential_id])?;
-    Ok(())
+pub fn passkey_used(
+    c: &Connection,
+    account: i64,
+    credential_id: &[u8],
+    sign_count: u32,
+    now: u64,
+) -> Res<bool> {
+    // false: the passkey is no longer that account's
+    Ok(c.prepare_cached("UPDATE passkeys SET sign_count = max(sign_count, ?1), last_used_at = ?2 WHERE credential_id = ?3 AND account_id = ?4")?
+        .execute(params![sign_count, now as i64, credential_id, account])? == 1)
 }
 
 fn insert_passkey(

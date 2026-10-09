@@ -561,9 +561,6 @@ pub fn post_envelope(x: &Ctx, auth: &Auth, bytes: &[u8], fx: &mut Effects) -> Re
             "the padded body is 256, 512 … 65536 bytes",
         ));
     }
-    if !row.live {
-        return Err(refuse("gone", "the session is archived"));
-    }
     // (2) the group has reached the envelope's epoch
     if h.epoch > row.epoch {
         return Err(refuse(
@@ -599,6 +596,9 @@ pub fn post_envelope(x: &Ctx, auth: &Auth, bytes: &[u8], fx: &mut Effects) -> Re
             )))
         }
         _ => {}
+    }
+    if !row.live {
+        return Err(refuse("gone", "the session is archived"));
     }
     if let Some(cut) = cut_seq {
         if h.seq > cut as u64 {
@@ -1039,11 +1039,23 @@ pub fn cut_chain(
         "UPDATE envelopes SET cut = 1 WHERE group_id = ?1 AND sender = ?2 AND seq > ?3",
     )?
     .execute(params![group_id, &cut.device[..], cut.seq as i64])?;
+    // each object, timeline, register and file that the cut envelopes touch is put right once, however many of
+    // them touch it
+    let mut done: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
     for (header, change) in beyond {
         let Ok(h) = Header::parse(&header) else {
             continue;
         };
+        let subject = match &h.subject {
+            Subject::Object { object_id, .. } => [&[0u8][..], &object_id[..]].concat(),
+            Subject::Item { .. } => {
+                [&[1u8][..], &timeline_key(&h).unwrap_or_default()[..]].concat()
+            }
+            Subject::Register { register_id } => [&[2u8][..], &register_id[..]].concat(),
+        };
+        let first_time = done.insert(subject);
         match &h.subject {
+            _ if !first_time => {}
             Subject::Object { object_id, .. } => rebuild_object(c, room, object_id)?,
             Subject::Item { timeline_kind, .. } => {
                 let table = if *timeline_kind == wire::TIMELINE_BOARD {
@@ -1081,6 +1093,9 @@ pub fn cut_chain(
         }
         // a file first named beyond the Cut is unclaimed again (and goes with the next sweep); its shares end
         for file_id in &h.file_ids {
+            if !done.insert([&[3u8][..], &file_id[..]].concat()) {
+                continue;
+            }
             // named before, by an envelope of the same device that stays? (the list is 16-byte entries: an id
             // is compared entry by entry, never as a run of bytes across two of them)
             let earlier: Vec<Vec<u8>> = {
@@ -1201,7 +1216,7 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
         let mut items = Vec::new();
         while let Some(r) = rows.next()? {
             // a Desk with more open objects of a kind than this, or more bytes, is cut short and says so
-            if items.len() >= 1000 || desk_bytes > ANSWER_BYTES {
+            if items.len() >= 1000 {
                 truncated = true;
                 break;
             }
@@ -1215,6 +1230,11 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
                 .as_ref()
                 .and_then(|v| v["envelope"].as_str())
                 .map_or(0, str::len);
+            // the budget is checked before an item goes in; the first one always does
+            if desk_bytes > ANSWER_BYTES && !items.is_empty() {
+                truncated = true;
+                break;
+            }
             items.push(json!({
                 "object_id": b64(&r.get::<_, Vec<u8>>(0)?),
                 "group_id": b64(&group),
@@ -1239,13 +1259,17 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
         // one budget for the whole Desk
         let mut register_bytes = desk_bytes;
         while let Some(r) = rows.next()? {
-            if registers.len() >= 20_000 || register_bytes > ANSWER_BYTES {
+            if registers.len() >= 20_000 {
                 truncated = true;
                 break;
             }
             if sees(&r.get::<_, Vec<u8>>(10)?) {
                 let item = envelope_item(r, false)?;
                 register_bytes += item["envelope"].as_str().map_or(0, str::len);
+                if register_bytes > ANSWER_BYTES {
+                    truncated = true;
+                    break;
+                }
                 registers.push(item);
             }
         }
