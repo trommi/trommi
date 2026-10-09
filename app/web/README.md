@@ -128,6 +128,9 @@ instead); files come network first, the cache only offline. On the dev server (`
   answer tiles; under the pointer the teaser and, at the left, a ring that selects it (Shift: a range). Rows of one session
   that follow each other stand in one run, held by a pen curly bracket at the far left (two or more). A row that leaves
   glides out while the rows below move up (`app.mjs` `flipOut`, transform only).
+- **Tips:** one tip in the app's look for every element that says something under the pointer (`app.mjs` "tips",
+  `app.css` `.tip`): `data-tip`, and any `title` (taken over when the pointer comes, so the browser's own tooltip never
+  shows). A row's title says its number, session and whole title.
 - **Selection bar:** while rows are selected, Later (the pull-tag: the rows go down into Off your mind), Egal, Read (with
   infos), Shred; one POST `/cards/batch`, one toast with Undo.
 - **With the agents:** answered cards whose session is still at it, one line each, below the open ones. A card answered
