@@ -23,6 +23,7 @@ use super::facts::{
     group_key, take_extra, Facts, Record, Status, SUB_OWN_CHAIN, SUB_OWN_IDS, SUB_PROVISIONAL,
 };
 use super::Device;
+use crate::board;
 use crate::board_items::{Board, ItemBody, Unread};
 use crate::chain::{
     self, GroupFacts, Head, Mode, Outcome, OwnChain, Provisional, Receipt, Role, Served, Standing,
@@ -31,7 +32,7 @@ use crate::codec::{self, Decode, Encode, Reader, Writer};
 use crate::crypto::{self, SecretBytes};
 use crate::envelope::{
     self, AnswerBind, Bind, Body, Envelope, Header, ObjectType, RequestBind, Subject, TakeBackBind,
-    Urgency, Verdict, VerdictBind,
+    Timeline, Urgency, Verdict, VerdictBind,
 };
 use crate::error::Error;
 use crate::ids::{
@@ -477,6 +478,20 @@ pub(super) fn check_command(rest: &[u8], value: &[u8]) -> Result<(), Error> {
             .map(|_| ()),
         _ => Err(Error::BadFormat),
     }
+}
+
+fn read_frontier(stored: &[u8]) -> Result<Vec<(DeviceId, Head)>, Error> {
+    let mut reader = Reader::new(stored);
+    let mut frontier = Vec::new();
+    while !reader.is_empty() {
+        frontier.push((reader.value()?, reader.value()?));
+    }
+    Ok(frontier)
+}
+
+/// Checks one stored entry of the table of boards when the device is opened.
+pub(super) fn check_board(value: &[u8]) -> Result<(), Error> {
+    read_frontier(value).map(|_| ())
 }
 
 fn provisional_key(group: &GroupId, sender: &DeviceId, seq: u64) -> Vec<u8> {
@@ -965,6 +980,89 @@ impl<S: Storage> Device<S> {
         };
         let named = chain::parse_heads(value)?;
         chain::compare_heads(&Facts(self), &self.chains(group)?, group, &named)
+    }
+
+    // ---- the Scribble Board ----
+
+    /// The frontier of the snapshot this device last loaded for `board`.
+    fn board_frontier(&self, board: &BoardId) -> Result<Vec<(DeviceId, Head)>, Error> {
+        let Some(stored) = self.stored(&store::key(table::BOARD, &[board.as_bytes()])) else {
+            return Ok(Vec::new());
+        };
+        read_frontier(stored).map_err(|_| damaged("a board's frontier"))
+    }
+
+    /// Loads `board` by the rule of 10.3, from what this device holds: the newest snapshot (the current
+    /// value of `board_snapshot/<board>`), the Cuts of the room group, and every writer's chain after the
+    /// snapshot's frontier as this device accepted it. `served` are the board's items the hub gave from
+    /// [`board::Snapshot::items_after_change`] on. The device has read the writers' chains up to their heads
+    /// before (9.0.6, 9.0.7).
+    ///
+    /// On success the snapshot's frontier is the one applied from now on, and the result says which served
+    /// items the snapshot covers and which are to be added to it ([`board_reduce`]). The refusals are those
+    /// of [`board::verify_load`]: `withheld`, `hash-mismatch`, `equivocation`, `replay`, `removed-sender`,
+    /// `gap`, `chain-break`, `forbidden`; `not-found` without a snapshot.
+    pub fn board_load(
+        &mut self,
+        board: &BoardId,
+        served: &[board::ServedItem],
+    ) -> Result<board::Loaded, Error> {
+        self.transact(|this, batch| {
+            this.begin(0);
+            let room = GroupId::room(this.memory.record.room.ok_or(Error::NoRoom)?);
+            let registers = this.registers(&room)?;
+            let value = registers
+                .get(&board::snapshot_name(board))
+                .ok_or(Error::NotFound)?;
+            let snapshot = board::Snapshot::parse(value)?;
+            let applied = this.board_frontier(board)?;
+            let heads = this.chains(&room)?.heads();
+            let mut cuts = Vec::new();
+            let mut chains = Vec::new();
+            for (writer, head) in &heads {
+                if let Some(cut) = this.cut(&room, writer)? {
+                    cuts.push((*writer, cut));
+                }
+                let mut links = Vec::new();
+                let mut seq = snapshot.frontier_of(writer).seq;
+                while seq < head.seq {
+                    seq = seq.saturating_add(1);
+                    let record = this
+                        .record(&room, writer, seq)?
+                        .ok_or(Error::Internal("an accepted envelope without its record"))?;
+                    let counts = record.status == Status::Taken;
+                    links.push(board::Link {
+                        seq,
+                        prev: record.header.prev,
+                        hash: record.hash,
+                        board: match record.header.subject {
+                            Subject::Item(Timeline::Board(of)) if counts => Some(of),
+                            _ => None,
+                        },
+                    });
+                }
+                chains.push((*writer, links));
+            }
+            for (writer, _) in snapshot.frontier.iter().chain(&applied) {
+                if !cuts.iter().any(|(cut, _)| cut == writer) {
+                    if let Some(cut) = this.cut(&room, writer)? {
+                        cuts.push((*writer, cut));
+                    }
+                }
+            }
+            let loaded = board::verify_load(board, &applied, &cuts, &snapshot, served, &chains)?;
+            let mut frontier = Writer::new();
+            for (writer, head) in &loaded.frontier {
+                frontier.fixed(writer.as_bytes());
+                frontier.value(head)?;
+            }
+            this.put_stored(
+                batch,
+                store::key(table::BOARD, &[board.as_bytes()]),
+                frontier.into_bytes(),
+            );
+            Ok(loaded)
+        })
     }
 
     // ---- receiving ----
