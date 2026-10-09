@@ -11,6 +11,7 @@ const text = bytes => new TextDecoder().decode(bytes)
 const bytes = string => new TextEncoder().encode(string)
 const same = (a, b) => a.length === b.length && a.every((byte, at) => byte === b[at])
 const check = (holds, what) => { if (!holds) throw new Error(what) }
+const unhex = text => Uint8Array.from(text.match(/../g) ?? [], byte => parseInt(byte, 16))
 const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 
 /** The least a hub does: one change counter, the ordered log, the Welcomes, and what it serves a device that
@@ -37,6 +38,8 @@ class Hub {
       } else if (entry.kind === 'commit') commit = [part(0), part(1), part(2), part(3), null]
       else if (entry.kind === 'externalCommit') commit = [part(0), part(1), new Uint8Array(), part(2), part(3)]
       else if (entry.kind === 'recoveryCode') { commit = [part(0), part(1), new Uint8Array(), part(2), null]; this.links.push(part(3)) }
+      else if (entry.kind === 'recoveryCommit') commit = [part(0), part(1), part(2), part(3), part(4).length ? part(4) : null]
+      else if (entry.kind === 'recoveryFinish') this.links.push(part(0))
       let change = null
       if (entry.kind === 'roomFounding') {
         this.roomInfos.push(part(0))
@@ -69,7 +72,8 @@ class Hub {
     const anchor = core.recoveryAnchor(code, room, this.rows)
     return {
       room, group: this.served(room, this.roomInfos[0], this.roomInfos.at(-1)), anchor: this.roomInfos[anchor.epoch],
-      rows: this.rows, links: this.links, sessions: [],
+      rows: this.rows, links: this.links,
+      sessions: [...this.sessions].map(([group, { founding, current }]) => this.served(unhex(group), founding, current)),
     }
   }
 
@@ -79,7 +83,7 @@ class Hub {
     const cursor = await device.call('cursor')
     for (const entry of this.log.filter(entry => entry.change > cursor)) {
       try {
-        done.push(await device.call('processLogEntry', entry))
+        done.push(await device.call('processLogEntry', entry, Date.now()))
       } catch (error) {
         // An entry behind what the device holds (its own Commit, a group's Commits before it joined) is passed over.
         if (world.core.logFinding(error.code) !== 'duplicate') throw error
@@ -119,15 +123,28 @@ export async function runScenario(scenario, world) {
       groups.set('room', core.roomGroupId(room))
     },
     async post(step) { await hub.post(device(step.device)) },
-    async add_human(step) {
-      const newcomer = device(step.device)
-      const keyPackage = await newcomer.call('keyPackage', Date.now())
-      check(same(core.keyPackageInfo(keyPackage).device, await newcomer.call('id')), 'the KeyPackage names another device')
-      await device(step.by).call('addHumanDevice', await newcomer.call('id'), keyPackage, Date.now())
+    /** One invite from its opening to its Commit in the inviter's outbox. Both sides must show the same six emoji. */
+    async invite(step) {
+      const [inviter, newcomer] = [device(step.by), device(step.device)]
+      const opened = await inviter.call('inviteOpen', step.role, null, 'https://app.example', 'https://hub.example', Date.now())
+      const asked = await newcomer.call('joinRequest', opened.link, opened.offer, opened.offerSignature, Date.now())
+      check(asked.role === step.role && same(asked.inviter, await inviter.call('id')), 'the Request is for another invite')
+      const accepted = await inviter.call('inviteAccept', opened.inviteId, asked.request, asked.mac, asked.signature, Date.now())
+      const shown = await newcomer.call('joinReveal', accepted.reveal, accepted.revealSignature)
+      check(same(shown.numbers, accepted.code.numbers) && shown.emoji.length === 6 && shown.emoji.join() === accepted.code.emoji.join(), 'the two sides show different codes')
+      // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
+      if (step.role === 'agent') await newcomer.call('joinObserve', hub.roomInfos.at(-1))
+      const confirmed = await inviter.call('inviteConfirm', opened.inviteId, accepted.code.numbers, accepted.requestHash, true, Date.now())
+      check(confirmed?.role === step.role && same(confirmed.newDevice, await newcomer.call('id')), 'the confirmed invite was not committed')
+    },
+    async hand_over(step) {
+      const steps = (await device(step.by).call('inviteSteps')).filter(next => next.kind === 'handover')
+      check(steps.length === 1, 'the invite asks for no handover')
+      await device(step.by).call('inviteHandover', steps[0].inviteId)
     },
     async join(step) {
       const welcome = hub.welcomes.at(-1).bytes
-      const joined = await device(step.device).call('joinWelcome', welcome, room, await device(step.by).call('id'), Date.now())
+      const joined = await device(step.device).call('joinInvited', welcome, Date.now())
       check(joined.offending.length === 0 && same(joined.addedBy, await device(step.by).call('id')), 'the join is not the expected one')
     },
     async same_key(step) {
@@ -136,11 +153,9 @@ export async function runScenario(scenario, world) {
       for (const other of others) check(other.epoch === first.epoch && same(other.key, first.key), `the keys of ${step.group} differ`)
     },
     async sign_in(step) {
-      const signed = await device(step.device).call('hubSignIn', room, 'https://hub.example', new Uint8Array(32).fill(9))
+      const signed = await device(step.device).call('hubSignIn', 'https://hub.example', new Uint8Array(32).fill(9))
       check(signed.signature.length === 64 && signed.auth.length > 96, 'the sign-in is not a signed HubAuth')
     },
-    async enrol(step) { await device(step.by).call('changeAgents', [await device(step.device).call('id')], [], Date.now()) },
-    async observe(step) { await device(step.device).call('observeRoom', hub.roomInfos.at(-1), null) },
     async sync(step) {
       const done = await hub.sync(world, device(step.device), room)
       if (step.message !== undefined) {
@@ -151,8 +166,11 @@ export async function runScenario(scenario, world) {
     },
     async found_session(step) {
       const founder = device(step.by)
-      const keyPackages = []
-      for (const name of [...step.humans, step.agent]) keyPackages.push(await device(name).call('keyPackage', Date.now()))
+      // The agent's KeyPackage is the one of its confirmed Request, which the invite's next step names.
+      const next = (await founder.call('inviteSteps')).find(next => next.kind === 'foundSession')
+      check(next && same(next.device, await device(step.agent).call('id')), 'the invite asks for no session')
+      const keyPackages = [next.keyPackage]
+      for (const name of step.humans) keyPackages.push(await device(name).call('keyPackage', Date.now()))
       const session = await founder.call('foundSession', await device(step.agent).call('id'), keyPackages, Date.now())
       groups.set(step.name, core.sessionGroupId(room, session))
     },
@@ -224,6 +242,16 @@ export async function runScenario(scenario, world) {
       check(next.length === 32 && !same(next, code), 'the new code is not a new code')
       await device(step.device).call('replaceCode', code, bytes('the account\'s sealed copies'), Date.now())
       code = next
+    },
+    async recover(step) {
+      const served = hub.servedRoom(core, room, code)
+      check(served.sessions.length > 0, 'the room is served without its sessions')
+      const plan = await device(step.device).call('prepareRecovery', code, served)
+      const cuts = plan.removals.flatMap(({ group, devices }) => devices.map(gone => ({ group, cut: { device: gone, seq: 0, hash: new Uint8Array(32) } })))
+      check(cuts.length > 0 && plan.newCode.length === 32, 'the recovery removes nobody')
+      const built = await device(step.device).call('recover', code, served, cuts, bytes('the account\'s sealed copies'), Date.now())
+      check(built.unverified.length === 0 && built.outbox.length >= 2, 'the recovery was not built whole')
+      code = plan.newCode
     },
     async holds_recovery_mac(step) { check(await device(step.device).call('holdsRecoveryMac'), 'the device does not hold the key of the code in force') },
     async no_key(step) {

@@ -90,6 +90,11 @@ const fill = Uint8Array.prototype.fill
 const MAX_BYTES = 80 * 1024 * 1024 // a little above the largest stored file, for all bytes of one call together
 const MAX_VALUES = 4 * 1024 * 1024 // every value of one call together: a room's whole log served for a join is far below
 const MAX_TEXT = 1024 * 1024       // no call takes longer text
+// How deep the deepest argument of any call is nested: a ServedRoom holds a list of groups, each a list of
+// Commits, each with its bytes. tests/bindings/manifest.mjs works this out from the facade's declarations and
+// fails when this number is another. It keeps a cyclic object from being walked for ever; the budgets above are
+// what bounds the work.
+const MAX_DEPTH = 5
 
 /** Copies one argument. `copies` collects the byte arrays made, so that they can be overwritten after the call. */
 function snapshot(value, copies, depth = 0) {
@@ -101,7 +106,7 @@ function snapshot(value, copies, depth = 0) {
     if (value.length > MAX_TEXT) throw new TrommiError('too-large', 'too-large: a text')
     return value
   }
-  if (type !== 'object' || depth > 4) throw new TrommiError('bad-format', 'bad-format: an argument of a kind no call takes')
+  if (type !== 'object' || depth > MAX_DEPTH) throw new TrommiError('bad-format', 'bad-format: an argument of a kind no call takes')
   if (typedArrayName.call(value) !== undefined) {
     if (typedArrayName.call(value) !== 'Uint8Array') throw new TrommiError('bad-format', 'bad-format: bytes are a Uint8Array')
     copies.bytes += typedArrayLength.call(value)
@@ -157,12 +162,14 @@ function wipe(entries) {
 const DEVICE_CALLS = [
   'id', 'room', 'cursor', 'is_human', 'is_owner', 'room_roles', 'groups', 'group', 'content_key',
   'outbox', 'outbox_accepted', 'outbox_refused', 'key_packages_to_upload', 'key_package',
-  'found_room', 'found_session', 'found_helper', 'add_human_device', 'add_to_session', 'change_agents',
+  'found_room', 'found_session', 'found_helper', 'add_to_session', 'remove_agents',
   'remove_human_devices', 'clean_session', 'readmit_helper', 'update', 'archive',
   'join_welcome', 'observe_room', 'observe_session', 'process_log_entry',
   'send_handover', 'handovers_sent', 'handover_read', 'send_stroke_piece', 'send_work_trail', 'hub_sign_in',
   'holds_recovery_mac', 'key_is_confirmed', 'send_recovery_auth', 'post_sealed_key', 'verify_founding',
   'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
+  'invite_open', 'invite_accept', 'invite_confirm', 'invite_recommit', 'invite_steps', 'invite_handover', 'invite_forget',
+  'join_request', 'join_reveal', 'join_observe', 'join_invited',
 ]
 
 const CONSTRUCT = Symbol('Device')

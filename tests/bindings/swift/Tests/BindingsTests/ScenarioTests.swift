@@ -26,6 +26,7 @@ struct Step: Decodable {
   var refused: String?
   var epoch_of: String?
   var like: String?
+  var role: String?
   var epoch: UInt64?
 }
 
@@ -73,6 +74,8 @@ final class Hub {
       case .recoveryCode:
         commit = (part(0), part(1), Data(), part(2), nil)
         links.append(part(3))
+      case .recoveryCommit: commit = (part(0), part(1), part(2), part(3), part(4).isEmpty ? nil : part(4))
+      case .recoveryFinish: links.append(part(0))
       default: break
       }
       var accepted: UInt64?
@@ -109,7 +112,8 @@ final class Hub {
     let anchor = try recoveryAnchor(recoveryCode: code, room: room, rows: rows)
     return ServedRoom(
       room: room, group: served(room, founding: roomInfos[0], current: roomInfos[roomInfos.count - 1]),
-      anchor: roomInfos[Int(anchor.epoch)], rows: rows, links: links, sessions: [])
+      anchor: roomInfos[Int(anchor.epoch)], rows: rows, links: links,
+      sessions: sessions.map { served($0.key, founding: $0.value.founding, current: $0.value.current) })
   }
 
   /// Hands the device the log after its cursor, with every Welcome at its place. Returns what the entries did.
@@ -118,7 +122,7 @@ final class Hub {
     let cursor = try device.cursor()
     for entry in log where entry.change > cursor {
       do {
-        done.append(try device.processLogEntry(entry: entry))
+        done.append(try device.processLogEntry(entry: entry, nowMs: now()))
       } catch let CoreError.Refused(code, _) where logFinding(code: code) == .duplicate {
         // An entry behind what the device holds (its own Commit, a group's Commits before it joined) is passed over.
       }
@@ -187,27 +191,37 @@ final class ScenarioTests: XCTestCase {
       groups["room"] = try roomGroupId(room: room)
     case "post":
       try hub.post(device(step.device))
-    case "add_human":
-      let newcomer = try device(step.device)
-      let keyPackage = try newcomer.keyPackage(nowMs: now())
-      try check(try keyPackageInfo(keyPackage: keyPackage).device == newcomer.id(), "the KeyPackage names another device")
-      _ = try device(step.by).addHumanDevice(device: newcomer.id(), keyPackage: keyPackage, nowMs: now())
+    case "invite":
+      // One invite from its opening to its Commit in the inviter's outbox. Both sides must show the same six emoji.
+      let (inviter, newcomer) = (try device(step.by), try device(step.device))
+      let role: InviteRole = step.role == "agent" ? .agent : .human
+      let opened = try inviter.inviteOpen(role: role, sessionId: nil, app: "https://app.example", hub: "https://hub.example", nowMs: now())
+      let asked = try newcomer.joinRequest(link: opened.link, offer: opened.offer, offerSignature: opened.offerSignature, nowMs: now())
+      try check(asked.role == role && asked.inviter == (try inviter.id()), "the Request is for another invite")
+      let accepted = try inviter.inviteAccept(inviteId: opened.inviteId, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: now())
+      let shown = try newcomer.joinReveal(reveal: accepted.reveal, revealSignature: accepted.revealSignature)
+      try check(shown == accepted.code && shown.emoji.count == 6, "the two sides show different codes")
+      // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
+      if role == .agent { try newcomer.joinObserve(groupInfo: hub.roomInfos[hub.roomInfos.count - 1]) }
+      let confirmed = try inviter.inviteConfirm(
+        inviteId: opened.inviteId, code: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: now())
+      try check(confirmed?.role == role && confirmed?.newDevice == (try newcomer.id()), "the confirmed invite was not committed")
+    case "hand_over":
+      let steps = try device(step.by).inviteSteps().filter { $0.kind == .handover }
+      try check(steps.count == 1, "the invite asks for no handover")
+      _ = try device(step.by).inviteHandover(inviteId: steps[0].inviteId)
     case "join":
       guard let welcome = hub.welcomes.last?.bytes else { throw Unexpected("no Welcome") }
       let inviter = try device(step.by).id()
-      let joined = try device(step.device).joinWelcome(welcome: welcome, room: room, committer: inviter, nowMs: now())
+      let joined = try device(step.device).joinInvited(welcome: welcome, nowMs: now())
       try check(joined.offending.isEmpty && joined.addedBy == inviter, "the join is not the expected one")
     case "same_key":
       let keys = try step.devices!.map { try key($0, step.group) }
       try check(keys[0].key.count == 32, "a content key is not 32 bytes")
       try check(keys.allSatisfy { $0.epoch == keys[0].epoch && $0.key == keys[0].key }, "the keys of \(step.group!) differ")
     case "sign_in":
-      let signed = try device(step.device).hubSignIn(room: room, hub: "https://hub.example", challenge: Data(repeating: 9, count: 32))
+      let signed = try device(step.device).hubSignIn(hub: "https://hub.example", challenge: Data(repeating: 9, count: 32))
       try check(signed.signature.count == 64 && signed.auth.count > 96, "the sign-in is not a signed HubAuth")
-    case "enrol":
-      _ = try device(step.by).changeAgents(enrol: [device(step.device).id()], remove: [], nowMs: now())
-    case "observe":
-      try device(step.device).observeRoom(groupInfo: hub.roomInfos[hub.roomInfos.count - 1], expectedState: nil)
     case "sync":
       let done = try hub.sync(device(step.device), room: room)
       if let expected = step.message {
@@ -216,7 +230,12 @@ final class ScenarioTests: XCTestCase {
       }
       if step.removed == true { try check(done.contains { $0.removed }, "the device did not learn of its removal") }
     case "found_session":
-      let keyPackages = try (step.humans! + [step.agent!]).map { try device($0).keyPackage(nowMs: now()) }
+      // The agent's KeyPackage is the one of its confirmed Request, which the invite's next step names.
+      let agent = try device(step.agent).id()
+      guard let next = try device(step.by).inviteSteps().first(where: { $0.kind == .foundSession }), next.device == agent,
+        let invited = next.keyPackage
+      else { throw Unexpected("the invite asks for no session") }
+      let keyPackages = try [invited] + step.humans!.map { try device($0).keyPackage(nowMs: now()) }
       let session = try device(step.by).foundSession(agent: device(step.agent).id(), keyPackages: keyPackages, nowMs: now())
       groups[step.name!] = try sessionGroupId(room: room, session: session)
     case "work_trail":
@@ -269,6 +288,18 @@ final class ScenarioTests: XCTestCase {
       try check(next.count == 32 && next != code, "the new code is not a new code")
       _ = try device(step.device).replaceCode(recoveryCode: code, account: Data("the account's sealed copies".utf8), nowMs: now())
       code = next
+    case "recover":
+      let served = try hub.servedRoom(room, code: code)
+      try check(!served.sessions.isEmpty, "the room is served without its sessions")
+      let plan = try device(step.device).prepareRecovery(recoveryCode: code, served: served)
+      let cuts = plan.removals.flatMap { removal in
+        removal.devices.map { GroupCut(group: removal.group, cut: Cut(device: $0, seq: 0, hash: Data(count: 32))) }
+      }
+      try check(!cuts.isEmpty && plan.newCode.count == 32, "the recovery removes nobody")
+      let built = try device(step.device).recover(
+        recoveryCode: code, served: served, cuts: cuts, account: Data("the account's sealed copies".utf8), nowMs: now())
+      try check(built.unverified.isEmpty && built.outbox.count >= 2, "the recovery was not built whole")
+      code = plan.newCode
     case "holds_recovery_mac":
       try check(try device(step.device).holdsRecoveryMac(), "the device does not hold the key of the code in force")
     case "no_key":
