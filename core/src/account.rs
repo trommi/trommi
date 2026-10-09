@@ -57,20 +57,18 @@ pub const MAX_CREDENTIAL_ID_LEN: usize = 1023;
 pub const PASSWORD_MIN: usize = 12;
 /// The words of an Emergency Kit.
 pub const KIT_WORDS: usize = 12;
-/// Room for twelve words of the list (none is longer than nine letters) and the spaces between, so that the
-/// text never moves while it grows.
-const KIT_TEXT_CAPACITY: usize = KIT_WORDS * 10;
+/// The longest word of the list, and room for twelve of them with the spaces between, so that the text never
+/// moves while it grows.
+const MAX_WORD_LEN: usize = 9;
+const KIT_TEXT_CAPACITY: usize = KIT_WORDS * (MAX_WORD_LEN + 1);
 /// The length of a sealed copy of the recovery code.
 pub const SEALED_COPY_LEN: usize = 1 + NONCE_LEN + 32 + TAG_LEN;
 /// The first byte of a sealed copy.
 const SEALED_COPY_VERSION: u8 = 2;
 /// The key derivation record of an account as this client writes it, and the only one it derives with.
 pub const KDF_RECORD: &str = r#"{"alg":"argon2id","v":1,"m":65536,"t":3,"p":1}"#;
-/// The longest key derivation record that is read, the longest text read as Emergency Kit words, and as a
-/// recovery code: what a hub or a person gives is many times shorter.
+/// The longest key derivation record that is read: what a hub gives is many times shorter.
 pub const MAX_KDF_RECORD_LEN: usize = 1024;
-pub const MAX_KIT_TEXT_LEN: usize = 1024;
-pub const MAX_CODE_TEXT_LEN: usize = 1024;
 const KDF_ALG: &str = "argon2id";
 const KDF_RECORD_VERSION: f64 = 1.0;
 const KDF_MEMORY_KIB: u32 = 65536;
@@ -1073,27 +1071,32 @@ pub fn generate_kit_words(entropy: &mut dyn Entropy) -> Result<SecretBytes, Erro
 
 /// The Emergency Kit's words as everything is derived from them: the text is lowercased and split at anything
 /// but `a` to `z`, and must then be twelve words of the list, which are joined by one space. Anything else is
-/// `bad-recovery-words`.
+/// `bad-recovery-words`. The text is read character by character and nothing but the words is kept, however
+/// long it is.
 pub fn parse_kit_words(text: &str) -> Result<SecretBytes, AccountError> {
-    if text.len() > MAX_KIT_TEXT_LEN {
-        return Err(AccountError::BadRecoveryWords);
-    }
-    let lowercase = Zeroizing::new(text.to_lowercase());
     let list = word_list();
     let mut normalised = Zeroizing::new(String::with_capacity(KIT_TEXT_CAPACITY));
+    let mut word = Zeroizing::new(String::with_capacity(MAX_WORD_LEN));
     let mut count = 0usize;
-    for word in lowercase
-        .split(|c: char| !c.is_ascii_lowercase())
-        .filter(|word| !word.is_empty())
-    {
-        if count == KIT_WORDS || list.binary_search(&word).is_err() {
-            return Err(AccountError::BadRecoveryWords);
+    // One separator behind the text ends its last word.
+    let lowercase = text.chars().flat_map(char::to_lowercase).chain([' ']);
+    for c in lowercase {
+        if c.is_ascii_lowercase() {
+            if word.len() == MAX_WORD_LEN {
+                return Err(AccountError::BadRecoveryWords);
+            }
+            word.push(c);
+        } else if !word.is_empty() {
+            if count == KIT_WORDS || list.binary_search(&word.as_str()).is_err() {
+                return Err(AccountError::BadRecoveryWords);
+            }
+            if count > 0 {
+                normalised.push(' ');
+            }
+            normalised.push_str(&word);
+            word.zeroize();
+            count = count.saturating_add(1);
         }
-        if count > 0 {
-            normalised.push(' ');
-        }
-        normalised.push_str(word);
-        count = count.saturating_add(1);
     }
     if count != KIT_WORDS {
         return Err(AccountError::BadRecoveryWords);
@@ -1152,16 +1155,14 @@ fn is_dropped_space(c: char) -> bool {
 /// `I` and `L` as `1`. Anything else, another length, or a last character with one of its four padding bits set
 /// is `bad-recovery-code`. There is no checksum: a mistyped code is the code of no room.
 pub fn parse_recovery_code(text: &str) -> Result<Secret<32>, AccountError> {
-    if text.len() > MAX_CODE_TEXT_LEN {
-        return Err(AccountError::BadRecoveryCode);
-    }
-    let upper = Zeroizing::new(text.to_uppercase());
     let mut code = Zeroizing::new([0u8; 32]);
     let mut out = code.iter_mut();
     let mut acc = 0u32;
     let mut bits = 0u32;
     let mut count = 0usize;
-    for c in upper.chars().filter(|c| !is_dropped_space(*c) && *c != '-') {
+    // Capitals are taken character by character, so that a text of any length is read without a copy of it.
+    let capitals = text.chars().flat_map(char::to_uppercase);
+    for c in capitals.filter(|c| !is_dropped_space(*c) && *c != '-') {
         let symbol = match c {
             'O' => b'0',
             'I' | 'L' => b'1',
@@ -1708,7 +1709,7 @@ mod tests {
         assert!(list
             .iter()
             .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase())));
-        assert_eq!(list.iter().map(|word| word.len()).max(), Some(9));
+        assert_eq!(list.iter().map(|word| word.len()).max(), Some(MAX_WORD_LEN));
     }
 
     #[test]
@@ -1738,12 +1739,24 @@ mod tests {
             .expect("a word with k");
         let kelvin = words.replace("banjo", &with_k.replacen('k', "\u{212a}", 1));
         assert_eq!(read(&kelvin), Ok(words.replace("banjo", with_k)));
+        // Any amount of white space is dropped, as the reference client drops it; any amount of anything
+        // else is refused without being kept.
         assert_eq!(
-            read(&"acorn ".repeat(400)),
+            read(&format!("{words}{}", " ".repeat(5000))).as_deref(),
+            Ok(words)
+        );
+        assert_eq!(
+            read(&"acorn ".repeat(4000)),
             Err(AccountError::BadRecoveryWords)
         );
         assert_eq!(
-            parse_recovery_code(&"0".repeat(MAX_CODE_TEXT_LEN + 1)),
+            read(&"a".repeat(100_000)),
+            Err(AccountError::BadRecoveryWords)
+        );
+        let code = "0".repeat(52);
+        assert!(parse_recovery_code(&format!("{code}{}", " ".repeat(5000))).is_ok());
+        assert_eq!(
+            parse_recovery_code(&"0".repeat(100_000)),
             Err(AccountError::BadRecoveryCode)
         );
         let eleven = words.rsplit_once(' ').expect("words").0;
