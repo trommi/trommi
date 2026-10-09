@@ -85,16 +85,24 @@ export function roomsOn(env: RoomEnv): Rooms {
   async function clientOf(o: DeviceOptions, core: Core, hub: Hub, engine: Engine, cache: Cache): Promise<Client> {
     return new Client({ core, hub, engine, cache, ...(o.device_name ? { device_name: o.device_name } : {}), ...(o.device_info !== undefined ? { device_info: o.device_info } : {}) }).open()
   }
-  /** Posts everything in the outbox now, in order, each entry once: a step's own posts, whose failure is the step's. */
+  /** Posts everything in the outbox now, in order: a step's own posts, whose failure is the step's. An entry the
+   *  hub did not answer is the same bytes again, a few times (the hub answers a repeated post like the first). */
   async function postAll(engine: Engine): Promise<void> {
-    while ((await engine.outbox()).length) await engine.postHead()
+    for (let tries = 0; (await engine.outbox()).length;) {
+      try { await engine.postHead(); tries = 0 } catch (e) {
+        if (!(e instanceof HubError) || !e.transient || ++tries > 4) throw e
+        await sleep(300 * 2 ** tries)
+      }
+    }
   }
+  /** Whether a failed post may have reached the hub all the same: its answer was lost, or the hub was busy. */
+  const uncertain = (e: unknown): boolean => e instanceof HubError && e.transient
 
   async function foundRoom(o: Parameters<Rooms['foundRoom']>[0]): Promise<{ client: Client; recovery_code: Uint8Array }> {
     const core = await env.core()
     const hub = hubOf(o, o.hub_url)
     const device = await fresh(o, core)
-    let engine: Engine | null = null
+    let engine: Engine | null = null, posting = false
     const code = o.recovery_code ? o.recovery_code.slice() : core.generateRecoveryCode()
     try {
       const room_id = await device.foundRoom(code, Date.now())
@@ -105,12 +113,17 @@ export function roomsOn(env: RoomEnv): Rooms {
       engine = new Engine({ core, hub, meta: engineMeta(cache), ...again(o), ...timing }, device)
       const founding = (await engine.outbox()).find(e => e.kind === 'roomFounding') ?? (() => { throw new ClientError('internal', 'the core made no founding') })()
       await engine.attach(founding.id, { account, found_token: o.found_token ?? null })
-      await engine.postHead()
+      posting = true
+      await postAll(engine)
       await engine.load()
       return { client: await clientOf(o, core, hub, engine, cache), recovery_code: code }
     } catch (e) {
       code.fill(0)
-      await discard(o, device, engine)
+      // A founding the hub may have taken (its answers were lost) is NOT thrown away: the device and its outbox
+      // stay, with the account that goes with them, and the next start of this stored room posts the same bytes
+      // again. Everything else leaves nothing stored.
+      if (posting && uncertain(e)) { if (engine) await engine.stop().catch(() => {}); else await device.close().catch(() => {}) }
+      else await discard(o, device, engine)
       throw e
     }
   }

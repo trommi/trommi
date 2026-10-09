@@ -49,7 +49,8 @@ export class RemoteClient {
   /** The hub as far as the page needs it: its address, the room, and its Web Push key (asked in the worker). */
   readonly hub: { hub_url: string | null; room_id: string | null; pushKey(): Promise<{ vapid_public_key: string }> }
   /** Closing the storage closes the worker's (log out deletes the database next). */
-  readonly storage = { close: async () => { await this.call('storage.close').catch(() => {}); this.worker.terminate() } }
+  readonly storage = { close: async () => { await this.call('storage.close').catch(() => {}); this.worker.terminate(); this.fail(Object.assign(new Error('the core worker was closed'), { code: 'worker-closed' })) } }
+  private closed: unknown = null
 
   constructor(worker: Worker, model: Model, extra: Extra) {
     this.worker = worker
@@ -96,12 +97,14 @@ export class RemoteClient {
   }
   /** The worker died (a crash, an error loading it): every call still waiting fails, and 'error' says so. */
   fail(e: unknown): void {
+    this.closed = e
     for (const p of this.pending.values()) p.reject(e)
     this.pending.clear()
     this.emit('error', e)
   }
 
   call(method: string, ...args: unknown[]): Promise<any> {
+    if (this.closed) return Promise.reject(this.closed)
     const id = ++this.seq
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
