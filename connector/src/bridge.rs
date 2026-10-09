@@ -1103,7 +1103,7 @@ impl Bridge {
                 [".html", ".htm"]
                     .iter()
                     .map(|ext| PathBuf::from(stem.replace(&fs_, *ext).to_string()))
-                    .find(|f| *f != file && f.exists())
+                    .find(|f| *f != file && f.symlink_metadata().is_ok_and(|m| m.is_file() && m.len() <= MAX_ASSET))
             } else {
                 None
             };
@@ -2441,6 +2441,9 @@ impl Bridge {
             }
             let content = if cmd.history {
                 format!("(Earlier message, for context only; not a new request.)\n{content}")
+            } else if cmd.uncertain {
+                m.insert("uncertain".into(), json!("1"));
+                format!("(This arrived before the connector restarted. You may have seen it and acted on it already: do not act on it twice; if you are not sure, ask the human.)\n{content}")
             } else {
                 content
             };

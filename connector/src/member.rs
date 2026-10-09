@@ -586,7 +586,17 @@ impl Member {
             }
             (None, _) => pick_slot(&self.cfg, room_id, ask).await,
         };
-        let st = SlotStore::open(&p.key_file)?;
+        // The slot this process holds already keeps its state open: one handle, one lock.
+        let held = {
+            let me = self.me.lock().unwrap();
+            me.storage
+                .clone()
+                .filter(|_| me.paths.as_ref().is_some_and(|q| q.key_file == p.key_file))
+        };
+        let st = match held {
+            Some(st) => st,
+            None => SlotStore::open(&p.key_file)?,
+        };
         let mut me = self.me.lock().unwrap();
         me.room_id = Some(room_id.into());
         me.paths = Some(p);
@@ -670,7 +680,7 @@ impl Member {
                     ClientEvent::Command(cmd) => {
                         if me.phase() == "halted" {
                             eprintln!(
-                                "[trommi] command {} held back: the member list forked",
+                                "[trommi] command {} held back: this connector halted",
                                 cmd.envelope_number
                             );
                             continue;
