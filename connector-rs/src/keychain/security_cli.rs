@@ -103,9 +103,14 @@ fn failed(what: &str, out: &Out) -> ZError {
 pub fn set(bin: &Path, service: &str, account: &str, secret: &[u8], timeout: Duration) -> Result<()> {
     checked(service)?;
     checked(account)?;
-    let mut line = Zeroizing::new(format!("add-generic-password -U -a {account} -s {service} -w "));
+    // (one allocation of the full size and no temporary strings: every copy of the hex is the one zeroized on drop)
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let head = format!("add-generic-password -U -a {account} -s {service} -w ");
+    let mut line = Zeroizing::new(String::with_capacity(head.len() + secret.len() * 2 + 1));
+    line.push_str(&head);
     for b in secret {
-        line.push_str(&format!("{b:02x}"));
+        line.push(HEX[(b >> 4) as usize] as char);
+        line.push(HEX[(b & 15) as usize] as char);
     }
     line.push('\n');
     let started = Instant::now();
