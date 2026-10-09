@@ -39,7 +39,7 @@ const CALM = ['All quiet.', 'Nothing needs you.', 'Clear desk.', 'Carry on.', 'A
 const dice = Math.random()
 const greeting = calm => { const set = calm ? CALM : GREETINGS; return set[Math.floor(dice * set.length)] }
 /** No question waits, but it is not quiet: a session cannot hear him, an answer of his was not picked up, or Done rows wait to be seen. */
-const unquiet = model => (model.cut?.length ? (model.cut.length === 1 ? 'One can’t hear you.' : 'Some can’t hear you.') : model.unheard ? (model.unheard === 1 ? 'An answer waits.' : 'Answers wait.') : model.landed?.length ? (model.landed.length === 1 ? 'Something got done.' : 'Things got done.') : '')
+const unquiet = model => (model.cut?.length ? (model.cut.length === 1 ? 'One can’t hear you.' : 'Some can’t hear you.') : model.unheard ? (model.unheard === 1 ? 'An answer waits.' : 'Answers wait.') : '')
 function deskHead(model, base) {
   const n = model.fresh.length
   if (!model.units.length) return deskInvite()
@@ -155,7 +155,6 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 //   done    status "decided" but older than ACTING_MS or its session is offline (its line says "not closed by the
 //           agent"), and status "done" with an answer of his (choice, or trusted; one that was a final option settled
 //           the card at once, it was never "decided": its line says "settled by your answer"), or an info he read; "Take back"
-//           (one its agent finished, close_card, first stands unticked in the end list until he ticks it off: landed)
 //   trash   status "shredded" (he threw it away; "Take back" fishes it out), or status "done" without an answer
 //           of his (its session withdrew it; the hub takes nothing back there, so the line has no way back)
 // A permission card is never listed (the hub closes it by itself). The newest lies on top of each.
@@ -198,7 +197,7 @@ function stackCards(model) {
     closedPlaces = Object.assign(closedPlaces, {
       until,
       acting: newest(closed.filter(c => c.status === 'decided' && stackOf(c, ctx) === 'works'), c => c.decided),
-      done: newest(closed.filter(c => stackOf(c, ctx) === 'done' && !c.landed), c => c.decided),
+      done: newest(closed.filter(c => stackOf(c, ctx) === 'done'), c => c.decided),
       trash: newest(closed.filter(c => stackOf(c, ctx) === 'trash'), c => (c.status === 'shredded' ? c.shredded : c.created)),
     })
   }
@@ -278,41 +277,33 @@ const closedSheets = new WeakMap()
 /** The foot of the Desk (#desk-stacks): Artifacts. */
 const deskStacks = (model, base) => html`<div class="inbox-stacks stack-tabs is-straight is-two" id="desk-stacks">${artifactsPile(model, base)}</div>`
 
-// ---- the end of the Desk's list (his word, 8 October: "much slimmer at the end of the list, a checkbox to tick off,
-// max 5, then load more; ticked ones stay visible; the pile Off the desk goes into it") ----
-// After the open questions and the cards out with the agents: one slim list. First what the agents finished and he has
-// not archived yet (app.mjs landed: the title, the agent's closing line in grey, the drawn archive box at the right: his
-// word, 9 October, "an Archive button instead of ticking, and it strikes the row through"); the button is Archive: the
-// title is struck through first (STRIKE_MS below), then the card is archived (the toast's Undo takes it back). Then
-// what is put off (Later: the three Z), then what is ticked off already (answered, done, shredded, withdrawn: a ticked box, struck through). Five rows, "Load more" five more; "All" opens the whole
-// list with its search (/stacks/off). A title opens its card.
+// ---- the end of the Desk's list: Off your mind, a plain feed (his word, 9 October: "no archiving, no ticking: the feed
+// runs off at the bottom, that is enough") ----
+// After the open questions: one slim list. First what the agents are still working on (a small green dot), then what is
+// put off (Later: the three Z), then what is closed, the newest first (answered, done by its agent, read; shredded and
+// withdrawn ones struck through). Nothing to tick, nothing to archive. Five rows, then "Show more" opens the whole list
+// with its search (/stacks/off). A title opens its card.
 const END_STEP = 5
-const BOX_TICK = raw('<svg viewBox="0 0 24 24" class="end-box" aria-hidden="true"><path d="M5.2 4.6 Q12 4.1 19.1 4.8 Q19.6 12 19.2 19.3 Q12 19.7 4.8 19.2 Q4.4 12 5.2 4.6 Z"/><path class="end-check" d="M7.4 12.6 Q9.4 14.8 10.8 16.8 Q14.6 10.4 21.6 3.2"/></svg>')
 /** A section's heading at the Desk's foot: a pen rule with its small label; a link (Show more, All Artifacts) where
  *  the rule ends, at its right. */
 const divider = (label, link = '') => html`<div class="end-divider"><svg viewBox="0 0 300 8" preserveAspectRatio="none" aria-hidden="true"><path d="M2 4.6 Q60 2.6 120 4.2 T238 3.6 T298 4.4"/></svg><span aria-hidden="true">${label}</span>${link}</div>`
 /** The end list. On the Desk the first five rows and "Show more"; full (the page /stacks/off): every row, with its search. */
 function endList(model, base, { full = false, q = '' } = {}) {
-  const open = (model.landed ?? []).map(card => ({ card, g: 'open', at: card.finished ?? 0, said: card.summary ? plain(card.summary, model.state.assets) : 'Done' }))
   const { later, closedTop, closedSize } = offParts(model)
   const works = workItems(model).map(i => ({ card: i.card, g: 'works', at: i.line?.updated ?? i.at, said: `${i.sender.name}${i.line?.label ? ` · ${i.line.label}` : ' is on it'}` }))
   const id = full ? 'off-end' : 'desk-end'
   const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   // (the Desk shows the first END_STEP: only so many of the thousands closed are taken, the count says the rest)
   const whole = full || terms.length
-  let items = [...works, ...open, ...later, ...closedTop(whole ? Infinity : END_STEP)]
-  const total = whole ? items.length : works.length + open.length + later.length + closedSize
+  let items = [...works, ...later, ...closedTop(whole ? Infinity : END_STEP)]
+  const total = whole ? items.length : works.length + later.length + closedSize
   if (terms.length) items = items.filter(s => terms.every(w => `${s.card.title} ${model.byAgent.get(s.card.agent)?.name ?? ''} ${s.said}`.toLowerCase().includes(w)))
   if (!items.length && !full) return html`<section id="${id}" class="endlist" hidden></section>`
-  // (a card he archived himself can be taken back: its ticked box is Unarchive; a card closed by his answer stays ticked)
-  const tickForm = (c, way, label, inner, cls = '') => html`<form class="end-form" method="post" action="${act(c, base, way)}"><input type="hidden" name="stay" value="1"><button class="end-tick${cls}" type="submit" title="${label}" aria-label="${label}: ${c.title}">${inner}</button></form>`
   const row = (s, i) => {
     const c = s.card, href = cardPath(c, base)
     const box = s.g === 'works' ? html`<span class="end-tick is-working" title="Being worked on" role="img" aria-label="Being worked on"><i class="work-dot"></i></span>`
-      : s.g === 'open' ? tickForm(c, 'archive', 'Archive', sk('archive'), ' is-archive')
       : s.g === 'later' ? html`<span class="end-tick is-later" title="Put off: Later" role="img" aria-label="Later">${sk('snooze')}</span>`
-        : c.archived ? tickForm(c, 'unarchive', 'Unarchive', BOX_TICK, ' is-ticked')
-          : html`<span class="end-tick is-ticked" title="${s.g === 'trash' ? 'Thrown away' : 'Done'}" role="img" aria-label="${s.g === 'trash' ? 'Thrown away' : 'Done'}">${BOX_TICK}</span>`
+        : ''
     return html`<li class="end-row" data-g="${s.g}" data-id="${c.id}">${box}<a class="end-title" data-nav href="${href}" title="${c.title} · ${s.said}">${c.title}</a><span class="end-said">${s.said}</span>${agoSpan(s.at, 'ago end-ago')}</li>`
   }
   return html`<section id="${id}" class="endlist${full ? ' is-full' : ''}" aria-label="Off your mind">
@@ -320,26 +311,6 @@ ${divider('Off your mind', !full && (terms.length ? items.length : total) > END_
 <ol class="end-rows">${(full ? items : items.slice(0, END_STEP)).map(row)}</ol>${full && !items.length ? html`<p class="end-none">${terms.length ? 'Nothing here has these words.' : 'Nothing yet.'}</p>` : ''}
 </section>`
 }
-
-/** Archive in the end list strikes the row through first: the line is drawn across the title and the row dims
- *  (desk.css .end-row.is-archiving), then the form goes as before. Where motion is reduced it goes at once. */
-const STRIKE_MS = 700
-const striking = new Set(), struck = new Set()
-if (typeof document !== 'undefined') document.addEventListener('submit', e => {
-  const form = e.target, row = form.closest?.('.end-row[data-g="open"]'), id = row?.dataset.id
-  if (!id || !form.classList.contains('end-form')) return
-  if (struck.delete(id) || matchMedia('(prefers-reduced-motion: reduce)').matches) return
-  e.preventDefault(); e.stopImmediatePropagation()
-  if (striking.has(id)) return
-  striking.add(id)
-  row.classList.add('is-archiving')
-  setTimeout(() => {
-    striking.delete(id)
-    // (a live update may have drawn the row anew meanwhile: the form of now)
-    const now = document.querySelector(`.end-row[data-g="open"][data-id="${CSS.escape(id)}"] form.end-form`)
-    if (now) { struck.add(id); now.closest('.end-row').classList.add('is-archiving'); now.requestSubmit(now.querySelector('button')) }
-  }, STRIKE_MS)
-}, true)
 
 /** The page /stacks/off: the whole list, the work with the agents first, then every row of the end list, with a search. */
 const offMain = (model, base, q) => html`<main id="inbox" class="off-page" aria-label="Off your mind"><header class="inbox-head desk-top"><h2 class="desk-hello"><a class="off-back" data-nav href="${base}/" aria-label="Back to the Desk">←</a> Off your <em>mind</em></h2><form class="end-search" method="get" action="${base}/stacks/off" role="search"><label><span class="offscreen">Search</span><input type="search" name="q" value="${q}" placeholder="Search the list" autocomplete="off"></label></form></header>
@@ -781,10 +752,10 @@ export function register(t) {
     })
     // Several cards at once (the selection bar): each through the same way as one card's own button; one toast whose
     // Undo takes all of them back (later -> wake, the others -> reopen).
-    const BATCH = { later: id => t.hub.snooze(id, {}), wake: id => t.hub.snooze(id, { clear: true }), duck: id => t.hub.trust(id, ''), shred: id => t.hub.shred(id, ''), read: id => t.hub.closeInfo(id), reopen: id => t.hub.reopen(id), archive: id => t.hub.archive(id), unarchive: id => t.hub.archive(id, false) }
-    const BACK = { later: 'wake', duck: 'reopen', shred: 'reopen', read: 'reopen', archive: 'unarchive' }
-    const WHAT = { later: 'snooze', duck: 'trust', shred: 'shred', archive: 'archive' }   // (a single card's toast: app.mjs SAID)
-    const SAID = { later: WORDS.later, duck: 'Left to the agents', shred: 'Shredded', read: 'Read', wake: 'Back on the Desk', reopen: 'Back on the Desk', archive: 'Archived', unarchive: 'Back on the Desk' }
+    const BATCH = { later: id => t.hub.snooze(id, {}), wake: id => t.hub.snooze(id, { clear: true }), duck: id => t.hub.trust(id, ''), shred: id => t.hub.shred(id, ''), read: id => t.hub.closeInfo(id), reopen: id => t.hub.reopen(id) }
+    const BACK = { later: 'wake', duck: 'reopen', shred: 'reopen', read: 'reopen' }
+    const WHAT = { later: 'snooze', duck: 'trust', shred: 'shred' }   // (a single card's toast: app.mjs SAID)
+    const SAID = { later: WORDS.later, duck: 'Left to the agents', shred: 'Shredded', read: 'Read', wake: 'Back on the Desk', reopen: 'Back on the Desk' }
     t.post(/^\/cards\/batch$/, async ({ req, res, form }) => {
       const way = String(form.get('way') ?? ''), m0 = model()
       if (!Object.hasOwn(BATCH, way)) { res.code = 400; return }
@@ -795,7 +766,6 @@ export function register(t) {
         if (way === 'duck' && c.kind !== 'decision') continue
         if (way === 'read' && c.kind !== 'info') continue
         if ((way === 'later' || way === 'shred') && c.kind === 'permission') continue
-        if (way === 'archive' ? !c.landed : c.landed && way !== 'unarchive') continue
         try { await BATCH[way](id); done.push(id) } catch (err) { console.warn(way, id, err.message) }
       }
       // From a card's own page (from: that card): on to the next open card, or back to where it was opened from

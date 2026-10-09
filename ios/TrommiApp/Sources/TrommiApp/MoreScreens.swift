@@ -17,7 +17,7 @@ struct BlitzScreen: View {
   @State private var current: String?
   var body: some View {
     let _ = model.version
-    let walk = (model.view?.deskCards() ?? []) + (model.view?.landed ?? [])
+    let walk = model.view?.deskCards() ?? []
     let id = current.flatMap { c in walk.contains { $0.id == c } ? c : nil } ?? walk.first?.id
     Group {
       if let id = id {
@@ -69,9 +69,10 @@ struct OffScreen: View {
 }
 
 /**
- * Off your mind as ONE list (his decision, 8 October): what the agents are still working on first (a small pulsing
- * green dot, no gear), then what is done (Done rows with the drawn archive box, Later, answered, shredded). One line per
- * row, the title only; a tap opens the card (OffRow: Archive strikes the title through, then archives). On the Desk five rows, then Show More (this list in full, with its search).
+ * Off your mind as ONE list, a plain feed (his word, 9 October: "no archiving, no ticking: the feed runs off at the
+ * bottom, that is enough"): what the agents are still working on first (a small pulsing green dot), then Later, then
+ * what is closed, the newest first (shredded and withdrawn ones struck through). One line per row, the title only; a
+ * tap opens the card. On the Desk five rows, then Show More (this list in full, with its search).
  */
 struct OffList: View {
   @EnvironmentObject var model: BoardModel
@@ -87,7 +88,7 @@ struct OffList: View {
     if !shown.isEmpty || full {
       VStack(alignment: .leading, spacing: 0) {
         if !full { EndDivider(title: "Off your mind").padding(.bottom, 4) }
-        ForEach(full ? shown : Array(shown.prefix(5))) { r in OffRow(card: r.card, g: r.g) }
+        ForEach(full ? shown : Array(shown.prefix(5))) { r in row(r) }
         if full && shown.isEmpty { Text(terms.isEmpty ? "Nothing yet." : "Nothing here has these words.").font(Face.text(15)).foregroundStyle(Ink.muted).padding(.vertical, 20) }
         if !full && shown.count > 5 {
           Button("Show More") { model.path.append(.off) }.font(Face.text(15, .semibold)).foregroundStyle(Ink.accent).frame(maxWidth: .infinity).padding(.vertical, 12)
@@ -95,7 +96,7 @@ struct OffList: View {
       }.padding(.top, 8)
     }
   }
-  /** Being worked on first (the newest move first), then the end list's order (EndList.endItems: Done rows, Later, the rest). */
+  /** Being worked on first (the newest move first), then the end list's order (EndList.endItems: Later, the rest). */
   static func rows(_ v: DeskModel.View, _ d: DeskModel) -> [Row] {
     let working = d.tasks.filter { $0.state == "working" }
     let decidedHere = d.cards.filter { c in c.status == "decided" && d.stackOf(c) == "works" && v.here.contains { $0.id == c.agent } }
@@ -104,75 +105,29 @@ struct OffList: View {
       return (c, line?.updated ?? (c.status == "open" ? c.withAgent : c.decided) ?? 0)
     }.sorted { $0.1 > $1.1 }.map { Row(card: $0.0, g: "works") }
     let seen = Set(busy.map { $0.id })
-    let rest = EndList(view: v, full: true).endItems(v, d).filter { !seen.contains($0.card.id) }.map { Row(card: $0.card, g: $0.g) }
+    let rest = EndList().endItems(v, d).filter { !seen.contains($0.card.id) }.map { Row(card: $0.card, g: $0.g) }
     return busy + rest
   }
-}
-
-/** One row of Off your mind: the title from the left edge; at the right the dot (being worked on), the drawn archive
- *  box (finished, not archived yet: his word, 9 October, "an Archive button instead of ticking, and it strikes the row
- *  through"), Later's Z, or the ticked box. Archive draws the pen's line across the title and dims the row, then
- *  archives the card as the tick did (the toast's Undo takes it back); what he archived stays struck through. */
-struct OffRow: View {
-  @EnvironmentObject var model: BoardModel
-  let card: DeskCard
-  let g: String
-  /** Archive was pressed here: the line is drawn, the card is archived a moment later. */
-  @State private var striking = false
-  private static let strikeSeconds = 0.7
-  var body: some View {
-    let c = card
-    let struck = striking || (c.archived && g != "open")
+  @ViewBuilder private func row(_ r: Row) -> some View {
+    let c = r.card
+    // the title from the left edge; the dot of work or Later's Z on the right, nothing on a closed row
     HStack(spacing: 8) {
       Button { model.path.append(.card(c.id)) } label: {
         Text(c.title.isEmpty ? "(no title)" : c.title).font(Face.text(16, .medium))
-          .foregroundStyle(g == "done" || g == "trash" ? Ink.muted : Ink.fg)
-          .strikethrough(g == "trash", color: Ink.faint)
+          .foregroundStyle(r.g == "later" || r.g == "trash" ? Ink.muted : Ink.fg)
+          .strikethrough(r.g == "trash", color: Ink.faint)
           .lineLimit(1).truncationMode(.tail)
-          .overlay { StrikeLine().trim(from: 0, to: struck ? 1 : 0).stroke(striking ? Ink.fg : Ink.muted, style: StrokeStyle(lineWidth: 1.6, lineCap: .round)).accessibilityHidden(true) }
-          .opacity(striking ? 0.5 : 1)
           .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .accessibilityLabel(g == "works" ? "\(c.title), being worked on" : c.title)
-      Group {
-        if g == "works" { PulseDot() }
-        else if g == "open" {
-          Button { archive() } label: { Sketch("archive", color: Ink.fg).frame(width: 22, height: 22).frame(width: 44, height: 44).contentShape(Rectangle()) }
-            .buttonStyle(.plain).disabled(striking).opacity(striking ? 0.5 : 1).accessibilityLabel("Archive: \(c.title)")
-        }
-        else if g == "later" { Sketch("snooze", color: Ink.stampLater).frame(width: 20, height: 20) }
-        else { PenMark("desk:BOX_TICK", color: Ink.faint).frame(width: 22, height: 22) }
-      }.frame(width: 44, height: 44)
+      .accessibilityLabel(r.g == "works" ? "\(c.title), being worked on" : r.g == "later" ? "\(c.title), later" : r.g == "trash" ? "\(c.title), thrown away" : c.title)
+      if r.g == "works" { PulseDot().frame(width: 44, height: 44) }
+      else if r.g == "later" { Sketch("snooze", color: Ink.stampLater).frame(width: 20, height: 20).frame(width: 44, height: 44).accessibilityHidden(true) }
     }
     .overlay(alignment: .bottom) { Rectangle().fill(Ink.line).frame(height: 1) }
-    // (archived: the row is struck by its state from here on; taken back by Undo, the line goes)
-    .onChange(of: c.archived) { _, _ in striking = false }
-  }
-  private func archive() {
-    let id = card.id
-    let still = UIAccessibility.isReduceMotionEnabled
-    withAnimation(still ? nil : .easeOut(duration: 0.45)) { striking = true }
-    Task { @MainActor in
-      if !still { try? await Task.sleep(nanoseconds: UInt64(OffRow.strikeSeconds * 1_000_000_000)) }
-      model.archive(id)
-      // (not saved: the alert toast says so, and the line is taken off again)
-      try? await Task.sleep(nanoseconds: 4_000_000_000)
-      if striking { withAnimation(.easeOut(duration: 0.2)) { striking = false } }
-    }
   }
 }
 
-/** The pen's line across a title: left to right, a little uneven, slightly rising. */
-struct StrikeLine: Shape {
-  func path(in r: CGRect) -> Path {
-    var p = Path()
-    let y = r.midY + 1
-    p.move(to: CGPoint(x: r.minX - 1, y: y + 0.8))
-    p.addCurve(to: CGPoint(x: r.maxX + 2, y: y - 0.8), control1: CGPoint(x: r.minX + r.width * 0.3, y: y - 1.4), control2: CGPoint(x: r.minX + r.width * 0.68, y: y + 1.5))
-    return p
-  }
-}
 
 /** The small green dot of something still being worked on: it breathes. */
 struct PulseDot: View {

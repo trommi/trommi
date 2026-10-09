@@ -2,7 +2,7 @@
 // by the pen, the duck for all and Blitz; the open questions as calm cards in their session's tones, the answers as
 // tiles (thumbs for a plain yes/no, two named tiles, the advised one with "+N other ways", or Choose); a long press
 // brings Later, Reverse, Duck it, What??, Shred, Copy. Below: what is with the agents, then the slim end list (Done rows
-// to tick off, Later, what is done), "Show more" opens Off your mind.
+// Later, what is done), "Show more" opens Off your mind.
 import SwiftUI
 import TrommiClient
 import TrommiCore
@@ -80,8 +80,7 @@ struct DeskScreen: View {
     else {
       let n = v.fresh.count
       let unquiet = !v.cut.isEmpty ? (v.cut.count == 1 ? "One can’t hear you." : "Some can’t hear you.")
-        : v.unheard > 0 ? (v.unheard == 1 ? "An answer waits." : "Answers wait.")
-        : !v.landed.isEmpty ? (v.landed.count == 1 ? "Something got done." : "Things got done.") : ""
+        : v.unheard > 0 ? (v.unheard == 1 ? "An answer waits." : "Answers wait.") : ""
       let set = n == 0 ? CALM : GREETINGS
       let line = n == 0 && !unquiet.isEmpty ? unquiet : set[Int(DICE * Double(set.count))]
       let decisions = v.fresh.filter { $0.kind == "decision" }.map { $0.id }
@@ -508,41 +507,21 @@ struct EndDivider: View {
   }
 }
 
-/** The end of the Desk's list (desk.mjs endList): Done rows to tick off, Later, what is done; five, then "Show more". */
-struct EndList: View {
-  @EnvironmentObject var model: BoardModel
-  let view: DeskModel.View
-  let full: Bool
-  var query = ""
-  var body: some View {
-    let d = model.desk!
-    let items = endItems(view, d)
-    let terms = query.lowercased().split(separator: " ").map(String.init)
-    let shown = terms.isEmpty ? items : items.filter { s in terms.allSatisfy { "\(s.card.title) \(d.byAgent[s.card.agent]?.name ?? "") \(s.said)".lowercased().contains($0) } }
-    if !shown.isEmpty || full {
-      VStack(alignment: .leading, spacing: 0) {
-        if !full { EndDivider(title: "Off your mind").padding(.bottom, 4) }
-        ForEach(full ? shown : Array(shown.prefix(5)), id: \.card.id) { s in endRow(s) }
-        if full && shown.isEmpty { Text(terms.isEmpty ? "Nothing yet." : "Nothing here has these words.").font(Face.text(15)).foregroundStyle(Ink.muted).padding(.vertical, 20) }
-        if !full && shown.count > 5 {
-          Button("Show More") { model.path.append(.off) }.font(Face.text(15, .semibold)).foregroundStyle(Ink.accent).frame(maxWidth: .infinity).padding(.vertical, 12)
-        }
-      }.padding(.top, 8)
-    }
-  }
+/** The order of the end of the Desk's list (desk.mjs endList): Later, then what is closed, the newest first. The rows
+ *  themselves are OffList's (MoreScreens.swift). */
+struct EndList {
   struct Item { var card: DeskCard; var g: String; var at: UInt64; var said: String }
   func endItems(_ v: DeskModel.View, _ d: DeskModel) -> [Item] {
-    let open = v.landed.map { Item(card: $0, g: "open", at: $0.finished ?? 0, said: $0.summary.isEmpty ? "Done" : $0.summary) }
     let mine: (DeskCard) -> Bool = { c in v.all || d.deskOf(d.byAgent[c.agent]) == v.deskId || d.desks.isEmpty }
     var rest = [Item]()
     for c in v.snoozed { rest.append(Item(card: c, g: "later", at: c.snoozedAt ?? 0, said: c.snoozedUntil.map { "Until \(untilText($0))" } ?? "")) }
-    for c in d.cards where c.status != "open" && mine(c) && !c.landed {
+    for c in d.cards where c.status != "open" && mine(c) {
       let place = d.stackOf(c)
       if place == "done" { rest.append(Item(card: c, g: "done", at: c.decided ?? 0, said: answerOf(c))) }
       else if place == "trash" { rest.append(Item(card: c, g: "trash", at: (c.status == "shredded" ? c.shredded : c.created) ?? 0, said: c.status == "shredded" ? "Shredded" : "Withdrawn\(c.summary.isEmpty ? "" : ": \(c.summary)")")) }
     }
     rest.sort { $0.at > $1.at }
-    return open + rest.filter { $0.g == "later" } + rest.filter { $0.g != "later" }
+    return rest.filter { $0.g == "later" } + rest.filter { $0.g != "later" }
   }
   private func answerOf(_ c: DeskCard) -> String {
     if c.kind == "info" { return "Read" }
@@ -551,26 +530,6 @@ struct EndList: View {
     return (picked.isEmpty ? c.choices.joined(separator: ", ") : picked) + (c.settled ? " · settled by your answer" : c.status == "done" ? " · done by the agent" : "")
   }
   private func untilText(_ t: UInt64) -> String { let f = DateFormatter(); f.locale = Locale(identifier: "en_GB"); f.dateFormat = "EEE HH:mm"; return f.string(from: Date(timeIntervalSince1970: Double(t) / 1000)) }
-  @ViewBuilder private func endRow(_ s: Item) -> some View {
-    HStack(spacing: 12) {
-      Group {
-        if s.g == "open" { Button { model.archive(s.card.id) } label: { PenMark("desk:BOX", color: Ink.fg).frame(width: 24, height: 24) }.accessibilityLabel("Check Off: \(s.card.title)") }
-        else if s.g == "later" { Sketch("snooze", color: Ink.stampLater).frame(width: 22, height: 22) }
-        else if s.card.archived { Button { model.archive(s.card.id, false) } label: { PenMark("desk:BOX_TICK", color: Ink.fg).frame(width: 24, height: 24) }.accessibilityLabel("Uncheck") }
-        else { PenMark("desk:BOX_TICK", color: Ink.faint).frame(width: 24, height: 24) }
-      }.frame(width: 28)
-      Button { model.path.append(.card(s.card.id)) } label: {
-        VStack(alignment: .leading, spacing: 1) {
-          Text(s.card.title).font(Face.text(15, .medium)).foregroundStyle(s.g == "open" || s.g == "later" ? Ink.fg : Ink.muted)
-            .strikethrough(s.g == "done" || s.g == "trash", color: Ink.faint).lineLimit(1)
-          if !s.said.isEmpty { Text(s.said).font(Face.text(13)).foregroundStyle(Ink.faint).lineLimit(1) }
-        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-      }.buttonStyle(.plain)
-      Text(agoText(s.at)).font(Face.text(12)).foregroundStyle(Ink.faint)
-    }
-    .padding(.vertical, 9)
-    .overlay(alignment: .bottom) { Rectangle().fill(Ink.line).frame(height: 1) }
-  }
 }
 
 /** The bar for the chosen cards (desk.mjs sel-bar): Later, Duck it, Read (infos), Shred, and clear. */

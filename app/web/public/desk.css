@@ -1038,42 +1038,27 @@ html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-text { padding-r
 /* (a phone: the advised pair a little taller, the stroke clear under the words) */
 @media (max-width: 860px) { html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-answer.is-advised::after { bottom: 3px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer { height: 60px; } html body :is(#inbox, #session) .inbox-groups .inbox-row .inbox-actions.is-advised-pair .inbox-answer.is-take { padding-bottom: 14px; } }
 
-/* ---- the end of the Desk's list (desk.mjs endList): slim rows, a drawn archive box to put a finished one away (its
-   title is struck through first, then it is archived), archived ones struck through with a ticked box in the done ink;
-   Later's three Z in its ink. Max five, then Show more. ---- */
+/* ---- the end of the Desk's list (desk.mjs endList): Off your mind, a plain feed of slim rows: the work with a green
+   dot, Later's three Z in its ink, then what is closed; nothing to tick. Max five, then Show more. ---- */
 .endlist { display: grid; gap: 2px; margin: var(--s-6) 0 0; }
 .endlist[hidden] { display: none; }
 .end-rows { display: grid; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
 .end-row { text-align: left; display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto 36px; grid-template-areas: "t s w b"; align-items: center; column-gap: var(--s-2); min-height: 40px; padding: 2px 4px 2px var(--s-2); border-bottom: 1px solid var(--line); }
 .end-row[hidden] { display: none; }
-.end-form { margin: 0; display: contents; }
-/* (the box at the row's right end, in line with the Desk's tiles; the title and its line at the left) */
-.end-row > .end-tick, .end-row > .end-form > .end-tick { grid-area: b; justify-self: end; }
+/* (the dot or the Z at the row's right end, in line with the Desk's tiles; the title and its line at the left) */
+.end-row > .end-tick { grid-area: b; justify-self: end; }
 .end-title { grid-area: t; } .end-said { grid-area: s; } .end-ago { grid-area: w; }
 @media (pointer: coarse) { .end-tick { width: 44px; height: 44px; } .end-row { grid-template-columns: minmax(0, max-content) minmax(0, 1fr) auto 44px; } }
 .end-tick { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--fg); }
-button.end-tick { cursor: pointer; }
-button.end-tick:hover { background: var(--sunken); }
-button.end-tick:hover .end-box { stroke: var(--stamp-ink-done); }
-.end-tick.is-archive .sketch { width: 22px; height: 22px; }
-button.end-tick.is-archive:hover { color: var(--stamp-ink-done); }
-/* Archive pressed (desk.mjs STRIKE_MS): the pen's line runs across the title's words, the row dims; then it is archived */
-.end-row.is-archiving > :is(.end-title, .end-said, .end-ago) { opacity: .5; transition: opacity .5s ease-out; }
-.end-row.is-archiving .end-tick { opacity: .5; pointer-events: none; }
-.end-row.is-archiving > .end-title { position: relative; justify-self: start; max-width: 100%; }
-.end-row.is-archiving > .end-title::after { content: ""; position: absolute; left: 0; right: 0; top: 54%; height: 1.6px; border-radius: 2px; background: var(--fg); transform-origin: left center; rotate: -.5deg; animation: end-strike .45s cubic-bezier(.3, 0, .2, 1) both; }
-@keyframes end-strike { from { transform: scaleX(0); } }
-.end-box { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
-.end-tick.is-ticked { color: var(--faint); }
-.end-tick.is-ticked .end-check { stroke: var(--stamp-ink-done); stroke-width: 2.2; }
 .end-tick.is-later { color: var(--stamp-ink-later); }
 .end-tick.is-later .sketch { width: 20px; height: 20px; }
 .end-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font: 600 var(--t-sm)/1.3 var(--font); text-decoration: none; }
 .end-title:hover { text-decoration: underline; }
 .end-said { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 400 var(--t-sm)/1.3 var(--font); }
 .end-ago { color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
-.end-row:not([data-g="open"]) :is(.end-title, .end-said) { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--fg) 45%, transparent); color: var(--muted); }
-.end-row[data-g="later"] :is(.end-title, .end-said) { text-decoration: none; }
+/* (put off: grey; thrown away: struck through; what is done reads plain) */
+.end-row:is([data-g="later"], [data-g="trash"]) :is(.end-title, .end-said) { color: var(--muted); }
+.end-row[data-g="trash"] :is(.end-title, .end-said) { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--fg) 45%, transparent); }
 .end-row[data-g="trash"] :is(.end-title, .end-said) { opacity: .7; }
 
 /* a phone: the title and its line one above the other */
@@ -1127,7 +1112,6 @@ button.end-tick.is-archive:hover { color: var(--stamp-ink-done); }
   
 }
 .end-row > .end-title { font-weight: 500; }
-.end-row[data-g="open"] > .end-title { font-weight: 600; }
 @media (max-width: 860px) {
   :is(#inbox, #session) .inbox-groups > .tail, :is(#inbox, #session) .inbox-groups > #desk-ip[hidden] + .endlist { margin-top: max(72px, 40vh); }
   
@@ -1146,7 +1130,6 @@ button.end-tick.is-archive:hover { color: var(--stamp-ink-done); }
 #desk-ip:not([hidden]) + .endlist .end-divider { display: none !important; }
 #desk-ip:not([hidden]) + .endlist { margin-top: 0; }
 #desk-ip:not([hidden]) + .endlist .end-rows { border-top: 0; }
-.end-tick.is-ticked:is(button):hover .end-check { stroke: var(--muted); }
 /* the page /stacks/off */
 .off-page .desk-hello { display: flex; align-items: baseline; gap: var(--s-3); }
 .off-back { color: var(--muted); text-decoration: none; font: 400 1.4rem/1 var(--font); }
