@@ -13,7 +13,7 @@
 #            build provenance for each file and for the manifest (no secret; who built what, from which commit)
 #   deliver  `wrangler deploy` of exactly those files, then asks app.trommi.com which commit it serves
 #
-# Secrets: the environment `production` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; CLOUDFLARE_API_TOKEN
+# Secrets: the environment `web` holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID; CLOUDFLARE_API_TOKEN
 # and CLOUDFLARE_ACCOUNT_ID come from the 1Password Environment and are seen by the wrangler command only.
 name: deploy_web
 
@@ -104,7 +104,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
-      name: production
+      name: web
       url: https://app.trommi.com
     # one delivery at a time; a waiting one is not cut off
     concurrency:
