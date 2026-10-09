@@ -46,6 +46,8 @@ pub struct Scope {
     pub link_pending: bool,
     pub joiner: Option<Device>,
     pub keys_replaced: bool,
+    /// in a recovery: the part applied last was the room Commit that replaced the recovery keys
+    pub replaced_in_last: bool,
     pub joined: Vec<Vec<u8>>,
 }
 
@@ -156,12 +158,23 @@ fn store_group_info(
 }
 
 fn add_member(c: &Connection, group_id: &[u8], device: &Device, epoch: u64) -> Res<()> {
-    // 9.0.10: a chain that was cut does not go on, so a key that left a group does not come back to it
     let n = c
         .prepare_cached("INSERT OR IGNORE INTO group_members (group_id, device, added_epoch) VALUES (?1, ?2, ?3)")?
         .execute(params![group_id, &device[..], epoch as i64])?;
+    if n == 1 {
+        return Ok(());
+    }
+    // The key was a leaf of this group before. It comes back (3.7: a device whose Welcome failed is added
+    // again) only if its chain can go on where it was cut: nothing of it lies beyond its Cut (9.0.10).
+    let n = c
+        .prepare_cached(
+            "UPDATE group_members SET added_epoch = ?1, removed_epoch = NULL, cut_seq = NULL, cut_hash = NULL
+             WHERE group_id = ?2 AND device = ?3 AND removed_epoch IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM envelopes e WHERE e.group_id = ?2 AND e.sender = ?3 AND e.seq > group_members.cut_seq)",
+        )?
+        .execute(params![epoch as i64, group_id, &device[..]])?;
     if n == 0 {
-        return Err(bad("a device that was a leaf of this group before"));
+        return Err(bad("a device whose chain in this group was cut short of what it wrote, or that is a leaf already"));
     }
     Ok(())
 }
@@ -553,10 +566,9 @@ fn commit_in(
             .optional()?;
         return match taken {
             Some((d, change, sender))
-                if same(&d, &digest(&body.commit))
-                    && (scope.recovery
-                        || auth.who == Who::Recovery
-                        || same(&sender, &auth.device)) =>
+                if !scope.recovery
+                    && same(&d, &digest(&body.commit))
+                    && (auth.who == Who::Recovery || same(&sender, &auth.device)) =>
             {
                 Ok(Accepted {
                     epoch: body.epoch + 1,
@@ -676,6 +688,16 @@ fn commit_in(
             if scope.keys_replaced {
                 return Err(bad("the recovery keys are replaced once per request"));
             }
+            // 8.1: a recovery key is no device's key, now or ever: a key that has or had a role would no longer
+            // be told apart at sign-in
+            for key in [&after.recovery_signature_key, &after.recovery_hpke_key] {
+                if x.c
+                    .prepare_cached("SELECT 1 FROM devices WHERE room_id = ?1 AND device = ?2")?
+                    .exists(params![&room[..], key])?
+                {
+                    return Err(bad("a recovery key that is or was a device's key"));
+                }
+            }
             scope.keys_replaced = true;
         }
         sealed_to = after.recovery_hpke_key.clone();
@@ -686,8 +708,8 @@ fn commit_in(
             return Err(bad("a session group's TrommiSession never changes"));
         }
         let kind = store::session_kind(x.c, &view, &row)?;
-        let was_stale = !rules::offending_leaves(kind, &view, &facts.before.leaves).is_empty();
-        rules::check_session_commit(kind, &view, &facts, founding, was_stale)?;
+        let was_stale = rules::is_stale(kind, &view, &facts.before.leaves);
+        rules::check_session_commit(kind, &view, &facts, founding, was_stale, scope.recovery)?;
         if let By::External(joiner) = &facts.by {
             verify_recovery_auth(
                 x,
@@ -726,6 +748,24 @@ fn commit_in(
         }
         committer_is_human = view.standing(&committer) == Standing::Human;
         sealed_to = room_row.recovery_hpke_key.clone();
+    }
+
+    // 8.1, the other way round: no device comes in under the room's recovery signature key
+    let incoming = facts.adds.iter().map(|a| &a.device).chain(match &facts.by {
+        By::External(j) => Some(j),
+        By::Member(_) => None,
+    });
+    for device in incoming {
+        let recovery_key = facts
+            .after
+            .room
+            .as_ref()
+            .map_or(&room_row.recovery_signature_key, |r| {
+                &r.recovery_signature_key
+            });
+        if same(device, recovery_key) || same(device, &room_row.recovery_signature_key) {
+            return Err(bad("a device under the room's recovery key"));
+        }
     }
 
     // 14.1: the GroupInfo of the new epoch, a Welcome for every Add, the SealedKey.
@@ -855,7 +895,13 @@ fn commit_in(
             }
             fx.recovery_replaced.push(room);
         }
-        crate::log::info(
+        // a rehearsal of a recovery's part is rolled back: it is not an event of the room
+        let log: fn(&str, Value) = if scope.link_pending {
+            |_, _| {}
+        } else {
+            crate::log::info
+        };
+        log(
             "room_commit",
             json!({ "room": short(&room), "epoch": new_epoch, "added": change.humans_added.len() + change.agents_added.len(),
                     "removed": change.humans_removed.len() + change.agents_removed.len(), "join": change.joined_from_outside.is_some() }),
@@ -1183,7 +1229,7 @@ pub fn put_key_packages(
     }
     let unused: i64 = x
         .c
-        .prepare_cached("SELECT count(*) FROM key_packages WHERE room_id = ?1 AND device = ?2 AND last_resort = 0 AND expires_at > ?3")?
+        .prepare_cached("SELECT count(*) FROM key_packages WHERE room_id = ?1 AND device = ?2 AND last_resort = 0 AND claimed_at IS NULL AND expires_at > ?3")?
         .query_row(params![&auth.room[..], &auth.device[..], x.now as i64], |r| r.get(0))?;
     if unused as usize > x.cfg.key_packages {
         return Err(refuse(
@@ -1205,11 +1251,14 @@ pub fn claim_key_packages(x: &Ctx, auth: &Auth, devices: &[Device]) -> Res<Value
         ));
     }
     let mut out = serde_json::Map::new();
-    for device in devices {
+    for (i, device) in devices.iter().enumerate() {
+        if devices[..i].contains(device) {
+            return Err(refuse("bad-format", "a device is named once"));
+        }
         let found: Option<(i64, bool, Vec<u8>)> = x
             .c
             .prepare_cached(
-                "SELECT id, last_resort, bytes FROM key_packages WHERE room_id = ?1 AND device = ?2 AND expires_at > ?3
+                "SELECT id, last_resort, bytes FROM key_packages WHERE room_id = ?1 AND device = ?2 AND claimed_at IS NULL AND expires_at > ?3
                  ORDER BY last_resort, id LIMIT 1",
             )?
             .query_row(params![&auth.room[..], &device[..], x.now as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
@@ -1220,8 +1269,11 @@ pub fn claim_key_packages(x: &Ctx, auth: &Auth, devices: &[Device]) -> Res<Value
                 .with(json!({ "device": b64(device) })));
         };
         if !last_resort {
-            x.c.prepare_cached("DELETE FROM key_packages WHERE id = ?1")?
-                .execute([id])?;
+            // handed out once: the row stays as a mark until it expires, so that the package is not taken again
+            x.c.prepare_cached(
+                "UPDATE key_packages SET claimed_at = ?1, bytes = x'' WHERE id = ?2",
+            )?
+            .execute(params![x.now as i64, id])?;
         }
         out.insert(b64(device), json!(b64(&bytes)));
     }
@@ -1398,6 +1450,8 @@ pub fn requests(c: &Connection, auth: &Auth) -> Res<Value> {
 
 // ---- recovery (8.6, 8.7)
 
+pub const MAX_RECOVERY_PARTS: i64 = 256;
+
 /// A room in recovery takes nothing else (8.7).
 pub fn open_recovery_of(c: &Connection, room: &Room, now: u64) -> Res<Option<Vec<u8>>> {
     Ok(c.prepare_cached("SELECT recovery_id FROM recoveries WHERE room_id = ?1 AND finished_at IS NULL AND expires_at > ?2")?
@@ -1498,7 +1552,9 @@ fn replay_recovery(
     };
     for text in &parts {
         let (group_id, body) = body_from_json(text)?;
+        let replaced_before = scope.keys_replaced;
         commit(x, &actor, &group_id, &body, scope, fx)?;
+        scope.replaced_in_last = scope.keys_replaced && !replaced_before;
     }
     match extra {
         Some((group_id, body)) => Ok(Some(commit(x, &actor, group_id, body, scope, fx)?)),
@@ -1523,8 +1579,9 @@ pub fn recovery_rehearse(
     let count: i64 =
         x.c.prepare_cached("SELECT count(*) FROM recovery_parts WHERE recovery_id = ?1")?
             .query_row([id], |r| r.get(0))?;
-    if count >= 2048 {
-        return Err(refuse("too-many", "a recovery has at most 2048 parts"));
+    // every part is checked against all parts before it: the number is bounded
+    if count >= MAX_RECOVERY_PARTS {
+        return Err(refuse("too-many", "a recovery has at most 256 parts"));
     }
     let mut scope = Scope {
         recovery: true,
@@ -1566,11 +1623,21 @@ pub fn recovery_keep(
 }
 
 /// Whether this exact part is already kept: then its rehearsal would see its own epoch taken.
-pub fn recovery_has(c: &Connection, id: &[u8], group_id: &[u8], body: &CommitBody) -> Res<bool> {
-    Ok(
-        c.prepare_cached("SELECT 1 FROM recovery_parts WHERE recovery_id = ?1 AND body = ?2")?
-            .exists(params![id, body_json(group_id, body)])?,
-    )
+pub fn recovery_has(
+    x: &Ctx,
+    auth: &Auth,
+    id: &[u8],
+    group_id: &[u8],
+    body: &CommitBody,
+) -> Res<bool> {
+    // whose recovery it is comes first: nothing is told about another room's or a finished one
+    let (finished, _, _) = recovery_row(x, auth, id)?;
+    if finished.is_some() {
+        return Err(refuse("gone", "the recovery is finished"));
+    }
+    Ok(x.c
+        .prepare_cached("SELECT 1 FROM recovery_parts WHERE recovery_id = ?1 AND body = ?2")?
+        .exists(params![id, body_json(group_id, body)])?)
 }
 
 /// 8.7: publishes all parts or none. The room group and every live session group were joined and cleaned, the
@@ -1582,13 +1649,14 @@ pub fn recovery_finish(
     link_bytes: &[u8],
     request_hash: &[u8; 32],
     fx: &mut Effects,
-) -> Res<Value> {
+) -> Res<(Value, bool)> {
     let (finished, hash, answer) = recovery_row(x, auth, id)?;
     if finished.is_some() {
         return match (hash, answer) {
-            (Some(h), Some(a)) if same(&h, request_hash) => {
-                serde_json::from_str(&a).map_err(|_| refuse("internal", "stored answer"))
-            }
+            (Some(h), Some(a)) if same(&h, request_hash) => Ok((
+                serde_json::from_str(&a).map_err(|_| refuse("internal", "stored answer"))?,
+                false,
+            )),
             _ => Err(refuse("gone", "the recovery is finished")),
         };
     }
@@ -1606,10 +1674,10 @@ pub fn recovery_finish(
             "the recovery did not join the room group",
         ));
     };
-    if !scope.keys_replaced {
+    if !scope.replaced_in_last {
         return Err(refuse(
             "incomplete",
-            "a recovery ends with a new code (8.6)",
+            "a recovery ends with the room Commit that brings the new code (8.6)",
         ));
     }
     let view = store::room_view(x.c, &auth.room)?;
@@ -1650,7 +1718,7 @@ pub fn recovery_finish(
         "recovery_finished",
         json!({ "room": short(&auth.room), "device": short(&joiner) }),
     );
-    Ok(answer)
+    Ok((answer, true))
 }
 
 pub fn recovery_drop(x: &Ctx, auth: &Auth, id: &[u8]) -> Res<Value> {

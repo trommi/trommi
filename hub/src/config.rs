@@ -15,6 +15,8 @@ pub struct Config {
     pub origins: Vec<String>,
     pub trust_proxy_header: bool,
     pub min_client: Option<String>,
+    /// when set, `POST /v2/rooms` needs it in `x-found-token`
+    pub found_token: Option<String>,
     pub test_control: bool,
     pub quiet: bool,
 
@@ -155,6 +157,7 @@ impl Config {
             origins: list(env, "HUB_ORIGINS"),
             trust_proxy_header: env.get("HUB_TRUST_CF").is_some_and(|v| v == "1"),
             min_client: optional("HUB_MIN_CLIENT"),
+            found_token: optional("HUB_FOUND_TOKEN"),
             test_control: env.get("HUB_TEST_CONTROL").is_some_and(|v| v == "1"),
             quiet: env.get("HUB_QUIET").is_some_and(|v| v == "1"),
 

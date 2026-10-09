@@ -100,10 +100,13 @@ CREATE TABLE key_packages (
   last_resort    INTEGER NOT NULL CHECK (last_resort IN (0, 1)),
   uploaded_at    INTEGER NOT NULL,
   expires_at     INTEGER NOT NULL,
+  -- a single-use package that was handed out: the row stays until it expires, so that the same package cannot
+  -- be uploaded and handed out again
+  claimed_at     INTEGER,
   bytes          BLOB NOT NULL
 ) STRICT;
 -- claim: one device's oldest single-use package, else its last-resort one
-CREATE INDEX key_packages_claim ON key_packages(room_id, device, last_resort, id);
+CREATE INDEX key_packages_claim ON key_packages(room_id, device, last_resort, id) WHERE claimed_at IS NULL;
 CREATE UNIQUE INDEX key_packages_by_ref ON key_packages(room_id, ref);
 -- exactly one last-resort package per device
 CREATE UNIQUE INDEX key_packages_last_resort ON key_packages(room_id, device) WHERE last_resort = 1;
@@ -574,6 +577,16 @@ impl Db {
         &self,
         f: impl FnOnce(&Connection) -> Result<T, E>,
     ) -> Result<T, E> {
+        self.write_then(f, |_| {})
+    }
+
+    /// As `write`; `then` runs once the transaction is committed and before the next writer gets its turn, so
+    /// that what it announces is announced in the order of the commits.
+    pub fn write_then<T, E: From<rusqlite::Error>>(
+        &self,
+        f: impl FnOnce(&Connection) -> Result<T, E>,
+        then: impl FnOnce(&T),
+    ) -> Result<T, E> {
         let c = self.writer();
         if !c.is_autocommit() {
             let _ = c.execute_batch("ROLLBACK");
@@ -582,6 +595,7 @@ impl Db {
         match f(&c) {
             Ok(v) => {
                 c.execute_batch("COMMIT")?;
+                then(&v);
                 Ok(v)
             }
             Err(e) => {

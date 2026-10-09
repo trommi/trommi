@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::error::{refuse, Res};
 use crate::observer::{Device, GroupState};
-use crate::rules::{offending_leaves, RoomView, SessionKind, Standing};
+use crate::rules::{RoomView, SessionKind, Standing};
 
 pub type Room = [u8; 32];
 
@@ -240,7 +240,11 @@ pub fn is_stale(c: &Connection, view: &RoomView, row: &GroupRow) -> Res<bool> {
         return Ok(false);
     }
     let kind = session_kind(c, view, row)?;
-    Ok(!offending_leaves(kind, view, &leaves(c, &row.group_id)?).is_empty())
+    Ok(crate::rules::is_stale(
+        kind,
+        view,
+        &leaves(c, &row.group_id)?,
+    ))
 }
 
 /// What the asker may see of a group. `Leaf`: its log, envelopes, files and registers. `Public`: its Commits and

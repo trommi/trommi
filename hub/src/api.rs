@@ -26,6 +26,7 @@ struct Rq {
     query: Vec<(String, String)>,
     bearer: Option<String>,
     lease: Option<u64>,
+    found_token: Option<String>,
     ip: String,
     body: Value,
 }
@@ -60,7 +61,7 @@ impl Rq {
         if auth.who == Who::Spent {
             // the key of a finished recovery: only that finish may be asked again
             let finish =
-                self.path.len() == 5 && self.path[2] == "recovery" && self.path[4] == "finish";
+                self.path.len() == 6 && self.path[3] == "recovery" && self.path[5] == "finish";
             if !finish {
                 return Err(refuse("not-member", "this recovery key was replaced"));
             }
@@ -242,6 +243,7 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
     let bearer = http::header(&parts.headers, "authorization").map(str::to_string);
     let lease = http::header(&parts.headers, "trommi-lease").and_then(|l| l.parse().ok());
     let query = http::query(parts.uri.query());
+    let found_token = http::header(&parts.headers, "x-found-token").map(str::to_string);
 
     // the routes that stream
     let streamed = match (&parts.method, &segs[1..]) {
@@ -314,6 +316,7 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
         query,
         bearer,
         lease,
+        found_token,
         ip,
         body: parsed,
     };
@@ -356,6 +359,12 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         }
         ("POST", ["rooms"]) => {
             limited(app.limits.foundings.check(rq.ip.as_bytes(), t, true))?;
+            // a hub may ask for a word before it founds a room for a stranger
+            if let Some(word) = &app.cfg.found_token {
+                if !rq.found_token.as_deref().is_some_and(|given| crate::util::same(given.as_bytes(), word.as_bytes())) {
+                    return Err(refuse("forbidden", "this hub founds rooms by invitation"));
+                }
+            }
             let (group_info, sealed_key) = (rq.bytes("group_info")?, rq.bytes("sealed_key")?);
             app.write(|x, _| {
                 let founded = delivery::found_room(x, &group_info, &sealed_key)?;
@@ -420,7 +429,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("POST", ["account"]) => {
             let auth = read_auth()?;
             auth.human()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, _| app.accounts.create(x.c, &auth.room, &rq.body, x.now))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, _| app.accounts.create(x.c, &auth.room, &rq.body, x.now))
         }
         ("GET", ["account"]) => app.read(|x| {
             let auth = rq.auth(app, x.c)?;
@@ -461,12 +470,13 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let group = group_id(group)?;
             let n = rq.body["n"].as_i64().ok_or_else(|| refuse("bad-format", "n: the log number of the Commit"))?;
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, fx| delivery::reject(x, &auth, &group, n, fx))
+            limited(app.limits.requests.take(&[&auth.room[..], &auth.device[..]].concat(), 1.0, t))?;
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, fx| delivery::reject(x, &auth, &group, n, fx))
         }
         ("POST", ["groups", group, "archive"]) => {
             let group = group_id(group)?;
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, fx| delivery::archive(x, &auth, &group, fx))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, fx| delivery::archive(x, &auth, &group, fx))
         }
         ("GET", ["groups", group, "log"]) => {
             let group = group_id(group)?;
@@ -513,7 +523,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             };
             let last_resort = rq.opt_bytes("last_resort")?;
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, _| delivery::put_key_packages(x, &auth, &single_use, last_resort.as_deref()))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, _| delivery::put_key_packages(x, &auth, &single_use, last_resort.as_deref()))
         }
         ("POST", ["key-packages", "claim"]) => {
             let devices: Vec<[u8; 32]> = match &rq.body["devices"] {
@@ -522,7 +532,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             };
             let auth = read_auth()?;
             limited(app.limits.claims.take(&[&auth.room[..], &auth.device[..]].concat(), devices.len() as f64, t))?;
-            app.write_as(&auth, Lease::NotNeeded, |x, _| delivery::claim_key_packages(x, &auth, &devices))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, _| delivery::claim_key_packages(x, &auth, &devices))
         }
         ("PUT", ["sealed-keys"]) => {
             let key = rq.bytes("sealed_key")?;
@@ -546,7 +556,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             };
             let key_package = rq.opt_bytes("key_package")?;
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, fx| delivery::add_request(x, &auth, kind, group.as_deref(), key_package.as_deref(), None, json!({}), fx))
+            limited(app.limits.requests.take(&[&auth.room[..], &auth.device[..]].concat(), 1.0, t))?;
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, fx| delivery::add_request(x, &auth, kind, group.as_deref(), key_package.as_deref(), None, json!({}), fx))
         }
         ("GET", ["requests"]) => app.read(|x| delivery::requests(x.c, &rq.auth(app, x.c)?)),
 
@@ -554,7 +565,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("POST", ["rooms", room, "recovery"]) => {
             let auth = read_auth()?;
             own_room(&auth, room)?;
-            app.write(|x, _| delivery::recovery_open(x, &auth))
+            app.write_recovery(&auth, |x, _| delivery::recovery_open(x, &auth))
         }
         ("POST", ["rooms", room, "recovery", recovery, "commits"]) => {
             let recovery = id::<16>(recovery)?;
@@ -568,7 +579,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             // checked against what the parts before it leave behind, then kept apart: nothing of it is published
             app.db.write(|c| {
                 let x = delivery::Ctx { c, obs: &app.obs, cfg: &app.cfg, now: now() };
-                if delivery::recovery_has(c, &recovery, &group, &body)? {
+                crate::app::still(&x, &auth)?;
+                if delivery::recovery_has(&x, &auth, &recovery, &group, &body)? {
                     return Ok(json!({ "epoch": body.epoch + 1, "kept": true }));
                 }
                 c.execute_batch("SAVEPOINT rehearsal").map_err(Refused::from)?;
@@ -585,9 +597,9 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let hash: [u8; 32] = Sha256::digest(rq.body.to_string().as_bytes()).into();
             let auth = read_auth()?;
             own_room(&auth, room)?;
-            app.write(|x, fx| {
-                let answer = delivery::recovery_finish(x, &auth, &recovery, &link, &hash, fx)?;
-                if auth.who != Who::Spent {
+            app.write_recovery(&auth, |x, fx| {
+                let (answer, published_now) = delivery::recovery_finish(x, &auth, &recovery, &link, &hash, fx)?;
+                if published_now {
                     accounts::replace_copies(x.c, &auth.room, &rq.body["account"], x.now)?;
                 }
                 Ok(answer)
@@ -597,7 +609,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let recovery = id::<16>(recovery)?;
             let auth = read_auth()?;
             own_room(&auth, room)?;
-            app.write(|x, _| delivery::recovery_drop(x, &auth, &recovery))
+            app.write_recovery(&auth, |x, _| delivery::recovery_drop(x, &auth, &recovery))
         }
         ("POST", ["rooms", room, "recovery-code"]) => {
             let body = commit_body(&rq.body)?;
@@ -606,7 +618,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             own_room(&auth, room)?;
             auth.human()?;
             // 8.6: the room Commit with new recovery keys, its RecoveryLink and the account's new copies: whole or not at all
-            app.write_as(&auth, Lease::NotNeeded, |x, fx| {
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, fx| {
                 let mut scope = Scope { link: Some(link), ..Default::default() };
                 let a = delivery::commit(x, &auth, &auth.room, &body, &mut scope, fx)?;
                 if !scope.keys_replaced && a.change > 0 {
@@ -657,7 +669,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("DELETE", ["files", file]) => {
             let file = id::<16>(file)?;
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, fx| files::delete(x, &auth, &file, fx))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, fx| files::delete(x, &auth, &file, fx))
         }
         ("POST", ["shares"]) => {
             let share: [u8; 16] = rq.bytes("share_id")?.try_into().map_err(|_| refuse("bad-format", "share_id: 16 bytes"))?;
@@ -665,30 +677,30 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let file: [u8; 16] = rq.bytes("file_id")?.try_into().map_err(|_| refuse("bad-format", "file_id: 16 bytes"))?;
             let expires = rq.body["expires_at"].as_u64().ok_or_else(|| refuse("bad-format", "expires_at"))?;
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, _| files::share(x, &auth, &share, &hash, &file, expires))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, _| files::share(x, &auth, &share, &hash, &file, expires))
         }
         ("DELETE", ["shares", share]) => {
             let share = id::<16>(share)?;
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, _| files::unshare(x, &auth, &share))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, _| files::unshare(x, &auth, &share))
         }
 
         // ---- invites, by human devices
         ("POST", ["invites"]) => {
             let (offer, signature) = (rq.bytes("offer")?, rq.bytes("signature")?);
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, _| invites::publish(x, &auth, &offer, &signature))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, _| invites::publish(x, &auth, &offer, &signature))
         }
         ("PUT", ["invites", invite, "reveal"]) => {
             let invite = id::<16>(invite)?;
             let (reveal, signature) = (rq.bytes("reveal")?, rq.bytes("signature")?);
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, _| invites::reveal(x, &auth, &invite, &reveal, &signature))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, _| invites::reveal(x, &auth, &invite, &reveal, &signature))
         }
         ("DELETE", ["invites", invite]) => {
             let invite = id::<16>(invite)?;
             let auth = read_auth()?;
-            app.write_as(&auth, Lease::NotNeeded, |x, _| invites::burn(x, &auth, &invite))
+            app.write_as(&auth, Lease::Needed(rq.lease), |x, _| invites::burn(x, &auth, &invite))
         }
 
         // ---- push, Live Activity, presence
@@ -750,7 +762,7 @@ fn human_write(
 ) -> Res<Value> {
     let auth = app.read(|x| rq.auth(app, x.c))?;
     auth.human()?;
-    app.write_as(&auth, Lease::NotNeeded, |x, _| f(x, &auth))
+    app.write_as(&auth, Lease::Needed(rq.lease), |x, _| f(x, &auth))
 }
 
 /// `POST /v2/account/login` and `/recover`: one answer for an unknown e-mail and a wrong secret, one cost, and a
@@ -998,6 +1010,15 @@ async fn stream(
             "this device has its limit of streams open",
         ));
     };
+    // the device may have been removed between the check of its token and the registration of its stream
+    let (a, registered) = (app.clone(), s.clone());
+    let standing =
+        blocking(move || a.read(|x| store::standing(x.c, &auth.room, &auth.device))).await?;
+    if standing != Some(auth.who) {
+        registered.end();
+        app.live.close(&auth.room, registered.id);
+        return Err(refuse("not-member", "this device is no longer in the room"));
+    }
     app.stream_opened(&auth);
     let guard = StreamGuard {
         app: app.clone(),

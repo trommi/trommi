@@ -29,6 +29,7 @@ pub struct Limits {
     pub open_requests: Buckets,
     pub shares: Buckets,
     pub pushes: Buckets,
+    pub requests: Buckets,
     pub foundings: Window,
     pub logins: Window,
     pub login_failures: Window,
@@ -116,6 +117,7 @@ impl App {
             ),
             shares: Buckets::new(1.0, 60.0),
             pushes: Buckets::new(10.0 / 60.0, 10.0),
+            requests: Buckets::new(0.2, 10.0),
             foundings: Window::new(cfg.foundings_per_ip_hour, 3_600_000),
             logins: Window::new(cfg.logins_per_ip_10min, 600_000),
             login_failures: Window::new(cfg.login_failures_per_email_hour, 3_600_000),
@@ -142,26 +144,36 @@ impl App {
         }))
     }
 
-    /// One transaction of writes; what follows from it happens only if it was committed.
+    /// One transaction of writes; what follows from it happens only if it was committed. Its live events are
+    /// published before the next writer gets its turn: streams see changes in the order of their numbers.
     pub fn write<T>(self: &Arc<Self>, f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>) -> Res<T> {
-        let mut fx = Effects::default();
-        let out = self.db.write(|c| {
-            f(
-                &Ctx {
+        let fx = std::cell::RefCell::new(Effects::default());
+        let out = self.db.write_then(
+            |c| {
+                let x = Ctx {
                     c,
                     obs: &self.obs,
                     cfg: &self.cfg,
                     now: util::now(),
-                },
-                &mut fx,
-            )
-        })?;
-        self.after(fx);
+                };
+                f(&x, &mut fx.borrow_mut())
+            },
+            |_| {
+                let mut fx = fx.borrow_mut();
+                self.cut_off(&fx);
+                for ev in std::mem::take(&mut fx.events) {
+                    self.publish(&ev);
+                }
+            },
+        )?;
+        self.after(fx.into_inner());
         Ok(out)
     }
 
-    /// A write of a signed-in device in its room: refused while the room is in recovery (8.7: it takes nothing
-    /// else for ten minutes), and for an agent device without its current lease (13.7).
+    /// A write of a signed-in device in its room. Inside the transaction the device's standing is checked again
+    /// (it may have been removed while the request waited for its turn); the write is refused while the room is
+    /// in recovery (8.7: it takes nothing else for ten minutes), and for an agent device without its current
+    /// lease (13.7).
     pub fn write_as<T>(
         self: &Arc<Self>,
         auth: &Auth,
@@ -169,6 +181,7 @@ impl App {
         f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>,
     ) -> Res<T> {
         self.write(|x, fx| {
+            still(x, auth)?;
             if crate::delivery::open_recovery_of(x.c, &auth.room, x.now)?.is_some() {
                 return Err(refuse(
                     "overloaded",
@@ -178,6 +191,21 @@ impl App {
             }
             if let (Who::Agent, Lease::Needed(given)) = (auth.who, lease) {
                 check_lease(x, auth, given)?;
+            }
+            f(x, fx)
+        })
+    }
+
+    /// A write under the recovery key (the routes of a recovery): its standing is checked again inside the
+    /// transaction; the room's lock is its own.
+    pub fn write_recovery<T>(
+        self: &Arc<Self>,
+        auth: &Auth,
+        f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>,
+    ) -> Res<T> {
+        self.write(|x, fx| {
+            if auth.who != Who::Spent {
+                still(x, auth)?;
             }
             f(x, fx)
         })
@@ -194,8 +222,9 @@ impl App {
         })
     }
 
-    /// What follows a committed transaction.
-    pub fn after(self: &Arc<Self>, fx: Effects) {
+    /// 14.4: a removal ends the removed device's streams at once, and a replaced recovery key's too. (Their
+    /// tokens are refused from here on: every request checks the present standing.)
+    fn cut_off(&self, fx: &Effects) {
         for (room, device) in &fx.recheck {
             let gone = self
                 .db
@@ -203,14 +232,16 @@ impl App {
                 .map(|s| s.is_none())
                 .unwrap_or(false);
             if gone {
-                // 14.4: a removal ends the removed device's tokens and streams at once: every request with
-                // its token is refused from here on (its standing is checked each time), and its streams end
                 self.live.end_where(room, |a| &a.device == device);
             }
         }
         for room in &fx.recovery_replaced {
             self.live.end_where(room, |a| a.who == Who::Recovery);
         }
+    }
+
+    /// What follows a committed transaction and needs no order: files, pushes, the Live Activity.
+    pub fn after(self: &Arc<Self>, fx: Effects) {
         for ev in &fx.events {
             self.publish(ev);
         }
@@ -731,6 +762,15 @@ pub enum Lease {
     /// a write that an agent device makes under its lease: the generation its `Trommi-Lease` header carried
     Needed(Option<u64>),
     NotNeeded,
+}
+
+/// The asker still has the standing its token was checked with: asked again inside the write's transaction.
+pub fn still(x: &Ctx, auth: &Auth) -> Res<()> {
+    if store::standing(x.c, &auth.room, &auth.device)? == Some(auth.who) {
+        Ok(())
+    } else {
+        Err(refuse("not-member", "this device is no longer in the room"))
+    }
 }
 
 /// 13.7: every write of an agent device carries its lease's generation; an older one is refused.

@@ -49,3 +49,7 @@ path = "hub/load.rs"
 [[test]]
 name = "hub_units"
 path = "hub/units.rs"
+
+[[test]]
+name = "hub_recovery"
+path = "hub/recovery.rs"
