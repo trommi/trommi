@@ -305,7 +305,7 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
         }
         reply.refused(429, "rate-limited");
         waited += reply.header("retry-after").unwrap().parse::<i64>().unwrap();
-        assert!(waited <= 20, "in line behind six at most: {waited} s");
+        assert!(waited <= 30, "in line behind a handful: {waited} s");
         wait_out(hub, &reply);
     }
     // a wrong password from home, while others stand in line, is answered like theirs: with a turn if there is

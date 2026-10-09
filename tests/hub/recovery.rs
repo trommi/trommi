@@ -642,4 +642,45 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
     w.ada
         .post_commit(&w.hub, &out, &to_old)
         .refused(400, "incomplete");
+    w.ada.clear(&room);
+    // 8.6: a recovery key the room held before does not come back, as either of the two: the first code's
+    // signature key beside a fresh HPKE key, and the other way round
+    for old_signature in [true, false] {
+        let fresh = Recovery::new();
+        let (mut ext, old) = (fresh.room_ext(&[]), w.recovery.room_ext(&[]));
+        if old_signature {
+            ext.recovery_signature_key = old.recovery_signature_key;
+        } else {
+            ext.recovery_hpke_key = old.recovery_hpke_key;
+        }
+        let sealed_to = ext.recovery_hpke_key.clone();
+        let now = w.ada.room_now();
+        let out = w.ada.commit(
+            &room,
+            &Change {
+                room: Some(ext),
+                ..Default::default()
+            },
+            now,
+        );
+        let key = w.ada.sealed_key(
+            &room,
+            out.epoch + 1,
+            &out.group_info,
+            out.epoch + 1,
+            &sealed_to,
+            true,
+        );
+        let mut body = commit_json(&out, &key, None);
+        body["recovery_link"] = json!(b64(&wire::RecoveryLink {
+            room_id: room,
+            new_recovery_hpke_key: sealed_to,
+            kem_output: vec![1; 32],
+            ciphertext: vec![2; 80],
+            mac: vec![3; 32],
+        }
+        .bytes()));
+        w.ada.post(&w.hub, &path, &body).refused(400, "bad-commit");
+        w.ada.clear(&room);
+    }
 }
