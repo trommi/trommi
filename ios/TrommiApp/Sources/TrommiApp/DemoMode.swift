@@ -76,10 +76,16 @@ extension BoardModel {
   }
 }
 
-/** The yellow tag in the corner while the demo runs (the web's demo band): Demo · All Screens · Leave. */
+/** The yellow tag at the top while the demo runs (the web's demo band): Demo · All Screens · Leave. On the iPad only:
+ *  on the iPhone it lay over the place pill and the Desk's buttons (build 21), so there "Leave demo" stands yellow
+ *  beside the tab pill and both entries are in the place pill's menu (Shell.swift). */
 struct DemoTag: View {
   @EnvironmentObject var model: BoardModel
+  @Environment(\.horizontalSizeClass) private var hSize
   var body: some View {
+    if hSize == .regular { tag }
+  }
+  private var tag: some View {
     // "Demo · Leave" as one clear yellow pill (his word, 8 October); All Screens beside it, quieter
     HStack(spacing: 8) {
       Button { model.leaveDemo() } label: {

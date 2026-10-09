@@ -50,7 +50,7 @@ struct BoardShell: View {
         // a bar, not a plain inset: the lists' soft scroll edge reaches up to it
         .safeAreaBar(edge: .bottom, spacing: 0) {
           if showBar {
-            TabPill(on: model.tab, waiting: model.view?.fresh.count ?? 0, hasNote: hasNote) { t in
+            TabPill(on: model.tab, waiting: model.view?.fresh.count ?? 0, hasNote: hasNote, leaveDemo: model.demo ? { model.leaveDemo() } : nil) { t in
               if t == .note {
                 if model.tab == .note { model.tab = noteUnder } else { noteUnder = model.tab; model.tab = .note }
               } else if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) }
@@ -103,27 +103,48 @@ struct TabPill: View {
   let on: BoardModel.Tab
   let waiting: Int
   let hasNote: Bool
+  /** The demo runs: its yellow mark stands at the pill's left as the way out (his word, 9 October: nothing of the
+   *  demo floats over the top row any more). The tabs are narrower then, so both fit a 375 pt screen. */
+  var leaveDemo: (() -> Void)? = nil
   let tap: (BoardModel.Tab) -> Void
   @Namespace private var ns
+  private var wide: CGFloat { leaveDemo == nil ? 84 : 66 }
   var body: some View {
-    HStack(spacing: 0) {
-      item(.chat, "sketch:bubble", 39, "Chat")
-      item(.desk, "sketch:desk", 34, waiting > 0 ? "Desk, \(waiting) waiting" : "Desk")
-      item(.note, "sketch:page", 36, hasNote ? "Note, written" : "Note")
+    HStack(spacing: 8) {
+      if let leave = leaveDemo {
+        Button(action: leave) {
+          HStack(spacing: 6) {
+            Image(systemName: "rectangle.portrait.and.arrow.right").font(.system(size: 15, weight: .bold))
+            Text("Leave demo").font(Face.text(14, .bold)).lineLimit(1).fixedSize()
+          }
+          .foregroundStyle(Color(hex: 0x2d2406))
+          .padding(.horizontal, 13).frame(height: 58)
+          .background(Capsule().fill(Ink.yellow))
+          .overlay(Capsule().strokeBorder(Color(hex: 0x2d2406), lineWidth: 1.6))
+          .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Leave Demo")
+      }
+      HStack(spacing: 0) {
+        item(.chat, "sketch:bubble", 39, "Chat")
+        item(.desk, "sketch:desk", 34, waiting > 0 ? "Desk, \(waiting) waiting" : "Desk")
+        item(.note, "sketch:page", 36, hasNote ? "Note, written" : "Note")
+      }
+      .padding(4)
+      .glass(Capsule())
+      .accessibilityElement(children: .contain).accessibilityAddTraits(.isTabBar)
     }
-    .padding(4)
-    .glass(Capsule())
     .bottomChrome()
     .animation(.snappy, value: on)
     // where the system's tab bar lies: the lower edge 23 pt over the screen's bottom edge (it stood 36 pt over it)
     .padding(.top, 6).padding(.bottom, bottomSink(23))
-    .accessibilityElement(children: .contain).accessibilityAddTraits(.isTabBar)
   }
   private func item(_ t: BoardModel.Tab, _ key: String, _ side: CGFloat, _ label: String) -> some View {
     let sel = on == t
     return Button { tap(t) } label: {
       PenMark(key, color: Ink.fg.opacity(sel ? 1 : 0.6), width: 2.4 * 24 / side).frame(width: side, height: side)
-        .frame(width: 84, height: 50)
+        .frame(width: wide, height: 50)
         .overlay {
           if t == .desk && waiting > 0 {
             Text("\(waiting)").font(Face.text(11, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18).background(Capsule().fill(Ink.fg)).offset(x: 18, y: -13)
@@ -173,7 +194,10 @@ struct MenuPill: View {
     let d = model.desk, v = model.view
     Menu {
       if model.demo {
-        Section { Button { model.leaveDemo() } label: { Label("Leave Demo", systemImage: "xmark.circle") } }
+        Section("Demo") {
+          Button { model.demoScreens = true } label: { Label("All Screens", systemImage: "rectangle.grid.2x2") }
+          Button { model.leaveDemo() } label: { Label("Leave Demo", systemImage: "rectangle.portrait.and.arrow.right") }
+        }
       }
       Section("Desks") {
         if (d?.desks.count ?? 0) > 1 {
@@ -199,7 +223,7 @@ struct MenuPill: View {
         } label: { Label("Notifications", systemImage: Push.level == "off" ? "bell.slash" : Push.level == "knocking" ? "bell.badge" : "bell") }
         .pickerStyle(.menu)
         Button { go(.settings("agents")) } label: { Label("Settings", systemImage: "gearshape") }
-        Button { if model.demo { model.demoScreens = true } else { model.startDemo() } } label: { Label(model.demo ? "Demo: All Screens" : "Demo", systemImage: "play.rectangle") }
+        if !model.demo { Button { model.startDemo() } label: { Label("Demo", systemImage: "play.rectangle") } }
       }
     } label: {
       HStack(spacing: 7) {
