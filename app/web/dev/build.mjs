@@ -1,6 +1,7 @@
 // The app's build: everything generated is made here, at deploy time, and never committed.
 //   gen/app/               the app as one minified bundle (esbuild, split): app-<hash>.mjs (app, ui, desk, sidebar,
-//                          notes), one chunk per lazy view, the core (../core/) in chunks of its own, all named by
+//                          notes), one chunk per lazy view, the core (../core/) in chunks of its own, the proof
+//                          worker (proof-worker-<hash>.mjs, for the "MLS proof" screen), all named by
 //                          their content; and the Rust core's trommi-core-<hash>.wasm beside them ("the Rust core"
 //                          below; its scripts are in the worker's bundle)
 //   gen/vendor/            tools-reference.mjs: the connector's tools and events as data, for the help page (the dev
@@ -305,7 +306,7 @@ const versioned = (src, version) => String(src)
 // (app, ui, desk, sidebar, notes), and one chunk per lazy view and for the core (app.mjs imports them with import()),
 // all named by their content. The core comes from the in-memory gen/vendor/ (the plugin below), never from disk.
 // The dev server serves the sources as they are instead (bundle: false): unminified, one file per module.
-const BUNDLED = /^(app|auth|agents|desk|card|session|sidebar|notes|media|whiteboard)\.mjs$|^demo\/demo\.mjs$/   // in the bundle, not served alone
+const BUNDLED = /^(app|auth|agents|desk|card|session|sidebar|notes|media|whiteboard|proof)\.mjs$|^demo\/demo\.mjs$/   // in the bundle, not served alone
 async function bundle(pub, vendor, core) {
   const esbuild = await import('esbuild').catch(() => { throw new Error('build: esbuild is missing (npm ci at the repository root)') })
   const fromVendor = {
@@ -352,10 +353,21 @@ async function bundle(pub, vendor, core) {
   })
   const start = rel(st.outputFiles[0].path)
   out[start] = st.outputFiles[0].text
+  // The proof worker (core/proof-worker.ts, for the "MLS proof" screen, public/proof.mjs): one file of its own with
+  // core-wasm.ts and the binding's scripts in it, so the screen needs neither a room nor the core worker. The screen
+  // learns its address from __TROMMI_PROOF_WORKER__ (without it, as on the dev server: /gen/vendor/proof-worker.mjs).
+  const pw = await esbuild.build({ absWorkingDir: REPO,   // (the same names and bytes from any directory: verify.mjs)
+    entryPoints: [{ in: 'gen/vendor/proof-worker.mjs', out: 'proof-worker' }], bundle: true, format: 'esm', minify: true, write: false,
+    outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', outExtension: { '.js': '.mjs' }, target: ['es2022'], logLevel: 'silent', plugins: [fromVendor], define: core.define,
+  })
+  if (pw.outputFiles.length !== 1) throw new Error('build: the proof worker is not one file')
+  const proofWorker = rel(pw.outputFiles[0].path)
+  out[proofWorker] = pw.outputFiles[0].text
+  if (!out[proofWorker].includes(`/${core.wasm}`)) throw new Error('build: the proof worker does not name the .wasm of this build')
   const r = await esbuild.build({ absWorkingDir: REPO,   // (the same names and bytes from any directory: verify.mjs)
     entryPoints: [path.join(pub, 'app.mjs')], bundle: true, splitting: true, format: 'esm', minify: true, write: false, metafile: true,
     outdir: path.join(pub, 'gen', 'app'), entryNames: '[name]-[hash]', chunkNames: '[name]-[hash]', outExtension: { '.js': '.mjs' },
-    target: ['es2022'], logLevel: 'silent', plugins: [fromVendor], define: { ...core.define, __TROMMI_CORE_WORKER__: JSON.stringify(`/${worker}`) },
+    target: ['es2022'], logLevel: 'silent', plugins: [fromVendor], define: { ...core.define, __TROMMI_CORE_WORKER__: JSON.stringify(`/${worker}`), __TROMMI_PROOF_WORKER__: JSON.stringify(`/${proofWorker}`) },
   })
   for (const f of r.outputFiles) out[rel(f.path)] = f.text
   const outputs = Object.entries(r.metafile.outputs)
@@ -432,11 +444,11 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // Subresource integrity (the bundle): the entry, core-start and every preload carry their sha384; an import map names
   // the integrity of every module of the page, so a chunk imported later is checked too (browsers without import-map
   // integrity ignore it). The import map is an inline script: its hash goes into the CSP of the generated _headers.
-  // (Workers take no integrity: the core worker comes from this origin under the same CSP. The Rust core's scripts
+  // (Workers take no integrity: the core worker and the proof worker come from this origin under the same CSP. The Rust core's scripts
   // are inside it; its .wasm is checked by core-wasm.ts, which fetches it with the SHA-256 this build gave it.)
   if (js) {
     const sri = f => `sha384-${crypto.createHash('sha384').update(out[f]).digest('base64')}`
-    const pageModules = Object.keys(js.out).filter(f => f.endsWith('.mjs') && !/^gen\/app\/core-worker/.test(f)).sort()
+    const pageModules = Object.keys(js.out).filter(f => f.endsWith('.mjs') && !/^gen\/app\/(?:core|proof)-worker/.test(f)).sort()
     const map = JSON.stringify({ integrity: Object.fromEntries(pageModules.map(f => [`/${f}`, sri(f)])) })
     const importmap = `<script type="importmap">${map}</script>`
     out['index.html'] = out['index.html']
