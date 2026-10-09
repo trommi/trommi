@@ -26,6 +26,23 @@ func refusedCode(_ call: () throws -> Void) -> String? {
   do { try call(); return nil } catch { return (error as? TrommiError)?.code }
 }
 
+/// One invite up to the moment both sides show their code: the inviter opens it, the new device answers the Offer,
+/// the inviter accepts the Request, the new device checks the Reveal. (A hub only carries the four parts between
+/// them, so none is needed.) The six numbers each side shows; what follows is `confirmInvite` or `burnInvite`.
+func exchangeInvite(from inviter: LiveDevice, to newcomer: LiveDevice, role: Int = ROLE.HUMAN, session: SessionId? = nil,
+                    tools: LiveCore) throws -> (invite: Bytes, inviterShows: [UInt8], newcomerShows: [UInt8]) {
+  let opened = try inviter.openInvite(role: role, session: session, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
+  let asked = try tools.inviteRequest(link: opened.link, offer: opened.offer, offerSignature: opened.offerSignature, device: newcomer, nowMs: nowMs())
+  let accepted = try inviter.acceptInviteRequest(invite: opened.invite, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: nowMs())
+  let shown = try tools.inviteReveal(device: newcomer, reveal: accepted.reveal, signature: accepted.revealSignature)
+  return (opened.invite, accepted.numbers, shown)
+}
+
+/// Whether both devices hold the content key of that group and epoch. (The key itself never leaves the core.)
+func bothHoldKey(_ a: LiveDevice, _ b: LiveDevice, group: GroupId, epoch: UInt64) throws -> Bool {
+  try a.holdsKey(group: group, epoch: epoch) && b.holdsKey(group: group, epoch: epoch)
+}
+
 final class LiveCoreTests: XCTestCase {
   let tools = LiveCore()
 
@@ -71,18 +88,21 @@ final class LiveCoreTests: XCTestCase {
 
   /// What the binding does not have refuses by name, and never pretends. One call of each stubbed block.
   func testAStubSaysItIsAStub() throws {
-    XCTAssertThrowsError(try tools.parseInviteLink("https://app.trommi.com/#x")) { error in
+    XCTAssertThrowsError(try tools.inviteReveal(joiner: [], reveal: [], signature: [])) { error in
       XCTAssertEqual((error as? TrommiError)?.code, LiveCore.notBuiltCode)
-      XCTAssertEqual((error as? TrommiError)?.message, "parseInviteLink(_:): not in this build of the core binding")
+      XCTAssertEqual((error as? TrommiError)?.message, "inviteReveal(joiner:reveal:signature:): not in this build of the core binding")
     }
     // The two calls Core.swift guessed for recovery: the core cannot serve them in that shape (LiveRecovery.swift).
     let fresh = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
     XCTAssertEqual(refusedCode { _ = try self.tools.joinWithRecoveryCode(device: fresh, code: ZERO32, groupInfos: [], sealedKeys: [], nowMs: nowMs()) }, "not-built")
-    XCTAssertEqual(tools.checkEmoji([1, 2]).map(\.word), ["not-built", "not-built"])
     let device = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
     XCTAssertEqual(refusedCode { _ = try device.sendEnvelope(.boardItem(board: ZERO16, payload: [], files: []), nowMs: nowMs()) }, "not-built")
     XCTAssertEqual(refusedCode { _ = try device.receiveEnvelope([], change: 1, source: .live, voidCode: nil, nowMs: nowMs()) }, "not-built")
-    XCTAssertEqual(refusedCode { _ = try device.openInvite(role: ROLE.HUMAN, session: nil, app: "", hub: "", nowMs: nowMs()) }, "not-built")
+    // A content key never leaves the core.
+    XCTAssertEqual(refusedCode { _ = try device.contentKey(group: ZERO32, epoch: 0) }, "not-built")
+    // Gone from the core: a device comes into a room by invite only.
+    XCTAssertEqual(refusedCode { _ = try device.addHumanDevice(ZERO32, keyPackage: [], nowMs: nowMs()) }, "not-built")
+    XCTAssertEqual(refusedCode { _ = try device.changeAgents(enrol: [ZERO32], remove: [], nowMs: nowMs()) }, "not-built")
     XCTAssertEqual(refusedCode { _ = try (device as? LiveDevice)?.replaceRecoveryCode(nowMs: nowMs()) }, "not-built")
     // A stubbed call is the device's fault, never the entry's: the caller stops instead of passing an item over.
     XCTAssertEqual(device.logFinding(TrommiError("not-built")), .local)
@@ -99,8 +119,8 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertEqual(refusedCode { _ = try self.tools.passwordKeys(email: "a@example.com", password: "a long password", kdf: #"{"alg":"argon2id","v":1,"m":8,"t":1,"p":1}"#) }, "bad-kdf")
     XCTAssertEqual(refusedCode { _ = try self.tools.openDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32)) }, "storage")
     let device = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
-    XCTAssertEqual(refusedCode { _ = try device.contentKey(group: ZERO32, epoch: 0) }, "no-key")
-    XCTAssertEqual(refusedCode { _ = try device.contentKey(group: [1, 2, 3], epoch: 0) }, "bad-format")
+    XCTAssertEqual(try (device as? LiveDevice)?.holdsKey(group: ZERO32, epoch: 0), false)
+    XCTAssertEqual(refusedCode { _ = try (device as? LiveDevice)?.holdsKey(group: [1, 2, 3], epoch: 0) }, "bad-format")
     XCTAssertEqual(refusedCode { _ = try device.signHubAuth(room: ZERO32, hub: "https://hub.example", challenge: [1]) }, "bad-format")
     // The message names what was refused and does not repeat the code in front of it.
     XCTAssertThrowsError(try device.signHubAuth(room: ZERO32, hub: "https://hub.example", challenge: [1])) { error in
@@ -121,25 +141,39 @@ final class LiveCoreTests: XCTestCase {
     }
   }
 
-  /// `LiveCore.isFinalRefusal` against the core's own table. `outboxRefused` for an entry that does not exist answers
-  /// `bad-format` before it looks for the entry when the code is not a refusal for good, and `not-found` when it is.
+  /// `LiveCore.isFinalRefusal` against what the core does with every code of its list, each on a founding that waits
+  /// in the outbox: a code that judges the request undoes the founding (the entry and the room are gone), a code
+  /// that says nothing about it returns and leaves both, a code no hub answers with is `bad-format` and leaves both.
   func testWhichRefusalsAreFinalIsTheCoresTable() throws {
-    let device = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: ZERO32))
     let codes = try everyCode()
     XCTAssertGreaterThan(codes.count, 60)
-    var sendAgain = [String]()
+    var passing = [String](), notOfAHub = [String]()
     for code in codes {
-      let answer = refusedCode { try device.outboxRefused(999, code: code, voided: false) }
-      XCTAssertTrue(answer == "bad-format" || answer == "not-found", "\(code): \(answer ?? "accepted")")
-      XCTAssertEqual(LiveCore.isFinalRefusal(code), answer == "not-found", code)
-      if answer == "bad-format" { sendAgain.append(code) }
+      let device = try LiveDevice(store: MemoryStorage(), create: true)
+      _ = try device.foundRoom(recoveryCode: ZERO32, nowMs: nowMs())
+      let entry = try XCTUnwrap(device.outbox().first)
+      let answer = refusedCode { try device.outboxRefused(entry.id, code: code, voided: false) }
+      let stays = device.outbox() == [entry] && device.room != nil
+      switch answer {
+      case nil where stays: passing.append(code)
+      case nil: XCTAssertTrue(device.outbox().isEmpty && device.room == nil, code)
+      case "bad-format": notOfAHub.append(code); XCTAssertTrue(stays, code)
+      default: XCTFail("\(code): \(answer ?? "")")
+      }
+      XCTAssertEqual(LiveCore.isFinalRefusal(code), answer == nil && !stays, code)
+      device.close()
     }
-    XCTAssertEqual(sendAgain.sorted(), ["bad-challenge", "bad-email", "bad-kdf", "bad-recovery-code", "bad-recovery-words", "busy", "client-too-old",
-                                        "entropy", "gap", "internal", "no-prf", "overloaded", "quota-exceeded", "rate-limited", "storage", "too-many",
-                                        "unauthorised", "weak-password"])
+    XCTAssertEqual(Set(passing), LiveCore.passing)
+    XCTAssertEqual(Set(notOfAHub), LiveCore.notOfAHub)
+    XCTAssertEqual(passing.sorted(), ["bad-challenge", "client-too-old", "internal", "lease-lost", "overloaded", "rate-limited", "unauthorised"])
+    for code in ["quota-exceeded", "too-many", "gap", "epoch-taken", "bad-commit"] { XCTAssertTrue(LiveCore.isFinalRefusal(code), code) }
     // A code this core does not know (a newer hub's, or the client's own "http-502") is never a refusal for good.
+    let device = try LiveDevice(store: MemoryStorage(), create: true)
     XCTAssertFalse(LiveCore.isFinalRefusal("http-502"))
     XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "http-502", voided: false) }, "bad-format")
+    // An entry that is not there: `not-found`, whatever the code says.
+    XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "internal", voided: false) }, "not-found")
+    XCTAssertEqual(refusedCode { try device.outboxRefused(999, code: "bad-commit", voided: false) }, "not-found")
   }
 
   // ---- the device on the phone's store --------------------------------------------------------------------
@@ -168,7 +202,7 @@ final class LiveCoreTests: XCTestCase {
 
     let groups = try device.groups()
     XCTAssertEqual(groups, [GroupSummary(group: room, session: nil, epoch: 0, leaves: [device.id], archived: false, pending: false)])
-    XCTAssertEqual(try device.contentKey(group: room, epoch: 0).count, 32)
+    XCTAssertEqual(try (device as? LiveDevice)?.holdsKey(group: room, epoch: 0), true)
     let outbox = device.outbox()
     XCTAssertEqual(outbox.count, 1)
     XCTAssertEqual(outbox[0].kind, .roomFounding)
@@ -254,19 +288,24 @@ final class LiveCoreTests: XCTestCase {
     return entry
   }
 
-  /// A founds a room and adds B with B's KeyPackage; B joins by the Welcome; both hold the same key for the room.
-  /// Then a later Commit of A reaches B through the log, an agent device is enrolled, and a session is founded.
+  private func newDevice() throws -> LiveDevice {
+    try XCTUnwrap(try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: systemRandom(32))) as? LiveDevice)
+  }
+
+  /// A founds a room and takes B in by invite; B joins by the Welcome; both hold the same key for the room. Then a
+  /// later Commit of A reaches B through the log, an agent device is enrolled by invite, and its session is founded.
   func testTwoDevicesShareTheRoomsKey() throws {
     var change: UInt64 = 0
-    let a = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: systemRandom(32)))
-    let b = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: systemRandom(32)))
-    let agent = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: systemRandom(32)))
-    let room = try XCTUnwrap(a as? LiveDevice).foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
+    let a = try newDevice(), b = try newDevice(), agent = try newDevice()
+    let room = try a.foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
     _ = try accept(a, .roomFounding, &change)
 
-    // A adds B. The Commit's parts: Commit, GroupInfo, Welcome, SealedKey.
-    let id = try a.addHumanDevice(b.id, keyPackage: try b.keyPackage(nowMs: nowMs()), nowMs: nowMs())
+    // A takes B in. The Commit's parts: Commit, GroupInfo, Welcome, SealedKey.
+    let forB = try exchangeInvite(from: a, to: b, tools: tools)
+    XCTAssertEqual(forB.inviterShows, forB.newcomerShows)
+    let id = try a.confirmInvite(invite: forB.invite, numbers: forB.inviterShows, nowMs: nowMs())
     XCTAssertEqual(try a.groups().first?.pending, true)
+    XCTAssertEqual(try a.inviteSteps(), [.wait(invite: forB.invite)])
     let add = try accept(a, .commit, &change)
     XCTAssertEqual(add.id, id)
     XCTAssertEqual(add.group, room)
@@ -274,7 +313,7 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertEqual(add.parts.count, 4)
     XCTAssertFalse(add.parts[2].isEmpty)
 
-    let joined = try b.joinWelcome(add.parts[2], room: room, committer: a.id, nowMs: nowMs())
+    let joined = try b.joinInvited(add.parts[2], nowMs: nowMs())
     XCTAssertEqual(joined, Joined(group: room, epoch: 1, addedBy: a.id))
     XCTAssertEqual(b.room, room)
     for device in [a, b] {
@@ -283,11 +322,9 @@ final class LiveCoreTests: XCTestCase {
       XCTAssertEqual(Set(group.leaves), Set([a.id, b.id]))
       XCTAssertFalse(group.pending)
     }
-    let key = try a.contentKey(group: room, epoch: 1)
-    XCTAssertEqual(key.count, 32)
-    XCTAssertEqual(try b.contentKey(group: room, epoch: 1), key)
+    XCTAssertTrue(try bothHoldKey(a, b, group: room, epoch: 1))
     // B was not there at epoch 0 and A has not handed that key over.
-    XCTAssertEqual(refusedCode { _ = try b.contentKey(group: room, epoch: 0) }, "no-key")
+    XCTAssertFalse(try b.holdsKey(group: room, epoch: 0))
 
     // The Commit that added B, as the log brings it: A applied it when the hub accepted it (a duplicate now); for B
     // it lies behind the epoch its Welcome put it in, and is passed over.
@@ -301,11 +338,22 @@ final class LiveCoreTests: XCTestCase {
 
     // With the Add accepted, A sends B the key that authenticates the room's sealed keys (7.4), unasked: a stored
     // message of the room group, in the epoch the Add led to. B came by Welcome, not with the code, and has none.
-    XCTAssertEqual(try (b as? LiveDevice)?.holdsRecoveryMac(), false)
+    XCTAssertEqual(try b.holdsRecoveryMac(), false)
     let auth = try accept(a, .message, &change)
     XCTAssertEqual(auth.epoch, 1)
     XCTAssertEqual(try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: auth.parts[0]))), .message(.recoveryAuth(from: a.id)))
-    XCTAssertEqual(try (b as? LiveDevice)?.holdsRecoveryMac(), true)
+    XCTAssertEqual(try b.holdsRecoveryMac(), true)
+
+    // What the invite still asks for: the handover of the old key, a stored message of the room group, which B opens.
+    XCTAssertEqual(try a.inviteSteps(), [.handover(invite: forB.invite, group: room, device: b.id)])
+    XCTAssertFalse(try a.inviteHandover(invite: forB.invite).isEmpty)
+    XCTAssertEqual(try a.inviteSteps(), [])
+    let handover = try accept(a, .message, &change)
+    let taken = try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: handover.parts[0])))
+    guard case .message(.keys(let from, let count, _)) = taken else { return XCTFail("\(taken)") }
+    XCTAssertEqual(from, a.id)
+    XCTAssertGreaterThan(count, 0)
+    XCTAssertTrue(try bothHoldKey(b, a, group: room, epoch: 0))
 
     // A's next Commit reaches B through the log: both stand at epoch 2 with one key.
     _ = try XCTUnwrap(try a.update(group: room, forced: true, nowMs: nowMs()))
@@ -314,60 +362,68 @@ final class LiveCoreTests: XCTestCase {
     let done = try b.processLogEntry(LogEntry(change: change, group: room, kind: .commit(bytes: update.parts[0], recoveryAuth: nil)))
     XCTAssertEqual(done, .commit(group: room, epoch: 2, superseded: nil, removed: false))
     XCTAssertEqual(b.cursor, change)
-    XCTAssertEqual(try b.contentKey(group: room, epoch: 2), try a.contentKey(group: room, epoch: 2))
-    XCTAssertNotEqual(try a.contentKey(group: room, epoch: 2), key)
+    XCTAssertTrue(try bothHoldKey(b, a, group: room, epoch: 2))
 
-    // The handover of the old key: a stored message of the room group, which B opens.
-    XCTAssertFalse(try a.sendHandover(group: room, recipient: b.id).isEmpty)
-    let handover = try accept(a, .message, &change)
-    let taken = try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: handover.parts[0])))
-    guard case .message(.keys(let from, let count, _)) = taken else { return XCTFail("\(taken)") }
-    XCTAssertEqual(from, a.id)
-    XCTAssertGreaterThan(count, 0)
-    XCTAssertEqual(try b.contentKey(group: room, epoch: 0), try a.contentKey(group: room, epoch: 0))
-
-    // A stroke piece is relayed, not stored.
+    // A stroke piece is relayed, not stored: the hub passes it on without a change number, and B's cursor stays.
     _ = try a.sendStrokePiece(board: ALL_DESKS_BOARD, piece: utf8(#"{"p":[1,2]}"#))
-    // (The real hub gives a relayed message no change number and keeps it out of the log; the core takes a message
-    // only as a log entry above its cursor. Until it has a call for a relayed message, this one gets a number.)
-    let piece = try accept(a, .relayMessage, &change)
-    let drawn = try b.processLogEntry(LogEntry(change: change, group: room, kind: .message(bytes: piece.parts[0])))
-    XCTAssertEqual(drawn, .message(.strokePiece(from: a.id, board: ALL_DESKS_BOARD, piece: utf8(#"{"p":[1,2]}"#))))
+    let piece = try XCTUnwrap(a.outbox().first { $0.kind == .relayMessage })
+    try a.outboxAccepted(piece.id, change: nil)
+    XCTAssertEqual(try b.processRelay(group: room, bytes: piece.parts[0]), .strokePiece(from: a.id, board: ALL_DESKS_BOARD, piece: utf8(#"{"p":[1,2]}"#)))
+    XCTAssertEqual(b.cursor, change)
+    // A message of a group this device is no leaf of is dropped.
+    XCTAssertEqual(try agent.processRelay(group: room, bytes: piece.parts[0]), .dropped)
 
-    // An agent device is enrolled and a session founded: the session's agent is told by the room's roles.
-    _ = try a.changeAgents(enrol: [agent.id], remove: [], nowMs: nowMs())
+    // An agent device is enrolled by invite: it follows the room group from the GroupInfo of the epoch its Offer
+    // names (the update's), and the Commit that enrols it reaches it and B through the log.
+    let forAgent = try exchangeInvite(from: a, to: agent, role: ROLE.AGENT, tools: tools)
+    XCTAssertEqual(forAgent.inviterShows, forAgent.newcomerShows)
+    try agent.joinObserve(groupInfo: update.parts[1])
+    _ = try a.confirmInvite(invite: forAgent.invite, numbers: forAgent.inviterShows, nowMs: nowMs())
     let enrol = try accept(a, .commit, &change)
-    _ = try b.processLogEntry(LogEntry(change: change, group: room, kind: .commit(bytes: enrol.parts[0], recoveryAuth: nil)))
-    let session = try a.foundSession(agent: agent.id, keyPackages: [try b.keyPackage(nowMs: nowMs()), try agent.keyPackage(nowMs: nowMs())], nowMs: nowMs())
+    let enrolEntry = LogEntry(change: change, group: room, kind: .commit(bytes: enrol.parts[0], recoveryAuth: nil))
+    _ = try b.processLogEntry(enrolEntry)
+    XCTAssertEqual(try agent.processLogEntry(enrolEntry), .observed)
+    XCTAssertEqual(try a.roomRoles()?.agents, [agent.id])
+    XCTAssertFalse(try agent.isHuman())
+
+    // The invite asks for the agent's main session, with the KeyPackage of its Request and one of every other human.
+    let steps = try a.inviteSteps()
+    guard steps.count == 1, case .foundSession(let invite, let enrolled, let keyPackage) = steps[0] else { return XCTFail("\(steps)") }
+    XCTAssertEqual(invite, forAgent.invite)
+    XCTAssertEqual(enrolled, agent.id)
+    let session = try a.foundSession(agent: agent.id, keyPackages: [keyPackage, try b.keyPackage(nowMs: nowMs())], nowMs: nowMs())
     XCTAssertEqual(session.count, 16)
     // The founding's parts: GroupInfo 0, SealedKey 0, the first Commit, its GroupInfo, its Welcome, its SealedKey.
     let founding = try accept(a, .groupFounding, &change)
     XCTAssertEqual(founding.group, room + session)
     XCTAssertEqual(founding.parts.count, 6)
+    XCTAssertEqual(try a.inviteSteps(), [])
     _ = try b.joinWelcome(founding.parts[4], room: room, committer: a.id, nowMs: nowMs())
-    for device in [a, b] {
+    _ = try agent.joinWelcome(founding.parts[4], room: room, committer: a.id, nowMs: nowMs())
+    for device in [a, b, agent] {
       let group = try XCTUnwrap(try device.groups().first { $0.session != nil })
       XCTAssertEqual(group.group, room + session)
       XCTAssertEqual(group.session, SessionInfo(session: session, parent: nil, agents: [agent.id]))
       XCTAssertEqual(Set(group.leaves), Set([a.id, b.id, agent.id]))
-      XCTAssertEqual(try (device as? LiveDevice)?.disallowed(group: group.group), [])
+      XCTAssertEqual(try device.disallowed(group: group.group), [])
     }
-    XCTAssertEqual(try a.contentKey(group: room + session, epoch: 1), try b.contentKey(group: room + session, epoch: 1))
+    XCTAssertTrue(try bothHoldKey(a, b, group: room + session, epoch: 1))
+    XCTAssertTrue(try bothHoldKey(a, agent, group: room + session, epoch: 1))
     XCTAssertTrue(a.outbox().isEmpty)
   }
 
-  /// A Welcome that is not from the device the joiner was told (its inviter) is refused, and the KeyPackage it was for
-  /// is spent with it: the same Welcome is `not-member` afterwards, and the device asks to be added again.
-  func testAWelcomeFromTheWrongCommitterIsRefusedForGood() throws {
+  /// The Welcome of an invite is taken only as the invite said: named for another room it is refused, and the
+  /// KeyPackage it was for is spent with it, so the same Welcome is refused afterwards and the device asks anew.
+  func testAWelcomeForAnotherRoomIsRefusedForGood() throws {
     var change: UInt64 = 0
-    let a = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: systemRandom(32)))
-    let b = try tools.createDevice(store: DeviceStore(directory: try scratchFolder(self), key: systemRandom(32)))
-    let room = try XCTUnwrap(a as? LiveDevice).foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
+    let a = try newDevice(), b = try newDevice()
+    _ = try a.foundRoom(recoveryCode: try tools.generateRecoveryCode(), nowMs: nowMs())
     _ = try accept(a, .roomFounding, &change)
-    _ = try a.addHumanDevice(b.id, keyPackage: try b.keyPackage(nowMs: nowMs()), nowMs: nowMs())
+    let invite = try exchangeInvite(from: a, to: b, tools: tools)
+    _ = try a.confirmInvite(invite: invite.invite, numbers: invite.inviterShows, nowMs: nowMs())
     let welcome = try accept(a, .commit, &change).parts[2]
     XCTAssertEqual(refusedCode { _ = try b.joinWelcome(welcome, room: systemRandom(32), committer: a.id, nowMs: nowMs()) }, "wrong-room")
-    XCTAssertEqual(refusedCode { _ = try b.joinWelcome(welcome, room: room, committer: a.id, nowMs: nowMs()) }, "not-member")
+    XCTAssertEqual(refusedCode { _ = try b.joinInvited(welcome, nowMs: nowMs()) }, "not-member")
     XCTAssertNil(b.room)
   }
 
@@ -456,6 +512,23 @@ final class LiveCoreTests: XCTestCase {
     XCTAssertEqual(link.shareId.count, 16)
     XCTAssertEqual(link.secretHash.count, 32)
     XCTAssertEqual(refusedCode { _ = try self.tools.createShareLink(app: "app.trommi.com", fileId: sealed.fileId, fileKey: sealed.fileKey, sha256: sealed.sha256) }, "bad-format")
+  }
+
+  /// The 64 emoji of the check code and their words are the core's list.
+  func testCheckEmoji() {
+    let all = tools.checkEmoji(Array(0..<64))
+    XCTAssertEqual(all.count, 64)
+    XCTAssertEqual(Set(all.map(\.emoji)).count, 64)
+    XCTAssertEqual(Set(all.map(\.word)).count, 64)
+    XCTAssertTrue(all.allSatisfy { !$0.emoji.isEmpty && !$0.word.isEmpty })
+    XCTAssertEqual(tools.checkEmoji([5, 5]).map(\.word), [all[5].word, all[5].word])
+    XCTAssertEqual(tools.checkEmoji([64]).map(\.emoji), ["?"])
+  }
+
+  /// A link that is none is refused before any hub is asked.
+  func testAnInviteLinkIsTheCoresToRead() {
+    XCTAssertEqual(refusedCode { _ = try self.tools.parseInviteLink("https://app.trommi.com/#x") }, "bad-format")
+    XCTAssertEqual(refusedCode { _ = try self.tools.parseInviteLink("") }, "bad-format")
   }
 
   func testPushKey() throws {
