@@ -202,7 +202,7 @@ public final class Room {
     closed = true
     liveTask?.cancel(); goalsTask?.cancel(); cacheTask?.cancel()
     hub.signer = nil
-    hub.forgetToken()
+    hub.shutdown()
     // The core first (it wipes what it holds in memory and lets go of the store), then the store's lock.
     coreQueue.sync { device.close(); deviceStore.close() }
   }
@@ -740,9 +740,9 @@ public final class Room {
   /** What the hub's answer to an outbox entry must hold to count as "taken"; the change number the core wants. */
   static func accepted(_ kind: OutboxKind, _ r: JSON) -> UInt64?? {
     switch kind {
-    case .envelope, .commit, .externalCommit, .recoveryCode: return Wire.uint(r["change"]).map { .some($0) }
+    case .envelope, .commit, .externalCommit, .recoveryCode: return Wire.uint(r["change"]).flatMap { $0 > 0 ? .some(.some($0)) : nil }
     case .message: return Wire.uint(r["n"]) != nil ? .some(nil) : nil
-    case .relayMessage: return r["n"] != nil ? .some(nil) : nil   // (passed on, not stored: `n` is null)
+    case .relayMessage: return r["n"] is NSNull ? .some(nil) : nil   // (passed on, not stored: `n` is null)
     case .keyPackages: return Wire.uint(r["unused"]) != nil ? .some(nil) : nil
     case .groupFounding: return r["group_id"] is String ? .some(nil) : nil
     case .roomFounding: return r["room_id"] is String ? .some(nil) : nil

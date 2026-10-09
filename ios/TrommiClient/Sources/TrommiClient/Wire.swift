@@ -83,7 +83,7 @@ public func hex(_ bytes: Bytes) -> String {
   for b in bytes { out.append(HEXDIGITS[Int(b >> 4)]); out.append(HEXDIGITS[Int(b & 15)]) }
   return String(decoding: out, as: UTF8.self)
 }
-/** Lower-case hex only, like zcrypto.mjs unhex. */
+/** Lower-case hex only. */
 public func unhex(_ str: String) throws -> Bytes {
   let s = Array(str.utf8)
   if s.count % 2 != 0 { throw fail("bad-format", "hex") }
