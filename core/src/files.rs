@@ -516,7 +516,9 @@ impl Decryptor {
         if let Some(error) = &self.failed {
             return Err(error.clone());
         }
-        let room = self.pending.len().saturating_add(most);
+        // No more than the largest file still has to give, whatever the caller hands in.
+        let left = usize::try_from(MAX_STORED_LEN.saturating_sub(self.taken)).unwrap_or(usize::MAX);
+        let room = self.pending.len().saturating_add(most.min(left));
         let mut out = Zeroizing::new(Vec::with_capacity(room));
         match step(self, &mut out) {
             Ok(()) => Ok(std::mem::take(&mut *out)),

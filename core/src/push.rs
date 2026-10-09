@@ -80,12 +80,28 @@ struct ApnsPushJson {
     room_id: String,
     change: u64,
     urgency: u8,
-    ticket: String,
+    ticket: Ticket,
 }
 
-impl Drop for ApnsPushJson {
+/// The ticket as the JSON carries it, base64url. It is wiped when dropped, wherever that happens: also when
+/// the fields behind it do not parse.
+struct Ticket(String);
+
+impl Drop for Ticket {
     fn drop(&mut self) {
-        self.ticket.zeroize();
+        self.0.zeroize();
+    }
+}
+
+impl Serialize for Ticket {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Ticket {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self)
     }
 }
 
@@ -106,6 +122,11 @@ fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {
 
 /// Parses `bytes` as `T` and accepts it only if writing `T` again gives the same bytes.
 fn from_json<T: Serialize + for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T, Error> {
+    // The one spelling has no escape; a text with one is refused before a parser unfolds it into a buffer
+    // of its own.
+    if bytes.contains(&b'\\') {
+        return Err(Error::BadFormat);
+    }
     let value: T = serde_json::from_slice(bytes).map_err(|_| Error::BadFormat)?;
     if *Zeroizing::new(to_json(&value)?) != bytes {
         return Err(Error::BadFormat);
@@ -150,7 +171,7 @@ impl ApnsPush {
             room_id: self.room_id.to_base64url(),
             change: self.change,
             urgency: self.urgency,
-            ticket: ids::base64url_encode(&self.ticket),
+            ticket: Ticket(ids::base64url_encode(&self.ticket)),
         })
     }
 
@@ -158,7 +179,7 @@ impl ApnsPush {
         let fields: ApnsPushJson = from_json(bytes)?;
         check_numbers(fields.change, fields.urgency)?;
         // Wiped on every way out but the last.
-        let mut ticket = Zeroizing::new(ids::base64url_decode(&fields.ticket)?);
+        let mut ticket = Zeroizing::new(ids::base64url_decode(&fields.ticket.0)?);
         if ticket.len() > MAX_TICKET_LEN {
             return Err(Error::BadFormat);
         }
