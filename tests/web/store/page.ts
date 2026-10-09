@@ -14,17 +14,13 @@ import type * as Binding from '../../../core/wasm/js/trommi-core.js'
 import { hex, keyOf, openFake, openReal } from './fake-client.ts'
 import type { FakeClient } from './fake-client.ts'
 
-/** ok: null is a test that could not run, with the reason in `detail`. */
-interface Result { name: string; ok: boolean | null; detail: string }
-class Skip extends Error {}
+interface Result { name: string; ok: boolean; detail: string }
 
 // The binding as run.mjs serves it (never bundled: the glue fetches its .wasm from beside itself).
 const pkg = '/pkg/'
 const core = await import(`${pkg}trommi-core.js`) as typeof Binding
 const IdbStore = (await import(`${pkg}idb-store.js`) as { IdbStore: IdbStoreClass }).IdbStore
 await core.init()
-const recovery = core.versions().recovery
-const canFound = !recovery.startsWith('not built')
 
 const utf8 = new TextEncoder(), text = new TextDecoder()
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -51,10 +47,9 @@ async function until(cond: () => unknown, what: string, ms = 8000): Promise<void
   while (!await cond()) { if (Date.now() - t > ms) throw new Error(`timed out waiting for ${what}`); await sleep(20) }
 }
 const deviceStore = (name: string, wait = false) => openDeviceStore({ name, wait, IdbStore })
-/** A loaded store. It waits for the lock: the binding frees it a moment AFTER close() returned, so a store opened
- *  right after another was closed must wait, or it meets the lock of the one that just went. */
+/** A loaded store, without waiting for the lock: after `await close()` of the one before, the state is free. */
 async function opened(name: string): Promise<{ store: DeviceStore; revision: number; entries: StoreEntry[] }> {
-  const store = deviceStore(name, true)
+  const store = deviceStore(name)
   return { store, ...await store.load() }
 }
 /** A database read or changed with plain IndexedDB: not through store-idb.ts, not through the binding, and without the lock. */
@@ -80,7 +75,8 @@ const contains = (hay: Uint8Array, needle: Uint8Array): boolean => {
   return false
 }
 const lockHeld = async (name: string) => (await navigator.locks.query()).held?.some(l => l.name === `trommi-core:${name}`) ?? false
-const freed = (name: string) => until(async () => !await lockHeld(name), 'the lock to be free')
+/** The lock is free NOW: whatever closed before has resolved only once the browser let it go. */
+const freed = async (name: string) => same(await lockHeld(name), false, 'the lock')
 const databases = async (name: string) => (await indexedDB.databases()).map(d => d.name).filter(n => n?.startsWith(name)).sort()
 
 /** The options of a tab over the fake client. `Channel: null` is a browser without BroadcastChannel. */
@@ -107,10 +103,11 @@ const tests: [string, () => Promise<void>][] = [
     check(await store.load() === state, 'a second load() read again')
     const other = deviceStore(name)
     same((await refused(() => other.load(), 'a second owner')).name, 'StoreConflict', 'the second owner')
-    store.close()
-    await freed(name)
+    await store.close()
+    same(await lockHeld(name), false, 'the lock once close() resolved')
+    await refused(() => store.load(), 'load() on a closed store')
     const again = await opened(name)
-    again.store.close()
+    await again.store.close()
   }],
   ['store: writes are applied in order and are there after reopening', async () => {
     const name = fresh('order')
@@ -119,16 +116,16 @@ const tests: [string, () => Promise<void>][] = [
     await a.store.apply(write(1, [put(bytes(1, 1), 'ONE'), put(bytes(2), 'three')], [bytes(1, 2)]))
     // deletes come first: a key both deleted and put ends up put; of two puts of one key the later counts
     await a.store.apply(write(2, [put(bytes(9), 'early'), put(bytes(9), 'late'), put(bytes(2), 'again')], [bytes(2), bytes(7, 7)]))
-    a.store.close()
+    await a.store.close()
     const b = await opened(name)
     same([b.revision, shown(b.entries)], [3, '0101=ONE 02=again 09=late'], 'after reopen')
     // an empty value and an empty write are a value and a revision like any other
     await b.store.apply(write(3, [put(bytes(3), new Uint8Array(0))]))
     await b.store.apply(write(4, []))
-    b.store.close()
+    await b.store.close()
     const c = await opened(name)
     same([c.revision, shown(c.entries)], [5, '0101=ONE 02=again 03= 09=late'], 'after the second reopen')
-    c.store.close()
+    await c.store.close()
   }],
   ['store: a write that names the wrong revision is refused with StoreConflict and nothing of it is stored', async () => {
     const name = fresh('conflict')
@@ -136,10 +133,10 @@ const tests: [string, () => Promise<void>][] = [
     same((await refused(() => a.store.apply(write(5, [put(bytes(1), 'no')])), 'expected 5 at revision 0')).name, 'StoreConflict', 'refusal')
     await a.store.apply(write(0, [put(bytes(1), 'yes')]))
     same((await refused(() => a.store.apply(write(0, [put(bytes(1), 'twice'), put(bytes(2), 'more')])), 'expected 0 at revision 1')).name, 'StoreConflict', 'second refusal')
-    a.store.close()
+    await a.store.close()
     const b = await opened(name)
     same([b.revision, shown(b.entries)], [1, '01=yes'], 'stored')
-    b.store.close()
+    await b.store.close()
     same((await refused(() => deviceStore(fresh('unloaded')).apply(write(0, [])), 'a write before load()')).code, 'storage-failed', 'before load')
   }],
   ['store: another owner wrote behind this one\'s back (past the lock): the next write is refused whole', async () => {
@@ -149,10 +146,10 @@ const tests: [string, () => Promise<void>][] = [
     // what a second owner would do if the lock had failed: one more write, the revision counted up
     await plain(name, ['meta'], 'readwrite', tx => { tx.objectStore('meta').put(2, 'revision') })
     same((await refused(() => a.store.apply(write(1, [put(bytes(1), 'overwritten'), put(bytes(2), 'new')])), 'the write behind another owner')).name, 'StoreConflict', 'refusal')
-    a.store.close()
+    await a.store.close()
     const b = await opened(name)
     same([b.revision, shown(b.entries)], [2, '01=mine'], 'what is stored')
-    b.store.close()
+    await b.store.close()
   }],
   ['store: values are wrapped at rest (no plaintext in IndexedDB), a fresh nonce per write, bound to their key, under a non-extractable key', async () => {
     const name = fresh('wrapped')
@@ -161,7 +158,7 @@ const tests: [string, () => Promise<void>][] = [
     await a.store.apply(write(0, [put(bytes(1), secret), put(bytes(2), secret), put(bytes(3), 'other')]))
     const once = (await raw(name, 'entries')).values as Uint8Array[]
     await a.store.apply(write(1, [put(bytes(1), secret)]))   // the same value under the same key again
-    a.store.close()
+    await a.store.close()
     const device = await raw(name, 'entries')
     same(device.keys.map(k => hex(new Uint8Array(k as ArrayBuffer))), ['01', '02', '03'], 'the raw keys are the entries\' key bytes')
     const stored = device.values as Uint8Array[]
@@ -176,7 +173,7 @@ const tests: [string, () => Promise<void>][] = [
     // the key is kept, not made again: a second store on the name reads what the first wrote
     const b = await opened(name)
     same(b.entries.map(e => hex(e.value)).sort(), [hex(secret), hex(secret), hex(utf8.encode('other'))].sort(), 'unwrapped on load')
-    b.store.close()
+    await b.store.close()
     // a stored value moved under another key does not open (the key is the additional data)
     await plain(name, ['entries'], 'readwrite', tx => { tx.objectStore('entries').put(stored[0], new Uint8Array([3]).buffer) })
     await freed(name)
@@ -190,49 +187,64 @@ const tests: [string, () => Promise<void>][] = [
     const name = fresh('keyless')
     const a = await opened(name)
     await a.store.apply(write(0, [put(bytes(1), 'sealed')]))
-    a.store.close()
+    await a.store.close()
     await new Promise<void>((resolve, reject) => { const r = indexedDB.deleteDatabase(`${name}:wrap`); r.onsuccess = () => resolve(); r.onerror = () => reject(r.error) })
     await freed(name)
     same((await refused(() => deviceStore(name).load(), 'loading without the key')).code, 'storage-failed', 'refusal')
     same((await raw(`${name}:wrap`, 'wrap')).values.length, 0, 'no key was made')
     await freed(name)
   }],
-  ['store: close() while load() waits for the lock: that load() is refused and the lock is given back the moment it comes (the binding cannot leave the line)', async () => {
+  ['store: close() while load() waits for the lock: that load() is refused at once and never takes the lock', async () => {
     const name = fresh('line')
     const a = await opened(name)
     const b = deviceStore(name, true)
     let outcome = 'waiting'
     const loading = b.load().then(() => { outcome = 'loaded' }, () => { outcome = 'refused' })
     await sleep(150)
-    same(outcome, 'waiting', 'the second store while the first owns')
-    b.close()
-    a.store.close()
+    same([outcome, (await navigator.locks.query()).pending?.filter(l => l.name === `trommi-core:${name}`).length], ['waiting', 1], 'the second store while the first owns')
+    await b.close()
     await loading
-    same(outcome, 'refused', 'after both closed')
-    await freed(name)
+    same([outcome, (await navigator.locks.query()).pending?.filter(l => l.name === `trommi-core:${name}`).length, await lockHeld(name)], ['refused', 0, true], 'out of the line, while the first still owns')
+    await a.store.close()
     const c = deviceStore(name, true)
     same((await c.load()).revision, 0, 'a waiting load() with nobody in front')
-    c.close()
+    await c.close()
   }],
-  ['store: deleteStores removes the state and the cache, also under an open store; the wrapping key stays and serves the next device', async () => {
+  ['store: the lock is stolen from an owner: its next write is refused with StoreConflict and nothing of it is stored', async () => {
+    const name = fresh('stolen')
+    const a = await opened(name)
+    await a.store.apply(write(0, [put(bytes(1), 'mine')]))
+    let giveBack = () => {}
+    const thief = navigator.locks.request(`trommi-core:${name}`, { steal: true }, () => new Promise<void>(r => { giveBack = r }))
+    await until(async () => (await navigator.locks.query()).held?.filter(l => l.name === `trommi-core:${name}`).length === 1, 'the theft')
+    await sleep(50)
+    same((await refused(() => a.store.apply(write(1, [put(bytes(2), 'after the theft')])), 'a write after the lock was stolen')).name, 'StoreConflict', 'refusal')
+    await a.store.close()
+    giveBack(); await thief
+    const b = await opened(name)
+    same([b.revision, shown(b.entries)], [1, '01=mine'], 'what is stored')
+    await b.store.close()
+  }],
+  ['store: deleteStores is refused while a device has the state open; then it removes the state and the cache; the wrapping key stays and serves the next device', async () => {
     const name = fresh('deleted')
     const a = await opened(name)
     await a.store.apply(write(0, [put(bytes(1), 'gone soon')]))
     const cache = await openCache(name)
     await cache.set('x', 1)
     same(await databases(name), [name, `${name}:cache`, `${name}:wrap`], 'before')
+    same((await refused(() => deleteStores({ name, IdbStore }), 'deleting an open state')).name, 'StoreConflict', 'while open')
+    same([await databases(name), await cache.get('x')], [[name, `${name}:cache`, `${name}:wrap`], 1], 'nothing was deleted')
+    await a.store.close()
     await deleteStores({ name, IdbStore })
     same(await databases(name), [`${name}:wrap`], 'after')
-    await refused(() => a.store.apply(write(1, [put(bytes(2), 'late')])), 'a write after the delete')
     same((await refused(() => cache.get('x'), 'the cache after the delete')).code, 'storage-failed', 'cache')
-    a.store.close()
     const b = await opened(name)
     same([b.revision, b.entries.length], [0, 0], 'a new store on the name')
     await b.store.apply(write(0, [put(bytes(1), 'the next device')]))
-    b.store.close()
+    await b.store.close()
     const c = await opened(name)
     same([shown(c.entries), (await raw(`${name}:wrap`, 'wrap')).values.length], ['01=the next device', 1], 'the next device, under the one key')
-    c.store.close()
+    await c.store.close()
   }],
   ['cache: get, set, delete, setMany in one transaction, range by prefix with bounds, limit and reverse; no lock, two handles', async () => {
     const name = fresh('cache')
@@ -264,8 +276,8 @@ const tests: [string, () => Promise<void>][] = [
     const device = await core.Device.create(deviceStore(name))
     const id = hex(await device.id())
     same([id.length, await device.room(), await lockHeld(name)], [64, null, true], 'a new device')
-    same((await refused(() => core.Device.open(deviceStore(name)), 'a second Device on an owned store')).code, 'storage', 'the second owner')
-    if (!canFound) { await device.close(); throw new Skip(`the core's build has no recovery construct (${recovery}): no room can be founded; build with TROMMI_STAND_IN_RECOVERY=1`) }
+    const second = await refused(() => core.Device.open(deviceStore(name)), 'a second Device on an owned store') as { code?: string; cause?: unknown }
+    same([second.code, second.cause instanceof core.StoreConflict], ['storage', true], 'the second owner: storage, caused by StoreConflict')
     const room = hex(await device.foundRoom(core.generateRecoveryCode(), Date.now()))
     const outbox = (await device.outbox()).map(e => `${e.id}:${e.kind}:${e.parts.map(p => p.length)}`)
     check(room.length === 64 && outbox.length > 0, `room ${room}, outbox ${outbox}`)
@@ -275,22 +287,22 @@ const tests: [string, () => Promise<void>][] = [
     const stored = (await raw(name, 'entries')).values as Uint8Array[]
     check(stored.length > 0 && stored.every(v => v[0] === 1 && v.length >= 29), 'the stored entries are not in the wrapped form')
     same((await refused(() => core.Device.open(new IdbStore(name)), 'opening the wrapped state unwrapped')).code, 'storage', 'unwrapped')
-    const again = await core.Device.open(deviceStore(name, true))
+    const again = await core.Device.open(deviceStore(name))
     same([hex(await again.id()), hex((await again.room())!), (await again.outbox()).map(e => `${e.id}:${e.kind}:${e.parts.map(p => p.length)}`)], [id, room, outbox], 'the device after reopening')
     await again.close()
-    same((await refused(() => core.Device.create(deviceStore(name, true)), 'creating over a stored device')).code, 'storage', 'create on a full store')
+    same((await refused(() => core.Device.create(deviceStore(name)), 'creating over a stored device')).code, 'storage', 'create on a full store')
   }],
   ['core: another owner wrote behind a real Device: its next write fails, it closes itself and frees the lock; the stored state opens again without that write', async () => {
     const name = fresh('device-behind')
-    if (!canFound) throw new Skip(`the core's build has no recovery construct (${recovery}): the Device has nothing to write after its creation`)
     const device = await core.Device.create(deviceStore(name))
     const id = hex(await device.id())
     const before = (await raw(name, 'meta')).values[0] as number
     await plain(name, ['meta'], 'readwrite', tx => { tx.objectStore('meta').put(before + 1, 'revision') })
-    same((await refused(() => device.foundRoom(core.generateRecoveryCode(), Date.now()), 'the write behind another owner')).code, 'storage', 'the failed call')
+    const behind = await refused(() => device.foundRoom(core.generateRecoveryCode(), Date.now()), 'the write behind another owner') as { code?: string; cause?: unknown }
+    same([behind.code, behind.cause instanceof core.StoreConflict], ['storage', true], 'the failed call: storage, caused by StoreConflict')
     const later = await refused(() => device.id(), 'a call after the failure')
     check(later.code === 'storage' || later.code === 'internal', `a later call: ${later.code}`)
-    await freed(name)   // (the device that closed itself gave the lock back)
+    same(await lockHeld(name), false, 'the device that closed itself gave the lock back')
     // recovery is the app's: a new store, the device from what is stored
     const again = await core.Device.open(deviceStore(name))
     same([hex(await again.id()), await again.room(), (await again.outbox()).length], [id, null, 0], 'the stored state: the device without the room')
@@ -345,7 +357,7 @@ const tests: [string, () => Promise<void>][] = [
     await b.close(); await a.close()
     const c = await opened(name)
     same(c.entries.map(e => text.decode(e.value)).sort(), ['before', 'by the follower', 'x', 'y'], 'stored, each once')
-    c.store.close()
+    await c.store.close()
   }],
   ['tabs: a forwarded call that is sent again (no answer for 2.5 s) runs once and is answered once', async () => {
     const name = fresh('retry')
@@ -457,7 +469,7 @@ async function single(): Promise<Result[]> {
   for (const [name, run] of tests) {
     let timer = 0
     const deadline = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('not finished after 30 s')), 30_000) as unknown as number })
-    try { await Promise.race([run(), deadline]); out.push({ name, ok: true, detail: '' }) } catch (e) { out.push({ name, ok: e instanceof Skip ? null : false, detail: String((e as Error)?.message ?? e) }) } finally { clearTimeout(timer) }
+    try { await Promise.race([run(), deadline]); out.push({ name, ok: true, detail: '' }) } catch (e) { out.push({ name, ok: false, detail: String((e as Error)?.message ?? e) }) } finally { clearTimeout(timer) }
   }
   return out
 }
@@ -472,7 +484,7 @@ const calls = new Map<string, { done: boolean; value?: unknown; error?: string }
 
 const steps = {
   single,
-  recovery: () => recovery,
+  versions: () => core.versions(),
   /** When this document was loaded: another number after a reload. */
   born: () => performance.timeOrigin,
 
@@ -517,16 +529,16 @@ const steps = {
     const big = new Uint8Array(megabytes * 1024 * 1024)
     for (let i = 0; i < big.length; i += 65536) crypto.getRandomValues(big.subarray(i, i + 65536))   // (does not compress)
     const e = await refused(() => s.apply(write(1, [put(bytes(2), big), put(bytes(1), 'overwritten')])), 'the write over quota')
-    s.close()   // (what a Device does when its write failed)
+    await s.close()   // (what a Device does when its write failed)
     return { name: e.name, message: e.message }
   },
   async quotaAfter(name: string) {
     const b = await opened(name)   // recovery: a new store, loaded
     const state = { revision: b.revision, entries: shown(b.entries) }
     await b.store.apply(write(b.revision, [put(bytes(4), 'on again')]))
-    b.store.close()
+    await b.store.close()
     const c = await opened(name)
-    c.store.close()
+    await c.store.close()
     return { ...state, then: [c.revision, shown(c.entries)] }
   },
 
@@ -534,7 +546,7 @@ const steps = {
   async midWriteSetup(name: string) {
     const a = await opened(name)
     await a.store.apply(write(0, [put(bytes(0, 0, 0, 0), 'base')]))
-    a.store.close()
+    await a.store.close()
     return null
   },
   /**
@@ -562,7 +574,7 @@ const steps = {
   },
   async midWriteCheck(name: string, entries: number, size: number) {
     const b = await opened(name)
-    b.store.close()
+    await b.store.close()
     const base = b.entries.find(e => e.key.length === 4 && new DataView(e.key.buffer, e.key.byteOffset).getUint32(0) === 0)
     return { revision: b.revision, count: b.entries.length - 1, base: base ? text.decode(base.value) : null, sizesOk: b.entries.every(e => e === base || e.value.length === size), want: entries }
   },
