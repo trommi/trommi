@@ -94,10 +94,7 @@ async function checkToolchain(repo) {
 // .wasm by import.meta.url (the glue's own default address is never used: init() always gets the response).
 //
 // The build does not compile Rust as long as pkg/ is there and not older than the core's sources (CORE_SOURCES);
-// else it runs core/wasm/build.sh, with this process's environment (CARGO_TARGET_DIR, TROMMI_STAND_IN_RECOVERY).
-// The recovery stand-in (TROMMI_STAND_IN_RECOVERY=1: development only, rooms founded with it cannot be recovered) is
-// never chosen here: a pkg/ built with it is taken as it is and named as a warning in the manifest and on the
-// console; a pkg/ built without it is built again only when the environment asks for the stand-in.
+// else it runs core/wasm/build.sh, with this process's environment (CARGO_TARGET_DIR).
 const CORE_SOURCES = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'core/Cargo.toml', 'core/src', 'core/swift/Cargo.toml', 'core/swift/src', 'core/wasm/Cargo.toml', 'core/wasm/build.sh', 'core/wasm/src', 'core/wasm/js']
 const CORE_WASM = 'trommi_core_wasm_bg.wasm'
 const CORE_MODULES = ['trommi-core', 'trommi_core_wasm', 'idb-store']   // pkg/<name>.js, in gen/vendor/ as <name>.mjs
@@ -139,7 +136,7 @@ function coreVersions(repo, pkg) {
 }
 let coreMade = null
 /** The binding's output, made first when it is missing or stale: { modules: { '<name>.mjs': text }, wasm (bytes),
- *  madeBy (the wasm-bindgen version the .wasm names), versions (the binding's own), standIn (the warning, or null) }.
+ *  madeBy (the wasm-bindgen version the .wasm names), versions (the binding's own) }.
  *  Read again only when the files changed. */
 export function coreWasm(repo = REPO) {
   const pkg = path.join(repo, 'core/wasm/pkg')
@@ -155,14 +152,12 @@ export function coreWasm(repo = REPO) {
       // (the "producers" section of the .wasm: processed-by wasm-bindgen <version>, each a length byte and the text)
       const named = /processed-by[\s\S]{0,40}?wasm-bindgen([\x01-\x20])/.exec(wasm.toString('latin1'))
       const madeBy = named ? wasm.toString('latin1', named.index + named[0].length, named.index + named[0].length + named[1].charCodeAt(0)) : null
-      const versions = coreVersions(repo, pkg)
-      coreMade = { key: `${repo}:${made}`, modules, wasm, madeBy, versions, standIn: versions.recovery === 'built' ? null : `the Rust core's recovery construct is not the real one (${versions.recovery})` }
+      coreMade = { key: `${repo}:${made}`, modules, wasm, madeBy, versions: coreVersions(repo, pkg) }
     }
     return coreMade
   }
   const made = age()
   if (made == null || made < Math.max(...CORE_SOURCES.map(f => newest(path.join(repo, f))))) buildCoreWasm(repo, made == null ? 'missing (core/wasm/pkg/)' : "older than the core's sources")
-  else if (process.env.TROMMI_STAND_IN_RECOVERY === '1' && !read().standIn) buildCoreWasm(repo, 'built without the recovery stand-in that TROMMI_STAND_IN_RECOVERY=1 asks for')
   return read()
 }
 /** The .wasm as the build serves it under `dir` ('gen/app' named by its content, 'gen/vendor' under the binding's
@@ -468,19 +463,17 @@ export async function generate({ pub = PUBLIC, repo = REPO, bundle: bundled = tr
   // build.txt (README "Verifying the build": anyone can build the commit and compare).
   Object.assign(out, demo)   // (after the shell's list and the version: the demo is not in the shell, sw.js lets /demo/ through)
   const served = [...new Set([...walk(pub).filter(f => !f.startsWith('gen/') && !stale(f) && !(bundled && BUNDLED.test(f))), ...Object.keys(out)])].filter(f => f !== 'gen/build.txt' && f !== 'gen/manifest.json').sort()
-  // (the Rust core as it names itself; a stand-in in it is a warning nobody who reads the manifest can miss)
-  const { versions, standIn } = coreWasm(repo)
-  const manifest = { commit: commitOf(repo), toolchain: await checkToolchain(repo), core: versions, ...(standIn ? { warning: `NOT FOR RELEASE: ${standIn}` } : {}), files: Object.fromEntries(served.map(f => [f, crypto.createHash('sha256').update(content(f)).digest('hex')])) }
+  // (core: the Rust core as it names itself, versions())
+  const manifest = { commit: commitOf(repo), toolchain: await checkToolchain(repo), core: coreWasm(repo).versions, files: Object.fromEntries(served.map(f => [f, crypto.createHash('sha256').update(content(f)).digest('hex')])) }
   out['gen/manifest.json'] = `${JSON.stringify(manifest, null, 1)}\n`
   out['gen/build.txt'] += `build: ${crypto.createHash('sha256').update(out['gen/manifest.json']).digest('hex')}\n`
   // (the core worker too: boot starts it at once; and the Rust core's .wasm once the worker loads it)
   const firstLoad = js ? [...js.first, js.worker, js.start, ...(js.workerLoadsCore ? [core.wasm] : [])].reduce((n, f) => n + Buffer.byteLength(out[f]), 0) : null
-  return { out, version, sheets: links.length, files: files.length, firstLoad, chunks: js ? Object.keys(js.out).length : 0, warning: manifest.warning ?? null }
+  return { out, version, sheets: links.length, files: files.length, firstLoad, chunks: js ? Object.keys(js.out).length : 0 }
 }
 
 async function build({ write = false } = {}) {
-  const { out, version, sheets, files, firstLoad, chunks, warning } = await generate()
-  if (warning) console.warn(`build: ${warning}`)
+  const { out, version, sheets, files, firstLoad, chunks } = await generate()
   console.log(`build ${version}: ${chunks} modules in the bundle (${Math.round(firstLoad / 1024)} KB at a cold start), ${sheets} sheets in one bundle, ${files} shell files${write ? '' : ' (check only, nothing written)'}`)
   if (!write) return
   for (const made of ['gen', 'demo/files']) fs.rmSync(path.join(PUBLIC, made), { recursive: true, force: true })

@@ -34,7 +34,7 @@ const check = (ok, what, seen) => { checks++; if (!ok) failures.push(`${what}${s
 
 /** The stand-in worker of check 6: what proof-worker.ts posts when the core's second step fails. */
 const FAILING = { name: 'the first founds a room', detail: 'a detail the core gave for the failed step' }
-const FAILING_VERSIONS = { core: 'stand-in', openmls: 'stand-in', provider: 'stand-in', binding: 'stand-in', recovery: 'built' }
+const FAILING_VERSIONS = { core: 'stand-in', openmls: 'stand-in', provider: 'stand-in', binding: 'stand-in' }
 const FAILING_WORKER = `postMessage(${JSON.stringify({ report: { ok: false, micros: 4600, versions: FAILING_VERSIONS, steps: [{ name: 'three devices make their keys', ok: true, micros: 1200, detail: '' }, { ...FAILING, ok: false, micros: 3400 }] }, versions: FAILING_VERSIONS })}); close()`
 
 const tmp = tempDir('proof')
@@ -121,7 +121,7 @@ try {
     return {
       path: location.pathname, title: text(document.querySelector('.set-head h2')), line: text(document.querySelector('#proof-line')), error: text(document.querySelector('#proof-error')),
       steps: [...document.querySelectorAll('#proof-steps > li')].map(li => ({ name: li.querySelector('.proof-name').firstChild.textContent, detail: text(li.querySelector('small')), time: text(li.querySelector('.proof-time')) })),
-      facts, warning: text(document.querySelector('.proof-facts .is-warning dd')), again: document.querySelector('#proof-again')?.disabled, copy: document.querySelector('#proof-copy')?.disabled,
+      facts, again: document.querySelector('#proof-again')?.disabled, copy: document.querySelector('#proof-copy')?.disabled,
       frame: Boolean(document.querySelector('#sidebar, nav.sidebar, [data-t-view]')), back: text(document.querySelector('.set-back')),
     }
   })()`)
@@ -153,10 +153,9 @@ try {
   check(Boolean(okLine), 'the first line starts with OK and says how many steps ran in how many ms', first.line)
   check(first.steps.length > 0 && Number(okLine?.[1]) === first.steps.length, 'every step the line counts has a row', first.steps.length)
   check(first.steps.every(s => s.name && /^OK \d+(\.\d)? ms$/.test(s.time)), 'every step row shows OK and its time in ms', first.steps)
-  check(['Core', 'OpenMLS', 'Provider', 'Binding', 'Recovery', 'App', 'Browser', 'Cores', 'Ran in'].every(k => first.facts[k]), 'the versions, the app and the browser are named', first.facts)
+  check(Object.keys(first.facts).join() === 'Core,OpenMLS,Provider,Binding,App,Browser,Cores,Ran in' && Object.values(first.facts).every(Boolean), "the core's four versions, the app and the browser are named, and nothing else", first.facts)
   check(/^Trommi app\/\d+\.\d+\.\d+, build \w+, commit \w+$/.test(first.facts.App ?? ''), "the app's line names its version, build and commit", first.facts.App)
   check(/a worker/.test(first.facts['Ran in'] ?? '') && first.facts.Browser === (await evaluate('navigator.userAgent')), 'it says it ran in a worker, in this browser', first.facts)
-  check(first.facts.Recovery === 'built' ? first.warning === null : first.warning === first.facts.Recovery, 'a recovery construct that is not the real one is shown as a warning, in its own words', [first.facts.Recovery, first.warning])
   check(first.again === false && first.copy === false, 'with a result both buttons are on', first)
   check(workers.length === 1 && workers[0].endsWith(`/gen/app/${workerFile}`), "exactly one worker ran: the build's proof worker", workers)
   check(requests.some(r => r.from === 'worker' && r.url.endsWith(`/gen/app/${wasmFile}`)), "the worker's own requests are seen by this test (the .wasm is among them)", requests.filter(r => r.from === 'worker'))
