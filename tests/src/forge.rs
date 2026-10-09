@@ -45,6 +45,8 @@ pub struct Forger {
     pub identity: Vec<u8>,
     /// An extension type its leaves state beside the profile's, if a test sets one.
     pub extra_extension: Option<u16>,
+    /// How many seconds its KeyPackages are valid for from now, if a test sets it; else OpenMLS's own span.
+    pub lifetime_s: Option<u64>,
 }
 
 impl Default for Forger {
@@ -72,6 +74,7 @@ impl Forger {
             signer,
             key,
             extra_extension: None,
+            lifetime_s: None,
         }
     }
 
@@ -114,8 +117,11 @@ impl Forger {
 
     /// One KeyPackage of it, as it travels.
     pub fn key_package(&self) -> Vec<u8> {
-        let bundle = KeyPackage::builder()
-            .leaf_node_capabilities(self.capabilities())
+        let mut builder = KeyPackage::builder().leaf_node_capabilities(self.capabilities());
+        if let Some(seconds) = self.lifetime_s {
+            builder = builder.key_package_lifetime(openmls::prelude::Lifetime::new(seconds));
+        }
+        let bundle = builder
             .build(SUITE, &self.provider, &self.signer, self.credential())
             .expect("a key package");
         MlsMessageOut::from(bundle.key_package().clone())
