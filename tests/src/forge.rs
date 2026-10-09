@@ -20,7 +20,7 @@ use trommi_core::codec;
 use trommi_core::crypto::{SigningKey, SystemEntropy};
 use trommi_core::device::Accepted;
 use trommi_core::ids::{DeviceId, GroupId};
-use trommi_core::mls::profile::{TrommiRoom, EXTENSION_ROOM, EXTENSION_SESSION};
+use trommi_core::mls::profile::{TrommiRoom, TrommiSession, EXTENSION_ROOM, EXTENSION_SESSION};
 use trommi_core::store::{OutboxEntry, OutboxKind};
 use trommi_core::Error;
 
@@ -121,6 +121,17 @@ impl Forger {
 
     /// Founds a room group with itself as the only leaf.
     pub fn found_room(&self, group: &GroupId, room: &TrommiRoom) -> MlsGroup {
+        let content = codec::encode(room).expect("the extension encodes");
+        self.found(group, EXTENSION_ROOM, content)
+    }
+
+    /// Founds a session group with itself as the only leaf.
+    pub fn found_session(&self, session: &TrommiSession) -> MlsGroup {
+        let content = codec::encode(session).expect("the extension encodes");
+        self.found(&session.group_id(), EXTENSION_SESSION, content)
+    }
+
+    fn found(&self, group: &GroupId, extension: u16, content: Vec<u8>) -> MlsGroup {
         let required = Extension::RequiredCapabilities(RequiredCapabilitiesExtension::new(
             &[
                 ExtensionType::Unknown(EXTENSION_ROOM),
@@ -129,10 +140,9 @@ impl Forger {
             &[],
             &[CredentialType::Basic],
         ));
-        let content = codec::encode(room).expect("the extension encodes");
         let extensions = Extensions::from_vec(vec![
             required,
-            Extension::Unknown(EXTENSION_ROOM, UnknownExtension(content)),
+            Extension::Unknown(extension, UnknownExtension(content)),
         ])
         .expect("the extensions fit");
         let config = MlsGroupCreateConfig::builder()

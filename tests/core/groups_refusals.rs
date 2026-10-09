@@ -6,10 +6,10 @@
 
 use trommi_core::codec;
 use trommi_core::crypto::Secret;
-use trommi_core::device::{log_finding, LogFinding, Processed, Received};
-use trommi_core::ids::{BoardId, GroupId, Hash32, TurnId};
+use trommi_core::device::{log_finding, LogFinding, Processed, Received, WelcomeExpectation};
+use trommi_core::ids::{BoardId, DeviceId, GroupId, Hash32, RoomId, TurnId};
 use trommi_core::mls::message::{EpochKey, TrommiMessage};
-use trommi_core::mls::profile::{CommitNote, Cut};
+use trommi_core::mls::profile::{CommitNote, Cut, TrommiRoom};
 use trommi_core::Error;
 use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
@@ -537,4 +537,51 @@ fn a_work_trail_step_without_a_number() {
         Ok(Processed::Message(Received::Dropped))
     );
     assert_eq!(a.content_key(&helper, 0), Err(Error::NoKey));
+}
+
+#[test]
+fn a_welcome_into_a_room_with_too_many_devices() {
+    // No device builds one: the Add of a 33rd human device and the enrolment of a 257th agent device are
+    // refused where they are built and where they are judged (`rules.rs`). A founder that obeys MLS only
+    // makes such rooms, and the device it adds refuses the Welcome (section 16).
+    let room = |agents: usize| TrommiRoom {
+        recovery_signature_key: [0xE1; 32],
+        recovery_hpke_key: [0xE2; 32],
+        // Ascending: the first two bytes count up.
+        agents: (0..agents)
+            .map(|at| {
+                let mut id = [0x70; 32];
+                id[0] = (at >> 8) as u8;
+                id[1] = at as u8;
+                DeviceId::new(id)
+            })
+            .collect(),
+    };
+    for (humans, agents, fits) in [(31, 256, true), (32, 0, false), (1, 257, false)] {
+        let founder = Forger::new();
+        let group = GroupId::room(RoomId::new([humans as u8; 32]));
+        let extension = room(agents);
+        assert_eq!(extension.agents.len(), agents);
+        let mut forged = founder.found_room(&group, &extension);
+        let mut c = new_device();
+        let mut packages: Vec<Vec<u8>> = (1..humans).map(|_| Forger::new().key_package()).collect();
+        packages.push(c.key_package(now()).unwrap());
+        let welcome = founder
+            .commit(&mut forged, b"", &packages)
+            .welcome
+            .expect("a Welcome");
+        let expected = WelcomeExpectation {
+            room: group.room_id(),
+            committer: Some(founder.id()),
+        };
+        let joined = c.join_welcome(&welcome, &expected, now());
+        if fits {
+            let joined = joined.expect("32 human devices and 256 agent devices fit");
+            assert_eq!(c.group(&joined.group).unwrap().leaves.len(), 32);
+        } else {
+            assert_eq!(joined, Err(Error::TooMany), "{humans} and {agents}");
+            assert!(c.groups().unwrap().is_empty());
+            assert_eq!(c.room(), None);
+        }
+    }
 }
