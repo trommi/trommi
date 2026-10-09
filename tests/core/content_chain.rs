@@ -816,6 +816,30 @@ fn an_oversize_body_is_the_hubs_to_refuse_and_counts_the_same_in_both_forms_on_a
 }
 
 #[test]
+fn the_hub_takes_a_new_envelope_in_full_form_only() {
+    let mut hub = World::new();
+    hub.fake.hub = true;
+    let sealed = hub.sign(3, session(), &card());
+    let pruned = sealed.envelope.prune().unwrap();
+    assert_eq!(hub.hub_take(3, &pruned).err(), Some(Error::BadFormat));
+    // It took no number and made no object: the full form is still the sender's first.
+    assert_eq!(hub.chains(&session()), Chains::new());
+    assert_eq!(hub.objects(&session()), Objects::new());
+    let receipt = hub.hub_take(3, &sealed.envelope).unwrap();
+    assert!(matches!(
+        receipt.outcome(),
+        Outcome::Taken {
+            transition: Some(_),
+            ..
+        }
+    ));
+    // A device reads the same record back pruned.
+    let mut device = World::new();
+    assert!(device.take(&pruned).is_ok());
+    assert_eq!(device.objects(&session()), hub.objects(&session()));
+}
+
+#[test]
 fn the_hub_runs_the_same_checks_without_the_body() {
     let mut hub = World::new();
     hub.fake.hub = true;

@@ -856,9 +856,11 @@ pub fn receive(
 /// token carried the request.
 ///
 /// `Err` takes no number: what [`receive`] refuses in checks 1 to 6, `wrong-sender` when the envelope is not
-/// signed by `signed_in`, and `bad-format` for a reserved kind. `Ok` with [`Outcome::Taken`] (its body is
+/// signed by `signed_in`, and `bad-format` for a reserved kind or a pruned envelope. `Ok` with [`Outcome::Taken`] (its body is
 /// `no-key`: the hub reads none) is an accepted envelope; `Ok` with [`Outcome::Refused`] is a void record: the
 /// hub stores the envelope pruned with that code and answers `voided: true`. Either way the number is taken.
+/// A new envelope comes in full form: a pruned one is `bad-format`, since nothing of its body can be judged
+/// or stored.
 /// The agent's lease (`lease-lost`) and the rules for files (section 11.3) are the hub's own, before this.
 pub fn hub_take(
     facts: &dyn GroupFacts,
@@ -870,7 +872,7 @@ pub fn hub_take(
     now_ms: u64,
 ) -> Result<Receipt, Error> {
     let envelope = Envelope::decode(bytes)?;
-    if envelope.header.subject.is_reserved() {
+    if envelope.header.subject.is_reserved() || envelope.is_pruned() {
         return Err(Error::BadFormat);
     }
     if envelope.header.sender != *signed_in {
