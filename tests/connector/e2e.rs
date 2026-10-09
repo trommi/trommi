@@ -266,7 +266,7 @@ async fn a_takeover_stops_the_first_connector_and_hands_the_session_on() {
             .await
             .expect("an event in time")
             .expect("the client lives");
-        if let ClientEvent::Removed { replaced } = event {
+        if let ClientEvent::Removed { replaced, .. } = event {
             break replaced;
         }
     };
