@@ -15,7 +15,7 @@ use crate::mls::profile::{
     MAX_COMMIT_REQUEST_LEN, MAX_HELPER_DEVICES, MAX_HUMAN_DEVICES, MAX_LIVE_HELPERS, MAX_NOTE_LEN,
     RECOVERY_KEY_LEN,
 };
-use openmls::group::StagedCommit;
+use openmls::group::{PublicGroup, StagedCommit};
 use openmls::prelude::{
     ContentType, GroupContext, LeafNodeIndex, Member, MlsMessageIn, ProcessedMessage, Proposal,
     ProposalOrRefType, ProtocolMessage, Sender,
@@ -141,18 +141,6 @@ impl RoomHistory {
     /// The state at `epoch`, if this history holds it.
     pub fn at(&self, epoch: u64) -> Option<&RoomState> {
         self.states.get(&epoch)
-    }
-
-    /// This history up to `epoch`, with the revocations that happened until then; none when it holds no state
-    /// of that epoch. What a holder keeps that goes back to that epoch.
-    pub fn until(&self, epoch: u64) -> Option<Self> {
-        self.at(epoch)?;
-        let mut states = self.states.values().filter(|state| state.epoch <= epoch);
-        let mut kept = Self::new(states.next()?.clone());
-        for state in states {
-            kept.record(state.clone()).ok()?;
-        }
-        Some(kept)
     }
 
     /// Every state held, ascending by epoch.
@@ -714,12 +702,11 @@ pub fn check_session_commit(
         refuse(helper && opener, Error::BadCommit)?;
     }
     if !helper {
-        // 5.3.1: a takeover replaces an agent device that the room holds no more: its removal from `agents`
-        // comes first. An agent leaf may go and leave the seat empty (5.2.2) while its device is enrolled;
-        // another agent device takes the seat in the same Commit only once the old one is out of `A(r)`.
-        let seats_another = facts.adds.iter().any(|added| !room.is_human(added));
+        // 5.2.8, 5.3.1: the leaf of an agent device goes only after the room Commit that took the device
+        // out of `agents`, for a takeover or an empty seat. While the room holds the device its leaf stays:
+        // otherwise a Remove and a later Add would put another device in the seat of one still enrolled.
         let unseats_enrolled = facts.removes.iter().any(|gone| room.is_agent(gone));
-        refuse(seats_another && unseats_enrolled, Error::BadCommit)?;
+        refuse(unseats_enrolled, Error::BadCommit)?;
     }
 
     // 5.2.8: a leaf the room state does not allow makes the group stale. Only the Commit that removes every
@@ -807,6 +794,25 @@ pub(crate) fn leaves_of(
             DeviceId::from_slice(&member.signature_key)
                 .map(|device| (member.index, device))
                 .map_err(|_| Error::BadGroup)
+        })
+        .collect()
+}
+
+/// The leaves of a group's public state as [`leaves_of`] names them, each checked to be the profile's (section
+/// 3): a basic credential that is the leaf's signature key, the profile's capabilities, no leaf extension.
+/// `bad-group` otherwise. For a tree that came whole, in a GroupInfo or a Welcome: a leaf that a Commit adds
+/// or renews is checked where the Commit is read.
+pub(crate) fn profile_leaves(
+    public: &PublicGroup,
+) -> Result<Vec<(LeafNodeIndex, DeviceId)>, Error> {
+    public
+        .members()
+        .map(|member| {
+            public
+                .leaf(member.index)
+                .and_then(key_package::leaf_device)
+                .map(|device| (member.index, device))
+                .ok_or(Error::BadGroup)
         })
         .collect()
 }

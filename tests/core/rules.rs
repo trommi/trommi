@@ -527,13 +527,34 @@ fn main_session_commits_follow_5_2() {
         session_verdict(&after_removal, &SESSIONS, &live, &takeover),
         Ok(())
     );
-    // The agent leaf of an enrolled device may go and leave the seat empty (5.2.2).
+    // Nor does its leaf go alone while the room holds the device (5.2.8): a Remove now and an Add later
+    // would be the same takeover in two Commits. Once it left `agents`, the Remove alone leaves the seat
+    // empty (5.2.2), and a later Commit seats another device.
     assert_eq!(
         session_verdict(
             &history,
             &SESSIONS,
             &live,
             &removing(update.clone(), &[AGENT])
+        ),
+        Err(Error::BadCommit)
+    );
+    assert_eq!(
+        session_verdict(
+            &after_removal,
+            &SESSIONS,
+            &live,
+            &removing(facts(group, 3, H1, 3), &[AGENT])
+        ),
+        Ok(())
+    );
+    let empty = before(main, &[H1, H2], 3);
+    assert_eq!(
+        session_verdict(
+            &after_removal,
+            &SESSIONS,
+            &empty,
+            &adding(facts(group, 4, H1, 3), &[OTHER_AGENT])
         ),
         Ok(())
     );
