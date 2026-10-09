@@ -28,10 +28,6 @@
 // 2. `load()` may be called twice and gives the same state: once by the app, which has to look before it decides
 //    (is anything stored? does another tab own it: StoreConflict), and once by `Device.open(store)`.
 //
-// One thing to know about the lock: the binding frees it a moment AFTER `close()` returned (a Web Lock is released
-// when its holder's promise settles). A store opened right after another one on the same name was closed therefore
-// opens with `wait: true`, or it meets the lock of the one that just went.
-//
 // Values may be private keys: nothing here logs a value or puts one into an error.
 import type { IdbStore } from '../../../core/wasm/js/idb-store.js'
 import type { Store, StoredState, StoreEntry, StoreWrite } from './core-api.ts'
@@ -43,9 +39,9 @@ export interface DeviceStore extends Store {
   /** Takes the owner lock (rejects with the binding's StoreConflict when another tab holds it, or waits for it with
    *  `wait`), reads and unwraps everything. A second call gives the same state. */
   load(): Promise<StoredState>
-  /** Closes the database and frees the lock. While `load()` still waits for the lock, it stays in line (the binding
-   *  cannot leave it), and gives the lock back the moment it comes; that `load()` rejects. */
-  close(): void
+  /** Closes the database and frees the lock, for good; resolves once the lock is free. A `load()` that still waits
+   *  for the lock is given up and rejects. */
+  close(): Promise<void>
 }
 export interface Cache {
   get(key: string): Promise<unknown>
@@ -141,31 +137,28 @@ export function openDeviceStore({ name, wait = false, IdbStore }: { name: string
 
   const shut = fail('the device store was closed')
   const read = async (): Promise<StoredState> => {
+    const stored = await inner.load()   // the lock is held from here on (a load that fails has given it back)
     try {
-      const stored = await inner.load()   // the lock is held from here on
-      // (closed while it waited: the binding cannot take a waiting store out of the line, so the lock came anyway)
-      if (closed) throw shut
       const key = await wrapKeyOf(name, stored.revision === 0 && stored.entries.length === 0, () => !closed)
       const entries = await Promise.all(stored.entries.map(async (e): Promise<StoreEntry> => ({ key: e.key, value: await unwrap(key, e.key, e.value) })))
       if (closed) throw shut
       wrapKey = key
       return { revision: stored.revision, entries }
-    } catch (e) { inner.close(); throw e }   // (a load that failed gives the lock back)
+    } catch (e) { await inner.close(); throw e }   // (what fails here, after the binding's load, gives the lock back too)
   }
 
   return {
-    load(): Promise<StoredState> { return state ??= read() },
+    load(): Promise<StoredState> { return closed ? Promise.reject(shut) : state ??= read() },
     async apply(write: StoreWrite): Promise<void> {
       const key = wrapKey
       if (closed || !key) throw fail('the device store is not open')
       const put = await Promise.all(write.put.map(async (e): Promise<StoreEntry> => ({ key: e.key, value: await wrap(key, e.key, e.value) })))
       await inner.apply({ expectedRevision: write.expectedRevision, put, delete: write.delete })
     },
-    close(): void {
+    async close(): Promise<void> {
       closed = true
-      state = null
       wrapKey = null
-      inner.close()
+      await inner.close()
     },
   }
 }
@@ -213,8 +206,9 @@ export async function openCache(name: string): Promise<Cache> {
 }
 
 /**
- * Deletes what is stored under `name`: the device's state and the cache. Stores and caches open on it, in any tab,
- * close themselves. The wrapping key stays (see the header): it wraps nothing any more and cannot be read.
+ * Deletes what is stored under `name`: the device's state and the cache. Refused with the binding's StoreConflict
+ * while a device has the state open, in any tab: close it first. Caches open on it close themselves. The wrapping
+ * key stays (see the header): it wraps nothing any more and cannot be read.
  */
 export async function deleteStores({ name, IdbStore }: { name: string; IdbStore: IdbStoreClass }): Promise<void> {
   await IdbStore.destroy(name)

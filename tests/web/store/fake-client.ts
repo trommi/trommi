@@ -68,7 +68,7 @@ export function openFake(name: string, store: DeviceStore, stored: StoredState, 
 
   const client: FakeClient = {
     model, ran, on,
-    stop() { store.close() },
+    stop() { return store.close() },
     echo(value: unknown) { count('echo'); return value },
     fail() { count('fail'); throw Object.assign(new Error('the fake refuses'), { code: 'fake-refusal', status: 418 }) },
     uncloneable() { count('uncloneable'); return () => {} },
