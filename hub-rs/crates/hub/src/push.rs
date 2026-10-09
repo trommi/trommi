@@ -384,17 +384,23 @@ impl Apns {
         self.deliver(a, a["topic"].as_str().unwrap_or(""), "alert", "10", &payload, log).await
     }
     /// One Live Activity push (apns.mjs sendLive): start (with the attributes { tag }), update or end; two counts only.
-    pub async fn send_live(&self, a: &Value, event: &str, working: i64, waiting: i64, tag: &str, urgent: bool, log: &(dyn Fn(&str) + Sync)) -> u16 {
+    /// start and update carry a stale date (stale_s from now) and a relevance score.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_live(&self, a: &Value, event: &str, working: i64, waiting: i64, tag: &str, urgent: bool, stale_s: i64, log: &(dyn Fn(&str) + Sync)) -> u16 {
         let t = crate::util::now() / 1000;
         let mut aps = json!({ "timestamp": t, "event": event, "content-state": { "working": working, "waiting": waiting } });
         let o = aps.as_object_mut().unwrap();
         if event == "start" {
             o.insert("attributes-type".into(), json!("TrommiActivityAttributes"));
             o.insert("attributes".into(), json!({ "tag": tag }));
+            o.insert("input-push-token".into(), json!(1));
             o.insert("alert".into(), json!({ "title": "Trommi", "body": "Agenten arbeiten." }));
         }
         if event == "end" {
             o.insert("dismissal-date".into(), json!(t + 900));
+        } else {
+            o.insert("stale-date".into(), json!(t + stale_s));
+            o.insert("relevance-score".into(), json!(if waiting > 0 { 100 } else { 50 }));
         }
         let topic = format!("{}.push-type.liveactivity", a["topic"].as_str().unwrap_or(""));
         let priority = if event == "update" && !urgent { "5" } else { "10" };

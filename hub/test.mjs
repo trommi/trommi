@@ -949,7 +949,9 @@ test('live activity: started when an agent works, updated with two counts, ended
   assert.equal(got[0].headers['apns-topic'], 'com.trommi.ios.push-type.liveactivity')
   const { timestamp, alert, ...start } = got[0].body.aps
   assert.ok(Number.isInteger(timestamp) && alert.body)
-  assert.deepEqual(start, { event: 'start', 'content-state': { working: 1, waiting: 1 }, 'attributes-type': 'TrommiActivityAttributes', attributes: { tag: 'abcd1234' } })
+  const { 'stale-date': stale, ...fixed } = start
+  assert.deepEqual(fixed, { event: 'start', 'content-state': { working: 1, waiting: 1 }, 'attributes-type': 'TrommiActivityAttributes', attributes: { tag: 'abcd1234' }, 'input-push-token': 1, 'relevance-score': 100 })
+  assert.ok(stale > timestamp)
   assert.ok(!JSON.stringify(got[0].body).includes(w.roomId))
   // Still working, the token of the activity not here yet: no second start.
   await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: false }, headers: lease })
@@ -964,11 +966,14 @@ test('live activity: started when an agent works, updated with two counts, ended
   assert.equal(got[1].headers['apns-priority'], '10')
   assert.equal(got[1].body.aps.event, 'update')
   assert.deepEqual(got[1].body.aps['content-state'], { working: 1, waiting: 2 })
+  assert.ok(got[1].body.aps['stale-date'] > got[1].body.aps.timestamp)
+  assert.equal(got[1].body.aps['relevance-score'], 100)
   await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: false }, headers: lease })
   await wait(3)
   assert.equal(got[2].body.aps.event, 'end')
   assert.deepEqual(got[2].body.aps['content-state'], { working: 0, waiting: 2 })
   assert.ok(got[2].body.aps['dismissal-date'] > got[2].body.aps.timestamp)
+  assert.equal(got[2].body.aps['stale-date'], undefined)
   assert.equal(w.hub.db.q('SELECT activity_token FROM live_activities').get().activity_token, null)
   // Working again: a new start; Apple says the start token is gone: it is forgotten.
   answer = () => [410, 'Unregistered']
@@ -980,6 +985,46 @@ test('live activity: started when an agent works, updated with two counts, ended
   await ok(w, 'POST', L, { token: w.laptop.token, body: { apns: reg(actTok), kind: 'activity' } })
   await ok(w, 'POST', L, { token: w.laptop.token, body: { apns: reg(actTok), kind: 'activity', remove: true } })
   assert.equal(w.hub.db.q('SELECT COUNT(*) AS n FROM live_activities').get().n, 0)
+  await w.hub.close()
+  fake.close()
+})
+
+test('live activity: a running one gets the same counts again every beat, with a stale date three beats ahead', async () => {
+  const got = []
+  const fake = http2.createServer()
+  fake.on('stream', (stream, headers) => {
+    const parts = []
+    stream.on('data', c => parts.push(c))
+    stream.on('end', () => { got.push({ headers, body: JSON.parse(Buffer.concat(parts).toString()) }); stream.respond({ ':status': 200 }); stream.end('') })
+  })
+  await new Promise(ok2 => fake.listen(0, '127.0.0.1', ok2))
+  const origin = `http://127.0.0.1:${fake.address().port}`
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const config = { key: privateKey.export({ type: 'pkcs8', format: 'pem' }), keyId: 'KEY1234567', teamId: 'TEAM123456', topics: ['com.trommi.ios'] }
+  const w = await world({ apns: config, apnsHosts: { sandbox: origin, production: origin }, liveMs: 30, liveBeatMs: 300 })
+  const L = `${R(w)}/live_activity`
+  const reg = tok => ({ token: tok, environment: 'sandbox', topic: 'com.trommi.ios' })
+  await ok(w, 'POST', L, { token: w.laptop.token, body: { apns: reg('cd'.repeat(40)), kind: 'start', tag: 'abcd1234' } })
+  const lease = await leaseHeader(w, w.agent)
+  await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: true }, headers: lease })
+  for (let i = 0; i < 100 && got.length < 1; i++) await sleep(20)
+  assert.equal(got[0].body.aps.event, 'start')
+  assert.equal(got[0].body.aps['stale-date'] - got[0].body.aps.timestamp, 60)   // three beats, at least a minute
+  assert.equal(got[0].body.aps['relevance-score'], 50)
+  await ok(w, 'POST', L, { token: w.laptop.token, body: { apns: reg('ef'.repeat(40)), kind: 'activity' } })
+  await sleep(150)
+  assert.equal(got.length, 1)   // the same counts, the beat not due: nothing
+  for (let i = 0; i < 100 && got.length < 2; i++) await sleep(20)
+  assert.equal(got[1].body.aps.event, 'update')
+  assert.equal(got[1].headers['apns-priority'], '5')
+  assert.deepEqual(got[1].body.aps['content-state'], { working: 1, waiting: 0 })
+  // Nobody works any more: the end, and no further beat.
+  await ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: false }, headers: lease })
+  for (let i = 0; i < 100 && got[got.length - 1].body.aps.event !== 'end'; i++) await sleep(20)
+  const n = got.length
+  await sleep(700)
+  assert.equal(got.length, n)
+  assert.equal(got[n - 1].body.aps.event, 'end')
   await w.hub.close()
   fake.close()
 })

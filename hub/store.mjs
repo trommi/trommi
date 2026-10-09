@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS live_activities (
   room_id TEXT NOT NULL, device_id TEXT NOT NULL, environment TEXT NOT NULL, topic TEXT NOT NULL, tag TEXT NOT NULL DEFAULT '',
-  start_token TEXT, activity_token TEXT, started_at INTEGER, sent TEXT, created_at INTEGER NOT NULL,
+  start_token TEXT, activity_token TEXT, started_at INTEGER, sent TEXT, sent_at INTEGER, created_at INTEGER NOT NULL,
   PRIMARY KEY (room_id, device_id)
 ) WITHOUT ROWID;
 `

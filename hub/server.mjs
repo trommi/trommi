@@ -92,7 +92,7 @@ export async function startHub({
   origins = `${process.env.HUB_ORIGINS || ''},${process.env.HUB_PREVIEW_ORIGINS || ''}`.split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
   trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, apns: apnsOptions = apnsConfig(), apnsHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
-  pingMs = 25000, retentionEveryMs = DAY, streamCapEveryMs = 1000, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT, lossMs = Number(process.env.HUB_LOSS_MS || 60000), liveMs = Number(process.env.HUB_LIVE_MS || 2000),
+  pingMs = 25000, retentionEveryMs = DAY, streamCapEveryMs = 1000, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT, lossMs = Number(process.env.HUB_LOSS_MS || 60000), liveMs = Number(process.env.HUB_LIVE_MS || 2000), liveBeatMs = Number(process.env.HUB_LIVE_BEAT_MS || 600000),
 } = {}) {
   const t0 = performance.now()
   const db = openDb(dataDir, { log })
@@ -385,12 +385,19 @@ export async function startHub({
    * Live Activity (README "Live Activity"): per human iPhone one row, its push-to-start token and the token of its
    * running activity. The counts are what the hub sees anyway: agents whose link says `working`, open objects owned by
    * an agent (cards and permission requests). A change goes out at most every liveMs (HUB_LIVE_MS, 2 s): start when agents begin to work
-   * (once, until it ended), update, end when none works any more.
+   * (once, until it ended), update, end when none works any more. While one runs, the same counts go out again every
+   * liveBeatMs (HUB_LIVE_BEAT_MS, 10 min) with a stale date three beats ahead: a hub that fell silent leaves an activity
+   * iOS marks as out of date, never one that claims work for hours.
    */
   function liveSoon(r) {
     if (!apns || r.liveTimer) return
     r.liveTimer = setTimeout(() => { r.liveTimer = null; liveNow(r).catch(err => log(`live: ${err.message}`)) }, liveMs)
     r.liveTimer.unref?.()
+  }
+  function liveBeat(r) {
+    if (r.liveBeatTimer) return
+    r.liveBeatTimer = setTimeout(() => { r.liveBeatTimer = null; liveNow(r).catch(err => log(`live: ${err.message}`)) }, liveBeatMs)
+    r.liveBeatTimer.unref?.()
   }
   function liveCounts(r) {
     const agents = new Set(db.q("SELECT device_id FROM devices WHERE room_id = ? AND device_role = 'agent' AND removed_entry_number IS NULL").all(r.id).map(d => d.device_id))
@@ -405,24 +412,28 @@ export async function startHub({
       WHERE l.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL`).all(r.id)
     if (!rows.length) return
     const state = liveCounts(r), key = `${state.working}:${state.waiting}`
+    const staleS = Math.max(60, Math.ceil(3 * liveBeatMs / 1000))
+    if (state.working) liveBeat(r)
     const set = (row, cols) => db.q(`UPDATE live_activities SET ${Object.keys(cols).map(c => `${c} = ?`).join(', ')} WHERE room_id = ? AND device_id = ?`).run(...Object.values(cols), r.id, row.device_id)
     await Promise.all(rows.map(async row => {
       const reg = { environment: row.environment, topic: row.topic }
       if (row.activity_token) {
         if (!state.working) {
           await apns.sendLive({ ...reg, token: row.activity_token }, { event: 'end', state })
-          return set(row, { activity_token: null, started_at: null, sent: null })
+          return set(row, { activity_token: null, started_at: null, sent: null, sent_at: null })
         }
-        if (row.sent === key) return
+        // the same counts go out again only as the beat (to move the stale date)
+        if (row.sent === key && now() - (row.sent_at ?? 0) < 0.9 * liveBeatMs) return
         const before = Number(String(row.sent ?? '0:0').split(':')[1])
-        const status = await apns.sendLive({ ...reg, token: row.activity_token }, { event: 'update', state, urgent: state.waiting > before })
-        return set(row, status === 410 ? { activity_token: null, started_at: null, sent: null } : { sent: key })
+        const status = await apns.sendLive({ ...reg, token: row.activity_token }, { event: 'update', state, urgent: state.waiting > before, staleS })
+        return set(row, status === 410 ? { activity_token: null, started_at: null, sent: null, sent_at: null } : { sent: key, sent_at: now() })
       }
-      if (!state.working) return row.started_at != null ? set(row, { started_at: null, sent: null }) : undefined
+      if (!state.working) return row.started_at != null ? set(row, { started_at: null, sent: null, sent_at: null }) : undefined
       // started and its token not here yet (the app registers it when iOS wakes it): no second start
       if (!row.start_token || (row.started_at != null && now() - row.started_at < 8 * 3600000)) return
-      const status = await apns.sendLive({ ...reg, token: row.start_token }, { event: 'start', state, tag: row.tag })
-      set(row, status === 410 ? { start_token: null } : status === 200 ? { started_at: now(), sent: key } : {})
+      const status = await apns.sendLive({ ...reg, token: row.start_token }, { event: 'start', state, tag: row.tag, staleS })
+      if (status === 410) set(row, { start_token: null })
+      else if (status === 200) set(row, { started_at: now(), sent: key, sent_at: now() })
     }))
   }
 

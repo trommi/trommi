@@ -175,14 +175,18 @@ export function apnsSender(config, { hosts = HOSTS, log = () => {}, now = Date.n
   }
   /**
    * One Live Activity push (README "Live Activity"): event start (to the push-to-start token, with the attributes
-   * { tag } the app chose), update, or end (dismissed after 15 minutes). The content state is two counts, nothing else.
+   * { tag } the app chose; `input-push-token` asks iOS for the activity's own token), update, or end (dismissed after
+   * 15 minutes). The content state is two counts, nothing else. `stale-date` (staleS from now): what iOS shows as
+   * out of date when no further push came (the hub refreshes a running one before that). `relevance-score`: the
+   * activity with waiting questions leads when several rooms run one.
    * Priority 10 for start, end and a new question; 5 otherwise (Apple budgets the 10s).
    */
-  async function sendLive(a, { event, state, tag, urgent = false }) {
+  async function sendLive(a, { event, state, tag, urgent = false, staleS = 1800 }) {
     const t = Math.floor(now() / 1000)
     const aps = { timestamp: t, event, 'content-state': { working: state.working, waiting: state.waiting } }
-    if (event === 'start') Object.assign(aps, { 'attributes-type': 'TrommiActivityAttributes', attributes: { tag }, alert: { title: 'Trommi', body: 'Agenten arbeiten.' } })
+    if (event === 'start') Object.assign(aps, { 'attributes-type': 'TrommiActivityAttributes', attributes: { tag }, 'input-push-token': 1, alert: { title: 'Trommi', body: 'Agenten arbeiten.' } })
     if (event === 'end') aps['dismissal-date'] = t + 900
+    else Object.assign(aps, { 'stale-date': t + staleS, 'relevance-score': state.waiting > 0 ? 100 : 50 })
     return deliver(a, `${a.topic}.push-type.liveactivity`, 'liveactivity', event === 'update' && !urgent ? '5' : '10', JSON.stringify({ aps }))
   }
   function close() { for (const s of sessions.values()) s.close(); sessions.clear() }
