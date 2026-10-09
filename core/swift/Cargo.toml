@@ -1,0 +1,15 @@
+[package]
+name = "trommi-core-swift"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "trommi-core for Swift (iOS, macOS, Linux): a static library and, through UniFFI, its Swift file, C header and module map."
+
+[lib]
+name = "trommi_core_ffi"
+# staticlib: what the app links. cdylib: what the binding generator reads the interface from (a host build).
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+trommi-core = { path = ".." }
+uniffi = "=0.32.2"

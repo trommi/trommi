@@ -1,0 +1,20 @@
+[package]
+name = "trommi-core"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+openmls = { workspace = true }
+openmls_rust_crypto = { workspace = true }
+openmls_basic_credential = { workspace = true }
+openmls_traits = { workspace = true }
+openmls_memory_storage = { workspace = true }
+# The body cipher, used directly: the same crate and version the provider brings.
+aes-gcm = "=0.10.3"
+
+# In a browser: randomness from crypto.getRandomValues (both getrandom generations in the tree need their switch),
+# time from Date.now (web-time, through OpenMLS's "js" feature).
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+openmls = { workspace = true, features = ["js"] }
+getrandom_02 = { package = "getrandom", version = "0.2.17", features = ["js"] }

@@ -7,3 +7,6 @@ app/web/public/demo/files/
 
 # Wrangler's local state.
 .wrangler/
+
+# Rust build output.
+/target/
