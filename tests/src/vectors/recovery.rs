@@ -59,8 +59,12 @@ fn served(fetched: &Fetched) -> Value {
         .room
         .commits
         .iter()
-        .map(|(commit, recovery_auth)| {
-            json!({ "commit": hex(commit), "recovery_auth": recovery_auth.as_deref().map(hex) })
+        .map(|(change, commit, recovery_auth)| {
+            json!({
+                "change": change,
+                "commit": hex(commit),
+                "recovery_auth": recovery_auth.as_deref().map(hex),
+            })
         })
         .collect();
     json!({
