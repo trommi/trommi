@@ -304,7 +304,7 @@ fn a_device_catches_up_on_two_hundred_commits() {
 #[test]
 fn a_device_catches_up_across_twenty_groups_in_the_hubs_order_only() {
     const SESSIONS: usize = 19;
-    const ROUNDS: usize = 24;
+    const ROUNDS: usize = 78;
     let store = MemoryStorage::new();
     let handle = store.handle();
     let (mut a, mut b) = (new_device(), new_device_on(store));
