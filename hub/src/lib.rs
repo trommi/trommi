@@ -7,6 +7,7 @@
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 
 pub mod accounts;
+pub mod admin;
 pub mod api;
 pub mod app;
 pub mod config;
