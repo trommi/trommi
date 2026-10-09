@@ -205,6 +205,24 @@ async fn the_tools_write_to_the_board_and_answers_come_back() {
         "{event}"
     );
 
+    // The Desk's goals, which a human device keeps in the session for its agent, come with a tool's result.
+    human
+        .set_register(&group, "goals", Some(json!({ "desk_id": "d1", "desk_name": "Launch", "goals": "Ship v2\nNo regressions" })))
+        .await
+        .expect("the hub takes the register");
+    let mut told = String::new();
+    for _ in 0..50 {
+        told = mcp.ok("reply", json!({ "text": "On it." })).await;
+        if told.contains("Desk goals") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        told.contains("Desk goals") && told.contains("Ship v2") && told.contains("No regressions"),
+        "{told}"
+    );
+
     mcp.ok("clear_status", json!({})).await;
     human.sync().await;
     assert!(human.findings.is_empty(), "{:?}", human.findings);

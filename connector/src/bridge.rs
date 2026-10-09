@@ -2931,7 +2931,10 @@ fn trail_step(item: &Value) -> Option<(Value, bool)> {
     }
     let mut step = Map::new();
     step.insert("text".into(), json!(text));
-    let tool: String = field("tool").chars().take(80).collect();
+    let mut tool = field("tool");
+    while tool.len() > 80 {
+        tool.pop();
+    }
     if !tool.is_empty() {
         step.insert("tool".into(), json!(tool));
     }
