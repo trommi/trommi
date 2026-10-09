@@ -47,7 +47,8 @@ struct BoardShell: View {
           chats.opacity(page == .chat ? 1 : 0).allowsHitTesting(page == .chat).accessibilityHidden(page != .chat)
         }
         .modifier(NotePanel(open: Binding(get: { model.tab == .note }, set: { if !$0 && model.tab == .note { model.tab = noteUnder } })))
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        // a bar, not a plain inset: the lists' soft scroll edge reaches up to it
+        .safeAreaBar(edge: .bottom, spacing: 0) {
           if showBar {
             TabPill(on: model.tab, waiting: model.view?.fresh.count ?? 0, hasNote: hasNote) { t in
               if t == .note {
@@ -144,20 +145,17 @@ struct TabPill: View {
 }
 
 /** The pills at the top of the iPhone's root pages (his word, 9 October): the place pill at the left, the page's own
- *  buttons at the right, each a clear glass capsule floating on the content. No navigation bar, no band, no hairline,
- *  no scroll edge blur: the content scrolls under them up to the status bar. */
+ *  buttons at the right, each a clear glass capsule floating on the content. No navigation bar, no band, no hairline.
+ *  The pills are a safeAreaBar, so the system's soft scroll edge runs under them and the status bar: the content fades
+ *  out towards the top instead of colliding with the clock and the pills (his word on build 21); the same soft edge
+ *  at the bottom, above the tab pill. */
 extension View {
   func topPills<T: View>(@ViewBuilder _ trailing: () -> T) -> some View {
     self.toolbar(.hidden, for: .navigationBar)
-      .safeAreaInset(edge: .top, spacing: 0) {
+      .safeAreaBar(edge: .top, spacing: 0) {
         HStack(spacing: 10) { MenuPill(); Spacer(minLength: 8); trailing() }.padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 6)
       }
-      .modifier(NoTopEdge())
-  }
-}
-struct NoTopEdge: ViewModifier {
-  func body(content: Content) -> some View {
-    content.scrollEdgeEffectHidden(true, for: .top)
+      .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
   }
 }
 
