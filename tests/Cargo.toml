@@ -63,3 +63,7 @@ path = "core/groups_observer.rs"
 [[test]]
 name = "core_groups_refusals"
 path = "core/groups_refusals.rs"
+
+[[test]]
+name = "core_recovery_construct"
+path = "core/recovery_construct.rs"
