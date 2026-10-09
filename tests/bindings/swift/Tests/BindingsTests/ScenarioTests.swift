@@ -112,7 +112,6 @@ final class ScenarioTests: XCTestCase {
 
   override func tearDown() {
     devices.values.forEach { $0.close() }
-    stores.values.forEach { $0.close() }
     try? FileManager.default.removeItem(at: folder)
   }
 
@@ -128,13 +127,9 @@ final class ScenarioTests: XCTestCase {
 
   /// A device on the stored state `name`, new or as stored.
   func start(_ name: String, create: Bool) throws -> (CoreDevice, FileStore) {
+    // A device that closes, or cannot be opened, lets its store go itself: the lock is free again.
     let store = FileStore(directory: folder.appendingPathComponent(name))
-    do {
-      return (create ? try CoreDevice.create(store: store) : try CoreDevice.open(store: store), store)
-    } catch {
-      store.close()
-      throw error
-    }
+    return (create ? try CoreDevice.create(store: store) : try CoreDevice.open(store: store), store)
   }
 
   func key(_ name: String, _ groupName: String?) throws -> (epoch: UInt64, key: Data) {
@@ -195,7 +190,6 @@ final class ScenarioTests: XCTestCase {
       let name = step.device!
       let id = try? device(name).id()
       devices[name]?.close()
-      stores[name]?.close()
       let (again, store) = try start(name, create: false)
       devices[name] = again
       stores[name] = store
@@ -208,11 +202,10 @@ final class ScenarioTests: XCTestCase {
       if step.remember == true { remembered[step.device!] = outbox }
       if step.same == true { try check(outbox == remembered[step.device!], "the outbox is not the same after the restart") }
     case "fail_next_write":
-      stores[step.device!]!.failNextWrite = true
+      stores[step.device!]!.failNextWrite()
     case "second_owner":
-      let (second, store) = try start(step.device!, create: false)
+      let (second, _) = try start(step.device!, create: false)
       second.close()
-      store.close()
     case "remove_human":
       let gone = Cut(device: try device(step.device).id(), seq: 0, hash: Data(count: 32))
       _ = try device(step.by).removeHumanDevices(cuts: [gone], nowMs: now())

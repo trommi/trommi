@@ -8,7 +8,9 @@
 //   device that is not stored with the state it implies. If storing fails, the device is closed, because its
 //   memory is then ahead of what is stored; the app opens the stored state again.
 // - A fault inside the core (a panic) stops the WebAssembly module. Every later call is then refused with the
-//   code `internal`: the module's memory is no longer trusted. The worker, or the page, is loaded again.
+//   code `internal`: the module's memory is no longer trusted. The worker, or the page, is thrown away and loaded
+//   again; that also ends whatever the stopped module still held.
+// - Arguments are copied when a call is made (see "arguments" below); results are fresh objects of the caller's.
 // - Every refusal is a TrommiError with the stable code of the specification's section 16 in `code`.
 //
 // It runs in a module worker and in the page, needs no bundler, and no more of the Content-Security-Policy than
@@ -50,24 +52,71 @@ export function init(source) {
   return loading
 }
 
-/** One call into the module. Anything it throws that is not a refusal of the core's own is a fault: the module
- *  stops for good. */
+/** One call into the module. An export answers with a pair: [null, value], or [code, message] for a refusal of the
+ *  core's. Whatever is thrown instead is a fault (a panic in the core, a misuse of the glue): the module stops for
+ *  good. So a refusal cannot be forged by an exception, and a fault cannot pass for a refusal. */
 function call(target, name, args) {
   if (!loaded) throw new TrommiError('internal', 'internal: init() has not finished')
   if (stopped) throw new TrommiError('internal', 'internal: the core stopped after a fault: load it again')
+  let code, value
   try {
-    return target[name](...args)
-  } catch (error) {
-    if (error instanceof Error && error.name === 'TrommiError' && typeof error.code === 'string') {
-      throw new TrommiError(error.code, error.message)
-    }
+    [code, value] = target[name](...args)
+  } catch {
     stopped = true
     throw new TrommiError('internal', 'internal: a fault inside the core: load it again')
   }
+  if (code !== null) throw new TrommiError(code, value)
+  return value
 }
 
 /** snake_case, as the module exports a call, to camelCase, as this file does. */
 const camel = name => name.replace(/_([a-z0-9])/g, (_, letter) => letter.toUpperCase())
+
+// ---- arguments ----------------------------------------------------------------------------------------------------
+//
+// What a caller hands in is copied when the call is made, into plain values of this realm: bytes into a fresh
+// Uint8Array of exactly their length, a list into a fresh Array, a record into an object of its own fields. The
+// core then never sees a caller's object: nothing of the caller's runs while the core works (no getter, no
+// iterator), a later change of an argument changes nothing, and a view of a larger or shared buffer brings along
+// only its own bytes.
+
+// The brand of a typed array, read past whatever the object itself claims; works across realms.
+const typedArrayName = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get
+const MAX_LIST = 4096              // no call takes a longer list
+const MAX_BYTES = 80 * 1024 * 1024 // a little above the largest stored file, for all bytes of one call together
+
+function snapshot(value, budget, depth = 0) {
+  if (value === null || value === undefined) return null
+  const type = typeof value
+  if (type === 'string' || type === 'boolean' || type === 'number') return value
+  if (type !== 'object' || depth > 4) throw new TrommiError('bad-format', 'bad-format: an argument of a kind no call takes')
+  if (typedArrayName.call(value) !== undefined) {
+    if (typedArrayName.call(value) !== 'Uint8Array') throw new TrommiError('bad-format', 'bad-format: bytes are a Uint8Array')
+    let copy
+    try { copy = new Uint8Array(value) } catch { throw new TrommiError('bad-format', 'bad-format: the bytes cannot be read') }
+    budget.bytes += copy.length
+    if (budget.bytes > MAX_BYTES) throw new TrommiError('too-large', 'too-large: the arguments of one call')
+    return copy
+  }
+  if (Array.isArray(value)) {
+    const length = value.length
+    if (!(length <= MAX_LIST)) throw new TrommiError('too-large', 'too-large: a list')
+    const copy = new Array(length)
+    for (let at = 0; at < length; at++) copy[at] = snapshot(value[at], budget, depth + 1)
+    return copy
+  }
+  const copy = Object.create(null)
+  for (const key of Object.keys(value)) copy[key] = snapshot(value[key], budget, depth + 1)
+  return copy
+}
+
+/** The arguments of one call, copied. */
+const taken = args => { const budget = { bytes: 0 }; return args.map(argument => snapshot(argument, budget)) }
+
+/** Overwrites the bytes of a store's records once they were used: they hold private keys. */
+function wipe(entries) {
+  for (const entry of entries ?? []) entry?.value?.fill?.(0)
+}
 
 // ---- the device ---------------------------------------------------------------------------------------------------
 
@@ -82,6 +131,8 @@ const DEVICE_CALLS = [
 ]
 
 const CONSTRUCT = Symbol('Device')
+// The store objects that belong to a device, or are being opened for one: a store object serves one device.
+const owned = new WeakSet()
 
 /**
  * One device over the host's store. Exactly one Device works on a stored state at a time; the store holds the lock
@@ -106,11 +157,14 @@ export class Device {
   static open(store) { return Device.#start(store, 'open') }
 
   static async #start(store, how) {
+    if (owned.has(store)) throw new TrommiError('storage', 'storage: this store object already belongs to a device')
+    owned.add(store)
     let loadedState
     try {
       loadedState = await store.load()
     } catch (error) {
-      await closeStore(store)
+      // A store whose load failed owns nothing, and cleans up after itself: it is not closed from here.
+      owned.delete(store)
       throw storageError(error)
     }
     let rawDevice
@@ -119,6 +173,8 @@ export class Device {
     } catch (error) {
       await closeStore(store)
       throw error
+    } finally {
+      wipe(loadedState?.entries)
     }
     const device = new Device(CONSTRUCT, rawDevice, store)
     await device.#enqueue(() => undefined)   // stores what creating wrote: the new key
@@ -152,14 +208,19 @@ export class Device {
       await this.#shut(error)
       throw error
     }
-    for (const write of writes) {
-      try {
-        await this.#store.apply(write)
-      } catch (error) {
-        const failure = storageError(error)
-        await this.#shut(failure)
-        throw failure
+    try {
+      for (const write of writes) {
+        try {
+          await this.#store.apply(write)
+        } catch (error) {
+          const failure = storageError(error)
+          await this.#shut(failure)
+          throw failure
+        }
       }
+    } finally {
+      // Stored or not, this side's copies of what was written go.
+      for (const write of writes) wipe(write.put)
     }
   }
 
@@ -186,7 +247,10 @@ export class Device {
   static {
     for (const name of DEVICE_CALLS) {
       Device.prototype[camel(name)] = function (...args) {
-        return this.#enqueue(() => call(this.#raw, name, args))
+        // Copied now, not when the call's turn comes: what the caller does with its objects afterwards is its own.
+        let copied
+        try { copied = taken(args) } catch (error) { return Promise.reject(error) }
+        return this.#enqueue(() => call(this.#raw, name, copied))
       }
     }
   }
@@ -201,39 +265,57 @@ function storageError(error) {
 
 async function closeStore(store) {
   try { await store.close?.() } catch { /* a store that fails to close is closed as far as this side can tell */ }
+  owned.delete(store)
 }
 
 // ---- files --------------------------------------------------------------------------------------------------------
 
+const CALL = Symbol('call')
+
+/** What an encryptor and a decryptor share: the object in the module, and its end. */
+class FileObject {
+  #raw
+  constructor(rawObject) { this.#raw = rawObject }
+
+  /** A call on the object in the module; `internal` once the object was used up or closed. */
+  [CALL](name, args, last = false) {
+    if (!this.#raw) throw new TrommiError('internal', 'internal: the object is closed')
+    const rawObject = this.#raw
+    if (last) this.#raw = null
+    try {
+      return call(rawObject, name, taken(args))
+    } finally {
+      if (last && !stopped) { try { rawObject.free() } catch { stopped = true } }
+    }
+  }
+
+  /** Gives the object up without finishing: its key and what it holds of the file are wiped. */
+  close() {
+    const rawObject = this.#raw
+    this.#raw = null
+    if (rawObject && !stopped) { try { rawObject.free() } catch { stopped = true } }
+  }
+}
+
 /** Encrypts one file piece by piece, under a key it makes for that file alone. Everything `update` and `finish`
  *  return, in order, is the stored file. */
-export class FileEncryptor {
-  #raw = call(raw.RawFileEncryptor, 'create', [])
-  fileId() { return call(this.#raw, 'file_id', []) }
-  update(plaintext) { return call(this.#raw, 'update', [plaintext]) }
-  finish() { return ending(this.#raw) }
+export class FileEncryptor extends FileObject {
+  constructor() { super(call(raw.RawFileEncryptor, 'create', [])) }
+  fileId() { return this[CALL]('file_id', []) }
+  update(plaintext) { return this[CALL]('update', [plaintext]) }
+  finish() { return this[CALL]('finish', [], true) }
 }
 
 /** Decrypts a stored file piece by piece. What `update` handed out counts only once `finish` succeeded. */
-export class FileDecryptor {
-  #raw
-  constructor(file) { this.#raw = call(raw.RawFileDecryptor, 'create', [file]) }
-  update(stored) { return call(this.#raw, 'update', [stored]) }
-  finish() { return ending(this.#raw) }
-}
-
-/** `finish` of an encryptor or decryptor, which uses the object up: its memory in the module is freed with it. */
-function ending(rawObject) {
-  try {
-    return call(rawObject, 'finish', [])
-  } finally {
-    if (!stopped) { try { rawObject.free() } catch { stopped = true } }
-  }
+export class FileDecryptor extends FileObject {
+  constructor(file) { super(call(raw.RawFileDecryptor, 'create', taken([file]))) }
+  update(stored) { return this[CALL]('update', [stored]) }
+  finish() { return this[CALL]('finish', [], true) }
 }
 
 // ---- everything without state -------------------------------------------------------------------------------------
 
-const plain = name => (...args) => call(raw, name, args)
+const plain = name => (...args) => call(raw, name, taken(args))
 
 export const versions = plain('versions')
 export const selfTest = plain('self_test')

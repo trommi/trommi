@@ -24,4 +24,18 @@ final class SelfTestTests: XCTestCase {
     XCTAssertNil(errorCodeFromText(text: "no-such-code"))
     XCTAssertEqual(logFinding(code: .roomBehind), .early)
   }
+
+  func testRecordsWithKeysPrintNothingOfThem() throws {
+    let encryptor = try FileEncryptor()
+    _ = try encryptor.update(plaintext: Data(repeating: 1, count: 10))
+    let end = try encryptor.finish()
+    XCTAssertEqual("\(end.file)", "FileRef(<redacted>)")
+    XCTAssertEqual(String(reflecting: end), "FileEnd(<redacted>)")
+    XCTAssertTrue(Mirror(reflecting: end.file).children.isEmpty)
+    var dumped = ""
+    dump(end, to: &dumped)
+    XCTAssertFalse(dumped.contains("fileKey"))
+    // A file object that was used up refuses.
+    XCTAssertThrowsError(try encryptor.finish())
+  }
 }
