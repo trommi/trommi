@@ -11,35 +11,65 @@ const text = bytes => new TextDecoder().decode(bytes)
 const bytes = string => new TextEncoder().encode(string)
 const same = (a, b) => a.length === b.length && a.every((byte, at) => byte === b[at])
 const check = (holds, what) => { if (!holds) throw new Error(what) }
+const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
 
-/** The least a hub does: one change counter, the ordered log, the Welcomes, the room's newest GroupInfo. */
+/** The least a hub does: one change counter, the ordered log, the Welcomes, and what it serves a device that
+ *  comes with the recovery code (every GroupInfo of the room group, every SealedKey, the links). */
 class Hub {
   change = 0
   log = []
-  welcomes = []   // { change, bytes }
-  roomGroupInfo = null
+  welcomes = []        // { change, bytes }
+  roomInfos = []       // the room group's GroupInfo of every epoch, from its founding
+  sessions = new Map() // hex of a session group -> { founding, current }
+  rows = []            // every SealedKey posted
+  links = []           // every RecoveryLink posted
 
   /** Posts everything in the device's outbox and reports each as accepted. */
   async post(device) {
     for (const entry of await device.call('outbox')) {
       const part = at => entry.parts[at] ?? new Uint8Array()
-      // Where the Commit, its GroupInfo and its Welcome stand among the parts of each kind.
-      const commit = entry.kind === 'groupFounding' ? [part(2), part(3), part(4)]
-        : entry.kind === 'commit' ? [part(0), part(1), part(2)] : null
+      // Where the Commit, its GroupInfo, its Welcome, its SealedKey and its RecoveryAuth stand among the parts.
+      let commit = null
+      if (entry.kind === 'groupFounding') {
+        this.rows.push(part(1))
+        this.sessions.set(hex(entry.group), { founding: part(0), current: part(0) })
+        commit = [part(2), part(3), part(4), part(5), null]
+      } else if (entry.kind === 'commit') commit = [part(0), part(1), part(2), part(3), null]
+      else if (entry.kind === 'externalCommit') commit = [part(0), part(1), new Uint8Array(), part(2), part(3)]
+      else if (entry.kind === 'recoveryCode') { commit = [part(0), part(1), new Uint8Array(), part(2), null]; this.links.push(part(3)) }
       let change = null
       if (entry.kind === 'roomFounding') {
-        this.roomGroupInfo = part(0)
+        this.roomInfos.push(part(0))
+        this.rows.push(part(1))
         change = ++this.change
       } else if (commit) {
         change = ++this.change
-        if (entry.group.length === 32) this.roomGroupInfo = commit[1]
+        this.rows.push(commit[3])
+        if (entry.group.length === 32) this.roomInfos.push(commit[1])
+        else this.sessions.get(hex(entry.group)).current = commit[1]
         if (commit[2].length) this.welcomes.push({ change, bytes: commit[2] })
-        this.log.push({ change, group: entry.group, kind: 'commit', bytes: commit[0], recoveryAuth: null })
+        this.log.push({ change, group: entry.group, kind: 'commit', bytes: commit[0], recoveryAuth: commit[4] })
       } else if (entry.kind === 'message') {
         change = ++this.change
         this.log.push({ change, group: entry.group, kind: 'message', bytes: part(0), recoveryAuth: null })
       }
       await device.call('outboxAccepted', entry.id, change)
+    }
+  }
+
+  /** A group as the hub serves it to a device that verifies it from its founding. */
+  served(group, founding, current) {
+    const commits = this.log.filter(entry => entry.kind === 'commit' && same(entry.group, group))
+      .map(entry => ({ change: entry.change, commit: entry.bytes, recoveryAuth: entry.recoveryAuth }))
+    return { founding, commits, current }
+  }
+
+  /** The room as the hub serves it to a device that comes with the recovery code. */
+  servedRoom(core, room, code) {
+    const anchor = core.recoveryAnchor(code, room, this.rows)
+    return {
+      room, group: this.served(room, this.roomInfos[0], this.roomInfos.at(-1)), anchor: this.roomInfos[anchor.epoch],
+      rows: this.rows, links: this.links, sessions: [],
     }
   }
 
@@ -71,6 +101,7 @@ export async function runScenario(scenario, world) {
   const groups = new Map()     // name -> group id
   const remembered = new Map() // device name -> its outbox, as remembered
   let room = null
+  let code = null      // the recovery code in force
   const device = name => devices.get(name) ?? (() => { throw new Error(`no device ${name}`) })()
   const group = name => groups.get(name) ?? (() => { throw new Error(`no group ${name}`) })()
   const keyOf = async (name, groupName) => {
@@ -83,7 +114,8 @@ export async function runScenario(scenario, world) {
   const run = {
     async create(step) { devices.set(step.device, await world.device(step.device, 'create')) },
     async found_room(step) {
-      room = await device(step.device).call('foundRoom', core.generateRecoveryCode(), Date.now())
+      code = core.generateRecoveryCode()
+      room = await device(step.device).call('foundRoom', code, Date.now())
       groups.set('room', core.roomGroupId(room))
     },
     async post(step) { await hub.post(device(step.device)) },
@@ -108,7 +140,7 @@ export async function runScenario(scenario, world) {
       check(signed.signature.length === 64 && signed.auth.length > 96, 'the sign-in is not a signed HubAuth')
     },
     async enrol(step) { await device(step.by).call('changeAgents', [await device(step.device).call('id')], [], Date.now()) },
-    async observe(step) { await device(step.device).call('observeRoom', hub.roomGroupInfo, null) },
+    async observe(step) { await device(step.device).call('observeRoom', hub.roomInfos.at(-1), null) },
     async sync(step) {
       const done = await hub.sync(world, device(step.device), room)
       if (step.message !== undefined) {
@@ -162,7 +194,8 @@ export async function runScenario(scenario, world) {
       if (step.remember) remembered.set(step.device, outbox)
       if (step.same) {
         const before = remembered.get(step.device)
-        check(outbox.every((entry, at) => entry.id === before[at].id && entry.parts.length === before[at].parts.length
+        check(outbox.every((entry, at) => entry.id === before[at].id && entry.kind === before[at].kind && entry.epoch === before[at].epoch
+          && same(entry.group, before[at].group) && entry.parts.length === before[at].parts.length
           && entry.parts.every((part, index) => same(part, before[at].parts[index]))), 'the outbox is not the same after the restart')
       }
     },
@@ -174,6 +207,25 @@ export async function runScenario(scenario, world) {
       const cuts = disallowed.map(gone => ({ device: gone, seq: 0, hash: new Uint8Array(32) }))
       await device(step.by).call('cleanSession', group(step.group), cuts, null, Date.now())
     },
+    async join_with_code(step) {
+      const joined = await device(step.device).call('joinRoomWithCode', code, hub.servedRoom(core, room, code), Date.now())
+      check(joined.outbox.length === 1 && joined.unverified.length === 0 && joined.missingLink === null, 'the room did not verify whole')
+    },
+    async join_session_with_code(step) {
+      const { founding, current } = hub.sessions.get(hex(group(step.group)))
+      await device(step.device).call('joinSessionWithCode', code, hub.served(group(step.group), founding, current), Date.now())
+    },
+    async earlier_key(step) {
+      const [mine, theirs] = await Promise.all([step.device, step.like].map(name => device(name).call('contentKey', group(step.group), step.epoch)))
+      check(same(mine, theirs) && await device(step.device).call('keyIsConfirmed', group(step.group), step.epoch), 'the code did not open the earlier key')
+    },
+    async replace_code(step) {
+      const next = await device(step.device).call('newRecoveryCode', code)
+      check(next.length === 32 && !same(next, code), 'the new code is not a new code')
+      await device(step.device).call('replaceCode', code, bytes('the account\'s sealed copies'), Date.now())
+      code = next
+    },
+    async holds_recovery_mac(step) { check(await device(step.device).call('holdsRecoveryMac'), 'the device does not hold the key of the code in force') },
     async no_key(step) {
       const { epoch } = await keyOf(step.epoch_of, step.group)
       await device(step.device).call('contentKey', group(step.group), epoch)

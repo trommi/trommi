@@ -143,18 +143,6 @@ impl RoomHistory {
         self.states.get(&epoch)
     }
 
-    /// This history up to `epoch`, with the revocations that happened until then; none when it holds no state
-    /// of that epoch. What a holder keeps that goes back to that epoch.
-    pub fn until(&self, epoch: u64) -> Option<Self> {
-        self.at(epoch)?;
-        let mut states = self.states.values().filter(|state| state.epoch <= epoch);
-        let mut kept = Self::new(states.next()?.clone());
-        for state in states {
-            kept.record(state.clone()).ok()?;
-        }
-        Some(kept)
-    }
-
     /// Every state held, ascending by epoch.
     pub fn states(&self) -> impl Iterator<Item = &RoomState> {
         self.states.values()
@@ -266,6 +254,9 @@ pub struct JoinClaim<'a> {
     pub note: &'a CommitNote,
     /// The Commit as posted.
     pub commit: &'a [u8],
+    /// The hash of the GroupInfo posted for the epoch the Commit builds on, for a verifier that holds that
+    /// GroupInfo: the hub. A member holds none.
+    pub base_group_info: Option<&'a Hash32>,
     /// The `recovery_signature_key` of the room state at the note's `room_epoch`.
     pub recovery_signature_key: &'a [u8; RECOVERY_KEY_LEN],
     /// The `RecoveryAuth` that came with the Commit, if any.
@@ -345,6 +336,8 @@ pub struct Judged<'a> {
     pub commit: &'a [u8],
     /// The `RecoveryAuth` posted with it, if any.
     pub recovery_auth: Option<&'a [u8]>,
+    /// The hash of the GroupInfo posted for the epoch it builds on, where the verifier holds it.
+    pub base_group_info: Option<&'a Hash32>,
 }
 
 /// A session group before a Commit.
@@ -437,6 +430,7 @@ pub fn check_room_commit(verifier: &Verifier<'_>, judged: &Judged<'_>) -> Result
             joiner: &facts.committer,
             note,
             commit: judged.commit,
+            base_group_info: judged.base_group_info,
             recovery_signature_key: &before.room.recovery_signature_key,
             recovery_auth: judged.recovery_auth,
         })?;
@@ -672,6 +666,7 @@ pub fn check_session_commit(
             joiner: committer,
             note,
             commit: judged.commit,
+            base_group_info: judged.base_group_info,
             recovery_signature_key: &room.room.recovery_signature_key,
             recovery_auth: judged.recovery_auth,
         })?;
@@ -714,12 +709,11 @@ pub fn check_session_commit(
         refuse(helper && opener, Error::BadCommit)?;
     }
     if !helper {
-        // 5.3.1: a takeover replaces an agent device that the room holds no more: its removal from `agents`
-        // comes first. An agent leaf may go and leave the seat empty (5.2.2) while its device is enrolled;
-        // another agent device takes the seat in the same Commit only once the old one is out of `A(r)`.
-        let seats_another = facts.adds.iter().any(|added| !room.is_human(added));
+        // 5.2.8, 5.3.1: the leaf of an agent device goes only after the room Commit that took the device
+        // out of `agents`, for a takeover or an empty seat. While the room holds the device its leaf stays:
+        // otherwise a Remove and a later Add would put another device in the seat of one still enrolled.
         let unseats_enrolled = facts.removes.iter().any(|gone| room.is_agent(gone));
-        refuse(seats_another && unseats_enrolled, Error::BadCommit)?;
+        refuse(unseats_enrolled, Error::BadCommit)?;
     }
 
     // 5.2.8: a leaf the room state does not allow makes the group stale. Only the Commit that removes every

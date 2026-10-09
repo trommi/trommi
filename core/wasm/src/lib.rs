@@ -2,8 +2,8 @@
 //!
 //! This layer is mechanical. Each export takes JavaScript values, turns them into the facade's plain data
 //! (`trommi_core_ffi::js`: a `Uint8Array` for bytes, a plain object for a record, a `number` for a count), calls
-//! the facade's function of the same name, and turns the answer back. A refusal is thrown as an `Error` whose
-//! `code` is the stable code of the specification's section 16.
+//! the facade's function of the same name, and turns the answer back: a pair, `[null, value]` or, for a refusal,
+//! `[code, message]` with the stable code of the specification's section 16.
 //!
 //! The exports keep the facade's names. The hand-written module `js/trommi-core.js` is what an app imports: it
 //! gives them their JavaScript spelling, stores what a device's call wrote before the call's result reaches
@@ -11,34 +11,49 @@
 //!
 //! A panic stops the module (WebAssembly has no unwinding here): the export throws a `RuntimeError`, and the
 //! JavaScript layer refuses every later call.
+//!
+//! Built for another target than the browser's, this crate is empty.
 
-use js_sys::{Error, Reflect};
+#![cfg(target_arch = "wasm32")]
+
+use js_sys::Array;
 use trommi_core_ffi as facade;
 use trommi_core_ffi::js::{FromJs, ToJs};
 use trommi_core_ffi::{CoreDevice, CoreError, FileDecryptor, FileEncryptor};
 use wasm_bindgen::prelude::*;
 
-/// A refusal as JavaScript throws it: an `Error` named `TrommiError` with the stable code in `code`.
-fn refusal(error: CoreError) -> JsValue {
-    let thrown = Error::new(error.message());
-    thrown.set_name("TrommiError");
-    // Setting a property of a fresh Error cannot fail.
-    let _ = Reflect::set(
-        &thrown,
-        &JsValue::from_str("code"),
+/// What every export returns: a pair. `[null, value]` when the call went through, `[code, message]` when the
+/// core refused it. Nothing is thrown on purpose, so whatever an export does throw is a fault (a panic, a misuse
+/// of the glue), and the JavaScript layer treats it as one: a refusal cannot be forged by an exception.
+type Answer = Array;
+
+fn pair(first: &JsValue, second: &JsValue) -> Answer {
+    Array::of2(first, second)
+}
+
+fn refusal(error: &CoreError) -> Answer {
+    pair(
         &JsValue::from_str(error.code().text()),
-    );
-    thrown.into()
+        &JsValue::from_str(error.message()),
+    )
 }
 
 /// An argument as the facade takes it.
-fn arg<T: FromJs>(value: &JsValue) -> Result<T, JsValue> {
-    T::from_js(value).map_err(refusal)
+fn arg<T: FromJs>(value: &JsValue) -> Result<T, CoreError> {
+    T::from_js(value)
+}
+
+/// Runs a call whose arguments may themselves be refused.
+fn attempt<T>(call: impl FnOnce() -> Result<T, CoreError>) -> Result<T, CoreError> {
+    call()
 }
 
 /// An answer as JavaScript takes it.
-fn answer<T: ToJs>(result: Result<T, CoreError>) -> Result<JsValue, JsValue> {
-    result.and_then(|value| value.to_js()).map_err(refusal)
+fn answer<T: ToJs>(result: Result<T, CoreError>) -> Answer {
+    match result.and_then(|value| value.to_js()) {
+        Ok(value) => pair(&JsValue::NULL, &value),
+        Err(error) => refusal(&error),
+    }
 }
 
 /// The facade's free functions, by name and arguments. `fallible` ones return a `Result`, `plain` ones cannot
@@ -49,14 +64,14 @@ macro_rules! functions {
     };
     (@one fallible $name:ident($($argument:ident),*)) => {
         #[wasm_bindgen]
-        pub fn $name($($argument: &JsValue),*) -> Result<JsValue, JsValue> {
-            answer(facade::$name($(arg($argument)?),*))
+        pub fn $name($($argument: &JsValue),*) -> Answer {
+            answer(attempt(|| facade::$name($(arg($argument)?),*)))
         }
     };
     (@one plain $name:ident($($argument:ident),*)) => {
         #[wasm_bindgen]
-        pub fn $name($($argument: &JsValue),*) -> Result<JsValue, JsValue> {
-            answer(Ok(facade::$name($(arg($argument)?),*)))
+        pub fn $name($($argument: &JsValue),*) -> Answer {
+            answer(attempt(|| Ok(facade::$name($(arg($argument)?),*))))
         }
     };
 }
@@ -96,6 +111,8 @@ functions! {
     fallible generate_push_key();
     fallible open_apns_push(key, sealed);
     fallible read_web_push(payload);
+    fallible recovery_anchor(recovery_code, room, rows);
+    fallible recovery_sign_in(recovery_code, room, hub, challenge);
 }
 
 /// The methods of a facade object that return a `Result`, by name and arguments.
@@ -104,12 +121,20 @@ macro_rules! methods {
         #[wasm_bindgen]
         impl $object {
             $(
-                pub fn $name(&self, $($argument: &JsValue),*) -> Result<JsValue, JsValue> {
-                    answer(self.0.$name($(arg($argument)?),*))
+                pub fn $name(&self, $($argument: &JsValue),*) -> Answer {
+                    answer(attempt(|| self.0.$name($(arg($argument)?),*)))
                 }
             )*
         }
     };
+}
+
+/// A new object of the facade as an answer.
+fn made<T: Into<JsValue>>(result: Result<T, CoreError>) -> Answer {
+    match result {
+        Ok(object) => pair(&JsValue::NULL, &object.into()),
+        Err(error) => refusal(&error),
+    }
 }
 
 /// The facade's device.
@@ -119,21 +144,21 @@ pub struct RawDevice(CoreDevice);
 #[wasm_bindgen]
 impl RawDevice {
     /// A new device over what the page loaded from its store, which must be empty.
-    pub fn create(loaded: &JsValue) -> Result<RawDevice, JsValue> {
-        CoreDevice::create_loaded(arg(loaded)?)
-            .map(RawDevice)
-            .map_err(refusal)
+    pub fn create(loaded: &JsValue) -> Answer {
+        made(
+            arg(loaded)
+                .and_then(CoreDevice::create_loaded)
+                .map(RawDevice),
+        )
     }
 
     /// The device that what the page loaded from its store holds.
-    pub fn open(loaded: &JsValue) -> Result<RawDevice, JsValue> {
-        CoreDevice::open_loaded(arg(loaded)?)
-            .map(RawDevice)
-            .map_err(refusal)
+    pub fn open(loaded: &JsValue) -> Answer {
+        made(arg(loaded).and_then(CoreDevice::open_loaded).map(RawDevice))
     }
 
     /// The writes the calls since the last `take_writes` made, oldest first.
-    pub fn take_writes(&self) -> Result<JsValue, JsValue> {
+    pub fn take_writes(&self) -> Answer {
         answer(Ok(self.0.take_writes()))
     }
 
@@ -178,6 +203,17 @@ methods!(RawDevice {
     handover_read(group, recipient);
     send_stroke_piece(board, piece);
     send_work_trail(group, turn, number, step, now_ms);
+    holds_recovery_mac();
+    key_is_confirmed(group, epoch);
+    send_recovery_auth(recipient);
+    post_sealed_key(group, group_info, listed);
+    verify_founding(group, served);
+    join_room_with_code(recovery_code, served, now_ms);
+    join_session_with_code(recovery_code, served, now_ms);
+    new_recovery_code(recovery_code);
+    replace_code(recovery_code, account, now_ms);
+    prepare_recovery(recovery_code, served);
+    recover(recovery_code, served, cuts, account, now_ms);
     hub_sign_in(room, hub, challenge);
 });
 
@@ -188,8 +224,8 @@ pub struct RawFileEncryptor(FileEncryptor);
 #[wasm_bindgen]
 impl RawFileEncryptor {
     /// Starts a new file.
-    pub fn create() -> Result<RawFileEncryptor, JsValue> {
-        FileEncryptor::new().map(RawFileEncryptor).map_err(refusal)
+    pub fn create() -> Answer {
+        made(FileEncryptor::new().map(RawFileEncryptor))
     }
 }
 
@@ -206,10 +242,8 @@ pub struct RawFileDecryptor(FileDecryptor);
 #[wasm_bindgen]
 impl RawFileDecryptor {
     /// Starts reading the file `file` names.
-    pub fn create(file: &JsValue) -> Result<RawFileDecryptor, JsValue> {
-        FileDecryptor::new(arg(file)?)
-            .map(RawFileDecryptor)
-            .map_err(refusal)
+    pub fn create(file: &JsValue) -> Answer {
+        made(arg(file).and_then(FileDecryptor::new).map(RawFileDecryptor))
     }
 }
 
