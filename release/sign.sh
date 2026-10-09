@@ -45,6 +45,9 @@ case $mode in
     sed -n 's/^ *{ "name": "\([A-Za-z0-9._-]*\)", "sha256": "\([0-9a-f]\{64\}\)", "size": \([0-9]*\) }.*/\1 \2 \3/p' "$manifest" > "$manifest.list"
     trap 'rm -f "$manifest.list"' EXIT
     [ -s "$manifest.list" ] || { echo "$manifest names no file" >&2; exit 1; }
+    # a manifest not written one asset per line would hide entries from this check: refuse it
+    [ "$(grep -o '"name"' "$manifest" | wc -l | tr -d ' ')" = "$(wc -l < "$manifest.list" | tr -d ' ')" ] \
+      || { echo "$manifest is not in the form release/manifest.sh writes" >&2; exit 1; }
     while read -r name sum size; do
       [ "$(sha256sum "$dir/$name" | cut -d' ' -f1)" = "$sum" ] && [ "$(wc -c < "$dir/$name" | tr -d ' ')" = "$size" ] \
         || { echo "$name is not the file the manifest names" >&2; exit 1; }

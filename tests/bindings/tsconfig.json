@@ -1,0 +1,21 @@
+{
+  // The strictest settings, for the check of the browser binding's declarations (tests/bindings/typings.ts):
+  //   npx tsc -p tests/bindings
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2024", "dom", "dom.iterable", "webworker.importscripts"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": [],
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "useUnknownInCatchVariables": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  "files": ["typings.ts", "../../core/wasm/js/trommi-core.d.ts", "../../core/wasm/js/idb-store.d.ts"]
+}

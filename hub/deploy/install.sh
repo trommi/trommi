@@ -1,29 +1,28 @@
 #!/usr/bin/env bash
 # The hub server's first installation, run on the owner's laptop from a checkout of this repository.
 #
-#   hub/deploy/install.sh inventory           reads the server and writes trommi-inventory-<time>.txt; changes nothing
-#   hub/deploy/install.sh install [hub-vN]    installs the updater and the first hub release (default: the newest)
-#   hub/deploy/install.sh secrets             sends the push credentials; run it as
-#                                               op run --environment <hub production environment id> -- hub/deploy/install.sh secrets
+#   hub/deploy/install.sh inventory          reads the server, writes trommi-inventory-<time>.txt; changes nothing
+#   hub/deploy/install.sh install [hub-vN]   installs the updater and a hub release (default: the newest)
+#   hub/deploy/install.sh secrets            sends the push credentials; run it as
+#                                              op run --environment <hub production environment id> -- hub/deploy/install.sh secrets
+#   hub/deploy/install.sh back               undoes `install`: stops the new hub, puts the old stack back, starts it
 #
-# It reaches the server with ssh as root (1Password approves the key). Where:
-#   HUB_SSH        default root@trommi-hub.tail276436.ts.net
-#   HUB_SSH_PORT   default 22
-# While the repository is private the server needs a token to fetch later releases itself; give it once with
-#   TROMMI_RELEASE_TOKEN=<fine-grained token, this repository, Contents: read-only> hub/deploy/install.sh install
-# The token is sent over the ssh connection, kept in /etc/trommi/updater.env (root only) and never printed.
+# It reaches the server with ssh as root (1Password approves the key): HUB_SSH (default
+# root@trommi-hub.tail276436.ts.net), HUB_SSH_PORT (default 22).
 #
-# `install` can be run again at any time: it finds out what is there, prints every step before it takes it, checks
-# it afterwards, and deletes nothing. The stack that ran before (docker compose in /srv/trommi) is stopped and moved
-# to /srv/trommi-old with all its data. If a step fails after that move, the old stack is put back and started, and
-# the script says what happened.
-#
-# After the first installation everything else arrives by release: the hub, its unit and the updater itself.
+# What `install` does on the server, each step printed before it is taken and checked after:
+#   1. looks, and stops before changing anything if something is not as expected
+#   2. stops the old hub container (docker compose stop hub in /srv/trommi) and moves the whole old stack, with its
+#      data and backups, to /srv/trommi-old. The tunnel container (cloudflared) is not touched and keeps running.
+#   3. makes a new, empty /srv/trommi, installs the pinned release key, the updater and its unit
+#   4. lets the updater deploy the release (it proves it itself), and asks the hub through its public address
+# It deletes nothing and can be run again at any time. If a step fails after the old hub was stopped, the old stack
+# is put back and started. After the first installation everything arrives by release: hub, its unit, the updater.
 set -euo pipefail
 
 HUB_SSH=${HUB_SSH:-root@trommi-hub.tail276436.ts.net}
 HUB_SSH_PORT=${HUB_SSH_PORT:-22}
-REPOSITORY=${TROMMI_REPOSITORY:-trommi/trommi}
+REPOSITORY=trommi/trommi
 TARGET=x86_64-unknown-linux-musl
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -35,109 +34,95 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 if [ -z "${SSH_AUTH_SOCK:-}" ] && [ -S "$HOME/.1password/agent.sock" ]; then
   export SSH_AUTH_SOCK="$HOME/.1password/agent.sock"
 fi
-SSH=(ssh -p "$HUB_SSH_PORT" -o StrictHostKeyChecking=accept-new -o ControlPath=none -o ConnectTimeout=15 "$HUB_SSH")
+SSH_OPTIONS=(-o StrictHostKeyChecking=accept-new -o ControlPath=none -o ConnectTimeout=15)
+SSH=(ssh -p "$HUB_SSH_PORT" "${SSH_OPTIONS[@]}" "$HUB_SSH")
 
 # ---------------------------------------------------------------------------------------------------------------
-# What runs on the server. Each part is a program of its own, sent over the ssh connection.
+# What runs on the server: programs sent over the ssh connection
 # ---------------------------------------------------------------------------------------------------------------
 
-# Reads only. Anything that could be a secret is cut out before it leaves the server.
+# Reads only. Settings are shown by name, never by value; command lines only as far as they are plain words.
 remote_inventory() {
   cat <<'REMOTE'
 set -u
 export LC_ALL=C
 section() { printf '\n## %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
-# values of settings whose name sounds secret, and any long run of key-like characters
+# a second net under everything printed below: values of settings whose name sounds secret, long key-like runs
 redact() {
   sed -E \
-    -e 's/(([A-Za-z0-9_]*(TOKEN|KEY|SECRET|PASSWORD|PASSWD|HASH|CREDENTIAL)[A-Za-z0-9_]*)[[:space:]]*[=:][[:space:]]*).*/\1<redacted>/I' \
-    -e 's/(--token[= ])[^ "]+/\1<redacted>/g' \
+    -e 's/(([A-Za-z0-9_]*(TOKEN|KEY|SECRET|PASSWORD|PASSWD|HASH|CREDENTIAL)[A-Za-z0-9_]*)"?[[:space:]]*[=:][[:space:]]*).*/\1<redacted>/I' \
+    -e 's/(--token[= ]+)[^ ]+/\1<redacted>/g' \
     -e 's/[A-Za-z0-9+\/_=-]{32,}/<redacted>/g'
 }
-
+{
 section "machine"
 date -u '+now (UTC): %Y-%m-%d %H:%M:%S'
 have timedatectl && timedatectl show -p Timezone -p NTPSynchronized 2>/dev/null
 . /etc/os-release 2>/dev/null && echo "os: ${PRETTY_NAME:-?}"
-echo "arch: $(uname -m)   kernel: $(uname -r)"
-echo "systemd: $(systemctl --version 2>/dev/null | head -1)"
-echo "uptime: $(uptime -p 2>/dev/null)"
-echo "cpus: $(nproc 2>/dev/null)"
-free -m 2>/dev/null | sed -n '1,2p'
-
-section "disk"
+echo "arch: $(uname -m)   kernel: $(uname -r)   systemd: $(systemctl --version 2>/dev/null | head -1)"
+echo "cpus: $(nproc 2>/dev/null)"; free -m 2>/dev/null | sed -n '1,2p'
 df -h / /srv 2>/dev/null
 
 section "tools"
-for t in curl python3 openssl sha256sum docker tailscale ss; do
+for t in curl python3 openssl sha256sum docker tailscale ss flock; do
   if have "$t"; then echo "$t: yes"; else echo "$t: MISSING"; fi
 done
-have openssl && openssl version
 
 section "automatic updates"
-if have apt-config; then
-  apt-config dump 2>/dev/null | grep -E 'APT::Periodic::(Unattended-Upgrade|Update-Package-Lists)|Unattended-Upgrade::Automatic-Reboot' || echo "no unattended-upgrades settings found"
-fi
-systemctl is-enabled unattended-upgrades.service 2>/dev/null | sed 's/^/unattended-upgrades.service: /'
+have apt-config && apt-config dump 2>/dev/null | grep -E 'APT::Periodic::(Unattended-Upgrade|Update-Package-Lists)|Unattended-Upgrade::Automatic-Reboot'
+echo "unattended-upgrades.service: $(systemctl is-enabled unattended-upgrades.service 2>/dev/null)"
 
 section "tailscale"
 if have tailscale; then
   tailscale version 2>/dev/null | head -1
   echo "addresses: $(tailscale ip 2>/dev/null | tr '\n' ' ')"
-  if have python3; then
-    tailscale status --json 2>/dev/null | python3 -c '
+  tailscale status --json 2>/dev/null | python3 -c '
 import json, sys
 s = json.load(sys.stdin).get("Self", {})
-print("name:", s.get("DNSName"))
-print("tags:", s.get("Tags") or "none (a person'"'"'s device)")
-print("online:", s.get("Online"))' 2>/dev/null
-    tailscale debug prefs 2>/dev/null | python3 -c '
+print("name:", s.get("DNSName"), " tags:", s.get("Tags") or "none", " online:", s.get("Online"))' 2>/dev/null
+  tailscale debug prefs 2>/dev/null | python3 -c '
 import json, sys
 p = json.load(sys.stdin)
-print("Tailscale SSH:", "ON" if p.get("RunSSH") else "off")
-print("auto-update:", (p.get("AutoUpdate") or {}).get("Apply"))' 2>/dev/null
-  fi
-  echo "tailscale serve:"; tailscale serve status 2>&1 | redact | sed 's/^/  /'
+print("Tailscale SSH:", "ON" if p.get("RunSSH") else "off", " auto-update:", (p.get("AutoUpdate") or {}).get("Apply"))' 2>/dev/null
+  echo "tailscale serve:"; tailscale serve status 2>&1 | sed 's/^/  /'
 fi
 
 section "ssh"
-echo "listening:"; ss -tlnpH 2>/dev/null | grep -E 'sshd|"systemd"' | awk '{print "  " $4 "  " $6}'
-for u in ssh.socket ssh.service sshd.service; do echo "$u: $(systemctl is-active "$u" 2>/dev/null)"; done
-echo "Port and ListenAddress lines:"
+for u in ssh.socket ssh.service; do echo "$u: $(systemctl is-active "$u" 2>/dev/null)"; done
 grep -HEi '^[[:space:]]*(Port|ListenAddress)[[:space:]]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | sed 's/^/  /'
-systemctl cat ssh.socket 2>/dev/null | grep -E '^(# |ListenStream)' | sed 's/^/  /'
 
 section "firewall on the machine"
-if have ufw; then ufw status 2>/dev/null | head -3; fi
-if have nft; then echo "nft rules: $(nft list ruleset 2>/dev/null | grep -c .)"; fi
+have ufw && ufw status 2>/dev/null | head -1
+have nft && echo "nft rules: $(nft list ruleset 2>/dev/null | grep -c .)"
 
 section "what listens (tcp)"
 ss -tlnpH 2>/dev/null | awk '{print $4 "  " $6}' | sort -u
-echo
-if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -Eq ':9443$'; then echo "port 9443: TAKEN"; else echo "port 9443: free"; fi
-if ss -tlnH 2>/dev/null | awk '{print $4}' | grep -Eq ':8790$'; then echo "port 8790: taken"; else echo "port 8790: free"; fi
+for p in 9443 8790; do
+  if ss -tlnH 2>/dev/null | awk -v p=":$p\$" '$4 ~ p {f = 1} END {exit !f}'; then echo "port $p: taken"; else echo "port $p: free"; fi
+done
 
 section "docker"
 if have docker; then
   docker version --format 'docker {{.Server.Version}}' 2>/dev/null
-  docker ps -a --format '{{.Names}}  image={{.Image}}  {{.Status}}  ports={{.Ports}}' 2>/dev/null
   echo "compose projects:"; docker compose ls 2>/dev/null | sed 's/^/  /'
   for id in $(docker ps -aq 2>/dev/null); do
     docker inspect "$id" 2>/dev/null | python3 -c '
-import json, sys
+import json, re, sys
 c = json.load(sys.stdin)[0]
 cfg, host = c["Config"], c["HostConfig"]
+def words(args):
+    # only what is plainly a flag or a sub-command is shown
+    return [a if re.fullmatch(r"-{0,2}[A-Za-z][A-Za-z0-9-]*|/[A-Za-z0-9/_.-]{1,40}", a) else "<hidden>" for a in args or []]
 print()
-print("container", c["Name"].lstrip("/"))
+print("container", c["Name"].lstrip("/"), "-", c["State"]["Status"])
 print("  image:", cfg.get("Image"), c["Image"][:19])
 print("  compose service:", (cfg.get("Labels") or {}).get("com.docker.compose.service"))
-print("  entrypoint:", cfg.get("Entrypoint"))
-print("  command:", cfg.get("Cmd"))
+print("  entrypoint:", words(cfg.get("Entrypoint")), " command:", words(cfg.get("Cmd")))
 print("  setting names:", sorted(e.split("=", 1)[0] for e in cfg.get("Env") or []))
-print("  user:", cfg.get("User") or "(image default)")
-print("  network:", host.get("NetworkMode"), " restart:", (host.get("RestartPolicy") or {}).get("Name"))
-print("  mounts:", host.get("Binds"))' 2>/dev/null | redact
+print("  user:", cfg.get("User") or "(image default)", " network:", host.get("NetworkMode"),
+      " restart:", (host.get("RestartPolicy") or {}).get("Name"))
+print("  ports:", sorted((host.get("PortBindings") or {}).keys()), " mounts:", [m.get("Source") for m in c.get("Mounts") or []])' 2>/dev/null
   done
 else
   echo "no docker"
@@ -149,13 +134,8 @@ for d in /srv/trommi /srv/trommi-old; do
   [ -d "$d" ] || continue
   echo; echo "$d:"; ls -la "$d" 2>/dev/null | sed 's/^/  /'
   du -sh "$d"/* 2>/dev/null | sed 's/^/  /'
-  for f in "$d"/compose.yaml "$d"/compose.override.yaml "$d"/docker-compose.yml; do
-    [ -f "$f" ] || continue
-    echo; echo "$f (secrets cut out):"; redact < "$f" | sed 's/^/  | /'
-  done
   for f in "$d"/*.env "$d"/.env; do
-    [ -f "$f" ] || continue
-    echo "$f, names only: $(grep -Eo '^[A-Za-z_][A-Za-z0-9_]*' "$f" | tr '\n' ' ')"
+    [ -f "$f" ] && echo "  $f, names only: $(grep -Eo '^[A-Za-z_][A-Za-z0-9_]*' "$f" | tr '\n' ' ')"
   done
 done
 
@@ -164,128 +144,153 @@ if [ -d /etc/trommi ]; then ls -la /etc/trommi | sed 's/^/  /'; else echo "/etc/
 for l in current previous updater updater-previous; do
   [ -L "/srv/trommi/$l" ] && echo "  /srv/trommi/$l -> $(readlink "/srv/trommi/$l")"
 done
-for u in trommi-hub.service trommi-hub-updater.service trommi-proxy.service; do
-  echo "  $u: $(systemctl is-enabled "$u" 2>/dev/null || true) / $(systemctl is-active "$u" 2>/dev/null || true)"
+for u in trommi-hub.service trommi-hub-updater.service; do
+  echo "  $u: $(systemctl is-active "$u" 2>/dev/null || true)"
 done
-id trommi 2>/dev/null | sed 's/^/  user: /' || echo "  user trommi: not there"
 [ -x /usr/local/bin/trommi-hub-updater ] && /usr/local/bin/trommi-hub-updater status 2>/dev/null | sed 's/^/  /'
+} 2>&1 | redact
 exit 0
 REMOTE
 }
 
-# The installation. Arguments: <tag> <staging directory>. A token for GitHub may come on standard input (one line).
-remote_install() {
+# Shared by `install` and `back`: where things are, and how the old stack is put back.
+remote_common() {
   cat <<'REMOTE'
 set -euo pipefail
 export LC_ALL=C
-TAG=$1 STAGE=$2
-ROOT=/srv/trommi OLD=/srv/trommi-old ETC=/etc/trommi LIB=/usr/local/lib/trommi
-UNITS=/etc/systemd/system
+ROOT=/srv/trommi OLD=/srv/trommi-old UNITS=/etc/systemd/system
 step() { printf '\n--> %s\n' "$*"; }
 ok() { printf '    ok: %s\n' "$*"; }
 stop() { printf '\nSTOPPED: %s\n' "$*" >&2; exit 1; }
-have() { command -v "$1" >/dev/null 2>&1; }
+# whether something listens on exactly this address; whether anything listens on this port at all
+listens() { ss -tlnH 2>/dev/null | awk -v a="$1" '$4 == a {f = 1} END {exit !f}'; }
+port_taken() { ss -tlnH 2>/dev/null | awk -v p=":$1\$" '$4 ~ p {f = 1} END {exit !f}'; }
+old_stack_here() { [ -f "$1/compose.yaml" ] || [ -f "$1/docker-compose.yml" ]; }
 
-IFS= read -r TOKEN || TOKEN=''
+# One installation or undoing at a time.
+exec 9> /run/trommi-install.lock
+flock -n 9 || stop "another run of this script is at work on the server"
 
-# ---- look, change nothing ----
+# Stops what this script installed and starts the old stack from where it was. Deletes nothing.
+put_old_back() {
+  systemctl disable --now trommi-hub-updater.service >/dev/null 2>&1 || true
+  systemctl stop trommi-hub.service >/dev/null 2>&1 || true
+  rm -f "$UNITS/trommi-hub.service"
+  systemctl daemon-reload || true
+  if [ -d "$OLD" ]; then
+    if [ -e "$ROOT" ]; then
+      aside="/srv/trommi-new-$(date -u +%Y%m%d-%H%M%S)"
+      mv "$ROOT" "$aside"
+      echo "    the new installation (its data too) is kept in $aside"
+    fi
+    mv "$OLD" "$ROOT"
+  fi
+  old_stack_here "$ROOT" || { echo "    there is no old stack in $ROOT to start" >&2; return 1; }
+  (cd "$ROOT" && docker compose up -d)
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 3 http://127.0.0.1:8790/healthz >/dev/null 2>&1; then return 0; fi
+    sleep 2
+  done
+  echo "    the old hub was started but does not answer on 127.0.0.1:8790: cd $ROOT && docker compose ps" >&2
+  return 1
+}
+REMOTE
+}
+
+remote_back() {
+  remote_common
+  cat <<'REMOTE'
+step "Stop the new hub and its updater, put the old stack back into $ROOT and start it"
+put_old_back || stop "the old stack is not running; see above"
+ok "the old stack runs again (docker compose in $ROOT)"
+REMOTE
+}
+
+# Arguments: <tag> <staging directory>.
+remote_install() {
+  remote_common
+  cat <<'REMOTE'
+TAG=$1 STAGE=$2 ETC=/etc/trommi LIB=/usr/local/lib/trommi
+
+# ---- 1. look, change nothing ----
 step "Look at the server (nothing is changed yet)"
 [ "$(id -u)" = 0 ] || stop "this must run as root"
-[ "$(uname -m)" = x86_64 ] || stop "this server is $(uname -m); the release is built for x86_64 only"
+[ "$(uname -m)" = x86_64 ] || stop "this server is $(uname -m); the release is built for x86_64"
 [ -d /run/systemd/system ] || stop "this server does not run systemd"
-for t in curl python3 sha256sum tailscale ss; do have "$t" || stop "$t is missing on the server"; done
+for t in curl python3 sha256sum tailscale ss; do command -v "$t" >/dev/null || stop "$t is missing on the server"; done
 (cd "$STAGE" && sha256sum --quiet -c SHA256SUMS) || stop "the files did not arrive whole; run the script again"
 TSIP=$(tailscale ip -4 2>/dev/null | head -1)
 case "$TSIP" in 100.*) ;; *) stop "the server has no tailnet address (is tailscale up?)" ;; esac
-if [ -d "$ROOT/releases" ]; then STATE=installed
-elif [ -f "$ROOT/compose.yaml" ] || [ -f "$ROOT/docker-compose.yml" ]; then STATE=old-stack
-elif [ -e "$ROOT" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ]; then stop "$ROOT holds something this script does not know; send the inventory"
-else STATE=empty
-fi
-[ "$STATE" = old-stack ] && [ -e "$OLD" ] && stop "$OLD exists already and $ROOT still holds the old stack; send the inventory"
-taken() { ss -tlnpH 2>/dev/null | awk -v p=":$1\$" '$4 ~ p && !seen {print $6; seen = 1}'; }
-# whether something listens on exactly this address, and whether anything else listens on its port
-listens() { ss -tlnH 2>/dev/null | awk -v a="$1" '$4 == a {found = 1} END {exit !found}'; }
-elsewhere() { ss -tlnH 2>/dev/null | awk -v a="$1" -v p=":${1##*:}\$" '$4 ~ p && $4 != a {found = 1} END {exit !found}'; }
-by=$(taken 9443)
-case "$by" in ''|*trommi-hub-upd*) ;; *) stop "port 9443 is taken by $by" ;; esac
-by=$(taken 8790)
-case "$STATE:$by" in
-  *:''|*:*trommi-hub*) ;;
-  old-stack:*docker*) ;;
-  *) stop "port 8790 is taken by $by" ;;
-esac
-PROXY=''
-if [ "$STATE" = old-stack ]; then
-  have docker || stop "the old stack is a docker compose stack, but docker is not there"
-  PROXY=$(docker ps --format '{{.ID}} {{.Image}}' | awk 'tolower($2) ~ /cloudflared/ {print $1}')
-  [ "$(printf '%s\n' "$PROXY" | grep -c .)" = 1 ] || stop "expected exactly one running cloudflared container, found: ${PROXY:-none}; send the inventory"
-fi
 if [ -f "$ETC/release-public-key.pem" ] && ! cmp -s "$ETC/release-public-key.pem" "$STAGE/public-key.pem"; then
-  stop "another release key is pinned in $ETC/release-public-key.pem; it is never replaced by this script"
+  stop "another release key is pinned in $ETC/release-public-key.pem; this script never replaces it"
 fi
-ok "state: $STATE; tailnet address $TSIP; ports 9443 and 8790 usable"
+if old_stack_here "$ROOT"; then
+  [ ! -e "$OLD" ] || stop "$OLD exists already although $ROOT still holds the old stack; run 'inventory' and look"
+  command -v docker >/dev/null || stop "the old stack is a docker compose stack, but docker is not there"
+  STATE=old-stack
+elif [ -d "$ROOT/releases" ] || [ ! -e "$ROOT" ] || [ -z "$(ls -A "$ROOT")" ]; then
+  STATE=ours
+else
+  stop "$ROOT holds something this script does not know; run 'inventory' and look"
+fi
+if port_taken 9443 && ! systemctl is-active --quiet trommi-hub-updater.service; then stop "port 9443 is taken by something else"; fi
+if [ "$STATE" = ours ] && port_taken 8790 && ! systemctl is-active --quiet trommi-hub.service; then
+  stop "port 8790 is taken by something else"
+fi
+tunnels=0
+if command -v docker >/dev/null; then
+  tunnels=$(docker ps --filter network=host --format '{{.Image}}' | grep -ci cloudflared || true)
+fi
+ok "state: $STATE; tailnet address $TSIP; tunnel containers on the host's network: $tunnels (left as they are)"
 
-# The owner's tailnet login (from this very ssh connection): his own devices may call the endpoint beside the CI.
-OWNER=$(tailscale whois --json "${SSH_CLIENT%% *}:$(printf '%s' "$SSH_CLIENT" | awk '{print $2}')" 2>/dev/null | python3 -c '
+# The owner's tailnet login, from this very ssh connection: his own devices may call the endpoint beside the CI.
+read -r client_ip client_port _ <<< "${SSH_CLIENT:-}"
+OWNER=$(tailscale whois --json "$client_ip:$client_port" 2>/dev/null | python3 -c '
 import json, sys
 w = json.load(sys.stdin)
 print("" if w["Node"].get("Tags") else w["UserProfile"].get("LoginName", ""))' 2>/dev/null || true)
 case "$OWNER" in *[!A-Za-z0-9@._+-]*) OWNER='' ;; esac
 
-# ---- from here on things change; if a step fails after the old stack was moved, it is put back ----
-MOVED=0
-back() {
+# ---- from here on things change; if a step fails once the old hub was stopped, the old stack is put back ----
+TOUCHED=0
+on_exit() {
   code=$?
-  trap - ERR EXIT
+  trap - EXIT
   [ "$code" = 0 ] && exit 0
-  if [ "$MOVED" = 1 ]; then
+  if [ "$TOUCHED" = 1 ]; then
     printf '\n!!! A step failed. Putting the old stack back.\n' >&2
-    systemctl stop trommi-proxy.service trommi-hub.service trommi-hub-updater.service 2>/dev/null || true
-    systemctl disable trommi-proxy.service trommi-hub-updater.service 2>/dev/null || true
-    rm -f "$UNITS/trommi-hub.service" "$UNITS/multi-user.target.wants/trommi-hub.service"
-    systemctl daemon-reload || true
-    failed="/srv/trommi-failed-$(date -u +%Y%m%d-%H%M%S)"
-    restored=0
-    if [ ! -e "$ROOT" ] || mv "$ROOT" "$failed"; then
-      if mv "$OLD" "$ROOT" && (cd "$ROOT" && docker compose up -d); then restored=1; fi
-    fi
-    if [ "$restored" = 1 ]; then
-      printf '!!! The old stack runs again from %s; nothing was deleted (a half-made installation, if any, is in %s).\n    Fix what failed above and run the script again.\n' "$ROOT" "$failed" >&2
+    if put_old_back; then
+      printf '!!! The old stack runs again from %s. Nothing was deleted. Fix what failed above and run install again.\n' "$ROOT" >&2
     else
-      printf '!!! The old stack could NOT be started again. Its files are in %s or %s; there: docker compose up -d\n' "$OLD" "$ROOT" >&2
+      printf '!!! The old stack does NOT run. Run:  hub/deploy/install.sh back\n' >&2
     fi
   else
-    printf '\n!!! A step failed. What ran before still runs; fix what failed above and run the script again.\n' >&2
+    printf '\n!!! A step failed. Nothing that ran before was stopped. Fix what failed above and run install again.\n' >&2
   fi
   exit "$code"
 }
-trap back ERR EXIT
+trap on_exit EXIT
 
 step "User trommi (the hub runs as it)"
 id trommi >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin trommi
-id trommi >/dev/null
 ok "$(id trommi)"
 
 if [ "$STATE" = old-stack ]; then
-  step "Note how the tunnel (cloudflared) runs today, so that it can run the same way beside the new hub"
-  install -d -m 0755 "$ETC"
-  python3 "$STAGE/proxy-unit.py" "$PROXY" "$ROOT" "$OLD" "$ETC/proxy.env" "$STAGE/trommi-proxy.service"
-  ok "noted in $ETC/proxy.env (root only)"
+  step "Stop the old hub container (docker compose stop hub in $ROOT); the tunnel container keeps running"
+  TOUCHED=1
+  (cd "$ROOT" && docker compose stop hub)
+  for _ in $(seq 1 15); do port_taken 8790 || break; sleep 1; done
+  if port_taken 8790; then stop "port 8790 is still taken after the old hub was stopped"; fi
+  ok "stopped; port 8790 is free"
 
-  step "Stop the old stack (docker compose down in $ROOT; data, volumes and images stay)"
-  (cd "$ROOT" && docker compose down)
-  [ -z "$(docker ps -q --filter "id=$PROXY")" ] || stop "the old tunnel container still runs"
-  ok "stopped"
-
-  step "Move the old stack aside: $ROOT -> $OLD"
+  step "Move the old stack aside with all its data and backups: $ROOT -> $OLD"
   mv "$ROOT" "$OLD"
-  MOVED=1
   [ -d "$OLD" ] && [ ! -e "$ROOT" ]
-  ok "everything of the old stack is in $OLD"
+  ok "in $OLD, untouched"
 fi
 
-step "Folders"
+step "Folders (a new, empty data folder: the hub starts clean)"
+systemctl stop trommi-hub-updater.service >/dev/null 2>&1 || true
 install -d -m 0755 "$ROOT" "$ROOT/releases" "$ETC" "$LIB"
 install -d -m 0700 "$ROOT/backups"
 install -d -m 0700 -o trommi -g trommi "$ROOT/data"
@@ -305,33 +310,26 @@ step "Settings: $ETC/hub.env (kept if it is there), $ETC/updater.env"
 if [ ! -f "$ETC/hub.env" ]; then
   cat > "$ETC/hub.env" <<'ENV'
 # Settings of the hub on this server. Where it listens and keeps its data is fixed in its unit.
+# the address devices sign in to (their signatures name it)
 HUB_URL=https://hub.trommi.com
 HUB_ORIGINS=https://app.trommi.com
-# the tunnel on this machine names the client's address in a header
+# the tunnel on this machine names the client's address in a header; without this every client is one source
 HUB_TRUST_CF=1
+HUB_WEB_PUSH_SUBJECT=mailto:trommi@mail101.de
 # HSTS: "on" makes every answer tell browsers to use HTTPS only for this name and every name below it, for two
 # years, marked as fit for the browsers' preload list. Switch it on only when that is decided; then:
 # systemctl restart trommi-hub
 HUB_HSTS=off
+# The admin page (later, on 127.0.0.1:8791 behind tailscale serve) starts only when its password hash is set,
+# in hub-secrets.env: HUB_ADMIN_PASSWORD_HASH=...
 ENV
-  chmod 0644 "$ETC/hub.env"
 fi
-if [ -z "$TOKEN" ] && [ -f "$ETC/updater.env" ]; then
-  TOKEN=$(sed -n 's/^UPDATER_GITHUB_TOKEN=//p' "$ETC/updater.env" | head -1)
-fi
-umask 077
-{
-  echo "# Settings of the updater (hub/updater/src/main.rs lists them). Written by hub/deploy/install.sh."
-  echo "UPDATER_LISTEN=$TSIP:9443"
-  echo "UPDATER_REPOSITORY=$REPOSITORY"
-  echo "UPDATER_CALLER_TAGS=tag:trommi-ci"
-  echo "UPDATER_CALLER_USERS=$OWNER"
-  [ -z "$TOKEN" ] || echo "UPDATER_GITHUB_TOKEN=$TOKEN"
-} > "$ETC/updater.env.part"
-mv -f "$ETC/updater.env.part" "$ETC/updater.env"
-umask 022
-grep -q "^UPDATER_LISTEN=$TSIP:9443$" "$ETC/updater.env"
-ok "the endpoint will listen on $TSIP:9443 only; callers: tag:trommi-ci${OWNER:+ and $OWNER}; GitHub token: $([ -n "$TOKEN" ] && echo there || echo none)"
+chmod 0644 "$ETC/hub.env"
+printf '%s\n' "# Settings of the updater (hub/updater/src/main.rs lists them). Written by hub/deploy/install.sh." \
+  "UPDATER_LISTEN=$TSIP:9443" "UPDATER_REPOSITORY=$REPOSITORY" "UPDATER_CALLER_TAGS=tag:trommi-ci" \
+  "UPDATER_CALLER_USERS=$OWNER" > "$ETC/updater.env"
+chmod 0644 "$ETC/updater.env"
+ok "the endpoint will listen on $TSIP:9443 only; callers: tag:trommi-ci${OWNER:+ and $OWNER}"
 
 step "The release $TAG, as it was checked on the laptop, into $ROOT/releases/$TAG"
 if [ -d "$ROOT/releases/$TAG" ]; then
@@ -347,165 +345,58 @@ else
   mv "$part" "$ROOT/releases/$TAG"
   ok "in place"
 fi
-if [ ! -L "$ROOT/updater" ]; then
+if [ -L "$ROOT/updater" ]; then
+  ok "an updater is in place already ($(readlink "$ROOT/updater")); it changes itself by release"
+else
   ln -s "releases/$TAG" "$ROOT/updater"
   ok "the first updater is the one of $TAG"
-else
-  ok "an updater is in place already ($(readlink "$ROOT/updater")); it changes itself by release"
 fi
 [ -x "$ROOT/updater/trommi-hub-updater" ]
-
-step "The hub's unit is the one of the running release (a link), started at boot"
+# the hub's unit is the one of the release that runs; the updater starts the hub, also after a reboot
 ln -sfn "$ROOT/current/trommi-hub.service" "$UNITS/trommi-hub.service"
-install -d -m 0755 "$UNITS/multi-user.target.wants"
-ln -sfn "$ROOT/current/trommi-hub.service" "$UNITS/multi-user.target.wants/trommi-hub.service"
-ok "linked"
 
-step "Start the updater (systemd, at boot too)"
+step "Start the updater (systemd; at boot too)"
 systemctl daemon-reload
 systemctl enable trommi-hub-updater.service >/dev/null
 systemctl restart trommi-hub-updater.service
-for _ in $(seq 1 30); do
-  if listens "$TSIP:9443"; then break; fi
-  sleep 1
-done
 listens "$TSIP:9443" || { journalctl -u trommi-hub-updater.service -n 20 --no-pager >&2; stop "the updater does not listen on $TSIP:9443"; }
-if elsewhere "$TSIP:9443"; then stop "port 9443 listens on more than the tailnet address"; fi
+[ "$(ss -tlnH | awk '$4 ~ /:9443$/' | wc -l)" = 1 ] || stop "port 9443 listens on more than the tailnet address"
 ok "listening on $TSIP:9443 and nowhere else"
 
 step "Deploy $TAG through the updater (it proves the release itself, swaps, checks health)"
-/usr/local/bin/trommi-hub-updater deploy "$TAG" | tee "$STAGE/outcome.json"
-grep -q '"ok": true' "$STAGE/outcome.json" || stop "the updater did not accept $TAG (see its answer above)"
+/usr/local/bin/trommi-hub-updater deploy "$TAG" > "$STAGE/outcome.json" || true
+cat "$STAGE/outcome.json"
+python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("ok") is True else 1)' "$STAGE/outcome.json" \
+  || stop "the updater did not accept $TAG (its answer is above; the hub's own words: journalctl -u trommi-hub -n 30)"
 curl -fsS --max-time 5 http://127.0.0.1:8790/healthz >/dev/null
 systemctl is-active --quiet trommi-hub.service
 ok "the hub runs and is well"
 
-if [ -f "$STAGE/trommi-proxy.service" ]; then
-  step "Start the tunnel beside the new hub (same image, same settings as before, on the host's network)"
-  install -m 0600 "$STAGE/trommi-proxy.service" "$UNITS/trommi-proxy.service"
-  systemctl daemon-reload
-  systemctl enable trommi-proxy.service >/dev/null
-  systemctl restart trommi-proxy.service
-  sleep 3
-  systemctl is-active --quiet trommi-proxy.service || { journalctl -u trommi-proxy.service -n 20 --no-pager >&2; stop "the tunnel did not start"; }
-  ok "trommi-proxy.service runs"
-fi
+step "Ask the hub from outside, through the tunnel"
+url=$(sed -n 's/^HUB_URL=//p' "$ETC/hub.env" | head -1)
+want=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["commit"])' "$ROOT/current/manifest.json")
+got=''
+for _ in $(seq 1 30); do
+  got=$(curl -fsS --max-time 5 "$url/healthz" 2>/dev/null | python3 -c 'import json, sys; print(json.load(sys.stdin).get("commit", ""))' 2>/dev/null || true)
+  [ "$got" = "$want" ] && break
+  sleep 2
+done
+[ "$got" = "$want" ] || stop "$url/healthz does not answer as the new hub (got: ${got:-nothing}, expected $want)"
+ok "$url answers as commit $want"
 
-if systemctl is-enabled --quiet trommi-proxy.service 2>/dev/null; then
-  step "Ask the hub from outside, through the tunnel"
-  url=$(sed -n 's/^HUB_URL=//p' "$ETC/hub.env" | head -1)
-  want=$(sed -n 's/.*"commit": "\([0-9a-f]*\)".*/\1/p' "$ROOT/current/manifest.json" | head -1)
-  got=''
-  for _ in $(seq 1 30); do
-    got=$(curl -fsS --max-time 5 "$url/healthz" 2>/dev/null | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p' || true)
-    [ "$got" = "$want" ] && break
-    sleep 2
-  done
-  [ "$got" = "$want" ] || stop "$url/healthz does not answer as the new hub (got: ${got:-nothing})"
-  ok "$url answers as commit $want"
-else
-  printf '\n    note: no tunnel was found to carry over; the hub answers on 127.0.0.1:8790 only.\n'
-fi
-
-trap - ERR EXIT
+trap - EXIT
 step "Done"
 /usr/local/bin/trommi-hub-updater status
-for u in trommi-hub-updater.service trommi-hub.service trommi-proxy.service; do
-  printf '%s: %s, at boot: %s\n' "$u" "$(systemctl is-active "$u" 2>/dev/null || true)" "$(systemctl is-enabled "$u" 2>/dev/null || true)"
-done
-[ -d "$OLD" ] && printf 'The old stack lies untouched in %s (stopped). Remove it yourself when you no longer want it.\n' "$OLD"
+printf 'trommi-hub.service: %s    trommi-hub-updater.service: %s, at boot: %s\n' \
+  "$(systemctl is-active trommi-hub.service)" "$(systemctl is-active trommi-hub-updater.service)" "$(systemctl is-enabled trommi-hub-updater.service)"
+[ -d "$OLD" ] && printf 'The old stack lies untouched in %s (its hub container stopped, its tunnel container still running).\n' "$OLD"
+printf 'Should a later release refuse the data of an earlier one (before launch the hub does not migrate), a clean\nstart is: systemctl stop trommi-hub; mv %s/data %s/data-old; install -d -m 0700 -o trommi -g trommi %s/data; systemctl start trommi-hub\n' "$ROOT" "$ROOT" "$ROOT"
 rm -rf "$STAGE"
-exit 0
+printf '\nINSTALLED: %s runs.\n' "$TAG"
 REMOTE
 }
 
-# Writes the tunnel's settings and a systemd unit that runs the same container definition on the host's network.
-# proxy-unit.py <container id> <old root> <where it moves to> <env file> <unit file>
-proxy_unit_py() {
-  cat <<'PY'
-import json, os, subprocess, sys
-
-cid, root, moved, env_path, unit_path = sys.argv[1:6]
-if cid == "-":
-    c = json.load(sys.stdin)[0]
-else:
-    c = json.loads(subprocess.check_output(["docker", "inspect", cid]))[0]
-cfg, host = c["Config"], c["HostConfig"]
-
-# the settings (the tunnel's token may be among them): a file only root reads
-env = [e for e in (cfg.get("Env") or []) if "\n" not in e]
-# cloudflared's metrics page must not listen on every address once it shares the host's network
-if not any(e.startswith("TUNNEL_METRICS=") for e in env) and "--metrics" not in (cfg.get("Cmd") or []):
-    env.append("TUNNEL_METRICS=127.0.0.1:20241")
-fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, "w") as f:
-    f.write("".join(e + "\n" for e in env))
-
-# the names under which the tunnel reached the hub inside the compose network now mean this machine
-names = {"hub"}
-project = (cfg.get("Labels") or {}).get("com.docker.compose.project")
-if project and cid != "-":
-    ids = subprocess.check_output(
-        ["docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=" + project]).split()
-    for other in ids:
-        o = json.loads(subprocess.check_output(["docker", "inspect", other.decode()]))[0]
-        if o["Id"] == c["Id"]:
-            continue
-        names.add(o["Name"].lstrip("/"))
-        service = (o["Config"].get("Labels") or {}).get("com.docker.compose.service")
-        if service:
-            names.add(service)
-
-args = ["/usr/bin/docker", "run", "--rm", "--name", "trommi-proxy", "--network", "host",
-        "--env-file", env_path]
-for name in sorted(names):
-    args += ["--add-host", name + ":127.0.0.1"]
-if cfg.get("User"):
-    args += ["--user", cfg["User"]]
-for bind in host.get("Binds") or []:
-    # what was mounted from the old stack's folder is mounted from where that folder moved to
-    if bind.startswith(root + "/"):
-        bind = moved + bind[len(root):]
-    args += ["-v", bind]
-entry = cfg.get("Entrypoint") or []
-if entry:
-    args += ["--entrypoint", entry[0]]
-args.append(c["Image"])
-args += entry[1:] + (cfg.get("Cmd") or [])
-
-
-def quote(a):
-    # systemd's own quoting: double quotes, with \ " escaped, % and $ doubled
-    a = a.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$")
-    return '"' + a + '"'
-
-
-unit = """# The tunnel (cloudflared) that carries hub.trommi.com to the hub on this machine. Written by hub/deploy/install.sh
-# from the container the old stack ran: the same image and settings, now on the host's network.
-[Unit]
-Description=Trommi tunnel (cloudflared)
-After=docker.service network-online.target
-Requires=docker.service
-Wants=network-online.target
-StartLimitIntervalSec=0
-
-[Service]
-ExecStartPre=-/usr/bin/docker rm -f trommi-proxy
-ExecStart=%s
-ExecStop=/usr/bin/docker stop trommi-proxy
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-""" % " ".join(quote(a) for a in args)
-fd = os.open(unit_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, "w") as f:
-    f.write(unit)
-PY
-}
-
-# Arguments: none. Standard input: three lines (key id, team id, topics), then the key in PEM form.
+# Standard input: three lines (key id, team id, topics), then the key in PEM form.
 remote_secrets() {
   cat <<'REMOTE'
 set -euo pipefail
@@ -517,27 +408,22 @@ cat > "$ETC/apns-key.p8.part"
 grep -q 'BEGIN PRIVATE KEY' "$ETC/apns-key.p8.part" || { rm -f "$ETC/apns-key.p8.part"; echo "the key did not arrive" >&2; exit 1; }
 chown root:trommi "$ETC/apns-key.p8.part"; chmod 0640 "$ETC/apns-key.p8.part"
 mv -f "$ETC/apns-key.p8.part" "$ETC/apns-key.p8"
-{
-  echo "# Push credentials of the hub. Written by hub/deploy/install.sh secrets from the 1Password Environment."
-  echo "APPLE_APNS_KEY_FILE=$ETC/apns-key.p8"
-  echo "APPLE_APNS_KEY_ID=$key_id"
-  echo "APPLE_TEAM_ID=$team_id"
-  echo "APPLE_APNS_TOPIC=$topics"
+# other lines of the file (set by hand, such as the admin page's password hash) are kept
+{ grep -v '^APPLE_\|^# Push credentials' "$ETC/hub-secrets.env" 2>/dev/null || true
+  printf '%s\n' "# Push credentials of the hub. Written by hub/deploy/install.sh secrets from the 1Password Environment." \
+    "APPLE_APNS_KEY_FILE=$ETC/apns-key.p8" "APPLE_APNS_KEY_ID=$key_id" "APPLE_TEAM_ID=$team_id" "APPLE_APNS_TOPIC=$topics"
 } > "$ETC/hub-secrets.env.part"
 mv -f "$ETC/hub-secrets.env.part" "$ETC/hub-secrets.env"
 echo "written: $ETC/apns-key.p8 (root and trommi read it), $ETC/hub-secrets.env (root only)"
-if systemctl is-active --quiet trommi-hub.service; then
-  systemctl restart trommi-hub.service
-  sleep 2
-  curl -fsS --max-time 5 http://127.0.0.1:8790/healthz >/dev/null || { echo "the hub is NOT well after the restart: journalctl -u trommi-hub -n 30" >&2; exit 1; }
-  journalctl -u trommi-hub.service -n 20 --no-pager > /run/trommi-hub-start.log 2>/dev/null || true
-  if grep -q '"apns":true' /run/trommi-hub-start.log; then
-    echo "the hub was restarted and reports: push to Apple is on"
-  else
-    echo "the hub was restarted and is well, but does NOT report push to Apple as on: journalctl -u trommi-hub -n 30" >&2; exit 1
-  fi
+systemctl is-active --quiet trommi-hub.service || { echo "the hub does not run yet; it reads these when it starts"; exit 0; }
+systemctl restart trommi-hub.service
+sleep 2
+curl -fsS --max-time 5 http://127.0.0.1:8790/healthz >/dev/null || { echo "the hub is NOT well after the restart: journalctl -u trommi-hub -n 30" >&2; exit 1; }
+journalctl -u trommi-hub.service -n 20 --no-pager > /run/trommi-hub-start.log 2>/dev/null || true
+if grep -q '"apns":true' /run/trommi-hub-start.log; then
+  echo "SECRETS SENT: the hub was restarted and reports that push to Apple is on"
 else
-  echo "the hub does not run yet; it reads these when it starts"
+  echo "the hub was restarted and is well, but does NOT report push to Apple as on: journalctl -u trommi-hub -n 30" >&2; exit 1
 fi
 REMOTE
 }
@@ -553,15 +439,43 @@ inventory() {
     remote_inventory | "${SSH[@]}" 'bash -s'
   } > "$out" || die "the server could not be read (ssh to $HUB_SSH port $HUB_SSH_PORT)"
   cat "$out"
-  say "Written to $PWD/$out. It holds no secret (values of tokens, keys and passwords are cut out): send it back as it is."
+  say "INVENTORY WRITTEN: $PWD/$out (settings by name only, no values). Read it once before you send it."
+}
+
+# Fetches the release into $1 and proves it: the signature of the manifest, then every file against the manifest.
+fetch_release() {
+  stage=$1 tag=$2
+  for name in manifest.json manifest.json.sig "trommi-hub-$TARGET" "trommi-hub-updater-$TARGET" trommi-hub.service; do
+    curl -fsSL --max-time 300 -o "$stage/$name" "https://github.com/$REPOSITORY/releases/download/$tag/$name" \
+      || die "could not fetch $name of $tag from GitHub"
+  done
+  mkdir "$stage/release" && cp "$REPO/release/sign.sh" "$REPO/release/public-key.pem" "$stage/release/"
+  sh "$stage/release/sign.sh" verify "$stage/manifest.json" || die "the signature of $tag is not good"
+  rm -rf "$stage/release"
+  python3 - "$stage" "$tag" "$REPOSITORY" "$TARGET" <<'PY' || die "the release $tag is not what its manifest says"
+import hashlib, json, os, sys
+stage, tag, repository, target = sys.argv[1:5]
+m = json.load(open(os.path.join(stage, "manifest.json")))
+assert m["product"] == "trommi-hub" and m["repository"] == repository, "another product or repository"
+assert m["tag"] == tag and tag == "hub-v%d" % m["version"], "another release"
+for name in ("trommi-hub-" + target, "trommi-hub-updater-" + target, "trommi-hub.service"):
+    entries = [a for a in m["assets"] if a["name"] == name]
+    assert len(entries) == 1, "the manifest does not name exactly one " + name
+    data = open(os.path.join(stage, name), "rb").read()
+    assert len(data) == entries[0]["size"] and hashlib.sha256(data).hexdigest() == entries[0]["sha256"], name + " is not the file the manifest names"
+    print(name + ": as the manifest says")
+PY
 }
 
 install_() {
-  for t in ssh scp gh openssl sha256sum python3; do command -v "$t" >/dev/null || die "$t is needed on this laptop"; done
+  for t in ssh scp curl openssl sha256sum python3; do command -v "$t" >/dev/null || die "$t is needed on this laptop"; done
   tag=${1:-}
   if [ -z "$tag" ]; then
     say "Find the newest hub release of $REPOSITORY"
-    tag=$(gh release list --repo "$REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' | grep -E '^hub-v[1-9][0-9]*$' | sort -t v -k 2 -n | tail -1) || true
+    tag=$(curl -fsSL --max-time 30 "https://api.github.com/repos/$REPOSITORY/releases?per_page=100" | python3 -c '
+import json, re, sys
+tags = [r["tag_name"] for r in json.load(sys.stdin) if not r["draft"] and re.fullmatch(r"hub-v[1-9][0-9]*", r["tag_name"])]
+print(max(tags, key=lambda t: int(t[5:])) if tags else "")') || die "GitHub could not be asked for the releases"
     [ -n "$tag" ] || die "no hub release found in $REPOSITORY (the build on main publishes hub-v<N>)"
   fi
   printf '%s' "$tag" | grep -Eq '^hub-v[1-9][0-9]{0,11}$' || die "not a hub release: $tag"
@@ -569,99 +483,77 @@ install_() {
   stage=$(mktemp -d)
   trap 'rm -rf "$stage"' EXIT
   say "Fetch $tag from GitHub and check it against release/public-key.pem"
-  gh release download "$tag" --repo "$REPOSITORY" --dir "$stage"
-  cp "$REPO/release/public-key.pem" "$stage/public-key.pem"
-  mkdir "$stage/release" && cp "$REPO/release/sign.sh" "$REPO/release/public-key.pem" "$stage/release/"
-  sh "$stage/release/sign.sh" verify "$stage/manifest.json"
-  sh "$stage/release/sign.sh" files "$stage/manifest.json"
-  rm -rf "$stage/release"
-  grep -q "\"product\": \"trommi-hub\"" "$stage/manifest.json" || die "the manifest is not a hub's"
-  grep -q "\"repository\": \"$REPOSITORY\"" "$stage/manifest.json" || die "the manifest is of another repository"
-  grep -q "\"tag\": \"$tag\"" "$stage/manifest.json" || die "the manifest is of another release"
-  for f in "trommi-hub-$TARGET" "trommi-hub-updater-$TARGET" trommi-hub.service; do
-    grep -q "\"name\": \"$f\"" "$stage/manifest.json" || die "the manifest does not name $f"
-  done
-  cp "$HERE/trommi-hub-updater.service" "$HERE/updater-prestart.sh" "$stage/"
-  proxy_unit_py > "$stage/proxy-unit.py"
+  fetch_release "$stage" "$tag"
+  cp "$REPO/release/public-key.pem" "$HERE/trommi-hub-updater.service" "$HERE/updater-prestart.sh" "$stage/"
   { printf 'TARGET=%q\nREPOSITORY=%q\n' "$TARGET" "$REPOSITORY"; remote_install; } > "$stage/install-remote.sh"
   (cd "$stage" && sha256sum -- * > SHA256SUMS)
 
   say "Copy the checked files to $HUB_SSH"
-  remote_stage="/root/trommi-install-$tag"
-  "${SSH[@]}" "rm -rf '$remote_stage' && mkdir -m 0700 '$remote_stage'"
-  scp -q -P "$HUB_SSH_PORT" -o StrictHostKeyChecking=accept-new -o ControlPath=none "$stage"/* "$HUB_SSH:$remote_stage/"
+  remote_stage=$("${SSH[@]}" 'mktemp -d /root/trommi-install.XXXXXX')
+  case "$remote_stage" in /root/trommi-install.*) ;; *) die "the server gave no folder to copy into" ;; esac
+  scp -q -P "$HUB_SSH_PORT" "${SSH_OPTIONS[@]}" "$stage"/* "$HUB_SSH:$remote_stage/"
 
   say "Install on $HUB_SSH (every step is printed before it is taken)"
-  # the token, if any, travels on standard input: never on a command line
-  printf '%s\n' "${TROMMI_RELEASE_TOKEN:-}" | "${SSH[@]}" "bash '$remote_stage/install-remote.sh' '$tag' '$remote_stage'" \
-    || die "the installation did not finish; what the server printed above says where it stopped and what runs now. Running this script again is safe."
+  "${SSH[@]}" "bash '$remote_stage/install-remote.sh' '$tag' '$remote_stage'" \
+    || die "the installation did not finish; the server's last lines above say where it stopped and what runs now. Running install again is safe."
 
-  say "From this laptop: the hub's public address"
-  curl -fsS --max-time 10 https://hub.trommi.com/healthz && echo
   cat <<EOF
 
-Installed. Next:
-  1. hub/deploy/install.sh secrets      (under op run, see the head of this script): push to Apple
-  2. set the repository variable HUB_SERVER_READY to true: from then on every hub build on main is delivered
-Which hub and which updater run:  ssh -p $HUB_SSH_PORT $HUB_SSH trommi-hub-updater status
+Next:
+  1. op run --environment <hub production environment id> -- hub/deploy/install.sh secrets     (push to Apple)
+  2. nothing else: from now on every hub build on main is delivered by itself
+Which hub and which updater run:   ssh -p $HUB_SSH_PORT $HUB_SSH trommi-hub-updater status
+Back to the old stack:             hub/deploy/install.sh back
 EOF
+}
+
+back() {
+  say "Put the old stack back on $HUB_SSH"
+  remote_back | "${SSH[@]}" 'bash -s' || die "the old stack does not run; see above"
+  say "BACK: the old stack runs again; the new installation was stopped and kept."
 }
 
 secrets() {
   for name in APPLE_APNS_KEY APPLE_APNS_KEY_ID APPLE_TEAM_ID APPLE_APNS_TOPIC; do
     [ -n "${!name:-}" ] || die "$name is not set; run this under: op run --environment <hub production environment id> -- $0 secrets"
   done
-  for name in APPLE_APNS_KEY_ID APPLE_TEAM_ID APPLE_APNS_TOPIC; do
-    case "${!name}" in *[!A-Za-z0-9.,_-]*) die "$name holds characters that do not belong there" ;; esac
+  topics=$(printf '%s' "$APPLE_APNS_TOPIC" | tr -d ' ')
+  for value in "$APPLE_APNS_KEY_ID" "$APPLE_TEAM_ID" "$topics"; do
+    case "$value" in *[!A-Za-z0-9.,_-]*) die "one of the three short push settings holds characters that do not belong there" ;; esac
   done
   # the key may have lost its line breaks on the way: put it back into PEM form
   body=$(printf '%s' "$APPLE_APNS_KEY" | sed -e 's/\\n/ /g' -e 's/-----[A-Z ]*-----//g' | tr -d ' \n\r\t')
   key=$(printf -- '-----BEGIN PRIVATE KEY-----\n%s\n-----END PRIVATE KEY-----\n' "$(printf '%s' "$body" | fold -w 64)")
   printf '%s\n' "$key" | openssl pkey -noout 2>/dev/null || die "APPLE_APNS_KEY is not readable as a private key"
-  say "Send the four push settings to $HUB_SSH (names only are shown: APPLE_APNS_KEY, APPLE_APNS_KEY_ID, APPLE_TEAM_ID, APPLE_APNS_TOPIC)"
-  topics=$(printf '%s' "$APPLE_APNS_TOPIC" | tr -d ' ')
-  script=$(remote_secrets)
-  printf '%s\n%s\n%s\n%s\n' "$APPLE_APNS_KEY_ID" "$APPLE_TEAM_ID" "$topics" "$key" | "${SSH[@]}" "bash -c $(printf '%q' "$script")"
+  say "Send the four push settings to $HUB_SSH (only their names are ever shown)"
+  # the values travel on standard input, the program as the command: nothing secret is on a command line
+  printf '%s\n%s\n%s\n%s\n' "$APPLE_APNS_KEY_ID" "$APPLE_TEAM_ID" "$topics" "$key" | "${SSH[@]}" "bash -c $(printf '%q' "$(remote_secrets)")"
 }
 
-# Checks this script without a server: the programs it sends parse, and the tunnel unit is written as expected.
-selftest() {
+# Checks this script without a server (the build runs it): the programs it sends parse and pass shellcheck, and the
+# inventory's second net catches what it should.
+check() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
-  remote_inventory > "$tmp/inventory.sh" && bash -n "$tmp/inventory.sh"
-  remote_install > "$tmp/install.sh" && bash -n "$tmp/install.sh"
-  remote_secrets > "$tmp/secrets.sh" && bash -n "$tmp/secrets.sh"
+  remote_inventory > "$tmp/inventory.sh"; remote_install > "$tmp/install.sh"
+  remote_back > "$tmp/back.sh"; remote_secrets > "$tmp/secrets.sh"
+  for f in "$tmp"/*.sh; do bash -n "$f"; done
   if command -v shellcheck >/dev/null 2>&1; then
     # TARGET and REPOSITORY are put in front of the installation program when it is sent
-    shellcheck -s bash -S warning -e SC2154 "$tmp/inventory.sh" "$tmp/install.sh" "$tmp/secrets.sh"
+    shellcheck -s bash -S warning -e SC2154 "$tmp"/*.sh
   fi
-  proxy_unit_py > "$tmp/proxy-unit.py"
-  cat > "$tmp/inspect.json" <<'JSON'
-[{"Id":"abc","Name":"/trommi-cloudflared-1","Image":"sha256:0123","Config":{"Image":"cloudflare/cloudflared:latest",
-  "Env":["TUNNEL_TOKEN=not-a-real-token","PATH=/usr/bin"],"Entrypoint":["cloudflared","--no-autoupdate"],
-  "Cmd":["tunnel","run","--url","http://hub:8790/100%$x"],"User":"65532:65532","Labels":{}},
-  "HostConfig":{"Binds":["/srv/trommi/cf:/etc/cloudflared:ro","/var/lib/x:/x"],"NetworkMode":"trommi_default"}}]
-JSON
-  python3 "$tmp/proxy-unit.py" - /srv/trommi /srv/trommi-old "$tmp/proxy.env" "$tmp/proxy.service" < "$tmp/inspect.json"
-  [ "$(stat -c %a "$tmp/proxy.env")" = 600 ] && [ "$(stat -c %a "$tmp/proxy.service")" = 600 ]
-  grep -qx 'TUNNEL_TOKEN=not-a-real-token' "$tmp/proxy.env"
-  grep -qx 'TUNNEL_METRICS=127.0.0.1:20241' "$tmp/proxy.env"
-  if grep -q 'not-a-real-token' "$tmp/proxy.service"; then die "the tunnel's token would be written into the unit"; fi
-  # shellcheck disable=SC2016 # the text systemd is given, as it is
-  want='ExecStart="/usr/bin/docker" "run" "--rm" "--name" "trommi-proxy" "--network" "host" "--env-file" "'"$tmp"'/proxy.env" "--add-host" "hub:127.0.0.1" "--user" "65532:65532" "-v" "/srv/trommi-old/cf:/etc/cloudflared:ro" "-v" "/var/lib/x:/x" "--entrypoint" "cloudflared" "sha256:0123" "--no-autoupdate" "tunnel" "run" "--url" "http://hub:8790/100%%$$x"'
-  grep -qxF "$want" "$tmp/proxy.service" || { grep '^ExecStart=' "$tmp/proxy.service"; die "the tunnel unit is not as expected"; }
-  # what the inventory cuts out
   redact=$(sed -n '/^redact() {$/,/^}$/p' "$tmp/inventory.sh")
-  out=$(printf '%s\n' 'TUNNEL_TOKEN=abc' '  command: tunnel run --token eyJhIjoiMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwIn0' 'image: x' 'password: "p"' | bash -c "$redact; redact")
-  case "$out" in *abc*|*eyJ*|*'"p"'*) die "the inventory would show a secret" ;; esac
+  out=$(printf '%s\n' 'TUNNEL_TOKEN=abc' 'run --token eyJhIjoiMTIz' '"ADMIN_PASSWORD_HASH": "short"' 'image: x' | bash -c "$redact; redact")
+  case "$out" in *abc*|*eyJ*|*short*) die "the inventory would show a secret" ;; esac
   printf '%s\n' "$out" | grep -qx 'image: x' || die "the inventory cuts out too much"
-  echo "selftest: ok"
+  echo "check: ok"
 }
 
 case "${1:-}" in
   inventory) inventory ;;
   install) install_ "${2:-}" ;;
   secrets) secrets ;;
-  selftest) selftest ;;
-  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  back) back ;;
+  check) check ;;
+  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

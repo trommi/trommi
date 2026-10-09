@@ -17,17 +17,22 @@ openmls_rust_crypto = { workspace = true }
 openmls_basic_credential = { workspace = true }
 openmls_traits = { workspace = true }
 tls_codec = "=0.5.0"
+# The facade both bindings share, for the tests of the bindings (`bindings/`).
+trommi-core-swift = { path = "../core/swift" }
 # the hub and what its test clients need (tests/hub/…)
 trommi-hub = { path = "../hub" }
 # the hub's updater and what its tests sign with (tests/deploy/…)
 trommi-hub-updater = { path = "../hub/updater" }
 ed25519-dalek = "=2.2.0"
-tokio = { version = "=1.53.2", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util"] }
+tokio = { version = "=1.53.2", features = ["rt-multi-thread", "net", "sync", "time", "macros", "process", "io-util"] }
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 sha2 = "=0.10.9"
 chacha20poly1305 = "=0.10.1"
 aes-gcm = "=0.10.3"
 p256 = { version = "=0.13.2", features = ["ecdsa", "ecdh", "pkcs8", "pem"] }
+# The connector's tests (tests/connector/…): the crate itself, and what its end-to-end tests drive it with.
+trommi-connector = { path = "../connector" }
+reqwest = { version = "=0.12.28", default-features = false }
 
 [[test]]
 name = "core_groups_founding"
@@ -165,7 +170,9 @@ path = "core/join_invite.rs"
 name = "core_secrets"
 path = "core/secrets.rs"
 
-# ---- the hub's tests (tests/hub/…): the hub itself, and what its test clients need beside the above
+[[test]]
+name = "bindings_facade"
+path = "bindings/facade.rs"
 
 [[test]]
 name = "hub_delivery"
@@ -214,6 +221,34 @@ path = "hub/jobs.rs"
 [[test]]
 name = "hub_busy"
 path = "hub/busy.rs"
+
+[[test]]
+name = "connector_e2e"
+path = "connector/e2e.rs"
+
+[[test]]
+name = "connector_tools"
+path = "connector/tools.rs"
+
+[[test]]
+name = "connector_line"
+path = "connector/line.rs"
+
+[[test]]
+name = "connector_mirror"
+path = "connector/mirror.rs"
+
+[[test]]
+name = "connector_trail"
+path = "connector/trail.rs"
+
+[[test]]
+name = "connector_html"
+path = "connector/html.rs"
+
+[[test]]
+name = "connector_store"
+path = "connector/store.rs"
 
 [[test]]
 name = "deploy_updater"
