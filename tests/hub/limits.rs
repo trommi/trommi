@@ -460,6 +460,21 @@ fn policies_set_by_configuration() {
     let hub = TestHub::start_with(&[("HUB_MIN_CLIENT", "1.0.1")]);
     hub.get("/v2/desk").refused(426, "client-too-old");
     assert_eq!(hub.get("/healthz").status, 200);
+    // HSTS with preload is prepared behind one switch, and off unless it is thrown
+    let plain = TestHub::start();
+    assert_eq!(
+        plain.get("/healthz").header("strict-transport-security"),
+        None
+    );
+    let strict = TestHub::start_with(&[("HUB_HSTS", "on")]);
+    for path in ["/healthz", "/v2/desk"] {
+        assert_eq!(
+            strict.get(path).header("strict-transport-security"),
+            Some("max-age=63072000; includeSubDomains; preload")
+        );
+    }
+    // the health route names the running version
+    assert_eq!(plain.get("/healthz").ok()["commit"], "dev");
     // the login throttle can be switched off: then only the per-address limit holds
     let hub = TestHub::start_with(&[("HUB_LOGIN_THROTTLE", "off")]);
     for _ in 0..3 {
