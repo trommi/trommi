@@ -17,10 +17,11 @@
 // script-src 'self' 'wasm-unsafe-eval'.
 import initWasm, * as raw from './trommi_core_wasm.js'
 
-/** A refusal or a finding: `code` is its stable code, `message` is for a log and never holds key material. */
+/** A refusal or a finding: `code` is its stable code, `message` is for a log and never holds key material. For the
+ *  code `storage`, `cause` is what the store threw: a StoreConflict when another owner has, or wrote to, the state. */
 export class TrommiError extends Error {
-  constructor(code, message) {
-    super(message ?? code)
+  constructor(code, message, cause) {
+    super(message ?? code, cause === undefined ? undefined : { cause })
     this.name = 'TrommiError'
     this.code = code
   }
@@ -294,9 +295,9 @@ export class Device {
 
 function storageError(error) {
   if (error instanceof TrommiError) return error
-  if (error instanceof StoreConflict) return new TrommiError('storage', `storage: ${error.message}`)
   // The store's own words, as the core reports a store's failure. A store never puts a stored value into them.
-  return new TrommiError('storage', `storage: ${error instanceof Error ? error.message : 'the store failed'}`)
+  // What it threw goes along as the cause: `error.cause instanceof StoreConflict` is "open somewhere else".
+  return new TrommiError('storage', `storage: ${error instanceof Error ? error.message : 'the store failed'}`, error)
 }
 
 async function closeStore(store) {
