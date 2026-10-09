@@ -2239,8 +2239,11 @@ dependencies = [
 name = "trommi-core-swift"
 version = "0.0.0"
 dependencies = [
+ "js-sys",
  "trommi-core",
  "uniffi",
+ "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]
@@ -2263,6 +2266,7 @@ dependencies = [
  "serde_json",
  "tls_codec",
  "trommi-core",
+ "trommi-core-swift",
 ]
 
 [[package]]
