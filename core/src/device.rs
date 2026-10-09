@@ -780,7 +780,11 @@ impl<S: Storage> Device<S> {
             let context = group.public_group().group_context();
             let (stored, kind) =
                 profile::kind_of_context(context).map_err(|_| damaged("a group"))?;
-            if stored != id || rules::leaves_of(group.members()).is_err() {
+            // The leaf OpenMLS holds as this device's own is the one with this device's key.
+            let own_leaf = group
+                .own_leaf_node()
+                .is_some_and(|leaf| leaf.signature_key().as_slice() == self.id.as_bytes());
+            if stored != id || !own_leaf || rules::leaves_of(group.members()).is_err() {
                 return Err(damaged("a group"));
             }
             if let (GroupKind::Session(session), Some(meta)) =
