@@ -566,8 +566,11 @@ fn a_takeover_races_with_a_helper_founding() {
     // Tried again on the new room state it is refused for good: the device is no agent device any more.
     settle(&hub, &mut old);
     let packages = hub.claim(&[a.id()]).unwrap();
-    old.found_helper(&parent, &packages, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut old), [Error::BadCommit]);
+    assert_eq!(
+        old.found_helper(&parent, &packages, now()),
+        Err(Error::BadCommit)
+    );
+    assert!(old.outbox().is_empty());
     let package = new.key_package(now()).unwrap();
     a.clean_session(
         &main,

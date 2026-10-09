@@ -874,6 +874,36 @@ pub(crate) fn signer_of(public: &PublicGroup, group_info: &[u8]) -> Result<Devic
     }
 }
 
+/// Reads a Commit against a group's public state without following it: OpenMLS verifies it there as it does
+/// for any observer, and the result is described as for every verifier. `public` are the entries of
+/// [`provider::public_entries`]. For a device that judges its own Commit, from the bytes it will post, by the
+/// rules a receiver applies. Returns the facts and the group's leaves before the Commit.
+pub(crate) fn read_commit(
+    public: MlsEntries,
+    group: &GroupId,
+    commit: &[u8],
+) -> Result<(CommitFacts, BTreeSet<DeviceId>), Error> {
+    provider::validate_entries(&public)?;
+    let provider = Provider::without_entropy(public)?;
+    let id = openmls::prelude::GroupId::from_slice(group.as_bytes());
+    let held = PublicGroup::load(provider.storage(), &id)
+        .map_err(mls_fault)?
+        .ok_or_else(damaged)?;
+    let message = rules::parse_commit(commit)?;
+    let leaves = rules::leaves_of(held.members())?;
+    let processed = held
+        .process_message(provider.crypto(), message)
+        .map_err(|_| Error::BadCommit)?;
+    let ProcessedMessageContent::StagedCommitMessage(staged) = processed.content() else {
+        return Err(Error::BadCommit);
+    };
+    let facts = rules::commit_facts(group, &leaves, &processed, staged)?;
+    Ok((
+        facts,
+        leaves.into_iter().map(|(_, device)| device).collect(),
+    ))
+}
+
 /// A main session's agent leaf under `room`: its leaf that is not a human device. A group with several has no
 /// agent leaf the rules would name.
 pub(crate) fn seat(

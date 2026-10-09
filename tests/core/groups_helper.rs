@@ -274,9 +274,12 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
     settle(&hub, &mut h1);
     sync_ok(&hub, &mut b);
     let packages = hub.claim(&humans).unwrap();
-    other.found_helper(&parent, &packages, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut other), [Error::BadCommit]);
-    assert!(other.groups().unwrap().is_empty());
+    // It is no leaf of the main session and cannot tell who the opener is: it founds nothing.
+    assert_eq!(
+        other.found_helper(&parent, &packages, now()),
+        Err(Error::RoomBehind)
+    );
+    assert!(other.groups().unwrap().is_empty() && other.outbox().is_empty());
     // A founding that leaves a human device out is not built.
     let one = hub.claim(&[a.id()]).unwrap();
     assert_eq!(
@@ -285,10 +288,10 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
     );
     // A helper session hangs under a live main session of the room.
     let packages = hub.claim(&humans).unwrap();
-    agent
-        .found_helper(&SessionId::new([9; 16]), &packages, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
+    assert_eq!(
+        agent.found_helper(&SessionId::new([9; 16]), &packages, now()),
+        Err(Error::RoomBehind)
+    );
 
     // The opener removes no human leaf: it builds no such Commit.
     let mut h2 = helper_device(&hub, &main);
@@ -299,17 +302,19 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
     );
     // The opener adds no enrolled agent device and no human device.
     let of_other = other.key_package(now()).unwrap();
-    agent
-        .add_to_session(&group, &other.id(), &of_other, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
+    assert_eq!(
+        agent.add_to_session(&group, &other.id(), &of_other, now()),
+        Err(Error::BadCommit)
+    );
     let mut c = new_device();
     add_human(&mut hub, &mut a, &mut c);
     settle(&hub, &mut agent);
     settle(&hub, &mut h1);
     let of_c = c.key_package(now()).unwrap();
-    agent.add_to_session(&group, &c.id(), &of_c, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
+    assert_eq!(
+        agent.add_to_session(&group, &c.id(), &of_c, now()),
+        Err(Error::BadCommit)
+    );
     // A human device adds it (5.2.7).
     a.add_to_session(&group, &c.id(), &of_c, now()).unwrap();
     post_ok(&mut hub, &mut a);
@@ -317,14 +322,15 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
     settle(&hub, &mut h1);
 
     // A helper device commits nothing.
-    h1.add_to_session(&group, &h2.id(), &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut h1), [Error::BadCommit]);
+    assert_eq!(
+        h1.add_to_session(&group, &h2.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
     // The opener commits in no other group: not in its own main session.
-    agent
-        .add_to_session(&main, &h2.id(), &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
+    assert_eq!(
+        agent.add_to_session(&main, &h2.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
     assert_eq!(hub.epoch(&main), Some(1));
 
     // Seven helper devices, and no eighth.
@@ -337,10 +343,10 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
         post_ok(&mut hub, &mut agent);
     }
     assert_eq!(hub.observer(&group).unwrap().leaves().unwrap().len(), 11);
-    agent
-        .add_to_session(&group, &h2.id(), &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::TooMany]);
+    assert_eq!(
+        agent.add_to_session(&group, &h2.id(), &package, now()),
+        Err(Error::TooMany)
+    );
     assert_eq!(hub.epoch(&group), Some(8));
     assert!(agent.outbox().is_empty() && !agent.group(&group).unwrap().pending);
 }
@@ -362,8 +368,11 @@ fn a_main_session_has_at_most_thirty_two_live_helper_sessions() {
     }
     assert!(groups.iter().all(|group| hub.epoch(group) == Some(1)));
     let packages = hub.claim(&[a.id(), b.id()]).unwrap();
-    agent.found_helper(&parent, &packages, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::TooMany]);
+    assert_eq!(
+        agent.found_helper(&parent, &packages, now()),
+        Err(Error::TooMany)
+    );
+    assert!(agent.outbox().is_empty());
     assert_eq!(agent.groups().unwrap().len(), 33);
 
     // An archived helper session is not live: its place is free again.
@@ -412,22 +421,23 @@ fn after_a_takeover_the_helper_sessions_are_stale_until_cleaned_with_the_new_ope
         .unwrap();
     assert_eq!(post_refused(&mut hub, &mut agent), [Error::RoomBehind]);
     settle(&hub, &mut agent);
-    agent
-        .found_helper(&main.session_id().unwrap(), &packages, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
+    assert_eq!(
+        agent.found_helper(&main.session_id().unwrap(), &packages, now()),
+        Err(Error::BadCommit)
+    );
 
     // The helper session cannot be given its new opener before the main session has it.
     let package = new.key_package(now()).unwrap();
     assert_eq!(a.group(&group).unwrap().disallowed, [agent.id()]);
-    a.clean_session(
-        &group,
-        &cuts_for(&a, &group),
-        Some((&new.id(), &package)),
-        now(),
-    )
-    .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.clean_session(
+            &group,
+            &cuts_for(&a, &group),
+            Some((&new.id(), &package)),
+            now(),
+        ),
+        Err(Error::BadCommit)
+    );
 
     // (b) The takeover in the main session, (c) the same in the helper session.
     let of_main = new.key_package(now()).unwrap();
@@ -525,13 +535,15 @@ fn while_the_seat_is_empty_a_helper_session_waits_without_an_opener() {
     let stranger = trommi_core::device::key_package_info(&package)
         .unwrap()
         .device;
-    a.add_to_session(&group, &stranger, &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.add_to_session(&group, &stranger, &package, now()),
+        Err(Error::BadCommit)
+    );
     settle(&hub, &mut h1);
-    h1.add_to_session(&group, &stranger, &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut h1), [Error::BadCommit]);
+    assert_eq!(
+        h1.add_to_session(&group, &stranger, &package, now()),
+        Err(Error::BadCommit)
+    );
     a.update(&group, true, now()).unwrap().unwrap();
     post_ok(&mut hub, &mut a);
     assert_eq!(hub.epoch(&group), Some(3));

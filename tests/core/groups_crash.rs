@@ -434,20 +434,36 @@ fn a_founding_survives_a_crash_and_a_refusal_leaves_nothing() {
         );
     }
 
+    // The agent device already has its session: a second founding for it is not built.
+    let packages = run.hub.claim(&needed).unwrap();
+    assert_eq!(
+        run.device.found_session(&agent_id, &packages, now()),
+        Err(Error::BadCommit)
+    );
+    run.memory_is_what_is_stored();
+
     // A founding the hub refuses, reported after a crash: the group and its keys are gone.
     let mut second = new_device();
     enrol(&mut run.hub, &mut run.device, &mut second);
-    let packages = run.hub.claim(&needed).unwrap();
+    publish_some(&mut run.hub, &mut second, 1);
+    let second_id = second.id();
+    let packages = run.hub.claim(&[run.peer.id(), second_id]).unwrap();
     run.crash_after = Some(2);
-    // The agent device already has its session: this founding is refused.
     let refused = run.step(2, |_, device| {
-        device.found_session(&agent_id, &packages, now())
+        device.found_session(&second_id, &packages, now())
     });
     let refused = GroupId::session(run.room_group.room_id(), refused);
     assert!(run.device.content_key(&refused, 0).is_ok());
+    // The room goes on before the founding reaches the hub: it names a room epoch behind.
+    settle(&run.hub, &mut run.peer);
+    run.peer
+        .update(&run.room_group, true, now())
+        .unwrap()
+        .unwrap();
+    post_ok(&mut run.hub, &mut run.peer);
     assert_eq!(
         post_all(&mut run.hub, &mut run.device),
-        [Err(Error::BadCommit)]
+        [Err(Error::RoomBehind)]
     );
     assert_eq!(run.device.group(&refused).err(), Some(Error::NotFound));
     assert_eq!(run.device.content_key(&refused, 0), Err(Error::NoKey));
