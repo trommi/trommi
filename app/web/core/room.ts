@@ -225,7 +225,7 @@ export function roomsOn(env: RoomEnv): Rooms {
         // The new code is made, and the account's copies of it (or the person's own copy: the caller's `account`
         // resolves once the code is on their screen), BEFORE the recovery is opened: the hub locks the room for
         // ten minutes from then on, and nothing of a recovery is posted for a code nobody holds.
-        const served = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
+        const { served, session_groups } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
         const plan = await held.prepareRecovery(code, served)
         let copies: Uint8Array
         try { copies = accountCopiesBytes(o.account ? await o.account(plan.newCode) as AccountCopies | null : null) } finally { plan.newCode.fill(0) }
@@ -233,13 +233,9 @@ export function roomsOn(env: RoomEnv): Rooms {
         // device VERIFIED it. A device that wrote nothing is cut at nothing; a chain is verified by the core
         // (`chainCut`, provisional: the binding refuses with `core-missing`, and so does this recovery then, since
         // cutting a chain unseen would take a person's notes and answers away).
-        // (a served room does not name its sessions' groups: they come in the order of the hub's list, main
-        // sessions first; a list that changed meanwhile fails the core's check of the chain)
-        const live = (await hub.roomGroups()).filter(g => g.live && g.kind !== 'room')
-        const sessionIds = [...live.filter(g => g.kind === 'main'), ...live.filter(g => g.kind === 'helper')].map(g => g.group)
         const cuts = []
         for (const removal of plan.removals) {
-          const group = [served.group, ...served.sessions][[room, ...sessionIds].findIndex(g => sameBytes(g, removal.group))]
+          const group = [served.group, ...served.sessions][[room, ...session_groups].findIndex(g => sameBytes(g, removal.group))]
           for (const gone of removal.devices) {
             const chain: Uint8Array[] = []
             for (let more = true; more;) {
@@ -258,7 +254,7 @@ export function roomsOn(env: RoomEnv): Rooms {
           await postAll(engine)
         } catch (e) { await hub.dropRecovery(recovery.recovery_id).catch(() => {}); throw e }
       } else {
-        const served = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
+        const { served } = await hub.servedRoom({ anchorOf: rows => core.recoveryAnchor(code, room, rows) })
         // (the sessions are joined one by one below; handed over here as well, a room with sessions is deeper than
         // the binding's copy of an argument goes, and it refuses the call with `bad-format`)
         await held.joinRoomWithCode(code, { ...served, sessions: [] }, Date.now())

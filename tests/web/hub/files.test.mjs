@@ -92,6 +92,8 @@ test('the same bytes again get the first answer; other bytes under the id are re
   const file_id = id(16), bytes = new Uint8Array(randomBytes(5000))
   const first = await hub.putFile(file_id, bytes)
   fake.faults.add({ method: 'PUT', path: `/v2/files/${txt(file_id)}`, drop: 'after' })
+  assert.deepEqual(await hub.putFile(file_id, bytes), first, 'an answer lost once: sent again at once')
+  fake.faults.add({ method: 'PUT', path: `/v2/files/${txt(file_id)}`, drop: 'after', times: 2 })
   await assert.rejects(hub.putFile(file_id, bytes), e => e.code === 'offline')
   assert.deepEqual(await hub.putFile(file_id, bytes), first)
   assert.equal(fake.state.rooms.get(txt(room_id)).files.size, 1)

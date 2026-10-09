@@ -284,7 +284,8 @@ test('servedRoom: what a device with the code needs, in the core\'s shape, from 
   room.recovery_keys.add(txt(key))
   const reader = client(fake, room_id, key)
   let asked = null
-  const served = await reader.servedRoom({ anchorOf: rows => { asked = rows; return { group: room_id, epoch: 2 } } })
+  const { served, session_groups } = await reader.servedRoom({ anchorOf: rows => { asked = rows; return { group: room_id, epoch: 2 } } })
+  assert.deepEqual(session_groups, [main_group, helper_group], 'the group of each session served, in that order')
   assert.equal(reader.role, 'recovery')
   assert.deepEqual(served.room, room_id)
   assert.deepEqual(served.group.founding, utf8('{}'))
