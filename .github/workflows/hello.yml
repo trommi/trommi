@@ -1,16 +1,12 @@
-# Placeholders for the three delivery paths that have no real deploy workflow yet. Each one proves that its
-# environment, its secrets and its target answer, and delivers nothing real:
-#   connector  signs a hello file with the release key and publishes it as a pre-release on GitHub
-#   hub        joins the tailnet as the CI and asks the server's deploy port
-#   ios        asks App Store Connect for the app record with the team key
-# Each job goes when its deploy workflow (deploy_connector.yml, deploy_hub.yml, deploy_ios.yml) is in.
+# A placeholder for the hub's delivery path until deploy_hub.yml is in: joins the tailnet as the CI and asks the
+# server's deploy port. It proves that the environment, the Tailscale trust and the policy fit, and delivers nothing.
 name: hello
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [.github/workflows/hello.yml, .github/hello/**, app/hello/**]
+    paths: [.github/workflows/hello.yml]
 
 permissions: {}
 
@@ -19,52 +15,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  connector:
-    name: Connector (signed pre-release)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment:
-      name: connector
-      url: ${{ steps.release.outputs.url }}
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install the 1Password CLI
-        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
-        with:
-          version: latest-beta
-      - name: Sign
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
-        run: |
-          set -eu
-          mkdir out
-          cp app/hello/connector/hello.txt out/
-          op run --environment "$OP_ENVIRONMENT_ID" -- sh .github/hello/sign.sh "$PWD/out"
-      - name: Check the signature with the public key of the repository
-        run: |
-          set -eu
-          cd out
-          openssl pkeyutl -verify -pubin -inkey ../release/public-key.pem -rawin -in SHA256SUMS -sigfile SHA256SUMS.sig
-          sha256sum -c SHA256SUMS
-      - name: Publish
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: hello-connector-${{ github.run_number }}
-        run: |
-          set -eu
-          gh release create "$TAG" out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
-            --title "Connector placeholder $GITHUB_RUN_NUMBER" \
-            --notes "A placeholder that proves the release path: a hello file, SHA256SUMS and its signature (release/public-key.pem)."
-          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "Published and signature checked: $url" >> "$GITHUB_STEP_SUMMARY"
-
   hub:
     name: Hub (reach the server over Tailscale)
     runs-on: ubuntu-24.04
@@ -102,28 +52,3 @@ jobs:
           else
             say "port 22 is closed to the CI, as the policy says"
           fi
-
-  ios:
-    name: iOS (App Store Connect answers)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    environment:
-      name: ios
-      deployment: false
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install the 1Password CLI
-        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
-        with:
-          version: latest-beta
-      - name: Ask App Store Connect for the app
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
-        run: |
-          set -euo pipefail
-          op run --environment "$OP_ENVIRONMENT_ID" -- python3 .github/hello/asc.py | tee -a "$GITHUB_STEP_SUMMARY"
