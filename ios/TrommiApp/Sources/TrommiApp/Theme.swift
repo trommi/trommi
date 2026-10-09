@@ -193,6 +193,19 @@ extension View {
     self.safeAreaBar(edge: .bottom, spacing: 0, content: content)
   }
 }
+/**
+ * The bottom padding of a floating glass control in a bottom bar, so that its lower edge lies `above` points over the
+ * screen's bottom edge, where the system's own floating bars lie: inside the home indicator's area, not stacked on top
+ * of it (negative on a Face ID phone: 34 pt of safe area there). A screen without that area: 8 pt over the edge.
+ */
+@MainActor func bottomSink(_ above: CGFloat) -> CGFloat {
+  #if canImport(UIKit)
+  let safe = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.bottom ?? 0
+  return safe > 0 ? above - safe : 8
+  #else
+  return 8
+  #endif
+}
 /** Put the keyboard away (a tap in the content, as Messages does). */
 @MainActor func hideKeyboard() {
   #if canImport(UIKit)
