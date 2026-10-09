@@ -1,5 +1,0 @@
-{
-  "board": { "port": 8790, "turbo": true, "base": "" },
-  "retention_days": 30,
-  "speech": { "enabled": false }
-}
