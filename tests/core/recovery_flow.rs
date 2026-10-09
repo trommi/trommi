@@ -1747,32 +1747,18 @@ fn first_contact_verifies_a_helper_session_from_its_founding() {
     let mut w = world(true);
     w.write_epochs(1);
     let served = trommi_tests::fetch_group(&w.hub, &w.side);
-    for device in [&w.a, &w.b] {
-        assert_eq!(
-            served.served(|served| device.verify_founding(&w.side, served)),
-            Ok(())
-        );
-    }
-    // The log of another group, a log cut short, a founding that is not this group's, a Commit left out.
+    // The log of another group, a log cut short, a founding that is not this group's, a Commit left out:
+    // none arrives at the state the device stands in, and none closes the group.
     let other = trommi_tests::fetch_group(&w.hub, &w.main);
     assert_eq!(
         other.served(|served| w.a.verify_founding(&w.side, served)),
         Err(Error::BadGroup)
     );
     let mut short = served.clone();
-    short.commits.pop();
+    short.commits.clear();
     assert_eq!(
         short.served(|served| w.a.verify_founding(&w.side, served)),
         Err(Error::BadGroup)
-    );
-    short.current = w
-        .hub
-        .group_info_at(&w.side, w.hub.epoch(&w.side).unwrap() - 1)
-        .unwrap()
-        .clone();
-    assert_eq!(
-        short.served(|served| w.a.verify_founding(&w.side, served)),
-        Err(Error::GroupBehind)
     );
     let mut grafted = served.clone();
     grafted.founding = other.founding.clone();
@@ -1781,11 +1767,32 @@ fn first_contact_verifies_a_helper_session_from_its_founding() {
         Err(Error::BadGroup)
     );
     let mut holed = served.clone();
-    holed.commits.remove(1);
+    holed.commits.remove(0);
     assert_eq!(
         holed.served(|served| w.a.verify_founding(&w.side, served)),
         Err(Error::BadGroup)
     );
+    assert!(w.a.findings().unwrap().is_empty());
+    assert!(!w.a.group_past(&w.side).unwrap().unwrap().learned);
+    assert!(w.a.content_key(&w.side, 1).is_ok());
+    // A device that came to the room later learns the room's past first, then the main session's.
+    assert_eq!(
+        served.served(|served| w.b.verify_founding(&w.side, served)),
+        Err(Error::RoomBehind)
+    );
+    trommi_tests::learn(&w.hub, &mut w.b, &w.room).unwrap();
+    assert_eq!(
+        served.served(|served| w.b.verify_founding(&w.side, served)),
+        Err(Error::GroupBehind)
+    );
+    trommi_tests::learn(&w.hub, &mut w.b, &w.main).unwrap();
+    for device in [&mut w.a, &mut w.b] {
+        assert_eq!(
+            served.served(|served| device.verify_founding(&w.side, served)),
+            Ok(())
+        );
+        assert!(device.group_past(&w.side).unwrap().unwrap().learned);
+    }
     // A device whose record of the room begins after the founding cannot tell, and says so.
     let mut late = new_device();
     add_human(&mut w.hub, &mut w.a, &mut late);

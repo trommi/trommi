@@ -46,6 +46,7 @@ use crate::mls::rules::{
 use crate::recovery::{
     self, AuthMessage, CheckedRoom, KeyContext, MacKeys, PublicRules, RecoveryJoin, RecoveryKeys,
     RecoveryMac, RecoveryPublic, Replacement, SealedKey, Sealing, ServedGroup, ServedRoom, Taken,
+    Walked,
 };
 use crate::store::{self, table, Batch, Entry, OutboxEntry, OutboxKind, Storage, StorageError};
 use openmls::group::MlsGroup;
@@ -76,6 +77,7 @@ const SUB_UNCONFIRMED: u8 = 1;
 const SUB_UNBOUND: u8 = 6;
 mod content;
 mod facts;
+mod history;
 mod invite;
 
 pub use content::{
@@ -83,6 +85,7 @@ pub use content::{
     RegisterChange, Sealed, HEADS_EVERY_MS,
 };
 pub use facts::Finding;
+pub use history::{GroupPast, Learned};
 pub use invite::{
     InviteAccepted, InviteConfirmed, InviteOpened, InviteStep, JoinRequest, MAX_OPEN_INVITES,
 };
@@ -318,6 +321,11 @@ pub struct GroupSummary {
     pub archived: bool,
     /// Whether a Commit of this device waits for the hub's answer.
     pub pending: bool,
+    /// The epoch this device's own records of the group begin at: the one it joined at.
+    pub own_from: u64,
+    /// Whether it holds the group's epochs before that one too ([`Device::learn_history`]). While false,
+    /// an envelope of an earlier epoch is `group-behind`.
+    pub past_learned: bool,
 }
 
 /// The hub's answer to an accepted request.
@@ -1051,6 +1059,7 @@ impl<S: Storage> Device<S> {
             lost: false,
         };
         device.read_groups()?;
+        device.check_past()?;
         Ok(device)
     }
 
@@ -1266,6 +1275,7 @@ impl<S: Storage> Device<S> {
                 .into_iter()
                 .map(|(_, device)| device)
                 .collect();
+            let past = self.group_past(id)?;
             summaries.push(GroupSummary {
                 group: *id,
                 session: meta.session,
@@ -1274,6 +1284,8 @@ impl<S: Storage> Device<S> {
                 leaves,
                 archived: meta.archived,
                 pending: meta.pending.is_some(),
+                own_from: past.map_or(0, |past| past.from_epoch),
+                past_learned: past.is_none_or(|past| past.learned),
             });
         }
         Ok(summaries)
@@ -3071,6 +3083,7 @@ impl<S: Storage> Device<S> {
             }
             this.memory.record.room = Some(group.room_id());
             this.put_record(batch)?;
+            this.put_observed_origin(batch, &observer)?;
             this.memory.observers.insert(group, observer);
             Ok(())
         })
@@ -3092,6 +3105,7 @@ impl<S: Storage> Device<S> {
             // The device can tell how far the group is now: handed keys beyond that go.
             let beyond = observer.epoch()?.saturating_add(1);
             this.bound_handed_keys(batch, &group, beyond);
+            this.put_observed_origin(batch, &observer)?;
             this.memory.observers.insert(group, observer);
             Ok(())
         })
@@ -3139,6 +3153,7 @@ impl<S: Storage> Device<S> {
         keys: &RecoveryKeys,
         group_info: &[u8],
         seats: &[(u64, Option<DeviceId>)],
+        walked: &Walked,
         now_ms: u64,
     ) -> Result<Posting, Error> {
         let room = self.history()?.newest().clone();
@@ -3198,6 +3213,7 @@ impl<S: Storage> Device<S> {
             },
         );
         self.settle(batch, &id, &group, room.epoch)?;
+        self.record_walked(batch, &id, walked, now_ms)?;
         Ok(Posting {
             group: id,
             epoch: built.epoch,
@@ -3261,6 +3277,7 @@ impl<S: Storage> Device<S> {
         }
         let checked = recovery::check_room(keys, served)?;
         let missing_link = checked.missing_link;
+        let walked = checked.walked.clone();
         let unverified = checked
             .sessions
             .iter()
@@ -3269,7 +3286,7 @@ impl<S: Storage> Device<S> {
             .collect();
         let (posting, copy) = self.shadow(|this, batch| {
             this.take_checked(batch, keys, served.room, checked)?;
-            this.join_built(batch, keys, served.group.current, &[], now_ms)
+            this.join_built(batch, keys, served.group.current, &[], &walked, now_ms)
         })?;
         Ok(CodeJoin {
             outbox: vec![self.post_join(posting, copy)?],
@@ -3298,42 +3315,10 @@ impl<S: Storage> Device<S> {
             return Err(Error::Busy);
         }
         let seats = checked.observer.seats().to_vec();
-        let (posting, copy) = self
-            .shadow(|this, batch| this.join_built(batch, keys, served.current, &seats, now_ms))?;
+        let (posting, copy) = self.shadow(|this, batch| {
+            this.join_built(batch, keys, served.current, &seats, &checked.walked, now_ms)
+        })?;
         self.post_join(posting, copy)
-    }
-
-    /// First contact with a session group this device joined by Welcome (5.2.6): verifies the group as any
-    /// reader does, from its founding GroupInfo through its Commits against the room states this device holds
-    /// ([`recovery::check_session`]), so that a helper session is known to have been founded by its main
-    /// session's agent leaf of that time, and requires what the hub serves to end in the state this device
-    /// stands in. `bad-group` is the finding: the device then opens none of the session's content and removes
-    /// the offending leaves or leaves the group closed. `room-behind` when this device's record of the room
-    /// does not reach back to the session's founding, and `group-behind` when the device has not processed
-    /// the group up to what is served: neither is a finding.
-    pub fn verify_founding(&self, group: &GroupId, served: &ServedGroup<'_>) -> Result<(), Error> {
-        self.owner()?;
-        let room = self.memory.record.room.ok_or(Error::NoRoom)?;
-        if !self.is_leaf_of(group) || group.is_room() {
-            return Err(Error::NotFound);
-        }
-        let checked = recovery::check_session(served, &room, self.history()?, &self.known())
-            .map_err(|error| match error {
-                Error::WrongRecovery | Error::WrongRoom => Error::BadGroup,
-                other => other,
-            })?;
-        if checked.observer.group() != *group {
-            return Err(Error::BadGroup);
-        }
-        let own = group::load(&self.provider, group)?;
-        if checked.observer.epoch()? != own.epoch().as_u64() {
-            return Err(Error::GroupBehind);
-        }
-        // The state reached from the founding is this device's own: the GroupInfo that agrees with the one
-        // agrees with the other.
-        observer::signer_of(own.public_group(), served.current)
-            .map(|_| ())
-            .map_err(|_| Error::BadGroup)
     }
 
     /// Replaces the recovery code (8.6) as a human device that holds the current code `keys`: one request with
@@ -3442,16 +3427,22 @@ impl<S: Storage> Device<S> {
             .into_iter()
             .zip(served.sessions)
         {
-            sessions.push((session?.observer.seats().to_vec(), served.current));
+            let session = session?;
+            sessions.push((
+                session.observer.seats().to_vec(),
+                session.walked,
+                served.current,
+            ));
         }
+        let walked = checked.walked.clone();
         let room_group = GroupId::room(served.room);
         let (postings, copy) = self.shadow(|this, batch| {
             this.take_checked(batch, keys, served.room, checked)?;
             this.hold_mac(batch, replacement.keys.mac_key())?;
-            let mut postings =
-                vec![this.join_built(batch, keys, served.group.current, &[], now_ms)?];
-            for (seats, current) in &sessions {
-                postings.push(this.join_built(batch, keys, current, seats, now_ms)?);
+            let current = served.group.current;
+            let mut postings = vec![this.join_built(batch, keys, current, &[], &walked, now_ms)?];
+            for (seats, walked, current) in &sessions {
+                postings.push(this.join_built(batch, keys, current, seats, walked, now_ms)?);
             }
             // The room Commit: every other human device goes, and the code with them.
             let mut room = this.history()?.newest().clone();

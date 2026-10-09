@@ -502,6 +502,50 @@ impl Observer {
         Ok(self.public()?.group_context().epoch().as_u64())
     }
 
+    /// The group's GroupContext as it stands, in its TLS encoding. It carries the confirmed transcript hash,
+    /// which chains every Commit since the founding.
+    pub fn group_context(&self) -> Result<Vec<u8>, Error> {
+        self.public()?
+            .group_context()
+            .tls_serialize_detached()
+            .map_err(|_| Error::Internal("group context encoding"))
+    }
+
+    /// Puts what a walk from the group's founding verified before the state this observer started from in
+    /// front of its own record: the room's roles of the earlier epochs, or a main session's agent leaf over
+    /// that time. The caller has checked that the walk arrives at the state this observer started from.
+    pub(crate) fn prepend(
+        &mut self,
+        earlier_room: Option<&RoomHistory>,
+        earlier_seats: &[(u64, Option<DeviceId>)],
+    ) -> Result<(), Error> {
+        match &mut self.followed {
+            Followed::Room(history) => {
+                let earlier = earlier_room.ok_or(Error::Internal("room observer"))?;
+                let mut whole = earlier.clone();
+                for state in history
+                    .states()
+                    .filter(|state| state.epoch > earlier.newest().epoch)
+                {
+                    whole.record(state.clone())?;
+                }
+                *history = whole;
+                self.untaken_from = 0;
+            }
+            Followed::Session(record) => {
+                let mut seats = earlier_seats.to_vec();
+                for change in record.seats.iter().skip(1) {
+                    if seats.last().map(|(_, seat)| *seat) != Some(change.1) {
+                        seats.push(*change);
+                    }
+                }
+                record.seats = seats;
+                self.record_changed = true;
+            }
+        }
+        Ok(())
+    }
+
     /// The devices of the group's leaves.
     pub fn leaves(&self) -> Result<BTreeSet<DeviceId>, Error> {
         let leaves = rules::leaves_of(self.public()?.members())?;

@@ -18,9 +18,10 @@ use crate::error::Error;
 use crate::ids::SessionId;
 use crate::ids::{DeviceId, GroupId, Hash32, RoomId};
 use crate::mls::observer::{Context, Observer};
-use crate::mls::profile::{TrommiRoom, MAX_HUMAN_DEVICES_IN_RECOVERY, RECOVERY_KEY_LEN};
+use crate::mls::profile::{Cut, TrommiRoom, MAX_HUMAN_DEVICES_IN_RECOVERY, RECOVERY_KEY_LEN};
 use crate::mls::rules::{
-    self, JoinClaim, Parent, RecoveryRules, RoomHistory, RoomState, SealedKeyClaim, SessionFacts,
+    self, CommitFacts, JoinClaim, Parent, RecoveryRules, RoomHistory, RoomState, SealedKeyClaim,
+    SessionFacts,
 };
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1290,6 +1291,77 @@ pub struct ServedRoom<'a> {
     pub sessions: &'a [ServedGroup<'a>],
 }
 
+/// The Commit that ended an epoch of a walked group: what its note says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkedEnd {
+    /// The note's `time`.
+    pub time: u64,
+    /// The Cuts it carries, one per leaf it removed.
+    pub cuts: Vec<Cut>,
+}
+
+/// One epoch of a group's public history, as a walk from its founding found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkedEpoch {
+    /// The devices of the group's leaves in this epoch.
+    pub leaves: Vec<DeviceId>,
+    /// The `room_epoch` of the Commit that began the epoch; for epoch 0 the founding Commit's, since a
+    /// founding is one request.
+    pub room_epoch: u64,
+    /// The Commit that ended it; none for the epoch the walk stands in.
+    pub end: Option<WalkedEnd>,
+}
+
+/// A group's public history epoch by epoch, from its founding GroupInfo (epoch 0) through the Commits a walk
+/// followed. Every fact in it is read from a Commit that verified against the state before it and obeyed
+/// section 5, or from the tree that Commit led to.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Walked {
+    /// The epochs, from 0 on.
+    pub epochs: Vec<WalkedEpoch>,
+}
+
+impl Walked {
+    /// A walk that stands at the founding GroupInfo `observer` was started from.
+    pub fn begin(observer: &Observer) -> Result<Self, Error> {
+        Ok(Self {
+            epochs: vec![WalkedEpoch {
+                leaves: observer.leaves()?.into_iter().collect(),
+                room_epoch: 0,
+                end: None,
+            }],
+        })
+    }
+
+    /// Follows the next Commit with `observer` and records the epoch it ends and the one it begins. On a
+    /// refusal nothing is recorded and the observer is unchanged.
+    pub fn follow(
+        &mut self,
+        observer: &mut Observer,
+        commit: &ServedCommit<'_>,
+        context: &Context<'_>,
+    ) -> Result<CommitFacts, Error> {
+        let facts = observer.process_commit(commit.commit, commit.recovery_auth, context)?;
+        let leaves = observer.leaves()?.into_iter().collect();
+        let (room_epoch, time, cuts) = facts.note.as_ref().map_or((0, 0, Vec::new()), |note| {
+            (note.room_epoch, note.time, note.cuts.clone())
+        });
+        let first = self.epochs.len() == 1;
+        if let Some(ended) = self.epochs.last_mut() {
+            ended.end = Some(WalkedEnd { time, cuts });
+            if first {
+                ended.room_epoch = room_epoch;
+            }
+        }
+        self.epochs.push(WalkedEpoch {
+            leaves,
+            room_epoch,
+            end: None,
+        });
+        Ok(facts)
+    }
+}
+
 /// A session group that a device verified from its founding (8.4).
 #[derive(Debug)]
 pub struct CheckedSession {
@@ -1298,6 +1370,8 @@ pub struct CheckedSession {
     /// Per epoch of the group, the `room_epoch` of the Commit that led to it; for epoch 0 the founding
     /// Commit's.
     pub begun: Vec<u64>,
+    /// The group's history epoch by epoch, up to the state the observer stands in.
+    pub walked: Walked,
 }
 
 /// A room that a device with the code checked (8.5).
@@ -1311,6 +1385,8 @@ pub struct CheckedRoom {
     /// The session groups, in the order served: each verified from its founding, or the reason it is not.
     /// A session that does not verify is not joined.
     pub sessions: Vec<Result<CheckedSession, Error>>,
+    /// The room group's history epoch by epoch, from its founding to the state the observer stands in.
+    pub walked: Walked,
     /// The content keys the code opens, each marked confirmed or not.
     pub keys: Vec<RecoveredKey>,
     /// A recovery key whose link to its predecessor the hub did not serve ([`Openers::missing_link`]).
@@ -1323,6 +1399,7 @@ struct Walk<'a> {
     /// The follower, once the group's first Commit came by; taken out while a Commit of it is judged.
     observer: Option<Observer>,
     begun: Vec<u64>,
+    walked: Walked,
     last_committer: Option<DeviceId>,
     /// Why the group does not verify, if it does not.
     failed: Option<Error>,
@@ -1377,7 +1454,11 @@ impl Walk<'_> {
     ) -> Result<Observer, Error> {
         let mut observer = match observer {
             Some(observer) => observer,
-            None => Observer::follow_founding(self.served.founding)?,
+            None => {
+                let observer = Observer::follow_founding(self.served.founding)?;
+                self.walked = Walked::begin(&observer)?;
+                observer
+            }
         };
         if observer.group().room_id() != *room {
             return Err(Error::WrongRoom);
@@ -1388,7 +1469,7 @@ impl Walk<'_> {
             recovery: &PublicRules,
             max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
         };
-        let facts = observer.process_commit(commit.commit, commit.recovery_auth, &context)?;
+        let facts = self.walked.follow(&mut observer, commit, &context)?;
         let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
         if self.begun.is_empty() {
             // The founding is one request: epoch 0 began under the room epoch its first Commit names.
@@ -1413,6 +1494,7 @@ impl Walk<'_> {
         Ok(CheckedSession {
             observer,
             begun: self.begun,
+            walked: self.walked,
         })
     }
 }
@@ -1439,15 +1521,17 @@ pub fn check_session(
         max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
     };
     let mut begun = Vec::new();
+    let mut walked = Walked::begin(&observer)?;
     let mut last_committer = None;
     for served in served.commits {
-        let facts = observer
-            .process_commit(served.commit, served.recovery_auth, &context)
-            .map_err(|error| match error {
-                // The verifier does not hold the room state a Commit names: it cannot tell.
-                Error::RoomBehind => Error::RoomBehind,
-                _ => Error::BadGroup,
-            })?;
+        let facts =
+            walked
+                .follow(&mut observer, served, &context)
+                .map_err(|error| match error {
+                    // The verifier does not hold the room state a Commit names: it cannot tell.
+                    Error::RoomBehind => Error::RoomBehind,
+                    _ => Error::BadGroup,
+                })?;
         let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
         if begun.is_empty() {
             // The founding is one request: epoch 0 began under the room epoch its first Commit names.
@@ -1460,7 +1544,11 @@ pub fn check_session(
     observer
         .check_group_info(served.current, &committer)
         .map_err(|_| Error::WrongRecovery)?;
-    Ok(CheckedSession { observer, begun })
+    Ok(CheckedSession {
+        observer,
+        begun,
+        walked,
+    })
 }
 
 /// Whether the walk from the founding stands, at the anchor's epoch, in the anchor's state.
@@ -1499,6 +1587,7 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
             served,
             observer: None,
             begun: Vec::new(),
+            walked: Walked::default(),
             last_committer: None,
             failed: None,
         })
@@ -1527,6 +1616,7 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
     }
 
     let mut last_committer = None;
+    let mut walked = Walked::begin(&observer)?;
     let mut anchored = false;
     for (_, session, commit) in order {
         let Some(at) = session else {
@@ -1540,8 +1630,8 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
                 recovery: &PublicRules,
                 max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
             };
-            let facts = observer
-                .process_commit(commit.commit, commit.recovery_auth, &context)
+            let facts = walked
+                .follow(&mut observer, commit, &context)
                 .map_err(|_| Error::BadGroup)?;
             last_committer = Some(facts.committer);
             continue;
@@ -1600,6 +1690,7 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
         anchor,
         observer,
         sessions,
+        walked,
         keys: recovered,
         missing_link: opened.missing_link,
     })

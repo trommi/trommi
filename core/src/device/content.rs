@@ -1180,7 +1180,12 @@ impl<S: Storage> Device<S> {
                 return this.receive_provisional(batch, bytes, change, hash, header, now_ms);
             }
             let in_order = change > this.memory.record.cursor;
-            let mode = if in_order {
+            // The end of an epoch this device learned from the group's history was not processed when
+            // it came: an envelope of such an epoch is read back, wherever it stands in the log.
+            let learned = this
+                .epoch_facts(&group, header.epoch)?
+                .is_some_and(|facts| facts.learned);
+            let mode = if in_order && !learned {
                 Mode::InOrder
             } else {
                 Mode::ReadingBack
@@ -1458,6 +1463,17 @@ impl<S: Storage> Device<S> {
             }
             self.put_registers(batch, &group, &registers)?;
             self.put_envelope_record(batch, &group, &record)?;
+            // What a body says for the registers depends on the bodies before it in the hub's order
+            // (9.3.2): bodies come in any order here, so the registers are built again in that one.
+            let counts = match &received.header.subject {
+                Subject::Register(_) => true,
+                Subject::Version(fields) => fields.object_type == ObjectType::Note,
+                _ => false,
+            };
+            if counts {
+                self.replay_group(batch, &group)?;
+                received.replayed = true;
+            }
         }
         if record.status == Status::Taken && record.code.is_none() {
             received.outcome = EnvelopeOutcome::Applied;
