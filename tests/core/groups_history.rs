@@ -237,6 +237,11 @@ fn a_session_handover_carries_that_groups_keys_only() {
 #[test]
 fn a_handed_key_is_bound_by_what_the_device_knows_of_its_group() {
     let (mut hub, mut a, _agent, room_group, group) = room_with_history();
+    // A second session, which the device will follow without being a leaf of it.
+    let mut second_agent = new_device();
+    enrol(&mut hub, &mut a, &mut second_agent);
+    publish_some(&mut hub, &mut second_agent, 1);
+    let followed = found_main(&mut hub, &mut a, &second_agent.id());
     let mut b = new_device();
     add_human(&mut hub, &mut a, &mut b);
     // A human device that hands over what no device hands over.
@@ -282,9 +287,22 @@ fn a_handed_key_is_bound_by_what_the_device_knows_of_its_group() {
             (never_joined, u64::MAX, 4),
             (elsewhere, 0, 5),
             (room_group, room_epoch + 1, 6),
+            (followed, 1, 9),
+            (followed, 100, 10),
         ],
     );
-    assert_eq!(taken, 4);
+    assert_eq!(taken, 6);
+    // Once it follows a group as an observer it can tell how far the group is: the handed keys beyond that
+    // go, and no later one is taken.
+    assert_eq!(b.content_key(&followed, 100).unwrap(), key(10));
+    b.observe_session(hub.group_info(&followed).unwrap())
+        .unwrap();
+    assert_eq!(hub.epoch(&followed), Some(1));
+    assert_eq!(b.content_key(&followed, 100), Err(Error::NoKey));
+    assert_eq!(b.content_key(&followed, 1).unwrap(), key(9));
+    let taken = hand(&mut hub, &mut b, vec![(followed, 2, 11), (followed, 0, 12)]);
+    assert_eq!(taken, 1);
+    assert_eq!(b.content_key(&followed, 2), Err(Error::NoKey));
     assert_eq!(b.content_key(&group, joins_at).unwrap(), key(2));
     assert_eq!(b.content_key(&elsewhere, 0), Err(Error::NoKey));
     assert_eq!(

@@ -204,6 +204,10 @@ impl Observer {
         .map_err(|_| Error::BadSignature)?;
         // OpenMLS takes any credential and any capabilities: that each leaf is the profile's is checked here.
         rules::profile_leaves(&public)?;
+        // An epoch no group reaches by Commits: such a state is not stored, since it would not open again.
+        if public.group_context().epoch().as_u64() > profile::MAX_STORED_EPOCH {
+            return Err(Error::BadGroup);
+        }
         let (group, kind) = profile::kind_of_context(public.group_context())?;
         Ok((provider, public, group, kind))
     }
@@ -243,21 +247,28 @@ impl Observer {
         ))
     }
 
-    /// Puts `history` in the place of this observer's own, which must be its end: the same newest state. For
-    /// a device that held the room group as a leaf and follows it from where it stands, with what it verified
-    /// until then.
-    pub(crate) fn continuing(mut self, history: RoomHistory) -> Result<Self, Error> {
-        match &self.followed {
-            Followed::Room(own) if own.newest() == history.newest() => {}
-            _ => {
-                return Err(Error::Internal(
-                    "the history does not end where the observer stands",
-                ))
-            }
+    /// An observer of the room group from the public state a leaf of it holds (`public`: the entries of
+    /// [`provider::public_entries`]) and that leaf's record of the roles, whose newest state must be the one
+    /// the public state stands in. For a device that is removed from the room group and follows it from there:
+    /// nothing is verified again, the leaf verified all of it.
+    pub(crate) fn from_member(
+        public: MlsEntries,
+        group: GroupId,
+        history: RoomHistory,
+    ) -> Result<Self, Error> {
+        provider::validate_entries(&public)?;
+        let observer = Self::assemble(
+            Provider::without_entropy(public)?,
+            group,
+            Followed::Room(history),
+        );
+        let held = observer.public()?;
+        let leaves = rules::leaves_of(held.members())?;
+        let stands = rules::room_state_of(held.group_context(), &leaves)?;
+        match &observer.followed {
+            Followed::Room(history) if *history.newest() == stands => Ok(observer),
+            _ => Err(damaged()),
         }
-        self.untaken_from = history.states().next().map_or(0, |state| state.epoch);
-        self.followed = Followed::Room(history);
-        Ok(self)
     }
 
     /// The room's roles per epoch, for the holder that takes them over when it becomes a leaf of the room group.
