@@ -1,15 +1,18 @@
 //! Removal of a human device (5.2.8): the room Commit, the stale session groups, and whoever comes next
 //! finishing the Removes. Nothing is taken from or for the removed device in between.
 
+use trommi_core::codec;
 use trommi_core::device::{Processed, Received};
 use trommi_core::ids::{GroupId, TurnId};
+use trommi_core::mls::message::TrommiMessage;
 use trommi_core::mls::profile::Cut;
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, cuts_for, enrol, found_main, found_room, found_room_on, new_device, new_device_on,
-    now, post_ok, post_refused, publish_some, reopen, settle, sync, sync_ok, MemoryStorage,
-    TestDevice,
+    add_forger, add_human, cuts_for, enrol, found_main, found_room, found_room_on, new_device,
+    new_device_on, now, post_ok, post_refused, publish_some, reopen, settle, sync, sync_ok,
+    MemoryStorage, TestDevice,
 };
 
 struct Room {
@@ -228,6 +231,71 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
     assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
     assert!(!a.group(&group).unwrap().pending);
     assert_eq!(hub.epoch(&group), Some(2));
+}
+
+#[test]
+fn a_removed_human_device_is_no_sender_of_a_work_trail() {
+    // A hub that checks nothing stores what a removed device still posts in a stale session group.
+    let (mut a, mut agent) = (new_device(), new_device());
+    let mut hub = Hub::new(false);
+    found_room_on(&mut hub, &mut a);
+    enrol(&mut hub, &mut a, &mut agent);
+    publish_some(&mut hub, &mut agent, 1);
+    let group = found_main(&mut hub, &mut a, &agent.id());
+    // A human device that sends what no device sends, in the room and in the session.
+    let forger = Forger::new();
+    add_forger(&mut hub, &mut a, &forger);
+    a.add_to_session(&group, &forger.id(), &forger.key_package(), now())
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    let mut forged = forger.join(&hub.welcomes.last().unwrap().bytes);
+    settle(&hub, &mut agent);
+    let step = |number: u32| {
+        codec::encode(&TrommiMessage::WorkTrail {
+            turn: TurnId::new([7; 16]),
+            number,
+            time: now(),
+            step: b"{}".to_vec(),
+        })
+        .unwrap()
+    };
+    let last = |hub: &Hub, device: &mut TestDevice| sync(hub, device).pop().unwrap();
+
+    // A step from a human device is dropped; one from the agent device is taken (7.3).
+    forger.post_message(&mut hub, &mut forged, &step(1));
+    assert_eq!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::Dropped))
+    );
+    agent
+        .send_work_trail(&group, &TurnId::new([7; 16]), 1, b"{}", now())
+        .unwrap();
+    post_ok(&mut hub, &mut agent);
+    assert!(matches!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::WorkTrail { from, .. })) if from == agent.id()
+    ));
+
+    // Removed from the room group, the device is no human device any more, and its leaf is still in the
+    // session group. It is none of the session's agent or helper devices either: its key is revoked.
+    a.remove_human_devices(&[Cut::none(forger.id())], now())
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    assert_eq!(a.group(&group).unwrap().disallowed, [forger.id()]);
+    forger.post_message(&mut hub, &mut forged, &step(2));
+    assert_eq!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::Dropped))
+    );
+    // The agent device's steps are still taken.
+    agent
+        .send_work_trail(&group, &TurnId::new([7; 16]), 2, b"{}", now())
+        .unwrap();
+    post_ok(&mut hub, &mut agent);
+    assert!(matches!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::WorkTrail { from, number: 2, .. })) if from == agent.id()
+    ));
 }
 
 #[test]

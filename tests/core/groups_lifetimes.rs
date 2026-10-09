@@ -3,10 +3,11 @@
 //! KeyPackage here.
 
 use std::collections::BTreeMap;
-use trommi_core::device::{key_package_info, WelcomeExpectation};
+use trommi_core::device::{key_package_info, Processed, WelcomeExpectation};
 use trommi_core::ids::GroupId;
 use trommi_core::mls::key_package::verify_key_package_of;
 use trommi_core::mls::observer::Observer;
+use trommi_core::mls::profile::Cut;
 use trommi_core::store::{table, Batch, Storage};
 use trommi_core::Error;
 use trommi_tests::hub::Hub;
@@ -61,6 +62,48 @@ fn a_founders_expired_leaf_stops_observers_and_no_join_by_welcome() {
     let observer = Observer::follow_room(hub.group_info(&room_group).unwrap(), None).unwrap();
     assert_eq!(observer.epoch().unwrap(), 2);
     assert_eq!(observer.leaves().unwrap().len(), 2);
+}
+
+#[test]
+fn a_device_removed_while_the_tree_holds_an_expired_leaf_knows_it_is_out() {
+    // A room whose founder's leaf ran out, on a hub that checks nothing, with a second human device.
+    let mut a = new_device();
+    let room = a
+        .found_room([0xE1; 32], [0xE2; 32], now() - ELEVEN_YEARS_MS)
+        .unwrap();
+    let room_group = GroupId::room(room);
+    let mut hub = Hub::new(false);
+    post_ok(&mut hub, &mut a);
+    let mut b = new_device();
+    add_human(&mut hub, &mut a, &mut b);
+    settle(&hub, &mut b);
+    assert!(b.is_human());
+
+    // The founder removes it. The removed device goes on as an observer of the room group from the public
+    // state it held as a leaf, which it verified when it joined: no lifetime is checked again, so the
+    // expired leaf does not stop it. It knows the state that removed it.
+    a.remove_human_devices(&[Cut::none(b.id())], now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let processed = sync_ok(&hub, &mut b);
+    assert!(matches!(
+        processed[..],
+        [Processed::Commit { removed: true, .. }]
+    ));
+    assert!(!b.is_human());
+    let roles = b.room_history().unwrap();
+    assert_eq!(roles.newest().epoch, 2);
+    assert!(roles.newest().is_human(&a.id()) && roles.is_revoked(&b.id(), 2));
+    assert_eq!(b.group(&room_group).err(), Some(Error::NotFound));
+    assert_eq!(b.update(&room_group, true, now()), Err(Error::Forbidden));
+    assert!(b.content_key(&room_group, 1).is_ok());
+    // And follows the room group on.
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    assert!(matches!(
+        sync_ok(&hub, &mut b)[..],
+        [Processed::Observed(_)]
+    ));
+    assert_eq!(b.room_history().unwrap().newest().epoch, 3);
 }
 
 #[test]
@@ -280,30 +323,59 @@ fn the_last_resort_key_package_is_retired_when_its_replacement_was_accepted() {
     let joined = b.join_welcome(&welcome, &anyone, now()).unwrap();
     assert_eq!(joined.group, room_group);
 
-    // Replaced by an accepted upload, the old one is kept for another period, counted from the making of its
-    // replacement, and then goes: a Welcome made with it within that period opens, one made after it does not.
-    for (days, opens) in [(29, true), (61, false)] {
+    // A device whose uploads waited: its first last-resort KeyPackage is at the hub, the second was made 31
+    // days later and the third 31 days after that, and the hub takes both only now. Each replaces what was
+    // made before it and nothing made after it; the period a replaced one is kept for begins when the device
+    // is next told the time, not when its replacement was made.
+    #[derive(Clone, Copy, Debug)]
+    enum Then {
+        FirstStillOpens,
+        NewestIsCurrent,
+        FirstIsGone,
+    }
+    for then in [
+        Then::FirstStillOpens,
+        Then::NewestIsCurrent,
+        Then::FirstIsGone,
+    ] {
         let mut c = new_device();
-        c.key_packages_to_upload(100, start - 31 * DAY_MS)
+        c.key_packages_to_upload(100, start - 62 * DAY_MS)
             .unwrap()
             .unwrap();
         post_ok(&mut hub, &mut c);
-        let old = hub.claim(&[c.id()]).unwrap().remove(0);
-        c.key_packages_to_upload(100, start).unwrap().unwrap();
-        post_ok(&mut hub, &mut c);
-        assert_ne!(hub.claim(&[c.id()]).unwrap(), std::slice::from_ref(&old));
-        let due = c
-            .key_packages_to_upload(100, start + days * DAY_MS)
+        let first = hub.claim(&[c.id()]).unwrap().remove(0);
+        c.key_packages_to_upload(100, start - 31 * DAY_MS)
+            .unwrap()
             .unwrap();
-        assert_eq!(due.is_none(), opens, "after {days} days");
-        a.add_human_device(&c.id(), &old, now()).unwrap();
+        c.key_packages_to_upload(100, start).unwrap().unwrap();
+        assert_eq!(c.outbox().len(), 2);
+        post_ok(&mut hub, &mut c);
+        let newest = hub.claim(&[c.id()]).unwrap().remove(0);
+        assert_ne!(newest, first);
+        // The next day the device is told the time: nothing is due, and the periods begin.
+        assert_eq!(c.key_packages_to_upload(100, start + DAY_MS), Ok(None));
+        let (with, opens) = match then {
+            Then::FirstStillOpens => (&first, true),
+            Then::NewestIsCurrent => {
+                // A month on the next one is due; the one the hub holds is still the current one.
+                let due = c.key_packages_to_upload(100, start + 31 * DAY_MS).unwrap();
+                assert!(due.is_some());
+                (&newest, true)
+            }
+            Then::FirstIsGone => {
+                let due = c.key_packages_to_upload(100, start + 32 * DAY_MS).unwrap();
+                assert!(due.is_some());
+                (&first, false)
+            }
+        };
+        a.add_human_device(&c.id(), with, now()).unwrap();
         post_ok(&mut hub, &mut a);
         let welcome = hub.welcomes.last().unwrap().bytes.clone();
         let joined = c.join_welcome(&welcome, &anyone, now());
         if opens {
-            assert_eq!(joined.unwrap().group, room_group);
+            assert_eq!(joined.unwrap().group, room_group, "{then:?}");
         } else {
-            assert_eq!(joined, Err(Error::NotMember));
+            assert_eq!(joined, Err(Error::NotMember), "{then:?}");
         }
     }
 }
