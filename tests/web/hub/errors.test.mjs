@@ -48,11 +48,26 @@ test('a hub that is not there is `offline` with status 0, never a refusal', asyn
 test('a connection cut before, after or in the middle of the answer is `offline`', async t => {
   const { fake, hub } = await scene(t)
   await hub.desk()
-  for (const drop of ['before', 'after', 'mid']) {
-    fake.faults.add({ path: '/v2/desk', drop })
+  // no answer at all: tried once more at once (a dead kept-alive connection), then it is "not reached"; an answer
+  // that broke off in its middle is "not reached" at once
+  for (const [drop, times] of [['before', 2], ['after', 2], ['mid', 1]]) {
+    fake.faults.add({ path: '/v2/desk', drop, times })
     await assert.rejects(hub.desk(), e => e instanceof HubError && e.code === 'offline' && e.status === 0, drop)
   }
+  fake.faults.add({ path: '/v2/desk', drop: 'before' })
   await hub.desk()
+  assert.deepEqual(received(fake, '/v2/desk').slice(-2).map(r => r.dropped), ['before', null])
+})
+
+test('a hub that restarted: the connections it left dead cost no request, read or write', async t => {
+  const { fake, hub, room_id, device } = await scene(t)
+  for (let round = 1; round <= 5; round++) {
+    await Promise.all([hub.desk(), hub.welcomes(), hub.requests()])        // several connections kept alive
+    fake.dropConnections()                                                 // cut under the client, which has not seen it yet
+    assert.deepEqual(await hub.postEnvelope(envelope(room_id, device, round)), { change: round })
+    fake.dropConnections()
+    assert.equal((await hub.desk()).change, round)
+  }
 })
 
 test('a hub that does not answer in time is `offline`', async t => {
