@@ -4,7 +4,7 @@
 # A part counts as changed when its own folder changed, or core/, or what pins the build (Cargo.toml, Cargo.lock,
 # rust-toolchain.toml). A run started by hand counts every part as changed.
 #
-# How a part is wired in (web and connector are; hub and ios follow the same three steps):
+# How a part is wired in (web, connector and ios are; the hub follows the same three steps):
 #   1. `changes`: one more `part <name> '<its own paths>'` line and one more output.
 #   2. a job named after the part: tests, builds, uploads ONE artifact named `<part>-release`.
 #   3. a job `deploy_<part>` that calls `.github/workflows/deploy_<part>.yml` with
@@ -49,6 +49,7 @@ jobs:
     outputs:
       web: ${{ steps.find.outputs.web }}
       connector: ${{ steps.find.outputs.connector }}
+      ios: ${{ steps.find.outputs.ios }}
       version: ${{ steps.find.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,6 +91,7 @@ jobs:
           # (connector/tools.json and prompt.md, demo/: the app's build reads them)
           part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
           part connector 'connector/|release/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/deploy_connector\.yml$'
+          part ios 'ios/|\.github/scripts/ios_testflight\.sh$|\.github/workflows/deploy_ios\.yml$'
 
   web:
     name: Web app (test and build)
@@ -283,4 +285,76 @@ jobs:
       version: ${{ needs.changes.outputs.version }}
       commit: ${{ github.sha }}
       artifact: connector-release
+    secrets: inherit
+
+  ios:
+    name: iOS (test and build the core)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    # macOS with Xcode 27 (the app's deployment target is iOS 27)
+    runs-on: xcode-27
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # llvm-tools: core/swift/build.sh takes the compiler runtime's helpers out of the iOS library with llvm-ar
+      - name: Compiler (rust-toolchain.toml)
+        run: |
+          set -eu
+          rustup toolchain install || rustup show
+          rustup component add llvm-tools
+          rustc --version
+          xcodebuild -version
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ios-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      # The Rust core for this Mac (for the tests) and for iOS; the helpers it removes from the iOS library are
+      # checked against Apple's runtime of this Xcode.
+      - name: The Rust core for Swift
+        run: |
+          set -eu
+          DARWIN_CLANG_RT="$(xcrun --sdk iphoneos clang -print-resource-dir)/lib/darwin"
+          export DARWIN_CLANG_RT
+          sh core/swift/build.sh
+      - name: Test
+        run: swift test --package-path ios/TrommiClient
+      # What deploy_ios.yml takes: the iOS library and UniFFI's two files, with their hashes and the commit.
+      - name: Put the release together
+        run: |
+          set -eu
+          package=core/swift/TrommiCoreRust
+          mkdir -p out/lib/ios out/Sources/TrommiCoreFFI/include out/Sources/TrommiCoreRust
+          cp "$package/lib/ios/libtrommi_core_ffi.a" out/lib/ios/
+          cp "$package/Sources/TrommiCoreFFI/include/TrommiCoreFFI.h" out/Sources/TrommiCoreFFI/include/
+          cp "$package/Sources/TrommiCoreRust/TrommiCoreRust.swift" out/Sources/TrommiCoreRust/
+          printf 'commit: %s\n' "$GITHUB_SHA" > out/build.txt
+          (cd out && find . -type f | sed 's|^\./||' | sort | xargs shasum -a 256 > "$RUNNER_TEMP/checksums.txt")
+          mv "$RUNNER_TEMP/checksums.txt" out/checksums.txt
+          cat out/checksums.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-release
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy_ios:
+    name: iOS
+    needs: [changes, ios]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.ios == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/deploy_ios.yml
+    with:
+      version: ${{ needs.changes.outputs.version }}
+      commit: ${{ github.sha }}
+      artifact: ios-release
     secrets: inherit
