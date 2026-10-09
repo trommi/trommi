@@ -2,20 +2,19 @@ import XCTest
 @testable import TrommiClient
 
 final class IslandTests: XCTestCase {
-  /** iPhone 15/16 (393 × 852, safe top 59) and the Pro Max (430 × 932, safe top 59): the pill covers the island exactly
-   *  in height, grows 32 pt each side, stays clear of the clock (ends ≈ 95 pt) and the battery (starts ≈ width − 95). */
+  /** iPhone 15/16 (393 × 852, safe top 59), the Pro Max (430 × 932, 59) and the 16 Pro (402 × 874, 62): the grown shape
+   *  is 11 pt from the edges and the top, holds the island, and its content row lies wholly below the sensors. */
   func testGeometry() throws {
-    for (w, clockEnd, batteryStart) in [(CGFloat(393), CGFloat(95), CGFloat(298)), (430, 104, 326)] {
-      let p = try XCTUnwrap(IslandPill.of(width: w, safeTop: 59))
-      XCTAssertEqual(p.pill.midX, w / 2, accuracy: 0.5)
-      XCTAssertEqual(p.pill.minY, p.island.minY)
-      XCTAssertEqual(p.pill.height, p.island.height)
-      XCTAssertEqual(p.radius, 18.5)
-      XCTAssertEqual(p.pill.width, 190)
-      XCTAssertTrue(p.pill.contains(p.island))
-      XCTAssertGreaterThan(p.pill.minX, clockEnd, "clear of the clock at \(w)")
-      XCTAssertLessThan(p.pill.maxX, batteryStart, "clear of the battery at \(w)")
-      XCTAssertGreaterThanOrEqual(p.leftWing.width, 28); XCTAssertGreaterThanOrEqual(p.rightWing.width, 28)
+    for (w, safeTop, top) in [(CGFloat(393), CGFloat(59), CGFloat(11)), (430, 59, 11), (402, 62, 14)] {
+      let p = try XCTUnwrap(IslandPill.of(width: w, safeTop: safeTop))
+      XCTAssertEqual(p.island.size, IslandPill.islandSize)
+      XCTAssertEqual(p.island.minY, top)
+      XCTAssertEqual(p.island.midX, w / 2, accuracy: 0.5)
+      XCTAssertEqual(p.grown.minX, 11); XCTAssertEqual(p.grown.maxX, w - 11); XCTAssertEqual(p.grown.minY, 11)
+      XCTAssertTrue(p.grown.contains(p.island))
+      XCTAssertEqual(p.content.height, IslandPill.row)
+      XCTAssertEqual(p.content.minY + p.grown.minY, p.island.maxY, "the content starts under the sensors at \(w)")
+      XCTAssertGreaterThanOrEqual(p.grown.height, 2 * IslandPill.grownRadius, "room for the corners at \(w)")
     }
   }
   func testNoIsland() {
