@@ -174,6 +174,13 @@ painted small); a click opens that desk's board (`/scribble-board?desk=<id>` swi
 board). On a desk the page shows that desk's board with one quiet line at the top left: back to All desks, and the
 desk's name. A room with one desk or none shows neither.
 
+**Parking the corner note (wide windows).** On the Scribble Board the yellow corner note can be dragged onto the board
+(`sidebar.mjs` controller `corner-note` `park`, event `trommi:park-note`, taken by `whiteboard.mjs`): closed, the
+corner's sticky is dragged; open, the sheet is taken by its paper (its edge, its foot, the grip "onto the board"),
+never by its words. Where it is dropped it stays as a `sticky` with its words; its pictures are laid under it as
+pictures of the board (decrypted here and uploaded as the board's own attachments), and both leave the corner's note.
+Files that are no pictures stay with the note.
+
 ## The account (what a person sees)
 
 The UI says **account**, never "room" (inside, the core still founds and joins a room; one account = one room).

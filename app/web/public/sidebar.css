@@ -542,6 +542,14 @@ body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cu
 .corner-note-box.is-parking .corner-note-ico { opacity: .3; }
 .corner-note-ghost.msg-note { position: fixed; z-index: var(--z-panel); width: 240px; max-height: 200px; translate: -50% -50%; rotate: -2deg; box-shadow: 0 10px 22px rgb(20 30 25 / .28); pointer-events: none; }
 .corner-note-ghost p { max-height: 170px; overflow: hidden; overflow-wrap: anywhere; }
+/* (on the Scribble Board the open note is taken by its paper and dragged onto the board; the grip in its foot says so) */
+.corner-note-park { display: none; user-select: none; -webkit-user-select: none; }
+body[data-t-view="whiteboard"] .corner-note-box.is-open .corner-note-body { cursor: grab; touch-action: none; }
+body[data-t-view="whiteboard"] .corner-note-box.is-open .corner-note-field { cursor: text; touch-action: auto; }
+body[data-t-view="whiteboard"] .corner-note-box.is-open :is(button, a) { cursor: pointer; }
+body[data-t-view="whiteboard"] .corner-note-box.is-open .corner-note-park { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 8px 0 4px; border-radius: 6px; color: var(--note-ink-soft); font: 500 var(--t-xs)/1 var(--font); white-space: nowrap; }
+.corner-note-park .sketch { width: 16px; height: 16px; }
+.corner-note-box.is-parking .corner-note-body { opacity: .35; }
 .corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: var(--s-3) var(--s-3) var(--s-2); }
 .corner-note-field { max-height: 50vh; }
 /* a wide window: the open note is a square sheet (his word, 9 October: "40 % größer und quadratisch"), 448px a side,
