@@ -59,3 +59,7 @@ path = "core/vectors.rs"
 [[test]]
 name = "core_groups_observer"
 path = "core/groups_observer.rs"
+
+[[test]]
+name = "core_groups_refusals"
+path = "core/groups_refusals.rs"
