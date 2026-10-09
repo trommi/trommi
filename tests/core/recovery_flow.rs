@@ -1232,7 +1232,11 @@ fn a_recovery_is_all_or_nothing() {
             .map(|id| id.is_some()),
         Ok(true)
     );
-    assert_eq!(post_refused(&mut w.hub, &mut w.a), [Error::Overloaded]);
+    // The refusal says nothing about the requests: both stay in the outbox and are sent again.
+    assert_eq!(
+        post_refused(&mut w.hub, &mut w.a),
+        [Error::Overloaded, Error::Overloaded]
+    );
 
     // The ten minutes pass in the middle: the hub drops what was staged, and so does the device.
     let fetched = fetch(&w.hub, &keys);
@@ -1255,9 +1259,13 @@ fn a_recovery_is_all_or_nothing() {
     assert_eq!(w.hub.change(), change);
     let now_epochs: Vec<Option<u64>> = w.groups().iter().map(|group| w.hub.epoch(group)).collect();
     assert_eq!(now_epochs, epochs);
-    // The room is open again: the others go on as if nothing had been.
-    w.a.update(&w.room, true, now()).unwrap().unwrap();
-    post_ok(&mut w.hub, &mut w.a);
+    // The room is open again: the others go on as if nothing had been, and what they could not post is
+    // sent now, unchanged: the update is taken, and the sealed key, which names the room epoch before it,
+    // is refused for good.
+    let answers = trommi_tests::post_all(&mut w.hub, &mut w.a);
+    assert!(answers[0].is_ok());
+    assert_eq!(answers[1], Err(Error::RoomBehind));
+    assert!(w.a.outbox().is_empty());
     w.settle_all();
 
     // A finish that leaves a human device in the room, or a session unjoined, publishes nothing: here the
