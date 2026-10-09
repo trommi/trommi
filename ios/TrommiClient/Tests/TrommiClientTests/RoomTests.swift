@@ -1,0 +1,171 @@
+// The engine on a core that seals nothing (FakeCore.swift) and a hub in the process: founding, catching up in the
+// hub's order, the outbox across a restart, the board the views read, the cache, one owner.
+import XCTest
+@testable import TrommiClient
+
+@MainActor
+final class RoomTests: XCTestCase {
+  var base: URL!
+  let hubURL = "http://127.0.0.1:9"
+  let agent = String(repeating: "ab", count: 32), session = String(repeating: "cd", count: 16)
+
+  override func setUp() async throws {
+    base = FileManager.default.temporaryDirectory.appendingPathComponent("trommi-room-\(UUID().uuidString)")
+    Core.tools = FakeTools()
+    HubClient.transportForTests = [FakeHub.self]
+    FakeHub.shared = FakeHub.Hub()
+  }
+  override func tearDown() async throws { try? FileManager.default.removeItem(at: base) }
+
+  func founded() async throws -> Room {
+    let made = try await Room.foundRoom(hubURL: hubURL, base: base)
+    return made.room
+  }
+  /** A session with one agent, as a Commit in the room's log. */
+  func addSession(_ room: Room) { FakeHub.shared.commit(group: room.roomId, ["session": session, "agent": agent]) }
+  func agentSays(_ room: Room, seq: Int, _ text: String) {
+    FakeHub.shared.envelope(["sender": agent, "role": ROLE.AGENT, "group": hex(FakeDevice.sessionGroup(room.roomIdHex, session)), "seq": seq, "time": 1000 + seq, "kind": KIND.TIMELINE_ITEM,
+                             "tk": TIMELINE.CHAT, "ts": TIMELINE_SCOPE.SESSION, "tr": session, "files": [String]()], payload: ["content_type": "message", "text": text])
+  }
+  func texts(_ room: Room) -> [String] {
+    let t = room.board.timelineOf("chat:session/\(session)")
+    return t.items.keys.sorted().compactMap { t.items[$0]?.content?["text"].string }
+  }
+
+  func testFoundingMakesARoomOnDiskAndAtTheHub() async throws {
+    let room = try await founded()
+    XCTAssertEqual(FakeHub.shared.rooms, 1)
+    XCTAssertEqual(Store.rooms(base: base), [room.roomIdHex])
+    XCTAssertEqual(room.board.members[room.deviceIdHex]?.deviceRole, "human")
+    // the founding left the outbox; nothing of the "founding-…" folder stays
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: base.path), [room.roomIdHex])
+    room.close()
+  }
+
+  func testOneOwner() async throws {
+    let room = try await founded()
+    XCTAssertThrowsError(try Room.open(base: base, roomId: room.roomIdHex)) { XCTAssertEqual($0 as? StoreError, .failed("busy")) }
+    room.close()
+    let again = try Room.open(base: base, roomId: room.roomIdHex)
+    XCTAssertEqual(again.deviceIdHex, room.deviceIdHex)
+    again.close()
+  }
+
+  func testCatchUpInTheHubsOrderBuildsTheBoard() async throws {
+    let room = try await founded()
+    addSession(room)
+    agentSays(room, seq: 1, "one"); agentSays(room, seq: 2, "two")
+    FakeHub.shared.message(group: FakeDevice.sessionGroup(room.roomIdHex, session), ["from": agent, "number": 1, "text": "ls"])
+    agentSays(room, seq: 4, "out of order")   // a gap in the agent's chain: refused, changes nothing
+    agentSays(room, seq: 3, "three")
+    let report = try await room.sync()
+    XCTAssertEqual(room.cursor, 6)
+    XCTAssertEqual(report.refused, 1)
+    XCTAssertEqual(room.board.sessions[session]?.agentDeviceId, agent)
+    XCTAssertEqual(texts(room), ["one", "two", "", "three"])   // the third item is the step of the work trail
+    let step = room.board.timelineOf("chat:session/\(session)").items[4]?.content
+    XCTAssertEqual(step?["terminal"].string, "work")
+    XCTAssertTrue(Work.isWork(step))
+    XCTAssertEqual(Work.fold([step!["work"]]).items.first?.tool, "Bash")
+    // again: nothing new, nothing twice
+    _ = try await room.sync()
+    XCTAssertEqual(texts(room).count, 4)
+    room.close()
+  }
+
+  func testAMessageIsEchoedPostedAndReplacedByTheHubsCopy() async throws {
+    let room = try await founded()
+    addSession(room)
+    _ = try await room.sync()
+    try await room.sendMessage(sessionId: session, text: "hello")
+    let t = room.board.timelineOf("chat:session/\(session)")
+    XCTAssertEqual(FakeHub.shared.envelopePosts.count, 1)
+    XCTAssertEqual(t.echoes.count, 1, "shown at once")
+    _ = try await room.sync()
+    XCTAssertEqual(t.echoes.count, 0, "replaced by the hub's copy")
+    XCTAssertEqual(texts(room), ["hello"])
+    XCTAssertEqual(t.items.values.first?.senderDeviceId, room.deviceIdHex)
+    room.close()
+  }
+
+  func testTheOutboxSurvivesARestartAndGoesOutUnchanged() async throws {
+    var room = try await founded()
+    addSession(room)
+    _ = try await room.sync()
+    FakeHub.shared.offline = true
+    let sending = Task { try await room.sendMessage(sessionId: session, text: "kept") }
+    try await Task.sleep(nanoseconds: 700_000_000)
+    let waiting = try await room.onCore { $0.outbox() }
+    XCTAssertEqual(waiting.count, 1)
+    sending.cancel()
+    room.close()
+    // the app is gone; the hub comes back; the same bytes go out
+    FakeHub.shared.offline = false
+    room = try Room.open(base: base, roomId: room.roomIdHex)
+    let after = try await room.onCore { $0.outbox() }
+    XCTAssertEqual(after, waiting)
+    _ = try await room.sync()
+    try await room.flush()
+    XCTAssertEqual(FakeHub.shared.envelopePosts, [b64u(waiting[0].parts[0])])
+    _ = try await room.sync()
+    XCTAssertEqual(texts(room), ["kept"])
+    room.close()
+  }
+
+  func testARefusalReachesTheSenderAndLeavesNoEcho() async throws {
+    let room = try await founded()
+    addSession(room)
+    _ = try await room.sync()
+    FakeHub.shared.refuse["/v2/envelopes"] = (403, "forbidden")
+    do { try await room.sendMessage(sessionId: session, text: "no"); XCTFail("refused") }
+    catch let e as HubError { XCTAssertEqual(e.code, "forbidden") }
+    XCTAssertEqual(room.board.timelineOf("chat:session/\(session)").echoes.count, 0)
+    let left = try await room.onCore { $0.outbox().count }
+    XCTAssertEqual(left, 0, "a refused entry is reported to the core and never sent again")
+    room.close()
+  }
+
+  func testARegisterIsOneEnvelopePerNameAndShowsAtOnce() async throws {
+    let room = try await founded()
+    _ = try await room.sync()
+    try await room.setDesk("d1", .obj(["name": "Home", "goals": "ship"]))
+    XCTAssertEqual(room.board.human.desks["d1"]?["name"].string, "Home")
+    _ = try await room.sync()
+    XCTAssertEqual(room.board.human.desks["d1"]?["goals"].string, "ship")
+    let posted = parse(try unb64u(FakeHub.shared.envelopePosts[0]))
+    XCTAssertEqual(parse(try unhex(posted["p"] as! String))["name"] as? String, "desk/d1")
+    room.close()
+  }
+
+  func testTheCacheShowsTheBoardBeforeTheHubAnswers() async throws {
+    var room = try await founded()
+    addSession(room)
+    agentSays(room, seq: 1, "remembered")
+    _ = try await room.sync()
+    await room.saveCacheAndWait()
+    room.close()
+    FakeHub.shared.offline = true
+    room = try Room.open(base: base, roomId: room.roomIdHex)
+    let had = await room.restore()
+    XCTAssertTrue(had)
+    XCTAssertEqual(texts(room), ["remembered"])
+    XCTAssertEqual(room.cursor, 2)
+    room.close()
+  }
+
+  func testBodiesAreRenamedBetweenTheWireAndTheModel() throws {
+    let file = Bytes(repeating: 5, count: 16)
+    let wire: JV = .obj(["attachments": .arr([.obj(["file_id": .str(b64u(file)), "file_key": "k"])])])
+    let model = Records.renameFiles(wire, toWire: false, depth: 0)
+    XCTAssertEqual(model["attachments"].array?.first?["attachment_id"].string, hex(file))
+    XCTAssertEqual(Records.renameFiles(model, toWire: true, depth: 0), wire)
+    XCTAssertEqual(Records.fileIds(wire), [file])
+    // a body that names a file its signed header does not list is not shown
+    let h = EnvelopeHeader(kind: KIND.TIMELINE_ITEM, group: [], epoch: 0, sender: [], seq: 1, time: 0, fileIds: [])
+    XCTAssertEqual(Records.decodePayload(wire.encoded(), header: h).state, "undecryptable")
+    // a register becomes the one-name `values` the board reads; a board snapshot keeps its old name there
+    let reg = Records.fromWire(.obj(["name": "board_snapshot/00ff", "value": .obj(["change": 3]), "lamport": 4]), header: EnvelopeHeader(kind: KIND.STATUS, group: [], epoch: 0, sender: [], seq: 1, time: 0), sessionId: nil)
+    XCTAssertEqual(reg["values"]["scribble_snapshot/desk/00ff"]["change"].int, 3)
+    XCTAssertEqual(reg["lamport"].int, 4)
+  }
+}

@@ -375,7 +375,10 @@ public final class Room {
       }
       return out
     }
-    var groupsChanged = false
+    // The groups are read again from the core after a Commit and before the next item is shown: an envelope right
+    // behind the Commit that founded its session must find that session on the board.
+    var groupsStale = false, groupsChanged = false
+    func freshGroups() async throws { if groupsStale { groupsStale = false; groupsChanged = true; try await refreshGroups(&change) } }
     for (i, o) in outcomes.enumerated() {
       cursor = max(cursor, parsed[i].change)
       board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, Int(cursor))
@@ -383,19 +386,24 @@ public final class Room {
       case .processed(let p):
         switch p {
         case .commit(_, _, _, let removed):
-          groupsChanged = true
+          groupsStale = true
           if removed { board.pushAlert(&change, code: "removed", message: "this device was removed from a group") }
-        case .ownCommit, .observed: groupsChanged = true
-        case .message(let m): if case .log(let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
+        case .ownCommit, .observed: groupsStale = true
+        case .message(let m):
+          try await freshGroups()
+          if case .log(let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
         case .skipped: break
         }
-      case .envelope(let e, let c): apply(e, change: c, report: &report, &change)
+      case .envelope(let e, let c):
+        try await freshGroups()
+        apply(e, change: c, report: &report, &change)
       case .refused(let c, let code):
         report.refused += 1
         if report.refused <= 5 { report.warnings.append("change \(c) refused: \(code)") }
       }
     }
-    if groupsChanged { try await refreshGroups(&change); notifyKeysChanged?() }
+    try await freshGroups()
+    if groupsChanged { notifyKeysChanged?() }
     if outcomes.count < parsed.count { throw TrommiError("storage", "this device's store did not take a change") }
   }
   /** Called when the groups or their epochs changed: the app hands the notification extension its new keys. */
@@ -431,6 +439,11 @@ public final class Room {
     default: report.undecryptable += 1
     }
     rec.localId = ownEchoes.removeValue(forKey: rec.envelopeHash)
+    // The core checked who may write what (9.2); the board's reducer checks again and needs to know the devices.
+    if e.standing == .accepted, let sid = rec.sessionId {
+      if rec.senderRole == "agent" { board.sawAgent(sid, rec.senderDeviceId, epoch: rec.epoch) }
+      else if let to = rec.recipientDeviceId { board.sawAgent(sid, to, epoch: rec.epoch) }
+    }
     lamport = max(lamport, rec.causal.lamport)
     board.apply(rec, change: &change)
     var kept = rec
