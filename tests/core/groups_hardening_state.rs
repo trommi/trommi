@@ -95,7 +95,20 @@ fn a_stored_state_whose_parts_contradict_each_other_does_not_open() {
     let mut elsewhere = merged.clone();
     let foreign = GroupId::room(RoomId::new([9; 32]));
     elsewhere.insert(content_key_key(&foreign, 0), vec![7; 32]);
+    // The content side's records: [CHAIN, 0, group, epoch] is an epoch's record, [CHAIN, 3, group] the
+    // device's own chain in the group.
+    let of_group = |sub: u8, rest: &[u8]| {
+        let group = room_group.as_bytes();
+        [&[table::CHAIN, sub, group.len() as u8][..], group, rest].concat()
+    };
+    let record = merged[&of_group(0, &epoch.to_be_bytes())].clone();
+    let mut ahead = merged.clone();
+    ahead.insert(of_group(0, &(epoch + 2).to_be_bytes()), record);
+    let mut chainless = merged.clone();
+    assert!(chainless.remove(&of_group(3, &[])).is_some());
     let contradictions: Vec<(&str, Entries)> = vec![
+        ("an epoch's record beyond the group's epoch", ahead),
+        ("a group without the device's own chain", chainless),
         (
             "another device's signature key",
             mixed(&merged, &snapshot(&other), SEED),

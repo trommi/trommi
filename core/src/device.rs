@@ -83,6 +83,19 @@ const SUB_OWED: u8 = 7;
 const SUB_MAC: u8 = 0;
 const SUB_UNCONFIRMED: u8 = 1;
 const SUB_UNBOUND: u8 = 6;
+mod content;
+mod facts;
+mod invite;
+
+pub use content::{
+    board_reduce, BoardItem, BoardSnapshot, Confirmation, Draft, EnvelopeOutcome, ReceivedEnvelope,
+    RegisterChange, Sealed, HEADS_EVERY_MS,
+};
+pub use facts::Finding;
+pub use invite::{
+    InviteAccepted, InviteConfirmed, InviteOpened, InviteStep, JoinRequest, MAX_OPEN_INVITES,
+};
+
 const SUB_OWN_HISTORY: u8 = 0;
 const SUB_OBSERVER: u8 = 1;
 const SUB_ROOM_PLACE: u8 = 2;
@@ -247,6 +260,22 @@ fn handshake_group(bytes: &[u8]) -> Option<GroupId> {
         }
         _ => None,
     }
+}
+
+/// Whether a refusal of the hub says nothing about the request it answers, so that the same request is sent
+/// again unchanged: `internal`, `overloaded`, `rate-limited`, `unauthorised` and `bad-challenge` (sign in
+/// again), `client-too-old`, `lease-lost` (take the lease again). Every other code judges the request.
+pub fn refusal_is_passing(code: &Error) -> bool {
+    matches!(
+        code,
+        Error::Internal(_)
+            | Error::Overloaded
+            | Error::RateLimited
+            | Error::Unauthorised
+            | Error::BadChallenge
+            | Error::ClientTooOld
+            | Error::LeaseLost
+    )
 }
 
 /// Sorts an error of [`Device::process_log_entry`].
@@ -567,7 +596,8 @@ impl Drop for Staged {
 
 impl Staged {
     /// Whether the copy touches only what a join or a recovery writes: OpenMLS's entries, content keys, the
-    /// room's roles, the recovery keys, the records of groups and the device record. Never the device's key,
+    /// room's roles, the recovery keys, the records of groups and of their epochs with what a Cut does to
+    /// chains and objects, and the device record. Never the device's key,
     /// its KeyPackages, the outbox or another staged copy.
     fn in_scope(&self) -> bool {
         let allowed = |key: &Vec<u8>| {
@@ -576,7 +606,13 @@ impl Staged {
                 [table::DEVICE, SUB_RECORD]
                     | [table::DEVICE, SUB_GROUP, ..]
                     | [
-                        table::MLS | table::CONTENT_KEY | table::ROOM_STATE | table::RECOVERY,
+                        table::MLS
+                            | table::CONTENT_KEY
+                            | table::ROOM_STATE
+                            | table::RECOVERY
+                            | table::CHAIN
+                            | table::OBJECT
+                            | table::REGISTER,
                         ..
                     ]
             )
@@ -674,6 +710,8 @@ pub struct CodeJoin {
 /// Everything the device holds in memory that is rebuilt from the store.
 #[derive(Default)]
 struct Memory {
+    /// What the content layer holds between the steps of one operation.
+    wire: facts::Transient,
     record: Record,
     outbox: BTreeMap<u64, OutboxEntry>,
     keys: BTreeMap<(GroupId, u64), Secret<32>>,
@@ -1062,8 +1100,8 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                 let entry = OutboxEntry::from_entry(&Entry::new(key.clone(), value.clone()))?;
                 memory.outbox.insert(entry.id, entry);
             }
-            // The tables of the modules that are composed on top keep their entries untouched.
-            _ => {}
+            // The tables of stored content are read where they are used; here they are only checked.
+            _ => facts::check_entry(key, value)?,
         }
     }
     provider::validate_entries(&mls)?;
@@ -1200,6 +1238,8 @@ impl<S: Storage> Device<S> {
     ///   the group or follows it. A key marked as handed or unconfirmed is held.
     /// - Every outbox entry, and whatever names one (a pending Commit, a staged copy, an owed
     ///   `recovery_mac`), has an id below the next one to give out. A staged copy has its entry.
+    /// - An epoch's record of the content side is of a group of the room and of an epoch the group has
+    ///   reached; where the epoch a group stands in is recorded, the device's own chain in it exists.
     /// - No group's place in the hub's order, and no cursor it was joined at, lies beyond the cursor. The
     ///   place of a room epoch is the place of an epoch the roles hold.
     fn cross_check(&self) -> Result<(), Error> {
@@ -1318,6 +1358,42 @@ impl<S: Storage> Device<S> {
                 .any(|(group, _)| held.contains_key(group))
         {
             return Err(contradicts("a content key's record"));
+        }
+        // The content side's records of the groups (9.0): an epoch's record is of a group of this room and,
+        // where the device is a leaf of the group, of an epoch the group has reached; and the device has
+        // its own chain in every group it is a leaf of and has settled in.
+        let chain = [table::CHAIN];
+        for (key, _) in self
+            .mirror
+            .range(chain.to_vec()..)
+            .take_while(|(key, _)| key.starts_with(&chain))
+        {
+            let mut rest = Reader::new(key.get(1..).unwrap_or_default());
+            if rest.u8() != Ok(facts::SUB_EPOCH) {
+                continue;
+            }
+            let parsed = group_after(&mut rest).and_then(|group| Ok((group, rest.u64()?)));
+            let (group, epoch) = parsed.map_err(|_| damaged("an epoch's record"))?;
+            if !of_room(&group) || held.get(&group).is_some_and(|reached| epoch > *reached) {
+                return Err(contradicts("an epoch's record"));
+            }
+        }
+        for (group, epoch) in &held {
+            let recorded = self.mirror.contains_key(&facts::group_key(
+                table::CHAIN,
+                facts::SUB_EPOCH,
+                group,
+                &epoch.to_be_bytes(),
+            ));
+            let own_chain = self.mirror.contains_key(&facts::group_key(
+                table::CHAIN,
+                facts::SUB_OWN_CHAIN,
+                group,
+                &[],
+            ));
+            if recorded && !own_chain {
+                return Err(contradicts("the own chain"));
+            }
         }
         // What names an outbox entry.
         for (under, staged) in &memory.staged {
@@ -1993,7 +2069,14 @@ impl<S: Storage> Device<S> {
             // The cursor moves past the own entry only when nothing lies between: an entry of another
             // device that the hub ordered before it is still to be processed (5.4.1), and the log then
             // brings the own one by again.
-            let next = device.memory.record.cursor.checked_add(1);
+            // An own envelope is not passed: it takes effect on this device's view when it comes back
+            // from the hub at its place, like everyone's.
+            let next = device
+                .memory
+                .record
+                .cursor
+                .checked_add(1)
+                .filter(|_| entry.kind != OutboxKind::Envelope);
             let passed = answer.change.filter(|change| Some(*change) == next);
             if let Some(change) = passed.filter(|_| !in_the_log) {
                 device.advance(batch, change)?;
@@ -2007,7 +2090,14 @@ impl<S: Storage> Device<S> {
         Ok(())
     }
 
-    /// The hub refused the outbox entry `id` with `code`. `epoch-taken` for a Commit or a join from outside:
+    /// The hub refused the outbox entry `id` with `code`.
+    ///
+    /// A refusal that does not judge the request ([`refusal_is_passing`]: the hub failed, is busy, wants a
+    /// new sign-in, a newer client or the lease) changes nothing, for every kind of entry: the entry stays
+    /// and the same bytes are sent again. An envelope stays after every refusal (see
+    /// [`Device::outbox_voided`], [`Device::envelope_abandon`]). Every other refusal is final for its entry:
+    ///
+    /// `epoch-taken` for a Commit or a join from outside:
     /// it is held back, and the caller processes the log, which decides it: where the log shows the Commit
     /// that took the epoch, the own one is merged if that is it, and dropped otherwise. Any other refusal undoes what the
     /// entry was for: the pending Commit is cleared, a founding's group or a staged join is dropped, the
@@ -2020,6 +2110,10 @@ impl<S: Storage> Device<S> {
                 .get(&id)
                 .cloned()
                 .ok_or(Error::NotFound)?;
+            // A refusal that says nothing about the request leaves it to be sent again.
+            if refusal_is_passing(code) {
+                return Ok(());
+            }
             match (entry.kind, entry.group) {
                 (OutboxKind::Commit | OutboxKind::RecoveryCode, Some(group)) => {
                     if *code == Error::EpochTaken {
@@ -2074,6 +2168,9 @@ impl<S: Storage> Device<S> {
                         }
                     }
                 }
+                // The hub took no number, and this device signs no other envelope under the one it
+                // used (9.0.1): the entry stays and the same bytes are sent again.
+                (OutboxKind::Envelope, _) => return Ok(()),
                 (OutboxKind::KeyPackages, _) => {
                     // The refusal may be for the KeyPackages themselves: they are not verified here.
                     for part in entry.parts.iter().filter(|part| !part.is_empty()) {
@@ -2102,6 +2199,7 @@ impl<S: Storage> Device<S> {
     /// epoch. Its outbox entry goes, if the hub's answer has not taken it yet.
     fn merge_own(&mut self, batch: &mut Batch, id: &GroupId) -> Result<(), Error> {
         let pending = self.meta(id)?.pending.take().ok_or(Error::NotFound)?;
+        self.merging_own(id, pending.outbox, pending.time)?;
         let mut group = group::load(&self.provider, id)?;
         group
             .merge_pending_commit(&self.provider)
@@ -2137,6 +2235,7 @@ impl<S: Storage> Device<S> {
     ) -> Result<(), Error> {
         let leaves = rules::leaves_of(group.members())?;
         if !group.is_active() {
+            self.record_epoch(batch, id, group.epoch().as_u64(), &leaves, room_epoch)?;
             return self.leave(batch, id);
         }
         let key = group::content_key(&self.provider, group)?;
@@ -2163,6 +2262,7 @@ impl<S: Storage> Device<S> {
         }
         // 7.2: the pieces are counted per epoch.
         self.meta(id)?.pieces = 0;
+        self.record_epoch(batch, id, group.epoch().as_u64(), &leaves, room_epoch)?;
         self.put_group(batch, id)
     }
 
@@ -2518,7 +2618,7 @@ impl<S: Storage> Device<S> {
     /// The `SealedKey` of the group and epoch `of`, sealed to the recovery key `to.1` of the room epoch `to.0` (8.2). A human
     /// device sets the `mac` with the `recovery_mac` of that key: `given` for a key that only now comes into
     /// force, else the one it holds. Without it, it founds nothing and commits nothing (7.4): `no-key`.
-    fn seal(
+    fn seal_key(
         &mut self,
         of: (&GroupId, u64),
         content_key: &Secret<32>,
@@ -2581,7 +2681,7 @@ impl<S: Storage> Device<S> {
             let info = group::group_info(&device.provider, &device.key, &group)?;
             let key = group::content_key(&device.provider, &group)?;
             device.hold_mac(batch, keys.mac_key())?;
-            let sealed = device.seal(
+            let sealed = device.seal_key(
                 (&group_id, 0),
                 &key,
                 &info,
@@ -2602,6 +2702,7 @@ impl<S: Storage> Device<S> {
                 },
             );
             device.put_group(batch, &group_id)?;
+            device.record_epoch(batch, &group_id, 0, &leaves, 0)?;
             device.enqueue(
                 batch,
                 OutboxKind::RoomFounding,
@@ -2690,7 +2791,7 @@ impl<S: Storage> Device<S> {
             let info_0 = group::group_info(&device.provider, &device.key, &group)?;
             let key_0 = group::content_key(&device.provider, &group)?;
             let hpke = room.room.recovery_hpke_key;
-            let sealed_0 = device.seal(
+            let sealed_0 = device.seal_key(
                 (&group_id, 0),
                 &key_0,
                 &info_0,
@@ -2714,7 +2815,7 @@ impl<S: Storage> Device<S> {
             let built = group::commit(&device.provider, &device.key, &mut group, &note, change)?;
             // 5.2.5: the founding Commit is judged as every receiver judges it.
             device.judge_own(&group_id, Some((session, 0)), public, &built.commit, None)?;
-            let sealed = device.seal(
+            let sealed = device.seal_key(
                 (&group_id, 1),
                 &built.next_key,
                 &built.group_info,
@@ -2738,6 +2839,7 @@ impl<S: Storage> Device<S> {
                     sealed,
                 ],
             )?;
+            device.keep_own_cuts(batch, &group_id, outbox)?;
             device.memory.groups.insert(
                 group_id,
                 GroupMeta {
@@ -2758,6 +2860,8 @@ impl<S: Storage> Device<S> {
                 },
             );
             device.put_group(batch, &group_id)?;
+            let founder = rules::leaves_of(group.members())?;
+            device.record_epoch(batch, &group_id, 0, &founder, room.epoch)?;
             Ok(session.session_id)
         })
     }
@@ -2880,6 +2984,7 @@ impl<S: Storage> Device<S> {
             .session
             .map(|session| (session, meta.previous_room_epoch));
         self.judge_own(id, session, public, &built.commit, None)?;
+        self.built_cuts(&note.cuts);
         // 8.2: a room Commit that replaces the recovery keys seals its new epoch to the new key, and its row
         // names the new room epoch.
         let (sealed_epoch, hpke, given) = match &kind {
@@ -2895,7 +3000,7 @@ impl<S: Storage> Device<S> {
             welcome,
             next_key,
         } = built;
-        let sealed = self.seal(
+        let sealed = self.seal_key(
             (id, epoch.saturating_add(1)),
             &next_key,
             &group_info,
@@ -2948,6 +3053,7 @@ impl<S: Storage> Device<S> {
             ),
         };
         let outbox = self.enqueue(batch, kind, Some(group), epoch, parts)?;
+        self.keep_own_cuts(batch, &group, outbox)?;
         self.meta(&group)?.pending = Some(Pending {
             outbox,
             room_epoch,
@@ -2992,6 +3098,7 @@ impl<S: Storage> Device<S> {
             .merge_pending_commit(&self.provider)
             .map_err(mls_fault)?;
         self.meta(id)?.own_leaf_ms = now_ms;
+        self.merging_now(now_ms);
         self.settle(batch, id, &group, posting.room_epoch)?;
         Ok(posting)
     }
@@ -3004,44 +3111,55 @@ impl<S: Storage> Device<S> {
         Ok(GroupId::room(room))
     }
 
-    /// Adds the human device `device` to the room group with its KeyPackage (5.1.2, 12.1.5), which must verify
-    /// and be that device's (4.5). The caller then hands the history over ([`Device::send_handover`]) and adds
-    /// it to every live session group ([`Device::add_to_session`]).
+    /// Adds a human device to the room group without an invite. Only under the cargo feature `vectors`, for
+    /// the scenario tests and the generator of the vectors, whose subject is not the invite; in a shipped
+    /// build a human device is added by [`Device::invite_confirm`] alone (12.1.4).
+    #[cfg(feature = "vectors")]
     pub fn add_human_device(
         &mut self,
         device: &DeviceId,
         key_package: &[u8],
         now_ms: u64,
     ) -> Result<u64, Error> {
-        self.transact(|this, batch| {
-            let group = this.room_group()?;
-            let history = this.history()?;
-            let room = history.newest();
-            if room.is_agent(device) || history.is_revoked(device, room.epoch) {
-                return Err(Error::BadCommit);
-            }
-            if room.humans.len() >= MAX_HUMAN_DEVICES {
-                return Err(Error::TooMany);
-            }
-            key_package::verify_key_package_of(key_package, device)?;
-            let (package, _) = key_package::validated(key_package)?;
-            let recovery_hpke_key = room.room.recovery_hpke_key;
-            let outbox = this.commit(batch, &group, vec![package], &[], None, now_ms)?;
-            // 7.4: the newcomer is owed the recovery_mac, written with the Commit that adds it.
-            let recovery_mac = this
-                .memory
-                .macs
-                .get(&recovery_hpke_key)
-                .ok_or(Error::NoKey)?
-                .duplicate();
-            let owed = Owed {
-                recovery_hpke_key,
-                recovery_mac,
-                bound: true,
-            };
-            this.put_owed(batch, outbox, *device, owed)?;
-            Ok(outbox)
-        })
+        self.transact(|this, batch| this.add_human(batch, device, key_package, now_ms))
+    }
+
+    /// Commits the Add of the human device `device` to the room group with its KeyPackage (5.1.2, 12.1.5),
+    /// which must verify and be that device's (4.5).
+    fn add_human(
+        &mut self,
+        batch: &mut Batch,
+        device: &DeviceId,
+        key_package: &[u8],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        let group = self.room_group()?;
+        let history = self.history()?;
+        let room = history.newest();
+        if room.is_agent(device) || history.is_revoked(device, room.epoch) {
+            return Err(Error::BadCommit);
+        }
+        if room.humans.len() >= MAX_HUMAN_DEVICES {
+            return Err(Error::TooMany);
+        }
+        key_package::verify_key_package_of(key_package, device)?;
+        let (package, _) = key_package::validated(key_package)?;
+        let recovery_hpke_key = room.room.recovery_hpke_key;
+        let outbox = self.commit(batch, &group, vec![package], &[], None, now_ms)?;
+        // 7.4: the newcomer is owed the recovery_mac, written with the Commit that adds it.
+        let recovery_mac = self
+            .memory
+            .macs
+            .get(&recovery_hpke_key)
+            .ok_or(Error::NoKey)?
+            .duplicate();
+        let owed = Owed {
+            recovery_hpke_key,
+            recovery_mac,
+            bound: true,
+        };
+        self.put_owed(batch, outbox, *device, owed)?;
+        Ok(outbox)
     }
 
     /// Adds `device` to the session group `group` with its KeyPackage: a human device missing from a live
@@ -3063,27 +3181,45 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// Changes the room's enrolled agent devices (5.1.2): `enrol` are added to `agents`, `remove` taken out.
-    /// Removing one makes its main session and the helper sessions it opened stale (5.3.1).
+    /// Takes agent devices out of the room's `agents` (5.1.2). Removing one makes its main session and the
+    /// helper sessions it opened stale (5.3.1). An agent device is enrolled by [`Device::invite_confirm`]
+    /// alone (12.1.4).
+    pub fn remove_agents(&mut self, remove: &[DeviceId], now_ms: u64) -> Result<u64, Error> {
+        self.transact(|this, batch| this.set_agents(batch, &[], remove, now_ms))
+    }
+
+    /// Changes the room's enrolled agent devices without an invite. Only under the cargo feature `vectors`,
+    /// like [`Device::add_human_device`].
+    #[cfg(feature = "vectors")]
     pub fn change_agents(
         &mut self,
         enrol: &[DeviceId],
         remove: &[DeviceId],
         now_ms: u64,
     ) -> Result<u64, Error> {
-        self.transact(|this, batch| {
-            let group = this.room_group()?;
-            let mut room = this.history()?.newest().room.clone();
-            let mut agents: BTreeSet<DeviceId> = room.agents.iter().copied().collect();
-            for gone in remove {
-                if !agents.remove(gone) {
-                    return Err(Error::NotMember);
-                }
+        self.transact(|this, batch| this.set_agents(batch, enrol, remove, now_ms))
+    }
+
+    /// Commits a change of the room's enrolled agent devices (5.1.2): `enrol` are added to `agents`, `remove`
+    /// taken out.
+    fn set_agents(
+        &mut self,
+        batch: &mut Batch,
+        enrol: &[DeviceId],
+        remove: &[DeviceId],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        let group = self.room_group()?;
+        let mut room = self.history()?.newest().room.clone();
+        let mut agents: BTreeSet<DeviceId> = room.agents.iter().copied().collect();
+        for gone in remove {
+            if !agents.remove(gone) {
+                return Err(Error::NotMember);
             }
-            agents.extend(enrol.iter().copied());
-            room.agents = agents.into_iter().collect();
-            this.commit(batch, &group, Vec::new(), &[], Some(room), now_ms)
-        })
+        }
+        agents.extend(enrol.iter().copied());
+        room.agents = agents.into_iter().collect();
+        self.commit(batch, &group, Vec::new(), &[], Some(room), now_ms)
     }
 
     /// Removes human devices from the room group (5.2.8), each with its Cut there. This is the first Commit of
@@ -3319,6 +3455,7 @@ impl<S: Storage> Device<S> {
         let mut offending = Vec::new();
         match kind {
             GroupKind::Room(_) => {
+                self.invited(batch, &id, &added_by, welcome)?;
                 let state = rules::room_state_of(staged.group_context(), &leaves)?;
                 // Section 16: a device is added to a room of at most 32 human and 256 agent devices.
                 if state.humans.len() > MAX_HUMAN_DEVICES
@@ -3335,6 +3472,7 @@ impl<S: Storage> Device<S> {
                 self.put_record(batch)?;
             }
             GroupKind::Session(session) => {
+                self.enrolment_verified()?;
                 if let Some(observer) = self.retire_observer(batch, &id) {
                     Self::adopt_session_record(&mut meta, &observer, epoch, &devices)?;
                 }
@@ -3372,6 +3510,9 @@ impl<S: Storage> Device<S> {
         self.keep_key(batch, &id, epoch, key);
         self.memory.groups.insert(id, meta);
         self.put_group(batch, &id)?;
+        // The Commit that began this epoch is not known to the joiner: the roles are those of the newest
+        // room state it holds.
+        self.record_epoch(batch, &id, epoch, &leaves, u64::MAX)?;
         // The KeyPackage's private part is gone from OpenMLS's storage unless it is the last-resort one.
         let used: Vec<Hash32> = self
             .memory
@@ -3405,6 +3546,7 @@ impl<S: Storage> Device<S> {
     ) -> Result<(), Error> {
         self.transact(|this, batch| {
             let observer = Observer::follow_room(group_info, expected_state)?;
+            this.observing_as_invited(expected_state, observer.history())?;
             let group = observer.group();
             let known_room = this.memory.record.room;
             if this.memory.history.is_some()
@@ -3528,7 +3670,7 @@ impl<S: Storage> Device<S> {
             joiner: self.id,
         };
         let recovery_auth = keys.authorise(&join, &built.commit)?;
-        let sealed = self.seal(
+        let sealed = self.seal_key(
             (&id, built.epoch.saturating_add(1)),
             &built.next_key,
             &built.group_info,
@@ -3925,7 +4067,7 @@ impl<S: Storage> Device<S> {
             observer::signer_of(state.public_group(), group_info)?;
             let key = this.content_key(group, epoch)?;
             let room = this.history()?.newest().clone();
-            let sealed = this.seal(
+            let sealed = this.seal_key(
                 (group, epoch),
                 &key,
                 group_info,
@@ -3975,8 +4117,16 @@ impl<S: Storage> Device<S> {
     /// An entry called a message whose bytes are a handshake message (a `PublicMessage`) of a group this
     /// device is a leaf of or follows, by the group the message itself names, is refused (`bad-format`, the
     /// finding `bad-group`) and the cursor stays: it is not passed over as a message that does not open.
-    pub fn process_log_entry(&mut self, entry: &LogEntry<'_>) -> Result<Processed, Error> {
+    ///
+    /// `now_ms` is this device's clock: when it processed the Commit that ended an epoch decides how long
+    /// an envelope of that epoch is still taken (9.0.5, check 8).
+    pub fn process_log_entry(
+        &mut self,
+        entry: &LogEntry<'_>,
+        now_ms: u64,
+    ) -> Result<Processed, Error> {
         let (processed, adopted) = self.transact(|this, batch| {
+            this.begin(now_ms);
             let mut adopted = false;
             // 5.4.1: every entry once, in the hub's order. One at or below the cursor was processed, or was
             // passed when a later one was: it is a duplicate. The one exception is the next Commit of a
@@ -4036,6 +4186,7 @@ impl<S: Storage> Device<S> {
                     }
                 }
             };
+            this.enrolled_by_inviter(batch, &processed)?;
             this.advance(batch, entry.change)?;
             Ok((processed, adopted))
         })?;
@@ -4410,6 +4561,7 @@ impl<S: Storage> Device<S> {
         }
         let removed = !group.is_active();
         self.meta(id)?.place = change;
+        self.merging_foreign(facts.note.as_ref());
         self.settle(batch, id, &group, room_epoch)?;
         if id.is_room() {
             self.put_room_place(batch, epoch.saturating_add(1), change);
