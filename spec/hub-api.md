@@ -245,7 +245,8 @@ encrypted.
     registers together. A stream ends when the token it was opened with runs out, and the device resumes
     with a new one by change number.
 23. `epoch-full` counts the accepted envelopes of a group and epoch. An envelope whose ciphertext is not a
-    padded size of 9 is `bad-format` and takes no number; `too-large` is the void of a register over its size.
+    padded size of 9 is `bad-format` and takes no number; `too-large` is the void of a register over its size
+    and of any sealed body beyond the largest padded size (9.0.5).
 
 **Operations**
 
