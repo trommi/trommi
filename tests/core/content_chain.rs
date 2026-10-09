@@ -697,7 +697,7 @@ fn a_void_of_another_sender_that_cannot_be_checked_again_is_a_finding() {
 }
 
 #[test]
-fn a_stale_session_a_full_epoch_and_an_oversize_body_are_refused_after_the_chain() {
+fn a_stale_session_and_a_full_epoch_are_refused_after_the_chain() {
     let mut world = World::new();
     world.fake.group(&session()).stale = true;
     let sealed = world.sign(2, session(), &chat("x"));
@@ -726,19 +726,92 @@ fn a_stale_session_a_full_epoch_and_an_oversize_body_are_refused_after_the_chain
         *full.take(&sealed.envelope).unwrap().outcome(),
         Outcome::Refused(Error::EpochFull)
     );
+}
 
-    // A sealed body beyond the largest padded size: decoded, chained, refused.
-    let mut envelope = world.sign(2, session(), &chat("x")).envelope;
-    envelope.content = Content::Full(vec![0; envelope::MAX_PADDED_LEN + 17]);
-    let hash = envelope.hash().unwrap();
-    envelope.signature =
-        trommi_core::crypto::sign_with_label(&signer(2), "TrommiEnvelope", hash.as_bytes())
-            .unwrap()
-            .try_into()
+#[test]
+fn an_oversize_body_is_the_hubs_to_refuse_and_counts_the_same_in_both_forms_on_a_device() {
+    // The agent's first card version over a sealed body of 65 553 bytes.
+    let sealed = oversize(3, session(), &card());
+    let Content::Full(ciphertext) = &sealed.envelope.content else {
+        panic!("full form");
+    };
+    assert_eq!(ciphertext.len(), 65_553);
+    let pruned = sealed.envelope.prune().unwrap();
+
+    // The hub chains it and refuses it: a void record, no object.
+    let mut hub = World::new();
+    hub.fake.hub = true;
+    let receipt = hub.hub_take(3, &sealed.envelope).unwrap();
+    assert_eq!(*receipt.outcome(), Outcome::Refused(Error::TooLarge));
+    assert_eq!(hub.objects(&session()), Objects::new());
+    assert_eq!(hub.chains(&session()).head(&device(3)).seq, 1);
+
+    // Served as that void record, every device chains it and applies nothing, in order and reading back; the
+    // reason cannot be checked again, which is the finding.
+    for mode in [Mode::InOrder, Mode::ReadingBack] {
+        let mut device = World::new();
+        let receipt = device
+            .take_as(
+                &pruned.encode().unwrap(),
+                &Served::Void(Error::TooLarge),
+                mode,
+            )
             .unwrap();
+        assert_eq!(
+            *receipt.outcome(),
+            Outcome::Void {
+                code: Error::TooLarge,
+                finding: Some(Error::HubVoidedOther)
+            }
+        );
+        assert_eq!(device.objects(&session()), Objects::new());
+        assert_eq!(device.chains(&session()), hub.chains(&session()));
+    }
+
+    // A hub that hides the marker and serves the record as stored: a device cannot tell from the pruned
+    // form, which carries no length, so the full form counts the same. Both devices hold the same object;
+    // neither reads a body.
+    for mode in [Mode::InOrder, Mode::ReadingBack] {
+        let mut with_body = World::new();
+        let mut without = World::new();
+        let full = with_body
+            .take_as(&sealed.envelope.encode().unwrap(), &Served::Stored, mode)
+            .unwrap();
+        let bare = without
+            .take_as(&pruned.encode().unwrap(), &Served::Stored, mode)
+            .unwrap();
+        let Outcome::Taken { transition, body } = full.outcome() else {
+            panic!("taken: {:?}", full.outcome());
+        };
+        assert_eq!(body, &Err(Error::TooLarge));
+        assert!(full.opened().is_none());
+        let Outcome::Taken {
+            transition: bare_transition,
+            body: bare_body,
+        } = bare.outcome()
+        else {
+            panic!("taken: {:?}", bare.outcome());
+        };
+        assert_eq!(bare_body, &Err(Error::Pruned));
+        assert!(transition.is_some());
+        assert_eq!(transition, bare_transition);
+        assert_eq!(with_body.objects(&session()), without.objects(&session()));
+        assert_eq!(with_body.objects(&session()).iter().count(), 1);
+        assert_eq!(with_body.chains(&session()), without.chains(&session()));
+    }
+
+    // Out of order it is not shown: its body does not open.
+    let device = World::new();
     assert_eq!(
-        *world.take(&envelope).unwrap().outcome(),
-        Outcome::Refused(Error::TooLarge)
+        provisional(
+            &device.fake,
+            &device.fake,
+            &Chains::new(),
+            &sealed.envelope.encode().unwrap(),
+            NOW
+        )
+        .err(),
+        Some(Error::TooLarge)
     );
 }
 

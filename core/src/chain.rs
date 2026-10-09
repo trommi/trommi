@@ -489,8 +489,8 @@ pub struct Advance {
 pub enum Outcome {
     /// It passed checks 7 and 8. `transition` is the change of its object's state, to be applied and stored
     /// with the [`Advance`]; `None` for an item and a register. `body` is check
-    /// 9: the opened body, or `no-key`, `pruned`, `decrypt-failed`, `bad-format`, `newer-version` (the hub, which
-    /// holds no key, always has `no-key`). Without a body nothing is shown or acted on, but the transition
+    /// 9: the opened body, or `no-key`, `pruned`, `too-large`, `decrypt-failed`, `bad-format`, `newer-version`
+    /// (the hub, which holds no key, always has `no-key`). Without a body nothing is shown or acted on, but the transition
     /// counts: object state follows the headers.
     Taken {
         /// The object's change of state.
@@ -499,7 +499,8 @@ pub enum Outcome {
         body: Result<Body, Error>,
     },
     /// It failed check 7 or 8, or what the hub checks beside them: `forbidden`, `wrong-epoch`, `stale-session`,
-    /// `epoch-full`, `too-large`. It is chained and never applied; the hub stores it as a void record.
+    /// `epoch-full`, and at the hub `too-large`. It is chained and never applied; the hub stores it as a void
+    /// record.
     Refused(Error),
     /// The hub served it as a void record: chained, never applied. `finding` is `hub-voided-other` when the
     /// record is another sender's and its reason cannot be checked again from the header and the group state,
@@ -693,7 +694,11 @@ fn judge_chained(
             return Ok(Err(Error::EpochFull));
         }
     }
-    if verified.envelope.is_oversize() {
+    // The length of the sealed body is the hub's alone to judge: it takes only the full form. A device may
+    // be served the same envelope pruned, where no length is left, and the signature covers the body's hash,
+    // not its length. So a device takes an envelope the hub served as stored by its header in either form,
+    // and a body that is too long does not open (check 9).
+    if mode == Mode::Hub && verified.envelope.is_oversize() {
         return Ok(Err(Error::TooLarge));
     }
     Ok(Ok(transition))
@@ -816,8 +821,10 @@ fn open(facts: &dyn GroupFacts, envelope: &Envelope) -> Result<Body, Error> {
 /// `chains` and `objects` are the state of the envelope's group. `me` is this device. The envelopes of a group
 /// are handed in by ascending change number, the hub's order, by whichever route they came: an object's state
 /// is judged against the envelopes before it in that order, and a sender's numbers ascend with it. `mode` says
-/// whether the group state in `facts` is the one of the envelope's place in that order or a later one; a pruned envelope is checked like a full one and ends
-/// with the body `pruned`. This device's own envelopes come back through here like everyone's.
+/// whether the group state in `facts` is the one of the envelope's place in that order or a later one. A pruned
+/// envelope is checked like a full one and ends with the body `pruned`; whatever the hub served as stored
+/// gives the same receipt in both forms but for the body. This device's own envelopes come back through here
+/// like everyone's.
 #[allow(clippy::too_many_arguments)]
 pub fn receive(
     facts: &dyn GroupFacts,
