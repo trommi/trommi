@@ -1,6 +1,6 @@
 //! What the connector's end-to-end tests share: the real v2 hub as a child process, and a stand-in for the
 //! human's device. The stand-in is built on `trommi-core` through the connector's own vault (the device, its
-//! journal, the content chains) with a recovery construct of its own, and speaks to the hub through the
+//! journal, the content chains), and speaks to the hub through the
 //! connector's hub client; everything a human's app does in these tests is here, step by step.
 #![allow(dead_code)]
 
@@ -16,8 +16,8 @@ use trommi_connector::store::Journal;
 use trommi_connector::util::{hex, now_ms};
 use trommi_connector::vault::{ContentDevice, Vault};
 use trommi_core::chain::{Mode, Served};
-use trommi_core::crypto::{self, Entropy, Secret, SigningKey, SystemEntropy};
-use trommi_core::device::{Accepted, DeviceRecovery, LogEntry, LogKind, Processed, SealRequest};
+use trommi_core::crypto::{SigningKey, SystemEntropy};
+use trommi_core::device::{Accepted, LogEntry, LogKind, Processed};
 use trommi_core::envelope::{
     AnswerBind, Draft, Envelope, Subject, TakeBackBind, Urgency, Verdict, VerdictBind,
 };
@@ -25,7 +25,6 @@ use trommi_core::hub_auth::HubAddress;
 use trommi_core::ids::{DeviceId, GroupId, Hash32, ObjectId, RoomId, SessionId};
 use trommi_core::invite::{InviteTerms, Inviter, Request, Role, SignedRequest};
 use trommi_core::mls::profile::Cut;
-use trommi_core::mls::rules::{JoinClaim, RecoveryRules, SealedKeyClaim};
 use trommi_core::store::{OutboxEntry, OutboxKind};
 use trommi_core::Error;
 
@@ -145,50 +144,6 @@ impl Drop for HubProc {
     }
 }
 
-/// The recovery construct of the stand-in: a `SealedKey` in the layout the hub checks (spec/v2.md section 8),
-/// with random bytes where the hub and an agent cannot look, and a `mac` as a human device's row carries.
-struct HumanRecovery;
-
-impl RecoveryRules for HumanRecovery {
-    fn verify_join(&self, _: &JoinClaim<'_>) -> std::result::Result<(), Error> {
-        Err(Error::BadCommit)
-    }
-    fn verify_sealed_key(
-        &self,
-        _: &SealedKeyClaim<'_>,
-        sealed_key: &[u8],
-    ) -> std::result::Result<(), Error> {
-        if sealed_key.is_empty() {
-            Err(Error::Incomplete)
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl DeviceRecovery for HumanRecovery {
-    fn seal_key(
-        &mut self,
-        entropy: &mut dyn Entropy,
-        request: &SealRequest<'_>,
-    ) -> std::result::Result<Vec<u8>, Error> {
-        let mut writer = trommi_core::codec::Writer::new();
-        writer.opaque(request.group.as_bytes())?;
-        writer.u64(request.epoch);
-        writer.fixed(crypto::ref_hash("Trommi Group Info", request.group_info)?.as_bytes());
-        writer.u64(request.room_epoch);
-        writer.opaque(request.recovery_hpke_key)?;
-        writer.opaque(&crypto::random::<32>(entropy)?)?;
-        writer.opaque(&crypto::random::<48>(entropy)?)?;
-        writer.fixed(request.writer.as_bytes());
-        writer.opaque(&crypto::random::<32>(entropy)?)?;
-        Ok(writer.into_bytes())
-    }
-    fn rules(&self) -> &dyn RecoveryRules {
-        self
-    }
-}
-
 /// An invite the stand-in made, until its device is in.
 pub struct Invite {
     inviter: Inviter,
@@ -235,15 +190,14 @@ impl Human {
     pub async fn found(url: &str) -> Human {
         let dir = TempDir::new("human");
         let journal = Journal::open(dir.path()).expect("a journal");
-        let mut vault = Vault::create_with(journal, Box::new(HumanRecovery)).expect("a device");
+        let mut vault = Vault::create(journal).expect("a device");
         let key = SigningKey::from_seed(vault.signing_key().seed().duplicate());
-        let recovery_sign = SigningKey::generate(&mut SystemEntropy).expect("a key");
-        let recovery_hpke =
-            crypto::derive_hpke_keypair(&Secret::random(&mut SystemEntropy).expect("a seed"))
-                .expect("a key pair");
+        // The recovery code a human's app shows once; the stand-in forgets it.
+        let (_code, keys) =
+            trommi_core::recovery::RecoveryKeys::generate(&mut SystemEntropy).expect("a code");
         let room = vault
             .device
-            .found_room(recovery_sign.public(), recovery_hpke.public, now_ms())
+            .found_room(&keys, now_ms())
             .expect("the room is founded");
         vault.commit().expect("stored");
         let address = HubAddress::parse(url).expect("the hub's address");

@@ -529,6 +529,7 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
         mut hub,
         mut a,
         mut b,
+        room_group,
         main,
         parent,
         ..
@@ -573,6 +574,20 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
         assert_eq!(sync_ok(&hub, device), [Processed::Skipped]);
         assert_eq!(device.content_key(&group, 1), Err(Error::NoKey));
     }
+    // Nor does it hand a key of that group on: a human device that comes later gets the keys of the room
+    // and of the main session, and none of the session that failed first contact.
+    let mut c = new_device();
+    add_human(&mut hub, &mut a, &mut c);
+    a.send_handover(&room_group, &c.id()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let processed = settle(&hub, &mut c);
+    assert!(matches!(
+        processed.last(),
+        Some(Processed::Message(Received::Keys { taken, .. })) if *taken > 0
+    ));
+    assert!(c.content_key(&main, 0).is_ok());
+    assert_eq!(c.content_key(&group, 1), Err(Error::NoKey));
+    sync_ok(&hub, &mut b);
 
     // It removes the offending leaf. Open point: 5.2.6 says such a session's content is never opened; a
     // device that processed the cleaning hands the keys out from then on, the device that made it does not.

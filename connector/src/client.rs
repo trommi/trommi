@@ -1010,6 +1010,12 @@ impl Client {
                             "[trommi] finding: {} (a session's past was not learned)",
                             fault.code
                         );
+                        if fault.code == "bad-group" {
+                            self.emit(ClientEvent::Error(Fault::new(
+                                "bad-group",
+                                "a session this agent was added to does not verify from its founding",
+                            )));
+                        }
                     }
                     core.reread.push(group);
                 }
@@ -1034,8 +1040,12 @@ impl Client {
     }
 
     /// Every Commit of a group's log, in order, with the `RecoveryAuth` beside a join from outside.
-    async fn commits_of(&self, group: &GroupId) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>)>> {
+    async fn commits_of(
+        &self,
+        group: &GroupId,
+    ) -> Result<(Vec<(Vec<u8>, Option<Vec<u8>>)>, Vec<u64>)> {
         let mut out = Vec::new();
+        let mut changes = Vec::new();
         let mut after = 0u64;
         loop {
             let page = self
@@ -1060,10 +1070,11 @@ impl Client {
                     .map(|_| unb64(item, "recovery_auth"))
                     .transpose()?;
                 out.push((unb64(item, "bytes")?, auth));
+                changes.push(item.get("change").and_then(Value::as_u64).unwrap_or(0));
                 after = after.max(item.get("n").and_then(Value::as_u64).unwrap_or(after));
             }
             if page.get("more") != Some(&Value::Bool(true)) || items.is_empty() {
-                return Ok(out);
+                return Ok((out, changes));
             }
         }
     }
@@ -1081,11 +1092,19 @@ impl Client {
                 .await?;
             unb64(&info, "group_info")
         };
+        let (room_commits, _) = self.commits_of(&room_group).await?;
+        let (commits, changes) = self.commits_of(&group).await?;
+        let current = self
+            .hub
+            .get(&format!("/v2/groups/{}/info", b64(group.as_bytes())))
+            .await?;
         let past = crate::vault::Past {
             room_info: info_of(room_group).await?,
-            room_commits: self.commits_of(&room_group).await?,
+            room_commits,
             info: info_of(group).await?,
-            commits: self.commits_of(&group).await?,
+            commits,
+            changes,
+            current: unb64(&current, "group_info")?,
         };
         let anchor = (
             core.room.room_epoch,
@@ -1094,7 +1113,11 @@ impl Client {
         );
         let now = now_ms();
         self.vault
-            .call(move |v: &mut Vault| v.learn_past(&group, &past, anchor, now))
+            .call(move |v: &mut Vault| -> Result<()> {
+                // 5.2.6 first, as the core's device checks it; then the epochs before this device's own.
+                v.first_contact(&group, &past)?;
+                v.learn_past(&group, &past, anchor, now)
+            })
             .await??;
         core.commit()
     }
@@ -2015,7 +2038,9 @@ impl Client {
             OutboxKind::RoomFounding
             | OutboxKind::ExternalCommit
             | OutboxKind::SealedKey
-            | OutboxKind::RecoveryCode => {
+            | OutboxKind::RecoveryCode
+            | OutboxKind::RecoveryCommit
+            | OutboxKind::RecoveryFinish => {
                 return Err(Fault::new("forbidden", "not a request of an agent device"))
             }
         };
