@@ -25,7 +25,7 @@ KeyPackage, an envelope and every struct of v2.md travel as their TLS-encoded by
 | `POST /v2/rooms/{room}/recovery-code` | `{ commit bodies as above, recovery_link, account }` | 8.6: all or nothing |
 | `POST /v2/groups/{group}/reject` | `{ n }` | 14.7 |
 | `POST /v2/groups/{group}/archive` | | 5.2.10; human devices |
-| `GET /v2/groups/{group}/log?after=&limit=` | → `{ items: [ { n, epoch, kind: commit \| message, bytes, at } ], more }` | the ordered log (5.4.1, 7.0); `gone` when `after` is older than what is kept |
+| `GET /v2/groups/{group}/log?after=&limit=` | → `{ items: [ { n, change, epoch, at, kind: "commit", bytes, recovery_auth? } \| { n, change, epoch, at, kind: "message", bytes } ], more }` | the ordered log (5.4.1, 7.0); `gone` when `after` is older than what is kept |
 | `POST /v2/groups/{group}/messages` | `{ epoch, message, relay? }` → `{ n }` | application message; `relay: true`: passed on, not stored (7.2); `wrong-epoch` |
 | `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | current; for the room group every epoch is kept |
 | `GET /v2/welcomes` | → `[ { group_id, welcome, at } ]` | for the asking device; deleted when it has joined |
@@ -91,7 +91,7 @@ written. Catch-up is "everything above N".
   it touches, later parts are checked against that copy, every other reader sees the state from before. `finish`
   checks that the room group and every live session group were joined and cleaned, then publishes all parts under
   consecutive change numbers; repeated, it gives the same answer. At expiry or `DELETE` the copy is dropped.
-- The log route gives a join from outside together with its `RecoveryAuth`, and `withdrawn` entries (14.7). The
-  chain route marks envelopes beyond a Cut `cut`.
+- The log route gives a join from outside together with its `RecoveryAuth`. The chain route marks envelopes beyond
+  a Cut `cut`. Nothing in a log is ever withdrawn.
 - A repeated post of the same bytes gets the first answer again. Every read route serves a void record with its
   `void_code`.
