@@ -67,6 +67,47 @@ hub never reads**: a body: texts, card content, choices, verdicts, register name
 file names and types. **What goes away**: thirty days after a card is answered or closed its bodies and files; work
 trails after thirty days. The table per stored thing is in `spec/v2.md`, section 14.
 
+## Delivery
+
+Every commit on `main` runs `.github/workflows/build.yml`. It finds which parts changed (a part's own folder, or
+`core/`, or what pins the build), tests and builds those, and hands each built part to its deploy workflow. A deploy
+workflow delivers the files the build made and tested; it builds nothing again. Each can also be started by hand with
+the id of an earlier build run, to deliver that build once more.
+
+| Part | Build makes | Deploy workflow | What it changes |
+| --- | --- | --- | --- |
+| Web app | `web-release`: the files the worker serves, the worker, its settings, `manifest.json`, `checksums.txt` | `deploy_web.yml` | the Cloudflare worker `trommi-app` at https://app.trommi.com |
+| Connector | `connector-release`: four binaries, the plugin's archive, `manifest.json` | `deploy_connector.yml` | a GitHub release `connector-v<N>`, signed |
+| iOS app | `ios-release`: the Rust core for iOS and its Swift bindings | `deploy_ios.yml` | a TestFlight build in the group "Intern" |
+| Hub | `hub-release`: the hub and its updater as static programs, the hub's systemd unit, `manifest.json` | `deploy_hub.yml` | a GitHub release `hub-v<N>`, signed; then the server takes it (below) |
+
+Secrets: each part has a GitHub environment of its name (`web`, `connector`, `ios`, `hub`) that holds only the way
+into a 1Password Environment; every other secret is read from there by the one command that needs it (`op run`).
+Pull requests run the build jobs and reach no secret and no deploy workflow.
+
+**Signed releases** (connector, hub) have one form. `release/manifest.sh` writes `manifest.json`: product,
+repository, version, tag, commit, and every file with its size and SHA-256. `release/sign.sh sign` signs the exact
+bytes of the manifest with Ed25519 (`manifest.json.sig`, 64 raw bytes); the public key is `release/public-key.pem`.
+To check a release: `release/sign.sh verify manifest.json`, then that the manifest names the product, tag and
+version you asked for, then `release/sign.sh files manifest.json`.
+
+**The web app** cannot be signed for a browser, so it is attested instead. `.github/scripts/web_release.mjs` lists
+every delivered file with its SHA-256 (`manifest.json`, `checksums.txt`), and the deploy creates GitHub's build
+provenance attestation for each file and for the manifest: a public statement of which workflow run built these
+bytes from which commit. To check a file the site serves:
+
+```bash
+curl -fsSO https://app.trommi.com/gen/build.txt          # the commit the site says it serves
+curl -fsS https://app.trommi.com/index.html -o index.html
+gh attestation verify index.html --repo trommi/trommi    # fails for bytes no build of this repository made
+```
+
+A monitor that does this for every file the site serves, on a schedule and after each delivery, is planned and not
+built: it would read the file list from `sw.js`, verify each file's attestation, check that all of them name the
+commit of `gen/build.txt`, and raise an alarm on the first file that no build of this repository made.
+
+`Strict-Transport-Security` with preload is prepared and off: `WEB_HSTS` in `build.yml`.
+
 ## How the hub is deployed
 
 From a commit to the running server, nobody logs in and no code is handed to the server by CI.
@@ -88,10 +129,7 @@ server (updater, port 9443, tailnet address only)
         └── answers with what happened; the run shows it and fails unless the release runs
 ```
 
-**The release.** One form for every part that is signed (the hub now, the connector next): `release/manifest.sh`
-writes `manifest.json` (product, repository, version, tag, commit, and each file with size and SHA-256);
-`release/sign.sh` signs its exact bytes and checks signatures; `release/public-key.pem` is the public key. A release
-never brings a key. The hub is released as static programs, not as an image: one file each, hashable, no registry
+**The release** has the form of every signed release (above); a release never brings a key. The hub is released as static programs, not as an image: one file each, hashable, no registry
 and nothing to unpack; the server says the SHA-256 of what it runs, to compare with the manifest of the release. The
 version is the build's run number (plus `RELEASE_BASE` in `build.yml`): a whole number that only grows. A published
 release is never replaced.
@@ -112,9 +150,10 @@ devices. If tailscaled cannot be asked, nobody is served.
 | older release | refused before anything is fetched |
 | the new hub does not become well in 60 s, or says another commit | the release before is put back and started; `rolled-back`; the copy of the database made before the swap is named in the answer and is not restored by itself |
 | the disk is full | a fetch that cannot be written changes nothing; if the copy of the database cannot be made, nothing is swapped and the hub is started again |
-| the machine or the updater goes down in the middle | a note written before the swap is found at the next start: the release before is put back and started |
+| the machine or the updater goes down in the middle | a note written before the swap is found at the next start (the hub is started by the updater, never by itself, so a release whose health was never known does not serve): if the new release is in place, proves and is well, it stays; otherwise the release before is put back |
 | two calls at once | one after the other; the second finds its release running (`unchanged`) or older (`refused`) |
-| the server restarts (it reboots by itself for updates) | both services start at boot; a call that finds no connection is tried again for three minutes, then the run fails without having changed anything |
+| the server restarts (it reboots by itself for updates) | the updater starts at boot and starts the hub; a call that finds no connection is tried again for three minutes, then the run fails without having changed anything |
+| a new updater is on trial, or another deploy runs | `busy`; the run tries again for three minutes |
 | a new updater does not come up | systemd starts it once more, the pre-start script puts the previous updater back, and that one says so in its answers |
 
 **The updater updates itself.** Every release brings the updater too. When it differs from the one that runs, the
@@ -144,7 +183,8 @@ Rules that follow from this: a hub release must be able to run on the database o
 it usable for that one, because that is what a rollback starts; renaming `build.yml` restarts the run number, so
 `RELEASE_BASE` is raised then; HSTS is off until `HUB_HSTS=on` is set in `/etc/trommi/hub.env`.
 
-**The first installation** is `hub/deploy/install.sh` on the owner's laptop (`inventory` reads the server and
-changes nothing, `install` puts the first updater and hub in place and moves the old stack aside, `secrets` sends
-the push credentials from the 1Password Environment). Afterwards the repository variable `HUB_SERVER_READY` is set
-to `true`; until then `deploy_hub` publishes releases without calling the server.
+**The first installation** is `hub/deploy/install.sh` on the owner's laptop: `inventory` reads the server and
+changes nothing; `install` stops the old hub, moves the old stack aside, and puts the first updater and hub in
+place; `secrets` sends the push credentials from the 1Password Environment; `back` puts the old stack back. Until
+the server is installed, `deploy_hub` publishes each release and then fails saying that nothing answers on the
+server's deploy port.
