@@ -227,8 +227,10 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
         a.add_human_device(&x.id(), &package, now()),
         Err(Error::BadCommit)
     );
-    a.add_to_session(&group, &x.id(), &package, now()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut a), [Error::BadCommit]);
+    assert_eq!(
+        a.add_to_session(&group, &x.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
     assert!(!a.group(&group).unwrap().pending);
     assert_eq!(hub.epoch(&group), Some(2));
 }
@@ -381,9 +383,10 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
             .unwrap()
             .contains(&x.id()));
     }
-    b.add_to_session(&groups[0], &x.id(), &package, now())
-        .unwrap();
-    assert_eq!(post_refused(&mut hub, &mut b), [Error::BadCommit]);
+    assert_eq!(
+        b.add_to_session(&groups[0], &x.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
 
     // The removing device restarts: its Commit is still in the outbox, the same bytes, and the hub answers
     // the repeated post like the first. It then finds every session cleaned by the other device.

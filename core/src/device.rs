@@ -2468,7 +2468,11 @@ impl<S: Storage> Device<S> {
                 adds,
                 ..Change::default()
             };
+            let mls_id = openmls::prelude::GroupId::from_slice(group_id.as_bytes());
+            let public = provider::public_entries(&device.provider.entries(), &mls_id)?;
             let built = group::commit(&device.provider, &device.key, &mut group, &note, change)?;
+            // 5.2.5: the founding Commit is judged as every receiver judges it.
+            device.judge_own(&group_id, Some((session, 0)), public, &built.commit)?;
             let sealed = device.seal(
                 (&group_id, 1),
                 &built.next_key,
@@ -2518,6 +2522,49 @@ impl<S: Storage> Device<S> {
     }
 
     // ---- Commits ----
+
+    /// Judges a Commit this device built, before anything of it is written or queued: by the rules every
+    /// receiver applies to it ([`rules::check_room_commit`], [`rules::check_session_commit`]), with the
+    /// verifier a member uses, read from the bytes that will be posted against the group's public state
+    /// before it (`public`, of [`provider::public_entries`]). What a member or the hub would refuse is
+    /// refused here, with the same code, and the operation leaves nothing behind.
+    fn judge_own(
+        &self,
+        id: &GroupId,
+        session: Option<(TrommiSession, u64)>,
+        public: MlsEntries,
+        commit: &[u8],
+    ) -> Result<(), Error> {
+        let (facts, leaves) = observer::read_commit(public, id, commit)?;
+        let known = self.known();
+        let history = self.history()?;
+        let verifier = Verifier {
+            history,
+            sessions: &known,
+            recovery: &PublicRules,
+            max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
+            // It is built on the newest room state this device holds, and is taken only at that place.
+            room_epoch: history.newest().epoch,
+        };
+        let judged = Judged {
+            facts: &facts,
+            commit,
+            recovery_auth: None,
+            base_group_info: None,
+        };
+        match session {
+            None => rules::check_room_commit(&verifier, &judged),
+            Some((session, previous_room_epoch)) => rules::check_session_commit(
+                &verifier,
+                &SessionBefore {
+                    session,
+                    leaves,
+                    previous_room_epoch,
+                },
+                &judged,
+            ),
+        }
+    }
 
     /// Builds one Commit in `group` and leaves it pending in OpenMLS. `cuts` name the leaves it removes;
     /// `context` a new room extension; `new_mac` the `recovery_mac` of the recovery key that extension brings.
@@ -2573,7 +2620,13 @@ impl<S: Storage> Device<S> {
             removes: &removes,
             context: kind.as_ref(),
         };
+        let mls_id = openmls::prelude::GroupId::from_slice(id.as_bytes());
+        let public = provider::public_entries(&self.provider.entries(), &mls_id)?;
         let built = group::commit(&self.provider, &self.key, &mut group, &note, change)?;
+        let session = meta
+            .session
+            .map(|session| (session, meta.previous_room_epoch));
+        self.judge_own(id, session, public, &built.commit)?;
         // 8.2: a room Commit that replaces the recovery keys seals its new epoch to the new key, and its row
         // names the new room epoch.
         let (sealed_epoch, hpke, given) = match &kind {
