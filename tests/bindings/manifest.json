@@ -571,23 +571,6 @@
         ],
         "returns": "bytes"
       },
-      "addHumanDevice": {
-        "arguments": [
-          {
-            "name": "device",
-            "type": "bytes"
-          },
-          {
-            "name": "keyPackage",
-            "type": "bytes"
-          },
-          {
-            "name": "nowMs",
-            "type": "number"
-          }
-        ],
-        "returns": "number"
-      },
       "addToSession": {
         "arguments": [
           {
@@ -609,12 +592,8 @@
         ],
         "returns": "number"
       },
-      "changeAgents": {
+      "removeAgents": {
         "arguments": [
-          {
-            "name": "enrol",
-            "type": "list<bytes>"
-          },
           {
             "name": "remove",
             "type": "list<bytes>"
@@ -759,6 +738,10 @@
           {
             "name": "entry",
             "type": "LogEntry"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
           }
         ],
         "returns": "Processed"
@@ -985,12 +968,174 @@
         ],
         "returns": "CodeJoin"
       },
-      "hubSignIn": {
+      "inviteOpen": {
         "arguments": [
           {
-            "name": "room",
+            "name": "role",
+            "type": "InviteRole"
+          },
+          {
+            "name": "sessionId",
+            "type": "optional<bytes>"
+          },
+          {
+            "name": "app",
+            "type": "text"
+          },
+          {
+            "name": "hub",
+            "type": "text"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "InviteOpened"
+      },
+      "inviteAccept": {
+        "arguments": [
+          {
+            "name": "inviteId",
             "type": "bytes"
           },
+          {
+            "name": "request",
+            "type": "bytes"
+          },
+          {
+            "name": "mac",
+            "type": "bytes"
+          },
+          {
+            "name": "signature",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "InviteAccepted"
+      },
+      "inviteConfirm": {
+        "arguments": [
+          {
+            "name": "inviteId",
+            "type": "bytes"
+          },
+          {
+            "name": "code",
+            "type": "bytes"
+          },
+          {
+            "name": "requestHash",
+            "type": "bytes"
+          },
+          {
+            "name": "matches",
+            "type": "bool"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "optional<InviteConfirmed>"
+      },
+      "inviteRecommit": {
+        "arguments": [
+          {
+            "name": "inviteId",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "number"
+      },
+      "inviteSteps": {
+        "arguments": [],
+        "returns": "list<InviteStep>"
+      },
+      "inviteHandover": {
+        "arguments": [
+          {
+            "name": "inviteId",
+            "type": "bytes"
+          }
+        ],
+        "returns": "list<number>"
+      },
+      "inviteForget": {
+        "arguments": [
+          {
+            "name": "inviteId",
+            "type": "bytes"
+          }
+        ],
+        "returns": "void"
+      },
+      "joinRequest": {
+        "arguments": [
+          {
+            "name": "link",
+            "type": "text"
+          },
+          {
+            "name": "offer",
+            "type": "bytes"
+          },
+          {
+            "name": "offerSignature",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "JoinRequest"
+      },
+      "joinReveal": {
+        "arguments": [
+          {
+            "name": "reveal",
+            "type": "bytes"
+          },
+          {
+            "name": "revealSignature",
+            "type": "bytes"
+          }
+        ],
+        "returns": "CheckCode"
+      },
+      "joinObserve": {
+        "arguments": [
+          {
+            "name": "groupInfo",
+            "type": "bytes"
+          }
+        ],
+        "returns": "void"
+      },
+      "joinInvited": {
+        "arguments": [
+          {
+            "name": "welcome",
+            "type": "bytes"
+          },
+          {
+            "name": "nowMs",
+            "type": "number"
+          }
+        ],
+        "returns": "Joined"
+      },
+      "hubSignIn": {
+        "arguments": [
           {
             "name": "hub",
             "type": "text"
@@ -1093,6 +1238,48 @@
       "secretHash": "bytes",
       "fileKey": "bytes",
       "sha256": "bytes"
+    },
+    "InviteOpened": {
+      "inviteId": "bytes",
+      "link": "text",
+      "expiresAt": "number",
+      "offer": "bytes",
+      "offerSignature": "bytes"
+    },
+    "CheckCode": {
+      "numbers": "bytes",
+      "emoji": "list<text>",
+      "words": "list<text>"
+    },
+    "InviteAccepted": {
+      "newDevice": "bytes",
+      "code": "CheckCode",
+      "reveal": "bytes",
+      "revealSignature": "bytes",
+      "requestHash": "bytes"
+    },
+    "InviteConfirmed": {
+      "newDevice": "bytes",
+      "role": "InviteRole",
+      "sessionId": "optional<bytes>",
+      "outboxId": "number"
+    },
+    "InviteStep": {
+      "inviteId": "bytes",
+      "kind": "InviteStepKind",
+      "group": "optional<bytes>",
+      "device": "optional<bytes>",
+      "keyPackage": "optional<bytes>",
+      "cuts": "list<Cut>"
+    },
+    "JoinRequest": {
+      "inviteId": "bytes",
+      "request": "bytes",
+      "mac": "bytes",
+      "signature": "bytes",
+      "role": "InviteRole",
+      "inviter": "bytes",
+      "expiresAt": "number"
     },
     "PushNote": {
       "roomId": "bytes",
@@ -1339,6 +1526,18 @@
       "storage": "storage",
       "entropy": "entropy",
       "busy": "busy"
+    },
+    "InviteRole": {
+      "human": "human",
+      "agent": "agent"
+    },
+    "InviteStepKind": {
+      "wait": "wait",
+      "commit": "commit",
+      "handover": "handover",
+      "addToSession": "addToSession",
+      "foundSession": "foundSession",
+      "takeOver": "takeOver"
     },
     "OutboxKind": {
       "roomFounding": "roomFounding",

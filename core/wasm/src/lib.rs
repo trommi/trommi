@@ -186,9 +186,8 @@ methods!(RawDevice {
     found_room(recovery_code, now_ms);
     found_session(agent, key_packages, now_ms);
     found_helper(parent, key_packages, now_ms);
-    add_human_device(device, key_package, now_ms);
     add_to_session(group, device, key_package, now_ms);
-    change_agents(enrol, remove, now_ms);
+    remove_agents(remove, now_ms);
     remove_human_devices(cuts, now_ms);
     clean_session(group, cuts, replacement, now_ms);
     readmit_helper(group, old, device, key_package, now_ms);
@@ -197,7 +196,7 @@ methods!(RawDevice {
     join_welcome(welcome, room, committer, now_ms);
     observe_room(group_info, expected_state);
     observe_session(group_info);
-    process_log_entry(entry);
+    process_log_entry(entry, now_ms);
     send_handover(group, recipient);
     handovers_sent();
     handover_read(group, recipient);
@@ -214,7 +213,18 @@ methods!(RawDevice {
     replace_code(recovery_code, account, now_ms);
     prepare_recovery(recovery_code, served);
     recover(recovery_code, served, cuts, account, now_ms);
-    hub_sign_in(room, hub, challenge);
+    invite_open(role, session_id, app, hub, now_ms);
+    invite_accept(invite_id, request, mac, signature, now_ms);
+    invite_confirm(invite_id, code, request_hash, matches, now_ms);
+    invite_recommit(invite_id, now_ms);
+    invite_steps();
+    invite_handover(invite_id);
+    invite_forget(invite_id);
+    join_request(link, offer, offer_signature, now_ms);
+    join_reveal(reveal, reveal_signature);
+    join_observe(group_info);
+    join_invited(welcome, now_ms);
+    hub_sign_in(hub, challenge);
 });
 
 /// The facade's file encryptor.
