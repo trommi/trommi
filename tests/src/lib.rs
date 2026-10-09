@@ -5,6 +5,8 @@
 pub mod content;
 pub mod forge;
 pub mod hub;
+pub mod room;
+pub mod seal;
 pub mod store;
 
 use hub::{Hub, LogItem};
