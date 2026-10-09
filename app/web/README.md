@@ -76,7 +76,7 @@ public/
 `worker.js` also serves the connector's release from the R2 bucket bound as `RELEASES`:
 `/connector/<sha256>/trommi-connector-<target>`, `/connector/trommi-connector-<target>.sha256`,
 `/plugins/marketplace.json`, `/plugins/trommi-<version>.zip`. The connector is built and uploaded apart from the app;
-it is not in this repository yet. Two of its files are: `connector-rs/tools.json` and `connector/prompt.md`, from
+it is not in this repository yet. Two of its files are: `connector/tools.json` and `connector/prompt.md`, from
 which the build makes the help page's list of tools.
 
 ## Rules
@@ -107,8 +107,10 @@ inline script or style whose hash is not in `_headers`, and broken demo data.
 - `public/gen/app/` (esbuild, minified and split): the entry `app-<hash>.mjs` with app, ui, desk, sidebar and notes,
   one chunk per lazy view, the core as chunks of its own, the demo, the core's worker in one file
   (`core-worker-<hash>.mjs`), the account screens' part of it (`core-worker-account-<hash>.mjs`, loaded only by them)
-  and `core-start-<hash>.mjs`, which `index.html` runs first to start the worker. Every name carries its content's
-  hash; `_headers` keeps them immutable.
+  and `core-start-<hash>.mjs`, which `index.html` runs first to start the worker. Beside them lies the Rust core,
+  `trommi-core-<hash>.wasm`, as `core/wasm/build.sh` made it (`core/wasm/pkg/`; the build runs that script only when
+  its output is missing or older than the core's sources); the binding's scripts are inside the worker. Every name
+  carries its content's hash; `_headers` keeps them immutable.
 - `public/gen/vendor/tools-reference.mjs`: the connector's tools and events, for the help page.
 - `public/gen/bundle.<hash>.css`: the `<link>`s of `index.html` as one stylesheet, in their order.
 - `public/gen/build.txt` and `public/gen/manifest.json`: the commit, every served file with its SHA-256, the build hash.
@@ -118,24 +120,27 @@ inline script or style whose hash is not in `_headers`, and broken demo data.
 
 `node dev/build.mjs` checks only and prints the cold start's size; `--write` writes into `public/` (never commit that:
 it rewrites `index.html`, `sw.js` and `_headers` too). In Cloudflare's build (`WORKERS_CI=1`) it runs `npm ci` at the
-repository root first, writes, and refuses another Node or esbuild than the pinned ones. `dev/serve.mjs` serves the
+repository root first, writes, and refuses another Node, esbuild, Rust or wasm-bindgen than the pinned ones
+(`.node-version`, `package-lock.json`, `rust-toolchain.toml`, `core/wasm/Cargo.toml`). `dev/serve.mjs` serves the
 build from memory: by default the sources as modules of their own, with `--bundle` as deployed.
 
 **Integrity.** The bundle's `index.html` carries `integrity` (sha384) on the entry, `core-start` and every
 modulepreload, and an import map with the integrity of every module of the page; its hash is added to the CSP of the
-generated `_headers`. The core worker loads from this origin under the same CSP (workers take no integrity attribute).
+generated `_headers`. The core worker loads from this origin under the same CSP (workers take no integrity attribute);
+the Rust core's scripts are inside it, and its `.wasm` is fetched with the SHA-256 the build computed
+(`fetch(url, { integrity })`), so the browser hands the worker nothing but those bytes.
 
 **Deploying.** Cloudflare Workers: root directory `app/web`, build command `node dev/build.mjs` (`wrangler.jsonc`),
 deploy command `npx wrangler deploy`, Node from `.node-version`. The build reads `app/web/`, `demo/data/`,
-`connector-rs/tools.json`, `connector/prompt.md`, `package.json`, `package-lock.json` and `.node-version`: a change
-to any of them is a new build.
+`connector/tools.json`, `connector/prompt.md`, `core/` (through `core/wasm/pkg/`), `Cargo.toml`, `Cargo.lock`,
+`rust-toolchain.toml`, `package.json`, `package-lock.json` and `.node-version`: a change to any of them is a new build.
 
 ### Verifying the build
 
 `gen/manifest.json` lists every file the app serves with its SHA-256; `gen/build.txt` names the commit and the **build
 hash**, the SHA-256 of that manifest. The build is reproducible (content-named files, no time stamps, the toolchain
-pinned and named in the manifest; its output does not depend on the directory it runs in), so anyone can check that a
-server serves exactly this source:
+pinned and named in the manifest: Node, esbuild, Rust and wasm-bindgen; its output does not depend on the directory it
+runs in), so anyone can check that a server serves exactly this source:
 
 ```bash
 curl -s https://app.trommi.com/gen/build.txt          # commit: <c>, build: <hash>
