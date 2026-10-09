@@ -357,6 +357,9 @@ ${isHuman() ? setRow({ href: '/settings/account', icon: sk('key'), word: 'Accoun
 ${setRow({ href: '/settings/theme', icon: sk('moon'), word: 'Theme', detail: SHOWN[themeMode()] ?? 'System', id: 'settings-theme' })}
 ${setRow({ href: '/settings/keys', icon: sk('keycap'), word: 'Keyboard Shortcuts', id: 'settings-keys' })}
 </nav>
+<nav class="set-group" aria-label="About">
+${setRow({ href: '/settings/proof', icon: sk('tick'), word: 'MLS proof', detail: 'self test', id: 'settings-proof' })}
+</nav>
 `, { back: false })
     }
     const home = (req, res, pairId = '', error = '', code = 200) => {

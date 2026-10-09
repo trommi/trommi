@@ -33,7 +33,7 @@ process.env.WORKERS_CI_COMMIT_SHA ??= commit
 const { generate } = await import('./build.mjs')
 const { out } = await generate()
 const local = JSON.parse(out['gen/manifest.json'])
-for (const k of ['node', 'esbuild']) if (local.toolchain?.[k] !== served.toolchain?.[k]) problems.push(`built with ${k} ${served.toolchain?.[k] ?? '?'} there, ${local.toolchain?.[k] ?? '?'} here (pinned: .node-version, package-lock.json): run it with that`)
+for (const k of ['node', 'esbuild', 'rust', 'wasm-bindgen']) if (local.toolchain?.[k] !== served.toolchain?.[k]) problems.push(`built with ${k} ${served.toolchain?.[k] ?? '?'} there, ${local.toolchain?.[k] ?? '?'} here (pinned: .node-version, package-lock.json, rust-toolchain.toml, core/wasm/Cargo.toml): run it with that`)
 if (local.commit !== served.commit) problems.push(`this checkout builds commit ${local.commit}, the server names ${served.commit}: check out ${served.commit} first`)
 for (const f of new Set([...Object.keys(local.files), ...Object.keys(served.files)])) {
   if (!(f in served.files)) problems.push(`${f}: built here, not served`)
