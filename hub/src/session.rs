@@ -128,8 +128,11 @@ impl Sessions {
         now: u64,
     ) -> Res<(Auth, u64)> {
         let unauthorised = || refuse("unauthorised", "sign in");
+        // (the scheme's name in any case, RFC 9110)
         let token = bearer
-            .and_then(|h| h.strip_prefix("Bearer "))
+            .and_then(|h| h.split_once(' '))
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+            .map(|(_, token)| token)
             .ok_or_else(unauthorised)?;
         if token.len() < 16
             || token.len() > 200

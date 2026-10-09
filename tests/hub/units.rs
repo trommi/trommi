@@ -1374,11 +1374,13 @@ mod push_tests {
         };
         let r = web_push_request(&vapid, &sub, &[], &[3; 32], 42, 2, 1_700_000_000_000).unwrap();
         assert_eq!(r.url, sub.endpoint);
-        let plain: Value =
-            serde_json::from_slice(&browser_open(&secret, &sub.auth, &r.body)).unwrap();
+        // 15.2: one spelling, the fields in this order
         assert_eq!(
-            plain,
-            json!({ "room_id": b64(&[3; 32]), "change": 42, "urgency": 2 })
+            String::from_utf8(browser_open(&secret, &sub.auth, &r.body)).unwrap(),
+            format!(
+                "{{\"room_id\":\"{}\",\"change\":42,\"urgency\":2}}",
+                b64(&[3; 32])
+            )
         );
         let header = |name: &str| r.headers.iter().find(|(k, _)| k == name).unwrap().1.clone();
         assert_eq!(
@@ -1482,13 +1484,23 @@ mod push_tests {
         let payload: Value = serde_json::from_slice(&r.body).unwrap();
         assert_eq!(payload["aps"]["alert"]["body"], "Urgent: a new question.");
         assert_eq!(payload["aps"]["mutable-content"], 1);
-        let opened: Value = serde_json::from_slice(
-            &open_on_phone(&reg.key, &unb64(payload["e"].as_str().unwrap()).unwrap()).unwrap(),
-        )
-        .unwrap();
         assert_eq!(
-            opened,
-            json!({ "room_id": b64(&[3; 32]), "change": 77, "urgency": 3, "ticket": "TICKET" })
+            String::from_utf8(
+                open_on_phone(&reg.key, &unb64(payload["e"].as_str().unwrap()).unwrap()).unwrap()
+            )
+            .unwrap(),
+            format!(
+                "{{\"room_id\":\"{}\",\"change\":77,\"urgency\":3,\"ticket\":\"TICKET\"}}",
+                b64(&[3; 32])
+            )
+        );
+        // without an envelope to fetch the ticket is empty, not absent
+        assert_eq!(
+            payload_text(&[3; 32], 5, 2, Some("")),
+            format!(
+                "{{\"room_id\":\"{}\",\"change\":5,\"urgency\":2,\"ticket\":\"\"}}",
+                b64(&[3; 32])
+            )
         );
         assert!(open_on_phone(&[6; 32], &unb64(payload["e"].as_str().unwrap()).unwrap()).is_none());
         let header = |name: &str| r.headers.iter().find(|(k, _)| k == name).unwrap().1.clone();

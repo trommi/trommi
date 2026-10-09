@@ -130,6 +130,21 @@ fn jwt(key: &SigningKey, header: Value, claims: Value) -> String {
 
 // ---- Web Push
 
+/// 15.2: the one spelling of a push's JSON: the fields in this order, no white space, numbers as plain decimals.
+/// `ticket`: `None` for Web Push, which has none; for APNs the ticket, or the empty text.
+pub fn payload_text(room: &Room, change: i64, urgency: u8, ticket: Option<&str>) -> String {
+    // (base64url and a ticket of base64url need no escaping)
+    let mut text = format!(
+        "{{\"room_id\":\"{}\",\"change\":{change},\"urgency\":{urgency}",
+        b64(room)
+    );
+    if let Some(ticket) = ticket {
+        text.push_str(&format!(",\"ticket\":\"{ticket}\""));
+    }
+    text.push('}');
+    text
+}
+
 /// The hub's VAPID key (RFC 8292): P-256, made on first start, kept beside the database.
 pub struct Vapid {
     key: SigningKey,
@@ -255,8 +270,7 @@ pub fn web_push_request(
     now: u64,
 ) -> Option<PushRequest> {
     let origin = endpoint_origin(&sub.endpoint, extra_hosts)?;
-    let payload = json!({ "room_id": b64(room), "change": change, "urgency": urgency });
-    let body = web_push_encrypt(sub, payload.to_string().as_bytes())?;
+    let body = web_push_encrypt(sub, payload_text(room, change, urgency, None).as_bytes())?;
     let token = jwt(
         &vapid.key,
         json!({ "typ": "JWT", "alg": "ES256" }),
@@ -425,9 +439,9 @@ impl Apns {
         ticket: Option<&str>,
         now: u64,
     ) -> Option<PushRequest> {
-        let message =
-            json!({ "room_id": b64(room), "change": change, "urgency": urgency, "ticket": ticket });
-        let sealed = seal_for_phone(&reg.key, message.to_string().as_bytes())?;
+        // (no envelope to fetch: an empty ticket)
+        let message = payload_text(room, change, urgency, Some(ticket.unwrap_or("")));
+        let sealed = seal_for_phone(&reg.key, message.as_bytes())?;
         let payload = json!({
             "aps": { "alert": { "title": "Trommi", "body": text.text() }, "sound": "default", "mutable-content": 1 },
             "e": b64(&sealed),
