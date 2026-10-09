@@ -118,6 +118,27 @@ public func linkOf(_ a: Agent?, now: UInt64 = nowMs()) -> LinkWords? {
 
 // ---- a card as the Desk reads it ---------------------------------------------------------------------
 
+/**
+ * The Desk's two tools, Blitz and the duck for all (his word, 9 October: with only cards to read he still wants to
+ * read card by card, Blitz, or close them all, the duck). Over the open cards that wait for him: questions and infos,
+ * not snoozed, not with an agent, not of an archived session.
+ * Blitz walks all of them one by one; its count is `walk`, and it shows when walk > 0.
+ * The duck acts on all at once: a decision gets "I don't give a duck" (`duck`), an info is marked read (`read`), a
+ * permission request is never touched. It shows when one of the two lists is not empty: not with permissions alone.
+ */
+public struct DeskTools: Equatable {
+  public var walk: Int
+  public var duck: [String]
+  public var read: [String]
+  public var showsBlitz: Bool { walk > 0 }
+  public var showsDuck: Bool { !duck.isEmpty || !read.isEmpty }
+  public init(_ open: [(id: String, kind: String)]) {
+    walk = open.count
+    duck = open.filter { $0.kind == "decision" }.map { $0.id }
+    read = open.filter { $0.kind == "info" }.map { $0.id }
+  }
+}
+
 public struct DeskCard: Identifiable {
   public var id: String
   public var agent: String
@@ -457,6 +478,8 @@ public final class DeskModel {
     public var working: Int
     public var allFreshCount: Int
     public var goals: String = ""            // this desk's goals; none on All desks
+    /** What the Desk's two tools act on: every open card that waits for him (fresh and reads). */
+    public var tools: DeskTools { DeskTools((fresh + reads).map { (id: $0.id, kind: $0.kind) }) }
     public func deskCards() -> [DeskCard] {
       func rank(_ c: DeskCard) -> Int { c.urgency == "critical" ? 2 : c.isKnock ? 1 : 0 }
       var out = fresh
