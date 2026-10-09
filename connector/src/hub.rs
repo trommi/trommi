@@ -205,17 +205,32 @@ impl Hub {
         {
             return Err(Fault::new("too-large", "the hub's answer is too long"));
         }
-        let body = response.bytes().await.map_err(|e| transport(&e))?;
-        if body.len() > MAX_ANSWER_LEN {
-            return Err(Fault::new("too-large", "the hub's answer is too long"));
+        // Read piece by piece: a body without a length is bounded as it comes.
+        let mut body = Vec::new();
+        let mut pieces = response.bytes_stream();
+        while let Some(piece) = pieces.next().await {
+            let piece = piece.map_err(|e| transport(&e))?;
+            if body.len() + piece.len() > MAX_ANSWER_LEN {
+                return Err(Fault::new("too-large", "the hub's answer is too long"));
+            }
+            body.extend_from_slice(&piece);
         }
-        let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        let parsed: Option<Value> = serde_json::from_slice(&body).ok();
         if status == 200 {
-            return Ok(value);
+            return parsed.ok_or_else(|| Fault::new("bad-format", "the hub's answer is not JSON"));
         }
+        let value = parsed.unwrap_or(Value::Null);
+        // The code is the hub's word and ends up in logs and in what the agent reads: only the shape of a code
+        // of the protocol is taken.
         let code = value
             .get("error")
             .and_then(Value::as_str)
+            .filter(|code| {
+                (1..=40).contains(&code.len())
+                    && code
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            })
             .map(str::to_owned)
             .unwrap_or_else(|| {
                 if status >= 500 {
@@ -235,12 +250,9 @@ impl Hub {
             .collect();
         let mut fault = Fault::new(code, message).status(status);
         fault.retry_after = retry_after;
-        if let Some(extra) = value.as_object() {
-            for (key, field) in extra {
-                if key != "error" && key != "message" {
-                    fault.extra.insert(key.clone(), field.clone());
-                }
-            }
+        // Of what else a refusal carries, only what a caller acts on.
+        if value.get("voided") == Some(&Value::Bool(true)) {
+            fault.extra.insert("voided".into(), Value::Bool(true));
         }
         Err(fault)
     }
@@ -438,9 +450,11 @@ impl Hub {
                 &token,
                 false,
             )
-            .header("accept", "text/event-stream")
-            .send()
+            .header("accept", "text/event-stream");
+        // The answer's head must come in time; the body then lives as long as the stream.
+        let response = tokio::time::timeout(REQUEST_TIMEOUT, response.send())
             .await
+            .map_err(|_| Fault::new("offline", "the hub did not open the stream in time"))?
             .map_err(|e| transport(&e))?;
         if response.status().as_u16() != 200 {
             let fault = Self::answer(response).await.err();

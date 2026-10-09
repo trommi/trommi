@@ -99,7 +99,12 @@ impl Seat {
             .expect("the join runs");
         (
             output.status.success(),
-            String::from_utf8_lossy(&output.stderr).into_owned(),
+            format!(
+                "{}{}(exit: {:?})\n",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout),
+                output.status
+            ),
         )
     }
 
