@@ -137,8 +137,8 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   - *Per account:* 100 checks in an hour (the hour begins with the first of them). Past that, sources stand in
     line: turns are given out two seconds apart in the order sources came, each told by `retry-after`. A turn is
     its source's alone and good for one check, from its time until five seconds after; nobody else can take it,
-    and nobody waits for anybody; a request that came in that time keeps the turn while it waits for the hub's
-    pool. Who comes later asks for a new turn. The line is ten minutes long; a source
+    and nobody waits for anybody; a request that reached the hub in that time has the turn, however long it
+    then waits for the hub's pool (ten seconds at most). Who comes later asks for a new turn. The line is ten minutes long; a source
     that finds it full is told to ask again in a minute. That is at most 2 010 checks per account in any hour,
     however many sources there are (1 800 turns of that hour, the few given out before it that are still good,
     and the 100 twice where two of its hours meet), beside the
@@ -158,15 +158,16 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
     at one second: the thirteen and four hold while its record does; the account's 2 010 an hour hold all the
     same); a record that still waits is never
     forgotten, and if all do, a wrong credential is told to ask again in a minute, from a known source as from
-    any other, also when it asks again (a right one from a known source gets in; the records of the sources
+    any other, also when it asks again and after its own back-off (a right one from a known source gets in; the records of the sources
     accounts know, at most 16 each, come on top of the 500 000). A full table of hours forgets the oldest hour, with
     its line, whoever's it is: the 2 010 an hour hold while fewer than 200 000 e-mails are tried within the
     hour. A record is deleted a day after its wait ran out.
   - Not covered, and left so: someone guessing from the owner's own address (the same NAT) slows that address
     down for the owner too, the right password included, while its back-off runs. A source that finds the line
     full has no place in it: against a crowd that keeps the line full, a new device has no promise of a turn. And a guesser at an address the account knows can find that out
-    with some effort: after about six wrong guesses in line its back-off is longer than its turn is away, and
-    it is told the back-off.
+    with some effort: its early checks are failures like any, so after about six wrong guesses in line its
+    back-off is longer than its turn is away and it is told the back-off, and once a full table has room
+    again its back-off shows the checks made meanwhile.
 - A successful login is answered only if the account still is as the check found it (its revision); a password,
   kit or passkey replaced meanwhile makes the login start over (`overloaded`).
 - Other limits: 30 logins per address in ten minutes (answers that only tell a wait count too); 20 passkeys per
