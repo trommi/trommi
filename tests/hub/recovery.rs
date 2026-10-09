@@ -342,28 +342,7 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
         seq: dev.chain(g).0,
         hash: dev.chain(g).1,
     };
-    let clean = neo.commit(
-        &group,
-        &Change {
-            removes: vec![w.ada.id(), bea.id()],
-            cuts: sorted(vec![cut(&w.ada, &group), cut(&bea, &group)]),
-            ..Default::default()
-        },
-        now,
-    );
-    let clean_key = neo.sealed_key(
-        &group,
-        clean.epoch + 1,
-        &clean.group_info,
-        now.0,
-        &w.recovery.hpke_public,
-        true,
-    );
-    part(&rec, &group, &clean, &clean_key, None).ok();
-    neo.merge(&group);
-    rec.post(&w.hub, &format!("{base_path}/finish"), &finish)
-        .refused(400, "incomplete");
-    // … and ends with 8.6: the room Commit that removes them and brings new recovery keys
+    // 8.7: in the room group, the removal of every other human device together with 8.6 (new recovery keys) …
     let last = neo.commit(
         &room,
         &Change {
@@ -378,12 +357,36 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
         &room,
         last.epoch + 1,
         &last.group_info,
-        last.epoch,
+        last.epoch + 1,
         &new_recovery.hpke_public,
         true,
     );
     part(&rec, &room, &last, &last_key, None).ok();
     neo.merge(&room);
+    // (a recovery that stops here left the session group with devices the room no longer holds)
+    rec.post(&w.hub, &format!("{base_path}/finish"), &finish)
+        .refused(409, "stale-session");
+    // … and after that, against the new room epoch, the Removes in every live session group
+    let now = neo.room_now();
+    let clean = neo.commit(
+        &group,
+        &Change {
+            removes: vec![w.ada.id(), bea.id()],
+            cuts: sorted(vec![cut(&w.ada, &group), cut(&bea, &group)]),
+            ..Default::default()
+        },
+        now,
+    );
+    let clean_key = neo.sealed_key(
+        &group,
+        clean.epoch + 1,
+        &clean.group_info,
+        now.0,
+        &new_recovery.hpke_public,
+        true,
+    );
+    part(&rec, &group, &clean, &clean_key, None).ok();
+    neo.merge(&group);
     assert_eq!(epochs(&w.hub, &rec, &room), before);
     // a link for another key than the new one
     rec.post(
@@ -412,6 +415,15 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
     w.ada.get(&w.hub, "/v2/desk").refused(403, "not-member");
     bea.get(&w.hub, "/v2/desk").refused(403, "not-member");
     neo.sign_in(&w.hub, &room).ok();
+    // 8.7: after publication the new device asks for that answer under its own token too; no other device does
+    assert_eq!(
+        neo.post(&w.hub, &format!("{base_path}/finish"), &finish)
+            .ok(),
+        published
+    );
+    agent
+        .post(&w.hub, &format!("{base_path}/finish"), &finish)
+        .refused(404, "not-found");
     let after = epochs(&w.hub, &neo, &room);
     assert_eq!(
         after,
@@ -557,7 +569,7 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
         &room,
         out.epoch + 1,
         &out.group_info,
-        out.epoch,
+        out.epoch + 1,
         &new.hpke_public,
         true,
     );
@@ -571,7 +583,7 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
         &room,
         out.epoch + 1,
         &out.group_info,
-        out.epoch,
+        out.epoch + 1,
         &new.hpke_public,
         true,
     );
@@ -583,12 +595,24 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
         &room,
         out.epoch + 1,
         &out.group_info,
-        out.epoch,
+        out.epoch + 1,
         &w.recovery.hpke_public,
         true,
     );
     let mut wrong = body.clone();
     wrong["sealed_key"] = json!(b64(&old_key));
+    w.ada.post(&w.hub, &path, &wrong).refused(400, "incomplete");
+    // 8.2: the row of the Commit that replaces the recovery keys names the new room epoch, whose state holds
+    // the new keys; the epoch the Commit builds on is another row's
+    let behind = w.ada.sealed_key(
+        &room,
+        out.epoch + 1,
+        &out.group_info,
+        out.epoch,
+        &new.hpke_public,
+        true,
+    );
+    wrong["sealed_key"] = json!(b64(&behind));
     w.ada.post(&w.hub, &path, &wrong).refused(400, "incomplete");
     // a Commit that replaces nothing is not this route's
     let old_token = recovery_token(&w.hub, &room, &w.recovery);
