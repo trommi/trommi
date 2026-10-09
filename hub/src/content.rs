@@ -11,7 +11,7 @@ use crate::error::{refuse, Refused, Res};
 use crate::observer::Device;
 use crate::rules::Standing;
 use crate::store::{
-    self, fixed, Audience, Auth, Effects, Event, GroupKind, GroupRow, PushJob, Room, Sight, Who,
+    self, fixed, Auth, Effects, Event, GroupKind, GroupRow, PushJob, Room, Sight, Who,
 };
 use crate::util::{b64, same};
 use crate::wire::{self, Cut, Envelope, Header, HeaderError, Subject, ZERO32};
@@ -1284,7 +1284,15 @@ pub fn changes(c: &Connection, auth: &Auth, after: i64, limit: Option<i64>) -> R
     // reached, so a cursor never skips an eligible row.
     let mut cursor = after;
     let mut reached = head;
+    let mut rounds = 0;
     'outer: while cursor < head {
+        // an asker that sees little of a busy room is not served by one endless scan: after some rounds it
+        // gets what was found and the cursor to go on from
+        rounds += 1;
+        if rounds > 16 {
+            reached = cursor;
+            break;
+        }
         let batch = 512;
         let mut seen = 0;
         let mut batch_items: Vec<(i64, Value)> = Vec::new();
@@ -1413,12 +1421,3 @@ pub fn prune_due(
     }
     Ok(pruned)
 }
-
-/// Who gets what a group's content events carry: used by the stream to decide per device.
-pub fn may_read_group(c: &Connection, auth: &Auth, group_id: &[u8]) -> Res<bool> {
-    let row = store::group(c, &auth.room, group_id)?;
-    Ok(store::sight(c, auth, &row)? == Sight::Leaf)
-}
-
-#[allow(dead_code)]
-fn audience_unused(_: Audience) {}

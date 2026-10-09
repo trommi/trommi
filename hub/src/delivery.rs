@@ -10,9 +10,9 @@ use sha2::{Digest, Sha256};
 use crate::config::Config;
 use crate::db::next_change;
 use crate::error::{refuse, Res};
-use crate::observer::{By, CommitFacts, Device, GroupState, Observer, Snapshot};
-use crate::rules::{self, RoomView, SessionKind, Standing};
-use crate::store::{self, fixed, Audience, Auth, Effects, Event, GroupKind, Room, Sight, Who};
+use crate::observer::{By, CommitFacts, Device, Observer};
+use crate::rules::{self, SessionKind, Standing};
+use crate::store::{self, Audience, Auth, Effects, Event, GroupKind, Room, Sight, Who};
 use crate::util::{b64, same, short};
 use crate::wire::{self, CommitNote, RecoveryAuth, RecoveryLink, SealedKey, ZERO16};
 
@@ -1750,17 +1750,4 @@ pub fn recovery_drop(x: &Ctx, auth: &Auth, id: &[u8]) -> Res<Value> {
             .execute([id])?;
     }
     Ok(json!({ "dropped": finished.is_none() }))
-}
-
-/// For tests and the admin's eyes: the state a group's row holds, read back through the observer.
-pub fn snapshot(x: &Ctx, group_id: &[u8]) -> Res<Snapshot> {
-    let state: GroupState = store::group_state(x.c, group_id)?;
-    Ok(x.obs.snapshot(&state)?)
-}
-
-#[allow(dead_code)]
-fn unused(_: &RoomView) {}
-
-pub fn fixed16(v: Vec<u8>) -> Res<[u8; 16]> {
-    Ok(fixed(v)?)
 }
