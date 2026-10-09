@@ -552,6 +552,16 @@ pub fn ticket(key: &[u8; 32], room: &Room, device: &Device, change: i64, now: u6
     b64(&t)
 }
 
+/// A source (a client's address) as an account remembers it: under the hub's own key, never the address.
+pub fn source_hash(key: &[u8; 32], address: &str) -> [u8; 16] {
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("any key length");
+    mac.update(b"trommi login source v2\0");
+    mac.update(address.as_bytes());
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&mac.finalize().into_bytes()[..16]);
+    out
+}
+
 fn ticket_mac(key: &[u8; 32], fields: &[u8]) -> [u8; 32] {
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("any key length");
     mac.update(b"trommi push ticket v2\0");

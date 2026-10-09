@@ -170,6 +170,9 @@ pub fn record(
                 .with(json!({ "used": room.file_bytes, "quota": x.cfg.room_quota })),
         );
     }
+    x.cfg
+        .quotas
+        .take(x.c, &auth.room, crate::quota::Counted::Files)?;
     x.c.prepare_cached("INSERT INTO files (room_id, file_id, uploader, size, sha256, stored_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?
         .execute(params![&auth.room[..], &file_id[..], &auth.device[..], size as i64, &sha256[..], x.now as i64])?;
     x.c.prepare_cached("UPDATE rooms SET file_bytes = file_bytes + ?1 WHERE room_id = ?2")?
@@ -282,8 +285,6 @@ pub fn sweep_parts(dir: &Path) -> usize {
 
 // ---- Share links (11.5)
 
-const MAX_SHARES_PER_ROOM: i64 = 1000;
-
 /// `POST /v2/shares`: its maker (the session's agent or helper device, or a human device) registers the id, the
 /// hash of the link's secret, the file and an expiry. The file belongs to an open Artifact.
 pub fn share(
@@ -344,7 +345,7 @@ pub fn share(
     let open: i64 =
         x.c.prepare_cached("SELECT count(*) FROM shares WHERE room_id = ?1")?
             .query_row([&auth.room[..]], |r| r.get(0))?;
-    if open >= MAX_SHARES_PER_ROOM {
+    if open >= x.cfg.shares_per_room {
         return Err(refuse("too-many", "a room has at most 1000 Share links"));
     }
     x.c.prepare_cached("INSERT INTO shares (share_id, room_id, file_id, secret_hash, expires_at, created_by, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)")?

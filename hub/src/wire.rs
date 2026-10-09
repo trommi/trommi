@@ -148,7 +148,7 @@ pub fn sign_content(label: &str, content: &[u8]) -> Vec<u8> {
 pub const EXT_ROOM: u16 = 0xF001;
 pub const EXT_SESSION: u16 = 0xF002;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TrommiRoom {
     pub recovery_signature_key: Vec<u8>,
     pub recovery_hpke_key: Vec<u8>,
@@ -188,7 +188,7 @@ impl TrommiRoom {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TrommiSession {
     pub room_id: [u8; 32],
     pub session_id: [u8; 16],

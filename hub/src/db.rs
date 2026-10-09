@@ -46,6 +46,15 @@ CREATE TABLE passkeys (
 ) STRICT;
 CREATE INDEX passkeys_by_account ON passkeys(account_id, created_at);
 
+-- The places an account was signed in to from (a keyed hash of the address, never the address): a failed-login
+-- slow-down for sources an account does not know leaves these alone. The newest 16 are kept.
+CREATE TABLE account_sources (
+  account_id     INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+  source         BLOB NOT NULL,
+  last_at        INTEGER NOT NULL,
+  PRIMARY KEY (account_id, source)
+) STRICT, WITHOUT ROWID;
+
 -- An account has a list of rooms (one for now); a room belongs to one account.
 CREATE TABLE account_rooms (
   account_id     INTEGER NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
@@ -61,6 +70,12 @@ CREATE TABLE rooms (
   -- one counter per room: every Commit, message, envelope and fetchable row carries the change it was written at
   change         INTEGER NOT NULL DEFAULT 0,
   file_bytes     INTEGER NOT NULL DEFAULT 0,
+  -- how many of each the room has ever made (quota.rs)
+  file_count     INTEGER NOT NULL DEFAULT 0,
+  register_count INTEGER NOT NULL DEFAULT 0,
+  void_count     INTEGER NOT NULL DEFAULT 0,
+  group_count    INTEGER NOT NULL DEFAULT 1,
+  helper_count   INTEGER NOT NULL DEFAULT 0,
   -- read from the room group's public state at its current epoch, kept beside it for the checks of every request
   epoch              INTEGER NOT NULL DEFAULT 0,
   room_state         BLOB NOT NULL,
@@ -223,7 +238,18 @@ CREATE TABLE recovery_parts (
   n              INTEGER NOT NULL,
   group_id       BLOB NOT NULL,
   body           TEXT NOT NULL,
+  -- where the outcome of this part's Commit lies in recovery_memo
+  commit_key     BLOB,
   PRIMARY KEY (recovery_id, n)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX recovery_parts_by_group ON recovery_parts(recovery_id, group_id, n);
+-- What verifying each part gave (the public state after its Commit): computed once, outside the write lock, so
+-- that checking the next part and publishing them all replay writes, not cryptography. Public data.
+CREATE TABLE recovery_memo (
+  recovery_id    BLOB NOT NULL REFERENCES recoveries(recovery_id) ON DELETE CASCADE,
+  key            BLOB NOT NULL,
+  value          BLOB NOT NULL,
+  PRIMARY KEY (recovery_id, key)
 ) STRICT, WITHOUT ROWID;
 
 -- ---- stored content
@@ -452,6 +478,9 @@ CREATE TABLE invite_requests (
   request        BLOB NOT NULL,
   mac            BLOB NOT NULL,
   signature      BLOB NOT NULL,
+  -- of the Request's KeyPackage, checked when it came
+  key_package_ref BLOB NOT NULL,
+  device         BLOB NOT NULL,
   at             INTEGER NOT NULL,
   PRIMARY KEY (invite_id, request_hash)
 ) STRICT, WITHOUT ROWID;
@@ -517,6 +546,8 @@ CREATE TABLE agent_leases (
   hears          INTEGER NOT NULL DEFAULT 0,
   working        INTEGER NOT NULL DEFAULT 0,
   last_call_at   INTEGER NOT NULL DEFAULT 0,
+  -- when the hub told the human devices that this agent's lease ran out and it stayed away
+  lost_at        INTEGER,
   PRIMARY KEY (room_id, device)
 ) STRICT, WITHOUT ROWID;
 "#;

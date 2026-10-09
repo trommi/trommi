@@ -662,6 +662,23 @@ pub fn post_envelope(x: &Ctx, auth: &Auth, bytes: &[u8], fx: &mut Effects) -> Re
         ));
     }
 
+    // a register id the room does not hold yet: counted against the room's number (the envelope takes no number
+    // if it is over)
+    let new_register = match &h.subject {
+        Subject::Register { register_id } => {
+            !x.c.prepare_cached(
+                "SELECT 1 FROM registers WHERE group_id = ?1 AND writer = ?2 AND register_id = ?3",
+            )?
+            .exists(params![h.group_id, &h.sender[..], &register_id[..]])?
+        }
+        _ => false,
+    };
+    if new_register {
+        x.cfg
+            .quotas
+            .room_for(x.c, &auth.room, crate::quota::Counted::Registers)?;
+    }
+
     // From here on the chain has advanced, whatever follows: a refusal is stored as a void record.
     let view = store::room_view(x.c, &auth.room)?;
     let sender = Sender {
@@ -811,6 +828,15 @@ pub fn post_envelope(x: &Ctx, auth: &Auth, bytes: &[u8], fx: &mut Effects) -> Re
     crate::delivery::joined(x.c, &h.group_id, &h.sender)?;
     let audience = store::leaf_audience(x.c, &h.group_id)?;
     if let Err((code, why)) = verdict {
+        // A room holds so many void records; past that the refusal comes without one and the number is not
+        // used (the transaction is rolled back).
+        if x.cfg
+            .quotas
+            .take(x.c, &auth.room, crate::quota::Counted::Voids)
+            .is_err()
+        {
+            return Err(refuse(code, why));
+        }
         // receivers chain a void record and apply nothing
         fx.events.push(Event {
             room: auth.room,
@@ -839,6 +865,11 @@ pub fn post_envelope(x: &Ctx, auth: &Auth, bytes: &[u8], fx: &mut Effects) -> Re
     };
     let _ = claim_files(x.c, &auth.room, h, owner_now, x.now, true)?;
     apply_index(x.c, &auth.room, h, change, next_state.as_ref(), x.now, fx)?;
+    if new_register {
+        x.cfg
+            .quotas
+            .take(x.c, &auth.room, crate::quota::Counted::Registers)?;
+    }
     // 9.2: the push flag is honoured on card versions and permission requests from the session's agent or helper device
     let pushes = h.push()
         && matches!(sender.standing, Standing::Agent | Standing::Helper)
@@ -1392,109 +1423,114 @@ pub fn chain(
     Ok(json!({ "items": items, "more": more }))
 }
 
+/// How far one catch-up request looks: an asker that sees little of a busy room gets what lies in this stretch
+/// and the cursor to go on from.
+pub const CHANGES_WINDOW: i64 = 20_000;
+
 /// `GET /v2/changes?after=&limit=`: everything the asker may see with a change number above `after`, in the
-/// hub's one order across groups (5.4.1): log entries and envelopes.
+/// hub's one order across groups (5.4.1): log entries and envelopes. First the numbers and sizes of what is
+/// visible are read (two integers a row, filtered and limited in SQL), then only the items that fit the limit
+/// and the answer's byte budget are loaded. The cursor never skips an item the asker may see.
 pub fn changes(c: &Connection, auth: &Auth, after: i64, limit: Option<i64>) -> Res<Value> {
     let limit = clamp(limit, 200, 1000);
     let head = store::room_row(c, &auth.room)?.change;
-    let rows = store::groups_of_room(c, &auth.room)?;
-    let mut sights = std::collections::HashMap::new();
-    for row in &rows {
-        sights.insert(row.group_id.clone(), store::sight(c, auth, row)?);
+    let upto = after.saturating_add(CHANGES_WINDOW).min(head);
+    let (human, recovery) = (auth.who == Who::Human, auth.who == Who::Recovery);
+    // an agent or helper device: the groups it is a leaf of, and those whose Commits it follows
+    let (mut leaf, mut public) = (Vec::new(), Vec::new());
+    if !human && !recovery {
+        for row in store::groups_of_room(c, &auth.room)? {
+            match store::sight(c, auth, &row)? {
+                Sight::Leaf => leaf.push(crate::util::hex(&row.group_id).to_uppercase()),
+                Sight::Public => public.push(crate::util::hex(&row.group_id).to_uppercase()),
+                Sight::None => {}
+            }
+        }
     }
-    let human = auth.who == Who::Human;
-    let pruned_only = auth.who == Who::Recovery;
-    let mut merged: Vec<(i64, Value)> = Vec::new();
-    // Both tables are scanned in change order in batches until `limit` visible items are found or the head is
-    // reached, so a cursor never skips an eligible row.
+    let (leaf, public) = (json!(leaf).to_string(), json!(public).to_string());
+    let mut found: Vec<(i64, i64, bool)> = Vec::new();
+    let (log_full, envelopes_full);
+    {
+        let mut s = c.prepare_cached(
+            "SELECT change, length(bytes) FROM group_log
+             WHERE room_id = ?1 AND change > ?2 AND change <= ?3
+               AND (?4 = 1 OR hex(group_id) IN (SELECT value FROM json_each(?5))
+                    OR (kind = 'commit' AND (?6 = 1 OR hex(group_id) IN (SELECT value FROM json_each(?7)))))
+             ORDER BY change LIMIT ?8",
+        )?;
+        let rows = s
+            .query_map(
+                params![
+                    &auth.room[..],
+                    after,
+                    upto,
+                    human,
+                    leaf,
+                    recovery,
+                    public,
+                    limit + 1
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?, true)),
+            )?
+            .collect::<rusqlite::Result<Vec<(i64, i64, bool)>>>()?;
+        log_full = rows.len() as i64 > limit;
+        found.extend(rows);
+    }
+    {
+        // the recovery key gets envelopes in pruned form: their size is the header's
+        let mut s = c.prepare_cached(
+            "SELECT change, length(header) + CASE WHEN ?6 = 1 THEN 0 ELSE coalesce(length(body), 0) END FROM envelopes
+             WHERE room_id = ?1 AND change > ?2 AND change <= ?3 AND cut = 0
+               AND (?4 = 1 OR ?6 = 1 OR hex(group_id) IN (SELECT value FROM json_each(?5)))
+             ORDER BY change LIMIT ?7",
+        )?;
+        let rows = s
+            .query_map(
+                params![
+                    &auth.room[..],
+                    after,
+                    upto,
+                    human,
+                    leaf,
+                    recovery,
+                    limit + 1
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?, false)),
+            )?
+            .collect::<rusqlite::Result<Vec<(i64, i64, bool)>>>()?;
+        envelopes_full = rows.len() as i64 > limit;
+        found.extend(rows);
+    }
+    found.sort_by_key(|(change, _, _)| *change);
+    let (mut items, mut bytes, mut cut_short) = (Vec::new(), 0i64, log_full || envelopes_full);
     let mut cursor = after;
-    let mut reached = head;
-    let mut rounds = 0;
-    let mut answer_bytes = 0usize;
-    'outer: while cursor < head {
-        // an asker that sees little of a busy room is not served by one endless scan: after some rounds it
-        // gets what was found and the cursor to go on from
-        rounds += 1;
-        if rounds > 16 {
-            reached = cursor;
+    for (change, size, is_log) in found {
+        // base64 makes four bytes of three; the first item always goes in
+        let size = size * 4 / 3 + 200;
+        if items.len() as i64 == limit || (bytes + size > ANSWER_BYTES as i64 && !items.is_empty())
+        {
+            cut_short = true;
             break;
         }
-        let batch = 512;
-        let mut seen = 0;
-        let mut batch_items: Vec<(i64, Value)> = Vec::new();
-        let mut last_log = cursor;
-        {
-            let mut s = c.prepare_cached(
-                "SELECT n, change, epoch, at, kind, bytes, recovery_auth, sender, group_id FROM group_log
-                 WHERE room_id = ?1 AND change > ?2 ORDER BY change LIMIT ?3",
-            )?;
-            let mut q = s.query(params![&auth.room[..], cursor, batch])?;
-            while let Some(r) = q.next()? {
-                seen += 1;
-                let group: Vec<u8> = r.get(8)?;
-                let change: i64 = r.get(1)?;
-                last_log = change;
-                let is_commit = r.get::<_, String>(4)? == "commit";
-                let visible = match sights.get(&group) {
-                    Some(Sight::Leaf) => true,
-                    Some(Sight::Public) => is_commit,
-                    _ => false,
-                };
-                if visible {
-                    batch_items.push((change, crate::delivery::log_item(&group, r)?));
-                }
-            }
-        }
-        let full_log = seen == batch;
-        let mut last_env = cursor;
-        let mut seen_env = 0;
-        {
-            let mut s = c.prepare_cached(&format!(
-                "SELECT {ENVELOPE_COLUMNS}, group_id FROM envelopes WHERE room_id = ?1 AND change > ?2 ORDER BY change LIMIT ?3"
-            ))?;
-            let mut q = s.query(params![&auth.room[..], cursor, batch])?;
-            while let Some(r) = q.next()? {
-                seen_env += 1;
-                let change: i64 = r.get(0)?;
-                last_env = change;
-                let group: Vec<u8> = r.get(10)?;
-                let cut = r.get::<_, i64>(7)? == 1;
-                let visible =
-                    !cut && (human || pruned_only || sights.get(&group) == Some(&Sight::Leaf));
-                if visible {
-                    let mut item = envelope_item(r, pruned_only)?;
-                    item["kind"] = json!("envelope");
-                    batch_items.push((change, item));
-                }
-            }
-        }
-        let full_env = seen_env == batch;
-        // only up to where both scans are complete is the order known
-        let safe = match (full_log, full_env) {
-            (true, true) => last_log.min(last_env),
-            (true, false) => last_log,
-            (false, true) => last_env,
-            (false, false) => head,
+        let item = if is_log {
+            crate::delivery::log_at(c, &auth.room, change)?
+        } else {
+            envelope_at(c, &auth.room, change, recovery)?.map(|mut item| {
+                item["kind"] = json!("envelope");
+                item
+            })
         };
-        batch_items.retain(|(change, _)| *change <= safe);
-        batch_items.sort_by_key(|(change, _)| *change);
-        for item in batch_items {
-            if merged.len() as i64 == limit || (answer_bytes > ANSWER_BYTES && !merged.is_empty()) {
-                reached = merged.last().map_or(cursor, |(c, _)| *c);
-                break 'outer;
-            }
-            answer_bytes += item.1["envelope"]
-                .as_str()
-                .or(item.1["bytes"].as_str())
-                .map_or(0, str::len);
-            merged.push(item);
+        if let Some(item) = item {
+            items.push(item);
+            bytes += size;
         }
-        cursor = safe;
-        reached = safe;
+        cursor = change;
     }
-    let more = reached < head;
-    let items: Vec<Value> = merged.into_iter().map(|(_, v)| v).collect();
-    Ok(json!({ "items": items, "change": reached.max(after), "more": more }))
+    // nothing visible was left out of the stretch: the cursor moves to its end
+    if !cut_short {
+        cursor = upto;
+    }
+    Ok(json!({ "items": items, "change": cursor.max(after), "more": cursor < head }))
 }
 
 // ---- retention (9.4)
