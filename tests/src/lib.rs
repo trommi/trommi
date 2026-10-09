@@ -511,6 +511,16 @@ impl Fetched {
     }
 }
 
+/// `device` learns the past of `group` from what the hub holds of it (4.4, 9.0.6).
+pub fn learn(
+    hub: &Hub,
+    device: &mut TestDevice,
+    group: &GroupId,
+) -> Result<trommi_core::device::Learned, Error> {
+    fetch_group(hub, group)
+        .served(|served| device.learn_history(group, served.founding, served.commits))
+}
+
 /// `device` signs in with the code `keys` (8.4): it builds its join of the room group from what the hub
 /// serves. Nothing is posted yet.
 pub fn join_room(
