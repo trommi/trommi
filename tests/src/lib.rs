@@ -1,6 +1,7 @@
 //! What the tests of the protocol core share: a hub in memory, a stand-in for the recovery construct, and the
 //! few steps every scenario repeats (post the outbox, process the log, take the Welcomes).
 
+pub mod content;
 pub mod hub;
 pub mod store;
 

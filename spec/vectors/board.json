@@ -1,0 +1,1174 @@
+{
+  "about": "The Scribble Board (spec/v2.md section 10). points: packed points of a stroke in hex and what they hold, [x, y, t, force, azimuth, altitude] per point, x and y in 1/16 board unit. points_refused: packed bytes no reader takes. items: payloads of board items; a reader that decodes and encodes one gets the same text; file_ids is what the envelope's header lists. items_with_unknown_fields: payloads that read like the one named in same_as. items_refused, snapshots_refused: with the code of the refusal. history: board items in one order of arrival (sender in hex, envelope number, payload); applied in any order that keeps each sender's own order they give the board whose snapshot file, taken at frontier, is snapshot.",
+  "frontier": [
+    [
+      "1111111111111111111111111111111111111111111111111111111111111111",
+      20,
+      "1411111111111111111111111111111111111111111111111111111111111111"
+    ],
+    [
+      "2222222222222222222222222222222222222222222222222222222222222222",
+      24,
+      "1822222222222222222222222222222222222222222222222222222222222222"
+    ],
+    [
+      "3333333333333333333333333333333333333333333333333333333333333333",
+      28,
+      "1c33333333333333333333333333333333333333333333333333333333333333"
+    ]
+  ],
+  "history": [
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/3/1\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/4/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/4/1\"],\"offset\":[134217727.9375,-134217728]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 1
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/1\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/2/0\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/4/1\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 1
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"image\",\"rect\":[536.9375,286.3125,538.6875,86.25],\"attachment\":{\"file_id\":\"i60kcstp9CVPKX7aJBZrIQ\",\"file_key\":\"GVY5TXM5-U3XFdHgxXXgTQJBcXrcytjaI_qfPLNUO78\",\"sha256\":\"7ypNEp8L0P8ofeshmvt_X7B4b2MhgD2Ub_2XX94xKWs\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":241727,\"width\":356},\"z\":-4,\"group\":\"g1\"}]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 1
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/7/0\",\"ERERERERERERERERERERERERERERERERERERERERERE/4/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/4/0\"],\"offset\":[-13.6875,-3.625]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 4
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/4/1\",\"ERERERERERERERERERERERERERERERERERERERERERE/3/1\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 2
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/2/0\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/5/2\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/4/1\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/2\"],\"offset\":[134217727.9375,-134217728]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 6
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"pen\",\"color\":\"yellow\",\"width\":22.625,\"points\":\"AaabBtWZCQyyBOwMLyRGYXaBA-oCCPyZ1ROEAQO9cR8\",\"live\":\"CFehbSzT4hztmN6MOtYNxg\"}]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 3
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/9/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/4/1\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 5
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/3/2\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/4/2\"],\"offset\":[-7.9375,-20.1875]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 7
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/6/0\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/10/1\",\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/1/2\"],\"offset\":[-18.5,-1.375]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 3
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/10/2\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/5/0\"],\"offset\":[16,1.125]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 9
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/7/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/8/0\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/5/0\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/1/2\"],\"offset\":[134217727.9375,-134217728]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 8
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"pen\",\"color\":\"yellow\",\"width\":0.8125,\"points\":\"A9thiJAJHsrNwKICmQQZ4bdB0AGwAg9pq4Y\",\"group\":\"g1\"},{\"tool\":\"sticky\",\"color\":\"yellow\",\"at\":[-355.9375,384.75],\"text\":\"Ship it\",\"size\":33,\"wrap\":386.9375}]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 11
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/6/0\"],\"offset\":[-19.9375,-4.4375]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 10
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/3/2\",\"ERERERERERERERERERERERERERERERERERERERERERE/4/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/12/0\",\"ERERERERERERERERERERERERERERERERERERERERERE/1/2\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 13
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"pen\",\"color\":\"yellow\",\"width\":12.5625,\"points\":\"AoC7AbJ6DuCzAu8DCiesmaijDq3EobgIIMPLA28iy_4DuwEVWX_1AyTn\",\"live\":\"NdeKGNN5N9BAp8JTxv47bQ\"},{\"tool\":\"marker\",\"color\":\"red\",\"width\":14.625,\"points\":\"AeLCAounBR7SIyqVA4kCF8Pll0VJAzIbasEB1AEReQgb8qzEkQHrkdKXCAznqF3lAQcH8DzdiAPSAQu_71PDAc8EJUQliZEDtQQSk-fGmAScBAfWjZ5H8QMFXWr4\",\"live\":\"qfHsrA3cbpQbT7Bcxa4KNg\"}]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 13
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/2/2\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/17/1\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/12/2\",\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 14
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/2/0\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 17
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"pen\",\"color\":\"red\",\"width\":7,\"points\":\"ArfSCb6dBCSvgQQjIo20BDcRJQP0AQ4RpwGFBBCWzpW-_Am3oPm7AgAzlaiflQ7wu-rVBw2augJ8FOcBsAEnl4EDrAMJ_M4DhQMVq70BjwQHsg\",\"group\":\"g1\"},{\"tool\":\"pen\",\"color\":\"yellow\",\"width\":21.0625,\"points\":\"AfaZAqLbBAGEWsbwAcwCJOV22fMDwgIdgdZYtwEhALWXPMTD7Z8J6KjYwQQnOJ_YsgFIFH58_k35AiU49FmVA5sBIBuLgg\",\"live\":\"PmKX5aolI89u5ofkaYanzA\",\"z\":-1}]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 6
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/18/2\",\"ERERERERERERERERERERERERERERERERERERERERERE/1/1\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/15/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/13/0\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 18
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/2/2\",\"ERERERERERERERERERERERERERERERERERERERERERE/9/2\",\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"offset\":[-13,22.4375]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 14
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/4/1\",\"ERERERERERERERERERERERERERERERERERERERERERE/9/0\",\"ERERERERERERERERERERERERERERERERERERERERERE/5/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/14/0\"]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 16
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"sticky\",\"color\":\"red\",\"at\":[-53.125,-380.9375],\"text\":\"\",\"size\":37.5625}]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 20
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"voice\",\"color\":\"red\",\"at\":[222.5,433],\"text\":\"\",\"size\":15.25,\"wrap\":355.9375}]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 17
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"image\",\"rect\":[-551.75,-464.5625,-225.75,425.5625],\"attachment\":{\"file_id\":\"LwChaP0-UZ-C1wgarV2Hwg\",\"file_key\":\"lMpcARVgqJfd1hp5PLuhfRSecI4ErTziwcM-CZNaPJU\",\"sha256\":\"x0P5icByTXz1HQBFk4jPtiN1dP0CDthdoTN9ohpdzPo\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":1916227,\"width\":3578},\"z\":-1}]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 7
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"sticky\",\"color\":\"blue\",\"at\":[-237.125,311.5625],\"text\":\"größer \\\"denken\\\"\\n• zwei\",\"size\":22.5625,\"wrap\":132.875,\"z\":4,\"group\":\"g1\"},{\"tool\":\"image\",\"rect\":[205.875,-474.9375,371.375,201.1875],\"attachment\":{\"file_id\":\"PUXULRpVj74sqzc02z3DJg\",\"file_key\":\"Gi5c9MXCTgMiHCwOlXAZZ7N7B2-006E-qgu1TxL-r2k\",\"sha256\":\"uP1hbwLvv7Fw_GkqwYDUT9cN5r6k_FHNEk_bRz5bBA4\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":1801539,\"width\":972,\"height\":2313},\"z\":4},{\"tool\":\"text\",\"color\":\"red\",\"at\":[-108.5625,307.25],\"text\":\"Ship it\",\"size\":20.625}]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 9
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"send_away\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/10/1\",\"ERERERERERERERERERERERERERERERERERERERERERE/6/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/10/1\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 21
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/9/2\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/12/2\"],\"offset\":[1.75,13.1875]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 10
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/7/2\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/12/1\",\"ERERERERERERERERERERERERERERERERERERERERERE/9/2\"]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 24
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"pen\",\"color\":\"ink\",\"width\":7,\"points\":\"AbC2BvjYCRKnfOs\",\"live\":\"sjXUO9i4PQohCZqgDKWRFA\",\"z\":1},{\"tool\":\"marker\",\"color\":\"yellow\",\"width\":20.1875,\"points\":\"AOyb_poKuvuvwwIFdRM2CZk\",\"group\":\"g1\"},{\"tool\":\"voice\",\"color\":\"yellow\",\"at\":[-412.625,134.875],\"text\":\"Ship it\",\"size\":26.4375,\"wrap\":360.4375,\"z\":2}]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 18
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/13/1\"]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 13
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"marker\",\"color\":\"yellow\",\"width\":0.5625,\"points\":\"A4yvAs2wAQMqXww\",\"live\":\"4k6iQmgVL8kQnzpaysrpuA\"}]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 25
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"marker\",\"color\":\"red\",\"width\":1.8125,\"points\":\"Aqa4BqaeBQfg\"},{\"tool\":\"image\",\"rect\":[-374.25,50.75,27.125,114.0625],\"attachment\":{\"file_id\":\"IHyBFQC0TTioUB0nsp--sg\",\"file_key\":\"fC_K-iYRrJuagwZns0w7AtqVBOpxbefj9wXyg5Mg-m4\",\"sha256\":\"W7R53LDf3A1cAJhaDLOoolWJGhSZoRI2FMncBEiKTxI\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":1004668,\"width\":1121}},{\"tool\":\"pen\",\"color\":\"yellow\",\"width\":2.1875,\"points\":\"AL6GiKsN-taD_QYUFfTGq-EEqsrkgQUgkLMExgQN1cUBcSU5nAL0AwS_bugBDyo\"}]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 16
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/12/0\",\"ERERERERERERERERERERERERERERERERERERERERERE/3/2\"],\"offset\":[16.75,17.3125]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 21
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"send_away\",\"shape_ids\":[\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/7/1\",\"ERERERERERERERERERERERERERERERERERERERERERE/2/2\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/19/2\",\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 23
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"marker\",\"color\":\"yellow\",\"width\":0.25,\"points\":\"Ac7uBICiARWOTUCSAmUH1HPHsQPDAg2LccPDBKwDIdijqfi3qcEM96DK4wwMSvyizgKhAgD-Jrg\"}]}",
+      "sender": "2222222222222222222222222222222222222222222222222222222222222222",
+      "seq": 24
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"image\",\"rect\":[252.3125,207.5,-467.3125,-15.4375],\"attachment\":{\"file_id\":\"5br_NqrLTd-ihMxRwIK0Xg\",\"file_key\":\"M6gUSR73h8aqSMs7c012wgLl3dvrVHPEevHXyEwWqXQ\",\"sha256\":\"cKcBMcodjBG_vJftmRwzvsnQzuQTtkxiAEpKkxwcGe4\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":4841134,\"height\":3371}}]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 18
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"marker\",\"color\":\"ink\",\"width\":21.875,\"points\":\"APyDB_rJAgn7\"}]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 19
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"send_away\",\"shape_ids\":[\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/3/2\",\"ERERERERERERERERERERERERERERERERERERERERERE/9/0\",\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/19/0\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/27/0\"]}",
+      "sender": "1111111111111111111111111111111111111111111111111111111111111111",
+      "seq": 20
+    },
+    {
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"sticky\",\"color\":\"ink\",\"at\":[377.875,357.375],\"text\":\"Ship it\",\"size\":35.875},{\"tool\":\"image\",\"rect\":[-202.5,209.4375,-225.75,523.5],\"attachment\":{\"file_id\":\"Q5CImmKYoYGqU1aRWZB8Zg\",\"file_key\":\"rdxaTJUrdLHiXThRDiQCpVKxBVKoal71p21xwFPguwg\",\"sha256\":\"7YjMOULX2kBWnDaSo-bGLoJjPpMrx5xhaO_-Qeu9UZo\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":1753489,\"height\":1601}},{\"tool\":\"marker\",\"color\":\"ink\",\"width\":7.0625,\"points\":\"A_OJ_fQJm4aQ4Asl7EuvSfEDI7eKGusDpQQeIlpy\",\"z\":-3}]}",
+      "sender": "3333333333333333333333333333333333333333333333333333333333333333",
+      "seq": 28
+    }
+  ],
+  "items": [
+    {
+      "file_ids": [],
+      "payload": "{\"schema_version\":2,\"content_type\":\"erase\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\",\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/18446744073709551615/4294967295\"]}"
+    },
+    {
+      "file_ids": [],
+      "payload": "{\"schema_version\":2,\"content_type\":\"send_away\",\"shape_ids\":[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/7/2\"]}"
+    },
+    {
+      "file_ids": [],
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/3/1\"],\"offset\":[-12.5,0.0625]}"
+    },
+    {
+      "file_ids": [],
+      "payload": "{\"schema_version\":2,\"content_type\":\"move\",\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/3/1\"],\"offset\":[134217727.9375,-134217728]}"
+    },
+    {
+      "file_ids": [],
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"voice\",\"color\":\"ink\",\"at\":[-2.0625,50],\"text\":\"Morgen: \\\"Kern\\\" fertig\\n\",\"size\":20,\"wrap\":250,\"z\":-2,\"group\":\"g7\"}]}"
+    },
+    {
+      "file_ids": [
+        "21517500e49f54b3c40f64edef6ef8c5"
+      ],
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"pen\",\"color\":\"ink\",\"width\":4,\"points\":\"AcOZB8ntBgYuYmrtAdsBDRUQRswCswIZ7XhspQOvAhnTcaC8AxwCUKdaoQTyAQtzJRo\",\"live\":\"eFkw8FBk2UXvhtXcDNLAQA\"},{\"tool\":\"image\",\"rect\":[146.9375,-215.5,-313.75,-556.3125],\"attachment\":{\"file_id\":\"IVF1AOSfVLPED2Tt7274xQ\",\"file_key\":\"WmPshH-vuiDRBLaND8pnhfbFOxiQtEIHKnP-83lW_os\",\"sha256\":\"Rd001lx2QQB5CHgm8dS0pZMWCoVbWpoH-IMh-fX7HCc\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":2825735,\"height\":3061}}]}"
+    },
+    {
+      "file_ids": [],
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"marker\",\"color\":\"yellow\",\"width\":11.875,\"points\":\"AsXEAfvVBSIn\"},{\"tool\":\"pen\",\"color\":\"yellow\",\"width\":14.4375,\"points\":\"AI_fBNbzBRphuQSoASEqSTYMiokE0wQMSw\"}]}"
+    },
+    {
+      "file_ids": [],
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"text\",\"color\":\"yellow\",\"at\":[207.25,-189.6875],\"text\":\"\",\"size\":12.4375,\"group\":\"g1\"},{\"tool\":\"pen\",\"color\":\"red\",\"width\":2.4375,\"points\":\"AbrNB_eRAhPDnoifBMwEE7XCDeMB6gIekV0jggPwARPJYLaqARkD48OxtAOXAiKeZIW2ARQC0f6v\",\"z\":2}]}"
+    },
+    {
+      "file_ids": [],
+      "payload": "{\"schema_version\":2,\"content_type\":\"strokes\",\"strokes\":[{\"tool\":\"pen\",\"color\":\"ink\",\"width\":22.5,\"points\":\"A4v-BPovBvygpYMC1gMQSc7J_wPkAyIGtYqxjMrfAcTsuMYPDG-j07ABAxtPfz7KA_4DDkRFiBylAhy7YWXBAp4BBwPGi_bh_HiZsf3ABR7mC9U\"},{\"tool\":\"marker\",\"color\":\"yellow\",\"width\":7.25,\"points\":\"AMWYApHCBwoKiQOGASOgncSZswLexLP2CR72wQHVAwiI\"}]}"
+    }
+  ],
+  "items_refused": [
+    {
+      "code": "bad-format",
+      "payload": "strokes",
+      "why": "no JSON"
+    },
+    {
+      "code": "bad-format",
+      "payload": "[1]",
+      "why": "no object"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "no schema_version"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":1,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "schema_version 1"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":\"2\",\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "schema_version as text"
+    },
+    {
+      "code": "newer-version",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":3,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "schema_version 3"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"tiles\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "an unknown content_type"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2}",
+      "why": "strokes without shapes"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[]}",
+      "why": "an empty list of shapes"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"],\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "strokes with shape ids"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"eraser\",\"width\":4}]}",
+      "why": "an unknown tool"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "a shape that names its own id"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"at\":[0,0],\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "a stroke with a note's field"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "a stroke without colour"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "an empty colour"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":0}]}",
+      "why": "width 0"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":1000.0625}]}",
+      "why": "a width above 1 000"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":0.03125}]}",
+      "why": "a width that is no multiple of 1/16"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":\"4\"}]}",
+      "why": "a width as text"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "no points"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICA\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "points with a point cut short"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAwx\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "points whose base64url has bits left over"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww==\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "points with base64 padding"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"live\":\"AAAA\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "a live id of 3 bytes"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4,\"z\":1.5}]}",
+      "why": "a layer that is no whole number"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"group\":\"\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}",
+      "why": "an empty group"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"at\":[1,2.5],\"color\":\"yellow\",\"size\":20,\"tool\":\"sticky\"}]}",
+      "why": "a note without text"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"at\":[1,2.5],\"color\":\"yellow\",\"size\":0,\"text\":\"x\",\"tool\":\"sticky\"}]}",
+      "why": "a note of size 0"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"at\":[1,2.5],\"color\":\"yellow\",\"size\":20,\"text\":\"x\",\"tool\":\"sticky\",\"wrap\":0}]}",
+      "why": "a note that wraps at 0"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"at\":[1],\"color\":\"yellow\",\"size\":20,\"text\":\"x\",\"tool\":\"sticky\"}]}",
+      "why": "a note at one number"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"at\":[1,134217728],\"color\":\"yellow\",\"size\":20,\"text\":\"x\",\"tool\":\"sticky\"}]}",
+      "why": "a position beyond the range"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"at\":[1,2.5],\"color\":\"yellow\",\"points\":\"AYCAAYBgAICAww\",\"size\":20,\"text\":\"x\",\"tool\":\"sticky\"}]}",
+      "why": "a note with points"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"rect\":[0,0,10,10],\"tool\":\"image\"}]}",
+      "why": "a picture without attachment"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"attachment\":{\"file_id\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"file_key\":\"AAAA\",\"file_name\":\"a.png\",\"media_type\":\"image/png\",\"sha256\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"total_size\":3},\"rect\":[0,0,10,10],\"tool\":\"image\"}]}",
+      "why": "a file key of 3 bytes"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"attachment\":{\"file_id\":\"AAAAAAAAAAAAAAAAAAAAAA\",\"file_key\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"file_name\":\"a.png\",\"media_type\":\"image/png\",\"sha256\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"total_size\":3},\"color\":\"ink\",\"rect\":[0,0,10,10],\"tool\":\"image\"}]}",
+      "why": "a picture with a colour"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"shape_ids\":[]}",
+      "why": "no shape id"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\",\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "a shape id twice"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/0/0\"]}",
+      "why": "envelope number 0"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/01/0\"]}",
+      "why": "a number with a leading zero"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0/0\"]}",
+      "why": "an id of four parts"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1\"]}",
+      "why": "an id of two parts"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"shape_ids\":[\"AAAA/1/0\"]}",
+      "why": "a sender of 3 bytes"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/4294967296\"]}",
+      "why": "an index beyond 32 bits"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"erase\",\"offset\":[1,1],\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "an erase with an offset"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"move\",\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "a move without offset"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"move\",\"offset\":[1,2,3],\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "an offset of three numbers"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"move\",\"offset\":[1000000000000.0,0],\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "an offset beyond the range"
+    },
+    {
+      "code": "bad-format",
+      "payload": "{\"content_type\":\"move\",\"offset\":[0.1,0],\"schema_version\":2,\"shape_ids\":[\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\"]}",
+      "why": "an offset that is no multiple of 1/16"
+    }
+  ],
+  "items_with_unknown_fields": [
+    {
+      "payload": "{\"content_type\":\"strokes\",\"later\":[1,2],\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"transform\":[2,0,0,2,100,50],\"width\":4,\"wrap\":null}]}",
+      "same_as": "{\"content_type\":\"strokes\",\"schema_version\":2,\"strokes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}]}"
+    }
+  ],
+  "points": [
+    {
+      "packed": "01ce8b03e1e7081e1d8acad202761b7fde6f9c03c1041cdb9ab7",
+      "points": [
+        [
+          25319,
+          -72177,
+          30,
+          29,
+          138,
+          202
+        ],
+        [
+          25488,
+          -72118,
+          57,
+          127,
+          222,
+          111
+        ],
+        [
+          25694,
+          -72407,
+          85,
+          219,
+          154,
+          183
+        ]
+      ],
+      "simulated": false,
+      "tilted": true
+    },
+    {
+      "packed": "00878f08a2dc050e1e56a6030590dd015f0a198403e701189cd601481905f08cbd8e01a5a7d1ee0116d2424716558b04322645d7d7c0d10fce88e4ce0712f89803960307b22bc00223b2",
+      "points": [
+        [
+          -66500,
+          46865,
+          14,
+          30,
+          0,
+          0
+        ],
+        [
+          -66457,
+          47076,
+          19,
+          144,
+          0,
+          0
+        ],
+        [
+          -66568,
+          47028,
+          29,
+          25,
+          0,
+          0
+        ],
+        [
+          -66374,
+          46912,
+          53,
+          156,
+          0,
+          0
+        ],
+        [
+          -66267,
+          46948,
+          78,
+          5,
+          0,
+          0
+        ],
+        [
+          149332061,
+          -250180207,
+          100,
+          210,
+          0,
+          0
+        ],
+        [
+          149332094,
+          -250180243,
+          122,
+          85,
+          0,
+          0
+        ],
+        [
+          149331832,
+          -250180218,
+          160,
+          69,
+          0,
+          0
+        ],
+        [
+          -1949398644,
+          771952557,
+          178,
+          248,
+          0,
+          0
+        ],
+        [
+          -1949398440,
+          771952760,
+          185,
+          178,
+          0,
+          0
+        ],
+        [
+          -1949398462,
+          771952920,
+          220,
+          178,
+          0,
+          0
+        ]
+      ],
+      "simulated": false,
+      "tilted": false
+    },
+    {
+      "packed": "00fae5018eff052563d4019a0318fd9b012d07f2d50384031cffd2028902008a4f6d009ef684d3ac0590ddb7a60e0ed89704e1022069170d16eaf203ed0311d58bd1dfb90d80b99ecd0f1daa",
+      "points": [
+        [
+          14717,
+          49095,
+          37,
+          99,
+          0,
+          0
+        ],
+        [
+          14823,
+          49300,
+          61,
+          253,
+          0,
+          0
+        ],
+        [
+          14745,
+          49277,
+          68,
+          242,
+          0,
+          0
+        ],
+        [
+          14510,
+          49471,
+          96,
+          255,
+          0,
+          0
+        ],
+        [
+          14679,
+          49338,
+          96,
+          138,
+          0,
+          0
+        ],
+        [
+          14639,
+          49283,
+          96,
+          158,
+          0,
+          0
+        ],
+        [
+          717920874,
+          1919399883,
+          110,
+          216,
+          0,
+          0
+        ],
+        [
+          717920606,
+          1919399706,
+          142,
+          105,
+          0,
+          0
+        ],
+        [
+          717920594,
+          1919399699,
+          164,
+          234,
+          0,
+          0
+        ],
+        [
+          717920843,
+          1919399452,
+          181,
+          213,
+          0,
+          0
+        ],
+        [
+          -1087461883,
+          -281312164,
+          210,
+          170,
+          0,
+          0
+        ]
+      ],
+      "simulated": false,
+      "tilted": false
+    },
+    {
+      "packed": "00a7da0281f0042512af03e8032186b8034f1a5bc5018004063dfa013113058a028c041c86d3029a02171b8103130c671fd204021a",
+      "points": [
+        [
+          -22164,
+          -39937,
+          37,
+          18,
+          0,
+          0
+        ],
+        [
+          -22380,
+          -39693,
+          70,
+          134,
+          0,
+          0
+        ],
+        [
+          -22160,
+          -39733,
+          96,
+          91,
+          0,
+          0
+        ],
+        [
+          -22259,
+          -39477,
+          102,
+          61,
+          0,
+          0
+        ],
+        [
+          -22134,
+          -39502,
+          121,
+          5,
+          0,
+          0
+        ],
+        [
+          -22001,
+          -39240,
+          149,
+          134,
+          0,
+          0
+        ],
+        [
+          -22171,
+          -39099,
+          172,
+          27,
+          0,
+          0
+        ],
+        [
+          -22364,
+          -39109,
+          184,
+          103,
+          0,
+          0
+        ],
+        [
+          -22380,
+          -38812,
+          186,
+          26,
+          0,
+          0
+        ]
+      ],
+      "simulated": false,
+      "tilted": false
+    },
+    {
+      "packed": "01a8cf04d4cf0412ec0f61d6037522a59acae7016d1f50f63b46c40206bb42afb8e9b3e103f0b486780d9922f0f203e001082709fb8003df020ecb56c270fa0124aa3c08a103a6040c7b087e8f04a402109dd47882011205d28598b0013d17747736",
+      "points": [
+        [
+          37844,
+          37866,
+          18,
+          236,
+          15,
+          97
+        ],
+        [
+          38079,
+          37807,
+          52,
+          165,
+          154,
+          202
+        ],
+        [
+          37963,
+          37752,
+          83,
+          80,
+          246,
+          59
+        ],
+        [
+          37998,
+          37914,
+          89,
+          187,
+          66,
+          175
+        ],
+        [
+          504827594,
+          125919570,
+          102,
+          153,
+          34,
+          240
+        ],
+        [
+          504827843,
+          125919682,
+          110,
+          39,
+          9,
+          251
+        ],
+        [
+          504828035,
+          125919506,
+          124,
+          203,
+          86,
+          194
+        ],
+        [
+          504828091,
+          125919631,
+          160,
+          170,
+          60,
+          8
+        ],
+        [
+          504827882,
+          125919906,
+          172,
+          123,
+          8,
+          126
+        ],
+        [
+          504827618,
+          125920052,
+          188,
+          157,
+          212,
+          120
+        ],
+        [
+          504827683,
+          125920061,
+          193,
+          210,
+          133,
+          152
+        ],
+        [
+          504827771,
+          125920030,
+          216,
+          116,
+          119,
+          54
+        ]
+      ],
+      "simulated": false,
+      "tilted": true
+    },
+    {
+      "packed": "009b90039b830603e9a4036b101fe603cf03036c8a03fd0105e2dc03fb0124dc9c034e15d71dcb01141dc202b1020d61f9dedada0786b59e9d052261b402fa0104eb1e7f0dbcf39ecf98039b94ca8b0c1132",
+      "points": [
+        [
+          -25614,
+          -49358,
+          3,
+          233,
+          0,
+          0
+        ],
+        [
+          -25404,
+          -49412,
+          19,
+          31,
+          0,
+          0
+        ],
+        [
+          -25161,
+          -49644,
+          22,
+          108,
+          0,
+          0
+        ],
+        [
+          -24964,
+          -49771,
+          27,
+          226,
+          0,
+          0
+        ],
+        [
+          -24726,
+          -49897,
+          63,
+          220,
+          0,
+          0
+        ],
+        [
+          -24520,
+          -49858,
+          84,
+          215,
+          0,
+          0
+        ],
+        [
+          -24535,
+          -49960,
+          104,
+          29,
+          0,
+          0
+        ],
+        [
+          -24374,
+          -50113,
+          117,
+          97,
+          0,
+          0
+        ],
+        [
+          -1034663667,
+          701696386,
+          151,
+          97,
+          0,
+          0
+        ],
+        [
+          -1034663513,
+          701696511,
+          155,
+          235,
+          0,
+          0
+        ],
+        [
+          -1034663498,
+          701696447,
+          168,
+          188,
+          0,
+          0
+        ],
+        [
+          -1463131652,
+          -921058127,
+          185,
+          50,
+          0,
+          0
+        ]
+      ],
+      "simulated": false,
+      "tilted": false
+    },
+    {
+      "packed": "00ffffffff0ffeffffff0f0000",
+      "points": [
+        [
+          -2147483648,
+          2147483647,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "simulated": false,
+      "tilted": false
+    }
+  ],
+  "points_refused": [
+    {
+      "packed": "",
+      "why": "no flags"
+    },
+    {
+      "packed": "00",
+      "why": "no point"
+    },
+    {
+      "packed": "0402020000",
+      "why": "an unknown flag"
+    },
+    {
+      "packed": "00800002000a",
+      "why": "x written longer than needed"
+    },
+    {
+      "packed": "00ffffffff1f0200",
+      "why": "x beyond 32 bits"
+    },
+    {
+      "packed": "00808080808000020000",
+      "why": "a number of six bytes"
+    },
+    {
+      "packed": "0002",
+      "why": "a point that ends after x"
+    },
+    {
+      "packed": "00020200",
+      "why": "a point without force"
+    },
+    {
+      "packed": "010202000a40",
+      "why": "a point without altitude in a stroke with tilt"
+    },
+    {
+      "packed": "000202ffffffff0f000202ffffffff0f00",
+      "why": "a time beyond 32 bits"
+    }
+  ],
+  "snapshot": "{\"v\":3,\"shapes\":[{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\",\"tool\":\"image\",\"rect\":[523.25,282.6875,525,82.625],\"attachment\":{\"file_id\":\"i60kcstp9CVPKX7aJBZrIQ\",\"file_key\":\"GVY5TXM5-U3XFdHgxXXgTQJBcXrcytjaI_qfPLNUO78\",\"sha256\":\"7ypNEp8L0P8ofeshmvt_X7B4b2MhgD2Ub_2XX94xKWs\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":241727,\"width\":356},\"z\":-4,\"group\":\"g1\"},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/6/0\",\"tool\":\"pen\",\"color\":\"red\",\"width\":7,\"points\":\"AofXCZKdBCSvgQQjIo20BDcRJQP0AQ4RpwGFBBCWzpW-_Am3oPm7AgAzlaiflQ7wu-rVBw2augJ8FOcBsAEnl4EDrAMJ_M4DhQMVq70BjwQHsg\",\"group\":\"g1\"},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/6/1\",\"tool\":\"pen\",\"color\":\"yellow\",\"width\":21.0625,\"points\":\"AfaZAqLbBAGEWsbwAcwCJOV22fMDwgIdgdZYtwEhALWXPMTD7Z8J6KjYwQQnOJ_YsgFIFH58_k35AiU49FmVA5sBIBuLgg\",\"live\":\"PmKX5aolI89u5ofkaYanzA\",\"z\":-1},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/7/0\",\"tool\":\"image\",\"rect\":[-551.75,-464.5625,-225.75,425.5625],\"attachment\":{\"file_id\":\"LwChaP0-UZ-C1wgarV2Hwg\",\"file_key\":\"lMpcARVgqJfd1hp5PLuhfRSecI4ErTziwcM-CZNaPJU\",\"sha256\":\"x0P5icByTXz1HQBFk4jPtiN1dP0CDthdoTN9ohpdzPo\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":1916227,\"width\":3578},\"z\":-1},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/9/1\",\"tool\":\"image\",\"rect\":[205.875,-474.9375,371.375,201.1875],\"attachment\":{\"file_id\":\"PUXULRpVj74sqzc02z3DJg\",\"file_key\":\"Gi5c9MXCTgMiHCwOlXAZZ7N7B2-006E-qgu1TxL-r2k\",\"sha256\":\"uP1hbwLvv7Fw_GkqwYDUT9cN5r6k_FHNEk_bRz5bBA4\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":1801539,\"width\":972,\"height\":2313},\"z\":4},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/16/0\",\"tool\":\"marker\",\"color\":\"red\",\"width\":1.8125,\"points\":\"Aqa4BqaeBQfg\"},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/16/1\",\"tool\":\"image\",\"rect\":[-374.25,50.75,27.125,114.0625],\"attachment\":{\"file_id\":\"IHyBFQC0TTioUB0nsp--sg\",\"file_key\":\"fC_K-iYRrJuagwZns0w7AtqVBOpxbefj9wXyg5Mg-m4\",\"sha256\":\"W7R53LDf3A1cAJhaDLOoolWJGhSZoRI2FMncBEiKTxI\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":1004668,\"width\":1121}},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/16/2\",\"tool\":\"pen\",\"color\":\"yellow\",\"width\":2.1875,\"points\":\"AL6GiKsN-taD_QYUFfTGq-EEqsrkgQUgkLMExgQN1cUBcSU5nAL0AwS_bugBDyo\"},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/18/0\",\"tool\":\"image\",\"rect\":[252.3125,207.5,-467.3125,-15.4375],\"attachment\":{\"file_id\":\"5br_NqrLTd-ihMxRwIK0Xg\",\"file_key\":\"M6gUSR73h8aqSMs7c012wgLl3dvrVHPEevHXyEwWqXQ\",\"sha256\":\"cKcBMcodjBG_vJftmRwzvsnQzuQTtkxiAEpKkxwcGe4\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":4841134,\"height\":3371}},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/19/0\",\"tool\":\"marker\",\"color\":\"ink\",\"width\":21.875,\"points\":\"APyDB_rJAgn7\"},{\"id\":\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/11/0\",\"tool\":\"pen\",\"color\":\"yellow\",\"width\":0.8125,\"points\":\"A9thiJAJHsrNwKICmQQZ4bdB0AGwAg9pq4Y\",\"group\":\"g1\"},{\"id\":\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/11/1\",\"tool\":\"sticky\",\"color\":\"yellow\",\"at\":[-355.9375,384.75],\"text\":\"Ship it\",\"size\":33,\"wrap\":386.9375},{\"id\":\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/17/0\",\"tool\":\"voice\",\"color\":\"red\",\"at\":[222.5,433],\"text\":\"\",\"size\":15.25,\"wrap\":355.9375},{\"id\":\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/18/0\",\"tool\":\"pen\",\"color\":\"ink\",\"width\":7,\"points\":\"AbC2BvjYCRKnfOs\",\"live\":\"sjXUO9i4PQohCZqgDKWRFA\",\"z\":1},{\"id\":\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/18/1\",\"tool\":\"marker\",\"color\":\"yellow\",\"width\":20.1875,\"points\":\"AOyb_poKuvuvwwIFdRM2CZk\",\"group\":\"g1\"},{\"id\":\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/18/2\",\"tool\":\"voice\",\"color\":\"yellow\",\"at\":[-412.625,134.875],\"text\":\"Ship it\",\"size\":26.4375,\"wrap\":360.4375,\"z\":2},{\"id\":\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/24/0\",\"tool\":\"marker\",\"color\":\"yellow\",\"width\":0.25,\"points\":\"Ac7uBICiARWOTUCSAmUH1HPHsQPDAg2LccPDBKwDIdijqfi3qcEM96DK4wwMSvyizgKhAgD-Jrg\"},{\"id\":\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/3/0\",\"tool\":\"pen\",\"color\":\"yellow\",\"width\":22.625,\"points\":\"AaabBtWZCQyyBOwMLyRGYXaBA-oCCPyZ1ROEAQO9cR8\",\"live\":\"CFehbSzT4hztmN6MOtYNxg\"},{\"id\":\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/20/0\",\"tool\":\"sticky\",\"color\":\"red\",\"at\":[-53.125,-380.9375],\"text\":\"\",\"size\":37.5625},{\"id\":\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/25/0\",\"tool\":\"marker\",\"color\":\"yellow\",\"width\":0.5625,\"points\":\"A4yvAs2wAQMqXww\",\"live\":\"4k6iQmgVL8kQnzpaysrpuA\"},{\"id\":\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/28/0\",\"tool\":\"sticky\",\"color\":\"ink\",\"at\":[377.875,357.375],\"text\":\"Ship it\",\"size\":35.875},{\"id\":\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/28/1\",\"tool\":\"image\",\"rect\":[-202.5,209.4375,-225.75,523.5],\"attachment\":{\"file_id\":\"Q5CImmKYoYGqU1aRWZB8Zg\",\"file_key\":\"rdxaTJUrdLHiXThRDiQCpVKxBVKoal71p21xwFPguwg\",\"sha256\":\"7YjMOULX2kBWnDaSo-bGLoJjPpMrx5xhaO_-Qeu9UZo\",\"file_name\":\"sketch.png\",\"media_type\":\"image/png\",\"total_size\":1753489,\"height\":1601}},{\"id\":\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/28/2\",\"tool\":\"marker\",\"color\":\"ink\",\"width\":7.0625,\"points\":\"A_OJ_fQJm4aQ4Asl7EuvSfEDI7eKGusDpQQeIlpy\",\"z\":-3}],\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[20,\"FBERERERERERERERERERERERERERERERERERERERERE\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[24,\"GCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\"],\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM\":[28,\"HDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM\"]},\"gone\":[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/27/0\"],\"moved\":[]}",
+  "snapshot_small": "{\"v\":3,\"shapes\":[{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"tool\":\"pen\",\"color\":\"ink\",\"width\":4,\"points\":\"AYCAAYBgAICAww\"},{\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"tool\":\"pen\",\"color\":\"ink\",\"width\":4,\"points\":\"AYCAAYBgAICAww\"}],\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]]}",
+  "snapshots_refused": [
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":2}",
+      "why": "version 2"
+    },
+    {
+      "code": "newer-version",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":4}",
+      "why": "version 4"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "no list of erased shapes"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "no frontier"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a shape beyond the frontier"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM/1/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a shape of a writer the frontier does not name"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a shape twice"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/1/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "shapes out of order"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a shape without id"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"eraser\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a shape of an unknown tool"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[0,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a frontier at number 0"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"AAAA\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a frontier hash of 3 bytes"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"ERERERERERERERERERERERERERERERERERERERERERE\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a writer twice in the frontier"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/4/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "an erased shape that the frontier covers"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/6/0\",\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",1.5,-2]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "erased shapes out of order"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/1/0\",1,1]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a move kept for a shape that the frontier covers"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",0,0]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a move by nothing"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\",1,1]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a move kept for an erased shape"
+    },
+    {
+      "code": "bad-format",
+      "file": "{\"frontier\":{\"ERERERERERERERERERERERERERERERERERERERERERE\":[4,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"],\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI\":[1,\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"]},\"gone\":[\"ERERERERERERERERERERERERERERERERERERERERERE/5/0\"],\"moved\":[[\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI/2/0\",0.1,1]],\"shapes\":[{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/0\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4},{\"color\":\"ink\",\"id\":\"ERERERERERERERERERERERERERERERERERERERERERE/2/1\",\"points\":\"AYCAAYBgAICAww\",\"tool\":\"pen\",\"width\":4}],\"v\":3}",
+      "why": "a move that is no multiple of 1/16"
+    }
+  ]
+}

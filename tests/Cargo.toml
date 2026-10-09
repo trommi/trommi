@@ -67,3 +67,11 @@ path = "core/groups_refusals.rs"
 [[test]]
 name = "core_groups_crash"
 path = "core/groups_crash.rs"
+
+[[test]]
+name = "core_content_board"
+path = "core/content_board.rs"
+
+[[test]]
+name = "core_content_trail"
+path = "core/content_trail.rs"
