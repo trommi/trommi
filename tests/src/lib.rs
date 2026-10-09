@@ -102,6 +102,17 @@ pub fn new_device_with(recovery: TestRecovery) -> TestDevice {
     .expect("a new device")
 }
 
+/// A new device in `store`. A test keeps `store.handle()` to see what the device wrote, to plan a failing
+/// write, and to play a crash.
+pub fn new_device_on(store: MemoryStorage) -> TestDevice {
+    Device::create(
+        store,
+        Box::new(SystemEntropy),
+        Box::new(TestRecovery::default()),
+    )
+    .expect("a new device")
+}
+
 /// The device a store holds: what a restart finds.
 pub fn reopen(store: MemoryStorage) -> Result<TestDevice, Error> {
     Device::open(
@@ -174,12 +185,7 @@ pub fn sync_ok(hub: &Hub, device: &mut TestDevice) -> Vec<Processed> {
 
 /// Joins every group whose Welcome at `change` is for this device.
 pub fn take_welcomes(hub: &Hub, device: &mut TestDevice, change: u64) -> Vec<Joined> {
-    let Some(room) = device
-        .room()
-        .or_else(|| hub.history().map(|_| hub_room(hub)))
-    else {
-        return Vec::new();
-    };
+    let room = device.room().unwrap_or_else(|| hub_room(hub));
     let expected = WelcomeExpectation {
         room,
         committer: None,
@@ -369,5 +375,13 @@ pub fn cuts_for(device: &TestDevice, group: &GroupId) -> Vec<Cut> {
         .disallowed
         .into_iter()
         .map(Cut::none)
+        .collect()
+}
+
+/// Posts the outbox and expects every entry to be refused. Returns the codes in order.
+pub fn post_refused(hub: &mut Hub, device: &mut TestDevice) -> Vec<Error> {
+    post_all(hub, device)
+        .into_iter()
+        .map(|answer| answer.expect_err("the hub refuses"))
         .collect()
 }
