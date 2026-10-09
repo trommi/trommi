@@ -182,7 +182,8 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer
     let origin = http::header(req.headers(), "origin")
         .filter(|o| allowed_origin(&app, o))
         .map(str::to_string);
-    let mut answer = respond(app, req, conn).await;
+    let mut answer = respond(app.clone(), req, conn).await;
+    hsts(&app, &mut answer);
     if let Some(origin) = origin {
         let h = answer.headers_mut();
         if let Ok(v) = origin.parse() {
@@ -200,6 +201,18 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer
         .headers_mut()
         .insert("x-content-type-options", "nosniff".parse().expect("static"));
     answer
+}
+
+/// With `HUB_HSTS=on`: HTTPS only, for two years, subdomains included, fit for the preload list.
+pub fn hsts(app: &App, answer: &mut Answer) {
+    if app.cfg.hsts {
+        answer.headers_mut().insert(
+            "strict-transport-security",
+            "max-age=63072000; includeSubDomains; preload"
+                .parse()
+                .expect("static"),
+        );
+    }
 }
 
 async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {

@@ -1,5 +1,5 @@
 # Every test of the repository lives in this one crate, in a folder per part. This file lists the hub's targets
-# (tests/hub/…); the core's (tests/core/…) are added beside them.
+# (tests/hub/…) and the deploy path's (tests/deploy/…); the core's (tests/core/…) are added beside them.
 [package]
 name = "trommi-tests"
 version = "0.0.0"
@@ -11,11 +11,13 @@ path = "lib.rs"
 
 [dependencies]
 trommi-hub = { path = "../hub" }
+trommi-hub-updater = { path = "../hub/updater" }
+ed25519-dalek = "=2.2.0"
 openmls = { workspace = true }
 openmls_rust_crypto = { workspace = true }
 openmls_basic_credential = { workspace = true }
 openmls_traits = { workspace = true }
-tokio = { version = "=1.53.2", features = ["rt-multi-thread", "net", "sync", "time"] }
+tokio = { version = "=1.53.2", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util"] }
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 serde_json = "1"
 sha2 = "=0.10.9"
@@ -70,3 +72,11 @@ path = "hub/jobs.rs"
 [[test]]
 name = "hub_busy"
 path = "hub/busy.rs"
+
+[[test]]
+name = "deploy_updater"
+path = "deploy/updater.rs"
+
+[[test]]
+name = "deploy_hub_settings"
+path = "deploy/hub_settings.rs"

@@ -922,15 +922,16 @@ impl Updater {
         let floor = state
             .high_water
             .max(running.as_ref().map_or(0, |r| r.version));
+        // asking for what runs changes nothing, whatever the floor is
+        if let Some(now) = running.as_ref().filter(|r| r.tag == tag) {
+            return self.same_again(tag, now).await;
+        }
         if version < floor {
             return Outcome::new(
                 "refused",
                 tag,
                 format!("older than hub-v{floor}, which this server already accepted"),
             );
-        }
-        if let Some(now) = running.as_ref().filter(|r| r.tag == tag) {
-            return self.same_again(tag, now).await;
         }
 
         // fetch and prove, beside what runs; nothing that serves is touched until this holds
