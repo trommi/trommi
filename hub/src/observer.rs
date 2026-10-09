@@ -23,8 +23,10 @@ pub type Device = [u8; 32];
 pub const SUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_CHACHA20POLY1305_SHA256_Ed25519;
 
 /// Why the observer refuses something; each maps to one error code of the spec.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Refusal {
+    /// the work for this call was not prepared on the state the transaction found: try again
+    Busy,
     /// not parseable, not valid MLS on the public state, or outside the profile of section 3
     BadCommit(String),
     BadKeyPackage(String),
@@ -39,11 +41,11 @@ fn bad(what: impl Into<String>) -> Refusal {
 
 /// The serialised public state of one group: tree, group context, interim transcript hash and confirmation tag,
 /// as OpenMLS stores them. Public data only.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GroupState(pub Vec<u8>);
 
 /// What anyone can read from a group's public state at one epoch.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     pub group_id: Vec<u8>,
     pub epoch: u64,
@@ -62,7 +64,7 @@ impl Snapshot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum By {
     Member(Device),
     /// a join from outside: the key of the leaf it brings
@@ -77,7 +79,7 @@ impl By {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Added {
     pub device: Device,
     /// RFC 9420 KeyPackageRef: what a Welcome names its receivers by
@@ -85,7 +87,7 @@ pub struct Added {
 }
 
 /// What a Commit does, read from the Commit and the public state before and after it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CommitFacts {
     pub by: By,
     pub adds: Vec<Added>,
@@ -97,19 +99,17 @@ pub struct CommitFacts {
     pub after: Snapshot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KeyPackageFacts {
     pub device: Device,
     pub key_package_ref: Vec<u8>,
     pub last_resort: bool,
 }
 
-pub trait Observer: Send + Sync {
+pub trait Observer {
     /// Start following a group from a GroupInfo that carries the tree. Returns the state, what it shows and the
     /// leaf that signed the GroupInfo.
     fn open(&self, group_info: &[u8]) -> Res<(GroupState, Snapshot, Device)>;
-    /// The state as stored.
-    fn snapshot(&self, state: &GroupState) -> Res<Snapshot>;
     /// Verify a Commit on the public state and apply it. Nothing is written: the caller keeps the returned state
     /// only if its own rules pass.
     fn commit(&self, state: &GroupState, commit: &[u8]) -> Res<(GroupState, CommitFacts)>;
@@ -358,10 +358,6 @@ impl Observer for MlsObserver {
         remember_id(&storage, &group);
         let snapshot = snapshot_of(&group)?;
         Ok((encode_state(&storage), snapshot, signer))
-    }
-
-    fn snapshot(&self, state: &GroupState) -> Res<Snapshot> {
-        snapshot_of(&self.load(state)?.1)
     }
 
     fn commit(&self, state: &GroupState, commit: &[u8]) -> Res<(GroupState, CommitFacts)> {

@@ -46,11 +46,24 @@ fn every(
 }
 
 pub fn spawn_jobs(app: &Arc<App>) {
-    every(app, app.cfg.retention_every_ms, 60_000, |a| {
-        a.retention();
-    });
-    every(app, app.cfg.sweep_every_ms, 30_000, |a| a.sweep());
+    every(
+        app,
+        app.cfg.retention_every_ms,
+        app.cfg.retention_every_ms.min(60_000),
+        |a| {
+            a.retention();
+        },
+    );
+    every(
+        app,
+        app.cfg.sweep_every_ms,
+        app.cfg.sweep_every_ms.min(30_000),
+        |a| a.sweep(),
+    );
     every(app, 30_000, 30_000, |a| a.db.maintain());
+    every(app, app.cfg.lease_watch_ms, app.cfg.lease_watch_ms, |a| {
+        a.lease_watch()
+    });
     every(app, app.cfg.ping_ms, app.cfg.ping_ms, |a| {
         a.live.ping(crate::util::now())
     });

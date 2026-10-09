@@ -381,6 +381,9 @@ pub fn found_session(x: &Ctx, auth: &Auth, f: &Founding, fx: &mut Effects) -> Re
         &signer,
         founder_standing == Standing::Human,
     )?;
+    x.cfg
+        .quotas
+        .take(x.c, &auth.room, crate::quota::Counted::Groups)?;
     let founded_change = next_change(x.c, &auth.room)?;
     x.c.prepare_cached(
         "INSERT INTO groups (group_id, room_id, kind, session_id, parent, founder, epoch, room_epoch, epoch_at, founded_change, state)
@@ -846,8 +849,13 @@ fn commit_in(
     for add in &facts.adds {
         add_member(x.c, group_id, &add.device, new_epoch)?;
         if view.standing(&add.device) == Standing::Helper && row.kind == GroupKind::Helper {
-            x.c.prepare_cached("INSERT OR IGNORE INTO devices (room_id, device, role, added_epoch) VALUES (?1, ?2, 'helper', ?3)")?
+            let n = x.c.prepare_cached("INSERT OR IGNORE INTO devices (room_id, device, role, added_epoch) VALUES (?1, ?2, 'helper', ?3)")?
                 .execute(params![&room[..], &add.device[..], view.epoch as i64])?;
+            if n == 1 {
+                x.cfg
+                    .quotas
+                    .take(x.c, &room, crate::quota::Counted::HelperDevices)?;
+            }
         }
         let welcome = body.welcome.as_ref().expect("checked above");
         x.c.prepare_cached("INSERT INTO welcomes (room_id, device, group_id, at, bytes) VALUES (?1, ?2, ?3, ?4, ?5)")?
@@ -1484,6 +1492,7 @@ pub fn requests(c: &Connection, auth: &Auth) -> Res<Value> {
 /// A join and a cleaning Commit for each group: enough for 4 000 live sessions.
 pub const MAX_RECOVERY_PARTS: i64 = 8192;
 pub const MAX_RECOVERY_BYTES: i64 = 64 << 20;
+pub const MAX_RECOVERY_MEMO_BYTES: i64 = 512 << 20;
 
 /// A room in recovery takes nothing else (8.7).
 pub fn open_recovery_of(c: &Connection, room: &Room, now: u64) -> Res<Option<Vec<u8>>> {
@@ -1664,6 +1673,8 @@ pub fn recovery_keep(
     id: &[u8],
     group_id: &[u8],
     body: &CommitBody,
+    commit_key: Option<&crate::memo::Key>,
+    entries: &std::collections::HashMap<crate::memo::Key, crate::memo::Entry>,
 ) -> Res<()> {
     recovery_row(x, auth, id)?;
     // a repeated post of the same part is kept once
@@ -1671,12 +1682,33 @@ pub fn recovery_keep(
     let held =
         x.c.prepare_cached("SELECT 1 FROM recovery_parts WHERE recovery_id = ?1 AND body = ?2")?
             .exists(params![id, text])?;
-    if !held {
+    if held {
+        return Ok(());
+    }
+    x.c.prepare_cached(
+        "INSERT INTO recovery_parts (recovery_id, n, group_id, body, commit_key)
+         VALUES (?1, (SELECT coalesce(max(n), 0) + 1 FROM recovery_parts WHERE recovery_id = ?1), ?2, ?3, ?4)",
+    )?
+    .execute(params![id, group_id, text, commit_key.map(|k| &k[..])])?;
+    // what verifying it gave, for the parts that follow and for `finish`
+    for (key, entry) in entries {
+        if let Some(value) = entry.encode() {
+            x.c.prepare_cached(
+                "INSERT OR IGNORE INTO recovery_memo (recovery_id, key, value) VALUES (?1, ?2, ?3)",
+            )?
+            .execute(params![id, &key[..], value])?;
+        }
+    }
+    let held: i64 =
         x.c.prepare_cached(
-            "INSERT INTO recovery_parts (recovery_id, n, group_id, body)
-             VALUES (?1, (SELECT coalesce(max(n), 0) + 1 FROM recovery_parts WHERE recovery_id = ?1), ?2, ?3)",
+            "SELECT coalesce(sum(length(value)), 0) FROM recovery_memo WHERE recovery_id = ?1",
         )?
-        .execute(params![id, group_id, text])?;
+        .query_row([id], |r| r.get(0))?;
+    if held > MAX_RECOVERY_MEMO_BYTES {
+        return Err(refuse(
+            "too-many",
+            "this recovery holds more public group state than a recovery may",
+        ));
     }
     Ok(())
 }
@@ -1773,6 +1805,8 @@ pub fn recovery_finish(
     x.c.prepare_cached("UPDATE recoveries SET finished_at = ?1, expires_at = ?1 + 600000, finish_hash = ?2, finish_answer = ?3 WHERE recovery_id = ?4")?
         .execute(params![x.now as i64, &request_hash[..], answer.to_string(), id])?;
     x.c.prepare_cached("DELETE FROM recovery_parts WHERE recovery_id = ?1")?
+        .execute([id])?;
+    x.c.prepare_cached("DELETE FROM recovery_memo WHERE recovery_id = ?1")?
         .execute([id])?;
     crate::log::info(
         "recovery_finished",

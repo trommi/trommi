@@ -4,6 +4,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Founding {
+    Open,
+    Token,
+    Closed,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub host: String,
@@ -17,7 +24,19 @@ pub struct Config {
     pub min_client: Option<String>,
     /// when set, `POST /v2/rooms` needs it in `x-found-token`
     pub found_token: Option<String>,
+    /// who may found a room: `open` (anyone, within the limits), `token` (whoever brings `HUB_FOUND_TOKEN`),
+    /// `closed` (nobody)
+    pub founding: Founding,
+    /// whether failed logins slow their source down (`throttle.rs`); `off` leaves the per-address limit only
+    pub login_throttle: bool,
     pub test_control: bool,
+    /// with test control: every piece of expensive work takes this much longer
+    pub test_heavy_ms: u64,
+    /// the pool for expensive work (verifying Commits, slow hashes): workers, and how many may wait
+    pub heavy_workers: usize,
+    pub heavy_waiting: usize,
+    /// requests worked on at a time; more are told to come back
+    pub admitted: usize,
     pub quiet: bool,
 
     pub json_limit: usize,
@@ -33,18 +52,19 @@ pub struct Config {
     pub open_requests_per_ip_minute: f64,
     pub foundings_per_ip_hour: usize,
     pub logins_per_ip_10min: usize,
-    pub login_failures_per_email_hour: usize,
     pub max_rooms: u64,
     pub humans: usize,
     pub agents: usize,
     pub helpers_per_main: usize,
-    pub helper_devices: usize,
     pub key_packages: usize,
     pub key_package_days: u64,
     pub open_invites: usize,
     pub share_days: u64,
     pub retention_days: u64,
     pub push_subscriptions_per_device: usize,
+    pub shares_per_room: i64,
+    pub passkeys: i64,
+    pub quotas: crate::quota::Quotas,
 
     pub body_timeout_ms: u64,
     pub ping_ms: u64,
@@ -53,6 +73,7 @@ pub struct Config {
     pub live_ms: u64,
     pub live_beat_ms: u64,
     pub loss_ms: u64,
+    pub lease_watch_ms: u64,
     pub stream_buffer_bytes: usize,
 
     pub push_subject: String,
@@ -158,8 +179,25 @@ impl Config {
             trust_proxy_header: env.get("HUB_TRUST_CF").is_some_and(|v| v == "1"),
             min_client: optional("HUB_MIN_CLIENT"),
             found_token: optional("HUB_FOUND_TOKEN"),
+            founding: match (
+                text("HUB_FOUNDING", "").as_str(),
+                optional("HUB_FOUND_TOKEN").is_some(),
+            ) {
+                ("closed", _) => Founding::Closed,
+                ("token", _) | ("", true) => Founding::Token,
+                _ => Founding::Open,
+            },
+            login_throttle: text("HUB_LOGIN_THROTTLE", "on") != "off",
             test_control: env.get("HUB_TEST_CONTROL").is_some_and(|v| v == "1"),
             quiet: env.get("HUB_QUIET").is_some_and(|v| v == "1"),
+            test_heavy_ms: number(env, "HUB_TEST_HEAVY_MS", 0),
+            heavy_workers: number(
+                env,
+                "HUB_HEAVY_WORKERS",
+                std::thread::available_parallelism().map_or(2, |n| n.get()),
+            ),
+            heavy_waiting: number(env, "HUB_HEAVY_WAITING", 64),
+            admitted: number(env, "HUB_ADMITTED", 256),
 
             json_limit: number(env, "HUB_LIMIT_JSON", 1 << 20),
             commit_limit: number(env, "HUB_LIMIT_COMMIT", 1 << 20),
@@ -178,22 +216,33 @@ impl Config {
             ),
             foundings_per_ip_hour: number(env, "HUB_LIMIT_FOUND_PER_IP_HOUR", 10),
             logins_per_ip_10min: number(env, "HUB_LIMIT_LOGINS_PER_IP_10MIN", 30),
-            login_failures_per_email_hour: number(
-                env,
-                "HUB_LIMIT_LOGIN_FAILURES_PER_EMAIL_HOUR",
-                10,
-            ),
             max_rooms: number(env, "HUB_MAX_ROOMS", 1000),
-            humans: 32,
-            agents: 256,
-            helpers_per_main: 32,
-            helper_devices: 7,
-            key_packages: 100,
+            humans: number(env, "HUB_LIMIT_HUMANS", 32),
+            agents: number(env, "HUB_LIMIT_AGENTS", 256),
+            helpers_per_main: number(env, "HUB_LIMIT_HELPERS_PER_MAIN", 32),
+            key_packages: number(env, "HUB_LIMIT_KEY_PACKAGES", 100),
             key_package_days: 90,
-            open_invites: 16,
+            open_invites: number(env, "HUB_LIMIT_OPEN_INVITES", 16),
             share_days: number(env, "HUB_LIMIT_SHARE_DAYS", 180),
             retention_days: number(env, "HUB_LIMIT_RETENTION_DAYS", 30),
-            push_subscriptions_per_device: 10,
+            push_subscriptions_per_device: number(
+                env,
+                "HUB_LIMIT_PUSH_SUBSCRIPTIONS_PER_DEVICE",
+                10,
+            ),
+            shares_per_room: number(env, "HUB_LIMIT_SHARES_PER_ROOM", 1000),
+            passkeys: number(env, "HUB_LIMIT_PASSKEYS", 20),
+            quotas: crate::quota::Quotas {
+                files: number(env, "HUB_QUOTA_FILES", crate::quota::FILES),
+                registers: number(env, "HUB_QUOTA_REGISTERS", crate::quota::REGISTERS),
+                voids: number(env, "HUB_QUOTA_VOIDS", crate::quota::VOIDS),
+                groups: number(env, "HUB_QUOTA_GROUPS", crate::quota::GROUPS),
+                helper_devices: number(
+                    env,
+                    "HUB_QUOTA_HELPER_DEVICES",
+                    crate::quota::HELPER_DEVICES,
+                ),
+            },
 
             body_timeout_ms: number(env, "HUB_BODY_TIMEOUT_MS", 15_000),
             ping_ms: number(env, "HUB_PING_MS", 25_000),
@@ -202,6 +251,7 @@ impl Config {
             live_ms: number(env, "HUB_LIVE_MS", 2_000),
             live_beat_ms: number(env, "HUB_LIVE_BEAT_MS", 600_000),
             loss_ms: number(env, "HUB_LOSS_MS", 60_000),
+            lease_watch_ms: number(env, "HUB_LEASE_WATCH_MS", 5_000),
             stream_buffer_bytes: number(env, "HUB_STREAM_BUFFER_BYTES", 4 << 20),
 
             push_subject: text("HUB_PUSH_SUBJECT", "https://trommi.com"),

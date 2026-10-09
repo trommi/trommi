@@ -16,11 +16,14 @@ use crate::delivery::Ctx;
 use crate::error::{refuse, Refused, Res};
 use crate::limits::{Buckets, Window};
 use crate::live::Live;
+use crate::memo::{Entry, Gate, Memo};
 use crate::observer::MlsObserver;
 use crate::push::{self, Apns, ApnsRegistration, Text, Transport, Vapid, WebSubscription};
 use crate::session::Sessions;
 use crate::store::{self, Auth, Effects, Event, PushJob, Room, Who};
 use crate::util::{self, b64, short};
+
+pub type Entries = HashMap<crate::memo::Key, Entry>;
 
 pub struct Limits {
     pub envelopes: Buckets,
@@ -30,9 +33,10 @@ pub struct Limits {
     pub shares: Buckets,
     pub pushes: Window,
     pub requests: Buckets,
+    pub heavy: Buckets,
     pub foundings: Window,
     pub logins: Window,
-    pub login_failures: Window,
+    pub login: crate::throttle::LoginThrottle,
 }
 
 pub struct App {
@@ -50,10 +54,15 @@ pub struct App {
     pub ticket_key: [u8; 32],
     pub closing: AtomicBool,
     pub in_flight: AtomicUsize,
+    /// requests being worked on (not: streams and transfers): the admission queue
+    pub admitted: AtomicUsize,
+    /// the pool for expensive work
+    pub gate: Gate,
     live_due: Mutex<HashSet<Room>>,
     /// per room: the bytes and the number of uploads in progress
     uploads: Mutex<HashMap<Room, (u64, usize)>>,
-    lost_since: Mutex<HashMap<(Room, [u8; 32]), u64>>,
+    /// one round of Live Activity pushes per room at a time
+    live_rounds: Mutex<HashMap<Room, Arc<tokio::sync::Mutex<()>>>>,
     pub started_at: u64,
 }
 
@@ -120,13 +129,15 @@ impl App {
             shares: Buckets::new(1.0, 60.0),
             pushes: Window::new(10, 60_000),
             requests: Buckets::new(0.2, 10.0),
+            heavy: Buckets::new(10.0, 60.0),
             foundings: Window::new(cfg.foundings_per_ip_hour, 3_600_000),
             logins: Window::new(cfg.logins_per_ip_10min, 600_000),
-            login_failures: Window::new(cfg.login_failures_per_email_hour, 3_600_000),
+            login: Default::default(),
         };
         crate::log::set_quiet(cfg.quiet);
+        let cfg_heavy = (cfg.heavy_workers, cfg.heavy_waiting);
         Ok(Arc::new(App {
-            accounts: Accounts::new(origins),
+            accounts: Accounts::new(origins, cfg.passkeys),
             cfg,
             db,
             obs: MlsObserver::default(),
@@ -140,9 +151,11 @@ impl App {
             ticket_key,
             closing: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
+            admitted: AtomicUsize::new(0),
+            gate: Gate::new(cfg_heavy.0, cfg_heavy.1),
             live_due: Mutex::new(HashSet::new()),
             uploads: Mutex::new(HashMap::new()),
-            lost_since: Mutex::new(HashMap::new()),
+            live_rounds: Mutex::new(HashMap::new()),
             started_at: util::now(),
         }))
     }
@@ -171,15 +184,49 @@ impl App {
         })
     }
 
+    /// Expensive work before a transaction (see `memo`): on the bounded pool, reading through a reading
+    /// connection, into a memo whose entries the transaction is then given.
+    pub fn heavy<T>(&self, f: impl FnOnce(&rusqlite::Connection, &Memo) -> T) -> Res<(Entries, T)> {
+        let _place = self.gate.enter()?;
+        if self.cfg.test_control && self.cfg.test_heavy_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(self.cfg.test_heavy_ms));
+        }
+        let memo = Memo::preparing(&self.obs);
+        let out = self.db.read(|c| Ok::<_, Refused>(f(c, &memo)))?;
+        Ok((memo.into_entries(), out))
+    }
+
+    /// The pool, for expensive work that needs no database (a slow hash, a signature check).
+    pub fn pooled<T>(&self, f: impl FnOnce() -> T) -> Res<T> {
+        let _place = self.gate.enter()?;
+        Ok(f())
+    }
+
     /// One transaction of writes; what follows from it happens only if it was committed. Its live events are
     /// published before the next writer gets its turn: streams see changes in the order of their numbers.
-    pub fn write<T>(self: &Arc<Self>, f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>) -> Res<T> {
+    /// Inside it nothing expensive is computed: the observer answers from `entries` (and, for a recovery, from
+    /// what its parts stored), or the request is told to try again.
+    pub fn write_with<T>(
+        self: &Arc<Self>,
+        entries: Entries,
+        recovery: Option<&[u8]>,
+        f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>,
+    ) -> Res<T> {
         let fx = std::cell::RefCell::new(Effects::default());
         let out = self.db.write_then(
             |c| {
+                let stored = recovery.map(|id| -> Box<dyn Fn(&crate::memo::Key) -> Option<Vec<u8>> + '_> {
+                    Box::new(move |key| {
+                        c.prepare_cached("SELECT value FROM recovery_memo WHERE recovery_id = ?1 AND key = ?2")
+                            .ok()?
+                            .query_row(params![id, &key[..]], |r| r.get(0))
+                            .ok()
+                    })
+                });
+                let memo = Memo::prepared(&self.obs, entries, stored);
                 let x = Ctx {
                     c,
-                    obs: &self.obs,
+                    obs: &memo,
                     cfg: &self.cfg,
                     now: util::now(),
                 };
@@ -197,6 +244,10 @@ impl App {
         Ok(out)
     }
 
+    pub fn write<T>(self: &Arc<Self>, f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>) -> Res<T> {
+        self.write_with(Entries::new(), None, f)
+    }
+
     /// A write of a signed-in device in its room. Inside the transaction the device's standing is checked again
     /// (it may have been removed while the request waited for its turn); the write is refused while the room is
     /// in recovery (8.7: it takes nothing else for ten minutes), and for an agent device without its current
@@ -204,10 +255,20 @@ impl App {
     pub fn write_as<T>(
         self: &Arc<Self>,
         auth: &Auth,
-        lease: Lease,
+        lease: Option<u64>,
         f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>,
     ) -> Res<T> {
-        self.write(|x, fx| {
+        self.write_as_with(Entries::new(), auth, lease, f)
+    }
+
+    pub fn write_as_with<T>(
+        self: &Arc<Self>,
+        entries: Entries,
+        auth: &Auth,
+        lease: Option<u64>,
+        f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>,
+    ) -> Res<T> {
+        self.write_with(entries, None, |x, fx| {
             still(x, auth)?;
             if crate::delivery::open_recovery_of(x.c, &auth.room, x.now)?.is_some() {
                 return Err(refuse(
@@ -216,8 +277,8 @@ impl App {
                 )
                 .retry(30));
             }
-            if let (Who::Agent, Lease::Needed(given)) = (auth.who, lease) {
-                check_lease(x, auth, given)?;
+            if auth.who == Who::Agent {
+                check_lease(x, auth, lease)?;
             }
             f(x, fx)
         })
@@ -227,10 +288,12 @@ impl App {
     /// transaction; the room's lock is its own.
     pub fn write_recovery<T>(
         self: &Arc<Self>,
+        entries: Entries,
+        recovery: Option<&[u8]>,
         auth: &Auth,
         f: impl FnOnce(&Ctx, &mut Effects) -> Res<T>,
     ) -> Res<T> {
-        self.write(|x, fx| {
+        self.write_with(entries, recovery, |x, fx| {
             if auth.who != Who::Spent {
                 still(x, auth)?;
             }
@@ -465,6 +528,15 @@ impl App {
 
     pub async fn live_round(self: &Arc<Self>, room: Room, beat: bool) {
         let Some(apns) = &self.apns else { return };
+        // rounds of one room never overlap: a second one waits and then sees what the first recorded
+        let turn = self
+            .live_rounds
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(room)
+            .or_default()
+            .clone();
+        let _turn = turn.lock().await;
         let Ok((working, waiting)) = self.live_counts(&room) else {
             return;
         };
@@ -566,7 +638,8 @@ impl App {
                     params![if delivered { started } else { started_at }, working as i64, waiting as i64, now as i64, &room[..], &device[..]],
                 )?;
                 if dead {
-                    c.execute(&format!("UPDATE live_activities SET {column} = NULL WHERE room_id = ?1 AND device = ?2"), params![&room[..], &device[..]])?;
+                    // only the token that was refused: a newer one registered meanwhile stays
+                    c.execute(&format!("UPDATE live_activities SET {column} = NULL WHERE room_id = ?1 AND device = ?2 AND {column} = ?3"), params![&room[..], &device[..], token])?;
                 }
                 Ok::<_, Refused>(())
             });
@@ -610,7 +683,8 @@ impl App {
     }
 
     /// An agent device's last stream closed: if it stays away for `loss_ms` and its lease ran out, the human
-    /// devices are told ("An agent lost its connection.").
+    /// A stream closed: the human devices see the device go offline. (Whether an agent is lost is its lease's
+    /// matter: `lease_watch`.)
     pub fn stream_closed(self: &Arc<Self>, auth: Auth) {
         if self.closing.load(Ordering::Relaxed) {
             return;
@@ -621,78 +695,74 @@ impl App {
             &auth.device,
             json!({ "device": b64(&auth.device), "online": online }),
         );
-        if auth.who != Who::Agent || online {
-            return;
+    }
+
+    /// The watch over agents' leases, by timer: a lease that ran out no longer counts as working (the Live
+    /// Activity follows), and one that stayed away for `loss_ms` after that, with no stream open, is told to
+    /// the human devices once ("An agent lost its connection.").
+    pub fn lease_watch(self: &Arc<Self>) {
+        let now = util::now();
+        let expired: Vec<Room> = self
+            .db
+            .write(|c| {
+                let mut s = c.prepare_cached("UPDATE agent_leases SET working = 0 WHERE working = 1 AND expires_at <= ?1 RETURNING room_id")?;
+                let rows = s.query_map([now as i64], |r| store::fixed::<32>(r.get(0)?))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok::<_, Refused>(rows)
+            })
+            .unwrap_or_default();
+        for room in expired {
+            self.live_soon(room);
         }
-        let since = util::now();
-        self.lost_since
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert((auth.room, auth.device), since);
-        let app = self.clone();
-        spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(app.cfg.loss_ms)).await;
-            let still = app
-                .lost_since
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(&(auth.room, auth.device))
-                == Some(&since);
-            if !still
-                || app.live.online(&auth.room, &auth.device)
-                || app.closing.load(Ordering::Relaxed)
-            {
-                return;
-            }
-            app.lost_since
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&(auth.room, auth.device));
-            let leased = app
+        let lost: Vec<(Room, [u8; 32])> = self
+            .db
+            .write(|c| {
+                let mut s = c.prepare_cached(
+                    "UPDATE agent_leases SET lost_at = ?1 WHERE lost_at IS NULL AND expires_at + ?2 <= ?1 RETURNING room_id, device",
+                )?;
+                let rows = s
+                    .query_map(params![now as i64, self.cfg.loss_ms as i64], |r| Ok((store::fixed::<32>(r.get(0)?)?, store::fixed::<32>(r.get(1)?)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok::<_, Refused>(rows)
+            })
+            .unwrap_or_default();
+        for (room, device) in lost {
+            let standing = self
                 .db
-                .read(|c| {
-                    Ok::<_, Refused>(c.prepare_cached("SELECT 1 FROM agent_leases WHERE room_id = ?1 AND device = ?2 AND expires_at > ?3")?.exists(params![
-                        &auth.room[..],
-                        &auth.device[..],
-                        util::now() as i64
-                    ])?)
-                })
-                .unwrap_or(true);
-            let standing = app
-                .db
-                .read(|c| store::standing(c, &auth.room, &auth.device))
+                .read(|c| store::standing(c, &room, &device))
                 .ok()
                 .flatten();
-            if leased || standing != Some(Who::Agent) {
-                return;
+            if standing != Some(Who::Agent) || self.live.online(&room, &device) {
+                continue;
             }
             crate::log::info(
                 "agent_lost",
-                json!({ "room": short(&auth.room), "device": short(&auth.device) }),
+                json!({ "room": short(&room), "device": short(&device) }),
             );
-            let change = app
+            self.presence(
+                &room,
+                &device,
+                json!({ "device": b64(&device), "online": false, "lost": true }),
+            );
+            let change = self
                 .db
-                .read(|c| store::room_row(c, &auth.room))
+                .read(|c| store::room_row(c, &room))
                 .map(|r| r.change)
                 .unwrap_or(0);
-            app.clone()
-                .send_push(PushJob {
-                    room: auth.room,
+            let app = self.clone();
+            spawn(async move {
+                app.send_push(PushJob {
+                    room,
                     sender: None,
                     change,
                     urgency: 2,
                     envelope: None,
                 })
-                .await;
-            app.live_soon(auth.room);
-        });
+                .await
+            });
+        }
     }
 
     pub fn stream_opened(self: &Arc<Self>, auth: &Auth) {
-        self.lost_since
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&(auth.room, auth.device));
         self.presence(
             &auth.room,
             &auth.device,
@@ -785,7 +855,7 @@ impl App {
         self.limits.pushes.sweep(now);
         self.limits.foundings.sweep(now);
         self.limits.logins.sweep(now);
-        self.limits.login_failures.sweep(now);
+        self.limits.login.sweep(now);
         if files > 0 || parts > 0 {
             crate::log::info(
                 "sweep",
@@ -813,13 +883,6 @@ impl Drop for UploadSlot {
             }
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Lease {
-    /// a write that an agent device makes under its lease: the generation its `Trommi-Lease` header carried
-    Needed(Option<u64>),
-    NotNeeded,
 }
 
 /// The asker still has the standing its token was checked with: asked again inside the write's transaction.
@@ -893,7 +956,7 @@ pub fn link(x: &Ctx, auth: &Auth, v: &Value) -> Res<Value> {
     x.c.prepare_cached(
         "INSERT INTO agent_leases (room_id, device, process, generation, expires_at, hears, working, last_call_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT (room_id, device) DO UPDATE SET process = excluded.process, generation = excluded.generation, expires_at = excluded.expires_at,
-           hears = excluded.hears, working = excluded.working, last_call_at = excluded.last_call_at",
+           hears = excluded.hears, working = excluded.working, last_call_at = excluded.last_call_at, lost_at = NULL",
     )?
     .execute(params![
         &auth.room[..],
