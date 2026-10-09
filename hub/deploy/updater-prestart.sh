@@ -7,8 +7,8 @@
 # did not come up, and the link goes back to <root>/updater-previous. The old updater then starts, finds
 # <root>/updater-reverted and says so in its answers.
 #
-# It uses nothing but the shell and coreutils, and it never fails the start: whatever happens here, systemd goes on
-# to start the updater the link names.
+# It uses nothing but the shell and coreutils. Whatever happens here, systemd goes on to start the updater the link
+# names (the unit ignores this script's exit code).
 root=${1:-/srv/trommi}
 cd "$root" 2>/dev/null || exit 0
 [ -f updater-trial ] || exit 0
@@ -19,11 +19,18 @@ if [ "$count" = 0 ]; then
   echo "updater-prestart: first start of the updater of $tag"
   exit 0
 fi
-if [ -L updater-previous ]; then
-  ln -s "$(readlink updater-previous)" updater.part 2>/dev/null && mv -fT updater.part updater
-  echo "updater-prestart: the updater of $tag did not come up; back to $(readlink updater)"
+# The link goes back first; the note of the trial goes only when that is done, so a failure here is tried again at
+# the next start.
+[ -L updater-previous ] || { echo "updater-prestart: no previous updater to go back to"; rm -f updater-trial; exit 0; }
+rm -f updater.part
+if ! { ln -s "$(readlink updater-previous)" updater.part && mv -fT updater.part updater; }; then
+  echo "updater-prestart: could not put the previous updater back; trying again at the next start"
+  exit 1
 fi
-printf '%s\n' "$tag" > updater-reverted
-rm -f updater-trial updater.part
+if ! { printf '%s\n' "$tag" > updater-reverted.part && mv -f updater-reverted.part updater-reverted; }; then
+  exit 1
+fi
+rm -f updater-trial
 sync 2>/dev/null || true
+echo "updater-prestart: the updater of $tag did not come up; back to $(readlink updater)"
 exit 0

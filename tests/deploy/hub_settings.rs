@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use trommi_hub::config::{private_key_pem, Config};
+use trommi_hub::config::{pem, Config};
 
 fn env(pairs: &[(&str, &str)]) -> HashMap<String, String> {
     pairs
@@ -27,25 +27,14 @@ fn push_settings_are_read_under_their_1password_names() {
     assert_eq!(cfg.apns_key_id.as_deref(), Some("KEYID12345"));
     assert_eq!(cfg.apns_team_id.as_deref(), Some("TEAMID1234"));
     assert_eq!(cfg.apns_topics, ["com.example.app", "com.example.app.dev"]);
-
-    // the older names still count, and the new ones win
-    let cfg = Config::from_map(&env(&[
-        ("APNS_KEY_ID", "old"),
-        ("APNS_TEAM_ID", "old"),
-        ("APNS_TOPIC", "a,b"),
-        ("APPLE_TEAM_ID", "new"),
-    ]));
-    assert_eq!(cfg.apns_key_id.as_deref(), Some("old"));
-    assert_eq!(cfg.apns_team_id.as_deref(), Some("new"));
-    assert_eq!(cfg.apns_topics, ["a", "b"]);
 }
 
 #[test]
 fn a_key_that_lost_its_line_breaks_is_put_back_together() {
     let one_line = KEY.trim_end().replace('\n', " ");
-    assert_eq!(private_key_pem(&one_line), KEY);
-    assert_eq!(private_key_pem(&KEY.replace('\n', "\\n")), KEY);
-    assert_eq!(private_key_pem(KEY), KEY);
+    assert_eq!(pem(&one_line), KEY);
+    assert_eq!(pem(&KEY.replace('\n', "\\n")), KEY);
+    assert_eq!(pem(KEY), KEY);
     let cfg = Config::from_map(&env(&[("APPLE_APNS_KEY", &one_line)]));
     assert_eq!(cfg.apns_key_pem.as_deref(), Some(KEY));
 

@@ -83,9 +83,9 @@ fn a_file_is_written_once_and_read_by_those_who_may() {
     assert_eq!(upload(&s.w.hub, &s.agent, &file, &bytes).ok(), stored);
     upload(&s.w.hub, &s.agent, &file, b"other bytes").refused(409, "replay");
     upload(&s.w.hub, &s.bea, &file, &bytes).refused(409, "replay");
-    // no envelope names it yet: only its uploader reads it
+    // no envelope names it yet: its uploader reads it, and human devices (11.3)
     assert_eq!(fetch(&s.w.hub, &s.agent, &file, None).body, bytes);
-    fetch(&s.w.hub, &s.bea, &file, None).refused(404, "not-found");
+    assert_eq!(fetch(&s.w.hub, &s.bea, &file, None).body, bytes);
     // an envelope of another device does not claim it
     let mut by_bea = chat(&s.session, s.agent.id(), "look");
     by_bea.file_ids = vec![file];
@@ -483,12 +483,20 @@ fn apns_env() -> Vec<(&'static str, String)> {
     let key = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
     vec![
         (
-            "APNS_KEY",
-            key.to_pkcs8_pem(Default::default()).unwrap().to_string(),
+            "APPLE_APNS_KEY",
+            // as a secret store hands it over: spaces where the line breaks were
+            key.to_pkcs8_pem(Default::default())
+                .unwrap()
+                .trim()
+                .replace('\n', " "),
         ),
-        ("APNS_KEY_ID", "KEYID12345".to_string()),
-        ("APNS_TEAM_ID", "TEAMID1234".to_string()),
-        ("APNS_TOPIC", "com.trommi.app".to_string()),
+        ("APPLE_APNS_KEY_ID", "KEYID12345".to_string()),
+        ("APPLE_TEAM_ID", "TEAMID1234".to_string()),
+        // a list of topics: the app's and one more
+        (
+            "APPLE_APNS_TOPIC",
+            "com.trommi.other, com.trommi.app".to_string(),
+        ),
         ("HUB_LIVE_MS", "30".to_string()),
     ]
 }

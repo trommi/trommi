@@ -23,18 +23,18 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | **Groups (MLS delivery service)** | | |
 | `POST /v2/groups` | `{ group_info_0, sealed_key_0, commit, group_info, welcome?, sealed_key }` → `{ group_id }` | founding of a session group (5.2.5) |
 | `POST /v2/groups/{group}/commits` | `{ epoch, commit, group_info, welcome?, sealed_key, recovery_auth? }` → `{ epoch, change }` | `epoch` = the epoch it builds on; `epoch-taken`, `room-behind`, `bad-commit`, `incomplete` |
-| `POST /v2/rooms/{room}/recovery` → `{ recovery_id, expires_at }` · `POST …/recovery/{id}/commits` (a body as above with `group_id`, one per call) → `{ epoch, kept }` · `POST …/recovery/{id}/finish` (`{ recovery_link, account }`) → `{ published, first_change, change, device }` · `DELETE` | recovery key's token | 8.7: the room is locked for ten minutes; nothing is visible to others until `finish`, which publishes all or nothing |
-| `POST /v2/rooms/{room}/recovery-code` | `{ epoch, commit, group_info, sealed_key, recovery_link, account }` → `{ epoch, change }` | 8.6: one room Commit, all or nothing; a human device |
+| `POST /v2/rooms/{room}/recovery` → `{ recovery_id, expires_at }` · `POST …/recovery/{id}/commits` (`{ group_id, epoch, commit, group_info, welcome?, sealed_key, recovery_auth? }`, one per call) → `{ epoch, kept }` · `POST …/recovery/{id}/finish` (`{ recovery_link, account }`) → `{ published, first_change, change, device }` · `DELETE` | recovery key's token | 8.7: the room is locked for ten minutes; nothing is visible to others until `finish`, which publishes all or nothing |
+| `POST /v2/rooms/{room}/recovery-code` | `{ commit: { epoch, commit, group_info, sealed_key }, recovery_link, account }` → `{ epoch, change }` | 8.6: one room Commit, all or nothing; a human device |
 | `POST /v2/groups/{group}/reject` | `{ n }` | 14.7 |
 | `POST /v2/groups/{group}/archive` | | 5.2.10; human devices |
 | `GET /v2/groups/{group}/log?after=&limit=&kind=commit` | → `{ items: [ { n, change, epoch, at, kind: "commit", bytes, recovery_auth? } \| { n, change, epoch, at, kind: "message", bytes } ], more }` | the ordered log (5.4.1, 7.0); `gone` when `after` is older than what is kept |
 | `POST /v2/groups/{group}/messages` | `{ epoch, message, relay? }` → `{ n }` | application message; `relay: true`: passed on, not stored (7.2); `wrong-epoch` |
-| `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | current, and epoch 0 (the founding) of every group; for the room group every epoch is kept |
+| `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | without `epoch`: the current one; with it exactly that epoch (`not-found`). Kept: the current one and epoch 0 (the founding) of every group, every epoch that still lacks a `SealedKey` with a `mac` (8.3), every epoch of the room group |
 | `GET /v2/welcomes` | → `[ { group_id, welcome, at } ]` | for the asking device; deleted when it has joined |
 | `PUT /v2/key-packages` | `{ single_use: [..], last_resort? }` → `{ unused }` | 14.2; `bad-key-package` |
 | `POST /v2/key-packages/claim` | `{ devices: [..] }` → `{ key_packages: { device: bytes } }` | one each, all or nothing; the last-resort one when none is left; none uploaded more than 90 days ago |
 | `GET /v2/rooms/{room}/groups` | → `[ { group_id, kind, session_id, parent, epoch, live, stale, leaves } ]` | what the asker may see: a human device all, another device its own groups and the room group |
-| `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
+| `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; writing: a human device that is the row's `writer`; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
 | `POST /v2/requests` · `GET /v2/requests` | `{ kind: readmit \| handover \| session, group?, key_package? }` | an unsigned wish of the signed-in device to the human devices (5.2.7, 5.3.5, 7.1, 13.4); nothing follows from it without a Commit |
 | **Content** | | |
 | `POST /v2/envelopes` | `{ envelope }` → `{ change }` or a refusal with `voided` | every stored item (9); the hub files it by its header |
@@ -47,7 +47,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `GET /v2/stream?after=` | server-sent events: `envelope`, `log`, `relay`, `welcome`, `request`, `presence`, `file_evicted`, `ping` | live; resumes by change number (`after`, or `Last-Event-ID`) |
 | **Files, shares, push, presence** | | |
 | `PUT /v2/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; `quota-exceeded` |
-| `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5 |
+| `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5; `expires_at` at most 180 days ahead |
 | `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | Offer + signature; Reveal + signature | human devices |
 | `POST /v2/push` · `GET` · `DELETE` | `{ web_push: { endpoint, keys: { p256dh, auth } } \| apns: { token, key, environment, topic }, level }`; `GET` → `{ subscriptions, vapid_public_key, apns }` | 15; human devices |
 | `POST /v2/live-activity` | `{ kind: start \| activity, token, tag, environment, topic }` | 15.3 |
@@ -66,14 +66,14 @@ written. Catch-up is "everything above N".
 | `key_packages` | `device`, `ref`, `last_resort`, `expires_at`, `bytes` | | claim: (`device`, `last_resort`, oldest) |
 | `groups` | `group_id`, `room_id`, `kind` (room, main, helper), `session_id`, `parent`, `epoch`, `room_epoch`, `live`, `archived_at`, `log_n`, the serialised public group | | by room |
 | `group_log` | `group_id`, `n`, `epoch`, `kind`, `bytes` (a Commit: readable; a message: opaque), `sender` (the posting device), `at`, `change` | messages | **catch up a group**: (`group_id`, `n`) |
-| `group_infos` | `group_id`, `epoch`, `bytes` | | current; room group: all |
+| `group_infos` | `group_id`, `epoch`, `bytes` | | current, epoch 0, epochs without an authenticated `SealedKey`; room group: all |
 | `welcomes` | `device`, `group_id`, `at` | `bytes` | by device |
 | `sealed_keys`, `recovery_links` | `group_id`, `epoch`, `writer`, `recovery_hpke_key` | `sealed` | (`room_id`, `change`) |
 | `envelopes` | `change`, `group_id`, `epoch`, `sender`, `seq`, `prev`, `hash`, `recipient`, `kind`, `flags`, `time`, `received_at`, `timeline` (kind, scope, ref), `object_id`, `object_type`, `object_state`, `urgency`, `answered_at`, `object_ref`, `register_id`, `file_ids`, `padded_size`, `header`, `nonce`, `body_hash`, `signature`, `void_code` | `body` (null once pruned) | truth for all stored content. **Chain**: unique (`group_id`, `sender`, `seq`). **Catch-up**: (`room_id`, `change`). **Page a chat, load a board**: (`timeline`, `change`) |
 | `cards`, `notes`, `permission_requests`, `artifacts` | `object_id`, `group_id`, `state`, `urgency`, `answered_at`, `owner`, `first_change`, `head_change`, `closed_at` | | **the Desk**: partial index on `state = open` by (`urgency` desc, `first_change`). Derived from `envelopes`, rebuildable |
 | `chats`, `boards` | `timeline`, `group_id`, `item_count`, `last_change` | | derived |
 | `registers` | `group_id`, `writer`, `register_id`, `head_change` | | **all current values**: (`group_id`); derived |
-| `files` | `file_id`, `room_id`, `uploader`, `object_id`, `size`, `stored_at`, `referenced_at` | bytes beside the database | by object; pending uploads by `stored_at` |
+| `files` | `file_id`, `room_id`, `uploader`, `group_id`, `object_id`, `size`, `stored_at`, `referenced_at` | bytes beside the database | by object; pending uploads by `stored_at` |
 | `shares` | `share_id`, `file_id`, `secret_hash`, `expires_at`, `created_by` | | by id |
 | `invites`, `invite_requests` | signed Offer, Requests, Reveal, `expires_at`, `used_at`, `burned_at` | | by `invite_id` |
 | `requests` | `room_id`, `device`, `kind`, `group_id`, `at` | | by room |
@@ -83,7 +83,7 @@ written. Catch-up is "everything above N".
 - The four object tables, `chats`, `boards` and `registers` are indexes over `envelopes`, written in the same
   transaction from signed header fields, and can be dropped and rebuilt. One write route, one truth table; the app's
   names are on what is read.
-- Retention: `group_log` messages 30 days; Commits and the founding GroupInfo of a group as long as any envelope of
+- Retention: `group_log` messages 30 days; Commits and the founding GroupInfo of a group while it is live and as long as any envelope of
   it is kept (the room group: for ever); `envelopes.body` per v2.md 9.4; `welcomes` until joined; relay-only messages never.
 - Who may read: a human device everything of its room; an agent or helper device the Commits and GroupInfo of the
   room group and, for a helper session, of its main session's group (public state only, no messages), and the log,
@@ -93,7 +93,8 @@ written. Catch-up is "everything above N".
 - A recovery (8.7) is a transaction of its own: each posted part advances a copy of the public state of the groups
   it touches, later parts are checked against that copy, every other reader sees the state from before. `finish`
   checks that the room group and every live session group were joined and cleaned, then publishes all parts under
-  consecutive change numbers; repeated, it gives the same answer. At expiry or `DELETE` the copy is dropped.
+  consecutive change numbers; repeated, by the recovery key's token or after publication by the new device's own,
+  it gives the same answer. While a recovery is open the room takes no other write (v2.md 8.7). At expiry or `DELETE` the copy is dropped.
 - The log route gives a join from outside together with its `RecoveryAuth`. The chain route marks envelopes beyond
   a Cut `cut`. Nothing in a log is ever withdrawn.
 - A repeated post of the same bytes gets the first answer again. Every read route serves a void record with its
@@ -117,44 +118,50 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
 - The hub keeps a slow hash (Argon2id) of each login key, never the key. There is no account session: a login
   answers with sealed copies and sign-in challenges, and the device signs in to the room with the recovery key
   (8.4).
-- With new recovery keys (8.6, 8.7) `account` is `{ kit: { auth_key, sealed_copy }, password: { sealed_copy } }` or
-  `{ kit, passkey: { credential_id, sealed_copy } }`: the copy under the way in used just now and a new kit; every
-  other way in is removed in the same transaction. A room without an account sends `null`.
+- With new recovery keys (8.6, 8.7) `account` is a new kit `{ auth_key, sealed_copy }` and one way in; every
+  other way in is removed in the same transaction. The way in used just now: `password: { sealed_copy }` (the
+  login hash stays) or `passkey: { credential_id, sealed_copy }`. Or one set anew (after a recovery with the
+  Emergency Kit words or the bare code): `password: { auth_key, sealed_copy, kdf }`, or `passkey` as in
+  `POST /v2/account` (a registration; its challenge is the account's or one of `POST /v2/account/passkey/challenge`,
+  which needs no token). A room without an account sends `null`.
 - Sign-up is instant: there is no e-mail confirmation and the hub sends no mail (owner, 9 October 2026). Signing
   up with an e-mail that has an account is `account-exists`.
 - **Failed logins slow down whoever guesses wrong and lock nobody** (owner, 9 October 2026). The source is the
   client's address (the forwarded one only when the hub is configured to trust its proxy, and only if it is an
   address); one IPv6 network (/64) is one source. The password and the Emergency Kit are counted apart; an
   e-mail without an account behaves the same.
-  - *Per source and e-mail:* after each failure that source waits 1 s, 2 s, 4 s … up to 15 minutes before its
-    next attempt at that e-mail (`rate-limited` with `retry-after`); a success ends it. That is at most 13
-    guesses in the first hour and 4 an hour after. A source has one attempt at an account being checked at a
-    time, however long the check takes.
+  - *Per source and e-mail:* after each failed check that source waits 1 s, 2 s, 4 s … up to 15 minutes before
+    its next check at that e-mail (`rate-limited` with `retry-after`); a success ends it. That is at most 13
+    guesses in the first hour and 4 an hour after, whatever else happens. A source has one check at an account
+    running at a time, however long the check takes.
   - *Per account:* 100 checks in an hour (the hour begins with the first of them). Past that, sources stand in
-    line: one is checked every two seconds, in the order they came. Each is told its turn by `retry-after` and
-    is checked when it comes back then; a turn is kept for three seconds, and nobody told a later turn is
-    checked while an earlier one is kept. The line is ten minutes long; a source that finds it full is told to
-    ask again in a minute. That is at most 2 000 checks per account in any hour, however many sources there
-    are (1 800 in line, and the 100 twice where two of its hours meet), beside the early checks of the sources
-    it knows (below). The spacing holds at the moment a check starts, not when its request came.
+    line: turns are given out two seconds apart in the order sources came, each told by `retry-after`. A turn is
+    its source's alone and good for one check, from its time until five seconds after; nobody else can take it,
+    and nobody waits for anybody. Who comes later asks for a new turn. The line is ten minutes long; a source
+    that finds it full is told to ask again in a minute. That is at most 2 000 checks per account in any hour,
+    however many sources there are (1 800 turns, and the 100 twice where two of its hours meet), beside the
+    early checks of the sources it knows (below). The time of a check is the moment it starts.
   - *The owner always gets in.* A source the account knows (one of the last 16 it was signed in to from, by
-    password, kit or passkey; the hub keeps a keyed hash, not the address) is checked at once whatever others
-    do: a correct credential is answered at once. From a new source a correct credential is checked in its
-    turn, at most ten minutes and a little later.
+    password, kit or passkey; the hub keeps a keyed hash, not the address) is checked at once also while it
+    stands in line: a correct credential is answered at once, whatever others do. From a new source a correct
+    credential is checked at its turn, at most ten minutes and a little later.
   - *One answer.* A wrong credential is answered alike from a source the account knows and one it does not: in
     line, both are told to wait their turn, and the answer costs the same slow hash either way (for a known
-    source it is the real check, with a back-off of its own of 1 s … 15 minutes that the answer does not
-    show). So the owner at home who mistypes while others stand in line is told a turn too; the right password
-    gets in before it, once that hidden second or so has passed.
+    source it is the real check, under that source's one back-off). So the owner at home who mistypes while
+    others stand in line is told a turn too; the right password gets in before it, once the back-off of the
+    mistake (a second, two …) has passed.
   - *Kept and bounded.* The state lies in the database (hashes, no address, no e-mail): a restart resets
-    nothing. An account keeps a record of at most 5 000 sources, the hub of 500 000 in all, and of 200 000
-    accounts' hours. A full table forgets the record whose wait ran out longest ago (that source starts again
+    nothing. An account keeps a record of at most 5 000 sources, the hub of 500 000 in all, and the hours of
+    200 000 e-mails. A full table forgets the record whose wait ran out longest ago (that source starts again
     at one second; the account's 2 000 an hour hold all the same); a record that still waits is never
-    forgotten, and if all do, a source without a record is told to ask again in a minute. Sources an account
-    knows always have room. A full table of hours forgets the oldest hour of an e-mail that has no account,
-    never an account's. A record is deleted a day after its wait ran out.
-  - Not covered by an address-based rule, and left so: someone guessing from the owner's own address (the same
-    NAT) slows the owner's wrong attempts from there down as well.
+    forgotten, and if all do, a wrong credential is told to ask again in a minute, from a known source as from
+    any other (a right one from a known source gets in). A full table of hours forgets the oldest hour, with
+    its line, whoever's it is: the 2 000 an hour hold while fewer than 200 000 e-mails are tried within the
+    hour. A record is deleted a day after its wait ran out.
+  - Not covered, and left so: someone guessing from the owner's own address (the same NAT) slows the owner's
+    wrong attempts from there down as well. And a guesser at an address the account knows can find that out
+    with some effort: after about six wrong guesses in line its back-off is longer than its turn is away, and
+    it is told the back-off.
 - A successful login is answered only if the account still is as the check found it (its revision); a password,
   kit or passkey replaced meanwhile makes the login start over (`overloaded`).
 - Other limits: 30 logins per address in ten minutes (answers that only tell a wait count too); 20 passkeys per
@@ -205,8 +212,9 @@ encrypted.
     an agent's lease renewal is still taken. A recovery has at most 8 192 parts and 64 MiB, and at most 8 parts
     for one group (`too-many`); each is checked
     against the state the parts before it leave (those of the room group, of its own group and of its main
-    session's group); the same part twice is kept once; its last part is the room Commit with the new
-    recovery keys. The recovery key that ran a finished recovery may ask for the answer of that `finish` again
+    session's group); the same part twice is kept once; one of its parts is the room Commit with the new
+    recovery keys (8.7: after the joins, before the session groups' Removes; the hub checks what `finish` leaves,
+    not the order). The recovery key that ran a finished recovery may ask for the answer of that `finish` again
     until the ten minutes are over, and for nothing else.
 
 **Content**
@@ -237,7 +245,8 @@ encrypted.
     registers together. A stream ends when the token it was opened with runs out, and the device resumes
     with a new one by change number.
 23. `epoch-full` counts the accepted envelopes of a group and epoch. An envelope whose ciphertext is not a
-    padded size of 9 is `bad-format` and takes no number; `too-large` is the void of a register over its size.
+    padded size of 9 is `bad-format` and takes no number; `too-large` is the void of a register over its size
+    and of any sealed body beyond the largest padded size (9.0.5).
 
 **Operations**
 
@@ -274,14 +283,20 @@ encrypted.
 34. The update cadence of v2.md 5.2.9 is the clients'; the hub neither asks for an own-leaf update nor refuses
     one for coming early (it counts among a device's expensive requests, point 30).
 35. Stroke pieces: 20 within any second per device. A stream whose token ran out is cut at that moment, also
-    one that had ended before with a reader that did not read; what was queued for it is not sent.
+    one that had ended before with a reader that did not read (not a connection whose stream was read to its
+    end: that one may serve the next request); what was queued for it is not sent.
 36. Every failure of `POST /v2/account/passkey/login` is `wrong-login`, a malformed request too (also a body
     that is no JSON object).
 37. The per-address and per-device limits are kept in memory for 100 000 keys each. Over that, keys not in use
     are forgotten first; if all are in use, a key without a record is let through unrecorded rather than
     everyone refused. (The login throttle does not rest on these: its state is in the database, see "The
     account".)
-38. A Live Activity's counts are taken for sent only when Apple took them. A token Apple refuses is forgotten;
-    a token registered anew is sent the counts in the next round. "Lost" is never told after the `online` of a
+38. A Live Activity's counts are taken for sent only when Apple took them; without a token nothing counts as
+    sent, so an end stays due until the activity's token is registered. A token Apple refuses is forgotten; a
+    token registered anew is sent the counts in a round after it is stored. "Lost" is never told after the `online` of a
     stream the agent opened first.
 28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
+39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`; the hub also takes them
+    beside the other members. New recovery keys are refused if the room held either of them before, as
+    either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v2/sealed-keys` is a human device's
+    (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.

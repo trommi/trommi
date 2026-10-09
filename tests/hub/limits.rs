@@ -378,17 +378,18 @@ fn sizes() {
             .refused(413, "too-large")["voided"],
         true
     );
-    // 16: a padded body is at most 64 KiB: 65 536 is taken, the next size is no envelope (`bad-format`, no number)
+    // 16: a padded body is at most 64 KiB: 65 536 is taken, the next size is a `too-large` void (9.0.5)
     let board = |n: usize| Item {
         payload: vec![b'x'; n],
         ..board_item(&random())
     };
     w.ada.send(hub, &room, &board(65536 - 6)).ok();
-    let before = w.ada.chain(&room).0;
-    w.ada
-        .send(hub, &room, &board(65536 - 5))
-        .refused(400, "bad-format");
-    assert_eq!(w.ada.chain(&room).0, before);
+    assert_eq!(
+        w.ada
+            .send(hub, &room, &board(65536 - 5))
+            .refused(413, "too-large")["voided"],
+        true
+    );
     // 9: at most 255 file ids
     let files = |n: usize| Item {
         file_ids: vec![[9; 16]; n],
@@ -460,6 +461,21 @@ fn policies_set_by_configuration() {
     let hub = TestHub::start_with(&[("HUB_MIN_CLIENT", "1.0.1")]);
     hub.get("/v2/desk").refused(426, "client-too-old");
     assert_eq!(hub.get("/healthz").status, 200);
+    // HSTS with preload is prepared behind one switch, and off unless it is thrown
+    let plain = TestHub::start();
+    assert_eq!(
+        plain.get("/healthz").header("strict-transport-security"),
+        None
+    );
+    let strict = TestHub::start_with(&[("HUB_HSTS", "on")]);
+    for path in ["/healthz", "/v2/desk"] {
+        assert_eq!(
+            strict.get(path).header("strict-transport-security"),
+            Some("max-age=63072000; includeSubDomains; preload")
+        );
+    }
+    // the health route names the running version
+    assert_eq!(plain.get("/healthz").ok()["commit"], "dev");
     // the login throttle can be switched off: then only the per-address limit holds
     let hub = TestHub::start_with(&[("HUB_LOGIN_THROTTLE", "off")]);
     for _ in 0..3 {

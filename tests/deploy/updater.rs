@@ -271,7 +271,6 @@ impl Bench {
         let cfg = Config {
             repository: REPOSITORY.into(),
             api: format!("http://{api}"),
-            token: None,
             key: signing_key().verifying_key(),
             target: TARGET.into(),
             data: root.join("data"),
@@ -521,6 +520,7 @@ async fn a_release_that_is_not_well_is_rolled_back() {
     assert_eq!(b.link("previous"), None, "what was before stays what it was");
     assert_eq!(b.hub_commit(), Some(commit_of(5)));
     assert!(!b.root.join("deploy-journal.json").exists());
+    assert!(!b.root.join("releases/hub-v6").exists(), "the release that failed is not kept");
     // the copy made while the hub stood still
     let backup = PathBuf::from(outcome.backup.unwrap());
     assert_eq!(std::fs::read(backup.join("hub.db")).unwrap(), b"database");
@@ -681,19 +681,20 @@ async fn when_the_copy_before_the_swap_fails_the_old_hub_runs_on() {
     assert_eq!(b.hub_commit(), Some(commit_of(5)));
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_deploy_cut_off_halfway_is_undone_at_the_next_start() {
-    let b = bench("cut").await;
-    for v in [5, 6] {
-        b.publish(make(v).release());
-    }
+/// The machine went down after the swap to hub-v6 and before its health was known.
+async fn cut_off(name: &str, six_is_well: bool) -> Bench {
+    let b = bench(name).await;
+    b.publish(make(5).release());
     assert!(deploy(&b.updater(), 5).await.ok);
-    // the machine went down after the swap to hub-v6 and before its health was known
+    let mut six = make(6);
+    six.hub = hub_file(6, six_is_well);
     let dir = b.root.join("releases/hub-v6");
     std::fs::create_dir_all(&dir).unwrap();
-    for (name, bytes) in make(6).release().assets {
+    for (name, bytes) in six.release().assets {
         std::fs::write(dir.join(name.replace(&format!("-{TARGET}"), "")), bytes).unwrap();
     }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir.join("trommi-hub"), std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::remove_file(b.root.join("current")).unwrap();
     std::os::unix::fs::symlink("releases/hub-v6", b.root.join("current")).unwrap();
     std::os::unix::fs::symlink("releases/hub-v5", b.root.join("previous")).unwrap();
@@ -703,7 +704,12 @@ async fn a_deploy_cut_off_halfway_is_undone_at_the_next_start() {
     )
     .unwrap();
     *b.world.hub.lock().unwrap() = None;
+    b
+}
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_deploy_cut_off_halfway_is_undone_at_the_next_start() {
+    let b = cut_off("cut", false).await;
     let updater = b.updater();
     assert_eq!(updater.status().await["deploy_cut_off"], true);
     updater.started().await;
@@ -715,6 +721,68 @@ async fn a_deploy_cut_off_halfway_is_undone_at_the_next_start() {
     *b.world.hub.lock().unwrap() = None;
     b.updater().started().await;
     assert_eq!(b.hub_commit(), Some(commit_of(5)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_deploy_cut_off_after_the_new_hub_was_in_place_and_well_counts_as_done() {
+    let b = cut_off("cutwell", true).await;
+    b.updater().started().await;
+    assert_eq!(b.link("current").as_deref(), Some("hub-v6"));
+    assert_eq!(b.link("previous").as_deref(), Some("hub-v5"));
+    assert_eq!(b.hub_commit(), Some(commit_of(6)));
+    assert!(!b.root.join("deploy-journal.json").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cut_off_deploy_is_settled_before_the_next_one_begins() {
+    let b = cut_off("cutnext", false).await;
+    b.publish(make(7).release());
+    // no start of the updater in between: the call itself finds the note
+    let outcome = deploy(&b.updater(), 7).await;
+    assert_eq!(outcome.result, "deployed", "{}", outcome.message);
+    assert_eq!(b.link("current").as_deref(), Some("hub-v7"));
+    assert_eq!(b.link("previous").as_deref(), Some("hub-v5"), "the release before is the last one that was well");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn while_a_new_updater_is_on_trial_no_further_deploy_is_taken() {
+    let b = bench("trial").await;
+    b.publish(make(5).release());
+    assert!(deploy(&b.updater(), 5).await.ok);
+    let mut newer = make(6);
+    newer.updater = b"updater B\n".to_vec();
+    b.publish(newer.release());
+    let mut newest = make(7);
+    newest.updater = b"updater C\n".to_vec();
+    b.publish(newest.release());
+    let updater = b.updater();
+    assert_eq!(deploy(&updater, 6).await.updater.next.as_deref(), Some("hub-v6"));
+    // a second call reaches the old process before it has ended, or another process: the fallback stays hub-v5
+    for other in [updater.clone(), b.updater()] {
+        let outcome = deploy(&other, 7).await;
+        assert_eq!(outcome.result, "busy", "{}", outcome.message);
+        assert_eq!(outcome.http_status(), 503);
+    }
+    assert_eq!(b.link("updater").as_deref(), Some("hub-v6"));
+    assert_eq!(b.link("updater-previous").as_deref(), Some("hub-v5"));
+    assert_eq!(b.link("current").as_deref(), Some("hub-v6"));
+    // once the new updater is up, the next release is taken
+    prestart(&b.root);
+    let new = b.updater();
+    new.started().await;
+    assert_eq!(deploy(&new, 7).await.result, "deployed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn asking_for_what_runs_proves_it_again() {
+    let b = bench("reprove").await;
+    b.publish(make(5).release());
+    let updater = b.updater();
+    assert!(deploy(&updater, 5).await.ok);
+    std::fs::write(b.root.join("releases/hub-v5/trommi-hub-updater"), b"planted").unwrap();
+    let outcome = deploy(&updater, 5).await;
+    assert!(!outcome.ok);
+    assert_eq!(outcome.result, "failed", "{}", outcome.message);
 }
 
 // ---- the updater's own update ----
