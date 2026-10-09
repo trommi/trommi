@@ -7,6 +7,9 @@
 
 pub mod board;
 pub mod envelope;
+pub mod files;
+pub mod hub_auth;
+pub mod invite;
 pub mod recovery;
 pub mod trail;
 
@@ -23,6 +26,9 @@ pub type Generate = fn() -> Result<Value, Error>;
 pub const FILES: &[(&str, Generate)] = &[
     (board::NAME, board::generate),
     (envelope::NAME, envelope::generate),
+    (files::NAME, files::generate),
+    (hub_auth::NAME, hub_auth::generate),
+    (invite::NAME, invite::generate),
     (recovery::NAME, recovery::generate),
     (trail::NAME, trail::generate),
 ];

@@ -1024,7 +1024,18 @@ impl<S: Storage> Device<S> {
                     cuts.push((*writer, cut));
                 }
                 let mut links = Vec::new();
-                let mut seq = snapshot.frontier_of(writer).seq;
+                // A writer's chain starts after what this device applied of it, taken back to its Cut;
+                // for a writer it applied nothing of, after the snapshot's frontier.
+                let cut = cuts
+                    .iter()
+                    .find(|(of, _)| of == writer)
+                    .map(|(_, cut)| cut.seq);
+                let mut seq = applied
+                    .iter()
+                    .find(|(of, _)| of == writer)
+                    .map_or(snapshot.frontier_of(writer).seq, |(_, held)| {
+                        held.seq.min(cut.unwrap_or(u64::MAX))
+                    });
                 while seq < head.seq {
                     seq = seq.saturating_add(1);
                     let record = this
