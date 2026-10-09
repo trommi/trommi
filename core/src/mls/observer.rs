@@ -897,16 +897,18 @@ pub(crate) fn signer_of(public: &PublicGroup, group_info: &[u8]) -> Result<Devic
 /// Reads a Commit against a group's public state without following it: OpenMLS verifies it there as it does
 /// for any observer, and the result is described as for every verifier. `public` are the entries of
 /// [`provider::public_entries`]. For a device that judges its own Commit, from the bytes it will post, by the
-/// rules a receiver applies. Returns the facts and the group's leaves before the Commit.
+/// rules a receiver applies. Returns the facts, the group's leaves before the Commit, and the group context
+/// the Commit leads to, as a follower of the public state computes it: a member that merges its own staged
+/// copy of the Commit must arrive at the same.
 pub(crate) fn read_commit(
     public: MlsEntries,
     group: &GroupId,
     commit: &[u8],
-) -> Result<(CommitFacts, BTreeSet<DeviceId>), Error> {
+) -> Result<(CommitFacts, BTreeSet<DeviceId>, Vec<u8>), Error> {
     provider::validate_entries(&public)?;
     let provider = Provider::without_entropy(public)?;
     let id = openmls::prelude::GroupId::from_slice(group.as_bytes());
-    let held = PublicGroup::load(provider.storage(), &id)
+    let mut held = PublicGroup::load(provider.storage(), &id)
         .map_err(mls_fault)?
         .ok_or_else(damaged)?;
     let message = rules::parse_commit(commit)?;
@@ -918,10 +920,17 @@ pub(crate) fn read_commit(
         return Err(Error::BadCommit);
     };
     let facts = rules::commit_facts(group, &leaves, &processed, staged)?;
-    Ok((
-        facts,
-        leaves.into_iter().map(|(_, device)| device).collect(),
-    ))
+    let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
+        return Err(Error::BadCommit);
+    };
+    held.merge_commit(provider.storage(), *staged)
+        .map_err(mls_fault)?;
+    let after = held
+        .group_context()
+        .tls_serialize_detached()
+        .map_err(|_| Error::Internal("group context encoding"))?;
+    let leaves = leaves.into_iter().map(|(_, device)| device).collect();
+    Ok((facts, leaves, after))
 }
 
 /// A main session's agent leaf under `room`: its leaf that is not a human device. A group with several has no
