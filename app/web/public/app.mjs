@@ -6,7 +6,7 @@ import * as desk from './desk.mjs'
 import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
 import { DRAWER_VEIL, SIDE_FOOT, cornerNote, markCurrent, phoneBar, sidebarRows, tabBar, topbar } from './sidebar.mjs'
-import { Controller, WORDS, calm, readAttachmentsWith, controller, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
+import { Controller, WORDS, calm, readAttachmentsWith, controller, copyLater, curlHTML, el, html, hueFor, isKnock, keySheet, raw, showToast, sk, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { rowSheet } from './desk.mjs'
 // The views a cold start needs (the Desk, its frame, the notes) come with this module; every other view is loaded
@@ -837,6 +837,72 @@ function nextMorning(now = Date.now()) {
   return at.getTime()
 }
 
+// ---- "Copy link" on an artifact (media.mjs tiles, session.mjs asset card and viewer) ----
+// Copying the link IS the consent (his word, 9 October): the first press makes a link for people outside the room
+// that holds 30 days and copies it; while it holds, a press copies the same link (it is not renewed: a new one is made
+// only after it ran out or was stopped). No dialog, no choices. While a link holds the button is filled in the accent,
+// and Stop sharing stands beside it. The links this device made are kept in its storage (client.myShares); one made on
+// another device, or by an agent (share_asset), is not known here.
+const SHARE_DAYS = 30
+let sharing = null   // the hub facade (set when the board starts)
+let shares = []      // this device's open shares, newest first
+let sharesAsked = null
+const loadShares = async () => { try { shares = await sharing.myShares() } catch (err) { console.warn('shares', err); shares = [] } }
+/** The shares are read once when the board starts; a page that shows Copy link waits for that. */
+export const sharesLoaded = () => (sharesAsked ??= sharing ? loadShares() : Promise.resolve())
+const shareOf = att => (att ? shares.find(x => x.attachment_id === att && x.link && x.expires_at > Date.now()) ?? null : null)
+const sharedWord = sh => { const n = Math.max(1, Math.ceil((sh.expires_at - Date.now()) / 86400_000)); return `Shared · ${n} ${n === 1 ? 'day' : 'days'}` }
+const COPY_TIP = `Copy link: anyone with the link can open it, for ${SHARE_DAYS} days`
+const tipOf = sh => (sh ? `${sharedWord(sh)} left. Copies the same link again` : COPY_TIP)
+/** The button (and Stop sharing) for the file `att` (its attachment id); tile: the round icons on an Artifacts tile. */
+export function shareControl(att, title, { tile = false, cls = '' } = {}) {
+  if (!att) return ''
+  const sh = shareOf(att), on = sh ? ' is-on' : '', off = sh ? '' : raw(' hidden')
+  const head = html`data-controller="sharelink" data-sharelink-att-value="${att}" data-sharelink-title-value="${title}"`
+  if (tile) return html`<span class="shr is-tile${on}" ${head}><button type="button" class="art-act shr-copy" data-action="sharelink#copy" title="${tipOf(sh)}" aria-label="Copy link to ${title}" aria-pressed="${sh ? 'true' : 'false'}">${sk('link')}</button><details class="art-share t-pick" data-controller="pops"${off}><summary class="art-act" title="More" aria-label="More for ${title}">${sk('more')}</summary><div class="art-share-body"><span class="shr-word">${sh ? `${sharedWord(sh)} left` : ''}</span><button type="button" class="shr-stop" data-action="sharelink#stop">Stop sharing</button></div></details></span>`
+  return html`<span class="shr${on}${cls ? ` ${cls}` : ''}" ${head}><button type="button" class="asset-copy shr-copy" data-action="sharelink#copy" title="${tipOf(sh)}" aria-pressed="${sh ? 'true' : 'false'}"><span class="shr-word">${sh ? sharedWord(sh) : 'Copy link'}</span></button><button type="button" class="shr-stop" data-action="sharelink#stop"${off}>Stop sharing</button></span>`
+}
+// (every control of that file on the page: a tile, the card in the talk)
+function paintShare(att, flash = '') {
+  const sh = shareOf(att)
+  for (const el of document.querySelectorAll(`.shr[data-sharelink-att-value="${att}"]`)) {
+    const tile = el.classList.contains('is-tile'), copy = el.querySelector('.shr-copy'), word = el.querySelector('.shr-word')
+    el.classList.toggle('is-on', Boolean(sh))
+    copy.title = tipOf(sh)
+    copy.setAttribute('aria-pressed', sh ? 'true' : 'false')
+    word.textContent = tile ? (sh ? `${sharedWord(sh)} left` : '') : flash || (sh ? sharedWord(sh) : 'Copy link')
+    const more = el.querySelector(tile ? 'details' : '.shr-stop')
+    more.hidden = !sh
+    if (!sh && tile) more.open = false
+  }
+}
+controller('sharelink', class extends Controller {
+  static values = { att: String, title: String }
+  disconnect() { clearTimeout(this.timer) }
+  async copy() {
+    if (this.busy) return
+    this.busy = true
+    const att = this.attValue, had = shareOf(att)
+    // (the clipboard is asked at once, inside the press, and given the link when it is made: Safari wants it so)
+    let made = null
+    const link = had ? Promise.resolve(had.link) : sharing.shareFile(att).then(async r => { made = r; await loadShares(); return r.link })
+    let ok = false
+    try { ok = await copyLater(link) } catch (err) { this.busy = false; return showToast({ head: 'Not shared', line: err.message, role: 'alert' }) }
+    this.busy = false
+    paintShare(att, ok ? 'Link copied' : '')
+    clearTimeout(this.timer)
+    this.timer = setTimeout(() => paintShare(att), 1800)
+    const sh = shareOf(att) ?? made
+    if (!ok) return showToast({ head: 'Not copied', line: 'It is shared, but the browser kept the clipboard closed. Press again', role: 'alert' })
+    showToast({ head: 'Link copied', line: sh ? `Valid for ${sharedWord(sh).replace('Shared · ', '')}` : '' })
+  }
+  async stop() {
+    const att = this.attValue
+    try { for (const sh of shares.filter(x => x.attachment_id === att)) await sharing.stopSharing(sh.share_id, att) } catch (err) { return showToast({ head: 'Not stopped', line: err.message, role: 'alert' }) } finally { await loadShares(); paintShare(att) }
+    showToast({ head: 'Sharing stopped', line: `The link to “${this.titleValue}” opens nothing any more` })
+  }
+})
+
 function hubFacade(client, board) {
   const m = () => client.model
   const card = id => { const c = board.state.cards.find(x => x.id === id); if (!c) throw fail(404, 'unknown card'); return c }
@@ -856,14 +922,13 @@ function hubFacade(client, board) {
     /** Are there older items of that timeline than the window holds? */
     hasMore: ref => Boolean(m().timelines.get(timelineOf(ref))?.has_more),
 
-    // ---- links for people outside the room (the Links page, media.mjs) ----
+    // ---- links for people outside the room ("Copy link" on an artifact: shareControl below) ----
     // A human device shares any file of the room: the secret is drawn here, the hub keeps its hash; the link (secret
-    // and file key after the #) is kept in this device's storage so Copy works again later. days: 1 to 30.
-    async shareFile(attachment_id, days = 7) {
+    // and file key after the #) is kept in this device's storage so Copy works again later. Always 30 days.
+    async shareFile(attachment_id) {
       const ref = refOfFile(client, attachment_id)
       if (!ref) throw fail(404, 'this file is not known here')
-      const d = Math.min(30, Math.max(1, Math.round(Number(days) || 7)))
-      return client.shareAttachment(ref, { expires_at: Date.now() + d * 86400_000 - 60_000, app_url: location.origin, keep_link: true })
+      return client.shareAttachment(ref, { expires_at: Date.now() + SHARE_DAYS * 86400_000 - 60_000, app_url: location.origin, keep_link: true })
     },
     stopSharing: (share_id, attachment_id) => client.revokeShare(share_id, { attachment_id }),
     /** This device's open shares: [{ share_id, attachment_id, expires_at, link }]. */
@@ -1839,6 +1904,8 @@ async function start(client, { fresh = false } = {}) {
   board.update()
   let desk = read('trommi-desk')
   const hub = hubFacade(client, board)
+  sharing = hub
+  sharesLoaded()
   let cached = null
   const model = (d = desk) => {
     if (pending && !wasCatchingUp) { update(); frame ||= requestAnimationFrame(() => apply()) }

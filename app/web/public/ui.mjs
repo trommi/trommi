@@ -257,6 +257,8 @@ const SKETCH = {
   unfold: [[[6.2, 9.2], [12, 15.4], [17.8, 8.8]]],
   // onward: an arrow to the right
   go: [[[4.4, 12.2], [11, 11.7], [19.2, 12.1]], [[14.2, 7], [19.6, 12], [14.4, 17.2]]],
+  // more: three dots
+  more: [[[5.2, 12], [6.4, 12.1]], [[11.4, 12.1], [12.6, 12]], [[17.6, 12], [18.8, 12.1]]],
   // the theme: a moon for the dark one, a sun for the light one
   moon: [[[15.6, 3.8], [9, 5.6], [5.4, 11.6], [7.2, 18], [13.4, 20.6], [19.6, 17.6], [14.4, 15.6], [11.6, 10.6], [13, 5.8], [15.9, 4.2]]],
   // Push on this device: a bell, its rim and its clapper.
@@ -835,7 +837,7 @@ export function toast({ head, line = '', undo = null, link = null, role = 'statu
 
 /** A toast made in the page, for an action a controller did itself: the same markup; undo is a function that takes it
  *  back (the toast goes as soon as it is pressed, also by U). */
-function showToast({ head, line = '', undo = null, label = 'Undo', role = 'status', ms = null }) {
+export function showToast({ head, line = '', undo = null, label = 'Undo', role = 'status', ms = null }) {
   const host = document.getElementById('says-host')
   if (!host) return null
   host.insertAdjacentHTML('afterbegin', String(toast({ head, line, role, ms, undo: undo && { label } })))
@@ -2056,6 +2058,14 @@ function onStream(e) {
   e.preventDefault()
   held.set(`${action} ${target ?? ''}`, el.cloneNode(true))
 }
+/** Copies a text that is still being made (a link the hub is asked for): the clipboard is asked at once, inside the
+ *  press, and given the text when it comes; true when it worked. Throws what the making threw. */
+export async function copyLater(text) {
+  if (navigator.clipboard?.write && globalThis.ClipboardItem) {
+    try { await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then(t => new Blob([t], { type: 'text/plain' })) })]); return true } catch {}
+  }
+  return copyText(await text)
+}
 
 const LISTENERS = [['toggle', onToggle, true], ['click', onClick, false], ['keydown', onKey, true], ['turbo:submit-start', onSubmit, false], ['turbo:before-stream-render', onStream, false]]
 let connected = 0
@@ -2842,7 +2852,10 @@ const GLYPHS = {
 }
 export const assetGlyph = type => raw(`<svg viewBox="0 0 24 24" class="asset-glyph" aria-hidden="true">${(GLYPHS[type] ?? GLYPHS.file).map(d => `<path d="${d}"/>`).join('')}</svg>`)
 const ext = name => (/\.([a-z0-9]{1,5})$/i.exec(name ?? '')?.[1] ?? '').toUpperCase()
-/** Everything received, the newest first: [{ id, type, title, agent, ts, url, name, href, from, more }]. Kept per state. */
+/** A file's attachment id (what a link for people outside the room is made of), or null. */
+export const attIdOf = att => att?.ref?.attachment_id ?? /^\/att\/([0-9a-f]{32})$/.exec(String(att?.url ?? ''))?.[1] ?? null
+/** Everything received, the newest first: [{ id, type, title, agent, ts, url, name, href, from, more, att (a published
+ *  file's attachment id) }]. Kept per state. */
 const galleryKept = new WeakMap()
 export function galleryItems(model, base = '') {
   const { state } = model
@@ -2856,7 +2869,7 @@ export function galleryItems(model, base = '') {
     const agent = model.byAgent.get(a.agent)
     if (!agent || !model.onDesk(agent)) continue
     const type = a.type === 'image' || a.type === 'html' || a.type === 'video' ? a.type : 'file'
-    out.push({ id: a.id, type, title: a.title || 'Untitled', agent, ts: a.created ?? 0, url: a.att?.url ?? '', name: a.att?.name ?? '', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, from: 'published' })
+    out.push({ id: a.id, type, title: a.title || 'Untitled', agent, ts: a.created ?? 0, url: a.att?.url ?? '', name: a.att?.name ?? '', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, from: 'published', att: attIdOf(a.att) })
   }
   for (const c of state.cards) {
     const agent = model.byAgent.get(c.agent)
@@ -2906,7 +2919,7 @@ export function pageItems(model, base = '') {
   for (const a of state.assets ?? []) {
     const agent = here(a.agent)
     if (!agent || a.type !== 'html') continue
-    const id = a.att?.ref?.attachment_id ?? attId(a.att?.url)
+    const id = attIdOf(a.att)
     put({ key: `file:${id ?? a.att?.url ?? a.id}`, kind: 'page', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, url: a.att?.url ?? '', title: a.title || 'Untitled page', agent, ts: a.created ?? 0, att: id })
   }
   for (const c of state.cards) {

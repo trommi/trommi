@@ -16,8 +16,8 @@
 //
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
-import { BASE, UNHEARD_MS, blockedOf, linkOf, quietOf } from './app.mjs'
-import { Controller, EXPLAIN_TEXT, HAND_BACK_TEXT, WORDS, advisedLabels, later, agoSpan, assetGlyph, avatar, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
+import { BASE, UNHEARD_MS, blockedOf, linkOf, quietOf, shareControl, sharesLoaded } from './app.mjs'
+import { Controller, EXPLAIN_TEXT, HAND_BACK_TEXT, WORDS, advisedLabels, later, agoSpan, assetGlyph, attIdOf, avatar, controller, copyText, deskRow, handSvg, html, kindOf, linkNote, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
 const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const IN_VIEW = 14            // of them, rendered with the page (a phone shows fewer); the rest of the window right after its first paint
@@ -167,7 +167,7 @@ function assetCard(asset, s, base) {
   const kind = ['Artifact', ASSET_LABEL[type], !asset.gone && asset.size ? sizeText(asset.size) : ''].filter(Boolean).join(' · ')
   if (asset.gone) return html`<div class="asset-slot"><div class="asset-card has-preview is-gone"><span class="asset-preview" data-kind="${type}">${assetGlyph(type)}</span><div class="asset-text"><span class="caps">${kind}</span><strong>${asset.title || 'Untitled'}</strong><span class="asset-note">No longer available.</span></div></div></div>`
   const view = assetPath(s, asset.id, base), title = asset.title || 'Untitled'
-  return html`<div class="asset-slot"><div class="asset-card has-preview" data-controller="share" data-share-link-value="${view}" data-share-title-value="${title}"><a class="asset-preview${type === 'image' ? ' is-shown' : ''}" data-kind="${type}" data-nav href="${view}" tabindex="-1" aria-hidden="true"${thumbAttrs(asset, type)}>${preview(asset, type, type === 'html' ? raw('<span class="asset-page-label">Page</span>') : '')}</a><div class="asset-text"><span class="caps">${kind}</span><strong>${title}</strong>${asset.note ? html`<span class="asset-note">${asset.note}</span>` : ''}</div><div class="asset-actions"><a class="asset-open" data-nav href="${view}">Open</a><button type="button" class="asset-copy" data-action="share#copy" title="Copy a link to it: it opens for the people of this room">Copy link</button></div></div></div>`
+  return html`<div class="asset-slot"><div class="asset-card has-preview"><a class="asset-preview${type === 'image' ? ' is-shown' : ''}" data-kind="${type}" data-nav href="${view}" tabindex="-1" aria-hidden="true"${thumbAttrs(asset, type)}>${preview(asset, type, type === 'html' ? raw('<span class="asset-page-label">Page</span>') : '')}</a><div class="asset-text"><span class="caps">${kind}</span><strong>${title}</strong>${asset.note ? html`<span class="asset-note">${asset.note}</span>` : ''}</div><div class="asset-actions"><a class="asset-open" data-nav href="${view}">Open</a>${shareControl(attIdOf(asset.att), title)}</div></div></div>`
 }
 
 /** The viewer: the published thing at its own address, as large as the page lets it be. */
@@ -182,8 +182,8 @@ function assetPage(s, asset, base, from = '') {
         : type === 'video' ? html`<video class="as-media" src="${url}#t=0.001" controls playsinline preload="metadata"></video>`
           : type === 'audio' ? html`<audio class="as-media" src="${url}" controls preload="metadata"></audio>`
             : html`<div class="as-file"><span class="as-file-name">${asset.att?.name ?? asset.title}</span>${asset.size ? html`<span class="caps">${sizeText(asset.size)}</span>` : ''}<a class="as-btn" href="${url}" download="${asset.att?.name ?? ''}">Download</a></div>`
-  return html`<div class="t-picture as-view" data-controller="share" data-share-link-value="${assetPath(s, asset.id, base)}" data-share-title-value="${asset.title || 'Untitled'}">
-<header class="t-picture-bar"><a class="focus-back-desk t-picture-back" data-nav href="${back}" aria-label="Back to the conversation">${arrow}<span>${s.agent.name}</span></a><span class="t-picture-where"><b>${ASSET_LABEL[type]}</b> ${asset.title || 'Untitled'}</span>${asset.gone ? '' : html`<button type="button" class="asset-copy as-copy" data-action="share#copy" title="Copy a link to it: it opens for the people of this room">Copy link</button>`}</header>
+  return html`<div class="t-picture as-view">
+<header class="t-picture-bar"><a class="focus-back-desk t-picture-back" data-nav href="${back}" aria-label="Back to the conversation">${arrow}<span>${s.agent.name}</span></a><span class="t-picture-where"><b>${ASSET_LABEL[type]}</b> ${asset.title || 'Untitled'}</span>${asset.gone ? '' : shareControl(attIdOf(asset.att), asset.title || 'Untitled', { cls: 'as-copy' })}</header>
 ${asset.note ? html`<p class="as-note">${asset.note}</p>` : ''}<div class="as-stage" data-type="${type}">${stage}</div>
 </div>`
 }
@@ -605,7 +605,8 @@ export function register(t) {
   })
 
   // Something it published, in the app's viewer (?from=<message>: the way back to where it was announced).
-  t.get(/^\/s\/([^/+]+)\/a\/([0-9a-f]{8,64})$/, ({ req, res, url, match }) => {
+  t.get(/^\/s\/([^/+]+)\/a\/([0-9a-f]{8,64})$/, async ({ req, res, url, match }) => {
+    await sharesLoaded()
     const s = find(req, res, match[1])
     if (!s) return
     const asset = s.model.state.assets.find(a => a.id === match[2]) ?? { id: match[2], gone: true, type: 'file', title: 'Published' }
@@ -1100,19 +1101,4 @@ controller('files', class extends Controller {
     this.unmark = setTimeout(() => at.classList.remove('is-jumped'), 1800)
   }
   disconnect() { clearTimeout(this.unmark) }
-})
-
-// ---- controller "share" ----
-// "Copy link" of something a session published (session.mjs assetCard, assetPage): copies the address of the
-// app's viewer for it. It opens for the people of this room (the contents are end-to-end encrypted with the room's
-// keys); there is no outside link.
-
-controller('share', class extends Controller {
-  static values = { link: String, title: String }
-
-  async copy() {
-    const ok = await copyText(new URL(this.linkValue, location.href).href)
-    if (!ok) return toast({ head: 'Not copied', line: 'The browser kept the clipboard closed', role: 'alert' })
-    toast({ head: 'Link copied', line: `“${this.titleValue}” opens for the people of this room` })
-  }
 })

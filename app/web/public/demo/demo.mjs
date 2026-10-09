@@ -175,7 +175,7 @@ class MockClient {
     return { attachment_id: hex(32), file_key: '', sha256: '', total_size: blob.size, ...meta, url: URL.createObjectURL(blob) }
   }
   async attachmentBlob(ref) { return (await fetch(ref.url)).blob() }
-  // Share links (the Links page): kept in this tab, the form of the real link (the mock has no keys: stand-ins).
+  // Share links (Copy link on an artifact): kept in this tab, the form of the real link (the mock has no keys: stand-ins).
   async shareAttachment(ref, { expires_at = Date.now() + 30 * 86400000 - 60000, app_url = location.origin, keep_link = false } = {}) {
     const b64 = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
     const share_id = hex(32), link = `${app_url}/a/${share_id}#${b64()}.${ref.file_key || b64()}.${ref.sha256 || b64()}`
@@ -843,7 +843,7 @@ const SCREENS = [
   ['Blitz', '/blitz', []],
   ['Session', '/s/trommi', [['Three-dot menu open', '', 'session-more'], ['Questions only', '/s/trommi?only=questions'], ['Files', '/s/trommi/files'], ['A helper', '/s/trommi-ui']]],
   ['Settings', '/settings', [['Invite a Device: the code', '', 'pair'], ['Invite a Device: the emoji', '', 'pair-emoji'], ['Invite an agent', '', 'invite'], ['Emoji compare (agent)', '/s/trommi', 'invite-emoji'], ['Link run out', '', 'invite-ended'], ['Sessions', '/settings/sessions'], ['Sessions, a desk open', '/settings/sessions', 'desk-open'], ['Sessions: the … menu', '/settings/sessions', 'session-dots'], ['Devices', '/settings/devices'], ['Account', '/settings/account'], ['Theme', '/settings/theme'], ['Keyboard Shortcuts', '/settings/keys']]],
-  ['Artifacts', '/artifacts', [['Media', '/artifacts?kind=media'], ['Pages', '/artifacts?kind=pages'], ['Share open', '/artifacts?kind=pages', 'share']]],
+  ['Artifacts', '/artifacts', [['Media', '/artifacts?kind=media'], ['Pages', '/artifacts?kind=pages'], ['Link copied (shared)', '/artifacts?kind=pages', 'share']]],
   ['Off the desk', '/stacks/off', []],
   ['Scribble Board', '/scribble-board', [['Its keys', '', 'board-help']]],
   ['Log out', '/logout', []],
@@ -1011,7 +1011,7 @@ export async function demoState(name, { now = false } = {}) {
     'desk-invite': () => click('#desk-invite-go'),
     'invite-emoji': async () => { click('.t-head-more'); await wait(200); [...document.querySelectorAll('.desk-move button')].find(b => /invite link/.test(b.textContent))?.click() },
     'invite-ended': async () => { click('#settings-invite-agent'); await wait(900); const inv = [...window.trommi.client.model.invites.values()].at(-1); if (inv) { inv.expires_at = Date.now() - 1000; window.trommi.client.changed(c => c.invites.add(inv.invite_id)) } },
-    share: () => { const d = $('.art-share'); if (d) d.open = true; const s = $('.lk-share .lk-switch input'); if (s) { s.checked = true; s.dispatchEvent(new Event('change', { bubbles: true })) } },
+    share: async () => { click('#artifacts-list .shr-copy'); await wait(400); const d = $('#artifacts-list .shr.is-on details'); if (d) d.open = true },
     'board-help': () => click('#help-btn'),
   }
   await S[name]?.()
