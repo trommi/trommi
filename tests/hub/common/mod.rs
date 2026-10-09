@@ -1485,3 +1485,76 @@ pub fn founding_json(info0: &[u8], key0: &[u8], out: &Out, key1: &[u8]) -> Value
         "welcome": out.welcome.as_deref().map(b64), "sealed_key": b64(key1),
     })
 }
+
+// ---- a passkey authenticator, as a browser's would answer
+
+pub mod passkey {
+    use p256::ecdsa::signature::Signer;
+    use p256::ecdsa::{Signature, SigningKey};
+    use sha2::{Digest, Sha256};
+    use trommi_hub::util::b64;
+
+    pub const ORIGIN: &str = "https://app.trommi.com";
+    pub const RP: &str = "app.trommi.com";
+    /// user present and user verified
+    pub const UP_UV: u8 = 0x05;
+
+    pub struct Authenticator {
+        pub key: SigningKey,
+        pub credential_id: Vec<u8>,
+    }
+
+    impl Authenticator {
+        #[allow(clippy::new_without_default)]
+        pub fn new() -> Self {
+            Authenticator {
+                key: SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng),
+                credential_id: trommi_hub::util::random::<20>().to_vec(),
+            }
+        }
+        pub fn cose(&self) -> Vec<u8> {
+            let p = self.key.verifying_key().to_encoded_point(false);
+            trommi_hub::webauthn::cose_es256(p.x().unwrap(), p.y().unwrap())
+        }
+        pub fn data(&self, rp: &str, flags: u8, attested: bool) -> Vec<u8> {
+            let mut d = Sha256::digest(rp.as_bytes()).to_vec();
+            d.push(flags | if attested { 0x40 } else { 0 });
+            d.extend_from_slice(&7u32.to_be_bytes());
+            if attested {
+                d.extend_from_slice(&[0; 16]);
+                d.extend_from_slice(&(self.credential_id.len() as u16).to_be_bytes());
+                d.extend_from_slice(&self.credential_id);
+                d.extend_from_slice(&self.cose());
+            }
+            d
+        }
+        pub fn client_data(ceremony: &str, challenge: &[u8], origin: &str) -> Vec<u8> {
+            serde_json::json!({ "type": ceremony, "challenge": b64(challenge), "origin": origin, "crossOrigin": false }).to_string().into_bytes()
+        }
+        /// `{ "fmt": "none", "attStmt": {}, "authData": bytes }`
+        pub fn attestation(&self, rp: &str, flags: u8) -> Vec<u8> {
+            let data = self.data(rp, flags, true);
+            let mut a = vec![0xa3, 0x63];
+            a.extend_from_slice(b"fmt");
+            a.push(0x64);
+            a.extend_from_slice(b"none");
+            a.push(0x67);
+            a.extend_from_slice(b"attStmt");
+            a.push(0xa0);
+            a.push(0x68);
+            a.extend_from_slice(b"authData");
+            a.push(0x59);
+            a.extend_from_slice(&(data.len() as u16).to_be_bytes());
+            a.extend_from_slice(&data);
+            a
+        }
+        /// (authenticator data, signature) over the client data
+        pub fn assertion(&self, rp: &str, flags: u8, client_data: &[u8]) -> (Vec<u8>, Vec<u8>) {
+            let data = self.data(rp, flags, false);
+            let mut message = data.clone();
+            message.extend_from_slice(&Sha256::digest(client_data));
+            let signature: Signature = self.key.sign(&message);
+            (data, signature.to_der().as_bytes().to_vec())
+        }
+    }
+}
