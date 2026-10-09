@@ -4,6 +4,7 @@
 
 pub mod content;
 pub mod forge;
+pub mod forge_content;
 pub mod hub;
 pub mod store;
 
