@@ -6,6 +6,8 @@
 // - the scenario of scenario.json passes with every device in a worker of its own and IndexedDB as the store;
 // - a worker killed between a write and its sending leaves the request in the outbox, and a second worker cannot
 //   open a state the first holds;
+// - the IndexedDB store: closed and opened again at once, a wait for the lock given up, a load that fails with the
+//   lock in hand, another owner told apart from other failures, a lock taken away;
 // - without 'wasm-unsafe-eval' WebAssembly is refused (in the page by the page's policy; in a worker by the policy
 //   of the worker script's own response).
 // It prints a report with the sizes of the build (core/wasm/pkg/build.json) and the times of this machine.
@@ -68,7 +70,7 @@ async function inBrowser(what) {
 }
 
 try {
-  for (const what of ['page', 'worker', 'scenario', 'kill', 'times']) {
+  for (const what of ['page', 'worker', 'scenario', 'kill', 'store', 'times']) {
     const result = await inBrowser(what)
     if (!result.ok || result.violations.length || result.console.length || result.contentType !== 'application/wasm') fail(what, result)
     if (result.steps) {

@@ -1,6 +1,7 @@
 // The test page: the binding in the page itself and in module workers, under the web app's Content-Security-Policy.
 // tests/bindings/browser.mjs loads it in headless Chromium and calls run(what).
 import * as core from '/core/wasm/pkg/trommi-core.js'
+import { StoreConflict } from '/core/wasm/pkg/trommi-core.js'
 import { IdbStore } from '/core/wasm/pkg/idb-store.js'
 import { runScenario } from '/tests/bindings/scenario.mjs'
 
@@ -87,6 +88,63 @@ const cases = {
     const same = before.length === 1 && after.length === 1 && after[0].id === before[0].id
       && after[0].parts.every((part, at) => sameBytes(part, before[0].parts[at]))
     return { ok: same && second === 'storage', same, second }
+  },
+
+  /** The IndexedDB store's own edge: close and open again at once, a wait given up, a load that fails with the
+   *  lock in hand, another owner told apart from other failures, a lock taken away. */
+  async store() {
+    const name = `store-${Date.now()}`
+    const held = async () => (await navigator.locks.query()).held.some(lock => lock.name === `trommi-core:${name}`)
+    const outcome = async promise => { try { await promise; return 'resolved' } catch (error) { return error } }
+    const found = {}
+
+    // Closed, then opened again without waiting, many times: the lock is free when close() has resolved.
+    found.reopen = true
+    for (let round = 0; round < 25; round++) {
+      const store = new IdbStore(name)
+      if (await outcome(store.load()) !== 'resolved') found.reopen = false
+      await store.close()
+    }
+
+    // A load that waits for the lock is given up by close(), and never takes the lock.
+    const first = new IdbStore(name)
+    await first.load()
+    const waiting = new IdbStore(name, { wait: true })
+    const pending = outcome(waiting.load())
+    await waiting.close()
+    found.givenUp = await pending !== 'resolved'
+    await first.close()
+    found.neverTaken = !(await held())
+
+    // Another owner is a StoreConflict of its own, also through a device.
+    const owner = new IdbStore(name)
+    await owner.load()
+    found.conflict = await outcome(new IdbStore(name).load()) instanceof StoreConflict
+    const refused = await outcome(core.Device.open(new IdbStore(name)))
+    found.cause = refused instanceof core.TrommiError && refused.code === 'storage' && refused.cause instanceof StoreConflict
+
+    // A lock that is taken away: the next write is a conflict, and nothing is written.
+    let giveBack
+    const taken = new Promise(granted => {
+      navigator.locks.request(`trommi-core:${name}`, { steal: true }, () => { granted(); return new Promise(free => { giveBack = free }) })
+    })
+    await taken
+    found.stolen = await outcome(owner.apply({ expectedRevision: 0, put: [], delete: [] })) instanceof StoreConflict
+    giveBack()
+    await owner.close()
+
+    // A load that fails after it took the lock gives the lock back: here the database is of a newer layout.
+    const other = `${name}-newer`
+    await new Promise((resolve, reject) => {
+      const open = indexedDB.open(other, 2)
+      open.onsuccess = () => { open.result.close(); resolve() }
+      open.onerror = () => reject(open.error)
+    })
+    const failing = await outcome(new IdbStore(other).load())
+    found.loadFailed = failing !== 'resolved' && !(failing instanceof StoreConflict)
+    found.lockFreed = !(await navigator.locks.query()).held.some(lock => lock.name === `trommi-core:${other}`)
+
+    return { ok: Object.values(found).every(Boolean), ...found }
   },
 
   /** Times of the heavy calls, for the size and speed report. */
