@@ -16,6 +16,7 @@ use crate::error::Error;
 use crate::ids::{DeviceId, GroupId, Hash32, ObjectId};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 /// The largest stored state this module reads.
 const MAX_STATE_LEN: usize = 1 << 28;
@@ -551,8 +552,9 @@ impl GateLog {
     }
 }
 
-/// What this device kept of the thing an answer or a verdict refers to. It wrote it, so it holds it.
-#[derive(Debug, Clone, Copy)]
+/// What this device kept of the thing an answer or a verdict refers to. It wrote it, so it holds it. A card's
+/// payload is content and is not printed.
+#[derive(Clone, Copy)]
 pub enum OwnRecord<'a> {
     /// Nothing is needed (a Chat message, a take back), or nothing is held.
     None,
@@ -570,6 +572,16 @@ pub enum OwnRecord<'a> {
         /// The request's bind.
         bind: RequestBind,
     },
+}
+
+impl fmt::Debug for OwnRecord<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::None => f.write_str("None"),
+            Self::CardVersion { hash, .. } => write!(f, "CardVersion({hash}, <redacted>)"),
+            Self::Request { hash, bind } => write!(f, "Request({hash}, {bind:?})"),
+        }
+    }
 }
 
 /// The fields of a card version's payload that decide which choices an answer may carry.
