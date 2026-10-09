@@ -60,7 +60,8 @@ fn class(key: &[u8]) -> String {
                 "group",
                 "key package",
                 "staged join",
-                "handover sent"
+                "handover sent",
+                "handed key"
             ]
             .get(usize::from(sub))
             .unwrap_or(&"?")
