@@ -475,6 +475,7 @@ function accountDetail(db, room, has) {
     const rows = ask(db, "SELECT level, sum(endpoint NOT LIKE 'apns:%'), sum(endpoint LIKE 'apns:%') FROM push_subscriptions WHERE room_id = ? GROUP BY level ORDER BY level", room);
     more.push(['push registrations', rows.length ? rows.map(([level, web, apns]) => `${esc(String(level))}: ${esc(num(web))} Web Push, ${esc(num(apns))} APNs`).join('<br>') : '0']);
   }
+  if (has('live_activities')) more.push(['Live Activity registrations', esc(num(one('SELECT count(*) FROM live_activities WHERE room_id = ?', room)[0]))]);
   if (has('invites')) more.push(['open invites', esc(num(one('SELECT count(*) FROM invites WHERE room_id = ? AND used_at IS NULL AND burned_at IS NULL', room)[0]))]);
   if (has('agent_leases')) more.push(['running agents', esc(num(one('SELECT count(*) FROM agent_leases WHERE room_id = ?', room)[0]))]);
   section('Counted', more.length ? kvList(more) : '');

@@ -156,6 +156,11 @@ export const COLUMN_CLASSES = {
     room_id: [P, ''], device_id: [P, ''], endpoint: [P, 'address at the push service, with the device token: a secret'],
     subscription: [P, 'the keys the hub needs to send a push: a secret'], created_at: [P, ''], level: [P, 'all or knocking'],
   },
+  live_activities: {
+    room_id: [P, ''], device_id: [P, 'the iPhone'], environment: [P, 'sandbox or production'], topic: [P, 'bundle id'], tag: [P, 'random tag of the room on that device'],
+    start_token: [P, 'APNs push-to-start token: a secret the hub needs to send'], activity_token: [P, 'APNs token of the running activity: a secret the hub needs to send'],
+    started_at: [P, ''], sent: [P, 'the counts last sent (working:waiting)'], sent_at: [P, ''], created_at: [P, ''],
+  },
   shares: {
     share_id: [P, ''], room_id: [P, ''], attachment_id: [P, ''], share_secret_hash: [H, 'SHA-256 of the secret in the link'], expires_at: [P, ''],
     created_by_device_id: [P, ''], created_at: [P, ''],
@@ -177,6 +182,7 @@ export const TABLE_NOTES = {
   timelines: 'Derived from signed header fields of envelopes; can be rebuilt at any time.',
   attachments: 'Bookkeeping only. The files are encrypted on the client and lie beside hub.db, not in it.',
   accounts: 'Sign-in by email. The hub can check a login, it cannot open the room with it.',
+  live_activities: 'What the hub needs to show an iPhone\'s Live Activity. It sends two numbers (agents working, cards waiting), never content.',
   push_subscriptions: 'What the hub needs to ring a device. A push carries room, envelope number and urgency, never content.',
 }
 
