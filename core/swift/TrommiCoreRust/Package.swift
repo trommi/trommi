@@ -9,6 +9,9 @@
 import PackageDescription
 
 let lib = "\(Context.packageDirectory)/lib"
+// A build for the simulator (on a Mac) sets TROMMI_IOS_SIMULATOR=1: SwiftPM cannot tell device from simulator in
+// a linker setting.
+let ios = Context.environment["TROMMI_IOS_SIMULATOR"] == "1" ? "ios-simulator" : "ios"
 
 let package = Package(
   name: "TrommiCoreRust",
@@ -22,7 +25,7 @@ let package = Package(
       name: "TrommiCoreRust",
       dependencies: ["TrommiCoreFFI"],
       linkerSettings: [
-        .unsafeFlags(["-L\(lib)/ios"], .when(platforms: [.iOS])),
+        .unsafeFlags(["-L\(lib)/\(ios)"], .when(platforms: [.iOS])),
         .unsafeFlags(["-L\(lib)/macos"], .when(platforms: [.macOS])),
         .unsafeFlags(["-L\(lib)/linux"], .when(platforms: [.linux])),
         .linkedLibrary("trommi_core_ffi"),

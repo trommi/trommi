@@ -1,9 +1,12 @@
 #!/bin/sh
 # Build trommi-core for Swift: the static library per platform and UniFFI's Swift file and C header, into the Swift
 # package TrommiCoreRust next to this script.
-#   build.sh            the host (Linux or macOS: for `swift test`) and iOS (device)
+#   build.sh            the host (Linux or macOS: for `swift test`) and iOS (device and simulator)
 #   build.sh host       the host only
 #   build.sh ios        iOS only
+# Everything it writes is build output and not in the repository: lib/<platform>/libtrommi_core_ffi.a,
+# Sources/TrommiCoreFFI/include/TrommiCoreFFI.h, Sources/TrommiCoreRust/TrommiCoreRust.swift. A script that ships
+# the app from a clean checkout runs `build.sh ios` first.
 # TROMMI_STAND_IN_RECOVERY=1 builds with the stand-in for the recovery construct (src/recovery.rs): for
 # development only, never for a release. Without it no room can be founded yet.
 # Needs the Rust targets (rustup target add aarch64-apple-ios); no Apple SDK and no Apple linker: a static library is
@@ -15,6 +18,9 @@ what=${1:-all}
 target=${CARGO_TARGET_DIR:-$here/../../target}
 package=$here/TrommiCoreRust
 cd "$here"
+# Paths of this machine stay out of the library (they would sit in the texts of panics).
+RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=$(cd "$here/../.." && pwd)=/trommi --remap-path-prefix=$(rustc --print sysroot)=/rust"
+export RUSTFLAGS
 features=
 if [ "${TROMMI_STAND_IN_RECOVERY:-}" = 1 ]; then
   features="--features stand-in-recovery"
@@ -75,5 +81,9 @@ if [ "$what" != host ]; then
     echo "no Apple compiler runtime at $rt to check against (DARWIN_CLANG_RT=<its libclang_rt.ios.a>, or DARWIN_CLANG_RT=unchecked to go on without the check)" >&2; exit 1
   fi
   xargs "$ar" d "$package/lib/ios/libtrommi_core_ffi.a" < "$work/members"
+fi
+# The simulator's library, for a Mac (TROMMI_IOS_SIMULATOR=1 makes the package link it): as rustc writes it.
+if [ "$what" != host ]; then
+  IPHONEOS_DEPLOYMENT_TARGET=${IPHONEOS_DEPLOYMENT_TARGET:-17.0} staticlib aarch64-apple-ios-sim ios-simulator
 fi
 ls -l "$package"/lib/*/libtrommi_core_ffi.a
