@@ -213,12 +213,15 @@ struct CardScreen: View {
         if c.kind == "decision" {
           HStack(spacing: 10) { Rectangle().fill(Ink.lineStrong).frame(height: 1); Text("OR").font(Face.text(13, .semibold)).kerning(1.4).foregroundStyle(Ink.muted); Rectangle().fill(Ink.lineStrong).frame(height: 1) }
             .padding(.vertical, 4)
-          Button { model.trust(c, note: note) } label: {
-            HStack(spacing: 14) { PenMark("sketch:duck", color: Ink.fg, duck: true).frame(width: 52, height: 44); Text(Words.trust).font(Face.text(18, .semibold)); Spacer() }
-              .padding(.horizontal, 16).frame(maxWidth: .infinity, minHeight: 64)
-          }
-          .buttonStyle(TileStyle(lead: false, hue: hue))
-          .accessibilityLabel("\(Words.trust): your call\(c.advisedLabels.isEmpty ? "" : " · agent takes \(c.advisedLabels)")")
+          Button { model.trust(c, note: note) } label: { EmptyView() }
+            .buttonStyle(SideWay(kind: .duck) { on in
+              // the duck is yellow at rest too; held, the button turns the palest yellow and all ink goes dark
+              HStack(spacing: 14) {
+                PenMark(doc: PenStore.doc("sketch:duck"), inks: PenInks(stroke: Ink.fg, duck: true, water: on ? Ink.duckInk : Ink.fg)).frame(width: 52, height: 44)
+                Text(Words.trust).font(Face.text(18, .semibold)); Spacer()
+              }.padding(.horizontal, 16)
+            })
+            .accessibilityLabel("\(Words.trust): your call\(c.advisedLabels.isEmpty ? "" : " · agent takes \(c.advisedLabels)")")
           otherWays(c, hue)
         }
       }
@@ -231,10 +234,12 @@ struct CardScreen: View {
   }
   private func otherWays(_ c: DeskCard, _ hue: Int) -> some View {
     HStack(spacing: 10) {
-      Button { model.what(c) } label: { PenMark("sketch:what", color: Ink.fg, width: 2.2).frame(width: 90, height: 32).frame(maxWidth: .infinity, minHeight: 64) }
-        .buttonStyle(TileStyle(lead: false, hue: hue)).accessibilityLabel("What??")
-      Button { model.handBack(c, text: note) } label: { Sketch("reverse", color: Ink.fg).frame(width: 34, height: 34).frame(maxWidth: .infinity, minHeight: 64) }
-        .buttonStyle(TileStyle(lead: false, hue: hue)).accessibilityLabel("Reverse: back to the agent for rework, with the comments")
+      Button { model.what(c) } label: { EmptyView() }
+        .buttonStyle(SideWay(kind: .what) { on in PenMark("sketch:what", color: on ? .white : Ink.fg, width: 2.2).frame(width: 90, height: 32) })
+        .accessibilityLabel("What??")
+      Button { model.handBack(c, text: note) } label: { EmptyView() }
+        .buttonStyle(SideWay(kind: .reverse) { on in Sketch("reverse", color: on ? .white : Ink.fg).frame(width: 34, height: 34) })
+        .accessibilityLabel("Reverse: back to the agent for rework, with the comments")
     }
   }
   @ViewBuilder private func option(_ c: DeskCard, _ o: Option, _ hue: Int) -> some View {
@@ -437,5 +442,57 @@ struct CardKeys: View {
       if card.status == "open" && card.kind == "info" { Button("") { model.closeInfo(card) }.keyboardShortcut(.return, modifiers: []) }
     }
     .opacity(0).accessibilityHidden(true)
+  }
+}
+
+/**
+ * The three side answers (I don't give a duck, What??, the reverse card): calm at rest, and held under the finger they
+ * take the colour the web gives them under the pointer (card.css .tc-whatever, .tc-wtf, .tc-reverse :hover): the palest
+ * yellow with dark ink, a violet with white, the wild card's four colours round an ink middle with white. A light tap
+ * is felt as the colour comes.
+ */
+struct SideWay<L: View>: ButtonStyle {
+  enum Kind { case duck, what, reverse }
+  let kind: Kind
+  @ViewBuilder let face: (Bool) -> L
+  func makeBody(configuration: Configuration) -> some View { SideWayBody(kind: kind, on: configuration.isPressed, face: face) }
+}
+private struct SideWayBody<L: View>: View {
+  let kind: SideWay<L>.Kind
+  let on: Bool
+  let face: (Bool) -> L
+  @Environment(\.colorScheme) private var scheme
+  private static var unoInk: Color { Color(hex: 0x14161a) }
+  var body: some View {
+    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+    face(on)
+      .foregroundStyle(on ? (kind == .duck ? Ink.duckInk : .white) : Ink.fg)
+      .frame(maxWidth: .infinity, minHeight: 64)
+      .background {
+        ZStack {
+          shape.fill(Ink.surface)
+          shape.fill(Ink.accent.opacity(0.09))
+          if on {
+            switch kind {
+            case .duck: shape.fill(Ink.duckPale)
+            case .what: shape.fill(Color(hex: 0x7a5bc7))
+            case .reverse:
+              // four flat fields round a point a little off the middle, the card's ink ground in the middle
+              AngularGradient(stops: [.init(color: Color(hex: 0xd9483b), location: 0), .init(color: Color(hex: 0xd9483b), location: 0.25),
+                                      .init(color: Color(hex: 0xf3c52f), location: 0.25), .init(color: Color(hex: 0xf3c52f), location: 0.5),
+                                      .init(color: Color(hex: 0x3f9f58), location: 0.5), .init(color: Color(hex: 0x3f9f58), location: 0.75),
+                                      .init(color: Color(hex: 0x2f70c4), location: 0.75), .init(color: Color(hex: 0x2f70c4), location: 1)],
+                              center: UnitPoint(x: 0.53, y: 0.47), angle: .degrees(-83))
+                .clipShape(shape)
+              Ellipse().fill(Self.unoInk).frame(width: 50, height: 54)
+            }
+          }
+        }
+      }
+      .overlay(shape.strokeBorder(on ? (kind == .duck ? Ink.duckInk : kind == .what ? Color(hex: 0x7a5bc7).opacity(0.7) : Self.unoInk) : (scheme == .dark ? Ink.lineStrong : .clear), lineWidth: on ? 1.5 : 1))
+      .contentShape(shape)
+      .scaleEffect(on ? 0.97 : 1)
+      .animation(.easeOut(duration: 0.12), value: on)
+      .sensoryFeedback(.impact(weight: .light), trigger: on) { _, now in now }
   }
 }
