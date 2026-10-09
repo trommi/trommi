@@ -5,9 +5,10 @@
 //! trail step without a number.
 
 use trommi_core::codec;
+use trommi_core::crypto::Secret;
 use trommi_core::device::{log_finding, LogFinding, Processed, Received};
 use trommi_core::ids::{BoardId, GroupId, Hash32, TurnId};
-use trommi_core::mls::message::TrommiMessage;
+use trommi_core::mls::message::{EpochKey, TrommiMessage};
 use trommi_core::mls::profile::{CommitNote, Cut};
 use trommi_core::Error;
 use trommi_tests::forge::Forger;
@@ -149,33 +150,28 @@ fn an_agent_device_committing_in_the_room_group() {
 
 #[test]
 fn an_opener_removing_a_human_leaf() {
-    for checks in [true, false] {
-        let World {
-            mut hub,
-            mut a,
-            mut b,
-            mut agent,
-            main,
-            ..
-        } = world(checks);
-        let helper = found_helper(&mut hub, &mut agent, &main, &mut []);
-        settle(&hub, &mut a);
-        settle(&hub, &mut b);
-        let mut device = new_device();
-        let package = device.key_package(now()).unwrap();
-        agent
-            .readmit_helper(&helper, Cut::none(b.id()), &device.id(), &package, now())
-            .unwrap();
-        if checks {
-            assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
-            assert_eq!(hub.epoch(&helper), Some(1));
-        } else {
-            post_ok(&mut hub, &mut agent);
-            refuse(&hub, &mut [&mut a, &mut b], &Error::BadCommit);
-            assert_eq!(b.group(&helper).unwrap().epoch, 1);
-            assert!(b.group(&helper).unwrap().leaves.contains(&b.id()));
-        }
-    }
+    // No operation of the opener builds it: the one that removes a leaf replaces a helper device.
+    // (`rules.rs`, helper_session_commits_follow_5_2_3_to_5_2_5: the opener removes no human leaf.)
+    let World {
+        mut hub,
+        mut a,
+        mut b,
+        mut agent,
+        main,
+        ..
+    } = world(true);
+    let helper = found_helper(&mut hub, &mut agent, &main, &mut []);
+    settle(&hub, &mut a);
+    settle(&hub, &mut b);
+    let mut device = new_device();
+    let package = device.key_package(now()).unwrap();
+    assert_eq!(
+        agent.readmit_helper(&helper, Cut::none(b.id()), &device.id(), &package, now()),
+        Err(Error::BadCommit)
+    );
+    assert!(agent.outbox().is_empty());
+    assert_eq!(hub.epoch(&helper), Some(1));
+    assert!(b.group(&helper).unwrap().leaves.contains(&b.id()));
 }
 
 #[test]
@@ -525,4 +521,20 @@ fn a_work_trail_step_without_a_number() {
         last(&hub, &mut a),
         Ok(Processed::Message(Received::Dropped))
     );
+    // So is a key handover from a helper device (7.1): keys come from a human device or the opener.
+    let handover = TrommiMessage::KeyHandover {
+        recipient: a.id(),
+        keys: vec![EpochKey {
+            group: helper,
+            epoch: 0,
+            content_key: Secret::new([7; 32]),
+        }],
+        last: true,
+    };
+    forger.post_message(&mut hub, &mut forged, &codec::encode(&handover).unwrap());
+    assert_eq!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::Dropped))
+    );
+    assert_eq!(a.content_key(&helper, 0), Err(Error::NoKey));
 }
