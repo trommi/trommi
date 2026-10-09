@@ -1169,11 +1169,12 @@ impl<S: Storage> Device<S> {
                     batch.delete(device_key(SUB_STAGED, &id.to_be_bytes()));
                 }
                 (OutboxKind::KeyPackages, _) => {
+                    // The refusal may be for the KeyPackages themselves: they are not verified here.
                     for part in entry.parts.iter().filter(|part| !part.is_empty()) {
-                        let info = key_package::verify_key_package(part)?;
-                        key_package::forget(&device.provider, &info.reference)?;
-                        device.memory.key_packages.remove(&info.reference);
-                        batch.delete(device_key(SUB_KEY_PACKAGE, info.reference.as_bytes()));
+                        let reference = key_package::reference(part)?;
+                        key_package::forget(&device.provider, &reference)?;
+                        device.memory.key_packages.remove(&reference);
+                        batch.delete(device_key(SUB_KEY_PACKAGE, reference.as_bytes()));
                     }
                 }
                 _ => {}
