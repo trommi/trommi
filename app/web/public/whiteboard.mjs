@@ -3,16 +3,30 @@
 //
 //   register(t)           the page /whiteboard: the pad as large as the main area
 //
-// What is on it is the room's one board (ROOM_BOARD, the core's scribble.ts; one board per room, whatever desk is in
-// view). The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
+// What is on it is the board of the desk in view (boardOf: one board per desk, and one for "All desks", the core's
+// scribble.ts deskBoard and ALL_BOARD). On "All desks" every desk's board stands at the left as a small card with a
+// live thumbnail (whiteboardDesks, controller "whiteboard" thumbs); a click opens that desk's board. The pad runs on
+// the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's scribble.mjs).
-import { Controller, controller, html, isTyping, letterKeysOn, markArt, nextThemeMode, raw, setThemeMode } from './ui.mjs'
+import { Controller, controller, html, isTyping, letterKeysOn, markArt, nextThemeMode, raw, setThemeMode, sk } from './ui.mjs'
 import { scribbleWire } from './app.mjs'
 // The core's stroke format, shape and palette (scribble.mjs with ink.mjs and palette.mjs), loaded with this view.
-const { PEN_COLORS, MARKER_COLORS, MARKER_OPACITY, colorOf, anglesOfTilt, forceFromSpeed, packPoints, sampleStroke, ROOM_BOARD } = await scribbleWire()
-export { ROOM_BOARD }
-const canvasOf = () => ROOM_BOARD   // one board per room
+/** The core's scribble.mjs as this view loaded it (also for the dev tools: dev/migrate, e2e). */
+export const wire = await scribbleWire()
+const { PEN_COLORS, MARKER_COLORS, MARKER_OPACITY, colorOf, anglesOfTilt, forceFromSpeed, packPoints, sampleStroke, deskBoard, ALL_BOARD, MAIN_BOARD } = wire
+export { deskBoard, ALL_BOARD, MAIN_BOARD }
+/** The board the page shows: All desks' own, else the board of the desk in view (a room without desks: 'main'). */
+export const boardOf = model => (model.all ? ALL_BOARD : deskBoard(model.desk))
 
+/** The boards beside the one in view. On "All desks": a card per desk (its drawing and name, a thumbnail of its board
+ *  and how much is on it, both filled in by the controller). On a desk: the quiet way back to All desks. A room with
+ *  one desk or none has one board and nothing here. */
+function whiteboardDesks(model) {
+  const desks = model.desks ?? []
+  if (desks.length < 2) return html`<nav id="whiteboard-desks" hidden></nav>`
+  if (!model.all) return html`<nav class="board-desks is-desk" id="whiteboard-desks" aria-label="Scribble Boards"><a class="board-back" data-nav href="/scribble-board?desk=all" data-tip="All desks: its Scribble Board and every desk's">${sk('back')}<span>All desks</span></a><b class="board-here">${sk('desk')}<span>${model.deskName}</span></b></nav>`
+  return html`<nav class="board-desks" id="whiteboard-desks" aria-label="The desks' Scribble Boards">${desks.map(d => html`<a class="board-card" data-nav href="/scribble-board?desk=${d.id}" data-board="${deskBoard(d.id)}" aria-label="${d.name}: open its Scribble Board"><canvas class="board-card-thumb" width="264" height="156" aria-hidden="true"></canvas><span class="board-card-name">${sk('desk')}<b>${d.name}</b><small class="board-card-n"></small></span></a>`)}</nav>`
+}
 
 /** The sessions for the pad's "Send to…" (read by the controller whiteboard). */
 function whiteboardSessions(model) {
@@ -22,8 +36,8 @@ function whiteboardSessions(model) {
 
 /** The Scribble Board's page. It is a part of its own in the frame (app.mjs bodyParts, key "pad"): the Desk keeps the
  *  same markup under its sheet once the corner was touched, so a turn of the page mounts nothing anew. */
-export const whiteboardMain = model => raw(`<main id="whiteboard" aria-label="Scribble Board" data-controller="whiteboard" data-whiteboard-canvas-value="${canvasOf(model)}">
-${whiteboardSessions(model)}
+export const whiteboardMain = model => raw(`<main id="whiteboard" aria-label="Scribble Board" data-controller="whiteboard" data-whiteboard-canvas-value="${boardOf(model)}">
+${whiteboardSessions(model)}${whiteboardDesks(model)}
 <div class="pad" id="pad" data-tool="pen" data-place data-owns-keys>
   <canvas class="pad-canvas" id="canvas" role="img" aria-label="Scribble Board: an endless surface for notes, drawings and pictures"></canvas>
 
@@ -183,8 +197,9 @@ export function register(t) {
     t.page(req, res, { model: m, title: `Scribble Board · Trommi`, view: 'whiteboard', bodyAttrs: ' data-page="whiteboard"', main: whiteboardMain(m) })
   })
   t.live('whiteboard', {
-    take: m => ({ sessions: String(whiteboardSessions(m)), canvas: canvasOf(m) }),
-    diff: (was, now) => (was.canvas !== now.canvas ? '' : was.sessions !== now.sessions ? t.stream('replace', 'whiteboard-sessions', raw(now.sessions)) : ''),
+    take: m => ({ sessions: String(whiteboardSessions(m)), desks: String(whiteboardDesks(m)), canvas: boardOf(m) }),
+    // (another board came into view under the page, e.g. a second desk was made and the room is on All desks now: the page is drawn again)
+    diff: (was, now) => (was.canvas !== now.canvas ? t.stream('refresh') : raw([was.sessions !== now.sessions ? t.stream('replace', 'whiteboard-sessions', raw(now.sessions)) : '', was.desks !== now.desks ? t.stream('replace', 'whiteboard-desks', raw(now.desks)) : ''].map(String).join(''))),
   })
 }
 
@@ -196,16 +211,46 @@ controller('whiteboard', class extends Controller {
   connect() {
     const client = window.trommi?.client
     if (!client) return
+    this.client = client
     this.pad = mountPad(this.element, { canvasId: this.canvasValue, client })
     this.sessions = () => { try { this.pad.setSessions(JSON.parse(document.getElementById('whiteboard-sessions')?.dataset.sessions ?? '[]')) } catch {} }
     this.sessions()
-    this.watch = new MutationObserver(this.sessions)
+    this.boards = new Map()   // timeline id -> { canvas: the promise of openCanvas, timer }
+    this.thumbs()
+    this.watch = new MutationObserver(() => { this.sessions(); this.thumbs() })
     this.watch.observe(this.element, { childList: true })
+    this.themed = new MutationObserver(() => { for (const id of this.boards.keys()) this.thumb(id) })
+    this.themed.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
     this.onPen = () => window.pad?.tool('pen')
     document.addEventListener('trommi:pen', this.onPen)
   }
+  // ---- the desks' boards on "All desks": each card shows its board small and says how much is on it, live ----
+  // A card's board is opened like the pad's own (openCanvas: snapshot + tail, then what the room brings); it is closed
+  // when its card goes (another page, a desk removed).
+  thumbs() {
+    const want = new Set([...this.element.querySelectorAll('.board-card[data-board]')].map(c => c.dataset.board))
+    for (const [id, b] of this.boards) if (!want.has(id)) { clearTimeout(b.timer); b.canvas.then(c => c.close(), () => {}); this.boards.delete(id) }
+    for (const id of want) {
+      if (!this.boards.has(id)) {
+        const b = { timer: 0, canvas: null }
+        b.canvas = openCanvas({ client: this.client, timeline_id: id, onRemote: () => { clearTimeout(b.timer); b.timer = setTimeout(() => this.thumb(id), 120) } })
+        this.boards.set(id, b)
+      }
+      this.thumb(id)
+    }
+  }
+  async thumb(id) {
+    let list
+    try { list = (await this.boards.get(id)?.canvas)?.records() } catch (e) { console.warn('board card', e) }
+    const card = this.element.querySelector(`.board-card[data-board="${id}"]`)
+    if (!card || !list) return
+    paintThumb(card.querySelector('canvas'), list)
+    card.querySelector('.board-card-n').textContent = list.length ? String(list.length) : 'empty'
+    card.dataset.tip = `${list.length} element${list.length === 1 ? '' : 's'}: open`
+  }
   disconnect() {
-    this.watch?.disconnect()
+    this.watch?.disconnect(); this.themed?.disconnect()
+    for (const b of this.boards?.values() ?? []) { clearTimeout(b.timer); b.canvas.then(c => c.close(), () => {}) }
     document.removeEventListener('trommi:pen', this.onPen)
     this.pad?.unmount()
   }
@@ -568,8 +613,23 @@ function renderRect(list, rect, env, { max = 2000 } = {}) {
   return { png: cv.toDataURL('image/png'), bbox: { x: r2(rect.x), y: r2(rect.y), w: r2(rect.w), h: r2(rect.h) }, width: cv.width, height: cv.height }
 }
 
+/** A board small, for its card on "All desks": everything on it fitted into the card's canvas, on the paper of
+ *  the theme. Pictures show as their place (a card is a hint of the board, not the board). */
+function paintThumb(cv, list) {
+  const c = cv.getContext('2d'), css = getComputedStyle(document.documentElement), dark = document.documentElement.dataset.theme === 'dark'
+  c.setTransform(1, 0, 0, 1, 0, 0)
+  c.fillStyle = css.getPropertyValue('--surface').trim() || '#fff'
+  c.fillRect(0, 0, cv.width, cv.height)
+  const b = unionBox(list)
+  if (!b) return
+  const edge = 14, k = Math.min((cv.width - 2 * edge) / Math.max(1, b.w), (cv.height - 2 * edge) / Math.max(1, b.h), 2)
+  c.setTransform(k, 0, 0, k, (cv.width - b.w * k) / 2 - b.x * k, (cv.height - b.h * k) / 2 - b.y * k)
+  const env = { dark, accent: css.getPropertyValue('--accent').trim(), placeholder: css.getPropertyValue('--sunken').trim(), picture: () => ({ ok: false }) }
+  for (const el of [...list].sort((p, q) => p.z - q.z || (p.id < q.id ? -1 : 1))) paintElement(c, el, env)
+}
+
 // ---- the canvas timeline ----
-// The pad's canvas, end-to-end encrypted: one canvas timeline of the room (ROOM_BOARD; session/<session_id> for a session's),
+// The pad's canvas, end-to-end encrypted: one canvas timeline of the room (a desk's board or All desks', boardOf; session/<session_id> for a session's),
 // carried by the client core (trommi-hub client/core: sendStrokes, loadTimelineAfter, uploadAttachment, registers).
 // The wire and the merge are wire.js; this file is the glue between the pad's element records (elements.js) and it.
 //

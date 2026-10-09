@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { packPoints, unpackPoints, bake, sampleStroke, anglesOfTilt, forceFromSpeed, thickness, Q } from './ink.ts'
-import { CanvasState, entryOf, shapeOf } from './scribble.ts'
+import { CanvasState, entryOf, shapeOf, deskBoard, MAIN_BOARD, ALL_BOARD } from './scribble.ts'
 import { PALETTE, PEN_COLORS, MARKER_COLORS, colorOf, isToken } from './palette.ts'
 import { b64u } from './crypto/zcrypto.mjs'
 
@@ -142,6 +142,16 @@ await test('shape: a stroke being drawn is sampled piece by piece (from, to): a 
   // no gap between a piece and the next: each begins where the one before it ends (within the sampling step)
   for (let k = 1; k < pieces.length; k++) assert.ok(Math.hypot(pieces[k][0] - pieces[k - 1].at(-3), pieces[k][1] - pieces[k - 1].at(-2)) <= 0.5, `piece ${k} joins the one before`)
   assert.deepEqual(sampleStroke(pts, f, { ...opt, from: 0, to: Infinity }), whole)
+})
+
+await test('boards: one per desk and one for All desks, the same id on every client', () => {
+  assert.equal(deskBoard('main'), 'desk/6d61696e000000000000000000000004'); assert.equal(deskBoard('main'), MAIN_BOARD)
+  assert.equal(deskBoard(null), MAIN_BOARD); assert.equal(deskBoard(''), MAIN_BOARD)
+  assert.equal(deskBoard('a1b2c3d4'), 'desk/61316232633364340000000000000008')
+  assert.equal(deskBoard('0123456789abcdef0123456789abcdef'), 'desk/0123456789abcdef0123456789abcdef')
+  assert.equal(deskBoard('all-desks'), ALL_BOARD); assert.equal(ALL_BOARD, 'desk/616c6c2d6465736b7300000000000009')
+  assert.notEqual(ALL_BOARD, deskBoard('all'))   // (the board "All" had before 8 October is not read again)
+  for (const id of [MAIN_BOARD, ALL_BOARD, deskBoard('ä desk with a long name, longer than sixteen bytes')]) assert.match(id, /^desk\/[0-9a-f]{32}$/)
 })
 
 await test('input: tilt to azimuth and altitude, simulated force from speed', () => {

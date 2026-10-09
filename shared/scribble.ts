@@ -28,10 +28,28 @@ import type { AttachmentRef } from './types.ts'
 export * from './ink.ts'       // one import for the app: the format, the shape and the palette
 export * from './palette.ts'
 
-/** The room's one Scribble Board (since 8 October 2026: one board per room, no board per desk). Its timeline is the
- *  one the 'main' desk's board had (desk/ and 'main' folded into 32 hex), so what was drawn there stays on it; the
- *  other desks' old boards were moved onto it once (dev/migrate/scribble-first-format.js). */
-export const ROOM_BOARD = 'desk/6d61696e000000000000000000000004'
+// ---- which board: one per desk, and one for "All desks" (9 October 2026) ----
+// A board is a scribble timeline desk/<32 hex> (the core's parseTimelineId). Every client derives the same id:
+//   a desk            deskBoard(desk id): a desk id of 32 hex is taken as it is; any other ('main', a menu desk's
+//                     8 hex) is folded into 16 bytes: its UTF-8 XORed by position (byte i onto i mod 16), then the
+//                     length XORed onto the last byte. 'main' -> 6d61696e000000000000000000000004.
+//   "All desks"       ALL_BOARD, a board of its own (the fold of 'all-desks'), never a desk's.
+//   no desks yet      the board of 'main' (MAIN_BOARD): the first desk is made with the id 'main', so it stays.
+// MAIN_BOARD is the timeline that was the room's one board on 8 and 9 October 2026 (ROOM_BOARD): what was drawn
+// there is the 'main' desk's board now.
+/** The Scribble Board of a desk: its scribble timeline id (see above). */
+export function deskBoard(desk: string | null | undefined): string {
+  const id = String(desk || 'main')
+  if (/^[0-9a-f]{32}$/.test(id)) return `desk/${id}`
+  const bytes = new TextEncoder().encode(id), out = new Uint8Array(16)
+  bytes.forEach((v, i) => { out[i % 16]! ^= v })
+  out[15]! ^= bytes.length & 0xff
+  return `desk/${[...out].map(b => b.toString(16).padStart(2, '0')).join('')}`
+}
+/** The board of the 'main' desk, and of a room without desks. */
+export const MAIN_BOARD = 'desk/6d61696e000000000000000000000004'
+/** The board of "All desks". */
+export const ALL_BOARD = 'desk/616c6c2d6465736b7300000000000009'
 
 // ---- shapes ----
 // A shape is the board's own form of one element: { id, by, tool, pts (board units), z, group, … }.
