@@ -1,0 +1,13 @@
+[package]
+name = "trommi-uniffi-bindgen"
+version = "0.0.0"
+edition.workspace = true
+publish.workspace = true
+description = "The UniFFI binding generator at the workspace's pinned version (a crate of its own: its dependencies never reach the library the app links)."
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/main.rs"
+
+[dependencies]
+uniffi = { version = "=0.32.2", features = ["cli"] }
