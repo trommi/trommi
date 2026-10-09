@@ -43,8 +43,9 @@ const unquiet = model => (model.cut?.length ? (model.cut.length === 1 ? 'One can
 function deskHead(model, base) {
   const n = model.fresh.length
   if (!model.units.length) return deskInvite()
-  const words = ((!n && unquiet(model)) || greeting(!n)).split(' '), last = words.pop()
-  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><h2 class="desk-hello">${words.join(' ')} <em>${last}</em></h2>${deskGoals(model)}${n ? html`<div class="desk-tools">${duckAll(model, base)}${nextPlease(model, base)}</div>` : ''}</header>`
+  const waits = walkOf(model).length   // (the tools stand for what is only to read too: Blitz reads card by card, the duck closes all)
+  const words = ((!n && unquiet(model)) || greeting(!waits)).split(' '), last = words.pop()
+  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><h2 class="desk-hello">${words.join(' ')} <em>${last}</em></h2>${deskGoals(model)}${waits ? html`<div class="desk-tools">${duckAll(model, base)}${nextPlease(model, base)}</div>` : ''}</header>`
 }
 
 /** The desk's goals (his word, 8 October): a short note of his own right under the greeting, at most five lines
@@ -102,29 +103,32 @@ ${deskHead(model, base)}
 </div>`
 
 // ---- the walk's button ----
-// A drawn button into the walk through every open question (his word, 6 October: "ein Button mit eigenem Design"):
+// A drawn button into the walk through every open card, what is only to read too (his word, 6 October: "ein Button mit eigenem Design"):
 // a small lightning bolt in the pen's line, the word (WORDS.walk, the one place it stands: Blitz), the count in an ink
 // disc. desk.css (.desk-blitz). The address is /blitz; a card in the walk carries ?walk=1, as a session's own walk does.
 const BOLT = raw('<svg class="blitz-bolt" viewBox="0 0 24 24" aria-hidden="true"><path d="M13.9 2.9 Q10.2 8.2 6.3 13.4 Q9.4 13 12.2 13.2 Q10.8 17.2 9.7 21.2 Q14 15.7 18 10.2 Q14.8 10.7 11.9 10.6 Q13.1 6.7 13.9 2.9 Z"/></svg>')
 
-/** The button for n > 0 open cards (model.fresh, in the hub's order): a link to the walk. */
+/** The button for n > 0 open cards (app.mjs walkOf: the questions, then what is to read): a link to the walk. */
 function nextPlease(model, base) {
-  const n = model.fresh.length
-  return html`<a class="desk-blitz" data-nav href="${base}/blitz" title="${WORDS.walk}: every open question, one after the other (G B)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G B">${BOLT}<span>${WORDS.walk}</span><b class="desk-blitz-n">${n}</b></a>`
+  const n = walkOf(model).length
+  return html`<a class="desk-blitz" data-nav href="${base}/blitz" title="${WORDS.walk}: every open card, one after the other (G B)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open card' : `${n} open cards`}" aria-keyshortcuts="G B">${BOLT}<span>${WORDS.walk}</span><b class="desk-blitz-n">${n}</b></a>`
 }
 
 // ---- the duck for all ----
 // Left of Blitz, smaller and quieter: the duck of "I don't give a duck". One press asks, in a small sheet of its
-// own (no browser dialog); "Yes" answers every open decision on this Desk the way the single card's duck does, one
-// answer per card (POST <base>/cards/batch, way "duck": hub.trust per card, one toast whose Undo takes all back).
-// Infos and permission requests are not touched (the sheet does not say so: one line and two buttons). Not there when no decision is open.
+// own (no browser dialog); "Yes" clears everything open on this Desk at once (his word, 9 October: "alle schließen"):
+// every open decision is answered the way the single card's duck does, everything that is only to read is closed as
+// read, one deed per card (POST <base>/cards/batch, way "sweep": hub.trust or hub.closeInfo per card, one toast whose
+// Undo takes all back). Permission requests are never touched. Not there when only permission requests are open.
 function duckAll(model, base) {
-  const ids = model.fresh.filter(c => c.kind === 'decision').map(c => c.id), n = ids.length
+  const cards = walkOf(model).filter(c => c.kind === 'decision' || c.kind === 'info'), n = cards.length
   if (!n) return ''
-  const tip = n === 1 ? 'I don’t give a duck: for the one open decision' : `I don’t give a duck: for all ${n} open decisions`
+  const asks = cards.filter(c => c.kind === 'decision').length, reads = n - asks
+  const tip = !reads ? (n === 1 ? 'I don’t give a duck: for the one open decision' : `I don’t give a duck: for all ${n} open decisions`) : !asks ? (n === 1 ? 'I don’t give a duck: close the one card to read' : `I don’t give a duck: close all ${n} cards to read`) : `I don’t give a duck: for all ${n} open cards`
+  const ask = !reads ? html`Answer ${n === 1 ? 'it' : html`all ${n}`} with “I don’t give a duck”?` : !asks ? html`Close ${n === 1 ? 'it' : html`all ${n}`} as read?` : html`Duck all ${n}? ${asks === 1 ? '1 decision goes' : `${asks} decisions go`} to the agents, ${reads === 1 ? '1 card to read is' : `${reads} cards to read are`} closed.`
   return html`<details class="t-pick desk-duck" data-controller="pops"><summary class="desk-duck-open" title="${tip}" aria-label="${tip}">${sk('duck')}</summary>
-<form class="desk-duck-ask" method="post" action="${base}/cards/batch" aria-label="Answer all open decisions"><input type="hidden" name="way" value="duck"><input type="hidden" name="ids" value="${ids.join(',')}">
-<p>Answer ${n === 1 ? 'it' : html`all ${n}`} with “I don’t give a duck”?</p>
+<form class="desk-duck-ask" method="post" action="${base}/cards/batch" aria-label="Clear everything open"><input type="hidden" name="way" value="sweep"><input type="hidden" name="ids" value="${cards.map(c => c.id).join(',')}">
+<p>${ask}</p>
 <div class="desk-duck-ways"><button type="submit" class="desk-duck-yes">${sk('duck')}<span>Yes, duck ${n === 1 ? 'it' : 'them all'}</span></button><button type="button" class="desk-duck-no" data-pop-close>Cancel</button></div>
 </form></details>`
 }
@@ -752,8 +756,10 @@ export function register(t) {
     })
     // Several cards at once (the selection bar): each through the same way as one card's own button; one toast whose
     // Undo takes all of them back (later -> wake, the others -> reopen).
-    const BATCH = { later: id => t.hub.snooze(id, {}), wake: id => t.hub.snooze(id, { clear: true }), duck: id => t.hub.trust(id, ''), shred: id => t.hub.shred(id, ''), read: id => t.hub.closeInfo(id), reopen: id => t.hub.reopen(id) }
-    const BACK = { later: 'wake', duck: 'reopen', shred: 'reopen', read: 'reopen' }
+    const BATCH = { later: id => t.hub.snooze(id, {}), wake: id => t.hub.snooze(id, { clear: true }), duck: id => t.hub.trust(id, ''), shred: id => t.hub.shred(id, ''), read: id => t.hub.closeInfo(id), reopen: id => t.hub.reopen(id),
+      // (the Desk's duck for all: a decision is left to its agent, what is only to read is closed; never a permission request)
+      sweep: (id, c) => (c.kind === 'info' ? t.hub.closeInfo(id) : t.hub.trust(id, '')) }
+    const BACK = { later: 'wake', duck: 'reopen', shred: 'reopen', read: 'reopen', sweep: 'reopen' }
     const WHAT = { later: 'snooze', duck: 'trust', shred: 'shred' }   // (a single card's toast: app.mjs SAID)
     const SAID = { later: WORDS.later, duck: 'Left to the agents', shred: 'Shredded', read: 'Read', wake: 'Back on the Desk', reopen: 'Back on the Desk' }
     t.post(/^\/cards\/batch$/, async ({ req, res, form }) => {
@@ -765,8 +771,9 @@ export function register(t) {
         const c = m0.byCard.get(id)
         if (way === 'duck' && c.kind !== 'decision') continue
         if (way === 'read' && c.kind !== 'info') continue
+        if (way === 'sweep' && c.kind !== 'decision' && c.kind !== 'info') continue
         if ((way === 'later' || way === 'shred') && c.kind === 'permission') continue
-        try { await BATCH[way](id); done.push(id) } catch (err) { console.warn(way, id, err.message) }
+        try { await BATCH[way](id, c); done.push(id) } catch (err) { console.warn(way, id, err.message) }
       }
       // From a card's own page (from: that card): on to the next open card, or back to where it was opened from
       // (the Desk when none is left); the toast with its Undo comes along as on any card's action.
@@ -787,7 +794,7 @@ export function register(t) {
         const to = n === 1 ? cardPath(m0.byCard.get(done[0]), BASE) : `${BASE}/`
         if (at !== to) return t.sendStream(req, res, t.stream('visit', to))
       }
-      return t.sendStream(req, res, t.toast({ head: SAID[way], line: n === 1 ? m0.byCard.get(done[0]).title : `${n} cards`, undo: back && n ? { action: `${BASE}/cards/batch`, fields: { way: back, ids: done.join(',') } } : null }))
+      return t.sendStream(req, res, t.toast({ head: way === 'sweep' ? (done.every(id => m0.byCard.get(id).kind === 'info') ? SAID.read : SAID.duck) : SAID[way], line: n === 1 ? m0.byCard.get(done[0]).title : `${n} cards`, undo: back && n ? { action: `${BASE}/cards/batch`, fields: { way: back, ids: done.join(',') } } : null }))
     })
     t.get(/^\/blitz$/, ({ res, url }) => {
       const next = walkOf(model())[0], said = url.searchParams.get('said')

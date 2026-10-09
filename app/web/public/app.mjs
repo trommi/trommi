@@ -175,8 +175,9 @@ export function heardOf(card, now = Date.now()) {
 // "All desks" (his word, 7 October: "one overall desk … the existing desks are its children"): the desk id ALL_DESKS
 // stands for every desk at once; nothing is stored on the hub for it, it is this browser's choice like any desk.
 export const ALL_DESKS = 'all'
-/** The walk (Blitz, a card's before and next): the open questions. */
-export const walkOf = m => m.fresh
+/** The walk (Blitz, a card's before and next): every open card that waits for him, the questions first, then what
+ *  is only to read (his word, 9 October: "Karte für Karte lesen"). Not what is with an agent. */
+export const walkOf = m => (m.walk ??= [...m.fresh, ...(m.reads ?? [])])
 function boardModel(state, agents = state.agents, desk = null) {
   const desks = state.desks?.length ? state.desks : null
   const all = Boolean(desks && desks.length > 1 && desk === ALL_DESKS)

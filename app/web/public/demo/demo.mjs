@@ -645,13 +645,19 @@ function quietDesk(f) {
 
 // ?mock=foot: nothing open on the Desk ("Carry on."), but full piles at its foot: every question answered, and many
 // pages the agents published (the phone's foot with three full piles and the empty Desk under them).
-function fullFoot(f) {
-  for (const c of f.cards) if (c.closed_how !== 'shredded' && (c.object_state !== 'closed' || c.closed_how === 'closed')) {
+// ?mock=reads: only cards to read wait on the Desk (every question answered, no permission request): the duck and
+// Blitz stand for them too.
+function onlyReads(f) { settleAll(f, c => c.card_type === 'info'); return f }
+function settleAll(f, keep = () => false) {
+  for (const c of f.cards) if (!keep(c) && c.closed_how !== 'shredded' && (c.object_state !== 'closed' || c.closed_how === 'closed')) {
     const v = c.versions?.at(-1)
     c.answer ??= { answer_action: 'answer', choices: [v?.content?.options?.[0]?.key ?? 'a'], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: c.version_hash, bound_object_version: c.object_version ?? 1, envelope_number: c.first_envelope_number, answered_at: Date.now() }
     c.answers = [c.answer]; c.object_state = 'closed'; c.closed_how = 'settled'; c.in_revision = null
   }
   f.permissions = []
+}
+function fullFoot(f) {
+  settleAll(f)
   const pages = f.published.filter(p => p.attachments?.[0]?.media_type === 'text/html')
   const names = ['desklook-tabs', 'desklook-table', 'desklook-rows', 'cardscribble-trace', 'toast-slot', 'pages-pile', 'phone-foot', 'done-rows', 'tracing-sheet', 'all-desks']
   for (let i = 0; i < 60 && pages.length; i++) {
@@ -694,6 +700,7 @@ async function loadFixture(kind) {
   const f = (overloaded(filler(putAway(structuredClone(fixtureCache)))))
   if (kind === 'many') return manyHelpers(crowded(f))
   if (kind === 'foot') return fullFoot(f)
+  if (kind === 'reads') return onlyReads(f)
   return kind === 'side' ? crowded(f) : kind === 'link' ? linkDemo(f) : f
 }
 
