@@ -1,11 +1,11 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.4
 // TrommiApp: the iOS app (an xtool project: exactly one library product, the app). It uses TrommiCore and TrommiClient
 // from ../TrommiCore. Build and ship from Linux with omarchy-apple-dev (ios/README.md).
 import PackageDescription
 
 let package = Package(
   name: "TrommiApp",
-  platforms: [.iOS(.v18), .macOS(.v15)],
+  platforms: [.iOS(.v27), .macOS(.v15)],
   products: [
     // An xtool project's first library product is the main app; each further one is an app extension (xtool.yml).
     .library(name: "TrommiApp", targets: ["TrommiApp"]),

@@ -1,4 +1,4 @@
-// swift-tools-version:6.0
+// swift-tools-version:6.4
 // TrommiCore: the Trommi crypto core (shared/crypto/FORMAT.md) in pure Swift, the hub client on top of it, and the
 // command-line client `trommi-swift`. Crypto: swift-crypto (Apple's CryptoKit API; on Apple platforms it is CryptoKit),
 // Argon2id: the vendored C reference implementation (Sources/CArgon2).
@@ -6,7 +6,7 @@ import PackageDescription
 
 let package = Package(
   name: "TrommiCore",
-  platforms: [.iOS(.v18), .macOS(.v15)],
+  platforms: [.iOS(.v27), .macOS(.v15)],
   products: [
     .library(name: "TrommiCore", targets: ["TrommiCore"]),
     .library(name: "TrommiClient", targets: ["TrommiClient"]),
@@ -15,7 +15,7 @@ let package = Package(
     .executable(name: "trommi-swift", targets: ["trommi-swift"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
+    .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.2"),
   ],
   targets: [
     .target(
