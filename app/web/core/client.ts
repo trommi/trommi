@@ -127,7 +127,7 @@ export interface ClientOptions {
   now?: () => number
 }
 /** An invite as this device keeps it beside what the model shows. */
-interface InviteKept { public: Invite; checked_at?: number; confirmed_at?: number; done?: boolean }
+interface InviteKept { public: Invite; checked_at?: number; done?: boolean }
 
 export class Client {
   model: Model
@@ -153,6 +153,7 @@ export class Client {
   private readonly invites = new Map<string, InviteKept>()
   private inviteTimer: ReturnType<typeof setInterval> | null = null
   private readonly checking = new Set<string>()
+  private readonly finishing = new Set<string>()
   /** A note's newest version as THIS client sealed it (ahead of the model while versions are in flight). */
   private readonly localHeads = new Map<string, { object_version: number; version_hash: string; content: Fields }>()
   private lamport = 0
@@ -238,10 +239,15 @@ export class Client {
     if (this.flushTimer !== null) { clearTimeout(this.flushTimer); this.flushTimer = null }
     return this.flushing = this.flushing.catch(() => {}).then(async () => {
       if (!this.dirty.size) return
-      const entries: [string, unknown | undefined][] = [...this.dirty]
+      const taken = [...this.dirty]
       this.dirty.clear()
-      entries.push(['client/at', { cursor: this.engine.cursor, device: this.my_device_id }])
-      await this.cache.setMany(entries)
+      const entries: [string, unknown | undefined][] = [...taken, ['client/at', { cursor: this.engine.cursor, device: this.my_device_id }]]
+      try { await this.cache.setMany(entries) } catch (e) {
+        // not written: the records stay due (a newer value of one wins), so a later write cannot stamp the cursor
+        // over a cache that lacks them
+        for (const [key, value] of taken) if (!this.dirty.has(key)) this.dirty.set(key, value)
+        throw e
+      }
     })
   }
 
@@ -256,6 +262,7 @@ export class Client {
       if (done.commit) M.applyCommit(this.model, done.commit, this.change, { by_recovery: room && done.commit.external, removed_me: done.removed && room, now: this.now() })
       const m = done.message
       if (m?.kind === 'workTrail') { const s = e.groups.find(g => sameBytes(g.group, item.group))?.session; if (s) M.applyWorkTrail(this.model, hex(s.sessionId), m, item.change, this.change) }
+      else if (m?.kind === 'recoveryAuthConflict') M.pushAlert(this.model, this.change, { code: 'equivocation', message: 'two different confirmations of the recovery key were sent: neither replaces the one this device holds', envelope_number: item.change, sender_device_id: m.from ? hex(m.from) : null, at: this.now() })
       else if (m?.kind === 'newerVersion') M.noteNewer(this.model, this.change, 'message type', { envelope_number: item.change })
     })
     on('relay', m => { if (m.kind === 'strokePiece') M.applyStrokePiece(this.model, m, this.change, { now: this.now() }) })
@@ -296,6 +303,7 @@ export class Client {
         return
       case 'invite_request': void this.checkInvite(hex(event.invite_id)).catch(() => {}); return
       case 'file_evicted': this.attachmentCache.delete(hex(event.file_id)); return
+      case 'archived': void this.engine.archive(event.group).catch(() => {}); return
       default:
     }
   }
@@ -308,6 +316,8 @@ export class Client {
     if (refusal) {
       // the views see the item `failed` in the change that takes the echo back
       sent.item.outbox_state = 'failed'; sent.item.error = refusal
+      // a refused Note version is no basis for the next one
+      if (sent.item.envelope_kind?.startsWith('note') && sent.item.object_id) this.localHeads.delete(sent.item.object_id)
       M.rollbackEcho(this.model, sent.local_id, ch)
       M.pushAlert(this.model, ch, { code: refusal, message: `the hub refused an envelope (${refusal})`, at: this.now() })
       ch.outbox = true
@@ -339,7 +349,9 @@ export class Client {
     if (this.started) return
     this.started = true
     if (this.rebuild) await this.fromDesk().catch(() => {})
+    if (!this.started) return
     await this.engine.start({ stream })
+    if (!this.started) return     // stopped meanwhile: no timer is left behind
     if (this.rebuild) { this.rebuild = false; await this.engine.wantRescan() }
     this.inviteTimer = setInterval(() => this.watchInvites(), 1000)
     void this.nameDevice().catch(() => {})
@@ -480,13 +492,23 @@ export class Client {
     for (const k of keys) if (k.startsWith('device/') && k !== `device/${this.my_device_id}`) fail('forbidden', 'a device writes only its own device register')
     const group = session_id ? this.sessionGroup(session_id) : this.core.roomGroupId(this.room_id)
     if (!session_id) this.needHuman()
-    const local_id = `local-${randomHex(8)}`
-    const shown = Object.fromEntries(keys.filter(k => !k.startsWith('device/')).map(k => [k, values[k] ?? null]))
-    if (!session_id && Object.keys(shown).length) this.tell(ch => M.echoRegisters(this.model, { local_id, values: shown }, ch))
-    return this.send(local_id, keys.map(key => {
+    // one echo and one envelope per name: a name whose sealing fails is taken back alone
+    let last: Sent | null = null
+    for (const key of keys) {
+      const local_id = `local-${randomHex(8)}`
+      if (!session_id && !key.startsWith('device/')) this.tell(ch => M.echoRegisters(this.model, { local_id, values: { [key]: values[key] ?? null } }, ch))
       const { name, value } = encodeRegister(key, values[key] ?? null)
-      return { draft: { kind: 'register', group, name, value } satisfies Draft, files: fileIdsOf('register', { value: values[key] }), item: { content: { key } } }
-    }))
+      last = await this.send(local_id, [{ draft: { kind: 'register', group, name, value }, files: fileIdsOf('register', { value: values[key] }), item: { content: { key } } }])
+      if (key.startsWith('session/') && (values[key] as { archived?: unknown } | null)?.archived === true) void this.archive(key.slice('session/'.length)).catch(() => {})
+    }
+    return last!
+  }
+  /** An archived session is over for good (5.2.10): the hub takes nothing more for its group, and neither does this device. */
+  private async archive(session_id: string): Promise<void> {
+    const group = this.engine.groups.find(g => g.session && hex(g.session.sessionId) === session_id)
+    if (!group || group.archived) return
+    await this.hub.archiveGroup(group.group)
+    await this.engine.archive(group.group)
   }
   setDraft(object_id: string, draft: unknown): Promise<Sent> { return this.setRegisters({ [`draft/${object_id}`]: draft ?? null }) }
   snooze(object_id: string, until: number | null | undefined): Promise<Sent> { return this.setRegisters({ [`snooze/${object_id}`]: until == null ? null : { until } }) }
@@ -574,12 +596,13 @@ export class Client {
     return rows.map(([, v]) => v as TimelineItem)
   }
   /** One page of a Chat or a board from the hub, read by the core out of the hub's order. */
-  private async page(timeline_key: string, opts: { before?: number; after?: number; limit: number }): Promise<{ received: ReceivedEnvelope[]; more: boolean }> {
+  private async page(timeline_key: string, opts: { before?: number; after?: number; limit: number }): Promise<{ received: ReceivedEnvelope[]; more: boolean; last: number }> {
     const p = M.parseTimelineKey(timeline_key), ref = unhex(p.scope_id)
     const got = p.timeline_kind === 'scribble'
       ? await this.hub.boardItems(ref, { after_change: opts.after ?? 0, limit: opts.limit })
       : await this.hub.chatItems(p.scope as 'session' | 'card', ref, { ...(opts.before !== undefined && Number.isFinite(opts.before) ? { before: opts.before } : {}), limit: opts.limit })
-    return { received: (await this.engine.receivePage(got.items)).filter(r => r.outcome !== 'refused'), more: got.more }
+    // `last`: how far the hub's page went, whatever of it could be read
+    return { received: (await this.engine.receivePage(got.items)).filter(r => r.outcome !== 'refused'), more: got.more, last: got.items.at(-1)?.change ?? 0 }
   }
   /** Older items of a timeline, newest first: from the cache where it holds them, else the hub's page. `into`: the
    *  model the hub's page is applied to (the client's own, or a scratch one for a read that must not grow the window). */
@@ -605,6 +628,8 @@ export class Client {
   }
   /** Loads the next older page of a timeline into the window. */
   async loadTimeline(timeline_key: string, { limit = 50 }: { limit?: number } = {}): Promise<{ loaded: number; has_more: boolean }> {
+    // a board has no pages towards the past (its route reads forwards from a change): all of it, once
+    if (timeline_key.startsWith('scribble:')) return { loaded: (await this.loadTimelineAfter(timeline_key, 0)).loaded, has_more: false }
     const t = M.timelineOf(this.model, timeline_key)
     t.window_open = true
     const ch = M.emptyChange()
@@ -636,11 +661,14 @@ export class Client {
           M.applyEnvelope(this.model, r, ch, { now: this.now() })
           const item = t.items.get(r.header.change)
           if (item && !(out.get(r.header.change)?.content && !item.content)) out.set(r.header.change, item)
-          after = Math.max(after, r.header.change)
         }
-        if (!page.more || !page.received.length) break
+        if (!page.more || page.last <= after) break
+        after = page.last
       }
-    } catch (e) { if (!(e instanceof HubError) || !e.transient) throw e }
+    } catch (e) {
+      // not reached: what the cache holds is given if it holds anything, else the caller hears that nothing was read
+      if (!(e instanceof HubError) || !e.transient || !out.size) throw e
+    }
     const items = [...out.values()].sort((a, b) => a.envelope_number! - b.envelope_number!)
     for (const it of items) { if (!t.items.get(it.envelope_number!)?.content) t.items.set(it.envelope_number!, it); M.addItem(ch, timeline_key, it) }
     ch.timelines.add(timeline_key)
@@ -714,13 +742,13 @@ export class Client {
    * sides show the same six emoji, and `confirmInvite` adds the newcomer or burns the link. `takeover` with
    * `session_id`: the agent that joins continues that session and the device that held it is removed (5.3, 13.5).
    */
-  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', label = null, session_id = null, with_history = false, takeover = false, desk = null }: { device_role?: 'human' | 'agent'; app_url?: string; ttl_ms?: number; label?: string | null; session_id?: string | null; with_history?: boolean; takeover?: boolean; desk?: string | null } = {}): Promise<Invite> {
+  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', label = null, session_id = null, with_history, takeover = false, desk = null }: { device_role?: 'human' | 'agent'; app_url?: string; ttl_ms?: number; label?: string | null; session_id?: string | null; with_history?: boolean; takeover?: boolean; desk?: string | null } = {}): Promise<Invite> {
     this.needHuman()
     if (takeover && (device_role !== 'agent' || !session_id || !this.model.sessions.get(session_id)?.group_id)) fail('bad-argument', 'a takeover invite names an existing session and is for an agent')
     const opened = await this.engine.do(() => this.invitable().inviteOpen(device_role, takeover ? unhex(session_id!) : null, originOf(app_url), this.hub.hub_url, this.now()))
     await this.hub.postInvite(opened.offer, opened.signature)
     const invite_id = hex(opened.inviteId)
-    const pub: Invite = { invite_id, device_role, link: opened.link, label: label ?? '', session_id: takeover ? session_id : null, with_history: takeover || with_history, takeover: !!takeover,
+    const pub: Invite = { invite_id, device_role, link: opened.link, label: label ?? '', session_id: takeover ? session_id : null, with_history: takeover ? with_history !== false : !!with_history, takeover: !!takeover,
       desk: device_role === 'agent' && !takeover && typeof desk === 'string' && desk ? desk.slice(0, 64) : null, confirm_code: true, expires_at: opened.expiresAt, check_code: null, invite_state: 'open', newcomer: null, error: null }
     this.invites.set(invite_id, { public: pub })
     this.model.invites.set(invite_id, pub)
@@ -735,8 +763,8 @@ export class Client {
       if (state === 'open' && this.now() > kept.public.expires_at) this.setInvite(id, { invite_state: 'expired', done: true })
       else if (state === 'confirm_code' && this.now() > (kept.checked_at ?? 0) + INVITE_CONFIRM_MS) this.setInvite(id, { invite_state: 'expired', error: 'invite-expired', done: true })
       else if (state === 'open') void this.checkInvite(id).catch(() => {})
-      // an invite confirmed before a restart is finished by whoever runs now
-      else if (state === 'adding' && kept.confirmed_at === undefined) { kept.confirmed_at = this.now(); void this.finishInvite(id).catch(() => {}) }
+      // an invite that was confirmed and is not through (a restart, a hub that did not answer) is taken up again
+      else if (state === 'adding' && !this.finishing.has(id)) void this.finishInvite(id).catch(() => {})
     }
   }
   private async checkInvite(invite_id: string): Promise<void> {
@@ -769,13 +797,14 @@ export class Client {
       void this.hub.deleteInvite(unhex(invite_id)).catch(() => {})
       return fail('code-mismatch', 'the check codes do not match: nobody was added, the invite is spent')
     }
-    kept.confirmed_at = this.now()
     this.setInvite(invite_id, { invite_state: 'adding' })
     await this.finishInvite(invite_id)
   }
   private async finishInvite(invite_id: string): Promise<void> {
     const kept = this.invites.get(invite_id)!
     const pub = kept.public, e = this.engine, id = unhex(invite_id)
+    if (this.finishing.has(invite_id)) return
+    this.finishing.add(invite_id)
     try {
       const role = pub.device_role
       const inside = (device: Uint8Array): boolean => ((role === 'human' ? e.roles?.humans : e.roles?.agents) ?? []).some(d => sameBytes(d, device))
@@ -798,9 +827,10 @@ export class Client {
         await e.land(d => d.sendRecoveryAuth(newDevice))
         await e.healNow()
       } else if (pub['takeover'] && pub['session_id']) {
-        await this.takeOver(pub['session_id'] as string, newDevice, keyPackage, true)
+        await this.takeOver(pub['session_id'] as string, newDevice, keyPackage, pub['with_history'] !== false)
       } else {
-        const session_id = await this.foundSession(newDevice, keyPackage)
+        const has = e.groups.find(g => g.session && !g.archived && g.leaves.some(l => sameBytes(l, newDevice)))
+        const session_id = has?.session ? hex(has.session.sessionId) : await this.foundSession(newDevice, keyPackage)
         pub['session_id'] = session_id
         // the name the human chose when inviting, and the desk the invite was made on
         const place = { ...(pub.label ? { name: pub.label } : {}), ...(pub['desk'] ? { desk: pub['desk'] } : {}) }
@@ -808,9 +838,13 @@ export class Client {
       }
       this.setInvite(invite_id, { invite_state: 'joined', done: true })
     } catch (err) {
-      this.setInvite(invite_id, { invite_state: 'failed', error: String((err as { code?: unknown }).code ?? 'failed'), done: true })
+      // not reached, busy, stopped: the invite stays `adding` and is taken up again (watchInvites); every step
+      // above looks first at what is done already
+      const code = String((err as { code?: unknown }).code ?? 'failed')
+      const later = (err instanceof HubError && err.transient) || code === 'stopped' || code === 'busy' || code === 'offline'
+      if (!later) this.setInvite(invite_id, { invite_state: 'failed', error: code, done: true })
       throw err
-    }
+    } finally { this.finishing.delete(invite_id) }
   }
 
   // ---- sessions, takeover, removal (5.2, 5.3)
@@ -838,8 +872,11 @@ export class Client {
   private async takeOver(session_id: string, agent: Uint8Array, keyPackage: Uint8Array | null, history: boolean): Promise<void> {
     const e = this.engine, main = this.sessionGroup(session_id)
     const mine = (parent: Uint8Array | undefined): boolean => !!parent && hex(parent) === session_id
-    const groups = (): Uint8Array[] => e.groups.filter(g => g.session && !g.archived && (sameBytes(g.group, main) || mine(g.session.parent))).map(g => g.group)
-    if (!groups().length) fail('not-found', `no session ${session_id}`)
+    // the main session first: a helper session's new opener must be the main session's agent leaf already (5.2.3)
+    const groups = (): Uint8Array[] => e.groups.filter(g => g.session && !g.archived && (sameBytes(g.group, main) || mine(g.session.parent))).map(g => g.group).sort((x, y) => Number(sameBytes(y, main)) - Number(sameBytes(x, main)))
+    // (helper sessions this device has a Welcome for and has not joined yet are taken first)
+    await e.joinNow(null)
+    if (!groups().some(g => sameBytes(g, main))) fail('not-found', `no session ${session_id}`)
     for (const g of groups()) e.hold(g, true)
     try {
       const agents = e.roles?.agents ?? []
@@ -877,16 +914,15 @@ export class Client {
     await e.healNow()
     return { key_epoch: this.model.room.key_epoch }
   }
-  /** Log out: this device removes itself with its own Cut. The hub ends its access with that Commit; the session
-   *  groups are cleaned by a human device that stays. The client is stopped afterwards, whatever happened. */
-  async leaveRoom(): Promise<{ key_epoch: number; humans_left: number }> {
+  /** Log out. The core lets no device commit its own removal, so nothing is removed here: what is still in the
+   *  outbox goes out if it can, the client stops, and the caller wipes this device's storage. The device stays a
+   *  member (it shows under Devices) until another human device removes it; `removed` says so. */
+  async leaveRoom(): Promise<{ key_epoch: number; humans_left: number; removed: false }> {
     this.needHuman()
-    await this.settle({ timeout_ms: 3000 }).catch(() => {})
-    const e = this.engine, room = this.core.roomGroupId(this.room_id)
     try {
-      await e.land(async d => d.removeHumanDevices([await d.cutOf(room, e.device_id)], this.now()))
+      await this.settle({ timeout_ms: 3000 }).catch(() => {})
       const humans_left = [...this.model.members.values()].filter(m => m.is_active && m.device_role === 'human' && m.device_id !== this.my_device_id).length
-      return { key_epoch: this.model.room.key_epoch + 1, humans_left }
+      return { key_epoch: this.model.room.key_epoch, humans_left, removed: false }
     } finally { await this.stop().catch(() => {}) }
   }
 
