@@ -1,7 +1,7 @@
 // The TypeScript declarations of the browser binding, used as an app would: `tsc` must accept this file under the
 // strictest settings (tests/bindings/tsconfig.json). It is compiled, never run.
 import {
-  Device, FileDecryptor, FileEncryptor, TrommiError, init, logFinding, selfTest, sessionGroupId,
+  Device, FileDecryptor, FileEncryptor, StoreConflict, TrommiError, init, logFinding, selfTest, sessionGroupId,
   type ErrorCode, type LogEntry, type OutboxEntry, type Store, type StoredState, type StoreWrite,
 } from '../../core/wasm/js/trommi-core.js'
 import { IdbStore } from '../../core/wasm/js/idb-store.js'
@@ -37,6 +37,7 @@ export async function use(hubCode: string, entry: LogEntry): Promise<void> {
     const processed = await device.processLogEntry(entry)
     if (processed.kind === 'message' && processed.message?.kind === 'workTrail') void processed.message.payload
   } catch (error) {
+    if (error instanceof TrommiError && error.code === 'storage' && error.cause instanceof StoreConflict) return
     if (error instanceof TrommiError && logFinding(error.code) === 'badGroup') throw error
   }
 
