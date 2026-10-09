@@ -31,13 +31,14 @@ fn checked(served: &Value, keys: &RecoveryKeys) -> Result<Observer, Error> {
     let list = |name: &str| -> Vec<Vec<u8>> {
         served[name].as_array().unwrap().iter().map(bytes).collect()
     };
-    let commits: Vec<(Vec<u8>, Option<Vec<u8>>)> = served["commits"]
+    let commits: Vec<(u64, Vec<u8>, Option<Vec<u8>>)> = served["commits"]
         .as_array()
         .unwrap()
         .iter()
         .map(|commit| {
             let auth = &commit["recovery_auth"];
             (
+                commit["change"].as_u64().unwrap(),
                 bytes(&commit["commit"]),
                 (!auth.is_null()).then(|| bytes(auth)),
             )
@@ -45,7 +46,8 @@ fn checked(served: &Value, keys: &RecoveryKeys) -> Result<Observer, Error> {
         .collect();
     let commits: Vec<ServedCommit<'_>> = commits
         .iter()
-        .map(|(commit, recovery_auth)| ServedCommit {
+        .map(|(change, commit, recovery_auth)| ServedCommit {
+            change: *change,
             commit,
             recovery_auth: recovery_auth.as_deref(),
         })

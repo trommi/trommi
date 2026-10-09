@@ -886,19 +886,26 @@ pub fn check_posted_row(bytes: &[u8], posted: &PostedRow<'_>) -> Result<SealedKe
     }
 }
 
-/// Whether `rows` hold a `SealedKey` for `group` and `epoch` whose `mac` verifies under one of `held` (8.3). A
-/// human device that derived that content key and finds none posts one.
+/// Whether `rows` hold a `SealedKey` for `group` and `epoch` that a device with the code would take as
+/// confirmed (8.3, 8.5): its `mac` verifies under one of `held`, and it is sealed to the recovery key in force
+/// at its `room_epoch`, which is not below `begun`, the room epoch under which that epoch began. A human
+/// device that derived that content key and finds none posts one.
 pub fn lists_authenticated(
     rows: &[Vec<u8>],
-    group: &GroupId,
-    epoch: u64,
+    place: (&GroupId, u64),
     held: &MacKeys,
+    history: &RoomHistory,
+    begun: u64,
 ) -> Result<bool, Error> {
+    let (group, epoch) = place;
     for row in rows
         .iter()
         .filter_map(|row| SealedKey::from_bytes(row).ok())
     {
-        if row.context.group != *group || row.context.epoch != epoch {
+        if row.context.group != *group
+            || row.context.epoch != epoch
+            || !in_force(&row, history, &|_, _| Began::Under(begun))
+        {
             continue;
         }
         let Some(key) = held.get(&row.recovery_hpke_key) else {
@@ -1127,15 +1134,26 @@ pub struct RecoveredKey {
     pub confirmed: bool,
 }
 
+/// Under which room epoch an epoch of a session group began, as far as a device verified it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Began {
+    /// The Commit that led to the epoch named this room epoch.
+    Under(u64),
+    /// The device verified the group, and the group has not reached that epoch: no row is its row.
+    Never,
+    /// The device did not verify the group's Commits (an archived session): any room epoch may be the one.
+    Unverified,
+}
+
 /// Whether a row is sealed to the recovery key in force where it belongs: the room state at its `room_epoch`
 /// holds the key it names, and that room epoch is not below the one its content epoch began under. For the
 /// room group that is the epoch's own state, or the one before it when the key did not change between them;
-/// for a session group `begun` names the `room_epoch` of the Commit that led to the epoch, where the caller
-/// verified that Commit. So a replaced code authenticates nothing for an epoch that began after it.
+/// for a session group `begun` says it. So a replaced code authenticates nothing for an epoch that began
+/// after it, and no row stands for an epoch a verified group has not reached.
 fn in_force(
     row: &SealedKey,
     history: &RoomHistory,
-    begun: &dyn Fn(&GroupId, u64) -> Option<u64>,
+    begun: &dyn Fn(&GroupId, u64) -> Began,
 ) -> bool {
     let key_at = |epoch: u64| history.at(epoch).map(|state| state.room.recovery_hpke_key);
     let context = &row.context;
@@ -1147,14 +1165,18 @@ fn in_force(
             (_, None) => return false,
         }
     } else {
-        begun(&context.group, context.epoch).unwrap_or(0)
+        match begun(&context.group, context.epoch) {
+            Began::Under(room_epoch) => room_epoch,
+            Began::Never => return false,
+            Began::Unverified => 0,
+        }
     };
     row.room_epoch >= floor && key_at(row.room_epoch) == Some(row.recovery_hpke_key)
 }
 
 /// The content keys of the room `room` that `openers` open from `rows` (8.5), per group and epoch, ascending.
-/// `history` is the room's from its founding on, as the caller verified it; `begun` names, for an epoch of a
-/// session group whose Commits the caller verified, the `room_epoch` of the Commit that led to it.
+/// `history` is the room's from its founding on, as the caller verified it; `begun` says under which room
+/// epoch an epoch of a session group began.
 ///
 /// Only rows sealed to the recovery key in force where they belong count: the room state at the row's
 /// `room_epoch` holds the key it names, and that is not before the epoch began. Of these, the rows of an epoch
@@ -1167,7 +1189,7 @@ pub fn select_keys(
     rows: &[Vec<u8>],
     openers: &[Opener],
     history: &RoomHistory,
-    begun: &dyn Fn(&GroupId, u64) -> Option<u64>,
+    begun: &dyn Fn(&GroupId, u64) -> Began,
 ) -> Result<Vec<RecoveredKey>, Error> {
     let mut confirmed: BTreeMap<(GroupId, u64), Secret<32>> = BTreeMap::new();
     let mut unconfirmed: BTreeMap<(GroupId, u64), Secret<32>> = BTreeMap::new();
@@ -1232,6 +1254,8 @@ pub fn select_keys(
 /// One Commit of a group's log, as the hub serves it.
 #[derive(Debug, Clone, Copy)]
 pub struct ServedCommit<'a> {
+    /// The room's change number of the Commit: its place in the hub's order across groups.
+    pub change: u64,
     /// The Commit.
     pub commit: &'a [u8],
     /// The `RecoveryAuth` stored beside a join from outside.
@@ -1293,24 +1317,38 @@ pub struct CheckedRoom {
     pub missing_link: Option<[u8; RECOVERY_KEY_LEN]>,
 }
 
-/// The sessions verified so far, as the rules ask about them while the next one is verified.
-struct Walked<'a>(&'a [Result<CheckedSession, Error>]);
+/// A session group while it is verified from its founding.
+struct Walk<'a> {
+    served: &'a ServedGroup<'a>,
+    /// The follower, once the group's first Commit came by; taken out while a Commit of it is judged.
+    observer: Option<Observer>,
+    begun: Vec<u64>,
+    last_committer: Option<DeviceId>,
+    /// Why the group does not verify, if it does not.
+    failed: Option<Error>,
+}
 
-impl Walked<'_> {
+/// The sessions as they stand at one place of the hub's order, as the rules ask about them there: all of
+/// them, or those before and after the one being judged.
+struct Standing<'a, 'b>(&'a [Walk<'b>], &'a [Walk<'b>]);
+
+impl Standing<'_, '_> {
     fn observers(&self) -> impl Iterator<Item = &Observer> {
         self.0
             .iter()
-            .filter_map(|session| session.as_ref().ok())
-            .map(|session| &session.observer)
+            .chain(self.1.iter())
+            .filter(|walk| walk.failed.is_none())
+            .filter_map(|walk| walk.observer.as_ref())
     }
 }
 
-impl SessionFacts for Walked<'_> {
-    fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+impl SessionFacts for Standing<'_, '_> {
+    fn main_session(&self, session: &SessionId, _: u64) -> Parent {
+        // The walk goes in the hub's order: the seat as it stands now is the seat at this place.
         self.observers()
             .find(|observer| observer.session().is_some_and(|s| s.session_id == *session))
             .map_or(Parent::NotAMainSession, |observer| {
-                observer.seat_at(room_epoch)
+                observer.seat_at(u64::MAX)
             })
     }
 
@@ -1324,6 +1362,58 @@ impl SessionFacts for Walked<'_> {
         self.observers()
             .filter(|observer| observer.session().is_some_and(|s| s.parent == *parent))
             .count()
+    }
+}
+
+impl Walk<'_> {
+    /// Follows the next Commit of this group at its place in the hub's order.
+    fn step(
+        &mut self,
+        commit: &ServedCommit<'_>,
+        room: &RoomId,
+        history: &RoomHistory,
+        sessions: &dyn SessionFacts,
+        observer: Option<Observer>,
+    ) -> Result<Observer, Error> {
+        let mut observer = match observer {
+            Some(observer) => observer,
+            None => Observer::follow_founding(self.served.founding)?,
+        };
+        if observer.group().room_id() != *room {
+            return Err(Error::WrongRoom);
+        }
+        let context = Context {
+            room: Some(history),
+            sessions,
+            recovery: &PublicRules,
+            max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
+        };
+        let facts = observer.process_commit(commit.commit, commit.recovery_auth, &context)?;
+        let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
+        if self.begun.is_empty() {
+            // The founding is one request: epoch 0 began under the room epoch its first Commit names.
+            self.begun.push(room_epoch);
+        }
+        self.begun.push(room_epoch);
+        self.last_committer = Some(facts.committer);
+        Ok(observer)
+    }
+
+    /// The verified group, if the GroupInfo offered as current agrees with the state reached.
+    fn finish(self) -> Result<CheckedSession, Error> {
+        if let Some(error) = self.failed {
+            return Err(error);
+        }
+        let (Some(observer), Some(committer)) = (self.observer, self.last_committer) else {
+            return Err(Error::BadGroup);
+        };
+        observer
+            .check_group_info(self.served.current, &committer)
+            .map_err(|_| Error::WrongRecovery)?;
+        Ok(CheckedSession {
+            observer,
+            begun: self.begun,
+        })
     }
 }
 
@@ -1381,12 +1471,14 @@ fn at_anchor(observer: &Observer, anchor: &KeyContext, group_info: &[u8]) -> Res
 
 /// Checks the room a hub serves before a device joins it with the code (8.4, 8.5).
 ///
-/// The anchor is selected from the rows. The room group is followed as an observer from its founding
-/// GroupInfo through every Commit served (`bad-group` when one does not verify or obey section 5); at the
-/// anchor's epoch that walk must stand in the state of the anchor's GroupInfo, and the GroupInfo offered as
-/// current must agree with the state reached at the end, whose `TrommiRoom` must hold exactly the code's two
-/// public keys (`wrong-recovery` for each). Then the links are walked back to older codes, every session
-/// served is verified from its founding, and the content keys are selected.
+/// The anchor is selected from the rows. The Commits of the room group and of every session served are
+/// followed as an observer in the hub's order, by their change numbers, each group from its founding
+/// GroupInfo: a session Commit is judged against the room state and the other sessions as they stand at its
+/// place. A room Commit that does not verify or obey section 5 is `bad-group`; a session that does not verify
+/// is named in the result and not joined. At the anchor's epoch the room walk must stand in the state of the
+/// anchor's GroupInfo, and the GroupInfo offered as current must agree with the state reached at the end, whose
+/// `TrommiRoom` must hold exactly the code's two public keys (`wrong-recovery` for each). Then the links are
+/// walked back to older codes and the content keys are selected.
 pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<CheckedRoom, Error> {
     let anchor = select_anchor(keys, &served.room, served.rows)?;
     let group = &served.group;
@@ -1395,23 +1487,81 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
     if observer.group() != anchor.group || observer.epoch()? != 0 {
         return Err(Error::WrongRecovery);
     }
-    let context = Context {
-        room: None,
-        sessions: &Walked(&[]),
-        recovery: &PublicRules,
-        max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
-    };
+    let mut walks: Vec<Walk<'_>> = served
+        .sessions
+        .iter()
+        .map(|served| Walk {
+            served,
+            observer: None,
+            begun: Vec::new(),
+            last_committer: None,
+            failed: None,
+        })
+        .collect();
+    // Every Commit served, in the hub's order: `None` for the room group, else the session's place.
+    let mut order: Vec<(u64, Option<usize>, &ServedCommit<'_>)> = group
+        .commits
+        .iter()
+        .map(|commit| (commit.change, None, commit))
+        .collect();
+    for (at, session) in served.sessions.iter().enumerate() {
+        order.extend(
+            session
+                .commits
+                .iter()
+                .map(|commit| (commit.change, Some(at), commit)),
+        );
+    }
+    order.sort_by_key(|(change, _, _)| *change);
+    let unique = order
+        .iter()
+        .zip(order.iter().skip(1))
+        .all(|(a, b)| a.0 < b.0);
+    if !unique {
+        return Err(Error::BadGroup);
+    }
+
     let mut last_committer = None;
     let mut anchored = false;
-    for commit in group.commits {
-        if observer.epoch()? == anchor.epoch {
-            at_anchor(&observer, &anchor, served.anchor)?;
-            anchored = true;
+    for (_, session, commit) in order {
+        let Some(at) = session else {
+            if observer.epoch()? == anchor.epoch {
+                at_anchor(&observer, &anchor, served.anchor)?;
+                anchored = true;
+            }
+            let context = Context {
+                room: None,
+                sessions: &Standing(&walks, &[]),
+                recovery: &PublicRules,
+                max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
+            };
+            let facts = observer
+                .process_commit(commit.commit, commit.recovery_auth, &context)
+                .map_err(|_| Error::BadGroup)?;
+            last_committer = Some(facts.committer);
+            continue;
+        };
+        let history = observer.history().ok_or(Error::Internal("room observer"))?;
+        let taken = walks
+            .get_mut(at)
+            .and_then(|walk| walk.failed.is_none().then(|| walk.observer.take()));
+        let Some(taken) = taken else { continue };
+        let stepped = {
+            let (before, rest) = walks.split_at_mut(at);
+            let Some((walk, after)) = rest.split_first_mut() else {
+                continue;
+            };
+            // The group judged is out of the picture while the others answer for the room's sessions.
+            let others = Standing(before, after);
+            walk.step(commit, &served.room, history, &others, taken)
+        };
+        if let Some(walk) = walks.get_mut(at) {
+            match stepped {
+                Ok(followed) => walk.observer = Some(followed),
+                Err(Error::WrongRoom) => walk.failed = Some(Error::WrongRoom),
+                Err(_) => walk.failed = Some(Error::BadGroup),
+            }
         }
-        let facts = observer
-            .process_commit(commit.commit, commit.recovery_auth, &context)
-            .map_err(|_| Error::BadGroup)?;
-        last_committer = Some(facts.committer);
     }
     if observer.epoch()? == anchor.epoch {
         at_anchor(&observer, &anchor, served.anchor)?;
@@ -1425,17 +1575,20 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
     keys.check_room(&history.newest().room)?;
 
     let opened = open_links(keys, &served.room, served.links, &key_changes(history))?;
-    let mut sessions: Vec<Result<CheckedSession, Error>> = Vec::new();
-    for session in served.sessions {
-        let checked = check_session(session, &served.room, history, &Walked(&sessions));
-        sessions.push(checked);
-    }
+    let sessions: Vec<Result<CheckedSession, Error>> =
+        walks.into_iter().map(Walk::finish).collect();
     let begun = |group: &GroupId, epoch: u64| {
-        let session = sessions
+        let verified = sessions
             .iter()
             .filter_map(|session| session.as_ref().ok())
-            .find(|session| session.observer.group() == *group)?;
-        session.begun.get(usize::try_from(epoch).ok()?).copied()
+            .find(|session| session.observer.group() == *group);
+        match verified {
+            None => Began::Unverified,
+            Some(session) => usize::try_from(epoch)
+                .ok()
+                .and_then(|epoch| session.begun.get(epoch))
+                .map_or(Began::Never, |room_epoch| Began::Under(*room_epoch)),
+        }
     };
     let recovered = select_keys(&served.room, served.rows, &opened.openers, history, &begun)?;
     Ok(CheckedRoom {

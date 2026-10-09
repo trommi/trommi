@@ -380,8 +380,8 @@ pub struct FetchedGroup {
     pub group: GroupId,
     /// The founding GroupInfo.
     pub founding: Vec<u8>,
-    /// Every Commit since, each with its `RecoveryAuth`.
-    pub commits: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// Every Commit since, each with its change number and its `RecoveryAuth`.
+    pub commits: Vec<(u64, Vec<u8>, Option<Vec<u8>>)>,
     /// The GroupInfo offered as current.
     pub current: Vec<u8>,
 }
@@ -437,7 +437,8 @@ impl FetchedGroup {
         let commits: Vec<ServedCommit<'_>> = self
             .commits
             .iter()
-            .map(|(commit, recovery_auth)| ServedCommit {
+            .map(|(change, commit, recovery_auth)| ServedCommit {
+                change: *change,
                 commit,
                 recovery_auth: recovery_auth.as_deref(),
             })
@@ -460,7 +461,8 @@ impl Fetched {
                 session
                     .commits
                     .iter()
-                    .map(|(commit, recovery_auth)| ServedCommit {
+                    .map(|(change, commit, recovery_auth)| ServedCommit {
+                        change: *change,
                         commit,
                         recovery_auth: recovery_auth.as_deref(),
                     })

@@ -15,7 +15,7 @@ use trommi_core::mls::rules::{JoinClaim, RecoveryRules, RoomHistory, RoomState, 
 use trommi_core::recovery::{
     self, check_agreement, check_posted_row, commit_hash, follow_anchor, group_info_hash,
     key_changes, lists_authenticated, may_commit, open_links, select_anchor, select_keys,
-    take_recovery_auth, AuthMessage, JoinFacts, KeyChange, KeyContext, MacKeys, MacState,
+    take_recovery_auth, AuthMessage, Began, JoinFacts, KeyChange, KeyContext, MacKeys, MacState,
     OldRecovery, Opener, PostedRow, PublicRules, RecoveredKey, RecoveryAuth, RecoveryJoin,
     RecoveryKeys, RecoveryLink, SealedKey, Sealing, Taken,
 };
@@ -102,8 +102,8 @@ fn flat(code_byte: u8) -> RoomHistory {
 }
 
 /// No session group's Commits were verified.
-fn unverified(_: &GroupId, _: u64) -> Option<u64> {
-    None
+fn unverified(_: &GroupId, _: u64) -> Began {
+    Began::Unverified
 }
 
 fn select(
@@ -1048,19 +1048,22 @@ fn the_hub_lists_an_authenticated_row_or_the_device_posts_one() {
             forged
         },
     ]);
-    assert_eq!(lists_authenticated(&rows, &session, 4, &held), Ok(true));
+    assert_eq!(
+        lists_authenticated(&rows, (&session, 4), &held, &flat(1), 0),
+        Ok(true)
+    );
     for epoch in [3, 5, 6, 7] {
         assert_eq!(
-            lists_authenticated(&rows, &session, epoch, &held),
+            lists_authenticated(&rows, (&session, epoch), &held, &flat(1), 0),
             Ok(false)
         );
     }
     assert_eq!(
-        lists_authenticated(&rows, &room_group(), 4, &held),
+        lists_authenticated(&rows, (&room_group(), 4), &held, &flat(1), 0),
         Ok(false)
     );
     assert_eq!(
-        lists_authenticated(&rows, &session, 4, &MacKeys::new()),
+        lists_authenticated(&rows, (&session, 4), &MacKeys::new(), &flat(1), 0),
         Ok(false)
     );
 }
@@ -1412,8 +1415,12 @@ fn a_replaced_code_authenticates_nothing_for_later_epochs() {
     };
     // The session's epochs 0 and 1 began under room epoch 0, its epoch 2 under room epoch 2, as the device
     // verified from its Commits.
-    let begun =
-        |group: &GroupId, epoch: u64| (*group == session).then_some(if epoch < 2 { 0 } else { 2 });
+    let begun = |group: &GroupId, epoch: u64| match epoch {
+        _ if *group != session => Began::Unverified,
+        0 | 1 => Began::Under(0),
+        2 => Began::Under(2),
+        _ => Began::Never,
+    };
     let real = bytes_of(&[
         row(1, room_group(), 1, 11, true),
         row(2, room_group(), 2, 12, true),
@@ -1429,8 +1436,9 @@ fn a_replaced_code_authenticates_nothing_for_later_epochs() {
         forge(session, 2, 1, true),
         forge(session, 2, 2, true),
         forge(session, 2, 0, false),
-        // A row for a room epoch the history does not hold.
+        // A row for a room epoch the history does not hold, and for an epoch the session has not reached.
         forge(room_group(), 40, 1, true),
+        forge(session, 3, 2, false),
     ]);
     let served = [forged.clone(), real.clone(), forged].concat();
     let found = select_keys(&ROOM, &served, &opened.openers, &history, &begun).unwrap();
@@ -1928,7 +1936,7 @@ fn malformed_input_is_refused_and_never_panics() {
                 );
             }
         }
-        let _ = lists_authenticated(&rows, &room_group(), 0, &MacKeys::new());
+        let _ = lists_authenticated(&rows, (&room_group(), 0), &MacKeys::new(), &flat(1), 0);
 
         let link = dice.damage(&good_link);
         if let Ok(decoded) = RecoveryLink::from_bytes(&link) {

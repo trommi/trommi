@@ -43,6 +43,7 @@ use openmls::prelude::{KeyPackage, ProcessedMessageContent, ProtocolMessage, Sen
 use openmls_traits::OpenMlsProvider as _;
 use std::collections::{BTreeMap, BTreeSet};
 use tls_codec::{Deserialize as _, Serialize as _};
+use zeroize::{Zeroize as _, Zeroizing};
 
 /// A human device updates its leaf in a live group when the leaf is older than this (5.2.9).
 pub const UPDATE_AFTER_MS: u64 = 7 * 24 * 60 * 60 * 1000;
@@ -106,8 +107,16 @@ pub enum Processed {
         /// Whether this device is no leaf of the group any more.
         removed: bool,
     },
-    /// The entry is this device's own Commit: merged now, or already when the hub accepted it.
+    /// The entry is this device's own Commit: merged now, or already when the hub accepted it. Also its own
+    /// join from outside, whose copy becomes the real state here when the hub's answer never came.
     OwnCommit,
+    /// A Commit of another device took the epoch that a join from outside of this device was built on: the
+    /// join and its outbox entry `superseded` are dropped, and the join is to be built again on what the hub
+    /// serves now.
+    JoinSuperseded {
+        /// The dropped join.
+        superseded: u64,
+    },
     /// A Commit of a group this device follows as an observer.
     Observed(CommitFacts),
     /// An application message that opened.
@@ -447,6 +456,43 @@ impl Decode for Staged {
     }
 }
 
+impl Drop for Staged {
+    fn drop(&mut self) {
+        // The copy holds content keys, recovery_mac keys and OpenMLS's private state.
+        for (_, value) in &mut self.put {
+            value.zeroize();
+        }
+    }
+}
+
+impl Staged {
+    /// Whether the copy touches only what a join or a recovery writes: OpenMLS's entries, content keys, the
+    /// room's roles, the recovery keys, the records of groups and the device record. Never the device's key,
+    /// its KeyPackages, the outbox or another staged copy.
+    fn in_scope(&self) -> bool {
+        let allowed = |key: &Vec<u8>| {
+            matches!(
+                key.as_slice(),
+                [table::DEVICE, SUB_RECORD]
+                    | [table::DEVICE, SUB_GROUP, ..]
+                    | [
+                        table::MLS | table::CONTENT_KEY | table::ROOM_STATE | table::RECOVERY,
+                        ..
+                    ]
+            )
+        };
+        self.put.iter().all(|(key, _)| allowed(key)) && self.delete.iter().all(allowed)
+    }
+}
+
+/// What a Commit of the log means for a join from outside that waits.
+enum StagedVerdict {
+    /// It is the join's own Commit.
+    Own,
+    /// It took the epoch: the join with this outbox entry is dropped.
+    Superseded(u64),
+}
+
 /// A `recovery_mac` this device owes another (7.4), written with the Commit it follows from. It waits for an
 /// outbox entry: the Commit, until it is merged and the message can be encrypted in the new epoch; then the
 /// message, until the hub took it.
@@ -471,10 +517,18 @@ impl Decode for Owed {
         Ok(Self {
             recovery_hpke_key: reader.fixed()?,
             recovery_mac: Secret::new(reader.fixed()?),
-            bound: reader.u8()? == 1,
+            bound: match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(Error::BadFormat),
+            },
         })
     }
 }
+
+/// What an owed `recovery_mac` is kept under: the outbox entry it waits for, its recipient, and the recovery
+/// key it belongs to.
+type OwedKey = (u64, DeviceId, [u8; RECOVERY_KEY_LEN]);
 
 /// What a Commit leaves to post.
 struct Posting {
@@ -521,8 +575,8 @@ struct Memory {
     sent: BTreeSet<(DeviceId, GroupId)>,
     /// The `recovery_mac` keys this device holds (8.3).
     macs: MacKeys,
-    /// The `recovery_mac`s it owes, by the outbox entry each waits for and its recipient.
-    owed: BTreeMap<(u64, DeviceId), Owed>,
+    /// The `recovery_mac`s it owes.
+    owed: BTreeMap<OwedKey, Owed>,
     /// The content keys that only a row without a `mac` vouches for (8.5).
     unconfirmed: BTreeSet<(GroupId, u64)>,
 }
@@ -622,10 +676,16 @@ fn unconfirmed_key(group: &GroupId, epoch: u64) -> Vec<u8> {
     )
 }
 
-fn owed_key(waits_for: u64, recipient: &DeviceId) -> Vec<u8> {
+fn owed_key(key: &OwedKey) -> Vec<u8> {
+    let (waits_for, recipient, recovery_hpke_key) = key;
     device_key(
         SUB_OWED,
-        &[&waits_for.to_be_bytes()[..], recipient.as_bytes()].concat(),
+        &[
+            &waits_for.to_be_bytes()[..],
+            recipient.as_bytes(),
+            recovery_hpke_key,
+        ]
+        .concat(),
     )
 }
 
@@ -687,6 +747,10 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                     let id = rest.u64().map_err(|_| damaged("a staged join"))?;
                     let staged: Staged =
                         codec::decode(value, value.len()).map_err(|_| damaged("a staged join"))?;
+                    if !rest.is_empty() || !staged.in_scope() || staged.entries.last() != Some(&id)
+                    {
+                        return Err(damaged("a staged join"));
+                    }
                     memory.staged.insert(id, staged);
                 }
                 SUB_SENT => {
@@ -701,7 +765,12 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                     let recipient: DeviceId = rest.value().map_err(|_| damaged("an owed key"))?;
                     let owed: Owed =
                         codec::decode(value, value.len()).map_err(|_| damaged("an owed key"))?;
-                    memory.owed.insert((waits_for, recipient), owed);
+                    let named: [u8; RECOVERY_KEY_LEN] =
+                        rest.fixed().map_err(|_| damaged("an owed key"))?;
+                    if !rest.is_empty() || named != owed.recovery_hpke_key {
+                        return Err(damaged("an owed key"));
+                    }
+                    memory.owed.insert((waits_for, recipient, named), owed);
                 }
                 _ => return Err(damaged("a key")),
             },
@@ -713,7 +782,9 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                             key: Secret::from_slice(value)?,
                         })
                     })()
-                    .map_err(|_| damaged("a recovery key"))?;
+                    .ok()
+                    .filter(|_| rest.is_empty())
+                    .ok_or_else(|| damaged("a recovery key"))?;
                     memory
                         .macs
                         .hold(held)
@@ -722,6 +793,9 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                 SUB_UNCONFIRMED => {
                     let group = group_after(&mut rest).map_err(|_| damaged("a key mark"))?;
                     let epoch = rest.u64().map_err(|_| damaged("a key mark"))?;
+                    if !rest.is_empty() || !value.is_empty() {
+                        return Err(damaged("a key mark"));
+                    }
                     memory.unconfirmed.insert((group, epoch));
                 }
                 _ => return Err(damaged("a key")),
@@ -1173,6 +1247,19 @@ impl<S: Storage> Device<S> {
         true
     }
 
+    /// Stores the content key this device derived from its own group state. It is the key: whatever was held
+    /// for that group and epoch from a row or a handover gives way, and the mark of an unconfirmed key goes.
+    fn own_key(&mut self, batch: &mut Batch, group: &GroupId, epoch: u64, key: Secret<32>) {
+        let place = (*group, epoch);
+        if self.memory.unconfirmed.remove(&place) {
+            batch.delete(unconfirmed_key(group, epoch));
+        }
+        if self.memory.keys.get(&place) != Some(&key) {
+            batch.put(content_key_key(group, epoch), key.expose().to_vec());
+            self.memory.keys.insert(place, key);
+        }
+    }
+
     fn enqueue(
         &mut self,
         batch: &mut Batch,
@@ -1406,7 +1493,7 @@ impl<S: Storage> Device<S> {
             return self.leave(batch, id);
         }
         let key = group::content_key(&self.provider, group)?;
-        self.keep_key(batch, id, group.epoch().as_u64(), key);
+        self.own_key(batch, id, group.epoch().as_u64(), key);
         if id.is_room() {
             let state = rules::room_state_of(group.public_group().group_context(), &leaves)?;
             batch.put(history_key(state.epoch), codec::encode(&state)?);
@@ -1482,10 +1569,10 @@ impl<S: Storage> Device<S> {
     /// The hub accepted what was staged under the outbox entry `id`: the copy becomes the real state. The
     /// caller rebuilds memory once it is written.
     fn adopt_staged(&mut self, batch: &mut Batch, id: u64) -> Result<(), Error> {
-        let staged = self.memory.staged.remove(&id).ok_or(Error::NotFound)?;
+        let mut staged = self.memory.staged.remove(&id).ok_or(Error::NotFound)?;
         batch.delete(device_key(SUB_STAGED, &id.to_be_bytes()));
         let record = device_key(SUB_RECORD, &[]);
-        for (key, value) in staged.put {
+        for (key, value) in std::mem::take(&mut staged.put) {
             if key == record {
                 // The copy's record names the room; cursor and outbox counter are the real ones.
                 let copy: Record =
@@ -1495,7 +1582,7 @@ impl<S: Storage> Device<S> {
                 batch.put(key, value);
             }
         }
-        for key in staged.delete {
+        for key in std::mem::take(&mut staged.delete) {
             batch.delete(key);
         }
         self.put_record(batch)
@@ -1512,8 +1599,8 @@ impl<S: Storage> Device<S> {
             .map(|(under, _)| *under);
         let Some(under) = found else { return };
         if let Some(staged) = self.memory.staged.remove(&under) {
-            for entry in staged.entries {
-                self.drop_outbox(batch, entry);
+            for entry in &staged.entries {
+                self.drop_outbox(batch, *entry);
             }
         }
         batch.delete(device_key(SUB_STAGED, &under.to_be_bytes()));
@@ -1562,15 +1649,16 @@ impl<S: Storage> Device<S> {
 
     /// Takes the owed `recovery_mac`s that wait for the outbox entry `waits_for`.
     fn take_owed(&mut self, batch: &mut Batch, waits_for: u64) -> Vec<(DeviceId, Owed)> {
-        let waiting: Vec<(u64, DeviceId)> = self
+        let waiting: Vec<OwedKey> = self
             .memory
             .owed
-            .range((waits_for, DeviceId::ZERO)..=(waits_for, DeviceId::new([0xFF; 32])))
-            .map(|(key, _)| *key)
+            .keys()
+            .filter(|key| key.0 == waits_for)
+            .copied()
             .collect();
         let mut taken = Vec::new();
         for key in waiting {
-            batch.delete(owed_key(key.0, &key.1));
+            batch.delete(owed_key(&key));
             if let Some(owed) = self.memory.owed.remove(&key) {
                 taken.push((key.1, owed));
             }
@@ -1582,6 +1670,8 @@ impl<S: Storage> Device<S> {
         self.take_owed(batch, waits_for);
     }
 
+    /// Keeps `owed` until the outbox entry `waits_for` is answered. One that is the consequence of a Commit
+    /// is never displaced by one that merely waits behind it.
     fn put_owed(
         &mut self,
         batch: &mut Batch,
@@ -1589,15 +1679,25 @@ impl<S: Storage> Device<S> {
         recipient: DeviceId,
         owed: Owed,
     ) -> Result<(), Error> {
-        batch.put(owed_key(waits_for, &recipient), codec::encode(&owed)?);
-        self.memory.owed.insert((waits_for, recipient), owed);
+        let key = (waits_for, recipient, owed.recovery_hpke_key);
+        if self.memory.owed.get(&key).is_some_and(|held| held.bound) {
+            return Ok(());
+        }
+        batch.put(owed_key(&key), codec::encode(&owed)?);
+        self.memory.owed.insert(key, owed);
         Ok(())
     }
 
     /// Sends an owed `recovery_mac` in the room group's current epoch and keeps it owed until the hub took
-    /// the message. While a Commit of this device is pending there, it waits for that Commit instead: no
-    /// message can be encrypted beside a pending Commit.
-    fn owe(&mut self, batch: &mut Batch, recipient: DeviceId, mut owed: Owed) -> Result<(), Error> {
+    /// the message: refused there with `wrong-epoch`, it is encrypted again. While a Commit of this device is
+    /// pending in the room group it waits for that Commit instead, since no message can be encrypted beside
+    /// a pending Commit. Returns the message's outbox entry, if it was sent now.
+    fn owe(
+        &mut self,
+        batch: &mut Batch,
+        recipient: DeviceId,
+        mut owed: Owed,
+    ) -> Result<Option<u64>, Error> {
         let group = GroupId::room(self.memory.record.room.ok_or(Error::NoRoom)?);
         owed.bound = false;
         let pending = self
@@ -1605,18 +1705,20 @@ impl<S: Storage> Device<S> {
             .pending
             .as_ref()
             .map(|pending| pending.outbox);
-        let waits_for = match pending {
-            Some(commit) => commit,
+        let sent = match pending {
+            Some(_) => None,
             None => {
                 let message = TrommiMessage::RecoveryAuth {
                     recipient,
                     recovery_hpke_key: owed.recovery_hpke_key,
                     recovery_mac: owed.recovery_mac.duplicate(),
                 };
-                self.send(batch, &group, &message, false)?
+                Some(self.send(batch, &group, &message, false)?)
             }
         };
-        self.put_owed(batch, waits_for, recipient, owed)
+        let waits_for = sent.or(pending).ok_or(Error::Internal("owed"))?;
+        self.put_owed(batch, waits_for, recipient, owed)?;
+        Ok(sent)
     }
 
     /// Whether a row with a valid `mac` vouches for the content key of `group` at `epoch`, or the device
@@ -2946,10 +3048,29 @@ impl<S: Storage> Device<S> {
             if !this.is_human() {
                 return Err(Error::Forbidden);
             }
-            this.meta(group)?;
+            let meta = this.meta(group)?.clone();
+            if meta.archived {
+                return Err(Error::Gone);
+            }
+            // 5.2.8: nothing is written for a stale group but the Commit that cleans it, with its own row.
+            if !this.group(group)?.disallowed.is_empty() {
+                return Err(Error::StaleSession);
+            }
             let state = group::load(&this.provider, group)?;
             let epoch = state.epoch().as_u64();
-            if recovery::lists_authenticated(listed, group, epoch, &this.memory.macs)? {
+            let begun = if group.is_room() {
+                epoch
+            } else {
+                meta.previous_room_epoch
+            };
+            let listed = recovery::lists_authenticated(
+                listed,
+                (group, epoch),
+                &this.memory.macs,
+                this.history()?,
+                begun,
+            )?;
+            if listed {
                 return Ok(None);
             }
             observer::signer_of(state.public_group(), group_info)?;
@@ -2981,32 +3102,40 @@ impl<S: Storage> Device<S> {
     /// Commit that is not the next of its group, or a session Commit whose room epoch this device has not
     /// reached, is refused and changes nothing ([`log_finding`]).
     pub fn process_log_entry(&mut self, entry: &LogEntry<'_>) -> Result<Processed, Error> {
-        self.transact(|this, batch| {
+        let (processed, adopted) = self.transact(|this, batch| {
+            let member = this
+                .memory
+                .groups
+                .get(&entry.group)
+                .is_some_and(|meta| !meta.removed);
+            let mut adopted = false;
             let processed = match entry.kind {
                 LogKind::Commit {
                     bytes,
                     recovery_auth,
-                } => {
-                    if this.memory.observers.contains_key(&entry.group) {
-                        this.observe_commit(&entry.group, bytes, recovery_auth)?
-                    } else if this
-                        .memory
-                        .groups
-                        .get(&entry.group)
-                        .is_some_and(|meta| !meta.removed)
-                    {
-                        this.process_commit(batch, &entry.group, bytes, recovery_auth)?
-                    } else {
-                        Processed::Skipped
+                } => match this.decide_staged(batch, &entry.group, bytes)? {
+                    Some(StagedVerdict::Own) => {
+                        adopted = true;
+                        Processed::OwnCommit
                     }
-                }
+                    verdict => {
+                        let processed = if this.memory.observers.contains_key(&entry.group) {
+                            this.observe_commit(&entry.group, bytes, recovery_auth)?
+                        } else if member {
+                            this.process_commit(batch, &entry.group, bytes, recovery_auth)?
+                        } else {
+                            Processed::Skipped
+                        };
+                        match verdict {
+                            Some(StagedVerdict::Superseded(superseded)) => {
+                                Processed::JoinSuperseded { superseded }
+                            }
+                            _ => processed,
+                        }
+                    }
+                },
                 LogKind::Message { bytes } => {
-                    if this
-                        .memory
-                        .groups
-                        .get(&entry.group)
-                        .is_some_and(|meta| !meta.removed)
-                    {
+                    if member {
                         this.process_message(batch, &entry.group, bytes)?
                     } else {
                         Processed::Skipped
@@ -3014,8 +3143,50 @@ impl<S: Storage> Device<S> {
                 }
             };
             this.advance(batch, entry.change)?;
-            Ok(processed)
-        })
+            Ok((processed, adopted))
+        })?;
+        if adopted {
+            // What was staged is stored now: memory follows it.
+            self.reset()?;
+        }
+        Ok(processed)
+    }
+
+    /// 13.2 for a join from outside into `group` that waits: a Commit of the log that is the join's own makes
+    /// the copy the real state, as the hub's acceptance does, so that the Commits behind it are processed as
+    /// a member; another Commit for the epoch the join builds on, or a later one, took that epoch, and the
+    /// join with its outbox entry is dropped. A Commit of an earlier epoch decides nothing.
+    fn decide_staged(
+        &mut self,
+        batch: &mut Batch,
+        group: &GroupId,
+        commit: &[u8],
+    ) -> Result<Option<StagedVerdict>, Error> {
+        let waiting = self.memory.outbox.values().find(|entry| {
+            entry.kind == OutboxKind::ExternalCommit
+                && entry.group == Some(*group)
+                && self.memory.staged.contains_key(&entry.id)
+        });
+        let Some((outbox, built_on, own)) = waiting.map(|entry| {
+            let own = entry.parts.first().is_some_and(|own| own == commit);
+            (entry.id, entry.epoch, own)
+        }) else {
+            return Ok(None);
+        };
+        if own {
+            self.adopt_staged(batch, outbox)?;
+            self.drop_outbox(batch, outbox);
+            return Ok(Some(StagedVerdict::Own));
+        }
+        let takes_the_epoch = rules::parse_commit(commit).is_ok_and(|message| {
+            GroupId::from_bytes(message.group_id().as_slice()) == Ok(*group)
+                && message.epoch().as_u64() >= built_on
+        });
+        if !takes_the_epoch {
+            return Ok(None);
+        }
+        self.drop_staged(batch, outbox);
+        Ok(Some(StagedVerdict::Superseded(outbox)))
     }
 
     fn observe_commit(
@@ -3204,7 +3375,7 @@ impl<S: Storage> Device<S> {
         else {
             return Ok(Processed::Skipped);
         };
-        let content = content.into_bytes();
+        let content = Zeroizing::new(content.into_bytes());
         let message = match codec::decode::<TrommiMessage>(&content, MAX_MESSAGE_LEN) {
             Ok(message) => message,
             Err(Error::NewerVersion) => {
@@ -3365,7 +3536,8 @@ impl<S: Storage> Device<S> {
         if !self.disallowed(&meta, &leaves, &self.known()).is_empty() {
             return Err(Error::StaleSession);
         }
-        let plaintext = codec::encode(message)?;
+        // A message may carry keys: its plaintext is wiped.
+        let plaintext = Zeroizing::new(codec::encode(message)?);
         if plaintext.len() > MAX_MESSAGE_LEN {
             return Err(Error::TooLarge);
         }
@@ -3502,10 +3674,11 @@ impl<S: Storage> Device<S> {
     /// Sends the `recovery_mac` of the room's current recovery key (7.4) to `recipient`, or to all with zeros:
     /// room group, from a human device that holds it (`no-key` otherwise). This answers the request of a
     /// device that does not hold it; after an Add by link and after a replacement of the code the device sends
-    /// it by itself, with the Commit.
-    pub fn send_recovery_auth(&mut self, recipient: &DeviceId) -> Result<u64, Error> {
+    /// it by itself, with the Commit. The message is owed until the hub took it. Returns its outbox entry, or
+    /// none while a Commit of this device is pending in the room group: it is then sent when that is decided.
+    pub fn send_recovery_auth(&mut self, recipient: &DeviceId) -> Result<Option<u64>, Error> {
         self.transact(|this, batch| {
-            let group = this.room_group()?;
+            this.room_group()?;
             let recovery_hpke_key = this.history()?.newest().room.recovery_hpke_key;
             let recovery_mac = this
                 .memory
@@ -3513,12 +3686,12 @@ impl<S: Storage> Device<S> {
                 .get(&recovery_hpke_key)
                 .ok_or(Error::NoKey)?
                 .duplicate();
-            let message = TrommiMessage::RecoveryAuth {
-                recipient: *recipient,
+            let owed = Owed {
                 recovery_hpke_key,
                 recovery_mac,
+                bound: false,
             };
-            this.send(batch, &group, &message, false)
+            this.owe(batch, *recipient, owed)
         })
     }
 }
