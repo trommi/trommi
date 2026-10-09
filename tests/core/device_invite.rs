@@ -50,7 +50,12 @@ fn exchange(
 
 /// A room with a founder, an agent in its main session, and a card in it.
 fn room() -> (Hub, GroupId, GroupId, TestDevice, TestDevice) {
-    let (mut a, mut agent) = (new_device(), new_device());
+    room_of(new_device())
+}
+
+/// The same room, founded by `a`.
+fn room_of(mut a: TestDevice) -> (Hub, GroupId, GroupId, TestDevice, TestDevice) {
+    let mut agent = new_device();
     let (mut hub, room) = found_room(&mut a);
     publish_some(&mut hub, &mut a, 4);
     publish_some(&mut hub, &mut agent, 4);
@@ -148,15 +153,22 @@ fn a_human_device_joins_by_link_and_is_taken_into_every_live_session() {
 
     // The inviter hands the history over, then adds the device to every live session.
     sync_all(&hub, &mut a);
+    let add = InviteStep::AddToSession {
+        group: main,
+        device: b.id(),
+    };
     assert_eq!(
         a.invite_steps().unwrap(),
-        vec![(
-            opened.invite_id,
-            InviteStep::Handover {
-                group: room,
-                device: b.id()
-            }
-        )]
+        vec![
+            (
+                opened.invite_id,
+                InviteStep::Handover {
+                    group: room,
+                    device: b.id()
+                }
+            ),
+            (opened.invite_id, add.clone())
+        ]
     );
     a.invite_handover(&opened.invite_id).unwrap();
     post_ok(&mut hub, &mut a);
@@ -321,8 +333,13 @@ fn an_agent_device_joins_by_link_and_takes_a_session_over() {
         (cuts[0].device, cuts[0].seq, cuts[0].hash),
         (old.id(), 1, made.envelope_hash)
     );
-    a.clean_session(group, cuts, Some((agent, key_package)), now())
-        .unwrap();
+    a.clean_session(
+        group,
+        cuts,
+        Some((agent, key_package.as_ref().unwrap())),
+        now(),
+    )
+    .unwrap();
     post_ok(&mut hub, &mut a);
     sync_all(&hub, &mut a);
     // With history: the handover in the session group.
@@ -642,4 +659,136 @@ fn a_joining_device_signs_in_for_the_room_of_its_checked_invite() {
     );
     // Nothing else follows from the stored Offer: the device has no room and holds no group.
     assert!(b.room().is_none() && b.groups().unwrap().is_empty() && !b.is_human());
+}
+
+#[test]
+fn a_takeover_reaches_every_helper_session_and_survives_a_restart() {
+    use trommi_tests::{found_helper, new_device_on, observe, reopen, MemoryStorage};
+    let store = MemoryStorage::new();
+    let handle = store.handle();
+    let (mut hub, room, main, mut a, mut old) = room_of(new_device_on(store));
+    let mut worker = new_device();
+    observe(&hub, &mut worker);
+    let helper = found_helper(&mut hub, &mut old, &main, &mut [&mut worker]);
+    sync_all(&hub, &mut a);
+
+    let mut new = new_device();
+    let session = main.session_id().unwrap();
+    let (opened, _, accepted) = exchange(&mut a, &mut new, Role::Agent, Some(&session));
+    let code = new.join_reveal(&accepted.signed_reveal).unwrap();
+    let offered = hub.group_info(&room).unwrap().clone();
+    a.invite_confirm(
+        &opened.invite_id,
+        &code,
+        &accepted.request_hash,
+        true,
+        now(),
+    )
+    .unwrap()
+    .unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut a);
+    let id = opened.invite_id;
+    // (a) is done: both groups are stale. (b) comes first; the helper session waits for it.
+    assert_eq!(a.group(&helper).unwrap().disallowed, vec![old.id()]);
+    let steps = a.invite_steps().unwrap();
+    assert_eq!(steps.len(), 1);
+    let (
+        _,
+        InviteStep::TakeOver {
+            group,
+            cuts,
+            agent,
+            key_package,
+        },
+    ) = &steps[0]
+    else {
+        panic!("the main session first: {steps:?}");
+    };
+    assert_eq!(*group, main);
+    a.clean_session(
+        group,
+        cuts,
+        Some((agent, key_package.as_ref().unwrap())),
+        now(),
+    )
+    .unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut a);
+
+    // (c): the helper session, with a KeyPackage of the new device that the step does not carry.
+    let expect_helper = |steps: &[(trommi_core::ids::InviteId, InviteStep)], cut: usize| {
+        assert!(steps.contains(&(
+            id,
+            InviteStep::Handover {
+                group: main,
+                device: new.id()
+            }
+        )));
+        let found = steps.iter().find_map(|(_, step)| match step {
+            InviteStep::TakeOver {
+                group,
+                cuts,
+                agent,
+                key_package: None,
+            } if *group == helper && *agent == new.id() => Some(cuts.clone()),
+            _ => None,
+        });
+        assert_eq!(found.expect("the helper session's takeover").len(), cut);
+    };
+    expect_helper(&a.invite_steps().unwrap(), 1);
+    // The inviter restarts: the steps are read from the groups again.
+    drop(a);
+    let mut a = reopen(handle.reopened()).unwrap();
+    expect_helper(&a.invite_steps().unwrap(), 1);
+    // Without history: only the handovers go, the takeover stays.
+    a.invite_forget(&id).unwrap();
+    let steps = a.invite_steps().unwrap();
+    assert_eq!(steps.len(), 1);
+    assert!(matches!(&steps[0].1, InviteStep::TakeOver { group, .. } if *group == helper));
+
+    // A clean-up of the stale helper session that only removes the old opener (5.2.8) does not strand it:
+    // the session stands without an opener, and the step now adds the new one.
+    let (_, InviteStep::TakeOver { cuts, .. }) = &steps[0] else {
+        unreachable!()
+    };
+    a.clean_session(&helper, cuts, None, now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut a);
+    assert!(a.group(&helper).unwrap().disallowed.is_empty());
+    let steps = a.invite_steps().unwrap();
+    assert_eq!(
+        steps,
+        vec![(
+            id,
+            InviteStep::TakeOver {
+                group: helper,
+                cuts: Vec::new(),
+                agent: new.id(),
+                key_package: None,
+            }
+        )]
+    );
+    publish_some(&mut hub, &mut new, 2);
+    let package = hub.claim(&[new.id()]).unwrap().remove(0);
+    a.clean_session(&helper, &[], Some((&new.id(), &package)), now())
+        .unwrap();
+    assert_eq!(a.invite_steps().unwrap(), vec![(id, InviteStep::Wait)]);
+    post_ok(&mut hub, &mut a);
+    sync_all(&hub, &mut a);
+    // Finished: nothing is listed, and the invite's record is gone.
+    assert!(a.invite_steps().unwrap().is_empty());
+    assert_eq!(a.invite_forget(&id), Err(Error::NotFound));
+    assert!(hub.stale_leaves(&helper).unwrap().is_empty());
+
+    // The new device is in both groups, and is the helper session's opener: it adds a helper device.
+    new.join_observe(&offered).unwrap();
+    sync_all(&hub, &mut new);
+    assert!(new.group(&main).is_ok() && new.group(&helper).is_ok());
+    let mut second = new_device();
+    observe(&hub, &mut second);
+    let package = second.key_package(now()).unwrap();
+    new.add_to_session(&helper, &second.id(), &package, now())
+        .unwrap();
+    post_ok(&mut hub, &mut new);
 }
