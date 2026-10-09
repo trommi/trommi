@@ -14,6 +14,8 @@ use zeroize::Zeroize;
 
 /// The longest content a variable-length vector holds, in bytes.
 pub const MAX_VECTOR_LEN: usize = (1 << 30) - 1;
+/// The most bytes the length of a vector takes.
+const MAX_LENGTH_PREFIX_LEN: usize = 4;
 
 /// A value with an encoding.
 pub trait Encode {
@@ -46,7 +48,10 @@ pub fn decode<T: Decode>(bytes: &[u8], max_len: usize) -> Result<T, Error> {
     Ok(value)
 }
 
-/// Builds an encoding field by field. What it holds is wiped when it is dropped, since a secret may pass through.
+/// Builds an encoding field by field. A secret may pass through, so no copy of what it holds is left behind:
+/// it is wiped when the writer is dropped, and when it must grow the bytes move to a new buffer and the old
+/// one is wiped before it is freed. A writer that will hold a secret is best made with its final size
+/// ([`Writer::with_capacity`]) and then never moves at all.
 #[derive(Default)]
 pub struct Writer {
     bytes: Vec<u8>,
@@ -58,28 +63,50 @@ impl Writer {
         Self::default()
     }
 
+    /// An empty writer with room for `capacity` bytes: up to there it does not move what it holds.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            bytes: Vec::with_capacity(capacity),
+        }
+    }
+
+    /// Makes room for `more` bytes. The vector never grows by itself, which would free its old buffer as it
+    /// is: a larger one is made, filled, and the old one wiped.
+    fn reserve(&mut self, more: usize) {
+        let needed = self.bytes.len().saturating_add(more);
+        if needed <= self.bytes.capacity() {
+            return;
+        }
+        let capacity = needed.max(self.bytes.capacity().saturating_mul(2)).max(64);
+        let mut grown = Vec::with_capacity(capacity);
+        grown.extend_from_slice(&self.bytes);
+        self.bytes.zeroize();
+        self.bytes = grown;
+    }
+
     /// `uint8`.
     pub fn u8(&mut self, value: u8) {
-        self.bytes.push(value);
+        self.fixed(&[value]);
     }
 
     /// `uint16`.
     pub fn u16(&mut self, value: u16) {
-        self.bytes.extend_from_slice(&value.to_be_bytes());
+        self.fixed(&value.to_be_bytes());
     }
 
     /// `uint32`.
     pub fn u32(&mut self, value: u32) {
-        self.bytes.extend_from_slice(&value.to_be_bytes());
+        self.fixed(&value.to_be_bytes());
     }
 
     /// `uint64`.
     pub fn u64(&mut self, value: u64) {
-        self.bytes.extend_from_slice(&value.to_be_bytes());
+        self.fixed(&value.to_be_bytes());
     }
 
     /// `opaque x[N]`, and any bytes that stand in an encoding as they are.
     pub fn fixed(&mut self, bytes: &[u8]) {
+        self.reserve(bytes.len());
         self.bytes.extend_from_slice(bytes);
     }
 
@@ -88,6 +115,7 @@ impl Writer {
         if bytes.len() > MAX_VECTOR_LEN {
             return Err(Error::TooLarge);
         }
+        self.reserve(bytes.len().saturating_add(MAX_LENGTH_PREFIX_LEN));
         tls_codec::vlen::write_length(&mut self.bytes, bytes.len()).map_err(|_| Error::TooLarge)?;
         self.bytes.extend_from_slice(bytes);
         Ok(())
@@ -107,7 +135,17 @@ impl Writer {
         self.opaque(&content.bytes)
     }
 
-    /// The bytes written.
+    /// How many bytes were written.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Whether nothing was written.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// The bytes written, in the buffer they were written to: the caller wipes them if they are secret.
     pub fn into_bytes(mut self) -> Vec<u8> {
         std::mem::take(&mut self.bytes)
     }

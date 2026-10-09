@@ -246,6 +246,30 @@ impl Decode for GroupState {
     }
 }
 
+/// The removal of a device from a group: its Cut, and the epoch that began without its leaf. The first one
+/// for a device stands.
+struct Removal {
+    cut: Head,
+    epoch: u64,
+}
+
+impl Encode for Removal {
+    fn write(&self, writer: &mut Writer) -> Result<(), Error> {
+        writer.value(&self.cut)?;
+        writer.u64(self.epoch);
+        Ok(())
+    }
+}
+
+impl Decode for Removal {
+    fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
+        Ok(Self {
+            cut: reader.value()?,
+            epoch: reader.u64()?,
+        })
+    }
+}
+
 /// The Cuts of an own Commit that waits for the hub, with the outbox entry they belong to.
 struct OwnCuts {
     outbox: u64,
@@ -316,7 +340,7 @@ pub(super) fn check_entry(key: &[u8], value: &[u8]) -> Result<(), Error> {
             let sub = rest.u8().map_err(|_| damaged("a key"))?;
             match sub {
                 SUB_EPOCH => codec::decode::<EpochFacts>(value, value.len()).map(|_| ()),
-                SUB_CUT => codec::decode::<Head>(value, value.len()).map(|_| ()),
+                SUB_CUT => codec::decode::<Removal>(value, value.len()).map(|_| ()),
                 SUB_CHAINS => Chains::from_bytes(value).map(|_| ()),
                 SUB_OWN_CHAIN => OwnChain::from_bytes(value).map(|_| ()),
                 SUB_RECORD => codec::decode::<Record>(value, value.len()).map(|_| ()),
@@ -526,7 +550,7 @@ impl<S: Storage> Device<S> {
             }
         }
         for cut in &merging.cuts {
-            self.apply_cut(batch, group, cut)?;
+            self.apply_cut(batch, group, cut, epoch)?;
         }
         Ok(())
     }
@@ -801,16 +825,26 @@ impl<S: Storage> Device<S> {
 
     // ---- Cuts ----
 
-    pub(super) fn cut(&self, group: &GroupId, device: &DeviceId) -> Result<Option<Head>, Error> {
+    fn removal(&self, group: &GroupId, device: &DeviceId) -> Result<Option<Removal>, Error> {
         self.stored(&group_key(table::CHAIN, SUB_CUT, group, device.as_bytes()))
-            .map(|value| codec::decode(value, 64).map_err(|_| damaged("a Cut")))
+            .map(|value| codec::decode(value, value.len()).map_err(|_| damaged("a Cut")))
             .transpose()
+    }
+
+    pub(super) fn cut(&self, group: &GroupId, device: &DeviceId) -> Result<Option<Head>, Error> {
+        Ok(self.removal(group, device)?.map(|removal| removal.cut))
     }
 
     /// Ends the chain of a removed device at its Cut (9.0.10): the Cut is kept for ever, the first one for a
     /// device stands; what this device had accepted beyond it is dropped, and the group's object states and
     /// registers are built again without it.
-    fn apply_cut(&mut self, batch: &mut Batch, group: &GroupId, cut: &Cut) -> Result<(), Error> {
+    fn apply_cut(
+        &mut self,
+        batch: &mut Batch,
+        group: &GroupId,
+        cut: &Cut,
+        epoch: u64,
+    ) -> Result<(), Error> {
         if self.cut(group, &cut.device)?.is_some() {
             return Ok(());
         }
@@ -821,7 +855,7 @@ impl<S: Storage> Device<S> {
         self.put_stored(
             batch,
             group_key(table::CHAIN, SUB_CUT, group, cut.device.as_bytes()),
-            codec::encode(&head)?,
+            codec::encode(&Removal { cut: head, epoch })?,
         );
         let mut chains = self.chains(group)?;
         let effect = chain::cut_chain(&Facts(self), &chains, group, &cut.device, &head)?;
@@ -968,6 +1002,15 @@ impl<S: Storage> GroupFacts for Facts<'_, S> {
 
     fn cut(&self, group: &GroupId, device: &DeviceId) -> Result<Option<Head>, Error> {
         self.0.cut(group, device)
+    }
+
+    /// From the record of the removal itself: the epoch that began without the device's leaf. A Commit that
+    /// removes a leaf and adds the same key at once is seen this way too.
+    fn removed_by(&self, group: &GroupId, epoch: u64, device: &DeviceId) -> Result<bool, Error> {
+        Ok(self
+            .0
+            .removal(group, device)?
+            .is_some_and(|removal| removal.epoch <= epoch))
     }
 
     fn epoch_end(&self, group: &GroupId, epoch: u64) -> Result<Option<EpochEnd>, Error> {

@@ -24,8 +24,8 @@ use crate::error::Error;
 use crate::hub_auth::{self, HubAddress, SignedHubAuth, CHALLENGE_LEN};
 use crate::ids::{DeviceId, GroupId, Hash32, InviteId, SessionId};
 use crate::invite::{
-    self, CheckCode, InviteLink, InviteTerms, Inviter, Joiner, Request, Role, SignedOffer,
-    SignedRequest, SignedReveal, CONFIRM_MS, INVITE_LIFE_MS,
+    self, CheckCode, InviteLink, InviteTerms, Inviter, Joiner, Role, SignedOffer, SignedRequest,
+    SignedReveal, CONFIRM_MS, INVITE_LIFE_MS,
 };
 use crate::mls::group;
 use crate::mls::key_package;
@@ -175,17 +175,15 @@ pub(super) fn check_entry(rest: &[u8], value: &[u8]) -> Result<(), Error> {
     }
 }
 
-/// The one place that hands a Request to [`Inviter::accept`]: the KeyPackage it carries is verified as 4.5
-/// asks, and its signature key, the new device's id, is the key the Request must be signed with.
+/// The one place that hands a Request to [`Inviter::accept`], which verifies the KeyPackage it carries as 4.5
+/// asks and reads the new device from it.
 fn accept_request(
     inviter: &mut Inviter,
     key: &SigningKey,
     request: &SignedRequest,
     now_ms: u64,
 ) -> Result<invite::Accepted, Error> {
-    let key_package = Request::decode(&request.request)?.key_package;
-    let new_device = key_package::verify_key_package(&key_package)?.device;
-    inviter.accept(key, request, &new_device, now_ms)
+    inviter.accept(key, request, now_ms)
 }
 
 /// An invite as its inviter opened it.
