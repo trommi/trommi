@@ -16,8 +16,8 @@ use trommi_core::recovery::{
     self, check_agreement, check_posted_row, commit_hash, follow_anchor, group_info_hash,
     key_changes, lists_authenticated, may_commit, open_links, select_anchor, select_keys,
     take_recovery_auth, AuthMessage, JoinFacts, KeyChange, KeyContext, MacKeys, MacState,
-    OldRecovery, PostedRow, PublicRules, RecoveryAuth, RecoveryJoin, RecoveryKeys, RecoveryLink,
-    RecoveryMac, SealedKey, Sealer, Sealing, Taken,
+    OldRecovery, Opener, PostedRow, PublicRules, RecoveredKey, RecoveryAuth, RecoveryJoin,
+    RecoveryKeys, RecoveryLink, RecoveryMac, SealedKey, Sealer, Sealing, Taken,
 };
 use trommi_core::Error;
 use trommi_tests::{now, MemoryStorage};
@@ -29,7 +29,7 @@ fn code(byte: u8) -> Secret<32> {
 }
 
 fn keys(byte: u8) -> RecoveryKeys {
-    RecoveryKeys::from_code(&code(byte)).unwrap()
+    RecoveryKeys::from_code(code(byte)).unwrap()
 }
 
 fn mac_of(byte: u8) -> Secret<32> {
@@ -69,7 +69,7 @@ fn row(code_byte: u8, group: GroupId, epoch: u64, key: u8, human: bool) -> Seale
         &mut SystemEntropy,
         &Sealing {
             context: context(group, epoch),
-            room_epoch: 0,
+            room_epoch: room_epoch_of(code_byte, group, epoch),
             recovery_hpke_key: &keys.public().hpke_key,
             writer: device(0xA1),
             content_key: &content_key(key),
@@ -77,6 +77,40 @@ fn row(code_byte: u8, group: GroupId, epoch: u64, key: u8, human: bool) -> Seale
         human.then_some(&mac),
     )
     .unwrap()
+}
+
+/// The room epoch a test row names: a room row its own epoch, a session row the first room epoch under its
+/// code in [`history_of`] (code 1 from epoch 0, code 2 from 2, code 3 from 4).
+fn room_epoch_of(code_byte: u8, group: GroupId, epoch: u64) -> u64 {
+    if group.is_room() {
+        epoch
+    } else {
+        u64::from(code_byte.saturating_sub(1)) * 2
+    }
+}
+
+/// A room that kept the keys of `code_byte` through ten epochs.
+fn flat(code_byte: u8) -> RoomHistory {
+    let mut history = RoomHistory::new(room_state(0, &[device(0xA1)], code_byte));
+    for epoch in 1..10 {
+        history
+            .record(room_state(epoch, &[device(0xA1)], code_byte))
+            .unwrap();
+    }
+    history
+}
+
+/// No session group's Commits were verified.
+fn unverified(_: &GroupId, _: u64) -> Option<u64> {
+    None
+}
+
+fn select(
+    rows: &[Vec<u8>],
+    openers: &[Opener],
+    history: &RoomHistory,
+) -> Result<Vec<RecoveredKey>, Error> {
+    select_keys(&ROOM, rows, openers, history, &unverified)
 }
 
 fn bytes_of(rows: &[SealedKey]) -> Vec<Vec<u8>> {
@@ -102,7 +136,7 @@ fn room_state(epoch: u64, humans: &[DeviceId], code_byte: u8) -> RoomState {
 #[test]
 fn the_three_keys_follow_from_the_code_by_their_labels() {
     let code = code(7);
-    let keys = RecoveryKeys::from_code(&code).unwrap();
+    let keys = RecoveryKeys::from_code(code.duplicate()).unwrap();
     let sign =
         SigningKey::from_seed(expand_with_label(&code, "trommi recovery sign", &[]).unwrap());
     let hpke_secret: Secret<32> = expand_with_label(&code, "trommi recovery hpke", &[]).unwrap();
@@ -122,7 +156,7 @@ fn the_three_keys_follow_from_the_code_by_their_labels() {
     assert_eq!(left.recovery_hpke_key, hpke.public);
 
     // Another code, other keys.
-    let other = RecoveryKeys::from_code(&Secret::new([8; 32]))
+    let other = RecoveryKeys::from_code(Secret::new([8; 32]))
         .unwrap()
         .public();
     assert_ne!(other.signature_key, public.signature_key);
@@ -136,7 +170,9 @@ fn a_fresh_code_is_random_and_its_keys_are_the_codes() {
     assert_ne!(code_a, code_b);
     assert_ne!(keys_a.public(), keys_b.public());
     assert_eq!(
-        RecoveryKeys::from_code(&code_a).unwrap().public(),
+        RecoveryKeys::from_code(code_a.duplicate())
+            .unwrap()
+            .public(),
         keys_a.public()
     );
     assert_eq!(format!("{keys_a:?}").matches("redacted").count(), 4);
@@ -1002,7 +1038,7 @@ fn keys_are_taken_per_group_and_epoch_and_marked() {
         row(1, helper, 2, 32, false),
         row(1, helper, 2, 32, true),
     ]);
-    let keys = select_keys(&ROOM, &rows, &openers).unwrap();
+    let keys = select(&rows, &openers, &flat(1)).unwrap();
     let found: Vec<(GroupId, u64, bool)> = keys
         .iter()
         .map(|key| (key.group, key.epoch, key.confirmed))
@@ -1035,7 +1071,7 @@ fn an_unauthenticated_row_never_stands_against_an_authenticated_one() {
         [row(1, session, 4, 66, false), row(1, session, 4, 40, true)],
         [row(1, session, 4, 40, true), row(1, session, 4, 66, false)],
     ] {
-        let keys = select_keys(&ROOM, &bytes_of(&rows), &openers).unwrap();
+        let keys = select(&bytes_of(&rows), &openers, &flat(1)).unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].key, content_key(40));
         assert!(keys[0].confirmed);
@@ -1047,13 +1083,10 @@ fn authenticated_rows_that_disagree_are_an_equivocation() {
     let openers = [keys(1).opener().unwrap()];
     let session = session_group(1);
     let rows = bytes_of(&[row(1, session, 4, 40, true), row(1, session, 4, 41, true)]);
-    assert_eq!(
-        select_keys(&ROOM, &rows, &openers),
-        Err(Error::Equivocation)
-    );
+    assert_eq!(select(&rows, &openers, &flat(1)), Err(Error::Equivocation));
     // The same key twice, from two writers, agrees.
     let rows = bytes_of(&[row(1, session, 4, 40, true), row(1, session, 4, 40, true)]);
-    assert_eq!(select_keys(&ROOM, &rows, &openers).unwrap().len(), 1);
+    assert_eq!(select(&rows, &openers, &flat(1)).unwrap().len(), 1);
 }
 
 #[test]
@@ -1066,19 +1099,19 @@ fn tampered_rows_open_nothing() {
     // A swapped row: epoch 4's sealed key served under epoch 3's context. Its mac does not verify.
     let mut swapped = real_3.clone();
     swapped.sealed = real_4.sealed.clone();
-    let keys = select_keys(&ROOM, &bytes_of(&[swapped.clone()]), &openers).unwrap();
+    let keys = select(&bytes_of(&[swapped.clone()]), &openers, &flat(1)).unwrap();
     assert!(keys.is_empty());
     // The same without a mac: the context is the sealing's info, so it does not open.
     swapped.mac = None;
-    let keys = select_keys(&ROOM, &bytes_of(&[swapped]), &openers).unwrap();
+    let keys = select(&bytes_of(&[swapped]), &openers, &flat(1)).unwrap();
     assert!(keys.is_empty());
 
     // A row whose mac was stripped is unconfirmed while alone, and nothing beside the real row.
     let mut stripped = real_4.clone();
     stripped.mac = None;
-    let keys = select_keys(&ROOM, &bytes_of(&[stripped.clone()]), &openers).unwrap();
+    let keys = select(&bytes_of(&[stripped.clone()]), &openers, &flat(1)).unwrap();
     assert_eq!((keys.len(), keys[0].confirmed), (1, false));
-    let keys = select_keys(&ROOM, &bytes_of(&[stripped, real_4.clone()]), &openers).unwrap();
+    let keys = select(&bytes_of(&[stripped, real_4.clone()]), &openers, &flat(1)).unwrap();
     assert_eq!((keys.len(), keys[0].confirmed), (1, true));
 
     // A wrong context: the real row renamed to another epoch or group.
@@ -1086,7 +1119,7 @@ fn tampered_rows_open_nothing() {
     renamed.context.epoch = 5;
     let mut regrouped = real_4.clone();
     regrouped.context.group = session_group(2);
-    let keys = select_keys(&ROOM, &bytes_of(&[renamed, regrouped]), &openers).unwrap();
+    let keys = select(&bytes_of(&[renamed, regrouped]), &openers, &flat(1)).unwrap();
     assert!(keys.is_empty());
 
     // A wrong key: a row with a non-empty mac that does not verify is ignored, also when it would open.
@@ -1103,7 +1136,7 @@ fn tampered_rows_open_nothing() {
     );
     let mut served = bytes_of(&[forged, foreign, elsewhere, real_3]);
     served.push(b"junk".to_vec());
-    let keys = select_keys(&ROOM, &served, &openers).unwrap();
+    let keys = select(&served, &openers, &flat(1)).unwrap();
     assert_eq!(keys.len(), 1);
     assert_eq!((keys[0].epoch, &keys[0].key), (3, &content_key(30)));
 
@@ -1119,8 +1152,8 @@ fn tampered_rows_open_nothing() {
     .concat();
     broken.mac = Some(hmac_sha256(&mac, &input).unwrap());
     assert_eq!(
-        select_keys(&ROOM, &bytes_of(&[broken]), &openers),
-        Err(Error::DecryptFailed)
+        select(&bytes_of(&[broken]), &openers, &flat(1)),
+        Err(Error::Equivocation)
     );
 }
 
@@ -1263,7 +1296,9 @@ fn a_replacement_makes_new_keys_and_a_link_to_the_old_ones() {
     let new = replacement.keys.public();
     assert_ne!(new, old.public());
     assert_eq!(
-        RecoveryKeys::from_code(&replacement.code).unwrap().public(),
+        RecoveryKeys::from_code(replacement.code.duplicate())
+            .unwrap()
+            .public(),
         new
     );
 
@@ -1301,7 +1336,7 @@ fn a_replacement_never_takes_keys_the_room_held_or_a_devices() {
     let seed = [0x5E; 32];
     let mut first = SeededEntropy::new(seed);
     let (drawn, _) = RecoveryKeys::generate(&mut first).unwrap();
-    let drawn_public = RecoveryKeys::from_code(&drawn).unwrap().public();
+    let drawn_public = RecoveryKeys::from_code(drawn.duplicate()).unwrap().public();
 
     // The room held these keys before: the same draw again is refused.
     let human = device(0xA1);
@@ -1449,14 +1484,17 @@ fn a_chain_of_two_replacements_opens_every_older_row() {
         row(3, room_group(), 4, 30, true),
         row(3, session, 3, 31, true),
     ]);
-    let keys_found = select_keys(&ROOM, &rows, &opened.openers).unwrap();
+    let keys_found = select(&rows, &opened.openers, &history_of(&[1, 2, 3])).unwrap();
     assert_eq!(keys_found.len(), 6);
     assert_eq!(keys_found.iter().filter(|key| key.confirmed).count(), 5);
     assert_eq!(keys_found[0].key, content_key(10));
 
     // The code in hand alone opens only its own rows; the anchor is never an older code's row.
     let own = [keys(3).opener().unwrap()];
-    assert_eq!(select_keys(&ROOM, &rows, &own).unwrap().len(), 2);
+    assert_eq!(
+        select(&rows, &own, &history_of(&[1, 2, 3])).unwrap().len(),
+        2
+    );
     assert_eq!(
         select_anchor(&keys(3), &ROOM, &rows).map(|anchor| anchor.epoch),
         Ok(4)
@@ -1472,6 +1510,86 @@ fn a_chain_of_two_replacements_opens_every_older_row() {
     let first = open_links(&keys(1), &ROOM, &links, &changes).unwrap();
     assert_eq!(first.openers.len(), 1);
     assert_eq!(first.missing_link, None);
+}
+
+#[test]
+fn a_replaced_code_authenticates_nothing_for_later_epochs() {
+    // The room: code 1 at room epochs 0 and 1, code 2 from epoch 2 on. A thief holds code 1.
+    let history = history_of(&[1, 2]);
+    let changes = key_changes(&history);
+    let opened = open_links(&keys(2), &ROOM, &links_of(&[link(2, 1, &ROOM)]), &changes).unwrap();
+    let session = session_group(1);
+    let forge = |group, epoch, room_epoch, human: bool| {
+        let mac = mac_of(1);
+        SealedKey::seal(
+            &mut SystemEntropy,
+            &Sealing {
+                context: context(group, epoch),
+                room_epoch,
+                recovery_hpke_key: &keys(1).public().hpke_key,
+                writer: device(0xA1),
+                content_key: &content_key(0x66),
+            },
+            human.then_some(&mac),
+        )
+        .unwrap()
+    };
+    // The session's epochs 0 and 1 began under room epoch 0, its epoch 2 under room epoch 2, as the device
+    // verified from its Commits.
+    let begun =
+        |group: &GroupId, epoch: u64| (*group == session).then_some(if epoch < 2 { 0 } else { 2 });
+    let real = bytes_of(&[
+        row(1, room_group(), 1, 11, true),
+        row(2, room_group(), 2, 12, true),
+        row(1, session, 1, 21, true),
+        row(2, session, 2, 22, true),
+    ]);
+    let forged = bytes_of(&[
+        // Room epoch 2 began under code 2: a row sealed to code 1 is not its row, whatever room epoch it names.
+        forge(room_group(), 2, 2, true),
+        forge(room_group(), 2, 1, true),
+        forge(room_group(), 2, 0, false),
+        // The session's epoch 2 began under room epoch 2: a row naming an older room epoch is not its row.
+        forge(session, 2, 1, true),
+        forge(session, 2, 2, true),
+        forge(session, 2, 0, false),
+        // A row for a room epoch the history does not hold.
+        forge(room_group(), 40, 1, true),
+    ]);
+    let served = [forged.clone(), real.clone(), forged].concat();
+    let found = select_keys(&ROOM, &served, &opened.openers, &history, &begun).unwrap();
+    let keys_found: Vec<(u64, &Secret<32>, bool)> = found
+        .iter()
+        .map(|key| (key.epoch, &key.key, key.confirmed))
+        .collect();
+    assert_eq!(
+        keys_found,
+        vec![
+            (1, &content_key(11), true),
+            (2, &content_key(12), true),
+            (1, &content_key(21), true),
+            (2, &content_key(22), true),
+        ]
+    );
+    // What the old code may still do: rows for the epochs of its own time, where it was the code. There its
+    // second key stands against the real one, and the finding is named.
+    let poisoned = [real, bytes_of(&[forge(session, 1, 1, true)])].concat();
+    assert_eq!(
+        select_keys(&ROOM, &poisoned, &opened.openers, &history, &begun),
+        Err(Error::Equivocation)
+    );
+}
+
+#[test]
+fn only_the_code_in_force_replaces() {
+    let history = history_of(&[1, 2]);
+    assert_eq!(
+        keys(1)
+            .replace(&mut SystemEntropy, &ROOM, &history)
+            .map(|_| ()),
+        Err(Error::WrongRecovery)
+    );
+    assert!(keys(2).replace(&mut SystemEntropy, &ROOM, &history).is_ok());
 }
 
 #[test]
@@ -1697,7 +1815,14 @@ fn a_real_devices_rows_anchor_the_room_and_its_group_infos_agree() {
     let room_id = room.group.room_id();
 
     // Every row of the device is authenticated and opens to the content key the device holds.
-    let found = select_keys(&room_id, &room.rows, &[keys.opener().unwrap()]).unwrap();
+    let found = select_keys(
+        &room_id,
+        &room.rows,
+        &[keys.opener().unwrap()],
+        room.device.room_history().unwrap(),
+        &unverified,
+    )
+    .unwrap();
     assert_eq!(found.len(), 4);
     for key in &found {
         assert!(key.confirmed);
@@ -1921,7 +2046,7 @@ fn malformed_input_is_refused_and_never_panics() {
         }
         // Whatever is served, the selection ends in a result, and never in a key a damaged row carried.
         let _ = select_anchor(&keys, &ROOM, &rows);
-        if let Ok(found) = select_keys(&ROOM, &rows, &openers) {
+        if let Ok(found) = select(&rows, &openers, &flat(1)) {
             for key in found {
                 assert!(
                     key.key == content_key(1)
