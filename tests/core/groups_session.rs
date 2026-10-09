@@ -249,3 +249,34 @@ fn a_device_that_cannot_seal_founds_nothing_and_commits_nothing() {
         a.content_key(&room_group, 3).unwrap()
     );
 }
+
+#[test]
+fn the_own_leaf_update_counts_from_the_last_commit_with_a_path() {
+    const HOUR_MS: u64 = 60 * 60 * 1000;
+    const DAY_MS: u64 = 24 * HOUR_MS;
+    let (mut a, mut b) = (new_device(), new_device());
+    let start = now();
+    let (mut hub, room_group) = found_room(&mut a);
+
+    // A leaf younger than seven days needs no update (5.2.9).
+    assert_eq!(a.update(&room_group, false, start + 6 * DAY_MS), Ok(None));
+    // An Add on the sixth day: a Commit without a path, which leaves the committer's leaf as it was.
+    let package = b.key_package(now()).unwrap();
+    a.add_human_device(&b.id(), &package, start + 6 * DAY_MS)
+        .unwrap();
+    post_ok(&mut hub, &mut a);
+    // So the leaf is seven days old a day later, and the update is due.
+    let due = a
+        .update(&room_group, false, start + 7 * DAY_MS + HOUR_MS)
+        .unwrap();
+    assert!(due.is_some(), "the Add renewed nothing");
+    post_ok(&mut hub, &mut a);
+    // The update has a path: the next one is due seven days after it.
+    assert_eq!(a.update(&room_group, false, start + 14 * DAY_MS), Ok(None));
+    let due = a
+        .update(&room_group, false, start + 14 * DAY_MS + 2 * HOUR_MS)
+        .unwrap();
+    assert!(due.is_some());
+    post_ok(&mut hub, &mut a);
+    assert_eq!(hub.epoch(&room_group), Some(3));
+}

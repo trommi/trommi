@@ -313,6 +313,8 @@ struct Pending {
     time: u64,
     /// The hub answered `epoch-taken`: the log decides.
     awaiting_log: bool,
+    /// The Commit has a path, which renews this device's leaf; one that only adds has none (3.4).
+    renews_leaf: bool,
 }
 
 /// What the device keeps of a group beside OpenMLS's state.
@@ -323,7 +325,9 @@ struct GroupMeta {
     previous_room_epoch: u64,
     /// A main session's agent leaf over time.
     seats: Vec<(u64, Option<DeviceId>)>,
-    /// When this device's leaf was last renewed, and when it last committed an update.
+    /// When this device's leaf was last renewed: by an own Commit with a path, or when the group was founded
+    /// or joined (a Welcome does not say when the KeyPackage it used was made, so the join counts). And when
+    /// the device last committed an update.
     own_leaf_ms: u64,
     last_update_ms: u64,
     archived: bool,
@@ -360,7 +364,12 @@ impl Encode for GroupMeta {
                 self.pending
                     .as_ref()
                     .is_some_and(|pending| pending.awaiting_log),
-            ) << 4);
+            ) << 4)
+            | (u8::from(
+                self.pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.renews_leaf),
+            ) << 5);
         writer.u8(flags);
         let pending = self.pending.as_ref();
         writer.u64(pending.map_or(0, |pending| pending.outbox));
@@ -387,7 +396,7 @@ impl Decode for GroupMeta {
         let own_leaf_ms = reader.u64()?;
         let last_update_ms = reader.u64()?;
         let flags = reader.u8()?;
-        if flags >= 1 << 5 {
+        if flags >= 1 << 6 {
             return Err(Error::BadFormat);
         }
         let outbox = reader.u64()?;
@@ -398,6 +407,7 @@ impl Decode for GroupMeta {
             room_epoch,
             time,
             awaiting_log: flags & (1 << 4) != 0,
+            renews_leaf: flags & (1 << 5) != 0,
         });
         let epoch = reader.u64()?;
         let hash: Hash32 = reader.value()?;
@@ -1279,7 +1289,9 @@ impl<S: Storage> Device<S> {
             .map_err(mls_fault)?;
         let meta = self.meta(id)?;
         meta.founding = false;
-        meta.own_leaf_ms = pending.time;
+        if pending.renews_leaf {
+            meta.own_leaf_ms = pending.time;
+        }
         meta.last_commit = Some((built_on, crypto::sha256(&commit)?));
         self.settle(batch, id, &group, pending.room_epoch)
     }
@@ -1742,6 +1754,8 @@ impl<S: Storage> Device<S> {
                         room_epoch: room.epoch,
                         time: now_ms,
                         awaiting_log: false,
+                        // The founder's leaf is as old as the group; the first Commit only adds.
+                        renews_leaf: false,
                     }),
                     ..GroupMeta::default()
                 },
@@ -1798,6 +1812,8 @@ impl<S: Storage> Device<S> {
             join: false,
         };
         let kind = context.map(GroupKind::Room);
+        // 3.4: a Commit that only adds has no path, and so leaves the committer's leaf as it is.
+        let renews_leaf = adds.is_empty() || !removes.is_empty() || kind.is_some();
         let change = Change {
             adds,
             removes: &removes,
@@ -1839,6 +1855,7 @@ impl<S: Storage> Device<S> {
             room_epoch: room.epoch,
             time: now_ms,
             awaiting_log: false,
+            renews_leaf,
         });
         self.put_group(batch, id)?;
         Ok(outbox)
@@ -1994,8 +2011,9 @@ impl<S: Storage> Device<S> {
 
     /// The own-leaf update of a human device (5.2.9): an empty Commit when its leaf in `group` is older than
     /// seven days and its last update there older than a day, or at once when `forced` (after 5 000 stroke
-    /// pieces in an epoch, or `epoch-full`). Agent and helper devices make no Commit for an update
-    /// (`forbidden`). Returns none when nothing is due.
+    /// pieces in an epoch, or `epoch-full`). A leaf's age counts from the device's last Commit there that had
+    /// a path (an Add alone has none and renews nothing), or from its founding or joining the group. Agent
+    /// and helper devices make no Commit for an update (`forbidden`). Returns none when nothing is due.
     pub fn update(
         &mut self,
         group: &GroupId,
