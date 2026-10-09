@@ -14,12 +14,14 @@
 
 use crate::codec::{self, Decode, Encode, Reader, Writer};
 use crate::crypto::{self, Entropy, HpkeCiphertext, HpkeKeyPair, Secret, SigningKey, TAG_LEN};
-use crate::device::{DeviceRecovery, SealRequest};
 use crate::error::Error;
+use crate::ids::SessionId;
 use crate::ids::{DeviceId, GroupId, Hash32, RoomId};
-use crate::mls::observer::Observer;
-use crate::mls::profile::{TrommiRoom, RECOVERY_KEY_LEN};
-use crate::mls::rules::{JoinClaim, RecoveryRules, RoomHistory, RoomState, SealedKeyClaim};
+use crate::mls::observer::{Context, Observer};
+use crate::mls::profile::{TrommiRoom, MAX_HUMAN_DEVICES_IN_RECOVERY, RECOVERY_KEY_LEN};
+use crate::mls::rules::{
+    self, JoinClaim, Parent, RecoveryRules, RoomHistory, RoomState, SealedKeyClaim, SessionFacts,
+};
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use zeroize::Zeroizing;
@@ -675,6 +677,14 @@ impl RecoveryKeys {
         })
     }
 
+    /// This code's `recovery_mac` with the key it belongs to: what the device keeps beyond the join.
+    pub fn mac_key(&self) -> RecoveryMac {
+        RecoveryMac {
+            recovery_hpke_key: self.hpke.public,
+            key: self.mac.duplicate(),
+        }
+    }
+
     /// Ends the use of the code: the two key pairs are wiped, `recovery_mac` stays with the device.
     pub fn finish(self) -> RecoveryMac {
         RecoveryMac {
@@ -807,7 +817,7 @@ impl RecoveryRules for PublicRules {
         auth.verify(&JoinFacts {
             group: claim.group,
             epoch: claim.epoch,
-            base_group_info: None,
+            base_group_info: claim.base_group_info,
             room_epoch: claim.note.room_epoch,
             room_state: &claim.note.room_state,
             joiner: claim.joiner,
@@ -873,86 +883,6 @@ pub fn check_posted_row(bytes: &[u8], posted: &PostedRow<'_>) -> Result<SealedKe
         Ok(row)
     } else {
         Err(Error::Incomplete)
-    }
-}
-
-/// The recovery construct on a device: the public checks, and the making of the `SealedKey` that goes with every
-/// Commit and founding. A human device holds the `recovery_mac` keys it was handed or derived; an agent or
-/// helper device holds none and leaves `mac` empty.
-#[derive(Debug, Default)]
-pub struct Sealer {
-    macs: MacKeys,
-}
-
-impl Sealer {
-    /// A sealer that holds no `recovery_mac`: an agent or helper device, or a human device before it was
-    /// handed one.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// A sealer that holds these keys.
-    pub fn with(macs: MacKeys) -> Self {
-        Self { macs }
-    }
-
-    /// The keys held.
-    pub fn macs(&self) -> &MacKeys {
-        &self.macs
-    }
-
-    /// The keys held, to add one.
-    pub fn macs_mut(&mut self) -> &mut MacKeys {
-        &mut self.macs
-    }
-}
-
-impl RecoveryRules for Sealer {
-    fn verify_join(&self, claim: &JoinClaim<'_>) -> Result<(), Error> {
-        PublicRules.verify_join(claim)
-    }
-
-    fn verify_sealed_key(
-        &self,
-        claim: &SealedKeyClaim<'_>,
-        sealed_key: &[u8],
-    ) -> Result<(), Error> {
-        PublicRules.verify_sealed_key(claim, sealed_key)
-    }
-}
-
-impl DeviceRecovery for Sealer {
-    fn seal_key(
-        &mut self,
-        entropy: &mut dyn Entropy,
-        request: &SealRequest<'_>,
-    ) -> Result<Vec<u8>, Error> {
-        // 7.4: a human device without the recovery_mac of the key in force founds nothing and commits nothing.
-        let recovery_mac = if request.writer_is_human {
-            Some(
-                self.macs
-                    .get(request.recovery_hpke_key)
-                    .ok_or(Error::NoKey)?,
-            )
-        } else {
-            None
-        };
-        SealedKey::seal(
-            entropy,
-            &Sealing {
-                context: KeyContext::of(request.group, request.epoch, request.group_info)?,
-                room_epoch: request.room_epoch,
-                recovery_hpke_key: request.recovery_hpke_key,
-                writer: *request.writer,
-                content_key: request.content_key,
-            },
-            recovery_mac,
-        )?
-        .to_bytes()
-    }
-
-    fn rules(&self) -> &dyn RecoveryRules {
-        self
     }
 }
 
@@ -1297,4 +1227,285 @@ pub fn select_keys(
         .collect();
     keys.sort_by_key(|key| (key.group, key.epoch));
     Ok(keys)
+}
+
+/// One Commit of a group's log, as the hub serves it.
+#[derive(Debug, Clone, Copy)]
+pub struct ServedCommit<'a> {
+    /// The Commit.
+    pub commit: &'a [u8],
+    /// The `RecoveryAuth` stored beside a join from outside.
+    pub recovery_auth: Option<&'a [u8]>,
+}
+
+/// One group as the hub serves it to a device that joins with the code.
+#[derive(Debug, Clone, Copy)]
+pub struct ServedGroup<'a> {
+    /// The founding GroupInfo (epoch 0).
+    pub founding: &'a [u8],
+    /// Every Commit since, in the hub's order.
+    pub commits: &'a [ServedCommit<'a>],
+    /// The GroupInfo the hub offers as current: what the device would join on.
+    pub current: &'a [u8],
+}
+
+/// A room as the hub serves it to a device that joins with the code. Nothing in it is trusted.
+#[derive(Debug, Clone, Copy)]
+pub struct ServedRoom<'a> {
+    /// The room.
+    pub room: RoomId,
+    /// The room group.
+    pub group: ServedGroup<'a>,
+    /// The GroupInfo of the anchor's epoch ([`select_anchor`] names the epoch).
+    pub anchor: &'a [u8],
+    /// Every `SealedKey` of the room.
+    pub rows: &'a [Vec<u8>],
+    /// Every `RecoveryLink` of the room.
+    pub links: &'a [Vec<u8>],
+    /// Every live session group, main sessions before helper sessions.
+    pub sessions: &'a [ServedGroup<'a>],
+}
+
+/// A session group that a device verified from its founding (8.4).
+#[derive(Debug)]
+pub struct CheckedSession {
+    /// The group's public state at the GroupInfo the hub offers as current, which agrees with it.
+    pub observer: Observer,
+    /// Per epoch of the group, the `room_epoch` of the Commit that led to it; for epoch 0 the founding
+    /// Commit's.
+    pub begun: Vec<u64>,
+}
+
+/// A room that a device with the code checked (8.5).
+#[derive(Debug)]
+pub struct CheckedRoom {
+    /// The anchor.
+    pub anchor: KeyContext,
+    /// The room group's public state at the GroupInfo the hub offers as current, which agrees with it; its
+    /// history reaches from the founding to there.
+    pub observer: Observer,
+    /// The session groups, in the order served: each verified from its founding, or the reason it is not.
+    /// A session that does not verify is not joined.
+    pub sessions: Vec<Result<CheckedSession, Error>>,
+    /// The content keys the code opens, each marked confirmed or not.
+    pub keys: Vec<RecoveredKey>,
+    /// A recovery key whose link to its predecessor the hub did not serve ([`Openers::missing_link`]).
+    pub missing_link: Option<[u8; RECOVERY_KEY_LEN]>,
+}
+
+/// The sessions verified so far, as the rules ask about them while the next one is verified.
+struct Walked<'a>(&'a [Result<CheckedSession, Error>]);
+
+impl Walked<'_> {
+    fn observers(&self) -> impl Iterator<Item = &Observer> {
+        self.0
+            .iter()
+            .filter_map(|session| session.as_ref().ok())
+            .map(|session| &session.observer)
+    }
+}
+
+impl SessionFacts for Walked<'_> {
+    fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+        self.observers()
+            .find(|observer| observer.session().is_some_and(|s| s.session_id == *session))
+            .map_or(Parent::NotAMainSession, |observer| {
+                observer.seat_at(room_epoch)
+            })
+    }
+
+    fn main_session_of(&self, agent: &DeviceId) -> Option<SessionId> {
+        self.observers()
+            .filter(|observer| observer.seat_at(u64::MAX) == Parent::Seat(Some(*agent)))
+            .find_map(|observer| observer.session().map(|session| session.session_id))
+    }
+
+    fn live_helpers(&self, parent: &SessionId) -> usize {
+        self.observers()
+            .filter(|observer| observer.session().is_some_and(|s| s.parent == *parent))
+            .count()
+    }
+}
+
+/// Verifies a session group as any reader does (8.4): from its founding GroupInfo through its Commits against
+/// the room states of `history` (`bad-group` when one does not verify or obey section 5), and requires the
+/// GroupInfo offered as current to agree with the state so reached (`wrong-recovery`). `sessions` answers for
+/// the room's other sessions: a helper session is verified after its main session.
+pub fn check_session(
+    served: &ServedGroup<'_>,
+    room: &RoomId,
+    history: &RoomHistory,
+    sessions: &dyn SessionFacts,
+) -> Result<CheckedSession, Error> {
+    let mut observer = Observer::follow_founding(served.founding).map_err(|_| Error::BadGroup)?;
+    if observer.group().room_id() != *room {
+        return Err(Error::WrongRoom);
+    }
+    let context = Context {
+        room: Some(history),
+        sessions,
+        recovery: &PublicRules,
+        max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
+    };
+    let mut begun = Vec::new();
+    let mut last_committer = None;
+    for served in served.commits {
+        let facts = observer
+            .process_commit(served.commit, served.recovery_auth, &context)
+            .map_err(|_| Error::BadGroup)?;
+        let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
+        if begun.is_empty() {
+            // The founding is one request: epoch 0 began under the room epoch its first Commit names.
+            begun.push(room_epoch);
+        }
+        begun.push(room_epoch);
+        last_committer = Some(facts.committer);
+    }
+    let committer = last_committer.ok_or(Error::BadGroup)?;
+    observer
+        .check_group_info(served.current, &committer)
+        .map_err(|_| Error::WrongRecovery)?;
+    Ok(CheckedSession { observer, begun })
+}
+
+/// Whether the walk from the founding stands, at the anchor's epoch, in the anchor's state.
+fn at_anchor(observer: &Observer, anchor: &KeyContext, group_info: &[u8]) -> Result<(), Error> {
+    if group_info_hash(group_info)? != anchor.group_info {
+        return Err(Error::WrongRecovery);
+    }
+    observer
+        .group_info_signer(group_info)
+        .map(|_| ())
+        .map_err(|_| Error::WrongRecovery)
+}
+
+/// Checks the room a hub serves before a device joins it with the code (8.4, 8.5).
+///
+/// The anchor is selected from the rows. The room group is followed as an observer from its founding
+/// GroupInfo through every Commit served (`bad-group` when one does not verify or obey section 5); at the
+/// anchor's epoch that walk must stand in the state of the anchor's GroupInfo, and the GroupInfo offered as
+/// current must agree with the state reached at the end, whose `TrommiRoom` must hold exactly the code's two
+/// public keys (`wrong-recovery` for each). Then the links are walked back to older codes, every session
+/// served is verified from its founding, and the content keys are selected.
+pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<CheckedRoom, Error> {
+    let anchor = select_anchor(keys, &served.room, served.rows)?;
+    let group = &served.group;
+    let mut observer =
+        Observer::follow_room(group.founding, None).map_err(|_| Error::WrongRecovery)?;
+    if observer.group() != anchor.group || observer.epoch()? != 0 {
+        return Err(Error::WrongRecovery);
+    }
+    let context = Context {
+        room: None,
+        sessions: &Walked(&[]),
+        recovery: &PublicRules,
+        max_human_devices: MAX_HUMAN_DEVICES_IN_RECOVERY,
+    };
+    let mut last_committer = None;
+    let mut anchored = false;
+    for commit in group.commits {
+        if observer.epoch()? == anchor.epoch {
+            at_anchor(&observer, &anchor, served.anchor)?;
+            anchored = true;
+        }
+        let facts = observer
+            .process_commit(commit.commit, commit.recovery_auth, &context)
+            .map_err(|_| Error::BadGroup)?;
+        last_committer = Some(facts.committer);
+    }
+    if observer.epoch()? == anchor.epoch {
+        at_anchor(&observer, &anchor, served.anchor)?;
+        anchored = true;
+    }
+    if !anchored {
+        return Err(Error::WrongRecovery);
+    }
+    check_agreement(&observer, last_committer.as_ref(), &anchor, group.current)?;
+    let history = observer.history().ok_or(Error::Internal("room observer"))?;
+    keys.check_room(&history.newest().room)?;
+
+    let opened = open_links(keys, &served.room, served.links, &key_changes(history))?;
+    let mut sessions: Vec<Result<CheckedSession, Error>> = Vec::new();
+    for session in served.sessions {
+        let checked = check_session(session, &served.room, history, &Walked(&sessions));
+        sessions.push(checked);
+    }
+    let begun = |group: &GroupId, epoch: u64| {
+        let session = sessions
+            .iter()
+            .filter_map(|session| session.as_ref().ok())
+            .find(|session| session.observer.group() == *group)?;
+        session.begun.get(usize::try_from(epoch).ok()?).copied()
+    };
+    let recovered = select_keys(&served.room, served.rows, &opened.openers, history, &begun)?;
+    Ok(CheckedRoom {
+        anchor,
+        observer,
+        sessions,
+        keys: recovered,
+        missing_link: opened.missing_link,
+    })
+}
+
+/// The leaves a recovery removes (8.7), per group, so that the caller can verify each one's chain and name its
+/// Cut: from the room group every human device, and from each verified session group every leaf that the room
+/// state after that removal, and for a helper session its main session's state, does not allow. Main sessions
+/// come before helper sessions.
+pub fn removals(checked: &CheckedRoom) -> Result<Vec<(GroupId, Vec<DeviceId>)>, Error> {
+    let history = checked
+        .observer
+        .history()
+        .ok_or(Error::Internal("room observer"))?;
+    let before = history.newest();
+    let mut after = history.clone();
+    after.record(RoomState {
+        epoch: before
+            .epoch
+            .checked_add(1)
+            .ok_or(Error::Internal("room epoch"))?,
+        state: Hash32::ZERO,
+        humans: BTreeSet::new(),
+        room: before.room.clone(),
+    })?;
+    let room = after.newest();
+    let mut plan = vec![(
+        checked.observer.group(),
+        before.humans.iter().copied().collect::<Vec<_>>(),
+    )];
+    // A main session's agent leaf once its own removals are done.
+    let mut seats: BTreeMap<SessionId, Option<DeviceId>> = BTreeMap::new();
+    let verified = || {
+        checked
+            .sessions
+            .iter()
+            .filter_map(|session| session.as_ref().ok())
+    };
+    for helper in [false, true] {
+        for session in verified() {
+            let Some(extension) = session.observer.session() else {
+                continue;
+            };
+            if extension.parent.is_zero() == helper {
+                continue;
+            }
+            let parent = if helper {
+                seats
+                    .get(&extension.parent)
+                    .map_or(Parent::NotAMainSession, |seat| Parent::Seat(*seat))
+            } else {
+                Parent::NotAMainSession
+            };
+            let leaves = session.observer.leaves()?;
+            let gone = rules::disallowed_leaves(&after, room, extension, parent, &leaves);
+            if !helper {
+                let mut left = leaves
+                    .iter()
+                    .filter(|leaf| !gone.contains(leaf) && !room.is_human(leaf));
+                let seat = left.next().copied();
+                seats.insert(extension.session_id, seat.filter(|_| left.next().is_none()));
+            }
+            plan.push((session.observer.group(), gone));
+        }
+    }
+    Ok(plan)
 }

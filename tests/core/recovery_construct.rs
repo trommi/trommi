@@ -7,7 +7,7 @@ use trommi_core::crypto::{
     self, derive_hpke_keypair, encrypt_with_label, expand_with_label, hmac_sha256, Secret,
     SeededEntropy, SigningKey, SystemEntropy,
 };
-use trommi_core::device::{Accepted, Device, DeviceRecovery, SealRequest};
+use trommi_core::device::{Accepted, Device};
 use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId, SessionId};
 use trommi_core::mls::observer::{Context, NoSessions, Observer};
 use trommi_core::mls::profile::{CommitNote, TrommiRoom, MAX_HUMAN_DEVICES};
@@ -17,9 +17,10 @@ use trommi_core::recovery::{
     key_changes, lists_authenticated, may_commit, open_links, select_anchor, select_keys,
     take_recovery_auth, AuthMessage, JoinFacts, KeyChange, KeyContext, MacKeys, MacState,
     OldRecovery, Opener, PostedRow, PublicRules, RecoveredKey, RecoveryAuth, RecoveryJoin,
-    RecoveryKeys, RecoveryLink, RecoveryMac, SealedKey, Sealer, Sealing, Taken,
+    RecoveryKeys, RecoveryLink, SealedKey, Sealing, Taken,
 };
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::{now, MemoryStorage};
 
 const ROOM: RoomId = RoomId::new([0x10; 32]);
@@ -518,6 +519,7 @@ fn the_rules_take_a_join_only_with_its_recovery_auth() {
         joiner: &join.joiner,
         note: &note,
         commit: &join.commit,
+        base_group_info: None,
         recovery_signature_key: &join.key,
         recovery_auth,
     };
@@ -561,13 +563,13 @@ fn the_rules_take_a_join_only_with_its_recovery_auth() {
     let mut moved = claim(Some(&join.auth));
     moved.recovery_signature_key = &other;
     assert_eq!(PublicRules.verify_join(&moved), Err(Error::BadSignature));
-
-    // A sealer on a device runs the same checks.
-    assert_eq!(
-        Sealer::new().verify_join(&claim(None)),
-        Err(Error::BadCommit)
-    );
-    assert_eq!(Sealer::new().verify_join(&claim(Some(&join.auth))), Ok(()));
+    // The hub holds the GroupInfo posted for the epoch the join builds on, and the join names it.
+    let mut held = claim(Some(&join.auth));
+    held.base_group_info = Some(&join.base);
+    assert_eq!(PublicRules.verify_join(&held), Ok(()));
+    let another = Hash32::new([0x02; 32]);
+    held.base_group_info = Some(&another);
+    assert_eq!(PublicRules.verify_join(&held), Err(Error::BadCommit));
 }
 
 #[test]
@@ -673,132 +675,6 @@ fn the_rules_take_a_sealed_key_only_for_its_commit() {
         PublicRules.verify_sealed_key(&claim, b"test sealed key"),
         Err(Error::Incomplete)
     );
-    assert_eq!(
-        Sealer::new().verify_sealed_key(&claim, &by_human.to_bytes().unwrap()),
-        Ok(())
-    );
-}
-
-#[test]
-fn a_replacement_seals_to_the_new_key_under_the_new_room_epoch() {
-    // 8.2: the row of a room Commit that replaces the recovery keys names the new room epoch and the new key.
-    let new = keys(2);
-    let new_hpke = new.public().hpke_key;
-    let group = room_group();
-    let writer = device(0xA1);
-    let info = b"the group info of room epoch 8".to_vec();
-    let mut macs = MacKeys::new();
-    macs.hold(keys(1).finish()).unwrap();
-    macs.hold(new.finish()).unwrap();
-    let mut sealer = Sealer::with(macs);
-    let request = SealRequest {
-        group: &group,
-        epoch: 8,
-        content_key: &content_key(8),
-        group_info: &info,
-        room_epoch: 8,
-        recovery_hpke_key: &new_hpke,
-        writer: &writer,
-        writer_is_human: true,
-    };
-    let sealed = sealer.seal_key(&mut SystemEntropy, &request).unwrap();
-    let row = SealedKey::from_bytes(&sealed).unwrap();
-    assert_eq!(row.room_epoch, 8);
-    assert_eq!(row.recovery_hpke_key, new_hpke);
-    assert_eq!(row.mac_state(&mac_of(2)), Ok(MacState::Valid));
-    assert_eq!(row.mac_state(&mac_of(1)), Ok(MacState::Invalid));
-    assert_eq!(
-        row.open(&keys(2).opener().unwrap()).unwrap(),
-        content_key(8)
-    );
-    let claim = SealedKeyClaim {
-        group: &group,
-        epoch: 8,
-        group_info: &info,
-        room_epoch: 8,
-        recovery_hpke_key: &new_hpke,
-        writer: &writer,
-        writer_is_human: true,
-    };
-    assert_eq!(PublicRules.verify_sealed_key(&claim, &sealed), Ok(()));
-    // Sealed to the old key, or named under the old room epoch, it is not the row of that Commit.
-    let old_hpke = keys(1).public().hpke_key;
-    let to_old = sealer
-        .seal_key(
-            &mut SystemEntropy,
-            &SealRequest {
-                recovery_hpke_key: &old_hpke,
-                ..request
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        PublicRules.verify_sealed_key(&claim, &to_old),
-        Err(Error::Incomplete)
-    );
-}
-
-// ---- the device's side ----
-
-#[test]
-fn a_human_device_seals_with_its_mac_and_an_opener_without() {
-    let hpke = keys(1).public().hpke_key;
-    let group = session_group(2);
-    let writer = device(0xA1);
-    let key = content_key(4);
-    let request = |human| SealRequest {
-        group: &group,
-        epoch: 2,
-        content_key: &key,
-        group_info: b"group info",
-        room_epoch: 1,
-        recovery_hpke_key: &hpke,
-        writer: &writer,
-        writer_is_human: human,
-    };
-    let mut macs = MacKeys::new();
-    assert_eq!(macs.hold(keys(1).finish()), Ok(Taken::New));
-    let mut human = Sealer::with(macs);
-    let row = SealedKey::from_bytes(&human.seal_key(&mut SystemEntropy, &request(true)).unwrap())
-        .unwrap();
-    assert_eq!(row.mac_state(&mac_of(1)), Ok(MacState::Valid));
-    assert_eq!(row.writer, writer);
-    assert_eq!(row.room_epoch, 1);
-    assert_eq!(
-        row.context,
-        KeyContext::of(&group, 2, b"group info").unwrap()
-    );
-    assert_eq!(row.open(&keys(1).opener().unwrap()).unwrap(), key);
-
-    // An opener holds no recovery_mac and leaves the mac empty.
-    let mut opener = Sealer::new();
-    let row = SealedKey::from_bytes(
-        &opener
-            .seal_key(&mut SystemEntropy, &request(false))
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(row.mac, None);
-    assert_eq!(row.open(&keys(1).opener().unwrap()).unwrap(), key);
-
-    // A human device without the recovery_mac of the key in force founds nothing and commits nothing.
-    assert_eq!(
-        opener.seal_key(&mut SystemEntropy, &request(true)),
-        Err(Error::NoKey)
-    );
-    let mut macs = MacKeys::new();
-    macs.hold(keys(2).finish()).unwrap();
-    let mut outdated = Sealer::with(macs);
-    assert_eq!(
-        outdated.seal_key(&mut SystemEntropy, &request(true)),
-        Err(Error::NoKey)
-    );
-    assert!(human.macs().holds(&hpke));
-    assert!(!outdated.macs().holds(&hpke));
-    assert_eq!(outdated.macs_mut().hold(keys(1).finish()), Ok(Taken::New));
-    assert!(outdated
-        .seal_key(&mut SystemEntropy, &request(true))
-        .is_ok());
 }
 
 #[test]
@@ -1746,19 +1622,8 @@ struct Room {
 /// A room founded with the keys of `code_byte` by a device that holds its recovery_mac, moved on by `updates`
 /// own-leaf updates. No hub: the outbox is read and every entry reported as accepted.
 fn real_room(code_byte: u8, updates: usize) -> Room {
-    let keys = keys(code_byte);
-    let public = keys.public();
-    let mut macs = MacKeys::new();
-    macs.hold(keys.finish()).unwrap();
-    let mut device = Device::create(
-        MemoryStorage::new(),
-        Box::new(SystemEntropy),
-        Box::new(Sealer::with(macs)),
-    )
-    .unwrap();
-    let room = device
-        .found_room(public.signature_key, public.hpke_key, now())
-        .unwrap();
+    let mut device = Device::create(MemoryStorage::new(), Box::new(SystemEntropy)).unwrap();
+    let room = device.found_room(&keys(code_byte), now()).unwrap();
     let group = GroupId::room(room);
     let founding = device.outbox().pop().unwrap();
     device
@@ -1922,25 +1787,33 @@ fn a_room_of_the_hubs_own_making_is_not_the_codes_room() {
     let room_id = real.group.room_id();
     let public = keys.public();
 
-    // The hub knows the recovery public keys and founds a room of its own with them. Its device holds no
-    // recovery_mac; the stand-in for that here is the mac of another code.
-    let mut macs = MacKeys::new();
-    macs.hold(RecoveryMac {
-        recovery_hpke_key: public.hpke_key,
-        key: mac_of(9),
-    })
-    .unwrap();
-    let mut hub_device = Device::create(
-        MemoryStorage::new(),
-        Box::new(SystemEntropy),
-        Box::new(Sealer::with(macs)),
+    // The hub knows the recovery public keys and founds a room of its own with them. It holds no
+    // recovery_mac: the mac on its row is made with a key of its own.
+    let hub_device = Forger::new();
+    let fake_room = RoomId::new([0x77; 32]);
+    let fake_group = hub_device.found_room(
+        &GroupId::room(fake_room),
+        &TrommiRoom {
+            recovery_signature_key: public.signature_key,
+            recovery_hpke_key: public.hpke_key,
+            agents: Vec::new(),
+        },
+    );
+    let fake_info = hub_device.group_info(&fake_group);
+    let fake_row = SealedKey::seal(
+        &mut SystemEntropy,
+        &Sealing {
+            context: KeyContext::of(&GroupId::room(fake_room), 0, &fake_info).unwrap(),
+            room_epoch: 0,
+            recovery_hpke_key: &public.hpke_key,
+            writer: hub_device.id(),
+            content_key: &content_key(9),
+        },
+        Some(&mac_of(9)),
     )
+    .unwrap()
+    .to_bytes()
     .unwrap();
-    let fake_room = hub_device
-        .found_room(public.signature_key, public.hpke_key, now())
-        .unwrap();
-    let founding = hub_device.outbox().pop().unwrap();
-    let (fake_info, fake_row) = (founding.parts[0].clone(), founding.parts[1].clone());
 
     // Served alone, under its own room id: no anchor.
     assert_eq!(
@@ -2076,6 +1949,7 @@ fn malformed_input_is_refused_and_never_panics() {
             joiner: &join.joiner,
             note: &note,
             commit: &join.commit,
+            base_group_info: Some(&join.base),
             recovery_signature_key: &join.key,
             recovery_auth: Some(&auth),
         };

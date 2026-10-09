@@ -30,8 +30,12 @@ use crate::mls::profile::{
 };
 use crate::mls::provider::{self, DeviceSigner, MlsEntries, Provider};
 use crate::mls::rules::{
-    self, CommitFacts, Judged, Parent, RecoveryRules, RoomHistory, RoomState, SessionBefore,
-    SessionFacts, Verifier,
+    self, CommitFacts, Judged, Parent, RoomHistory, RoomState, SessionBefore, SessionFacts,
+    Verifier,
+};
+use crate::recovery::{
+    self, AuthMessage, CheckedRoom, KeyContext, MacKeys, PublicRules, RecoveryJoin, RecoveryKeys,
+    RecoveryMac, RecoveryPublic, Replacement, SealedKey, Sealing, ServedGroup, ServedRoom, Taken,
 };
 use crate::store::{self, table, Batch, Entry, OutboxEntry, OutboxKind, Storage, StorageError};
 use openmls::group::MlsGroup;
@@ -55,47 +59,11 @@ const SUB_GROUP: u8 = 2;
 const SUB_KEY_PACKAGE: u8 = 3;
 const SUB_STAGED: u8 = 4;
 const SUB_SENT: u8 = 5;
+const SUB_OWED: u8 = 6;
+const SUB_MAC: u8 = 0;
+const SUB_UNCONFIRMED: u8 = 1;
 const SUB_OWN_HISTORY: u8 = 0;
 const SUB_OBSERVER: u8 = 1;
-
-/// What the `SealedKey` that goes with a Commit or a founding is made from (8.2).
-#[derive(Debug)]
-pub struct SealRequest<'a> {
-    /// The group.
-    pub group: &'a GroupId,
-    /// The epoch whose content key is sealed.
-    pub epoch: u64,
-    /// `content_key(group, epoch)`.
-    pub content_key: &'a Secret<32>,
-    /// The GroupInfo of that epoch, as it is posted.
-    pub group_info: &'a [u8],
-    /// The room epoch the row names.
-    pub room_epoch: u64,
-    /// The recovery key it is sealed to.
-    pub recovery_hpke_key: &'a [u8; RECOVERY_KEY_LEN],
-    /// This device, the row's writer.
-    pub writer: &'a DeviceId,
-    /// Whether this device is a human device, whose row carries a `mac`.
-    pub writer_is_human: bool,
-}
-
-/// The recovery construct (section 8) as the device needs it: the public checks, and the making of the
-/// `SealedKey` that goes with every Commit and founding.
-pub trait DeviceRecovery: RecoveryRules {
-    /// The `SealedKey` for `request`, as it is posted. A human device that does not hold the `recovery_mac` of
-    /// the key in force fails here, and so founds nothing and commits nothing (7.4).
-    fn seal_key(
-        &mut self,
-        entropy: &mut dyn Entropy,
-        request: &SealRequest<'_>,
-    ) -> Result<Vec<u8>, Error>;
-
-    /// The checks, for the rules.
-    fn rules(&self) -> &dyn RecoveryRules;
-}
-
-/// Makes the `RecoveryAuth` of a join from outside, from the Commit as it will be posted and its note (8.4).
-pub type Authorise<'a> = dyn FnMut(&[u8], &CommitNote) -> Result<Vec<u8>, Error> + 'a;
 
 /// One entry of the hub's ordered log.
 #[derive(Debug, Clone, Copy)]
@@ -183,15 +151,22 @@ pub enum Received {
         /// The JSON step.
         step: Vec<u8>,
     },
-    /// The `recovery_mac` of the room's current recovery key, from a human device. Whether it replaces nothing
-    /// (`equivocation`) is the recovery construct's to judge.
+    /// The `recovery_mac` of the room's recovery key, from a human device (7.4): this device holds it now.
     RecoveryAuth {
         /// The sender.
         from: DeviceId,
         /// The recovery key it belongs to.
         recovery_hpke_key: [u8; RECOVERY_KEY_LEN],
-        /// The key.
-        recovery_mac: Secret<32>,
+        /// Whether the key was new to this device.
+        new: bool,
+    },
+    /// A second, different `recovery_mac` for a recovery key this device holds one for: the finding
+    /// `equivocation`. Nothing was replaced.
+    RecoveryAuthConflict {
+        /// The sender.
+        from: DeviceId,
+        /// The recovery key it names.
+        recovery_hpke_key: [u8; RECOVERY_KEY_LEN],
     },
     /// A message this device may not take from that sender in that group, or that is for another device.
     Dropped,
@@ -427,23 +402,19 @@ struct OwnKeyPackage {
     retired_ms: u64,
 }
 
-/// A join from outside that waits for the hub: the group's state as a set of changes to OpenMLS's entries.
+/// A change to the stored state that waits for the hub (13.2): everything a join from outside, or a whole
+/// recovery, leaves behind. It was made on a copy and is applied only when the hub accepted the outbox entry
+/// it is kept under.
 struct Staged {
-    group: GroupId,
-    /// The epoch the group stands in once joined.
-    epoch: u64,
-    room_epoch: u64,
-    key: Secret<32>,
+    /// The outbox entries that belong to it: when the hub refuses one, all of them go.
+    entries: Vec<u64>,
     put: Vec<(Vec<u8>, Vec<u8>)>,
     delete: Vec<Vec<u8>>,
 }
 
 impl Encode for Staged {
     fn write(&self, writer: &mut Writer) -> Result<(), Error> {
-        writer.value(&self.group)?;
-        writer.u64(self.epoch);
-        writer.u64(self.room_epoch);
-        writer.fixed(self.key.expose());
+        writer.vector(&self.entries)?;
         let mut put = Writer::new();
         for (key, value) in &self.put {
             put.opaque(key)?;
@@ -457,10 +428,7 @@ impl Encode for Staged {
 
 impl Decode for Staged {
     fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
-        let group = reader.value()?;
-        let epoch = reader.u64()?;
-        let room_epoch = reader.u64()?;
-        let key = Secret::new(reader.fixed()?);
+        let entries = reader.vector()?;
         let mut listed = Reader::new(reader.opaque()?);
         let mut put = Vec::new();
         while !listed.is_empty() {
@@ -472,14 +440,69 @@ impl Decode for Staged {
             .map(|key| key.0)
             .collect();
         Ok(Self {
-            group,
-            epoch,
-            room_epoch,
-            key,
+            entries,
             put,
             delete,
         })
     }
+}
+
+/// A `recovery_mac` this device owes another (7.4), written with the Commit it follows from. It waits for an
+/// outbox entry: the Commit, until it is merged and the message can be encrypted in the new epoch; then the
+/// message, until the hub took it.
+struct Owed {
+    recovery_hpke_key: [u8; RECOVERY_KEY_LEN],
+    recovery_mac: Secret<32>,
+    /// Whether it is the consequence of the Commit it waits for, and goes if that Commit does.
+    bound: bool,
+}
+
+impl Encode for Owed {
+    fn write(&self, writer: &mut Writer) -> Result<(), Error> {
+        writer.fixed(&self.recovery_hpke_key);
+        writer.fixed(self.recovery_mac.expose());
+        writer.u8(u8::from(self.bound));
+        Ok(())
+    }
+}
+
+impl Decode for Owed {
+    fn read(reader: &mut Reader<'_>) -> Result<Self, Error> {
+        Ok(Self {
+            recovery_hpke_key: reader.fixed()?,
+            recovery_mac: Secret::new(reader.fixed()?),
+            bound: reader.u8()? == 1,
+        })
+    }
+}
+
+/// What a Commit leaves to post.
+struct Posting {
+    group: GroupId,
+    /// The epoch the Commit builds on.
+    epoch: u64,
+    commit: Vec<u8>,
+    group_info: Vec<u8>,
+    /// Empty when the Commit adds nobody.
+    welcome: Vec<u8>,
+    sealed: Vec<u8>,
+    /// Empty unless the Commit is a join from outside.
+    recovery_auth: Vec<u8>,
+    /// The room epoch its note names.
+    room_epoch: u64,
+}
+
+/// What a join with the code leaves behind (8.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeJoin {
+    /// The outbox entries to post, in order. The device's state changes only when the hub accepted the last.
+    pub outbox: Vec<u64>,
+    /// A recovery key whose link to the code it replaced the hub did not serve: the content of the older
+    /// codes' time stays closed. The finding is `withheld`.
+    pub missing_link: Option<[u8; RECOVERY_KEY_LEN]>,
+    /// The live session groups that did not verify from their founding, by their place in what was served,
+    /// each with the reason: they are not joined.
+    pub unverified: Vec<(usize, Error)>,
 }
 
 /// Everything the device holds in memory that is rebuilt from the store.
@@ -496,6 +519,12 @@ struct Memory {
     staged: BTreeMap<u64, Staged>,
     /// Handovers sent and not yet seen read: the recipient and the group they went through.
     sent: BTreeSet<(DeviceId, GroupId)>,
+    /// The `recovery_mac` keys this device holds (8.3).
+    macs: MacKeys,
+    /// The `recovery_mac`s it owes, by the outbox entry each waits for and its recipient.
+    owed: BTreeMap<(u64, DeviceId), Owed>,
+    /// The content keys that only a row without a `mac` vouches for (8.5).
+    unconfirmed: BTreeSet<(GroupId, u64)>,
 }
 
 /// What the device knows of the room's sessions, as the rules ask it.
@@ -533,7 +562,6 @@ pub struct Device<S: Storage> {
     key: SigningKey,
     id: DeviceId,
     provider: Provider,
-    recovery: Box<dyn DeviceRecovery>,
     memory: Memory,
     /// Another owner wrote to the stored state: this object works on it no more.
     lost: bool,
@@ -575,6 +603,29 @@ fn observer_prefix(group: &GroupId) -> Vec<u8> {
     store::key(
         table::ROOM_STATE,
         &[&[SUB_OBSERVER, group.len() as u8], group],
+    )
+}
+
+fn mac_key(recovery_hpke_key: &[u8; RECOVERY_KEY_LEN]) -> Vec<u8> {
+    store::key(table::RECOVERY, &[&[SUB_MAC], recovery_hpke_key])
+}
+
+fn unconfirmed_key(group: &GroupId, epoch: u64) -> Vec<u8> {
+    let group = group.as_bytes();
+    store::key(
+        table::RECOVERY,
+        &[
+            &[SUB_UNCONFIRMED, group.len() as u8],
+            group,
+            &epoch.to_be_bytes(),
+        ],
+    )
+}
+
+fn owed_key(waits_for: u64, recipient: &DeviceId) -> Vec<u8> {
+    device_key(
+        SUB_OWED,
+        &[&waits_for.to_be_bytes()[..], recipient.as_bytes()].concat(),
     )
 }
 
@@ -645,6 +696,34 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                         .map_err(|_| damaged("a handover record"))?;
                     memory.sent.insert((recipient, group));
                 }
+                SUB_OWED => {
+                    let waits_for = rest.u64().map_err(|_| damaged("an owed key"))?;
+                    let recipient: DeviceId = rest.value().map_err(|_| damaged("an owed key"))?;
+                    let owed: Owed =
+                        codec::decode(value, value.len()).map_err(|_| damaged("an owed key"))?;
+                    memory.owed.insert((waits_for, recipient), owed);
+                }
+                _ => return Err(damaged("a key")),
+            },
+            table::RECOVERY => match rest.u8().map_err(|_| damaged("a key"))? {
+                SUB_MAC => {
+                    let held = (|| {
+                        Ok::<_, Error>(RecoveryMac {
+                            recovery_hpke_key: rest.fixed()?,
+                            key: Secret::from_slice(value)?,
+                        })
+                    })()
+                    .map_err(|_| damaged("a recovery key"))?;
+                    memory
+                        .macs
+                        .hold(held)
+                        .map_err(|_| damaged("a recovery key"))?;
+                }
+                SUB_UNCONFIRMED => {
+                    let group = group_after(&mut rest).map_err(|_| damaged("a key mark"))?;
+                    let epoch = rest.u64().map_err(|_| damaged("a key mark"))?;
+                    memory.unconfirmed.insert((group, epoch));
+                }
                 _ => return Err(damaged("a key")),
             },
             table::MLS => {
@@ -710,11 +789,7 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
 
 impl<S: Storage> Device<S> {
     /// A new device in an empty store: a fresh signature key, no room yet.
-    pub fn create(
-        mut store: S,
-        mut entropy: Box<dyn Entropy + Send>,
-        recovery: Box<dyn DeviceRecovery>,
-    ) -> Result<Self, Error> {
+    pub fn create(mut store: S, mut entropy: Box<dyn Entropy + Send>) -> Result<Self, Error> {
         let loaded = store.load()?;
         if loaded.revision != 0 || !loaded.entries.is_empty() {
             return Err(Error::Storage("the store is not empty".into()));
@@ -741,7 +816,6 @@ impl<S: Storage> Device<S> {
             id: DeviceId::new(key.public()),
             key,
             provider: Provider::new(entropy, MlsEntries::new())?,
-            recovery,
             memory: Memory {
                 record,
                 ..Memory::default()
@@ -752,11 +826,7 @@ impl<S: Storage> Device<S> {
 
     /// The device a store holds. `Error::Storage` when anything in it does not decode or fit together, or a
     /// stored group stands in an epoch above [`profile::MAX_STORED_EPOCH`].
-    pub fn open(
-        mut store: S,
-        entropy: Box<dyn Entropy + Send>,
-        recovery: Box<dyn DeviceRecovery>,
-    ) -> Result<Self, Error> {
+    pub fn open(mut store: S, entropy: Box<dyn Entropy + Send>) -> Result<Self, Error> {
         let loaded = store.load()?;
         let mirror: BTreeMap<Vec<u8>, Vec<u8>> = loaded
             .entries
@@ -772,7 +842,6 @@ impl<S: Storage> Device<S> {
             id: DeviceId::new(key.public()),
             key,
             provider: Provider::new(entropy, mls)?,
-            recovery,
             memory,
             lost: false,
         };
@@ -854,7 +923,8 @@ impl<S: Storage> Device<S> {
         result
     }
 
-    fn write(&mut self, mut batch: Batch) -> Result<(), Error> {
+    /// Adds to `batch` what OpenMLS and the observers changed since the last write.
+    fn fold(&mut self, batch: &mut Batch) -> Result<(), Error> {
         let stored: MlsEntries = self
             .mirror
             .range(vec![table::MLS]..vec![table::MLS.saturating_add(1)])
@@ -877,6 +947,28 @@ impl<S: Storage> Device<S> {
                 batch.delete([&prefix[..], key].concat());
             }
         }
+        Ok(())
+    }
+
+    /// Runs one operation on a copy: memory is put back to what is stored, and what the operation would have
+    /// written is returned instead of written (13.2: a join from outside replaces the real state only when
+    /// the hub accepted it).
+    fn shadow<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self, &mut Batch) -> Result<T, Error>,
+    ) -> Result<(T, Batch), Error> {
+        self.owner()?;
+        let mut batch = Batch::new();
+        let result = operation(self, &mut batch).and_then(|value| {
+            self.fold(&mut batch)?;
+            Ok(value)
+        });
+        self.reset()?;
+        result.map(|value| (value, batch))
+    }
+
+    fn write(&mut self, mut batch: Batch) -> Result<(), Error> {
+        self.fold(&mut batch)?;
         if batch.is_empty() {
             return Ok(());
         }
@@ -1138,7 +1230,8 @@ impl<S: Storage> Device<S> {
     /// The hub accepted the outbox entry `id`: the entry goes, and its consequence is applied in the same write
     /// (a pending Commit is merged, a join from outside replaces the real state).
     pub fn outbox_accepted(&mut self, id: u64, answer: Accepted) -> Result<(), Error> {
-        self.transact(|device, batch| {
+        let adopted = self.transact(|device, batch| {
+            let mut adopted = false;
             let entry = device
                 .memory
                 .outbox
@@ -1156,7 +1249,11 @@ impl<S: Storage> Device<S> {
                     device.meta(&group)?.founding = false;
                     device.put_group(batch, &group)?;
                 }
-                (OutboxKind::ExternalCommit, Some(_)) => device.adopt_staged(batch, id)?,
+                (OutboxKind::ExternalCommit | OutboxKind::RecoveryFinish, _) => {
+                    device.adopt_staged(batch, id)?;
+                    adopted = true;
+                }
+                (OutboxKind::Message, _) => device.forget_owed(batch, id),
                 (OutboxKind::KeyPackages, _) => {
                     let replacement = entry.parts.first().filter(|part| !part.is_empty());
                     if let Some(replacement) = replacement {
@@ -1173,8 +1270,13 @@ impl<S: Storage> Device<S> {
             if let Some(change) = answer.change.filter(|change| Some(*change) == next) {
                 device.advance(batch, change)?;
             }
-            Ok(())
-        })
+            Ok(adopted)
+        })?;
+        if adopted {
+            // What was staged is stored now: memory follows it.
+            self.reset()?;
+        }
+        Ok(())
     }
 
     /// The hub refused the outbox entry `id` with `code`. `epoch-taken` for a Commit: it is held back, and the
@@ -1214,9 +1316,21 @@ impl<S: Storage> Device<S> {
                         }
                     }
                 }
-                (OutboxKind::ExternalCommit, _) => {
-                    device.memory.staged.remove(&id);
-                    batch.delete(device_key(SUB_STAGED, &id.to_be_bytes()));
+                (
+                    OutboxKind::ExternalCommit
+                    | OutboxKind::RecoveryCommit
+                    | OutboxKind::RecoveryFinish,
+                    _,
+                ) => device.drop_staged(batch, id),
+                (OutboxKind::Message, _) => {
+                    // 7.0: a message of an epoch that ended is encrypted again; a recovery_mac is owed
+                    // until the hub took it.
+                    let again = *code == Error::WrongEpoch;
+                    for (recipient, owed) in device.take_owed(batch, id) {
+                        if again {
+                            device.owe(batch, recipient, owed)?;
+                        }
+                    }
                 }
                 (OutboxKind::KeyPackages, _) => {
                     // The refusal may be for the KeyPackages themselves: they are not verified here.
@@ -1264,7 +1378,19 @@ impl<S: Storage> Device<S> {
         meta.founding = false;
         meta.own_leaf_ms = pending.time;
         meta.last_commit = Some((built_on, crypto::sha256(&commit)?));
-        self.settle(batch, id, &group, pending.room_epoch)
+        self.settle(batch, id, &group, pending.room_epoch)?;
+        // 7.4: the recovery_mac owed with this Commit is encrypted in the epoch it led to.
+        for (recipient, owed) in self.take_owed(batch, pending.outbox) {
+            self.hold_mac(
+                batch,
+                RecoveryMac {
+                    recovery_hpke_key: owed.recovery_hpke_key,
+                    key: owed.recovery_mac.duplicate(),
+                },
+            )?;
+            self.owe(batch, recipient, owed)?;
+        }
+        Ok(())
     }
 
     /// After a merge: the new epoch's content key, the roles, the record of the group, all in the batch.
@@ -1324,6 +1450,12 @@ impl<S: Storage> Device<S> {
             .clear_pending_commit(self.provider.storage())
             .map_err(mls_fault)?;
         self.put_group(batch, id)?;
+        // What the Commit would have brought goes with it; what merely waited behind it is sent now.
+        for (recipient, owed) in self.take_owed(batch, pending.outbox) {
+            if !owed.bound {
+                self.owe(batch, recipient, owed)?;
+            }
+        }
         Ok(Some(pending.outbox))
     }
 
@@ -1347,47 +1479,150 @@ impl<S: Storage> Device<S> {
         Ok(())
     }
 
-    /// The hub accepted a join from outside: the copy becomes the real state.
+    /// The hub accepted what was staged under the outbox entry `id`: the copy becomes the real state. The
+    /// caller rebuilds memory once it is written.
     fn adopt_staged(&mut self, batch: &mut Batch, id: u64) -> Result<(), Error> {
         let staged = self.memory.staged.remove(&id).ok_or(Error::NotFound)?;
         batch.delete(device_key(SUB_STAGED, &id.to_be_bytes()));
-        let mut entries = self.provider.entries();
-        for key in &staged.delete {
-            entries.remove(key);
-        }
-        for (key, value) in &staged.put {
-            entries.insert(key.clone(), value.clone());
-        }
-        provider::validate_entries(&entries)?;
-        self.provider.restore(entries);
-        let group = group::load(&self.provider, &staged.group)?;
-        let (_, kind) = profile::kind_of_context(group.public_group().group_context())?;
-        let meta = self.memory.groups.entry(staged.group).or_default();
-        *meta = GroupMeta {
-            session: match kind {
-                GroupKind::Session(session) => Some(session),
-                GroupKind::Room(_) => None,
-            },
-            seats: std::mem::take(&mut meta.seats),
-            joined_epoch: staged.epoch,
-            // 5.2.10: what was archived stays archived.
-            archived: meta.archived,
-            ..GroupMeta::default()
-        };
-        if staged.group.is_room() {
-            self.memory.record.room = Some(staged.group.room_id());
-            self.put_record(batch)?;
-            // The joiner is a human device from here on and keeps the history it followed as an observer.
-            if self.memory.history.is_none() {
-                let leaves = rules::leaves_of(group.members())?;
-                let state = rules::room_state_of(group.public_group().group_context(), &leaves)?;
-                batch.put(history_key(state.epoch), codec::encode(&state)?);
-                self.memory.history = Some(RoomHistory::new(state));
-                self.keep_key(batch, &staged.group, staged.epoch, staged.key.duplicate());
-                return self.put_group(batch, &staged.group);
+        let record = device_key(SUB_RECORD, &[]);
+        for (key, value) in staged.put {
+            if key == record {
+                // The copy's record names the room; cursor and outbox counter are the real ones.
+                let copy: Record =
+                    codec::decode(&value, value.len()).map_err(|_| damaged("a staged record"))?;
+                self.memory.record.room = copy.room;
+            } else {
+                batch.put(key, value);
             }
         }
-        self.settle(batch, &staged.group, &group, staged.room_epoch)
+        for key in staged.delete {
+            batch.delete(key);
+        }
+        self.put_record(batch)
+    }
+
+    /// The hub refused the outbox entry `id` of something staged: all of it goes, and the real state is as
+    /// it was.
+    fn drop_staged(&mut self, batch: &mut Batch, id: u64) {
+        let found = self
+            .memory
+            .staged
+            .iter()
+            .find(|(_, staged)| staged.entries.contains(&id))
+            .map(|(under, _)| *under);
+        let Some(under) = found else { return };
+        if let Some(staged) = self.memory.staged.remove(&under) {
+            for entry in staged.entries {
+                self.drop_outbox(batch, entry);
+            }
+        }
+        batch.delete(device_key(SUB_STAGED, &under.to_be_bytes()));
+    }
+
+    /// Keeps what a shadow run would have written under the outbox entry whose acceptance adopts it.
+    fn stage(&mut self, batch: &mut Batch, entries: Vec<u64>, copy: Batch) -> Result<(), Error> {
+        let under = *entries.last().ok_or(Error::Internal("staged entries"))?;
+        let staged = Staged {
+            entries,
+            put: copy
+                .put
+                .iter()
+                .map(|entry| (entry.key.clone(), entry.value.clone()))
+                .collect(),
+            delete: copy.delete.clone(),
+        };
+        batch.put(
+            device_key(SUB_STAGED, &under.to_be_bytes()),
+            codec::encode(&staged)?,
+        );
+        self.memory.staged.insert(under, staged);
+        Ok(())
+    }
+
+    // ---- recovery_mac (7.4, 8.3) ----
+
+    /// Holds a `recovery_mac`. A held key is never replaced: `equivocation` for a second, different value.
+    fn hold_mac(&mut self, batch: &mut Batch, mac: RecoveryMac) -> Result<Taken, Error> {
+        let key = mac_key(&mac.recovery_hpke_key);
+        let value = mac.key.expose().to_vec();
+        let taken = self.memory.macs.hold(mac)?;
+        if taken == Taken::New {
+            batch.put(key, value);
+        }
+        Ok(taken)
+    }
+
+    /// Whether this device holds the `recovery_mac` of the room's current recovery key. A human device that
+    /// does not founds nothing and commits nothing (7.4): it asks for it (`POST /v2/requests`, kind
+    /// `handover`).
+    pub fn holds_recovery_mac(&self) -> bool {
+        self.room_history()
+            .is_some_and(|history| recovery::may_commit(&self.memory.macs, history.newest()))
+    }
+
+    /// Takes the owed `recovery_mac`s that wait for the outbox entry `waits_for`.
+    fn take_owed(&mut self, batch: &mut Batch, waits_for: u64) -> Vec<(DeviceId, Owed)> {
+        let waiting: Vec<(u64, DeviceId)> = self
+            .memory
+            .owed
+            .range((waits_for, DeviceId::ZERO)..=(waits_for, DeviceId::new([0xFF; 32])))
+            .map(|(key, _)| *key)
+            .collect();
+        let mut taken = Vec::new();
+        for key in waiting {
+            batch.delete(owed_key(key.0, &key.1));
+            if let Some(owed) = self.memory.owed.remove(&key) {
+                taken.push((key.1, owed));
+            }
+        }
+        taken
+    }
+
+    fn forget_owed(&mut self, batch: &mut Batch, waits_for: u64) {
+        self.take_owed(batch, waits_for);
+    }
+
+    fn put_owed(
+        &mut self,
+        batch: &mut Batch,
+        waits_for: u64,
+        recipient: DeviceId,
+        owed: Owed,
+    ) -> Result<(), Error> {
+        batch.put(owed_key(waits_for, &recipient), codec::encode(&owed)?);
+        self.memory.owed.insert((waits_for, recipient), owed);
+        Ok(())
+    }
+
+    /// Sends an owed `recovery_mac` in the room group's current epoch and keeps it owed until the hub took
+    /// the message. While a Commit of this device is pending there, it waits for that Commit instead: no
+    /// message can be encrypted beside a pending Commit.
+    fn owe(&mut self, batch: &mut Batch, recipient: DeviceId, mut owed: Owed) -> Result<(), Error> {
+        let group = GroupId::room(self.memory.record.room.ok_or(Error::NoRoom)?);
+        owed.bound = false;
+        let pending = self
+            .meta(&group)?
+            .pending
+            .as_ref()
+            .map(|pending| pending.outbox);
+        let waits_for = match pending {
+            Some(commit) => commit,
+            None => {
+                let message = TrommiMessage::RecoveryAuth {
+                    recipient,
+                    recovery_hpke_key: owed.recovery_hpke_key,
+                    recovery_mac: owed.recovery_mac.duplicate(),
+                };
+                self.send(batch, &group, &message, false)?
+            }
+        };
+        self.put_owed(batch, waits_for, recipient, owed)
+    }
+
+    /// Whether a row with a valid `mac` vouches for the content key of `group` at `epoch`, or the device
+    /// derived it itself. Content of an epoch whose key is not confirmed is shown as unconfirmed (8.5).
+    pub fn key_is_confirmed(&self, group: &GroupId, epoch: u64) -> bool {
+        !self.memory.unconfirmed.contains(&(*group, epoch))
     }
 
     // ---- KeyPackages ----
@@ -1511,45 +1746,46 @@ impl<S: Storage> Device<S> {
 
     // ---- founding ----
 
-    /// The `SealedKey` of `epoch`, sealed to the recovery key `to.1` of the room epoch `to.0`.
+    /// The `SealedKey` of the group and epoch `of`, sealed to the recovery key `to.1` of the room epoch `to.0` (8.2). A human
+    /// device sets the `mac` with the `recovery_mac` of that key: `given` for a key that only now comes into
+    /// force, else the one it holds. Without it, it founds nothing and commits nothing (7.4): `no-key`.
     fn seal(
         &mut self,
-        group: &GroupId,
-        epoch: u64,
+        of: (&GroupId, u64),
         content_key: &Secret<32>,
         group_info: &[u8],
         to: (u64, &[u8; RECOVERY_KEY_LEN]),
         human: bool,
+        given: Option<&Secret<32>>,
     ) -> Result<Vec<u8>, Error> {
+        let (group, epoch) = of;
         let (room_epoch, recovery_hpke_key) = to;
-        let request = SealRequest {
-            group,
-            epoch,
-            content_key,
-            group_info,
+        let recovery_mac = if human {
+            let held = given.or_else(|| self.memory.macs.get(recovery_hpke_key));
+            Some(held.ok_or(Error::NoKey)?.duplicate())
+        } else {
+            None
+        };
+        let sealing = Sealing {
+            context: KeyContext::of(group, epoch, group_info)?,
             room_epoch,
             recovery_hpke_key,
-            writer: &self.id,
-            writer_is_human: human,
+            writer: self.id,
+            content_key,
         };
-        let recovery = &mut self.recovery;
-        let sealed = self
-            .provider
-            .with_entropy(|entropy| recovery.seal_key(entropy, &request))?;
-        if sealed.is_empty() {
-            return Err(Error::Incomplete);
-        }
-        Ok(sealed)
+        self.provider
+            .with_entropy(|entropy| SealedKey::seal(entropy, &sealing, recovery_mac.as_ref()))?
+            .to_bytes()
     }
 
-    /// Founds the room (5.1.1) with the recovery public keys of section 8 and posts the GroupInfo of epoch 0
-    /// with its `SealedKey`. Returns the room's id, 32 random bytes.
-    pub fn found_room(
-        &mut self,
-        recovery_signature_key: [u8; RECOVERY_KEY_LEN],
-        recovery_hpke_key: [u8; RECOVERY_KEY_LEN],
-        now_ms: u64,
-    ) -> Result<RoomId, Error> {
+    /// Founds the room (5.1.1) with the public keys of the recovery code `keys` (8.1) and posts the GroupInfo
+    /// of epoch 0 with its `SealedKey`. The device keeps the code's `recovery_mac`. Returns the room's id, 32
+    /// random bytes.
+    pub fn found_room(&mut self, keys: &RecoveryKeys, now_ms: u64) -> Result<RoomId, Error> {
+        let RecoveryPublic {
+            signature_key: recovery_signature_key,
+            hpke_key: recovery_hpke_key,
+        } = keys.public();
         self.transact(|device, batch| {
             if device.memory.record.room.is_some() {
                 return Err(Error::RoomExists);
@@ -1575,7 +1811,15 @@ impl<S: Storage> Device<S> {
             rules::check_room_founding(&state)?;
             let info = group::group_info(&device.provider, &device.key, &group)?;
             let key = group::content_key(&device.provider, &group)?;
-            let sealed = device.seal(&group_id, 0, &key, &info, (0, &recovery_hpke_key), true)?;
+            device.hold_mac(batch, keys.mac_key())?;
+            let sealed = device.seal(
+                (&group_id, 0),
+                &key,
+                &info,
+                (0, &recovery_hpke_key),
+                true,
+                None,
+            )?;
             device.keep_key(batch, &group_id, 0, key);
             batch.put(history_key(0), codec::encode(&state)?);
             device.memory.history = Some(RoomHistory::new(state));
@@ -1677,8 +1921,14 @@ impl<S: Storage> Device<S> {
             let info_0 = group::group_info(&device.provider, &device.key, &group)?;
             let key_0 = group::content_key(&device.provider, &group)?;
             let hpke = room.room.recovery_hpke_key;
-            let sealed_0 =
-                device.seal(&group_id, 0, &key_0, &info_0, (room.epoch, &hpke), human)?;
+            let sealed_0 = device.seal(
+                (&group_id, 0),
+                &key_0,
+                &info_0,
+                (room.epoch, &hpke),
+                human,
+                None,
+            )?;
             let note = CommitNote {
                 room_epoch: room.epoch,
                 room_state: room.state,
@@ -1692,12 +1942,12 @@ impl<S: Storage> Device<S> {
             };
             let built = group::commit(&device.provider, &device.key, &mut group, &note, change)?;
             let sealed = device.seal(
-                &group_id,
-                1,
+                (&group_id, 1),
                 &built.next_key,
                 &built.group_info,
                 (room.epoch, &hpke),
                 human,
+                None,
             )?;
             device.keep_key(batch, &group_id, 0, key_0);
             let outbox = device.enqueue(
@@ -1736,17 +1986,17 @@ impl<S: Storage> Device<S> {
 
     // ---- Commits ----
 
-    /// Builds one Commit in `group`, leaves it pending and puts it in the outbox with its GroupInfo, Welcome
-    /// and `SealedKey`. `cuts` name the leaves it removes; `context` a new room extension.
-    fn commit(
+    /// Builds one Commit in `group` and leaves it pending in OpenMLS. `cuts` name the leaves it removes;
+    /// `context` a new room extension; `new_mac` the `recovery_mac` of the recovery key that extension brings.
+    fn build(
         &mut self,
-        batch: &mut Batch,
         id: &GroupId,
         adds: Vec<KeyPackage>,
         cuts: &[Cut],
         context: Option<TrommiRoom>,
+        new_mac: Option<&Secret<32>>,
         now_ms: u64,
-    ) -> Result<u64, Error> {
+    ) -> Result<Posting, Error> {
         let meta = self.meta(id)?.clone();
         if meta.archived {
             return Err(Error::Gone);
@@ -1789,11 +2039,11 @@ impl<S: Storage> Device<S> {
         let built = group::commit(&self.provider, &self.key, &mut group, &note, change)?;
         // 8.2: a room Commit that replaces the recovery keys seals its new epoch to the new key, and its row
         // names the new room epoch.
-        let (sealed_epoch, hpke) = match &kind {
+        let (sealed_epoch, hpke, given) = match &kind {
             Some(GroupKind::Room(new)) if new.recovery_hpke_key != room.room.recovery_hpke_key => {
-                (room.epoch.saturating_add(1), new.recovery_hpke_key)
+                (room.epoch.saturating_add(1), new.recovery_hpke_key, new_mac)
             }
-            _ => (room.epoch, room.room.recovery_hpke_key),
+            _ => (room.epoch, room.room.recovery_hpke_key, None),
         };
         let Built {
             epoch,
@@ -1803,28 +2053,98 @@ impl<S: Storage> Device<S> {
             next_key,
         } = built;
         let sealed = self.seal(
-            id,
-            epoch.saturating_add(1),
+            (id, epoch.saturating_add(1)),
             &next_key,
             &group_info,
             (sealed_epoch, &hpke),
             human,
+            given,
         )?;
-        let outbox = self.enqueue(
-            batch,
-            OutboxKind::Commit,
-            Some(*id),
+        Ok(Posting {
+            group: *id,
             epoch,
-            vec![commit, group_info, welcome.unwrap_or_default(), sealed],
-        )?;
-        self.meta(id)?.pending = Some(Pending {
-            outbox,
+            commit,
+            group_info,
+            welcome: welcome.unwrap_or_default(),
+            sealed,
+            recovery_auth: Vec::new(),
             room_epoch: room.epoch,
+        })
+    }
+
+    /// Puts a built Commit in the outbox and records it as pending. `with` are the parts a replacement of the
+    /// recovery code posts beside it.
+    fn pend(
+        &mut self,
+        batch: &mut Batch,
+        posting: Posting,
+        with: Option<[Vec<u8>; 2]>,
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        let Posting {
+            group,
+            epoch,
+            commit,
+            group_info,
+            welcome,
+            sealed,
+            room_epoch,
+            ..
+        } = posting;
+        let (kind, parts) = match with {
+            Some([link, account]) => (
+                OutboxKind::RecoveryCode,
+                vec![commit, group_info, sealed, link, account],
+            ),
+            None => (
+                OutboxKind::Commit,
+                vec![commit, group_info, welcome, sealed],
+            ),
+        };
+        let outbox = self.enqueue(batch, kind, Some(group), epoch, parts)?;
+        self.meta(&group)?.pending = Some(Pending {
+            outbox,
+            room_epoch,
             time: now_ms,
             awaiting_log: false,
         });
-        self.put_group(batch, id)?;
+        self.put_group(batch, &group)?;
         Ok(outbox)
+    }
+
+    /// Builds one Commit in `group`, leaves it pending and puts it in the outbox with its GroupInfo, Welcome
+    /// and `SealedKey`.
+    fn commit(
+        &mut self,
+        batch: &mut Batch,
+        id: &GroupId,
+        adds: Vec<KeyPackage>,
+        cuts: &[Cut],
+        context: Option<TrommiRoom>,
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        let posting = self.build(id, adds, cuts, context, None, now_ms)?;
+        self.pend(batch, posting, None, now_ms)
+    }
+
+    /// Builds one Commit in `group` and merges it at once: for a state that is itself a copy, where the hub's
+    /// answer decides over all of it (8.7).
+    fn commit_now(
+        &mut self,
+        batch: &mut Batch,
+        id: &GroupId,
+        cuts: &[Cut],
+        context: Option<TrommiRoom>,
+        now_ms: u64,
+    ) -> Result<Posting, Error> {
+        let posting = self.build(id, Vec::new(), cuts, context, None, now_ms)?;
+        let mut group = group::load(&self.provider, id)?;
+        group
+            .merge_pending_commit(&self.provider)
+            .map_err(mls_fault)?;
+        self.meta(id)?.own_leaf_ms = now_ms;
+        self.settle(batch, id, &group, posting.room_epoch)?;
+        Ok(posting)
     }
 
     fn room_group(&self) -> Result<GroupId, Error> {
@@ -1856,7 +2176,22 @@ impl<S: Storage> Device<S> {
             }
             key_package::verify_key_package_of(key_package, device)?;
             let (package, _) = key_package::validated(key_package)?;
-            this.commit(batch, &group, vec![package], &[], None, now_ms)
+            let recovery_hpke_key = room.room.recovery_hpke_key;
+            let outbox = this.commit(batch, &group, vec![package], &[], None, now_ms)?;
+            // 7.4: the newcomer is owed the recovery_mac, written with the Commit that adds it.
+            let recovery_mac = this
+                .memory
+                .macs
+                .get(&recovery_hpke_key)
+                .ok_or(Error::NoKey)?
+                .duplicate();
+            let owed = Owed {
+                recovery_hpke_key,
+                recovery_mac,
+                bound: true,
+            };
+            this.put_owed(batch, outbox, *device, owed)?;
+            Ok(outbox)
         })
     }
 
@@ -2202,85 +2537,440 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// Builds a join from outside into the group of `group_info` (3.4, 8.4) on a copy of the state: nothing
-    /// of the real state changes until the hub accepted it. Refused before anything is built: a group this
-    /// device archived (`gone`), and a GroupInfo whose tree holds a leaf of this device's key (`bad-commit`). `authorise` is handed the Commit as it will be
-    /// posted and the note it carries, and returns the `RecoveryAuth` to post with it. The device must follow
-    /// the room group, as an observer or a member, so that the note names a room state it verified.
-    pub fn join_from_outside(
+    // ---- joining with the code (8.4, 8.5), replacing it (8.6), recovery (8.7) ----
+
+    /// Takes over what the check of a served room established: the room, its roles from the founding on, the
+    /// code's `recovery_mac`, and every content key the code opened, each marked if it is unconfirmed.
+    fn take_checked(
         &mut self,
+        batch: &mut Batch,
+        keys: &RecoveryKeys,
+        room: RoomId,
+        checked: CheckedRoom,
+    ) -> Result<(), Error> {
+        let history = checked
+            .observer
+            .history()
+            .ok_or(Error::Internal("room observer"))?
+            .clone();
+        for state in history.states() {
+            batch.put(history_key(state.epoch), codec::encode(state)?);
+        }
+        self.memory.history = Some(history);
+        self.memory.record.room = Some(room);
+        self.put_record(batch)?;
+        self.hold_mac(batch, keys.mac_key())?;
+        for key in checked.keys {
+            if self.keep_key(batch, &key.group, key.epoch, key.key) && !key.confirmed {
+                batch.put(unconfirmed_key(&key.group, key.epoch), Vec::new());
+                self.memory.unconfirmed.insert((key.group, key.epoch));
+            }
+        }
+        Ok(())
+    }
+
+    /// Joins the group of `group_info` from outside (3.4, 8.4), in the state this is called on, which is a
+    /// copy: the Commit with `join` = 1 naming the newest room state, its `RecoveryAuth` signed with the
+    /// code, and the `SealedKey` of the epoch it leads to. `seats` is a main session's agent leaf over time,
+    /// as its verification from the founding found it.
+    fn join_built(
+        &mut self,
+        batch: &mut Batch,
+        keys: &RecoveryKeys,
         group_info: &[u8],
+        seats: &[(u64, Option<DeviceId>)],
         now_ms: u64,
-        authorise: &mut Authorise<'_>,
-    ) -> Result<u64, Error> {
+    ) -> Result<Posting, Error> {
+        let room = self.history()?.newest().clone();
+        let verifiable = observer::parse_group_info(group_info)?;
+        let (id, kind) =
+            profile::kind_of_context(verifiable.group_context()).map_err(|_| Error::BadGroup)?;
+        if self.memory.record.room != Some(id.room_id()) {
+            return Err(Error::WrongRoom);
+        }
+        let known = self.memory.groups.get(&id);
+        // 5.2.10: an archived session is not reopened.
+        if known.is_some_and(|meta| meta.archived) {
+            return Err(Error::Gone);
+        }
+        if known.is_some_and(|meta| !meta.removed) {
+            return Err(Error::Replay);
+        }
+        // 4.3: a device that lost its state comes back under a new key. With a leaf of this key in the
+        // tree the join would remove that leaf, and a Remove needs the Cut that only the others hold.
+        if group::tree_holds(&verifiable, &self.id) {
+            return Err(Error::BadCommit);
+        }
+        let note = CommitNote {
+            room_epoch: room.epoch,
+            room_state: room.state,
+            time: now_ms,
+            cuts: Vec::new(),
+            join: true,
+        };
+        let (group, built) = group::external_commit(&self.provider, &self.key, group_info, &note)?;
+        let join = RecoveryJoin {
+            base: KeyContext::of(&id, built.epoch, group_info)?,
+            room_epoch: room.epoch,
+            room_state: room.state,
+            joiner: self.id,
+        };
+        let recovery_auth = keys.authorise(&join, &built.commit)?;
+        let sealed = self.seal(
+            (&id, built.epoch.saturating_add(1)),
+            &built.next_key,
+            &built.group_info,
+            (room.epoch, &room.room.recovery_hpke_key),
+            true,
+            None,
+        )?;
+        self.memory.groups.insert(
+            id,
+            GroupMeta {
+                session: match kind {
+                    GroupKind::Session(session) => Some(session),
+                    GroupKind::Room(_) => None,
+                },
+                seats: seats.to_vec(),
+                own_leaf_ms: now_ms,
+                joined_epoch: built.epoch.saturating_add(1),
+                ..GroupMeta::default()
+            },
+        );
+        self.settle(batch, &id, &group, room.epoch)?;
+        Ok(Posting {
+            group: id,
+            epoch: built.epoch,
+            commit: built.commit,
+            group_info: built.group_info,
+            welcome: Vec::new(),
+            sealed,
+            recovery_auth,
+            room_epoch: room.epoch,
+        })
+    }
+
+    /// Whether a join from outside into `group` already waits for the hub.
+    fn joining(&self, group: &GroupId) -> bool {
+        self.memory
+            .outbox
+            .values()
+            .any(|entry| entry.kind == OutboxKind::ExternalCommit && entry.group == Some(*group))
+    }
+
+    /// Puts a join from outside in the outbox, with the copy it was built on kept beside it.
+    fn post_join(&mut self, posting: Posting, copy: Batch) -> Result<u64, Error> {
         self.transact(|this, batch| {
-            let room = this.history()?.newest().clone();
-            let verifiable = observer::parse_group_info(group_info)?;
-            let (id, _) = profile::kind_of_context(verifiable.group_context())
-                .map_err(|_| Error::BadGroup)?;
-            if this.memory.record.room != Some(id.room_id()) {
-                return Err(Error::WrongRoom);
-            }
-            if this.memory.staged.values().any(|staged| staged.group == id) {
-                return Err(Error::Busy);
-            }
-            // 5.2.10: an archived session is not reopened.
-            if this
-                .memory
-                .groups
-                .get(&id)
-                .is_some_and(|meta| meta.archived)
-            {
-                return Err(Error::Gone);
-            }
-            // 4.3: a device that lost its state comes back under a new key. With a leaf of this key in the
-            // tree the join would remove that leaf, and a Remove needs the Cut that only the others hold.
-            if group::tree_holds(&verifiable, &this.id) {
-                return Err(Error::BadCommit);
-            }
-            let note = CommitNote {
-                room_epoch: room.epoch,
-                room_state: room.state,
-                time: now_ms,
-                cuts: Vec::new(),
-                join: true,
-            };
-            let before = this.provider.entries();
-            let result = group::external_commit(&this.provider, &this.key, group_info, &note);
-            let (put, delete) = this.provider.changes(&before);
-            this.provider.restore(before);
-            let (_, built) = result?;
-            let recovery_auth = authorise(&built.commit, &note)?;
-            let human = true;
-            let sealed = this.seal(
-                &id,
-                built.epoch.saturating_add(1),
-                &built.next_key,
-                &built.group_info,
-                (room.epoch, &room.room.recovery_hpke_key),
-                human,
-            )?;
             let outbox = this.enqueue(
                 batch,
                 OutboxKind::ExternalCommit,
-                Some(id),
-                built.epoch,
-                vec![built.commit, built.group_info, sealed, recovery_auth],
+                Some(posting.group),
+                posting.epoch,
+                vec![
+                    posting.commit,
+                    posting.group_info,
+                    posting.sealed,
+                    posting.recovery_auth,
+                ],
             )?;
-            let staged = Staged {
-                group: id,
-                epoch: built.epoch.saturating_add(1),
-                room_epoch: room.epoch,
-                key: built.next_key,
-                put,
-                delete,
-            };
-            batch.put(
-                device_key(SUB_STAGED, &outbox.to_be_bytes()),
-                codec::encode(&staged)?,
-            );
-            this.memory.staged.insert(outbox, staged);
+            this.stage(batch, vec![outbox], copy)?;
             Ok(outbox)
+        })
+    }
+
+    /// Signs in on a new device with the recovery code (8.4, 8.5): checks the room the hub serves
+    /// ([`recovery::check_room`]: the anchor, the walk from the founding, the agreement of the current
+    /// GroupInfo, the code's public keys, the links, the rows) and builds the join of the room group from
+    /// outside on a copy of the state. Nothing of the real state changes until the hub accepted the outbox
+    /// entry; then the device is a human device, holds the room's roles from its founding, the code's
+    /// `recovery_mac` and every content key the code opened. It joins each live session group next
+    /// ([`Device::join_session_with_code`]). The caller drops `keys` when the last join is posted: the device
+    /// keeps nothing of the code but `recovery_mac`.
+    pub fn join_room_with_code(
+        &mut self,
+        keys: &RecoveryKeys,
+        served: &ServedRoom<'_>,
+        now_ms: u64,
+    ) -> Result<CodeJoin, Error> {
+        if self.memory.record.room.is_some() {
+            return Err(Error::RoomExists);
+        }
+        if self.joining(&GroupId::room(served.room)) {
+            return Err(Error::Busy);
+        }
+        let checked = recovery::check_room(keys, served)?;
+        let missing_link = checked.missing_link;
+        let unverified = checked
+            .sessions
+            .iter()
+            .enumerate()
+            .filter_map(|(at, session)| Some((at, session.as_ref().err()?.clone())))
+            .collect();
+        let (posting, copy) = self.shadow(|this, batch| {
+            this.take_checked(batch, keys, served.room, checked)?;
+            this.join_built(batch, keys, served.group.current, &[], now_ms)
+        })?;
+        Ok(CodeJoin {
+            outbox: vec![self.post_join(posting, copy)?],
+            missing_link,
+            unverified,
+        })
+    }
+
+    /// Joins a live session group with the recovery code (8.4, 5.2.7), as a human device that joined the
+    /// room group with it: verifies the group as any reader does, from its founding GroupInfo through its
+    /// Commits against the room states this device holds, requires the GroupInfo served as current to agree
+    /// with the state so reached, and builds the join from outside on a copy of the state. A stale group
+    /// takes the join too. Main sessions are joined before their helper sessions.
+    pub fn join_session_with_code(
+        &mut self,
+        keys: &RecoveryKeys,
+        served: &ServedGroup<'_>,
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        let room = self.memory.record.room.ok_or(Error::NoRoom)?;
+        if !self.is_human() {
+            return Err(Error::Forbidden);
+        }
+        let checked = recovery::check_session(served, &room, self.history()?, &self.known())?;
+        if self.joining(&checked.observer.group()) {
+            return Err(Error::Busy);
+        }
+        let seats = checked.observer.seats().to_vec();
+        let (posting, copy) = self
+            .shadow(|this, batch| this.join_built(batch, keys, served.current, &seats, now_ms))?;
+        self.post_join(posting, copy)
+    }
+
+    /// Replaces the recovery code (8.6) as a human device that holds the current code `keys`: one request with
+    /// the room Commit that puts the new public keys into the room's state, its `SealedKey` sealed to the new
+    /// key, the `RecoveryLink` and the account's new sealed copies. `replacement` comes from
+    /// [`RecoveryKeys::replace`] with this device's [`Device::room_history`]; `account` are the sealed
+    /// copies of `replacement.code`, opaque here. When the hub accepted it, the device holds the new
+    /// `recovery_mac` and sends it to every human device.
+    pub fn replace_code(
+        &mut self,
+        keys: &RecoveryKeys,
+        replacement: &Replacement,
+        account: &[u8],
+        now_ms: u64,
+    ) -> Result<u64, Error> {
+        self.transact(|this, batch| {
+            let group = this.room_group()?;
+            let history = this.history()?;
+            let mut room = history.newest().room.clone();
+            keys.check_room(&room)?;
+            let new = this.new_keys(replacement)?;
+            room.recovery_signature_key = new.signature_key;
+            room.recovery_hpke_key = new.hpke_key;
+            let new_mac = replacement.keys.mac_key();
+            let posting = this.build(
+                &group,
+                Vec::new(),
+                &[],
+                Some(room),
+                Some(&new_mac.key),
+                now_ms,
+            )?;
+            let with = [replacement.link.clone(), account.to_vec()];
+            let outbox = this.pend(batch, posting, Some(with), now_ms)?;
+            let owed = Owed {
+                recovery_hpke_key: new_mac.recovery_hpke_key,
+                recovery_mac: new_mac.key,
+                bound: true,
+            };
+            this.put_owed(batch, outbox, DeviceId::ZERO, owed)?;
+            Ok(outbox)
+        })
+    }
+
+    /// The public keys of a replacement, if the room never held them (8.6); `bad-commit` otherwise.
+    fn new_keys(&self, replacement: &Replacement) -> Result<RecoveryPublic, Error> {
+        let history = self.history()?;
+        let new = replacement.keys.public();
+        if history.held_recovery_key(&new.signature_key) || history.held_recovery_key(&new.hpke_key)
+        {
+            return Err(Error::BadCommit);
+        }
+        Ok(new)
+    }
+
+    /// The Cuts for the leaves `gone` of `group`, from what the caller verified; `incomplete` when one is
+    /// missing.
+    fn cuts_of(
+        group: &GroupId,
+        gone: &[DeviceId],
+        cuts: &[(GroupId, Cut)],
+    ) -> Result<Vec<Cut>, Error> {
+        gone.iter()
+            .map(|device| {
+                cuts.iter()
+                    .find(|(of, cut)| of == group && cut.device == *device)
+                    .map(|(_, cut)| *cut)
+                    .ok_or(Error::Incomplete)
+            })
+            .collect()
+    }
+
+    /// The whole recovery, when every device is lost (8.7), as a new device with the code `keys`. `served` is
+    /// what the hub serves after the recovery was opened there, with every live session group. The device
+    /// checks the room as in [`Device::join_room_with_code`] and requires every session to verify; then, on
+    /// a copy of its state, it joins the room group and every session group from outside, commits in the
+    /// room group the removal of every other human device together with the replacement of the code, and
+    /// after that, against the new room epoch, removes from every session group (main sessions first) each
+    /// leaf the new room state does not allow. `cuts` hold, per group, the Cut of every leaf to go
+    /// ([`recovery::removals`] names them), as the caller verified each chain through pruned envelopes;
+    /// `incomplete` when one is missing. `account` are the sealed copies of `replacement.code`.
+    ///
+    /// The outbox entries are the recovery's Commits in order and its finish. The device's state changes
+    /// only when the hub accepted the finish; when the hub refuses any of them, or the recovery ran out,
+    /// which the caller reports as a refusal, all of it goes and the state is as before.
+    pub fn recover(
+        &mut self,
+        keys: &RecoveryKeys,
+        served: &ServedRoom<'_>,
+        replacement: &Replacement,
+        cuts: &[(GroupId, Cut)],
+        account: &[u8],
+        now_ms: u64,
+    ) -> Result<CodeJoin, Error> {
+        if self.memory.record.room.is_some() {
+            return Err(Error::RoomExists);
+        }
+        if !self.memory.staged.is_empty() {
+            return Err(Error::Busy);
+        }
+        let mut checked = recovery::check_room(keys, served)?;
+        let missing_link = checked.missing_link;
+        // Every live session is joined and cleaned, or the hub publishes nothing.
+        let mut sessions = Vec::new();
+        for (session, served) in std::mem::take(&mut checked.sessions)
+            .into_iter()
+            .zip(served.sessions)
+        {
+            sessions.push((session?.observer.seats().to_vec(), served.current));
+        }
+        let room_group = GroupId::room(served.room);
+        let (postings, copy) = self.shadow(|this, batch| {
+            this.take_checked(batch, keys, served.room, checked)?;
+            this.hold_mac(batch, replacement.keys.mac_key())?;
+            let mut postings =
+                vec![this.join_built(batch, keys, served.group.current, &[], now_ms)?];
+            for (seats, current) in &sessions {
+                postings.push(this.join_built(batch, keys, current, seats, now_ms)?);
+            }
+            // The room Commit: every other human device goes, and the code with them.
+            let mut room = this.history()?.newest().clone();
+            let others: Vec<DeviceId> = room
+                .humans
+                .iter()
+                .copied()
+                .filter(|human| *human != this.id)
+                .collect();
+            let new = this.new_keys(replacement)?;
+            room.room.recovery_signature_key = new.signature_key;
+            room.room.recovery_hpke_key = new.hpke_key;
+            let gone = Self::cuts_of(&room_group, &others, cuts)?;
+            postings.push(this.commit_now(batch, &room_group, &gone, Some(room.room), now_ms)?);
+            // The session groups, against the new room epoch: main sessions before helper sessions.
+            let mut groups = this.groups()?;
+            groups.retain(|summary| summary.session.is_some());
+            groups.sort_by_key(|summary| {
+                summary
+                    .session
+                    .is_some_and(|session| !session.parent.is_zero())
+            });
+            for summary in groups {
+                let unfit = this.group(&summary.group)?.disallowed;
+                if unfit.is_empty() {
+                    continue;
+                }
+                let gone = Self::cuts_of(&summary.group, &unfit, cuts)?;
+                postings.push(this.commit_now(batch, &summary.group, &gone, None, now_ms)?);
+            }
+            // The log brings every Commit of the recovery by again: none of them is for this device.
+            let ids: Vec<GroupId> = this.memory.groups.keys().copied().collect();
+            for id in ids {
+                let epoch = group::load(&this.provider, &id)?.epoch().as_u64();
+                this.meta(&id)?.joined_epoch = epoch;
+                this.put_group(batch, &id)?;
+            }
+            Ok(postings)
+        })?;
+        let outbox = self.transact(|this, batch| {
+            let mut outbox = Vec::new();
+            for posting in postings {
+                outbox.push(this.enqueue(
+                    batch,
+                    OutboxKind::RecoveryCommit,
+                    Some(posting.group),
+                    posting.epoch,
+                    vec![
+                        posting.commit,
+                        posting.group_info,
+                        posting.welcome,
+                        posting.sealed,
+                        posting.recovery_auth,
+                    ],
+                )?);
+            }
+            outbox.push(this.enqueue(
+                batch,
+                OutboxKind::RecoveryFinish,
+                Some(room_group),
+                0,
+                vec![replacement.link.clone(), account.to_vec()],
+            )?);
+            this.stage(batch, outbox.clone(), copy)?;
+            Ok(outbox)
+        })?;
+        Ok(CodeJoin {
+            outbox,
+            missing_link,
+            unverified: Vec::new(),
+        })
+    }
+
+    /// Posts the `SealedKey` of the epoch `group` stands in, with this device's `mac` (8.3), when the hub
+    /// lists none for it whose `mac` this device can verify: `listed` are the rows the hub lists, and
+    /// `group_info` the GroupInfo it holds for that epoch, which is checked against this device's own state of
+    /// the group before the row names it (`incomplete` when it is another). Returns none when an
+    /// authenticated row is listed. Only a human device posts one.
+    pub fn post_sealed_key(
+        &mut self,
+        group: &GroupId,
+        group_info: &[u8],
+        listed: &[Vec<u8>],
+    ) -> Result<Option<u64>, Error> {
+        self.transact(|this, batch| {
+            if !this.is_human() {
+                return Err(Error::Forbidden);
+            }
+            this.meta(group)?;
+            let state = group::load(&this.provider, group)?;
+            let epoch = state.epoch().as_u64();
+            if recovery::lists_authenticated(listed, group, epoch, &this.memory.macs)? {
+                return Ok(None);
+            }
+            observer::signer_of(state.public_group(), group_info)?;
+            let key = this.content_key(group, epoch)?;
+            let room = this.history()?.newest().clone();
+            let sealed = this.seal(
+                (group, epoch),
+                &key,
+                group_info,
+                (room.epoch, &room.room.recovery_hpke_key),
+                true,
+                None,
+            )?;
+            this.enqueue(
+                batch,
+                OutboxKind::SealedKey,
+                Some(*group),
+                epoch,
+                vec![sealed],
+            )
+            .map(Some)
         })
     }
 
@@ -2343,7 +3033,7 @@ impl<S: Storage> Device<S> {
         let context = Context {
             room: room.as_ref(),
             sessions: &known,
-            recovery: self.recovery.rules(),
+            recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
         };
         let observer = self
@@ -2422,7 +3112,7 @@ impl<S: Storage> Device<S> {
         let verifier = Verifier {
             history: self.history()?,
             sessions: &known,
-            recovery: self.recovery.rules(),
+            recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
             posting: false,
         };
@@ -2430,6 +3120,7 @@ impl<S: Storage> Device<S> {
             facts: &facts,
             commit,
             recovery_auth,
+            base_group_info: None,
         };
         match meta.session {
             None => rules::check_room_commit(&verifier, &judged)?,
@@ -2608,15 +3299,36 @@ impl<S: Storage> Device<S> {
                 recipient,
                 recovery_hpke_key,
                 recovery_mac,
-            } if session.is_none()
-                && from_human
-                && (recipient == self.id || recipient.is_zero())
-                && recovery_hpke_key == room.room.recovery_hpke_key =>
-            {
-                Received::RecoveryAuth {
-                    from,
-                    recovery_hpke_key,
-                    recovery_mac,
+            } if session.is_none() => {
+                let message = AuthMessage {
+                    sender: &from,
+                    recipient: &recipient,
+                    recovery_hpke_key: &recovery_hpke_key,
+                    recovery_mac: &recovery_mac,
+                };
+                // The message was opened in the group's current epoch, whose state `room` is.
+                let taken =
+                    recovery::take_recovery_auth(&mut self.memory.macs, &self.id, &room, &message);
+                match taken {
+                    Ok(Taken::New) => {
+                        batch.put(mac_key(&recovery_hpke_key), recovery_mac.expose().to_vec());
+                        Received::RecoveryAuth {
+                            from,
+                            recovery_hpke_key,
+                            new: true,
+                        }
+                    }
+                    Ok(Taken::Held) => Received::RecoveryAuth {
+                        from,
+                        recovery_hpke_key,
+                        new: false,
+                    },
+                    Ok(Taken::Dropped) => Received::Dropped,
+                    Err(Error::Equivocation) => Received::RecoveryAuthConflict {
+                        from,
+                        recovery_hpke_key,
+                    },
+                    Err(error) => return Err(error),
                 }
             }
             _ => Received::Dropped,
@@ -2788,17 +3500,22 @@ impl<S: Storage> Device<S> {
     }
 
     /// Sends the `recovery_mac` of the room's current recovery key (7.4) to `recipient`, or to all with zeros:
-    /// room group, from a human device.
-    pub fn send_recovery_auth(
-        &mut self,
-        recipient: &DeviceId,
-        recovery_mac: Secret<32>,
-    ) -> Result<u64, Error> {
+    /// room group, from a human device that holds it (`no-key` otherwise). This answers the request of a
+    /// device that does not hold it; after an Add by link and after a replacement of the code the device sends
+    /// it by itself, with the Commit.
+    pub fn send_recovery_auth(&mut self, recipient: &DeviceId) -> Result<u64, Error> {
         self.transact(|this, batch| {
             let group = this.room_group()?;
+            let recovery_hpke_key = this.history()?.newest().room.recovery_hpke_key;
+            let recovery_mac = this
+                .memory
+                .macs
+                .get(&recovery_hpke_key)
+                .ok_or(Error::NoKey)?
+                .duplicate();
             let message = TrommiMessage::RecoveryAuth {
                 recipient: *recipient,
-                recovery_hpke_key: this.history()?.newest().room.recovery_hpke_key,
+                recovery_hpke_key,
                 recovery_mac,
             };
             this.send(batch, &group, &message, false)

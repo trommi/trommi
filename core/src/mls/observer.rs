@@ -18,6 +18,7 @@ use crate::mls::rules::{
     self, CommitFacts, ContextChange, Judged, Parent, RecoveryRules, RoomHistory, RoomState,
     SealedKeyClaim, SessionBefore, SessionFacts, Verifier,
 };
+use crate::recovery;
 use crate::store::{Batch, Entry};
 use openmls::group::{ProposalStore, PublicGroup};
 use openmls::messages::group_info::VerifiableGroupInfo;
@@ -48,6 +49,9 @@ pub struct PostedCommit<'a> {
     pub sealed_key: &'a [u8],
     /// The `RecoveryAuth`, for a join from outside.
     pub recovery_auth: Option<&'a [u8]>,
+    /// The GroupInfo the hub holds for the epoch the Commit builds on: what a join from outside must name
+    /// (8.4). A join posted without it is `incomplete`.
+    pub base_group_info: Option<&'a [u8]>,
 }
 
 /// What an observer judges a Commit against besides the group it follows.
@@ -148,15 +152,19 @@ pub(crate) fn parse_group_info(bytes: &[u8]) -> Result<VerifiableGroupInfo, Erro
     }
 }
 
-/// The confirmation tag inside a GroupInfo as it travels: `MLSMessage { version, wire_format, GroupInfo {
-/// GroupContext, extensions<V>, confirmation_tag<V>, signer, signature<V> } }`.
-fn confirmation_tag_of(bytes: &[u8], group_info: &VerifiableGroupInfo) -> Result<Vec<u8>, Error> {
+/// The confirmation tag and the signer's leaf index inside a GroupInfo as it travels: `MLSMessage { version,
+/// wire_format, GroupInfo { GroupContext, extensions<V>, confirmation_tag<V>, uint32 signer, signature<V> } }`.
+fn tag_and_signer_of(
+    bytes: &[u8],
+    group_info: &VerifiableGroupInfo,
+) -> Result<(Vec<u8>, u32), Error> {
     let context_len = group_info.group_context().tls_serialized_len();
     let mut reader = Reader::new(bytes);
     reader.take(4)?;
     reader.take(context_len)?;
     reader.opaque()?;
-    Ok(reader.opaque()?.to_vec())
+    let tag = reader.opaque()?.to_vec();
+    Ok((tag, reader.u32()?))
 }
 
 impl Observer {
@@ -281,19 +289,8 @@ impl Observer {
         first: &PostedCommit<'_>,
         context: &Context<'_>,
     ) -> Result<(Self, CommitFacts), Error> {
-        let (provider, public, group, kind) = Self::start(group_info)?;
-        let GroupKind::Session(session) = kind else {
-            return Err(Error::BadCommit);
-        };
-        if public.group_context().epoch().as_u64() != 0 || public.members().count() != 1 {
-            return Err(Error::BadCommit);
-        }
-        let record = SessionRecord {
-            session,
-            previous_room_epoch: 0,
-            seats: Vec::new(),
-        };
-        let mut observer = Self::assemble(provider, group, Followed::Session(record));
+        let mut observer = Self::follow_founding(group_info)?;
+        let group = observer.group;
         let facts = observer.check_posted_commit(first, context)?;
         let note = facts.note.as_ref().ok_or(Error::BadCommit)?;
         let room = context
@@ -313,6 +310,25 @@ impl Observer {
             sealed_key,
         )?;
         Ok((observer, facts))
+    }
+
+    /// Follows a session group from its founding GroupInfo (epoch 0, the founder alone), as a reader that
+    /// verifies the group from its beginning does (8.4): the first Commit it then processes is judged as the
+    /// founding Commit (5.2.5). `bad-commit` for another GroupInfo.
+    pub fn follow_founding(group_info: &[u8]) -> Result<Self, Error> {
+        let (provider, public, group, kind) = Self::start(group_info)?;
+        let GroupKind::Session(session) = kind else {
+            return Err(Error::BadCommit);
+        };
+        if public.group_context().epoch().as_u64() != 0 || public.members().count() != 1 {
+            return Err(Error::BadCommit);
+        }
+        let record = SessionRecord {
+            session,
+            previous_room_epoch: 0,
+            seats: Vec::new(),
+        };
+        Ok(Self::assemble(provider, group, Followed::Session(record)))
     }
 
     /// Reads an observer back from its entries. `Error::Storage` for anything that does not decode or fit.
@@ -377,6 +393,22 @@ impl Observer {
             return Err(damaged());
         }
         Ok(observer)
+    }
+
+    /// A second follower of the same group in the same state: for a hub that stages a recovery, whose parts
+    /// are checked against a copy of the public state while every other reader sees the state from before.
+    pub fn fork(&self) -> Result<Self, Error> {
+        Ok(Self {
+            provider: Provider::without_entropy(self.provider.entries())?,
+            group: self.group,
+            followed: match &self.followed {
+                Followed::Room(history) => Followed::Room(history.clone()),
+                Followed::Session(record) => Followed::Session(record.clone()),
+            },
+            taken: self.taken.clone(),
+            untaken_from: self.untaken_from,
+            record_changed: self.record_changed,
+        })
     }
 
     /// What changed since the last call, for the holder to store in one write.
@@ -512,9 +544,21 @@ impl Observer {
         if total.is_none_or(|total| total > MAX_COMMIT_REQUEST_LEN) {
             return Err(Error::TooLarge);
         }
+        let base = posted
+            .base_group_info
+            .map(|base| crypto::ref_hash(recovery::GROUP_INFO_LABEL, base))
+            .transpose()?;
         self.guarded(|observer| {
-            let (facts, added) =
-                observer.follow(posted.commit, posted.recovery_auth, context, true)?;
+            let (facts, added) = observer.follow(
+                posted.commit,
+                posted.recovery_auth,
+                context,
+                Some(base.as_ref()),
+            )?;
+            // 8.4: the hub holds the GroupInfo a join from outside builds on, and the join names it.
+            if facts.external && base.is_none() {
+                return Err(Error::Incomplete);
+            }
             observer.check_group_info(posted.group_info, &facts.committer)?;
             check_welcome(posted.welcome, &added)?;
             let claim = observer.sealed_key_claim(&facts, posted.group_info, context)?;
@@ -544,7 +588,7 @@ impl Observer {
     ) -> Result<CommitFacts, Error> {
         self.guarded(|observer| {
             observer
-                .follow(commit, recovery_auth, context, false)
+                .follow(commit, recovery_auth, context, None)
                 .map(|(facts, _)| facts)
         })
     }
@@ -564,14 +608,17 @@ impl Observer {
         result
     }
 
-    /// Verifies, judges and merges one Commit. Returns its facts and the references of the KeyPackages it adds.
+    /// Verifies, judges and merges one Commit. `posted` is given for a Commit being posted, with the hash of
+    /// the GroupInfo held for the epoch it builds on. Returns its facts and the references of the KeyPackages
+    /// it adds.
     fn follow(
         &mut self,
         commit: &[u8],
         recovery_auth: Option<&[u8]>,
         context: &Context<'_>,
-        posting: bool,
+        posted: Option<Option<&Hash32>>,
     ) -> Result<(CommitFacts, Vec<Vec<u8>>), Error> {
+        let posting = posted.is_some();
         let message = rules::parse_commit(commit)?;
         let mut public = self.public()?;
         let epoch = public.group_context().epoch().as_u64();
@@ -605,6 +652,7 @@ impl Observer {
             facts: &facts,
             commit,
             recovery_auth,
+            base_group_info: posted.flatten(),
         };
         let note_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
         match &self.followed {
@@ -691,42 +739,59 @@ impl Observer {
         Ok((note.room_epoch, named.room.recovery_hpke_key, human))
     }
 
-    /// Whether `group_info` is the GroupInfo of the observer's present state, signed by `signer` (14.1, 8.5):
-    /// its signature verifies under that device's key, its group context is byte for byte the observer's, and
-    /// its tree and confirmation tag are the observer's. `incomplete` otherwise.
+    /// Whether `group_info` is the GroupInfo of the observer's present state, signed by `signer` (14.1, 8.5).
+    /// `incomplete` otherwise.
     pub fn check_group_info(&self, group_info: &[u8], signer: &DeviceId) -> Result<(), Error> {
-        let public = self.public()?;
-        let verifiable = parse_group_info(group_info).map_err(|_| Error::Incomplete)?;
-        let key = OpenMlsSignaturePublicKey::from_signature_key(
-            signer.as_bytes().to_vec().into(),
-            SignatureScheme::ED25519,
-        );
-        let encoded = |value: &dyn Fn() -> Result<Vec<u8>, tls_codec::Error>| {
-            value().map_err(|_| Error::Internal("group info encoding"))
-        };
-        let own_tree = encoded(&|| public.export_ratchet_tree().tls_serialize_detached())?;
-        let their_tree = verifiable
-            .extensions()
-            .ratchet_tree()
-            .map(|extension| extension.ratchet_tree().tls_serialize_detached());
-        let own_tag = encoded(&|| public.confirmation_tag().tls_serialize_detached())?;
-        let their_tag =
-            confirmation_tag_of(group_info, &verifiable).map_err(|_| Error::Incomplete)?;
-        let fits = public
-            .members()
-            .any(|member| member.signature_key == signer.as_bytes())
-            && verifiable.group_context() == public.group_context()
-            && verifiable.extensions().external_pub().is_some()
-            && their_tree.is_some_and(|tree| tree.ok() == Some(own_tree))
-            && codec::encode(&codec::Opaque(their_tag)).ok() == Some(own_tag)
-            && verifiable
-                .verify_no_out(crypto::rust_crypto()?, &key)
-                .is_ok();
-        if fits {
+        if self.group_info_signer(group_info)? == *signer {
             Ok(())
         } else {
             Err(Error::Incomplete)
         }
+    }
+
+    /// The device that signed `group_info`, if it is a GroupInfo of the observer's present state
+    /// ([`signer_of`]); `incomplete` otherwise.
+    pub fn group_info_signer(&self, group_info: &[u8]) -> Result<DeviceId, Error> {
+        signer_of(&self.public()?, group_info)
+    }
+}
+
+/// The device that signed `group_info`, if it is a GroupInfo of the state `public`: its group context is byte
+/// for byte that state's, its tree and confirmation tag are that state's, the leaf it names as its signer is a
+/// leaf of that tree, and its signature verifies under that leaf's key. `incomplete` otherwise.
+pub(crate) fn signer_of(public: &PublicGroup, group_info: &[u8]) -> Result<DeviceId, Error> {
+    let verifiable = parse_group_info(group_info).map_err(|_| Error::Incomplete)?;
+    let (their_tag, signer_index) =
+        tag_and_signer_of(group_info, &verifiable).map_err(|_| Error::Incomplete)?;
+    let signer = rules::leaves_of(public.members())?
+        .into_iter()
+        .find(|(index, _)| index.u32() == signer_index)
+        .map(|(_, device)| device)
+        .ok_or(Error::Incomplete)?;
+    let key = OpenMlsSignaturePublicKey::from_signature_key(
+        signer.as_bytes().to_vec().into(),
+        SignatureScheme::ED25519,
+    );
+    let encoded = |value: &dyn Fn() -> Result<Vec<u8>, tls_codec::Error>| {
+        value().map_err(|_| Error::Internal("group info encoding"))
+    };
+    let own_tree = encoded(&|| public.export_ratchet_tree().tls_serialize_detached())?;
+    let their_tree = verifiable
+        .extensions()
+        .ratchet_tree()
+        .map(|extension| extension.ratchet_tree().tls_serialize_detached());
+    let own_tag = encoded(&|| public.confirmation_tag().tls_serialize_detached())?;
+    let fits = verifiable.group_context() == public.group_context()
+        && verifiable.extensions().external_pub().is_some()
+        && their_tree.is_some_and(|tree| tree.ok() == Some(own_tree))
+        && codec::encode(&codec::Opaque(their_tag)).ok() == Some(own_tag)
+        && verifiable
+            .verify_no_out(crypto::rust_crypto()?, &key)
+            .is_ok();
+    if fits {
+        Ok(signer)
+    } else {
+        Err(Error::Incomplete)
     }
 }
 
