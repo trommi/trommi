@@ -411,14 +411,14 @@ for (const pair of pairs) {
     await P('scribble board: the sample strokes (fixtures/strokes.json) from JS decode on Swift point for point; a Swift stroke decodes on JS', async () => {
       const [js, sw] = ia === 'swift' ? [B, A] : [A, B]
       const samples = JSON.parse(fs.readFileSync(path.join(here, 'fixtures/strokes.json'), 'utf8')).strokes
-      for (const s of samples) await js.call('scribble_draw', { desk: 'main', entry: s.entry })
+      for (const s of samples) await js.call('scribble_draw', { entry: s.entry })
       const want = samples.map(s => [s.entry.tool, s.decoded.length])
       let got
-      await until('the sample strokes in Swift', async () => { got = (await sw.call('scribble_shapes', { desk: 'main' })).map(s => [s.tool, s.points]); return got.length >= want.length }).catch(() => {})
+      await until('the sample strokes in Swift', async () => { got = (await sw.call('scribble_shapes', {})).map(s => [s.tool, s.points]); return got.length >= want.length }).catch(() => {})
       const sorted = l => [...(l ?? [])].map(x => JSON.stringify(x)).sort()
       assert.deepEqual(sorted(got), sorted(want), 'Swift decodes every sample stroke (tool, number of points)')
-      await sw.call('scribble_draw', { desk: 'main' })
-      const mine = await until('the Swift stroke on JS', async () => { const l = await js.call('scribble_shapes', { desk: 'main' }); return l.length > want.length ? l : null })
+      await sw.call('scribble_draw', {})
+      const mine = await until('the Swift stroke on JS', async () => { const l = await js.call('scribble_shapes', {}); return l.length > want.length ? l : null })
       assert.ok(mine.at(-1).points > 0, `JS decodes the Swift stroke: ${JSON.stringify(mine.at(-1))}`)
     })
   }

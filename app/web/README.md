@@ -147,8 +147,8 @@ approached and kept under the Desk (`app.mjs` `keepPad`); the Desk under the boa
 the pad (`whiteboard.mjs` mountPad) as large as the main area; select or frame something and **Send to…** a session.
 One drawing on it is a scribble.
 
-What is drawn is the desk's scribble timeline `desk/<32 hex>` (`whiteboard.mjs` `deskCanvas`; the wire format is the
-core's `scribble.mjs`: a desk id that is not 32 hex, such as `main`, is folded into 16 bytes, the same on every device).
+What is drawn is the room's one scribble timeline (`ROOM_BOARD` in the core's `scribble.ts`, which is also the wire
+format): one board per room, the same whatever desk is in view.
 
 ## The account (what a person sees)
 

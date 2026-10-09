@@ -187,7 +187,7 @@ struct ScribbleScreen: View {
   @State private var sending = false
   @State private var error: String?
   @State private var tick = 0
-  private var timeline: String { deskCanvas(model.view?.all == true ? model.desk?.desks.first?.id : model.view?.deskId) }
+  private var timeline: String { roomBoard }
   private var me: String { model.room.map { hex($0.device.id) } ?? "" }
 
   var body: some View {

@@ -257,10 +257,10 @@ func short(_ id: String) -> String { String(id.prefix(12)) }
     while d.hasOlder(agent: a.id) && pages < 50 { try await PerfLog.time("history page") { try await room.loadOlder(timelineKeyOf("chat", "session/\(key)")) }; d.update(); pages += 1 }
     for m in d.messagesOf(agent: a.id) where m.from != "event" { print("\(m.from): \(m.text)") }
   case "canvas":
-    // trommi-swift canvas [<desk>] [--draw]: the desk's Scribble Board (its shapes), --draw adds one stroke first
+    // trommi-swift canvas [--draw]: the room's Scribble Board (its shapes), --draw adds one stroke first
     let room = try pickRoom()
     try await room.sync()
-    let tl = deskCanvas(rest.first ?? "main")
+    let tl = roomBoard
     if drawIt {
       let e = CanvasState.entryOf(.stroke(Ink(pts: [10, 10, 40, 30, 80, 20], t: [0, 8, 16], f: [0.25, 0.25, 0.25], sim: true), tool: "pen", color: "ink", width: 4))
       try await room.sendCanvas(tl, .obj(["content_type": "strokes", "strokes": [e]]))

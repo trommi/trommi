@@ -345,13 +345,6 @@ public final class CanvasState {
   }
 }
 
-/** The scribble timeline of a desk: desk/ and 32 hex; another desk id is folded into 16 bytes (whiteboard.mjs deskCanvas). */
-public func deskCanvas(_ desk: String?) -> String {
-  let id = (desk?.isEmpty == false ? desk! : "main")
-  if id.utf8.count == 32, id.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) { return "desk/\(id)" }
-  let bytes = Array(id.utf8)
-  var out = [UInt8](repeating: 0, count: 16)
-  for (i, v) in bytes.enumerated() { out[i % 16] ^= v }
-  out[15] ^= UInt8(bytes.count & 0xff)
-  return "desk/\(hex(out))"
-}
+/** The room's one Scribble Board (shared/scribble.ts ROOM_BOARD): one board per room, whatever desk is in view; the
+ *  timeline the 'main' desk's board had. */
+public let roomBoard = "desk/6d61696e000000000000000000000004"

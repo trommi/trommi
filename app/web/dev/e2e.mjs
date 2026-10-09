@@ -415,16 +415,16 @@ try {
     await move(home)
     await A.until(`${count} === ${before}`, 'the cards are back with the session', 10000).then(() => check(true, 'moved back: its cards are on this desk again'), e => check(false, e.message))
   }
-  // ---- the Whiteboard: the Desk has no paper; the drawing is a place of its own in the sidebar, on the desk's canvas
-  //      timeline (desk/<32 hex>, js/views/whiteboard.mjs deskCanvas) ----
+  // ---- the Whiteboard: the Desk has no paper; the drawing is a place of its own, on the room's one
+  //      board (ROOM_BOARD, the core's scribble.ts) ----
   await A.js("trommi.router.visit('/')")
   await A.until("document.querySelector('#inbox')", 'desk again')
   await sleep(800)
   check(await A.js("return !document.querySelector('#deskpad, #deskpad-pen, #deskpad-clear, #paper-island, .clear-btn')"), 'the Desk has no paper under it, no pen and no wipe button')
   check(await A.js("return !!document.querySelector('.curl-grab') && !document.querySelector('#whiteboard-row, #desk-pad')"), 'the Scribble Board is the back of the Desk: its corner')
   // A stroke on the desk's canvas, sealed through the Whiteboard's openCanvas before it opens (as another device would).
-  await A.js(`const { openCanvas, strokeFromWorld, deskCanvas } = await trommi.view('whiteboard')
-    const tl = deskCanvas(trommi.model().desk)
+  await A.js(`const { openCanvas, strokeFromWorld, ROOM_BOARD } = await trommi.view('whiteboard')
+    const tl = ROOM_BOARD
     const c = await openCanvas({ client: trommi.client, timeline_id: tl })
     const k = strokeFromWorld({ pts: [120, 140, 220, 190, 340, 160], t: [0, 16, 33], f: [0.2, 0.3, 0.25], sim: true }, { tool: 'pen', color: 'ink', width: 4 })
     c.push([{ id: 'e2e-old-paper', before: null, after: { id: 'e2e-old-paper', pad: tl, type: 'stroke', rotation: 0, z: 1, group: null, author: 'human', rev: 1, blob: null, sent: [], ...k } }])

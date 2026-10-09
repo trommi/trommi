@@ -3,28 +3,15 @@
 //
 //   register(t)           the page /whiteboard: the pad as large as the main area
 //
-// What is on it is the desk's canvas timeline, desk/<32 hex> (deskCanvas). The Desk's paper wrote to desk/<desk_id>
-// with the desk's own id ('main', or 8 hex for a desk made in the menu); the core refuses such an id (a canvas
-// timeline is desk/ and 32 hex, the core's parseTimelineId, since protocol v1.1), so none of the paper's strokes
-// ever reached the hub or a second device: there is nothing to carry over, and the Whiteboard is where drawing is kept
-// from now on. The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
+// What is on it is the room's one board (ROOM_BOARD, the core's scribble.ts; one board per room, whatever desk is in
+// view). The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's scribble.mjs).
 import { Controller, controller, html, isTyping, letterKeysOn, markArt, nextThemeMode, raw, setThemeMode } from './ui.mjs'
 import { scribbleWire } from './app.mjs'
 // The core's stroke format, shape and palette (scribble.mjs with ink.mjs and palette.mjs), loaded with this view.
-const { PEN_COLORS, MARKER_COLORS, MARKER_OPACITY, colorOf, anglesOfTilt, forceFromSpeed, packPoints, sampleStroke } = await scribbleWire()
-/** The canvas timeline of a desk: desk/ and 32 hex. A desk id that is not 32 hex already ('main', a menu desk's 8 hex)
- *  is folded into 16 bytes (its UTF-8, XOR by position, the length last): the same desk is the same timeline on every
- *  device, two desks never share one. */
-export function deskCanvas(desk) {
-  const id = String(desk || 'main')
-  if (/^[0-9a-f]{32}$/.test(id)) return `desk/${id}`
-  const bytes = new TextEncoder().encode(id), out = new Uint8Array(16)
-  bytes.forEach((v, i) => { out[i % 16] ^= v })
-  out[15] ^= bytes.length & 0xff
-  return `desk/${[...out].map(b => b.toString(16).padStart(2, '0')).join('')}`
-}
-const canvasOf = model => deskCanvas(model.homeDesk ?? model.desk)   // (on All: the desk last chosen, app.mjs homeDesk)
+const { PEN_COLORS, MARKER_COLORS, MARKER_OPACITY, colorOf, anglesOfTilt, forceFromSpeed, packPoints, sampleStroke, ROOM_BOARD } = await scribbleWire()
+export { ROOM_BOARD }
+const canvasOf = () => ROOM_BOARD   // one board per room
 
 
 /** The sessions for the pad's "Send to…" (read by the controller whiteboard). */
@@ -557,7 +544,7 @@ function renderRect(list, rect, env, { max = 2000 } = {}) {
 }
 
 // ---- the canvas timeline ----
-// The pad's canvas, end-to-end encrypted: one canvas timeline of the room (desk/<desk_id>, session/<session_id>),
+// The pad's canvas, end-to-end encrypted: one canvas timeline of the room (ROOM_BOARD; session/<session_id> for a session's),
 // carried by the client core (trommi-hub client/core: sendStrokes, loadTimelineAfter, uploadAttachment, registers).
 // The wire and the merge are wire.js; this file is the glue between the pad's element records (elements.js) and it.
 //

@@ -57,16 +57,6 @@ function patchEncoder(c) {
   }
 }
 
-/** whiteboard.mjs deskCanvas (its module needs the built vendor files, so the same rule here when they are missing) */
-function deskCanvas(desk) {
-  const id = String(desk || 'main')
-  if (/^[0-9a-f]{32}$/.test(id)) return `desk/${id}`
-  const bytes = new TextEncoder().encode(id), o = new Uint8Array(16)
-  bytes.forEach((v, i) => { o[i % 16] ^= v })
-  o[15] ^= bytes.length & 0xff
-  return `desk/${z.hex(o)}`
-}
-
 const H = {
   async version_info() {
     let hub = null
@@ -185,19 +175,17 @@ const H = {
   },
   async hub_envelopes({ after = 0, limit = 1000 } = {}) { return (await need().hub.envelopes({ after_envelope_number: after, limit })).envelopes },
   async alerts() { return need().model.alerts.map(a => ({ code: a.code, envelope_number: a.envelope_number ?? null })) },
-  /** A stroke on a desk's Scribble Board: `entry` as a strokes item carries it (README "Scribble strokes"), default the
+  /** A stroke on the room's Scribble Board: `entry` as a strokes item carries it (README "Scribble strokes"), default the
    *  first sample of dev/interop/fixtures/strokes.json. */
-  async scribble_draw({ desk = 'main', entry = null }) {
-    const W = await import('../../app/web/public/whiteboard.mjs').catch(() => null)
-    const timeline_id = W?.deskCanvas?.(desk) ?? deskCanvas(desk)
+  async scribble_draw({ entry = null }) {
+    const timeline_id = (await import('../../shared/scribble.ts')).ROOM_BOARD
     await need().sendStrokes({ timeline_id, strokes: [entry ?? STROKES.strokes[0].entry] })
     await settle(); return {}
   },
-  /** The shapes on a desk's Scribble Board as this core decodes them (scribble.mjs shapeOf). */
-  async scribble_shapes({ desk = 'main' }) {
+  /** The shapes on the room's Scribble Board as this core decodes them (scribble.mjs shapeOf). */
+  async scribble_shapes() {
     const S = await import('../../shared/scribble.ts')
-    const W = await import('../../app/web/public/whiteboard.mjs').catch(() => null)
-    const timeline_id = W?.deskCanvas?.(desk) ?? deskCanvas(desk)
+    const timeline_id = S.ROOM_BOARD
     const items = await need().loadTimelineAfter(`scribble:${timeline_id}`, 0)
     const out = []
     for (const i of items.items ?? items) for (const [k, e] of (i.content?.strokes ?? []).entries()) {

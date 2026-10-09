@@ -324,7 +324,7 @@ let DRIVER_COMMANDS = [
 
     case "scribble_draw":
       let r = try need()
-      let tl = deskCanvas(a["desk"].string ?? "main")
+      let tl = roomBoard
       let pts = (a["points"].array ?? [10, 10, 40, 30, 80, 20]).compactMap { $0.double }
       // an entry as given (fixtures/strokes.json), else one this core makes
       let e = a["entry"].object != nil ? a["entry"] : CanvasState.entryOf(.stroke(Ink(pts: pts, t: (0..<(pts.count / 2)).map { Double($0 * 8) }, f: Array(repeating: 0.25, count: pts.count / 2), sim: true), tool: "pen", color: "ink", width: 4))
@@ -334,7 +334,7 @@ let DRIVER_COMMANDS = [
     case "scribble_shapes":
       let r = try need()
       try await r.sync()
-      let st = try await r.loadCanvas(deskCanvas(a["desk"].string ?? "main"))
+      let st = try await r.loadCanvas(roomBoard)
       return .arr(st.shapes.values.sorted { $0.id < $1.id }.map { .obj(["id": .str($0.id), "tool": .str($0.tool), "points": .n($0.pts.count / 2)]) })
 
     default:
