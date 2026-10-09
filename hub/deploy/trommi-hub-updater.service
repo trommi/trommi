@@ -19,8 +19,9 @@ ExecStart=/srv/trommi/updater/trommi-hub-updater serve
 Restart=always
 RestartSec=3
 TimeoutStartSec=60
-# a deploy that runs is finished before the updater stops
-TimeoutStopSec=900
+# a deploy that runs gets two minutes to finish before the updater stops; one that is cut off (a reboot) is undone
+# at the next start
+TimeoutStopSec=120
 KillMode=mixed
 
 # Root, because it stops and starts the hub's unit and swaps the links. What it may write is narrowed down.

@@ -161,9 +161,11 @@ async fn run(updater: Arc<Updater>) -> i32 {
         json!({ "on": listen.to_string(), "repository": updater.cfg.repository, "target": updater.cfg.target,
                 "caller_tags": callers.tags, "caller_users": callers.users }),
     );
-    // up: a trial of this program ends here, a deploy that was cut off is undone, the hub is started
-    updater.started().await;
+    // up: a trial of this program ends here and systemd is told; then a deploy that was cut off is undone and
+    // the hub is started (that may take as long as a health check, which is why it comes after)
+    updater.confirm();
     notify_ready();
+    updater.recover().await;
     let stop = Arc::new(tokio::sync::Notify::new());
     let signalled = stop.clone();
     tokio::spawn(async move {
