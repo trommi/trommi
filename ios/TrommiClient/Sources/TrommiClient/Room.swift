@@ -1,0 +1,607 @@
+// Room.swift: one room on this device: the device (trommi-core, through Core.swift), its store, the hub, and the
+// board the views read (Board.swift). This file holds what the room is and how it keeps up with the hub:
+//
+//   catch up   GET /v2/changes after the cursor: Commits, messages and envelopes in the hub's order, each handed to
+//              the core, which checks it and keeps the keys, chains and object state; what it opened becomes a record
+//              (Records.swift) and is applied to the board by the same reducer as ever.
+//   live       GET /v2/stream (server-sent events) with the same items, resumed by change number.
+//   outbox     everything this device wants sent is in the core's outbox, stored with the state it implies; it is
+//              posted in order and the hub's answer reported back. After a crash the same bytes go out again.
+//
+// What a human does is in RoomActions.swift, devices and invites in RoomDevices.swift, signing in and recovery in
+// RoomAccount.swift, the record cache in RoomCache.swift.
+//
+// Threads: the room is used from the main actor; its operations run one after the other (`serial`). The core is not
+// thread-safe and is only called inside `onCore`, which runs on one queue of its own, so a long catch-up does not
+// hold the main thread.
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
+/** What the room is, kept beside the state as room.json. No secret in it. */
+public struct RoomRecord: Codable {
+  public var hubURL: String
+  public var roomId: String        // hex
+  public var myDeviceId: String    // hex
+  public var role: String          // "human": the app is always a human device
+  public var deviceRegisterSent: Bool
+}
+
+public struct SyncReport { public var envelopes = 0, opened = 0, headerOnly = 0, undecryptable = 0, voids = 0, refused = 0; public var warnings: [String] = [] }
+
+/** The hub said this app is too old to be served. */
+public struct UpgradeNotice: Equatable { public var minimumVersion: String?; public var message: String }
+
+/** The room's folder: room.json, the device's state (DeviceStore), the record cache. In the app's own container. */
+public struct Store {
+  public let dir: URL
+  public init(base: URL, roomId: String) { dir = base.appendingPathComponent(roomId, isDirectory: true) }
+  public static func defaultBase() -> URL {
+    if let x = ProcessInfo.processInfo.environment["TROMMI_SWIFT_HOME"] { return URL(fileURLWithPath: x, isDirectory: true) }
+    #if os(Linux)
+    return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share/trommi-swift", isDirectory: true)
+    #else
+    return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("trommi", isDirectory: true)
+    #endif
+  }
+  /** The rooms this device is in (hex ids). */
+  public static func rooms(base: URL) -> [String] {
+    ((try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []).filter { $0.utf8.count == 64 && FileManager.default.fileExists(atPath: base.appendingPathComponent($0).appendingPathComponent("room.json").path) }.sorted()
+  }
+  var stateDir: URL { dir.appendingPathComponent("state", isDirectory: true) }
+  /** Forgets the room on this device: its folder and its keys in the Keychain. */
+  public func wipe() {
+    LocalKey.wipe(dir: dir)
+    try? FileManager.default.removeItem(at: dir)
+  }
+  public func save(_ r: RoomRecord) throws {
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    try JSONEncoder().encode(r).write(to: dir.appendingPathComponent("room.json"), options: .atomic)
+  }
+  public func load() throws -> RoomRecord { try JSONDecoder().decode(RoomRecord.self, from: Data(contentsOf: dir.appendingPathComponent("room.json"))) }
+  /** The device's state under its lock; throws `StoreError.failed("busy")` when it is open already. */
+  func openState() throws -> DeviceStore { try DeviceStore(directory: stateDir, key: try LocalKey.get("state", dir: dir)) }
+}
+
+public final class Room {
+  public let store: Store
+  public var record: RoomRecord
+  public let hub: HubClient
+  /** The board: cards, sessions, conversations, registers, notes (Board.swift). */
+  public let board = Board()
+  /** The room's change number up to which the board holds everything. */
+  public internal(set) var cursor: UInt64 = 0
+  public internal(set) var upgrade: UpgradeNotice?
+  /** Called after every batch that changed the board (on the main actor). */
+  public var onChange: ((Change) -> Void)?
+  /** Live: the stream is open. */
+  public internal(set) var live = false
+  /** Whether the board came from the cache (shown before the first catch-up). */
+  public internal(set) var restored = false
+
+  public let roomId: RoomId
+  public var roomIdHex: String { record.roomId }
+  public var deviceIdHex: String { record.myDeviceId }
+  public var hubURL: String { record.hubURL }
+  /** What the views show of the room group: its epoch. */
+  public internal(set) var state: (epoch: Int, humans: Int) = (0, 0)
+
+  let device: CoreDevice
+  let deviceStore: DeviceStore
+  private let coreQueue = DispatchQueue(label: "trommi.core")
+  /** The groups as the core last told them, by group id (hex). */
+  var groups: [String: GroupSummary] = [:]
+  var roomGroup: GroupId?
+  /** Which session an envelope of a group belongs to: group id (hex) to session id (hex). */
+  var sessionIdOfGroup: [String: String] = [:]
+  var synced = false
+  var queueTail: Task<Void, Never>?
+  var echoSeq = 0
+  /** Records applied since launch, by change number: what the cache appends at its next save. */
+  var log: [UInt64: Rec] = [:]
+  /** What this device sealed and has not seen back yet, by envelope hash (hex): the local id of its echo. */
+  var ownEchoes: [String: String] = [:]
+  /** What the hub said to an envelope this device sealed, by outbox id. */
+  var outcome: [UInt64: Result<Void, HubError>] = [:]
+  var pumping = false
+  /** The highest lamport this device has seen or written (9.3.2): what an echo of an own write is ordered by. */
+  var lamport = 0
+  // the record cache (RoomCache.swift)
+  var recordStoreMemo: RecordStore?
+  var dirtyRecs = Set<UInt64>()
+  var cacheDirty = false
+  var cacheTask: Task<Void, Never>?
+  var saveTail: Task<Void, Never>?
+  var restoring: Task<Bool, Never>?
+  var restoredCount = 0
+  var sinceSnapshot = 0
+  // what a human does (RoomActions.swift)
+  var noteHeads: [String: (version: Int, hash: String, content: [String: JV])] = [:]
+  var attachmentCache: [String: Bytes] = [:]
+  var attachmentOrder: [String] = []
+  var shareStoreMemo: ShareStore?
+
+  // ---- opening -------------------------------------------------------------------------------------------
+
+  /** A room that is on this device already. Fails with `busy` when it is open elsewhere in this process. */
+  public static func open(base: URL = Store.defaultBase(), roomId: String) throws -> Room {
+    let store = Store(base: base, roomId: roomId)
+    let record = try store.load()
+    let state = try store.openState()
+    do { return try Room(store: store, record: record, deviceStore: state, device: try Core.tools.openDevice(store: state)) }
+    catch { state.close(); throw error }
+  }
+
+  init(store: Store, record: RoomRecord, deviceStore: DeviceStore, device: CoreDevice) throws {
+    guard let room = try? unhex(record.roomId), room.count == 32 else { throw TrommiError("bad-argument", "room.json names no room") }
+    guard hex(device.id) == record.myDeviceId else { throw TrommiError("bad-device", "the stored device does not belong to this room record") }
+    if let r = device.room, r != room { throw TrommiError("wrong-room", "the stored device is in another room") }
+    self.store = store; self.record = record; self.deviceStore = deviceStore; self.device = device
+    roomId = room
+    hub = try HubClient(hubURL: record.hubURL, room: room, signer: device)
+    board.roomId = record.roomId; board.hubURL = record.hubURL; board.myDeviceId = record.myDeviceId; board.myRole = record.role
+    var ch = Change()
+    try applyGroups(try device.groups(), &ch)
+  }
+
+  /** Gives the state's lock back (signing out, tests). The room is unusable afterwards. */
+  public func close() {
+    liveTask?.cancel()
+    coreQueue.sync { deviceStore.close() }
+  }
+  var liveTask: Task<Void, Never>?
+
+  // ---- one after the other -------------------------------------------------------------------------------
+
+  /** Runs strictly after everything queued before (catch-up, live items, sends). */
+  func serial<T>(_ op: @escaping @MainActor () async throws -> T) async throws -> T {
+    let prev = queueTail
+    let t = Task { @MainActor () throws -> T in
+      _ = await prev?.value
+      return try await op()
+    }
+    queueTail = Task { _ = try? await t.value }
+    return try await t.value
+  }
+
+  /** The one place the core is called from once the room is open. Only inside `serial`. */
+  func onCore<T>(_ body: @escaping (CoreDevice) throws -> T) async throws -> T {
+    let device = self.device
+    return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
+      coreQueue.async { cont.resume(with: Result { try body(device) }) }
+    }
+  }
+
+  func emit(_ c: Change) {
+    if c.isEmpty { return }
+    onChange?(c)
+    // (a desk, a session's settings, the sessions or the stream changed: the goals handed to the agents may be behind)
+    if c.room || !c.sessions.isEmpty || c.registers.contains(where: { $0.hasPrefix("desk/") || $0.hasPrefix("session/") }) { goalsSoon() }
+  }
+
+  /** A hub error that says this app is too old: remembered (the app shows it), and rethrown. */
+  func noted<T>(_ op: () async throws -> T) async throws -> T {
+    do { return try await op() }
+    catch let e as HubError where e.status == 426 || e.code == "client-too-old" {
+      upgrade = UpgradeNotice(minimumVersion: e.extra["minimum_version"] as? String, message: e.message)
+      var ch = Change(); ch.room = true; emit(ch)
+      throw e
+    }
+  }
+
+  // ---- desk goals for the agents (spec/v2.md 9.3.4, Goals.swift) -----------------------------------------
+
+  private var goalsTask: Task<Void, Never>?
+  /** What this device last wrote to `goals` of a session, in this run. */
+  private var goalsSaid: [String: JV] = [:]
+  private func goalsSoon() {
+    guard goalsTask == nil else { return }
+    goalsTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(nanoseconds: 400_000_000)
+      guard let self = self else { return }
+      self.goalsTask = nil
+      _ = await self.syncGoals()
+    }
+  }
+  /** Whether this device is a leaf of that session's group now (it can write there). */
+  func holdsSession(_ sid: String) -> Bool { sessionGroup(sid) != nil }
+  /**
+   * Keeps `goals` in each live main session's group equal to what its Desk says (9.3.4), writing where it differs.
+   * Only while live; how many were written. Runs by itself 400 ms after a change of a desk, a session's settings or
+   * the sessions (also a Commit that added an agent device).
+   */
+  @discardableResult public func syncGoals() async -> Int {
+    guard live, upgrade == nil else { return 0 }
+    var n = 0
+    for w in GoalsSync.toWrite(board, holdsKey: holdsSession, said: goalsSaid) {
+      do {
+        try await setRegisters(["goals": w.value], sessionId: w.sessionId)
+        goalsSaid[w.sessionId] = w.value
+        n += 1
+      } catch { continue }
+    }
+    return n
+  }
+
+  // ---- groups: who is in the room and which sessions there are -------------------------------------------
+
+  /** The session group of a session (hex id), if this device is in it and it is not archived. */
+  func sessionGroup(_ sid: String) -> GroupSummary? {
+    groups.values.first { $0.session.map { hex($0.session) } == sid && !$0.archived }
+  }
+  /** The members and sessions of the board from the groups the core holds. No network: the core verified them. */
+  func applyGroups(_ list: [GroupSummary], _ change: inout Change) throws {
+    groups = Dictionary(list.map { (hex($0.group), $0) }, uniquingKeysWith: { a, _ in a })
+    guard let room = list.first(where: { $0.session == nil }) else { return }   // not in a room yet (founding, joining)
+    roomGroup = room.group
+    let humans = Set(room.leaves.map(hex))
+    state = (Int(room.epoch), humans.count)
+    board.keyEpoch = Int(room.epoch)
+    var agents = [String]()
+    for g in list { for a in g.session?.agents ?? [] where !agents.contains(hex(a)) { agents.append(hex(a)) } }
+    // A device that is no leaf any more stays in the list as removed, so that what it wrote keeps its name.
+    var members = [(id: String, role: String, active: Bool, added: Int, removed: Int?)]()
+    for id in humans.sorted() { members.append((id, "human", true, 0, nil)) }
+    for id in agents { members.append((id, "agent", true, 0, nil)) }
+    for (id, m) in board.members where !humans.contains(id) && !agents.contains(id) { members.append((id, m.deviceRole, false, m.addedEntryNumber, m.removedEntryNumber ?? Int(room.epoch))) }
+    board.applyMembers(members, change: &change)
+    for g in list {
+      guard let s = g.session else { continue }
+      let sid = hex(s.session)
+      sessionIdOfGroup[hex(g.group)] = sid
+      board.applySession(sessionId: sid, agentIds: s.agents.map(hex), epoch: Int(g.epoch), parentSessionId: s.parent.map(hex), archived: g.archived, change: &change)
+    }
+    change.room = true
+  }
+  func refreshGroups(_ change: inout Change) async throws {
+    let list = try await onCore { try $0.groups() }
+    try applyGroups(list, &change)
+  }
+
+  // ---- catching up ---------------------------------------------------------------------------------------
+
+  /** Sign in, join what this device was welcomed to, and read everything after the cursor in the hub's order. */
+  @discardableResult public func sync() async throws -> SyncReport {
+    try await serial { [self] in try await self.catchUp() }
+  }
+
+  func catchUp() async throws -> SyncReport {
+    // the cache is read while the hub is asked
+    let restoring: Task<Bool, Never>? = cursor == 0 ? Task { @MainActor in await self.restore() } : nil
+    var report = SyncReport()
+    do { _ = try await noted { try await hub.signIn() } } catch { _ = await restoring?.value; throw error }
+    _ = await restoring?.value
+    var change = Change()
+    try await takeWelcomes(&change)
+    try await readChanges(&report, &change)
+    try await publishKeyPackages()
+    synced = true
+    Task { await self.refreshPresence() }
+    board.project()
+    change.stack = true
+    emit(change)
+    pumpOutbox()
+    return report
+  }
+
+  /** The Welcomes waiting for this device (a session group it was added to): joined, if the room's inviter made them. */
+  func takeWelcomes(_ change: inout Change) async throws {
+    let list = try await noted { try await hub.welcomes() }
+    guard !list.isEmpty else { return }
+    let room = roomId
+    for w in list {
+      guard let bytes = (w["welcome"] as? String).flatMap({ try? unb64u($0) }) else { continue }
+      // A Welcome that does not check is left alone: the hub keeps it, an alert says so, nothing is joined.
+      do { _ = try await onCore { try $0.joinWelcome(bytes, room: room, committer: nil, nowMs: nowMs()) } }
+      catch let e as TrommiError where e.code == "group-exists" || e.code == "wrong-epoch" { continue }
+      catch { board.pushAlert(&change, code: "welcome", message: "a Welcome was refused: \(Self.codeOf(error))") }
+    }
+    try await refreshGroups(&change)
+  }
+
+  /** Keeps the hub stocked with this device's KeyPackages (spec 14.2). */
+  func publishKeyPackages() async throws {
+    // The hub's count comes with its answer to an upload; before the first one of a run the device decides from
+    // what it remembers having published (0 here means "tell me if any are due").
+    _ = try await onCore { try $0.keyPackagesToUpload(unusedAtHub: Int.max, nowMs: nowMs()) }
+  }
+
+  /** GET /v2/changes from the cursor until the hub has no more. */
+  func readChanges(_ report: inout SyncReport, _ change: inout Change) async throws {
+    while true {
+      let page = try await noted { try await hub.changes(after: cursor) }
+      let items = page["items"] as? [JSON] ?? []
+      try await process(items, source: .catchUp, report: &report, change: &change)
+      let upTo = (page["change"] as? NSNumber)?.uint64Value ?? cursor
+      // The hub moves the cursor over what this device may not see; never backwards.
+      if upTo > cursor { cursor = upTo; board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, Int(upTo)) }
+      if page["more"] as? Bool != true { break }
+      if items.isEmpty && upTo <= cursor { break }   // a hub that says "more" and gives nothing is not followed for ever
+    }
+  }
+
+  /** One item of GET /v2/changes or of the stream, as bytes for the core. */
+  enum Item {
+    case log(LogEntry)
+    case envelope(change: UInt64, bytes: Bytes, voidCode: String?)
+    var change: UInt64 { switch self { case .log(let e): return e.change; case .envelope(let c, _, _): return c } }
+
+    init?(_ j: JSON) {
+      guard let change = (j["change"] as? NSNumber)?.uint64Value else { return nil }
+      if j["kind"] as? String == "envelope" {
+        guard let bytes = (j["envelope"] as? String).flatMap({ try? unb64u($0) }) else { return nil }
+        self = .envelope(change: change, bytes: bytes, voidCode: j["void_code"] as? String)
+        return
+      }
+      guard let group = (j["group_id"] as? String).flatMap({ try? unb64u($0) }), let bytes = (j["bytes"] as? String).flatMap({ try? unb64u($0) }) else { return nil }
+      switch j["kind"] as? String {
+      case "commit": self = .log(LogEntry(change: change, group: group, kind: .commit(bytes: bytes, recoveryAuth: (j["recovery_auth"] as? String).flatMap { try? unb64u($0) })))
+      case "message": self = .log(LogEntry(change: change, group: group, kind: .message(bytes: bytes)))
+      default: return nil    // a kind a newer hub adds
+      }
+    }
+  }
+
+  /** What the core made of one item. */
+  enum Outcome {
+    case processed(Processed)
+    case envelope(ReceivedEnvelope, change: UInt64)
+    case refused(change: UInt64, code: String)
+  }
+
+  /**
+   * A run of items in the hub's order: each to the core (off the main thread), then what it gave to the board. An
+   * item the core refuses changes nothing and is counted; a local failure (the store, a lost owner) stops the run
+   * with the cursor before it, so it is read again.
+   */
+  func process(_ items: [JSON], source: EnvelopeSource, report: inout SyncReport, change: inout Change) async throws {
+    let parsed = items.compactMap(Item.init).filter { $0.change > cursor }
+    guard !parsed.isEmpty else { return }
+    let outcomes: [Outcome] = try await onCore { device in
+      var out = [Outcome]()
+      for item in parsed {
+        do {
+          switch item {
+          case .log(let entry): out.append(.processed(try device.processLogEntry(entry)))
+          case .envelope(let c, let bytes, let void): out.append(.envelope(try device.receiveEnvelope(bytes, change: c, source: source, voidCode: void, nowMs: nowMs()), change: c))
+          }
+        } catch {
+          // A local failure is not the item's fault: stop here, nothing after it is processed out of order.
+          if case .local = device.logFinding(error) { if out.isEmpty { throw error }; return out }
+          if !device.isOwner { throw error }
+          out.append(.refused(change: item.change, code: Room.codeOf(error)))
+        }
+      }
+      return out
+    }
+    var groupsChanged = false
+    for (i, o) in outcomes.enumerated() {
+      cursor = max(cursor, parsed[i].change)
+      board.lastEnvelopeNumber = max(board.lastEnvelopeNumber, Int(cursor))
+      switch o {
+      case .processed(let p):
+        switch p {
+        case .commit(_, _, _, let removed):
+          groupsChanged = true
+          if removed { board.pushAlert(&change, code: "removed", message: "this device was removed from a group") }
+        case .ownCommit, .observed: groupsChanged = true
+        case .message(let m): if case .log(let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
+        case .skipped: break
+        }
+      case .envelope(let e, let c): apply(e, change: c, report: &report, &change)
+      case .refused(let c, let code):
+        report.refused += 1
+        if report.refused <= 5 { report.warnings.append("change \(c) refused: \(code)") }
+      }
+    }
+    if groupsChanged { try await refreshGroups(&change); notifyKeysChanged?() }
+    if outcomes.count < parsed.count { throw TrommiError("storage", "this device's store did not take a change") }
+  }
+  /** Called when the groups or their epochs changed: the app hands the notification extension its new keys. */
+  public var notifyKeysChanged: (() -> Void)?
+
+  /** An application message of a group: a step of a work trail, a piece of a stroke being drawn. */
+  private func applyMessage(_ m: ReceivedMessage, group: GroupId, change n: UInt64, _ change: inout Change) {
+    switch m {
+    case let .workTrail(from, turn, number, time, step):
+      // (which session: the group the message came in; the item is kept and folded like every chat item)
+      guard let sid = sessionIdOfGroup[hex(group)], let rec = Records.workStep(session: sid, sender: hex(from), turn: hex(turn), number: Int(number), time: time, step: step, change: n) else { return }
+      board.apply(rec, change: &change)
+      log[n] = rec
+      cacheSoon(n)
+    case let .strokePiece(from, boardId, piece):
+      onStrokePiece?(hex(from), "desk/\(hex(boardId))", piece)
+    case .newerVersion(let from):
+      board.pushAlert(&change, code: "newer-version", message: Compat.UPDATE_MESSAGE, sender: hex(from))
+    case .keys, .recoveryAuth, .dropped: break
+    }
+  }
+  /** A piece of a stroke another device is drawing (relayed, never stored): sender, board timeline id, the piece's JSON. */
+  public var onStrokePiece: ((String, String, Bytes) -> Void)?
+
+  /** One received envelope into the board. */
+  func apply(_ e: ReceivedEnvelope, change n: UInt64, report: inout SyncReport, _ change: inout Change) {
+    report.envelopes += 1
+    if case .notApplied(let code) = e.standing, e.payload == nil, code != "pruned", code != "no-key", code != "decrypt-failed" { report.voids += 1; return }
+    guard var rec = Records.record(e, change: n, sessionId: sessionIdOfGroup[hex(e.header.group)]) else { return }
+    switch rec.contentState {
+    case "ok": report.opened += 1
+    case "pruned", "header": report.headerOnly += 1
+    default: report.undecryptable += 1
+    }
+    rec.localId = ownEchoes.removeValue(forKey: rec.envelopeHash)
+    lamport = max(lamport, rec.causal.lamport)
+    board.apply(rec, change: &change)
+    var kept = rec
+    kept.localId = nil
+    log[n] = kept
+    sinceSnapshot += 1
+    cacheSoon(n)
+  }
+
+  static func codeOf(_ error: Error) -> String {
+    if let e = error as? TrommiError { return e.code }
+    if let e = error as? HubError { return e.code }
+    if let e = error as? StoreError { if case .conflict = e { return "conflict" }; return "storage" }
+    return "internal"
+  }
+
+  // ---- live ----------------------------------------------------------------------------------------------
+
+  /** One event of the hub's stream. */
+  public func handleStreamEvent(_ event: String, _ data: JV) async {
+    switch event {
+    case "envelope", "log":
+      guard let item = data.any as? JSON, let n = (item["change"] as? NSNumber)?.uint64Value, n > cursor else { return }
+      _ = try? await serial { [self] in
+        var report = SyncReport(), change = Change()
+        try await self.process([item], source: .live, report: &report, change: &change)
+        self.board.project(change)
+        self.emit(change)
+        self.pumpOutbox()
+      }
+    case "welcome":
+      _ = try? await serial { [self] in var ch = Change(); try await self.takeWelcomes(&ch); self.board.project(); self.emit(ch) }
+    case "presence":
+      var ch = Change()
+      board.applyPresence(Records.presence(data), change: &ch)
+      emit(ch)
+    case "request":
+      // a wish of a signed-in device (readmit, handover, session) or a join request of an invite
+      var ch = Change(); ch.invites.insert(data["invite_id"].string ?? ""); emit(ch)
+    case "file_evicted": break
+    default: break   // ping, and events a newer hub adds
+    }
+  }
+
+  /**
+   * The live stream while the app is in front: every item as the hub takes it, applied at once. Returns when the
+   * task is cancelled; reconnects with a growing pause after a drop, and when nothing (not even a ping) came for
+   * 40 s. The stream resumes after the cursor, so nothing between two streams is missed.
+   */
+  public func runLive() async {
+    var pause: UInt64 = 300_000_000
+    while !Task.isCancelled {
+      let reader = SSEReader()
+      var unauthorised = false
+      do {
+        if !synced { _ = try await sync() }
+        let req = try await hub.streamRequest(after: cursor)
+        for await ev in reader.start(req) {
+          if Task.isCancelled { break }
+          switch ev {
+          case .status(let status):
+            if status == 426 { upgrade = UpgradeNotice(minimumVersion: nil, message: "Please update Trommi."); var ch = Change(); ch.room = true; emit(ch); reader.stop(); return }
+            if status == 401 { unauthorised = true; reader.stop(); break }
+            if status != 200 { reader.stop(); break }
+            live = true; board.connection = "live"
+            var ch = Change(); ch.room = true; emit(ch)
+            pause = 300_000_000
+          case .event(let name, let data):
+            if let v = JV.parse(Array(data.utf8)) { await handleStreamEvent(name, v) }
+          }
+        }
+      } catch {}
+      reader.stop()
+      if Task.isCancelled { break }
+      if unauthorised { hub.forgetToken() }
+      live = false; board.connection = "offline"
+      var ch = Change(); ch.room = true; emit(ch)
+      if upgrade != nil { return }
+      try? await Task.sleep(nanoseconds: pause)
+      pause = min(pause * 2, 5_000_000_000)
+      Task { await self.refreshPresence() }
+    }
+    live = false
+  }
+
+  /** Who is online and what the agents' links say. */
+  public func refreshPresence() async {
+    // The hub tells presence on the stream only (a `presence` event per device as it comes and goes): there is
+    // nothing to ask. Kept because the views call it when they come to the front.
+  }
+  /** The old name of `refreshPresence`, which the views call. */
+  public func refreshDevices() async { await refreshPresence() }
+
+  // ---- the outbox ----------------------------------------------------------------------------------------
+
+  /**
+   * Posts the core's outbox in order and reports each answer back. A network failure is retried with a growing
+   * pause (the entry stays stored); a refusal is the hub's last word on those bytes and goes to the core, which
+   * drops the entry or holds it back until the log decided (an own Commit that lost its epoch).
+   */
+  func pumpOutbox() {
+    if pumping { return }
+    pumping = true
+    Task { @MainActor in
+      defer { pumping = false }
+      var backoff: UInt64 = 300_000_000
+      while !Task.isCancelled {
+        guard let entry = try? await onCore({ $0.outbox().first }) else { return }
+        do {
+          let r = try await noted { try await hub.post(entry) }
+          let change = (r["change"] as? NSNumber)?.uint64Value
+          try await onCore { try $0.outboxAccepted(entry.id, change: change) }
+          outcome[entry.id] = .success(())
+          backoff = 300_000_000
+          if entry.kind != .envelope && entry.kind != .message && entry.kind != .relayMessage { var ch = Change(); try? await refreshGroups(&ch); emit(ch) }
+        } catch let e as HubError {
+          if e.isOffline || e.status >= 500 || e.status == 429 || e.code == "unauthorised" {
+            try? await Task.sleep(nanoseconds: backoff); backoff = min(backoff * 2, 10_000_000_000); continue
+          }
+          if e.status == 426 { return }
+          do { try await onCore { try $0.outboxRefused(entry.id, code: e.code) } } catch { return }
+          outcome[entry.id] = .failure(e)
+          if entry.kind == .envelope {
+            var ch = Change()
+            board.pushAlert(&ch, code: e.code, message: "the hub refused an item: \(e.message)")
+            emit(ch)
+          }
+        } catch { return }   // the store failed or this device is no longer the owner: nothing more is sent
+      }
+    }
+  }
+  /**
+   * Waits a moment for the hub's word on what was just put into the outbox: a refusal is thrown here; a network
+   * delay is not waited out (the outbox keeps the entry and posts it later).
+   */
+  func awaitOutcome(_ id: UInt64, ms: UInt64 = 8_000) async throws {
+    let until = nowMs() + ms
+    while nowMs() < until {
+      if let o = outcome.removeValue(forKey: id) { if case .failure(let e) = o { throw e }; return }
+      try? await Task.sleep(nanoseconds: 40_000_000)
+    }
+  }
+  /** Waits until the hub has taken everything in the outbox. */
+  public func flush(timeoutMs: UInt64 = 30_000) async throws {
+    _ = try? await serial { }
+    let until = nowMs() + timeoutMs
+    while let n = try? await onCore({ $0.outbox().count }), n > 0 {
+      if nowMs() > until { throw TrommiError("timeout", "the hub has not taken \(n) item(s)") }
+      if !pumping { pumpOutbox() }
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+  }
+
+  /** The open cards (decisions and infos) in stack order. */
+  public var openCards: [Card] { board.stack.compactMap { board.cards[$0] } }
+
+  /**
+   * What the notification extension may get (PushNotify): of every live session group the content key of its
+   * current epoch and the one before, and its agent devices. Never the room group's key.
+   */
+  public func notifyKeys() -> [(group: Bytes, session: Bytes, epoch: UInt64, key: Bytes, agents: [Bytes])] {
+    var out = [(group: Bytes, session: Bytes, epoch: UInt64, key: Bytes, agents: [Bytes])]()
+    let list = groups.values.filter { $0.session != nil && !$0.archived }
+    coreQueue.sync {
+      for g in list {
+        guard let s = g.session else { continue }
+        for epoch in [g.epoch, g.epoch &- 1] where epoch <= g.epoch {
+          if let key = try? device.contentKey(group: g.group, epoch: epoch) { out.append((g.group, s.session, epoch, key, s.agents)) }
+        }
+      }
+    }
+    return out
+  }
+}
