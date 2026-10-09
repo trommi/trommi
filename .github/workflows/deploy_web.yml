@@ -1,0 +1,48 @@
+# Delivers the web app to app.trommi.com (the Cloudflare worker trommi-app). Called by build.yml with the name of the
+# artifact that holds the built files; it delivers exactly those files.
+name: deploy_web
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: The artifact of this run that holds the built files
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy_web
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: web
+      url: https://app.trommi.com
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Take the built files
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: release/public
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Install the 1Password CLI
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+        with:
+          version: latest-beta
+      - name: Deliver to Cloudflare
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
+        run: |
+          # the worker's settings beside the files that were built, so nothing else of the checkout is delivered
+          cp app/hello/wrangler.jsonc release/wrangler.jsonc
+          # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID come from the 1Password Environment
+          op run --environment "$OP_ENVIRONMENT_ID" -- npx --yes wrangler@4.149.0 deploy --config release/wrangler.jsonc
