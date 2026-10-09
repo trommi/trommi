@@ -7,8 +7,8 @@ use crate::hub::Hub;
 use openmls::group::{MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedWelcome};
 use openmls::prelude::{
     BasicCredential, Capabilities, Ciphersuite, CredentialType, CredentialWithKey, Extension,
-    ExtensionType, Extensions, KeyPackage, MlsMessageBodyIn, MlsMessageIn, MlsMessageOut,
-    ProcessedMessageContent, ProtocolVersion, RequiredCapabilitiesExtension,
+    ExtensionType, Extensions, KeyPackage, LeafNodeParameters, MlsMessageBodyIn, MlsMessageIn,
+    MlsMessageOut, ProcessedMessageContent, ProtocolVersion, RequiredCapabilitiesExtension,
     SenderRatchetConfiguration, UnknownExtension, PURE_PLAINTEXT_WIRE_FORMAT_POLICY,
 };
 use openmls_basic_credential::SignatureKeyPair;
@@ -239,6 +239,50 @@ impl Forger {
             group_info: encoded(&info.expect("a GroupInfo")),
             welcome: welcome.as_ref().map(encoded),
         }
+    }
+
+    /// Joins the group of `group_info` from outside with `aad` as the authenticated data, as the holder of a
+    /// signature key alone can: an external Commit that MLS takes.
+    pub fn join_from_outside(&self, group_info: &[u8], aad: &[u8]) -> (MlsGroup, Forged) {
+        let Ok(MlsMessageBodyIn::GroupInfo(group_info)) =
+            MlsMessageIn::tls_deserialize_exact(group_info).map(MlsMessageIn::extract)
+        else {
+            panic!("a GroupInfo");
+        };
+        let (group, bundle) = MlsGroup::external_commit_builder()
+            .with_config(Self::join_config())
+            .with_aad(aad.to_vec())
+            .skip_lifetime_validation()
+            .build_group(&self.provider, group_info, self.credential())
+            .expect("the join is built")
+            .leaf_node_parameters(
+                LeafNodeParameters::builder()
+                    .with_capabilities(self.capabilities())
+                    .build(),
+            )
+            .load_psks(self.provider.storage())
+            .expect("no PSK")
+            .create_group_info(true)
+            .use_ratchet_tree_extension(true)
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.signer,
+                |_| true,
+            )
+            .expect("the Commit is built")
+            .finalize(&self.provider)
+            .expect("the join is finalised");
+        let (commit, _, info) = bundle.into_messages();
+        let encoded =
+            |message: &MlsMessageOut| message.tls_serialize_detached().expect("it encodes");
+        let forged = Forged {
+            epoch: group.epoch().as_u64() - 1,
+            commit: encoded(&commit),
+            group_info: encoded(&info.expect("a GroupInfo")),
+            welcome: None,
+        };
+        (group, forged)
     }
 
     /// An application message of `group` holding `plaintext`, as it travels.

@@ -14,8 +14,8 @@ use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
     add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
-    new_device_with, now, observe, post_all, post_ok, post_refused, process, publish_some, settle,
-    sync, sync_ok, TestDevice, TestRecovery, TEST_RECOVERY_AUTH,
+    now, observe, post_all, post_ok, post_refused, process, publish_some, settle, sync, sync_ok,
+    TestDevice,
 };
 
 struct World {
@@ -28,14 +28,9 @@ struct World {
     main: GroupId,
 }
 
-/// Two human devices, a main session with its agent device, and a second enrolled agent device. Every device
-/// holds the stand-in that takes a join from outside, so that such a join is judged by the rules alone.
+/// Two human devices, a main session with its agent device, and a second enrolled agent device.
 fn world(checks: bool) -> World {
-    let recovery = TestRecovery {
-        joins: true,
-        ..TestRecovery::default()
-    };
-    let mut devices: Vec<TestDevice> = (0..4).map(|_| new_device_with(recovery)).collect();
+    let mut devices: Vec<TestDevice> = (0..4).map(|_| new_device()).collect();
     let (mut other, mut agent, mut b, mut a) = (
         devices.pop().unwrap(),
         devices.pop().unwrap(),
@@ -43,7 +38,6 @@ fn world(checks: bool) -> World {
         devices.pop().unwrap(),
     );
     let mut hub = Hub::new(checks);
-    hub.recovery = recovery;
     let room_group = found_room_on(&mut hub, &mut a);
     add_human(&mut hub, &mut a, &mut b);
     enrol(&mut hub, &mut a, &mut agent);
@@ -132,18 +126,6 @@ fn an_agent_device_committing_in_the_room_group() {
     assert_eq!(
         built.agent.update(&built.room_group, true, now()),
         Err(Error::Forbidden)
-    );
-    // The one Commit it can build there is a join from outside, and that makes no agent device a human device.
-    refused_by_hub_and_devices(
-        |w| {
-            let info = w.hub.group_info(&w.room_group).unwrap().clone();
-            w.agent
-                .join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec()))
-                .unwrap();
-            AGENT
-        },
-        &[A, B, OTHER],
-        Error::BadCommit,
     );
 }
 

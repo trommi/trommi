@@ -1,12 +1,12 @@
 //! A main session (5.2.2, 5.2.5): who holds which key, a founding that misses a KeyPackage, the last-resort
 //! KeyPackage, and a device that cannot make the `SealedKey` of its Commits.
 
-use trommi_core::device::key_package_info;
+use trommi_core::device::{key_package_info, Processed, Received};
 use trommi_core::ids::GroupId;
 use trommi_core::Error;
 use trommi_tests::{
-    add_human, enrol, found_main, found_room, new_device, new_device_with, now, post_ok,
-    publish_some, settle, sync_ok, TestRecovery,
+    add_human, enrol, found_main, found_room, new_device, now, post_ok, process, publish_some,
+    settle, sync_ok, take_welcomes,
 };
 
 #[test]
@@ -132,7 +132,7 @@ fn a_founding_with_a_missing_key_package_fails_and_is_tried_again() {
         Err(Error::BadKeyPackage)
     );
     assert!(a.outbox().is_empty());
-    assert_eq!(hub.change(), 3);
+    assert_eq!(hub.change(), 4);
 
     // Tried again with fresh ones; what was handed out stays used.
     publish_some(&mut hub, &mut b, 1);
@@ -202,29 +202,25 @@ fn the_last_resort_key_package_serves_several_groups() {
 }
 
 #[test]
-fn a_device_that_cannot_seal_founds_nothing_and_commits_nothing() {
-    let cannot_seal = TestRecovery {
-        cannot_seal: true,
-        ..TestRecovery::default()
-    };
-    // It founds no room.
-    let mut alone = new_device_with(cannot_seal);
-    assert_eq!(
-        alone.found_room([0xE1; 32], [0xE2; 32], now()),
-        Err(Error::NoKey)
-    );
-    assert!(alone.outbox().is_empty());
-    assert_eq!(alone.room(), None);
-    assert!(alone.groups().unwrap().is_empty());
-
-    // As a human device of a room it commits nothing and founds no session.
-    let (mut a, mut b, mut agent) = (new_device(), new_device_with(cannot_seal), new_device());
+fn a_human_device_without_the_recovery_mac_founds_nothing_and_commits_nothing() {
+    // 7.4: a device that was added and has not yet been handed the recovery_mac of the key in force.
+    let (mut a, mut b, mut agent) = (new_device(), new_device(), new_device());
     let (mut hub, room_group) = found_room(&mut a);
-    add_human(&mut hub, &mut a, &mut b);
+    let package = b.key_package(now()).unwrap();
+    a.add_human_device(&b.id(), &package, now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    assert_eq!(
+        take_welcomes(&hub, &mut b, trommi_tests::added_at(&hub)).len(),
+        1
+    );
     enrol(&mut hub, &mut a, &mut agent);
     publish_some(&mut hub, &mut a, 1);
     publish_some(&mut hub, &mut agent, 1);
-    sync_ok(&hub, &mut b);
+    // The message that carries the key has not reached it: it processes the Commits alone.
+    for item in hub.log_after(b.cursor()).iter().filter(|item| item.commit) {
+        process(&mut b, item).unwrap();
+    }
+    assert!(a.holds_recovery_mac() && !b.holds_recovery_mac());
     assert_eq!(b.update(&room_group, true, now()), Err(Error::NoKey));
     assert_eq!(
         b.change_agents(&[], &[agent.id()], now()),
@@ -248,4 +244,16 @@ fn a_device_that_cannot_seal_founds_nothing_and_commits_nothing() {
         b.content_key(&room_group, 3).unwrap(),
         a.content_key(&room_group, 3).unwrap()
     );
+    // It asks, and a device that holds the recovery_mac sends it again (7.4): then it commits.
+    assert!(!b.holds_recovery_mac());
+    a.send_recovery_auth(&b.id()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let processed = sync_ok(&hub, &mut b);
+    assert!(matches!(
+        processed.last(),
+        Some(Processed::Message(Received::RecoveryAuth { from, new: true, .. })) if *from == a.id()
+    ));
+    assert!(b.holds_recovery_mac());
+    b.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut b);
 }

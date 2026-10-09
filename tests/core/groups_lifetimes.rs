@@ -24,7 +24,7 @@ fn a_founders_expired_leaf_stops_observers_and_no_join_by_welcome() {
     // A room founded eleven years ago: the founder's leaf ran out a year ago.
     let long_ago = now() - ELEVEN_YEARS_MS;
     let mut a = new_device();
-    let room = a.found_room([0xE1; 32], [0xE2; 32], long_ago).unwrap();
+    let room = a.found_room(&trommi_tests::test_keys(), long_ago).unwrap();
     let room_group = GroupId::room(room);
     let founding = a.outbox().remove(0);
     // A hub that follows the group verifies the tree and refuses the founding; so does any observer.
@@ -133,7 +133,10 @@ fn a_key_package_outside_its_lifetime_is_refused() {
     // The fresh one is taken.
     a.add_human_device(&c.id(), &fresh, now()).unwrap();
     post_ok(&mut hub, &mut a);
-    assert_eq!(take_welcomes(&hub, &mut c, hub.change()).len(), 1);
+    assert_eq!(
+        take_welcomes(&hub, &mut c, trommi_tests::added_at(&hub)).len(),
+        1
+    );
 }
 
 #[test]

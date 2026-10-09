@@ -136,6 +136,7 @@ fn room_verdict_with(
             facts,
             commit: b"commit",
             recovery_auth,
+            base_group_info: None,
         },
     )
 }
@@ -168,6 +169,7 @@ fn session_verdict(
             facts,
             commit: b"commit",
             recovery_auth: None,
+            base_group_info: None,
         },
     )
 }
@@ -354,6 +356,7 @@ fn a_join_from_outside_needs_the_recovery_signature() {
             joiner: &device(0x13),
             note: join.note.as_ref().unwrap(),
             commit: b"",
+            base_group_info: None,
             recovery_signature_key: &[0; 32],
             recovery_auth: Some(b"signed"),
         }),
