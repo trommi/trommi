@@ -1184,7 +1184,7 @@ export class Client {
   }
 
   /**
-   * Phase 2, strictly in hub order: the sender's chain (spec/FORMAT.md §9 step 6 and 7, the same rules as
+   * Phase 2, strictly in hub order: the sender's chain (spec/v1.md §9 step 6 and 7, the same rules as
    * zcrypto's verifyEnvelope) and our own envelopes. Returns the reducer record, or null for a replay.
    */
   async _commit(pre: Pre): Promise<Rec | null> {

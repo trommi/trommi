@@ -1,5 +1,5 @@
 // types.ts: the shapes of the protocol and of the board model, as types only (nothing here exists at run time).
-// The wire format is spec/FORMAT.md and the README "Hub v1: the wire protocol"; the bodies are codec.ts; the
+// The wire format is spec/v1.md and the README "Hub v1: the wire protocol"; the bodies are codec.ts; the
 // model is core/README.md "The model" and model.ts. Names follow the README: snake_case, ids as lowercase hex
 // strings, times in ms since the epoch, envelope numbers as the hub's order.
 //

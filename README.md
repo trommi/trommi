@@ -4,75 +4,65 @@ Chat and decision cards between a person and their Claude Code sessions, end-to-
 
 ## How the data is organised
 
-```
-Room
-├── Member log (signed, chained)              who belongs: readable by the hub, no names in it
-│   ├── human devices, agent devices          a role and two public keys each
-│   ├── the recovery key                      its public keys
-│   └── the commitments of each room key epoch
-├── Invites (beside the log)                  signed offer, request and reveal; the link's secret never reaches
-│                                             the hub; both devices compute the check code and show it
-├── Room key per epoch                        key + history key; human devices and the recovery key only
-│   ├── one sealed copy per holder
-│   └── back link                             a new epoch opens the one before; a new epoch only when a
-│                                             device is removed or the room is recovered
-├── Files                                     encrypted blobs, uploaded on their own; one random key per file;
-│                                             key, hash, name and type only inside the body that names the file
-│
-├── ROOM LEVEL                                envelopes under the room key; agents read none of it
-│   ├── registers written by human devices    a current value each
-│   │   crown, kit, room_snapshot, desk/<id>, session/<session>, session_history/<session>,
-│   │   draft/<card>, snooze/<card>, duck/<card>, scribble_snapshot/<timeline>
-│   ├── device/<id> of each human device      only that device writes it (its name, platform)
-│   ├── notes                                 objects; any human device writes a version, a closed one deletes
-│   └── Scribble Board                        one timeline per desk, one for "All desks"
-│       └── items: strokes (a stroke, a piece of a stroke still being drawn, a text, sticky or voice
-│           note, a picture), move, erase, send_away
-│
-└── SESSION                                   its own key per epoch; made by its first grant: by a human
-    │                                         device, or by an agent for itself alone (a child session)
-    ├── grants (signed chain)                 readable by the hub: which agents hold the session (one or
-    │                                         several), with or without history
-    ├── sealed session key per holder         every human device, the recovery key, the assigned agents
-    ├── goals/<session>                       a register human devices write: the desk's goals for the agent
-    ├── the agent's registers                 profile, heard, status_line/<id>, alert/<envelope>, its device/<id>
-    ├── the session's chat (timeline)         messages (also a sent note's words and files), the mirrored
-    │                                         terminal turn, a selection sent from the Scribble Board (a picture)
-    └── objects
-        ├── card                              versions (question, options, revisions; its agent only)
-        │   ├── answer                        the choice, notes, drawings
-        │   ├── decide again                  an answer taken back
-        │   └── the card's chat (timeline)
-        ├── permission request + verdict
-        └── published                         files an agent releases
+The protocol is version 2: MLS (RFC 9420) distributes the keys, content is Trommi's own signed envelope. The whole of
+it is [`spec/v2.md`](spec/v2.md); why it leaves the standard in five places is
+[`spec/v2-deviations.md`](spec/v2-deviations.md). The web app in `app/web` still speaks version 1
+([`spec/v1.md`](spec/v1.md)) until it has moved onto the shared core.
 
-Account (email)                               kept by the hub beside the room, not part of its content
-├── sealed copy under the password
-├── sealed copy under the Emergency Kit words
-└── sealed copy per passkey
-        each opens the room's recovery code → the recovery key → a new device adds itself to the member log
+**Content: what a person or an agent has.** Sorting is not encryption: which Desk an Agent is on, the order, the
+crown and which Helper hangs under which Agent are register values; moving changes no key and moves no data.
+
+```
+Room                                          everything of one account (an account has a list of rooms; one for now)
+├── Desk                                      a register (name, order, crown, Goals)               room group
+│   ├── Goals                                 in the Desk's register; copied into each Agent's session for the agent
+│   └── Scribble Board (one per Desk,         items: stroke, text, sticky, voice note, picture,    room group
+│       one for "All desks")                  move, erase, send away; snapshot = a file
+│       └── piece of a stroke in progress     relayed live, never stored (an MLS message)
+├── Note                                      versions; sending it makes a Chat message             room group
+├── per-card markers                          Later (snooze), duck, drafts, read marks: registers   room group
+├── Agent (a session)                         everything below is that one session                  its session group
+│   ├── Chat                                  messages, attachments; the terminal's input and final answer
+│   ├── work trail                            "Working · 3 steps": MLS messages, kept 30 days
+│   ├── Decision card, Info card              versions; answer, take back; the card's own Chat
+│   ├── permission request + verdict
+│   ├── Artifact                              a published Page or Media: versions, files; Share link
+│   ├── Status line, agent profile, Goals     registers
+│   └── Helper (a child session)              the same again, in a session group of its own
+└── Push, Live Activity                       no content: how the hub reaches a device
 ```
 
-Everything marked "envelopes" above is one unit: a signed, encrypted envelope, chained per sender, of seven kinds
-(timeline item, object version, answer, permission request, verdict, status, decide again). A register is the current
-value of a key written with status envelopes. A timeline is chat or scribble and belongs to a card, a session or a
-desk. Log entries, invites, grants, sealed keys, back links and files are not envelopes.
+**Keys: what only protects.**
 
-**What a hub reads of an envelope** (its cleartext header): the room, whether it is under the room key or a session
-key (and which session), the key epoch, the sender with its running number and chain link, the position in the member
-log, the recipient, the sender's time, the kind, what the sender had seen, an object's id, state, urgency and answer
-time, a timeline's kind and id, the ids of the files it names, and whether it asks for a push. Beside the header: the
-nonce, the padded size, the signature and when it arrived.
+```
+Account (e-mail; password or passkey)         the hub checks the login; no key here
+└── sealed copies of the recovery code        under the password, the Emergency Kit words, each passkey        
+    └── recovery code → recovery key          public halves in the room group's context; not a member
 
-**What a hub never reads**: the body. Texts, card content, choices, verdicts, register keys and values, strokes, file
-keys, file names and types.
+Device                                        one Ed25519 signature key = its id; KeyPackages at the hub
 
-**What a hub keeps of its own**, outside the tree: the account (email, a slow hash of the login key, the sealed copies,
-passkey public keys), push registrations, Live Activity tokens, one lease per running agent process, share links for
-files (file id, a hash of the link's secret, expiry; the file's key stays in the link) and usage figures.
+Room group (MLS)                              all of the person's devices. Not a Desk.
+└── content key, per epoch                    MLS exporter; protects Desks, Goals, Scribble Boards, Notes, markers
 
-**What goes away**: thirty days after an object is answered or closed, a hub keeps of its envelopes and of its card's
-chat only header, nonce, hash and signature, and deletes its files. Registers, session chats and Scribble Board items
-are kept.
+Session group (MLS), one per Agent/Helper     the person's devices + that session's agent device(s)
+└── content key, per epoch                    MLS exporter; protects Chat, cards, permission requests, Artifacts,
+                                              Status lines
 
-The bytes are in [`spec/FORMAT.md`](spec/FORMAT.md).
+Old content keys                              kept by every device that had them; handed to a new device or to an
+                                              agent taking a session over in an MLS message; one sealed copy per
+                                              group and epoch at the hub for the recovery key                  
+File key                                      random, one per file; inside the encrypted body that names the file,
+                                              and after the # of a Share link                                  
+```
+
+- Two boundaries only: the room (the person's devices) and each single session (those devices and its agent devices).
+- The hub stores public group state, ordered group messages and ciphertext; it never holds a key or reads content.
+- Not forward secret for history, by decision: whoever holds a human device's state or the recovery code reads the
+  whole history. After a device's next update or its removal, a copied group state opens nothing new.
+
+**What a hub reads**: who is in which group and every change to it; of each stored item the signed header (sender,
+group and epoch, the sender's running number and chain link, recipient, time, kind, the Chat or board it belongs to,
+a card's id, type, state and urgency, a register's opaque id, file ids, the push flag) and its padded size. **What a
+hub never reads**: a body: texts, card content, choices, verdicts, register names and values, strokes, file keys,
+file names and types. **What goes away**: thirty days after a card is answered or closed its bodies and files; work
+trails after thirty days. The table per stored thing is in `spec/v2.md`, section 14.

@@ -1,6 +1,6 @@
 // zcrypto.d.mts: the TypeScript view of zcrypto.mjs (the crypto library stays JavaScript, byte for byte; this
 // file only says what its exports take and give, for the typed core). Bytes are Uint8Array; the member-list state, an
-// invite and the like are zcrypto's own objects (FORMAT.md): their fields that callers read are named, the rest open.
+// invite and the like are zcrypto's own objects (v1.md): their fields that callers read are named, the rest open.
 // Keep it in step with zcrypto.mjs: a new export or a changed argument is written here too.
 
 export type Bytes = Uint8Array
@@ -41,7 +41,7 @@ export function exportDeviceSecret(d: Device): Promise<Uint8Array<ArrayBuffer>>
 export function importDeviceSecret(bytes: Bytes, opts?: { extractable?: boolean }): Promise<Device>
 export function sign(device: Device, label: string, message: Bytes): Promise<Bytes>
 export function verify(signPub: Bytes, label: string, message: Bytes, signature: Bytes): Promise<boolean>
-/** Ed25519 over the message as given, by the pinned rules (FORMAT.md section 1): strict, the same in every implementation. */
+/** Ed25519 over the message as given, by the pinned rules (v1.md section 1): strict, the same in every implementation. */
 export function ed25519Verify(signPub: Bytes, message: Bytes, signature: Bytes): Promise<boolean>
 export function seal(recipientKexPub: Bytes, plaintext: Bytes, aad?: Bytes, opts?: Obj): Promise<Bytes>
 export function openSealed(device: Device, sealed: Bytes, aad?: Bytes): Promise<Bytes>
@@ -134,7 +134,7 @@ export function objectIdOf(creatorId: Bytes, senderSequence: number): Promise<By
 export function deriveSenderKey(roomId: Bytes, secret: Secret, senderId: Bytes, opts?: { keyScope?: number; sessionId?: Bytes | null }): Promise<Uint8Array<ArrayBuffer>>
 export function paddedLength(n: number): number
 
-/** An envelope's cleartext header (FORMAT.md "Envelope"). */
+/** An envelope's cleartext header (v1.md "Envelope"). */
 export interface Header {
   push: boolean; keyScope: number; sessionId: Bytes | null; roomId: Bytes; epoch: number; sender: Bytes; seq: number; prev: Bytes
   logSeq: number; logHash: Bytes; recipient: Bytes; time: number; kind: number; seen: { sender: Bytes; seq: number; hash: Bytes }[]

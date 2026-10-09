@@ -4,7 +4,7 @@
 // from which a new device adds itself (room.ts joinWithRecoveryCode). The hub never sees the password, the recovery
 // words, a passkey's prf output or the code.
 //
-// account (bytes; the labels follow FORMAT.md section 3: every label is followed by one 0x00, and a label has ONE use.
+// account (bytes; the labels follow v1.md section 3: every label is followed by one 0x00, and a label has ONE use.
 // Known answers: spec/account-vectors.json, checked by core/account-test.mjs and the iOS app's tests):
 //   email     = normaliseEmail (passwords.ts): ASCII only, the blanks around it dropped, A-Z as a-z
 //   salt      = SHA-256("trommi/v1/account-salt" 0x00 || email)                 (per account, known without a round trip)
