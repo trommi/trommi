@@ -83,6 +83,12 @@ struct ApnsPushJson {
     ticket: String,
 }
 
+impl Drop for ApnsPushJson {
+    fn drop(&mut self) {
+        self.ticket.zeroize();
+    }
+}
+
 fn check_numbers(change: u64, urgency: u8) -> Result<(), Error> {
     if change > MAX_CHANGE || urgency > MAX_URGENCY {
         return Err(Error::BadFormat);
@@ -140,32 +146,27 @@ impl ApnsPush {
         if self.ticket.len() > MAX_TICKET_LEN {
             return Err(Error::TooLarge);
         }
-        let mut fields = ApnsPushJson {
+        to_json(&ApnsPushJson {
             room_id: self.room_id.to_base64url(),
             change: self.change,
             urgency: self.urgency,
             ticket: ids::base64url_encode(&self.ticket),
-        };
-        let json = to_json(&fields);
-        fields.ticket.zeroize();
-        json
+        })
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, Error> {
-        let mut fields: ApnsPushJson = from_json(bytes)?;
-        let ticket = ids::base64url_decode(&fields.ticket);
-        fields.ticket.zeroize();
+        let fields: ApnsPushJson = from_json(bytes)?;
         check_numbers(fields.change, fields.urgency)?;
-        let mut ticket = ticket?;
+        // Wiped on every way out but the last.
+        let mut ticket = Zeroizing::new(ids::base64url_decode(&fields.ticket)?);
         if ticket.len() > MAX_TICKET_LEN {
-            ticket.zeroize();
             return Err(Error::BadFormat);
         }
         Ok(Self {
             room_id: RoomId::from_base64url(&fields.room_id)?,
             change: fields.change,
             urgency: fields.urgency,
-            ticket,
+            ticket: std::mem::take(&mut *ticket),
         })
     }
 }

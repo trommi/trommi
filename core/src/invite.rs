@@ -809,7 +809,8 @@ impl Inviter {
     ///
     /// Refusals: `invite-burned`; `invite-used` (the new device was committed already); `bad-invite` (no Request
     /// was accepted); `invite-expired` (more than five minutes since the Request was accepted);
-    /// `code-not-confirmed` (another code, or another Request).
+    /// `code-not-confirmed` (another code, or another Request); `bad-key-package` (the Request's KeyPackage does
+    /// not verify now, or is not the new device's).
     pub fn confirm(
         &self,
         code: &CheckCode,
@@ -836,6 +837,9 @@ impl Inviter {
         if !(same_request && same_code) {
             return Err(Error::CodeNotConfirmed);
         }
+        // What is confirmed is a device with its own KeyPackage, also when this invite came from a store.
+        let key_package = Request::decode(&request.request)?.key_package;
+        verify_key_package_of(&key_package, new_device)?;
         Ok(ConfirmedInvite {
             room_id: self.offer.room_id,
             invite_id: self.offer.invite_id,
@@ -843,7 +847,7 @@ impl Inviter {
             role: self.offer.role,
             session_id: self.offer.session_id,
             new_device: *new_device,
-            key_package: Request::decode(&request.request)?.key_package,
+            key_package,
             request_hash: own_hash,
         })
     }
@@ -926,8 +930,8 @@ impl Inviter {
     /// together: the Offer is signed by its inviter, names the invite of the secret and commits to the nonce,
     /// and an accepted Request is one this invite would accept, signed by the new device stored with it. That
     /// this device is the Request's KeyPackage's was verified when the Request was accepted and is verified
-    /// again by whatever adds the device (section 4.5); it is not verified here, where a KeyPackage's lifetime
-    /// against the clock would decide whether a stored invite still reads.
+    /// again by [`Inviter::confirm`] and by whatever adds the device (section 4.5); it is not verified here,
+    /// where a KeyPackage's lifetime against the clock would decide whether a stored invite still reads.
     pub fn from_stored(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() > MAX_STORED_LEN {
             return Err(Error::BadFormat);

@@ -252,7 +252,14 @@ fn sextet(symbol: u8) -> Option<u8> {
 
 /// How many symbols the base64url of `len` bytes has.
 pub const fn base64url_len(len: usize) -> usize {
-    len.saturating_mul(4).div_ceil(3)
+    // Four symbols for every three bytes, and two or three for one or two bytes left: no product that could
+    // overflow for the length of any slice.
+    let rest = match len % 3 {
+        0 => 0,
+        1 => 2,
+        _ => 3,
+    };
+    (len / 3).saturating_mul(4).saturating_add(rest)
 }
 
 /// Bytes as base64url without padding. The text is written into one buffer of its final length, which never
@@ -302,7 +309,7 @@ fn decode_group(chunk: &[u8]) -> Result<([u8; 3], usize), Error> {
 /// leaves nothing of what was read. For a key or a secret of a known length, [`base64url_decode_into`] needs
 /// no buffer on the heap at all.
 pub fn base64url_decode(text: &str) -> Result<Vec<u8>, Error> {
-    let capacity = text.len().saturating_mul(3).saturating_add(3) / 4;
+    let capacity = (text.len() / 4).saturating_mul(3).saturating_add(3);
     let mut bytes = Vec::with_capacity(capacity);
     for chunk in text.as_bytes().chunks(4) {
         match decode_group(chunk) {
