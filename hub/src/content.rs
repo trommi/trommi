@@ -356,6 +356,25 @@ fn may_write(
     })
 }
 
+/// The owner of an object as a reader must address it now: the stored owner while it is a leaf of the group, else
+/// the session's agent device (helper session: its opener), as the write rule has it.
+pub fn effective_owner(c: &Connection, room: &Room, group_id: &[u8], owner: Device) -> Res<Device> {
+    if store::is_leaf(c, group_id, &owner)? {
+        return Ok(owner);
+    }
+    let row = store::group(c, room, group_id)?;
+    let view = store::room_view(c, room)?;
+    let agent = match row.kind {
+        GroupKind::Room => None,
+        GroupKind::Main => store::agent_leaf(c, &view, &row.group_id)?,
+        GroupKind::Helper => match store::session_kind(c, &view, &row)? {
+            crate::rules::SessionKind::Helper { opener } => opener,
+            _ => None,
+        },
+    };
+    Ok(agent.unwrap_or(owner))
+}
+
 /// 9.2: the owner, or once it is no longer a leaf, the session's agent device.
 fn current_owner(c: &Connection, row: &GroupRow, o: &Object, sender: &Sender) -> Res<Device> {
     if store::is_leaf(c, &row.group_id, &o.owner)? {
@@ -562,6 +581,25 @@ pub fn post_envelope(x: &Ctx, auth: &Auth, bytes: &[u8], fx: &mut Effects) -> Re
         return Err(refuse("not-member", "the sender is no leaf of this group"));
     };
     let hash = env.hash();
+    // A repeated post of bytes the hub holds gets its first answer again, before anything that may have changed
+    // since is looked at (the sender may have left the group and come back meanwhile).
+    let held: Option<(Vec<u8>, i64, Option<String>)> = x
+        .c
+        .prepare_cached("SELECT hash, change, void_code FROM envelopes WHERE group_id = ?1 AND sender = ?2 AND seq = ?3")?
+        .query_row(params![h.group_id, &h.sender[..], h.seq as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .optional()?;
+    match &held {
+        Some((held_hash, change, None)) if same(held_hash, &hash) => {
+            return Ok(Posted::Stored { change: *change })
+        }
+        Some((held_hash, _, Some(code))) if same(held_hash, &hash) => {
+            return Ok(Posted::Voided(void(
+                void_code(code),
+                "refused before; the number is used",
+            )))
+        }
+        _ => {}
+    }
     if let Some(cut) = cut_seq {
         if h.seq > cut as u64 {
             return Err(refuse(
@@ -1097,11 +1135,15 @@ pub const ANSWER_BYTES: usize = 8 << 20;
 fn collect(rows: &mut rusqlite::Rows, limit: i64, pruned: bool) -> Res<(Vec<Value>, bool)> {
     let (mut items, mut bytes) = (Vec::new(), 0usize);
     while let Some(r) = rows.next()? {
-        if items.len() as i64 == limit || (bytes > ANSWER_BYTES && !items.is_empty()) {
+        if items.len() as i64 == limit {
             return Ok((items, true));
         }
         let item = envelope_item(r, pruned)?;
         bytes += item["envelope"].as_str().map_or(0, str::len);
+        // the budget is checked before an item goes in; the first one always does
+        if bytes > ANSWER_BYTES && !items.is_empty() {
+            return Ok((items, true));
+        }
         items.push(item);
     }
     Ok((items, false))
@@ -1148,7 +1190,7 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
                 "state": r.get::<_, i64>(2)?,
                 "urgency": r.get::<_, i64>(3)?,
                 "answered_at": r.get::<_, i64>(4)?,
-                "owner": b64(&r.get::<_, Vec<u8>>(5)?),
+                "owner": b64(&effective_owner(c, &auth.room, &group, fixed(r.get(5)?)?)?),
                 "first_change": r.get::<_, i64>(6)?,
                 "head_change": r.get::<_, i64>(7)?,
                 "version": version,
@@ -1163,7 +1205,8 @@ pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
              WHERE r.room_id = ?1 ORDER BY r.head_change"
         ))?;
         let mut rows = s.query([&auth.room[..]])?;
-        let mut register_bytes = 0usize;
+        // one budget for the whole Desk
+        let mut register_bytes = desk_bytes;
         while let Some(r) = rows.next()? {
             if registers.len() >= 20_000 || register_bytes > ANSWER_BYTES {
                 truncated = true;
@@ -1306,7 +1349,7 @@ pub fn object_envelopes(
     let (items, more) = collect(&mut rows, limit, false)?;
     Ok(json!({
         "object_id": b64(&id), "group_id": b64(&object.group_id), "state": object.state, "urgency": object.urgency,
-        "owner": b64(&object.owner), "first_change": object.first_change, "head_change": object.head_change, "items": items,
+        "owner": b64(&effective_owner(c, &auth.room, &object.group_id, object.owner)?), "first_change": object.first_change, "head_change": object.head_change, "items": items,
         "more": more,
     }))
 }

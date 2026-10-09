@@ -28,7 +28,7 @@ pub struct Limits {
     pub claims: Buckets,
     pub open_requests: Buckets,
     pub shares: Buckets,
-    pub pushes: Buckets,
+    pub pushes: Window,
     pub requests: Buckets,
     pub foundings: Window,
     pub logins: Window,
@@ -111,14 +111,14 @@ impl App {
         }
         let limits = Limits {
             envelopes: Buckets::new(cfg.envelopes_per_second, cfg.envelope_burst),
-            pieces: Buckets::new(cfg.pieces_per_second, cfg.pieces_per_second * 2.0),
+            pieces: Buckets::new(cfg.pieces_per_second, cfg.pieces_per_second),
             claims: Buckets::new(2.0, 200.0),
             open_requests: Buckets::new(
                 cfg.open_requests_per_ip_minute / 60.0,
                 cfg.open_requests_per_ip_minute,
             ),
             shares: Buckets::new(1.0, 60.0),
-            pushes: Buckets::new(10.0 / 60.0, 10.0),
+            pushes: Window::new(10, 60_000),
             requests: Buckets::new(0.2, 10.0),
             foundings: Window::new(cfg.foundings_per_ip_hour, 3_600_000),
             logins: Window::new(cfg.logins_per_ip_10min, 600_000),
@@ -294,7 +294,11 @@ impl App {
                 .db
                 .read(|c| crate::content::envelope_at(c, &ev.room, change, false))
             {
-                Ok(Some(item)) => item,
+                // the item as `/v2/changes` gives it
+                Ok(Some(mut item)) => {
+                    item["kind"] = json!("envelope");
+                    item
+                }
                 _ => return,
             },
             ("log", Some(change)) => match self
@@ -318,7 +322,7 @@ impl App {
             if self
                 .limits
                 .pushes
-                .take(&[&job.room[..], &sender[..]].concat(), 1.0, now)
+                .check(&[&job.room[..], &sender[..]].concat(), now, true)
                 .is_err()
             {
                 return;
@@ -764,11 +768,11 @@ impl App {
                 [now.saturating_sub(7 * 86_400_000) as i64],
             )?;
             c.execute(
-                "DELETE FROM recoveries WHERE expires_at <= ?1",
+                "DELETE FROM recoveries WHERE (finished_at IS NULL AND expires_at <= ?1 + 86400000) OR expires_at <= ?1",
                 [now.saturating_sub(86_400_000) as i64],
             )?;
             c.execute(
-                "DELETE FROM key_packages WHERE expires_at <= ?1",
+                "DELETE FROM key_packages WHERE expires_at <= ?1 AND claimed_at IS NULL",
                 [now as i64],
             )?;
             Ok::<_, Refused>(())

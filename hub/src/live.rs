@@ -56,6 +56,11 @@ impl Stream {
         if self.ended.load(Ordering::Relaxed) {
             return false;
         }
+        // nothing is sent on a stream whose token has run out
+        if crate::util::now() >= self.expires_at {
+            self.end();
+            return false;
+        }
         if self.queued.fetch_add(chunk.len(), Ordering::Relaxed) + chunk.len() > self.limit {
             self.overflow();
             return false;

@@ -1767,15 +1767,17 @@ fn an_archived_session_takes_nothing_more_and_a_reject_reaches_the_human_devices
             &json!({ "n": 99 }),
         )
         .refused(404, "not-found");
-    assert_eq!(
-        w.ada
-            .get(&w.hub, "/v2/requests")
-            .ok()
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
+    let listed = w.ada.get(&w.hub, "/v2/requests").ok();
+    assert_eq!(listed.as_array().unwrap().len(), 1);
+    assert_eq!(listed[0]["committer"], b64(&w.ada.id()));
+    // only a leaf of the group reports; an agent device is no leaf of the room group
+    agent
+        .post(
+            &w.hub,
+            &format!("/v2/groups/{}/reject", b64(&w.room)),
+            &json!({ "n": 1 }),
+        )
+        .refused(404, "not-found");
     // an unsigned wish: nothing follows from it
     agent.post(&w.hub, "/v2/requests", &json!({ "kind": "readmit", "group": b64(&group), "key_package": b64(&agent.key_package(false)) })).ok();
     agent

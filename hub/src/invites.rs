@@ -34,6 +34,18 @@ pub fn publish(x: &Ctx, auth: &Auth, offer_bytes: &[u8], signature: &[u8]) -> Re
             "the Offer's signature does not verify",
         ));
     }
+    // a repeated post of the same Offer gets the first answer again, whatever the room has become since
+    if let Some(held) =
+        x.c.prepare_cached("SELECT offer FROM invites WHERE invite_id = ?1")?
+            .query_row([&offer.invite_id[..]], |r| r.get::<_, Vec<u8>>(0))
+            .optional()?
+    {
+        return if same(&held, offer_bytes) {
+            Ok(json!({ "invite_id": b64(&offer.invite_id) }))
+        } else {
+            Err(refuse("replay", "this invite id is used"))
+        };
+    }
     // ten minutes, with a minute for clocks that differ
     if offer.expires_at <= x.now || offer.expires_at > x.now + INVITE_MS + 60_000 {
         return Err(refuse("bad-invite", "an invite lives ten minutes"));
@@ -58,17 +70,6 @@ pub fn publish(x: &Ctx, auth: &Auth, offer_bytes: &[u8], signature: &[u8]) -> Re
                 "an agent takes over a live main session",
             ));
         }
-    }
-    if let Some(held) =
-        x.c.prepare_cached("SELECT offer FROM invites WHERE invite_id = ?1")?
-            .query_row([&offer.invite_id[..]], |r| r.get::<_, Vec<u8>>(0))
-            .optional()?
-    {
-        return if same(&held, offer_bytes) {
-            Ok(json!({ "invite_id": b64(&offer.invite_id) }))
-        } else {
-            Err(refuse("replay", "this invite id is used"))
-        };
     }
     let open: i64 = x
         .c
