@@ -192,11 +192,20 @@ ios/TrommiApp/AppStore/ship-local.sh            # about 5 minutes to the upload,
 target `Trommi` that links the package's `TrommiApp` library, with the app icon, the production entitlements and the
 Info.plist keys xtool adds; one extension target each. Linux builds do not use it.
 
-**Not usable today.** The package links the Rust core by a search path to the device library, which is wrong for the
-simulator, and no workflow is in this repository. A Mac build needs `core/swift/build.sh` on the runner and an
-XCFramework with a device and a simulator slice (both libraries build on Linux; not built yet).
+**The Xcode path** (the repository's `.github/workflows/deploy_ios.yml` with `.github/scripts/ios_testflight.sh`: an
+archive with cloud-managed signing on a Mac runner, uploaded to TestFlight). What it needs from this folder:
 
-What stays true once it is: `AppStore/asc.py` holds the App Store Connect API steps (the bundle ids with their
+- `core/swift/build.sh` on the runner before anything is built: `ios` for the archive (the package links
+  `lib/ios/libtrommi_core_ffi.a` by a search path; a device archive needs no XCFramework), `host` for
+  `swift test` in `ios/TrommiClient` on the Mac (it links `lib/macos`). The simulator library is chosen with
+  `TROMMI_IOS_SIMULATOR=1`; one checkout builds for the device OR the simulator, not both at once.
+- The package's sources build for macOS as well (ActivityKit and the Keychain parts are for iOS only), so the Mac
+  job can run the same tests as Linux.
+- Not verified from here: this text was written on Linux. Whether XcodeGen's project, the archive and the upload go
+  through is what the first run on the runner shows; that the archive carries `PrivacyInfo.xcprivacy` at the bundle's
+  root (`project.yml` lists it) is to be checked on its output.
+
+`AppStore/asc.py` holds the App Store Connect API steps (the bundle ids with their
 capabilities, the app record check, waiting for the processed build, the group and its tester, "What to Test").
 Internal testers must be users of the team under the address they sign in with; when the API refuses the tester (409
 "Tester(s) cannot be assigned"), add them once in App Store Connect → TestFlight → Intern → Testers → +. Cloud-managed
@@ -209,7 +218,8 @@ AES-GCM, Argon2id in the Rust core), not only with what iOS provides. `ITSAppUse
 Info.plist answers Apple's question for every build: `NO` says the app uses no encryption or only exempt encryption;
 `YES` says it uses encryption that is not exempt, and App Store Connect then asks once for the export documents and
 gives a compliance code for the Info.plist. Which one is true is a legal answer of the owner, not a build setting;
-the ship script writes what `ITS_NON_EXEMPT_ENCRYPTION` says.
+the ship script writes what `ITS_NON_EXEMPT_ENCRYPTION` says. The owner's answer is `NO`
+(decided 10 October 2026); the builds carry it.
 
 ## Privacy manifest
 
@@ -407,6 +417,6 @@ What the app cannot do until the core and its binding (`core/swift`) carry it; e
   its whole-number format (`board_items`) replace it when they are bound.
 - Passkeys are built and switched off (`Passkeys.available`) until `app.trommi.com` lists the app under
   `webcredentials` and the entitlement names it.
-- The Mac and simulator build ("TestFlight from CI"); licence notices for the Rust crates inside the app bundle
+- The first archive on the Mac runner ("TestFlight from CI") is unproven; licence notices for the Rust crates inside the app bundle
   (`THIRD-PARTY.md` lists them); the memory of the Notification Service Extension with the core linked, measured on
   a phone.
