@@ -72,7 +72,7 @@ struct DeskScreen: View {
       }.opacity(0).accessibilityHidden(true)
     }
     .modifier(DeskTop(regular: hSize == .regular))
-    .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar() } }
+    .overlay(alignment: .bottom) { if !model.selected.isEmpty { SelectionBar().bottomChrome() } }
   }
 
   @ViewBuilder private func head(_ v: DeskModel.View) -> some View {

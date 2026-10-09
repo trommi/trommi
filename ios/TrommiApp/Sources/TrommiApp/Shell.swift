@@ -60,11 +60,10 @@ struct BoardShell: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboard = false }
       }
     }
-    .overlay(alignment: hSize == .regular ? .bottom : .top) { ToastHost(top: hSize != .regular).ignoresSafeArea(edges: hSize == .regular ? [] : .top) }
+    .overlay { ToastHost() }
     .safeAreaInset(edge: .top, spacing: 0) { UpdateBanner() }
     .overlay { UpdateRequired() }
     .background(Ink.bg.ignoresSafeArea())
-    .modifier(StatusBarUnderIsland())
     // anything dropped onto the app goes onto the note (NoteDrop.swift): the note opens and shows it arrive
     .modifier(NoteDropTarget { if hSize == .regular { NotificationCenter.default.post(name: .trommiNoteOpen, object: nil) } else if model.tab != .note { noteUnder = model.tab; model.tab = .note } })
   }
@@ -113,6 +112,7 @@ struct TabPill: View {
     }
     .padding(4)
     .glass(Capsule())
+    .bottomChrome()
     .animation(.snappy, value: on)
     // where the system's tab bar lies: the lower edge 23 pt over the screen's bottom edge (it stood 36 pt over it)
     .padding(.top, 6).padding(.bottom, bottomSink(23))
@@ -428,144 +428,92 @@ struct DashedRule: View {
 
 // ---- toast, update line --------------------------------------------------------------------------------------
 
-/** While the island's shape is open over the status bar's place the status bar is hidden, as under the system's own
- *  expanded island: no clock or battery inside the black. */
-struct StatusBarUnderIsland: ViewModifier {
-  #if canImport(UIKit)
-  @ObservedObject private var island = IslandWindow.shared
-  func body(content: Content) -> some View { content.statusBarHidden(island.covering) }
-  #else
-  func body(content: Content) -> some View { content }
-  #endif
-}
-
 /**
- * The passing word. iPhone with a Dynamic Island: the island itself says it (IslandWindow.swift) and nothing is drawn
- * here. iPhone without one: one clear glass capsule under the status bar, the words at the left, an Undo as the undo
- * arrow in a ring that runs down in 5 s at the right (a second Undo while it runs counts up: "3"); swipe it away; it
- * never covers more than itself; VoiceOver reads it out. iPad: the bar at the bottom.
+ * The passing word, on every device ONE ordinary toast of the app: a clear glass capsule at the bottom, centred, just
+ * above whatever stands there (the tab pill, a composer, the selection bar, the keyboard under them: BottomChrome),
+ * else above the home indicator. It never covers the status bar or the buttons at the top. The words at the left; an
+ * Undo is the round button at the right, the undo arrow in a ring that runs down in 5 s (a second Undo while it runs
+ * counts up: "3"). A second toast takes the first one's place in the same capsule. It slides in from below and fades;
+ * a tap on the words or a swipe down lets it go; VoiceOver announces it and reads the button as "Undo: …".
+ * (The Dynamic Island is the system's, for Live Activities: the app does not imitate it. His word, 9 October.)
  */
 struct ToastHost: View {
   @EnvironmentObject var model: BoardModel
-  var top = false
-  @State private var drag: CGSize = .zero
+  @ObservedObject private var chrome = BottomChrome.shared
+  @State private var drag: CGFloat = 0
   @State private var count = 1
   @State private var lastUndoAt: Date? = nil
   @State private var progress: CGFloat = 1
   static let undoSeconds: Double = 5
-  private var safeTop: CGFloat {
-    #if canImport(UIKit)
-    return UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first?.safeAreaInsets.top ?? 47
-    #else
-    return 20
-    #endif
-  }
   var body: some View {
-    VStack {
-      if let t = model.toast {
-        Group { if top { phone(t) } else { wide(t) } }
-        .task(id: t.id) {
-          #if canImport(UIKit)
-          AccessibilityNotification.Announcement(t.undo != nil ? "\(t.head). Undo available." : [t.head, t.line].filter { !$0.isEmpty }.joined(separator: ". ")).post()
-          #endif
-          // (a demo screen keeps its toast a minute: the screenshot of the state)
-          let secs = ProcessInfo.processInfo.environment["TROMMI_SCREEN"] != nil ? 60 : t.undo != nil ? Self.undoSeconds : 3.5
-          progress = 1
-          withAnimation(.linear(duration: secs)) { progress = 0 }
-          try? await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000))
-          withAnimation { if model.toast?.id == t.id { model.toast = nil; count = 1; lastUndoAt = nil } }
+    GeometryReader { g in
+      // this view ends at the safe area's bottom (the home indicator, or the keyboard); a control above that lifts it
+      let floor = g.frame(in: .global).maxY
+      let lift = max(0, floor - (chrome.top ?? floor))
+      VStack(spacing: 0) {
+        Spacer(minLength: 0)
+        if let t = model.toast {
+          capsule(t)
+            .task(id: t.id) {
+              #if canImport(UIKit)
+              AccessibilityNotification.Announcement(t.undo != nil ? "\(t.head). Undo available." : [t.head, t.line].filter { !$0.isEmpty }.joined(separator: ". ")).post()
+              #endif
+              // (a demo screen keeps its toast a minute: the screenshot of the state)
+              let secs = ProcessInfo.processInfo.environment["TROMMI_SCREEN"] != nil ? 60 : t.undo != nil ? Self.undoSeconds : 3.5
+              progress = 1
+              withAnimation(.linear(duration: secs)) { progress = 0 }
+              try? await Task.sleep(nanoseconds: UInt64(secs * 1_000_000_000))
+              if model.toast?.id == t.id { model.toast = nil; count = 1; lastUndoAt = nil }
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
       }
+      .frame(maxWidth: .infinity)
+      .padding(.bottom, lift + 8)
+      .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.toast)
+      .animation(.snappy, value: lift)
     }
-    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.toast)
     .onChange(of: model.toast) { old, new in
-      #if canImport(UIKit)
-      // every toast is said by the island's pill (one place); only a phone without an island shows the glass toast
-      defer { if top { if let n = new { IslandWindow.shared.show(n, count: count, model: model) } else { IslandWindow.shared.hide() } } }
-      #endif
       guard let n = new, n.undo != nil else { return }
       if let o = old, o.undo != nil, o.id != n.id, let at = lastUndoAt, Date().timeIntervalSince(at) < Self.undoSeconds { count += 1 } else { count = 1 }
       lastUndoAt = Date()
     }
   }
-  private func dismissGesture() -> some Gesture {
-    DragGesture(minimumDistance: 6).onChanged { drag = $0.translation }.onEnded { v in
-      withAnimation(.snappy) {
-        if v.translation.height < -24 || abs(v.translation.width) > 40 { model.toast = nil; count = 1 }
-        drag = .zero
-      }
-    }
-  }
-  private func ring(_ white: Bool, size: CGFloat) -> some View {
-    let ink: Color = white ? .white : Ink.fg
-    return ZStack {
-      Circle().stroke(ink.opacity(0.25), lineWidth: 2.2)
-      Circle().trim(from: 0, to: progress).stroke(ink, style: StrokeStyle(lineWidth: 2.2, lineCap: .round)).rotationEffect(.degrees(-90))
-      Image(systemName: "arrow.uturn.backward").font(.system(size: size * 0.46, weight: .bold)).foregroundStyle(ink)
-    }.frame(width: size, height: size)
-  }
-  @ViewBuilder private func phone(_ t: Toast) -> some View {
-    // on a phone with a Dynamic Island every toast is the island's pill, in its own window (IslandWindow.swift)
-    if onIsland { Color.clear.frame(width: 0, height: 0) }
-    else { phoneFallback(t) }
-  }
-  private var onIsland: Bool {
-    #if canImport(UIKit)
-    return IslandWindow.shared.geometry() != nil
-    #else
-    return false
-    #endif
-  }
-  /** No island: one clear glass capsule under the status bar, the words left, the undo arrow in its ring right. */
-  private func phoneFallback(_ t: Toast) -> some View {
+  private func capsule(_ t: Toast) -> some View {
     HStack(spacing: 10) {
-      if t.alert { Image(systemName: "exclamationmark.circle").foregroundStyle(Ink.urgCritical) }
-      (Text(t.head).font(Face.text(15, .semibold)).foregroundColor(t.alert ? Ink.urgCritical : Ink.fg)
-        + Text(t.line.isEmpty ? "" : "  \(t.line)").font(Face.text(14)).foregroundColor(Ink.muted))
-        .lineLimit(1).truncationMode(.tail)
-      if t.undo != nil {
-        Spacer(minLength: 4)
-        if count > 1 { Text("\(count)").font(Face.text(14, .semibold)).foregroundStyle(Ink.muted) }
-        ring(false, size: 28)
+      HStack(spacing: 8) {
+        if t.alert { Image(systemName: "exclamationmark.circle").foregroundStyle(Ink.urgCritical) }
+        (Text(t.head).font(Face.text(15, .semibold)).foregroundColor(t.alert ? Ink.urgCritical : Ink.fg)
+          + Text(t.line.isEmpty ? "" : "  \(t.line)").font(Face.text(14)).foregroundColor(Ink.muted))
+          .lineLimit(1).truncationMode(.tail)
       }
-    }
-    .padding(.leading, 18).padding(.trailing, t.undo != nil ? 8 : 18).frame(minHeight: 44)
-    .glass(Capsule(), interactive: true)
-    .contentShape(Capsule())
-    .onTapGesture {
-      let undo = t.undo
-      withAnimation { model.toast = nil; count = 1 }
-      if let u = undo { Task { await u() } }
-    }
-    .accessibilityElement(children: .ignore)
-    .accessibilityAddTraits(.isButton)
-    .accessibilityLabel(t.undo != nil ? "Undo: \(t.head)" : [t.head, t.line].filter { !$0.isEmpty }.joined(separator: ". "))
-    .frame(maxWidth: 360)
-    .padding(.horizontal, 16).padding(.top, safeTop + 6)
-    .frame(maxWidth: .infinity, alignment: .center)
-    .offset(x: drag.width, y: min(0, drag.height))
-    .gesture(dismissGesture())
-    .transition(.move(edge: .top).combined(with: .opacity))
-  }
-  private func wide(_ t: Toast) -> some View {
-    HStack(spacing: 12) {
-      VStack(alignment: .leading, spacing: 2) {
-        Text(t.head).font(Face.text(15, .semibold)).foregroundStyle(t.alert ? Ink.urgCritical : Ink.fg)
-        if !t.line.isEmpty { Text(t.line).font(Face.text(14)).foregroundStyle(Ink.muted).lineLimit(2) }
-      }
-      Spacer(minLength: 8)
+      .frame(minHeight: 44)
+      .contentShape(Rectangle())
+      .onTapGesture { model.toast = nil; count = 1 }
+      .accessibilityElement(children: .combine)
       if let undo = t.undo {
-        Button("Undo") { model.toast = nil; Task { await undo() } }.font(Face.text(15, .semibold)).foregroundStyle(Ink.accent)
+        Spacer(minLength: 2)
+        if count > 1 { Text("\(count)").font(Face.text(14, .semibold)).foregroundStyle(Ink.muted).accessibilityHidden(true) }
+        Button { model.toast = nil; count = 1; Task { await undo() } } label: {
+          ZStack {
+            Circle().fill(Ink.fg.opacity(0.08))
+            Circle().trim(from: 0, to: progress).stroke(Ink.fg, style: StrokeStyle(lineWidth: 2, lineCap: .round)).rotationEffect(.degrees(-90)).padding(1)
+            Image(systemName: "arrow.uturn.backward").font(.system(size: 14, weight: .bold)).foregroundStyle(Ink.fg)
+          }
+          .frame(width: 34, height: 34).frame(width: 44, height: 44).contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(count > 1 ? "Undo: \(t.head), \(count) actions" : "Undo: \(t.head)")
       }
     }
-    .padding(.horizontal, 16).padding(.vertical, 12)
-    .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
-    .frame(maxWidth: 560)
-    .padding(.horizontal, 14).padding(.bottom, 8)
-    .offset(y: max(0, drag.height))
-    .gesture(DragGesture().onChanged { drag = $0.translation }.onEnded { v in withAnimation(.snappy) { if v.translation.height > 30 { model.toast = nil }; drag = .zero } })
-    .transition(.move(edge: .bottom).combined(with: .opacity))
-    .onTapGesture { withAnimation { model.toast = nil } }
+    .padding(.leading, 18).padding(.trailing, t.undo != nil ? 3 : 18)
+    .glass(Capsule())
+    .frame(maxWidth: 380)
+    .padding(.horizontal, 16)
+    .offset(y: max(0, drag))
+    .gesture(DragGesture(minimumDistance: 6).onChanged { drag = $0.translation.height }.onEnded { v in
+      withAnimation(.snappy) { if v.translation.height > 24 { model.toast = nil; count = 1 }; drag = 0 }
+    })
   }
 }
 

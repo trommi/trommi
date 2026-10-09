@@ -190,7 +190,26 @@ extension View {
   /** The bar at the bottom of a scrolling page (a composer, its pencil): the system's safeAreaBar (it reserves its
    *  height and gives the content a scroll edge under it). */
   func bottomBar<C: View>(@ViewBuilder _ content: () -> C) -> some View {
-    self.safeAreaBar(edge: .bottom, spacing: 0, content: content)
+    self.safeAreaBar(edge: .bottom, spacing: 0) { content().bottomChrome() }
+  }
+  /** This is a control at the bottom of the screen (the tab pill, a composer, the selection bar): the toast floats
+   *  above it (BottomChrome). */
+  func bottomChrome() -> some View { modifier(BottomChromeReport()) }
+}
+
+/** Where the controls at the bottom of the screen begin: each showing one's top edge in screen coordinates. The toast
+ *  (ToastHost) stands just above the highest, so it never covers the tab pill, a composer or the keyboard above it. */
+@MainActor final class BottomChrome: ObservableObject {
+  static let shared = BottomChrome()
+  @Published var tops: [UUID: CGFloat] = [:]
+  var top: CGFloat? { tops.values.min() }
+}
+private struct BottomChromeReport: ViewModifier {
+  @State private var id = UUID()
+  func body(content: Content) -> some View {
+    content
+      .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY.rounded() } action: { BottomChrome.shared.tops[id] = $0 }
+      .onDisappear { BottomChrome.shared.tops[id] = nil }
   }
 }
 /**

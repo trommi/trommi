@@ -39,7 +39,7 @@ struct CardScreen: View {
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
           if c.kind != "permission" {
-            Composer(placeholder: askWords(c, a), agent: c.agent, cardId: c.id)
+            Composer(placeholder: askWords(c, a), agent: c.agent, cardId: c.id).bottomChrome()
           }
         }
       }
