@@ -29,6 +29,8 @@ ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["zer
 hpke-rs = { version = "=0.7.0", default-features = false }
 hpke-rs-crypto = "=0.7.0"
 hpke-rs-rust-crypto = "=0.7.0"
+# SHA-256 over a file as it streams by; the provider hashes with this crate.
+sha2 = { version = "=0.11.0", default-features = false }
 # The account's password key derivation (v1 section 16): Argon2id, in Rust alone.
 argon2 = { version = "=0.5.3", default-features = false, features = ["zeroize"] }
 # The account's password as NFC, as v1 section 16 derives from it.
