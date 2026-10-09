@@ -47,6 +47,9 @@ pub const MAX_HELPER_DEVICES: usize = 7;
 pub const MAX_LIVE_HELPERS: usize = 32;
 /// The most bytes of a Commit with its GroupInfo and Welcome.
 pub const MAX_COMMIT_REQUEST_LEN: usize = 1 << 20;
+/// The highest epoch a stored group may stand in. A group cannot reach it by Commits; a stored state above it
+/// is damaged, and is refused before OpenMLS counts the epoch up.
+pub const MAX_STORED_EPOCH: u64 = u64::MAX / 2;
 /// The most bytes of a KeyPackage accepted from outside.
 pub const MAX_KEY_PACKAGE_LEN: usize = 4096;
 /// The length of a recovery public key, signature or HPKE.

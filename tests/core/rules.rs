@@ -97,6 +97,7 @@ fn facts(group: GroupId, epoch: u64, committer: u8, room_epoch: u64) -> CommitFa
             cuts: vec![],
             join: false,
         }),
+        newer_version: false,
     }
 }
 
@@ -358,6 +359,55 @@ fn a_join_from_outside_needs_the_recovery_signature() {
         }),
         Err(Error::BadCommit)
     );
+    // Nor does it take a `SealedKey`, whatever its bytes: it cannot check one.
+    for sealed_key in [&b""[..], &[1], b"test sealed key"] {
+        assert_eq!(
+            NoRecovery.verify_sealed_key(
+                &SealedKeyClaim {
+                    group: &group,
+                    epoch: 3,
+                    group_info: b"group info",
+                    room_epoch: 2,
+                    recovery_hpke_key: &[0xE2; 32],
+                    writer: &device(H1),
+                    writer_is_human: true,
+                },
+                sealed_key
+            ),
+            Err(Error::Incomplete)
+        );
+    }
+}
+
+#[test]
+fn a_note_of_a_newer_version_is_named_as_such() {
+    let history = history();
+    let sessions = SESSIONS;
+    let main = session(SessionId::ZERO, MAIN);
+    // The note of a newer version does not decode: the Commit is `newer-version`, in the room group and in a
+    // session group, also when it holds what this build takes for forbidden.
+    for forbidden in [false, true] {
+        let mut newer = facts(GroupId::room(ROOM), 2, H1, 2);
+        newer.note = None;
+        newer.newer_version = true;
+        newer.forbidden = forbidden;
+        assert_eq!(room_verdict(&history, &newer), Err(Error::NewerVersion));
+        newer.group = main.group_id();
+        newer.epoch = 1;
+        assert_eq!(
+            session_verdict(
+                &history,
+                &sessions,
+                &before(main, &[H1, H2, AGENT], 2),
+                &newer
+            ),
+            Err(Error::NewerVersion)
+        );
+    }
+    // A note that does not decode for another reason stays `bad-commit`.
+    let mut broken = facts(GroupId::room(ROOM), 2, H1, 2);
+    broken.note = None;
+    assert_eq!(room_verdict(&history, &broken), Err(Error::BadCommit));
 }
 
 #[test]

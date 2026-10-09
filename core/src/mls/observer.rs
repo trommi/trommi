@@ -373,7 +373,7 @@ impl Observer {
             Followed::Room(history) => history.newest().epoch == epoch,
             Followed::Session(_) => true,
         };
-        if stored_group != group || !fits {
+        if stored_group != group || !fits || epoch > profile::MAX_STORED_EPOCH {
             return Err(damaged());
         }
         Ok(observer)

@@ -144,7 +144,8 @@ pub enum Processed {
     Observed(CommitFacts),
     /// An application message that opened.
     Message(Received),
-    /// Nothing for this device: a group it does not hold, or a message it cannot open (7.0).
+    /// Nothing for this device: a group it does not hold, a message it cannot open (7.0), or a message of a
+    /// group that failed its first contact, which is not opened (5.2.6).
     Skipped,
 }
 
@@ -194,6 +195,12 @@ pub enum Received {
     },
     /// A message this device may not take from that sender in that group, or that is for another device.
     Dropped,
+    /// A message that names a version above this build's: the finding `newer-version`. It opened and is not
+    /// read; the device is to be updated.
+    NewerVersion {
+        /// The sender.
+        from: DeviceId,
+    },
 }
 
 /// What an error of [`Device::process_log_entry`] means for the caller.
@@ -239,8 +246,9 @@ pub struct Joined {
     /// The device that added this one.
     pub added_by: DeviceId,
     /// The leaves the room state does not allow, or in a helper session whatever breaks 5.2.3: the finding of
-    /// first contact (5.2.6). Not empty: the device holds the group and hands out no content key of it until
-    /// those leaves are removed.
+    /// first contact (5.2.6). Not empty: the device holds the group, hands out no content key of it, opens no
+    /// message of it and writes nothing into it but the Commit that removes leaves, until those leaves are
+    /// removed.
     pub offending: Vec<DeviceId>,
 }
 
@@ -739,7 +747,8 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// The device a store holds. `Error::Storage` when anything in it does not decode or fit together.
+    /// The device a store holds. `Error::Storage` when anything in it does not decode or fit together, or a
+    /// stored group stands in an epoch above [`profile::MAX_STORED_EPOCH`].
     pub fn open(
         mut store: S,
         entropy: Box<dyn Entropy + Send>,
@@ -784,7 +793,9 @@ impl<S: Storage> Device<S> {
             let own_leaf = group
                 .own_leaf_node()
                 .is_some_and(|leaf| leaf.signature_key().as_slice() == self.id.as_bytes());
-            if stored != id || !own_leaf || rules::leaves_of(group.members()).is_err() {
+            let exhausted = group.epoch().as_u64() > profile::MAX_STORED_EPOCH;
+            if stored != id || !own_leaf || exhausted || rules::leaves_of(group.members()).is_err()
+            {
                 return Err(damaged("a group"));
             }
             if let (GroupKind::Session(session), Some(meta)) =
@@ -1687,6 +1698,10 @@ impl<S: Storage> Device<S> {
         if !unfit.iter().all(|leaf| removes.contains(leaf)) {
             return Err(Error::StaleSession);
         }
+        // 5.2.6: a group that failed its first contact takes only the Commit that removes leaves from it.
+        if meta.distrusted && removes.is_empty() {
+            return Err(Error::BadGroup);
+        }
         let note = CommitNote {
             room_epoch: room.epoch,
             room_state: room.state,
@@ -2385,6 +2400,10 @@ impl<S: Storage> Device<S> {
         if message.epoch().as_u64() > group.epoch().as_u64() {
             return Err(Error::GroupBehind);
         }
+        // 5.2.6: the content of a group that failed its first contact is never opened.
+        if self.meta(id)?.distrusted {
+            return Ok(Processed::Skipped);
+        }
         let leaves = rules::leaves_of(group.members())?;
         let before = self.provider.entries();
         let Ok(processed) = group.process_message(&self.provider, message) else {
@@ -2405,8 +2424,12 @@ impl<S: Storage> Device<S> {
             return Ok(Processed::Skipped);
         };
         let content = content.into_bytes();
-        let Ok(message) = codec::decode::<TrommiMessage>(&content, MAX_MESSAGE_LEN) else {
-            return Ok(Processed::Message(Received::Dropped));
+        let message = match codec::decode::<TrommiMessage>(&content, MAX_MESSAGE_LEN) {
+            Ok(message) => message,
+            Err(Error::NewerVersion) => {
+                return Ok(Processed::Message(Received::NewerVersion { from }))
+            }
+            Err(_) => return Ok(Processed::Message(Received::Dropped)),
         };
         let received = self.take_message(batch, id, &group, from, message)?;
         Ok(Processed::Message(received))
@@ -2484,7 +2507,7 @@ impl<S: Storage> Device<S> {
                 number,
                 time,
                 step,
-            } if session.is_some() && !from_human => Received::WorkTrail {
+            } if session.is_some() && !from_human && number != 0 => Received::WorkTrail {
                 from,
                 turn,
                 number,
@@ -2511,6 +2534,8 @@ impl<S: Storage> Device<S> {
     }
 
     /// Encrypts one application message in `group` and puts it in the outbox with the ratchet state after it.
+    /// `busy` while a Commit of this device in the group waits for the hub or the log, or its founding is
+    /// unanswered; `bad-group` in a group that failed its first contact; `stale-session` in a stale one.
     fn send(
         &mut self,
         batch: &mut Batch,
@@ -2522,8 +2547,13 @@ impl<S: Storage> Device<S> {
         if meta.archived {
             return Err(Error::Gone);
         }
-        if meta.founding {
+        // A message made now would be of the epoch a pending Commit ends, and reach the hub after it.
+        if meta.founding || meta.pending.is_some() {
             return Err(Error::Busy);
+        }
+        // 5.2.6: nothing is written into a group that failed its first contact.
+        if meta.distrusted {
+            return Err(Error::BadGroup);
         }
         let mut group = group::load(&self.provider, id)?;
         let leaves: BTreeSet<DeviceId> = rules::leaves_of(group.members())?
@@ -2640,7 +2670,8 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// Sends one step of the running turn (7.3): a session group, from its agent or helper devices.
+    /// Sends one step of the running turn (7.3): a session group, from its agent or helper devices. `number`
+    /// counts from 1 within `turn` (`bad-format` for 0); `step` is the application's JSON and is not read here.
     pub fn send_work_trail(
         &mut self,
         group: &GroupId,
@@ -2652,6 +2683,9 @@ impl<S: Storage> Device<S> {
         self.transact(|this, batch| {
             if group.is_room() || this.is_human() {
                 return Err(Error::Forbidden);
+            }
+            if number == 0 {
+                return Err(Error::BadFormat);
             }
             let message = TrommiMessage::WorkTrail {
                 turn: *turn,
