@@ -291,7 +291,7 @@ extension Room {
       let r = try await noted { try await hub.boardItems(id, afterChange: from) }
       let list = r["items"] as? [JSON] ?? []
       try await applyPage(list, t, key, &ch)
-      from = max(from, list.compactMap { ($0["change"] as? NSNumber)?.uint64Value }.max() ?? from)
+      from = max(from, list.compactMap { Wire.uint($0["change"]) }.max() ?? from)
       if list.isEmpty || r["more"] as? Bool != true { break }
     }
     ch.timelines.insert(key)
@@ -333,7 +333,7 @@ extension Room {
    */
   func applyPage(_ items: [JSON], _ t: Timeline, _ key: String, _ ch: inout Change) async throws {
     let parsed: [(change: UInt64, bytes: Bytes, void: String?)] = items.compactMap { j in
-      guard let n = (j["change"] as? NSNumber)?.uint64Value, let b = (j["envelope"] as? String).flatMap({ try? unb64u($0) }) else { return nil }
+      guard let n = Wire.uint(j["change"]), let b = (j["envelope"] as? String).flatMap({ try? unb64u($0) }) else { return nil }
       return (n, b, j["void_code"] as? String)
     }
     guard !parsed.isEmpty else { return }
@@ -366,7 +366,7 @@ extension Room {
     var ch = Change()
     let was = t.items.count
     try await applyPage(list, t, key, &ch)
-    t.loadedDownTo = min(t.loadedDownTo, list.compactMap { ($0["change"] as? NSNumber)?.intValue }.min() ?? t.loadedDownTo)
+    t.loadedDownTo = min(t.loadedDownTo, list.compactMap { Wire.int($0["change"]) }.min() ?? t.loadedDownTo)
     t.hasMore = r["more"] as? Bool ?? (list.count >= limit)
     ch.timelines.insert(key)
     emit(ch)
@@ -390,13 +390,14 @@ extension Room {
   public func liveShare(_ attachmentId: String) -> SharedLink? { (try? shareStore())?.live(attachmentId) }
   /** The link to one file for someone outside the room; the hub keeps only the hash of its secret. */
   public func shareLink(_ ref: JV, app: String = "https://app.trommi.com") async throws -> SharedLink {
-    guard let id = ref["attachment_id"].string, let fileId = try? unhex(id), let key = ref["file_key"].string.flatMap({ try? unb64u($0) }) else { throw TrommiError("bad-argument", "attachment reference") }
+    guard let id = ref["attachment_id"].string, let fileId = try? unhex(id), let key = ref["file_key"].string.flatMap({ try? unb64u($0) }),
+          let sha = ref["sha256"].string.flatMap({ try? unb64u($0) }) else { throw TrommiError("bad-argument", "attachment reference") }
     let kept = try shareStore()
     if let live = kept.live(id) { return live }
-    let made = try Core.tools.createShareLink(app: app, fileId: fileId, fileKey: key)
+    let made = try Core.tools.createShareLink(app: app, fileId: fileId, fileKey: key, sha256: sha)
     let expires = nowMs() + UInt64(ShareStore.days) * 86_400_000 - 60_000
     let r = try await noted { try await hub.request("POST", "/shares", body: ["share_id": b64u(made.shareId), "secret_hash": b64u(made.secretHash), "file_id": b64u(fileId), "expires_at": expires]) }
-    let link = SharedLink(shareId: hex(made.shareId), attachmentId: id, link: made.link, expiresAt: (r["expires_at"] as? NSNumber)?.uint64Value ?? expires)
+    let link = SharedLink(shareId: hex(made.shareId), attachmentId: id, link: made.link, expiresAt: min(expires, Wire.uint(r["expires_at"]) ?? expires))   // (the hub may shorten it, never lengthen)
     try kept.put(link)
     return link
   }

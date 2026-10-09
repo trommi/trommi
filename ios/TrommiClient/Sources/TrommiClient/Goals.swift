@@ -1,10 +1,10 @@
 // Goals.swift: a desk's goals handed to the agents of the sessions on it (README "Desk goals for the agent"; a port of
 // shared/client.ts goalsWanted and syncGoals, shared/model.ts cleanGoals).
 //
-// A desk's goals are a human register (desk/<id>, sealed under the room key): no agent can read them. So every human
+// A desk's goals are a human register (desk/<id>, in the room group): no agent can read them. So every human
 // device hands them to each session on that desk: the register goals/<session> = { desk_id, desk_name, goals, epoch },
 // written under THAT session's key, kept equal to the desk's goals whenever they, the session's desk or the session's
-// key epoch change (a new agent of the session cannot read what was sealed before it came). No goals: null.
+// Commit that adds an agent device (a new agent of the session cannot read what was sealed before it came). No goals: null.
 // Room.syncGoals writes what GoalsSync.toWrite names; this file is the part without a hub.
 import Foundation
 
