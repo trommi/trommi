@@ -56,6 +56,7 @@ pub struct App {
     pub in_flight: AtomicUsize,
     /// requests being worked on (not: streams and transfers): the admission queue
     pub admitted: AtomicUsize,
+    pub admitted_per_address: Mutex<HashMap<String, usize>>,
     /// the pool for expensive work
     pub gate: Gate,
     live_due: Mutex<HashSet<Room>>,
@@ -152,6 +153,7 @@ impl App {
             closing: AtomicBool::new(false),
             in_flight: AtomicUsize::new(0),
             admitted: AtomicUsize::new(0),
+            admitted_per_address: Mutex::new(HashMap::new()),
             gate: Gate::new(cfg_heavy.0, cfg_heavy.1),
             live_due: Mutex::new(HashSet::new()),
             uploads: Mutex::new(HashMap::new()),

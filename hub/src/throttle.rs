@@ -7,8 +7,10 @@
 //! - **Per account, for sources it does not know**: an account takes 100 attempts an hour from sources that never
 //!   signed in to it. Past that, such sources are served one every two seconds, in the order they came: each is
 //!   told when its turn is and is checked when it comes back then. That is at most 1 900 guesses an hour per
-//!   account from unknown sources, however many they are. A correct credential is never refused: from a source
-//!   the account knows it is checked at once, from a new one in its turn.
+//!   account from unknown sources, however many they are. A correct credential is never refused for what others
+//!   did: from a source the account knows it is checked at once, from a new one in its turn. The line is at most
+//!   ten minutes long; while thousands of sources attack one account at once, a device at a place the account
+//!   has never seen may have to ask again for a turn. A place it knows is never in that line.
 //!
 //! The password and the Emergency Kit are counted apart (the account key names which). State is in memory and
 //! bounded; keys are hashes of fixed size.
@@ -21,6 +23,8 @@ use sha2::{Digest, Sha256};
 pub const BACKOFF_MAX_MS: u64 = 900_000;
 pub const ACCOUNT_BUDGET_PER_HOUR: usize = 100;
 pub const SLOW_LANE_MS: u64 = 2_000;
+/// how far ahead turns are given out
+pub const LANE_HORIZON_MS: u64 = 600_000;
 /// how long after its turn a source may still come
 const TURN_KEPT_MS: u64 = 60_000;
 const MAX_ENTRIES: usize = 200_000;
@@ -80,12 +84,14 @@ impl LoginThrottle {
         let (a, pair) = (key(&[account]), key(&[account, source]));
         let secs = |ms: u64| ms.div_ceil(1000).max(1);
         let mut s = self.lock();
-        if s.sources.len() + s.turns.len() >= MAX_ENTRIES {
-            s.sources.retain(|_, v| now < v.next_at + 86_400_000);
+        // The state is bounded. When it is full, what has run out goes; if it is still full, sources not yet
+        // in it are admitted without a record (they stay under the per-address limit and the account's line):
+        // a flood of sources never turns into a refusal for everyone.
+        let mut full = s.sources.len() + s.turns.len() >= MAX_ENTRIES;
+        if full {
+            s.sources.retain(|_, v| now < v.next_at + 3_600_000);
             s.turns.retain(|_, turn| now <= *turn + TURN_KEPT_MS);
-            if s.sources.len() + s.turns.len() >= MAX_ENTRIES {
-                return Err(60);
-            }
+            full = s.sources.len() + s.turns.len() >= MAX_ENTRIES;
         }
         // the source's own back-off
         if let Some(src) = s.sources.get(&pair) {
@@ -120,6 +126,11 @@ impl LoginThrottle {
                         s.turns.remove(&pair);
                         let free = s.lanes.get(&a).copied().unwrap_or(0);
                         let turn = free.max(now);
+                        // the line is at most ten minutes long: a source that finds it full is told to ask
+                        // again, without a turn
+                        if turn > now + LANE_HORIZON_MS || (full && turn > now) {
+                            return Err(60);
+                        }
                         s.lanes.insert(a, turn + SLOW_LANE_MS);
                         if turn > now {
                             s.turns.insert(pair, turn);
@@ -131,13 +142,15 @@ impl LoginThrottle {
         }
         // while this attempt is checked, the same source does not start another
         let failures = s.sources.get(&pair).map_or(0, |v| v.failures);
-        s.sources.insert(
-            pair,
-            Source {
-                failures,
-                next_at: now + 1000,
-            },
-        );
+        if !full || s.sources.contains_key(&pair) {
+            s.sources.insert(
+                pair,
+                Source {
+                    failures,
+                    next_at: now + 1000,
+                },
+            );
+        }
         Ok(())
     }
 
@@ -149,13 +162,25 @@ impl LoginThrottle {
             .get(&pair)
             .map_or(0, |v| v.failures)
             .saturating_add(1);
-        s.sources.insert(
-            pair,
-            Source {
-                failures,
-                next_at: now + backoff_ms(failures),
-            },
-        );
+        if s.sources.len() + s.turns.len() < MAX_ENTRIES || s.sources.contains_key(&pair) {
+            s.sources.insert(
+                pair,
+                Source {
+                    failures,
+                    next_at: now + backoff_ms(failures),
+                },
+            );
+        }
+    }
+
+    /// The attempt was admitted but not checked (the hub was busy): the hold is lifted, the failures so far
+    /// and their wait stay.
+    pub fn not_checked(&self, account: &[u8], source: &[u8], now: u64) {
+        let pair = key(&[account, source]);
+        let mut s = self.lock();
+        if let Some(src) = s.sources.get_mut(&pair) {
+            src.next_at = now + backoff_ms(src.failures);
+        }
     }
 
     pub fn succeeded(&self, account: &[u8], source: &[u8]) {
