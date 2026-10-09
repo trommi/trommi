@@ -143,6 +143,18 @@ impl RoomHistory {
         self.states.get(&epoch)
     }
 
+    /// This history up to `epoch`, with the revocations that happened until then; none when it holds no state
+    /// of that epoch. What a holder keeps that goes back to that epoch.
+    pub fn until(&self, epoch: u64) -> Option<Self> {
+        self.at(epoch)?;
+        let mut states = self.states.values().filter(|state| state.epoch <= epoch);
+        let mut kept = Self::new(states.next()?.clone());
+        for state in states {
+            kept.record(state.clone()).ok()?;
+        }
+        Some(kept)
+    }
+
     /// Every state held, ascending by epoch.
     pub fn states(&self) -> impl Iterator<Item = &RoomState> {
         self.states.values()
