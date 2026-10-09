@@ -177,6 +177,9 @@ pub trait ChainRecords {
 pub struct Chains {
     heads: BTreeMap<DeviceId, Head>,
     counts: BTreeMap<u64, u64>,
+    /// How many changes this state has taken. An envelope is checked against one revision and its step fits
+    /// only that one.
+    revision: u64,
 }
 
 struct HeadEntry(DeviceId, Head);
@@ -227,7 +230,7 @@ impl Chains {
     pub fn from_frontier(frontier: &[(DeviceId, Head)]) -> Self {
         Self {
             heads: frontier.iter().copied().collect(),
-            counts: BTreeMap::new(),
+            ..Self::new()
         }
     }
 
@@ -254,9 +257,10 @@ impl Chains {
     /// longer stands where the envelope was checked: a step is applied once, before the next envelope of the
     /// group is checked.
     pub fn apply(&mut self, advance: &Advance) -> Result<(), Error> {
-        if self.head(&advance.sender) != advance.prev {
+        if self.revision != advance.revision || self.head(&advance.sender) != advance.prev {
             return Err(Error::Internal("a chain step applied out of turn"));
         }
+        self.revision = self.revision.saturating_add(1);
         self.heads.insert(advance.sender, advance.head);
         let count = self.counts.entry(advance.epoch).or_insert(0);
         *count = count.saturating_add(1);
@@ -268,6 +272,7 @@ impl Chains {
         if let Some(head) = effect.head {
             self.heads.insert(effect.sender, head);
         }
+        self.revision = self.revision.saturating_add(1);
     }
 
     /// The stored form.
@@ -279,6 +284,7 @@ impl Chains {
             .map(|(e, n)| CountEntry(*e, *n))
             .collect();
         let mut writer = Writer::new();
+        writer.u64(self.revision);
         writer.vector(&heads)?;
         writer.vector(&counts)?;
         Ok(writer.into_bytes())
@@ -290,10 +296,14 @@ impl Chains {
             return Err(corrupt(Error::TooLarge));
         }
         let mut reader = Reader::new(bytes);
+        let revision = reader.u64().map_err(corrupt)?;
         let heads: Vec<HeadEntry> = reader.vector().map_err(corrupt)?;
         let counts: Vec<CountEntry> = reader.vector().map_err(corrupt)?;
         reader.finish().map_err(corrupt)?;
-        let mut chains = Self::new();
+        let mut chains = Self {
+            revision,
+            ..Self::new()
+        };
         for HeadEntry(sender, head) in heads {
             if chains.heads.insert(sender, head).is_some() {
                 return Err(corrupt(Error::BadFormat));
@@ -334,7 +344,7 @@ impl OwnChain {
     }
 
     /// The place of the next envelope.
-    pub fn slot(
+    pub(crate) fn slot(
         &self,
         group: GroupId,
         epoch: u64,
@@ -382,7 +392,7 @@ pub struct Outgoing {
 /// Seals this device's next envelope in `group`, in the group's current epoch, as number `own.head().seq + 1`.
 ///
 /// Refuses, before anything is signed, what the hub would refuse: `group-behind` for a group the device does
-/// not know, `not-member` when it is no leaf, `stale-session`, `epoch-full`, `forbidden` when 9.2 does not let
+/// not know, `not-member` when it is no leaf, `removed-sender` when a Cut ended its chain, `stale-session`, `epoch-full`, `forbidden` when 9.2 does not let
 /// this device write the item against the object state it has, `no-key` without the epoch's content key; and
 /// what [`envelope::seal`] refuses. A refusal uses up no number and leaves `own` as it was.
 ///
@@ -409,6 +419,9 @@ pub fn seal_next(
     let epoch = facts.processed_epoch(&group)?.ok_or(Error::GroupBehind)?;
     if facts.leaf_role(&group, epoch, &sender)?.is_none() {
         return Err(Error::NotMember);
+    }
+    if facts.cut(&group, &sender)?.is_some() {
+        return Err(Error::RemovedSender);
     }
     if facts.is_stale(&group)? {
         return Err(Error::StaleSession);
@@ -467,6 +480,8 @@ pub struct Advance {
     pub head: Head,
     /// The epoch the envelope names.
     pub epoch: u64,
+    /// The revision of the [`Chains`] the envelope was checked against.
+    pub revision: u64,
 }
 
 /// What became of an envelope that took its place in the chain.
@@ -732,10 +747,14 @@ fn take(
         prev: chains.head(&header.sender),
         head,
         epoch: header.epoch,
+        revision: chains.revision,
     };
     let outcome = if let Served::Void(code) = served {
-        let own = me == Some(&header.sender) && VOID_CODES.contains(code);
-        let finding = if own {
+        // A void record is pruned and carries one of five codes; any other is a finding whoever sent it.
+        let well_formed = VOID_CODES.contains(code) && verified.envelope.is_pruned();
+        let finding = if !well_formed {
+            Some(Error::HubVoidedOther)
+        } else if me == Some(&header.sender) {
             None
         } else {
             recheck_void(facts, chains, objects, &verified, code, mode)?
@@ -1529,7 +1548,8 @@ mod tests {
                         seq,
                         hash: receipt.hash
                     },
-                    epoch: 0
+                    epoch: 0,
+                    revision: seq - 1
                 }
             );
             assert_eq!(taken(&receipt).as_ref().unwrap().payload(), payload(text));
@@ -2113,8 +2133,8 @@ mod tests {
         full.chains.insert(
             session(),
             Chains {
-                heads: BTreeMap::new(),
                 counts: [(0, MAX_ENVELOPES_PER_EPOCH)].into(),
+                ..Chains::new()
             },
         );
         let sealed = full.sign(2, session(), &chat("x"));
@@ -2139,6 +2159,22 @@ mod tests {
             ),
             Outcome::Void {
                 code: Error::BadSignature,
+                finding: finding.clone()
+            }
+        );
+        // So is a void record that still carries its body.
+        let sealed = own.sign(2, session(), &chat("x"));
+        let receipt = own
+            .take_as(
+                &sealed.envelope.encode().unwrap(),
+                &Served::Void(Error::WrongEpoch),
+                Mode::InOrder,
+            )
+            .unwrap();
+        assert_eq!(
+            receipt.outcome,
+            Outcome::Void {
+                code: Error::WrongEpoch,
                 finding: finding.clone()
             }
         );
@@ -2180,8 +2216,8 @@ mod tests {
         full.chains.insert(
             session(),
             Chains {
-                heads: BTreeMap::new(),
                 counts: [(0, MAX_ENVELOPES_PER_EPOCH - 1)].into(),
+                ..Chains::new()
             },
         );
         assert!(taken(&full.post(2, session(), &chat("the last one"))).is_ok());
@@ -2689,8 +2725,8 @@ mod tests {
             Err(Error::WrongRoom)
         );
         let full = Chains {
-            heads: BTreeMap::new(),
             counts: [(0, MAX_ENVELOPES_PER_EPOCH)].into(),
+            ..Chains::new()
         };
         assert_eq!(
             seal(&world, &full, session(), &mut entropy),
@@ -2706,6 +2742,17 @@ mod tests {
         assert_eq!(
             seal(&world, &Chains::new(), session(), &mut entropy),
             Err(Error::NoKey)
+        );
+        // A device whose chain a Cut ended signs nothing more there, even as a leaf again.
+        world.fake.group(&session()).epochs[0].no_key = false;
+        world
+            .fake
+            .group(&session())
+            .cuts
+            .insert(device(2), Head::START);
+        assert_eq!(
+            seal(&world, &Chains::new(), session(), &mut entropy),
+            Err(Error::RemovedSender)
         );
     }
 
@@ -2733,6 +2780,28 @@ mod tests {
             Err(Error::Internal(_))
         ));
         assert_eq!(chains.count(0), 1);
+        // Two envelopes of different senders checked against the same state: only one step fits.
+        let other = world.sign(1, session(), &chat("x"));
+        let second = receive(
+            &world.fake,
+            &world.fake,
+            &Chains::new(),
+            &Objects::new(),
+            &device(1),
+            &other.envelope.encode().unwrap(),
+            &Served::Stored,
+            Mode::InOrder,
+            NOW,
+        )
+        .unwrap();
+        assert!(matches!(
+            chains.apply(&second.advance),
+            Err(Error::Internal(_))
+        ));
+        assert_eq!(
+            Chains::from_bytes(&chains.to_bytes().unwrap()).unwrap(),
+            chains
+        );
         // A transition judged against a state that has moved on since.
         let receipt = world.take(&card.envelope).unwrap();
         let Outcome::Taken {

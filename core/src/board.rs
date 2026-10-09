@@ -226,7 +226,7 @@ pub struct Loaded {
 /// The loading rule of section 10.3, as a check of what the hub served.
 ///
 /// `applied` is the frontier of the snapshot this device applied last for the board (empty the first time),
-/// `cuts` the Cut in the room group of every removed device the snapshot's frontier names
+/// `cuts` the Cut in the room group of every removed device that the frontiers or `chains` name
 /// ([`crate::chain::GroupFacts::cut`]), `snapshot` the newest snapshot (the current value of the register by 9.3.2), `served` the board's items the
 /// hub gave from [`Snapshot::items_after_change`] on, and `chains` per writer its envelopes after the snapshot's
 /// frontier in ascending order, each verified by the receiver's checks 1 to 5 before it is handed in here
@@ -235,8 +235,8 @@ pub struct Loaded {
 /// Refuses with: `replay` if the snapshot's frontier lies before the applied one for some writer, and
 /// `equivocation` if it names another envelope under the same number; `removed-sender` if the frontier lies
 /// beyond a removed writer's Cut (the snapshot holds shapes that are to vanish: a device loads an older one or
-/// reads the chains), and `equivocation` if it names another envelope at the Cut's number or a served item
-/// contradicts the applied frontier or a Cut; `gap` or `chain-break` if a writer's chain
+/// reads the chains) or a chain goes on beyond it, and `equivocation` if the frontier or a chain has another
+/// envelope at the Cut's number, or a served item contradicts the applied frontier or a Cut; `gap` or `chain-break` if a writer's chain
 /// after the frontier does not link; `withheld` if an envelope of a chain names this board and was not served, or
 /// a served item lies beyond what its writer's chain shows; `hash-mismatch` if a served item is not the envelope
 /// its writer's chain has under that number; `equivocation` if a served item at the frontier's number has
@@ -250,7 +250,16 @@ pub fn verify_load(
     served: &[ServedItem],
     chains: &[(DeviceId, Vec<Link>)],
 ) -> Result<Loaded, Error> {
+    let cut_of = |writer: &DeviceId| {
+        cuts.iter()
+            .find(|(cut, _)| cut == writer)
+            .map(|(_, head)| head)
+    };
     for (writer, was) in applied {
+        // A Cut that came after the frontier was applied takes the frontier back to it.
+        let was = cut_of(writer)
+            .filter(|cut| cut.seq < was.seq)
+            .unwrap_or(was);
         let now = snapshot.frontier_of(writer);
         if now.seq < was.seq {
             return Err(Error::Replay);
@@ -289,6 +298,13 @@ pub fn verify_load(
             }
             if link.prev != last.hash {
                 return Err(Error::ChainBreak);
+            }
+            let cut = cut_of(writer);
+            if cut.is_some_and(|cut| link.seq > cut.seq) {
+                return Err(Error::RemovedSender);
+            }
+            if cut.is_some_and(|cut| link.seq == cut.seq && link.hash != cut.hash) {
+                return Err(Error::Equivocation);
             }
             last = Head {
                 seq: link.seq,
@@ -776,8 +792,41 @@ mod tests {
             load(&[], &[(writer, head(3, 5))], &scene.served),
             Err(Error::Equivocation)
         );
-        // A Cut at or beyond the frontier.
-        assert!(load(&[], &[(writer, at)], &scene.served).is_ok());
+        // A Cut at the frontier: the chain after it is refused.
+        assert_eq!(
+            load(&[], &[(writer, at)], &scene.served),
+            Err(Error::RemovedSender)
+        );
+        // A Cut at the first envelope after the frontier: the chain up to it loads.
+        let first = scene.chains[0].1[0];
+        let at_first = Head {
+            seq: first.seq,
+            hash: first.hash,
+        };
+        let cut_at = |cut: Head, applied: &[(DeviceId, Head)]| {
+            let chains = vec![(writer, vec![first])];
+            verify_load(
+                &BOARD,
+                applied,
+                &[(writer, cut)],
+                &scene.snapshot,
+                &scene.served[..2],
+                &chains,
+            )
+            .map(|loaded| loaded.frontier)
+        };
+        assert_eq!(cut_at(at_first, &[]).unwrap(), [(writer, at_first)]);
+        assert_eq!(cut_at(head(first.seq, 9), &[]), Err(Error::Equivocation));
+        // The device had applied a frontier beyond a Cut that came later: the Cut takes it back.
+        let rolled_back = verify_load(
+            &BOARD,
+            &[(writer, head(7, 5))],
+            &[(writer, at)],
+            &scene.snapshot,
+            &scene.served[..1],
+            &[],
+        );
+        assert_eq!(rolled_back.unwrap().frontier, [(writer, at)]);
         // An item served under a number the device had applied with another hash.
         let mut served = scene.served.clone();
         served.push(ServedItem {

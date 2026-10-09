@@ -778,11 +778,16 @@ struct CommonPayload {
     schema_version: Option<u64>,
 }
 
-/// The fields of an answer's payload that repeat its bind.
+/// The fields of an answer's payload that repeat its bind. A `choices` that is present is a list: null is
+/// not "absent".
 #[derive(Deserialize)]
 struct AnswerChoices {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present")]
     choices: Option<Vec<String>>,
+}
+
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<String>>, D::Error> {
+    Vec::deserialize(deserializer).map(Some)
 }
 
 /// The encrypted part of an envelope: what it is bound to, and its JSON payload. The payload may hold the keys
@@ -1284,12 +1289,14 @@ pub struct Sealed {
     pub hash: Hash32,
 }
 
+/// The one way from outside the crate is [`crate::chain::seal_next`], which uses each number once.
+///
 /// Seals `draft` at `slot` under `key`, the content key of the slot's group and epoch, with a fresh random
 /// nonce, and signs it. `wrong-sender` unless `signer` is the slot's sender; `too-large` for a payload above
 /// [`MAX_PAYLOAD_LEN`], a body that does not fit the largest padded size, or more than [`MAX_FILE_IDS`] files;
 /// `bad-format` for a payload that is not a JSON object, or a version whose `previous_version_hash` is not the
 /// one its header names.
-pub fn seal(
+pub(crate) fn seal(
     draft: &Draft,
     slot: &Slot,
     key: &Secret<32>,
@@ -1922,6 +1929,10 @@ mod tests {
         );
         assert_eq!(
             with_payload(&answer, br#"{"choices":"a"}"#).err(),
+            Some(Error::BadFormat)
+        );
+        assert_eq!(
+            with_payload(&answer, br#"{"choices":null}"#).err(),
             Some(Error::BadFormat)
         );
         let not_text = AnswerBind {
