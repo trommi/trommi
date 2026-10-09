@@ -56,7 +56,11 @@ impl Default for Forger {
 impl Forger {
     /// A forger whose leaves are the profile's.
     pub fn new() -> Self {
-        let key = SigningKey::generate(&mut SystemEntropy).expect("a key pair");
+        Self::with_key(SigningKey::generate(&mut SystemEntropy).expect("a key pair"))
+    }
+
+    /// A forger that holds this signature key.
+    pub fn with_key(key: SigningKey) -> Self {
         let signer = SignatureKeyPair::from_raw(
             SignatureScheme::ED25519,
             key.seed().expose().to_vec(),
