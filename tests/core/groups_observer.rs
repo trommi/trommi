@@ -741,6 +741,27 @@ fn a_join_from_outside_replaces_the_real_state_only_when_accepted() {
         c.content_key(&main, 3).unwrap()
     );
 
+    // A device that is a leaf joins no second time from outside: that would be the return of a device that
+    // lost its state under its old key (4.3), with a Remove of its own leaf and no Cut.
+    for group in [room_group, main] {
+        let info = hub.group_info(&group).unwrap().clone();
+        assert_eq!(
+            c.join_from_outside(&info, now(), &mut |_, _| Ok(TEST_RECOVERY_AUTH.to_vec())),
+            Err(Error::BadCommit)
+        );
+    }
+    assert!(c.outbox().is_empty());
+    // Nor does a join from outside reopen a session this device archived (5.2.10).
+    a.archive(&main).unwrap();
+    let session_info = hub.group_info(&main).unwrap().clone();
+    assert_eq!(
+        a.join_from_outside(&session_info, now(), &mut |_, _| Ok(
+            TEST_RECOVERY_AUTH.to_vec()
+        )),
+        Err(Error::Gone)
+    );
+    assert!(a.outbox().is_empty());
+
     // An agent device does not become a human device this way (4.2), and a member's Commit carries no
     // RecoveryAuth.
     let info = hub.group_info(&room_group).unwrap().clone();

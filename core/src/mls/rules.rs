@@ -210,6 +210,9 @@ pub struct CommitFacts {
     pub forbidden: bool,
     /// Its `authenticated_data` as a [`CommitNote`]; none when it does not decode.
     pub note: Option<CommitNote>,
+    /// Whether the note names a version above this build's: `note` is none then, and the Commit is refused as
+    /// `newer-version`, not as `bad-commit`.
+    pub newer_version: bool,
 }
 
 /// A main session as a verifier of a helper session's Commit sees it.
@@ -286,8 +289,9 @@ pub trait RecoveryRules {
         -> Result<(), Error>;
 }
 
-/// Refuses every join from outside and takes any non-empty `SealedKey`: for a verifier without the recovery
-/// construct.
+/// A verifier without the recovery construct: it refuses every join from outside (`bad-commit`) and every
+/// `SealedKey` (`incomplete`), because it can check neither. Whatever needs a join or a Commit taken carries the
+/// construct's own checks.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoRecovery;
 
@@ -296,12 +300,8 @@ impl RecoveryRules for NoRecovery {
         Err(Error::BadCommit)
     }
 
-    fn verify_sealed_key(&self, _: &SealedKeyClaim<'_>, sealed_key: &[u8]) -> Result<(), Error> {
-        if sealed_key.is_empty() {
-            Err(Error::Incomplete)
-        } else {
-            Ok(())
-        }
+    fn verify_sealed_key(&self, _: &SealedKeyClaim<'_>, _: &[u8]) -> Result<(), Error> {
+        Err(Error::Incomplete)
     }
 }
 
@@ -352,7 +352,10 @@ fn refuse(condition: bool, error: Error) -> Result<(), Error> {
 }
 
 /// The checks every Commit of every group passes: the proposal whitelist, the note, the shape of 3.4, the Cuts.
+/// A note of a newer version is `newer-version`.
 fn check_shape(facts: &CommitFacts) -> Result<&CommitNote, Error> {
+    // A newer version may hold what this build takes for forbidden: it is named first.
+    refuse(facts.newer_version, Error::NewerVersion)?;
     refuse(facts.forbidden, Error::BadCommit)?;
     let note = facts.note.as_ref().ok_or(Error::BadCommit)?;
     refuse(note.join != facts.external, Error::BadCommit)?;
@@ -815,6 +818,7 @@ pub(crate) fn commit_facts(
         Sender::NewMemberCommit => (path_device.ok_or(Error::BadCommit)?, true),
         _ => return Err(Error::BadCommit),
     };
+    let note = codec::decode::<CommitNote>(processed.aad(), MAX_NOTE_LEN);
     let mut facts = CommitFacts {
         group: *group,
         epoch: processed.epoch().as_u64(),
@@ -826,7 +830,8 @@ pub(crate) fn commit_facts(
         has_path: path_leaf.is_some(),
         external_inits: 0,
         forbidden,
-        note: codec::decode(processed.aad(), MAX_NOTE_LEN).ok(),
+        newer_version: matches!(note, Err(Error::NewerVersion)),
+        note: note.ok(),
     };
     for queued in staged.queued_proposals() {
         let by_value = matches!(queued.proposal_or_ref_type(), ProposalOrRefType::Proposal);

@@ -1,14 +1,19 @@
 //! The Commits that must be refused (section 19, item 3), each with its code: by the hub, and by the devices
 //! themselves when a hub that checks nothing stored it. Where no operation of a device builds such a Commit,
 //! the device's refusal to build it is shown here and the rule on the wire in `rules.rs`, on hand-built facts.
+//! And what a member that obeys MLS and not Trommi can send: a message or a note of another version, a work
+//! trail step without a number.
 
-use trommi_core::device::{log_finding, LogFinding, Processed};
-use trommi_core::ids::GroupId;
-use trommi_core::mls::profile::Cut;
+use trommi_core::codec;
+use trommi_core::device::{log_finding, LogFinding, Processed, Received};
+use trommi_core::ids::{BoardId, GroupId, Hash32, TurnId};
+use trommi_core::mls::message::TrommiMessage;
+use trommi_core::mls::profile::{CommitNote, Cut};
 use trommi_core::Error;
+use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
-    add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
+    add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
     new_device_with, now, observe, post_all, post_ok, post_refused, process, publish_some, settle,
     sync, sync_ok, TestDevice, TestRecovery, TEST_RECOVERY_AUTH,
 };
@@ -397,4 +402,127 @@ fn a_standalone_proposal_and_a_changed_session_extension() {
     assert_eq!(b.group(&main).unwrap().session, Some(founded));
     assert_eq!(hub.observer(&main).unwrap().session(), Some(&founded));
     assert_eq!(founded.group_id(), main);
+}
+
+/// What the last entry of the log is to `device`.
+fn last(hub: &Hub, device: &mut TestDevice) -> Result<Processed, Error> {
+    sync(hub, device).pop().expect("an entry")
+}
+
+#[test]
+fn a_message_or_a_note_of_a_newer_version() {
+    let World {
+        mut hub,
+        mut a,
+        mut b,
+        mut agent,
+        room_group,
+        ..
+    } = world(false);
+    // A human device that sends what no device builds.
+    let forger = Forger::new();
+    let mut forged = add_forger(&mut hub, &mut a, &forger);
+    sync_ok(&hub, &mut b);
+    settle(&hub, &mut agent);
+
+    // A stroke piece as the devices send it, then the same bytes under a version above and below this one.
+    let piece = TrommiMessage::StrokePiece {
+        board: BoardId::new([7; 16]),
+        piece: b"{}".to_vec(),
+    };
+    let mut bytes = codec::encode(&piece).unwrap();
+    forger.post_message(&mut hub, &mut forged, &bytes);
+    assert!(matches!(
+        last(&hub, &mut b),
+        Ok(Processed::Message(Received::StrokePiece { from, .. })) if from == forger.id()
+    ));
+    bytes[0] = 3;
+    forger.post_message(&mut hub, &mut forged, &bytes);
+    // The newer version is a finding of its own; the message is not read.
+    assert_eq!(
+        last(&hub, &mut b),
+        Ok(Processed::Message(Received::NewerVersion {
+            from: forger.id()
+        }))
+    );
+    bytes[0] = 1;
+    forger.post_message(&mut hub, &mut forged, &bytes);
+    assert_eq!(
+        last(&hub, &mut b),
+        Ok(Processed::Message(Received::Dropped))
+    );
+
+    // A Commit whose note names a newer version: `newer-version` to the members and to an observer, who keep
+    // their state; a note that is merely broken stays `bad-commit`.
+    let note = CommitNote {
+        room_epoch: 0,
+        room_state: Hash32::ZERO,
+        time: now(),
+        cuts: Vec::new(),
+        join: false,
+    };
+    let mut note = codec::encode(&note).unwrap();
+    note[0] = 3;
+    let epoch = hub.epoch(&room_group).unwrap();
+    let newer = forger.commit(&mut forged, &note, &[]);
+    forger.post_commit(&mut hub, &room_group, &newer).unwrap();
+    for device in [&mut a, &mut b, &mut agent] {
+        let error = last(&hub, device).unwrap_err();
+        assert_eq!(error, Error::NewerVersion);
+        assert_eq!(log_finding(&error), LogFinding::BadGroup);
+    }
+    assert_eq!(a.group(&room_group).unwrap().epoch, epoch);
+    assert_eq!(b.group(&room_group).unwrap().epoch, epoch);
+}
+
+#[test]
+fn a_work_trail_step_without_a_number() {
+    let World {
+        mut hub,
+        mut a,
+        b,
+        mut agent,
+        main,
+        ..
+    } = world(false);
+    // No device sends one.
+    let turn = TurnId::new([4; 16]);
+    assert_eq!(
+        agent.send_work_trail(&main, &turn, 0, b"{}", now()),
+        Err(Error::BadFormat)
+    );
+    assert!(agent.outbox().is_empty());
+
+    // A helper device that sends what no device builds, in a helper session of the agent.
+    let forger = Forger::new();
+    let mut packages = hub.claim(&[a.id(), b.id()]).unwrap();
+    packages.push(forger.key_package());
+    let parent = main.session_id().unwrap();
+    let session = agent.found_helper(&parent, &packages, now()).unwrap();
+    post_ok(&mut hub, &mut agent);
+    let helper = GroupId::session(main.room_id(), session);
+    let mut forged = forger.join(&hub.welcomes.last().unwrap().bytes);
+    settle(&hub, &mut a);
+    assert!(a.group(&helper).unwrap().leaves.contains(&forger.id()));
+
+    let step = |number: u32| {
+        codec::encode(&TrommiMessage::WorkTrail {
+            turn,
+            number,
+            time: now(),
+            step: b"{}".to_vec(),
+        })
+        .unwrap()
+    };
+    forger.post_message(&mut hub, &mut forged, &step(1));
+    assert!(matches!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::WorkTrail { from, number: 1, .. })) if from == forger.id()
+    ));
+    // Steps count from 1: one numbered 0 is dropped.
+    forger.post_message(&mut hub, &mut forged, &step(0));
+    assert_eq!(
+        last(&hub, &mut a),
+        Ok(Processed::Message(Received::Dropped))
+    );
 }

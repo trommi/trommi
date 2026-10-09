@@ -11,6 +11,7 @@ use crate::mls::provider::{self, DeviceSigner, Provider};
 use crate::mls::rules;
 use openmls::group::{JoinBuilder, ProcessedWelcome};
 use openmls::group::{MlsGroup, StagedCommit, StagedWelcome};
+use openmls::messages::group_info::VerifiableGroupInfo;
 use openmls::prelude::{
     KeyPackage, LeafNodeIndex, LeafNodeParameters, MlsMessageBodyIn, MlsMessageIn, MlsMessageOut,
 };
@@ -221,8 +222,23 @@ pub(crate) fn external_commit(
     Ok((group, built))
 }
 
+/// Whether the tree a GroupInfo carries holds a leaf under `device`'s signature key. The tree is read as it
+/// came, before anything verified it.
+pub(crate) fn tree_holds(group_info: &VerifiableGroupInfo, device: &DeviceId) -> bool {
+    group_info
+        .extensions()
+        .ratchet_tree()
+        .is_some_and(|extension| {
+            extension
+                .ratchet_tree()
+                .leaves()
+                .any(|leaf| leaf.signature_key().as_slice() == device.as_bytes())
+        })
+}
+
 /// Opens a Welcome without joining yet, so that the group can be checked first. The single-use KeyPackage it
-/// was for is used up whether or not this succeeds (3.7); `bad-group` when it does not open or verify.
+/// was for is used up whether or not this succeeds (3.7); `bad-group` when it does not open or verify, `replay`
+/// when the device holds the group already.
 pub(crate) fn stage_welcome(provider: &Provider, welcome: &[u8]) -> Result<StagedWelcome, Error> {
     let welcome = match MlsMessageIn::tls_deserialize_exact(welcome).map(MlsMessageIn::extract) {
         Ok(MlsMessageBodyIn::Welcome(welcome)) => welcome,
@@ -230,6 +246,14 @@ pub(crate) fn stage_welcome(provider: &Provider, welcome: &[u8]) -> Result<Stage
     };
     let processed = ProcessedWelcome::new_from_welcome(provider, &profile::join_config(), welcome)
         .map_err(|_| Error::BadGroup)?;
+    // A Welcome for a group the device holds is one met again (`replay`), not a group that does not verify.
+    let held = processed.unverified_group_info().group_context().group_id();
+    if MlsGroup::load(provider.storage(), held)
+        .map_err(mls_fault)?
+        .is_some()
+    {
+        return Err(Error::Replay);
+    }
     JoinBuilder::new(provider, processed)
         .skip_lifetime_validation()
         .build()
