@@ -326,7 +326,8 @@ struct GroupMeta {
     /// This device was removed: OpenMLS's state is gone, the keys stay.
     removed: bool,
     pending: Option<Pending>,
-    /// The epoch the last merged Commit built on, and its hash: an own Commit met again in the log.
+    /// The epoch this device's last merged own Commit built on, and its hash: so it is known when the log
+    /// brings it by again.
     last_commit: Option<(u64, Hash32)>,
     /// The epoch this device joined the group at: Commits before it are not for it.
     joined_epoch: u64,
@@ -2339,9 +2340,7 @@ impl<S: Storage> Device<S> {
             .merge_staged_commit(&self.provider, *staged)
             .map_err(|_| Error::BadGroup)?;
         let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
-        let live = self.meta(id)?;
-        live.last_commit = Some((named, crypto::sha256(commit)?));
-        if live.distrusted {
+        if self.meta(id)?.distrusted {
             // The offending leaves of a first contact may be gone now.
             let after: BTreeSet<DeviceId> = rules::leaves_of(group.members())?
                 .into_iter()
