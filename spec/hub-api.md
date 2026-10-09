@@ -118,9 +118,12 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
 - The hub keeps a slow hash (Argon2id) of each login key, never the key. There is no account session: a login
   answers with sealed copies and sign-in challenges, and the device signs in to the room with the recovery key
   (8.4).
-- With new recovery keys (8.6, 8.7) `account` is `{ kit: { auth_key, sealed_copy }, password: { sealed_copy } }` or
-  `{ kit, passkey: { credential_id, sealed_copy } }`: the copy under the way in used just now and a new kit; every
-  other way in is removed in the same transaction. A room without an account sends `null`.
+- With new recovery keys (8.6, 8.7) `account` is a new kit `{ auth_key, sealed_copy }` and one way in; every
+  other way in is removed in the same transaction. The way in used just now: `password: { sealed_copy }` (the
+  login hash stays) or `passkey: { credential_id, sealed_copy }`. Or one set anew (after a recovery with the
+  Emergency Kit words or the bare code): `password: { auth_key, sealed_copy, kdf }`, or `passkey` as in
+  `POST /v2/account` (a registration; its challenge is the account's or one of `POST /v2/account/passkey/challenge`,
+  which needs no token). A room without an account sends `null`.
 - Sign-up is instant: there is no e-mail confirmation and the hub sends no mail (owner, 9 October 2026). Signing
   up with an e-mail that has an account is `account-exists`.
 - **Failed logins slow down whoever guesses wrong and lock nobody** (owner, 9 October 2026). The source is the
@@ -206,8 +209,9 @@ encrypted.
     an agent's lease renewal is still taken. A recovery has at most 8 192 parts and 64 MiB, and at most 8 parts
     for one group (`too-many`); each is checked
     against the state the parts before it leave (those of the room group, of its own group and of its main
-    session's group); the same part twice is kept once; its last part is the room Commit with the new
-    recovery keys. The recovery key that ran a finished recovery may ask for the answer of that `finish` again
+    session's group); the same part twice is kept once; one of its parts is the room Commit with the new
+    recovery keys (8.7: after the joins, before the session groups' Removes; the hub checks what `finish` leaves,
+    not the order). The recovery key that ran a finished recovery may ask for the answer of that `finish` again
     until the ten minutes are over, and for nothing else.
 
 **Content**
@@ -286,3 +290,7 @@ encrypted.
     a token registered anew is sent the counts in the next round. "Lost" is never told after the `online` of a
     stream the agent opened first.
 28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
+39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`; the hub also takes them
+    beside the other members. New recovery keys are refused if a row of the room was sealed to that HPKE key
+    before (8.6; the hub holds no list of older signature keys). `PUT /v2/sealed-keys` is a human device's
+    (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.
