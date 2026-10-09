@@ -12,7 +12,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 mode=${1:-} manifest=${2:-}
-[ -n "$mode" ] && [ -f "$manifest" ] || { echo "usage: $0 sign|verify|files <manifest.json>" >&2; exit 2; }
+if [ -z "$mode" ] || [ ! -f "$manifest" ]; then echo "usage: $0 sign|verify|files <manifest.json>" >&2; exit 2; fi
 
 # A key may arrive with its line breaks turned into spaces (the 1Password form does that when a value is edited by
 # hand), so it is put back into PEM form from its base64 body before it is read.
@@ -49,8 +49,9 @@ case $mode in
     [ "$(grep -o '"name"' "$manifest" | wc -l | tr -d ' ')" = "$(wc -l < "$manifest.list" | tr -d ' ')" ] \
       || { echo "$manifest is not in the form release/manifest.sh writes" >&2; exit 1; }
     while read -r name sum size; do
-      [ "$(sha256sum "$dir/$name" | cut -d' ' -f1)" = "$sum" ] && [ "$(wc -c < "$dir/$name" | tr -d ' ')" = "$size" ] \
-        || { echo "$name is not the file the manifest names" >&2; exit 1; }
+      if [ "$(sha256sum "$dir/$name" | cut -d' ' -f1)" != "$sum" ] || [ "$(wc -c < "$dir/$name" | tr -d ' ')" != "$size" ]; then
+        echo "$name is not the file the manifest names" >&2; exit 1
+      fi
       echo "$name: as the manifest says"
     done < "$manifest.list"
     ;;
