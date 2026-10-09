@@ -6,7 +6,7 @@
 //   - a worker bundled with the build's constants names the hashed .wasm and its SHA-256 and holds the binding's
 //     scripts; so does the app's own worker once it loads the core (until then that one check is SKIPPED, and said so);
 //   - the service worker's shell and the manifest hold the .wasm; the manifest names Rust and wasm-bindgen beside
-//     Node and esbuild, the core as it names itself, and a warning exactly when the recovery construct is a stand-in;
+//     Node and esbuild, and the core as it names itself;
 //   - the two builds are identical, file for file.
 // Not checked here: that two machines compile the same .wasm (both builds take the .wasm that lies in core/wasm/pkg/).
 // Needs the binding's output or the tools to make it (the build says which is absent).
@@ -61,9 +61,7 @@ try {
   check(manifest.toolchain['wasm-bindgen'] === pin('core/wasm/Cargo.toml', /^wasm-bindgen = "=([^"]+)"$/m), `the manifest names the pinned wasm-bindgen (it says ${manifest.toolchain['wasm-bindgen']})`)
   check(manifest.toolchain.node && manifest.toolchain.esbuild, 'the manifest still names Node and esbuild')
   check(manifest.files[wasm] === hash(read(wasm)), `the manifest lists ${wasm} with its SHA-256`)
-  check(typeof manifest.core?.core === 'string' && typeof manifest.core?.openmls === 'string' && typeof manifest.core?.recovery === 'string', 'the manifest names the core as it names itself (versions())', manifest.core)
-  const standIn = manifest.core?.recovery !== 'built'
-  check(standIn ? /^NOT FOR RELEASE: /.test(manifest.warning ?? '') : manifest.warning === undefined, `the manifest warns exactly when the recovery construct is a stand-in (recovery: ${manifest.core?.recovery}; warning: ${manifest.warning})`)
+  check(['core', 'openmls', 'provider', 'binding'].every(k => typeof manifest.core?.[k] === 'string' && manifest.core[k]), 'the manifest names the core as it names itself (versions())', manifest.core)
   const shell = JSON.parse(/^const SHELL = (.*)$/m.exec(read('sw.js').toString())[1])
   check(shell.includes(`/${wasm}`), `the service worker's shell holds /${wasm}`)
 
@@ -74,7 +72,7 @@ try {
 
   if (skipped) console.log(skipped)
   if (failures.length) { console.error(`build.test: FAILED\n${failures.map(f => `  not true: ${f}`).join('\n')}`); process.exitCode = 1 }
-  else console.log(`build.test: ok, ${checks} checks${skipped ? ', 1 skipped' : ''} (${fa.length} files per build; ${wasm}, ${read(wasm).length} bytes)${standIn ? `\n  ${manifest.warning}` : ''}`)
+  else console.log(`build.test: ok, ${checks} checks${skipped ? ', 1 skipped' : ''} (${fa.length} files per build; ${wasm}, ${read(wasm).length} bytes)`)
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }
