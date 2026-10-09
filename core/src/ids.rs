@@ -5,6 +5,7 @@
 use crate::codec::{Decode, Encode, Reader, Writer};
 use crate::error::Error;
 use std::fmt;
+use zeroize::Zeroize;
 
 fn write_hex(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
     bytes.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
@@ -249,9 +250,22 @@ fn sextet(symbol: u8) -> Option<u8> {
     }
 }
 
-/// Bytes as base64url without padding.
+/// How many symbols the base64url of `len` bytes has.
+pub const fn base64url_len(len: usize) -> usize {
+    // Four symbols for every three bytes, and two or three for one or two bytes left: no product that could
+    // overflow for the length of any slice.
+    let rest = match len % 3 {
+        0 => 0,
+        1 => 2,
+        _ => 3,
+    };
+    (len / 3).saturating_mul(4).saturating_add(rest)
+}
+
+/// Bytes as base64url without padding. The text is written into one buffer of its final length, which never
+/// moves: of a secret no shorter copy is left behind, and the caller wipes the one it gets.
 pub fn base64url_encode(bytes: &[u8]) -> String {
-    let mut text = String::new();
+    let mut text = String::with_capacity(base64url_len(bytes.len()));
     for chunk in bytes.chunks(3) {
         let mut group = [0u8; 3];
         for (to, from) in group.iter_mut().zip(chunk) {
@@ -260,39 +274,85 @@ pub fn base64url_encode(bytes: &[u8]) -> String {
         let [a, b, c] = group;
         let sextets = [a >> 2, a << 4 | b >> 4, b << 2 | c >> 6, c];
         // One byte gives two symbols, two give three, three give four.
-        text.extend(
-            sextets
-                .iter()
-                .take(chunk.len().saturating_add(1))
-                .map(|s| symbol(*s)),
-        );
+        for sextet in sextets.iter().take(chunk.len().saturating_add(1)) {
+            text.push(symbol(*sextet));
+        }
     }
     text
 }
 
+/// The bytes of one group of up to four symbols and how many of them are whole; `bad-format` for a symbol
+/// outside the alphabet, a single symbol, or a set bit behind the last whole byte.
+fn decode_group(chunk: &[u8]) -> Result<([u8; 3], usize), Error> {
+    let mut sextets = [0u8; 4];
+    for (to, from) in sextets.iter_mut().zip(chunk) {
+        *to = sextet(*from).ok_or(Error::BadFormat)?;
+    }
+    let [a, b, c, d] = sextets;
+    let group = [a << 2 | b >> 4, b << 4 | c >> 2, c << 6 | d];
+    // Two symbols carry one byte, three carry two, four carry three; one symbol alone carries none.
+    let whole = chunk
+        .len()
+        .checked_sub(1)
+        .filter(|n| *n > 0)
+        .ok_or(Error::BadFormat)?;
+    if group.iter().skip(whole).any(|rest| *rest != 0) {
+        return Err(Error::BadFormat);
+    }
+    Ok((group, whole))
+}
+
 /// The bytes of a base64url text, strictly: no padding, no symbol outside the alphabet, no white space, and no set
 /// bit behind the last whole byte, so that every byte string has exactly one text. Anything else is `bad-format`.
+///
+/// The bytes are written into one buffer of their final length, which never moves, and a text that is refused
+/// leaves nothing of what was read. For a key or a secret of a known length, [`base64url_decode_into`] needs
+/// no buffer on the heap at all.
 pub fn base64url_decode(text: &str) -> Result<Vec<u8>, Error> {
-    let mut bytes = Vec::new();
+    let capacity = (text.len() / 4).saturating_mul(3).saturating_add(3);
+    let mut bytes = Vec::with_capacity(capacity);
     for chunk in text.as_bytes().chunks(4) {
-        let mut sextets = [0u8; 4];
-        for (to, from) in sextets.iter_mut().zip(chunk) {
-            *to = sextet(*from).ok_or(Error::BadFormat)?;
+        match decode_group(chunk) {
+            Ok((group, whole)) => bytes.extend(group.iter().take(whole)),
+            Err(error) => {
+                bytes.zeroize();
+                return Err(error);
+            }
         }
-        let [a, b, c, d] = sextets;
-        let group = [a << 2 | b >> 4, b << 4 | c >> 2, c << 6 | d];
-        // Two symbols carry one byte, three carry two, four carry three; one symbol alone carries none.
-        let whole = chunk
-            .len()
-            .checked_sub(1)
-            .filter(|n| *n > 0)
-            .ok_or(Error::BadFormat)?;
-        if group.iter().skip(whole).any(|rest| *rest != 0) {
-            return Err(Error::BadFormat);
-        }
-        bytes.extend(group.iter().take(whole));
     }
     Ok(bytes)
+}
+
+/// Reads exactly `out.len()` bytes from a base64url text into `out`, by the rules of [`base64url_decode`]:
+/// `bad-format` for a text of another length or anything but the canonical text of those bytes. Nothing is
+/// allocated; on a refusal `out` is wiped. This is how a key, a secret or a code is read: into the place that
+/// keeps it.
+pub fn base64url_decode_into(text: &str, out: &mut [u8]) -> Result<(), Error> {
+    let filled = decode_fixed(text, out);
+    if filled.is_err() {
+        out.zeroize();
+    }
+    filled
+}
+
+fn decode_fixed(text: &str, out: &mut [u8]) -> Result<(), Error> {
+    if text.len() != base64url_len(out.len()) {
+        return Err(Error::BadFormat);
+    }
+    for (chunk, place) in text.as_bytes().chunks(4).zip(out.chunks_mut(3)) {
+        let (mut group, whole) = decode_group(chunk)?;
+        let fits = whole == place.len();
+        if fits {
+            for (to, from) in place.iter_mut().zip(group) {
+                *to = from;
+            }
+        }
+        group.zeroize();
+        if !fits {
+            return Err(Error::BadFormat);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

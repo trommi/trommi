@@ -1190,14 +1190,17 @@ fn bytes_that_are_no_commit_are_refused_as_such() {
         changed.parts[0] = bytes.to_vec();
         assert_eq!(hub.post(&a.id(), &changed), Err(Error::BadCommit), "{name}");
         // A member handed the same bytes as a Commit of the log keeps its state.
-        let result = b.process_log_entry(&LogEntry {
-            change: hub.change() + 1,
-            group: room_group,
-            kind: LogKind::Commit {
-                bytes,
-                recovery_auth: None,
+        let result = b.process_log_entry(
+            &LogEntry {
+                change: hub.change() + 1,
+                group: room_group,
+                kind: LogKind::Commit {
+                    bytes,
+                    recovery_auth: None,
+                },
             },
-        });
+            now(),
+        );
         let error = result.expect_err(name);
         assert_eq!(error, Error::BadCommit, "{name}");
         assert_eq!(log_finding(&error), LogFinding::BadGroup, "{name}");
@@ -1210,22 +1213,28 @@ fn bytes_that_are_no_commit_are_refused_as_such() {
     moved.group = Some(main);
     moved.epoch = hub.epoch(&main).unwrap();
     assert_eq!(hub.post(&a.id(), &moved), Err(Error::BadCommit));
-    let result = b.process_log_entry(&LogEntry {
-        change: hub.change() + 1,
-        group: main,
-        kind: LogKind::Commit {
-            bytes: &entry.parts[0],
-            recovery_auth: None,
+    let result = b.process_log_entry(
+        &LogEntry {
+            change: hub.change() + 1,
+            group: main,
+            kind: LogKind::Commit {
+                bytes: &entry.parts[0],
+                recovery_auth: None,
+            },
         },
-    });
+        now(),
+    );
     assert_eq!(result, Err(Error::BadCommit));
     // A Commit posted by another device than its committer.
     assert_eq!(hub.post(&b.id(), &entry), Err(Error::WrongSender));
     // An application message that is no MLS message is passed over by its receivers (7.0).
-    let result = b.process_log_entry(&LogEntry {
-        change: hub.change() + 1,
-        group: room_group,
-        kind: LogKind::Message { bytes: b"garbage" },
-    });
+    let result = b.process_log_entry(
+        &LogEntry {
+            change: hub.change() + 1,
+            group: room_group,
+            kind: LogKind::Message { bytes: b"garbage" },
+        },
+        now(),
+    );
     assert_eq!(result, Ok(Processed::Skipped));
 }
