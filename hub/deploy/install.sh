@@ -270,6 +270,8 @@ on_exit() {
   exit "$code"
 }
 trap on_exit EXIT
+# an earlier run got as far as moving the old stack and did not bring the new hub up: this run answers for it too
+if [ -d "$OLD" ] && ! systemctl is-active --quiet trommi-hub.service; then TOUCHED=1; fi
 
 step "User trommi (the hub runs as it)"
 id trommi >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin trommi
