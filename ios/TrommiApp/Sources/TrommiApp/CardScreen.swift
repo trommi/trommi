@@ -331,16 +331,48 @@ struct CardScreen: View {
       }
     } else {
       let said = c.status == "shredded" ? "Shredded" : c.kind == "info" ? "Read" : c.trusted ? "\(Words.trust)\(c.advisedLabels.isEmpty ? "" : ": \(c.advisedLabels)")" : pickedLabels.isEmpty ? "Withdrawn by the agent" : pickedLabels
-      still(said, c.note.isEmpty ? "" : "Your note: \(c.note)", picked: true)
-      ForEach(c.options.filter { c.optionNotes[$0.key]?.isEmpty == false }, id: \.key) { o in still(o.label, "Your note: \(c.optionNotes[o.key]!)") }
+      if c.status != "shredded" && c.kind != "info" && !c.trusted && !pickedLabels.isEmpty {
+        // as the desktop: every option stays in its place, the chosen one pressed in, the others dimmed
+        ForEach(c.options, id: \.key) { o in
+          let on = c.choices.contains(o.key)
+          let noteOn = c.optionNotes[o.key] ?? ""
+          answered(o.label, [on && !c.note.isEmpty ? "Your note: \(c.note)" : "", noteOn.isEmpty ? "" : "Your note: \(noteOn)"].filter { !$0.isEmpty }.joined(separator: " · "), on: on)
+        }
+      } else {
+        still(said, c.note.isEmpty ? "" : "Your note: \(c.note)", picked: true)
+        ForEach(c.options.filter { c.optionNotes[$0.key]?.isEmpty == false }, id: \.key) { o in still(o.label, "Your note: \(c.optionNotes[o.key]!)") }
+      }
       MarksLine(marks: model.board?.cards[c.id]?.answer?.marks ?? [])
       if c.settled { still("✓ \(Words.settled)", "\(a?.name ?? "The agent") marked this answer as final: nothing follows from it.") }
       if let w = model.board?.cards[c.id]?.withdrawReason, !w.isEmpty { still("Why it was withdrawn", w) }
       else if !c.summary.isEmpty { still("Done by the agent", c.summary) }
       if c.status == "shredded" || !c.choices.isEmpty || c.trusted || (c.kind == "info" && c.read != nil) {
-        Button(Words.takeBack) { model.reopen(c.id) }.buttonStyle(QuietWay())
+        // a quiet text action, no pill
+        Button { model.reopen(c.id) } label: { Text(Words.takeBack).font(Face.text(15, .medium)).underline().foregroundStyle(Ink.muted).frame(minHeight: 44).contentShape(Rectangle()) }
+          .buttonStyle(.plain)
       }
     }
+  }
+  /** An option of an answered card (card.css .tc-opt.is-still, .is-picked): the chosen one pressed in (sunken, the
+   *  accent's line and word, a tick), the others dimmed. */
+  private func answered(_ label: String, _ detail: String, on: Bool) -> some View {
+    HStack(alignment: .top, spacing: 10) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text(label).font(Face.display(19, .bold)).foregroundStyle(on ? Ink.accent : Ink.fg)
+        if !detail.isEmpty { Text(detail).font(Face.text(15)).foregroundStyle(Ink.muted) }
+      }
+      Spacer(minLength: 4)
+      if on { Sketch("tick", color: Ink.accent).frame(width: 20, height: 20) }
+    }
+    .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(on ? Ink.sunken : Ink.surface))
+    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(on ? Ink.accent : Ink.line, lineWidth: on ? 2 : 1))
+    // pressed in: a shade inside its top edge, a hair smaller
+    .overlay(alignment: .top) { if on { LinearGradient(colors: [.black.opacity(0.18), .clear], startPoint: .top, endPoint: .bottom).frame(height: 8).clipShape(UnevenRoundedRectangle(topLeadingRadius: 14, topTrailingRadius: 14, style: .continuous)).padding(2).allowsHitTesting(false) } }
+    .scaleEffect(on ? 0.985 : 1)
+    .opacity(on ? 1 : 0.45)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(on ? "\(label), your answer" : "\(label), not chosen")
   }
 }
 
@@ -375,7 +407,8 @@ struct CardLink: View {
         let mins = max(1, Int((Double(h!.waiting) / 60000).rounded()))
         let receipt = h!.heard == true ? "\(n) has your answer." : h!.late ? "\(n) has not picked up your answer, sent \(mins) min ago." : "Your answer is on its way to \(n)."
         if let s = state { LinkNote(link: s, receipt: receipt) }
-        else { LinkNote(link: nil, receipt: receipt, sign: h!.heard == true ? "tick" : "letter", late: h!.late) }
+        // heard and all is well: no box of its own, the pressed-in answer says it (his word, 8 October)
+        else if h!.heard != true { LinkNote(link: nil, receipt: receipt, sign: "letter", late: h!.late) }
       }
     }
   }
