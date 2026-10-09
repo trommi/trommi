@@ -139,6 +139,29 @@ pub trait GroupFacts {
     /// again later, and if the key was removed more than once, the first Cut stands.
     fn cut(&self, group: &GroupId, device: &DeviceId) -> Result<Option<Head>, Error>;
 
+    /// Whether `device` had ceased to be a leaf of `group` by `epoch`: whether a Commit that began an epoch at
+    /// or below `epoch` removed its leaf. It stays true if the same key is a leaf of the group again later. An
+    /// object passes from such a device to the session's seat for good (section 9.2).
+    ///
+    /// The answer given here follows from [`GroupFacts::cut`] and [`GroupFacts::leaf_role`]: no Cut, never
+    /// removed; else the device was removed by `epoch` if an epoch in which it was a leaf is followed, up to
+    /// `epoch`, by one in which it was none. A verifier that keeps the epoch of each removal answers from
+    /// that instead, and must do so if it takes a Commit that removes a leaf and adds the same key at once.
+    fn removed_by(&self, group: &GroupId, epoch: u64, device: &DeviceId) -> Result<bool, Error> {
+        if self.cut(group, device)?.is_none() {
+            return Ok(false);
+        }
+        let mut was_leaf = false;
+        for earlier in 0..=epoch {
+            match self.leaf_role(group, earlier, device)? {
+                Some(_) => was_leaf = true,
+                None if was_leaf => return Ok(true),
+                None => {}
+            }
+        }
+        Ok(false)
+    }
+
     /// The Commit that ended `epoch` of `group` (the one that began `epoch + 1`): when the verifier processed
     /// it and the `time` of its `CommitNote`. `None` if `epoch` is the newest processed epoch or above it.
     fn epoch_end(&self, group: &GroupId, epoch: u64) -> Result<Option<EpochEnd>, Error>;

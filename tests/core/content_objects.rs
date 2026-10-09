@@ -301,7 +301,7 @@ fn random_headers_leave_the_objects_the_specification_describes() {
 /// Who may write what, the object state rule and the command gate, case by case (sections 9.0.9 and 9.2).
 mod rules {
     use serde_json::json;
-    use trommi_core::chain::{Mode, Outcome, Receipt, Role, Served, LIVE_GRACE_MS};
+    use trommi_core::chain::{Head, Mode, Outcome, Receipt, Role, Served, LIVE_GRACE_MS};
     use trommi_core::envelope::{
         AnswerBind, Draft, Header, ObjectFields, ObjectState, ObjectType, RequestBind, Subject,
         TakeBackBind, Urgency, Verdict, VerdictBind,
@@ -793,6 +793,106 @@ mod rules {
             2,
             session(),
             &answer(id, v2.hash(), 0, false)
+        ));
+    }
+
+    #[test]
+    fn a_writer_that_left_and_came_back_under_the_same_key_owns_nothing_again() {
+        let mut world = World::new();
+        world.me = device(4);
+        let card_payload = version_payload(&Hash32::ZERO, two_options());
+        let draft = Draft::first_version(ObjectType::Card, Urgency::Normal, &card_payload).unwrap();
+        let v1 = world.post(4, helper_session(), &draft);
+        let id = id_of(&v1);
+        // The opener removes the helper device, whose chain ends at its card, and adds the same key again.
+        world.fake.commit(&helper_session(), NOW, NOW, |leaves| {
+            leaves.remove(&device(4));
+        });
+        let cut = Head {
+            seq: 1,
+            hash: v1.hash(),
+        };
+        world
+            .fake
+            .group(&helper_session())
+            .cuts
+            .insert(device(4), cut);
+        world.fake.commit(&helper_session(), NOW, NOW, |leaves| {
+            leaves.insert(device(4), Role::Helper);
+        });
+        let card = state(&world, &helper_session(), &id);
+        assert_eq!(card.owner, device(4));
+        let owner_in = |epoch| owner(&world.fake, &helper_session(), epoch, &card).unwrap();
+        assert_eq!(owner_in(0), Some(device(4)));
+        assert_eq!(owner_in(1), Some(device(3)));
+        // A leaf again, and not the owner again: the card stays the opener's.
+        assert_eq!(owner_in(2), Some(device(3)));
+
+        // An answer addressed to the device that came back is forbidden; the opener's is taken, and only the
+        // opener's gate acts on it.
+        let answer_to = |to: u8| {
+            let bind = AnswerBind {
+                object_id: id,
+                version_hash: v1.hash(),
+                choices: vec![b"yes".to_vec()],
+            };
+            let payload = br#"{"answer_action":"answer"}"#;
+            Draft::answer(bind, false, Urgency::Normal, device(to), payload)
+        };
+        assert!(forbidden(&mut world, 2, helper_session(), &answer_to(4)));
+        let receipt = world.post(1, helper_session(), &answer_to(3));
+        let own = OwnRecord::CardVersion {
+            hash: v1.hash(),
+            payload: &card_payload,
+        };
+        let gate = |me: u8| {
+            command_gate(
+                &world.fake,
+                &mut GateLog::new(),
+                &device(me),
+                &receipt.opened().unwrap(),
+                &own,
+                NOW,
+            )
+            .unwrap()
+        };
+        assert_eq!(gate(3), act_answer(AnswerAction::Answer, &["yes"]));
+        assert_eq!(gate(4), Decision::Refused(Refusal::NotAddressed));
+        // Nor does it write the next version: its chain ended at the Cut, and 9.2 names the opener.
+        let next = later(id, ObjectType::Card, v1.hash(), false);
+        let header = next.header(&world.slot(4, helper_session(), 2)).unwrap();
+        let objects = world.objects(&helper_session());
+        assert_eq!(
+            judge(&world.fake, &objects, &header, &Hash32::ZERO).err(),
+            Some(Error::Forbidden)
+        );
+
+        // Read back later, an answer of the epoch before the removal still counts as addressed to its owner
+        // then: the hub took it, and all agree.
+        let mut reader = World::new();
+        reader.fake = world.fake.clone();
+        reader.fake.accepted.clear();
+        reader
+            .take_as(
+                &v1.envelope().encode().unwrap(),
+                &Served::Stored,
+                Mode::ReadingBack,
+            )
+            .unwrap();
+        let early = reader.sign_in_epoch(2, helper_session(), 0, &answer_to(4));
+        let receipt = reader
+            .take_as(
+                &early.envelope.encode().unwrap(),
+                &Served::Stored,
+                Mode::ReadingBack,
+            )
+            .unwrap();
+        assert!(matches!(
+            receipt.outcome(),
+            Outcome::Taken {
+                transition: Some(_),
+                ..
+            }
         ));
     }
 
