@@ -441,8 +441,8 @@ impl Decode for Envelope {
         let content = match form {
             FORM_FULL => {
                 let ciphertext = reader.opaque()?;
-                // A sealed body within the limit has one of nine lengths. A longer one is refused later, with
-                // its own code, by whoever chains the envelope.
+                // A sealed body within the limit has one of nine lengths. A longer one has its own code: the
+                // hub refuses it once it is chained, and it does not open.
                 if ciphertext.len() <= MAX_PADDED_LEN.saturating_add(TAG_LEN)
                     && !is_bucket(ciphertext.len().saturating_sub(TAG_LEN))
                 {

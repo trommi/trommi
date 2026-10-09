@@ -110,6 +110,20 @@ pub fn chains_with_count(epoch: u64, count: u64) -> Chains {
     Chains::from_bytes(&writer.into_bytes()).expect("a chain state")
 }
 
+/// What device `n` signs as its first envelope in `group`: `draft`'s header over a sealed body one byte
+/// beyond the largest padded size, 65 553 bytes with its tag.
+pub fn oversize(n: u8, group: GroupId, draft: &Draft) -> Sealed {
+    let slot = World::new().slot(n, group, 0);
+    seal::seal_plaintext(
+        draft.header(&slot).expect("a header"),
+        &vec![0; 65_537],
+        &key(0),
+        [7; 12],
+        &signer(n),
+    )
+    .expect("the envelope is sealed")
+}
+
 /// One epoch of a group.
 #[derive(Default, Clone)]
 pub struct FakeEpoch {
@@ -426,6 +440,22 @@ impl World {
             bytes,
             served,
             mode,
+            self.now,
+        )?;
+        self.record(&receipt);
+        Ok(receipt)
+    }
+
+    /// This world as the hub: a new envelope posted by signed-in device `n`; what takes a number is recorded.
+    pub fn hub_take(&mut self, n: u8, envelope: &Envelope) -> Result<Receipt, Error> {
+        let group = envelope.header.group;
+        let receipt = chain::hub_take(
+            &self.fake,
+            &self.fake,
+            &self.chains(&group),
+            &self.objects(&group),
+            &device(n),
+            &envelope.encode()?,
             self.now,
         )?;
         self.record(&receipt);
