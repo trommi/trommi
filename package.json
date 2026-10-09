@@ -9,18 +9,18 @@
     "node": "26.8.2"
   },
   "//": [
-    "test: everything that runs in this repository as it is (no hub, no connector, no browser).",
-    "test:needs-hub: the client core against a real hub (hub/server.mjs). The hub is not in this repository yet: these wait for its move and fail until then.",
-    "The browser tests (app/web/core/browser-test.mjs, tabs-test.mjs, app/web/dev/e2e.mjs, e2e-mobile.mjs) need a hub and Chromium and are run by hand."
+    "test: everything that needs no browser and no hub binary: types, the app's layout, the model, the hub client and the account against a fake hub, the client against a stand-in for what the core's binding lacks. Needs the Rust core built once: npm run build:core.",
+    "test:browser: the same layers in headless Chromium (the store and tabs, the build with the core, the MLS proof screen).",
+    "With TROMMI_HUB_BIN set to a hub binary, the hub and account tests also run against the real hub."
   ],
   "scripts": {
-    "test": "npm run typecheck && npm run test:app && npm run test:crypto && npm run test:core",
+    "test": "npm run typecheck && npm run test:app && npm run test:web",
     "typecheck": "tsc -p .",
     "test:app": "node app/web/dev/check.mjs",
     "test:demo": "node demo/check.mjs",
-    "test:crypto": "node app/web/core/crypto/crypto-test.mjs --no-bench && node app/web/core/crypto/session-grants-test.mjs",
-    "test:core": "node app/web/core/account-test.mjs && node app/web/core/scribble-test.mjs",
-    "test:needs-hub": "node app/web/core/test.mjs && node app/web/core/mirror-test.mjs",
+    "test:web": "node --test tests/web/model/ tests/web/hub/ tests/web/account/ tests/web/client/",
+    "test:browser": "node tests/web/store/run.mjs && node --test tests/web/build/build.test.mjs && node tests/web/build/wasm-load.mjs && node tests/web/proof/proof.mjs",
+    "build:core": "core/wasm/build.sh",
     "build": "node app/web/dev/build.mjs",
     "serve": "node app/web/dev/serve.mjs"
   },

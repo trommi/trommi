@@ -1,8 +1,0 @@
-{
-  // A placeholder for app.trommi.com that proves the delivery path (build.yml, deploy_web.yml). The real web app
-  // replaces it: point the web job of build.yml at the app's build output and delete this folder.
-  "name": "trommi-app",
-  "compatibility_date": "2026-10-01",
-  "assets": { "directory": "./public" },
-  "routes": [{ "pattern": "app.trommi.com", "custom_domain": true }]
-}

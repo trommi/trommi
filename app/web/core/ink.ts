@@ -1,27 +1,30 @@
-// ink.ts: one stroke's points on the wire and how a stroke is shaped (README "Scribble strokes"), without DOM.
+// ink.ts: one stroke's points on the wire and how a stroke is shaped (spec/v2.md 10.6), without DOM.
 // Modelled on PencilKit (PKStroke, PKStrokePath, PKStrokePoint), so the iOS app maps a stroke 1:1, and the web app
 // draws it the same way. spec/strokes.json holds sample strokes with their packed form.
 //
 // Board units: the Scribble Board has one fixed coordinate space, independent of screen, zoom and device. One unit is
 // one CSS pixel at 100 % zoom on the web and one point at zoom scale 1 in PKCanvasView; x grows to the right, y down;
-// the origin is where the board was first opened (any number is fine, the board is endless).
+// the origin is where the board was first opened. On the wire every position is a whole number of 1/16 unit (Q),
+// taken modulo 2^32 (quantum below).
 //
 // Ink (in memory): { pts: [x0, y0, x1, y1, …] (board units), t: [ms since the stroke began], f: [force 0..1],
 //                    az: [azimuth, rad] | null, al: [altitude, rad] | null, sim: force was simulated (no pressure) }
 // The points are the control points of a uniform cubic B-spline, as PKStrokePath's are; the ends are clamped (the
 // first and the last point are repeated), so the line begins and ends exactly at them (sampleStroke).
 //
-// Packed (the `points` field, base64url of these bytes):
+// Packed (the `points` field, base64url of these bytes; the same bytes as trommi-core's `board_items::Ink`):
 //   u8  flags        bit 0: every point carries azimuth and altitude; bit 1: the force is simulated;
-//                    any other bit set: a newer format, the stroke is not readable here
-//   then per point, until the bytes end:
-//   zigzag LEB128    x in 1/16 unit: the first point absolute, then the difference to the point before
+//                    any other bit set: not readable
+//   then per point, until the bytes end (1 to 10 000 points):
+//   zigzag LEB128    x in 1/16 unit: the difference to the point before modulo 2^32 (the first point: to zero)
 //   zigzag LEB128    y in 1/16 unit, the same
-//   LEB128           t in ms: the first point since the stroke began (a piece that continues a stroke starts later),
-//                    then the time since the point before
+//   LEB128           t in ms: the first point since the stroke began (a piece of a stroke in progress starts later),
+//                    then the time since the point before; the sum stays below 2^32
 //   u8               force, 0..255 = 0..1
 //   u8, u8           (flag 0) azimuth 0..255 = 0..2π (·2π/256), altitude 0..255 = 0..π/2 (·(π/2)/255)
-import { b64u, unb64u } from './crypto/zcrypto.mjs'
+// Every number is below 2^32 and written in the fewest bytes: a list of points has exactly one packed form, and
+// anything else is refused as a whole.
+import { b64u, unb64u } from './ids.ts'
 
 /** A stroke's points in memory (see above): control points, times, forces, tilt, whether the force was simulated. */
 export interface Ink { pts: number[]; t: number[]; f: number[]; az: number[] | null; al: number[] | null; sim: boolean }
@@ -31,19 +34,25 @@ export type StrokeTool = 'pen' | 'marker'
 
 export const Q = 16                         // 1/16 board unit
 export const STROKE_TOOLS: readonly StrokeTool[] = Object.freeze(['pen', 'marker'] as const)   // the eraser is a tool, never a stroke (it erases whole strokes)
-const MAX_POINTS = 50_000            // per packed piece; more is refused as a whole
+/** The most points of one stroke, and of one piece of a stroke in progress; more is refused as a whole. */
+export const MAX_POINTS = 10_000
 /** UITouch.maximumPossibleForce of an Apple Pencil: PKStrokePoint.force = f · PK_MAX_FORCE (WebKit's PointerEvent.pressure is the same ratio). */
 export const PK_MAX_FORCE = 4.166666666666667
 const TAU = Math.PI * 2, HALF_PI = Math.PI / 2
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const fin = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
-// ---- varints (Number arithmetic, safe up to 2^53) ----
+// ---- whole 1/16 units, varints ----
+/** A position or offset in board units as its whole number of 1/16 unit, modulo 2^32 (an i32). */
+export const quantum = (units: unknown): number => Math.round(fin(units) * Q) | 0
+/** Two i32 quanta added modulo 2^32. */
+export const wrapAdd = (a: number, b: number): number => (a + b) | 0
 function putVar(out: number[], v: number): void { while (v >= 128) { out.push((v % 128) + 128); v = Math.floor(v / 128) } out.push(v) }
-const zig = (v: number): number => (v >= 0 ? 2 * v : -2 * v - 1)
-const unzig = (v: number): number => (v % 2 ? -(v + 1) / 2 : v / 2)
+const zig = (d: number): number => ((d << 1) ^ (d >> 31)) >>> 0
+const unzig = (v: number): number => (v >>> 1) ^ -(v & 1)
 
-/** An ink -> the packed points (base64url). A point's time never runs backwards (it is held instead). */
+/** An ink -> the packed points (base64url). A point's time never runs backwards (it is held instead). More than
+ *  MAX_POINTS points pack into something no reader takes: the caller cuts a stroke before that. */
 export function packPoints(ink: InkIn): string {
   const p = ink.pts, n = p.length >> 1
   const az = ink.az, al = ink.al
@@ -51,9 +60,9 @@ export function packPoints(ink: InkIn): string {
   const out = [(tilt ? 1 : 0) | (ink.sim ? 2 : 0)]
   let lx = 0, ly = 0, lt = 0
   for (let i = 0; i < n; i++) {
-    const x = Math.round(fin(p[2 * i]) * Q), y = Math.round(fin(p[2 * i + 1]) * Q)
-    const t = Math.max(i ? lt : 0, Math.round(fin(ink.t?.[i] ?? lt)))
-    putVar(out, zig(x - lx)); putVar(out, zig(y - ly)); putVar(out, t - lt)
+    const x = quantum(p[2 * i]), y = quantum(p[2 * i + 1])
+    const t = Math.min(0xffffffff, Math.max(i ? lt : 0, Math.round(fin(ink.t?.[i] ?? lt))))
+    putVar(out, zig((x - lx) | 0)); putVar(out, zig((y - ly) | 0)); putVar(out, t - lt)
     out.push(Math.round(clamp(fin(ink.f?.[i] ?? 0.5), 0, 1) * 255))
     if (tilt) {
       const a = ((fin(az![i]) % TAU) + TAU) % TAU
@@ -64,7 +73,7 @@ export function packPoints(ink: InkIn): string {
   return b64u(Uint8Array.from(out))
 }
 
-/** The packed points -> an ink, or null when they are not readable (malformed, a newer format, too many). */
+/** The packed points -> an ink, or null when they are not the one packed form of 1 to MAX_POINTS points. */
 export function unpackPoints(text: unknown): Ink | null {
   let b: Uint8Array
   try { b = unb64u(typeof text === 'string' ? text : '') } catch { return null }
@@ -72,13 +81,14 @@ export function unpackPoints(text: unknown): Ink | null {
   const tilt = (b[0]! & 1) === 1
   const ink: Ink = { pts: [], t: [], f: [], az: tilt ? [] : null, al: tilt ? [] : null, sim: (b[0]! & 2) === 2 }
   let o = 1, x = 0, y = 0, t = 0
+  // One LEB128 number below 2^32 in its shortest form.
   const v = () => {
     let r = 0, m = 1
-    for (let k = 0; k < 8; k++) {
+    for (let k = 0; k < 5; k++) {
       if (o >= b.length) throw 0
       const c = b[o++]!
       r += (c & 127) * m
-      if (c < 128) return r
+      if (c < 128) { if ((c === 0 && k > 0) || r > 0xffffffff) throw 0; return r }
       m *= 128
     }
     throw 0
@@ -86,24 +96,13 @@ export function unpackPoints(text: unknown): Ink | null {
   try {
     while (o < b.length) {
       if (ink.t.length >= MAX_POINTS) return null
-      x += unzig(v()); y += unzig(v()); t += v()
-      if (o + (tilt ? 3 : 1) > b.length) return null
+      x = (x + unzig(v())) | 0; y = (y + unzig(v())) | 0; t += v()
+      if (t > 0xffffffff || o + (tilt ? 3 : 1) > b.length) return null
       ink.pts.push(x / Q, y / Q); ink.t.push(t); ink.f.push(Math.round((b[o++]! / 255) * 1000) / 1000)
       if (tilt) { ink.az!.push((b[o++]! / 256) * TAU); ink.al!.push((b[o++]! / 255) * HALF_PI) }
     }
   } catch { return null }
   return ink.t.length ? ink : null
-}
-
-/** A stroke's transform ([a, b, c, d, tx, ty], as CGAffineTransform: x' = a·x + c·y + tx, y' = b·x + d·y + ty)
- *  baked into its ink: the points moved, the azimuth turned. Returns { ink, scale } (scale multiplies the width). */
-export function bake(ink: Ink, m: unknown): { ink: Ink; scale: number } {
-  if (!Array.isArray(m) || m.length !== 6 || !m.every(Number.isFinite)) return { ink, scale: 1 }
-  const [a, b, c, d, tx, ty] = m as [number, number, number, number, number, number]
-  const pts = ink.pts.slice()
-  for (let i = 0; i < pts.length; i += 2) { const x = pts[i]!, y = pts[i + 1]!; pts[i] = a * x + c * y + tx; pts[i + 1] = b * x + d * y + ty }
-  const turn = Math.atan2(b, a)
-  return { ink: { ...ink, pts, az: ink.az && turn ? ink.az.map(v => (((v + turn) % TAU) + TAU) % TAU) : ink.az }, scale: Math.sqrt(Math.abs(a * d - b * c)) || 1 }
 }
 
 // ---- force ----

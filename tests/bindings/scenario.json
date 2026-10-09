@@ -1,0 +1,95 @@
+{
+  "about": [
+    "One scenario for both bindings: tests/bindings/scenario.mjs runs it through the browser binding (in Node, and in",
+    "Chromium with every device in a worker of its own), tests/bindings/swift runs it through the Swift binding.",
+    "Devices are named by a letter; A, B and C are human devices (C comes with the recovery code), G is an agent",
+    "device. Groups are named 'room' or by the name a session was founded under. The hub is a stand-in that orders and stores and verifies nothing: the",
+    "devices do. A step with 'refused' must fail with that code; every other step must succeed."
+  ],
+  "steps": [
+    { "do": "create", "device": "A" },
+    { "do": "create", "device": "B" },
+    { "do": "create", "device": "G" },
+
+    { "do": "found_room", "device": "A" },
+    { "do": "post", "device": "A" },
+
+    { "do": "add_human", "by": "A", "device": "B" },
+    { "do": "post", "device": "A" },
+    { "do": "join", "device": "B", "by": "A" },
+    { "do": "same_key", "devices": ["A", "B"], "group": "room" },
+    { "do": "sign_in", "device": "B" },
+
+    { "do": "enrol", "by": "A", "device": "G" },
+    { "do": "post", "device": "A" },
+    { "do": "observe", "device": "G" },
+    { "do": "sync", "device": "B" },
+    { "do": "found_session", "by": "A", "agent": "G", "humans": ["B"], "name": "main" },
+    { "do": "post", "device": "A" },
+    { "do": "sync", "device": "B" },
+    { "do": "sync", "device": "G" },
+    { "do": "same_key", "devices": ["A", "B", "G"], "group": "main" },
+
+    { "do": "work_trail", "device": "G", "group": "main", "number": 1, "text": "{\"step\":\"reading the brief\"}" },
+    { "do": "post", "device": "G" },
+    { "do": "sync", "device": "A", "message": "{\"step\":\"reading the brief\"}" },
+    { "do": "sync", "device": "B", "message": "{\"step\":\"reading the brief\"}" },
+
+    { "do": "file", "bytes": 300000, "pieces": 70000 },
+
+    { "do": "restart", "device": "B" },
+    { "do": "same_key", "devices": ["A", "B", "G"], "group": "main" },
+
+    { "do": "update", "device": "A", "group": "main" },
+    { "do": "outbox", "device": "A", "count": 1, "remember": true },
+    { "do": "restart", "device": "A" },
+    { "do": "outbox", "device": "A", "count": 1, "same": true },
+    { "do": "post", "device": "A" },
+    { "do": "sync", "device": "B" },
+    { "do": "sync", "device": "G" },
+    { "do": "same_key", "devices": ["A", "B", "G"], "group": "main" },
+
+    { "do": "fail_next_write", "device": "B" },
+    { "do": "update", "device": "B", "group": "main", "refused": "storage" },
+    { "do": "restart", "device": "B" },
+    { "do": "outbox", "device": "B", "count": 0 },
+    { "do": "same_key", "devices": ["A", "B", "G"], "group": "main" },
+    { "do": "update", "device": "B", "group": "main" },
+    { "do": "post", "device": "B" },
+    { "do": "sync", "device": "A" },
+    { "do": "sync", "device": "G" },
+    { "do": "same_key", "devices": ["A", "B", "G"], "group": "main" },
+
+    { "do": "second_owner", "device": "A", "refused": "storage" },
+
+    { "do": "remove_human", "by": "A", "device": "B" },
+    { "do": "post", "device": "A" },
+    { "do": "clean_session", "by": "A", "group": "main" },
+    { "do": "post", "device": "A" },
+    { "do": "sync", "device": "B", "removed": true },
+    { "do": "sync", "device": "G" },
+    { "do": "same_key", "devices": ["A", "G"], "group": "main" },
+    { "do": "no_key", "device": "B", "group": "main", "epoch_of": "A" },
+
+    { "do": "create", "device": "C" },
+    { "do": "join_with_code", "device": "C" },
+    { "do": "post", "device": "C" },
+    { "do": "join_session_with_code", "device": "C", "group": "main" },
+    { "do": "post", "device": "C" },
+    { "do": "sync", "device": "A" },
+    { "do": "sync", "device": "G" },
+    { "do": "same_key", "devices": ["A", "C"], "group": "room" },
+    { "do": "same_key", "devices": ["A", "C", "G"], "group": "main" },
+    { "do": "earlier_key", "device": "C", "like": "A", "group": "main", "epoch": 1 },
+
+    { "do": "replace_code", "device": "A" },
+    { "do": "post", "device": "A" },
+    { "do": "post", "device": "A" },
+    { "do": "sync", "device": "C" },
+    { "do": "sync", "device": "G" },
+    { "do": "holds_recovery_mac", "device": "C" },
+    { "do": "same_key", "devices": ["A", "C"], "group": "room" },
+    { "do": "restart", "device": "C" },
+    { "do": "holds_recovery_mac", "device": "C" }
+  ]
+}
