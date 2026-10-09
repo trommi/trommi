@@ -973,7 +973,9 @@ impl Drop for Checking<'_> {
 /// Failures slow their source down and lock nobody (`throttle.rs`).
 fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
     use crate::throttle::{self, Verdict};
-    limited(app.limits.logins.check(rq.ip.as_bytes(), now(), true))?;
+    // when the request came: a turn in line is kept by coming in time
+    let arrived = now();
+    limited(app.limits.logins.check(rq.ip.as_bytes(), arrived, true))?;
     // the password and the Emergency Kit are throttled apart
     let account_key = format!(
         "{}:{}",
@@ -984,7 +986,7 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
     // the source as the account knows it: a keyed hash of the address
     let source = crate::push::source_hash(&app.ticket_key, &rq.ip);
     let throttled = app.cfg.login_throttle;
-    let (row, known, due) = app.read(|x| {
+    let (row, known) = app.read(|x| {
         // a source waiting out its own failures is told so before anything is spent on it
         if throttled {
             if let Some(wait) = throttle::own_wait(x.c, account_key, &source, x.now)? {
@@ -993,15 +995,8 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
         }
         let row = app.accounts.login_row(x.c, &rq.body, kit)?;
         let known = accounts::knows_source(x.c, row.account(), &source)?;
-        let due = throttled && throttle::turn_due(x.c, account_key, &source, x.now)?;
-        Ok((row, known, due))
+        Ok((row, known))
     })?;
-    // who comes back at its turn keeps it while the request waits for the pool
-    if due {
-        app.db.write(|c| {
-            throttle::arrived(c, account_key, &source, now(), crate::memo::GATE_WAIT_MS)
-        })?;
-    }
     let revision = row.revision();
     // The slow hash is made on the pool with no database connection held. The attempt is admitted there, at the
     // moment its check starts: time spent waiting for the pool lets nobody check faster than the throttle says.
@@ -1021,7 +1016,7 @@ fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
         };
         match app
             .db
-            .write(|c| throttle::admit(c, account_key, &source, known, now()))?
+            .write(|c| throttle::admit(c, account_key, &source, known, now(), arrived))?
         {
             Verdict::Own(wait) => Ok(Checked::Wait(wait)),
             Verdict::Line { wait, early: None } => {

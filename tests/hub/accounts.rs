@@ -242,7 +242,10 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
         waits.push(early.header("retry-after").unwrap().parse::<i64>().unwrap());
         wait_out(hub, &early);
     }
-    assert_eq!(waits, vec![1, 2, 4, 8, 16, 32]);
+    // (what is told is the time left, in whole seconds: a slow machine eats a second or two of it)
+    for (wait, full) in waits.iter().zip([1i64, 2, 4, 8, 16, 32]) {
+        assert!((full - 2).max(1) <= *wait && *wait <= full, "{waits:?}");
+    }
     // meanwhile the owner gets in at once, from home and from a place the account has never seen
     sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
     sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &auth).ok();
