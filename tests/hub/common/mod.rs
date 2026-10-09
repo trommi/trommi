@@ -936,7 +936,7 @@ impl Dev {
 
     // -- the hub
 
-    fn headers(&self) -> Vec<(&'static str, String)> {
+    pub fn headers(&self) -> Vec<(&'static str, String)> {
         let mut h = vec![];
         if let Some(t) = &self.token {
             h.push(("authorization", format!("Bearer {t}")));

@@ -775,6 +775,61 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
     agent
         .post_commit(&w.hub, &out, &tagged)
         .refused(400, "incomplete");
+    agent.clear(&group);
+    // 8.3: the group went on to its next epoch before any human device filed a tagged key for the one before.
+    // That epoch's GroupInfo is kept until one has: a human device checks it before it files its key.
+    let current = w
+        .ada
+        .get(&w.hub, &format!("/v2/groups/{}/info", b64(&group)))
+        .ok()["epoch"]
+        .as_u64()
+        .unwrap();
+    assert!(current >= 2);
+    let before = format!("/v2/groups/{}/info?epoch={}", b64(&group), current - 1);
+    let info = unb64(
+        w.ada.get(&w.hub, &before).ok()["group_info"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let key = w.ada.sealed_key(
+        &group,
+        current - 1,
+        &info,
+        now.0,
+        &w.recovery.hpke_public,
+        true,
+    );
+    w.ada
+        .call(
+            &w.hub,
+            "PUT",
+            "/v2/sealed-keys",
+            &json!({ "sealed_key": b64(&key) }),
+        )
+        .ok();
+    w.ada.get(&w.hub, &before).refused(410, "gone");
+    // the current epoch's and the founding's stay
+    w.ada
+        .get(&w.hub, &format!("/v2/groups/{}/info?epoch=0", b64(&group)))
+        .ok();
+    w.ada
+        .get(
+            &w.hub,
+            &format!("/v2/groups/{}/info?epoch={current}", b64(&group)),
+        )
+        .ok();
+    // a token is taken under the scheme's name in any case (RFC 9110)
+    let token = w.ada.token.clone().unwrap();
+    for scheme in ["bearer", "BEARER"] {
+        let mut headers = w.ada.headers();
+        headers.retain(|(name, _)| *name != "authorization");
+        headers.push(("authorization", format!("{scheme} {token}")));
+        assert_eq!(
+            request(w.hub.port, "GET", "/v2/desk", &headers, b"").status,
+            200
+        );
+    }
 }
 
 #[test]

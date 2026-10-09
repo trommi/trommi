@@ -256,7 +256,7 @@ impl Config {
             json_limit: number(env, "HUB_LIMIT_JSON", 1 << 20),
             commit_limit: number(env, "HUB_LIMIT_COMMIT", 1 << 20),
             message_limit: number(env, "HUB_LIMIT_MESSAGE", 48 << 10),
-            file_limit: number(env, "HUB_LIMIT_FILE", 64 << 20),
+            file_limit: number(env, "HUB_LIMIT_FILE", 67_125_269),
             room_quota: number(env, "HUB_ROOM_QUOTA", 1 << 30),
             envelopes_per_second: number(env, "HUB_LIMIT_ENVELOPES_PER_SECOND", 50.0),
             envelope_burst: number(env, "HUB_LIMIT_ENVELOPE_BURST", 200.0),
