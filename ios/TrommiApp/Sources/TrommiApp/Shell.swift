@@ -179,6 +179,63 @@ extension View {
       }
       .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
   }
+  /** The same row on a pushed screen (a chat, a card's page): the back circle at the left, the screen's own pill in the
+   *  middle (centred between the two circles), its "⋯" at the right; the row's measures are topPills'. No navigation
+   *  bar, so no band and no hairline: the content scrolls under the row and the status bar and fades out softly. The
+   *  swipe from the left edge still goes back (PopGesture: UIKit turns it off with the bar). */
+  func pushedPills<C: View, T: View>(@ViewBuilder center: () -> C, @ViewBuilder trailing: () -> T) -> some View {
+    self.toolbar(.hidden, for: .navigationBar)
+      .safeAreaBar(edge: .top, spacing: 0) {
+        HStack(spacing: 10) { BackPill(); Spacer(minLength: 0); trailing() }
+          .overlay { center().padding(.horizontal, 54) }
+          .padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 6)
+      }
+      .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
+      .background { PopGesture().frame(width: 0, height: 0).accessibilityHidden(true) }
+  }
+  /** A round glass button of the top row (44 pt, as the place pill is tall). */
+  func pillCircle() -> some View {
+    self.frame(width: 44, height: 44).glass(Circle(), interactive: true).contentShape(Circle())
+  }
+}
+
+/** Back, as a round glass button at the left of a pushed screen's row. */
+struct BackPill: View {
+  @EnvironmentObject var model: BoardModel
+  var body: some View {
+    Button { if !model.path.isEmpty { model.path.removeLast() } } label: {
+      Image(systemName: "chevron.left").font(.system(size: 18, weight: .semibold)).foregroundStyle(Ink.fg).pillCircle()
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Back")
+    .accessibilityShowsLargeContentViewer { Label("Back", systemImage: "chevron.left") }
+  }
+}
+
+/**
+ * The swipe from the left edge goes back although the navigation bar is hidden: the navigation controller's own
+ * recogniser is switched on and asked by PopGate, which lets it begin only when there is a screen to go back to (at
+ * the root it must not begin: the stack would hang).
+ */
+struct PopGesture: UIViewControllerRepresentable {
+  func makeUIViewController(context: Context) -> Holder { Holder() }
+  func updateUIViewController(_ c: Holder, context: Context) {}
+  final class Holder: UIViewController {
+    override func viewDidAppear(_ animated: Bool) {
+      super.viewDidAppear(animated)
+      guard let g = navigationController?.interactivePopGestureRecognizer else { return }
+      g.delegate = PopGate.shared
+      g.isEnabled = true
+    }
+  }
+}
+final class PopGate: NSObject, UIGestureRecognizerDelegate {
+  static let shared = PopGate()
+  func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+    var r: UIResponder? = g.view
+    while let x = r { if let nav = x as? UINavigationController { return nav.viewControllers.count > 1 }; r = x.next }
+    return false
+  }
 }
 
 /**

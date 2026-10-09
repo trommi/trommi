@@ -116,17 +116,14 @@ struct SessionScreen: View {
             Composer(placeholder: composeWords(a), agent: a.id, onSent: { atBottom = true; withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } })
           }
         }
+        // the top row: back, the session's name as a glass pill (its menu), "⋯"; no bar, a soft edge above and below
+        .pushedPills { header(a, d) } trailing: { more(a, d, freshCount: fresh.count) }
         .onAppear { lastCount = all.count; atBottom = true; proxy.scrollTo("bottom", anchor: .bottom); model.markRead(a) }
         .onChange(of: model.version) { _, _ in model.markRead(a) }
         // what a catch-up brought as headers only (the app was away, the hub restarted): filled while the chat is open
         .task(id: model.version) { try? await Task.sleep(nanoseconds: 150_000_000); await model.loadNewer(agent: a.id) }
       }
       .background(Ink.bg.ignoresSafeArea())
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .principal) { header(a, d) }
-        ToolbarItem(placement: .topBarTrailing) { more(a, d, freshCount: fresh.count) }
-      }
       .alert("Rename Session", isPresented: $renaming) {
         TextField("Name", text: $name)
         Button("Save") { model.editSession(a, ["name": .str(String(name.prefix(60)))]) }
@@ -206,12 +203,15 @@ struct SessionScreen: View {
       // composer (SessionLinkNote), a stop by a red dot here
       HStack(spacing: 7) {
         ZStack { if working { WorkingRing(working: true, color: Tone.color(hue: a.hue, .mid)).frame(width: 30, height: 30) }; AgentMark(agent: a, size: 22) }
-        Text(a.name).font(Face.display(17, .bold)).foregroundStyle(Ink.fg).lineLimit(1)
+        Text(a.name).font(Face.display(17, .bold)).foregroundStyle(Ink.fg).lineLimit(1).truncationMode(.middle)
         if stopped != nil { Circle().fill(Ink.urgCritical).frame(width: 7, height: 7) }
         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.muted)
       }
-      .padding(.horizontal, 10).frame(minHeight: 40)
+      .padding(.horizontal, 14).frame(height: 44)
+      .glass(Capsule(), interactive: true)
+      .contentShape(Capsule())
     }
+    .accessibilityShowsLargeContentViewer { Label(a.name, systemImage: "bubble.left") }
     .accessibilityLabel(stopped.map { "\(a.name), stopped: \($0.1). Switch chat" } ?? "\(a.name): switch chat")
     .accessibilityHint(quiet ?? "")
   }
@@ -228,7 +228,9 @@ struct SessionScreen: View {
       }
       Button { model.editSession(a, ["archived": .bool(!a.archived)]) } label: { Label(a.archived ? "Unarchive" : "Archive", systemImage: "archivebox") }.disabled(a.online && !a.archived)
       if !a.own { Divider(); Button(role: .destructive) { deleteAsk = true } label: { Label("Delete…", systemImage: "trash") } }
-    } label: { Image(systemName: "ellipsis").accessibilityLabel("More") }
+    } label: { Image(systemName: "ellipsis").font(.system(size: 18, weight: .semibold)).foregroundStyle(Ink.fg).pillCircle() }
+    .accessibilityLabel("More")
+    .accessibilityShowsLargeContentViewer { Label("More", systemImage: "ellipsis") }
   }
 }
 

@@ -37,16 +37,14 @@ struct CardScreen: View {
           .frame(maxWidth: 760).frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
-        .safeAreaInset(edge: .bottom) {
+        // a bar, not a plain inset: the soft scroll edge reaches up to the composer (no band)
+        .bottomBar {
           if c.kind != "permission" {
-            Composer(placeholder: askWords(c, a), agent: c.agent, cardId: c.id).bottomChrome()
+            Composer(placeholder: askWords(c, a), agent: c.agent, cardId: c.id)
           }
         }
-      }
-      .background(Ink.bg.ignoresSafeArea())
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
+        // the top row as in a chat: back, "⋯"; no bar, a soft edge
+        .pushedPills { EmptyView() } trailing: {
           Menu {
             if let a = a { Button { model.path.append(.session(a.id)) } label: { Label("Open Session", systemImage: "bubble.left.and.bubble.right") } }
             Button { model.copyCard(c) } label: { Label("Copy", systemImage: "doc.on.doc") }
@@ -54,9 +52,12 @@ struct CardScreen: View {
               Button { model.snooze(c) } label: { Label(Words.later, systemImage: "zzz") }
               Button(role: .destructive) { model.shred(c, note: note) } label: { Label(Words.shred, systemImage: "trash") }
             }
-          } label: { Image(systemName: "ellipsis").accessibilityLabel("More") }
+          } label: { Image(systemName: "ellipsis").font(.system(size: 18, weight: .semibold)).foregroundStyle(Ink.fg).pillCircle() }
+          .accessibilityLabel("More")
+          .accessibilityShowsLargeContentViewer { Label("More", systemImage: "ellipsis") }
         }
       }
+      .background(Ink.bg.ignoresSafeArea())
       .onAppear { if !loadedDraft { loadDraft(c); loadedDraft = true } }
       .background { CardKeys(card: c) }
       .fullScreenCover(item: Binding(get: { picture.map { PicAt(at: $0) } }, set: { picture = $0?.at })) { p in

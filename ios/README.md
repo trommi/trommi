@@ -118,6 +118,9 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
 - **Top of the lists (iPhone):** no navigation bar. The place pill (the menu) floats at the top left, the Desk's duck
   and Blitz at the top right, each a glass capsule on the content (`topPills`, a `safeAreaBar`); no band or hairline, the content fades out under them and the status bar
   (`scrollEdgeEffectStyle(.soft)`, top and bottom).
+- **Top of a chat and of a card's page:** the same row (`pushedPills`): a round glass back button, in a chat the
+  session's name as a glass pill in the middle (drawing, crown, name, chevron: the menu of the other sessions), "⋯" at
+  the right. No navigation bar there either; the swipe from the left edge still goes back (`PopGesture`).
 - **Chat:** no tab bar inside a chat (Messages, WhatsApp); it returns on the list. The composer (attach, send) is
   always at the bottom, a bottom bar (`safeAreaBar`): a tap in it brings the keyboard,
   it rides on the keyboard and reserves its height, so the last message scrolls clear of it. A tap in the
