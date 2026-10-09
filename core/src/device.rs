@@ -1005,6 +1005,23 @@ impl<S: Storage> Device<S> {
         rules::disallowed_leaves(history, room, session, parent, leaves)
     }
 
+    /// Whether this device is the opener of the helper session `session` (5.2.3), by what it knows: an agent
+    /// device that is its main session's agent leaf. A device that does not follow the main session cannot
+    /// tell; as an agent device it then takes itself for the opener, and the others judge what it sends.
+    fn opens(&self, session: &TrommiSession) -> bool {
+        let Some(room) = self.room_history().map(RoomHistory::newest) else {
+            return false;
+        };
+        if session.parent.is_zero() || !room.is_agent(&self.id) {
+            return false;
+        }
+        match self.known().main_session(&session.parent, room.epoch) {
+            Parent::Seat(seat) => seat == Some(self.id),
+            Parent::Unknown => true,
+            Parent::NotAMainSession => false,
+        }
+    }
+
     fn known(&self) -> Known {
         let mut known = Known {
             seats: BTreeMap::new(),
@@ -1949,7 +1966,9 @@ impl<S: Storage> Device<S> {
     }
 
     /// The opener replaces a helper device that lost its state (5.3.5): Remove of the old leaf with its Cut
-    /// and Add of the new device in one Commit. A handover follows.
+    /// and Add of the new device in one Commit. A handover follows. Only the session's opener does this
+    /// (`forbidden`). The device that comes back has a new key (4.3), and the leaf that goes is a helper
+    /// device's: the same key again, a human device's leaf or the opener's own is `bad-commit`.
     pub fn readmit_helper(
         &mut self,
         group: &GroupId,
@@ -1959,8 +1978,13 @@ impl<S: Storage> Device<S> {
         now_ms: u64,
     ) -> Result<u64, Error> {
         self.transact(|this, batch| {
-            if group.is_room() || this.is_human() {
+            let session = this.meta(group)?.session;
+            if !session.is_some_and(|session| this.opens(&session)) {
                 return Err(Error::Forbidden);
+            }
+            let human = this.history()?.newest().is_human(&old.device);
+            if *device == old.device || old.device == this.id || human {
+                return Err(Error::BadCommit);
             }
             key_package::verify_key_package_of(key_package, device)?;
             let (package, _) = key_package::validated(key_package)?;
@@ -2675,7 +2699,7 @@ impl<S: Storage> Device<S> {
 
     /// Hands old content keys to `recipient` in `group` (7.1), in as many messages as needed. In the room
     /// group a human device sends every key it holds for every group of the room; in a session group a human
-    /// device, or a helper session's opener, sends that group's keys. What was sent is remembered until
+    /// device, or a helper session's opener, sends that group's keys; any other device is `forbidden`. What was sent is remembered until
     /// [`Device::handover_read`]. Returns the outbox ids.
     pub fn send_handover(
         &mut self,
@@ -2684,11 +2708,8 @@ impl<S: Storage> Device<S> {
     ) -> Result<Vec<u64>, Error> {
         self.transact(|this, batch| {
             let human = this.is_human();
-            let helper = this
-                .meta(group)?
-                .session
-                .is_some_and(|session| !session.parent.is_zero());
-            if !human && !helper {
+            let session = this.meta(group)?.session;
+            if !human && !session.is_some_and(|session| this.opens(&session)) {
                 return Err(Error::Forbidden);
             }
             let keys: Vec<EpochKey> = this

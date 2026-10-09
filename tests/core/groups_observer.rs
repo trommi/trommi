@@ -341,13 +341,6 @@ fn forgeries() -> Vec<(&'static str, Forgery)> {
                 (Forger::Agent, w.main, Error::BadCommit)
             },
         ),
-        ("an opener removes a human leaf", |w| {
-            let (device, package) = stranger();
-            w.agent
-                .readmit_helper(&w.helper, Cut::none(w.b.id()), &device, &package, now())
-                .unwrap();
-            (Forger::Agent, w.helper, Error::BadCommit)
-        }),
         ("an opener adds an enrolled agent device", |w| {
             let package = w.other.key_package(now()).unwrap();
             w.agent
@@ -358,12 +351,6 @@ fn forgeries() -> Vec<(&'static str, Forgery)> {
         ("a helper device commits", |w| {
             let (device, package) = stranger();
             w.h1.add_to_session(&w.helper, &device, &package, now())
-                .unwrap();
-            (Forger::Helper, w.helper, Error::BadCommit)
-        }),
-        ("a helper device removes the opener", |w| {
-            let (device, package) = stranger();
-            w.h1.readmit_helper(&w.helper, Cut::none(w.agent.id()), &device, &package, now())
                 .unwrap();
             (Forger::Helper, w.helper, Error::BadCommit)
         }),
@@ -487,8 +474,21 @@ fn what_no_device_builds() {
         b,
         room_group,
         main,
+        helper,
         ..
     } = world(true);
+    // The opener removes no human leaf, and a helper device removes nobody: the one operation that replaces
+    // a leaf is the opener's, for a helper device. (The rule on the wire: `rules.rs`,
+    // helper_session_commits_follow_5_2_3_to_5_2_5.)
+    let (device, package) = stranger();
+    assert_eq!(
+        agent.readmit_helper(&helper, Cut::none(b.id()), &device, &package, now()),
+        Err(Error::BadCommit)
+    );
+    assert_eq!(
+        h1.readmit_helper(&helper, Cut::none(agent.id()), &device, &package, now()),
+        Err(Error::Forbidden)
+    );
     // Agent and helper devices commit nothing in the room group (5.1.4): they are no leaves of it, and no
     // operation of theirs makes such a Commit. (The rule on the wire: `rules.rs`, room_commits_follow_5_1.)
     let (device, package) = stranger();
