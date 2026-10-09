@@ -131,9 +131,13 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
   above the text line, as in Messages (`PendingFiles`, the same in a card's "Ask … something"): a picture as itself
   (140 pt tall at most), a video as its first frame with a play sign, any other file as a small tile with its kind
   and name, each with a round × at its corner; the field grows and the chat's bottom inset with it.
-- **Chat list:** a main session's helpers lie folded in one stack under it, as in the web's sidebar (`UnitStack` in
-  `TrommiClient/Desk.swift`): seven drawings at most, the stopped ones first and marked, the count, how many wait on
-  him or are at work; the main's row counts its helpers in. A tap unfolds a stack; which are open is kept on the phone.
+- **Chat list:** a row as in Messages (`ChatRow` in `ChatList.swift`): the session's drawing in a round tinted field
+  (crown and working dot as badges on it), its name and the time of what was said last, two lines at most of what was
+  said last (`ChatTeaser` in `TrommiClient`: his own words with "You: ", a question's title, else the task), and at
+  the right only what needs him (count of open questions, the raised hand, a dot for unread). A main's helpers stay
+  folded, as in the web's sidebar (`UnitStack` in `TrommiClient/Desk.swift`: the stopped ones first and marked): four
+  small drawings and "+N" at the end of the teaser's line; a tap there unfolds them as smaller set-in rows; which are
+  open is kept on the phone. The main's row counts its helpers in. Desks are quiet section heads.
 - **Note:** a full page of yellow paper over the list he came from (`NotePanel` in `Shell.swift`), edge to edge, up
   under the status bar and on behind the tab pill, which stays and is lit on Note. From the top: a handle, "To: …" as
   a glass pill on a row of its own (the words begin below it, never under it), the words, the pictures, the
