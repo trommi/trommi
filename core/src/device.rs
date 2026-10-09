@@ -1058,8 +1058,11 @@ impl<S: Storage> Device<S> {
         })
     }
 
-    /// The device a store holds. `Error::Storage` when anything in it does not decode or fit together, or a
-    /// stored group stands in an epoch above [`profile::MAX_STORED_EPOCH`].
+    /// The device a store holds. `Error::Storage` when anything in it does not decode, when its parts
+    /// contradict each other (the signature key and the leaves and KeyPackages, a group's record and its
+    /// OpenMLS state, the roles and the room group, content keys and the epochs their groups reached, the
+    /// outbox and what names its entries, the cursor and the groups' places), or when a stored group stands
+    /// in an epoch above [`profile::MAX_STORED_EPOCH`].
     pub fn open(mut store: S, entropy: Box<dyn Entropy + Send>) -> Result<Self, Error> {
         let loaded = store.load()?;
         let mirror: BTreeMap<Vec<u8>, Vec<u8>> = loaded
@@ -1110,6 +1113,150 @@ impl<S: Storage> Device<S> {
             {
                 meta.session = Some(session);
             }
+        }
+        self.cross_check()
+    }
+
+    /// What the stored entries must say of each other, checked whenever memory is built from them: a state
+    /// whose parts contradict each other is damaged (`Error::Storage`), however well each part decodes. It
+    /// is never worked on: it would sign under one key what another state implies, or send what was sent.
+    ///
+    /// - The signature key is the one of this device's own leaf in every group (checked where the groups
+    ///   are read) and of every KeyPackage whose private part it holds.
+    /// - Every group OpenMLS holds has its record here, and a group this device left has none there. A
+    ///   group's record fits its state: it joined at or before the epoch it stands in; a Commit is pending
+    ///   in the one exactly when it is in the other; one that was not accepted has its outbox entry, for
+    ///   that group and epoch, and an accepted one has none; a founding not yet answered is pending.
+    /// - The room's roles end in the state the room group stands in, and a device holds them as a leaf or as
+    ///   an observer, not both. Every group and every observer is of the device's one room.
+    /// - A content key is of that room, and of an epoch its group has reached where the device is a leaf of
+    ///   the group or follows it. A key marked as handed or unconfirmed is held.
+    /// - Every outbox entry, and whatever names one (a pending Commit, a staged copy, an owed
+    ///   `recovery_mac`), has an id below the next one to give out. A staged copy has its entry.
+    /// - No group's place in the hub's order, and no cursor it was joined at, lies beyond the cursor. The
+    ///   place of a room epoch is the place of an epoch the roles hold.
+    fn cross_check(&self) -> Result<(), Error> {
+        let contradicts =
+            |what: &'static str| Error::Storage(format!("{what} contradicts the rest"));
+        let memory = &self.memory;
+        let next = memory.record.next_outbox;
+        let cursor = memory.record.cursor;
+        if next == 0 || memory.outbox.keys().any(|id| *id >= next) {
+            return Err(contradicts("the outbox"));
+        }
+        for reference in memory.key_packages.keys() {
+            if key_package::stored_device(&self.provider, reference)? != Some(self.id) {
+                return Err(contradicts("a key package"));
+            }
+        }
+        let of_room = |group: &GroupId| memory.record.room == Some(group.room_id());
+        let mut held = BTreeMap::new();
+        for (id, meta) in &memory.groups {
+            if !of_room(id) || meta.place > cursor || meta.passed > cursor {
+                return Err(contradicts("a group record"));
+            }
+            if meta.removed {
+                continue;
+            }
+            let group = group::load(&self.provider, id).map_err(|_| damaged("a group"))?;
+            let epoch = group.epoch().as_u64();
+            held.insert(*id, epoch);
+            let pending = meta.pending.as_ref();
+            let waits = group.pending_commit().is_some();
+            let entry = pending.and_then(|pending| memory.outbox.get(&pending.outbox));
+            let entry_fits = match (pending, entry) {
+                (None, _) => true,
+                (Some(pending), None) => pending.accepted,
+                (Some(pending), Some(entry)) => {
+                    let commit = matches!(
+                        entry.kind,
+                        OutboxKind::Commit | OutboxKind::GroupFounding | OutboxKind::RecoveryCode
+                    );
+                    !pending.accepted && commit && entry.group == Some(*id) && entry.epoch == epoch
+                }
+            };
+            let founding = !meta.founding || epoch == 0 && (id.is_room() || waits);
+            if meta.joined_epoch > epoch
+                || pending.is_some() != waits
+                || pending.is_some_and(|pending| pending.outbox >= next)
+                || !entry_fits
+                || !founding
+            {
+                return Err(contradicts("a group record"));
+            }
+        }
+        // OpenMLS holds exactly the groups this device is a leaf of.
+        let stored = provider::stored_groups(&self.provider.entries())?;
+        let known = stored
+            .iter()
+            .all(|id| GroupId::from_bytes(id).is_ok_and(|id| held.contains_key(&id)));
+        if !known || stored.len() != held.len() {
+            return Err(contradicts("a group"));
+        }
+        // The roles: a leaf's own record ends where the room group stands.
+        let room_group = memory.record.room.map(GroupId::room);
+        let as_leaf = room_group.filter(|group| held.contains_key(group));
+        match (&memory.history, as_leaf) {
+            (None, None) => {}
+            (Some(history), Some(group)) => {
+                let state = group::load(&self.provider, &group)?;
+                let leaves = rules::leaves_of(state.members())?;
+                let stands = rules::room_state_of(state.public_group().group_context(), &leaves)
+                    .map_err(|_| damaged("a group"))?;
+                if *history.newest() != stands || memory.observers.contains_key(&group) {
+                    return Err(contradicts("the room history"));
+                }
+            }
+            _ => return Err(contradicts("the room history")),
+        }
+        let mut followed = BTreeMap::new();
+        for (id, observer) in &memory.observers {
+            if !of_room(id) || held.contains_key(id) {
+                return Err(contradicts("an observer"));
+            }
+            followed.insert(*id, observer.epoch()?);
+        }
+        if let Some(history) = self.room_history() {
+            let first = history.states().next().map_or(0, |state| state.epoch);
+            let newest = history.newest().epoch;
+            if memory
+                .room_places
+                .keys()
+                .any(|epoch| *epoch < first || *epoch > newest)
+            {
+                return Err(contradicts("a room epoch's place"));
+            }
+        } else if !memory.room_places.is_empty() {
+            return Err(contradicts("a room epoch's place"));
+        }
+        // Content keys.
+        for (group, epoch) in memory.keys.keys() {
+            let reached = held.get(group).or_else(|| followed.get(group));
+            if !of_room(group) || reached.is_some_and(|reached| epoch > reached) {
+                return Err(contradicts("a content key"));
+            }
+        }
+        let marked = memory.unbound.iter().chain(memory.unconfirmed.iter());
+        if !marked.clone().all(|key| memory.keys.contains_key(key))
+            || memory
+                .unbound
+                .iter()
+                .any(|(group, _)| held.contains_key(group))
+        {
+            return Err(contradicts("a content key's record"));
+        }
+        // What names an outbox entry.
+        for (under, staged) in &memory.staged {
+            if !memory.outbox.contains_key(under) || staged.entries.iter().any(|id| *id >= next) {
+                return Err(contradicts("a staged copy"));
+            }
+        }
+        if memory
+            .owed
+            .keys()
+            .any(|(waits_for, _, _)| *waits_for >= next)
+        {
+            return Err(contradicts("an owed key"));
         }
         Ok(())
     }
