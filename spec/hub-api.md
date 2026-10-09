@@ -305,3 +305,10 @@ encrypted.
     beside the other members. New recovery keys are refused if the room held either of them before, as
     either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v2/sealed-keys` is a human device's
     (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.
+40. **The admin page** is not part of the API and not on the public port: a second listener on 127.0.0.1:8791
+    (`HUB_ADMIN_HOST`, `HUB_ADMIN_PORT`), started only if `HUB_ADMIN_PASSWORD_HASH` is set (Argon2id, PHC text;
+    `trommi-hub admin-hash` makes one from a password on standard input). One read-only page: the version and
+    health, the rooms with the counts the hub keeps (devices by role, sessions, changes, envelopes, file bytes
+    against the quota, push registrations, the account's e-mail), and every table with its number of rows, what
+    the hub reads in it and what lies in it sealed. After a wrong password the page takes no other for 1 s, 2 s
+    … up to a minute; a sign-in lasts twelve hours and lives in memory.
