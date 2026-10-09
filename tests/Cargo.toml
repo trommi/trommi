@@ -55,3 +55,7 @@ path = "core/groups_concurrency.rs"
 [[test]]
 name = "core_vectors"
 path = "core/vectors.rs"
+
+[[test]]
+name = "core_groups_observer"
+path = "core/groups_observer.rs"
