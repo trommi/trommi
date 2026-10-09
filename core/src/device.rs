@@ -10,11 +10,21 @@
 //! **A Commit is pending** until the hub answers. Accepted: it is merged. `epoch-taken`: it stays until the
 //! log shows the Commit that took the epoch; if that is this device's own it is merged, otherwise it is
 //! dropped, the other one is processed, and the caller builds its change again. A join from outside is built on
-//! a copy of the state that replaces the real one only when the hub accepted it.
+//! a copy of the state that replaces the real one only when the hub accepted it, or when the log shows the
+//! join's own Commit; it is held back and decided by the log in the same way. While a Commit of a group is
+//! pending the device sends no application message in that group.
 //!
-//! **The log** is processed entry by entry in the hub's order ([`Device::process_log_entry`]). An entry that
-//! does not verify, process or obey the rules changes nothing: the error says why, and
-//! [`log_finding`] says what it means (`bad-group`, or an entry that came too early).
+//! **The log** is processed entry by entry in the hub's order ([`Device::process_log_entry`]), each entry
+//! once. An entry that does not verify, process or obey the rules changes nothing: the error says why, and
+//! [`log_finding`] says what it means (`bad-group`, an entry that came too early, a duplicate).
+//!
+//! **Leaf or observer.** A device follows a group as a leaf of it or as an observer, never as both. When it
+//! becomes a leaf of a group it followed, what the observer verified becomes the device's own record and the
+//! observer goes in the same write; a human device that processes its removal from the room group becomes an
+//! observer of it and so knows the room state that removed it.
+//!
+//! **One owner.** A write that meets [`StorageError::Conflict`] ends this object: it answers
+//! `Error::Storage` from then on and hands out nothing ([`Device::is_owner`]).
 
 use crate::codec::{self, Decode, Encode, Opaque, Reader, Writer};
 use crate::crypto::{self, Entropy, Secret, SigningKey};
