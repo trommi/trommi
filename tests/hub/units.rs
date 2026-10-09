@@ -1791,7 +1791,7 @@ mod throttle_tests {
     impl T {
         fn admit(&self, account: &[u8], source: &[u8], known: bool, now: u64) -> Verdict {
             self.db
-                .write(|c| admit(c, account, source, known, now))
+                .write(|c| admit(c, account, source, known, now, now))
                 .map_err(|e: Refused| e.message)
                 .unwrap()
         }
@@ -2102,25 +2102,44 @@ mod throttle_tests {
             }
         }
         assert_eq!(checked, 300);
-        // one whose request came in time and then waited for the pool keeps its turn meanwhile
+        // A turn is kept by coming in time: a request that reached the hub within the turn's five seconds and
+        // then waited for the hub's pool is checked. One that came later has no turn; and a request the pool
+        // sent away leaves nothing behind that another could build on.
         let end = t1 + 700_000;
-        assert_eq!(t.guess(ACCOUNT, b"before", false, end), Ok(()));
-        assert_eq!(t.guess(ACCOUNT, b"slow", false, end), Err(2));
-        let arrive = |source: &[u8], at: u64| {
-            t.db.read(|c| turn_due(c, ACCOUNT, source, at))
+        let admit_at = |source: &[u8], now: u64, arrived: u64| {
+            t.db.write(|c| admit(c, ACCOUNT, source, false, now, arrived))
                 .map_err(|e: Refused| e.message)
                 .unwrap()
-                && t.db
-                    .write(|c| arrived(c, ACCOUNT, source, at, 10_000))
-                    .map_err(|e: Refused| e.message)
-                    .is_ok()
         };
-        assert!(!arrive(b"slow", end + 1500), "not before its turn");
-        assert!(arrive(b"slow", end + 3000));
+        assert_eq!(t.guess(ACCOUNT, b"before", false, end), Ok(()));
+        assert_eq!(t.guess(ACCOUNT, b"slow", false, end), Err(2));
+        assert_eq!(t.guess(ACCOUNT, b"late", false, end), Err(4));
+        // meanwhile others come and go: nobody clears away a turn whose request may still be waiting
+        assert_eq!(t.guess(ACCOUNT, b"other", false, end + 11_000), Ok(()));
+        assert!(
+            matches!(
+                admit_at(b"slow", end + 12_500, end + 3000),
+                Verdict::Check { .. }
+            ),
+            "came at 3, checked at 12.5"
+        );
         assert_eq!(
-            t.guess(ACCOUNT, b"slow", false, end + 12_500),
-            Ok(()),
-            "nine and a half seconds in the queue"
+            admit_at(b"late", end + 12_500, end + 9001),
+            Verdict::Line {
+                wait: 1,
+                early: None
+            },
+            "came after 9: a new turn, behind the other"
+        );
+        // a time of arrival that cannot be (longer ago than any request waits) counts for nothing
+        assert_eq!(t.guess(ACCOUNT, b"liar", false, end + 12_500), Err(3));
+        assert_eq!(t.guess(ACCOUNT, b"filler", false, end + 29_999), Ok(()));
+        assert_eq!(
+            admit_at(b"liar", end + 30_000, end + 15_000),
+            Verdict::Line {
+                wait: 2,
+                early: None
+            }
         );
     }
 
@@ -2326,7 +2345,17 @@ mod throttle_tests {
                 .unwrap(),
             None
         );
-        assert_eq!(t.right(ACCOUNT, b"home", true, now + 1000), Ok(()));
+        // … and after it has waited it out: still no room, still the full table's answer, though it is checked
+        assert_eq!(t.guess(ACCOUNT, b"home", true, now + 1100), Err(60));
+        assert_eq!(t.checks.get(), 2);
+        assert_eq!(
+            t.admit(ACCOUNT, b"one more", false, now + 1100),
+            Verdict::Line {
+                wait: 60,
+                early: None
+            }
+        );
+        assert_eq!(t.right(ACCOUNT, b"home", true, now + 3200), Ok(()));
         // another account is not touched
         assert_eq!(
             t.guess(b"password:b@example.org", b"one more", false, now),
