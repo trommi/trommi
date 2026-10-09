@@ -94,11 +94,6 @@ final class BoardModel: ObservableObject {
     get { tab == .chat ? chatPath : deskPath }
     set { if tab == .chat { chatPath = newValue } else { deskPath = newValue } }
   }
-  /** The chat he used last (the Chat page opens into it; the crowned session at first). */
-  var lastChat: String? {
-    get { UserDefaults.standard.string(forKey: "trommi-last-chat") }
-    set { UserDefaults.standard.set(newValue, forKey: "trommi-last-chat") }
-  }
   /** What he read of each session: the newest agent envelope he saw there (kept on this device). */
   private var readMarks: [String: Int] = (UserDefaults.standard.dictionary(forKey: "trommi-read") as? [String: Int]) ?? [:]
   func newestFromAgent(_ a: Agent) -> Int {

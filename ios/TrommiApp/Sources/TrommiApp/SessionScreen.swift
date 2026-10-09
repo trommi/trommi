@@ -22,7 +22,13 @@ struct SessionScreen: View {
   let agentId: String
   @State private var onlyQuestions = false
   @Environment(\.horizontalSizeClass) private var hSize
+  /** The view is at the newest message: it then follows what comes in, the keyboard and the composer's height. Only
+   *  his own scrolling takes it away from there (read when a scroll ends), never a change of the content's height. */
   @State private var atBottom = true
+  @State private var userScrolling = false
+  /** He has scrolled here: only then do earlier pages load by themselves (the top row also appears for a moment while
+   *  a chat opens, and the load then moved the view away from the newest message, build 20). */
+  @State private var touched = false
   @State private var unseen = 0
   @State private var lastCount = 0
   @State private var loadingOlder = false
@@ -53,7 +59,7 @@ struct SessionScreen: View {
                 HStack(spacing: 8) { if loadingOlder { ProgressView().controlSize(.small) }; Text("Earlier messages").font(Face.text(14, .semibold)) }
                   .foregroundStyle(Ink.accent).frame(maxWidth: .infinity).padding(.vertical, 14)
               }
-              .onAppear { loadOlder(proxy, first: msgs.first?.id) }
+              .onAppear { if touched { loadOlder(proxy, first: msgs.first?.id) } }
             }
             if msgs.isEmpty && !older { EmptyChat(agent: a) }
             ForEach(Array(msgs.enumerated()), id: \.element.id) { i, m in
@@ -65,13 +71,25 @@ struct SessionScreen: View {
             ForEach(permissions) { c in DeskRow(card: c, agent: a, inSession: true).padding(.vertical, 6) }
             SessionStatus(agent: a, tasks: tasks, messages: all)
             Color.clear.frame(height: 1).id("bottom")
-              .onAppear { atBottom = true; unseen = 0 }
-              .onDisappear { atBottom = false }
           }
-          .padding(.horizontal, 14).padding(.top, 6)
+          .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 8)
           .frame(maxWidth: 760).frame(maxWidth: .infinity)
         }
         .defaultScrollAnchor(.bottom)
+        // where he is, read whenever a scroll begins or ends (his finger, the run-out, our own scroll to the end)
+        .onScrollPhaseChange { _, new, context in
+          userScrolling = new == .tracking || new == .interacting || new == .decelerating
+          if userScrolling { touched = true }
+          if new == .animating { return }   // (on its way, e.g. to a new message: where it lands is read when it ends)
+          let g = context.geometry
+          atBottom = g.contentOffset.y + g.containerSize.height - g.contentInsets.bottom >= g.contentSize.height - 80
+          if atBottom { unseen = 0 }
+        }
+        // at the newest message it stays there: when the content grows (a message, a picture that loads, rows measured
+        // late), and when the keyboard or a taller composer takes room at the bottom
+        .onScrollGeometryChange(for: [CGFloat].self, of: { g in [g.contentSize.height.rounded(), g.containerSize.height.rounded(), g.contentInsets.bottom.rounded()] }) { _, _ in
+          if atBottom && !userScrolling { proxy.scrollTo("bottom", anchor: .bottom) }
+        }
         .scrollDismissesKeyboard(.interactively)
         // a tap in the conversation puts the keyboard away (Messages)
         .simultaneousGesture(TapGesture().onEnded { hideKeyboard() })
@@ -84,7 +102,7 @@ struct SessionScreen: View {
         }
         .overlay(alignment: .bottom) {
           if unseen > 0 && !atBottom {
-            Button { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }; unseen = 0 } label: {
+            Button { atBottom = true; withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }; unseen = 0 } label: {
               HStack(spacing: 6) { Text(unseen == 1 ? "1 new" : "\(unseen) new").font(Face.text(14, .semibold)); Image(systemName: "arrow.down") }
                 .foregroundStyle(Ink.fg).padding(.horizontal, 14).padding(.vertical, 8).glass(Capsule(), interactive: true)
             }.padding(.bottom, 8)
@@ -94,10 +112,10 @@ struct SessionScreen: View {
           // the composer stays at the bottom (Messages, WhatsApp): a tap in it brings the keyboard; no tab bar in a chat
           VStack(spacing: 0) {
             SessionLinkNote(agent: a, messages: all)
-            Composer(placeholder: composeWords(a), agent: a.id, onSent: { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } })
+            Composer(placeholder: composeWords(a), agent: a.id, onSent: { atBottom = true; withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } })
           }
         }
-        .onAppear { lastCount = all.count; proxy.scrollTo("bottom", anchor: .bottom); model.lastChat = a.id; model.markRead(a) }
+        .onAppear { lastCount = all.count; atBottom = true; proxy.scrollTo("bottom", anchor: .bottom); model.markRead(a) }
         .onChange(of: model.version) { _, _ in model.markRead(a) }
         // what a catch-up brought as headers only (the app was away, the hub restarted): filled while the chat is open
         .task(id: model.version) { try? await Task.sleep(nanoseconds: 150_000_000); await model.loadNewer(agent: a.id) }
@@ -129,6 +147,7 @@ struct SessionScreen: View {
   private func loadOlder(_ proxy: ScrollViewProxy, first: String?) {
     guard !loadingOlder else { return }
     loadingOlder = true
+    atBottom = false   // (the view stays with the message that was at the top, not with the newest)
     Task {
       await model.loadOlder(agent: agentId)
       // keep the message that was at the top where it was

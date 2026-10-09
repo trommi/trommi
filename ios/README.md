@@ -114,7 +114,13 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
 - **Chat:** no tab bar inside a chat (Messages, WhatsApp); it returns on the list. The composer (attach, send) is
   always at the bottom, a bottom bar (`safeAreaBar`, a safe area inset before iOS 26): a tap in it brings the keyboard,
   it rides on the keyboard and reserves its height, so the last message scrolls clear of it. A tap in the
-  conversation hides the keyboard.
+  conversation hides the keyboard. The Chat tab always opens on the list (a tap on it pops an open chat). A chat
+  opens at the newest message and stays there while it is at the end: when a message comes in, a picture loads, the
+  keyboard rises or the composer grows (`SessionScreen`: `onScrollGeometryChange`); only his own scrolling takes it
+  away, and earlier pages load by themselves only after he has scrolled.
+- **Chat list:** a main session's helpers lie folded in one stack under it, as in the web's sidebar (`UnitStack` in
+  `TrommiClient/Desk.swift`): seven drawings at most, the stopped ones first and marked, the count, how many wait on
+  him or are at work; the main's row counts its helpers in. A tap unfolds a stack; which are open is kept on the phone.
 - **Note:** a panel inside the page, above the tab bar, not a sheet (a sheet covered the bar). The page stays
   visible behind it, dimmed. The keyboard lifts the panel as it lifts the page. Drag the handle down or tap beside the
   panel to close it; the draft stays on the note.

@@ -11,9 +11,9 @@ struct BoardShell: View {
   @State private var columns = NavigationSplitViewVisibility.all
   @State private var noteOpen = false
   private var hasNote: Bool { !(model.desk?.notes.filter { $0.held.isNull && (!$0.text.isEmpty || !$0.attachments.isEmpty) }.isEmpty ?? true) }
-  /** Chat opens into the chat he used last (the crowned one first). */
+  /** Chat always opens on its list (a chat has no tab bar: opened into one, there was no way back to the bar). */
   private func openTab(_ t: BoardModel.Tab) {
-    if t == .chat, model.chatPath.isEmpty, let id = model.lastChat.flatMap({ model.agent($0)?.id }) ?? model.desk?.crownOf(desk: model.deskId)?.id { model.chatPath = [.session(id)] }
+    if t == .chat { model.chatPath = [] }
     model.tab = t
   }
 
