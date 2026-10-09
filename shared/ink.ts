@@ -127,8 +127,11 @@ export function anglesOfTilt(tiltX: unknown = 0, tiltY: unknown = 0): { az: numb
 
 // ---- shape ----
 /** The stroke's line as samples [x, y, r, …] (r: half the ink's width there), every ~step units along the
- *  clamped uniform cubic B-spline of its points; force follows the same spline. A marker has one radius. */
-export function sampleStroke(pts: number[], f: readonly (number | undefined)[] | null | undefined, { tool = 'pen', width = 4, step = 1 }: { tool?: string; width?: number; step?: number } = {}): number[] {
+ *  clamped uniform cubic B-spline of its points; force follows the same spline. A marker has one radius.
+ *  from, to: only the spans from..to of the n + 1 (a stroke being drawn is sampled piece by piece: with n points
+ *  the spans 0..n-2 no longer change when a point is added, only the last two do); a piece begins where the span
+ *  before it ends. */
+export function sampleStroke(pts: number[], f: readonly (number | undefined)[] | null | undefined, { tool = 'pen', width = 4, step = 1, from = 0, to = Infinity }: { tool?: string; width?: number; step?: number; from?: number; to?: number } = {}): number[] {
   const n = pts.length >> 1
   if (!n) return []
   const half = width / 2
@@ -136,7 +139,11 @@ export function sampleStroke(pts: number[], f: readonly (number | undefined)[] |
   if (n === 1) return [pts[0]!, pts[1]!, rAt(0)]
   const P = (j: number): number => Math.min(n - 1, Math.max(0, j - 2))   // the padded control points: P0 P0 P0 P1 … Pn-1 Pn-1 Pn-1
   const out = [pts[0]!, pts[1]!, rAt(0)]
-  for (let s = 0; s <= n; s++) {
+  if (from > 0) {   // the span's own beginning (t = 0): 1/6, 4/6, 1/6 of its first three control points
+    const a = P(from), b = P(from + 1), c = P(from + 2)
+    out[0] = (pts[2 * a]! + 4 * pts[2 * b]! + pts[2 * c]!) / 6; out[1] = (pts[2 * a + 1]! + 4 * pts[2 * b + 1]! + pts[2 * c + 1]!) / 6; out[2] = (rAt(a) + 4 * rAt(b) + rAt(c)) / 6
+  }
+  for (let s = Math.max(0, from); s <= Math.min(n, to); s++) {
     const i0 = P(s), i1 = P(s + 1), i2 = P(s + 2), i3 = P(s + 3)
     const x0 = pts[2 * i0]!, y0 = pts[2 * i0 + 1]!, x1 = pts[2 * i1]!, y1 = pts[2 * i1 + 1]!, x2 = pts[2 * i2]!, y2 = pts[2 * i2 + 1]!, x3 = pts[2 * i3]!, y3 = pts[2 * i3 + 1]!
     const r0 = rAt(i0), r1 = rAt(i1), r2 = rAt(i2), r3 = rAt(i3)

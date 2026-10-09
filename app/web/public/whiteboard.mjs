@@ -267,31 +267,56 @@ const resolveInk = (token, dark, tool = 'pen') => colorOf(token, tool, dark)
 // is the outline (round ends and joins, never a notch, and a see-through ink is laid once). The marker is one width:
 // the line stroked with round ends, translucent. (The points are local to the element.)
 const geomCache = new WeakMap()
-function buildGeom(s) {
-  const path = new Path2D()
-  const out = sampleStroke(s.pts, s.f, { tool: s.tool, width: s.width })
-  if (s.tool === 'marker') {
-    path.moveTo(out[0], out[1])
-    if (out.length === 3) path.lineTo(out[0] + 0.01, out[1])
-    for (let i = 3; i < out.length; i += 3) path.lineTo(out[i], out[i + 1])
-    return { path, fill: false }
+const LAY = 64   // samples per piece of a pen's outline
+/** Lay samples [x, y, r, …] (ink.mjs sampleStroke) into a path. begin: the path is empty (a piece that continues a
+ *  stroke being drawn joins what is there). The pen's discs and quads go in as pieces of LAY samples (addPath):
+ *  Chromium's Path2D takes longer for every new contour the more it holds, so one path built contour by contour
+ *  cost the square of the stroke's length (4,000 samples: 157 ms; in pieces: 4 ms). */
+function lay(path, out, marker, begin = true) {
+  if (marker) {
+    if (begin) { path.moveTo(out[0], out[1]); if (out.length === 3) path.lineTo(out[0] + 0.01, out[1]) }
+    for (let i = begin ? 3 : 0; i < out.length; i += 3) path.lineTo(out[i], out[i + 1])
+    return
   }
-  for (let i = 0; i < out.length; i += 3) {
-    const x = out[i], y = out[i + 1], r = out[i + 2]
-    path.moveTo(x + r, y)
-    path.arc(x, y, r, 0, Math.PI * 2, true)
-    if (i + 3 < out.length) {
-      const bx = out[i + 3], by = out[i + 4], br = out[i + 5]
-      const dx = bx - x, dy = by - y, l = Math.hypot(dx, dy) || 1
-      const nx = -dy / l, ny = dx / l
-      path.moveTo(x + nx * r, y + ny * r)
-      path.lineTo(bx + nx * br, by + ny * br)
-      path.lineTo(bx - nx * br, by - ny * br)
-      path.lineTo(x - nx * r, y - ny * r)
-      path.closePath()
+  for (let a = 0; a < out.length; a += 3 * LAY) {
+    const piece = new Path2D()
+    for (let i = a; i < out.length && i < a + 3 * LAY; i += 3) {
+      const x = out[i], y = out[i + 1], r = out[i + 2]
+      piece.moveTo(x + r, y)
+      piece.arc(x, y, r, 0, Math.PI * 2, true)
+      if (i + 3 < out.length) {
+        const bx = out[i + 3], by = out[i + 4], br = out[i + 5]
+        const dx = bx - x, dy = by - y, l = Math.hypot(dx, dy) || 1
+        const nx = -dy / l, ny = dx / l
+        piece.moveTo(x + nx * r, y + ny * r)
+        piece.lineTo(bx + nx * br, by + ny * br)
+        piece.lineTo(bx - nx * br, by - ny * br)
+        piece.lineTo(x - nx * r, y - ny * r)
+        piece.closePath()
+      }
     }
+    path.addPath(piece)
   }
-  return { path, fill: true }
+}
+function buildGeom(s) {
+  const path = new Path2D(), marker = s.tool === 'marker'
+  lay(path, sampleStroke(s.pts, s.f, { tool: s.tool, width: s.width }), marker)
+  return { path, fill: !marker }
+}
+/** The outline of a stroke while it is drawn (g: the gesture; its points grow), in world units. Only what a new point
+ *  changes is made again: with n points the spline's spans 0..n-2 are final and stay in g.wet.path, the last two
+ *  spans (the clamped end under the pen) are laid fresh for each frame. A frame costs the same at the stroke's first
+ *  point and at its thousandth. */
+export function wetGeom(g) {
+  const w = g.wet ??= { path: new Path2D(), spans: 0 }
+  const n = g.t.length, marker = g.tool === 'marker', opt = { tool: g.tool, width: g.width }
+  if (n - 2 >= w.spans) {
+    lay(w.path, sampleStroke(g.pts, g.f, { ...opt, from: w.spans, to: n - 2 }), marker, w.spans === 0)
+    w.spans = n - 1
+  }
+  const path = new Path2D(w.path)
+  lay(path, sampleStroke(g.pts, g.f, { ...opt, from: w.spans }), marker, w.spans === 0)
+  return { path, fill: !marker }
 }
 function geom(data) {
   let g = geomCache.get(data)
@@ -1170,8 +1195,7 @@ function mountPad(main, { canvasId: PAD, client }) {
 
     if (gesture?.type === 'draw' && gesture.moved) {
       ctx.setTransform(dpr * view.z, 0, 0, dpr * view.z, dpr * view.x, dpr * view.y)
-      const s = { tool: gesture.tool, color: gesture.color, width: gesture.width, pts: gesture.pts, f: gesture.f }
-      paintStroke(ctx, s, dark(), buildGeom(s))
+      paintStroke(ctx, gesture, dark(), wetGeom(gesture))
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     const S = selectionBox()

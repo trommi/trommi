@@ -120,6 +120,30 @@ await test('shape: the clamped B-spline begins and ends at the first and last po
   assert.deepEqual(sampleStroke([5, 6], [0.25], { width: 4 }), [5, 6, 2])
 })
 
+await test('shape: a stroke being drawn is sampled piece by piece (from, to): a piece never changes when points are added, and the pieces are the whole line', () => {
+  const pts = [], f = []
+  for (let i = 0; i < 60; i++) { pts.push(i * 7, 40 * Math.sin(i / 3) + (i % 2) * 5); f.push(0.1 + 0.3 * Math.abs(Math.cos(i / 5))) }
+  const opt = { tool: 'pen', width: 4 }
+  const whole = sampleStroke(pts, f, opt)
+  const onWhole = (x, y) => { let d = Infinity; for (let i = 0; i + 3 < whole.length; i += 3) { const ax = whole[i], ay = whole[i + 1], dx = whole[i + 3] - ax, dy = whole[i + 4] - ay, l = dx * dx + dy * dy, t = l ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l)) : 0; d = Math.min(d, Math.hypot(x - ax - t * dx, y - ay - t * dy)) } return d }
+  // drawn point by point, as the pad does (whiteboard.mjs wetGeom): with n points the spans done..n-2 are final
+  const pieces = []
+  let done = 0
+  for (let n = 2; n <= 60; n++) {
+    const now = pts.slice(0, 2 * n), piece = sampleStroke(now, f, { ...opt, from: done, to: n - 2 })
+    assert.deepEqual(piece, sampleStroke(pts, f, { ...opt, from: done, to: n - 2 }), `the piece of spans ${done}..${n - 2} is the same with every point after it`)
+    pieces.push(piece)
+    done = n - 1
+  }
+  pieces.push(sampleStroke(pts, f, { ...opt, from: done }))   // the end under the pen
+  const all = pieces.flat()
+  for (let i = 0; i < all.length; i += 3) assert.ok(onWhole(all[i], all[i + 1]) < 1e-6 + 0.02, `a piece's sample ${i / 3} lies on the whole line`)
+  assert.deepEqual(all.slice(0, 3), whole.slice(0, 3)); assert.deepEqual(all.slice(-3), whole.slice(-3))
+  // no gap between a piece and the next: each begins where the one before it ends (within the sampling step)
+  for (let k = 1; k < pieces.length; k++) assert.ok(Math.hypot(pieces[k][0] - pieces[k - 1].at(-3), pieces[k][1] - pieces[k - 1].at(-2)) <= 0.5, `piece ${k} joins the one before`)
+  assert.deepEqual(sampleStroke(pts, f, { ...opt, from: 0, to: Infinity }), whole)
+})
+
 await test('input: tilt to azimuth and altitude, simulated force from speed', () => {
   assert.deepEqual(anglesOfTilt(0, 0), { az: 0, al: Math.PI / 2 })
   const r = anglesOfTilt(45, 0); near(r.az, 0, 1e-9, 'az'); near(r.al, Math.PI / 4, 1e-9, 'al')
