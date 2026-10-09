@@ -9,7 +9,8 @@ description = "Scenario, conformance and crash tests of Trommi's protocol core, 
 path = "src/lib.rs"
 
 [dependencies]
-trommi-core = { path = "../core" }
+trommi-core = { path = "../core", features = ["vectors"] }
+serde_json = "=1.0.151"
 
 [[test]]
 name = "core_groups_founding"
@@ -50,3 +51,7 @@ path = "core/groups_helper.rs"
 [[test]]
 name = "core_groups_concurrency"
 path = "core/groups_concurrency.rs"
+
+[[test]]
+name = "core_vectors"
+path = "core/vectors.rs"

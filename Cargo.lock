@@ -2256,6 +2256,7 @@ dependencies = [
 name = "trommi-tests"
 version = "0.0.0"
 dependencies = [
+ "serde_json",
  "trommi-core",
 ]
 
