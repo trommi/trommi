@@ -293,7 +293,7 @@ struct DevicesPage: View {
         RowRule()
         Button { inviteDevice = true } label: { SettingsRow(title: "Invite a Device", tint: Ink.accent) { PenMark("ui:PLUS", color: Ink.accent) } }.buttonStyle(.plain)
       }
-      SettingsGroup(header: "Agents", footer: "Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the signed member list: it must look the same on every device.") {
+      SettingsGroup(header: "Agents", footer: "Every device holds its own keys; the hub sees sealed envelopes only. The fingerprint comes from the device's own key, as the room's group names it: it must look the same on every device.") {
         if agents.isEmpty { Text("No agent yet.").font(Face.text(15)).foregroundStyle(Ink.muted).padding(16).frame(maxWidth: .infinity, alignment: .leading) }
         ForEach(Array(agents.enumerated()), id: \.element.deviceId) { i, d in
           if i > 0 { RowRule() }
@@ -461,7 +461,7 @@ struct AccountPage: View {
           RowRule()
           SettingsRow(title: "Version", detail: "Trommi \(HubClient.appVersion) · key epoch \(r.state.epoch)") { PenMark("ui:BELL", color: Ink.fg) }
         }
-        SettingsGroup(footer: "This device removes itself from the room and forgets its keys. Your other devices and your agents carry on.") {
+        SettingsGroup(footer: "This device forgets the room and its keys. To take it out of the room, remove it under Devices on another device. Your other devices and your agents carry on.") {
           Button { leave = true } label: { SettingsRow(title: "Log Out…", tint: Ink.urgCritical) { PenMark("sidebar:LEAVE", color: Ink.urgCritical) } }.buttonStyle(.plain)
         }
         .confirmationDialog("Log Out of This Device?", isPresented: $leave, titleVisibility: .visible) {

@@ -203,7 +203,8 @@ public final class Room {
     liveTask?.cancel(); goalsTask?.cancel(); cacheTask?.cancel()
     hub.signer = nil
     hub.forgetToken()
-    coreQueue.sync { deviceStore.close() }
+    // The core first (it wipes what it holds in memory and lets go of the store), then the store's lock.
+    coreQueue.sync { device.close(); deviceStore.close() }
   }
   /** `close`, after what is running (queued operations, a cache save) has ended. */
   public func shutdown() async {
@@ -746,12 +747,14 @@ public final class Room {
    * Waits a moment for the hub's word on what was just put into the outbox: a refusal is thrown here; a network
    * delay is not waited out (the outbox keeps the entry and posts it later).
    */
-  func awaitOutcome(_ id: UInt64, ms: UInt64 = 8_000) async throws {
+  func awaitOutcome(_ id: UInt64, ms: UInt64 = 8_000, orThrow: Bool = false) async throws {
     let until = nowMs() + ms
     while nowMs() < until {
       if let o = outcome.removeValue(forKey: id) { if case .failure(let e) = o { throw e }; return }
       try? await Task.sleep(nanoseconds: 40_000_000)
     }
+    // `orThrow`: the caller builds on the hub having taken it (a step of several): no word is not a yes.
+    if orThrow { throw TrommiError("pending", "the hub has not answered yet: this waits in the outbox and is sent again") }
   }
   /** Waits until the hub has taken everything in the outbox. */
   public func flush(timeoutMs: UInt64 = 30_000) async throws {

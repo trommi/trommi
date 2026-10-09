@@ -36,7 +36,7 @@ extension Room {
       self.pumpOutbox()
       return id
     }
-    if let id = id { try await awaitOutcome(id, ms: 20_000) }
+    if let id = id { try await awaitOutcome(id, ms: 20_000, orThrow: true) }
     _ = try? await serial { [self] in var ch = Change(); try await self.refreshGroups(&ch); self.emit(ch) }
   }
 
@@ -100,10 +100,12 @@ extension Room {
   /** A human device that is in the room group but not yet in a live session group: added there, with the old keys. */
   func addToSessions(_ device: DeviceId) async throws {
     for g in groups.values where g.session != nil && !g.archived && !g.leaves.contains(device) {
-      guard let kp = try await noted({ try await hub.claimKeyPackages([device]) }).first?.keyPackage else { continue }
+      // (5.2.7: every live session, with its old keys. A session it could not be added to is an error the caller
+      // shows; calling this again goes on where it stopped, since it skips the groups the device is in.)
+      guard let kp = try await noted({ try await hub.claimKeyPackages([device]) }).first?.keyPackage else { throw TrommiError("not-found", "the new device has no KeyPackage left at the hub") }
       let group = g.group
       try await commit { try $0.addToSession(group: group, device: device, keyPackage: kp, nowMs: nowMs()) }
-      _ = try? await serial { [self] in try await self.onCore { try $0.sendHandover(group: group, recipient: device) }; self.pumpOutbox() }
+      try await serial { [self] in _ = try await self.onCore { try $0.sendHandover(group: group, recipient: device) }; self.pumpOutbox() }
     }
   }
 
@@ -139,12 +141,19 @@ extension Room {
       try await takeOver(sessionId: sid, newAgent: newId)
       return sid
     }
-    guard let kp = try await noted({ try await hub.claimKeyPackages([newId]) }).first?.keyPackage else { throw TrommiError("not-found", "the agent published no KeyPackage") }
-    let sid: SessionId = try await serial { [self] in
-      let s = try await self.onCore { try $0.foundSession(agent: newId, keyPackages: [kp], nowMs: nowMs()) }
+    // A session group holds the agent device and EVERY human device (5.2.5): one KeyPackage of each, all or nothing.
+    let others = (roomGroup.flatMap { groups[hex($0)]?.leaves } ?? []).filter { hex($0) != deviceIdHex }
+    let claimed = try await noted { try await hub.claimKeyPackages([newId] + others) }
+    guard claimed.count == others.count + 1 else { throw TrommiError("not-found", "a device has no KeyPackage left at the hub") }
+    let (sid, founding): (SessionId, UInt64?) = try await serial { [self] in
+      let r = try await self.onCore { d -> (SessionId, UInt64?) in
+        let s = try d.foundSession(agent: newId, keyPackages: claimed.map(\.keyPackage), nowMs: nowMs())
+        return (s, d.outbox().last(where: { $0.kind == .groupFounding })?.id)
+      }
       self.pumpOutbox()
-      return s
+      return r
     }
+    if let id = founding { try await awaitOutcome(id, ms: 20_000, orThrow: true) }
     _ = try? await serial { [self] in var ch = Change(); try await self.refreshGroups(&ch); self.emit(ch) }
     var place: [String: JV] = [:]
     if let l = inv.label, !l.isEmpty { place["name"] = .str(l) }
@@ -162,15 +171,17 @@ extension Room {
     guard let main = sessionGroup(sessionId), let old = main.session?.agents.first else { throw TrommiError("not-found", "no such session") }
     if old != newAgent { try await commit { try $0.changeAgents(enrol: [], remove: [old], nowMs: nowMs()) } }
     let session = try unhex(sessionId)
+    // The main session first: a helper session takes its new opener only once the main session has it (5.3.1 c).
     let affected = groups.values.filter { !$0.archived && ($0.session?.session == session || $0.session?.parent == session) }
+      .sorted { ($0.session?.parent == nil ? 0 : 1) < ($1.session?.parent == nil ? 0 : 1) }
     for g in affected {
-      guard let kp = try await noted({ try await hub.claimKeyPackages([newAgent]) }).first?.keyPackage else { continue }
+      guard let kp = try await noted({ try await hub.claimKeyPackages([newAgent]) }).first?.keyPackage else { throw TrommiError("not-found", "the new agent device has no KeyPackage left at the hub") }
       let group = g.group
       try await commit { device in
         let cuts = g.leaves.contains(old) ? [try device.cut(group: group, device: old)] : []
         return try device.cleanSession(group: group, cuts: cuts, replacement: (newAgent, kp), nowMs: nowMs())
       }
-      _ = try? await serial { [self] in try await self.onCore { try $0.sendHandover(group: group, recipient: newAgent) }; self.pumpOutbox() }
+      try await serial { [self] in _ = try await self.onCore { try $0.sendHandover(group: group, recipient: newAgent) }; self.pumpOutbox() }
     }
   }
 
