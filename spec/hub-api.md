@@ -130,35 +130,38 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   client's address (the forwarded one only when the hub is configured to trust its proxy, and only if it is an
   address); one IPv6 network (/64) is one source. The password and the Emergency Kit are counted apart; an
   e-mail without an account behaves the same.
-  - *Per source and e-mail:* after each failure that source waits 1 s, 2 s, 4 s … up to 15 minutes before its
-    next attempt at that e-mail (`rate-limited` with `retry-after`); a success ends it. That is at most 13
-    guesses in the first hour and 4 an hour after. A source has one attempt at an account being checked at a
-    time, however long the check takes.
+  - *Per source and e-mail:* after each failed check that source waits 1 s, 2 s, 4 s … up to 15 minutes before
+    its next check at that e-mail (`rate-limited` with `retry-after`); a success ends it. That is at most 13
+    guesses in the first hour and 4 an hour after, whatever else happens. A source has one check at an account
+    running at a time, however long the check takes.
   - *Per account:* 100 checks in an hour (the hour begins with the first of them). Past that, sources stand in
-    line: one is checked every two seconds, in the order they came. Each is told its turn by `retry-after` and
-    is checked when it comes back then; a turn is kept for three seconds, and nobody told a later turn is
-    checked while an earlier one is kept. The line is ten minutes long; a source that finds it full is told to
-    ask again in a minute. That is at most 2 000 checks per account in any hour, however many sources there
-    are (1 800 in line, and the 100 twice where two of its hours meet), beside the early checks of the sources
-    it knows (below). The spacing holds at the moment a check starts, not when its request came.
+    line: turns are given out two seconds apart in the order sources came, each told by `retry-after`. A turn is
+    its source's alone and good for one check, from its time until five seconds after; nobody else can take it,
+    and nobody waits for anybody. Who comes later asks for a new turn. The line is ten minutes long; a source
+    that finds it full is told to ask again in a minute. That is at most 2 000 checks per account in any hour,
+    however many sources there are (1 800 turns, and the 100 twice where two of its hours meet), beside the
+    early checks of the sources it knows (below). The time of a check is the moment it starts.
   - *The owner always gets in.* A source the account knows (one of the last 16 it was signed in to from, by
-    password, kit or passkey; the hub keeps a keyed hash, not the address) is checked at once whatever others
-    do: a correct credential is answered at once. From a new source a correct credential is checked in its
-    turn, at most ten minutes and a little later.
+    password, kit or passkey; the hub keeps a keyed hash, not the address) is checked at once also while it
+    stands in line: a correct credential is answered at once, whatever others do. From a new source a correct
+    credential is checked at its turn, at most ten minutes and a little later.
   - *One answer.* A wrong credential is answered alike from a source the account knows and one it does not: in
     line, both are told to wait their turn, and the answer costs the same slow hash either way (for a known
-    source it is the real check, with a back-off of its own of 1 s … 15 minutes that the answer does not
-    show). So the owner at home who mistypes while others stand in line is told a turn too; the right password
-    gets in before it, once that hidden second or so has passed.
+    source it is the real check, under that source's one back-off). So the owner at home who mistypes while
+    others stand in line is told a turn too; the right password gets in before it, once the back-off of the
+    mistake (a second, two …) has passed.
   - *Kept and bounded.* The state lies in the database (hashes, no address, no e-mail): a restart resets
-    nothing. An account keeps a record of at most 5 000 sources, the hub of 500 000 in all, and of 200 000
-    accounts' hours. A full table forgets the record whose wait ran out longest ago (that source starts again
+    nothing. An account keeps a record of at most 5 000 sources, the hub of 500 000 in all, and the hours of
+    200 000 e-mails. A full table forgets the record whose wait ran out longest ago (that source starts again
     at one second; the account's 2 000 an hour hold all the same); a record that still waits is never
-    forgotten, and if all do, a source without a record is told to ask again in a minute. Sources an account
-    knows always have room. A full table of hours forgets the oldest hour of an e-mail that has no account,
-    never an account's. A record is deleted a day after its wait ran out.
-  - Not covered by an address-based rule, and left so: someone guessing from the owner's own address (the same
-    NAT) slows the owner's wrong attempts from there down as well.
+    forgotten, and if all do, a wrong credential is told to ask again in a minute, from a known source as from
+    any other (a right one from a known source gets in). A full table of hours forgets the oldest hour, with
+    its line, whoever's it is: the 2 000 an hour hold while fewer than 200 000 e-mails are tried within the
+    hour. A record is deleted a day after its wait ran out.
+  - Not covered, and left so: someone guessing from the owner's own address (the same NAT) slows the owner's
+    wrong attempts from there down as well. And a guesser at an address the account knows can find that out
+    with some effort: after about six wrong guesses in line its back-off is longer than its turn is away, and
+    it is told the back-off.
 - A successful login is answered only if the account still is as the check found it (its revision); a password,
   kit or passkey replaced meanwhile makes the login start over (`overloaded`).
 - Other limits: 30 logins per address in ten minutes (answers that only tell a wait count too); 20 passkeys per
@@ -279,18 +282,20 @@ encrypted.
 34. The update cadence of v2.md 5.2.9 is the clients'; the hub neither asks for an own-leaf update nor refuses
     one for coming early (it counts among a device's expensive requests, point 30).
 35. Stroke pieces: 20 within any second per device. A stream whose token ran out is cut at that moment, also
-    one that had ended before with a reader that did not read; what was queued for it is not sent.
+    one that had ended before with a reader that did not read (not a connection whose stream was read to its
+    end: that one may serve the next request); what was queued for it is not sent.
 36. Every failure of `POST /v2/account/passkey/login` is `wrong-login`, a malformed request too (also a body
     that is no JSON object).
 37. The per-address and per-device limits are kept in memory for 100 000 keys each. Over that, keys not in use
     are forgotten first; if all are in use, a key without a record is let through unrecorded rather than
     everyone refused. (The login throttle does not rest on these: its state is in the database, see "The
     account".)
-38. A Live Activity's counts are taken for sent only when Apple took them. A token Apple refuses is forgotten;
-    a token registered anew is sent the counts in the next round. "Lost" is never told after the `online` of a
+38. A Live Activity's counts are taken for sent only when Apple took them; without a token nothing counts as
+    sent, so an end stays due until the activity's token is registered. A token Apple refuses is forgotten; a
+    token registered anew is sent the counts in a round after it is stored. "Lost" is never told after the `online` of a
     stream the agent opened first.
 28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
 39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`; the hub also takes them
-    beside the other members. New recovery keys are refused if a row of the room was sealed to that HPKE key
-    before (8.6; the hub holds no list of older signature keys). `PUT /v2/sealed-keys` is a human device's
+    beside the other members. New recovery keys are refused if the room held either of them before, as
+    either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v2/sealed-keys` is a human device's
     (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.
