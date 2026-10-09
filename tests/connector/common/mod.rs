@@ -479,7 +479,11 @@ impl Human {
         let session = self
             .vault
             .device
-            .found_session(&agent.device, &[agent.key_package.clone()], now_ms())
+            .found_session(
+                &agent.device,
+                std::slice::from_ref(&agent.key_package),
+                now_ms(),
+            )
             .expect("the founding is built");
         self.vault.commit().expect("stored");
         self.post_all().await.expect("the founding is taken");

@@ -1,5 +1,5 @@
 // build.rs: connector/prompt.md and connector/tools.json are compiled in (include_str! in src/prompt.rs). Here they
-// are checked as connector/test.mjs checks them, so a binary with a broken text cannot be built: every tool has a
+// are checked, so a binary with a broken text cannot be built: every tool has a
 // section "## <name>" and no section lacks a tool, every description has at most 2048 characters, the instructions at
 // most 1900 (with either paragraph for <mirror>).
 use std::collections::BTreeMap;

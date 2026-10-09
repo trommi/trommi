@@ -533,7 +533,7 @@ impl Conn {
                 .await
                 .is_ok()
             {
-                self.receipt(&[e.about.clone()]);
+                self.receipt(std::slice::from_ref(&e.about));
             } else {
                 self.missed.lock().unwrap().push(e);
             }
@@ -642,14 +642,13 @@ impl Conn {
         let r = self.report().await;
         let report =
             json!({ "hears": r["hears"], "working": false, "last_call_at": r["last_call_at"] });
-        match tokio::time::timeout(
+        let said = tokio::time::timeout(
             std::time::Duration::from_millis(1500),
             c.report_link(report),
         )
-        .await
-        {
-            Ok(Err(e)) => eprintln!("[trommi] last word not said: {}", e.text()),
-            _ => {}
+        .await;
+        if let Ok(Err(e)) = said {
+            eprintln!("[trommi] last word not said: {}", e.text());
         }
     }
     fn look_around(&self) {

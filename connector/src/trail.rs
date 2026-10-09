@@ -128,9 +128,7 @@ pub fn redact(s: &str) -> String {
     let e = named.replace_all(&d, |m: &regex::Captures| {
         let (name, value) = (&m[1], &m[2]);
         let spaced = !name.trim_end().ends_with([':', '=']);
-        if spaced && !name.starts_with('-') {
-            m[0].to_string()
-        } else if value == "…" || value.starts_with('…') {
+        if (spaced && !name.starts_with('-')) || value == "…" || value.starts_with('…') {
             m[0].to_string()
         } else {
             format!("{name}…")
@@ -162,12 +160,12 @@ pub fn excerpt(text: &str, max: usize) -> String {
     let lines: Vec<&str> = t.lines().collect();
     let (head_max, tail_max) = (max * 6 / 10, max * 4 / 10);
     let (mut head, mut tail, mut used) = (0, lines.len(), 0);
-    while head < lines.len() && used + lines[head].len() + 1 <= head_max {
+    while head < lines.len() && used + lines[head].len() < head_max {
         used += lines[head].len() + 1;
         head += 1;
     }
     used = 0;
-    while tail > head && used + lines[tail - 1].len() + 1 <= tail_max {
+    while tail > head && used + lines[tail - 1].len() < tail_max {
         used += lines[tail - 1].len() + 1;
         tail -= 1;
     }
