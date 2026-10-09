@@ -56,7 +56,8 @@ What a client must expect of the device:
   behind later ones): read them again. A Cut does the same when a Commit is processed; `chain_cut` names
   where a removed device's chain ends, and `findings` what was found on the way.
 - A human device is added, and an agent device enrolled, only by `invite_confirm`, which takes the code and
-  request hash the person confirmed; `invite_steps` lists what follows until it is done.
+  request hash the person confirmed; `invite_steps` lists everything that is left, from the state of the groups
+  (so also after a restart), until the invite is finished.
 
 - A write that meets another owner (`StorageError::Conflict`) ends this object: `is_owner()` is false, `outbox()`
   is empty and every operation returns the storage error, until the state is opened again.
@@ -89,6 +90,14 @@ its finish, and the device's state changes only when the hub accepted the finish
 Newest first. The interface grows by adding; these are the additions that an exhaustive `match` or a caller's
 assumptions have to take in.
 
+- Joining by link: `invite_steps` takes `&mut self`, lists every step left (not only the next), and drops an
+  invite with nothing left. `InviteStep::TakeOver::key_package` is an `Option`: `Some` for the main session (the
+  confirmed Request's), `None` for a helper session, where a fresh KeyPackage of the agent device is claimed at
+  the hub; a `TakeOver` without Cuts adds the new opener to a helper session that has none. `invite_forget`
+  drops only the handovers. `invite_handover` sends the first `Handover` step. `hub_sign_in` works for a
+  joining device once `join_reveal` returned the code (room and hub of the stored invite; another hub is
+  `bad-invite`). The `recovery_mac` for a device added by link is no step: it is in the outbox once the Add
+  was merged.
 - Recovery is in the device: `Device::create(store, entropy)` and `Device::open(store, entropy)` take no third
   parameter; `found_room(&RecoveryKeys, now_ms)`; `send_recovery_auth(&recipient) -> Option<u64>`;
   `join_from_outside`, `DeviceRecovery`, `SealRequest`, `Authorise` are gone, replaced by
