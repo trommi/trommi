@@ -60,7 +60,12 @@ CREATE TABLE rooms (
   founded_at     INTEGER NOT NULL,
   -- one counter per room: every Commit, message, envelope and fetchable row carries the change it was written at
   change         INTEGER NOT NULL DEFAULT 0,
-  file_bytes     INTEGER NOT NULL DEFAULT 0
+  file_bytes     INTEGER NOT NULL DEFAULT 0,
+  -- read from the room group's public state at its current epoch, kept beside it for the checks of every request
+  epoch              INTEGER NOT NULL DEFAULT 0,
+  room_state         BLOB NOT NULL,
+  recovery_signature_key BLOB NOT NULL,
+  recovery_hpke_key  BLOB NOT NULL
 ) STRICT, WITHOUT ROWID;
 
 -- Every signature key the room has ever seen in a role. A key has one role for ever; a human or agent device
@@ -91,7 +96,7 @@ CREATE TABLE key_packages (
   id             INTEGER PRIMARY KEY,
   room_id        BLOB NOT NULL REFERENCES rooms(room_id),
   device         BLOB NOT NULL,
-  ref            BLOB NOT NULL UNIQUE,
+  ref            BLOB NOT NULL,
   last_resort    INTEGER NOT NULL CHECK (last_resort IN (0, 1)),
   uploaded_at    INTEGER NOT NULL,
   expires_at     INTEGER NOT NULL,
@@ -99,9 +104,13 @@ CREATE TABLE key_packages (
 ) STRICT;
 -- claim: one device's oldest single-use package, else its last-resort one
 CREATE INDEX key_packages_claim ON key_packages(room_id, device, last_resort, id);
+CREATE UNIQUE INDEX key_packages_by_ref ON key_packages(room_id, ref);
+-- exactly one last-resort package per device
+CREATE UNIQUE INDEX key_packages_last_resort ON key_packages(room_id, device) WHERE last_resort = 1;
 
 CREATE TABLE groups (
-  group_id       BLOB PRIMARY KEY CHECK (length(group_id) IN (32, 48)),
+  -- 3.2: the room id for the room group, the room id and the session id for a session group
+  group_id       BLOB PRIMARY KEY CHECK (length(group_id) IN (32, 48) AND substr(group_id, 1, 32) = room_id),
   room_id        BLOB NOT NULL REFERENCES rooms(room_id),
   kind           TEXT NOT NULL CHECK (kind IN ('room', 'main', 'helper')),
   session_id     BLOB,
@@ -136,18 +145,24 @@ CREATE TABLE group_log (
   at             INTEGER NOT NULL,
   change         INTEGER NOT NULL,
   recovery_auth  BLOB,
+  -- SHA-256 of the bytes: a repeated post of the same bytes gets the first answer again
+  digest         BLOB NOT NULL,
   bytes          BLOB NOT NULL,
   PRIMARY KEY (group_id, n)
 ) STRICT, WITHOUT ROWID;
 CREATE UNIQUE INDEX group_log_by_change ON group_log(room_id, change);
 -- one Commit per group and epoch
 CREATE UNIQUE INDEX group_log_one_commit ON group_log(group_id, epoch) WHERE kind = 'commit';
+CREATE UNIQUE INDEX group_log_by_digest ON group_log(group_id, digest);
 CREATE INDEX group_log_messages_by_age ON group_log(at) WHERE kind = 'message';
 
 CREATE TABLE group_infos (
   group_id       BLOB NOT NULL REFERENCES groups(group_id),
   epoch          INTEGER NOT NULL,
-  bytes          BLOB NOT NULL,
+  -- RefHash("Trommi Group Info", bytes): what a SealedKey of this epoch names (8.2)
+  hash           BLOB NOT NULL,
+  -- kept for the current epoch and epoch 0 of every group, and for every epoch of the room group
+  bytes          BLOB,
   PRIMARY KEY (group_id, epoch)
 ) STRICT, WITHOUT ROWID;
 
@@ -274,8 +289,9 @@ CREATE TABLE cards (
   owner          BLOB NOT NULL,
   first_change   INTEGER NOT NULL,
   head_change    INTEGER NOT NULL,
-  -- the envelope hash of the current version, and of the answer in force
+  -- the current version: its envelope hash and the change it came at
   version_hash   BLOB NOT NULL,
+  version_change INTEGER NOT NULL,
   -- arrival of the newest state that is answered or closed: bodies are pruned 30 days after it (9.4)
   settled_at     INTEGER,
   closed_at      INTEGER,
@@ -296,6 +312,7 @@ CREATE TABLE permission_requests (
   first_change   INTEGER NOT NULL,
   head_change    INTEGER NOT NULL,
   version_hash   BLOB NOT NULL,
+  version_change INTEGER NOT NULL,
   settled_at     INTEGER,
   closed_at      INTEGER,
   pruned_at      INTEGER,
@@ -315,6 +332,7 @@ CREATE TABLE artifacts (
   first_change   INTEGER NOT NULL,
   head_change    INTEGER NOT NULL,
   version_hash   BLOB NOT NULL,
+  version_change INTEGER NOT NULL,
   settled_at     INTEGER,
   closed_at      INTEGER,
   pruned_at      INTEGER,
@@ -335,6 +353,7 @@ CREATE TABLE notes (
   first_change   INTEGER NOT NULL,
   head_change    INTEGER NOT NULL,
   version_hash   BLOB NOT NULL,
+  version_change INTEGER NOT NULL,
   settled_at     INTEGER,
   closed_at      INTEGER,
   pruned_at      INTEGER,
@@ -382,10 +401,13 @@ CREATE TABLE files (
   sha256         BLOB NOT NULL,
   stored_at      INTEGER NOT NULL,
   referenced_at  INTEGER,
+  -- the bytes are gone (retention, an unreferenced upload, a closed Artifact); the row stays, so that the id is
+  -- never used for other bytes (11.3)
+  deleted_at     INTEGER,
   PRIMARY KEY (room_id, file_id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX files_by_object ON files(room_id, object_id) WHERE object_id IS NOT NULL;
-CREATE INDEX files_pending ON files(stored_at) WHERE referenced_at IS NULL;
+CREATE INDEX files_pending ON files(stored_at) WHERE referenced_at IS NULL AND deleted_at IS NULL;
 
 CREATE TABLE shares (
   share_id       BLOB PRIMARY KEY CHECK (length(share_id) = 16),
@@ -507,7 +529,8 @@ fn tune(c: &Connection) -> rusqlite::Result<()> {
 impl Db {
     pub fn open(path: &Path) -> rusqlite::Result<Db> {
         let writer = Connection::open(path)?;
-        let tables: i64 = writer.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))?;
+        let tables: i64 =
+            writer.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get(0))?;
         if tables == 0 {
             // must be set before the first table
             writer.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
@@ -516,7 +539,9 @@ impl Db {
         tune(&writer)?;
         let version: i64 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if tables == 0 {
-            writer.execute_batch(&format!("BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"))?;
+            writer.execute_batch(&format!(
+                "BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+            ))?;
         } else if version != SCHEMA_VERSION {
             return Err(rusqlite::Error::InvalidParameterName(format!(
                 "the database has schema {version}, this hub writes schema {SCHEMA_VERSION}"
@@ -524,11 +549,18 @@ impl Db {
         }
         let mut readers = Vec::new();
         for _ in 0..4 {
-            let r = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+            let r = Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?;
             tune(&r)?;
             readers.push(Mutex::new(r));
         }
-        Ok(Db { writer: Mutex::new(writer), readers, next: Default::default() })
+        Ok(Db {
+            writer: Mutex::new(writer),
+            readers,
+            next: Default::default(),
+        })
     }
 
     /// The one writing connection. A poisoned lock is taken over: every write is a transaction, so a panic in the
@@ -538,7 +570,10 @@ impl Db {
     }
 
     /// One transaction on the writing connection: all of `f` or nothing.
-    pub fn write<T, E: From<rusqlite::Error>>(&self, f: impl FnOnce(&Connection) -> Result<T, E>) -> Result<T, E> {
+    pub fn write<T, E: From<rusqlite::Error>>(
+        &self,
+        f: impl FnOnce(&Connection) -> Result<T, E>,
+    ) -> Result<T, E> {
         let c = self.writer();
         if !c.is_autocommit() {
             let _ = c.execute_batch("ROLLBACK");
@@ -557,7 +592,10 @@ impl Db {
     }
 
     /// Runs `f` in a transaction that is always rolled back: a dry run against the real state.
-    pub fn rehearse<T, E: From<rusqlite::Error>>(&self, f: impl FnOnce(&Connection) -> Result<T, E>) -> Result<T, E> {
+    pub fn rehearse<T, E: From<rusqlite::Error>>(
+        &self,
+        f: impl FnOnce(&Connection) -> Result<T, E>,
+    ) -> Result<T, E> {
         let c = self.writer();
         if !c.is_autocommit() {
             let _ = c.execute_batch("ROLLBACK");
@@ -569,7 +607,10 @@ impl Db {
     }
 
     /// A consistent read on one of the reading connections.
-    pub fn read<T, E: From<rusqlite::Error>>(&self, f: impl FnOnce(&Connection) -> Result<T, E>) -> Result<T, E> {
+    pub fn read<T, E: From<rusqlite::Error>>(
+        &self,
+        f: impl FnOnce(&Connection) -> Result<T, E>,
+    ) -> Result<T, E> {
         let i = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.readers.len();
         let c = self.readers[i].lock().unwrap_or_else(|e| e.into_inner());
         if !c.is_autocommit() {
@@ -587,13 +628,19 @@ impl Db {
     }
 
     pub fn checkpoint(&self) {
-        let _ = self.writer().execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let _ = self
+            .writer()
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 }
 
 /// The next change number of a room.
 pub fn next_change(c: &Connection, room: &[u8]) -> rusqlite::Result<i64> {
-    c.query_row("UPDATE rooms SET change = change + 1 WHERE room_id = ?1 RETURNING change", [room], |r| r.get(0))
+    c.query_row(
+        "UPDATE rooms SET change = change + 1 WHERE room_id = ?1 RETURNING change",
+        [room],
+        |r| r.get(0),
+    )
 }
 
 #[cfg(test)]
@@ -602,21 +649,51 @@ mod tests {
 
     #[test]
     fn the_schema_loads_and_names_no_key_column() {
-        let dir = std::env::temp_dir().join(format!("trommi-hub-schema-{}", crate::util::hex(&crate::util::random::<8>())));
+        let dir = std::env::temp_dir().join(format!(
+            "trommi-hub-schema-{}",
+            crate::util::hex(&crate::util::random::<8>())
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let db = Db::open(&dir.join("hub.db")).unwrap();
         let tables: Vec<String> = db
             .read(|c| {
-                let mut s = c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")?;
-                let rows = s.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+                let mut s =
+                    c.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")?;
+                let rows = s
+                    .query_map([], |r| r.get(0))?
+                    .collect::<rusqlite::Result<Vec<String>>>()?;
                 Ok::<_, rusqlite::Error>(rows)
             })
             .unwrap();
         for wanted in [
-            "accounts", "passkeys", "account_rooms", "rooms", "devices", "key_packages", "groups", "group_log", "group_infos",
-            "welcomes", "sealed_keys", "recovery_links", "envelopes", "cards", "notes", "permission_requests", "artifacts",
-            "chats", "boards", "registers", "files", "shares", "invites", "invite_requests", "requests", "push_subscriptions",
-            "live_activities", "agent_leases",
+            "accounts",
+            "passkeys",
+            "account_rooms",
+            "rooms",
+            "devices",
+            "key_packages",
+            "groups",
+            "group_log",
+            "group_infos",
+            "welcomes",
+            "sealed_keys",
+            "recovery_links",
+            "envelopes",
+            "cards",
+            "notes",
+            "permission_requests",
+            "artifacts",
+            "chats",
+            "boards",
+            "registers",
+            "files",
+            "shares",
+            "invites",
+            "invite_requests",
+            "requests",
+            "push_subscriptions",
+            "live_activities",
+            "agent_leases",
         ] {
             assert!(tables.iter().any(|t| t == wanted), "table {wanted}");
         }
