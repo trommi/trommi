@@ -36,7 +36,6 @@ pub struct Limits {
     pub heavy: Buckets,
     pub foundings: Window,
     pub logins: Window,
-    pub login: crate::throttle::LoginThrottle,
 }
 
 pub struct App {
@@ -97,6 +96,8 @@ impl App {
         }
         std::fs::create_dir_all(&cfg.data).map_err(|e| format!("data directory: {e}"))?;
         let db = Db::open(&cfg.data.join("hub.db")).map_err(|e| format!("database: {e}"))?;
+        db.write(crate::throttle::recover)
+            .map_err(|e| format!("database: {}", e.message))?;
         let files = cfg.data.join("files");
         std::fs::create_dir_all(&files).map_err(|e| format!("files directory: {e}"))?;
         let vapid_secret =
@@ -133,7 +134,6 @@ impl App {
             heavy: Buckets::new(cfg.heavy_per_second, cfg.heavy_burst),
             foundings: Window::new(cfg.foundings_per_ip_hour, 3_600_000),
             logins: Window::new(cfg.logins_per_ip_10min, 600_000),
-            login: Default::default(),
         };
         crate::log::set_quiet(cfg.quiet);
         let cfg_heavy = (cfg.heavy_workers, cfg.heavy_waiting);
@@ -624,23 +624,21 @@ impl App {
                     }
                 }
             }
-            // what was not delivered is not recorded as sent: the next round tries again (a start without a
-            // token to start with never counts as started)
-            if !delivered && !dead {
-                continue;
-            }
+            // Only what was delivered is recorded as sent: anything else is tried again by the next round (a
+            // start without a token to start with never counts as started). A token Apple refuses is forgotten,
+            // and nothing else: the counts go to the token registered next.
             let column = if event == "start" {
                 "start_token"
             } else {
                 "activity_token"
             };
             let _ = self.db.write(|c| {
-                c.execute(
-                    &format!("UPDATE live_activities SET started_at = ?1, sent_working = ?2, sent_waiting = ?3, sent_at = ?4 WHERE room_id = ?5 AND device = ?6 AND {column} IS ?7"),
-                    params![if delivered { started } else { started_at }, working as i64, waiting as i64, now as i64, &room[..], &device[..], token],
-                )?;
-                if dead {
-                    // only the token that was refused: a newer one registered meanwhile stays
+                if delivered {
+                    c.execute(
+                        &format!("UPDATE live_activities SET started_at = ?1, sent_working = ?2, sent_waiting = ?3, sent_at = ?4 WHERE room_id = ?5 AND device = ?6 AND {column} IS ?7"),
+                        params![started, working as i64, waiting as i64, now as i64, &room[..], &device[..], token],
+                    )?;
+                } else if dead {
                     c.execute(&format!("UPDATE live_activities SET {column} = NULL WHERE room_id = ?1 AND device = ?2 AND {column} = ?3"), params![&room[..], &device[..], token])?;
                 }
                 Ok::<_, Refused>(())
@@ -729,36 +727,32 @@ impl App {
             })
             .unwrap_or_default();
         for (room, device, generation, expires_at) in candidates {
-            // an agent with a stream open is not lost; it is looked at again at the next tick
-            if self.live.online(&room, &device) {
-                continue;
-            }
-            // told once, and only if the lease is still the one that ran out (not renewed meanwhile)
-            let claimed = self
+            // Told once, and only if the lease is still the one that ran out and the agent has no stream open.
+            // The look, the claim and the telling happen under the writer, where a stream's opening is told
+            // too: "lost" is never told after the "online" of a stream that was there first.
+            let told = self
                 .db
                 .write(|c| {
-                    Ok::<_, Refused>(c.execute(
+                    if self.live.online(&room, &device) {
+                        return Ok(false);
+                    }
+                    let claimed = c.execute(
                         "UPDATE agent_leases SET lost_at = ?1 WHERE room_id = ?2 AND device = ?3 AND lost_at IS NULL AND generation = ?4 AND expires_at = ?5",
                         params![now as i64, &room[..], &device[..], generation, expires_at],
-                    )?)
+                    )?;
+                    if claimed != 1 || store::standing(c, &room, &device)? != Some(Who::Agent) {
+                        return Ok(false);
+                    }
+                    self.presence(&room, &device, json!({ "device": b64(&device), "online": false, "lost": true }));
+                    Ok::<_, Refused>(true)
                 })
-                .unwrap_or(0);
-            let standing = self
-                .db
-                .read(|c| store::standing(c, &room, &device))
-                .ok()
-                .flatten();
-            if claimed != 1 || standing != Some(Who::Agent) {
+                .unwrap_or(false);
+            if !told {
                 continue;
             }
             crate::log::info(
                 "agent_lost",
                 json!({ "room": short(&room), "device": short(&device) }),
-            );
-            self.presence(
-                &room,
-                &device,
-                json!({ "device": b64(&device), "online": false, "lost": true }),
             );
             let change = self
                 .db
@@ -779,12 +773,16 @@ impl App {
         }
     }
 
+    /// A stream opened: told under the writer, in order with what the lease watch tells.
     pub fn stream_opened(self: &Arc<Self>, auth: &Auth) {
-        self.presence(
-            &auth.room,
-            &auth.device,
-            json!({ "device": b64(&auth.device), "online": true }),
-        );
+        let _ = self.db.write(|_| {
+            self.presence(
+                &auth.room,
+                &auth.device,
+                json!({ "device": b64(&auth.device), "online": true }),
+            );
+            Ok::<_, Refused>(())
+        });
     }
 
     // ---- jobs
@@ -872,7 +870,7 @@ impl App {
         self.limits.pushes.sweep(now);
         self.limits.foundings.sweep(now);
         self.limits.logins.sweep(now);
-        self.limits.login.sweep(now);
+        let _ = self.db.write(|c| crate::throttle::sweep(c, now));
         if files > 0 || parts > 0 {
             crate::log::info(
                 "sweep",

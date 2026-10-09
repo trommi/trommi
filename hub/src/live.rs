@@ -127,6 +127,11 @@ impl Stream {
             pending.clear();
         }
         self.overflow();
+        // a stream that had ended already (its reader stalled before the end) still holds a connection: cut
+        // whatever happened before; what was queued is dropped by the body, which knows the time
+        if let Some(cut) = &self.cut {
+            cut.notify_one();
+        }
     }
 
     pub fn end(&self) {

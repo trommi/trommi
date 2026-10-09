@@ -333,6 +333,8 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
     } else {
         match serde_json::from_slice(&raw) {
             Ok(v @ Value::Object(_)) => v,
+            // a passkey sign-in has one answer for every failure, this one too
+            _ if path == ["v2", "account", "passkey", "login"] => json!({}),
             _ => return http::refusal(&refuse("bad-format", "the body is one JSON object")),
         }
     };
@@ -452,6 +454,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
                 if accounts::revision_of(x.c, account)? != revision || !accounts::passkey_used(x.c, account, &credential, sign_count, x.now)? {
                     return Err(refuse("overloaded", "the account changed under this login: try again").retry(1));
                 }
+                // the account knows this source from now on, as after a password
+                accounts::remember_source(x.c, account, &crate::push::source_hash(&app.ticket_key, &rq.ip), x.now)?;
                 login_answer(app, x.c, account, &copy)
             })
         }
@@ -922,66 +926,116 @@ fn human_write(
     app.write_as(&auth, rq.lease, |x, _| f(x, &auth))
 }
 
+/// What a login's check came to.
+enum Checked {
+    Found(i64, Vec<u8>),
+    Wrong,
+    Wait(u64),
+}
+
+/// An admitted check that ends without a result (its thread died) is taken off the record.
+struct Checking<'a> {
+    app: &'a App,
+    account: &'a [u8],
+    source: &'a [u8],
+    attempt: Option<i64>,
+}
+
+impl Drop for Checking<'_> {
+    fn drop(&mut self) {
+        if let Some(attempt) = self.attempt {
+            let _ = self
+                .app
+                .db
+                .write(|c| crate::throttle::not_checked(c, self.account, self.source, attempt));
+        }
+    }
+}
+
 /// `POST /v2/account/login` and `/recover`: one answer for an unknown e-mail and a wrong secret, at one cost.
 /// Failures slow their source down and lock nobody (`throttle.rs`).
 fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
-    let t = now();
-    limited(app.limits.logins.check(rq.ip.as_bytes(), t, true))?;
+    use crate::throttle::{self, Verdict};
+    limited(app.limits.logins.check(rq.ip.as_bytes(), now(), true))?;
     // the password and the Emergency Kit are throttled apart
     let account_key = format!(
         "{}:{}",
         if kit { "kit" } else { "password" },
         accounts::normalise_email(rq.body["email"].as_str().unwrap_or("")).unwrap_or_default()
     );
+    let account_key = account_key.as_bytes();
     // the source as the account knows it: a keyed hash of the address
     let source = crate::push::source_hash(&app.ticket_key, &rq.ip);
+    let throttled = app.cfg.login_throttle;
     let (row, known) = app.read(|x| {
+        // a source waiting out its own failures is told so before anything is spent on it
+        if throttled {
+            if let Some(wait) = throttle::own_wait(x.c, account_key, &source, x.now)? {
+                return Err(refuse("rate-limited", "too many requests").retry(wait));
+            }
+        }
         let row = app.accounts.login_row(x.c, &rq.body, kit)?;
         let known = accounts::knows_source(x.c, row.account(), &source)?;
         Ok((row, known))
     })?;
-    let attempt = match app.cfg.login_throttle {
-        true => Some(limited(app.limits.login.admit(
-            account_key.as_bytes(),
-            &source,
-            known,
-            t,
-        ))?),
-        false => None,
-    };
     let (account, revision) = (row.account(), row.revision());
-    // the slow hash is made on the pool with no database connection held
-    let found = match app.pooled(|| app.accounts.check_login(row)) {
-        Ok(found) => found,
-        Err(busy) => {
-            // not checked: the attempt is no failure, and no reset of the failures before it either
-            if let Some(attempt) = attempt {
-                app.limits
-                    .login
-                    .not_checked(account_key.as_bytes(), &source, attempt);
+    // The slow hash is made on the pool with no database connection held. The attempt is admitted there, at the
+    // moment its check starts: time spent waiting for the pool lets nobody check faster than the throttle says.
+    let checked = app.pooled(|| -> Res<Checked> {
+        if !throttled {
+            return Ok(app
+                .accounts
+                .check_login(row)
+                .map_or(Checked::Wrong, |(a, copy)| Checked::Found(a, copy)));
+        }
+        let t = now();
+        match app
+            .db
+            .write(|c| throttle::admit(c, account_key, &source, known, account.is_some(), t))?
+        {
+            Verdict::Own(wait) => Ok(Checked::Wait(wait)),
+            Verdict::Line { wait, early: false } => {
+                // the same work as a check
+                app.accounts.spend(&row);
+                Ok(Checked::Wait(wait))
             }
-            return Err(busy);
+            Verdict::Line { wait, early: true } => match app.accounts.check_login(row) {
+                Some((a, copy)) => {
+                    app.db
+                        .write(|c| throttle::early_succeeded(c, account_key, &source))?;
+                    Ok(Checked::Found(a, copy))
+                }
+                None => Ok(Checked::Wait(wait)),
+            },
+            Verdict::Check { attempt } => {
+                let mut checking = Checking {
+                    app,
+                    account: account_key,
+                    source: &source,
+                    attempt: Some(attempt),
+                };
+                let found = app.accounts.check_login(row);
+                app.db.write(|c| match found {
+                    Some(_) => throttle::succeeded(c, account_key, &source, attempt),
+                    None => throttle::failed(c, account_key, &source, attempt, now()),
+                })?;
+                checking.attempt = None;
+                Ok(found.map_or(Checked::Wrong, |(a, copy)| Checked::Found(a, copy)))
+            }
+        }
+    })??;
+    let (account, copy) = match checked {
+        Checked::Found(account, copy) => (account, copy),
+        Checked::Wait(wait) => return Err(refuse("rate-limited", "too many requests").retry(wait)),
+        Checked::Wrong => {
+            return Err(refuse(
+                if kit { "wrong-recovery" } else { "wrong-login" },
+                "e-mail or secret is wrong",
+            ))
         }
     };
-    let Some((_, copy)) = found else {
-        if let Some(attempt) = attempt {
-            app.limits
-                .login
-                .failed(account_key.as_bytes(), &source, attempt, now());
-        }
-        return Err(refuse(
-            if kit { "wrong-recovery" } else { "wrong-login" },
-            "e-mail or secret is wrong",
-        ));
-    };
-    if let Some(attempt) = attempt {
-        app.limits
-            .login
-            .succeeded(account_key.as_bytes(), &source, attempt);
-    }
     // The answer is made in a transaction that finds the account as the check found it: a password or kit
     // replaced meanwhile makes this login start over.
-    let account = account.expect("a login that succeeded has an account");
     app.write(|x, _| {
         if accounts::revision_of(x.c, account)? != revision {
             return Err(refuse(
@@ -1151,9 +1205,14 @@ fn live_activity_register(app: &Arc<App>, x: &delivery::Ctx, auth: &Auth, v: &Va
     };
     x.c.prepare_cached(&format!(
         "INSERT INTO live_activities (room_id, device, environment, topic, tag, {column}, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-         ON CONFLICT (room_id, device) DO UPDATE SET environment = excluded.environment, topic = excluded.topic, tag = excluded.tag, {column} = excluded.{column}"
+         ON CONFLICT (room_id, device) DO UPDATE SET environment = excluded.environment, topic = excluded.topic, tag = excluded.tag,
+           sent_working = CASE WHEN {column} IS excluded.{column} THEN sent_working END,
+           sent_waiting = CASE WHEN {column} IS excluded.{column} THEN sent_waiting END,
+           {column} = excluded.{column}"
     ))?
     .execute(rusqlite::params![&auth.room[..], &auth.device[..], environment, topic, tag, token, x.now as i64])?;
+    // a token that is new has been sent nothing: the next round sends it the counts
+    app.live_soon(auth.room);
     Ok(json!({ "registered": true }))
 }
 
@@ -1229,7 +1288,12 @@ async fn stream(
         tokio::time::sleep(Duration::from_millis(left)).await;
         deadline.expire();
     });
-    app.stream_opened(&auth);
+    let opened = app.clone();
+    blocking(move || {
+        opened.stream_opened(&auth);
+        Ok(())
+    })
+    .await?;
     let guard = StreamGuard {
         app: app.clone(),
         auth,
@@ -1279,7 +1343,7 @@ async fn stream(
         .header("content-type", "text/event-stream; charset=utf-8")
         .header("cache-control", "no-cache, no-transform")
         .header("x-accel-buffering", "no")
-        .body(Body::events(rx, queued).guard(guard))
+        .body(Body::events(rx, queued, until).guard(guard))
         .expect("a valid response"))
 }
 

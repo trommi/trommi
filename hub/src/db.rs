@@ -11,7 +11,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::{Connection, OpenFlags};
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub const SCHEMA: &str = r#"
 -- ---- accounts: a way into a room. The hub checks the login; the sealed copies of the recovery code are opaque.
@@ -54,6 +54,46 @@ CREATE TABLE account_sources (
   last_at        INTEGER NOT NULL,
   PRIMARY KEY (account_id, source)
 ) STRICT, WITHOUT ROWID;
+
+-- The login throttle (throttle.rs): hashes of an account key (password or kit, and the e-mail) and of a keyed
+-- hash of a source; no address, no e-mail. Kept in the database so that a restart resets nothing.
+CREATE TABLE login_sources (
+  account        BLOB NOT NULL,
+  source         BLOB NOT NULL,
+  failures       INTEGER NOT NULL,
+  next_at        INTEGER NOT NULL,
+  -- the attempt being checked now
+  checking       INTEGER,
+  -- of a known source's checks while it stood in line
+  early_failures INTEGER NOT NULL,
+  early_next_at  INTEGER NOT NULL,
+  PRIMARY KEY (account, source)
+) STRICT;
+CREATE INDEX login_sources_by_wait ON login_sources(next_at);
+CREATE INDEX login_sources_by_account_wait ON login_sources(account, next_at);
+-- an account's hour of checks from sources it does not know, and its line
+CREATE TABLE login_accounts (
+  account        BLOB PRIMARY KEY,
+  real           INTEGER NOT NULL,
+  budget_start   INTEGER NOT NULL,
+  budget_used    INTEGER NOT NULL,
+  next_turn      INTEGER NOT NULL,
+  last_served    INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE INDEX login_accounts_by_age ON login_accounts(real, budget_start);
+CREATE TABLE login_turns (
+  account        BLOB NOT NULL,
+  source         BLOB NOT NULL,
+  turn           INTEGER NOT NULL,
+  kept_until     INTEGER NOT NULL,
+  PRIMARY KEY (account, source)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX login_turns_in_order ON login_turns(account, turn);
+CREATE TABLE login_counts (
+  sources        INTEGER NOT NULL,
+  accounts       INTEGER NOT NULL
+) STRICT;
+INSERT INTO login_counts (sources, accounts) VALUES (0, 0);
 
 -- An account has a list of rooms (one for now); a room belongs to one account.
 CREATE TABLE account_rooms (
@@ -235,7 +275,11 @@ CREATE TABLE recoveries (
   finished_at    INTEGER,
   -- hash of the finish request and its answer: a repeated finish gets the same answer
   finish_hash    BLOB,
-  finish_answer  TEXT
+  finish_answer  TEXT,
+  -- what it holds, counted as it is kept
+  parts          INTEGER NOT NULL DEFAULT 0,
+  bytes          INTEGER NOT NULL DEFAULT 0,
+  memo_bytes     INTEGER NOT NULL DEFAULT 0
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX recoveries_by_room ON recoveries(room_id, expires_at);
 CREATE TABLE recovery_parts (
@@ -243,11 +287,14 @@ CREATE TABLE recovery_parts (
   n              INTEGER NOT NULL,
   group_id       BLOB NOT NULL,
   body           TEXT NOT NULL,
+  -- SHA-256 of the body: a repeated post is found without reading the bodies
+  body_hash      BLOB NOT NULL,
   -- where the outcome of this part's Commit lies in recovery_memo
   commit_key     BLOB,
   PRIMARY KEY (recovery_id, n)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX recovery_parts_by_group ON recovery_parts(recovery_id, group_id, n);
+CREATE UNIQUE INDEX recovery_parts_by_body ON recovery_parts(recovery_id, body_hash);
 -- What verifying each part gave (the public state after its Commit): computed once, outside the write lock, so
 -- that checking the next part and publishing them all replay writes, not cryptography. Public data.
 CREATE TABLE recovery_memo (

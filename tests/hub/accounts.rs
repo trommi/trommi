@@ -259,25 +259,66 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
     );
 
     // many sources hammering the account: its budget for sources it does not know (100 an hour) is spent
-    // (eight of them were used above: six by the guessing source, two by the owner from places then new)
-    for _ in 0..92 {
+    // (nine of them were used above: six by the guessing source, three by the owner)
+    for _ in 0..91 {
         sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &random())
             .refused(401, "wrong-login");
     }
     // the owner at home is not touched by it
     sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
-    // sources the account does not know are now served one every two seconds, in the order they came: the
-    // first right away, each next one is told its turn
-    sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &random())
-        .refused(401, "wrong-login");
-    let (second, third) = (fresh_source(), fresh_source());
-    let told = sign_in_from(hub, &second, "login", "ada@example.org", &random());
-    assert_eq!((told.status, told.header("retry-after")), (429, Some("2")));
-    // the owner on a new device somewhere else, with the right password: told a turn, and in at that turn
-    let turn = sign_in_from(hub, &third, "login", "ada@example.org", &auth);
-    assert_eq!((turn.status, turn.header("retry-after")), (429, Some("4")));
-    wait_out(hub, &turn);
-    sign_in_from(hub, &third, "login", "ada@example.org", &auth).ok();
+    // Sources now stand in line: one is checked every two seconds, in the order they came, and each is told its
+    // turn. (How long the slow hashes of this test take decides who of these finds the line empty; the exact
+    // turns are the throttle's own tests' matter.)
+    let port = hub.port;
+    let told: Vec<Reply> = (0..6)
+        .map(|_| {
+            let source = fresh_source();
+            std::thread::spawn(move || {
+                request(
+                    port,
+                    "POST",
+                    "/v2/account/login",
+                    &[("cf-connecting-ip", source)],
+                    json!({ "email": "ada@example.org", "auth_key": b64(&random::<32>()) })
+                        .to_string()
+                        .as_bytes(),
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|t| t.join().unwrap())
+        .filter(|reply| reply.status == 429)
+        .collect();
+    assert!(!told.is_empty(), "six guesses at once are not all checked");
+    for reply in &told {
+        let seconds: i64 = reply.header("retry-after").unwrap().parse().unwrap();
+        assert!((1..=14).contains(&seconds), "{seconds}");
+    }
+    // the owner on a new device somewhere else, with the right password: told a turn at most, and in at that turn
+    let third = fresh_source();
+    let mut waited = 0;
+    loop {
+        let reply = sign_in_from(hub, &third, "login", "ada@example.org", &auth);
+        if reply.status == 200 {
+            break;
+        }
+        reply.refused(429, "rate-limited");
+        waited += reply.header("retry-after").unwrap().parse::<i64>().unwrap();
+        assert!(waited <= 20, "in line behind six at most: {waited} s");
+        wait_out(hub, &reply);
+    }
+    // a wrong password from home, while others stand in line, is answered like theirs: with a turn if there is
+    // a line. The right one gets in.
+    let _ = sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &random());
+    let wrong = sign_in_from(hub, &home, "login", "ada@example.org", &random());
+    if wrong.status == 429 {
+        wait_out(hub, &wrong);
+    } else {
+        wrong.refused(401, "wrong-login");
+        hub.clock(1000);
+    }
+    sign_in_from(hub, &home, "login", "ada@example.org", &auth).ok();
     // and that place is known from now on: no turn needed next time, whatever the others do
     for _ in 0..5 {
         let _ = sign_in_from(hub, &fresh_source(), "login", "ada@example.org", &random());
@@ -385,7 +426,16 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
         let (data, signature) = a.assertion(rp, flags, &client);
         hub.post("/v2/account/passkey/login", &json!({ "credential_id": b64(&a.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature) }))
     };
+    let known = |hub: &TestHub| -> i64 {
+        rusqlite::Connection::open(hub.dir.join("hub.db"))
+            .unwrap()
+            .query_row("SELECT count(*) FROM account_sources", [], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(known(&hub), 0);
     let answer = sign_in(&key, ORIGIN, RP, UP_UV, true).ok();
+    // the account knows the source of a passkey sign-in as it knows that of a password
+    assert_eq!(known(&hub), 1);
     assert_eq!(
         (
             answer["rooms"][0]["room_id"].as_str(),
@@ -414,6 +464,12 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     );
     incomplete.refused(401, "wrong-login");
     assert_eq!(incomplete.body, failures[0].body);
+    // and a body that is no JSON object at all
+    for body in [&b"not json"[..], b"[1, 2]", b"\"text\""] {
+        let broken = request(hub.port, "POST", "/v2/account/passkey/login", &[], body);
+        broken.refused(401, "wrong-login");
+        assert_eq!(broken.body, failures[0].body);
+    }
     // the handle the authenticator returns must be the account's, if one is sent at all
     let with_handle = |handle: &[u8]| {
         let challenge = unb64(
