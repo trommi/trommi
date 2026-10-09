@@ -849,7 +849,7 @@ impl Observer {
     }
 
     /// The device that signed `group_info`, if it is a GroupInfo of the observer's present state
-    /// ([`signer_of`]); `incomplete` otherwise.
+    /// (`signer_of`); `incomplete` otherwise.
     pub fn group_info_signer(&self, group_info: &[u8]) -> Result<DeviceId, Error> {
         signer_of(&self.public()?, group_info)
     }
