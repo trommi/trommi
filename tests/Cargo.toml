@@ -30,6 +30,8 @@ p256 = { version = "=0.13.2", features = ["ecdsa", "ecdh", "pkcs8", "pem"] }
 # The connector's tests (tests/connector/…): the crate itself, and what its end-to-end tests drive it with.
 trommi-connector = { path = "../connector" }
 reqwest = { version = "=0.12.28", default-features = false }
+# A throwaway release key for tests/connector/update.rs: the version the core pins.
+ed25519-dalek = { version = "=2.2.0", default-features = false }
 
 [[test]]
 name = "core_groups_founding"
@@ -246,3 +248,7 @@ path = "connector/html.rs"
 [[test]]
 name = "connector_store"
 path = "connector/store.rs"
+
+[[test]]
+name = "connector_update"
+path = "connector/update.rs"
