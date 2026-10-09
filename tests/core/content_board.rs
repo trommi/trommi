@@ -944,6 +944,8 @@ mod loading {
         snapshot: Snapshot,
         served: Vec<ServedItem>,
         chains: Vec<(DeviceId, Vec<Link>)>,
+        /// Device 1's three envelopes that the snapshot covers.
+        before: Vec<Link>,
     }
 
     fn item(receipt: &Receipt) -> ServedItem {
@@ -989,6 +991,7 @@ mod loading {
                 (device(1), after.iter().map(Link::of).collect()),
                 (device(2), vec![Link::of(&by_two)]),
             ],
+            before: before.iter().map(Link::of).collect(),
         }
     }
 
@@ -1146,8 +1149,6 @@ mod loading {
         let at = scene.snapshot.frontier.clone();
         assert!(load(&at).is_ok());
         let (writer, snapshot_head) = at[0];
-        // The device had applied less.
-        assert!(load(&[(writer, head(2, 5))]).is_ok());
         // It had applied more: this snapshot is an older one.
         assert_eq!(load(&[(writer, head(4, 5))]), Err(Error::Replay));
         // It had applied another envelope under the same number.
@@ -1239,11 +1240,129 @@ mod loading {
             seq: 2,
             hash: Hash32::new([9; 32]),
         });
+        assert_eq!(load(&[(writer, at)], &[], &served).unwrap(), [0, 4]);
+        let mut held = at;
+        held.seq = 2;
         assert_eq!(
-            load(&[(writer, head(2, 5))], &[], &served),
-            Err(Error::Equivocation)
+            verify_load(
+                &BOARD,
+                &[(writer, held)],
+                &[],
+                &Snapshot {
+                    frontier: vec![(writer, held)],
+                    ..scene.snapshot.clone()
+                },
+                &served[4..],
+                &[],
+            )
+            .err(),
+            Some(Error::Equivocation)
         );
-        assert_eq!(load(&[(writer, head(2, 9))], &[], &served).unwrap(), [0, 4]);
+    }
+
+    #[test]
+    fn a_newer_snapshot_is_bridged_from_the_head_the_device_holds() {
+        let scene = scene();
+        let (writer, at) = scene.snapshot.frontier[0];
+        let head_of = |link: &Link| Head {
+            seq: link.seq,
+            hash: link.hash,
+        };
+        // The device had loaded the board when the writer stood at its first envelope.
+        let held = [(writer, head_of(&scene.before[0]))];
+        let load = |bridge: &[Link], served: &[ServedItem]| {
+            let mut chains = scene.chains.clone();
+            let after = std::mem::take(&mut chains[0].1);
+            chains[0].1 = bridge.iter().copied().chain(after).collect();
+            verify_load(&BOARD, &held, &[], &scene.snapshot, served, &chains)
+        };
+        // The writer's envelopes from there on lead to the snapshot's frontier and beyond it.
+        let loaded = load(&scene.before[1..], &scene.served).unwrap();
+        assert_eq!(loaded.fresh, [1, 2, 3]);
+        assert_eq!(loaded.covered, [0]);
+        assert_eq!(loaded.frontier, scene.load().unwrap().frontier);
+
+        // Only the chain after the frontier, as a device takes it that holds nothing of the writer: for this
+        // device it does not link to what it holds.
+        assert_eq!(load(&[], &scene.served).err(), Some(Error::Gap));
+        // No chain of that writer at all, or one that ends before the frontier.
+        let others = &scene.chains[1..];
+        assert_eq!(
+            verify_load(
+                &BOARD,
+                &held,
+                &[],
+                &scene.snapshot,
+                &scene.served[..1],
+                others
+            )
+            .err(),
+            Some(Error::Withheld)
+        );
+        let short = vec![(writer, scene.before[1..2].to_vec())];
+        assert_eq!(
+            verify_load(
+                &BOARD,
+                &held,
+                &[],
+                &scene.snapshot,
+                &scene.served[..1],
+                &short
+            )
+            .err(),
+            Some(Error::Withheld)
+        );
+
+        // The writer signed two chains from its second envelope on. This device holds one; the snapshot's
+        // writer saw the other and its frontier names that one's third envelope.
+        let mut world = World::new();
+        let stroke = |text: &str| Draft::board_item(BOARD, &payload(text));
+        let x1 = world.post(1, room(), &stroke("one"));
+        let x2 = world.post(1, room(), &stroke("two"));
+        world.own.insert((room(), 1), head_of(&Link::of(&x1)));
+        let mut other = World::new();
+        other.take(x1.envelope()).unwrap();
+        let y2 = other.take(&world.sign(1, room(), &stroke("two, again")).envelope);
+        let y2 = y2.unwrap();
+        let y3 = other.take(&world.sign(1, room(), &stroke("three")).envelope);
+        let y3 = y3.unwrap();
+        let forked = Snapshot {
+            attachment: "{}".into(),
+            frontier: vec![(writer, head_of(&Link::of(&y3)))],
+            change: 2000,
+        };
+        let holds = [(writer, head_of(&Link::of(&x2)))];
+        let load = |chain: Vec<Link>| {
+            verify_load(&BOARD, &holds, &[], &forked, &[], &[(writer, chain)]).err()
+        };
+        // Whatever the hub serves as the bridge, the fork shows: nothing, the other chain's envelopes, or
+        // an envelope made to link.
+        assert_eq!(
+            verify_load(&BOARD, &holds, &[], &forked, &[], &[]).err(),
+            Some(Error::Withheld)
+        );
+        assert_eq!(load(vec![Link::of(&y3)]), Some(Error::ChainBreak));
+        assert_eq!(load(vec![Link::of(&y2), Link::of(&y3)]), Some(Error::Gap));
+        let x3 = world.own.insert((room(), 1), head_of(&Link::of(&x2)));
+        assert!(x3.is_some());
+        let x3 = world.post(1, room(), &stroke("three, on the chain held"));
+        assert_eq!(load(vec![Link::of(&x3)]), Some(Error::Equivocation));
+
+        // An item served under a number of the bridge is the envelope the bridge has there.
+        let mut served = scene.served.clone();
+        served.push(ServedItem {
+            sender: writer,
+            seq: 2,
+            hash: Hash32::new([9; 32]),
+        });
+        let mut chains = scene.chains.clone();
+        let after = std::mem::take(&mut chains[0].1);
+        chains[0].1 = scene.before[1..].iter().copied().chain(after).collect();
+        assert_eq!(
+            verify_load(&BOARD, &held, &[], &scene.snapshot, &served, &chains).err(),
+            Some(Error::HashMismatch)
+        );
+        assert_eq!(at.seq, 3);
     }
 
     #[test]
