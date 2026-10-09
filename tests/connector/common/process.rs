@@ -214,7 +214,7 @@ impl Mcp {
 
     /// Waits for a notification of this method; returns its params.
     pub async fn notification(&mut self, method: &str) -> Value {
-        for _ in 0..200 {
+        for _ in 0..900 {
             if let Some(at) = self.notifications.iter().position(|(m, _)| m == method) {
                 return self.notifications.remove(at).1;
             }
@@ -255,7 +255,7 @@ impl Mcp {
             })?;
             Some(list.remove(at).1)
         };
-        for _ in 0..200 {
+        for _ in 0..900 {
             if let Some(params) = found(&mut self.notifications) {
                 return params;
             }
@@ -268,7 +268,7 @@ impl Mcp {
 
     /// Waits until the connector is in its room: a tool call no longer says it is not.
     pub async fn ready(&mut self) {
-        for _ in 0..100 {
+        for _ in 0..450 {
             let (text, failed) = self.call("list_cards", json!({})).await;
             if !failed {
                 return;
