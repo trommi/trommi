@@ -682,3 +682,29 @@ fn a_removed_human_device_does_not_make_the_agent_leaf_unfit() {
         vec![device(AGENT), device(OTHER_AGENT)]
     );
 }
+
+#[test]
+fn a_human_device_gives_a_helper_session_its_new_opener() {
+    let history = history();
+    let helper = session(MAIN, HELPER);
+    let waiting = before(helper, &[H1, H2, SUB], 2);
+    let takeover = adding(facts(helper.group_id(), 4, H1, 2), &[OTHER_AGENT]);
+    let verdict = |seat: Parent| {
+        let sessions = Sessions {
+            seat,
+            elsewhere: None,
+            helpers: 1,
+        };
+        session_verdict(&history, &sessions, &waiting, &takeover)
+    };
+    // The device added is the main session's agent leaf.
+    assert_eq!(verdict(Parent::Seat(Some(device(OTHER_AGENT)))), Ok(()));
+    assert_eq!(
+        verdict(Parent::Seat(Some(device(AGENT)))),
+        Err(Error::BadCommit)
+    );
+    assert_eq!(verdict(Parent::Seat(None)), Err(Error::BadCommit));
+    // A helper device that does not follow the main session cannot tell which agent device that is, and
+    // takes an enrolled one.
+    assert_eq!(verdict(Parent::Unknown), Ok(()));
+}
