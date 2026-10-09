@@ -89,3 +89,7 @@ path = "core/groups_cost.rs"
 [[test]]
 name = "core_recovery_construct"
 path = "core/recovery_construct.rs"
+
+[[test]]
+name = "core_recovery_flow"
+path = "core/recovery_flow.rs"
