@@ -2251,7 +2251,7 @@ name = "trommi-core-wasm"
 version = "0.0.0"
 dependencies = [
  "js-sys",
- "trommi-core",
+ "trommi-core-swift",
  "wasm-bindgen",
 ]
 

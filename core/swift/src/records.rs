@@ -372,8 +372,8 @@ choice! {
 }
 
 record! {
-    /// An application message as its receiver takes it.
-    pub struct ReceivedMessage {
+    /// An application message as its receiver takes it. `payload` is decrypted content.
+    secret pub struct ReceivedMessage {
         /// What it was. The fields below are filled as that kind says, and empty or 0 otherwise.
         pub kind: ReceivedKind,
         /// The sender; none for a dropped message.

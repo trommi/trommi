@@ -15,12 +15,12 @@
 
 use crate::error::core_error;
 use crate::guard::Guarded;
-use crate::interim::{self, InterimRecovery};
 use crate::records::{
     board_id, device_id, group_id, hash32, room_id, session_id, turn_id, Cut, GroupSummary,
     HandoverSent, Joined, LogEntry, LogEntryKind, LogFinding, OutboxEntry, Processed, Replacement,
     RoomRoles, SignedHubAuth,
 };
+use crate::recovery::{self, Recovery};
 use crate::store::{AnyStore, Seed};
 use crate::{CoreError, ErrorCode};
 use std::sync::PoisonError;
@@ -29,13 +29,16 @@ use trommi_core::device::{self as core, Accepted, Device, LogKind, WelcomeExpect
 use trommi_core::hub_auth::{self, HubAddress, CHALLENGE_LEN};
 use trommi_core::store::Storage;
 
-/// The core's device over any store. The core's type is not `Send` only because it holds the recovery
-/// construct as a boxed trait object without that bound.
-struct Inner(Device<AnyStore>);
+/// The core's device over any store, and where its store noted the seed of its signature key. The core's type
+/// is not `Send` only because it holds the recovery construct as a boxed trait object without that bound.
+struct Inner {
+    device: Device<AnyStore>,
+    seed: Seed,
+}
 
 // SAFETY: every part of the device is owned data that may move between threads. The one part the compiler
-// cannot see through is the boxed recovery construct, and the only value ever put there is `InterimRecovery`,
-// a struct without fields. The device is reached only through `Guarded`, one thread at a time.
+// cannot see through is the boxed recovery construct, and the only value ever put there is `Recovery`, a
+// struct without fields. The device is reached only through `Guarded`, one thread at a time.
 unsafe impl Send for Inner {}
 
 /// One device: its signature key, the groups it is a leaf of, its content keys and its outbox, over the store
@@ -43,36 +46,30 @@ unsafe impl Send for Inner {}
 #[cfg_attr(feature = "uniffi", derive(uniffi::Object))]
 pub struct CoreDevice {
     device: Guarded<Inner>,
-    seed: Seed,
     #[cfg(feature = "js")]
     writes: crate::store::Writes,
 }
 
 impl CoreDevice {
-    /// The core's device over `store`, new or as stored, and where its key's seed is found.
-    fn build(
-        store: Box<dyn Storage + Send>,
-        create: bool,
-    ) -> Result<(Guarded<Inner>, Seed), CoreError> {
+    /// The core's device over `store`, new or as stored.
+    fn build(store: Box<dyn Storage + Send>, create: bool) -> Result<Guarded<Inner>, CoreError> {
         let (store, seed) = AnyStore::new(store);
-        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let device = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if create {
-                Device::create(store, Box::new(SystemEntropy), Box::new(InterimRecovery))
+                Device::create(store, Box::new(SystemEntropy), Box::new(Recovery))
             } else {
-                Device::open(store, Box::new(SystemEntropy), Box::new(InterimRecovery))
+                Device::open(store, Box::new(SystemEntropy), Box::new(Recovery))
             }
         }))
         .map_err(|_| CoreError::internal("the device failed to open inside the core"))??;
-        Ok((Guarded::new(Inner(opened)), seed))
+        Ok(Guarded::new(Inner { device, seed }))
     }
 
     /// A new device in the empty store `store`: a fresh signature key, no room yet. `storage` when the store
     /// is not empty.
     pub fn create_on(store: Box<dyn Storage + Send>) -> Result<Self, CoreError> {
-        let (device, seed) = Self::build(store, true)?;
         Ok(Self {
-            device,
-            seed,
+            device: Self::build(store, true)?,
             #[cfg(feature = "js")]
             writes: Default::default(),
         })
@@ -80,10 +77,8 @@ impl CoreDevice {
 
     /// The device `store` holds. `storage` when anything in it does not decode or fit together.
     pub fn open_on(store: Box<dyn Storage + Send>) -> Result<Self, CoreError> {
-        let (device, seed) = Self::build(store, false)?;
         Ok(Self {
-            device,
-            seed,
+            device: Self::build(store, false)?,
             #[cfg(feature = "js")]
             writes: Default::default(),
         })
@@ -93,14 +88,14 @@ impl CoreDevice {
         &self,
         call: impl FnOnce(&Device<AnyStore>) -> Result<R, CoreError>,
     ) -> Result<R, CoreError> {
-        self.device.run(|inner| call(&inner.0))
+        self.device.run(|inner| call(&inner.device))
     }
 
     fn write<R>(
         &self,
         call: impl FnOnce(&mut Device<AnyStore>) -> Result<R, CoreError>,
     ) -> Result<R, CoreError> {
-        self.device.run(|inner| call(&mut inner.0))
+        self.device.run(|inner| call(&mut inner.device))
     }
 }
 
@@ -110,10 +105,8 @@ impl CoreDevice {
     /// A new device over what the page loaded, which must be an empty store.
     pub fn create_loaded(loaded: crate::store::StoredState) -> Result<Self, CoreError> {
         let (store, writes) = crate::store::QueueStore::new(loaded);
-        let (device, seed) = Self::build(Box::new(store), true)?;
         Ok(Self {
-            device,
-            seed,
+            device: Self::build(Box::new(store), true)?,
             writes,
         })
     }
@@ -121,16 +114,14 @@ impl CoreDevice {
     /// The device that what the page loaded holds.
     pub fn open_loaded(loaded: crate::store::StoredState) -> Result<Self, CoreError> {
         let (store, writes) = crate::store::QueueStore::new(loaded);
-        let (device, seed) = Self::build(Box::new(store), false)?;
         Ok(Self {
-            device,
-            seed,
+            device: Self::build(Box::new(store), false)?,
             writes,
         })
     }
 
     /// The writes made since the last call of this, oldest first: the page stores each in one transaction
-    /// before it lets the result of the call that made them reach anyone.
+    /// before it lets the result of the call that made them reach anyone. A closed device hands out none.
     pub fn take_writes(&self) -> Vec<crate::store::StoreWrite> {
         std::mem::take(&mut *self.writes.lock().unwrap_or_else(PoisonError::into_inner))
     }
@@ -158,8 +149,16 @@ impl CoreDevice {
     /// Closes the device and wipes what it holds in memory. Every later call is refused; the stored state is
     /// untouched and can be opened again.
     pub fn close(&self) {
-        self.device.close();
-        *self.seed.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        let closed = self.device.close();
+        // In a browser, what was written and not stored yet goes with the device: it holds private keys.
+        #[cfg(feature = "js")]
+        if closed {
+            self.writes
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
+        }
+        let _ = closed;
     }
 
     /// The device id: its signature public key, 32 bytes.
@@ -230,10 +229,20 @@ impl CoreDevice {
         self.write(|device| Ok(device.outbox_accepted(id, Accepted { change })?))
     }
 
-    /// The hub refused the outbox entry `id` with `code`. `epoch-taken` for a Commit: it is held back, and the
-    /// caller processes the log, which decides it. Any other refusal undoes what the entry was for. A code
-    /// this version does not know is reported as `internal` and undoes the entry like any other.
+    /// The hub refused the outbox entry `id` with `code`, for good. `epoch-taken` for a Commit: it is held back,
+    /// and the caller processes the log, which decides it. Any other refusal undoes what the entry was for: the
+    /// pending Commit is cleared, a founding's group is dropped, the KeyPackages' private parts go.
+    ///
+    /// Only a refusal that will not change is reported here. When the hub could not answer (`internal`,
+    /// `overloaded`, `rate-limited`), asks to sign in again (`unauthorised`), answered with a code this version
+    /// does not know, or did not answer at all, the entry stays and is sent again unchanged. Those codes, and the
+    /// ones that are no hub's answer, are `bad-format` here and change nothing.
     pub fn outbox_refused(&self, id: u64, code: ErrorCode) -> Result<(), CoreError> {
+        if !is_refusal(code) {
+            return Err(CoreError::bad_format(
+                "not a refusal for good: send the entry again",
+            ));
+        }
         self.write(|device| Ok(device.outbox_refused(id, &core_error(code))?))
     }
 
@@ -258,7 +267,7 @@ impl CoreDevice {
     pub fn found_room(&self, recovery_code: Vec<u8>, now_ms: u64) -> Result<Vec<u8>, CoreError> {
         let code = Secret::<32>::from_slice(&recovery_code)?;
         self.write(|device| {
-            let (signature_key, hpke_key) = interim::public_keys(code.expose())?;
+            let (signature_key, hpke_key) = recovery::public_keys(&code)?;
             let room = device.found_room(signature_key, hpke_key, now_ms)?;
             Ok(room.as_bytes().to_vec())
         })
@@ -556,9 +565,13 @@ impl CoreDevice {
             .as_slice()
             .try_into()
             .map_err(|_| CoreError::bad_format("the challenge is not 32 bytes"))?;
-        // Inside the device's lock, so that a closed or failed device signs nothing.
-        self.read(|_| {
-            let seed = self.seed.lock().unwrap_or_else(PoisonError::into_inner);
+        // Inside the device's lock: a closed or failed device signs nothing, and neither does one that another
+        // owner wrote behind.
+        self.device.run(|inner| {
+            if !inner.device.is_owner() {
+                return Err(CoreError::storage("another owner wrote to this state"));
+            }
+            let seed = inner.seed.lock().unwrap_or_else(PoisonError::into_inner);
             let seed = seed
                 .as_ref()
                 .ok_or_else(|| CoreError::internal("the device's key is not in its store"))?;
@@ -571,6 +584,26 @@ impl CoreDevice {
             })
         })
     }
+}
+
+/// Whether `code` is a hub's refusal that will not change when the same request is sent again.
+fn is_refusal(code: ErrorCode) -> bool {
+    !matches!(
+        code,
+        ErrorCode::Internal
+            | ErrorCode::Overloaded
+            | ErrorCode::RateLimited
+            | ErrorCode::Unauthorised
+            | ErrorCode::Storage
+            | ErrorCode::Entropy
+            | ErrorCode::Busy
+            | ErrorCode::BadEmail
+            | ErrorCode::WeakPassword
+            | ErrorCode::BadKdf
+            | ErrorCode::BadRecoveryWords
+            | ErrorCode::BadRecoveryCode
+            | ErrorCode::NoPrf
+    )
 }
 
 /// What a refusal of [`CoreDevice::process_log_entry`] with `code` means for the caller.

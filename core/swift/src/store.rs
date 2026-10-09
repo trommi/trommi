@@ -122,12 +122,13 @@ impl std::fmt::Display for StoreError {
 #[cfg(feature = "uniffi")]
 impl std::error::Error for StoreError {}
 
-/// A Swift error of another type than [`StoreError`], thrown from the store: a failure like any other.
+/// A Swift error of another type than [`StoreError`], thrown from the store: a failure like any other. Its own
+/// description is not passed on: nothing says what it holds.
 #[cfg(feature = "uniffi")]
 impl From<uniffi::UnexpectedUniFFICallbackError> for StoreError {
-    fn from(error: uniffi::UnexpectedUniFFICallbackError) -> Self {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> Self {
         StoreError::Failed {
-            message: error.reason,
+            message: "the store threw an error that is not a StoreError".to_owned(),
         }
     }
 }

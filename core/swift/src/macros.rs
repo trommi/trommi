@@ -43,7 +43,7 @@ macro_rules! record {
         #[cfg(feature = "js")]
         impl $crate::js::ToJs for $name {
             fn to_js(&self) -> Result<wasm_bindgen::JsValue, $crate::CoreError> {
-                let object = js_sys::Object::new();
+                let object = $crate::js::record()?;
                 $($crate::js::set(&object, stringify!($field), &self.$field)?;)*
                 Ok(object.into())
             }

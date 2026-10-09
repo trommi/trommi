@@ -5,10 +5,10 @@
 use crate::account::{generate_recovery_code, password_keys};
 use crate::device::CoreDevice;
 use crate::files::{FileDecryptor, FileEncryptor};
-use crate::interim;
 use crate::records::{
     Cut, LogEntry, LogEntryKind, LogFinding, OutboxKind, ProcessedKind, ReceivedKind,
 };
+use crate::recovery;
 use crate::store::MemoryStore;
 use crate::{log_finding, open_apns_push, session_group_id, CoreError, ErrorCode};
 use trommi_core::crypto::{Secret, SystemEntropy};
@@ -32,7 +32,7 @@ record! {
         pub provider: String,
         /// This binding and the generator it is made with.
         pub binding: String,
-        /// The state of the recovery construct in this build: `built`, or a warning that it is a stand-in.
+        /// The state of the recovery construct in this build: `built`, or why it is not.
         pub recovery: String,
     }
 }
@@ -78,7 +78,7 @@ pub fn versions() -> Versions {
         openmls: OPENMLS.to_owned(),
         provider: PROVIDER.to_owned(),
         binding: format!("{} ({generator})", env!("CARGO_PKG_VERSION")),
-        recovery: interim::RECOVERY.to_owned(),
+        recovery: recovery::STATE.to_owned(),
     }
 }
 

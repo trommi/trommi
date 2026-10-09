@@ -26,11 +26,11 @@ pub mod device;
 pub mod error;
 pub mod files;
 mod guard;
-mod interim;
 #[cfg(feature = "js")]
 pub mod js;
 pub mod push;
 pub mod records;
+mod recovery;
 pub mod selftest;
 pub mod store;
 pub mod wipe;
