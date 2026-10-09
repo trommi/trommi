@@ -45,8 +45,8 @@ fn main() {
             let mut password = String::new();
             let _ = std::io::stdin().read_line(&mut password);
             let password = password.trim_end_matches(['\r', '\n']);
-            if password.len() < 12 {
-                eprintln!("a password of at least 12 characters, on standard input");
+            if password.len() < 12 || password.len() > trommi_hub::admin::MAX_PASSWORD {
+                eprintln!("a password of 12 to 1024 bytes, on standard input");
                 std::process::exit(2);
             }
             println!("{}", trommi_hub::admin::hash_password(password));

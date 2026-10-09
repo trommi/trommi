@@ -152,8 +152,23 @@ fn the_admin_page_is_behind_its_password_and_shows_only_what_the_hub_sees() {
     // a credential that was checked is taken again without the slow hash, and a wrong one after it is still wrong
     assert_eq!(get(admin, &session).status, 200);
     assert_eq!(get(admin, &basic("correct horse batterx")).status, 401);
+    // the scheme's name in any case; the longest password `admin-hash` takes fits into the header the page reads
+    hub.clock(1000);
+    let shouted = [("authorization", session[0].1.replacen("Basic", "BASIC", 1))];
+    assert_eq!(get(admin, &shouted).status, 200);
+    let long = "p".repeat(trommi_hub::admin::MAX_PASSWORD);
+    let roomy = TestHub::start_with(&[(
+        "HUB_ADMIN_PASSWORD_HASH",
+        &trommi_hub::admin::hash_password(&long),
+    )]);
+    assert_eq!(get(roomy.admin(), &basic(&long)).status, 200);
     // the page is put together once for all who ask within a few seconds
     assert_eq!(text(&get(admin, &session)), html);
+    // and no longer: five seconds on, the page is put together anew
+    hub.clock(5001);
+    let later = get(admin, &session);
+    assert_eq!(later.status, 200);
+    assert!(text(&later).contains("1 rooms"));
 
     // few connections, none for long: the seventeenth is closed at once, and the hub's own port is not touched
     let held: Vec<std::net::TcpStream> = (0..trommi_hub::admin::MAX_CONNECTIONS + 4)
