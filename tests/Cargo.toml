@@ -75,3 +75,7 @@ path = "core/content_board.rs"
 [[test]]
 name = "core_content_trail"
 path = "core/content_trail.rs"
+
+[[test]]
+name = "core_content_board_flow"
+path = "core/content_board_flow.rs"
