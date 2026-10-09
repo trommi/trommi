@@ -1,6 +1,6 @@
 // swift-tools-version:6.0
-// ProofApp: the smallest iOS app that links trommi-core (Rust) and runs its round trip at launch. An xtool project,
-// built the way the Trommi app is (ios/README.md): `xtool dev build` on Linux, no Mac.
+// The smallest iOS app that links trommi-core (Rust) and calls it at launch. An xtool project, built the way the
+// Trommi app is (ios/README.md): `xtool dev build` on Linux, no Mac.
 import PackageDescription
 
 let package = Package(
