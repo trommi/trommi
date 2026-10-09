@@ -1,23 +1,22 @@
-# On every commit on main and on every pull request: find which parts changed, test and build those, and (on main
-# only) hand each built part to its deploy workflow.
+# Runs on every commit on main and on every pull request: finds which parts changed, tests and builds those, and (on
+# main only) hands what was built to that part's deploy workflow.
 #
 # A part counts as changed when its own folder changed, or core/, or what pins the build (Cargo.toml, Cargo.lock,
-# rust-toolchain.toml). A run started by hand counts every part as changed.
+# rust-toolchain.toml). A run started by hand, or one with nothing to compare with, counts every part as changed.
 #
-# How a part is wired in (the hub is the first; web, connector and ios follow the same three steps):
+# How a part is wired in (web and hub are; connector and ios follow the same three steps):
 #   1. `changes`: one more `part <name> '<its own paths>'` line and one more output.
 #   2. a job named after the part: tests, builds, uploads ONE artifact named `<part>-release`.
-#   3. a job `deploy_<part>` that calls `.github/workflows/deploy_<part>.yml` with
-#        version:  the number of this run (github.run_number): a whole number that only grows, the same for every
-#                  part built by one run
-#        commit:   the commit that was built
-#        artifact: `<part>-release`
-#      and `secrets: inherit`. The deploy workflow alone uses the environment `production`.
+#   3. a job `deploy_<part>` that calls `.github/workflows/deploy_<part>.yml` with `artifact: <part>-release` and
+#      `secrets: inherit`; a part whose releases are numbered and signed also gets
+#        version: the release number of this run (see `changes`): a whole number that only grows
+#        commit:  the commit that was built
+#      Only the deploy workflow uses the part's environment (`web`, `hub`, ...).
 #
 # Releases that are signed (hub, connector) use one form: release/manifest.sh writes manifest.json, release/sign.sh
 # signs and checks it, the public key is release/public-key.pem. The artifact of such a part holds the files and
 # their manifest.json, not yet signed; the deploy workflow signs.
-name: Build
+name: build
 
 on:
   push:
@@ -25,24 +24,31 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
-# One run per branch at a time. On main nothing running is cut off; of several waiting runs the newest stays.
+# One run per branch at a time. On main nothing running is cut off.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Release numbers are this workflow's run number plus this base. The run number starts again at 1 when this
+  # file is renamed or made anew: raise the base then by at least the highest number released so far, because a
+  # server never takes a release older than one it has accepted.
+  RELEASE_BASE: 0
+
 jobs:
   changes:
     name: Which parts changed
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
     outputs:
+      web: ${{ steps.find.outputs.web }}
       hub: ${{ steps.find.outputs.hub }}
+      version: ${{ steps.find.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -52,8 +58,10 @@ jobs:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -eu
+          echo "version=$((RUN_NUMBER + RELEASE_BASE))" >> "$GITHUB_OUTPUT"
           base=
           case "$EVENT" in
             push) base=$BEFORE ;;
@@ -76,20 +84,40 @@ jobs:
             echo "$1: $value"
             echo "- $1: $value" >> "$GITHUB_STEP_SUMMARY"
           }
+          part web 'app/hello/|app/web/'
           part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$'
 
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The placeholder has no build step: its files are the release.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-release
+          path: app/hello/public
+          if-no-files-found: error
+
+  deploy_web:
+    needs: [changes, web]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.web == 'true'
+    uses: ./.github/workflows/deploy_web.yml
+    with:
+      artifact: web-release
+    secrets: inherit
+
   hub:
-    name: Hub (test and build)
+    name: hub (test and build)
     needs: changes
     if: needs.changes.outputs.hub == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       TARGET: x86_64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Compiler (rust-toolchain.toml) and the C compiler for static builds
@@ -107,12 +135,16 @@ jobs:
           key: hub-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
       - name: Test (hub, updater, release form)
         run: cargo test --locked -p trommi-tests
+      - name: Scripts and units of the deploy path
+        run: |
+          shellcheck release/*.sh hub/deploy/*.sh
+          bash hub/deploy/install.sh selftest
       # The files of the release: both programs as static binaries, the hub's systemd unit, and the manifest that
       # names them. The commit is compiled in; paths of the build machine are not.
       - name: Build the release
         env:
           TROMMI_COMMIT: ${{ github.sha }}
-          VERSION: ${{ github.run_number }}
+          VERSION: ${{ needs.changes.outputs.version }}
         run: |
           set -eu
           export RUSTFLAGS="--remap-path-prefix=$PWD=/src --remap-path-prefix=$HOME/.cargo=/cargo"
@@ -150,7 +182,6 @@ jobs:
           retention-days: 14
 
   deploy_hub:
-    name: Hub
     needs: [changes, hub]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.hub == 'true'
     permissions:
@@ -158,7 +189,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/deploy_hub.yml
     with:
-      version: ${{ github.run_number }}
+      version: ${{ needs.changes.outputs.version }}
       commit: ${{ github.sha }}
       artifact: hub-release
     secrets: inherit

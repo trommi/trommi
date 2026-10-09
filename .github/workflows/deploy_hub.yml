@@ -9,15 +9,18 @@
 # the signature against the public key pinned on it, swaps, checks health, rolls back when the new hub is not well,
 # and answers with what happened. This run fails when the server says the release does not run.
 #
-# Secrets: the environment `production` holds OP_SERVICE_ACCOUNT_TOKEN, OP_ENVIRONMENT_ID, TAILSCALE_OAUTH_CLIENT_ID
-# and TAILSCALE_AUDIENCE. SIGN_RELEASE_KEY comes from the 1Password Environment.
-name: Deploy hub
+# Secrets: the environment `hub` (branch main only) holds OP_SERVICE_ACCOUNT_TOKEN, OP_ENVIRONMENT_ID,
+# TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_AUDIENCE. SIGN_RELEASE_KEY comes from the 1Password Environment.
+#
+# Until the server has had its first installation (hub/deploy/install.sh) the release is published but not
+# delivered: `deliver` calls the server only when the repository variable HUB_SERVER_READY is `true`.
+name: deploy_hub
 
 on:
   workflow_call:
     inputs:
       version:
-        description: The number of the build run; the release is hub-v<version>
+        description: The release number; the release is hub-v<version>
         required: true
         type: string
       commit:
@@ -47,13 +50,16 @@ jobs:
     name: Sign
     # only for a fresh build; a release delivered again is signed already
     if: inputs.version != ''
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
-    environment: production
+    # reads the secrets of the environment without counting as a deployment of it
+    environment:
+      name: hub
+      deployment: false
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.commit }}
           persist-credentials: false
@@ -95,7 +101,7 @@ jobs:
   publish:
     name: Publish the release
     needs: sign
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
@@ -132,18 +138,35 @@ jobs:
             echo "$TAG is published already and stays as it is" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  # Before the server's first installation there is nothing to call: the release is there, and that is said.
+  not_delivered:
+    name: Not delivered (server not installed yet)
+    needs: publish
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') && vars.HUB_SERVER_READY != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      TAG: ${{ inputs.tag || format('hub-v{0}', inputs.version) }}
+    steps:
+      - run: |
+          {
+            echo "### Hub: \`$TAG\` is published, not delivered"
+            echo
+            echo "The server has not had its first installation, so nothing was called."
+            echo "First installation, on the owner's laptop: \`hub/deploy/install.sh install $TAG\`."
+            echo "Afterwards set the repository variable \`HUB_SERVER_READY\` to \`true\`; from then on every hub build is delivered."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   deliver:
     name: Deliver to the server
     needs: publish
     # also when nothing had to be signed and published (a release delivered again)
-    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
-    runs-on: ubuntu-24.04
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') && vars.HUB_SERVER_READY == 'true' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: production
-    # one delivery at a time; of several waiting the newest stays (the server refuses anything older anyway)
-    concurrency:
-      group: deploy_hub
-      cancel-in-progress: false
+    environment:
+      name: hub
+      url: https://hub.trommi.com
     permissions:
       id-token: write
     env:
@@ -194,6 +217,12 @@ jobs:
             echo "| server says | $(jq -r .message answer.json) |"
           } >> "$GITHUB_STEP_SUMMARY"
           jq . answer.json
+          # Refused because something newer already runs (a later build got there first): nothing to do, not a failure.
+          running=$(jq -r '.running // ""' answer.json)
+          if [ "$(jq -r .result answer.json)" = refused ] && [ "${running#hub-v}" -gt "${TAG#hub-v}" ] 2>/dev/null; then
+            echo "::notice::$running already runs, which is newer than $TAG; nothing was changed"
+            exit 0
+          fi
           [ "$(jq -r .ok answer.json)" = true ] || { echo "::error::the server reports: $(jq -r .message answer.json)"; exit 1; }
 
           # The updater replaces itself after it has answered. Wait until the new one answers, or the old one says
