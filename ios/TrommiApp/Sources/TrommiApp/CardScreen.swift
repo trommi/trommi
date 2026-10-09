@@ -316,22 +316,7 @@ struct CardScreen: View {
   }
   @ViewBuilder private func done(_ c: DeskCard, _ a: Agent?) -> some View {
     let pickedLabels = c.options.filter { c.choices.contains($0.key) }.map { $0.label }.joined(separator: ", ")
-    if c.landed || c.archived {
-      HStack(spacing: 8) { Sketch("tick", color: Ink.accent).frame(width: 20, height: 20); (Text("Done").font(Face.text(16, .semibold)) + Text(c.summary.isEmpty ? "" : " · \(c.summary)").font(Face.text(16))).foregroundStyle(Ink.fg) }
-      let yours = c.kind == "info" ? "" : c.trusted ? "\(Words.trust)\(c.advisedLabels.isEmpty ? "" : ": \(c.advisedLabels)")" : pickedLabels
-      if !yours.isEmpty { still(yours, c.note.isEmpty ? "Your answer" : "Your answer · your note: \(c.note)", picked: true) }
-      if c.landed {
-        HStack(spacing: 10) {
-          Button { model.archive(c.id) } label: { HStack { Sketch("archive", color: Ink.fg).frame(width: 22, height: 22); Text("Archive").font(Face.text(16, .semibold)) }.frame(maxWidth: .infinity, minHeight: 56) }
-            .buttonStyle(TileStyle(lead: false, hue: a?.hue ?? 162))
-          Button { model.what(c) } label: { PenMark("sketch:what", color: Ink.fg).frame(width: 70, height: 24).frame(maxWidth: .infinity, minHeight: 56) }
-            .buttonStyle(TileStyle(lead: false, hue: a?.hue ?? 162))
-        }
-      } else {
-        Text("Archived: it lies in Off your mind.").font(Face.text(14)).foregroundStyle(Ink.muted)
-        Button("Back to Desk") { model.archive(c.id, false) }.buttonStyle(QuietWay())
-      }
-    } else {
+    Group {
       let said = c.status == "shredded" ? "Shredded" : c.kind == "info" ? "Read" : c.trusted ? "\(Words.trust)\(c.advisedLabels.isEmpty ? "" : ": \(c.advisedLabels)")" : pickedLabels.isEmpty ? "Withdrawn by the agent" : pickedLabels
       if c.status != "shredded" && c.kind != "info" && !c.trusted && !pickedLabels.isEmpty {
         // as the desktop: every option stays in its place, the chosen one in the accent's wash, the others dimmed

@@ -314,9 +314,9 @@ try {
   await A.until("document.querySelector('.room-notice[data-why=newer] .room-notice-go')", 'the newer notice').then(() => check(true, 'a calm notice offers Reload once something needs a newer Trommi'), e => check(false, e.message))
   await A.js("document.querySelector('.room-notice[data-why=newer]')?.remove()")
 
-  // ---- the end list at the foot of the Desk's list (#desk-end): what the agents finished (the archive box: it archives
-  //      it, Undo takes it back), what is put off (Later), what is ticked off (answered, done, shredded: struck); five
-  //      rows, then "Show more", which opens the whole list with its search (/stacks/off); the way back is on the card ----
+  // ---- the end list at the foot of the Desk's list (#desk-end): Off your mind, a plain feed: the work (a dot), what is
+  //      put off (Later), what is closed (answered, done; shredded: struck); nothing to tick or archive; five rows,
+  //      then "Show more", which opens the whole list with its search (/stacks/off); the way back is on the card ----
   const pile = {}
   for (const [k, title] of [['snooze', 'Stapel: später'], ['shred', 'Stapel: weg'], ['revise', 'Stapel: erklären'], ['done', 'Stapel: erledigt'], ['acting', 'Stapel: beantwortet']]) pile[k] = await agent.sendCard({ title, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
   await A.js("trommi.router.visit('/')")
@@ -337,22 +337,11 @@ try {
   await A.until(`!document.getElementById('row-${pile.done}')`, 'answered row leaves')
   const td = Date.now(); while (!commands.some(c => c.command === 'answer' && c.object_id === pile.done) && Date.now() - td < 10000) await sleep(30)
   await agent.close(pile.done, 'erledigt')
-  // closed by its session: it stands in the end list with its archive box; that archives it (struck, ticked), Undo takes it back
+  // closed by its session: it stands in the end list as a plain row: no box, no button, not struck, nothing to archive
   const endRow = (id, g) => `document.querySelector(':is(#desk-end, #off-end) .end-row[data-id="${id}"]${g ? `[data-g=${g}]` : ''}')`
-  await A.until(`trommi.model().landed.some(c => c.id === '${pile.done}') && ${endRow(pile.done, 'open')}?.querySelector('button.end-tick.is-archive[aria-label^="Archive"]')`, 'the finished card in the end list with its Archive button').then(() => check(true, 'a card its session closed stands in the end list with its Archive button'), e => check(false, e.message))
-  check(await A.js(`return !document.querySelector('#row-${pile.done}') && !document.querySelector('#desk-list .is-archive, #desk-list .is-done')`), 'no Done rows among the open questions any more')
-  await A.js(`${endRow(pile.done)}.querySelector('button.end-tick').click()`)
-  await A.until(`${endRow(pile.done, 'done')} && !trommi.model().landed.some(c => c.id === '${pile.done}')`, 'ticked off').then(() => check(true, 'the tick archives it: the row stays, ticked'), e => check(false, e.message))
-  check(await A.js(`const t = ${endRow(pile.done)}.querySelector('.end-title'); return getComputedStyle(t).textDecorationLine.includes('line-through') && !!${endRow(pile.done)}.querySelector('.end-tick.is-ticked')`), 'a ticked row is struck through, its box ticked')
-  const unarch = `#says-host .says:not([hidden]) form[action$="/cards/${pile.done}/unarchive"] .says-back`
-  await A.until(`document.querySelector('${unarch}')`, 'toast with Undo after the tick').then(() => check(true, 'the tick says so in a toast with Undo'), e => check(false, e.message))
-  await A.js(`document.querySelector('${unarch}').click()`)
-  await A.until(`trommi.model().landed.some(c => c.id === '${pile.done}')`, 'Undo of the tick').then(() => check(true, 'Undo takes the tick back: finished, not archived'), e => check(false, e.message))
-  await A.until("location.pathname.startsWith('/card/') && document.querySelector('#cardpage')", 'the card page after Undo of the tick', 5000).catch(() => {})   // (Undo from a toast leads to the card)
-  await A.js("trommi.router.visit('/')")
-  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick')`, 'the Archive button again').then(() => check(true, 'after Undo the row has its Archive button again'), e => check(false, e.message))
-  await A.js(`${endRow(pile.done)}.querySelector('button.end-tick').click()`)
-  await A.until(`${endRow(pile.done, 'done')}`, 'ticked off again')
+  await A.until(`${endRow(pile.done, 'done')}`, 'the finished card in the end list').then(() => check(true, 'a card its session closed stands in the end list'), e => check(false, e.message))
+  check(await A.js(`return !document.querySelector('#row-${pile.done}') && !document.querySelector('#desk-list .is-archive, #desk-list .is-done')`), 'no Done rows among the open questions')
+  check(await A.js(`const r = ${endRow(pile.done)}; return !r.querySelector('button, form, .end-tick') && !getComputedStyle(r.querySelector('.end-title')).textDecorationLine.includes('line-through') && !document.querySelector('.end-row [formaction*=archive], .end-row form[action*=archive]')`), 'a finished row is plain: nothing to tick, no Archive, not struck through')
   // answered, its session still at it: Working
   await A.js(`document.querySelector('#row-${pile.acting} form[action$="/decide"] button[value="a"], #row-${pile.acting} button[name=key][value=a]')?.click()`)
   await A.until(`!document.getElementById('row-${pile.acting}')`, 'answered row leaves')
@@ -369,13 +358,9 @@ try {
   await A.until(`${endRow(pile.snooze, 'later')} && ${endRow(pile.shred)} && ${endRow(pile.done, 'done')} && ${endRow(pile.revise, 'works')} && document.querySelector('#off-end .end-row[data-g=works] .work-dot') && !document.querySelector('#off-end .gear')`, 'one list: the asked one at the top, being worked on (a dot, no gear), five rows at most', 20000)
     .then(() => check(true, 'snoozed, shredded and done cards stand in the end list; the asked one (What??) stays on the Desk with the agents'), e => check(false, e.message))
   const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.done}'].map(id => [id, document.querySelector('#off-end .end-row[data-id="' + id + '"]')?.dataset.g]))`)
-  check(g[pile.snooze] === 'later' && g[pile.shred] !== 'later' && g[pile.shred] !== 'open' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
-  check(await A.js(`const o = [...document.querySelectorAll('#off-end .end-row')].map(r => r.dataset.g), rank = g => (g === 'works' ? -1 : g === 'open' ? 0 : g === 'later' ? 1 : 2); return o.every((x, i) => !i || rank(o[i - 1]) <= rank(x))`), 'the end list: finished first, then Later, then ticked off')
-  // a tick he made can be taken back on the list itself (while it is among the five drawn): the ticked box of the archived card unticks it
-  await A.js(`${endRow(pile.done, 'done')}.querySelector('button.end-tick.is-ticked').click()`)
-  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick:not(.is-ticked)')`, 'unticked').then(() => check(true, 'a ticked box unarchives: back to archive'), e => check(false, e.message))
-  await A.js(`${endRow(pile.done, 'open')}.querySelector('button.end-tick').click()`)
-  await A.until(`${endRow(pile.done, 'done')}`, 'ticked off once more')
+  check(g[pile.snooze] === 'later' && g[pile.shred] === 'trash' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
+  check(await A.js(`const o = [...document.querySelectorAll('#off-end .end-row')].map(r => r.dataset.g), rank = g => (g === 'works' ? 0 : g === 'later' ? 1 : 2); return o.every((x, i) => !i || rank(o[i - 1]) <= rank(x))`), 'the end list: the work first, then Later, then what is closed')
+  check(await A.js(`return getComputedStyle(${endRow(pile.shred)}.querySelector('.end-title')).textDecorationLine.includes('line-through')`), 'a shredded row is struck through')
   await A.js("trommi.router.visit('/')")
   await A.until("document.querySelector('#desk-stacks')", 'the Desk again')
   check(await A.js("return !document.querySelector('#desk-stacks [data-pile=off], #desk-stacks [data-stack=off], .off-head') && !!document.querySelector('#desk-stacks #desk-artifacts')"), 'no pile Off the desk at the foot any more; Artifacts stays')
@@ -386,7 +371,7 @@ try {
   check(ends.all === 5 && ends.shown === 5 && ends.more === 'Show more', `five rows on the Desk (only those are drawn), then Show more (${JSON.stringify(ends)})`)
   await A.js("document.querySelector('#desk-end .end-link').click()")
   await A.until(`location.pathname === '/stacks/off' && document.querySelector('#off-end .end-row[data-id="${pile.snooze}"]')`, 'Show more opens the whole list').then(() => check(true, '"Show more" opens the whole list at /stacks/off'), e => check(false, e.message))
-  check(await A.js("const l = [...document.querySelectorAll('#off-end .end-row')]; return l.length > 0 && l.every(x => x.querySelector('.end-tick') && x.querySelector('a.end-title')) && l.every(x => !x.hidden) && !!document.querySelector('.off-page .end-search input')"), 'the whole list: each row its mark and title, all shown, with its search')
+  check(await A.js("const l = [...document.querySelectorAll('#off-end .end-row')]; return l.length > 0 && l.every(x => x.querySelector('a.end-title')) && l.every(x => !x.hidden) && !!document.querySelector('.off-page .end-search input')"), 'the whole list: each row its title, all shown, with its search')
   // the way back is on the card: a row opens it, its Wake up brings it back to the Desk
   await A.js(`document.querySelector('#off-end .end-row[data-id="${pile.snooze}"] a.end-title').click()`)
   await A.until(`document.querySelector('#cardpage button[formaction$="/wake"]')`, 'the snoozed card with Wake up').then(() => check(true, 'a row opens its card, with its way back'), e => check(false, e.message))

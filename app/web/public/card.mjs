@@ -217,14 +217,6 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
   if (old) return box(html`<div class="tc-opts">${(old.options ?? []).map(o => still(o.label, plain(o.detail)))}</div><p class="tc-quiet">Version ${old.n} cannot be answered. <a data-nav href="${cardPath(card, base)}">The question as it stands now</a></p>`)
   if (card.status !== 'open') {
     const picked = card.choices?.length ? card.choices : [card.choice]
-    // Done by its agent and still on the Desk: what it says it did, his answer under it, Archive (and What?? to ask).
-    if (card.landed || card.archived) {
-      const yours = card.kind === 'info' ? '' : card.trusted ? `${WORDS.trust}${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ')
-      const done = html`<div class="tc-done-say"><span class="tc-done-mark" role="img" aria-label="Done">${sk('tick')}</span><span><b>Done</b>${card.summary ? html` · ${plain(card.summary)}` : ''}</span></div>`
-      return box(html`${done}<div class="tc-opts">${yours ? still(yours, card.note ? `Your answer · your note: ${card.note}` : 'Your answer', 'is-picked') : ''}</div>${card.landed
-        ? html`<div class="tc-or tc-done-ways"><button class="tc-tile is-archive" type="submit" form="${form}" formaction="${act(card, base, 'archive')}" title="Archive: seen it, down to Off the desk">${sk('archive')}<span>Archive</span></button><button class="tc-tile is-what" type="submit" form="${form}" formaction="${act(card, base, 'what')}" title="${WORDS.what}: ask the session about what it did">${sk('what')}</button></div>`
-        : html`<p class="tc-quiet">Archived: it lies in Off the desk.</p>${back(card, base, 'unarchive', 'Back on the Desk')}`}`)
-    }
     const said = card.status === 'shredded' ? 'Shredded' : card.kind === 'info' ? 'Read' : card.trusted ? `${WORDS.trust}${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || 'Withdrawn by the agent'
     const can = card.status === 'shredded' || card.choice != null || card.trusted || (card.kind === 'info' && card.read)
     return box(html`<div class="tc-opts">${still(said, card.note ? `Your note: ${card.note}` : '', 'is-picked')}${card.options.filter(o => card.option_notes?.[o.key]).map(o => still(o.label, `Your note: ${card.option_notes[o.key]}`))}${card.settled ? still(html`${sk('tick')}${SETTLED}`, `${model.byAgent.get(card.agent)?.name ?? 'The agent'} marked this answer as final: nothing follows from it.`, 'is-settled') : ''}${card.summary ? still('Done by the agent', card.summary) : ''}</div>${can ? back(card, base, 'reopen') : ''}`)
@@ -1394,8 +1386,6 @@ export function register(t) {
     takeback: card => hub.takeBack(card.id),
     revise: async (card, f, files) => { await say(card, noteOf(f) || HAND_BACK_TEXT, { handback: true }, files, marksIn(f)); forgetSent(card) },
     what: card => say(card, EXPLAIN_TEXT, { explain: true }),
-    archive: card => hub.archive(card.id),
-    unarchive: card => hub.archive(card.id, false),
     message(card, f, files) {
       const marks = marksIn(f)
       if (!noteOf(f) && !files.length && !marks) throw new Error('write something first')

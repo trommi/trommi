@@ -10,8 +10,6 @@ public let QUIET_MS: UInt64 = 15 * 60_000
 public let OFFLINE_GRACE_MS: UInt64 = 60_000
 public let UNHEARD_MS: UInt64 = 2 * 60_000
 public let ACTING_MS: UInt64 = 6 * 60 * 60 * 1000
-/** Cards an agent finished before the Done rows came count as archived (app.mjs DONE_SINCE, 7 October 2026). */
-public let DONE_SINCE: UInt64 = 1_791_331_200_000
 
 public enum Words {
   public static let later = "Later", duck = "Duck it", wake = "Wake up", ack = "Got it", what = "What??", trust = "I don’t give a duck", revise = "Reverse"
@@ -160,9 +158,6 @@ public struct DeskCard: Identifiable {
   public var snoozedUntil: UInt64?
   public var snoozedAt: UInt64?
   public var unsnoozed: UInt64?
-  public var finished: UInt64?
-  public var archived: Bool = false
-  public var landed = false
   public var mergedInto: String?
   public var mergedFrom: [String] = []
   public var noteAttachments: [JV] = []
@@ -427,11 +422,6 @@ public final class DeskModel {
     if let sn = h.snoozes[c.objectId], status == "open", let until = sn["until"].double {
       if UInt64(max(0, until)) > now { d.snoozedUntil = UInt64(until); d.snoozedAt = UInt64(max(0, sn["at"].double ?? 0)) } else { d.unsnoozed = UInt64(max(0, until)) }
     }
-    if status == "done" && c.closedHow == "closed", let a = a, !a.pending, a.answerAction != "read", a.answerAction != "shred" {
-      d.finished = c.updatedAt
-      if let arch = h.raw["archived/\(c.objectId)"]?.value, arch.truthy { d.archived = true }
-      else if c.updatedAt > UInt64(max(0, h.raw["archived_before"]?.value.double ?? 0)) && c.updatedAt > DONE_SINCE { d.landed = true }
-    }
     d.mergedInto = c.mergedIntoObjectId
     d.mergedFrom = c.mergedFromObjectIds
     if c.unsupported || c.contentState == "newer_schema" { d.unsupported = true }
@@ -459,7 +449,6 @@ public final class DeskModel {
     public var reads: [DeskCard]             // open infos
     public var revising: [DeskCard]          // with the agent (handed back, What??)
     public var snoozed: [DeskCard]
-    public var landed: [DeskCard]            // Done rows
     public var done: [DeskCard]
     public var units: [DeskUnit]
     public var cut: [DeskUnit]
@@ -519,15 +508,13 @@ public final class DeskModel {
     let reads = open.filter { $0.withAgent == nil && $0.kind == "info" }.sorted { ($1.isKnock ? 1 : 0, $1.created) < ($0.isKnock ? 1 : 0, $0.created) }
     let fresh = open.filter { $0.withAgent == nil && $0.kind != "info" }
     let revising = open.filter { $0.withAgent != nil }.sorted { ($0.withAgent ?? 0) > ($1.withAgent ?? 0) }
-    var snoozed = [DeskCard](), landed = [DeskCard](), done = [DeskCard](), unheardOf = [String: Int]()
+    var snoozed = [DeskCard](), done = [DeskCard](), unheardOf = [String: Int]()
     for c in cards where mine(c) {
       if c.status == "open" && c.snoozedUntil != nil && !shelved.contains(c.agent) { snoozed.append(c) }
-      if c.landed && !shelved.contains(c.agent) { landed.append(c) }
       if c.status == "shredded" || (c.status != "open" && ((c.kind == "decision" && (!c.choices.isEmpty || c.trusted)) || (c.kind == "info" && c.read != nil))) { done.append(c) }
       if c.status == "open" || c.status == "decided", let h = heardOf(c, now: now), h.late { unheardOf[c.agent, default: 0] += 1 }
     }
     snoozed.sort { ($0.snoozedAt ?? 0) > ($1.snoozedAt ?? 0) }
-    landed.sort { ($0.finished ?? 0) > ($1.finished ?? 0) }
     done.sort { ($0.status == "shredded" ? $0.shredded : $0.decided) ?? 0 > ($1.status == "shredded" ? $1.shredded : $1.decided) ?? 0 }
     func summary(_ ids: Set<String>) -> (open: Int, online: Bool, running: Bool, stuck: Bool, blocked: (String, String)?) {
       let mineF = fresh.filter { ids.contains($0.agent) }
@@ -550,7 +537,7 @@ public final class DeskModel {
     }
     let cut = units.filter { u in u.link?.state == "cut" && !(u.parent.flatMap { ix[$0] }.map { units[$0].link?.state == "cut" && units[$0].agent.agentDeviceId == u.agent.agentDeviceId } ?? false) }
     let name = all ? "All desks" : desks.first { $0.id == deskId }?.name ?? "Desk"
-    return View(deskId: deskId, all: all, deskName: name, here: here, fresh: fresh, reads: reads, revising: revising, snoozed: snoozed, landed: landed, done: done, units: units, cut: cut,
+    return View(deskId: deskId, all: all, deskName: name, here: here, fresh: fresh, reads: reads, revising: revising, snoozed: snoozed, done: done, units: units, cut: cut,
                 unheard: units.reduce(0) { $0 + $1.unheard }, knocking: fresh.filter { $0.isKnock }.count, working: units.filter { $0.online && $0.running }.count, allFreshCount: allFresh.count,
                 goals: all ? "" : desks.first { $0.id == deskId }?.goals ?? "")
   }

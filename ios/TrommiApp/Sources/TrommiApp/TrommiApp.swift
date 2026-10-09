@@ -477,10 +477,6 @@ final class BoardModel: ObservableObject {
       self.say("Asked: \(Words.what)", c.title, undo: { [weak self] in if let c = self?.card(c.id) { self?.takeBack(c) } })
     }
   }
-  func archive(_ id: String, _ on: Bool = true) {
-    guard let room = acting() else { return }
-    act { try await room.setRegisters(["archived/\(id)": on ? .obj(["at": .n(nowMs())]) : .null]); if on { self.say("Archived", self.card(id)?.title ?? "", undo: { [weak self] in self?.archive(id, false) }) } }
-  }
   func setDraft(_ c: DeskCard, keys: [String], note: String, notes: [String: String]) {
     guard let room = room, c.kind == "decision", c.status == "open" else { return }
     let empty = keys.isEmpty && note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && notes.values.allSatisfy { $0.isEmpty }
