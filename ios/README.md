@@ -41,7 +41,7 @@ Needs: [rustup](https://rustup.rs) (the compiler and its targets are named in `r
 first use), Swift 6.4, and for anything that runs on a phone the toolchain of "On an iPhone" below.
 
 ```bash
-core/swift/build.sh                                 # the Rust core: lib/linux and lib/ios, UniFFI's Swift file and header
+TROMMI_STAND_IN_RECOVERY=1 core/swift/build.sh      # the Rust core: lib/linux and lib/ios, UniFFI's Swift file and header
 (cd ios/TrommiClient && swift test)                 # the model, the store, and LiveCore against the Linux library
 (cd ios/TrommiApp && ulimit -n 65536 && xtool dev build --configuration release)   # xtool/TrommiApp.app
 ```
@@ -53,6 +53,13 @@ core/swift/build.sh                                 # the Rust core: lib/linux a
 `Sources/TrommiCoreRust/TrommiCoreRust.swift`. All three are build output and ignored by git: **after a fresh
 checkout, and after every change under `core/`, run it again** before `swift test` or `xtool dev build`. About two
 minutes the first time, 20 seconds after.
+
+`TROMMI_STAND_IN_RECOVERY=1` is needed while the core's recovery (spec section 8) is a stand-in: without it the
+library founds no room, with it a room it founds cannot be recovered and the real hub refuses the founding. It is a
+switch for development and tests; `AppStore/ship-local.sh` does not set it, so nothing with a stand-in is shipped.
+
+With a hub binary of branch `v2-hub` the tests also run against the real hub:
+`TROMMI_HUB_BIN=<path>/trommi-hub swift test --filter RealHubTests`.
 
 - No Apple SDK and no Apple linker are needed for the library itself: a static library is an archive of object files,
   which `rustc` writes for `aarch64-apple-ios` on Linux.
@@ -391,7 +398,22 @@ chrome; the minimum is iOS 27.
 
 ## Not there yet
 
-- The binding has `core_version()` only; every other call of `LiveCore` is a stub until the UniFFI facade lands.
-- The Mac and simulator build ("TestFlight from CI").
-- Licence notices for the Rust crates inside the app bundle (`THIRD-PARTY.md` lists them).
-- The memory of the Notification Service Extension with the core linked, measured on a phone.
+What the app cannot do until the core and its binding (`core/swift`) carry it; each is one stubbed line in
+`TrommiCoreLive` (its header lists real and stubbed calls) behind `Core.swift`:
+
+- **Stored content on the device** (spec section 9): `sendEnvelope`, `receiveEnvelope`, `register`, `cut`. Without
+  them the app signs in and follows groups, and shows and writes no chat, card, register, Note or board item.
+- **Joining by link** (12.1): `openInvite`, `acceptInviteRequest`, `confirmInvite`, `burnInvite`, `parseInviteLink`,
+  `inviteRequest`, `inviteReveal`, `checkEmoji`.
+- **Recovery** (section 8): the binding's recovery is a stand-in (`TROMMI_STAND_IN_RECOVERY=1`); the real hub refuses
+  its founding (`incomplete`). `recoverySigner`, `joinWithRecoveryCode`, `replaceRecoveryCode` are stubbed, so a
+  second device cannot sign in with the account yet.
+- **Live stroke pieces** of other devices (`processRelay`), and the **notification title** (`NotifyCoreLive`'s
+  `openEnvelope`): the extension shows the fixed text.
+- The Scribble Board still reads and writes the shapes of the Swift model (`Canvas.swift`); the core's reducer and
+  its whole-number format (`board_items`) replace it when they are bound.
+- Passkeys are built and switched off (`Passkeys.available`) until `app.trommi.com` lists the app under
+  `webcredentials` and the entitlement names it.
+- The Mac and simulator build ("TestFlight from CI"); licence notices for the Rust crates inside the app bundle
+  (`THIRD-PARTY.md` lists them); the memory of the Notification Service Extension with the core linked, measured on
+  a phone.
