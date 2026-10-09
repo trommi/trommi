@@ -225,22 +225,31 @@ pub struct Loaded {
 
 /// The loading rule of section 10.3, as a check of what the hub served.
 ///
-/// `applied` is the frontier of the snapshot this device applied last for the board (empty the first time),
-/// `cuts` the Cut in the room group of every removed device that the frontiers or `chains` name
-/// ([`crate::chain::GroupFacts::cut`]), `snapshot` the newest snapshot (the current value of the register by 9.3.2), `served` the board's items the
-/// hub gave from [`Snapshot::items_after_change`] on, and `chains` per writer its envelopes after the snapshot's
-/// frontier in ascending order, each verified by the receiver's checks 1 to 5 before it is handed in here
-/// ([`Link::of`]). A writer without a chain here is taken to have written nothing since.
+/// `applied` is the frontier this device applied last for the board ([`Loaded::frontier`] of its last load;
+/// empty the first time), `cuts` the Cut in the room group of every removed device that the frontiers or
+/// `chains` name ([`crate::chain::GroupFacts::cut`]), `snapshot` the newest snapshot (the current value of the
+/// register by 9.3.2), `served` the board's items the hub gave from [`Snapshot::items_after_change`] on, and
+/// `chains` per writer its envelopes in ascending order, each verified by the receiver's checks 1 to 5 before
+/// it is handed in here ([`Link::of`]).
+///
+/// A writer's chain starts after the last envelope of it that this device holds: after its head in `applied`
+/// (taken back to its Cut), and only for a writer the device holds nothing of, after the snapshot's frontier,
+/// the one shortcut of 9.0.6. So where the snapshot's frontier lies beyond the applied head, the chain is the
+/// bridge between the two: it must reach the frontier's number (`withheld`) with the frontier's envelope
+/// (`equivocation`). Without the bridge a writer that signed two chains, one seen by this device and one by
+/// the snapshot's writer, would go unseen below the new frontier. A writer whose chain is already where the
+/// frontier is and that has no chain here is taken to have written nothing since.
 ///
 /// Refuses with: `replay` if the snapshot's frontier lies before the applied one for some writer, and
 /// `equivocation` if it names another envelope under the same number; `removed-sender` if the frontier lies
 /// beyond a removed writer's Cut (the snapshot holds shapes that are to vanish: a device loads an older one or
 /// reads the chains) or a chain goes on beyond it, and `equivocation` if the frontier or a chain has another
-/// envelope at the Cut's number, or a served item contradicts the applied frontier or a Cut; `gap` or `chain-break` if a writer's chain
-/// after the frontier does not link; `withheld` if an envelope of a chain names this board and was not served, or
-/// a served item lies beyond what its writer's chain shows; `hash-mismatch` if a served item is not the envelope
-/// its writer's chain has under that number; `equivocation` if a served item at the frontier's number has
-/// another hash than the frontier; `forbidden` if a served item is, by its writer's chain, no item of this
+/// envelope at the Cut's number, or a served item contradicts the applied frontier or a Cut; `gap` or
+/// `chain-break` if a writer's chain does not link from where it starts; `withheld` if a chain ends before the
+/// snapshot's frontier or the bridge to it is missing, if an envelope of a chain after the frontier names this
+/// board and was not served, or a served item lies beyond what its writer's chain shows; `hash-mismatch` if a
+/// served item is not the envelope its writer's chain has under that number; `equivocation` if a chain or a
+/// served item at the frontier's number has another hash than the frontier; `forbidden` if a served item is, by its writer's chain, no item of this
 /// board that counts; `bad-format` for a writer or an item given twice.
 pub fn verify_load(
     board: &BoardId,
@@ -284,14 +293,29 @@ pub fn verify_load(
         .map(|(writer, head)| ((*writer, head.seq), head.hash))
         .collect();
 
+    // Where this device's own verified chain of each writer stands: at its applied head, taken back to a Cut.
+    let held: BTreeMap<DeviceId, Head> = applied
+        .iter()
+        .map(|(writer, was)| {
+            let was = cut_of(writer)
+                .filter(|cut| cut.seq < was.seq)
+                .unwrap_or(was);
+            (*writer, *was)
+        })
+        .filter(|(_, was)| was.seq > 0)
+        .collect();
+
     let mut frontier: BTreeMap<DeviceId, Head> = snapshot.frontier.iter().copied().collect();
+    // The envelopes after the snapshot's frontier, and those of a bridge up to it.
     let mut links: BTreeMap<(DeviceId, u64), &Link> = BTreeMap::new();
+    let mut bridge: BTreeMap<(DeviceId, u64), Hash32> = BTreeMap::new();
     let mut writers = BTreeSet::new();
     for (writer, chain) in chains {
         if !writers.insert(*writer) {
             return Err(Error::BadFormat);
         }
-        let mut last = snapshot.frontier_of(writer);
+        let covers = snapshot.frontier_of(writer);
+        let mut last = held.get(writer).copied().unwrap_or(covers);
         for link in chain {
             if last.seq.checked_add(1) != Some(link.seq) {
                 return Err(Error::Gap);
@@ -310,11 +334,28 @@ pub fn verify_load(
                 seq: link.seq,
                 hash: link.hash,
             };
-            links.insert((*writer, link.seq), link);
+            if link.seq > covers.seq {
+                links.insert((*writer, link.seq), link);
+            } else {
+                if link.seq == covers.seq && link.hash != covers.hash {
+                    return Err(Error::Equivocation);
+                }
+                bridge.insert((*writer, link.seq), link.hash);
+            }
+        }
+        if last.seq < covers.seq {
+            return Err(Error::Withheld);
         }
         if last.seq > 0 {
             frontier.insert(*writer, last);
         }
+    }
+    // A writer the device holds less of than the snapshot covers, and no bridge was served.
+    let unbridged = held.iter().any(|(writer, was)| {
+        !writers.contains(writer) && was.seq < snapshot.frontier_of(writer).seq
+    });
+    if unbridged {
+        return Err(Error::Withheld);
     }
 
     let mut fresh = Vec::new();
@@ -330,6 +371,12 @@ pub fn verify_load(
             .is_some_and(|hash| *hash != item.hash)
         {
             return Err(Error::Equivocation);
+        }
+        if bridge
+            .get(&(item.sender, item.seq))
+            .is_some_and(|hash| *hash != item.hash)
+        {
+            return Err(Error::HashMismatch);
         }
         if item.seq < start.seq {
             covered.push(index);
