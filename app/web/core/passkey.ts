@@ -3,7 +3,7 @@
 //   key_wrapped = 0x02 || nonce(12) || AES-256-GCM(wrap_key, nonce, aad "trommi/v1/account-wrap" 0x00 || room_id(32) || what || more, code(32 raw))
 //   what = "password" | "recovery" | "passkey"; more = the credential id for a passkey, else nothing
 //   passkey wrap key = HKDF-SHA-256(prf output(32), salt = room_id(32), info = "trommi/v1/passkey-wrap-key" 0x00 || credential_id, 32)
-// The labels follow FORMAT.md section 3: each is followed by one 0x00 where it is used, and each has one use.
+// The labels follow v1.md section 3: each is followed by one 0x00 where it is used, and each has one use.
 import * as z from './crypto/zcrypto.mjs'
 import { Hub } from './transport.ts'
 

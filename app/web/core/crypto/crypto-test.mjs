@@ -210,7 +210,7 @@ test('round trip, and an independent open with node:crypto', async () => {
   const sealed = await z.seal(bob.kexPub, utf8('secret'), utf8('where'))
   assert.equal(txt(await z.openSealed(bob, sealed, utf8('where'))), 'secret')
   assert.equal(sealed.length, 2 + 32 + 6 + 16)
-  // The same steps with node:crypto, from FORMAT.md: X25519, HKDF(salt = eph || recipient), AES-256-GCM.
+  // The same steps with node:crypto, from v1.md: X25519, HKDF(salt = eph || recipient), AES-256-GCM.
   const eph = sealed.slice(2, 34)
   const priv = nodeCrypto.createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b656e04220420', 'hex'), fill(32, 4)]), format: 'der', type: 'pkcs8' })
   const shared = nodeCrypto.diffieHellman({ privateKey: priv, publicKey: nodeCrypto.createPublicKey({ key: { kty: 'OKP', crv: 'X25519', x: b64u(eph) }, format: 'jwk' }) })
@@ -571,7 +571,7 @@ test('round trip, header fields, padding, an independent decrypt with node:crypt
   const p = z.peekEnvelope(env.bytes)
   assert.equal(p.ciphertext.length, 256 + 16, 'short messages are padded to 256 bytes')
   assert.ok(!includesBytes(env.bytes, utf8('Deploy')))
-  // FORMAT.md by hand: sender key, AES-256-GCM with the header as associated data, hash, signature.
+  // v1.md by hand: sender key, AES-256-GCM with the header as associated data, hash, signature.
   const key = await z.deriveSenderKey(w.roomId, SESSION_SECRET, w.phone.device.id, { keyScope: 1, sessionId: SESSION_ID })
   const dec = nodeCrypto.createDecipheriv('aes-256-gcm', key, p.nonce)
   dec.setAAD(p.headerBytes); dec.setAuthTag(p.ciphertext.slice(-16))
@@ -1423,14 +1423,14 @@ test('colludes with a removed device: hands it every wrap and back link of the n
 
 const H = b => hex(b)
 const be = (n, len) => { const b = new Uint8Array(len); let v = BigInt(n); for (let i = len - 1; i >= 0; i--) { b[i] = Number(v & 0xffn); v >>= 8n } return b }
-/** A log entry built by hand from FORMAT.md, section 6, and signed by `signer`: for entries the library refuses to build. */
+/** A log entry built by hand from v1.md, section 6, and signed by `signer`: for entries the library refuses to build. */
 async function handEntry(state, signer, type, payload) {
   const body = concat(Uint8Array.of(1, 1, type), be(state.head.seq + 1, 4), state.head.hash, be(T0, 8), Uint8Array.of(1), signer.id, payload)
   return concat(body, await z.sign(signer, z.LABEL.logSig, body))
 }
 // The twelve cases of ed25519-speccheck (github.com/novifinancial/ed25519-speccheck, cases.json, Apache-2.0; Chalkias,
 // Garillot, Nikolaenko: "Taming the many EdDSAs", 2020): the inputs on which Ed25519 verifiers differ. Each: message,
-// public key, signature, what it is. Under the pinned rules (FORMAT.md section 1) only case 3 verifies.
+// public key, signature, what it is. Under the pinned rules (v1.md section 1) only case 3 verifies.
 const SPECCHECK = [
   ['8c93255d71dcab10e8f379c26200f3c7bd5f09d9bc3068d3ef4edeb4853022b6', 'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa',
     'c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a0000000000000000000000000000000000000000000000000000000000000000', 'S = 0, A and R of small order'],

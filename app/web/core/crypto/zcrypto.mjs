@@ -4,7 +4,7 @@
 // HMAC-SHA-256, SHA-256. The same file runs in Node 22+ and in browsers (secure context).
 // No primitive is implemented here; if the runtime lacks one, requireRuntime() says which.
 //
-// The wire formats, labels and key schedule are specified in FORMAT.md. Keep both in step.
+// The wire formats, labels and key schedule are specified in v1.md. Keep both in step.
 // Used by the hub, the client core and the connector. Not audited.
 
 const subtle = globalThis.crypto?.subtle
@@ -340,7 +340,7 @@ export async function sign(device, label, message) {
   return new Uint8Array(await subtle.sign({ name: 'Ed25519' }, device.signKey, concat(labelBytes(label), message)))
 }
 
-// Ed25519 verification, one rule set for every implementation (FORMAT.md section 1, "Ed25519 verification"). Runtimes
+// Ed25519 verification, one rule set for every implementation (v1.md section 1, "Ed25519 verification"). Runtimes
 // differ on exactly these inputs, so they are refused here, in plain byte comparisons, before the runtime's verifier
 // is asked: a scalar S that is not below the group order, a point (the public key A, the signature's R) that is not
 // canonically encoded or has small order. What is left, the runtime decides by the equation without cofactor.
@@ -393,7 +393,7 @@ export function verify(signPub, label, message, signature) {
 // It gives confidentiality to the holder of the recipient key and nothing about the sender:
 // anyone can seal. Authenticity must come from elsewhere (here: key commitments in the signed log).
 
-// X25519, one rule in every implementation (FORMAT.md section 1): the function of RFC 7748 as it is (bit 255 of the
+// X25519, one rule in every implementation (v1.md section 1): the function of RFC 7748 as it is (bit 255 of the
 // public key ignored, a u coordinate of p and above reduced), and an all-zero result refused ('bad-key'). That refuses
 // every public key of small order and nothing else. WebCrypto throws for the all-zero result in some runtimes and
 // returns it in others; both end here as the same error. vectors.json "x25519" has the cases.
@@ -1206,7 +1206,7 @@ export const KIND = Object.freeze({
 })
 const KIND_MAX = 7
 /**
- * Kinds above KIND_MAX are reserved for later format versions. A READER accepts them (FORMAT.md section 9, "Kinds a
+ * Kinds above KIND_MAX are reserved for later format versions. A READER accepts them (v1.md section 9, "Kinds a
  * reader does not know"): no timeline block, the object block iff flags bit 1, the bind opaque. Signature, chain and
  * seen are checked as for any envelope, so a newer client's envelope never breaks its sender's chain on an older
  * device; nothing of it is applied. Writers (encodeHeader) and the hub (`strictKinds`) refuse them until defined.

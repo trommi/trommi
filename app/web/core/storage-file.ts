@@ -8,7 +8,7 @@
 // state's. When the journal outgrows the snapshot (and 1 MiB), the state is written whole (temp file + fsync + rename +
 // directory fsync) and the journal emptied. Opening reads the snapshot and replays the journal (a torn last line, from a
 // crash in the middle of an append, is dropped: its write never resolved).
-// The device key is a 66-byte key file (spec/FORMAT.md §4), mode 0600: `key_file` is a path or a function
+// The device key is a 66-byte key file (spec/v1.md §4), mode 0600: `key_file` is a path or a function
 // (room_id hex) -> path; default `<dir>/<prefix>device.key`. Several sessions of one room may share `dir` with different
 // prefixes.
 import fs from 'node:fs/promises'
