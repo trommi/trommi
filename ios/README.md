@@ -130,13 +130,15 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
 - **Chat list:** a main session's helpers lie folded in one stack under it, as in the web's sidebar (`UnitStack` in
   `TrommiClient/Desk.swift`): seven drawings at most, the stopped ones first and marked, the count, how many wait on
   him or are at work; the main's row counts its helpers in. A tap unfolds a stack; which are open is kept on the phone.
-- **Note:** a panel inside the page, above the tab bar, not a sheet (a sheet covered the bar). The page stays
-  visible behind it, dimmed. The keyboard lifts the panel as it lifts the page, and the whole note stays above it: the
-  panel takes the room above the keyboard (at most 400 pt), the text area shrinks and scrolls (the pictures and the
-  paperclip · bin · send row never give way), and what the keyboard's own frame still covers of the panel
-  (`UIResponder.keyboardWillChangeFrameNotification`; the tab content's keyboard inset ended a little below the
-  keyboard's top edge) is kept free at its bottom (`NotePanel` in `Shell.swift`). Drag the handle down or tap beside
-  the panel to close it; the draft stays on the note.
+- **Note:** a full page of yellow paper over the list he came from (`NotePanel` in `Shell.swift`), edge to edge, up
+  under the status bar and on behind the tab pill, which stays and is lit on Note. From the top: a handle, "To: …" as
+  a glass pill on a row of its own (the words begin below it, never under it), the words, the pictures, the
+  paperclip · bin · send row just above the tab pill. A tap on Note or another tab, or a drag down on the handle,
+  leaves it; the draft stays on the note. With the keyboard up the tab pill hides and the row sits on the keyboard:
+  the text area shrinks and scrolls (the pictures and the row never give way), and what the keyboard's own frame
+  still covers of the page (`UIResponder.keyboardWillChangeFrameNotification`; the content's keyboard inset ended a
+  little below the keyboard's top edge) is kept free at its bottom. On the iPad the note is a sheet from the Desk's
+  corner button.
 - **Desk:** no text field; the keyboard only appears in sheets (New Desk, Rename), which the system handles.
 - **Settings:** forms with the system's keyboard handling; a drag dismisses it.
 
@@ -251,7 +253,7 @@ running app took the share at once.
 
 Anything dropped onto the app goes onto the note (`NoteDrop.swift`, `.onDrop` on the shell): pictures, videos and other
 files become its attachments, links and text its words. While something hovers, the app shows a hand-drawn dashed
-outline and one line of glass ("Drop onto the note"); on the drop the note opens (the panel on the iPhone, the corner
+outline and one line of glass ("Drop onto the note"); on the drop the note opens (the yellow page on the iPhone, the corner
 sheet on the iPad's Desk). The note on screen takes the drop into what is being written; without one open it goes onto
 the stored note, as a share does (`ShareImport.addToNote`).
 

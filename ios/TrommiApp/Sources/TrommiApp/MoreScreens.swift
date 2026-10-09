@@ -324,11 +324,13 @@ struct NoteButton: View {
 /** The note as a sheet (the iPad's corner button). */
 struct NoteSheet: View {
   @Environment(\.dismiss) private var dismiss
-  var body: some View { NavigationStack { NoteScreen(onDone: { dismiss() }) } }
+  var body: some View { NoteScreen(onDone: { dismiss() }).padding(.top, 10).background(Ink.noteYellow.ignoresSafeArea()) }
 }
 
 /**
- * The note (notes.mjs): the yellow slip to the desk's crowned session, a page of its own on the iPhone (the bar stays).
+ * The note (notes.mjs): the yellow slip to the desk's crowned session, a full page of yellow paper on the iPhone (the
+ * tab pill stays, lit on Note), a sheet on the iPad. From the top: "To: …" on its own row, the words, the pictures,
+ * the paperclip · bin · send row.
  * Words, pictures and files (encrypted like the composer's); kept as a note object while he writes (every device sees
  * it), sent with a three-second Undo, then gone from the desk.
  */
@@ -361,6 +363,9 @@ struct NoteScreen: View {
     let target = to.flatMap { id in model.desk?.agents.first { $0.id == id } } ?? crown
     let empty = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && files.isEmpty
     VStack(alignment: .leading, spacing: 10) {
+      // "To: …" on a row of its own: the words begin below it and never run under it (build 20: as a navigation bar
+      // item the glass pill floated over the first lines)
+      HStack { Spacer(minLength: 0); recipient(target) }
       TextEditor(text: $text)
         .font(Face.text(18)).foregroundStyle(Ink.noteInk)
         .scrollContentBackground(.hidden)
@@ -422,12 +427,6 @@ struct NoteScreen: View {
     .padding(.bottom, 12)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .background(Ink.noteYellow.ignoresSafeArea())
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbarBackground(.hidden, for: .navigationBar)
-    .toolbar {
-      if hSize != .regular && onDone == nil { ToolbarItem(placement: .topBarLeading) { MenuPill() } }
-      ToolbarItem(placement: .topBarTrailing) { recipient(target) }
-    }
     .onAppear {
       if !loaded, let n = model.desk?.notes.filter({ $0.held.isNull }).sorted(by: { $0.updated > $1.updated }).first { text = n.text; noteId = n.id; files = n.attachments }
       loaded = true
@@ -496,7 +495,9 @@ struct NoteScreen: View {
         Text(target?.name ?? "No Session").fontWeight(.semibold).foregroundStyle(Ink.noteInk).lineLimit(1)
         Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Ink.noteInk.opacity(0.7))
       }
-      .font(Face.text(15)).padding(.horizontal, 4)
+      .font(Face.text(15)).padding(.horizontal, 14).frame(minHeight: 40)
+      .glass(Capsule(), interactive: true)
+      .contentShape(Capsule())
     }
     .accessibilityLabel("Recipient: \(target?.name ?? "none")")
   }

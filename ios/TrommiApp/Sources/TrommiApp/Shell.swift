@@ -1,5 +1,5 @@
 // Shell.swift: the frame around every board screen (sidebar.mjs, app.mjs): on the iPhone the glass pill at the bottom (Chat ·
-// Desk · Note as drawings, Note as a panel over the page) and the place pill (the menu) at the top left; on the iPad the sessions as a
+// Desk · Note as drawings, Note as a full yellow page over the list) and the place pill (the menu) at the top left; on the iPad the sessions as a
 // sidebar column beside the stack. The passing toast with its Undo, the calm line when the hub asks for a newer app.
 import SwiftUI
 import TrommiClient
@@ -66,7 +66,7 @@ struct BoardShell: View {
     .background(Ink.bg.ignoresSafeArea())
     .modifier(StatusBarUnderIsland())
     // anything dropped onto the app goes onto the note (NoteDrop.swift): the note opens and shows it arrive
-    .modifier(NoteDropTarget { if hSize == .regular { NotificationCenter.default.post(name: .trommiNoteOpen, object: nil) } else { withAnimation(.snappy) { noteOpen = true } } })
+    .modifier(NoteDropTarget { if hSize == .regular { NotificationCenter.default.post(name: .trommiNoteOpen, object: nil) } else if model.tab != .note { noteUnder = model.tab; model.tab = .note } })
   }
   private var stack: some View {
     NavigationStack(path: $model.deskPath) {
@@ -618,16 +618,17 @@ struct UpdateRequired: View {
 
 
 /**
- * The note as a panel over the page, ABOVE the tab bar (his word, 8 October: a sheet covered the bar): inside the
- * bar's safe area, so its bottom is the bar's top and the keyboard lifts it as it lifts the content. The page stays visible,
- * dimmed; a tap beside it or a swipe down closes it; the draft stays (NoteScreen keeps it on the note object).
+ * The note on the iPhone: a full page of yellow paper over the list he came from, edge to edge, up under the status
+ * bar and on behind the tab pill (his word, 9 October: "doch Full screen, dann schöner"; before it was a half-height
+ * panel over the dimmed page). It lies inside the shell's content, so the tab pill stays and is lit on Note; a tap on
+ * Note or another tab, or a drag down on the handle, leaves it. The draft stays (NoteScreen keeps it on the note object).
  *
  * With the keyboard up the whole note stays above it (build 20: the paperclip · bin · send row was half behind the
- * keyboard). Two causes, both taken away here: the panel had a fixed height (55 % of what the keyboard left, at least
- * 320 pt) that the note's content did not fit into, so its last row was cut off; and the panel's bottom lay about
- * 14 pt below the keyboard's top edge (the tab content's keyboard inset is not the keyboard's frame). So the panel
- * takes the room there is, and what the keyboard's own frame still covers of it (`under`) is kept free at its bottom,
- * the paper running on behind the keyboard.
+ * keyboard). Two causes: the panel had a fixed height (55 % of what the keyboard left, at least 320 pt) that the
+ * note's content did not fit into, so its last row was cut off; and the content's bottom lay about 14 pt below the
+ * keyboard's top edge (the keyboard inset of the content is not the keyboard's frame). Now the note takes all the room,
+ * its words give way (NoteScreen), and what the keyboard's own frame still covers of it (`under`) is kept free at the
+ * bottom.
  */
 struct NotePanel: ViewModifier {
   @Binding var open: Bool
@@ -638,34 +639,24 @@ struct NotePanel: ViewModifier {
     content.overlay {
       if open {
         GeometryReader { geo in
-          // what the keyboard covers of this tab's content although the safe area says it is free, and a little air
+          // what the keyboard covers of the content although the safe area says it is free, and a little air
           let under = keyboardTop.map { max(0, geo.frame(in: .global).maxY - $0) + 6 } ?? 0
-          let room = max(200, geo.size.height - under - 12)
-          // while he writes the note takes the room above the keyboard; else a good half of the page
-          let height = min(room, keyboardTop == nil ? max(360, geo.size.height * 0.55) : 400)
-          ZStack(alignment: .bottom) {
-            Color.black.opacity(0.28).ignoresSafeArea()
-              .onTapGesture { withAnimation(.snappy) { open = false } }
-              .transition(.opacity)
-            VStack(spacing: 0) {
-              Capsule().fill(Ink.noteInk.opacity(0.35)).frame(width: 38, height: 5).padding(.top, 8).padding(.bottom, 2)
-                .frame(maxWidth: .infinity).contentShape(Rectangle())
-                .gesture(DragGesture().onChanged { drag = max(0, $0.translation.height) }.onEnded { v in
-                  withAnimation(.snappy) { if v.translation.height > 80 || v.predictedEndTranslation.height > 200 { open = false }; drag = 0 }
-                })
-                .accessibilityLabel("Close the note").accessibilityAddTraits(.isButton)
-                .accessibilityAction { open = false }
-              NavigationStack { NoteScreen(onDone: { withAnimation(.snappy) { open = false } }) }
-            }
-            .padding(.bottom, under)
-            .frame(height: height + under)
-            .background(Ink.noteYellow)
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22, style: .continuous))
-            .shadow(color: .black.opacity(0.25), radius: 18, y: -2)
-            .offset(y: drag)
-            .transition(.move(edge: .bottom))
+          VStack(spacing: 0) {
+            Capsule().fill(Ink.noteInk.opacity(0.35)).frame(width: 38, height: 5).padding(.top, 8).padding(.bottom, 9)
+              .frame(maxWidth: .infinity).contentShape(Rectangle())
+              .gesture(DragGesture().onChanged { drag = max(0, $0.translation.height) }.onEnded { v in
+                withAnimation(.snappy) { if v.translation.height > 80 || v.predictedEndTranslation.height > 200 { hideKeyboard(); open = false }; drag = 0 }
+              })
+              .accessibilityLabel("Close the note").accessibilityAddTraits(.isButton)
+              .accessibilityAction { open = false }
+            NoteScreen(onDone: { withAnimation(.snappy) { open = false } })
           }
+          .padding(.bottom, under)
+          .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+          .background(Ink.noteYellow.ignoresSafeArea())
+          .offset(y: drag)
         }
+        .transition(.move(edge: .bottom))
       }
     }
     .animation(.snappy, value: open)
