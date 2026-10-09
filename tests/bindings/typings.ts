@@ -23,14 +23,19 @@ export async function use(hubCode: string, entry: LogEntry): Promise<void> {
   const room: Uint8Array | null = await device.room()
   if (!room) return
   const opened = await device.inviteOpen('agent', null, 'https://app.example', 'https://hub.example', Date.now())
-  const asked = await other.joinRequest(opened.link, opened.offer, opened.offerSignature, Date.now())
-  const accepted = await device.inviteAccept(opened.inviteId, asked.request, asked.mac, asked.signature, Date.now())
+  // What the hub's routes take and serve fits the calls as it is: { offer, signature }, { request, mac, signature }.
+  const asked = await other.joinRequest(opened.link, opened, Date.now())
+  const accepted = await device.inviteAccept(opened.inviteId, asked, Date.now())
+  await other.joinReveal(accepted)
   const emoji: string = accepted.code.emoji.join(' ')
   void emoji
   await device.inviteConfirm(opened.inviteId, accepted.code.numbers, accepted.requestHash, true, Date.now())
   const session = await device.foundSession(await other.id(), [await other.keyPackage(Date.now())], Date.now())
-  const key: Uint8Array = await device.contentKey(sessionGroupId(room, session), 1)
-  void key
+  const sealed = await device.seal({ kind: 'sessionChat', session, payload: new TextEncoder().encode('{}') }, null, [], Date.now())
+  const received = await other.receiveEnvelope(new Uint8Array(), 1, true, null, Date.now())
+  if (received.outcome === 'applied' && received.header.timeline?.kind === 'sessionChat') void received.payload
+  const held: boolean = await device.holdsKey(sessionGroupId(room, session), 1)
+  void [sealed.envelopeHash, held]
 
   const outbox: OutboxEntry[] = await device.outbox()
   for (const waiting of outbox) {
@@ -62,3 +67,11 @@ export async function use(hubCode: string, entry: LogEntry): Promise<void> {
   // @ts-expect-error a device is not constructed directly
   new Device()
 }
+
+/** A draft names its kind; what a kind does not use is left out. */
+export const drafts: import('../../core/wasm/js/trommi-core.js').Draft[] = [
+  { kind: 'register', group: new Uint8Array(32), name: 'heads', value: null },
+  { kind: 'answer', session: new Uint8Array(16), objectId: new Uint8Array(16), choices: ['yes'], closes: true, payload: new Uint8Array() },
+  // @ts-expect-error there is no such kind
+  { kind: 'letter', payload: new Uint8Array() },
+]

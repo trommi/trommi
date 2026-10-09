@@ -27,6 +27,10 @@ struct Step: Decodable {
   var epoch_of: String?
   var like: String?
   var role: String?
+  var writer: String?
+  var reader: String?
+  var chat: String?
+  var confirmed: Bool?
   var epoch: UInt64?
 }
 
@@ -49,7 +53,12 @@ func now() -> UInt64 { UInt64(Date().timeIntervalSince1970 * 1000) }
 /// comes with the recovery code (every GroupInfo of the room group, every SealedKey, the links).
 final class Hub {
   var change: UInt64 = 0
+  /// One order for the log's entries and the stored envelopes: an envelope has an empty `recoveryAuth` and is
+  /// told apart by `envelopes`, the change numbers that are envelopes.
   var log: [LogEntry] = []
+  var envelopes: Set<UInt64> = []
+  /// Application messages that are only passed on.
+  var relayed: [(group: Data, bytes: Data)] = []
   var welcomes: [(change: UInt64, bytes: Data)] = []
   /// The room group's GroupInfo of every epoch, from its founding.
   var roomInfos: [Data] = []
@@ -95,6 +104,15 @@ final class Hub {
         change += 1
         accepted = change
         log.append(LogEntry(change: change, group: group, kind: .message, bytes: part(0), recoveryAuth: nil))
+      } else if entry.kind == .envelope, let group = entry.group {
+        // A stored envelope has its place in the same one order as the log's entries.
+        change += 1
+        accepted = change
+        envelopes.insert(change)
+        log.append(LogEntry(change: change, group: group, kind: .message, bytes: part(0), recoveryAuth: nil))
+      } else if entry.kind == .relayMessage, let group = entry.group {
+        // Passed on, never stored: no change number.
+        relayed.append((group, part(0)))
       }
       try device.outboxAccepted(id: entry.id, change: accepted)
     }
@@ -102,7 +120,7 @@ final class Hub {
 
   /// A group as the hub serves it to a device that verifies it from its founding.
   func served(_ group: Data, founding: Data, current: Data) -> ServedGroup {
-    let commits = log.filter { $0.kind == .commit && $0.group == group }
+    let commits = log.filter { $0.kind == .commit && $0.group == group && !envelopes.contains($0.change) }
       .map { ServedCommit(change: $0.change, commit: $0.bytes, recoveryAuth: $0.recoveryAuth) }
     return ServedGroup(founding: founding, commits: commits, current: current)
   }
@@ -116,11 +134,17 @@ final class Hub {
       sessions: sessions.map { served($0.key, founding: $0.value.founding, current: $0.value.current) })
   }
 
-  /// Hands the device the log after its cursor, with every Welcome at its place. Returns what the entries did.
-  func sync(_ device: CoreDevice, room: Data) throws -> [Processed] {
+  /// Hands the device everything after its cursor, with every Welcome at its place. Returns what the log's
+  /// entries did and what became of the envelopes.
+  func sync(_ device: CoreDevice, room: Data) throws -> (done: [Processed], envelopes: [ReceivedEnvelope]) {
     var done: [Processed] = []
+    var received: [ReceivedEnvelope] = []
     let cursor = try device.cursor()
     for entry in log where entry.change > cursor {
+      if envelopes.contains(entry.change) {
+        received.append(try device.receiveEnvelope(envelope: entry.bytes, change: entry.change, ordered: true, voidCode: nil, nowMs: now()))
+        continue
+      }
       do {
         done.append(try device.processLogEntry(entry: entry, nowMs: now()))
       } catch let CoreError.Refused(code, _) where logFinding(code: code) == .duplicate {
@@ -131,9 +155,25 @@ final class Hub {
         _ = try? device.joinWelcome(welcome: welcome.bytes, room: room, committer: nil, nowMs: now())
       }
     }
-    return done
+    return (done, received)
   }
 }
+
+/// The code a call is refused with; nil when it is not refused.
+func refusal(_ work: () throws -> Void) -> ErrorCode? {
+  do { try work() } catch let CoreError.Refused(code, _) { return code } catch { return .internal }
+  return nil
+}
+
+/// A draft of the kind `kind` with nothing else filled in.
+func draft(_ kind: DraftKind) -> Draft {
+  Draft(
+    kind: kind, session: nil, card: nil, board: nil, group: nil, name: nil, value: nil, objectId: nil, requestId: nil,
+    choices: nil, closes: nil, closed: nil, allow: nil, urgency: nil, push: nil, expiresAt: nil, payload: nil)
+}
+
+/// The board of all desks: the one board id that is no Desk's.
+let allDesks = Data("all-desks".utf8) + Data([0, 0, 0, 0, 0, 0, 9])
 
 final class ScenarioTests: XCTestCase {
   let hub = Hub()
@@ -173,10 +213,18 @@ final class ScenarioTests: XCTestCase {
     return (create ? try CoreDevice.create(store: store) : try CoreDevice.open(store: store), store)
   }
 
-  func key(_ name: String, _ groupName: String?) throws -> (epoch: UInt64, key: Data) {
+  func key(_ name: String, _ groupName: String?) throws -> (epoch: UInt64, held: Bool) {
     let id = try group(groupName)
     let epoch = try device(name).group(group: id).epoch
-    return (epoch, try device(name).contentKey(group: id, epoch: epoch))
+    return (epoch, try device(name).holdsKey(group: id, epoch: epoch))
+  }
+
+  /// The applied or shown envelope among `envelopes` whose body is a Chat message with `text`.
+  func chat(in envelopes: [ReceivedEnvelope], _ text: String) -> ReceivedEnvelope? {
+    envelopes.first { envelope in
+      guard let payload = envelope.payload, let body = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return false }
+      return body["text"] as? String == text
+    }
   }
 
   func run(_ step: Step) throws {
@@ -196,13 +244,15 @@ final class ScenarioTests: XCTestCase {
       let (inviter, newcomer) = (try device(step.by), try device(step.device))
       let role: InviteRole = step.role == "agent" ? .agent : .human
       let opened = try inviter.inviteOpen(role: role, sessionId: nil, app: "https://app.example", hub: "https://hub.example", nowMs: now())
-      let asked = try newcomer.joinRequest(link: opened.link, offer: opened.offer, offerSignature: opened.offerSignature, nowMs: now())
+      try check(try inviteLinkParse(text: opened.link).inviteId == opened.inviteId && (try hubAddress(text: "https://hub.example")) == "https://hub.example", "the link names another invite")
+      let asked = try newcomer.joinRequest(link: opened.link, offer: SignedOffer(offer: opened.offer, signature: opened.signature), nowMs: now())
       try check(asked.role == role && asked.inviter == (try inviter.id()), "the Request is for another invite")
-      let accepted = try inviter.inviteAccept(inviteId: opened.inviteId, request: asked.request, mac: asked.mac, signature: asked.signature, nowMs: now())
-      let shown = try newcomer.joinReveal(reveal: accepted.reveal, revealSignature: accepted.revealSignature)
+      let accepted = try inviter.inviteAccept(
+        inviteId: opened.inviteId, request: SignedRequest(request: asked.request, mac: asked.mac, signature: asked.signature), nowMs: now())
+      let shown = try newcomer.joinReveal(reveal: SignedReveal(reveal: accepted.reveal, signature: accepted.signature))
       try check(shown == accepted.code && shown.emoji.count == 6, "the two sides show different codes")
       // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
-      if role == .agent { try newcomer.joinObserve(groupInfo: hub.roomInfos[hub.roomInfos.count - 1]) }
+      if role == .agent { try newcomer.joinObserve(groupInfo: hub.roomInfos[Int(asked.roomEpoch)]) }
       let confirmed = try inviter.inviteConfirm(
         inviteId: opened.inviteId, code: accepted.code.numbers, requestHash: accepted.requestHash, matches: true, nowMs: now())
       try check(confirmed?.role == role && confirmed?.newDevice == (try newcomer.id()), "the confirmed invite was not committed")
@@ -217,18 +267,52 @@ final class ScenarioTests: XCTestCase {
       try check(joined.offending.isEmpty && joined.addedBy == inviter, "the join is not the expected one")
     case "same_key":
       let keys = try step.devices!.map { try key($0, step.group) }
-      try check(keys[0].key.count == 32, "a content key is not 32 bytes")
-      try check(keys.allSatisfy { $0.epoch == keys[0].epoch && $0.key == keys[0].key }, "the keys of \(step.group!) differ")
+      try check(keys.allSatisfy { $0.epoch == keys[0].epoch && $0.held }, "the devices do not share the key of \(step.group!)")
     case "sign_in":
       let signed = try device(step.device).hubSignIn(hub: "https://hub.example", challenge: Data(repeating: 9, count: 32))
       try check(signed.signature.count == 64 && signed.auth.count > 96, "the sign-in is not a signed HubAuth")
     case "sync":
-      let done = try hub.sync(device(step.device), room: room)
+      let (done, envelopes) = try hub.sync(device(step.device), room: room)
       if let expected = step.message {
         let message = done.first { $0.kind == .message }?.message
         try check(message?.kind == .workTrail && message?.payload == Data(expected.utf8), "the message did not arrive as it was sent")
       }
       if step.removed == true { try check(done.contains { $0.removed }, "the device did not learn of its removal") }
+      if let text = step.chat {
+        let envelope = chat(in: envelopes, text)
+        try check(
+          envelope?.outcome == .applied && envelope?.header.kind == .item && envelope?.header.timeline?.kind == .sessionChat,
+          "the Chat message was not applied")
+        // One that was shown before its turn is now confirmed by its sender's chain.
+        if step.confirmed == true { try check(envelope?.confirmed == true, "the fetched envelope was not confirmed by its chain") }
+      }
+    case "chat":
+      // A Chat message in a session, sealed into the outbox.
+      let id = try group(step.group)
+      var message = draft(.sessionChat)
+      message.session = id.subdata(in: id.startIndex + 32..<id.endIndex)
+      message.payload = try JSONSerialization.data(withJSONObject: ["content_type": "message", "text": step.text!])
+      let sealed = try device(step.device).seal(draft: message, recipient: nil, fileIds: [], nowMs: now())
+      let entry = try device(step.device).outbox().first { $0.id == sealed.outboxId }
+      try check(entry?.kind == .envelope && entry?.parts.count == 1 && sealed.seq >= 1 && sealed.group == id, "the sealed envelope is not in the outbox")
+    case "fetch":
+      // The newest envelope, handed over out of order, before the entries in front of it: shown, not yet confirmed.
+      guard let entry = hub.log.last(where: { hub.envelopes.contains($0.change) }) else { throw Unexpected("no envelope") }
+      let cursor = try device(step.device).cursor()
+      let fetched = try device(step.device).receiveEnvelope(envelope: entry.bytes, change: entry.change, ordered: false, voidCode: nil, nowMs: now())
+      try check(fetched.outcome == .provisional && chat(in: [fetched], step.text!) != nil, "an envelope fetched out of order is \(fetched.outcome)")
+      try check(try device(step.device).cursor() == cursor, "an envelope fetched out of order moved the cursor")
+    case "stroke":
+      // A stroke still being drawn: relayed, never stored.
+      _ = try device(step.device).sendStrokePiece(board: allDesks, piece: Data(#"{"stroke":"AAAAAAAAAAAAAAAAAAAAAA","number":1}"#.utf8))
+    case "relay":
+      guard let relayed = hub.relayed.last else { throw Unexpected("nothing was relayed") }
+      let cursor = try device(step.device).cursor()
+      let piece = try device(step.device).receiveRelay(group: relayed.group, message: relayed.bytes, nowMs: now())
+      try check(piece?.kind == .strokePiece && piece?.board == allDesks && piece?.payload.isEmpty == false, "the stroke piece did not arrive")
+      try check(try device(step.device).cursor() == cursor, "a relayed message moved the cursor")
+    case "board":
+      try board(writer: device(step.writer), reader: device(step.reader))
     case "found_session":
       // The agent's KeyPackage is the one of its confirmed Request, which the invite's next step names.
       let agent = try device(step.agent).id()
@@ -264,11 +348,11 @@ final class ScenarioTests: XCTestCase {
       let (second, _) = try start(step.device!, create: false)
       second.close()
     case "remove_human":
-      let gone = Cut(device: try device(step.device).id(), seq: 0, hash: Data(count: 32))
+      let gone = try device(step.by).cutOf(group: group("room"), device: device(step.device).id())
       _ = try device(step.by).removeHumanDevices(cuts: [gone], nowMs: now())
     case "clean_session":
       let id = try group(step.group)
-      let cuts = try device(step.by).group(group: id).disallowed.map { Cut(device: $0, seq: 0, hash: Data(count: 32)) }
+      let cuts = try device(step.by).group(group: id).disallowed.map { try device(step.by).cutOf(group: id, device: $0) }
       _ = try device(step.by).cleanSession(group: id, cuts: cuts, replacement: nil, nowMs: now())
     case "join_with_code":
       let joined = try device(step.device).joinRoomWithCode(recoveryCode: code, served: hub.servedRoom(room, code: code), nowMs: now())
@@ -280,9 +364,8 @@ final class ScenarioTests: XCTestCase {
         recoveryCode: code, served: hub.served(id, founding: session.founding, current: session.current), nowMs: now())
     case "earlier_key":
       let id = try group(step.group)
-      let mine = try device(step.device).contentKey(group: id, epoch: step.epoch!)
-      let theirs = try device(step.like).contentKey(group: id, epoch: step.epoch!)
-      try check(mine == theirs && (try device(step.device).keyIsConfirmed(group: id, epoch: step.epoch!)), "the code did not open the earlier key")
+      let held = try [step.device, step.like].allSatisfy { try device($0).holdsKey(group: id, epoch: step.epoch!) }
+      try check(held && (try device(step.device).keyIsConfirmed(group: id, epoch: step.epoch!)), "the code did not open the earlier key")
     case "replace_code":
       let next = try device(step.device).newRecoveryCode(recoveryCode: code)
       try check(next.count == 32 && next != code, "the new code is not a new code")
@@ -304,10 +387,53 @@ final class ScenarioTests: XCTestCase {
       try check(try device(step.device).holdsRecoveryMac(), "the device does not hold the key of the code in force")
     case "no_key":
       let epoch = try key(step.epoch_of!, step.group).epoch
-      _ = try device(step.device).contentKey(group: group(step.group), epoch: epoch)
+      try check(!(try device(step.device).holdsKey(group: group(step.group), epoch: epoch)), "the removed device holds the key of the epoch after its removal")
     default:
       throw Unexpected("the scenario has a step this test does not know: \(step.do)")
     }
+  }
+
+  /// A board: an item, the writer's snapshot register, another item; the reader loads it and is told what is new.
+  func board(writer: CoreDevice, reader: CoreDevice) throws {
+    let roomGroup = try group("room")
+    let writerId = try writer.id()
+    let name = "board_snapshot/\(base64urlEncode(bytes: allDesks))"
+    var item = draft(.boardItem)
+    item.board = allDesks
+    item.payload = Data(#"{"content_type":"erase","shape_ids":["\#(base64urlEncode(bytes: writerId))/1/0"]}"#.utf8)
+    _ = try writer.seal(draft: item, recipient: nil, fileIds: [], nowMs: now())
+    try hub.post(writer)
+    // A device takes its own envelope into its chain when the hub hands it back, like anyone's.
+    _ = try hub.sync(writer, room: room)
+    let head = try writer.chainHead(group: roomGroup, sender: writerId)
+    try check(head.seq == 1, "the writer does not hold its own first envelope")
+    let change = try writer.cursor()
+    let snapshot: [String: Any] = [
+      "attachment": ["file_id": "AAAAAAAAAAAAAAAAAAAAAA"],
+      "frontier": [base64urlEncode(bytes: writerId): [head.seq, base64urlEncode(bytes: head.hash)] as [Any]],
+      "change": change,
+    ]
+    var register = draft(.register)
+    register.group = roomGroup
+    register.name = name
+    register.value = try JSONSerialization.data(withJSONObject: snapshot)
+    _ = try writer.seal(draft: register, recipient: nil, fileIds: [], nowMs: now())
+    try hub.post(writer)
+    let second = try writer.seal(draft: item, recipient: nil, fileIds: [], nowMs: now())
+    try hub.post(writer)
+    // Before the reader read the register it has no snapshot; after, a hub that leaves the newer item out is found out.
+    try check(refusal { _ = try reader.boardLoad(board: allDesks, served: []) } == .notFound, "a board loaded without its snapshot")
+    let envelopes = try hub.sync(reader, room: room).envelopes
+    try check(envelopes.count == 3 && envelopes.allSatisfy { $0.outcome == .applied }, "the board's envelopes were not applied")
+    try check(envelopes[1].register?.current == true && envelopes[1].header.kind == .register, "the snapshot register was not taken")
+    guard let value = try reader.register(group: roomGroup, name: name), let read = try JSONSerialization.jsonObject(with: value) as? [String: Any]
+    else { throw Unexpected("the register has no value") }
+    try check((read["change"] as? NSNumber)?.uint64Value == change, "the register reads another value")
+    try check(refusal { _ = try reader.boardLoad(board: allDesks, served: []) } == .withheld, "a withheld item went unnoticed")
+    let loaded = try reader.boardLoad(board: allDesks, served: [ServedItem(sender: writerId, seq: second.seq, hash: second.envelopeHash)])
+    try check(loaded.fresh == [0] && loaded.covered.isEmpty && loaded.frontier.first?.seq == second.seq, "the board did not load as written")
+    let cut = try reader.cutOf(group: roomGroup, device: writerId)
+    try check(cut.seq == second.seq && cut.hash == second.envelopeHash, "the Cut is not the last accepted envelope")
   }
 
   func file(bytes: Int, pieces: Int) throws {
@@ -366,8 +492,7 @@ final class ScenarioTests: XCTestCase {
     let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../scenario.json")
     let scenario = try JSONDecoder().decode(Scenario.self, from: Data(contentsOf: file))
     var ran = 0
-    for var step in scenario.steps {
-      if step.do == "no_key" { step.refused = "no-key" }
+    for step in scenario.steps {
       var refused: String?
       do {
         try run(step)
@@ -382,6 +507,6 @@ final class ScenarioTests: XCTestCase {
       ran += 1
     }
     XCTAssertEqual(ran, scenario.steps.count)
-    XCTAssertGreaterThan(ran, 70)
+    XCTAssertGreaterThan(ran, 85)
   }
 }

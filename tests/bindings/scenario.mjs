@@ -10,6 +10,8 @@
 const text = bytes => new TextDecoder().decode(bytes)
 const bytes = string => new TextEncoder().encode(string)
 const same = (a, b) => a.length === b.length && a.every((byte, at) => byte === b[at])
+/** The code a call is refused with; 'none' when it is not refused. */
+const refusal = async work => { try { await work() } catch (error) { return error.code ?? String(error) } return 'none' }
 const check = (holds, what) => { if (!holds) throw new Error(what) }
 const unhex = text => Uint8Array.from(text.match(/../g) ?? [], byte => parseInt(byte, 16))
 const hex = bytes => Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
@@ -24,6 +26,7 @@ class Hub {
   sessions = new Map() // hex of a session group -> { founding, current }
   rows = []            // every SealedKey posted
   links = []           // every RecoveryLink posted
+  relayed = []         // application messages that are only passed on: { group, bytes }
 
   /** Posts everything in the device's outbox and reports each as accepted. */
   async post(device) {
@@ -55,6 +58,13 @@ class Hub {
       } else if (entry.kind === 'message') {
         change = ++this.change
         this.log.push({ change, group: entry.group, kind: 'message', bytes: part(0), recoveryAuth: null })
+      } else if (entry.kind === 'envelope') {
+        // A stored envelope has its place in the same one order as the log's entries.
+        change = ++this.change
+        this.log.push({ change, group: entry.group, kind: 'envelope', bytes: part(0) })
+      } else if (entry.kind === 'relayMessage') {
+        // Passed on, never stored: no change number.
+        this.relayed.push({ group: entry.group, bytes: part(0) })
       }
       await device.call('outboxAccepted', entry.id, change)
     }
@@ -80,8 +90,13 @@ class Hub {
   /** Hands the device the log after its cursor, with every Welcome at its place. Returns what the entries did. */
   async sync(world, device, room) {
     const done = []
+    const envelopes = []
     const cursor = await device.call('cursor')
     for (const entry of this.log.filter(entry => entry.change > cursor)) {
+      if (entry.kind === 'envelope') {
+        envelopes.push(await device.call('receiveEnvelope', entry.bytes, entry.change, true, null, Date.now()))
+        continue
+      }
       try {
         done.push(await device.call('processLogEntry', entry, Date.now()))
       } catch (error) {
@@ -93,7 +108,7 @@ class Hub {
         await device.call('joinWelcome', welcome.bytes, room, null, Date.now()).catch(() => {})
       }
     }
-    return done
+    return { done, envelopes }
   }
 }
 
@@ -111,9 +126,11 @@ export async function runScenario(scenario, world) {
   const keyOf = async (name, groupName) => {
     const groupId = group(groupName)
     const { epoch } = await device(name).call('group', groupId)
-    return { epoch, key: await device(name).call('contentKey', groupId, epoch) }
+    return { epoch, held: await device(name).call('holdsKey', groupId, epoch) }
   }
-  const noCut = async name => ({ device: await device(name).call('id'), seq: 0, hash: new Uint8Array(32) })
+  const chatWith = (envelopes, text) => envelopes.find(envelope => envelope.payload && JSON.parse(new TextDecoder().decode(envelope.payload)).text === text)
+  // The board of all desks: the one board id that is no Desk's.
+  const board = Uint8Array.from([...new TextEncoder().encode('all-desks'), 0, 0, 0, 0, 0, 0, 9])
 
   const run = {
     async create(step) { devices.set(step.device, await world.device(step.device, 'create')) },
@@ -127,13 +144,14 @@ export async function runScenario(scenario, world) {
     async invite(step) {
       const [inviter, newcomer] = [device(step.by), device(step.device)]
       const opened = await inviter.call('inviteOpen', step.role, null, 'https://app.example', 'https://hub.example', Date.now())
-      const asked = await newcomer.call('joinRequest', opened.link, opened.offer, opened.offerSignature, Date.now())
+      check(same(core.inviteLinkParse(opened.link).inviteId, opened.inviteId) && core.hubAddress('https://hub.example') === 'https://hub.example', 'the link names another invite')
+      const asked = await newcomer.call('joinRequest', opened.link, { offer: opened.offer, signature: opened.signature }, Date.now())
       check(asked.role === step.role && same(asked.inviter, await inviter.call('id')), 'the Request is for another invite')
-      const accepted = await inviter.call('inviteAccept', opened.inviteId, asked.request, asked.mac, asked.signature, Date.now())
-      const shown = await newcomer.call('joinReveal', accepted.reveal, accepted.revealSignature)
+      const accepted = await inviter.call('inviteAccept', opened.inviteId, { request: asked.request, mac: asked.mac, signature: asked.signature }, Date.now())
+      const shown = await newcomer.call('joinReveal', { reveal: accepted.reveal, signature: accepted.signature })
       check(same(shown.numbers, accepted.code.numbers) && shown.emoji.length === 6 && shown.emoji.join() === accepted.code.emoji.join(), 'the two sides show different codes')
       // An agent device follows the room from the epoch its Offer names: the one before the Commit that enrols it.
-      if (step.role === 'agent') await newcomer.call('joinObserve', hub.roomInfos.at(-1))
+      if (step.role === 'agent') await newcomer.call('joinObserve', hub.roomInfos[asked.roomEpoch])
       const confirmed = await inviter.call('inviteConfirm', opened.inviteId, accepted.code.numbers, accepted.requestHash, true, Date.now())
       check(confirmed?.role === step.role && same(confirmed.newDevice, await newcomer.call('id')), 'the confirmed invite was not committed')
     },
@@ -149,20 +167,82 @@ export async function runScenario(scenario, world) {
     },
     async same_key(step) {
       const [first, ...others] = await Promise.all(step.devices.map(name => keyOf(name, step.group)))
-      check(first.key.length === 32, 'a content key is not 32 bytes')
-      for (const other of others) check(other.epoch === first.epoch && same(other.key, first.key), `the keys of ${step.group} differ`)
+      check(first.held, `the key of ${step.group} is not held`)
+      for (const other of others) check(other.epoch === first.epoch && other.held, `the devices do not share the key of ${step.group}`)
     },
     async sign_in(step) {
       const signed = await device(step.device).call('hubSignIn', 'https://hub.example', new Uint8Array(32).fill(9))
       check(signed.signature.length === 64 && signed.auth.length > 96, 'the sign-in is not a signed HubAuth')
     },
     async sync(step) {
-      const done = await hub.sync(world, device(step.device), room)
+      const { done, envelopes } = await hub.sync(world, device(step.device), room)
       if (step.message !== undefined) {
         const message = done.find(processed => processed.kind === 'message')?.message
         check(message?.kind === 'workTrail' && text(message.payload) === step.message, 'the message did not arrive as it was sent')
       }
       if (step.removed) check(done.some(processed => processed.removed), 'the device did not learn of its removal')
+      if (step.chat !== undefined) {
+        const envelope = chatWith(envelopes, step.chat)
+        check(envelope?.outcome === 'applied' && envelope.header.kind === 'item' && envelope.header.timeline.kind === 'sessionChat', 'the Chat message was not applied')
+        // One that was shown before its turn is now confirmed by its sender's chain.
+        if (step.confirmed) check(envelope.confirmed === true, 'the fetched envelope was not confirmed by its chain')
+      }
+    },
+    /** A Chat message in a session, sealed into the outbox. */
+    async chat(step) {
+      const session = group(step.group).subarray(32)
+      const sealed = await device(step.device).call('seal', { kind: 'sessionChat', session, payload: bytes(JSON.stringify({ content_type: 'message', text: step.text })) }, null, [], Date.now())
+      const [entry] = (await device(step.device).call('outbox')).filter(entry => entry.id === sealed.outboxId)
+      check(entry?.kind === 'envelope' && entry.parts.length === 1 && sealed.seq >= 1 && same(sealed.group, group(step.group)), 'the sealed envelope is not in the outbox')
+    },
+    /** The newest envelope, handed over out of order, before the entries in front of it: shown, not yet confirmed. */
+    async fetch(step) {
+      const entry = hub.log.findLast(entry => entry.kind === 'envelope')
+      const cursor = await device(step.device).call('cursor')
+      const fetched = await device(step.device).call('receiveEnvelope', entry.bytes, entry.change, false, null, Date.now())
+      check(fetched.outcome === 'provisional' && JSON.parse(text(fetched.payload)).text === step.text, `an envelope fetched out of order is ${fetched.outcome} ${fetched.code}`)
+      check(await device(step.device).call('cursor') === cursor, 'an envelope fetched out of order moved the cursor')
+    },
+    /** A stroke still being drawn: relayed, never stored. */
+    async stroke(step) {
+      await device(step.device).call('sendStrokePiece', board, bytes('{"stroke":"AAAAAAAAAAAAAAAAAAAAAA","number":1}'))
+    },
+    async relay(step) {
+      const { group: through, bytes: message } = hub.relayed.at(-1)
+      const cursor = await device(step.device).call('cursor')
+      const piece = await device(step.device).call('receiveRelay', through, message, Date.now())
+      check(piece?.kind === 'strokePiece' && same(piece.board, board) && JSON.parse(text(piece.payload)).number === 1, 'the stroke piece did not arrive')
+      check(await device(step.device).call('cursor') === cursor, 'a relayed message moved the cursor')
+    },
+    /** A board: an item, the writer's snapshot register, another item; the reader loads it and is told what is new. */
+    async board(step) {
+      const [writer, reader] = [device(step.writer), device(step.reader)]
+      const roomGroup = group('room')
+      const writerId = await writer.call('id')
+      const item = { kind: 'boardItem', board, payload: bytes(`{"content_type":"erase","shape_ids":["${core.base64urlEncode(writerId)}/1/0"]}`) }
+      await writer.call('seal', item, null, [], Date.now())
+      await hub.post(writer)
+      // A device takes its own envelope into its chain when the hub hands it back, like anyone's.
+      await hub.sync(world, writer, room)
+      const head = await writer.call('chainHead', roomGroup, writerId)
+      check(head.seq === 1, 'the writer does not hold its own first envelope')
+      const snapshot = { attachment: { file_id: 'AAAAAAAAAAAAAAAAAAAAAA' }, frontier: { [core.base64urlEncode(writerId)]: [head.seq, core.base64urlEncode(head.hash)] }, change: await writer.call('cursor') }
+      await writer.call('seal', { kind: 'register', group: roomGroup, name: `board_snapshot/${core.base64urlEncode(board)}`, value: bytes(JSON.stringify(snapshot)) }, null, [], Date.now())
+      await hub.post(writer)
+      const second = await writer.call('seal', item, null, [], Date.now())
+      await hub.post(writer)
+      // Before the reader read the register it has no snapshot; after, a hub that leaves the newer item out is found out.
+      check(await refusal(() => reader.call('boardLoad', board, [])) === 'not-found', 'a board loaded without its snapshot')
+      const { envelopes } = await hub.sync(world, reader, room)
+      check(envelopes.length === 3 && envelopes.every(envelope => envelope.outcome === 'applied'), 'the board\'s envelopes were not applied')
+      check(envelopes[1].register?.current === true && envelopes[1].header.kind === 'register', 'the snapshot register was not taken')
+      const read = JSON.parse(text(await reader.call('register', roomGroup, `board_snapshot/${core.base64urlEncode(board)}`)))
+      check(read.change === snapshot.change && read.attachment.file_id === snapshot.attachment.file_id, 'the register reads another value')
+      check(await refusal(() => reader.call('boardLoad', board, [])) === 'withheld', 'a withheld item went unnoticed')
+      const loaded = await reader.call('boardLoad', board, [{ sender: writerId, seq: second.seq, hash: second.envelopeHash }])
+      check(loaded.fresh.length === 1 && loaded.fresh[0] === 0 && loaded.covered.length === 0 && loaded.frontier[0].seq === second.seq, 'the board did not load as written')
+      const cut = await reader.call('cutOf', roomGroup, writerId)
+      check(cut.seq === second.seq && same(cut.hash, second.envelopeHash), 'the Cut is not the last accepted envelope')
     },
     async found_session(step) {
       const founder = device(step.by)
@@ -219,10 +299,14 @@ export async function runScenario(scenario, world) {
     },
     async fail_next_write(step) { await device(step.device).failNextWrite() },
     async second_owner(step) { await (await world.device(step.device, 'open')).close() },
-    async remove_human(step) { await device(step.by).call('removeHumanDevices', [await noCut(step.device)], Date.now()) },
+    async remove_human(step) {
+      const cut = await device(step.by).call('cutOf', group('room'), await device(step.device).call('id'))
+      await device(step.by).call('removeHumanDevices', [cut], Date.now())
+    },
     async clean_session(step) {
       const { disallowed } = await device(step.by).call('group', group(step.group))
-      const cuts = disallowed.map(gone => ({ device: gone, seq: 0, hash: new Uint8Array(32) }))
+      const cuts = []
+      for (const gone of disallowed) cuts.push(await device(step.by).call('cutOf', group(step.group), gone))
       await device(step.by).call('cleanSession', group(step.group), cuts, null, Date.now())
     },
     async join_with_code(step) {
@@ -234,8 +318,8 @@ export async function runScenario(scenario, world) {
       await device(step.device).call('joinSessionWithCode', code, hub.served(group(step.group), founding, current), Date.now())
     },
     async earlier_key(step) {
-      const [mine, theirs] = await Promise.all([step.device, step.like].map(name => device(name).call('contentKey', group(step.group), step.epoch)))
-      check(same(mine, theirs) && await device(step.device).call('keyIsConfirmed', group(step.group), step.epoch), 'the code did not open the earlier key')
+      const held = await Promise.all([step.device, step.like].map(name => device(name).call('holdsKey', group(step.group), step.epoch)))
+      check(held.every(Boolean) && await device(step.device).call('keyIsConfirmed', group(step.group), step.epoch), 'the code did not open the earlier key')
     },
     async replace_code(step) {
       const next = await device(step.device).call('newRecoveryCode', code)
@@ -256,14 +340,13 @@ export async function runScenario(scenario, world) {
     async holds_recovery_mac(step) { check(await device(step.device).call('holdsRecoveryMac'), 'the device does not hold the key of the code in force') },
     async no_key(step) {
       const { epoch } = await keyOf(step.epoch_of, step.group)
-      await device(step.device).call('contentKey', group(step.group), epoch)
+      check(!(await device(step.device).call('holdsKey', group(step.group), epoch)), 'the removed device holds the key of the epoch after its removal')
     },
   }
 
   let ran = 0
   for (const step of scenario.steps) {
     const what = `step ${ran + 1} (${JSON.stringify(step)})`
-    if (step.do === 'no_key') step.refused = 'no-key'
     let refused = null
     try {
       await run[step.do](step)

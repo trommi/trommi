@@ -466,6 +466,27 @@ impl<S: Storage> Device<S> {
         self.transact(|this, batch| {
             this.begin(now_ms);
             let (_, _, mut inviter) = this.inviter(invite_id)?;
+            // Confirmed before, and the Commit lost its epoch to another one (`epoch-taken`): the same
+            // confirmation builds it again. The code was held against the Request when it was first given.
+            if matches {
+                if let Some(follow_up) = this
+                    .stored(&follow_up_key(invite_id))
+                    .map(FollowUp::decode)
+                    .transpose()
+                    .map_err(|_| damaged("an invite's record"))?
+                {
+                    if this.next_step(&follow_up)? != Some(InviteStep::Commit) {
+                        return Err(Error::InviteUsed);
+                    }
+                    let outbox_id = this.commit_invited(batch, &follow_up, now_ms)?;
+                    return Ok(Some(InviteConfirmed {
+                        new_device: follow_up.new_device,
+                        role: follow_up.role,
+                        session_id: Some(follow_up.session_id).filter(|session| !session.is_zero()),
+                        outbox_id,
+                    }));
+                }
+            }
             if !matches {
                 inviter.burn();
                 this.put_inviter(batch, Stage::Burned, &inviter)?;
