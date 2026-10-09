@@ -553,6 +553,17 @@ pub fn learn(
         .served(|served| device.learn_history(group, served.founding, served.commits))
 }
 
+/// Every envelope the hub serves on its chain routes, in the order of its change numbers: what lies beyond a
+/// Cut is left out.
+pub fn served_chains(hub: &Hub) -> Vec<StoredEnvelope> {
+    hub.content
+        .envelopes
+        .iter()
+        .filter(|stored| !stored.cut)
+        .cloned()
+        .collect()
+}
+
 /// `device` signs in with the code `keys` (8.4): it builds its join of the room group from what the hub
 /// serves. Nothing is posted yet.
 pub fn join_room(

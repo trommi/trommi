@@ -340,6 +340,17 @@ pub struct GroupSummary {
     pub past_learned: bool,
 }
 
+/// One envelope as the hub's chain route serves it.
+#[derive(Debug, Clone, Copy)]
+pub struct ServedEnvelope<'a> {
+    /// The envelope, in pruned or in full form.
+    pub bytes: &'a [u8],
+    /// The hub's change number it was taken under.
+    pub change: u64,
+    /// The code of a void record.
+    pub void_code: Option<&'a Error>,
+}
+
 /// The hub's answer to an accepted request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Accepted {
@@ -3904,20 +3915,11 @@ impl<S: Storage> Device<S> {
         Ok(new)
     }
 
-    /// The Cuts for the leaves `gone` of `group`, from what the caller verified; `incomplete` when one is
-    /// missing.
-    fn cuts_of(
-        group: &GroupId,
-        gone: &[DeviceId],
-        cuts: &[(GroupId, Cut)],
-    ) -> Result<Vec<Cut>, Error> {
+    /// The Cuts for the leaves `gone` of `group`: the head of each one's chain as this device accepted it
+    /// (9.0.10), number 0 and zeros for a device of which it accepted nothing.
+    fn cuts_of(&self, group: &GroupId, gone: &[DeviceId]) -> Result<Vec<Cut>, Error> {
         gone.iter()
-            .map(|device| {
-                cuts.iter()
-                    .find(|(of, cut)| of == group && cut.device == *device)
-                    .map(|(_, cut)| *cut)
-                    .ok_or(Error::Incomplete)
-            })
+            .map(|device| self.cut_of(group, device))
             .collect()
     }
 
@@ -3927,9 +3929,16 @@ impl<S: Storage> Device<S> {
     /// a copy of its state, it joins the room group and every session group from outside, commits in the
     /// room group the removal of every other human device together with the replacement of the code, and
     /// after that, against the new room epoch, removes from every session group (main sessions first) each
-    /// leaf the new room state does not allow. `cuts` hold, per group, the Cut of every leaf to go
-    /// ([`recovery::removals`] names them), as the caller verified each chain through pruned envelopes;
-    /// `incomplete` when one is missing. `account` are the sealed copies of `replacement.code`.
+    /// leaf the new room state does not allow. `account` are the sealed copies of `replacement.code`.
+    ///
+    /// Every Remove carries the Cut (9.0.10): the head of the removed device's chain in that group as this
+    /// device verified it from number 1. `chains` are the envelopes of the devices to go
+    /// ([`recovery::removals`] names them), in pruned form as the hub's chain route serves them, in the hub's
+    /// order. They are read on the copy, against the past the joins brought, by the checks of
+    /// [`Device::receive_envelope`]; one that any of checks 1 to 6 refuses (a `gap`, a `chain-break`, a
+    /// second envelope under a number, an envelope beyond a Cut) fails the recovery with that code, since no
+    /// Cut is taken from a chain that does not hold. A device of which nothing is handed in is cut at
+    /// nothing; what a hub withholds from the end of a chain cannot be seen here (section 17).
     ///
     /// The outbox entries are the recovery's Commits in order and its finish. The device's state changes
     /// only when the hub accepted the finish; when the hub refuses any of them, or the recovery ran out,
@@ -3939,7 +3948,7 @@ impl<S: Storage> Device<S> {
         keys: &RecoveryKeys,
         served: &ServedRoom<'_>,
         replacement: &Replacement,
-        cuts: &[(GroupId, Cut)],
+        chains: &[ServedEnvelope<'_>],
         account: &[u8],
         now_ms: u64,
     ) -> Result<CodeJoin, Error> {
@@ -3974,6 +3983,20 @@ impl<S: Storage> Device<S> {
             for (seats, walked, current) in &sessions {
                 postings.push(this.join_built(batch, keys, current, seats, walked, now_ms)?);
             }
+            // The chains of the devices to go, read from number 1 on this copy.
+            for served in chains {
+                let read = this.receive_in(
+                    batch,
+                    served.bytes,
+                    served.change,
+                    true,
+                    served.void_code,
+                    now_ms,
+                )?;
+                if read.outcome == EnvelopeOutcome::Refused {
+                    return Err(read.code.unwrap_or(Error::BadFormat));
+                }
+            }
             // The room Commit: every other human device goes, and the code with them.
             let mut room = this.history()?.newest().clone();
             let others: Vec<DeviceId> = room
@@ -3985,7 +4008,7 @@ impl<S: Storage> Device<S> {
             let new = this.new_keys(replacement)?;
             room.room.recovery_signature_key = new.signature_key;
             room.room.recovery_hpke_key = new.hpke_key;
-            let gone = Self::cuts_of(&room_group, &others, cuts)?;
+            let gone = this.cuts_of(&room_group, &others)?;
             postings.push(this.commit_now(batch, &room_group, &gone, Some(room.room), now_ms)?);
             // The session groups, against the new room epoch: main sessions before helper sessions.
             let mut groups = this.groups()?;
@@ -4000,7 +4023,7 @@ impl<S: Storage> Device<S> {
                 if unfit.is_empty() {
                     continue;
                 }
-                let gone = Self::cuts_of(&summary.group, &unfit, cuts)?;
+                let gone = this.cuts_of(&summary.group, &unfit)?;
                 postings.push(this.commit_now(batch, &summary.group, &gone, None, now_ms)?);
             }
             // The log brings every Commit of the recovery by again: none of them is for this device.

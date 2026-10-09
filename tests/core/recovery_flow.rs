@@ -135,22 +135,26 @@ fn recover(
     fetched: &Fetched,
 ) -> Result<(Secret<32>, CodeJoin), Error> {
     let room = fetched.room.group.room_id();
-    let (replacement, cuts) = fetched.served(|served| {
+    let replacement = fetched.served(|served| {
         let checked = check_room(keys, served)?;
         let history = checked.observer.history().expect("the room's roles");
-        let replacement = keys.replace(&mut SystemEntropy, &room, history)?;
-        // No device of this room wrote an envelope: every chain ends at nothing.
-        let cuts: Vec<(GroupId, Cut)> = recovery::removals(&checked)?
-            .into_iter()
-            .flat_map(|(group, gone)| {
-                gone.into_iter()
-                    .map(move |device| (group, Cut::none(device)))
-            })
-            .collect();
-        Ok::<_, Error>((replacement, cuts))
+        keys.replace(&mut SystemEntropy, &room, history)
     })?;
+    // The chains of every device, as the hub serves them in pruned form: the Cuts are the recovering
+    // device's own reading of them.
+    let stored = trommi_tests::served_chains(hub);
+    let pruned: Vec<Vec<u8>> = stored.iter().map(|stored| stored.pruned()).collect();
+    let chains: Vec<trommi_core::device::ServedEnvelope<'_>> = stored
+        .iter()
+        .zip(&pruned)
+        .map(|(stored, bytes)| trommi_core::device::ServedEnvelope {
+            bytes,
+            change: stored.change,
+            void_code: stored.void_code.as_ref(),
+        })
+        .collect();
     let built = fetched.served(|served| {
-        device.recover(keys, served, &replacement, &cuts, b"sealed copies", now())
+        device.recover(keys, served, &replacement, &chains, b"sealed copies", now())
     })?;
     hub.account.clear();
     Ok((replacement.code.duplicate(), built))
@@ -1345,23 +1349,6 @@ fn a_recovery_cleans_a_session_that_an_interrupted_removal_left_stale() {
     assert!(!of(&w.side).contains(&w.helper.id()));
     assert!(!of(&w.room).contains(&gone_b));
 
-    // A Cut that the caller did not verify is missing: nothing is built.
-    let room_id = w.room.room_id();
-    let replacement = fetched.served(|served| {
-        let checked = check_room(&keys, served).unwrap();
-        keys.replace(
-            &mut SystemEntropy,
-            &room_id,
-            checked.observer.history().unwrap(),
-        )
-        .unwrap()
-    });
-    assert_eq!(
-        fetched
-            .served(|served| device.recover(&keys, served, &replacement, &[], b"", now()))
-            .err(),
-        Some(Error::Incomplete)
-    );
     assert!(device.outbox().is_empty() && device.room().is_none());
 
     recover(&mut w.hub, &mut device, &keys, &fetched).unwrap();
