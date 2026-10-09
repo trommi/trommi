@@ -40,30 +40,20 @@
 //    batch is tried again by the next catch-up.
 // 8. No timer survives `stop()`. Nothing here logs: errors travel as events with a code.
 //
-// WHAT THE CORE DOES NOT OFFER YET, and how this module is written against that (see the report):
+// WHAT THE CORE DOES NOT OFFER YET, and how this module is written against that (core-api.ts Part 2, README.md):
 // - A relayed message (a stroke piece, 7.2) has no change number, and `processLogEntry` takes none without one
-//   (it would move the cursor). The engine calls `receiveRelay` if the device has it and drops the piece otherwise.
+//   (it would move the cursor). The engine hands it to `receiveRelay` (core-api.ts, provisional) and drops the
+//   piece where the core answers `core-missing`.
 // - An envelope that arrived before this device joined its group, or before its key was handed over, is not taken
 //   in the hub's order. The engine then reads the room's changes once more from the start (`rescan`): what the
 //   chain could not take is taken, what it holds is read back (`receiveEnvelope(…, ordered = false)`).
 import type {
-  Core, Cut, Device, Draft, ErrorCode, GroupSummary, InviteAccepted, InviteOpened, InviteRole, JoinRequest, OutboxEntry, Processed, ReceivedEnvelope, ReceivedMessage, RoomRoles, Sealed, Store,
+  Core, Cut, Device, Draft, ErrorCode, GroupSummary, OutboxEntry, Processed, ReceivedEnvelope, ReceivedMessage, RoomRoles, Sealed, Store,
 } from './core-api.ts'
 import { HubError, logEntry } from './hub.ts'
 import type { ChangeItem, EnvelopeItem, Hub, LogItem, NewAccount, OutboxAnswer, StreamEvent } from './hub.ts'
 import { hex } from './ids.ts'
 import type { Connection } from './types.ts'
-
-/** The invite calls with each signed struct and its signature apart, as the hub's routes take them. core-api.ts
- *  still names one blob per struct; these are the shapes the client layer needs of the core. */
-export interface InviteDevice {
-  inviteOpen(role: InviteRole, sessionId: Uint8Array | null, app: string, hub: string, nowMs: number): Promise<InviteOpened & { offer: Uint8Array; signature: Uint8Array }>
-  inviteAccept(inviteId: Uint8Array, request: { request: Uint8Array; mac: Uint8Array; signature: Uint8Array }, nowMs: number): Promise<InviteAccepted & { reveal: Uint8Array; signature: Uint8Array }>
-  joinRequest(link: string, offer: { offer: Uint8Array; signature: Uint8Array }, nowMs: number): Promise<JoinRequest & { request: Uint8Array; mac: Uint8Array; signature: Uint8Array; sessionId: Uint8Array | null; roomEpoch: number; roomState: Uint8Array }>
-  joinReveal(reveal: { reveal: Uint8Array; signature: Uint8Array }): Promise<number[]>
-}
-/** A relayed application message as the core would take it: not in the log, no change number. */
-interface RelayDevice { receiveRelay?(group: Uint8Array, epoch: number, sender: Uint8Array, message: Uint8Array, nowMs: number): Promise<ReceivedMessage | null> }
 
 /** The engine's own small records beside the device's state (store-idb.ts `Cache` is one). Safe to lose: a lost
  *  record costs a repeated upload or a rescan that is not made. */
@@ -667,9 +657,8 @@ export class Engine {
     switch (event.event) {
       case 'change': await this.serial(() => this.ingest([event.item], event.item.change)); return
       case 'relay': {
-        const device = this.device as Device & RelayDevice
-        if (!device.receiveRelay) return
-        const message = await this.serial(() => this.call(() => device.receiveRelay!(event.group, event.epoch, event.sender, event.message, this.now()))).catch(() => null)
+        // (a piece that does not open, or a core without the call, is a piece not shown: nothing else follows)
+        const message = await this.serial(() => this.call(d => d.receiveRelay(event.group, event.epoch, event.sender, event.message, this.now()))).catch(() => null)
         if (message) { this.emit('relay', message); this.emit('batch', null) }
         return
       }

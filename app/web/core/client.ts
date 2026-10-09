@@ -26,7 +26,7 @@ import { attachmentRef, encodeBodyBytes, encodePiece, encodeRegister, fileIdsOf,
 import type { Fields } from './codec.ts'
 import type { Core, Device, Draft, FileRef, OutboxEntry, ReceivedEnvelope, Sealed } from './core-api.ts'
 import { Engine } from './engine.ts'
-import type { EngineEvents, EngineMeta, InviteDevice } from './engine.ts'
+import type { EngineEvents, EngineMeta } from './engine.ts'
 import { accountCopiesBytes, HubError } from './hub.ts'
 import type { AccountCopies, EnvelopeItem, Hub, StreamEvent } from './hub.ts'
 import { b64u, hex, unb64u, unhex } from './ids.ts'
@@ -727,7 +727,6 @@ export class Client {
 
   // ---- invites (12.1): the inviter's side
 
-  private invitable(): InviteDevice { return this.engine.device as unknown as InviteDevice }
   private setInvite(invite_id: string, fields: Partial<Invite> & { done?: boolean }): void {
     const kept = this.invites.get(invite_id)
     if (!kept) return
@@ -745,7 +744,7 @@ export class Client {
   async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', label = null, session_id = null, with_history, takeover = false, desk = null }: { device_role?: 'human' | 'agent'; app_url?: string; ttl_ms?: number; label?: string | null; session_id?: string | null; with_history?: boolean; takeover?: boolean; desk?: string | null } = {}): Promise<Invite> {
     this.needHuman()
     if (takeover && (device_role !== 'agent' || !session_id || !this.model.sessions.get(session_id)?.group_id)) fail('bad-argument', 'a takeover invite names an existing session and is for an agent')
-    const opened = await this.engine.do(() => this.invitable().inviteOpen(device_role, takeover ? unhex(session_id!) : null, originOf(app_url), this.hub.hub_url, this.now()))
+    const opened = await this.engine.do(d => d.inviteOpen(device_role, takeover ? unhex(session_id!) : null, originOf(app_url), this.hub.hub_url, this.now()))
     await this.hub.postInvite(opened.offer, opened.signature)
     const invite_id = hex(opened.inviteId)
     const pub: Invite = { invite_id, device_role, link: opened.link, label: label ?? '', session_id: takeover ? session_id : null, with_history: takeover ? with_history !== false : !!with_history, takeover: !!takeover,
@@ -776,7 +775,7 @@ export class Client {
       const { requests } = await this.hub.getInvite(id)
       for (const request of requests ?? []) {
         let accepted
-        try { accepted = await this.engine.do(() => this.invitable().inviteAccept(id, request, this.now())) }
+        try { accepted = await this.engine.do(d => d.inviteAccept(id, request, this.now())) }
         catch (e) { if (this.core.errorCode(e) === 'invite-expired') { this.setInvite(invite_id, { invite_state: 'expired', error: 'invite-expired', done: true }); return } continue }
         // a lost answer here is tried again at the next look: accepting the same Request again gives the same Reveal
         await this.hub.putReveal(id, accepted.reveal, accepted.signature)
