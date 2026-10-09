@@ -17,12 +17,13 @@
 //! - whole buffers: [`encrypt_file`], [`decrypt_file`] (which compares the stored file's SHA-256 first, 11.2);
 //! - streaming, without holding the file: [`Encryptor`] and [`Decryptor`] take any pieces and give out what is
 //!   ready. A decryptor hands out a chunk as soon as it opened; that the file is whole is known only when
-//!   [`Decryptor::finish`] succeeds. A download that is streamed is hashed on the way with [`FileHasher`];
+//!   [`Decryptor::finish`] succeeds, which also compares the SHA-256 of everything it was given;
 //! - single chunks for a `Range` read: [`Layout`] says where chunk `i` lies, [`open_chunk`] opens it, relying on
 //!   the chunk's own authentication.
 //!
 //! The file key is 32 fresh random bytes per file and is used for nothing else: with the nonces being counters,
-//! a key used for a second file would repeat them.
+//! a key used for a second file would repeat them. An [`Encryptor`] therefore makes its own key and file id and
+//! gives the key out only with the finished file; nothing here seals under a key the caller brings.
 
 use crate::crypto::{self, Entropy, Secret, SecretBytes, NONCE_LEN, TAG_LEN};
 use crate::error::Error;
@@ -94,16 +95,6 @@ impl FileHead {
     }
 }
 
-/// A fresh file key: 32 random bytes, for one file.
-pub fn generate_file_key(entropy: &mut dyn Entropy) -> Result<Secret<32>, Error> {
-    Secret::random(entropy)
-}
-
-/// A fresh file id: 16 random bytes.
-pub fn generate_file_id(entropy: &mut dyn Entropy) -> Result<FileId, Error> {
-    Ok(FileId::new(crypto::random(entropy)?))
-}
-
 /// `0x00 0x00 0x00 ‖ uint64 index ‖ uint8 last`.
 fn nonce(index: u64, last: bool) -> [u8; NONCE_LEN] {
     let mut nonce = [0u8; NONCE_LEN];
@@ -133,8 +124,9 @@ fn check_shape(index: u64, last: bool, plain_len: usize) -> Result<(), Error> {
 }
 
 /// Seals chunk `index` of file `file_id`: `plaintext` is exactly [`CHUNK_SIZE`] bytes, or with `last` what is
-/// left of the file. `bad-format` for another length, `too-large` for a chunk beyond the largest file.
-pub fn seal_chunk(
+/// left of the file. `bad-format` for another length, `too-large` for a chunk beyond the largest file. Only an
+/// [`Encryptor`] calls it, once per chunk number under its own key.
+fn seal_chunk(
     key: &Secret<32>,
     file_id: &FileId,
     index: u64,
@@ -286,18 +278,19 @@ impl FileHasher {
 }
 
 /// What an encryptor reports when the file is complete.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Sealed {
-    /// The SHA-256 of the stored file.
-    pub sha256: Hash32,
+    /// The file's id, its key and the SHA-256 of the stored file: for the body that names the file.
+    pub file: FileRef,
     /// The file's length in plaintext bytes.
     pub plain_len: u64,
     /// The file's length as stored.
     pub stored_len: u64,
 }
 
-/// Encrypts a file piece by piece. Everything [`Encryptor::update`] and [`Encryptor::finish`] return, in order,
-/// is the stored file. At most one chunk of plaintext is held, and wiped when it is sealed or dropped.
+/// Encrypts one file piece by piece, under a key it makes for that file alone. Everything
+/// [`Encryptor::update`] and [`Encryptor::finish`] return, in order, is the stored file. At most one chunk of
+/// plaintext is held, and wiped when it is sealed or dropped.
 pub struct Encryptor {
     key: Secret<32>,
     file_id: FileId,
@@ -309,17 +302,22 @@ pub struct Encryptor {
 }
 
 impl Encryptor {
-    /// Starts file `file_id` under `key`, which must be a key made for this file alone.
-    pub fn new(key: &Secret<32>, file_id: FileId) -> Self {
-        Self {
-            key: key.duplicate(),
-            file_id,
+    /// Starts a new file: a fresh key and a fresh id, 32 and 16 random bytes.
+    pub fn new(entropy: &mut dyn Entropy) -> Result<Self, Error> {
+        Ok(Self {
+            key: Secret::random(entropy)?,
+            file_id: FileId::new(crypto::random(entropy)?),
             index: 0,
             plain_len: 0,
             pending: Zeroizing::new(Vec::with_capacity(CHUNK_SIZE)),
             hasher: FileHasher::new(),
             head_written: false,
-        }
+        })
+    }
+
+    /// The id of the file being made: what it is uploaded under.
+    pub fn file_id(&self) -> FileId {
+        self.file_id
     }
 
     fn write(&mut self, out: &mut Vec<u8>, stored: &[u8]) {
@@ -376,14 +374,18 @@ impl Encryptor {
         }
     }
 
-    /// Ends the file: the last stored bytes, and what to put into the attachment reference.
+    /// Ends the file: the last stored bytes, and the reference with the file's key.
     pub fn finish(mut self) -> Result<(Vec<u8>, Sealed), Error> {
         let mut out = Vec::new();
         self.write_head(&mut out);
         self.seal_pending(&mut out, true)?;
         let layout = Layout::of_plain(self.plain_len)?;
         let sealed = Sealed {
-            sha256: self.hasher.finish()?,
+            file: FileRef {
+                file_id: self.file_id,
+                file_key: self.key.duplicate(),
+                sha256: self.hasher.finish()?,
+            },
             plain_len: layout.plain_len(),
             stored_len: layout.stored_len(),
         };
@@ -395,11 +397,16 @@ impl Encryptor {
 /// or reordered fails at the chunk concerned or in [`Decryptor::finish`], so what was handed out before counts
 /// only once `finish` succeeded. After a failure every further call fails the same way.
 ///
-/// This checks each chunk's own authentication. That the file is the one an attachment names is the SHA-256 of
-/// the stored bytes: [`decrypt_file`] compares it first; a streamed download runs a [`FileHasher`] beside this.
+/// Each chunk is authenticated on its own under the file key. That the file is the one the reference names is
+/// the SHA-256 of the stored bytes, which only the end can tell: `finish` compares it before it opens the final
+/// chunk. A caller that must not touch a byte before that comparison holds the download and uses
+/// [`decrypt_file`].
 pub struct Decryptor {
     key: Secret<32>,
     file_id: FileId,
+    sha256: Hash32,
+    /// The hash of what was taken; `None` when the caller compared it already.
+    hasher: Option<FileHasher>,
     index: u64,
     head: Vec<u8>,
     head_checked: bool,
@@ -408,11 +415,17 @@ pub struct Decryptor {
 }
 
 impl Decryptor {
-    /// Starts reading file `file_id` under `key`.
-    pub fn new(key: &Secret<32>, file_id: FileId) -> Self {
+    /// Starts reading the file `file` names.
+    pub fn new(file: &FileRef) -> Self {
+        Self::start(file, Some(FileHasher::new()))
+    }
+
+    fn start(file: &FileRef, hasher: Option<FileHasher>) -> Self {
         Self {
-            key: key.duplicate(),
-            file_id,
+            key: file.file_key.duplicate(),
+            file_id: file.file_id,
+            sha256: file.sha256,
+            hasher,
             index: 0,
             head: Vec::with_capacity(HEAD_LEN),
             head_checked: false,
@@ -453,6 +466,9 @@ impl Decryptor {
     }
 
     fn take(&mut self, stored: &[u8], out: &mut Vec<u8>) -> Result<(), Error> {
+        if let Some(hasher) = &mut self.hasher {
+            hasher.update(stored);
+        }
         let mut input = self.take_head(stored)?;
         loop {
             // A full chunk is opened only once a byte follows it: until then it may be the final one.
@@ -474,6 +490,9 @@ impl Decryptor {
     fn end(&mut self, out: &mut Vec<u8>) -> Result<(), Error> {
         if !self.head_checked || self.pending.len() < TAG_LEN {
             return Err(Error::BadFormat);
+        }
+        if let Some(hasher) = self.hasher.take() {
+            hasher.verify(&self.sha256)?;
         }
         self.open_pending(out, true)
     }
@@ -503,53 +522,51 @@ impl Decryptor {
     }
 
     /// Ends the file: the plaintext of the final chunk. `bad-format` when the bytes end before a chunk could,
-    /// or in an empty chunk behind others; `decrypt-failed` when what came last is not the file's final chunk:
-    /// the file was cut, or something was appended.
+    /// or in an empty chunk behind others; `decrypt-failed` when the bytes taken are not the file the reference's
+    /// SHA-256 names, or what came last is not the file's final chunk: the file was cut, or something was
+    /// appended.
     pub fn finish(mut self) -> Result<Vec<u8>, Error> {
         self.guarded(|this, out| this.end(out))
     }
 }
 
-/// Encrypts a whole file under `key`, which must be a key made for this file alone: the stored bytes and what to
-/// put into the attachment reference. `too-large` above [`MAX_FILE_LEN`].
+/// Encrypts a whole file under a fresh key: the stored bytes, and the reference with that key. `too-large`
+/// above [`MAX_FILE_LEN`].
 pub fn encrypt_file(
-    key: &Secret<32>,
-    file_id: FileId,
     plaintext: &[u8],
+    entropy: &mut dyn Entropy,
 ) -> Result<(Vec<u8>, Sealed), Error> {
-    let mut encryptor = Encryptor::new(key, file_id);
+    let mut encryptor = Encryptor::new(entropy)?;
     let mut stored = encryptor.update(plaintext)?;
     let (rest, sealed) = encryptor.finish()?;
     stored.extend_from_slice(&rest);
     Ok((stored, sealed))
 }
 
-/// Decrypts a whole download. `too-large` above [`MAX_STORED_LEN`]. The stored bytes are compared with the
-/// SHA-256 the attachment names before anything is decrypted (`decrypt-failed`); then `bad-format`,
+/// Decrypts a whole download of the file `file` names. `too-large` above [`MAX_STORED_LEN`]. The stored bytes
+/// are compared with the reference's SHA-256 before anything is decrypted (`decrypt-failed`); then `bad-format`,
 /// `newer-version` and `decrypt-failed` as [`Decryptor`] gives them.
-pub fn decrypt_file(
-    key: &Secret<32>,
-    file_id: FileId,
-    sha256: &Hash32,
-    stored: &[u8],
-) -> Result<Vec<u8>, Error> {
+pub fn decrypt_file(file: &FileRef, stored: &[u8]) -> Result<Vec<u8>, Error> {
     let stored_len = u64::try_from(stored.len())
         .ok()
         .filter(|len| *len <= MAX_STORED_LEN)
         .ok_or(Error::TooLarge)?;
     let mut hasher = FileHasher::new();
     hasher.update(stored);
-    hasher.verify(sha256)?;
+    hasher.verify(&file.sha256)?;
     Layout::of_stored(stored_len)?;
 
-    let mut decryptor = Decryptor::new(key, file_id);
+    let mut decryptor = Decryptor::start(file, None);
     let mut plain = Zeroizing::new(decryptor.update(stored)?);
     plain.extend_from_slice(&Zeroizing::new(decryptor.finish()?));
     Ok(std::mem::take(&mut *plain))
 }
 
-/// Reads `N` secret bytes from base64url without leaving a copy behind.
+/// Reads `N` secret bytes from base64url. Text of another length than `N` bytes have is refused unread.
 fn secret_from_base64url<const N: usize>(text: &str) -> Result<Secret<N>, Error> {
+    if text.len() != (N * 4).div_ceil(3) {
+        return Err(Error::BadFormat);
+    }
     Secret::from_slice(&Zeroizing::new(ids::base64url_decode(text)?))
 }
 
@@ -644,7 +661,8 @@ impl ShareLink {
 
     /// The link as text. It holds the secret and the key: it is for the person to hand on, never for a log.
     pub fn to_text(&self) -> SecretBytes {
-        let mut text = Zeroizing::new(String::new());
+        // Room for the whole link, so that no shorter copy of it is left behind while it grows.
+        let mut text = Zeroizing::new(String::with_capacity(self.app.len() + 160));
         text.push_str(&self.app);
         text.push_str("/a/");
         text.push_str(&self.share_id.to_base64url());
@@ -718,10 +736,43 @@ mod tests {
             .collect()
     }
 
+    /// The source of a test file: its key is `key(1)`, its id `FILE`.
+    struct OfTheTestFile;
+    impl Entropy for OfTheTestFile {
+        fn fill(&mut self, out: &mut [u8]) -> Result<(), Error> {
+            out.fill(if out.len() == 32 { 1 } else { 0xF1 });
+            Ok(())
+        }
+    }
+
     fn sealed_file(len: usize) -> (Vec<u8>, Sealed, Vec<u8>) {
         let plain = content(len);
-        let (stored, sealed) = encrypt_file(&key(1), FILE, &plain).expect("encrypts");
+        let (stored, sealed) = encrypt_file(&plain, &mut OfTheTestFile).expect("encrypts");
+        assert_eq!(sealed.file.file_id, FILE);
+        assert_eq!(sealed.file.file_key, key(1));
         (stored, sealed, plain)
+    }
+
+    fn reference(key: &Secret<32>, file_id: FileId, sha256: &Hash32) -> FileRef {
+        FileRef {
+            file_id,
+            file_key: key.duplicate(),
+            sha256: *sha256,
+        }
+    }
+
+    /// The reference of the test file for these stored bytes, whatever they are.
+    fn naming(stored: &[u8]) -> FileRef {
+        reference(&key(1), FILE, &crypto::sha256(stored).expect("hashes"))
+    }
+
+    fn decrypt_with(
+        key: &Secret<32>,
+        file_id: FileId,
+        sha256: &Hash32,
+        stored: &[u8],
+    ) -> Result<Vec<u8>, Error> {
+        decrypt_file(&reference(key, file_id, sha256), stored)
     }
 
     struct NoEntropy;
@@ -797,7 +848,7 @@ mod tests {
         ]
         .concat();
         assert_eq!(stored, expected);
-        assert_eq!(sealed.sha256, crypto::sha256(&stored).expect("hashes"));
+        assert_eq!(sealed.file.sha256, crypto::sha256(&stored).expect("hashes"));
         assert_eq!(sealed.plain_len, plain.len() as u64);
         assert_eq!(sealed.stored_len, stored.len() as u64);
     }
@@ -813,7 +864,7 @@ mod tests {
             crypto::aead_seal(&key(1), &nonce(0, true), &head, &[]).expect("seals")
         );
         assert_eq!(
-            decrypt_file(&key(1), FILE, &sealed.sha256, &stored),
+            decrypt_with(&key(1), FILE, &sealed.file.sha256, &stored),
             Ok(vec![])
         );
     }
@@ -826,7 +877,7 @@ mod tests {
             assert_eq!(stored.len() as u64, layout.stored_len(), "{len}");
             assert_eq!(Layout::of_stored(stored.len() as u64), Ok(layout), "{len}");
             assert_eq!(
-                decrypt_file(&key(1), FILE, &sealed.sha256, &stored),
+                decrypt_with(&key(1), FILE, &sealed.file.sha256, &stored),
                 Ok(plain),
                 "{len}"
             );
@@ -842,7 +893,7 @@ mod tests {
                 if piece == 1 && len > CHUNK_SIZE + 1 {
                     continue;
                 }
-                let mut encryptor = Encryptor::new(&key(1), FILE);
+                let mut encryptor = Encryptor::new(&mut OfTheTestFile).expect("entropy");
                 let mut out = Vec::new();
                 for part in plain.chunks(piece) {
                     out.extend(encryptor.update(part).expect("takes"));
@@ -852,7 +903,7 @@ mod tests {
                 assert_eq!(out, stored, "{len} by {piece}");
                 assert_eq!(streamed, sealed, "{len} by {piece}");
 
-                let mut decryptor = Decryptor::new(&key(1), FILE);
+                let mut decryptor = Decryptor::new(&sealed.file);
                 let mut hasher = FileHasher::new();
                 let mut back = Vec::new();
                 for part in stored.chunks(piece) {
@@ -861,14 +912,14 @@ mod tests {
                 }
                 back.extend(decryptor.finish().expect("finishes"));
                 assert_eq!(back, plain, "{len} by {piece}");
-                assert_eq!(hasher.verify(&sealed.sha256), Ok(()));
+                assert_eq!(hasher.verify(&sealed.file.sha256), Ok(()));
             }
         }
     }
 
     #[test]
     fn an_encryptor_holds_back_a_full_chunk_until_it_knows_what_follows() {
-        let mut encryptor = Encryptor::new(&key(1), FILE);
+        let mut encryptor = Encryptor::new(&mut OfTheTestFile).expect("entropy");
         let first = encryptor.update(&content(CHUNK_SIZE)).expect("takes");
         assert_eq!(first.len(), HEAD_LEN);
         let (rest, sealed) = encryptor.finish().expect("finishes");
@@ -1007,7 +1058,7 @@ mod tests {
             let cut = &stored[..HEAD_LEN + chunks * SEALED_CHUNK_LEN];
             let hash = crypto::sha256(cut).expect("hashes");
             assert_eq!(
-                decrypt_file(&key(1), FILE, &hash, cut),
+                decrypt_with(&key(1), FILE, &hash, cut),
                 Err(Error::DecryptFailed),
                 "{chunks}"
             );
@@ -1016,7 +1067,7 @@ mod tests {
         let head = &stored[..HEAD_LEN];
         let hash = crypto::sha256(head).expect("hashes");
         assert_eq!(
-            decrypt_file(&key(1), FILE, &hash, head),
+            decrypt_with(&key(1), FILE, &hash, head),
             Err(Error::BadFormat)
         );
     }
@@ -1039,7 +1090,7 @@ mod tests {
         ] {
             let cut = &stored[..len];
             let hash = crypto::sha256(cut).expect("hashes");
-            let result = decrypt_file(&key(1), FILE, &hash, cut);
+            let result = decrypt_with(&key(1), FILE, &hash, cut);
             assert!(
                 matches!(result, Err(Error::DecryptFailed | Error::BadFormat)),
                 "{len}: {result:?}"
@@ -1055,7 +1106,7 @@ mod tests {
                 let mut longer = stored.clone();
                 longer.extend(vec![0u8; extra]);
                 let hash = crypto::sha256(&longer).expect("hashes");
-                let result = decrypt_file(&key(1), FILE, &hash, &longer);
+                let result = decrypt_with(&key(1), FILE, &hash, &longer);
                 assert!(
                     matches!(result, Err(Error::DecryptFailed | Error::BadFormat)),
                     "{len}+{extra}: {result:?}"
@@ -1077,14 +1128,14 @@ mod tests {
         .concat();
         let hash = crypto::sha256(&stored).expect("hashes");
         assert_eq!(
-            decrypt_file(&key(1), FILE, &hash, &stored),
+            decrypt_with(&key(1), FILE, &hash, &stored),
             Err(Error::BadFormat)
         );
         assert_eq!(
             Layout::of_stored(stored.len() as u64),
             Err(Error::BadFormat)
         );
-        let mut decryptor = Decryptor::new(&key(1), FILE);
+        let mut decryptor = Decryptor::new(&naming(&stored));
         assert_eq!(decryptor.update(&stored), Ok(plain));
         assert_eq!(decryptor.finish(), Err(Error::BadFormat));
     }
@@ -1098,7 +1149,7 @@ mod tests {
             let swapped = [head, chunks[order[0]], chunks[order[1]], chunks[order[2]]].concat();
             let hash = crypto::sha256(&swapped).expect("hashes");
             assert_eq!(
-                decrypt_file(&key(1), FILE, &hash, &swapped),
+                decrypt_with(&key(1), FILE, &hash, &swapped),
                 Err(Error::DecryptFailed),
                 "{order:?}"
             );
@@ -1120,7 +1171,7 @@ mod tests {
         .concat();
         let hash = crypto::sha256(&marked_early).expect("hashes");
         assert_eq!(
-            decrypt_file(&key(1), FILE, &hash, &marked_early),
+            decrypt_with(&key(1), FILE, &hash, &marked_early),
             Err(Error::DecryptFailed)
         );
         let never_marked = [
@@ -1131,7 +1182,7 @@ mod tests {
         .concat();
         let hash = crypto::sha256(&never_marked).expect("hashes");
         assert_eq!(
-            decrypt_file(&key(1), FILE, &hash, &never_marked),
+            decrypt_with(&key(1), FILE, &hash, &never_marked),
             Err(Error::DecryptFailed)
         );
     }
@@ -1141,7 +1192,7 @@ mod tests {
         for len in [0, 5, CHUNK_SIZE + 5] {
             let (stored, sealed, _) = sealed_file(len);
             assert_eq!(
-                decrypt_file(&key(2), FILE, &sealed.sha256, &stored),
+                decrypt_with(&key(2), FILE, &sealed.file.sha256, &stored),
                 Err(Error::DecryptFailed)
             );
         }
@@ -1150,26 +1201,29 @@ mod tests {
     #[test]
     fn a_wrong_hash_fails_before_anything_is_decrypted() {
         let (stored, sealed, _) = sealed_file(5);
-        let mut other = *sealed.sha256.as_bytes();
+        let mut other = *sealed.file.sha256.as_bytes();
         other[31] ^= 1;
         assert_eq!(
-            decrypt_file(&key(1), FILE, &Hash32::new(other), &stored),
+            decrypt_with(&key(1), FILE, &Hash32::new(other), &stored),
             Err(Error::DecryptFailed)
         );
         // The hash is compared first: bytes that are no file at all fail on it, not on their form.
         assert_eq!(
-            decrypt_file(&key(1), FILE, &sealed.sha256, b"not a file"),
+            decrypt_with(&key(1), FILE, &sealed.file.sha256, b"not a file"),
             Err(Error::DecryptFailed)
         );
         let mut changed = stored.clone();
         changed[HEAD_LEN] ^= 1;
         assert_eq!(
-            decrypt_file(&key(1), FILE, &sealed.sha256, &changed),
+            decrypt_with(&key(1), FILE, &sealed.file.sha256, &changed),
             Err(Error::DecryptFailed)
         );
         let mut hasher = FileHasher::new();
         hasher.update(&changed);
-        assert_eq!(hasher.verify(&sealed.sha256), Err(Error::DecryptFailed));
+        assert_eq!(
+            hasher.verify(&sealed.file.sha256),
+            Err(Error::DecryptFailed)
+        );
     }
 
     #[test]
@@ -1179,7 +1233,7 @@ mod tests {
             let mut changed = stored.clone();
             changed[at] = byte;
             let hash = crypto::sha256(&changed).expect("hashes");
-            decrypt_file(&key(1), FILE, &hash, &changed)
+            decrypt_with(&key(1), FILE, &hash, &changed)
         };
         assert_eq!(with(0, 3), Err(Error::NewerVersion));
         assert_eq!(with(0, 1), Err(Error::BadFormat));
@@ -1188,7 +1242,7 @@ mod tests {
         assert_eq!(with(1, 0xF2), Err(Error::DecryptFailed));
         let hash = crypto::sha256(&stored).expect("hashes");
         assert_eq!(
-            decrypt_file(&key(1), FileId::new([0xF2; 16]), &hash, &stored),
+            decrypt_with(&key(1), FileId::new([0xF2; 16]), &hash, &stored),
             Err(Error::DecryptFailed)
         );
     }
@@ -1197,7 +1251,7 @@ mod tests {
     fn a_decryptor_that_failed_stays_failed() {
         let (mut stored, _, plain) = sealed_file(2 * CHUNK_SIZE);
         stored[HEAD_LEN + SEALED_CHUNK_LEN - 1] ^= 1;
-        let mut decryptor = Decryptor::new(&key(1), FILE);
+        let mut decryptor = Decryptor::new(&naming(&stored));
         assert_eq!(decryptor.update(&stored), Err(Error::DecryptFailed));
         assert_eq!(decryptor.update(&[]), Err(Error::DecryptFailed));
         assert_eq!(decryptor.finish(), Err(Error::DecryptFailed));
@@ -1206,7 +1260,7 @@ mod tests {
         stored[HEAD_LEN + SEALED_CHUNK_LEN - 1] ^= 1;
         let end = stored.len() - 1;
         stored[end] ^= 1;
-        let mut decryptor = Decryptor::new(&key(1), FILE);
+        let mut decryptor = Decryptor::new(&naming(&stored));
         assert_eq!(
             decryptor.update(&stored).expect("first chunk"),
             plain[..CHUNK_SIZE]
@@ -1216,15 +1270,12 @@ mod tests {
 
     #[test]
     fn a_decryptor_without_a_whole_head_or_chunk_fails() {
-        assert_eq!(
-            Decryptor::new(&key(1), FILE).finish(),
-            Err(Error::BadFormat)
-        );
+        assert_eq!(Decryptor::new(&naming(&[])).finish(), Err(Error::BadFormat));
         let head = FileHead { file_id: FILE }.encode();
-        let mut decryptor = Decryptor::new(&key(1), FILE);
+        let mut decryptor = Decryptor::new(&naming(&head[..HEAD_LEN - 1]));
         assert_eq!(decryptor.update(&head[..HEAD_LEN - 1]), Ok(vec![]));
         assert_eq!(decryptor.finish(), Err(Error::BadFormat));
-        let mut decryptor = Decryptor::new(&key(1), FILE);
+        let mut decryptor = Decryptor::new(&naming(&head));
         assert_eq!(decryptor.update(&head), Ok(vec![]));
         assert_eq!(decryptor.update(&[0; TAG_LEN - 1]), Ok(vec![]));
         assert_eq!(decryptor.finish(), Err(Error::BadFormat));
@@ -1281,7 +1332,7 @@ mod tests {
 
     #[test]
     fn the_largest_file_is_64_mib() {
-        let mut encryptor = Encryptor::new(&key(1), FILE);
+        let mut encryptor = Encryptor::new(&mut OfTheTestFile).expect("entropy");
         let piece = vec![0u8; 1 << 20];
         let mut stored_len = 0u64;
         for _ in 0..64 {
@@ -1297,25 +1348,57 @@ mod tests {
 
         let too_long = vec![0u8; MAX_STORED_LEN as usize + 1];
         assert_eq!(
-            decrypt_file(&key(1), FILE, &sealed.sha256, &too_long),
+            decrypt_with(&key(1), FILE, &sealed.file.sha256, &too_long),
             Err(Error::TooLarge)
         );
     }
 
     #[test]
-    fn a_file_key_and_a_file_id_are_fresh_random_bytes() {
-        let a = generate_file_key(&mut SystemEntropy).expect("entropy");
-        let b = generate_file_key(&mut SystemEntropy).expect("entropy");
-        assert_ne!(a.expose(), b.expose());
-        assert_ne!(
-            generate_file_id(&mut SystemEntropy).expect("entropy"),
-            generate_file_id(&mut SystemEntropy).expect("entropy")
-        );
+    fn every_file_gets_a_key_and_an_id_of_its_own() {
+        let (_, a) = encrypt_file(b"the same bytes", &mut SystemEntropy).expect("encrypts");
+        let (_, b) = encrypt_file(b"the same bytes", &mut SystemEntropy).expect("encrypts");
+        assert_ne!(a.file.file_key, b.file.file_key);
+        assert_ne!(a.file.file_id, b.file.file_id);
+        assert_ne!(a.file.sha256, b.file.sha256);
+        let encryptor = Encryptor::new(&mut SystemEntropy).expect("entropy");
+        let file_id = encryptor.file_id();
         assert_eq!(
-            generate_file_key(&mut NoEntropy).err(),
+            encryptor.finish().expect("finishes").1.file.file_id,
+            file_id
+        );
+        assert_eq!(Encryptor::new(&mut NoEntropy).err(), Some(Error::Entropy));
+        assert_eq!(
+            encrypt_file(b"x", &mut NoEntropy).err(),
             Some(Error::Entropy)
         );
-        assert_eq!(generate_file_id(&mut NoEntropy), Err(Error::Entropy));
+    }
+
+    #[test]
+    fn a_streamed_download_that_is_not_the_named_file_fails_at_its_end() {
+        // Whoever holds the file key can seal another file under the same id; the reference's hash tells.
+        let (stored, sealed, _) = sealed_file(CHUNK_SIZE + 9);
+        let head = FileHead { file_id: FILE }.encode();
+        let other = content(CHUNK_SIZE + 9)
+            .iter()
+            .map(|byte| byte ^ 0x5a)
+            .collect::<Vec<u8>>();
+        let (first, second) = other.split_at(CHUNK_SIZE);
+        let replaced = [
+            head.to_vec(),
+            seal_chunk(&key(1), &FILE, 0, false, first).expect("seals"),
+            seal_chunk(&key(1), &FILE, 1, true, second).expect("seals"),
+        ]
+        .concat();
+        assert_eq!(replaced.len(), stored.len());
+        let mut decryptor = Decryptor::new(&sealed.file);
+        assert_eq!(decryptor.update(&replaced), Ok(first.to_vec()));
+        assert_eq!(decryptor.finish(), Err(Error::DecryptFailed));
+        assert_eq!(
+            decrypt_file(&sealed.file, &replaced),
+            Err(Error::DecryptFailed)
+        );
+        // The same bytes under a reference that names them do open.
+        assert_eq!(decrypt_file(&naming(&replaced), &replaced), Ok(other));
     }
 
     fn file_ref() -> FileRef {
