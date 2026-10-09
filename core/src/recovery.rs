@@ -1418,7 +1418,8 @@ impl Walk<'_> {
 }
 
 /// Verifies a session group as any reader does (8.4): from its founding GroupInfo through its Commits against
-/// the room states of `history` (`bad-group` when one does not verify or obey section 5), and requires the
+/// the room states of `history` (`bad-group` when one does not verify or obey section 5, `room-behind` when
+/// `history` does not reach back to a room state one names), and requires the
 /// GroupInfo offered as current to agree with the state so reached (`wrong-recovery`). `sessions` answers for
 /// the room's other sessions: a helper session is verified after its main session.
 pub fn check_session(
@@ -1442,7 +1443,11 @@ pub fn check_session(
     for served in served.commits {
         let facts = observer
             .process_commit(served.commit, served.recovery_auth, &context)
-            .map_err(|_| Error::BadGroup)?;
+            .map_err(|error| match error {
+                // The verifier does not hold the room state a Commit names: it cannot tell.
+                Error::RoomBehind => Error::RoomBehind,
+                _ => Error::BadGroup,
+            })?;
         let room_epoch = facts.note.as_ref().map_or(0, |note| note.room_epoch);
         if begun.is_empty() {
             // The founding is one request: epoch 0 began under the room epoch its first Commit names.

@@ -3199,6 +3199,39 @@ impl<S: Storage> Device<S> {
         self.post_join(posting, copy)
     }
 
+    /// First contact with a session group this device joined by Welcome (5.2.6): verifies the group as any
+    /// reader does, from its founding GroupInfo through its Commits against the room states this device holds
+    /// ([`recovery::check_session`]), so that a helper session is known to have been founded by its main
+    /// session's agent leaf of that time, and requires what the hub serves to end in the state this device
+    /// stands in. `bad-group` is the finding: the device then opens none of the session's content and removes
+    /// the offending leaves or leaves the group closed. `room-behind` when this device's record of the room
+    /// does not reach back to the session's founding, and `group-behind` when the device has not processed
+    /// the group up to what is served: neither is a finding.
+    pub fn verify_founding(&self, group: &GroupId, served: &ServedGroup<'_>) -> Result<(), Error> {
+        self.owner()?;
+        let room = self.memory.record.room.ok_or(Error::NoRoom)?;
+        if !self.is_leaf_of(group) || group.is_room() {
+            return Err(Error::NotFound);
+        }
+        let checked = recovery::check_session(served, &room, self.history()?, &self.known())
+            .map_err(|error| match error {
+                Error::WrongRecovery | Error::WrongRoom => Error::BadGroup,
+                other => other,
+            })?;
+        if checked.observer.group() != *group {
+            return Err(Error::BadGroup);
+        }
+        let own = group::load(&self.provider, group)?;
+        if checked.observer.epoch()? != own.epoch().as_u64() {
+            return Err(Error::GroupBehind);
+        }
+        // The state reached from the founding is this device's own: the GroupInfo that agrees with the one
+        // agrees with the other.
+        observer::signer_of(own.public_group(), served.current)
+            .map(|_| ())
+            .map_err(|_| Error::BadGroup)
+    }
+
     /// Replaces the recovery code (8.6) as a human device that holds the current code `keys`: one request with
     /// the room Commit that puts the new public keys into the room's state, its `SealedKey` sealed to the new
     /// key, the `RecoveryLink` and the account's new sealed copies. `replacement` comes from
