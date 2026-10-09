@@ -41,7 +41,7 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | `GET /v2/desk` | → `{ cards, permission_requests, notes, artifacts, registers, groups, change }` | open objects' newest envelopes, every writer's newest value per register, in the asker's groups |
 | `GET /v2/chats/{timeline}/items?before=&limit=` | → envelopes, newest first | `timeline` = `session/<hex>` or `card/<hex>` |
 | `GET /v2/boards/{board}?after_change=` | → `{ items, more }` | the board's items after the given change (10.3) |
-| `GET /v2/cards/{object}` (and `/notes/`, `/permission-requests/`, `/artifacts/`) | → every envelope of the object | pruned ones in pruned form |
+| `GET /v2/cards/{object}?after=&limit=` (and `/notes/`, `/permission-requests/`, `/artifacts/`) | → `{ items, more, state, owner, … }`: every envelope of the object | pruned ones in pruned form |
 | `GET /v2/groups/{group}/chains/{sender}?after=&limit=` | → envelopes in pruned form, by `seq` | chain checks (9.0.5, 10.3) |
 | `GET /v2/changes?after=&limit=` | → `{ items, change, more }` | catch-up: everything the asker may see with a change number above `after` |
 | `GET /v2/stream?after=` | server-sent events: `envelope`, `log`, `relay`, `welcome`, `request`, `presence`, `file_evicted`, `ping` | live; resumes by change number (`after`, or `Last-Event-ID`) |
@@ -189,14 +189,22 @@ encrypted.
     `{ device, online, hears?, working?, last_call_at? }`; `file_evicted` `{ file_id }`. Events without a change
     number are not replayed.
 21. A void record and an envelope beyond a Cut are served in pruned form; the latter only on the chain route,
-    marked `cut`.
+    marked `cut` (not by a push ticket either). What a Cut cannot bring back stays as it is: the files of an
+    Artifact whose closing version was cut are deleted.
+22. An answer holds at most 8 MiB of envelopes: the list routes say `more`, the Desk `truncated` (then the rest
+    comes by `/v2/changes`). A stream ends when the token it was opened with runs out, and the device resumes
+    with a new one by change number.
+23. `epoch-full` counts the accepted envelopes of a group and epoch. An envelope whose ciphertext is not a
+    padded size of 9 is `bad-format` and takes no number; `too-large` is the void of a register over its size.
 
 **Operations**
 
-22. `GET /healthz` (outside `/v2/`, for the container) answers `{ ok, commit, protocol_version }`.
+24. `GET /healthz` (outside `/v2/`, for the container) answers `{ ok, commit, protocol_version }`.
     `HUB_FOUND_TOKEN`, when set, must come as `x-found-token` with `POST /v2/rooms`.
-23. A Share link expires within 180 days (owner, 9 October 2026; v2.md 11.5 and section 16 follow on the core's
+25. A Share link expires within 180 days (owner, 9 October 2026; v2.md 11.5 and section 16 follow on the core's
     branch). A room has at most 1 000 Share links, a device ten push registrations.
-24. A Web Push carries a `Topic` (one waiting notification per room). The ticket of 15.2 is the hub's own
-    `room ‖ device ‖ change ‖ expiry ‖ HMAC`; only the hub reads it.
-25. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
+26. A Web Push carries a `Topic` (one waiting notification per room). The ticket of 15.2 is the hub's own
+    `room ‖ device ‖ change ‖ expiry ‖ HMAC`; only the hub reads it. One device's envelopes cause at most ten
+    pushes a minute; a push service is called on port 443 and no redirect is followed.
+27. Uploads in progress count against the room's quota; a room has at most 16 at a time.
+28. Codes beside v2.md section 16: `account-changed` (409), `bad-email`, `bad-passkey` (400), `range` (416).
