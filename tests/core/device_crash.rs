@@ -409,7 +409,7 @@ fn damaged_content_state_is_a_storage_error_and_never_a_panic() {
                     Err(Error::Storage(_)) => {}
                     Err(other) => panic!("table {}: opening failed with {other:?}", key[0]),
                     // What still decodes is used as it stands, and using it does not panic.
-                    Ok(device) => {
+                    Ok(mut device) => {
                         let _ = device.commands_pending();
                         let _ = device.invite_steps();
                         let _ = device.findings();
