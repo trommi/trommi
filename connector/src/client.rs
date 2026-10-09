@@ -334,6 +334,8 @@ pub struct Client {
     /// This process, for the lease.
     process: [u8; 16],
     stopped: AtomicBool,
+    /// Tells the background tasks to end; they hold the client alive until they have.
+    stop_signal: tokio::sync::watch::Sender<bool>,
     removed: AtomicBool,
     online: AtomicBool,
     /// Wakes the loop: something waits in the outbox.
@@ -446,6 +448,7 @@ impl Client {
             room: room_id,
             process: crate::util::random()?,
             stopped: AtomicBool::new(false),
+            stop_signal: tokio::sync::watch::channel(false).0,
             removed: AtomicBool::new(false),
             online: AtomicBool::new(false),
             wake: tokio::sync::Notify::new(),
@@ -568,6 +571,7 @@ impl Client {
     /// Stops the background work. What waits in the outbox stays stored.
     pub async fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
+        let _ = self.stop_signal.send(true);
         self.wake.notify_waiters();
     }
 
@@ -583,6 +587,7 @@ impl Client {
         if self.removed.swap(true, Ordering::SeqCst) {
             return;
         }
+        let _ = self.stop_signal.send(true);
         {
             let mut core = self.core.lock().await;
             core.model.room.connection = "removed".into();
@@ -601,8 +606,8 @@ impl Client {
         self.hub.link(&self.process, &report).await?;
         let mut core = self.core.lock().await;
         self.observe_room(&mut core).await?;
-        self.take_welcomes(&mut core).await?;
         self.catch_up(&mut core).await?;
+        self.take_welcomes(&mut core, false).await?;
         self.publish_key_packages(&mut core).await?;
         self.pump(&mut core).await?;
         self.catch_up(&mut core).await?;
@@ -640,8 +645,12 @@ impl Client {
 
     /// Keeps the lease: the same process renews it every 20 s; when another process took it, this one stops.
     async fn keep_lease(self: Arc<Self>) {
+        let mut stop = self.stop_signal.subscribe();
         loop {
-            tokio::time::sleep(LEASE_EVERY).await;
+            tokio::select! {
+                _ = tokio::time::sleep(LEASE_EVERY) => {}
+                _ = stop.changed() => {}
+            }
             if self.is_stopped() {
                 return;
             }
@@ -709,9 +718,11 @@ impl Client {
                 }
             }
             let jitter = crate::util::rand_below(pause_ms / 2 + 1);
+            let mut stop = self.stop_signal.subscribe();
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(pause_ms + jitter)) => {}
                 _ = self.wake.notified() => {}
+                _ = stop.changed() => {}
             }
             pause_ms = (pause_ms * 2).min(60_000);
         }
@@ -721,9 +732,11 @@ impl Client {
     async fn follow(&self) -> Result<()> {
         let after = self.core.lock().await.cursor;
         let mut stream = self.hub.stream(after).await?;
+        let mut stop = self.stop_signal.subscribe();
         loop {
             let event = tokio::select! {
                 event = stream.next(STREAM_SILENCE) => event?,
+                _ = stop.changed() => return Ok(()),
                 _ = self.wake.notified() => {
                     if self.is_stopped() {
                         return Ok(());
@@ -747,7 +760,7 @@ impl Client {
                     self.deliver(commands).await;
                 }
                 "welcome" => {
-                    self.take_welcomes(&mut core).await?;
+                    self.take_welcomes(&mut core, false).await?;
                     self.catch_up(&mut core).await?;
                 }
                 _ => {}
@@ -814,10 +827,27 @@ impl Client {
     }
 
     /// Joins every group a Welcome waits for (12.1.5, 5.2.6), and records it.
-    pub(crate) async fn take_welcomes(&self, core: &mut Core) -> Result<()> {
+    ///
+    /// A Welcome is taken at its place in the hub's order (5.4.1): the room state its Commit names must have
+    /// been processed, or the group fails its first contact for good, and no later entry of the group may have
+    /// been passed. `at_item` says that the caller stands right before the first item of a group it does not
+    /// hold: everything before it is processed, so the Welcome is taken now. Otherwise the hub's order is
+    /// followed to its end first (which takes a Welcome at an item's place if there is one).
+    pub(crate) fn take_welcomes<'a>(
+        &'a self,
+        core: &'a mut Core,
+        at_item: bool,
+    ) -> BoxFut<'a, Result<()>> {
+        Box::pin(self.take_welcomes_now(core, at_item))
+    }
+
+    async fn take_welcomes_now(&self, core: &mut Core, at_item: bool) -> Result<()> {
         let list = self.hub.get("/v2/welcomes").await?;
         let room = self.room;
         let mut joined_any = false;
+        if !at_item && list.as_array().is_some_and(|rows| !rows.is_empty()) {
+            self.catch_up(core).await?;
+        }
         for row in list.as_array().cloned().unwrap_or_default() {
             let (Ok(group), Ok(welcome)) = (group_of_item(&row), unb64(&row, "welcome")) else {
                 continue;
@@ -951,7 +981,7 @@ impl Client {
                 .is_some_and(|sid| !core.groups.contains_key(&sid))
         {
             // A group this device does not hold yet: its Welcome comes first (5.4.1).
-            self.take_welcomes(core).await?;
+            self.take_welcomes(core, true).await?;
         }
         let me = self.me;
         let inviter = core.room.inviter.clone();
@@ -1104,7 +1134,7 @@ impl Client {
             return Ok(true);
         };
         if !core.groups.contains_key(&session) {
-            self.take_welcomes(core).await?;
+            self.take_welcomes(core, true).await?;
             if !core.groups.contains_key(&session) {
                 return Ok(true);
             }

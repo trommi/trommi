@@ -93,3 +93,7 @@ path = "core/groups_cost.rs"
 [[test]]
 name = "connector_e2e"
 path = "connector/e2e.rs"
+
+[[test]]
+name = "connector_tools"
+path = "connector/tools.rs"

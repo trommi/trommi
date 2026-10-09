@@ -174,3 +174,39 @@ async fn a_connector_joins_by_link_and_talks_both_ways() {
     assert_eq!(command.sender_device_id, human.id().to_base64url());
     assert!(human.findings.is_empty(), "{:?}", human.findings);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_keeps_the_membership() {
+    let (_hub, mut human, agent, group) = room().await;
+    agent
+        .client
+        .send_message(fields(json!({ "text": "before the restart" })), None, None)
+        .await
+        .expect("sent");
+    let me = agent.client.device_id();
+
+    let mut agent = agent.restart().await;
+    assert_eq!(agent.client.device_id(), me, "the same device");
+    agent
+        .client
+        .send_message(fields(json!({ "text": "after the restart" })), None, None)
+        .await
+        .expect("the same member writes on");
+    human
+        .say(
+            &group,
+            json!({ "content_type": "message", "text": "still there?" }),
+        )
+        .await
+        .expect("taken");
+    assert_eq!(agent.command().await.content["text"], "still there?");
+    human.sync().await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+    let texts: Vec<&str> = human
+        .items
+        .iter()
+        .filter(|(_, sender, _)| *sender == me)
+        .filter_map(|(_, _, payload)| payload["text"].as_str())
+        .collect();
+    assert_eq!(texts, ["before the restart", "after the restart"]);
+}
