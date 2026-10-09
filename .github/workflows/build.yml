@@ -1,0 +1,366 @@
+# On every commit on main and on every pull request: find which parts changed, test and build those, and (on main
+# only) hand each built part to its deploy workflow.
+#
+# A part counts as changed when its own folder changed, or core/, or what pins the build (Cargo.toml, Cargo.lock,
+# rust-toolchain.toml). A run started by hand counts every part as changed.
+#
+# How a part is wired in (web, connector and ios are; the hub follows the same three steps):
+#   1. `changes`: one more `part <name> '<its own paths>'` line and one more output.
+#   2. a job named after the part: tests, builds, uploads ONE artifact named `<part>-release`.
+#   3. a job `deploy_<part>` that calls `.github/workflows/deploy_<part>.yml` with
+#        version:  the release number of this run (see `changes`): a whole number that only grows, the same for
+#                  every part built by one run
+#        commit:   the commit that was built
+#        artifact: `<part>-release`
+#      and `secrets: inherit`. The deploy workflow alone uses the part's environment (`web`, `hub`, `connector`,
+#      `ios`), which holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID.
+#
+# Releases that are signed (hub, connector) use one form: release/manifest.sh writes manifest.json, release/sign.sh
+# signs and checks it, the public key is release/public-key.pem. The artifact of such a part holds the files and
+# their manifest.json, not yet signed; the deploy workflow signs.
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+# A pull request: one run at a time, a newer commit cuts the older run off. On main every run is its own group:
+# each compares with the commit before it, so a run dropped while waiting would be a change never built.
+concurrency:
+  group: build-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Release numbers are this workflow's run number plus this base. The run number starts again at 1 when this
+  # file is renamed or made anew: raise the base then by at least the highest number released so far, because a
+  # server never takes a release older than one it has accepted.
+  RELEASE_BASE: 0
+
+jobs:
+  changes:
+    name: Which parts changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      web: ${{ steps.find.outputs.web }}
+      connector: ${{ steps.find.outputs.connector }}
+      ios: ${{ steps.find.outputs.ios }}
+      version: ${{ steps.find.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find the changed parts
+        id: find
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -eu
+          echo "version=$((RUN_NUMBER + RELEASE_BASE))" >> "$GITHUB_OUTPUT"
+          base=
+          case "$EVENT" in
+            push) base=$BEFORE ;;
+            pull_request) base=$(git merge-base "$PR_BASE" HEAD || true) ;;
+          esac
+          # no known commit to compare with (a run by hand, a first push, a rewritten branch): everything changed
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            all=0
+            git diff --name-only "$base" HEAD > "$RUNNER_TEMP/files"
+            echo "compared with $base: $(wc -l < "$RUNNER_TEMP/files") file(s) changed"
+          else
+            all=1
+            : > "$RUNNER_TEMP/files"
+            echo "nothing to compare with: every part counts as changed"
+          fi
+          shared='core/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|\.github/workflows/build\.yml$'
+          part() {
+            if [ "$all" = 1 ] || grep -Eq "^($2|$shared)" "$RUNNER_TEMP/files"; then value=true; else value=false; fi
+            echo "$1=$value" >> "$GITHUB_OUTPUT"
+            echo "$1: $value"
+            echo "- $1: $value" >> "$GITHUB_STEP_SUMMARY"
+          }
+          # (connector/tools.json and prompt.md, demo/: the app's build reads them)
+          part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
+          part connector 'connector/|release/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/deploy_connector\.yml$'
+          part ios 'ios/|\.github/scripts/ios_testflight\.sh$|\.github/workflows/deploy_ios\.yml$'
+
+  web:
+    name: Web app (test and build)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # The hub the app speaks to. The build is checked against it: the page's policy must name this hub and no other.
+      WEB_HUB_URL: https://hub.trommi.com
+      # Strict-Transport-Security with preload on every answer: `on` once the owner says so. Not to be taken back
+      # quickly: browsers then refuse plain http for app.trommi.com and what lies under it for two years.
+      WEB_HSTS: 'off'
+      VERSION: ${{ needs.changes.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Compiler (rust-toolchain.toml)
+        run: |
+          rustup toolchain install || rustup show
+          rustc --version
+          echo "WASM_BINDGEN=$(sed -n 's/^wasm-bindgen = "=\(.*\)"$/\1/p' core/wasm/Cargo.toml)" >> "$GITHUB_ENV"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: web-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: bindgen
+        with:
+          path: ~/.cargo/bin/wasm-bindgen
+          key: wasm-bindgen-${{ runner.os }}-${{ env.WASM_BINDGEN }}-${{ hashFiles('rust-toolchain.toml') }}
+      # the command must be the version of the crate in Cargo.lock (core/wasm/build.sh checks it)
+      - name: wasm-bindgen
+        if: steps.bindgen.outputs.cache-hit != 'true'
+        run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN" --locked
+      - name: Packages
+        run: npm ci --no-audit --no-fund
+      - name: The Rust core for the browser
+        run: sh core/wasm/build.sh
+      - name: Test
+        run: npm test
+      - name: Build
+        run: node app/web/dev/build.mjs --write
+      # What is delivered: the files, the worker, its settings, and the manifest that names every file.
+      - name: Put the release together
+        run: |
+          set -eu
+          node .github/scripts/web_release.mjs app/web/public out
+          (cd out && sha256sum -c --quiet checksums.txt)
+          # the settings are tried as wrangler reads them; nothing is sent
+          npm ci --no-audit --no-fund --ignore-scripts --prefix .github/tools/wrangler
+          (cd out && WRANGLER_SEND_METRICS=false ../.github/tools/wrangler/node_modules/.bin/wrangler deploy --dry-run --outdir "$RUNNER_TEMP/dry")
+          {
+            echo "### Web app, build $VERSION"
+            echo
+            echo "hub \`$WEB_HUB_URL\`, HSTS \`$WEB_HSTS\`, $(jq '.files | length' out/manifest.json) files, manifest \`$(sha256sum out/manifest.json | cut -d' ' -f1)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-release
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy_web:
+    name: Web app
+    needs: [changes, web]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.web == 'true'
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/deploy_web.yml
+    with:
+      version: ${{ needs.changes.outputs.version }}
+      commit: ${{ github.sha }}
+      artifact: web-release
+    secrets: inherit
+
+  connector:
+    name: Connector (test and build)
+    needs: changes
+    if: needs.changes.outputs.connector == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.changes.outputs.version }}
+      # what the macOS binaries are linked with (connector/build-plugin.mjs): zig, by its published SHA-256, and
+      # cargo-zigbuild
+      ZIG_VERSION: 0.14.1
+      ZIG_SHA256: 24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+      ZIGBUILD_VERSION: 0.23.4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: Compiler (rust-toolchain.toml), clang, zig
+        run: |
+          set -eu
+          rustup toolchain install || rustup show
+          rustc --version
+          clang --version | head -n 1
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/zig.tar.xz" "https://ziglang.org/download/$ZIG_VERSION/zig-x86_64-linux-$ZIG_VERSION.tar.xz"
+          echo "$ZIG_SHA256  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/zig"
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP/zig" --strip-components 1
+          echo "ZIG=$RUNNER_TEMP/zig/zig" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/zig/zig" version
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: connector-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: zigbuild
+        with:
+          path: ~/.cargo/bin/cargo-zigbuild
+          key: cargo-zigbuild-${{ runner.os }}-${{ env.ZIGBUILD_VERSION }}-${{ hashFiles('rust-toolchain.toml') }}
+      - name: cargo-zigbuild
+        if: steps.zigbuild.outputs.cache-hit != 'true'
+        run: cargo install cargo-zigbuild --version "$ZIGBUILD_VERSION" --locked
+      # The scenario tests start the hub of this repository and the built connector (tests/connector/common/mod.rs).
+      - name: Test
+        run: |
+          set -eu
+          cargo build --locked -p trommi-hub -p trommi-connector
+          tests=$(sed -n 's/^name = "\(connector_[a-z0-9_]*\)"$/--test \1/p' tests/Cargo.toml | tr '\n' ' ')
+          [ -n "$tests" ] || { echo "::error::tests/Cargo.toml names no connector test"; exit 1; }
+          # The tests put the connector's sockets into a short folder beside the temporary one (its parent, then r/):
+          # with the default /tmp that is /r, which a runner may not make.
+          mkdir -p "$RUNNER_TEMP/t"
+          # shellcheck disable=SC2086
+          TMPDIR="$RUNNER_TEMP/t" TROMMI_HUB_BIN="$PWD/target/debug/trommi-hub" cargo test --locked -p trommi-tests $tests
+      # The four binaries and the plugin's archive, as connector/build-plugin.mjs makes them; then the manifest
+      # that names them. A target that did not build is an error here, not a smaller release.
+      - name: Build the release
+        run: |
+          set -eu
+          node connector/build-plugin.mjs "$RUNNER_TEMP/dist"
+          mkdir out
+          for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
+            hash=$(cut -d' ' -f1 "$RUNNER_TEMP/dist/connector/trommi-connector-$target.sha256") || { echo "::error::no build for $target"; exit 1; }
+            cp "$RUNNER_TEMP/dist/connector/$hash/trommi-connector-$target" "out/trommi-connector-$target"
+            file "out/trommi-connector-$target"
+          done
+          for f in out/trommi-connector-*-linux-musl; do
+            file "$f" | grep -Eq 'static(ally|-pie) linked' || { echo "::error::$f is not a static binary"; exit 1; }
+          done
+          cp "$RUNNER_TEMP"/dist/plugins/trommi-*.zip out/
+          [ "$(find out -name 'trommi-*.zip' | wc -l)" = 1 ] || { echo "::error::not exactly one plugin archive"; exit 1; }
+          release/manifest.sh trommi-connector "$VERSION" "$GITHUB_SHA" out/* > "$RUNNER_TEMP/manifest.json"
+          mv "$RUNNER_TEMP/manifest.json" out/manifest.json
+          release/sign.sh files out/manifest.json
+          cat out/manifest.json
+      # The very file that will be released is started once.
+      - name: Try the built connector
+        run: out/trommi-connector-x86_64-unknown-linux-musl --version
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: connector-release
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy_connector:
+    name: Connector
+    needs: [changes, connector]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.connector == 'true'
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/deploy_connector.yml
+    with:
+      version: ${{ needs.changes.outputs.version }}
+      commit: ${{ github.sha }}
+      artifact: connector-release
+    secrets: inherit
+
+  ios:
+    name: iOS (test and build the core)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    # macOS with Xcode 27 (the app's deployment target is iOS 27)
+    runs-on: xcode-27
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # llvm-tools: core/swift/build.sh takes the compiler runtime's helpers out of the iOS library with llvm-ar
+      - name: Compiler (rust-toolchain.toml)
+        run: |
+          set -eu
+          rustup toolchain install || rustup show
+          rustup component add llvm-tools
+          rustc --version
+          xcodebuild -version
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ios-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      # The Rust core for this Mac (for the tests) and for iOS; the helpers it removes from the iOS library are
+      # checked against Apple's runtime of this Xcode.
+      - name: The Rust core for Swift
+        run: |
+          set -eu
+          DARWIN_CLANG_RT="$(xcrun --sdk iphoneos clang -print-resource-dir)/lib/darwin"
+          export DARWIN_CLANG_RT
+          sh core/swift/build.sh
+      # The core's Swift binding on this Mac. The app's own package (ios/TrommiClient) is tested on Linux only: it
+      # does not compile for macOS (ActivityKit), and the archive in deploy_ios.yml is its build for iOS.
+      - name: Test
+        run: swift test --package-path tests/bindings/swift
+      # What deploy_ios.yml takes: the iOS library and UniFFI's two files, with their hashes and the commit.
+      - name: Put the release together
+        run: |
+          set -eu
+          package=core/swift/TrommiCoreRust
+          mkdir -p out/lib/ios out/Sources/TrommiCoreFFI/include out/Sources/TrommiCoreRust
+          cp "$package/lib/ios/libtrommi_core_ffi.a" out/lib/ios/
+          cp "$package/Sources/TrommiCoreFFI/include/TrommiCoreFFI.h" out/Sources/TrommiCoreFFI/include/
+          cp "$package/Sources/TrommiCoreRust/TrommiCoreRust.swift" out/Sources/TrommiCoreRust/
+          printf 'commit: %s\n' "$GITHUB_SHA" > out/build.txt
+          (cd out && find . -type f | sed 's|^\./||' | sort | xargs shasum -a 256 > "$RUNNER_TEMP/checksums.txt")
+          mv "$RUNNER_TEMP/checksums.txt" out/checksums.txt
+          cat out/checksums.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-release
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy_ios:
+    name: iOS
+    needs: [changes, ios]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.ios == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/deploy_ios.yml
+    with:
+      version: ${{ needs.changes.outputs.version }}
+      commit: ${{ github.sha }}
+      artifact: ios-release
+    secrets: inherit
