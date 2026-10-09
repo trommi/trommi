@@ -239,8 +239,11 @@ jobs:
           cargo build --locked -p trommi-hub -p trommi-connector
           tests=$(sed -n 's/^name = "\(connector_[a-z0-9_]*\)"$/--test \1/p' tests/Cargo.toml | tr '\n' ' ')
           [ -n "$tests" ] || { echo "::error::tests/Cargo.toml names no connector test"; exit 1; }
+          # The tests put the connector's sockets into a short folder beside the temporary one (its parent, then r/):
+          # with the default /tmp that is /r, which a runner may not make.
+          mkdir -p "$RUNNER_TEMP/t"
           # shellcheck disable=SC2086
-          TROMMI_HUB_BIN="$PWD/target/debug/trommi-hub" cargo test --locked -p trommi-tests $tests
+          TMPDIR="$RUNNER_TEMP/t" TROMMI_HUB_BIN="$PWD/target/debug/trommi-hub" cargo test --locked -p trommi-tests $tests
       # The four binaries and the plugin's archive, as connector/build-plugin.mjs makes them; then the manifest
       # that names them. A target that did not build is an error here, not a smaller release.
       - name: Build the release
@@ -324,8 +327,10 @@ jobs:
           DARWIN_CLANG_RT="$(xcrun --sdk iphoneos clang -print-resource-dir)/lib/darwin"
           export DARWIN_CLANG_RT
           sh core/swift/build.sh
+      # The core's Swift binding on this Mac. The app's own package (ios/TrommiClient) is tested on Linux only: it
+      # does not compile for macOS (ActivityKit), and the archive in deploy_ios.yml is its build for iOS.
       - name: Test
-        run: swift test --package-path ios/TrommiClient
+        run: swift test --package-path tests/bindings/swift
       # What deploy_ios.yml takes: the iOS library and UniFFI's two files, with their hashes and the commit.
       - name: Put the release together
         run: |
