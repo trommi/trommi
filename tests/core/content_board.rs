@@ -600,7 +600,7 @@ fn snapshots_of_the_vectors_load_or_are_refused() {
 }
 
 #[test]
-fn a_snapshot_is_refused_behind_the_board_and_after_a_newer_item() {
+fn a_snapshot_is_refused_behind_the_board_and_after_an_unread_item() {
     let [a, b, _] = writers();
     let head = |seq| Head {
         seq,
@@ -648,15 +648,21 @@ fn a_snapshot_is_refused_behind_the_board_and_after_a_newer_item() {
     .unwrap();
     assert!(!past.contains(&id(a, 9, 0).to_string()));
 
-    // An item of a newer version is skipped once, and the board then writes no snapshot.
-    assert!(!board.needs_newer());
-    board.skip_newer(a, 4);
-    assert!(!board.needs_newer());
-    board.skip_newer(a, 6);
-    assert!(board.needs_newer());
+    // An item the device could not read is skipped once, and the board then writes no snapshot.
+    assert_eq!(board.unread(), None);
+    board.skip_unread(a, 4, Unread::Newer);
+    assert_eq!(board.unread(), None);
+    board.skip_unread(a, 6, Unread::NoKey);
+    assert_eq!(board.unread(), Some(Unread::NoKey));
     assert_eq!(board.applied(&a), 6);
     assert_eq!(
         code(board.snapshot(&[(a, head(6)), (b, head(2))])),
+        "no-key"
+    );
+    board.skip_unread(b, 3, Unread::Newer);
+    assert_eq!(board.unread(), Some(Unread::Newer));
+    assert_eq!(
+        code(board.snapshot(&[(a, head(6)), (b, head(3))])),
         "newer-version"
     );
     assert_eq!(
