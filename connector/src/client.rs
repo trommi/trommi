@@ -875,6 +875,14 @@ impl Client {
                     if !offending.is_empty() {
                         eprintln!("[trommi] a session this device was added to has {} leaf(s) the room does not allow: its content is not opened until a human device removes them", offending.len());
                     }
+                    if let Err(fault) = self.learn_past(core, group).await {
+                        // The epochs before this device joined stay unknown: what devices wrote that left
+                        // before then is not taken. Named, never swallowed.
+                        eprintln!(
+                            "[trommi] finding: {} (a session's past was not learned)",
+                            fault.code
+                        );
+                    }
                     core.reread.push(group);
                 }
                 Err(fault) => {
@@ -894,6 +902,72 @@ impl Client {
             core.commit()?;
         }
         Ok(())
+    }
+
+    /// Every Commit of a group's log, in order, with the `RecoveryAuth` beside a join from outside.
+    async fn commits_of(&self, group: &GroupId) -> Result<Vec<(Vec<u8>, Option<Vec<u8>>)>> {
+        let mut out = Vec::new();
+        let mut after = 0u64;
+        loop {
+            let page = self
+                .hub
+                .get(&format!(
+                    "/v2/groups/{}/log?after={after}&limit=1000&kind=commit",
+                    b64(group.as_bytes())
+                ))
+                .await?;
+            let items = page
+                .get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for item in &items {
+                if item.get("kind").and_then(Value::as_str) != Some("commit") {
+                    continue;
+                }
+                let auth = item
+                    .get("recovery_auth")
+                    .filter(|v| !v.is_null())
+                    .map(|_| unb64(item, "recovery_auth"))
+                    .transpose()?;
+                out.push((unb64(item, "bytes")?, auth));
+                after = after.max(item.get("n").and_then(Value::as_u64).unwrap_or(after));
+            }
+            if page.get("more") != Some(&Value::Bool(true)) || items.is_empty() {
+                return Ok(out);
+            }
+        }
+    }
+
+    /// Learns the epochs of a group before this device joined it, from what the hub keeps (`Vault::learn_past`).
+    async fn learn_past(&self, core: &mut Core, group: GroupId) -> Result<()> {
+        let room_group = GroupId::room(self.room);
+        let info_of = |group: GroupId| async move {
+            let info = self
+                .hub
+                .get(&format!(
+                    "/v2/groups/{}/info?epoch=0",
+                    b64(group.as_bytes())
+                ))
+                .await?;
+            unb64(&info, "group_info")
+        };
+        let past = crate::vault::Past {
+            room_info: info_of(room_group).await?,
+            room_commits: self.commits_of(&room_group).await?,
+            info: info_of(group).await?,
+            commits: self.commits_of(&group).await?,
+        };
+        let anchor = (
+            core.room.room_epoch,
+            Hash32::from_base64url(&core.room.room_state)
+                .map_err(|_| Fault::new("state-damaged", "the stored room state does not read"))?,
+        );
+        let now = now_ms();
+        self.vault
+            .call(move |v: &mut Vault| v.learn_past(&group, &past, anchor, now))
+            .await??;
+        core.commit()
     }
 
     /// Tops the KeyPackages at the hub up (section 3: one last-resort always, a hundred single-use ones).
@@ -1552,6 +1626,23 @@ impl Client {
     /// their order. Stops at the first request the hub could not be reached for; that one and what follows are
     /// sent again later, unchanged.
     pub(crate) async fn pump(&self, core: &mut Core) -> Result<()> {
+        match self.pump_once(core).await {
+            Err(fault) if fault.code == "lease-lost" => {
+                // The lease ran out while this process was away, or it never had one (it started while the
+                // hub was away). Renewing tells: if another process holds the lease now, this fails for good.
+                let report = self
+                    .report
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                self.hub.link(&self.process, &report).await?;
+                self.pump_once(core).await
+            }
+            other => other,
+        }
+    }
+
+    async fn pump_once(&self, core: &mut Core) -> Result<()> {
         let entries = self.vault.call(|v: &mut Vault| v.device.outbox()).await?;
         for entry in entries {
             let id = entry.id;

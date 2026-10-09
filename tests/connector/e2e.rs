@@ -39,6 +39,33 @@ impl Agent {
         }
     }
 
+    /// Reopens the slot without going online first: what a process finds that starts while the hub is away.
+    async fn restart_cold(self) -> Agent {
+        self.client.stop().await;
+        let Agent {
+            client,
+            events,
+            dir,
+            admitted,
+        } = self;
+        drop(events);
+        let weak = Arc::downgrade(&client);
+        drop(client);
+        eventually("the old client is gone", || async {
+            weak.strong_count() == 0
+        })
+        .await;
+        let journal = open_when_free(&dir).await;
+        let (client, events) = Client::open(journal).await.expect("the slot opens again");
+        client.start().await.expect("it starts, online or not");
+        Agent {
+            client,
+            events,
+            dir,
+            admitted,
+        }
+    }
+
     /// Reopens the slot as a new process would: the old client is stopped and dropped first.
     async fn restart(self) -> Agent {
         self.client.stop().await;
@@ -209,4 +236,164 @@ async fn a_restart_keeps_the_membership() {
         .filter_map(|(_, _, payload)| payload["text"].as_str())
         .collect();
     assert_eq!(texts, ["before the restart", "after the restart"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_takeover_stops_the_first_connector_and_hands_the_session_on() {
+    let (_hub, mut human, mut first, group) = room().await;
+    let card = first
+        .client
+        .send_card(
+            fields(json!({
+                "card_type": "decision", "title": "Blue or green?", "body": "", "urgency": "normal",
+                "options": [{ "key": "blue", "label": "Blue" }, { "key": "green", "label": "Green" }],
+                "allows_multiple": false,
+            })),
+            None,
+        )
+        .await
+        .expect("a card");
+    let old = first.client.device_id();
+
+    // The human reconnects the session on another machine: a link for that session, then the takeover.
+    let session = group.session_id().expect("a session group");
+    let second = join(&mut human, Some(session)).await;
+    human.take_over(&group, old, &second.admitted).await;
+
+    // The first connector learns it from the Commit and stops.
+    let removed = loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(10), first.events.recv())
+            .await
+            .expect("an event in time")
+            .expect("the client lives");
+        if let ClientEvent::Removed { replaced } = event {
+            break replaced;
+        }
+    };
+    assert_eq!(
+        first.client.core.lock().await.model.room.connection,
+        "removed"
+    );
+    let _ = removed;
+
+    // The second one sits in the same session, reads what was there, and owns the first one's card.
+    let client = second.client.clone();
+    let sid = trommi_connector::util::hex(session.as_bytes());
+    eventually("the new connector is in the session", || async {
+        client.core.lock().await.session_id().as_deref() == Some(sid.as_str())
+    })
+    .await;
+    eventually(
+        "it read the session's history with the keys handed over",
+        || async {
+            client
+                .core
+                .lock()
+                .await
+                .model
+                .cards
+                .get(&card)
+                .is_some_and(|c| c.title() == "Blue or green?")
+        },
+    )
+    .await;
+    let mut second = second;
+    second
+        .client
+        .revise(
+            &card,
+            fields(json!({ "body": "Now with a new owner." })),
+            None,
+        )
+        .await
+        .expect("the session's agent device owns the card of the device that left");
+    human.sync().await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+    human
+        .answer(
+            &card,
+            json!({ "answer_action": "answer", "choices": ["green"] }),
+            &["green"],
+            false,
+        )
+        .await
+        .expect("taken");
+    let command = second.command().await;
+    assert_eq!(command.command, "answer");
+    assert_eq!(command.choices, ["green"]);
+
+    // Nothing of the first one reaches the board any more.
+    let late = first
+        .client
+        .send_message(fields(json!({ "text": "am I still here?" })), None, None)
+        .await;
+    assert!(late.is_err(), "a removed device writes nothing");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn commands_that_came_while_away_arrive_once_and_in_order() {
+    let (_hub, mut human, agent, group) = room().await;
+    agent.client.stop().await;
+    for text in ["one", "two", "three"] {
+        human
+            .say(&group, json!({ "content_type": "message", "text": text }))
+            .await
+            .expect("taken");
+    }
+    let mut agent = agent.restart().await;
+    for text in ["one", "two", "three"] {
+        assert_eq!(agent.command().await.content["text"], text);
+    }
+    // A second restart brings none of them again.
+    let mut agent = agent.restart().await;
+    human
+        .say(&group, json!({ "content_type": "message", "text": "four" }))
+        .await
+        .expect("taken");
+    assert_eq!(agent.command().await.content["text"], "four");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn what_was_written_while_the_hub_was_away_is_sent_once_it_is_back() {
+    let (hub, mut human, agent, _group) = room().await;
+    let me = agent.client.device_id();
+    let (data, port) = hub.stop();
+
+    // The hub is gone: the envelope is sealed, numbered and stored, and the call returns.
+    let sent = agent
+        .client
+        .send_message(fields(json!({ "text": "written offline" })), None, None)
+        .await
+        .expect("queued");
+    assert!(sent.envelope_number.is_none());
+    assert_eq!(agent.client.core.lock().await.outbox.len(), 1);
+
+    // The process dies before the hub is back: nothing but the stored state is left.
+    let agent = agent.restart_cold().await;
+    assert_eq!(
+        agent.client.core.lock().await.outbox.len(),
+        1,
+        "the outbox is on disk"
+    );
+
+    let _hub = HubProc::start_in(data, port).await;
+    agent
+        .client
+        .settle(20_000)
+        .await
+        .expect("the outbox empties");
+    // The hub lost its tokens with its restart: the stand-in signs in again by itself.
+    human.sync().await;
+    assert!(human.findings.is_empty(), "{:?}", human.findings);
+    let texts: Vec<&str> = human
+        .items
+        .iter()
+        .filter(|(_, sender, _)| *sender == me)
+        .filter_map(|(_, _, payload)| payload["text"].as_str())
+        .collect();
+    assert_eq!(
+        texts,
+        ["written offline"],
+        "sent once, with the number it was signed under"
+    );
 }
