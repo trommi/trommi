@@ -203,6 +203,11 @@ impl Accounts {
 
     /// Uses a challenge up, whatever the outcome.
     fn take_challenge(&self, challenge: &[u8], account: Option<(i64, i64)>, now: u64) -> bool {
+        self.take_challenge_of(challenge, &[account], now)
+    }
+
+    /// As `take_challenge`, for a challenge that may have been asked for in more than one way.
+    fn take_challenge_of(&self, challenge: &[u8], scopes: &[Option<(i64, i64)>], now: u64) -> bool {
         let Ok(c) = <[u8; 32]>::try_from(challenge) else {
             return false;
         };
@@ -212,7 +217,7 @@ impl Accounts {
             .unwrap_or_else(|e| e.into_inner())
             .0
             .remove(&c);
-        matches!(held, Some((expires, scope)) if expires > now && scope == account)
+        matches!(held, Some((expires, scope)) if expires > now && scopes.contains(&scope))
     }
 
     fn register_passkey(
@@ -221,13 +226,22 @@ impl Accounts {
         account: Option<(i64, i64)>,
         now: u64,
     ) -> Res<(webauthn::Registered, Vec<u8>, String)> {
+        self.register_passkey_of(v, &[account], now)
+    }
+
+    fn register_passkey_of(
+        &self,
+        v: &Value,
+        scopes: &[Option<(i64, i64)>],
+        now: u64,
+    ) -> Res<(webauthn::Registered, Vec<u8>, String)> {
         let bad = |w: webauthn::Bad| refuse("bad-passkey", w.0);
         let attestation = var_bytes(v, "attestation_object", 8192)?;
         let client_data = var_bytes(v, "client_data_json", 4096)?;
         let copy = sealed_copy(v, "sealed_copy")?;
         let (challenge, origin) =
             webauthn::client_challenge(&client_data, "webauthn.create").map_err(bad)?;
-        if !self.take_challenge(&challenge, account, now) {
+        if !self.take_challenge_of(&challenge, scopes, now) {
             return Err(refuse("bad-passkey", "challenge"));
         }
         let registered = webauthn::register(&attestation, &origin, &self.origins).map_err(bad)?;
@@ -618,68 +632,88 @@ pub fn delete_passkey(c: &Connection, room: &Room, credential_id: &[u8], now: u6
     Ok(json!({ "deleted": true }))
 }
 
-/// 8.6: with new recovery keys come the account's new sealed copies: one under the way in used just now
-/// (password or passkey) and one under a new Emergency Kit; every other way in is removed and set up again by
-/// the person. A room without an account brings none.
-pub fn replace_copies(
-    c: &Connection,
-    room: &Room,
-    v: &Value,
-    now: u64,
-    pre: &Prehashed,
-) -> Res<()> {
-    let account: Option<i64> = c
-        .prepare_cached("SELECT account_id FROM account_rooms WHERE room_id = ?1")?
-        .query_row([&room[..]], |r| r.get(0))
-        .optional()?;
-    let Some(account) = account else {
-        return if v.is_null() {
-            Ok(())
-        } else {
-            Err(refuse("not-found", "this room has no account"))
+impl Accounts {
+    /// 8.6: with new recovery keys come the account's new sealed copies: one under the way in used just now
+    /// (password or passkey) and one under a new Emergency Kit; every other way in is removed and set up again
+    /// by the person. After a recovery with the Emergency Kit words or the bare code there was no way in used
+    /// just now: then the password or passkey is set anew in the same request (`auth_key` and `kdf`, or a
+    /// passkey's registration). A room without an account brings none.
+    pub fn replace_copies(
+        &self,
+        c: &Connection,
+        room: &Room,
+        v: &Value,
+        now: u64,
+        pre: &Prehashed,
+    ) -> Res<()> {
+        let account: Option<i64> = c
+            .prepare_cached("SELECT account_id FROM account_rooms WHERE room_id = ?1")?
+            .query_row([&room[..]], |r| r.get(0))
+            .optional()?;
+        let Some(account) = account else {
+            return if v.is_null() {
+                Ok(())
+            } else {
+                Err(refuse("not-found", "this room has no account"))
+            };
         };
-    };
-    if v.is_null() {
-        return Err(refuse(
-            "incomplete",
-            "new recovery keys come with the account's new sealed copies",
-        ));
-    }
-    set_kit(c, account, &v["kit"], pre)
-        .map_err(|_| refuse("incomplete", "the account's new Emergency Kit copy"))?;
-    match (&v["password"], &v["passkey"]) {
-        (p, Value::Null) if !p.is_null() => {
-            let copy = sealed_copy(p, "sealed_copy")?;
-            let n = c
-                .prepare_cached("UPDATE accounts SET password_copy = ?1 WHERE account_id = ?2 AND auth_hash IS NOT NULL")?
-                .execute(params![copy, account])?;
-            if n == 0 {
-                return Err(refuse("incomplete", "the account has no password"));
-            }
-            c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?
-                .execute([account])?;
-        }
-        (Value::Null, p) if !p.is_null() => {
-            let (id, copy) = (
-                var_bytes(p, "credential_id", 1023)?,
-                sealed_copy(p, "sealed_copy")?,
-            );
-            let n = c
-                .prepare_cached("UPDATE passkeys SET sealed_copy = ?1 WHERE credential_id = ?2 AND account_id = ?3")?
-                .execute(params![copy, id, account])?;
-            if n == 0 {
-                return Err(refuse("incomplete", "the account has no such passkey"));
-            }
-            c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1 AND credential_id != ?2")?
-                .execute(params![account, id])?;
-            c.prepare_cached("UPDATE accounts SET auth_salt = NULL, auth_hash = NULL, kdf = NULL, password_copy = NULL WHERE account_id = ?1")?.execute([account])?;
-        }
-        _ => {
+        if v.is_null() {
             return Err(refuse(
                 "incomplete",
-                "one sealed copy under the way in used just now: password or passkey",
-            ))
+                "new recovery keys come with the account's new sealed copies",
+            ));
         }
+        set_kit(c, account, &v["kit"], pre)
+            .map_err(|_| refuse("incomplete", "the account's new Emergency Kit copy"))?;
+        let no_password = "UPDATE accounts SET auth_salt = NULL, auth_hash = NULL, kdf = NULL, password_copy = NULL WHERE account_id = ?1";
+        match (&v["password"], &v["passkey"]) {
+            // a password set anew: its key, its copy and its derivation record
+            (p, Value::Null) if !p["auth_key"].is_null() => {
+                let (auth, copy, kdf) = (bytes(p, "auth_key", 32)?, sealed_copy(p, "sealed_copy")?, kdf_record(p)?);
+                let (salt, hash) = pre.take(&auth)?;
+                c.prepare_cached("UPDATE accounts SET auth_salt = ?1, auth_hash = ?2, kdf = ?3, password_copy = ?4 WHERE account_id = ?5")?
+                    .execute(params![&salt[..], &hash[..], kdf, copy, account])?;
+                c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?.execute([account])?;
+            }
+            // the password used just now: a new copy under it
+            (p, Value::Null) if !p.is_null() => {
+                let copy = sealed_copy(p, "sealed_copy")?;
+                let n = c
+                    .prepare_cached("UPDATE accounts SET password_copy = ?1 WHERE account_id = ?2 AND auth_hash IS NOT NULL")?
+                    .execute(params![copy, account])?;
+                if n == 0 {
+                    return Err(refuse("incomplete", "the account has no password"));
+                }
+                c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?.execute([account])?;
+            }
+            // a passkey made anew: registered as any passkey, on a challenge asked for with or without a token
+            (Value::Null, p) if !p["attestation_object"].is_null() => {
+                let scopes = [Some((account, revision_of(c, account)?)), None];
+                let (registered, copy, transports) = self.register_passkey_of(p, &scopes, now)?;
+                c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?.execute([account])?;
+                insert_passkey(c, account, &registered, &copy, &transports, now)?;
+                c.prepare_cached(no_password)?.execute([account])?;
+            }
+            // the passkey used just now: a new copy under it
+            (Value::Null, p) if !p.is_null() => {
+                let (id, copy) = (var_bytes(p, "credential_id", 1023)?, sealed_copy(p, "sealed_copy")?);
+                let n = c
+                    .prepare_cached("UPDATE passkeys SET sealed_copy = ?1 WHERE credential_id = ?2 AND account_id = ?3")?
+                    .execute(params![copy, id, account])?;
+                if n == 0 {
+                    return Err(refuse("incomplete", "the account has no such passkey"));
+                }
+                c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1 AND credential_id != ?2")?
+                    .execute(params![account, id])?;
+                c.prepare_cached(no_password)?.execute([account])?;
+            }
+            _ => {
+                return Err(refuse(
+                    "incomplete",
+                    "one sealed copy under one way in: the password or passkey used just now, or one set anew",
+                ))
+            }
+        }
+        bump(c, account, now)
     }
-    bump(c, account, now)
 }

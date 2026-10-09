@@ -741,12 +741,12 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let auth = read_auth()?;
             own_room(&auth, room)?;
             heavy_limit(&auth)?;
-            let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["account"]["kit"]]))?;
+            let pre = app.pooled(|| accounts::Prehashed::of(&[&rq.body["account"]["kit"], &rq.body["account"]["password"]]))?;
             // every part was verified when it came: publishing replays their writes from what was kept
             app.write_recovery(Default::default(), Some(&recovery), &auth, |x, fx| {
                 let (answer, published_now) = delivery::recovery_finish(x, &auth, &recovery, &link, &hash, fx)?;
                 if published_now {
-                    accounts::replace_copies(x.c, &auth.room, &rq.body["account"], x.now, &pre)?;
+                    app.accounts.replace_copies(x.c, &auth.room, &rq.body["account"], x.now, &pre)?;
                 }
                 Ok(answer)
             })
@@ -758,7 +758,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             app.write_recovery(Default::default(), None, &auth, |x, _| delivery::recovery_drop(x, &auth, &recovery))
         }
         ("POST", ["rooms", room, "recovery-code"]) => {
-            let body = commit_body(&rq.body)?;
+            // the Commit's fields under `commit`; beside the other members is taken too
+            let body = commit_body(if rq.body["commit"].is_object() { &rq.body["commit"] } else { &rq.body })?;
             let link = crate::wire::RecoveryLink::parse(&rq.bytes("recovery_link")?)?;
             let auth = read_auth()?;
             own_room(&auth, room)?;
@@ -767,7 +768,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             heavy_limit(&auth)?;
             let (entries, pre) = app.heavy(|c, memo| {
                 crate::prepare::commit(c, memo, &auth.room, &auth.room, &body);
-                accounts::Prehashed::of(&[&rq.body["account"]["kit"]])
+                accounts::Prehashed::of(&[&rq.body["account"]["kit"], &rq.body["account"]["password"]])
             })?;
             app.write_as_with(entries, &auth, rq.lease, |x, fx| {
                 let mut scope = Scope { link: Some(link), ..Default::default() };
@@ -780,7 +781,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
                     }
                     return Ok(json!({ "epoch": a.epoch, "change": a.change }));
                 }
-                accounts::replace_copies(x.c, &auth.room, &rq.body["account"], x.now, &pre)?;
+                app.accounts.replace_copies(x.c, &auth.room, &rq.body["account"], x.now, &pre)?;
                 Ok(json!({ "epoch": a.epoch, "change": a.change }))
             })
         }
