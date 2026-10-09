@@ -1,0 +1,164 @@
+# On every commit on main and on every pull request: find which parts changed, test and build those, and (on main
+# only) hand each built part to its deploy workflow.
+#
+# A part counts as changed when its own folder changed, or core/, or what pins the build (Cargo.toml, Cargo.lock,
+# rust-toolchain.toml). A run started by hand counts every part as changed.
+#
+# How a part is wired in (the hub is the first; web, connector and ios follow the same three steps):
+#   1. `changes`: one more `part <name> '<its own paths>'` line and one more output.
+#   2. a job named after the part: tests, builds, uploads ONE artifact named `<part>-release`.
+#   3. a job `deploy_<part>` that calls `.github/workflows/deploy_<part>.yml` with
+#        version:  the number of this run (github.run_number): a whole number that only grows, the same for every
+#                  part built by one run
+#        commit:   the commit that was built
+#        artifact: `<part>-release`
+#      and `secrets: inherit`. The deploy workflow alone uses the environment `production`.
+#
+# Releases that are signed (hub, connector) use one form: release/manifest.sh writes manifest.json, release/sign.sh
+# signs and checks it, the public key is release/public-key.pem. The artifact of such a part holds the files and
+# their manifest.json, not yet signed; the deploy workflow signs.
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+# One run per branch at a time. On main nothing running is cut off; of several waiting runs the newest stays.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Which parts changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      hub: ${{ steps.find.outputs.hub }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find the changed parts
+        id: find
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+          base=
+          case "$EVENT" in
+            push) base=$BEFORE ;;
+            pull_request) base=$(git merge-base "$PR_BASE" HEAD || true) ;;
+          esac
+          # no known commit to compare with (a run by hand, a first push, a rewritten branch): everything changed
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            all=0
+            git diff --name-only "$base" HEAD > "$RUNNER_TEMP/files"
+            echo "compared with $base: $(wc -l < "$RUNNER_TEMP/files") file(s) changed"
+          else
+            all=1
+            : > "$RUNNER_TEMP/files"
+            echo "nothing to compare with: every part counts as changed"
+          fi
+          shared='core/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$'
+          part() {
+            if [ "$all" = 1 ] || grep -Eq "^($2|$shared)" "$RUNNER_TEMP/files"; then value=true; else value=false; fi
+            echo "$1=$value" >> "$GITHUB_OUTPUT"
+            echo "$1: $value"
+            echo "- $1: $value" >> "$GITHUB_STEP_SUMMARY"
+          }
+          part hub 'hub/|release/|tests/hub/|tests/deploy/|tests/Cargo\.toml$'
+
+  hub:
+    name: Hub (test and build)
+    needs: changes
+    if: needs.changes.outputs.hub == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Compiler (rust-toolchain.toml) and the C compiler for static builds
+        run: |
+          rustup toolchain install || rustup show
+          rustc --version
+          sudo apt-get update -q
+          sudo apt-get install -y -q musl-tools
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: hub-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      - name: Test (hub, updater, release form)
+        run: cargo test --locked -p trommi-tests
+      # The files of the release: both programs as static binaries, the hub's systemd unit, and the manifest that
+      # names them. The commit is compiled in; paths of the build machine are not.
+      - name: Build the release
+        env:
+          TROMMI_COMMIT: ${{ github.sha }}
+          VERSION: ${{ github.run_number }}
+        run: |
+          set -eu
+          export RUSTFLAGS="--remap-path-prefix=$PWD=/src --remap-path-prefix=$HOME/.cargo=/cargo"
+          cargo build --release --locked --target "$TARGET" -p trommi-hub -p trommi-hub-updater
+          mkdir out
+          cp "target/$TARGET/release/trommi-hub" "out/trommi-hub-$TARGET"
+          cp "target/$TARGET/release/trommi-hub-updater" "out/trommi-hub-updater-$TARGET"
+          cp hub/deploy/trommi-hub.service out/trommi-hub.service
+          for f in "out/trommi-hub-$TARGET" "out/trommi-hub-updater-$TARGET"; do
+            file "$f" | grep -Eq 'static(ally|-pie) linked' || { echo "::error::$f is not a static binary"; exit 1; }
+          done
+          release/manifest.sh trommi-hub "$VERSION" "$GITHUB_SHA" out/trommi-hub-* out/trommi-hub.service > out/manifest.json
+          cat out/manifest.json
+      # The very file that will be released is started once and asked whether it is well and which commit it is.
+      - name: Try the built hub
+        run: |
+          set -eu
+          data=$(mktemp -d)
+          HUB_HOST=127.0.0.1 HUB_PORT=18790 HUB_DATA="$data" HUB_QUIET=1 "out/trommi-hub-$TARGET" &
+          pid=$!
+          ok=0
+          for _ in $(seq 1 20); do
+            if got=$(curl -fsS --max-time 2 http://127.0.0.1:18790/healthz); then ok=1; break; fi
+            sleep 0.5
+          done
+          kill "$pid" || true
+          [ "$ok" = 1 ] || { echo "::error::the built hub did not answer"; exit 1; }
+          echo "$got"
+          [ "$(printf '%s' "$got" | jq -r .commit)" = "$GITHUB_SHA" ] || { echo "::error::the built hub does not report this commit"; exit 1; }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hub-release
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy_hub:
+    name: Hub
+    needs: [changes, hub]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.changes.outputs.hub == 'true'
+    permissions:
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/deploy_hub.yml
+    with:
+      version: ${{ github.run_number }}
+      commit: ${{ github.sha }}
+      artifact: hub-release
+    secrets: inherit

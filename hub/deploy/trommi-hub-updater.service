@@ -1,0 +1,48 @@
+# The updater under systemd: the deploy endpoint on the tailnet address. Installed once by hub/deploy/install.sh and
+# not part of a release: it is the fixed point a broken release cannot move. The program it starts IS part of every
+# release (/srv/trommi/updater is a link into the release it came with).
+#
+# Type=notify: the updater says when it is up. A new updater on trial that does not say so within the start time, or
+# ends, is started again by systemd, and the pre-start script then puts the previous one back.
+[Unit]
+Description=Trommi hub updater (deploy endpoint)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+EnvironmentFile=/etc/trommi/updater.env
+ExecStartPre=-/bin/sh /usr/local/lib/trommi/updater-prestart.sh /srv/trommi
+ExecStart=/srv/trommi/updater/trommi-hub-updater serve
+Restart=always
+RestartSec=3
+TimeoutStartSec=60
+# a deploy that runs is finished before the updater stops
+TimeoutStopSec=900
+KillMode=mixed
+
+# Root, because it stops and starts the hub's unit and swaps the links. What it may write is narrowed down.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/trommi
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

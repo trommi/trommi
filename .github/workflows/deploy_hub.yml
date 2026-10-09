@@ -1,0 +1,219 @@
+# Delivers a hub build to the server. Called by build.yml with the build that was tested, or started by hand to
+# deliver a release that is already published once more.
+#
+#   sign     signs the manifest of the build with SIGN_RELEASE_KEY (the only job that sees that key)
+#   publish  makes the GitHub release hub-v<version> with the files, the manifest and its signature
+#   deliver  joins the tailnet and tells the server which release to take; shows the server's answer
+#
+# The server takes no code from here. The call names a release; the server fetches it from GitHub itself, checks
+# the signature against the public key pinned on it, swaps, checks health, rolls back when the new hub is not well,
+# and answers with what happened. This run fails when the server says the release does not run.
+#
+# Secrets: the environment `production` holds OP_SERVICE_ACCOUNT_TOKEN, OP_ENVIRONMENT_ID, TAILSCALE_OAUTH_CLIENT_ID
+# and TAILSCALE_AUDIENCE. SIGN_RELEASE_KEY comes from the 1Password Environment.
+name: Deploy hub
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The number of the build run; the release is hub-v<version>
+        required: true
+        type: string
+      commit:
+        description: The commit that was built
+        required: true
+        type: string
+      artifact:
+        description: The artifact of this run that holds the files and manifest.json
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: A published hub release to deliver again, e.g. hub-v123
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  # the server's name on the tailnet and the port of its deploy endpoint
+  HUB_SERVER: trommi-hub.tail276436.ts.net
+  HUB_DEPLOY_PORT: "9443"
+
+jobs:
+  sign:
+    name: Sign
+    # only for a fresh build; a release delivered again is signed already
+    if: inputs.version != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: out
+      - name: The manifest is the one of this build
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          set -eu
+          jq -e --arg v "$VERSION" --arg c "$COMMIT" --arg r "$GITHUB_REPOSITORY" \
+            '.product == "trommi-hub" and .repository == $r and (.version | tostring) == $v and .tag == "hub-v" + $v and .commit == $c' \
+            out/manifest.json > /dev/null || { echo "::error::manifest.json is not about hub-v$VERSION of $COMMIT"; exit 1; }
+          release/sign.sh files out/manifest.json
+      - name: Install the 1Password CLI
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+        with:
+          version: latest-beta
+      - name: Sign the manifest
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
+        run: |
+          set -eu
+          test -n "$OP_SERVICE_ACCOUNT_TOKEN" || { echo "::error::OP_SERVICE_ACCOUNT_TOKEN is not set for this run"; exit 1; }
+          test -n "$OP_ENVIRONMENT_ID" || { echo "::error::OP_ENVIRONMENT_ID is not set for this run"; exit 1; }
+          # release/sign.sh puts the key back into PEM form, signs, and checks the result against release/public-key.pem
+          op run --environment "$OP_ENVIRONMENT_ID" -- release/sign.sh sign out/manifest.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hub-signature
+          path: out/manifest.json.sig
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish the release
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: hub-v${{ inputs.version }}
+      COMMIT: ${{ inputs.commit }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact }}
+          path: out
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hub-signature
+          path: out
+      # A published release is never replaced: a second run of the same build delivers what is published.
+      - name: Publish
+        run: |
+          set -eu
+          state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$state" = true ]; then
+            echo "an unfinished draft of $TAG is removed"
+            gh release delete "$TAG" --yes
+            state=none
+          fi
+          if [ "$state" = none ]; then
+            gh release create "$TAG" --target "$COMMIT" --latest=false --title "Hub $TAG" \
+              --notes "The hub and its updater, built from $COMMIT. Signed: manifest.json and manifest.json.sig (see release/sign.sh)." \
+              out/*
+            echo "published $TAG" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$TAG is published already and stays as it is" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deliver:
+    name: Deliver to the server
+    needs: publish
+    # also when nothing had to be signed and published (a release delivered again)
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || needs.publish.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    # one delivery at a time; of several waiting the newest stays (the server refuses anything older anyway)
+    concurrency:
+      group: deploy_hub
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+    env:
+      TAG: ${{ inputs.tag || format('hub-v{0}', inputs.version) }}
+    steps:
+      - name: The release name
+        run: |
+          printf '%s' "$TAG" | grep -Eq '^hub-v[1-9][0-9]{0,11}$' || { echo "::error::not a hub release: $TAG"; exit 1; }
+      - name: Join the tailnet
+        uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TAILSCALE_AUDIENCE }}
+          tags: tag:trommi-ci
+          ping: ${{ env.HUB_SERVER }}
+      - name: Tell the server
+        run: |
+          set -u
+          url="http://$HUB_SERVER:$HUB_DEPLOY_PORT"
+          # Only "could not connect" is tried again (the server may be starting after a reboot). An answer is final:
+          # a deploy that failed is not asked for a second time.
+          code=000
+          for try in 1 2 3 4 5 6 7 8 9; do
+            code=$(curl -sS --connect-timeout 10 --max-time 900 -o answer.json -w '%{http_code}' \
+              -X POST -H 'content-type: application/json' --data "{\"tag\":\"$TAG\"}" "$url/deploy")
+            status=$?
+            [ "$status" = 7 ] || [ "$status" = 6 ] || break
+            echo "the server does not take connections yet (try $try)"
+            sleep 20
+          done
+          if [ "$code" = 000 ] || ! jq -e . answer.json > /dev/null 2>&1; then
+            echo "::error::no answer from the server's deploy endpoint (curl exit $status)"
+            echo "### Hub deploy: no answer from the server" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          {
+            echo "### Hub deploy: $(jq -r .result answer.json)"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| asked for | \`$TAG\` |"
+            echo "| runs now | \`$(jq -r '.running // "nothing"' answer.json)\` |"
+            echo "| commit | \`$(jq -r '.commit // "?"' answer.json)\` |"
+            echo "| SHA-256 of the hub | \`$(jq -r '.sha256 // "?"' answer.json)\` |"
+            echo "| health | $(jq -r 'if .health then (if .health.ok then "well" else "NOT well: " + .health.detail end) + " after " + (.health.seconds | tostring) + " s" else "not asked" end' answer.json) |"
+            echo "| put back | $(jq -r 'if .rollback_health then (if .rollback_health.ok then "the release before, and it is well" else "the release before, and it is NOT well: " + .rollback_health.detail end) else "no" end' answer.json) |"
+            echo "| updater | \`$(jq -r '.updater.release // "?"' answer.json)\`$(jq -r 'if .updater.next then ", changing to `" + .updater.next + "`" else "" end' answer.json)$(jq -r 'if .updater.reverted then ", `" + .updater.reverted + "` did not come up earlier" else "" end' answer.json) |"
+            echo "| server says | $(jq -r .message answer.json) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          jq . answer.json
+          [ "$(jq -r .ok answer.json)" = true ] || { echo "::error::the server reports: $(jq -r .message answer.json)"; exit 1; }
+
+          # The updater replaces itself after it has answered. Wait until the new one answers, or the old one says
+          # that the new one did not come up.
+          next=$(jq -r '.updater.next // empty' answer.json)
+          [ -n "$next" ] || exit 0
+          for _ in $(seq 1 30); do
+            sleep 5
+            curl -sS --connect-timeout 5 --max-time 20 -o status.json "$url/status" 2>/dev/null || continue
+            release=$(jq -r '.updater.release // empty' status.json 2>/dev/null)
+            reverted=$(jq -r '.updater.reverted // empty' status.json 2>/dev/null)
+            if [ "$reverted" = "$next" ]; then
+              echo "The updater of \`$next\` did not come up; the one of \`$release\` runs again." >> "$GITHUB_STEP_SUMMARY"
+              echo "::error::the updater of $next did not come up; the server put its previous updater back"
+              exit 1
+            fi
+            if [ "$release" = "$next" ]; then
+              echo "The updater of \`$next\` runs." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          echo "::error::the server's updater did not answer as $next within the time"
+          exit 1

@@ -3,7 +3,7 @@
 # the rest (build with --locked), the compiler in rust-toolchain.toml.
 [workspace]
 resolver = "2"
-members = ["core", "core/wasm", "core/swift", "core/swift/bindgen", "hub", "tests"]
+members = ["core", "core/wasm", "core/swift", "core/swift/bindgen", "hub", "hub/updater", "tests"]
 
 [workspace.package]
 edition = "2021"
