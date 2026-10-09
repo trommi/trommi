@@ -1,1 +1,0 @@
-Hello world. A placeholder for the connector release.
