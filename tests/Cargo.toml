@@ -38,3 +38,7 @@ path = "core/groups_history.rs"
 [[test]]
 name = "core_groups_removal"
 path = "core/groups_removal.rs"
+
+[[test]]
+name = "core_groups_takeover"
+path = "core/groups_takeover.rs"
