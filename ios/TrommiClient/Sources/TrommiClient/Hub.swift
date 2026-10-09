@@ -38,11 +38,14 @@ public final class HubClient: @unchecked Sendable {
   private var tokenExpiresAt: UInt64 = 0
   private var sessionNow: URLSession
 
+  /** Tests answer the hub's routes in the process (URLProtocol classes); empty in the app. */
+  nonisolated(unsafe) static var transportForTests: [AnyClass] = []
   private static func newSession() -> URLSession {
     let cfg = URLSessionConfiguration.ephemeral
     cfg.timeoutIntervalForRequest = 30
     // No cookies, no cache, no credentials store: the token is the only state and lives in memory.
     cfg.httpCookieStorage = nil; cfg.urlCache = nil; cfg.urlCredentialStorage = nil
+    if !transportForTests.isEmpty { cfg.protocolClasses = transportForTests }
     return URLSession(configuration: cfg)
   }
   private var session: URLSession { lock.lock(); defer { lock.unlock() }; return sessionNow }
@@ -146,14 +149,14 @@ public final class HubClient: @unchecked Sendable {
   // ---- signing in (12.3) ---------------------------------------------------------------------------------
 
   public func accessToken() async throws -> String {
-    lock.lock(); let t = token, exp = tokenExpiresAt; lock.unlock()
-    if let t = t, nowMs() + 60_000 < exp { return t }
+    if let t = tokenNow(validFor: 60_000) { return t }
     try await signIn()
-    lock.lock(); defer { lock.unlock() }
-    guard let fresh = token else { throw TrommiError("unauthorised", "the hub gave no token") }
+    guard let fresh = tokenNow(validFor: 0) else { throw TrommiError("unauthorised", "the hub gave no token") }
     return fresh
   }
-  public func forgetToken() { lock.lock(); token = nil; tokenExpiresAt = 0; lock.unlock() }
+  public func forgetToken() { setToken(nil, expiresAt: 0) }
+  private func tokenNow(validFor ms: UInt64) -> String? { lock.withLock { token.flatMap { nowMs() + ms < tokenExpiresAt ? $0 : nil } } }
+  private func setToken(_ t: String?, expiresAt: UInt64) { lock.withLock { token = t; tokenExpiresAt = expiresAt } }
 
   /**
    * A challenge signed by this device for this hub and room, traded for a token of ten minutes. `challenge`: one the
@@ -174,7 +177,7 @@ public final class HubClient: @unchecked Sendable {
     let signed = try signer.signHubAuth(room: room, hub: hubURL, challenge: challenge)
     let r = try await request("POST", "/rooms/\(b64u(room))/tokens", body: ["auth": b64u(signed.auth), "signature": b64u(signed.signature)], auth: false)
     guard let t = r["token"] as? String, !t.isEmpty else { throw TrommiError("unauthorised", "the hub gave no token") }
-    lock.lock(); token = t; tokenExpiresAt = (r["expires_at"] as? NSNumber)?.uint64Value ?? 0; lock.unlock()
+    setToken(t, expiresAt: (r["expires_at"] as? NSNumber)?.uint64Value ?? 0)
     return r["role"] as? String ?? ""
   }
 
@@ -291,6 +294,20 @@ public final class HubClient: @unchecked Sendable {
     try await request("PUT", "/invites/\(b64u(invite))/reveal", body: ["reveal": b64u(reveal), "signature": b64u(signature)])
   }
   public func deleteInvite(_ invite: Bytes) async throws { try await request("DELETE", "/invites/\(b64u(invite))") }
+
+  // ---- push (15) ------------------------------------------------------------------------------------------
+
+  /**
+   * This device's push registrations, as the Devices page shows them: device id (hex) to how many of each kind and
+   * the level. A v2 hub tells a device only its own (GET /v2/push), so other devices have no entry.
+   */
+  public func pushStates() async throws -> [String: (web: Int, apns: Int, level: String)] {
+    guard let me = signer?.id else { return [:] }
+    let rows = try await requestList("GET", "/push")
+    guard !rows.isEmpty else { return [:] }
+    let apns = rows.filter { $0["kind"] as? String == "apns" }.count
+    return [hex(me): (rows.count - apns, apns, rows.first?["level"] as? String ?? "all")]
+  }
 
   // ---- the hub's version ---------------------------------------------------------------------------------
 
