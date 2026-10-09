@@ -1,14 +1,16 @@
-// work.ts: a turn's trail as a client shows it (README "The trail").
+// work.ts: a turn's work trail as a client shows it (spec/v2.md 7.3).
 //
-// An agent's connector mirrors what the agent does in its terminal between the human's prompt and the final answer
-// as messages with `terminal: 'work'` in the session's chat: each carries `work`, what changed in the trail of one
-// turn since the envelope before (types.ts WorkEnvelope). Envelopes are never edited: a step that ends is named again
-// by a later envelope. foldWork puts the envelopes of one turn together into the one block a client draws.
+// While an agent works, its connector sends what it does between the human's prompt and the final answer as MLS
+// application messages in the session's group: one message per step, `{ text, tool? }`, numbered from 1 within the
+// turn. They are never stored content and a device added later does not get them. model.ts puts each step into the
+// session's Chat as an item of its own in the form the views always folded (types.ts WorkEnvelope, `terminal:
+// 'work'`); stepEnvelope makes that form, foldWork puts the steps of one turn together into the one block a client
+// draws.
 //
-// Where the block stands in the chat is workAnchor's: at the turn's first envelope, or behind what he typed into the
+// Where the block stands in the chat is workAnchor's: at the turn's first step, or behind what he typed into the
 // terminal while the turn ran.
 //
-// Nothing in an envelope is trusted beyond its shape: an agent wrote it. Texts are cut, unknown kinds and states are
+// Nothing in a step is trusted beyond its shape: an agent wrote it. Texts are cut, unknown kinds and states are
 // left out, and a block lists at most 400 items.
 import type { WorkEnvelope } from './types.ts'
 
@@ -46,14 +48,32 @@ const KINDS = ['step', 'text', 'helper']
 const TEXTS: [keyof WorkLine, number][] = [['tool', 80], ['title', 200], ['subject', 300], ['text', 30000], ['input', 4000], ['output', 8000]]
 export const WORK_ITEMS_MAX = 400
 
-/** Whether a message's content is an envelope of a trail. */
+const bytes = new TextEncoder()
+/**
+ * One step of a turn (the `step` text of a work trail message, its `number` and `time`) in the form foldWork takes:
+ * a step with a tool is a 'step' whose title is its text, one without is the agent's own words. `started_at`: when
+ * the turn's first known step was sent. `state`: 'running' until the model learns that the turn ended. Null for a
+ * step trommi-core would refuse (no object, a text above 30 000 bytes, a tool that is not 1 to 80 bytes).
+ */
+export function stepEnvelope(turn: string, number: number, time: number, step: string, started_at: number, state: WorkEnvelope['state'] = 'running'): WorkEnvelope | null {
+  let s: unknown
+  try { s = JSON.parse(step) } catch { return null }
+  if (!s || typeof s !== 'object' || Array.isArray(s) || !Number.isSafeInteger(number) || number < 1) return null
+  const { text, tool } = s as { text?: unknown; tool?: unknown }
+  if (typeof text !== 'string' || bytes.encode(text).length > 30_000) return null
+  if (tool !== undefined && !(typeof tool === 'string' && tool !== '' && bytes.encode(tool).length <= 80)) return null
+  const id = String(number)
+  return { turn, seq: number, state, started_at, items: [typeof tool === 'string' ? { id, kind: 'step', tool, title: text, state: 'ok', at: time } : { id, kind: 'text', text, at: time }] }
+}
+
+/** Whether a message's content is a step of a trail. */
 export function isWork(content: unknown): content is { terminal: 'work'; work: WorkEnvelope } {
   const c = content as { terminal?: unknown; work?: { turn?: unknown; items?: unknown } } | null
   return c?.terminal === 'work' && typeof c.work?.turn === 'string' && c.work.turn !== '' && Array.isArray(c.work.items)
 }
 
 /**
- * The envelopes of ONE turn as one block. They are applied in the order of `seq`, whatever order they are given in;
+ * The steps of ONE turn as one block. They are applied in the order of `seq`, whatever order they are given in;
  * an item (by `id`) stands where it first came and takes the fields of every later envelope that names it; the
  * turn's state and times are those of the last envelope that says them.
  */
