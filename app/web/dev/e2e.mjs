@@ -314,7 +314,7 @@ try {
   await A.until("document.querySelector('.room-notice[data-why=newer] .room-notice-go')", 'the newer notice').then(() => check(true, 'a calm notice offers Reload once something needs a newer Trommi'), e => check(false, e.message))
   await A.js("document.querySelector('.room-notice[data-why=newer]')?.remove()")
 
-  // ---- the end list at the foot of the Desk's list (#desk-end): what the agents finished (an empty box: a tick archives
+  // ---- the end list at the foot of the Desk's list (#desk-end): what the agents finished (the archive box: it archives
   //      it, Undo takes it back), what is put off (Later), what is ticked off (answered, done, shredded: struck); five
   //      rows, then "Show more", which opens the whole list with its search (/stacks/off); the way back is on the card ----
   const pile = {}
@@ -337,9 +337,9 @@ try {
   await A.until(`!document.getElementById('row-${pile.done}')`, 'answered row leaves')
   const td = Date.now(); while (!commands.some(c => c.command === 'answer' && c.object_id === pile.done) && Date.now() - td < 10000) await sleep(30)
   await agent.close(pile.done, 'erledigt')
-  // closed by its session: it stands in the end list with an empty box; a tick archives it (struck, ticked), Undo takes it back
+  // closed by its session: it stands in the end list with its archive box; that archives it (struck, ticked), Undo takes it back
   const endRow = (id, g) => `document.querySelector(':is(#desk-end, #off-end) .end-row[data-id="${id}"]${g ? `[data-g=${g}]` : ''}')`
-  await A.until(`trommi.model().landed.some(c => c.id === '${pile.done}') && ${endRow(pile.done, 'open')}?.querySelector('button.end-tick')`, 'the finished card in the end list with its box').then(() => check(true, 'a card its session closed stands in the end list with an empty box to tick'), e => check(false, e.message))
+  await A.until(`trommi.model().landed.some(c => c.id === '${pile.done}') && ${endRow(pile.done, 'open')}?.querySelector('button.end-tick.is-archive[aria-label^="Archive"]')`, 'the finished card in the end list with its Archive button').then(() => check(true, 'a card its session closed stands in the end list with its Archive button'), e => check(false, e.message))
   check(await A.js(`return !document.querySelector('#row-${pile.done}') && !document.querySelector('#desk-list .is-archive, #desk-list .is-done')`), 'no Done rows among the open questions any more')
   await A.js(`${endRow(pile.done)}.querySelector('button.end-tick').click()`)
   await A.until(`${endRow(pile.done, 'done')} && !trommi.model().landed.some(c => c.id === '${pile.done}')`, 'ticked off').then(() => check(true, 'the tick archives it: the row stays, ticked'), e => check(false, e.message))
@@ -350,7 +350,7 @@ try {
   await A.until(`trommi.model().landed.some(c => c.id === '${pile.done}')`, 'Undo of the tick').then(() => check(true, 'Undo takes the tick back: finished, not archived'), e => check(false, e.message))
   await A.until("location.pathname.startsWith('/card/') && document.querySelector('#cardpage')", 'the card page after Undo of the tick', 5000).catch(() => {})   // (Undo from a toast leads to the card)
   await A.js("trommi.router.visit('/')")
-  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick')`, 'the empty box again').then(() => check(true, 'after Undo the row has its empty box again'), e => check(false, e.message))
+  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick')`, 'the Archive button again').then(() => check(true, 'after Undo the row has its Archive button again'), e => check(false, e.message))
   await A.js(`${endRow(pile.done)}.querySelector('button.end-tick').click()`)
   await A.until(`${endRow(pile.done, 'done')}`, 'ticked off again')
   // answered, its session still at it: Working
@@ -373,7 +373,7 @@ try {
   check(await A.js(`const o = [...document.querySelectorAll('#off-end .end-row')].map(r => r.dataset.g), rank = g => (g === 'works' ? -1 : g === 'open' ? 0 : g === 'later' ? 1 : 2); return o.every((x, i) => !i || rank(o[i - 1]) <= rank(x))`), 'the end list: finished first, then Later, then ticked off')
   // a tick he made can be taken back on the list itself (while it is among the five drawn): the ticked box of the archived card unticks it
   await A.js(`${endRow(pile.done, 'done')}.querySelector('button.end-tick.is-ticked').click()`)
-  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick:not(.is-ticked)')`, 'unticked').then(() => check(true, 'a ticked box unticks: back to tick off'), e => check(false, e.message))
+  await A.until(`${endRow(pile.done, 'open')}?.querySelector('button.end-tick:not(.is-ticked)')`, 'unticked').then(() => check(true, 'a ticked box unarchives: back to archive'), e => check(false, e.message))
   await A.js(`${endRow(pile.done, 'open')}.querySelector('button.end-tick').click()`)
   await A.until(`${endRow(pile.done, 'done')}`, 'ticked off once more')
   await A.js("trommi.router.visit('/')")
