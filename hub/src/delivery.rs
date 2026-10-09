@@ -1450,7 +1450,9 @@ pub fn requests(c: &Connection, auth: &Auth) -> Res<Value> {
 
 // ---- recovery (8.6, 8.7)
 
-pub const MAX_RECOVERY_PARTS: i64 = 256;
+/// A join and a cleaning Commit for each group: enough for 4 000 live sessions.
+pub const MAX_RECOVERY_PARTS: i64 = 8192;
+pub const MAX_RECOVERY_BYTES: i64 = 64 << 20;
 
 /// A room in recovery takes nothing else (8.7).
 pub fn open_recovery_of(c: &Connection, room: &Room, now: u64) -> Res<Option<Vec<u8>>> {
@@ -1536,12 +1538,24 @@ fn replay_recovery(
     scope: &mut Scope,
     fx: &mut Effects,
 ) -> Res<Option<Accepted>> {
+    // A rehearsal applies the parts the new one can depend on: those of the room group, of its own group and of
+    // its main session's group (a helper session's opener). The parts of other session groups do not touch
+    // what its checks read. `finish` applies them all.
+    let (own, parent): (Option<Vec<u8>>, Option<Vec<u8>>) = match extra {
+        Some((group_id, _)) => {
+            let parent = store::group(x.c, &auth.room, group_id)
+                .ok()
+                .and_then(|row| row.parent_group());
+            (Some(group_id.to_vec()), parent)
+        }
+        None => (None, None),
+    };
     let parts: Vec<String> = {
-        let mut s = x
-            .c
-            .prepare_cached("SELECT body FROM recovery_parts WHERE recovery_id = ?1 ORDER BY n")?;
+        let mut s = x.c.prepare_cached(
+            "SELECT body FROM recovery_parts WHERE recovery_id = ?1 AND (?2 IS NULL OR group_id IN (?2, ?3, ?4)) ORDER BY n",
+        )?;
         let rows = s
-            .query_map([id], |r| r.get(0))?
+            .query_map(params![id, own, &auth.room[..], parent], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
@@ -1579,9 +1593,16 @@ pub fn recovery_rehearse(
     let count: i64 =
         x.c.prepare_cached("SELECT count(*) FROM recovery_parts WHERE recovery_id = ?1")?
             .query_row([id], |r| r.get(0))?;
-    // every part is checked against all parts before it: the number is bounded
-    if count >= MAX_RECOVERY_PARTS {
-        return Err(refuse("too-many", "a recovery has at most 256 parts"));
+    let bytes: i64 =
+        x.c.prepare_cached(
+            "SELECT coalesce(sum(length(body)), 0) FROM recovery_parts WHERE recovery_id = ?1",
+        )?
+        .query_row([id], |r| r.get(0))?;
+    if count >= MAX_RECOVERY_PARTS || bytes >= MAX_RECOVERY_BYTES {
+        return Err(refuse(
+            "too-many",
+            "a recovery has at most 8192 parts and 64 MiB",
+        ));
     }
     let mut scope = Scope {
         recovery: true,
@@ -1710,7 +1731,8 @@ pub fn recovery_finish(
     }
     let last_change = store::room_row(x.c, &auth.room)?.change;
     let answer = json!({ "published": true, "first_change": first_change, "change": last_change, "device": b64(&joiner) });
-    x.c.prepare_cached("UPDATE recoveries SET finished_at = ?1, finish_hash = ?2, finish_answer = ?3 WHERE recovery_id = ?4")?
+    // the answer can be asked again for ten minutes from now, whenever the recovery would have run out
+    x.c.prepare_cached("UPDATE recoveries SET finished_at = ?1, expires_at = ?1 + 600000, finish_hash = ?2, finish_answer = ?3 WHERE recovery_id = ?4")?
         .execute(params![x.now as i64, &request_hash[..], answer.to_string(), id])?;
     x.c.prepare_cached("DELETE FROM recovery_parts WHERE recovery_id = ?1")?
         .execute([id])?;

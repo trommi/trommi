@@ -72,7 +72,7 @@ fn var_bytes(v: &Value, key: &str, max: usize) -> Res<Vec<u8>> {
 }
 
 /// v1 §16.3: a sealed copy is 61 bytes and begins with 0x02; anything else is refused, not converted.
-fn sealed_copy(v: &Value, key: &str) -> Res<Vec<u8>> {
+pub fn sealed_copy(v: &Value, key: &str) -> Res<Vec<u8>> {
     let copy = bytes(v, key, SEALED_COPY_LEN)?;
     if copy[0] != 0x02 {
         return Err(refuse("bad-format", "a sealed copy of another format"));
@@ -81,7 +81,7 @@ fn sealed_copy(v: &Value, key: &str) -> Res<Vec<u8>> {
 }
 
 /// v1 §16.6: the key derivation record is pinned; the hub stores and returns exactly it.
-fn kdf_record(v: &Value) -> Res<String> {
+pub fn kdf_record(v: &Value) -> Res<String> {
     let k = &v["kdf"];
     let pinned =
         k["alg"] == "argon2id" && k["v"] == 1 && k["m"] == 65536 && k["t"] == 3 && k["p"] == 1;
@@ -97,7 +97,10 @@ fn kdf_record(v: &Value) -> Res<String> {
 /// In-memory state of the account routes: passkey challenges, the dummies that make an unknown e-mail cost and
 /// answer like a known one.
 pub struct Accounts {
-    challenges: Mutex<(HashMap<[u8; 32], (u64, Option<i64>)>, VecDeque<[u8; 32]>)>,
+    challenges: Mutex<(
+        HashMap<[u8; 32], (u64, Option<(i64, i64)>)>,
+        VecDeque<[u8; 32]>,
+    )>,
     dummy_salt: [u8; 16],
     dummy_key: Vec<u8>,
     pub origins: Vec<String>,
@@ -113,9 +116,10 @@ impl Accounts {
         }
     }
 
-    /// A passkey challenge: 32 random bytes, two minutes, one use. `account`: the account a new passkey is for;
-    /// `None` for a sign-in or the passkey of a new account.
-    pub fn challenge(&self, account: Option<i64>, now: u64) -> [u8; 32] {
+    /// A passkey challenge: 32 random bytes, two minutes, one use. `account`: the account a new passkey is for
+    /// and its revision (a passkey prepared before the account changed, e.g. before the code was replaced, is
+    /// not registered after); `None` for a sign-in or the passkey of a new account.
+    pub fn challenge(&self, account: Option<(i64, i64)>, now: u64) -> [u8; 32] {
         let c = random::<32>();
         let mut held = self.challenges.lock().unwrap_or_else(|e| e.into_inner());
         while held.1.len() >= 10_000 {
@@ -129,7 +133,7 @@ impl Accounts {
     }
 
     /// Uses a challenge up, whatever the outcome.
-    fn take_challenge(&self, challenge: &[u8], account: Option<i64>, now: u64) -> bool {
+    fn take_challenge(&self, challenge: &[u8], account: Option<(i64, i64)>, now: u64) -> bool {
         let Ok(c) = <[u8; 32]>::try_from(challenge) else {
             return false;
         };
@@ -145,7 +149,7 @@ impl Accounts {
     fn register_passkey(
         &self,
         v: &Value,
-        account: Option<i64>,
+        account: Option<(i64, i64)>,
         now: u64,
     ) -> Res<(webauthn::Registered, Vec<u8>, String)> {
         let bad = |w: webauthn::Bad| refuse("bad-passkey", w.0);
@@ -191,6 +195,12 @@ impl Accounts {
             Value::Null => None,
             p => Some(self.register_passkey(p, None, now)?),
         };
+        // v1 §16.7: the user handle is 32 random bytes the device chose when it made the first passkey; the
+        // account keeps it, so that a later sign-in's handle can be compared
+        let user_handle = match &v["user_handle"] {
+            Value::Null if passkey.is_none() => random::<32>().to_vec(),
+            given => bytes(&json!({ "user_handle": given }), "user_handle", 32)?,
+        };
         if password.is_none() && passkey.is_none() {
             return Err(refuse(
                 "bad-format",
@@ -227,7 +237,7 @@ impl Accounts {
             "INSERT INTO accounts (email, created_at, updated_at, auth_salt, auth_hash, kdf, password_copy, kit_salt, kit_hash, kit_copy, user_handle)
              VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )?
-        .execute(params![email, now as i64, auth_salt, auth_hash, kdf, password_copy, &kit_salt[..], &slow_hash(&kit_auth, &kit_salt)[..], kit_copy, &random::<32>()[..]])?;
+        .execute(params![email, now as i64, auth_salt, auth_hash, kdf, password_copy, &kit_salt[..], &slow_hash(&kit_auth, &kit_salt)[..], kit_copy, &user_handle[..]])?;
         let account = c.last_insert_rowid();
         c.prepare_cached(
             "INSERT INTO account_rooms (account_id, room_id, position) VALUES (?1, ?2, 0)",
@@ -251,7 +261,8 @@ impl Accounts {
         if count >= MAX_PASSKEYS {
             return Err(refuse("too-many", "an account has at most 20 passkeys"));
         }
-        let (registered, copy, transports) = self.register_passkey(v, Some(account), now)?;
+        let (registered, copy, transports) =
+            self.register_passkey(v, Some((account, revision_of(c, account)?)), now)?;
         insert_passkey(c, account, &registered, &copy, &transports, now)?;
         bump(c, account, now)?;
         Ok(json!({ "credential_id": b64(&registered.credential_id), "created_at": now }))
@@ -314,13 +325,19 @@ impl Accounts {
             &origin,
             &self.origins,
         );
-        let handle_fits = match (&row, v["user_handle"].as_str().and_then(unb64)) {
-            (Some((_, _, _, handle)), Some(given)) => same(handle, &given),
-            _ => true,
+        // the handle an authenticator returns for a passkey it found by itself must be the account's
+        let handle_fits = match (&row, &v["user_handle"]) {
+            (_, Value::Null) => true,
+            (Some((_, _, _, handle)), given) => given
+                .as_str()
+                .and_then(unb64)
+                .is_some_and(|g| same(handle, &g)),
+            (None, _) => true,
         };
         match (row, verified, fresh && handle_fits) {
             (Some((account, _, copy, _)), Ok(sign_count), true) => {
-                c.prepare_cached("UPDATE passkeys SET sign_count = ?1, last_used_at = ?2 WHERE credential_id = ?3")?
+                // the counter never goes back; a passkey that is synced between devices reports none
+                c.prepare_cached("UPDATE passkeys SET sign_count = max(sign_count, ?1), last_used_at = ?2 WHERE credential_id = ?3")?
                     .execute(params![sign_count, now as i64, credential_id])?;
                 Ok(Some((account, copy)))
             }
@@ -356,6 +373,13 @@ fn bump(c: &Connection, account: i64, now: u64) -> Res<()> {
     )?
     .execute(params![now as i64, account])?;
     Ok(())
+}
+
+pub fn revision_of(c: &Connection, account: i64) -> Res<i64> {
+    Ok(
+        c.prepare_cached("SELECT revision FROM accounts WHERE account_id = ?1")?
+            .query_row([account], |r| r.get(0))?,
+    )
 }
 
 pub fn account_of(c: &Connection, room: &Room) -> Res<i64> {
@@ -540,55 +564,4 @@ pub fn replace_copies(c: &Connection, room: &Room, v: &Value, now: u64) -> Res<(
         }
     }
     bump(c, account, now)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn e_mail_addresses_are_normalised_or_refused_never_mapped() {
-        assert_eq!(
-            normalise_email("  Ada@Example.ORG\t").unwrap(),
-            "ada@example.org"
-        );
-        for bad in [
-            "",
-            "a@b",
-            "a@@b.co",
-            "a b@c.de",
-            "ädä@example.org",
-            "a@b.c",
-            "@example.org",
-            &format!("{}@example.org", "x".repeat(65)),
-            "a@.org",
-        ] {
-            assert_eq!(normalise_email(bad).unwrap_err().code, "bad-email", "{bad}");
-        }
-    }
-
-    #[test]
-    fn the_slow_hash_depends_on_key_and_salt() {
-        let a = slow_hash(&[1; 32], &[2; 16]);
-        assert_eq!(a, slow_hash(&[1; 32], &[2; 16]));
-        assert_ne!(a, slow_hash(&[1; 32], &[3; 16]));
-        assert_ne!(a, slow_hash(&[9; 32], &[2; 16]));
-    }
-
-    #[test]
-    fn a_sealed_copy_of_another_length_or_version_is_refused() {
-        let mut copy = vec![2u8; 61];
-        assert!(sealed_copy(&json!({ "c": b64(&copy) }), "c").is_ok());
-        copy[0] = 1;
-        assert!(sealed_copy(&json!({ "c": b64(&copy) }), "c").is_err());
-        assert!(sealed_copy(&json!({ "c": b64(&[2u8; 60]) }), "c").is_err());
-        assert!(kdf_record(
-            &json!({ "kdf": { "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1, "x": 1 } })
-        )
-        .is_ok());
-        assert!(kdf_record(
-            &json!({ "kdf": { "alg": "argon2id", "v": 1, "m": 1024, "t": 3, "p": 1 } })
-        )
-        .is_err());
-    }
 }
