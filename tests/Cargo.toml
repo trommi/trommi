@@ -46,3 +46,7 @@ path = "core/groups_takeover.rs"
 [[test]]
 name = "core_groups_helper"
 path = "core/groups_helper.rs"
+
+[[test]]
+name = "core_groups_concurrency"
+path = "core/groups_concurrency.rs"
