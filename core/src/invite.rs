@@ -48,7 +48,7 @@ pub const MAC_LEN: usize = 32;
 /// The length of the inviter's nonce.
 pub const NONCE_LEN: usize = 32;
 
-/// The longest hub address as base64url, and the length of a 32-byte secret as base64url.
+/// The longest hub address as base64url, and the length of 32 bytes (the room id, the secret) as base64url.
 const MAX_HUB_PART_LEN: usize = (512usize * 4).div_ceil(3);
 const SECRET_PART_LEN: usize = 43;
 /// The version a link names.
@@ -523,7 +523,10 @@ impl InviteLink {
             return Err(Error::BadFormat);
         };
         // Parts of another length than theirs are refused unread.
-        if hub.len() > MAX_HUB_PART_LEN || secret.len() != SECRET_PART_LEN {
+        if hub.len() > MAX_HUB_PART_LEN
+            || room_id.len() != SECRET_PART_LEN
+            || secret.len() != SECRET_PART_LEN
+        {
             return Err(Error::BadFormat);
         }
         Self::new(

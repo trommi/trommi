@@ -407,6 +407,8 @@ pub struct Decryptor {
     sha256: Hash32,
     /// The hash of what was taken; `None` when the caller compared it already.
     hasher: Option<FileHasher>,
+    /// How many stored bytes were taken.
+    taken: u64,
     index: u64,
     head: Vec<u8>,
     head_checked: bool,
@@ -426,6 +428,7 @@ impl Decryptor {
             file_id: file.file_id,
             sha256: file.sha256,
             hasher,
+            taken: 0,
             index: 0,
             head: Vec::with_capacity(HEAD_LEN),
             head_checked: false,
@@ -466,6 +469,12 @@ impl Decryptor {
     }
 
     fn take(&mut self, stored: &[u8], out: &mut Vec<u8>) -> Result<(), Error> {
+        // More than the largest file is refused before any of it is hashed.
+        self.taken = u64::try_from(stored.len())
+            .ok()
+            .and_then(|more| self.taken.checked_add(more))
+            .filter(|taken| *taken <= MAX_STORED_LEN)
+            .ok_or(Error::TooLarge)?;
         if let Some(hasher) = &mut self.hasher {
             hasher.update(stored);
         }
@@ -562,8 +571,9 @@ pub fn decrypt_file(file: &FileRef, stored: &[u8]) -> Result<Vec<u8>, Error> {
     Ok(std::mem::take(&mut *plain))
 }
 
-/// Reads `N` secret bytes from base64url. Text of another length than `N` bytes have is refused unread.
-fn secret_from_base64url<const N: usize>(text: &str) -> Result<Secret<N>, Error> {
+/// Reads the `N` bytes of a key, a secret, an id or a hash from base64url. Text of another length than `N`
+/// bytes have is refused unread.
+fn fixed_from_base64url<const N: usize>(text: &str) -> Result<Secret<N>, Error> {
     if text.len() != (N * 4).div_ceil(3) {
         return Err(Error::BadFormat);
     }
@@ -587,9 +597,9 @@ impl FileRef {
     /// anything else.
     pub fn from_base64url(file_id: &str, file_key: &str, sha256: &str) -> Result<Self, Error> {
         Ok(Self {
-            file_id: FileId::from_base64url(file_id)?,
-            file_key: secret_from_base64url(file_key)?,
-            sha256: Hash32::from_base64url(sha256)?,
+            file_id: FileId::new(*fixed_from_base64url(file_id)?.expose()),
+            file_key: fixed_from_base64url(file_key)?,
+            sha256: Hash32::new(*fixed_from_base64url(sha256)?.expose()),
         })
     }
 
@@ -647,10 +657,10 @@ impl ShareLink {
         };
         Ok(Self {
             app: app.to_owned(),
-            share_id: ShareId::from_base64url(share_id)?,
-            secret: secret_from_base64url(secret)?,
-            file_key: secret_from_base64url(file_key)?,
-            sha256: Hash32::from_base64url(sha256)?,
+            share_id: ShareId::new(*fixed_from_base64url(share_id)?.expose()),
+            secret: fixed_from_base64url(secret)?,
+            file_key: fixed_from_base64url(file_key)?,
+            sha256: Hash32::new(*fixed_from_base64url(sha256)?.expose()),
         })
     }
 
@@ -709,7 +719,7 @@ pub fn check_share_expiry(expires_at: u64, now_ms: u64) -> Result<(), Error> {
 /// Hub side: whether the secret a request presents (the text of `x-share-secret`) is the one whose SHA-256 was
 /// registered. Compared in constant time; text that is not the base64url of 32 bytes matches nothing.
 pub fn share_secret_matches(presented: &str, secret_hash: &Hash32) -> Result<bool, Error> {
-    let Ok(secret) = secret_from_base64url::<32>(presented) else {
+    let Ok(secret) = fixed_from_base64url::<32>(presented) else {
         return Ok(false);
     };
     Ok(crypto::ct_eq(
@@ -1279,6 +1289,13 @@ mod tests {
         assert_eq!(decryptor.update(&head), Ok(vec![]));
         assert_eq!(decryptor.update(&[0; TAG_LEN - 1]), Ok(vec![]));
         assert_eq!(decryptor.finish(), Err(Error::BadFormat));
+
+        // More bytes than the largest file has are refused as they come, before they are hashed.
+        let mut decryptor = Decryptor::new(&naming(&[]));
+        assert_eq!(decryptor.update(&head), Ok(vec![]));
+        decryptor.taken = MAX_STORED_LEN;
+        assert_eq!(decryptor.update(&[0]), Err(Error::TooLarge));
+        assert_eq!(decryptor.update(&[]), Err(Error::TooLarge));
     }
 
     #[test]
