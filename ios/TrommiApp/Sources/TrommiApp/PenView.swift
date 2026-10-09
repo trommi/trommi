@@ -230,6 +230,8 @@ struct PenInks {
   var surface: Color = Ink.surface          // paper parts (the duck's body, the tag)
   var blocked = false                       // the raised hand on red
   var duck = false                          // the duck in yellow
+  /** The water the yellow duck swims on (default: the stroke colour, the button's own ink). */
+  var water: Color? = nil
 }
 
 /** One mark of the pen, by its pen.json key, sized by its frame. */
@@ -271,7 +273,10 @@ enum PenDraw {
     for it in d.items {
       let p = it.path.applying(t)
       let c = it.classes.union(docCls)
-      var stroke: Color? = inks.stroke
+      // a drawing with a coloured fill (the yellow duck, the yellow note) keeps dark ink in dark mode too; only a drawing
+      // standing on the page's ground takes the page's ink (as the web: --duck-ink, the note's ink)
+      let onColour = inks.duck
+      var stroke: Color? = onColour ? Ink.duckInk : inks.stroke
       var fill: Color? = nil
       var width = base
       if let w = it.attrs["stroke-width"].flatMap(Double.init) { width = CGFloat(w) }
@@ -287,7 +292,9 @@ enum PenDraw {
       if docCls.contains("blitz-bolt") { fill = Ink.yellow }
       if c.contains("end-check") { stroke = Ink.stampDone; width = 2.2 }
       if c.contains("note-fill") { fill = Ink.noteYellow; stroke = nil }
-      if c.contains("note-ink") || c.contains("note-lines") { stroke = Ink.fg; width = 1.55 }
+      // the note's outline stands on the ground (the page's ink, as the web), its lines on the yellow paper (dark ink)
+      if c.contains("note-ink") { stroke = Ink.fg; width = 1.55 }
+      if c.contains("note-lines") { stroke = Ink.noteInk; width = 1.55 }
       if c.contains("clamp-plate") { fill = Color.dyn(0xc9ccc6, 0x59605b) }
       if c.contains("brand-mark-ring") { stroke = Ink.accent }
       if it.attrs["fill"] != nil && it.attrs["fill"] != "none" { fill = stroke }
@@ -295,12 +302,12 @@ enum PenDraw {
       if let f = it.style["fill"] {
         if f.contains("--surface") { fill = inks.duck ? Ink.duckYellow : inks.surface }
         else if f.contains("--duck-bill") { fill = inks.duck ? Color(hex: 0xf28a2e) : inks.stroke.opacity(0.22) }
-        else if f == "currentColor" { fill = inks.stroke }
+        else if f == "currentColor" { fill = onColour ? Ink.duckInk : inks.stroke }
         else if f == "none" { fill = nil }
       }
       if let st = it.style["stroke"] {
         if st.contains("--duck-glint") { stroke = inks.duck ? .white : inks.surface }
-        else if st.contains("--duck-water") { stroke = inks.stroke }
+        else if st.contains("--duck-water") { stroke = inks.duck ? (inks.water ?? inks.stroke) : inks.stroke }
       }
       if let w = it.style["stroke-width"].flatMap({ Double($0.replacingOccurrences(of: "px", with: "")) }) { width = CGFloat(w) }
       if let o = it.style["opacity"].flatMap(Double.init) { opacity = o }

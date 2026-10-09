@@ -57,6 +57,9 @@ enum Ink {
   static let noteYellow = Color.dyn(0xf5d64a, 0xd9c35f)
   static let noteInk = Color(hex: 0x3b300d)
   static let duckYellow = Color(hex: 0xf7d44c)
+  /** Ink on a coloured fill (the yellow duck, the pale press): dark in both modes (card.css --duck-ink). */
+  static let duckInk = Color(hex: 0x1f1a05)
+  static let duckPale = Color(hex: 0xfff4b8)
   static let stDecision = Color.dyn(0xc62f25, 0xff8a80)
   static let stWorking = Color.dyn(0xb07a06, 0xf2c14e)
   static let stDone = Color.dyn(0x1f8a4c, 0x6cd598)
