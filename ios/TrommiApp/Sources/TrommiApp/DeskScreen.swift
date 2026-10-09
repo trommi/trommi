@@ -597,23 +597,28 @@ struct DeskWays: View {
   @State private var duckAsk = false
   var body: some View {
     let _ = model.version
-    let fresh = model.view?.fresh ?? []
-    let decisions = fresh.filter { $0.kind == "decision" }.map { $0.id }
-    let n = fresh.count
-    if n > 0 {
+    // the rule is DeskTools (TrommiCore): every open card that waits for him, questions and infos
+    let tools = model.view?.tools ?? DeskTools([])
+    let decisions = tools.duck, infos = tools.read
+    let n = tools.walk, all = decisions.count + infos.count
+    let ask = decisions.isEmpty ? (all == 1 ? "Mark it as read?" : "Mark all \(all) as read?")
+      : infos.isEmpty ? (all == 1 ? "Answer it with “I don’t give a duck”?" : "Answer all \(all) with “I don’t give a duck”?")
+      : "Duck \(decisions.count == 1 ? "1 decision" : "\(decisions.count) decisions") and mark \(infos.count == 1 ? "1 info" : "\(infos.count) infos") as read?"
+    let yes = decisions.isEmpty ? (all == 1 ? "Yes, Got It" : "Yes, All Read") : all == 1 ? "Yes, Duck It" : "Yes, Duck All"
+    if tools.showsBlitz {
       Group {
-        if part == .duck && !decisions.isEmpty {
+        if part == .duck && tools.showsDuck {
           Button { duckAsk = true } label: { PenMark("sketch:duck", color: Ink.fg, duck: false).frame(width: 24, height: 20).frame(width: 44, height: 44).contentShape(Rectangle()).glass(Circle(), interactive: true) }
             .buttonStyle(.plain)
-            .accessibilityLabel("I don’t give a duck: for all \(decisions.count) open decisions")
+            .accessibilityLabel(decisions.isEmpty ? "Mark all \(all) open infos as read" : "I don’t give a duck: for all \(all) open cards")
             .popover(isPresented: $duckAsk, arrowEdge: .top) {
               VStack(alignment: .leading, spacing: 14) {
-                Text(decisions.count == 1 ? "Answer it with “I don’t give a duck”?" : "Answer all \(decisions.count) with “I don’t give a duck”?").font(Face.display(18, .bold)).foregroundStyle(Ink.fg).fixedSize(horizontal: false, vertical: true)
+                Text(ask).font(Face.display(18, .bold)).foregroundStyle(Ink.fg).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 10) {
                   Button { duckAsk = false } label: { Text("Cancel").font(Face.text(16, .semibold)).frame(maxWidth: .infinity, minHeight: 44) }
                     .buttonStyle(.plain).foregroundStyle(Ink.fg).background(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.fg, lineWidth: 1.5))
-                  Button { duckAsk = false; model.duckAll(decisions) } label: {
-                    HStack(spacing: 6) { PenMark("sketch:duck", color: Ink.bg, duck: false).frame(width: 22, height: 18); Text(decisions.count == 1 ? "Yes, Duck It" : "Yes, Duck All").font(Face.text(16, .semibold)) }
+                  Button { duckAsk = false; model.duckAll(decisions, read: infos) } label: {
+                    HStack(spacing: 6) { PenMark("sketch:duck", color: Ink.bg, duck: false).frame(width: 22, height: 18); Text(yes).font(Face.text(16, .semibold)) }
                       .frame(maxWidth: .infinity, minHeight: 44)
                   }
                   .buttonStyle(.plain).foregroundStyle(Ink.bg).background(RoundedRectangle(cornerRadius: 12).fill(Ink.fg))
@@ -631,7 +636,7 @@ struct DeskWays: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(Words.walk): \(n) open questions")
+        .accessibilityLabel("\(Words.walk): \(n == 1 ? "1 open card" : "\(n) open cards")")
         }
       }
     }

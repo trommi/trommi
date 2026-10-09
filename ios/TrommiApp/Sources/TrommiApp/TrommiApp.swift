@@ -543,11 +543,14 @@ final class BoardModel: ObservableObject {
       try await room.setDesk(deskId, .obj(v))
     }
   }
-  func duckAll(_ ids: [String]) {
+  /** The duck for all: every decision gets "I don't give a duck", every info is marked read; one toast, one Undo. */
+  func duckAll(_ ids: [String], read: [String] = []) {
     guard let room = acting() else { return }
     act {
       for id in ids { try await room.trust(cardId: id) }
-      self.say("Left to the agents", ids.count == 1 ? "1 question" : "\(ids.count) questions", undo: { [weak self] in for id in ids { self?.reopen(id) } })
+      for id in read { try await room.markRead(cardId: id) }
+      let all = ids + read
+      self.say(ids.isEmpty ? "Read" : "Left to the agents", all.count == 1 ? "1 card" : "\(all.count) cards", undo: { [weak self] in for id in all { self?.reopen(id) } })
     }
   }
   /**
