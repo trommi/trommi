@@ -17,6 +17,10 @@
 //     recovery (`recover`, LiveRecovery.swift) makes. `outbox()` ends in front of the first entry whose kind
 //     Core.swift cannot name, so that nothing is posted to a wrong route or out of order; the entry stays stored,
 //     and `heldBack()` lists what waits. Once Core.swift has the two cases (with those numbers) they pass through.
+//   - `InviteAccepted` has no hash of the accepted Request, which the core's confirmation names beside the code:
+//     it is kept here per invite from `acceptInviteRequest` to `confirmInvite`.
+//   - what follows a confirmed invite (`inviteSteps`, `inviteHandover`, `inviteRecommit`, `inviteForget`) and the
+//     new device's own calls (`joinRequest`, `joinReveal`, `joinObserve`, `joinInvited`) are not in Core.swift.
 //   - `ReceivedMessage` has no `recoveryAuthConflict` (a second, different key for the sealed keys under one
 //     recovery key: the finding `equivocation`). Here it is `.dropped`, and `recoveryAuthConflict` names its sender.
 import Foundation
@@ -28,6 +32,8 @@ public final class LiveDevice: TrommiClient.CoreDevice {
   public let id: DeviceId
   private let lock = NSLock()
   private var conflictFrom: DeviceId?
+  /// Per invite the hash of the Request this object accepted, from `acceptInviteRequest` until `confirmInvite`.
+  private var requestHashes: [Bytes: Bytes] = [:]
   /// The human device that last sent this device a second, different key for the room's sealed keys under a recovery
   /// key it already holds one for (the finding `equivocation`; nothing was replaced). nil: none since it was opened.
   public var recoveryAuthConflict: DeviceId? { lock.withLock { conflictFrom } }
@@ -65,9 +71,8 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     }
   }
 
-  public func contentKey(group: GroupId, epoch: UInt64) throws -> Bytes {
-    try core { try device.contentKey(group: group.data, epoch: epoch) }.bytes
-  }
+  /// Whether this device holds the content key of that group and epoch. The key itself never leaves the core.
+  public func holdsKey(group: GroupId, epoch: UInt64) throws -> Bool { try core { try device.holdsKey(group: group.data, epoch: epoch) } }
 
   // ---- real: KeyPackages ----------------------------------------------------------------------------------
 
@@ -87,13 +92,16 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     try core { try device.foundSession(agent: agent.data, keyPackages: keyPackages.map(\.data), nowMs: nowMs) }.bytes
   }
   public func addHumanDevice(_ added: DeviceId, keyPackage: Bytes, nowMs: UInt64) throws -> UInt64 {
-    try core { try device.addHumanDevice(device: added.data, keyPackage: keyPackage.data, nowMs: nowMs) }
+    // A device comes into the room by invite only (`confirmInvite`): this call has no counterpart in the core.
+    try notBuilt()
   }
   public func addToSession(group: GroupId, device added: DeviceId, keyPackage: Bytes, nowMs: UInt64) throws -> UInt64 {
     try core { try device.addToSession(group: group.data, device: added.data, keyPackage: keyPackage.data, nowMs: nowMs) }
   }
   public func changeAgents(enrol: [DeviceId], remove: [DeviceId], nowMs: UInt64) throws -> UInt64 {
-    try core { try device.changeAgents(enrol: enrol.map(\.data), remove: remove.map(\.data), nowMs: nowMs) }
+    // An agent device is enrolled by invite only (`confirmInvite`); taking agents out is the core's removeAgents.
+    guard enrol.isEmpty else { return try notBuilt() }
+    return try core { try device.removeAgents(remove: remove.map(\.data), nowMs: nowMs) }
   }
   public func removeHumanDevices(_ cuts: [TrommiClient.Cut], nowMs: UInt64) throws -> UInt64 {
     try core { try device.removeHumanDevices(cuts: cuts.map(Self.cut), nowMs: nowMs) }
@@ -113,6 +121,16 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     TrommiCoreRust.Cut(device: cut.device.data, seq: cut.seq, hash: cut.hash.data)
   }
 
+  // ---- real: what stored content left on the device (section 9) ---------------------------------------------
+
+  /// The current value (JSON) of a shared register name in a group; nil: never written, or deleted.
+  public func register(group: GroupId, name: String) throws -> Bytes? { try core { try device.register(group: group.data, name: name) }?.bytes }
+  /// The last envelope of `device` this device accepted in `group` (number 0 and zeros if none), for removing it.
+  public func cut(group: GroupId, device cutDevice: DeviceId) throws -> TrommiClient.Cut {
+    let cut = try core { try device.cutOf(group: group.data, device: cutDevice.data) }
+    return TrommiClient.Cut(device: cut.device.bytes, seq: cut.seq, hash: cut.hash.bytes)
+  }
+
   // ---- real: joining and the hub's log --------------------------------------------------------------------
 
   public func joinWelcome(_ welcome: Bytes, room: RoomId, committer: DeviceId?, nowMs: UInt64) throws -> TrommiClient.Joined {
@@ -128,7 +146,7 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     case .message(let bytes):
       theirs = TrommiCoreRust.LogEntry(change: entry.change, group: entry.group.data, kind: .message, bytes: bytes.data, recoveryAuth: nil)
     }
-    let done = try core { try device.processLogEntry(entry: theirs) }
+    let done = try core { try device.processLogEntry(entry: theirs, nowMs: nowMs()) }
     // The core names the epoch a Commit builds on; Core.swift's `epoch` is where the group stands after it.
     func commit(superseded: UInt64?, removed: Bool) -> TrommiClient.Processed {
       guard let c = done.commit else { return .skipped }
@@ -140,7 +158,7 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     case .observed: return .observed
     case .joinSuperseded: return commit(superseded: done.superseded, removed: false)
     case .message:
-      if done.message?.kind == .recoveryAuthConflict { lock.withLock { conflictFrom = done.message?.from?.bytes } }
+      if done.message?.kind == TrommiCoreRust.ReceivedKind.recoveryAuthConflict { lock.withLock { conflictFrom = done.message?.from?.bytes } }
       return .message(done.message.map(Self.message) ?? .dropped)
     case .skipped: return .skipped
     }
@@ -219,9 +237,11 @@ public final class LiveDevice: TrommiClient.CoreDevice {
   }
   public func outboxAccepted(_ id: UInt64, change: UInt64?) throws { try core { try device.outboxAccepted(id: id, change: change) } }
 
-  /// Only for the hub's last word on those bytes. `LiveCore.isFinalRefusal(_:)` says which codes are; for any other
-  /// (the hub could not answer, asks to sign in again, refuses for a reason that passes, or names a code this core
-  /// does not know) this throws `bad-format` and changes nothing: the entry stays and is sent again unchanged.
+  /// The hub refused the entry. A code that judges the request (`LiveCore.isFinalRefusal(_:)`) undoes what the
+  /// entry was for; `epoch-taken` holds a Commit back until the log decided it. A code that says nothing about the
+  /// request (`internal`, `overloaded`, `rate-limited`, `unauthorised`, `bad-challenge`, `client-too-old`,
+  /// `lease-lost`) changes nothing and returns: the entry stays and is sent again unchanged. A code no hub answers
+  /// with, or one this core does not know, throws `bad-format` and changes nothing.
   /// `voided` is not passed on: the binding has no stored content yet, and so no number of an envelope to void.
   public func outboxRefused(_ id: UInt64, code: String, voided: Bool) throws {
     guard let known = errorCodeFromText(text: code) else {
@@ -230,13 +250,106 @@ public final class LiveDevice: TrommiClient.CoreDevice {
     try core { try device.outboxRefused(id: id, code: known) }
   }
 
-  /// awaited: the binding takes a message only as a log entry.
-  public func processRelay(group: GroupId, bytes: Bytes) throws -> TrommiClient.ReceivedMessage { try notBuilt() }
+  /// A stroke piece the hub only passed on: in no log, with no change number, so the cursor stays. `.dropped` for a
+  /// message this device cannot open or of a group it is no leaf of; `bad-format` for anything but a stroke piece.
+  public func processRelay(group: GroupId, bytes: Bytes) throws -> TrommiClient.ReceivedMessage {
+    try core { try device.receiveRelay(group: group.data, message: bytes.data, nowMs: nowMs()) }.map(Self.message) ?? .dropped
+  }
+
+  // ---- real: invites by link (12.1), the inviting side ----------------------------------------------------
+
+  /// `app` is the app's origin ("https://app.trommi.com"): the core puts the link's path behind it.
+  public func openInvite(role: Int, session: SessionId?, app: String, hub: String, nowMs: UInt64) throws -> OpenedInvite {
+    guard role == ROLE.HUMAN || role == ROLE.AGENT else { throw TrommiError("bad-format", "an invite is for a human device or an agent device") }
+    let opened = try core { try device.inviteOpen(role: role == ROLE.HUMAN ? .human : .agent, sessionId: session?.data, app: app, hub: hub, nowMs: nowMs) }
+    return OpenedInvite(invite: opened.inviteId.bytes, link: opened.link, offer: opened.offer.bytes, offerSignature: opened.signature.bytes, expiresAt: opened.expiresAt)
+  }
+
+  /// Asked again with the same Request, the same comes back. The hash of the accepted Request stays here until
+  /// `confirmInvite`: Core.swift's `InviteAccepted` has no place for it.
+  public func acceptInviteRequest(invite: Bytes, request: Bytes, mac: Bytes, signature: Bytes, nowMs: UInt64) throws -> TrommiClient.InviteAccepted {
+    let signed = SignedRequest(request: request.data, mac: mac.data, signature: signature.data)
+    let accepted = try core { try device.inviteAccept(inviteId: invite.data, request: signed, nowMs: nowMs) }
+    lock.withLock { requestHashes[invite] = accepted.requestHash.bytes }
+    return TrommiClient.InviteAccepted(reveal: accepted.reveal.bytes, revealSignature: accepted.signature.bytes, numbers: accepted.code.numbers.bytes, newDevice: accepted.newDevice.bytes)
+  }
+
+  /// The person confirmed `numbers`. The core computes the code and the Request's hash again and commits the new
+  /// device only if both are what this device showed (`code-not-confirmed` otherwise, also when this object accepted
+  /// no Request for the invite: accept it again). Returns the Commit's outbox id; `inviteSteps()` says what follows
+  /// once the hub took it.
+  public func confirmInvite(invite: Bytes, numbers: [UInt8], nowMs: UInt64) throws -> UInt64 {
+    guard let hash = lock.withLock({ requestHashes[invite] }) else { throw TrommiError("code-not-confirmed", "this device showed no code for that invite") }
+    let confirmed = try core { try device.inviteConfirm(inviteId: invite.data, code: numbers.data, requestHash: hash.data, matches: true, nowMs: nowMs) }
+    guard let confirmed else { throw TrommiError("internal", "a confirmed invite made no Commit") }
+    lock.withLock { requestHashes[invite] = nil }
+    return confirmed.outboxId
+  }
+
+  /// "They don't match": the invite is burned, whatever Request it accepted.
+  public func burnInvite(invite: Bytes) throws {
+    _ = try core { try device.inviteConfirm(inviteId: invite.data, code: Bytes(repeating: 0, count: 6).data, requestHash: ZERO32.data, matches: false, nowMs: nowMs()) }
+    lock.withLock { requestHashes[invite] = nil }
+  }
+
+  /// What is to do next for every device this one committed by link, until all of it is done.
+  public func inviteSteps() throws -> [LiveInviteStep] {
+    try core { try device.inviteSteps() }.compactMap { step in
+      let invite = step.inviteId.bytes
+      switch step.kind {
+      case .wait: return .wait(invite: invite)
+      case .commit: return .commit(invite: invite)
+      case .handover:
+        guard let group = step.group, let device = step.device else { return nil }
+        return .handover(invite: invite, group: group.bytes, device: device.bytes)
+      case .addToSession:
+        guard let group = step.group, let device = step.device else { return nil }
+        return .addToSession(invite: invite, group: group.bytes, device: device.bytes)
+      case .foundSession:
+        guard let agent = step.device, let keyPackage = step.keyPackage else { return nil }
+        return .foundSession(invite: invite, agent: agent.bytes, keyPackage: keyPackage.bytes)
+      case .takeOver:
+        guard let group = step.group, let agent = step.device, let keyPackage = step.keyPackage else { return nil }
+        let cuts = step.cuts.map { TrommiClient.Cut(device: $0.device.bytes, seq: $0.seq, hash: $0.hash.bytes) }
+        return .takeOver(invite: invite, group: group.bytes, cuts: cuts, agent: agent.bytes, keyPackage: keyPackage.bytes)
+      }
+    }
+  }
+  /// Sends the key handover a step `.handover` names; the outbox ids of its messages.
+  public func inviteHandover(invite: Bytes) throws -> [UInt64] { try core { try device.inviteHandover(inviteId: invite.data) } }
+  /// Builds the Commit of a confirmed invite again (a step `.commit`); its outbox id.
+  public func inviteRecommit(invite: Bytes, nowMs: UInt64) throws -> UInt64 { try core { try device.inviteRecommit(inviteId: invite.data, nowMs: nowMs) } }
+  /// Drops what was left to do for an invite (a takeover without history sends no handover).
+  public func inviteForget(invite: Bytes) throws { try core { try device.inviteForget(inviteId: invite.data) } }
+
+  // ---- real: invites by link (12.1), the new device ---------------------------------------------------------
+
+  /// Checks the Offer served for `link` and answers it with a fresh KeyPackage. The core keeps the joining side in
+  /// the device's store, so `joiner` is empty; `hub` is the link's, `room` the Offer's.
+  public func joinRequest(link: String, offer: Bytes, offerSignature: Bytes, nowMs: UInt64) throws -> TrommiClient.JoinRequest {
+    let made = try core { try device.joinRequest(link: link, offer: SignedOffer(offer: offer.data, signature: offerSignature.data), nowMs: nowMs) }
+    let hub = try core { try inviteLinkParse(text: link) }.hub
+    return TrommiClient.JoinRequest(joiner: [], invite: made.inviteId.bytes, hub: hub, room: made.roomId.bytes,
+                                    role: made.role == .human ? ROLE.HUMAN : ROLE.AGENT, inviter: made.inviter.bytes,
+                                    request: made.request.bytes, mac: made.mac.bytes, signature: made.signature.bytes)
+  }
+  /// Checks the Reveal against this device's Request; the six numbers to show.
+  public func joinReveal(reveal: Bytes, signature: Bytes) throws -> [UInt8] {
+    try core { try device.joinReveal(reveal: SignedReveal(reveal: reveal.data, signature: signature.data)) }.numbers.bytes
+  }
+  /// An invited agent device starts following the room group from the GroupInfo of the epoch its Offer names.
+  public func joinObserve(groupInfo: Bytes) throws { try core { try device.joinObserve(groupInfo: groupInfo.data) } }
+  /// An invited human device joins the room group from the Welcome that answers its Request. What the Welcome must
+  /// be (the Offer's room, committed by the inviter, for the Request's KeyPackage) is read from the stored invite.
+  public func joinInvited(_ welcome: Bytes, nowMs: UInt64) throws -> TrommiClient.Joined {
+    let joined = try core { try device.joinInvited(welcome: welcome.data, nowMs: nowMs) }
+    return TrommiClient.Joined(group: joined.group.bytes, epoch: joined.epoch, addedBy: joined.addedBy.bytes)
+  }
 
   // ---- real: signing in to the hub (CoreSigner) -----------------------------------------------------------
 
   public func signHubAuth(room: RoomId, hub: String, challenge: Bytes) throws -> (auth: Bytes, signature: Bytes) {
-    let signed = try core { try device.hubSignIn(room: room.data, hub: hub, challenge: challenge.data) }
+    let signed = try core { try device.hubSignIn(hub: hub, challenge: challenge.data) }
     return (signed.auth.bytes, signed.signature.bytes)
   }
 
@@ -261,17 +374,11 @@ public final class LiveDevice: TrommiClient.CoreDevice {
   // STUBBED: not in this build of the core binding. Each throws `not-built` and changes nothing.
   // =========================================================================================================
 
-  // stored content (spec section 9): the binding has `contentKey` and nothing that seals, signs, chains or opens
+  // stored content (spec section 9): the binding has it (`seal`, `receiveEnvelope`); this adapter does not call it yet
   public func sendEnvelope(_ draft: EnvelopeDraft, nowMs: UInt64) throws -> SentEnvelope { try notBuilt() }
-  public func receiveEnvelope(_ bytes: Bytes, change: UInt64, source: EnvelopeSource, voidCode: String?, nowMs: UInt64) throws -> ReceivedEnvelope { try notBuilt() }
-  public func register(group: GroupId, name: String) throws -> Bytes? { try notBuilt() }
-  public func cut(group: GroupId, device: DeviceId) throws -> TrommiClient.Cut { try notBuilt() }
-
-  // invites by link (12.1), the inviting side
-  public func openInvite(role: Int, session: SessionId?, app: String, hub: String, nowMs: UInt64) throws -> OpenedInvite { try notBuilt() }
-  public func acceptInviteRequest(invite: Bytes, request: Bytes, mac: Bytes, signature: Bytes, nowMs: UInt64) throws -> InviteAccepted { try notBuilt() }
-  public func confirmInvite(invite: Bytes, numbers: [UInt8], nowMs: UInt64) throws -> UInt64 { try notBuilt() }
-  public func burnInvite(invite: Bytes) throws { try notBuilt() as Void }
+  public func receiveEnvelope(_ bytes: Bytes, change: UInt64, source: EnvelopeSource, voidCode: String?, nowMs: UInt64) throws -> TrommiClient.ReceivedEnvelope { try notBuilt() }
+  /// The core hands no content key out: what a key seals is written and opened inside it.
+  public func contentKey(group: GroupId, epoch: UInt64) throws -> Bytes { try notBuilt() }
 
   // recovery (section 8): the call the core cannot serve in this shape (it needs the code in force and the account's
   // new sealed copies). The real ones are `newRecoveryCode(current:)` and `replaceCode(current:account:nowMs:)`.
@@ -280,3 +387,19 @@ public final class LiveDevice: TrommiClient.CoreDevice {
 
 /// What every stubbed call refuses with, in the name of the calling function (`#function`).
 func notBuilt<T>(_ call: String = #function) throws -> T { throw TrommiError(LiveCore.notBuiltCode, "\(call): not in this build of the core binding") }
+
+/// One thing to do next for an invite this device confirmed (core `InviteStep`).
+public enum LiveInviteStep: Equatable {
+  /// Nothing yet: a Commit of this device waits for the hub or the log.
+  case wait(invite: Bytes)
+  /// The Commit that lets the device in was dropped for another: `inviteRecommit`.
+  case commit(invite: Bytes)
+  /// `inviteHandover`; or, for a takeover without history, `inviteForget`.
+  case handover(invite: Bytes, group: GroupId, device: DeviceId)
+  /// Claim one KeyPackage of the human device at the hub and call `addToSession`.
+  case addToSession(invite: Bytes, group: GroupId, device: DeviceId)
+  /// `foundSession` with this KeyPackage of the agent device and one of every other human device.
+  case foundSession(invite: Bytes, agent: DeviceId, keyPackage: Bytes)
+  /// `cleanSession` with these cuts and the agent device with this KeyPackage as the replacement.
+  case takeOver(invite: Bytes, group: GroupId, cuts: [TrommiClient.Cut], agent: DeviceId, keyPackage: Bytes)
+}

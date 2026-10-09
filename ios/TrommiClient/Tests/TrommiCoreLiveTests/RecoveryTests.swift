@@ -151,9 +151,13 @@ final class RecoveryTests: XCTestCase {
     XCTAssertTrue(try a.holdsRecoveryMac())
     _ = try a.update(group: room, forced: true, nowMs: nowMs())
     try hub.post(a)
-    _ = try a.changeAgents(enrol: [agent.id], remove: [], nowMs: nowMs())
+    // The agent device comes by invite, and its session is what the invite then asks for.
+    let invite = try exchangeInvite(from: a, to: agent, role: ROLE.AGENT, tools: tools)
+    try agent.joinObserve(groupInfo: try XCTUnwrap(hub.infos[room]?[1]))
+    _ = try a.confirmInvite(invite: invite.invite, numbers: invite.inviterShows, nowMs: nowMs())
     try hub.post(a)
-    let session = try a.foundSession(agent: agent.id, keyPackages: [try agent.keyPackage(nowMs: nowMs())], nowMs: nowMs())
+    guard case .foundSession(_, _, let keyPackage)? = try a.inviteSteps().first else { return XCTFail("the invite asks for no session") }
+    let session = try a.foundSession(agent: agent.id, keyPackages: [keyPackage], nowMs: nowMs())
     try hub.post(a)
     let sessionGroup = room + session
     XCTAssertEqual(try a.groups().first { $0.session == nil }?.epoch, 2)
@@ -193,10 +197,9 @@ final class RecoveryTests: XCTestCase {
     }
     // One key now, and the earlier ones through the sealed keys, each vouched for by a human device.
     for epoch in UInt64(0)...3 {
-      XCTAssertEqual(try b.contentKey(group: room, epoch: epoch), try a.contentKey(group: room, epoch: epoch), "epoch \(epoch)")
+      XCTAssertTrue(try bothHoldKey(b, a, group: room, epoch: epoch), "epoch \(epoch)")
       XCTAssertTrue(try b.keyIsConfirmed(group: room, epoch: epoch), "epoch \(epoch)")
     }
-    XCTAssertNotEqual(try b.contentKey(group: room, epoch: 0), try b.contentKey(group: room, epoch: 3))
 
     // The session group: B joins it as the human device it now is.
     let id = try b.joinSessionWithCode(code, served: served.sessions[0], nowMs: nowMs())
@@ -211,7 +214,7 @@ final class RecoveryTests: XCTestCase {
     XCTAssertEqual(Set(mine.leaves), Set([a.id, b.id, agent.id]))
     XCTAssertEqual(mine.session?.agents, [agent.id])
     for epoch in UInt64(0)...mine.epoch {
-      XCTAssertEqual(try b.contentKey(group: sessionGroup, epoch: epoch), try a.contentKey(group: sessionGroup, epoch: epoch), "session epoch \(epoch)")
+      XCTAssertTrue(try bothHoldKey(b, a, group: sessionGroup, epoch: epoch), "session epoch \(epoch)")
     }
     XCTAssertTrue(a.outbox().isEmpty)
     XCTAssertTrue(b.outbox().isEmpty)
@@ -287,7 +290,7 @@ final class RecoveryTests: XCTestCase {
     try join(c, code: next, room: room, hub: hub)
     try hub.deliver(to: a)
     for epoch in UInt64(0)...3 {
-      XCTAssertEqual(try c.contentKey(group: room, epoch: epoch), try a.contentKey(group: room, epoch: epoch), "epoch \(epoch)")
+      XCTAssertTrue(try bothHoldKey(c, a, group: room, epoch: epoch), "epoch \(epoch)")
       XCTAssertTrue(try c.keyIsConfirmed(group: room, epoch: epoch), "epoch \(epoch)")
     }
     // Without the link the hub withheld, it still joins, and is told which key's past stays closed.
@@ -349,7 +352,7 @@ final class RecoveryTests: XCTestCase {
     XCTAssertEqual(try new.roomRoles()?.humans, [new.id])
     XCTAssertEqual(try new.groups().first?.leaves, [new.id])
     XCTAssertEqual(try new.recoveryKeys()?.signatureKey, try tools.recoverySigner(code: plan.newCode).id)
-    XCTAssertEqual(try new.contentKey(group: room, epoch: 0), try lost.contentKey(group: room, epoch: 0))
+    XCTAssertTrue(try bothHoldKey(new, lost, group: room, epoch: 0))
     XCTAssertTrue(new.outbox().isEmpty)
     XCTAssertTrue(new.heldBack().isEmpty)
     // The lost device, should it turn up, learns that it is out.
