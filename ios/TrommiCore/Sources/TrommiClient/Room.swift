@@ -1604,17 +1604,40 @@ public final class Room {
 
   // ---- links for people outside the room (client.mjs shareAttachment) ------------------------------------------------
 
-  /** A link to one file for someone outside the room: `<app>/a/<share_id>#<secret>.<file_key>.<sha256>`; the hub keeps only H(secret). */
-  public func shareAttachment(_ ref: JV, days: Int = 7, app: String = "https://app.trommi.com") async throws -> (link: String, shareId: String, expiresAt: UInt64) {
+  // "Copy link" on an artifact IS the consent: the first one makes a link that holds 30 days, later ones give the same
+  // link while it holds (not renewed; a new one only after it ran out or was stopped). The links are kept in ShareStore.
+
+  private var shareStoreMemo: ShareStore?
+  private func shareStore() throws -> ShareStore {
+    if let s = shareStoreMemo { return s }
+    let s = ShareStore(dir: store.dir, key: try cacheKey())
+    shareStoreMemo = s
+    return s
+  }
+  /** This device's link for that file that still holds, if it made one. */
+  public func liveShare(_ attachmentId: String) -> SharedLink? { (try? shareStore())?.live(attachmentId) }
+  /** The link to one file for someone outside the room: `<app>/a/<share_id>#<secret>.<file_key>.<sha256>` (the hub keeps
+   *  only H(secret)): the one that still holds, else a new one for 30 days. */
+  public func shareLink(_ ref: JV, app: String = "https://app.trommi.com") async throws -> SharedLink {
     guard let id = ref["attachment_id"].string, let key = ref["file_key"].string, let sha = ref["sha256"].string else { throw ZError("bad-argument", "attachment reference") }
+    let kept = try shareStore()
+    if let live = kept.live(id) { return live }
     let secret = systemRandom(32)
     let shareId = hex(systemRandom(16))
-    let expires = nowMs() + UInt64(min(30, max(1, days))) * 86_400_000 - 60_000
+    let expires = nowMs() + UInt64(ShareStore.days) * 86_400_000 - 60_000
     let r = try await noted { try await hub.request("POST", "/rooms/\(record.roomId)/attachments/\(id)/shares", body: ["share_id": shareId, "share_secret_hash": b64u(sha256(secret)), "expires_at": expires]) }
-    return ("\(app)/a/\(shareId)#\(b64u(secret)).\(key).\(sha)", shareId, (r["expires_at"] as? NSNumber)?.uint64Value ?? expires)
+    let made = SharedLink(shareId: shareId, attachmentId: id, link: "\(app)/a/\(shareId)#\(b64u(secret)).\(key).\(sha)", expiresAt: (r["expires_at"] as? NSNumber)?.uint64Value ?? expires)
+    try kept.put(made)
+    return made
   }
-  public func revokeShare(attachmentId: String, shareId: String) async throws {
-    _ = try await noted { try await hub.request("DELETE", "/rooms/\(record.roomId)/attachments/\(attachmentId)/shares/\(shareId)") }
+  /** Stop sharing that file: the hub forgets every link this device made for it (DELETE attachments/:id/shares/:share_id). */
+  public func stopSharing(_ attachmentId: String) async throws {
+    let kept = try shareStore()
+    for s in kept.all(attachmentId) {
+      do { _ = try await noted { try await hub.request("DELETE", "/rooms/\(record.roomId)/attachments/\(attachmentId)/shares/\(s.shareId)") } }
+      catch let e as HubError where e.code == "not-found" {}   // (already gone at the hub)
+      try kept.remove(shareId: s.shareId)
+    }
   }
 
   // ---- the cache: the verified state, encrypted at rest (the web's storage and snapshot) ----------------------------------
