@@ -50,6 +50,9 @@ fn world(checks: bool) -> World {
     settle(&hub, &mut b);
     settle(&hub, &mut agent);
     observe(&hub, &mut helper);
+    helper
+        .observe_session(hub.group_info(&main).unwrap())
+        .unwrap();
     let side = found_helper(&mut hub, &mut agent, &main, &mut [&mut helper]);
     let mut world = World {
         hub,
@@ -95,6 +98,9 @@ impl World {
             // A helper session holds seven helper devices at most: beyond three, one is replaced.
             let mut another = new_device();
             observe(&self.hub, &mut another);
+            another
+                .observe_session(self.hub.group_info(&self.main).unwrap())
+                .unwrap();
             let package = another.key_package(now()).unwrap();
             if self.helpers.len() < 3 {
                 self.agent
@@ -1232,7 +1238,11 @@ fn a_recovery_is_all_or_nothing() {
             .map(|id| id.is_some()),
         Ok(true)
     );
-    assert_eq!(post_refused(&mut w.hub, &mut w.a), [Error::Overloaded]);
+    // The refusal says nothing about the requests: both stay in the outbox and are sent again.
+    assert_eq!(
+        post_refused(&mut w.hub, &mut w.a),
+        [Error::Overloaded, Error::Overloaded]
+    );
 
     // The ten minutes pass in the middle: the hub drops what was staged, and so does the device.
     let fetched = fetch(&w.hub, &keys);
@@ -1255,9 +1265,13 @@ fn a_recovery_is_all_or_nothing() {
     assert_eq!(w.hub.change(), change);
     let now_epochs: Vec<Option<u64>> = w.groups().iter().map(|group| w.hub.epoch(group)).collect();
     assert_eq!(now_epochs, epochs);
-    // The room is open again: the others go on as if nothing had been.
-    w.a.update(&w.room, true, now()).unwrap().unwrap();
-    post_ok(&mut w.hub, &mut w.a);
+    // The room is open again: the others go on as if nothing had been, and what they could not post is
+    // sent now, unchanged: the update is taken, and the sealed key, which names the room epoch before it,
+    // is refused for good.
+    let answers = trommi_tests::post_all(&mut w.hub, &mut w.a);
+    assert!(answers[0].is_ok());
+    assert_eq!(answers[1], Err(Error::RoomBehind));
+    assert!(w.a.outbox().is_empty());
     w.settle_all();
 
     // A finish that leaves a human device in the room, or a session unjoined, publishes nothing: here the
@@ -1671,6 +1685,9 @@ fn no_row_is_posted_alone_for_a_stale_or_archived_session() {
     }
     let mut another = new_device();
     observe(&w.hub, &mut another);
+    another
+        .observe_session(w.hub.group_info(&w.main).unwrap())
+        .unwrap();
     let package = another.key_package(now()).unwrap();
     w.agent
         .add_to_session(&w.side, &another.id(), &package, now())
@@ -1782,6 +1799,7 @@ fn first_contact_verifies_a_helper_session_from_its_founding() {
     let mut late = new_device();
     add_human(&mut w.hub, &mut w.a, &mut late);
     publish_some(&mut w.hub, &mut late, 0);
+    trommi_tests::add_to_session(&mut w.hub, &mut w.a, &mut late, &w.main);
     trommi_tests::add_to_session(&mut w.hub, &mut w.a, &mut late, &w.side);
     trommi_tests::settle_joining(&w.hub, &mut late);
     let served = trommi_tests::fetch_group(&w.hub, &w.side);
