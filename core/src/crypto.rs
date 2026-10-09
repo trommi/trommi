@@ -239,9 +239,13 @@ fn prefixed(label: &str) -> Vec<u8> {
     [LABEL_PREFIX.as_bytes(), label.as_bytes()].concat()
 }
 
-/// `RefHash(label, value)` of RFC 9420 section 5.2. The label is hashed as given, without a prefix.
+/// `RefHash(label, value)` of RFC 9420 section 5.2. The label is hashed as given, without a prefix. The value may
+/// be secret (a nonce behind a commitment): the copy that is hashed is wiped.
 pub fn ref_hash(label: &str, value: &[u8]) -> Result<Hash32, Error> {
-    sha256(&labelled(label.as_bytes(), value)?)
+    let mut input = labelled(label.as_bytes(), value)?;
+    let hash = sha256(&input);
+    input.zeroize();
+    hash
 }
 
 /// `ExpandWithLabel(secret, label, context, N)` of RFC 9420 section 8, with
