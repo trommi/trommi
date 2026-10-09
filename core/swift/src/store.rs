@@ -145,11 +145,25 @@ pub trait CoreStore: Send + Sync {
 
     /// Applies all of `write` or none of it, and returns only once that is durable.
     fn apply(&self, write: StoreWrite) -> Result<(), StoreError>;
+
+    /// The device lets the store go: it closed, failed for good, or could not be opened. The store releases
+    /// its lock here, so that the stored state can be opened again. Called once, as the last call.
+    fn close(&self);
 }
 
 /// The core's store over one written in Swift.
 #[cfg(feature = "uniffi")]
 pub(crate) struct ForeignStore(pub(crate) Arc<dyn CoreStore>);
+
+#[cfg(feature = "uniffi")]
+impl Drop for ForeignStore {
+    /// The device that owned this store is gone: the store hears of it. A store that fails here has still
+    /// been let go.
+    fn drop(&mut self) {
+        let store = std::sync::Arc::clone(&self.0);
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || store.close()));
+    }
+}
 
 #[cfg(feature = "uniffi")]
 impl From<StoreError> for StorageError {

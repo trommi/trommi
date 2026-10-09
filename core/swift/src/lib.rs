@@ -50,6 +50,10 @@ pub use store::{CoreStore, StoreError};
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();
 
+// Catching a panic at the edge needs unwinding. A build that aborts instead would take the app down with it.
+#[cfg(all(feature = "uniffi", panic = "abort"))]
+compile_error!("the Swift binding must be built with panic = \"unwind\" (the default)");
+
 #[global_allocator]
 static ALLOCATOR: wipe::Wiping = wipe::Wiping;
 

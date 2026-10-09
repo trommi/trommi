@@ -6,7 +6,9 @@
 // 32, a room 32, a session 16, a group 32 (the room group) or 48 (a session group), a hash 32. A count or a time is
 // a number: a whole number from 0 to 2^53 - 1, anything else is refused. `nowMs` is the host's clock, milliseconds
 // since 1970. A value that may be absent is `null` in what the core returns, and may be `null` or left out in what
-// it takes.
+// it takes. Arguments are copied when a call is made; what a call returns is the caller's own. Keys that reach
+// JavaScript (a content key, a file key, the account's keys) are ordinary bytes there: the caller overwrites them
+// (`fill(0)`) when it is done, and does not log or post them.
 
 /** The stable code of a refusal or finding (specification, section 16; the account's; the four local ones). */
 export type ErrorCode =
@@ -70,7 +72,9 @@ export interface StoreWrite {
  * IdbStore (idb-store.js) is such a store.
  */
 export interface Store {
+  /** Rejects when it cannot load, and then holds nothing: no lock, no connection. */
   load(): Promise<StoredState>
+  /** The bytes of `write` are the device's: a store copies what it keeps, they are overwritten afterwards. */
   apply(write: StoreWrite): Promise<void>
   /** Called once when the device closes, also when it closes itself after a failed write. */
   close?(): void | Promise<void>
@@ -350,6 +354,8 @@ export class FileEncryptor {
   fileId(): Uint8Array
   update(plaintext: Uint8Array): Uint8Array
   finish(): FileEnd
+  /** Gives the object up without finishing. After `finish` or `close` every call is refused with `internal`. */
+  close(): void
 }
 
 /** Decrypts a stored file piece by piece. What `update` handed out counts only once `finish` succeeded. */
@@ -357,6 +363,8 @@ export class FileDecryptor {
   constructor(file: FileRef)
   update(stored: Uint8Array): Uint8Array
   finish(): Uint8Array
+  /** Gives the object up without finishing. After `finish` or `close` every call is refused with `internal`. */
+  close(): void
 }
 
 // ---- everything without state -------------------------------------------------------------------------------------

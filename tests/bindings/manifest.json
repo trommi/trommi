@@ -829,6 +829,10 @@
         ],
         "returns": "bytes"
       },
+      "close": {
+        "arguments": [],
+        "returns": "void"
+      },
       "finish": {
         "arguments": [],
         "returns": "FileEnd"
@@ -843,6 +847,10 @@
           }
         ],
         "returns": "self"
+      },
+      "close": {
+        "arguments": [],
+        "returns": "void"
       },
       "update": {
         "arguments": [

@@ -14,7 +14,7 @@
 //! the system's source, read inside the core.
 
 use crate::error::core_error;
-use crate::guard::Guarded;
+use crate::guard::{Guarded, Quiet};
 use crate::records::{
     board_id, device_id, group_id, hash32, room_id, session_id, turn_id, Cut, GroupSummary,
     HandoverSent, Joined, LogEntry, LogEntryKind, LogFinding, OutboxEntry, Processed, Replacement,
@@ -54,6 +54,7 @@ impl CoreDevice {
     /// The core's device over `store`, new or as stored.
     fn build(store: Box<dyn Storage + Send>, create: bool) -> Result<Guarded<Inner>, CoreError> {
         let (store, seed) = AnyStore::new(store);
+        let _quiet = Quiet::enter();
         let device = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if create {
                 Device::create(store, Box::new(SystemEntropy), Box::new(Recovery))
@@ -440,9 +441,13 @@ impl CoreDevice {
         self.write(|device| Ok(device.archive(&group_id(&group)?)?))
     }
 
-    /// Joins the group a Welcome is for. The Welcome must be for one of this device's KeyPackages, for a
-    /// group of the room `room` that this device does not hold, and, where the joiner was told who adds it
-    /// (its inviter), committed by `committer`.
+    /// Joins the group a Welcome is for. The Welcome must be for one of this device's KeyPackages and for a
+    /// group of the room `room` that this device does not hold.
+    ///
+    /// `committer` is the device that must have committed the Add. **A device that joins by an invite names its
+    /// inviter here**: without it the Welcome of anyone who holds one of this device's KeyPackages is taken.
+    /// None is for the Welcomes that follow in a room the device already belongs to (a session it is added
+    /// to), where the room's own rules say who may add.
     pub fn join_welcome(
         &self,
         welcome: Vec<u8>,
@@ -460,7 +465,8 @@ impl CoreDevice {
     }
 
     /// Starts following the room group as an observer, for a device that is not a human device: from the
-    /// GroupInfo of the epoch it was told, which must hash to `expected_state` where one is given.
+    /// GroupInfo of the epoch it was told, which must hash to `expected_state`. **A device that was invited
+    /// gives the room state its invite named**: without it whatever GroupInfo the hub serves is followed.
     pub fn observe_room(
         &self,
         group_info: Vec<u8>,
