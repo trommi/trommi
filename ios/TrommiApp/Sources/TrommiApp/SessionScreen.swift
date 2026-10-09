@@ -498,7 +498,7 @@ struct MarksLine: View {
   }
 }
 
-/** Something the session published: its picture or sign, what it is, Open. */
+/** Something the session published: its picture or sign, what it is; a tap opens it, the round button copies its link. */
 struct PublishedCard: View {
   @EnvironmentObject var model: BoardModel
   let published: PublishedObject
@@ -506,36 +506,78 @@ struct PublishedCard: View {
   var body: some View {
     let a = published.attachments.first ?? .null
     let type = kindOf(a)
-    Button { open(a) } label: {
-      HStack(spacing: 12) {
-        Group {
-          if type == "image" { AttachmentImage(ref: a).frame(width: 64, height: 48).clipShape(RoundedRectangle(cornerRadius: 8)) }
-          else { PenMark("glyph:\(type)", color: Ink.fg).frame(width: 30, height: 30).frame(width: 64, height: 48).background(RoundedRectangle(cornerRadius: 8).fill(Ink.sunken)) }
+    let title = published.title.isEmpty ? (a["file_name"].string ?? "Untitled") : published.title
+    let live = model.room?.liveShare(a["attachment_id"].string ?? "")
+    HStack(spacing: 8) {
+      Button { open(a) } label: {
+        HStack(spacing: 12) {
+          Group {
+            if type == "image" { AttachmentImage(ref: a).frame(width: 64, height: 48).clipShape(RoundedRectangle(cornerRadius: 8)) }
+            else { PenMark("glyph:\(type)", color: Ink.fg).frame(width: 30, height: 30).frame(width: 64, height: 48).background(RoundedRectangle(cornerRadius: 8).fill(Ink.sunken)) }
+          }
+          VStack(alignment: .leading, spacing: 2) {
+            Text(["html": "PAGE", "image": "PICTURE", "video": "VIDEO", "audio": "AUDIO", "file": "FILE"][type] ?? "FILE").font(Face.text(10, .bold)).kerning(1).foregroundStyle(Ink.faint)
+            Text(title).font(Face.text(15, .semibold)).foregroundStyle(Ink.fg).lineLimit(2)
+            if let n = published.note, !n.isEmpty { Text(n).font(Face.text(13)).foregroundStyle(Ink.muted).lineLimit(2) }
+            if let live { Text(sharedWord(live)).font(Face.text(12, .semibold)).foregroundStyle(Ink.accent) }
+          }
+          Spacer(minLength: 0)
         }
-        VStack(alignment: .leading, spacing: 2) {
-          Text(["html": "PAGE", "image": "PICTURE", "video": "VIDEO", "audio": "AUDIO", "file": "FILE"][type] ?? "FILE").font(Face.text(10, .bold)).kerning(1).foregroundStyle(Ink.faint)
-          Text(published.title.isEmpty ? (a["file_name"].string ?? "Untitled") : published.title).font(Face.text(15, .semibold)).foregroundStyle(Ink.fg).lineLimit(2)
-          if let n = published.note, !n.isEmpty { Text(n).font(Face.text(13)).foregroundStyle(Ink.muted).lineLimit(2) }
-        }
-        Spacer(minLength: 0)
+        .contentShape(Rectangle())
       }
-      .padding(8).background(RoundedRectangle(cornerRadius: 12).fill(Ink.surface)).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.lineStrong))
+      .buttonStyle(.plain)
+      CopyLinkButton(ref: a, title: title)
     }
-    .buttonStyle(.plain)
+    .padding(8).background(RoundedRectangle(cornerRadius: 12).fill(Ink.surface)).overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Ink.lineStrong))
     .contextMenu {
-      Menu("Share Link") {
-        ForEach([1, 7, 30], id: \.self) { d in Button(d == 1 ? "For 1 Day" : "For \(d) Days") { share(a, days: d) } }
-      }
+      Button { model.copyLink(a, title: title) } label: { Label("Copy Link", systemImage: "link") }
+      if live != nil { Button(role: .destructive) { model.stopSharing(a, title: title) } label: { Label("Stop Sharing", systemImage: "xmark.circle") } }
     }
     .sheet(item: $opened) { f in FileSheet(file: f) }
-    .sheet(item: $shared) { l in ShareLinkSheet(link: l.link, title: published.title, attachmentId: l.attachmentId, shareId: l.shareId) }
-  }
-  @State private var shared: SharedLink?
-  private func share(_ a: JV, days: Int) {
-    Task { do { if let r = try await model.room?.shareAttachment(a, days: days) { shared = SharedLink(link: r.link, attachmentId: a["attachment_id"].string ?? "", shareId: r.shareId) } } catch { model.fail("No link", error) } }
   }
   private func open(_ a: JV) {
-    Task { do { let d = try await model.attachment(a); opened = OpenedFile(name: a["file_name"].string ?? published.title, type: a["media_type"].string ?? "", data: d) } catch { model.fail("Not opened", error) } }
+    Task { do { let d = try await model.attachment(a); opened = OpenedFile(name: a["file_name"].string ?? published.title, type: a["media_type"].string ?? "", data: d, ref: a) } catch { model.fail("Not opened", error) } }
+  }
+}
+
+// ---- Copy link: the link for people outside the room ---------------------------------------------------------------
+//
+// Copying the link IS the consent (his word, 9 October): no sheet, no choice of days. The first tap makes a link that
+// holds 30 days and copies it; while it holds, a tap copies the same link (Room.shareLink). While it holds the button is
+// filled in the accent; Stop Sharing is in the card's menu (hold it) and in the opened artifact's bar.
+
+func sharedWord(_ s: SharedLink) -> String { let n = s.daysLeft(); return "Shared · \(n) \(n == 1 ? "day" : "days")" }
+extension BoardModel {
+  func copyLink(_ ref: JV, title: String) {
+    guard let room = acting() else { return }
+    Task {
+      do { let s = try await room.shareLink(ref); copyText(s.link); objectWillChange.send(); say("Link copied", "Valid for \(s.daysLeft()) \(s.daysLeft() == 1 ? "day" : "days")") }
+      catch { fail("Not shared", error) }
+    }
+  }
+  func stopSharing(_ ref: JV, title: String) {
+    guard let room = acting(), let id = ref["attachment_id"].string else { return }
+    Task {
+      do { try await room.stopSharing(id); objectWillChange.send(); say("Sharing stopped", "The link to “\(title)” opens nothing any more") }
+      catch { objectWillChange.send(); fail("Not stopped", error) }
+    }
+  }
+}
+/** The round link button on an artifact: the pen's link, filled in the accent while its link holds. */
+struct CopyLinkButton: View {
+  @EnvironmentObject var model: BoardModel
+  let ref: JV
+  let title: String
+  var body: some View {
+    let live = model.room?.liveShare(ref["attachment_id"].string ?? "")
+    Button { model.copyLink(ref, title: title) } label: {
+      Sketch("link", color: live != nil ? Ink.accentFg : Ink.fg).frame(width: 20, height: 20).frame(width: 40, height: 40)
+        .background(Circle().fill(live != nil ? Ink.accent : Ink.sunken))
+        .frame(width: 44, height: 44).contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(live.map { "\(sharedWord($0)). Copy link to \(title)" } ?? "Copy link to \(title)")
+    .accessibilityHint("Anyone with the link can open it, for \(ShareStore.days) days")
   }
 }
 
@@ -906,54 +948,6 @@ struct PhotoPicker: UIViewControllerRepresentable {
   }
 }
 #endif
-
-struct SharedLink: Identifiable { let link: String; var attachmentId = ""; var shareId = ""; var id: String { link } }
-/** A link for someone outside the room: the secret after # never reaches a server. */
-struct ShareLinkSheet: View {
-  let link: String
-  let title: String
-  var attachmentId = ""
-  var shareId = ""
-  @EnvironmentObject var model: BoardModel
-  @Environment(\.dismiss) private var dismiss
-  @State private var revoked = false
-  @State private var asking = false
-  var body: some View {
-    NavigationStack {
-      VStack(alignment: .leading, spacing: 16) {
-        Text(revoked ? "Revoked: the link opens nothing any more." : "Anyone with this link can open \(title.isEmpty ? "this file" : "“\(title)”") until it runs out. The secret is after the #; the hub never sees it.")
-          .font(Face.text(15)).foregroundStyle(revoked ? Ink.urgCritical : Ink.muted)
-        Text(link).font(Face.mono(12)).textSelection(.enabled).padding(12).background(RoundedRectangle(cornerRadius: 10).fill(Ink.sunken)).strikethrough(revoked)
-        if !revoked {
-          HStack {
-            Button { copyText(link) } label: { Label("Copy", systemImage: "doc.on.doc") }.buttonStyle(QuietWay())
-            ShareLink(item: link) { Label("Send", systemImage: "square.and.arrow.up") }.buttonStyle(QuietWay())
-          }
-          // the hub forgets the share (README "Share links": DELETE attachments/:id/shares/:share_id)
-          if !attachmentId.isEmpty && !shareId.isEmpty {
-            Button(role: .destructive) { asking = true } label: { Label("Revoke Link…", systemImage: "xmark.circle").font(Face.text(15, .semibold)) }
-              .foregroundStyle(Ink.urgCritical)
-              .confirmationDialog("Revoke This Link?", isPresented: $asking, titleVisibility: .visible) {
-                Button("Revoke Link", role: .destructive) { revoke() }
-              } message: { Text("Whoever has it can no longer open the file. The file stays in the room.") }
-          }
-        }
-        Spacer()
-      }
-      .padding(20)
-      .navigationTitle("Share Link").navigationBarTitleDisplayMode(.inline)
-      .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
-    }
-    .presentationDetents([.medium])
-  }
-  private func revoke() {
-    guard let room = model.acting() else { return }
-    Task {
-      do { try await room.revokeShare(attachmentId: attachmentId, shareId: shareId); revoked = true; model.say("Link revoked", title) }
-      catch { model.fail("Not revoked", error) }
-    }
-  }
-}
 
 /** A session's files (session.mjs files drawer): what it sent and was sent, and what its questions carry, newest first. */
 struct SessionFiles: View {

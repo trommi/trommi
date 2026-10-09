@@ -286,7 +286,7 @@ struct Attachments: View {
     }
   }
 }
-struct OpenedFile: Identifiable { let id = UUID(); let name: String; let type: String; let data: Data }
+struct OpenedFile: Identifiable { let id = UUID(); let name: String; let type: String; let data: Data; /** An artifact's file (its reference): the bar offers Copy Link. */ var ref: JV? = nil }
 
 /** A video of the room, played inline: its name and a play button; a tap fetches and decrypts it, then the system's player
  *  plays it in place (full screen and AirPlay from its own controls). */
@@ -345,9 +345,12 @@ struct InlineVideo: View {
   }
 }
 
-/** A file of the room, opened: a page (sandboxed), a text, a video; and shared on (the system's sheet). */
+/** A file of the room, opened: a page (sandboxed), a text, a video; and shared on (the system's sheet). An artifact also
+ *  has Copy Link in the bar (SessionScreen.swift: the link for people outside the room; tinted while it holds, then
+ *  Stop Sharing beside it). */
 struct FileSheet: View {
   let file: OpenedFile
+  @EnvironmentObject var model: BoardModel
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     NavigationStack {
@@ -365,6 +368,18 @@ struct FileSheet: View {
       .toolbar {
         ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
         ToolbarItem(placement: .topBarTrailing) { ShareLink(item: TempFile.url(file), preview: SharePreview(file.name)) }
+        if let ref = file.ref {
+          let live = model.room?.liveShare(ref["attachment_id"].string ?? "")
+          ToolbarItem(placement: .topBarTrailing) {
+            Button { model.copyLink(ref, title: file.name) } label: { Label(live.map(sharedWord) ?? "Copy Link", systemImage: "link") }
+              .tint(live != nil ? Ink.accent : nil)
+          }
+          if live != nil {
+            ToolbarItem(placement: .topBarTrailing) {
+              Menu { Button(role: .destructive) { model.stopSharing(ref, title: file.name) } label: { Label("Stop Sharing", systemImage: "xmark.circle") } } label: { Image(systemName: "ellipsis") }
+            }
+          }
+        }
       }
     }
   }
