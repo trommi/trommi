@@ -208,13 +208,30 @@ pub enum Received {
 pub enum LogFinding {
     /// The entry came before another it needs: process the room group, or this group, further and try again.
     Early,
-    /// The entry lies behind what the device already processed: a duplicate.
+    /// The entry lies behind what the device already processed: a duplicate. Its `change` is not above the
+    /// cursor, or it is a Commit for an epoch its group has left.
     Duplicate,
     /// The entry does not verify, process or obey the rules: the finding `bad-group` (13.4). The device kept
     /// its last good state; the entry is reported to the hub.
     BadGroup,
     /// The device itself failed: its store, its entropy, or a request still pending.
     Local,
+}
+
+/// Whether `bytes` are a handshake message of `group` as it travels: an `MLSMessage` holding a `PublicMessage`.
+fn handshake_of(bytes: &[u8], group: &GroupId) -> bool {
+    if bytes.len() > MAX_COMMIT_REQUEST_LEN {
+        return false;
+    }
+    let parsed = openmls::prelude::MlsMessageIn::tls_deserialize_exact(bytes)
+        .ok()
+        .and_then(|message| message.try_into_protocol_message().ok());
+    match parsed {
+        Some(message @ ProtocolMessage::PublicMessage(_)) => {
+            GroupId::from_bytes(message.group_id().as_slice()) == Ok(*group)
+        }
+        _ => false,
+    }
 }
 
 /// Sorts an error of [`Device::process_log_entry`].
@@ -2363,33 +2380,51 @@ impl<S: Storage> Device<S> {
     /// a new epoch and the cursor are written together. Entries are handed in the hub's order across groups; a
     /// Commit that is not the next of its group, or a session Commit whose room epoch this device has not
     /// reached, is refused and changes nothing ([`log_finding`]).
+    ///
+    /// Every entry is processed once: one whose `change` is not above [`Device::cursor`] is refused as a
+    /// duplicate (`wrong-epoch`), whatever it holds. An entry processed moves the cursor to its `change`, so
+    /// handing a later entry first passes the earlier ones for good. An own request that the hub accepted
+    /// moves the cursor only when its `change` is the next one; otherwise the log brings it by again, above
+    /// the cursor, and it is met there ([`Processed::OwnCommit`], or a message that is skipped).
+    ///
+    /// An entry called a message whose bytes are a handshake message (a `PublicMessage`) of a group this
+    /// device is a leaf of or follows is refused (`bad-format`, the finding `bad-group`) and the cursor stays:
+    /// it is not passed over as a message that does not open.
     pub fn process_log_entry(&mut self, entry: &LogEntry<'_>) -> Result<Processed, Error> {
         self.transact(|this, batch| {
+            // 5.4.1: every entry once, in the hub's order. One at or below the cursor was processed, or was
+            // passed when a later one was: it is a duplicate.
+            if entry.change <= this.memory.record.cursor {
+                return Err(Error::WrongEpoch);
+            }
+            // A group this device is a leaf of is processed as a member, also when an observer of it is
+            // still held.
+            let member = this
+                .memory
+                .groups
+                .get(&entry.group)
+                .is_some_and(|meta| !meta.removed);
+            let observed = this.memory.observers.contains_key(&entry.group);
             let processed = match entry.kind {
                 LogKind::Commit {
                     bytes,
                     recovery_auth,
                 } => {
-                    if this.memory.observers.contains_key(&entry.group) {
-                        this.observe_commit(&entry.group, bytes, recovery_auth)?
-                    } else if this
-                        .memory
-                        .groups
-                        .get(&entry.group)
-                        .is_some_and(|meta| !meta.removed)
-                    {
+                    if member {
                         this.process_commit(batch, &entry.group, bytes, recovery_auth)?
+                    } else if observed {
+                        this.observe_commit(&entry.group, bytes, recovery_auth)?
                     } else {
                         Processed::Skipped
                     }
                 }
                 LogKind::Message { bytes } => {
-                    if this
-                        .memory
-                        .groups
-                        .get(&entry.group)
-                        .is_some_and(|meta| !meta.removed)
-                    {
+                    // A handshake message of a group this device follows is no application message,
+                    // whatever the entry is called: passing it over would lose a Commit.
+                    if (member || observed) && handshake_of(bytes, &entry.group) {
+                        return Err(Error::BadFormat);
+                    }
+                    if member {
                         this.process_message(batch, &entry.group, bytes)?
                     } else {
                         Processed::Skipped
