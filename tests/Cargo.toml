@@ -125,3 +125,7 @@ path = "core/vectors_recovery.rs"
 [[test]]
 name = "core_groups_hardening_merge"
 path = "core/groups_hardening_merge.rs"
+
+[[test]]
+name = "core_groups_hardening_rules"
+path = "core/groups_hardening_rules.rs"

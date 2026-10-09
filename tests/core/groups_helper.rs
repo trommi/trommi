@@ -1,15 +1,18 @@
 //! Helper sessions (5.2.3 to 5.2.6, 5.3.3, 5.3.5): founded by the main session's agent leaf, their opener,
 //! with every human device and up to seven helper devices; what the hub refuses; first contact.
 
+use trommi_core::codec;
 use trommi_core::device::{Joined, Processed, Received, WelcomeExpectation};
 use trommi_core::ids::{GroupId, SessionId, TurnId};
-use trommi_core::mls::profile::{Cut, TrommiSession};
+use trommi_core::mls::message::TrommiMessage;
+use trommi_core::mls::profile::{CommitNote, Cut, TrommiSession};
 use trommi_core::Error;
 use trommi_tests::forge::Forger;
 use trommi_tests::hub::Hub;
 use trommi_tests::{
     add_forger, add_human, cuts_for, enrol, found_helper, found_main, found_room_on, new_device,
-    now, observe, post_ok, post_refused, publish_some, settle, settle_joining, sync_ok, TestDevice,
+    now, observe, post_ok, post_refused, publish_some, settle, settle_joining, sync, sync_ok,
+    TestDevice,
 };
 
 struct Room {
@@ -49,10 +52,14 @@ fn room(checks: bool) -> Room {
     }
 }
 
-/// A new helper device that follows the room group.
-fn helper_device(hub: &Hub) -> TestDevice {
+/// A new helper device that follows the room group and, as an observer, its main session's group (section 3):
+/// by it the device knows who the opener of its helper session is.
+fn helper_device(hub: &Hub, main: &GroupId) -> TestDevice {
     let mut device = new_device();
     observe(hub, &mut device);
+    device
+        .observe_session(hub.group_info(main).unwrap())
+        .unwrap();
     device
 }
 
@@ -67,9 +74,7 @@ fn the_opener_founds_a_helper_session_with_every_human_device() {
         main,
         parent,
     } = room(true);
-    let mut h1 = helper_device(&hub);
-    // A helper device may follow its main session's group as an observer too.
-    h1.observe_session(hub.group_info(&main).unwrap()).unwrap();
+    let mut h1 = helper_device(&hub, &main);
 
     // The opener founds without a human's approval: one request, every human device and its helper device.
     let group = found_helper(&mut hub, &mut agent, &main, &mut [&mut h1]);
@@ -111,7 +116,7 @@ fn the_opener_founds_a_helper_session_with_every_human_device() {
     ));
 
     // The opener adds a second helper device and hands it the group's keys.
-    let mut h2 = helper_device(&hub);
+    let mut h2 = helper_device(&hub, &main);
     let package = h2.key_package(now()).unwrap();
     agent
         .add_to_session(&group, &h2.id(), &package, now())
@@ -163,13 +168,13 @@ fn a_helper_device_that_lost_its_state_is_readmitted_by_the_opener() {
         main,
         ..
     } = room(true);
-    let mut h1 = helper_device(&hub);
+    let mut h1 = helper_device(&hub, &main);
     let group = found_helper(&mut hub, &mut agent, &main, &mut [&mut h1]);
     settle(&hub, &mut h1);
     settle(&hub, &mut a);
 
     // It comes back as a new device with a new key: Remove of the old leaf and Add of the new, one Commit.
-    let mut again = helper_device(&hub);
+    let mut again = helper_device(&hub, &main);
     let package = again.key_package(now()).unwrap();
     agent
         .readmit_helper(&group, Cut::none(h1.id()), &again.id(), &package, now())
@@ -212,7 +217,7 @@ fn a_helper_device_that_lost_its_state_is_readmitted_by_the_opener() {
         a.readmit_helper(&group, Cut::none(again.id()), &h1.id(), &package, now()),
         Err(Error::Forbidden)
     );
-    let mut third = helper_device(&hub);
+    let mut third = helper_device(&hub, &main);
     let package = third.key_package(now()).unwrap();
     assert_eq!(
         again.readmit_helper(&group, Cut::none(agent.id()), &third.id(), &package, now()),
@@ -248,7 +253,7 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
         parent,
         ..
     } = room(true);
-    let mut h1 = helper_device(&hub);
+    let mut h1 = helper_device(&hub, &main);
     let group = found_helper(&mut hub, &mut agent, &main, &mut [&mut h1]);
     for device in [&mut a, &mut b, &mut h1] {
         settle(&hub, device);
@@ -286,7 +291,7 @@ fn the_hub_refuses_what_a_helper_session_may_not_hold() {
     assert_eq!(post_refused(&mut hub, &mut agent), [Error::BadCommit]);
 
     // The opener removes no human leaf: it builds no such Commit.
-    let mut h2 = helper_device(&hub);
+    let mut h2 = helper_device(&hub, &main);
     let package = h2.key_package(now()).unwrap();
     assert_eq!(
         agent.readmit_helper(&group, Cut::none(b.id()), &h2.id(), &package, now()),
@@ -378,7 +383,7 @@ fn after_a_takeover_the_helper_sessions_are_stale_until_cleaned_with_the_new_ope
         main,
         ..
     } = room(true);
-    let mut h1 = helper_device(&hub);
+    let mut h1 = helper_device(&hub, &main);
     let group = found_helper(&mut hub, &mut agent, &main, &mut [&mut h1]);
     for device in [&mut a, &mut b, &mut h1] {
         settle(&hub, device);
@@ -451,7 +456,7 @@ fn after_a_takeover_the_helper_sessions_are_stale_until_cleaned_with_the_new_ope
     assert_eq!(settle_joining(&hub, &mut new).len(), 2);
     settle(&hub, &mut h1);
     sync_ok(&hub, &mut b);
-    let mut h2 = helper_device(&hub);
+    let mut h2 = helper_device(&hub, &main);
     let of_h2 = h2.key_package(now()).unwrap();
     new.add_to_session(&group, &h2.id(), &of_h2, now()).unwrap();
     post_ok(&mut hub, &mut new);
@@ -470,10 +475,21 @@ fn after_a_takeover_the_helper_sessions_are_stale_until_cleaned_with_the_new_ope
             .into_iter()
             .collect()
     );
-    // The old opener is out of both groups.
-    settle(&hub, &mut agent);
-    assert!(agent.groups().unwrap().is_empty());
+    // The old opener learns from the main session's Commit that it is out (13.5). It no longer follows
+    // the main session, so it cannot tell who the helper session's opener is and judges nothing more there:
+    // the Commit that removes its leaf from the helper session is `room-behind` for it, and it derives
+    // nothing after it.
+    let results = sync(&hub, &mut agent);
+    assert!(results.contains(&Err(Error::RoomBehind)));
+    let held = agent.groups().unwrap();
+    assert_eq!(held.len(), 1);
+    assert_eq!((held[0].group, held[0].epoch), (group, 1));
+    assert_eq!(agent.group(&main).err(), Some(Error::NotFound));
     assert_eq!(agent.content_key(&group, 2), Err(Error::NoKey));
+    assert_eq!(
+        agent.send_work_trail(&group, &turn, 2, b"{}", now()),
+        Err(Error::RoomBehind)
+    );
 }
 
 #[test]
@@ -486,7 +502,7 @@ fn while_the_seat_is_empty_a_helper_session_waits_without_an_opener() {
         main,
         ..
     } = room(true);
-    let mut h1 = helper_device(&hub);
+    let mut h1 = helper_device(&hub, &main);
     let group = found_helper(&mut hub, &mut agent, &main, &mut [&mut h1]);
     for device in [&mut a, &mut b, &mut h1] {
         settle(&hub, device);
@@ -534,13 +550,33 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
         parent,
         ..
     } = room(false);
-    let mut other = new_device();
-    enrol(&mut hub, &mut a, &mut other);
+    // No device builds this founding (`groups_hardening_rules.rs`): the agent device is a member that obeys
+    // MLS only.
+    let other = Forger::new();
+    a.change_agents(&[other.id()], &[], now()).unwrap();
+    post_ok(&mut hub, &mut a);
     sync_ok(&hub, &mut b);
     let packages = hub.claim(&[a.id(), b.id()]).unwrap();
-    let session = other.found_helper(&parent, &packages, now()).unwrap();
-    post_ok(&mut hub, &mut other);
-    let group = GroupId::session(main.room_id(), session);
+    let session = TrommiSession {
+        room_id: main.room_id(),
+        session_id: SessionId::new([6; 16]),
+        parent,
+    };
+    let group = session.group_id();
+    let mut forged = other.found_session(&session);
+    let info_0 = other.group_info(&forged);
+    let room = a.room_history().unwrap().newest().clone();
+    let note = CommitNote {
+        room_epoch: room.epoch,
+        room_state: room.state,
+        time: now(),
+        cuts: Vec::new(),
+        join: false,
+    };
+    let first = other.commit(&mut forged, &codec::encode(&note).unwrap(), &packages);
+    other
+        .post_founding(&mut hub, &group, &info_0, &first)
+        .unwrap();
 
     // Each human device joins, finds the leaf that does not belong, and opens none of the session's content.
     for device in [&mut a, &mut b] {
@@ -565,11 +601,13 @@ fn first_contact_finds_a_helper_session_that_was_not_made_by_its_opener() {
     }
     // What is sent in the group it does not open: neither a step of the device that made the session nor a
     // handover of the other human device, which a hub that checks nothing stores.
-    let turn = TurnId::new([9; 16]);
-    other
-        .send_work_trail(&group, &turn, 1, b"{}", now())
-        .unwrap();
-    post_ok(&mut hub, &mut other);
+    let step = TrommiMessage::WorkTrail {
+        turn: TurnId::new([9; 16]),
+        number: 1,
+        time: now(),
+        step: b"{}".to_vec(),
+    };
+    other.post_message(&mut hub, &mut forged, &codec::encode(&step).unwrap());
     for device in [&mut a, &mut b] {
         assert_eq!(sync_ok(&hub, device), [Processed::Skipped]);
         assert_eq!(device.content_key(&group, 1), Err(Error::NoKey));

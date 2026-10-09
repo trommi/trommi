@@ -159,11 +159,19 @@ pub fn take_welcomes(hub: &Hub, device: &mut TestDevice, change: u64) -> Vec<Joi
         room,
         committer: None,
     };
-    hub.welcomes
+    let joined: Vec<Joined> = hub
+        .welcomes
         .iter()
         .filter(|welcome| welcome.change == change)
         .filter_map(|welcome| device.join_welcome(&welcome.bytes, &expected, now()).ok())
-        .collect()
+        .collect();
+    // The Commit that made the Welcome is handed again: it gives the join its place in the hub's order.
+    if !joined.is_empty() {
+        for item in hub.log.iter().filter(|item| item.change == change) {
+            let _ = process(device, item);
+        }
+    }
+    joined
 }
 
 fn hub_room(hub: &Hub) -> trommi_core::ids::RoomId {

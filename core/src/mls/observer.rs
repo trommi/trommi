@@ -602,6 +602,7 @@ impl Observer {
                 posted.recovery_auth,
                 context,
                 Some(base.as_ref()),
+                None,
             )?;
             // 8.4: the hub holds the GroupInfo a join from outside builds on, and the join names it.
             if facts.external && base.is_none() {
@@ -626,8 +627,11 @@ impl Observer {
         })
     }
 
-    /// Follows a Commit read from the hub's log: it verifies against the public state and obeys sections 3 to
-    /// 5, judged against the room state it names. On a refusal the observer is unchanged.
+    /// Follows a Commit read from the hub's log, in the hub's order: it verifies against the public state and
+    /// obeys sections 3 to 5. A session Commit must name the room epoch `context.room` stands in, which at
+    /// its place in that order is the one that was current at the hub: one that names a newer epoch came too
+    /// early (`room-behind`), one that names an older epoch is never taken (`bad-group`). On a refusal the
+    /// observer is unchanged.
     pub fn process_commit(
         &mut self,
         commit: &[u8],
@@ -636,7 +640,25 @@ impl Observer {
     ) -> Result<CommitFacts, Error> {
         self.guarded(|observer| {
             observer
-                .follow(commit, recovery_auth, context, None)
+                .follow(commit, recovery_auth, context, None, None)
+                .map(|(facts, _)| facts)
+        })
+    }
+
+    /// As [`Observer::process_commit`], for a holder whose record of the room reaches beyond the Commit's
+    /// place: one that replays a session's log, or is handed the log of a group it joined late. `room_epoch`
+    /// is the room epoch that was current at the Commit's place in the hub's order, which a session Commit
+    /// must name (5.2.1).
+    pub fn process_commit_at(
+        &mut self,
+        commit: &[u8],
+        recovery_auth: Option<&[u8]>,
+        context: &Context<'_>,
+        room_epoch: u64,
+    ) -> Result<CommitFacts, Error> {
+        self.guarded(|observer| {
+            observer
+                .follow(commit, recovery_auth, context, None, Some(room_epoch))
                 .map(|(facts, _)| facts)
         })
     }
@@ -665,6 +687,7 @@ impl Observer {
         recovery_auth: Option<&[u8]>,
         context: &Context<'_>,
         posted: Option<Option<&Hash32>>,
+        at: Option<u64>,
     ) -> Result<(CommitFacts, Vec<Vec<u8>>), Error> {
         let posting = posted.is_some();
         let message = rules::parse_commit(commit)?;
@@ -710,25 +733,33 @@ impl Observer {
                     sessions: context.sessions,
                     recovery: context.recovery,
                     max_human_devices: context.max_human_devices,
-                    posting,
+                    room_epoch: history.newest().epoch,
                 },
                 &judged,
             )?,
-            Followed::Session(record) => rules::check_session_commit(
-                &Verifier {
-                    history: context.room.ok_or(Error::RoomBehind)?,
+            Followed::Session(record) => {
+                // 5.2.1: the room epoch at the Commit's place is the one the room's history stands in:
+                // the hub takes a post against its newest state, and a log is followed in the hub's order.
+                // A holder whose history reaches further names the epoch itself.
+                let history = context.room.ok_or(Error::RoomBehind)?;
+                let verifier = Verifier {
+                    history,
                     sessions: context.sessions,
                     recovery: context.recovery,
                     max_human_devices: context.max_human_devices,
-                    posting,
-                },
-                &SessionBefore {
+                    room_epoch: at.unwrap_or(history.newest().epoch),
+                };
+                let before = SessionBefore {
                     session: record.session,
                     leaves: leaves.iter().map(|(_, device)| *device).collect(),
                     previous_room_epoch: record.previous_room_epoch,
-                },
-                &judged,
-            )?,
+                };
+                if posting {
+                    rules::check_session_commit(&verifier, &before, &judged)?;
+                } else {
+                    rules::check_stored_session_commit(&verifier, &before, &judged)?;
+                }
+            }
         }
         let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content() else {
             return Err(Error::BadCommit);
@@ -905,7 +936,8 @@ fn check_welcome(welcome: Option<&[u8]>, added: &[Vec<u8>]) -> Result<(), Error>
     }
 }
 
-/// An answer to [`SessionFacts`] for a verifier that follows no other session.
+/// An answer to [`SessionFacts`] for a verifier that follows no other session. It knows no main session, and
+/// so judges no Commit of a helper session (`room-behind`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoSessions;
 
