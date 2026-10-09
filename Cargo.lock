@@ -2223,6 +2223,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "trommi-tests"
+version = "0.0.0"
+dependencies = [
+ "trommi-core",
+]
+
+[[package]]
 name = "trommi-uniffi-bindgen"
 version = "0.0.0"
 dependencies = [
