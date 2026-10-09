@@ -1,6 +1,6 @@
 // Puts together what the web deploy delivers, from what the build wrote:
 //   node .github/scripts/web_release.mjs PUBLIC_DIR OUT_DIR
-// Environment: VERSION (the build run's number), GITHUB_SHA (the commit), GITHUB_REPOSITORY, WEB_ENTRY (shell or app),
+// Environment: VERSION (the build run's number), GITHUB_SHA (the commit), GITHUB_REPOSITORY,
 // WEB_HUB_URL (the hub the app speaks to), WEB_HSTS (on or off).
 // OUT_DIR then holds
 //   public/          the files the worker serves: PUBLIC_DIR as it is; with WEB_HSTS=on the first block of _headers
@@ -10,8 +10,10 @@
 //                    constants for the dev server and the tests, and the runtime refuses a module whose named
 //                    exports are not handlers ("Incorrect type for map entry 'FAVICON'")
 //   wrangler.jsonc   app/web/wrangler.jsonc without its build step (the deploy delivers these files and builds
-//                    nothing), with entry.js as the script and app.trommi.com as the worker's address
-//   manifest.json    what this release is (product, repository, version, commit, entry, hub, hsts) and every file
+//                    nothing) and without the R2 bucket (the connector's release is a GitHub release now; the
+//                    worker answers /connector/… and /plugins/… with 404 when no bucket is bound), with entry.js
+//                    as the script and app.trommi.com as the worker's address
+//   manifest.json    what this release is (product, repository, version, commit, hub, hsts) and every file
 //                    above with its size and SHA-256
 //   checksums.txt    the same hashes and manifest.json's, in the form of sha256sum: `sha256sum -c checksums.txt`
 // deploy_web.yml checks the files against checksums.txt, attests them and runs `wrangler deploy` in OUT_DIR.
@@ -26,7 +28,6 @@ if (!from || !out) { console.error('usage: node .github/scripts/web_release.mjs 
 const env = (name, fallback) => process.env[name] || fallback
 const version = Number(env('VERSION', '0'))
 const commit = env('GITHUB_SHA', 'dev')
-const entry = env('WEB_ENTRY', 'app')
 const hub = env('WEB_HUB_URL', 'https://hub.trommi.com')
 const hsts = env('WEB_HSTS', 'off')
 const HOST = 'app.trommi.com'
@@ -35,7 +36,6 @@ const fail = why => { console.error(`web_release: ${why}`); process.exit(1) }
 if (!Number.isSafeInteger(version) || version < 0) fail('VERSION is not a whole number')
 if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(hub)) fail(`WEB_HUB_URL is not a plain https origin: ${hub}`)
 if (!['on', 'off'].includes(hsts)) fail('WEB_HSTS is on or off')
-if (!['shell', 'app'].includes(entry)) fail('WEB_ENTRY is shell or app')
 
 /** JSON with comments (outside strings) and trailing commas, as wrangler reads it. */
 function jsonc(text) {
@@ -54,6 +54,7 @@ function jsonc(text) {
 const config = jsonc(fs.readFileSync(path.join(REPO, 'app/web/wrangler.jsonc'), 'utf8'))
 delete config.build
 delete config.$schema
+delete config.r2_buckets
 if (config.main !== 'worker.js' || config.assets?.directory !== './public') fail('app/web/wrangler.jsonc no longer names worker.js and ./public; this script must follow it')
 config.main = 'entry.js'
 // The worker's address. Named here so that a delivery never depends on what was clicked in the dashboard.
@@ -65,10 +66,8 @@ const headers = fs.readFileSync(path.join(from, '_headers'), 'utf8')
 const connect = /connect-src ([^;\n]*)/.exec(headers)?.[1].split(/\s+/) ?? []
 const hubs = connect.filter(source => source.startsWith('http'))
 if (hubs.length !== 1 || hubs[0] !== hub) fail(`_headers lets the app reach ${hubs.join(', ') || 'no hub'}, the build was asked for ${hub}`)
-if (entry === 'app') {
-  const app = fs.readFileSync(path.join(REPO, 'app/web/public/app.mjs'), 'utf8')
-  if (!app.includes(`'${hub}'`)) fail(`app/web/public/app.mjs does not name ${hub} as its hub`)
-}
+const app = fs.readFileSync(path.join(REPO, 'app/web/public/app.mjs'), 'utf8')
+if (!app.includes(`'${hub}'`)) fail(`app/web/public/app.mjs does not name ${hub} as its hub`)
 
 fs.rmSync(out, { recursive: true, force: true })
 fs.mkdirSync(out, { recursive: true })
@@ -90,8 +89,8 @@ const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).di
 const names = walk(out).map(file => path.relative(out, file).split(path.sep).join('/')).sort()
 for (const name of names) if (/[\s\\]/.test(name)) fail(`a file name with white space or a backslash: ${name}`)
 const files = names.map(name => ({ name, sha256: sha(path.join(out, name)), size: fs.statSync(path.join(out, name)).size }))
-const manifest = { product: 'trommi-web', repository: env('GITHUB_REPOSITORY', 'trommi/trommi'), version, commit, entry, worker: config.name, host: HOST, hub, hsts, files }
+const manifest = { product: 'trommi-web', repository: env('GITHUB_REPOSITORY', 'trommi/trommi'), version, commit, worker: config.name, host: HOST, hub, hsts, files }
 fs.writeFileSync(path.join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
 const sums = [...files, { name: 'manifest.json', sha256: sha(path.join(out, 'manifest.json')) }]
 fs.writeFileSync(path.join(out, 'checksums.txt'), sums.map(f => `${f.sha256}  ${f.name}\n`).join(''))
-console.log(`web_release: ${out} holds worker "${config.name}" for ${HOST}, entry ${entry}, hub ${hub}, HSTS ${hsts}, ${files.length} files`)
+console.log(`web_release: ${out} holds worker "${config.name}" for ${HOST}, hub ${hub}, HSTS ${hsts}, ${files.length} files`)

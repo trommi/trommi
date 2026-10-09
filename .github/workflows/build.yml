@@ -12,7 +12,8 @@
 #                  part built by one run
 #        commit:   the commit that was built
 #        artifact: `<part>-release`
-#      and `secrets: inherit`. The deploy workflow alone uses the environment `production`.
+#      and `secrets: inherit`. The deploy workflow alone uses the part's environment (`web`, `hub`, `connector`,
+#      `ios`), which holds OP_SERVICE_ACCOUNT_TOKEN and OP_ENVIRONMENT_ID.
 name: build
 
 on:
@@ -73,7 +74,7 @@ jobs:
             echo "- $1: $value" >> "$GITHUB_STEP_SUMMARY"
           }
           # (connector/tools.json and prompt.md, demo/: the app's build reads them)
-          part web 'app/web/|app/shell/|tests/web/|tests/shell/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
+          part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
 
   web:
     name: Web app (test and build)
@@ -84,10 +85,6 @@ jobs:
     permissions:
       contents: read
     env:
-      # What is built. `shell`: the stand-in page of app/shell (the core's self test under the app's worker and
-      # headers), while the real app does not build yet. THE ONE LINE TO CHANGE when it does: `app`; then
-      # app/shell and tests/shell are deleted.
-      WEB_ENTRY: shell
       # The hub the app speaks to. The build is checked against it: the page's policy must name this hub and no other.
       WEB_HUB_URL: https://hub.trommi.com
       # Strict-Transport-Security with preload on every answer: `on` once the owner says so. Not to be taken back
@@ -127,26 +124,15 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: The Rust core for the browser
         run: sh core/wasm/build.sh
-      - name: Test and build (shell)
-        if: env.WEB_ENTRY == 'shell'
-        run: |
-          set -eu
-          node app/shell/build.mjs "$RUNNER_TEMP/public"
-          node tests/shell/check.mjs "$RUNNER_TEMP/public"
-          echo "PUBLIC=$RUNNER_TEMP/public" >> "$GITHUB_ENV"
-      - name: Test and build (app)
-        if: env.WEB_ENTRY == 'app'
-        run: |
-          set -eu
-          npm test
-          node tests/web/build/build.test.mjs
-          node app/web/dev/build.mjs --write
-          echo "PUBLIC=app/web/public" >> "$GITHUB_ENV"
+      - name: Test
+        run: npm test
+      - name: Build
+        run: node app/web/dev/build.mjs --write
       # What is delivered: the files, the worker, its settings, and the manifest that names every file.
       - name: Put the release together
         run: |
           set -eu
-          node .github/scripts/web_release.mjs "$PUBLIC" out
+          node .github/scripts/web_release.mjs app/web/public out
           (cd out && sha256sum -c --quiet checksums.txt)
           # the settings are tried as wrangler reads them; nothing is sent
           npm ci --no-audit --no-fund --ignore-scripts --prefix .github/tools/wrangler
@@ -154,7 +140,7 @@ jobs:
           {
             echo "### Web app, build $VERSION"
             echo
-            echo "entry \`$WEB_ENTRY\`, hub \`$WEB_HUB_URL\`, HSTS \`$WEB_HSTS\`, $(jq '.files | length' out/manifest.json) files, manifest \`$(sha256sum out/manifest.json | cut -d' ' -f1)\`"
+            echo "hub \`$WEB_HUB_URL\`, HSTS \`$WEB_HSTS\`, $(jq '.files | length' out/manifest.json) files, manifest \`$(sha256sum out/manifest.json | cut -d' ' -f1)\`"
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
