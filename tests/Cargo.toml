@@ -85,5 +85,7 @@ path = "core/groups_lifetimes.rs"
 [[test]]
 name = "core_groups_cost"
 path = "core/groups_cost.rs"
+
+[[test]]
 name = "core_recovery_construct"
 path = "core/recovery_construct.rs"
