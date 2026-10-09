@@ -90,18 +90,18 @@ fn every_code_of_section_16_is_a_case_with_its_spelling() {
 
 #[test]
 fn arguments_of_the_wrong_shape_are_bad_format() {
-    let (device, room) = founder(MemoryStorage::new());
+    let (device, _) = founder(MemoryStorage::new());
     assert_eq!(code_of(device.group(vec![1; 31])), ErrorCode::BadFormat);
     assert_eq!(
         code_of(device.found_room(vec![1; 31], now())),
         ErrorCode::BadFormat
     );
     assert_eq!(
-        code_of(device.hub_sign_in(room.clone(), "https://hub.example".into(), vec![0; 31])),
+        code_of(device.hub_sign_in("https://hub.example".into(), vec![0; 31])),
         ErrorCode::BadFormat
     );
     assert_eq!(
-        code_of(device.hub_sign_in(room, "HTTPS://Hub.Example/".into(), vec![0; 32])),
+        code_of(device.hub_sign_in("HTTPS://Hub.Example/".into(), vec![0; 32])),
         ErrorCode::BadFormat
     );
     assert_eq!(
@@ -114,7 +114,7 @@ fn arguments_of_the_wrong_shape_are_bad_format() {
 fn the_sign_in_is_this_devices_and_verifies() {
     let (device, room) = founder(MemoryStorage::new());
     let signed = device
-        .hub_sign_in(room.clone(), "https://hub.example".into(), vec![5; 32])
+        .hub_sign_in("https://hub.example".into(), vec![5; 32])
         .expect("signed");
     let verified = hub_auth::verify(
         &hub_auth::SignedHubAuth {
@@ -134,23 +134,25 @@ fn the_sign_in_is_this_devices_and_verifies() {
 }
 
 #[test]
-fn only_a_refusal_for_good_undoes_an_outbox_entry() {
+fn a_refusal_that_judges_the_request_undoes_its_outbox_entry() {
     let (device, _) = founder(MemoryStorage::new());
     let entry = device.outbox().expect("the outbox").remove(0);
+    // No hub answers with these: nothing is changed.
+    for code in [ErrorCode::Storage, ErrorCode::Busy, ErrorCode::WeakPassword] {
+        assert_eq!(
+            code_of(device.outbox_refused(entry.id, code)),
+            ErrorCode::BadFormat
+        );
+    }
+    // These say nothing about the request: the entry stays and is sent again.
     for code in [
         ErrorCode::Internal,
         ErrorCode::Overloaded,
         ErrorCode::RateLimited,
         ErrorCode::Unauthorised,
-        ErrorCode::QuotaExceeded,
         ErrorCode::ClientTooOld,
-        ErrorCode::Storage,
-        ErrorCode::WeakPassword,
     ] {
-        assert_eq!(
-            code_of(device.outbox_refused(entry.id, code)),
-            ErrorCode::BadFormat
-        );
+        device.outbox_refused(entry.id, code).expect("taken");
         assert_eq!(device.outbox().expect("the outbox"), vec![entry.clone()]);
     }
     device
@@ -175,13 +177,13 @@ fn a_failed_write_changes_nothing_and_the_device_goes_on() {
 #[test]
 fn a_second_owner_is_found_out_and_the_first_signs_nothing_more() {
     let store = MemoryStorage::new();
-    let (first, room) = founder(store.handle());
+    let (first, _) = founder(store.handle());
     let second = CoreDevice::open_on(Box::new(store.handle())).expect("the same state once more");
     second.key_package(now()).expect("the second writes");
     assert_eq!(code_of(first.key_package(now())), ErrorCode::Storage);
     assert!(!first.is_owner().expect("asked"));
     assert_eq!(
-        code_of(first.hub_sign_in(room, "https://hub.example".into(), vec![1; 32])),
+        code_of(first.hub_sign_in("https://hub.example".into(), vec![1; 32])),
         ErrorCode::Storage
     );
     assert!(first.outbox().expect("the outbox").is_empty());
@@ -350,12 +352,12 @@ fn a_store_that_calls_its_device_back_is_refused_not_waited_for() {
 
 #[test]
 fn a_closed_device_answers_nothing() {
-    let (device, room) = founder(MemoryStorage::new());
+    let (device, _) = founder(MemoryStorage::new());
     device.close();
     assert_eq!(code_of(device.id()), ErrorCode::Internal);
     assert_eq!(code_of(device.outbox()), ErrorCode::Internal);
     assert_eq!(
-        code_of(device.hub_sign_in(room, "https://hub.example".into(), vec![1; 32])),
+        code_of(device.hub_sign_in("https://hub.example".into(), vec![1; 32])),
         ErrorCode::Internal
     );
     device.close();

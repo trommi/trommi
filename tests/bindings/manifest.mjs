@@ -195,6 +195,19 @@ const exported = [...layer.matchAll(/^export const (\w+) = plain\('(\w+)'\)$/gm)
 for (const [, name, raw] of exported) if (camel(raw) !== name) problem(`trommi-core.js exports ${name} for ${raw}`)
 const layerFunctions = exported.map(([, name]) => name).sort()
 if (!same(layerFunctions, Object.keys(manifest.functions).sort())) problem('trommi-core.js does not export exactly the facade\'s functions')
+// The argument copy of the JavaScript layer walks as deep as the deepest argument any call takes, no less (a room
+// served with its sessions would be refused) and no more. A list and a record are one level each.
+const depthOf = type => {
+  let inner
+  if ((inner = /^list<(.*)>$/.exec(type))) return 1 + depthOf(inner[1])
+  if ((inner = /^optional<(.*)>$/.exec(type))) return depthOf(inner[1])
+  const fields = manifest.records[type]
+  return fields ? 1 + Math.max(0, ...Object.values(fields).map(depthOf)) : 0
+}
+const everyCall = [...Object.values(manifest.functions), ...Object.values(manifest.objects).flatMap(Object.values)]
+const deepest = Math.max(...everyCall.flatMap(declared => declared.arguments.map(argument => depthOf(argument.type))))
+const allowed = Number(/const MAX_DEPTH = (\d+)/.exec(layer)?.[1])
+if (allowed !== deepest) problem(`trommi-core.js copies arguments ${allowed} levels deep, the deepest argument of the facade has ${deepest}`)
 const deviceCalls = [.../const DEVICE_CALLS = \[(.*?)\]/s.exec(layer)[1].matchAll(/'(\w+)'/g)].map(([, name]) => camel(name)).sort()
 const deviceMethods = Object.keys(manifest.objects.CoreDevice).filter(name => !['create', 'open', 'close'].includes(name)).sort()
 if (!same(deviceCalls, deviceMethods)) problem('trommi-core.js does not list exactly the device\'s calls')
