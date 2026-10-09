@@ -1,13 +1,18 @@
 //! What the tests of stored content and live messages share: dice on a random source, and random strokes,
 //! shapes, board items and whole histories of a board made with them.
 
+use std::collections::BTreeMap;
 use trommi_core::board::ShapeId;
 use trommi_core::board_items::{
     Board, Ink, ItemBody, Note, NoteKind, Pen, Picture, Point, Shape, ShapeKind, Stroke,
 };
+use trommi_core::chain::{
+    ChainRecords, Chains, EpochEnd, GroupFacts, Head, Outcome, Receipt, Role,
+};
 use trommi_core::crypto::{Entropy, Secret};
 use trommi_core::files::FileRef;
-use trommi_core::ids::{DeviceId, FileId, Hash32};
+use trommi_core::ids::{DeviceId, FileId, GroupId, Hash32, RoomId};
+use trommi_core::objects::Objects;
 use trommi_core::Error;
 
 /// Random choices from a random source.
@@ -238,4 +243,111 @@ pub fn apply_all<'a>(
         board.apply(item.sender, item.seq, ItemBody::decode(&item.payload)?)?;
     }
     Ok(())
+}
+
+// ---- one party's view of one group, written by hand ----
+
+/// The room of every hand-written view.
+pub const ROOM: RoomId = RoomId::new([1; 32]);
+
+/// What one device, or the hub, knows of one group in its epoch 0: the leaves with their roles, the content
+/// key if it holds one, and what it accepted. It stands in for the MLS engine where a test is about stored
+/// content alone.
+pub struct View {
+    /// The group.
+    pub group: GroupId,
+    /// The leaves and their roles.
+    pub leaves: BTreeMap<DeviceId, Role>,
+    /// The content key of epoch 0; the hub holds none.
+    pub key: Option<[u8; 32]>,
+    /// The hash of every accepted envelope.
+    pub accepted: BTreeMap<(DeviceId, u64), Hash32>,
+    /// The chains.
+    pub chains: Chains,
+    /// The objects.
+    pub objects: Objects,
+}
+
+impl View {
+    /// A view of `group` with these leaves.
+    pub fn new(group: GroupId, leaves: &[(DeviceId, Role)], key: Option<[u8; 32]>) -> Self {
+        Self {
+            group,
+            leaves: leaves.iter().copied().collect(),
+            key,
+            accepted: BTreeMap::new(),
+            chains: Chains::new(),
+            objects: Objects::new(),
+        }
+    }
+
+    /// Stores what a receipt changes, as one write.
+    pub fn store(&mut self, receipt: &Receipt) -> Result<(), Error> {
+        self.chains.apply(receipt.advance())?;
+        if let Outcome::Taken {
+            transition: Some(transition),
+            ..
+        } = receipt.outcome()
+        {
+            self.objects.apply(transition)?;
+        }
+        self.accepted.insert(
+            (receipt.advance().sender, receipt.advance().head.seq),
+            receipt.hash(),
+        );
+        Ok(())
+    }
+}
+
+impl GroupFacts for View {
+    fn room(&self) -> RoomId {
+        ROOM
+    }
+
+    fn processed_epoch(&self, group: &GroupId) -> Result<Option<u64>, Error> {
+        Ok((*group == self.group).then_some(0))
+    }
+
+    fn leaf_role(&self, _: &GroupId, epoch: u64, device: &DeviceId) -> Result<Option<Role>, Error> {
+        Ok(self.leaves.get(device).copied().filter(|_| epoch == 0))
+    }
+
+    fn seat(&self, _: &GroupId, _: u64) -> Result<Option<DeviceId>, Error> {
+        Ok(self
+            .leaves
+            .iter()
+            .find(|(_, role)| **role == Role::Agent)
+            .map(|(device, _)| *device))
+    }
+
+    fn cut(&self, _: &GroupId, _: &DeviceId) -> Result<Option<Head>, Error> {
+        Ok(None)
+    }
+
+    fn epoch_end(&self, _: &GroupId, _: u64) -> Result<Option<EpochEnd>, Error> {
+        Ok(None)
+    }
+
+    fn is_stale(&self, _: &GroupId) -> Result<bool, Error> {
+        Ok(false)
+    }
+
+    fn is_human_now(&self, device: &DeviceId) -> Result<bool, Error> {
+        Ok(self.leaves.get(device) == Some(&Role::Human))
+    }
+
+    fn content_key(&self, _: &GroupId, _: u64) -> Result<Option<Secret<32>>, Error> {
+        Ok(self.key.map(Secret::new))
+    }
+}
+
+impl ChainRecords for View {
+    fn accepted_hash(
+        &self,
+        _: &GroupId,
+        sender: &DeviceId,
+        seq: u64,
+    ) -> Result<Option<Hash32>, Error> {
+        Ok(self.accepted.get(&(*sender, seq)).copied())
+    }
 }
