@@ -37,7 +37,7 @@ body[data-page="gallery"] #gallery {
 @media (max-width: 860px) { .art-kinds a { min-height: 36px; } }
 
 /* ---- a tile (his word, 8 October: compact, one object): a soft rounded frame around the picture and its one line
-   (the session's drawing, the title, when); Open and Share as small round icons on the picture's corner. A tile not
+   (the session's drawing, the title, when); Open and Copy link as small round icons on the picture's corner. A tile not
    made yet (.art-ph) has the same frame and size, empty. ---- */
 .art-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--s-5); margin: 0; padding: 0; list-style: none; }
 .art-grid > .gal-none { grid-column: 1 / -1; }
@@ -58,38 +58,23 @@ body[data-page="gallery"] #gallery {
 .art-act { display: grid; place-items: center; width: 32px; height: 32px; box-sizing: border-box; border-radius: 50%; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 0 0 1px var(--line-strong), 0 1px 4px rgb(0 0 0 / .14); color: var(--fg); cursor: pointer; list-style: none; text-decoration: none; }
 .art-act::-webkit-details-marker { display: none; }
 .art-act .sketch { width: 18px; height: 18px; }
+.art-act { padding: 0; border: 0; font: inherit; }
 .art-act:hover, .art-share[open] > .art-act { background: var(--surface); box-shadow: 0 0 0 1.5px var(--fg), 0 2px 6px rgb(0 0 0 / .18); }
-.art-act.is-on, .art-share[open] > .art-act.is-on { background: var(--fg); color: var(--bg); }
+/* Copy link while its link holds: filled in the accent (app.mjs shareControl) */
+.shr.is-tile { display: contents; }
+.shr.is-on > .art-act.shr-copy, .shr.is-on > .art-act.shr-copy:hover { background: var(--accent); color: var(--accent-fg); box-shadow: 0 0 0 1px var(--accent), 0 1px 4px rgb(0 0 0 / .2); }
+.shr.is-on > .art-act.shr-copy:hover { background: var(--accent-hover); }
 .art-act:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-/* Share opens under the icons, over its own tile, as wide as the tile */
-.art-share { position: static; }
-.art-share-body { position: absolute; z-index: var(--z-pop); top: 40px; left: 0; right: -7px; box-sizing: border-box; padding: var(--s-3); border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
+/* The three dots (only while it is shared): how long the link still holds and Stop sharing, under the icons */
+.art-share { position: static; order: -1; }
+.art-share[hidden] { display: none; }
+.art-share-body { position: absolute; z-index: var(--z-pop); top: 40px; left: 0; right: -7px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 var(--s-2); box-sizing: border-box; padding: var(--s-2) var(--s-3); border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
+.art-share-body .shr-word { color: var(--muted); font: 500 var(--t-sm)/1.2 var(--font); white-space: nowrap; }
 @media (max-width: 860px) {
   .art-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
   .art-card { padding: 5px 5px 7px; border-radius: 14px; }
   .art-acts { top: 10px; left: 5px; right: 10px; }
-  .art-share-body { right: -5px; }
+  .art-share-body { top: 44px; right: -5px; }
   .art-act { width: 36px; height: 36px; }
   .art-ago { display: none; }
 }
-
-/* ---- Share: a switch, how long, then the link, Copy, until when, Stop sharing ---- */
-.lk-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 0 var(--s-3); border: 0; border-radius: 9px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); text-decoration: none; white-space: nowrap; cursor: pointer; }
-.lk-btn:hover { background: var(--sunken); }
-.is-done > .lk-btn, .is-done.lk-copy > .lk-btn { box-shadow: inset 0 0 0 1.5px var(--fg); }
-.lk-share { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); margin: 0; padding: 0; }
-.lk-share.is-busy { opacity: .6; pointer-events: none; }
-.lk-switch { position: relative; display: inline-flex; align-items: center; gap: var(--s-2); min-height: 34px; font: 600 var(--t-sm)/1 var(--font); color: var(--fg); cursor: pointer; }
-.lk-switch > input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-.lk-knob { position: relative; flex: none; width: 34px; height: 20px; border-radius: 10px; background: var(--line-strong); transition: background 120ms ease-out; }
-.lk-knob::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px var(--shade); transition: translate 120ms ease-out; }
-.lk-switch > input:checked + .lk-knob { background: var(--fg); }
-.lk-switch > input:checked + .lk-knob::after { translate: 14px 0; }
-.lk-switch > input:focus-visible + .lk-knob { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.lk-days select { min-height: 32px; padding: 0 var(--s-2); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
-.lk-until { color: var(--muted); font: 500 var(--t-sm)/1.2 var(--font); }
-.lk-copy { display: flex; gap: 6px; flex: 1 1 100%; min-width: 0; order: 3; }
-.lk-url { flex: 1 1 auto; min-width: 0; min-height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--sunken); color: var(--muted); font: 500 var(--t-xs)/1 var(--mono, ui-monospace, monospace); text-overflow: ellipsis; }
-.lk-stop { order: 4; box-shadow: none; padding: 0 var(--s-1); color: var(--muted); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
-.lk-stop:hover { background: none; color: var(--urg-critical); }
-@media (max-width: 860px) { .lk-btn { min-height: 36px; } .lk-switch { min-height: 40px; } }

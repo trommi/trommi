@@ -221,6 +221,14 @@ html:where([data-ui]), :where([data-ui]) body { margin: 0; overflow: hidden; ove
 .asset-copy { background: none; color: var(--fg); border-color: var(--line-strong); }
 .asset-copy:hover { border-color: var(--fg); }
 .asset-actions { flex-wrap: wrap; }
+/* Copy link (app.mjs shareControl): the link for people outside the room. While it holds the button is filled in the
+   accent's wash and says "Shared · N days"; Stop sharing stands beside it, quiet. */
+.shr { display: inline-flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+.shr.is-on > .asset-copy, .has-preview .shr.is-on > .asset-copy { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.has-preview .shr.is-on > .asset-copy { padding: 0 var(--s-3); }
+.shr-stop { min-height: 32px; padding: 0 var(--s-1); border: 0; background: none; color: var(--muted); font: 500 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; cursor: pointer; }
+.shr-stop:hover { color: var(--urg-critical); }
+.shr-stop[hidden] { display: none; }
 .asset-preview { grid-area: preview; position: relative; display: grid; place-items: center; width: 176px; height: 112px; overflow: hidden; border-radius: 6px; background: var(--sunken); color: var(--faint); text-decoration: none; }
 .asset-preview::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; }
 a.asset-preview:hover::after { box-shadow: inset 0 0 0 1px var(--line-strong); }
@@ -726,16 +734,16 @@ body > main#room:not(.room-paged) > .room-head .room-bell { display: none; }
 @media (max-width: 860px) { .page-head p { font-size: var(--t-md); margin-top: 0; } .page-head.page-head { margin-bottom: var(--s-4); } body > main#room:not(.room-paged) > .room-head h2 { display: none; } }
 
 /* ---- One quiet button for every secondary action (his pick "outline", 7 October): white, a fine line, radius 10, the
-   ink's words: Open and Copy on Links, Take back, Close (the keys sheet), Cancel, Back, Log out of this device, the
-   invite clipboard's Copy, Copy link and Stop sharing. ---- */
-html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .clip-copy-word, .clip-copy.is-small .clip-copy-word) {
+   ink's words: Take back, Close (the keys sheet), Cancel, Back, Log out of this device, the
+   invite clipboard's Copy. ---- */
+html body :is(.tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no, .clip-copy-word, .clip-copy.is-small .clip-copy-word) {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--s-2); min-height: 36px; height: auto; padding: 0 14px;
   border: 0; border-radius: 10px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg);
   font: 600 var(--t-sm)/1 var(--font); text-decoration: none; cursor: pointer;
 }
-html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no):hover, html body .clip-copy:hover .clip-copy-word { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
+html body :is(.tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no):hover, html body .clip-copy:hover .clip-copy-word { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
 html body .clip-copy.is-small .clip-copy-word { min-height: 30px; padding: 0 10px; }
-@media (pointer: coarse) { html body :is(.lk-btn, .tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no) { min-height: 44px; } }
+@media (pointer: coarse) { html body :is(.tc-way, .keys-close, .room-back, .room-logout-line a, .desk-duck-no) { min-height: 44px; } }
 
 /* ---- The agent's advice (his pick "stroke", 7 October): one short, slightly wavy pen stroke at the foot of the advised
    tile or option, centred a little above its bottom edge (on a card's option at the bottom right); white on a filled

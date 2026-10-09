@@ -136,9 +136,8 @@ body[data-filter] .jump { display: none; }
 .asset-card.is-gone strong { color: var(--muted); }
 /* The server-rendered card (session.mjs assetCard): an artifact, sober, always with a picture of it on
    the left (controller assetthumb: the decrypted picture, or a page's first screen; else the drawn kind), what it is,
-   Open, and one Copy link that copies the link anyone can open (controller share). Card Nr. 197. */
+   Open, and one Copy link that copies the link anyone can open (app.mjs shareControl). Card Nr. 197. */
 .asset-card.has-preview { display: grid; grid-template-columns: 176px minmax(0, 1fr); grid-template-areas: "preview text" "preview actions"; align-items: start; gap: var(--s-2) var(--s-4); max-width: 36rem; padding: var(--s-3); border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
-.asset-card.has-preview[data-busy] .asset-copy { opacity: .6; pointer-events: none; }
 .asset-card.has-preview.is-gone { grid-template-areas: "preview text"; border: 0; background: none; box-shadow: 0 0 0 1px var(--line-strong); }
 .asset-card.has-preview.is-gone .asset-preview { opacity: .6; }
 .asset-card { --asset-open-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14 4h6v6 M20 4l-9 9 M18 14v5.5H4.5V6H10' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); --asset-link-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2 M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }

@@ -3,59 +3,34 @@
 // "Artifacts"): one pile "Artifacts N" at the foot of the Desk and the page it leads to, both kinds together, the newest
 // first, with a small filter All · Media · Pages.
 //   GET  /artifacts                  everything (?kind=media: pictures, videos, files; ?kind=pages: the pages)
-//   POST /artifacts/share            att=<attachment_id> days=1..30: a link for people outside the room; stop=<share_id>: end it
 // Media (ui.mjs galleryItems without its pages): the assets the sessions published and the questions' own pictures and
 // videos (one tile each per question). Files sent in a plain chat message are not here: they stand in their session's
 // Files drawer (session.mjs looseFiles). Pages (ui.mjs pageItems): published pages, pages sent as files, a page behind a
 // picture; no foreign websites; one per file.
-import { CLIENT, core, hubUrl } from './app.mjs'
-import { Controller, agoSpan, artifactItems, controller, html, mediaPreview, pageItems, raw, sk, smallMark } from './ui.mjs'
+import { CLIENT, core, hubUrl, shareControl, sharesLoaded } from './app.mjs'
+import { Controller, agoSpan, artifactItems, controller, html, mediaPreview, raw, sk, smallMark } from './ui.mjs'
 const NOUN = { image: ['picture', 'pictures'], video: ['video', 'videos'], html: ['page', 'pages'], file: ['file', 'files'] }
 const countOf = i => { const n = i.more ?? 1, [one, many] = NOUN[i.type] ?? NOUN.file; return `${n} ${n === 1 ? one : many}` }
-// Share (a page's link icon): a switch that makes a share link in this browser (client.shareAttachment: the secret and the
-// file key only after the #, the hub keeps the secret's hash), then the link to copy, until when it holds (7 days unless
-// chosen, 30 at most) and Stop sharing. The links this device made are kept in its storage (myShares); one made
-// elsewhere is not shown here.
-const DAYS = [1, 3, 7, 14, 30]
-let shares = []   // this device's open shares, newest first (loaded when the page opens and after each change)
-const loadShares = async t => { try { shares = await t.hub.myShares() } catch (err) { console.warn('shares', err); shares = [] } }
-const shareOf = att => (att ? shares.find(x => x.attachment_id === att && x.link && x.expires_at > Date.now()) ?? null : null)
 // (an id for a line: the key made short and safe)
 const rowId = key => { let h = 5381; for (let i = 0; i < key.length; i++) h = ((h << 5) + h + key.charCodeAt(i)) >>> 0; return `lk-${h.toString(36)}` }
-const until = ts => new Date(ts).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-
-function shareForm(i, base) {
-  const sh = shareOf(i.att)
-  if (!sh) {
-    return html`<form class="lk-share" method="post" action="${base}/artifacts/share" data-controller="lkshare"><input type="hidden" name="att" value="${i.att}">
-<label class="lk-switch"><input type="checkbox" name="on" data-action="change->lkshare#flip"><span class="lk-knob" aria-hidden="true"></span><span>Share outside the room</span></label>
-<label class="lk-days"><span class="offscreen">How long</span><select name="days">${DAYS.map(d => html`<option value="${d}"${d === 7 ? raw(' selected') : ''}>for ${d === 1 ? '1 day' : `${d} days`}</option>`)}</select></label>
-<noscript><button type="submit" class="lk-btn">Share</button></noscript></form>`
-  }
-  return html`<form class="lk-share is-on" method="post" action="${base}/artifacts/share" data-controller="lkshare"><input type="hidden" name="att" value="${i.att}"><input type="hidden" name="share" value="${sh.share_id}">
-<label class="lk-switch"><input type="checkbox" name="on" checked data-action="change->lkshare#flip"><span class="lk-knob" aria-hidden="true"></span><span>Shared</span></label>
-<span class="lk-until">until ${until(sh.expires_at)}</span>
-<span class="lk-copy" data-controller="copy" data-copy-text-value="${sh.link}"><input class="lk-url" type="text" readonly value="${sh.link}" aria-label="The link for people outside the room" data-action="focus->lkshare#pick"><button type="button" class="lk-btn" data-action="copy#copy"><span data-copy-target="label">Copy link</span></button></span>
-<button type="submit" class="lk-btn lk-stop" name="stop" value="${sh.share_id}">Stop sharing</button></form>`
-}
 // ---- a tile (his word, 8 October: compact, one object): the picture in a soft rounded frame, one line under it (the
-// session's small drawing, the title, when, small), the actions as small round icons on the picture: Open, and on a
-// page Share (a link for people outside the room, 1 to 30 days; its icon filled while a link holds). A question's
-// several pictures: the first, with their count on it. ----
+// session's small drawing, the title, when, small), the actions as small round icons on the picture: Open (the arrow),
+// and on a file of the room Copy link (app.mjs shareControl: a link for people outside the room, 30 days; filled in the
+// accent while it holds, then the three dots beside it hold Stop sharing). A question's several pictures: the first,
+// with their count on it, no link. ----
 const pagePreview = i => (i.pic ? mediaPreview({ type: 'image', url: i.pic }) : mediaPreview({ type: 'html', url: i.url, name: i.title }))
 const tileLine = (i, title) => html`<div class="art-line"><span class="gal-who" title="${i.agent.name}">${smallMark(i.agent)}</span>${title}${agoSpan(i.ts, 'ago art-ago')}</div>`
 const openIcon = (go, title) => html`<a ${go('art-act')} title="Open" aria-label="Open ${title}">${sk('go')}</a>`
 function mediaTile(i) {
   const go = cls => html`data-nav href="${i.href}" class="${cls}"`
   return html`<li class="art-item art-card" data-kind="media"><a ${go('art-shot')} title="${i.title} · ${i.agent.name} · ${countOf(i)}">${mediaPreview(i)}${(i.more ?? 1) > 1 ? html`<b class="art-n" aria-label="${countOf(i)}">${i.more}</b>` : ''}</a>
-${tileLine(i, html`<a ${go('art-t')}>${i.title}</a>`)}<div class="art-acts">${openIcon(go, i.title)}</div></li>`
+${tileLine(i, html`<a ${go('art-t')}>${i.title}</a>`)}<div class="art-acts">${openIcon(go, i.title)}${shareControl(i.att, i.title, { tile: true })}</div></li>`
 }
-function pageTile(i, base) {
+function pageTile(i) {
   const own = i.kind === 'page'
   const go = cls => (own ? html`data-nav href="${i.href}" class="${cls}"` : html`href="${i.href}" target="_blank" rel="noopener" class="${cls}"`)
-  const on = Boolean(shareOf(i.att))
   return html`<li class="art-item art-card" id="${rowId(i.key)}" data-kind="pages"><a ${go('art-shot')} aria-label="Open ${i.title}">${pagePreview(i)}</a>
-${tileLine(i, html`<a ${go('art-t')}>${i.title}</a>`)}<div class="art-acts">${openIcon(go, i.title)}${i.att ? html`<details class="art-share" data-controller="pops"><summary class="art-act${on ? ' is-on' : ''}" title="${on ? 'Shared: the link' : 'Share: a link for 1 to 30 days'}" aria-label="Share ${i.title}">${sk('link')}</summary><div class="art-share-body">${shareForm(i, base)}</div></details>` : ''}</div></li>`
+${tileLine(i, html`<a ${go('art-t')}>${i.title}</a>`)}<div class="art-acts">${openIcon(go, i.title)}${shareControl(i.att, i.title, { tile: true })}</div></li>`
 }
 // (a tile not made yet: the same size, filled when it comes near; controller "artmore")
 const placeholder = at => html`<li class="art-item art-card art-ph" data-at="${at}" aria-hidden="true"><span class="art-shot"></span><div class="art-line">&nbsp;</div></li>`
@@ -69,7 +44,7 @@ const filters = (kind, base) => html`<nav class="art-kinds" aria-label="Kind">${
 // were already (shown).
 const STEP = 25
 let shown = STEP, tileAt = () => ''
-const tileOf = (x, base) => (x.kind === 'media' ? mediaTile(x.item) : pageTile(x.item, base))
+const tileOf = (x, base) => (x.kind === 'media' ? mediaTile(x.item) : pageTile(x.item))
 const itemsOf = (model, base, kind) => artifactItems(model, base).filter(x => !kind || x.kind === kind)
 function artifactsList(model, base, kind) {
   const items = itemsOf(model, base, kind)
@@ -100,35 +75,16 @@ ${n ? artifactsList(model, base, kind) : ''}
 </div></main>`
 }
 
-// The switch sends its form at once; the link's field is chosen whole when it is focused.
-controller('lkshare', class extends Controller {
-  flip() { this.element.classList.add('is-busy'); this.element.requestSubmit() }
-  pick(event) { event.target.select() }
-})
-
 const kindHere = () => kindOf2(new URLSearchParams(globalThis.location?.search ?? '').get('kind'))
 export function register(t) {
   // (the sessions' conversations are read as far as they are loaded: opening the page loads each one's newest page once)
   const asked = new Set()
   t.get(/^\/artifacts$/, async ({ req, res, url }) => {
-    await loadShares(t)
+    await sharesLoaded()
     for (const a of t.hub.state().agents) if (!asked.has(a.id)) { asked.add(a.id); Promise.resolve(t.hub.loadOlder?.(a.id)).catch(() => {}) }
     const m = t.model()
     shown = STEP
     t.page(req, res, { model: m, title: 'Artifacts · Trommi', view: 'artifacts', stream: null, bodyAttrs: ' data-page="gallery"', main: artifactsMain(m, t.BASE, kindOf2(url.searchParams.get('kind'))) })
-  })
-  t.post(/^\/artifacts\/share$/, async ({ req, res, form }) => {
-    const att = String(form.get('att') ?? ''), stop = String(form.get('stop') ?? '') || (!form.has('on') ? String(form.get('share') ?? '') : '')
-    if (!/^[0-9a-f]{32}$/.test(att) || (stop && !/^[0-9a-f]{32}$/.test(stop))) { res.code = 400; return }
-    let said
-    try {
-      if (stop) { await t.hub.stopSharing(stop, att); said = { head: 'Sharing stopped', line: 'The link opens nothing any more' } }
-      else if (!shareOf(att)) { const r = await t.hub.shareFile(att, Number(form.get('days') ?? 7)); said = { head: 'Shared', line: `Anyone with the link can open it until ${until(r.expires_at)}` } }
-    } catch (err) { said = { head: stop ? 'Not stopped' : 'Not shared', line: err.message, role: 'alert' } }
-    await loadShares(t)
-    if (!t.wantsStream(req)) return t.redirect(res, `${t.BASE}/artifacts`)
-    const m = t.model(), i = pageItems(m, t.BASE).find(x => x.att === att)
-    t.sendStream(req, res, `${i ? t.stream('replace', rowId(i.key), pageTile(i, t.BASE)) : ''}${said ? t.toast(said) : ''}`)
   })
   tileAt = at => { const x = itemsOf(t.model(), t.BASE, kindHere())[at]; return x ? tileOf(x, t.BASE) : '' }
   t.live('artifacts', {
