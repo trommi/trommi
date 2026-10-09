@@ -57,12 +57,20 @@ pub const MAX_CREDENTIAL_ID_LEN: usize = 1023;
 pub const PASSWORD_MIN: usize = 12;
 /// The words of an Emergency Kit.
 pub const KIT_WORDS: usize = 12;
+/// Room for twelve words of the list (none is longer than nine letters) and the spaces between, so that the
+/// text never moves while it grows.
+const KIT_TEXT_CAPACITY: usize = KIT_WORDS * 10;
 /// The length of a sealed copy of the recovery code.
 pub const SEALED_COPY_LEN: usize = 1 + NONCE_LEN + 32 + TAG_LEN;
 /// The first byte of a sealed copy.
 const SEALED_COPY_VERSION: u8 = 2;
 /// The key derivation record of an account as this client writes it, and the only one it derives with.
 pub const KDF_RECORD: &str = r#"{"alg":"argon2id","v":1,"m":65536,"t":3,"p":1}"#;
+/// The longest key derivation record that is read, the longest text read as Emergency Kit words, and as a
+/// recovery code: what a hub or a person gives is many times shorter.
+pub const MAX_KDF_RECORD_LEN: usize = 1024;
+pub const MAX_KIT_TEXT_LEN: usize = 1024;
+pub const MAX_CODE_TEXT_LEN: usize = 1024;
 const KDF_ALG: &str = "argon2id";
 const KDF_RECORD_VERSION: f64 = 1.0;
 const KDF_MEMORY_KIB: u32 = 65536;
@@ -203,12 +211,15 @@ pub fn check_password(password: &str) -> Result<(), AccountError> {
 
 /// Whether a key derivation record, as the JSON a hub hands out, may be derived with: only if `alg`, `v`, `m`,
 /// `t` and `p` are exactly `"argon2id"`, 1, 65536, 3 and 1; other fields are ignored. No record, or `null`, is
-/// that pinned set. Anything else is `bad-kdf`, and nothing is derived: a hub does not choose what a derivation
-/// of the password costs.
+/// that pinned set. Anything else, a record above [`MAX_KDF_RECORD_LEN`] bytes included, is `bad-kdf`, and
+/// nothing is derived: a hub does not choose what a derivation of the password costs.
 pub fn accept_kdf(record: Option<&str>) -> Result<(), AccountError> {
     let Some(record) = record else {
         return Ok(());
     };
+    if record.len() > MAX_KDF_RECORD_LEN {
+        return Err(AccountError::BadKdf);
+    }
     let value: serde_json::Value =
         serde_json::from_str(record).map_err(|_| AccountError::BadKdf)?;
     if value.is_null() {
@@ -1040,7 +1051,7 @@ pub fn generate_kit_words(entropy: &mut dyn Entropy) -> Result<SecretBytes, Erro
     // Sixteen random bits are taken as they are only below the largest multiple of the list's length: every word
     // is then as likely as every other.
     let limit = (u16::MAX / count).saturating_mul(count);
-    let mut text = Zeroizing::new(String::new());
+    let mut text = Zeroizing::new(String::with_capacity(KIT_TEXT_CAPACITY));
     let mut chosen = 0;
     while chosen < KIT_WORDS {
         let draw = Zeroizing::new(crypto::random::<2>(entropy)?);
@@ -1064,15 +1075,18 @@ pub fn generate_kit_words(entropy: &mut dyn Entropy) -> Result<SecretBytes, Erro
 /// but `a` to `z`, and must then be twelve words of the list, which are joined by one space. Anything else is
 /// `bad-recovery-words`.
 pub fn parse_kit_words(text: &str) -> Result<SecretBytes, AccountError> {
+    if text.len() > MAX_KIT_TEXT_LEN {
+        return Err(AccountError::BadRecoveryWords);
+    }
     let lowercase = Zeroizing::new(text.to_lowercase());
     let list = word_list();
-    let mut normalised = Zeroizing::new(String::new());
+    let mut normalised = Zeroizing::new(String::with_capacity(KIT_TEXT_CAPACITY));
     let mut count = 0usize;
     for word in lowercase
         .split(|c: char| !c.is_ascii_lowercase())
         .filter(|word| !word.is_empty())
     {
-        if list.binary_search(&word).is_err() {
+        if count == KIT_WORDS || list.binary_search(&word).is_err() {
             return Err(AccountError::BadRecoveryWords);
         }
         if count > 0 {
@@ -1138,6 +1152,9 @@ fn is_dropped_space(c: char) -> bool {
 /// `I` and `L` as `1`. Anything else, another length, or a last character with one of its four padding bits set
 /// is `bad-recovery-code`. There is no checksum: a mistyped code is the code of no room.
 pub fn parse_recovery_code(text: &str) -> Result<Secret<32>, AccountError> {
+    if text.len() > MAX_CODE_TEXT_LEN {
+        return Err(AccountError::BadRecoveryCode);
+    }
     let upper = Zeroizing::new(text.to_uppercase());
     let mut code = Zeroizing::new([0u8; 32]);
     let mut out = code.iter_mut();
@@ -1448,6 +1465,8 @@ mod tests {
                 Some(AccountError::BadKdf)
             );
         }
+        let padded = KDF_RECORD.replace('}', &format!(r#","x":"{}"}}"#, "x".repeat(1024)));
+        assert_eq!(accept_kdf(Some(&padded)), Err(AccountError::BadKdf));
         for not_json in ["", "{", "argon2id", "{\"alg\":\"argon2id\",}"] {
             assert_eq!(accept_kdf(Some(not_json)), Err(AccountError::BadKdf));
         }
@@ -1689,6 +1708,7 @@ mod tests {
         assert!(list
             .iter()
             .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase())));
+        assert_eq!(list.iter().map(|word| word.len()).max(), Some(9));
     }
 
     #[test]
@@ -1718,6 +1738,14 @@ mod tests {
             .expect("a word with k");
         let kelvin = words.replace("banjo", &with_k.replacen('k', "\u{212a}", 1));
         assert_eq!(read(&kelvin), Ok(words.replace("banjo", with_k)));
+        assert_eq!(
+            read(&"acorn ".repeat(400)),
+            Err(AccountError::BadRecoveryWords)
+        );
+        assert_eq!(
+            parse_recovery_code(&"0".repeat(MAX_CODE_TEXT_LEN + 1)),
+            Err(AccountError::BadRecoveryCode)
+        );
         let eleven = words.rsplit_once(' ').expect("words").0;
         for typed in [
             String::new(),
