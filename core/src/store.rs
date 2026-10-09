@@ -206,12 +206,18 @@ pub enum OutboxKind {
     KeyPackages = 8,
     /// A SealedKey posted on its own: the SealedKey.
     SealedKey = 9,
-    /// The replacing of the recovery code: Commit, GroupInfo, SealedKey, RecoveryLink.
+    /// The replacing of the recovery code: Commit, GroupInfo, SealedKey, RecoveryLink, the account's new sealed
+    /// copies.
     RecoveryCode = 10,
+    /// One Commit of a recovery, posted into its transaction: Commit, GroupInfo, Welcome, SealedKey,
+    /// RecoveryAuth.
+    RecoveryCommit = 11,
+    /// The finish of a recovery: RecoveryLink, the account's new sealed copies.
+    RecoveryFinish = 12,
 }
 
 impl OutboxKind {
-    const ALL: [OutboxKind; 10] = [
+    const ALL: [OutboxKind; 12] = [
         OutboxKind::RoomFounding,
         OutboxKind::GroupFounding,
         OutboxKind::Commit,
@@ -222,6 +228,8 @@ impl OutboxKind {
         OutboxKind::KeyPackages,
         OutboxKind::SealedKey,
         OutboxKind::RecoveryCode,
+        OutboxKind::RecoveryCommit,
+        OutboxKind::RecoveryFinish,
     ];
 
     fn from_u8(value: u8) -> Option<Self> {
@@ -394,7 +402,7 @@ mod tests {
             assert_eq!(OutboxKind::from_u8(kind as u8), Some(kind));
         }
         assert_eq!(OutboxKind::from_u8(0), None);
-        assert_eq!(OutboxKind::from_u8(11), None);
+        assert_eq!(OutboxKind::from_u8(13), None);
     }
 
     #[test]

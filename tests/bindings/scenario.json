@@ -2,8 +2,8 @@
   "about": [
     "One scenario for both bindings: tests/bindings/scenario.mjs runs it through the browser binding (in Node, and in",
     "Chromium with every device in a worker of its own), tests/bindings/swift runs it through the Swift binding.",
-    "Devices are named by a letter; A and B are human devices, G is an agent device. Groups are named 'room' or by",
-    "the name a session was founded under. The hub is a stand-in that orders and stores and verifies nothing: the",
+    "Devices are named by a letter; A, B and C are human devices (C comes with the recovery code), G is an agent",
+    "device. Groups are named 'room' or by the name a session was founded under. The hub is a stand-in that orders and stores and verifies nothing: the",
     "devices do. A step with 'refused' must fail with that code; every other step must succeed."
   ],
   "steps": [
@@ -69,6 +69,27 @@
     { "do": "sync", "device": "B", "removed": true },
     { "do": "sync", "device": "G" },
     { "do": "same_key", "devices": ["A", "G"], "group": "main" },
-    { "do": "no_key", "device": "B", "group": "main", "epoch_of": "A" }
+    { "do": "no_key", "device": "B", "group": "main", "epoch_of": "A" },
+
+    { "do": "create", "device": "C" },
+    { "do": "join_with_code", "device": "C" },
+    { "do": "post", "device": "C" },
+    { "do": "join_session_with_code", "device": "C", "group": "main" },
+    { "do": "post", "device": "C" },
+    { "do": "sync", "device": "A" },
+    { "do": "sync", "device": "G" },
+    { "do": "same_key", "devices": ["A", "C"], "group": "room" },
+    { "do": "same_key", "devices": ["A", "C", "G"], "group": "main" },
+    { "do": "earlier_key", "device": "C", "like": "A", "group": "main", "epoch": 1 },
+
+    { "do": "replace_code", "device": "A" },
+    { "do": "post", "device": "A" },
+    { "do": "post", "device": "A" },
+    { "do": "sync", "device": "C" },
+    { "do": "sync", "device": "G" },
+    { "do": "holds_recovery_mac", "device": "C" },
+    { "do": "same_key", "devices": ["A", "C"], "group": "room" },
+    { "do": "restart", "device": "C" },
+    { "do": "holds_recovery_mac", "device": "C" }
   ]
 }

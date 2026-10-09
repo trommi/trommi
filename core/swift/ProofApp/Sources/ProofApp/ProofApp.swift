@@ -27,6 +27,6 @@ func report() -> String {
   var lines = [test.ok ? "OK: \(test.steps.count) steps in \(milliseconds(test.micros))" : "FAILED"]
   lines += test.steps.map { "\($0.ok ? "ok  " : "FAIL") \(milliseconds($0.micros))  \($0.name) \($0.detail)" }
   let versions = test.versions
-  lines += ["core \(versions.core)", "OpenMLS \(versions.openmls)", versions.provider, "binding \(versions.binding)", "recovery: \(versions.recovery)"]
+  lines += ["core \(versions.core)", "OpenMLS \(versions.openmls)", versions.provider, "binding \(versions.binding)"]
   return lines.joined(separator: "\n")
 }

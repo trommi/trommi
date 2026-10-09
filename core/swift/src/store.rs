@@ -10,6 +10,9 @@
 //!   the device is closed (a file lock, a Web Lock). The revision is the check behind that lock. A device that
 //!   meets a conflict is the owner no more and answers `storage` from then on; the state is opened again.
 //!
+//! One store object serves one device. A store's calls must not call that device, nor wait for anything that
+//! does: the device is busy with the call the store is part of.
+//!
 //! The values are private keys. A store never logs them, and an error's text never holds one.
 
 use std::collections::BTreeMap;
@@ -145,11 +148,44 @@ pub trait CoreStore: Send + Sync {
 
     /// Applies all of `write` or none of it, and returns only once that is durable.
     fn apply(&self, write: StoreWrite) -> Result<(), StoreError>;
+
+    /// The device lets the store go: it closed, failed for good, or could not be opened after `load` went
+    /// through. The store releases its lock here, so that the stored state can be opened again. Called once,
+    /// as the last call, and never when `load` itself failed: a failed `load` holds nothing afterwards.
+    fn close(&self);
 }
 
 /// The core's store over one written in Swift.
 #[cfg(feature = "uniffi")]
-pub(crate) struct ForeignStore(pub(crate) Arc<dyn CoreStore>);
+pub(crate) struct ForeignStore {
+    store: Arc<dyn CoreStore>,
+    /// Whether `load` went through: only then does this device own the store, and let it go at its end.
+    loaded: bool,
+}
+
+#[cfg(feature = "uniffi")]
+impl ForeignStore {
+    /// The core's store over `store`.
+    pub(crate) fn new(store: Arc<dyn CoreStore>) -> Self {
+        Self {
+            store,
+            loaded: false,
+        }
+    }
+}
+
+#[cfg(feature = "uniffi")]
+impl Drop for ForeignStore {
+    /// The device that owned this store is gone: the store hears of it. A store that fails here has still
+    /// been let go. A store whose `load` failed was never owned (it may be another device's, handed in by
+    /// mistake) and is left alone: a failed `load` cleans up after itself.
+    fn drop(&mut self) {
+        if self.loaded {
+            let store = Arc::clone(&self.store);
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || store.close()));
+        }
+    }
+}
 
 #[cfg(feature = "uniffi")]
 impl From<StoreError> for StorageError {
@@ -164,11 +200,15 @@ impl From<StoreError> for StorageError {
 #[cfg(feature = "uniffi")]
 impl Storage for ForeignStore {
     fn load(&mut self) -> Result<Loaded, StorageError> {
-        Ok(self.0.load()?.into())
+        let loaded = self.store.load()?;
+        self.loaded = true;
+        Ok(loaded.into())
     }
 
     fn apply(&mut self, expected_revision: u64, batch: Batch) -> Result<(), StorageError> {
-        Ok(self.0.apply(StoreWrite::of(expected_revision, &batch))?)
+        Ok(self
+            .store
+            .apply(StoreWrite::of(expected_revision, &batch))?)
     }
 }
 
