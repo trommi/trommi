@@ -167,8 +167,8 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   - Not covered, and left so: someone guessing from the owner's own address (the same NAT) slows that address
     down for the owner too, the right password included, while its back-off runs. A source that finds the line
     full has no place in it: against a crowd that keeps the line full, a new device has no promise of a turn. And a guesser at an address the account knows can find that out
-    with some effort: its early checks are failures like any, so after about six wrong guesses in line its
-    back-off is longer than its turn is away and it is told the back-off, and once a full table has room
+    with some effort: its early checks are failures like any, so once its back-off is longer than its turn is away it is told the
+    back-off (after about six wrong guesses in line, or after two when it let its turn run out), and once a full table has room
     again its back-off shows the checks made meanwhile.
 - A successful login is answered only if the account still is as the check found it (its revision); a password,
   kit or passkey replaced meanwhile makes the login start over (`overloaded`).
@@ -316,5 +316,8 @@ encrypted.
     envelopes, file bytes against the quota, push registrations, the account's e-mail), and every table with
     its number of rows, what the hub reads in it and what lies in it sealed. After a wrong password the page
     takes no other for 1 s, 2 s … up to a minute; a checked credential is taken for twelve hours without the
-    slow hash (kept in memory). The page is put together by one request at a time and kept five seconds; the
+    slow hash (kept in memory; that is the time between two checks of the password, not a sign-out: the
+    browser keeps the credential until it is closed). A password is 12 to 1 024 bytes, a credential header at
+    most 2 048. The page is put together by one request at a time and kept five seconds (who asks meanwhile and finds none
+    that fresh is told to try again); the
     listener holds 16 connections, each for a minute at most.
