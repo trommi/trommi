@@ -112,12 +112,20 @@ pub fn offending_leaves(kind: SessionKind, room: &RoomView, leaves: &[Device]) -
         .collect()
 }
 
+/// 5.2.8: a session group is stale while it holds a leaf the room's state does not allow, and a helper session
+/// also while it lacks the opener its main session has now (a takeover that is not finished there).
+pub fn is_stale(kind: SessionKind, room: &RoomView, leaves: &[Device]) -> bool {
+    let lacks_opener =
+        matches!(kind, SessionKind::Helper { opener: Some(o) } if !leaves.contains(&o));
+    lacks_opener || !offending_leaves(kind, room, leaves).is_empty()
+}
+
 /// 5.2.2 and 5.2.3: what the leaves of a session group may be after a Commit.
 pub fn check_session_leaves(kind: SessionKind, room: &RoomView, leaves: &[Device]) -> Res<()> {
-    if !offending_leaves(kind, room, leaves).is_empty() {
+    if is_stale(kind, room, leaves) {
         return Err(refuse(
             "stale-session",
-            "the group holds a leaf the room's state does not allow",
+            "the group holds a leaf the room's state does not allow, or lacks its opener",
         ));
     }
     let agents = leaves
@@ -138,13 +146,15 @@ pub fn check_session_leaves(kind: SessionKind, room: &RoomView, leaves: &[Device
 }
 
 /// 5.2.2 to 5.2.5: who may commit what in a session group. `founding`: the first Commit of the group, which must
-/// leave no human device out. `was_stale`: the group held an offending leaf before this Commit.
+/// leave no human device out. `was_stale`: the group was stale before this Commit. `recovery`: a Commit of a
+/// recovery (8.7), which removes the other human devices from every live session group.
 pub fn check_session_commit(
     kind: SessionKind,
     room: &RoomView,
     facts: &CommitFacts,
     founding: bool,
     was_stale: bool,
+    recovery: bool,
 ) -> Res<()> {
     let leaves = &facts.after.leaves;
     match &facts.by {
@@ -181,6 +191,14 @@ pub fn check_session_commit(
                             return Err(bad("a human device adds human devices and the session's agent device only"));
                         }
                     }
+                    // 5.2.3: while the main session has no agent leaf, human devices only add human devices and
+                    // remove the leaves the room's state does not allow
+                    if kind == (SessionKind::Helper { opener: None }) && !recovery {
+                        let offending = offending_leaves(kind, room, &facts.before.leaves);
+                        if facts.removes.iter().any(|d| !offending.contains(d)) {
+                            return Err(bad("a waiting helper session loses only the leaves the room's state does not allow"));
+                        }
+                    }
                 }
                 (Standing::Agent, SessionKind::Helper { opener })
                     if opener.as_ref() == Some(committer) =>
@@ -215,6 +233,14 @@ pub fn check_session_commit(
     if founding {
         if !facts.removes.is_empty() {
             return Err(bad("a founding Commit removes nobody"));
+        }
+        // 5.2.5: the first Commit of a main session adds its agent device
+        let agents = leaves
+            .iter()
+            .filter(|d| room.standing(d) == Standing::Agent)
+            .count();
+        if kind == SessionKind::Main && agents != 1 {
+            return Err(bad("a main session is founded with its agent device"));
         }
         if let Some(missing) = room.humans.iter().find(|h| !leaves.contains(h)) {
             return Err(bad(format!(
@@ -397,6 +423,7 @@ mod tests {
             &facts(By::Member(d(1)), &[1], &[2, 3, 10], &[]),
             true,
             false,
+            false,
         )
         .unwrap();
         // a human device is never left out
@@ -406,6 +433,7 @@ mod tests {
                 &r,
                 &facts(By::Member(d(1)), &[1], &[2, 10], &[]),
                 true,
+                false,
                 false
             )),
             "bad-commit"
@@ -417,6 +445,7 @@ mod tests {
                 &r,
                 &facts(By::Member(d(1)), &[1], &[2, 3, 10, 11], &[]),
                 true,
+                false,
                 false
             )),
             "bad-commit"
@@ -428,6 +457,7 @@ mod tests {
                 &r,
                 &facts(By::Member(d(1)), &[1], &[2, 3, 77], &[]),
                 true,
+                false,
                 false
             )),
             "bad-commit"
@@ -443,6 +473,7 @@ mod tests {
                 &r,
                 &facts(By::Member(d(10)), &[1, 10], &[], &[]),
                 false,
+                false,
                 false
             )),
             "bad-commit"
@@ -455,6 +486,7 @@ mod tests {
                 helper,
                 &r,
                 &facts(By::Member(d(50)), &[1, 10, 50], &[], &[]),
+                false,
                 false,
                 false
             )),
@@ -475,6 +507,7 @@ mod tests {
             &facts(By::Member(d(10)), &[10], &[1, 2, 50], &[]),
             true,
             false,
+            false,
         )
         .unwrap();
         assert_eq!(
@@ -483,6 +516,7 @@ mod tests {
                 &r,
                 &facts(By::Member(d(10)), &[10], &[1, 50], &[]),
                 true,
+                false,
                 false
             )),
             "bad-commit"
@@ -494,6 +528,7 @@ mod tests {
             &facts(By::Member(d(10)), &[1, 2, 10, 50], &[51], &[50]),
             false,
             false,
+            false,
         )
         .unwrap();
         // not a human device, in or out
@@ -502,6 +537,7 @@ mod tests {
                 helper,
                 &r,
                 &facts(By::Member(d(10)), &[1, 10], &[2], &[]),
+                false,
                 false,
                 false
             )),
@@ -512,6 +548,7 @@ mod tests {
                 helper,
                 &r,
                 &facts(By::Member(d(10)), &[1, 2, 10], &[], &[2]),
+                false,
                 false,
                 false
             )),
@@ -524,6 +561,7 @@ mod tests {
                 &r,
                 &facts(By::Member(d(10)), &[1, 2, 10], &[11], &[]),
                 false,
+                false,
                 false
             )),
             "bad-commit"
@@ -534,6 +572,7 @@ mod tests {
                 helper,
                 &r,
                 &facts(By::Member(d(11)), &[1, 2, 11], &[50], &[]),
+                false,
                 false,
                 false
             )),
@@ -547,7 +586,7 @@ mod tests {
             &[],
         );
         assert_eq!(
-            code(check_session_commit(helper, &r, &many, false, false)),
+            code(check_session_commit(helper, &r, &many, false, false, false)),
             "bad-commit"
         );
     }
@@ -564,7 +603,8 @@ mod tests {
                 &r,
                 &facts(By::Member(d(1)), &[1, 9, 10], &[], &[]),
                 false,
-                true
+                true,
+                false
             )),
             "stale-session"
         );
@@ -575,6 +615,7 @@ mod tests {
             &facts(By::Member(d(1)), &[1, 9, 10], &[], &[9]),
             false,
             true,
+            false,
         )
         .unwrap();
         // a helper session whose opener leaf is no longer the main session's agent leaf
@@ -593,6 +634,7 @@ mod tests {
             &facts(By::Member(d(1)), &[1, 10, 50], &[11], &[10]),
             false,
             true,
+            false,
         )
         .unwrap();
         // the old opener cannot repair it by itself, nor go on
@@ -602,7 +644,8 @@ mod tests {
                 &r,
                 &facts(By::Member(d(10)), &[1, 10, 50], &[51], &[]),
                 false,
-                true
+                true,
+                false
             )),
             "bad-commit"
         );
@@ -618,6 +661,7 @@ mod tests {
             &facts(By::Member(d(1)), &[1, 10, 50], &[], &[10]),
             false,
             true,
+            false,
         )
         .unwrap();
     }
@@ -631,6 +675,7 @@ mod tests {
             &facts(By::External(d(2)), &[1, 9, 10], &[], &[]),
             false,
             true,
+            false,
         )
         .unwrap();
         assert_eq!(
@@ -638,6 +683,7 @@ mod tests {
                 MAIN,
                 &r,
                 &facts(By::External(d(10)), &[1], &[], &[]),
+                false,
                 false,
                 false
             )),
@@ -649,6 +695,7 @@ mod tests {
                 &r,
                 &facts(By::External(d(77)), &[1], &[], &[]),
                 false,
+                false,
                 false
             )),
             "bad-commit"
@@ -658,6 +705,7 @@ mod tests {
                 MAIN,
                 &r,
                 &facts(By::External(d(9)), &[1], &[], &[]),
+                false,
                 false,
                 false
             )),
