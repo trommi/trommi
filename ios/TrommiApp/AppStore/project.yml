@@ -6,7 +6,7 @@
 name: Trommi
 options:
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "27.0"
 # The store version, for the app and its extension alike (App Store processing wants them equal, ITMS-90473); the build
 # number is the workflow's run number (CURRENT_PROJECT_VERSION on the command line, which reaches both targets).
 settings:

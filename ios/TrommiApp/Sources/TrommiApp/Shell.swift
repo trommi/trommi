@@ -151,7 +151,7 @@ extension View {
 }
 struct NoTopEdge: ViewModifier {
   func body(content: Content) -> some View {
-    if #available(iOS 26.0, *) { content.scrollEdgeEffectHidden(true, for: .top) } else { content }
+    content.scrollEdgeEffectHidden(true, for: .top)
   }
 }
 

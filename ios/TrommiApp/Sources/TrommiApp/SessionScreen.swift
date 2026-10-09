@@ -211,7 +211,6 @@ struct SessionScreen: View {
         Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.muted)
       }
       .padding(.horizontal, 10).frame(minHeight: 40)
-      .barGlass()
     }
     .accessibilityLabel(stopped.map { "\(a.name), stopped: \($0.1). Switch chat" } ?? "\(a.name): switch chat")
     .accessibilityHint(quiet ?? "")
