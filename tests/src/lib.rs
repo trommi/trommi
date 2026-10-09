@@ -2,6 +2,7 @@
 //! few steps every scenario repeats (post the outbox, process the log, take the Welcomes).
 
 pub mod content;
+pub mod forge;
 pub mod hub;
 pub mod store;
 
@@ -218,6 +219,19 @@ pub fn publish_key_packages(hub: &mut Hub, device: &mut TestDevice) {
         .key_packages_to_upload(unused, now())
         .expect("key packages are made");
     post_ok(hub, device);
+}
+
+/// `adder` adds `forger` to the room group as a human device. Returns the room group as the forger holds it.
+pub fn add_forger(
+    hub: &mut Hub,
+    adder: &mut TestDevice,
+    forger: &forge::Forger,
+) -> openmls::group::MlsGroup {
+    adder
+        .add_human_device(&forger.id(), &forger.key_package(), now())
+        .expect("the Add is built");
+    post_ok(hub, adder);
+    forger.join(&hub.welcomes.last().expect("a Welcome").bytes)
 }
 
 /// A device id that no device holds.

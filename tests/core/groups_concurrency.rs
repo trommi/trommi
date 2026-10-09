@@ -32,11 +32,17 @@ fn of_two_commits_for_one_epoch_the_hub_takes_the_first() {
     post_ok(&mut hub, &mut a);
     assert_eq!(hub.epoch(&room_group), Some(2));
 
+    // While its Commit waits for the hub, a device sends no message in that group: it would be of the epoch
+    // the Commit ends and reach the hub after it.
+    assert_eq!(b.send_handover(&room_group, &a.id()), Err(Error::Busy));
+    assert_eq!(b.outbox().len(), 1);
+
     // The loser hears `epoch-taken`: its Commit is held back, out of the outbox, until the log decides.
     assert_eq!(post_all(&mut hub, &mut b), [Err(Error::EpochTaken)]);
     assert!(b.outbox().is_empty());
     assert!(b.group(&room_group).unwrap().pending);
     assert_eq!(b.update(&room_group, true, now()), Err(Error::Busy));
+    assert_eq!(b.send_handover(&room_group, &a.id()), Err(Error::Busy));
     assert_eq!(b.group(&room_group).unwrap().epoch, 1);
 
     // The log shows the Commit that took the epoch: the own one is dropped for it.
@@ -59,7 +65,9 @@ fn of_two_commits_for_one_epoch_the_hub_takes_the_first() {
         a.content_key(&room_group, 2).unwrap()
     );
 
-    // It builds its change again, on the new epoch, and succeeds.
+    // With nothing pending it sends again, and builds its change again, on the new epoch, and succeeds.
+    b.send_handover(&room_group, &a.id()).unwrap();
+    post_ok(&mut hub, &mut b);
     b.update(&room_group, true, now()).unwrap().unwrap();
     assert_ne!(b.outbox()[0].parts[0], lost_bytes);
     assert_eq!(b.outbox()[0].epoch, 2);
@@ -243,13 +251,12 @@ fn duplicates_and_reordered_entries_are_refused_and_change_nothing() {
         b.content_key(&group, 2).unwrap(),
     );
 
-    // Each of them a second time: a Commit lies behind the device's state, a message opens once.
-    for item in [room_1, room_2, session_1] {
+    // Each of them a second time: it lies at or below the cursor, a duplicate, whatever it holds.
+    for item in [room_1, room_2, session_1, message] {
         let error = process(&mut b, item).unwrap_err();
         assert_eq!(error, Error::WrongEpoch);
         assert_eq!(log_finding(&error), LogFinding::Duplicate);
     }
-    assert_eq!(process(&mut b, message), Ok(Processed::Skipped));
     assert_eq!(state(&b), (4, 2));
     assert_eq!(b.content_key(&room_group, 4).unwrap(), keys.0);
     assert_eq!(b.content_key(&group, 2).unwrap(), keys.1);
@@ -260,6 +267,43 @@ fn duplicates_and_reordered_entries_are_refused_and_change_nothing() {
     b.send_handover(&room_group, &a.id()).unwrap();
     post_ok(&mut hub, &mut a);
     assert_eq!(post_refused(&mut hub, &mut b), [Error::WrongEpoch]);
+    sync_ok(&hub, &mut b);
+
+    // The same Commits under a change number the hub never gave them, above the cursor: each lies behind
+    // its group's epoch, and the message opens no second time.
+    let mut again = hub.change();
+    for item in [room_1, room_2, session_1] {
+        again += 1;
+        let mut moved = item.clone();
+        moved.change = again;
+        let error = process(&mut b, &moved).unwrap_err();
+        assert_eq!(error, Error::WrongEpoch);
+        assert_eq!(log_finding(&error), LogFinding::Duplicate);
+    }
+    let mut moved = message.clone();
+    moved.change = again + 1;
+    assert_eq!(process(&mut b, &moved), Ok(Processed::Skipped));
+    assert_eq!(b.cursor(), again + 1);
+
+    // An entry that the hub calls a message and that holds a Commit of a group the device is a leaf of is
+    // not passed over like a message that does not open: it is refused, and the cursor stays.
+    a.update(&group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    let mut mislabelled = hub.log.last().unwrap().clone();
+    assert!(mislabelled.commit);
+    mislabelled.change = b.cursor() + 1;
+    mislabelled.commit = false;
+    let error = process(&mut b, &mislabelled).unwrap_err();
+    assert_eq!(error, Error::BadFormat);
+    assert_eq!(log_finding(&error), LogFinding::BadGroup);
+    assert_eq!((b.cursor(), state(&b)), (again + 1, (5, 2)));
+    // Called what it is, it processes.
+    mislabelled.commit = true;
+    assert!(matches!(
+        process(&mut b, &mislabelled),
+        Ok(Processed::Commit { .. })
+    ));
+    assert_eq!(state(&b), (5, 3));
 }
 
 #[test]

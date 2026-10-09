@@ -11,6 +11,7 @@ use crate::mls::provider::{self, DeviceSigner, Provider};
 use crate::mls::rules;
 use openmls::group::{JoinBuilder, ProcessedWelcome};
 use openmls::group::{MlsGroup, StagedCommit, StagedWelcome};
+use openmls::messages::group_info::VerifiableGroupInfo;
 use openmls::prelude::{
     KeyPackage, LeafNodeIndex, LeafNodeParameters, MlsMessageBodyIn, MlsMessageIn, MlsMessageOut,
 };
@@ -219,6 +220,20 @@ pub(crate) fn external_commit(
         next_key,
     };
     Ok((group, built))
+}
+
+/// Whether the tree a GroupInfo carries holds a leaf under `device`'s signature key. The tree is read as it
+/// came, before anything verified it.
+pub(crate) fn tree_holds(group_info: &VerifiableGroupInfo, device: &DeviceId) -> bool {
+    group_info
+        .extensions()
+        .ratchet_tree()
+        .is_some_and(|extension| {
+            extension
+                .ratchet_tree()
+                .leaves()
+                .any(|leaf| leaf.signature_key().as_slice() == device.as_bytes())
+        })
 }
 
 /// Opens a Welcome without joining yet, so that the group can be checked first. The single-use KeyPackage it

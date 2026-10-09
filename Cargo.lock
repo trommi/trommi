@@ -2256,7 +2256,12 @@ dependencies = [
 name = "trommi-tests"
 version = "0.0.0"
 dependencies = [
+ "openmls",
+ "openmls_basic_credential",
+ "openmls_rust_crypto",
+ "openmls_traits",
  "serde_json",
+ "tls_codec",
  "trommi-core",
 ]
 
