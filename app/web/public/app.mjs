@@ -1514,6 +1514,55 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     visit(url.pathname + url.search + url.hash, { action: a.getAttribute('data-turbo-action') === 'replace' ? 'replace' : 'advance' })
   })
 
+  // ---- tips ----
+  // One tip for the whole app, in its own look (app.css ".tip"), never the browser's: what an element says in
+  // data-tip, and what it says in title (taken over when the pointer first comes: the words move to data-tip, and to
+  // aria-label where the element had no name). It comes after a short rest under the element, near the pointer on a
+  // wide one, and goes with the pointer, a press, a key or a scroll. A mouse or a pen only; the keyboard's focus shows
+  // it too. Not where a view draws its own from data-tip in CSS (the Scribble Board, the corner note).
+  {
+    const OWN = '.pad, .corner-note-head'
+    let tip = null, of = null, timer = 0, px = 0
+    const hide = () => { clearTimeout(timer); timer = 0; of = null; tip?.classList.remove('is-on') }
+    const take = el => {
+      const words = el.getAttribute('title')
+      if (!words) return
+      el.removeAttribute('title'); el.setAttribute('data-tip', words)
+      if (!el.hasAttribute('aria-label') && !el.textContent.trim()) el.setAttribute('aria-label', words)
+    }
+    const show = () => {
+      timer = 0
+      const words = of?.isConnected ? of.getAttribute('data-tip') : ''
+      if (!words) return hide()
+      tip ??= document.body.appendChild(Object.assign(document.createElement('div'), { className: 'tip' }))
+      tip.setAttribute('aria-hidden', 'true'); tip.textContent = words
+      const r = of.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight, vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight
+      const cx = r.width > 220 && px ? px : r.left + r.width / 2
+      const below = r.bottom + 6 + h <= vh - 4 || r.top - 6 - h < 4
+      tip.style.left = `${Math.round(Math.max(6, Math.min(vw - w - 6, cx - w / 2)))}px`
+      tip.style.top = `${Math.round(below ? r.bottom + 6 : r.top - 6 - h)}px`
+      tip.classList.add('is-on')
+    }
+    const aim = (el, wait) => {
+      if (el === of) return
+      hide()
+      if (!el || el.closest(OWN)) return
+      take(el)
+      if (!el.getAttribute('data-tip')) return
+      of = el; timer = setTimeout(show, wait)
+    }
+    const holder = t => t instanceof Element ? t.closest('[data-tip], [title]') : null
+    document.addEventListener('pointerover', e => { if (e.pointerType === 'touch') return; px = e.clientX; aim(holder(e.target), 450) })
+    document.addEventListener('pointermove', e => { px = e.clientX }, { passive: true })
+    document.addEventListener('pointerdown', hide, true)
+    document.documentElement.addEventListener('pointerleave', hide)
+    document.addEventListener('keydown', hide, true)
+    document.addEventListener('scroll', hide, { capture: true, passive: true })
+    document.addEventListener('focusin', e => { const el = holder(e.target); if (el && e.target.matches?.(':focus-visible')) aim(el, 250) })
+    document.addEventListener('focusout', hide)
+    addEventListener('blur', hide)
+  }
+
   // ---- forms ----
   async function submitForm(form, submitter) {
     const method = (submitter?.getAttribute('formmethod') ?? form.getAttribute('method') ?? 'get').toLowerCase()

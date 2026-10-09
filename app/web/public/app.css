@@ -789,6 +789,12 @@ html body .inbox-answer.is-take.is-advised { padding-bottom: var(--s-3); }
   #says-host .says:has(form) .says-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 }
 
+/* ---- the tip: what an element says under the pointer (app.mjs "tips": data-tip, and every title, in one look; never
+   the browser's own). Ink on paper turned round, small, at most a few lines ---- */
+.tip { position: fixed; z-index: calc(var(--z-rowmenu) + 1); left: 0; top: 0; box-sizing: border-box; max-width: min(340px, calc(100vw - 12px)); padding: 5px 9px; border-radius: var(--r-sm); background: var(--fg); color: var(--bg); font: 600 var(--t-xs)/1.3 var(--font); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; pointer-events: none; opacity: 0; visibility: hidden; transition: opacity 120ms, visibility 0s 120ms; }
+.tip.is-on { opacity: 1; visibility: visible; transition: opacity 120ms; }
+@media print { .tip { display: none; } }
+
 /* ---- rendering a big room (README "The huge room, per-change cost and the budgets"): the sidebar is a layout
    boundary of its own (its size comes from the frame, never from its sessions), so a change on the page does not lay it
    out again and a change in it does not lay out the page; long talks under a card skip what is out of sight ---- */
