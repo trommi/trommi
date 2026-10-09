@@ -2062,18 +2062,27 @@ mod throttle_tests {
         assert_eq!(t.guess(ACCOUNT, b"a", false, t0 + 6999), Ok(()));
         // c comes a second after the time it was told (the answer says whole seconds): checked
         assert_eq!(t.guess(ACCOUNT, b"c", false, t0 + 7000), Ok(()));
-        // one who comes after its turn ran out has none: it is given a new one, at the end of the line
+        // one who comes after its turn ran out has none: it is told to come again once the old one is cleared
+        // away (eleven seconds past its end), and is then given a new one
         assert_eq!(t.guess(ACCOUNT, b"d", false, t0 + 7000), Err(1));
         assert_eq!(t.guess(ACCOUNT, b"e", false, t0 + 7000), Err(3));
-        assert_eq!(t.guess(ACCOUNT, b"f", false, t0 + 7000), Err(5));
         assert_eq!(
             t.guess(ACCOUNT, b"d", false, t0 + 13_001),
-            Err(1),
-            "behind f, whose turn is at 12"
+            Err(11),
+            "its turn was good till 13"
         );
-        assert_eq!(t.guess(ACCOUNT, b"d", false, t0 + 14_001), Ok(()));
+        assert_eq!(
+            t.guess(ACCOUNT, b"e", false, t0 + 13_001),
+            Ok(()),
+            "e, at 10, is in time"
+        );
+        assert_eq!(
+            t.guess(ACCOUNT, b"d", false, t0 + 24_002),
+            Ok(()),
+            "a new turn, and nobody before it"
+        );
         // the line is ten minutes long: who finds it full is told to ask again, and holds no place
-        let t1 = t0 + 20_000;
+        let t1 = t0 + 30_000;
         let mut placed = 0;
         for n in 0..400u32 {
             match t.guess(
@@ -2123,24 +2132,30 @@ mod throttle_tests {
             ),
             "came at 3, checked at 12.5"
         );
+        // Who came after its turn ran out has none, and is told to come again shortly: its old turn stays until
+        // no request that came in time can still be waiting, so that a late request takes nothing from one of
+        // its own source that came in time. Then it is given a new one.
         assert_eq!(
             admit_at(b"late", end + 12_500, end + 9001),
             Verdict::Line {
-                wait: 1,
+                wait: 8,
                 early: None
             },
-            "came after 9: a new turn, behind the other"
+            "the turn of second 4 was good till 9 and is kept till 20"
+        );
+        assert!(
+            matches!(
+                admit_at(b"late", end + 12_600, end + 8999),
+                Verdict::Check { .. }
+            ),
+            "its request that came in time is still checked"
         );
         // a time of arrival that cannot be (longer ago than any request waits) counts for nothing
-        assert_eq!(t.guess(ACCOUNT, b"liar", false, end + 12_500), Err(3));
-        assert_eq!(t.guess(ACCOUNT, b"filler", false, end + 29_999), Ok(()));
-        assert_eq!(
-            admit_at(b"liar", end + 30_000, end + 15_000),
-            Verdict::Line {
-                wait: 2,
-                early: None
-            }
-        );
+        assert_eq!(t.guess(ACCOUNT, b"liar", false, end + 12_500), Err(1));
+        assert!(matches!(
+            admit_at(b"liar", end + 28_000, end + 15_000),
+            Verdict::Line { early: None, .. }
+        ));
     }
 
     #[test]
