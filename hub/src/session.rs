@@ -154,7 +154,7 @@ impl Sessions {
                         who: Who::Spent,
                     });
                 }
-                self.lock().tokens.remove(&key);
+                // the token is of no use any more; it is told why until it runs out
                 Err(refuse("not-member", "this device is no longer in the room"))
             }
         }
