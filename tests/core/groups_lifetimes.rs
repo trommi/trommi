@@ -79,9 +79,9 @@ fn a_device_removed_while_the_tree_holds_an_expired_leaf_knows_it_is_out() {
     settle(&hub, &mut b);
     assert!(b.is_human());
 
-    // The founder removes it. The removed device cannot go on as an observer of the room group, since an
-    // observer checks every leaf's lifetime: the removal stands all the same. It is no human device, holds
-    // no record of the room's roles, and builds nothing.
+    // The founder removes it. The removed device goes on as an observer of the room group from the public
+    // state it held as a leaf, which it verified when it joined: no lifetime is checked again, so the
+    // expired leaf does not stop it. It knows the state that removed it.
     a.remove_human_devices(&[Cut::none(b.id())], now()).unwrap();
     post_ok(&mut hub, &mut a);
     let processed = sync_ok(&hub, &mut b);
@@ -90,16 +90,20 @@ fn a_device_removed_while_the_tree_holds_an_expired_leaf_knows_it_is_out() {
         [Processed::Commit { removed: true, .. }]
     ));
     assert!(!b.is_human());
-    assert_eq!(b.room_history(), None);
+    let roles = b.room_history().unwrap();
+    assert_eq!(roles.newest().epoch, 2);
+    assert!(roles.newest().is_human(&a.id()) && roles.is_revoked(&b.id(), 2));
     assert_eq!(b.group(&room_group).err(), Some(Error::NotFound));
     assert_eq!(b.update(&room_group, true, now()), Err(Error::Forbidden));
     assert!(b.content_key(&room_group, 1).is_ok());
-    // Told to follow the room again, from a GroupInfo whose leaves are all in their lifetime (the founder's
-    // was renewed by the path of its Commit), it does.
-    b.observe_room(hub.group_info(&room_group).unwrap(), None)
-        .unwrap();
-    assert!(!b.is_human());
-    assert!(b.room_history().unwrap().newest().is_human(&a.id()));
+    // And follows the room group on.
+    a.update(&room_group, true, now()).unwrap().unwrap();
+    post_ok(&mut hub, &mut a);
+    assert!(matches!(
+        sync_ok(&hub, &mut b)[..],
+        [Processed::Observed(_)]
+    ));
+    assert_eq!(b.room_history().unwrap().newest().epoch, 3);
 }
 
 #[test]
@@ -319,30 +323,59 @@ fn the_last_resort_key_package_is_retired_when_its_replacement_was_accepted() {
     let joined = b.join_welcome(&welcome, &anyone, now()).unwrap();
     assert_eq!(joined.group, room_group);
 
-    // Replaced by an accepted upload, the old one is kept for another period, counted from the making of its
-    // replacement, and then goes: a Welcome made with it within that period opens, one made after it does not.
-    for (days, opens) in [(29, true), (61, false)] {
+    // A device whose uploads waited: its first last-resort KeyPackage is at the hub, the second was made 31
+    // days later and the third 31 days after that, and the hub takes both only now. Each replaces what was
+    // made before it and nothing made after it; the period a replaced one is kept for begins when the device
+    // is next told the time, not when its replacement was made.
+    #[derive(Clone, Copy, Debug)]
+    enum Then {
+        FirstStillOpens,
+        NewestIsCurrent,
+        FirstIsGone,
+    }
+    for then in [
+        Then::FirstStillOpens,
+        Then::NewestIsCurrent,
+        Then::FirstIsGone,
+    ] {
         let mut c = new_device();
-        c.key_packages_to_upload(100, start - 31 * DAY_MS)
+        c.key_packages_to_upload(100, start - 62 * DAY_MS)
             .unwrap()
             .unwrap();
         post_ok(&mut hub, &mut c);
-        let old = hub.claim(&[c.id()]).unwrap().remove(0);
-        c.key_packages_to_upload(100, start).unwrap().unwrap();
-        post_ok(&mut hub, &mut c);
-        assert_ne!(hub.claim(&[c.id()]).unwrap(), std::slice::from_ref(&old));
-        let due = c
-            .key_packages_to_upload(100, start + days * DAY_MS)
+        let first = hub.claim(&[c.id()]).unwrap().remove(0);
+        c.key_packages_to_upload(100, start - 31 * DAY_MS)
+            .unwrap()
             .unwrap();
-        assert_eq!(due.is_none(), opens, "after {days} days");
-        a.add_human_device(&c.id(), &old, now()).unwrap();
+        c.key_packages_to_upload(100, start).unwrap().unwrap();
+        assert_eq!(c.outbox().len(), 2);
+        post_ok(&mut hub, &mut c);
+        let newest = hub.claim(&[c.id()]).unwrap().remove(0);
+        assert_ne!(newest, first);
+        // The next day the device is told the time: nothing is due, and the periods begin.
+        assert_eq!(c.key_packages_to_upload(100, start + DAY_MS), Ok(None));
+        let (with, opens) = match then {
+            Then::FirstStillOpens => (&first, true),
+            Then::NewestIsCurrent => {
+                // A month on the next one is due; the one the hub holds is still the current one.
+                let due = c.key_packages_to_upload(100, start + 31 * DAY_MS).unwrap();
+                assert!(due.is_some());
+                (&newest, true)
+            }
+            Then::FirstIsGone => {
+                let due = c.key_packages_to_upload(100, start + 32 * DAY_MS).unwrap();
+                assert!(due.is_some());
+                (&first, false)
+            }
+        };
+        a.add_human_device(&c.id(), with, now()).unwrap();
         post_ok(&mut hub, &mut a);
         let welcome = hub.welcomes.last().unwrap().bytes.clone();
         let joined = c.join_welcome(&welcome, &anyone, now());
         if opens {
-            assert_eq!(joined.unwrap().group, room_group);
+            assert_eq!(joined.unwrap().group, room_group, "{then:?}");
         } else {
-            assert_eq!(joined, Err(Error::NotMember));
+            assert_eq!(joined, Err(Error::NotMember), "{then:?}");
         }
     }
 }

@@ -33,7 +33,9 @@ adding; what exists is kept.
 operation writes its new state and everything to send in one batch; nothing is handed back for sending except
 through `outbox()`. Post each outbox entry, then report the hub's answer with `outbox_accepted` or
 `outbox_refused`; after a restart the same entries are there again and are sent again unchanged. Feed the hub's
-log to `process_log_entry` in the hub's order, each entry once: an entry at or below `cursor()` is a duplicate.
+log to `process_log_entry` in the hub's order, each entry once: an entry at or below `cursor()` is a duplicate,
+except the next Commit of a group the device holds or follows. Take a Welcome at its place in that order, with
+the Commit that made it; one taken later is caught up by handing the group's entries again from that place.
 
 What a client must expect of the device:
 
@@ -45,7 +47,8 @@ What a client must expect of the device:
   again. While a Commit of a group is pending, sending a message in that group is `busy`.
 - A device follows the room group either as a leaf or as an observer, never both: joining (Welcome or join from
   outside) takes the observer's record over, and a device that processes its own removal from the room group
-  becomes an observer of it (`is_human()` false). A Welcome that is `room-behind` is taken again after the log.
+  becomes an observer of it (`is_human()` false). A Welcome that is `room-behind` is taken again after the log;
+  one into the room group for an epoch the observer has left behind is `wrong-epoch` and lost.
 - A group that failed its first contact (`Joined::offending` not empty) hands out no key, opens no message
   (`Processed::Skipped`) and takes only the Commit that removes leaves.
 - `Received::NewerVersion` and `Error::NewerVersion` are the finding `newer-version`: shown, never swallowed.
