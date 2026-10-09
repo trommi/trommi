@@ -730,9 +730,14 @@ link report, a loss, an envelope with an object block, a registration) and at mo
 `apns-push-type: liveactivity` to `<topic>.push-type.liveactivity`: `start` to the push-to-start token when agents begin
 to work and no activity runs (once; again only after it ended or after 8 hours), `update` to the activity's token when
 the counts changed (priority 10 when a question came, else 5), `end` when no agent works any more (dismissed after
-15 minutes). The payload is `{ aps: { timestamp, event, 'content-state': { working, waiting } } }` plus, for `start`,
-`attributes-type: 'TrommiActivityAttributes'`, `attributes: { tag }` and a fixed alert; Apple sees two counts and a
-random tag, no room, no name, no card. A token Apple refuses (410, `BadDeviceToken`) is forgotten.
+15 minutes). While one runs, the same counts go out again every 10 minutes (`HUB_LIVE_BEAT_MS`, priority 5), and every
+`start` and `update` carries a `stale-date` three beats ahead: when the hub falls silent, iOS marks the activity as out
+of date (the widget dims it) instead of showing work for hours. The payload is
+`{ aps: { timestamp, event, 'content-state': { working, waiting }, 'stale-date', 'relevance-score' } }` (100 with
+waiting questions, else 50: which room's activity leads) plus, for `start`, `attributes-type: 'TrommiActivityAttributes'`,
+`attributes: { tag }`, `input-push-token: 1` and a fixed alert; `end` carries `dismissal-date` instead of the stale date.
+Apple sees two counts and a random tag, no room, no name, no card. A token Apple refuses (410, `BadDeviceToken`) is
+forgotten.
 
 ### Limits
 

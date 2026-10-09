@@ -1,7 +1,7 @@
 // TrommiLive: the Live Activity's widget. "n agents working · m questions waiting" on the lock screen and in the Dynamic
 // Island, with the drawing of the crowned session of the desk on screen. The two counts come by push from the hub
 // (content-state, nothing else); the drawing from the App Group (NotifyGroup.readLive, sealed: the app writes it). A tap
-// opens the app on its Desk.
+// opens the app on its Desk. Past the push's stale date (the hub fell silent) the counts are dimmed and say so.
 import Foundation
 import PushNotify
 #if canImport(ActivityKit) && canImport(WidgetKit) && os(iOS)
@@ -19,7 +19,7 @@ public struct TrommiLiveBundle: WidgetBundle {
 struct TrommiLiveActivity: Widget {
   var body: some WidgetConfiguration {
     ActivityConfiguration(for: TrommiActivityAttributes.self) { ctx in
-      LockScreenLive(counts: ctx.state)
+      LockScreenLive(counts: ctx.state, stale: ctx.isStale)
         .activityBackgroundTint(Color(red: 0.98, green: 0.97, blue: 0.94))
         .activitySystemActionForegroundColor(.black)
         .widgetURL(URL(string: "https://app.trommi.com/"))
@@ -29,8 +29,9 @@ struct TrommiLiveActivity: Widget {
         DynamicIslandExpandedRegion(.center) {
           VStack(alignment: .leading, spacing: 2) {
             Text(working(ctx.state.working)).font(.headline)
-            Text(waiting(ctx.state.waiting)).font(.subheadline).foregroundStyle(.secondary)
+            Text(ctx.isStale ? staleLine : waiting(ctx.state.waiting)).font(.subheadline).foregroundStyle(.secondary)
           }
+          .opacity(ctx.isStale ? 0.6 : 1)
           .frame(maxWidth: .infinity, alignment: .leading)
         }
       } compactLeading: {
@@ -42,8 +43,9 @@ struct TrommiLiveActivity: Widget {
           Text("\(ctx.state.waiting)").monospacedDigit()
         }
         .font(.caption.weight(.semibold))
+        .opacity(ctx.isStale ? 0.5 : 1)
       } minimal: {
-        Text("\(ctx.state.waiting)").font(.caption.weight(.bold)).monospacedDigit()
+        Text("\(ctx.state.waiting)").font(.caption.weight(.bold)).monospacedDigit().opacity(ctx.isStale ? 0.5 : 1)
       }
       .widgetURL(URL(string: "https://app.trommi.com/"))
     }
@@ -52,16 +54,19 @@ struct TrommiLiveActivity: Widget {
 
 func working(_ n: Int) -> String { n == 1 ? "1 agent working" : "\(n) agents working" }
 func waiting(_ n: Int) -> String { n == 1 ? "1 question waiting" : "\(n) questions waiting" }
+let staleLine = "Not up to date"
 
 struct LockScreenLive: View {
   let counts: LiveCounts
+  var stale = false
   var body: some View {
     HStack(spacing: 14) {
       Crown(size: 44)
       VStack(alignment: .leading, spacing: 3) {
         Text(working(counts.working)).font(.headline).foregroundStyle(.black)
-        Text(waiting(counts.waiting)).font(.subheadline).foregroundStyle(.black.opacity(0.65))
+        Text(stale ? staleLine : waiting(counts.waiting)).font(.subheadline).foregroundStyle(.black.opacity(0.65))
       }
+      .opacity(stale ? 0.6 : 1)
       Spacer(minLength: 0)
       Text("Trommi").font(.caption.weight(.semibold)).foregroundStyle(.black.opacity(0.45))
     }
