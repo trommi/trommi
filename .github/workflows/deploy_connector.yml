@@ -65,24 +65,36 @@ jobs:
     outputs:
       tag: ${{ steps.check.outputs.tag }}
       commit: ${{ steps.check.outputs.commit }}
+      manifest: ${{ steps.check.outputs.manifest }}
     steps:
+      # A run named by hand must be a build of the main branch of this repository: a pull request's run also has
+      # artifacts, and nothing of such a run may be signed, attested or delivered.
+      - name: The run that is delivered again
+        id: source
+        if: inputs.run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          set -eu
+          printf '%s' "$RUN_ID" | grep -Eq '^[1-9][0-9]{0,19}$' || { echo "::error::not a run id: $RUN_ID"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > "$RUNNER_TEMP/run.json"
+          jq -e --arg r "$GITHUB_REPOSITORY" \
+            '.path == ".github/workflows/build.yml" and .head_branch == "main" and (.event == "push" or .event == "workflow_dispatch") and .repository.full_name == $r and .head_repository.full_name == $r' \
+            "$RUNNER_TEMP/run.json" > /dev/null || { echo "::error::run $RUN_ID is not a build of the main branch of this repository"; exit 1; }
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --jq '.jobs[] | select(.conclusion == "success") | .name' > "$RUNNER_TEMP/jobs.txt"
+          grep -Fq "Connector (test and build)" "$RUNNER_TEMP/jobs.txt" || { echo "::error::the job Connector (test and build) of run $RUN_ID did not succeed"; exit 1; }
+          echo "commit=$(jq -r .head_sha "$RUNNER_TEMP/run.json")" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ inputs.artifact || 'connector-release' }}
           path: out
           run-id: ${{ inputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
-      # the scripts and the public key of the commit that was built
-      - name: What the manifest says
-        id: read
-        run: |
-          set -eu
-          commit=$(jq -r .commit out/manifest.json)
-          printf '%s' "$commit" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::the manifest names no commit"; exit 1; }
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+      # the signing script and the public key of the revision this workflow runs from, never of an artifact
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.read.outputs.commit }}
+          ref: ${{ github.sha }}
           path: repo
           persist-credentials: false
           sparse-checkout: release
@@ -90,7 +102,7 @@ jobs:
         id: check
         env:
           VERSION: ${{ inputs.version }}
-          COMMIT: ${{ inputs.commit }}
+          COMMIT: ${{ inputs.commit || steps.source.outputs.commit }}
         run: |
           set -eu
           jq -e --arg r "$GITHUB_REPOSITORY" \
@@ -99,20 +111,29 @@ jobs:
           tag=$(jq -r .tag out/manifest.json)
           commit=$(jq -r .commit out/manifest.json)
           printf '%s' "$tag" | grep -Eq '^connector-v[1-9][0-9]{0,11}$' || { echo "::error::not a connector release: $tag"; exit 1; }
-          # called by a build: the release must be that build's
-          if [ -n "$COMMIT" ]; then
-            [ "$commit" = "$COMMIT" ] && [ "$tag" = "connector-v$VERSION" ] || { echo "::error::the release is $tag of $commit, asked for was connector-v$VERSION of $COMMIT"; exit 1; }
-          fi
-          # every file the manifest names is there and is that file; nothing else lies beside it
-          repo/release/sign.sh files out/manifest.json
+          # the release must be of the commit the run built, and called by a build also of its number
+          [ "$commit" = "$COMMIT" ] || { echo "::error::the release is of $commit, the run built $COMMIT"; exit 1; }
+          if [ -n "$VERSION" ] && [ "$tag" != "connector-v$VERSION" ]; then echo "::error::the release is $tag, asked for was connector-v$VERSION"; exit 1; fi
+          # Every file the manifest names is there and is that file; nothing else lies beside it. Read with jq, entry
+          # by entry: an entry that is not a plain name, a SHA-256 and a size stops the run.
+          jq -e '(.assets | length) > 0 and all(.assets[]; (.name | test("^[A-Za-z0-9._-]+$")) and (.sha256 | test("^[0-9a-f]{64}$")) and (.size | type) == "number") and ([.assets[].name] | unique | length) == (.assets | length)' \
+            out/manifest.json > /dev/null || { echo "::error::manifest.json has an entry that is not a plain file with hash and size"; exit 1; }
+          jq -r '.assets[] | "\(.sha256)  \(.name)"' out/manifest.json > "$RUNNER_TEMP/sums"
+          (cd out && sha256sum -c --quiet "$RUNNER_TEMP/sums")
+          jq -r '.assets[] | "\(.size) \(.name)"' out/manifest.json | while read -r size name; do
+            [ "$(wc -c < "out/$name" | tr -d ' ')" = "$size" ] || { echo "::error::$name does not have the size the manifest names"; exit 1; }
+          done
           find out -type f ! -name manifest.json -printf '%f\n' | sort > "$RUNNER_TEMP/there"
           jq -r '.assets[].name' out/manifest.json | sort > "$RUNNER_TEMP/named"
           diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files the manifest does not name"; exit 1; }
           for target in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
             grep -qx "trommi-connector-$target" "$RUNNER_TEMP/named" || { echo "::error::the release has no binary for $target"; exit 1; }
           done
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$tag"
+            echo "commit=$commit"
+            echo "manifest=$(sha256sum out/manifest.json | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
       - name: Install the 1Password CLI
         uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
         with:
@@ -156,6 +177,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TAG: ${{ needs.sign.outputs.tag }}
       COMMIT: ${{ needs.sign.outputs.commit }}
+      MANIFEST: ${{ needs.sign.outputs.manifest }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -169,24 +191,30 @@ jobs:
           path: out
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.sign.outputs.commit }}
+          ref: ${{ github.sha }}
           path: repo
           persist-credentials: false
           sparse-checkout: release
-      # what is published is what was signed
+      # What is published is what was signed. The artifact is fetched a second time here, so everything is checked
+      # again against the manifest whose hash the signing job passed on, and only what it names is published.
       - name: Check the signature and the files
         run: |
           set -eu
+          [ "$(sha256sum out/manifest.json | cut -d' ' -f1)" = "$MANIFEST" ] || { echo "::error::manifest.json is not the one that was signed"; exit 1; }
           repo/release/sign.sh verify out/manifest.json
-          repo/release/sign.sh files out/manifest.json
           [ "$(jq -r .tag out/manifest.json)" = "$TAG" ] && [ "$(jq -r .commit out/manifest.json)" = "$COMMIT" ]
+          jq -r '.assets[] | "\(.sha256)  \(.name)"' out/manifest.json > "$RUNNER_TEMP/sums"
+          (cd out && sha256sum -c --quiet "$RUNNER_TEMP/sums")
+          mkdir publish
+          jq -r '.assets[].name' out/manifest.json | while read -r name; do cp "out/$name" "publish/$name"; done
+          cp out/manifest.json out/manifest.json.sig publish/
       - name: Attest the files
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
-            out/trommi-connector-*
-            out/trommi-*.zip
-            out/manifest.json
+            publish/trommi-connector-*
+            publish/trommi-*.zip
+            publish/manifest.json
       # A published release is never replaced: a second run of the same build leaves what is published.
       - name: Publish
         run: |
@@ -198,10 +226,17 @@ jobs:
             state=none
           fi
           if [ "$state" = none ]; then
+            # a tag of that name that is already there must be of this commit (--target only names a new tag's)
+            if tagged=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha 2>/dev/null); then
+              [ "$tagged" = "$COMMIT" ] || { echo "::error::the tag $TAG is there already and names $tagged, not $COMMIT"; exit 1; }
+            fi
             gh release create "$TAG" --target "$COMMIT" --latest=false --title "Connector $TAG" \
               --notes "The Trommi connector for Linux and macOS and the plugin's archive, built from $COMMIT. Signed: manifest.json and manifest.json.sig (see release/sign.sh)." \
-              out/*
+              publish/*
             echo "published $TAG" >> "$GITHUB_STEP_SUMMARY"
           else
+            # published already: it stays, and it must be this build
+            gh release download "$TAG" --pattern manifest.json --dir "$RUNNER_TEMP/published"
+            cmp -s "$RUNNER_TEMP/published/manifest.json" publish/manifest.json || { echo "::error::$TAG is published already with another manifest"; exit 1; }
             echo "$TAG is published already and stays as it is" >> "$GITHUB_STEP_SUMMARY"
           fi
