@@ -109,3 +109,11 @@ path = "core/content_objects.rs"
 [[test]]
 name = "core_content_registers"
 path = "core/content_registers.rs"
+
+[[test]]
+name = "core_content_chain"
+path = "core/content_chain.rs"
+
+[[test]]
+name = "core_content_flow"
+path = "core/content_flow.rs"
