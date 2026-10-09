@@ -134,9 +134,9 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
     );
 
     // The removed device learns of its removal from the log: it derives no key of the new room epoch and
-    // holds the room group no more. Open point: it cannot compute the room state of the epoch that removed it
-    // (OpenMLS gives a removed member no full group context), so its record of the roles ends one epoch
-    // earlier and `is_human` stays true; what it then builds names that older room epoch and is refused.
+    // holds the room group no more. It follows the room group as an observer from there: it knows the room
+    // state that removed it, in which its key is revoked, and is no human device.
+    assert!(x.is_human());
     let processed = sync(&hub, &mut x);
     assert!(matches!(
         processed[..],
@@ -146,11 +146,20 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
             ..
         })]
     ));
+    assert!(!x.is_human());
+    let roles = x.room_history().unwrap();
+    assert_eq!(roles.newest(), hub.history().unwrap().newest());
+    assert_eq!(roles.newest().epoch, 4);
+    assert!(roles.is_revoked(&x.id(), 4) && !roles.is_revoked(&x.id(), 3));
+    assert!(roles.at(3).is_some(), "what it verified before stays");
     assert_eq!(x.content_key(&room_group, 4), Err(Error::NoKey));
     assert_eq!(x.group(&room_group).err(), Some(Error::NotFound));
-    assert_eq!(x.update(&room_group, true, now()), Err(Error::NotFound));
-    x.update(&group, true, now()).unwrap().unwrap();
-    assert_eq!(post_refused(&mut hub, &mut x), [Error::RoomBehind]);
+    // It builds nothing more: not in the room group, and not in the session group it is still a leaf of.
+    assert_eq!(x.update(&room_group, true, now()), Err(Error::Forbidden));
+    assert_eq!(x.update(&group, true, now()), Err(Error::Forbidden));
+    assert_eq!(x.send_handover(&group, &agent.id()), Err(Error::Forbidden));
+    assert_eq!(x.group(&group).unwrap().disallowed, [x.id()]);
+    assert!(x.outbox().is_empty());
 
     // Another human device than the remover finishes: the Remove with the Cut in the session group.
     b.clean_session(&group, &cuts_for(&b, &group), None, now())
@@ -169,11 +178,15 @@ fn a_removed_human_device_leaves_its_sessions_stale_until_another_device_cleans_
         [a.id(), b.id(), agent.id()].into_iter().collect()
     );
 
-    // The removed device derives no key of the session's new epoch; what it read, it keeps.
-    sync(&hub, &mut x);
+    // The removed device processes its removal from the session group too, which names the room epoch that
+    // removed it: it derives no key of the session's new epoch; what it read, it keeps.
+    let processed = sync_ok(&hub, &mut x);
+    assert!(matches!(
+        &processed[..],
+        [Processed::Commit { facts, removed: true, .. }] if facts.removes == [x.id()]
+    ));
+    assert_eq!(x.group(&group).err(), Some(Error::NotFound));
     assert_eq!(x.content_key(&group, 2), Err(Error::NoKey));
-    x.send_handover(&group, &agent.id()).unwrap();
-    assert_eq!(post_refused(&mut hub, &mut x), [Error::WrongEpoch]);
     assert_eq!(x.content_key(&room_group, 3).unwrap(), old_room_key);
     assert_eq!(x.content_key(&group, 1).unwrap(), old_session_key);
     assert_eq!(a.content_key(&group, 1).unwrap(), old_session_key);
