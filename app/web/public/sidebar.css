@@ -547,8 +547,11 @@ body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cu
 /* a wide window: the open note is a square sheet (his word, 9 October: "40 % größer und quadratisch"), 448px a side,
    smaller where the window is; the words fill it, the paperclip, the bin and the envelope stay at its foot */
 @media (min-width: 861px) {
-  .corner-note-box.is-open .corner-note-body { --note-side: min(448px, calc(100vw - 32px), calc(100dvh - 32px)); box-sizing: border-box; width: var(--note-side); height: var(--note-side); grid-template-rows: minmax(0, 1fr) auto auto; }
-  .corner-note-box.is-open .corner-note-field { height: 100% !important; min-height: 0; max-height: none; }
+  .corner-note-box.is-open .corner-note-body { --note-side: min(448px, calc(100vw - 32px), calc(100dvh - 32px)); box-sizing: border-box; width: var(--note-side); height: var(--note-side); grid-template-rows: minmax(0, 1fr) auto auto; padding: 24px 26px 14px; }
+  .corner-note-box.is-open .corner-note-field { height: 100% !important; min-height: 0; max-height: none; padding: 0; }
+  /* (the words start well inside the paper, his word, 9 October; the paperclip's own line stands on the words' left edge:
+     its 36px button holds the 20px drawing in its middle) */
+  .corner-note-box.is-open .corner-note-foot { margin-left: -8px; }
 }
 /* In a conversation on a wide window the note keeps its corner too: the composer's line (the composer and the filter)
    ends before it, however narrow the window (session.css .session-compose). */
