@@ -80,6 +80,12 @@ impl FileEncryptor {
         self.0.run(|encryptor| Ok(encryptor.update(&plaintext)?))
     }
 
+    /// Gives the encryptor up without finishing: its key and what it holds of the file are wiped. After `finish`
+    /// or `close` every call is refused with `internal`.
+    pub fn close(&self) {
+        self.0.close();
+    }
+
     /// Ends the file. The encryptor is used up.
     pub fn finish(&self) -> Result<FileEnd, CoreError> {
         self.0.finish(|encryptor| {
@@ -106,6 +112,12 @@ impl FileDecryptor {
     #[cfg_attr(feature = "uniffi", uniffi::constructor)]
     pub fn new(file: FileRef) -> Result<Self, CoreError> {
         Ok(Self(Guarded::new(Decryptor::new(&file.to_core()?))))
+    }
+
+    /// Gives the decryptor up without finishing: its key and what it holds of the file are wiped. After `finish`
+    /// or `close` every call is refused with `internal`.
+    pub fn close(&self) {
+        self.0.close();
     }
 
     /// Takes the next stored bytes and returns the plaintext of the chunks that opened.

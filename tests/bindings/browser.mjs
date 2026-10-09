@@ -1,6 +1,6 @@
 // The browser binding in headless Chromium, served with the web app's own Content-Security-Policy
 // (app/web/public/_headers), in the page and in module workers.
-//   TROMMI_STAND_IN_RECOVERY=1 core/wasm/build.sh && node tests/bindings/browser.mjs
+//   core/wasm/build.sh && node tests/bindings/browser.mjs
 // What it checks:
 // - the self-test passes in the page and in a worker under the app's policy as it is, with no violation;
 // - the scenario of scenario.json passes with every device in a worker of its own and IndexedDB as the store;
