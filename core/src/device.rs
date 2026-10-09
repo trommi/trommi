@@ -82,6 +82,7 @@ const SUB_UNCONFIRMED: u8 = 1;
 const SUB_UNBOUND: u8 = 6;
 const SUB_OWN_HISTORY: u8 = 0;
 const SUB_OBSERVER: u8 = 1;
+const SUB_ROOM_PLACE: u8 = 2;
 
 /// One entry of the hub's ordered log.
 #[derive(Debug, Clone, Copy)]
@@ -379,6 +380,13 @@ struct GroupMeta {
     pending: Option<Pending>,
     /// The epoch this device joined the group at: Commits before it are not for it.
     joined_epoch: u64,
+    /// The cursor when this device became a leaf of the group by a Welcome: the group's entries up to that
+    /// change number were passed while it could not process them, and are taken behind the cursor. Any
+    /// later one was handed in the hub's order or not at all.
+    passed: u64,
+    /// The change number of the last Commit of the group this device processed, or of the Commit that led to
+    /// the epoch it joined at: the group's next Commit lies behind it in the hub's order.
+    place: u64,
 }
 
 impl Encode for GroupMeta {
@@ -418,6 +426,8 @@ impl Encode for GroupMeta {
         writer.u64(pending.map_or(0, |pending| pending.time));
         writer.value(&pending.map_or(Hash32::ZERO, |pending| pending.commit))?;
         writer.u64(self.joined_epoch);
+        writer.u64(self.passed);
+        writer.u64(self.place);
         Ok(())
     }
 }
@@ -463,6 +473,8 @@ impl Decode for GroupMeta {
             removed: flags & (1 << 3) != 0,
             pending,
             joined_epoch: reader.u64()?,
+            passed: reader.u64()?,
+            place: reader.u64()?,
         })
     }
 }
@@ -658,6 +670,9 @@ struct Memory {
     keys: BTreeMap<(GroupId, u64), Secret<32>>,
     /// A human device's own record of the room's roles; other devices use their observer's.
     history: Option<RoomHistory>,
+    /// Per room epoch, the change number of the Commit that led to it: its place in the hub's order (5.4.1).
+    /// By it the device tells which room epoch was current at the place of an entry it is handed.
+    room_places: BTreeMap<u64, u64>,
     groups: BTreeMap<GroupId, GroupMeta>,
     key_packages: BTreeMap<Hash32, OwnKeyPackage>,
     observers: BTreeMap<GroupId, Observer>,
@@ -679,12 +694,18 @@ struct Memory {
 struct Known {
     seats: BTreeMap<SessionId, Vec<(u64, Option<DeviceId>)>>,
     helpers: BTreeMap<SessionId, usize>,
+    /// The main sessions this device holds as archived: no live session has their id (5.2.10).
+    closed: BTreeSet<SessionId>,
 }
 
 impl SessionFacts for Known {
     fn main_session(&self, session: &SessionId, room_epoch: u64) -> Parent {
+        if self.closed.contains(session) {
+            return Parent::NotAMainSession;
+        }
         match self.seats.get(session) {
             Some(seats) => Parent::Seat(observer::seat_at(seats, room_epoch)),
+            // Neither a leaf nor an observer of it: this device cannot tell who its agent leaf is.
             None => Parent::Unknown,
         }
     }
@@ -788,6 +809,13 @@ fn owed_key(key: &OwedKey) -> Vec<u8> {
             recovery_hpke_key,
         ]
         .concat(),
+    )
+}
+
+fn room_place_key(epoch: u64) -> Vec<u8> {
+    store::key(
+        table::ROOM_STATE,
+        &[&[SUB_ROOM_PLACE], &epoch.to_be_bytes()],
     )
 }
 
@@ -938,6 +966,18 @@ fn rebuild(mirror: &BTreeMap<Vec<u8>, Vec<u8>>) -> Result<(Memory, MlsEntries, S
                         .entry(group)
                         .or_default()
                         .push(Entry::new(own, value.clone()));
+                }
+                SUB_ROOM_PLACE => {
+                    let parsed = (|| {
+                        let epoch = rest.u64()?;
+                        rest.finish()?;
+                        let mut value = Reader::new(value);
+                        let change = value.u64()?;
+                        value.finish()?;
+                        Ok::<_, Error>((epoch, change))
+                    })()
+                    .map_err(|_| damaged("a room epoch's place"))?;
+                    memory.room_places.insert(parsed.0, parsed.1);
                 }
                 _ => return Err(damaged("a key")),
             },
@@ -1311,9 +1351,8 @@ impl<S: Storage> Device<S> {
         unfit
     }
 
-    /// Whether this device is the opener of the helper session `session` (5.2.3), by what it knows: an agent
-    /// device that is its main session's agent leaf. A device that does not follow the main session cannot
-    /// tell; as an agent device it then takes itself for the opener, and the others judge what it sends.
+    /// Whether this device is the opener of the helper session `session` (5.2.3): an agent device that is
+    /// its main session's agent leaf, which it knows as a leaf of that session.
     fn opens(&self, session: &TrommiSession) -> bool {
         let Some(room) = self.room_history().map(RoomHistory::newest) else {
             return false;
@@ -1323,21 +1362,72 @@ impl<S: Storage> Device<S> {
         }
         match self.known().main_session(&session.parent, room.epoch) {
             Parent::Seat(seat) => seat == Some(self.id),
-            Parent::Unknown => true,
-            Parent::NotAMainSession => false,
+            Parent::Unknown | Parent::NotAMainSession => false,
         }
+    }
+
+    /// `room-behind` for a helper session whose main session this device neither holds nor follows: it
+    /// cannot tell the opener, and so judges, writes and opens nothing there until it does (5.2.3).
+    fn knows_parent(&self, meta: &GroupMeta, known: &Known) -> Result<(), Error> {
+        let unknown = meta
+            .session
+            .filter(|session| !session.parent.is_zero())
+            .is_some_and(|session| known.main_session(&session.parent, 0) == Parent::Unknown);
+        if unknown {
+            Err(Error::RoomBehind)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The room epoch that was current at the place `change` of the hub's order (5.2.1, 5.4.1): the newest
+    /// one whose own place, the change number of the Commit that led to it, is not above `change`. An entry
+    /// handed in the hub's order lies behind every room Commit this device processed, and meets the newest
+    /// epoch; one of a group joined late lies between them. `room-behind` when the device cannot tell: the
+    /// place of an epoch it holds is not known to it yet (it joined the room group there and was not handed
+    /// the Commit that led to it), or `change` lies before the place of the first room state it holds. The
+    /// first state of a device that began as an observer has no place it could know: the device was told
+    /// that state as the current one, and takes it for every place it cannot put behind a later epoch.
+    fn room_epoch_at(&self, change: u64) -> Result<u64, Error> {
+        let history = self.history()?;
+        let first = history.states().next().map_or(0, |state| state.epoch);
+        let mut epoch = history.newest().epoch;
+        while epoch > first {
+            match self.memory.room_places.get(&epoch) {
+                Some(place) if *place <= change => return Ok(epoch),
+                Some(_) => epoch = epoch.saturating_sub(1),
+                None => return Err(Error::RoomBehind),
+            }
+        }
+        match self.memory.room_places.get(&first) {
+            Some(place) if *place > change => Err(Error::RoomBehind),
+            _ => Ok(first),
+        }
+    }
+
+    /// Records that the room Commit at `change` led to the room epoch `epoch`.
+    fn put_room_place(&mut self, batch: &mut Batch, epoch: u64, change: u64) {
+        self.memory.room_places.insert(epoch, change);
+        batch.put(room_place_key(epoch), change.to_be_bytes().to_vec());
     }
 
     fn known(&self) -> Known {
         let mut known = Known {
             seats: BTreeMap::new(),
             helpers: BTreeMap::new(),
+            closed: BTreeSet::new(),
         };
         for meta in self.memory.groups.values() {
             let Some(session) = meta.session.as_ref() else {
                 continue;
             };
-            if meta.archived || meta.removed {
+            if meta.removed {
+                continue;
+            }
+            if meta.archived {
+                if session.parent.is_zero() {
+                    known.closed.insert(session.session_id);
+                }
                 continue;
             }
             if session.parent.is_zero() {
@@ -1644,6 +1734,12 @@ impl<S: Storage> Device<S> {
                 (OutboxKind::ExternalCommit | OutboxKind::RecoveryFinish, _) => {
                     device.adopt_staged(batch, id)?;
                     adopted = true;
+                    // The place of the room epoch joined at, where the hub names it; else the log does.
+                    let joined_room = entry.kind == OutboxKind::ExternalCommit
+                        && entry.group.is_some_and(|group| group.is_room());
+                    if let Some(change) = answer.change.filter(|_| joined_room) {
+                        device.put_room_place(batch, entry.epoch.saturating_add(1), change);
+                    }
                 }
                 (OutboxKind::Message, _) => device.forget_owed(batch, id),
                 (OutboxKind::KeyPackages, _) => {
@@ -2452,7 +2548,9 @@ impl<S: Storage> Device<S> {
             .into_iter()
             .map(|(_, device)| device)
             .collect();
-        let unfit = self.disallowed(&meta, &leaves, &self.known());
+        let known = self.known();
+        self.knows_parent(&meta, &known)?;
+        let unfit = self.disallowed(&meta, &leaves, &known);
         if !unfit.iter().all(|leaf| removes.contains(leaf)) {
             return Err(Error::StaleSession);
         }
@@ -2907,6 +3005,7 @@ impl<S: Storage> Device<S> {
         let mut meta = GroupMeta {
             own_leaf_ms: now_ms,
             joined_epoch: epoch,
+            passed: self.memory.record.cursor,
             ..GroupMeta::default()
         };
         let mut offending = Vec::new();
@@ -2932,9 +3031,12 @@ impl<S: Storage> Device<S> {
                     Self::adopt_session_record(&mut meta, &observer, epoch, &devices)?;
                 }
                 let known = self.known();
+                meta.session = Some(session);
+                // 5.2.3: a helper session is judged by its main session's agent leaf. A device joins the
+                // main session, or follows it, first; until then the Welcome is early and uses up nothing.
+                self.knows_parent(&meta, &known)?;
                 let history = self.history()?;
                 let room = history.newest();
-                meta.session = Some(session);
                 if session.parent.is_zero() && meta.seats.is_empty() {
                     meta.seats
                         .push((0, observer::seat(&session, &leaves, room)));
@@ -3051,6 +3153,9 @@ impl<S: Storage> Device<S> {
             batch.put(history_key(state.epoch), codec::encode(state)?);
         }
         self.memory.history = Some(history);
+        for (epoch, change) in &checked.places {
+            self.put_room_place(batch, *epoch, *change);
+        }
         self.memory.record.room = Some(room);
         self.put_record(batch)?;
         self.hold_mac(batch, keys.mac_key())?;
@@ -3227,7 +3332,10 @@ impl<S: Storage> Device<S> {
         if !self.is_human() {
             return Err(Error::Forbidden);
         }
-        let checked = recovery::check_session(served, &room, self.history()?, &self.known())?;
+        let checked =
+            recovery::check_session(served, &room, self.history()?, &self.known(), &|change| {
+                self.room_epoch_at(change)
+            })?;
         if self.joining(&checked.observer.group()) {
             return Err(Error::Busy);
         }
@@ -3251,11 +3359,13 @@ impl<S: Storage> Device<S> {
         if !self.is_leaf_of(group) || group.is_room() {
             return Err(Error::NotFound);
         }
-        let checked = recovery::check_session(served, &room, self.history()?, &self.known())
-            .map_err(|error| match error {
-                Error::WrongRecovery | Error::WrongRoom => Error::BadGroup,
-                other => other,
-            })?;
+        let places = |change: u64| self.room_epoch_at(change);
+        let checked =
+            recovery::check_session(served, &room, self.history()?, &self.known(), &places)
+                .map_err(|error| match error {
+                    Error::WrongRecovery | Error::WrongRoom => Error::BadGroup,
+                    other => other,
+                })?;
         if checked.observer.group() != *group {
             return Err(Error::BadGroup);
         }
@@ -3535,12 +3645,19 @@ impl<S: Storage> Device<S> {
     /// other own request that the hub accepted moves the cursor when its `change` is the next one;
     /// otherwise the log brings it by again, above the cursor (a message, which is skipped).
     ///
-    /// One kind of entry is processed at or below the cursor, and leaves the cursor where it is: the next
-    /// Commit of a group this device is a leaf of or follows, the one that names the epoch the group stands
-    /// in. It cannot be a duplicate. A device meets it there when it joined a group by a Welcome it took
-    /// after it had passed that group's later Commits, or when an entry was filed under another group: it
-    /// hands the group's entries again from the Welcome's place, and each next Commit is processed. An
-    /// application message at or below the cursor stays a duplicate: it opens once.
+    /// A session Commit is judged against the room state at its own place in that order (5.2.1): it names
+    /// the room epoch that was current at its `change`, which the device knows from the places of the room
+    /// Commits it processed. One that names a newer room epoch came too early (`room-behind`); one that
+    /// names an older one is never taken (`bad-group`).
+    ///
+    /// A few Commits are processed at or below the cursor, and leave the cursor where it is. Of a group this
+    /// device is a leaf of: its own pending Commit; the Commit that led to the epoch it joined at, which is
+    /// skipped and gives the join its place; and the group's next Commit, the one that names the epoch the
+    /// group stands in, if its `change` is not above the cursor the device stood at when it took the
+    /// Welcome. A device that took a Welcome after it had passed the group's entries hands them again from
+    /// the Welcome's place, the Commit that added it first. Of a group it follows as an observer: the next
+    /// Commit. A group's Commits are taken in ascending order of their `change`. An application message at
+    /// or below the cursor stays a duplicate: it opens once.
     ///
     /// An entry called a message whose bytes are a handshake message (a `PublicMessage`) of a group this
     /// device is a leaf of or follows, by the group the message itself names, is refused (`bad-format`, the
@@ -3551,7 +3668,7 @@ impl<S: Storage> Device<S> {
             // 5.4.1: every entry once, in the hub's order. One at or below the cursor was processed, or was
             // passed when a later one was: it is a duplicate. The one exception is the next Commit of a
             // group this device is a leaf of or follows, which cannot have been processed.
-            if entry.change <= this.memory.record.cursor && !this.is_next_commit(entry) {
+            if entry.change <= this.memory.record.cursor && !this.is_behind_the_cursor(entry) {
                 return Err(Error::WrongEpoch);
             }
             // A group this device is a leaf of is processed as a member, also when an observer of it is
@@ -3562,16 +3679,16 @@ impl<S: Storage> Device<S> {
                 LogKind::Commit {
                     bytes,
                     recovery_auth,
-                } => match this.decide_staged(batch, &entry.group, bytes)? {
+                } => match this.decide_staged(batch, entry, bytes)? {
                     Some(StagedVerdict::Own) => {
                         adopted = true;
                         Processed::OwnCommit
                     }
                     verdict => {
                         let processed = if member {
-                            this.process_commit(batch, &entry.group, bytes, recovery_auth)?
+                            this.process_commit(batch, entry, bytes, recovery_auth)?
                         } else if observed {
-                            this.observe_commit(&entry.group, bytes, recovery_auth)?
+                            this.observe_commit(batch, entry, bytes, recovery_auth)?
                         } else {
                             Processed::Skipped
                         };
@@ -3623,9 +3740,10 @@ impl<S: Storage> Device<S> {
     fn decide_staged(
         &mut self,
         batch: &mut Batch,
-        group: &GroupId,
+        entry: &LogEntry<'_>,
         commit: &[u8],
     ) -> Result<Option<StagedVerdict>, Error> {
+        let group = &entry.group;
         let waiting = self.memory.outbox.values().find(|entry| {
             entry.kind == OutboxKind::ExternalCommit
                 && entry.group == Some(*group)
@@ -3647,6 +3765,10 @@ impl<S: Storage> Device<S> {
         };
         if own {
             self.adopt_staged(batch, outbox)?;
+            if group.is_room() {
+                // This is the place of the room epoch the join led to.
+                self.put_room_place(batch, built_on.saturating_add(1), entry.change);
+            }
             self.drop_outbox(batch, outbox);
             return Ok(Some(StagedVerdict::Own));
         }
@@ -3668,10 +3790,19 @@ impl<S: Storage> Device<S> {
             .is_some_and(|meta| !meta.removed)
     }
 
-    /// Whether `entry` is the next Commit of its group as this device holds or follows it: the Commit names
-    /// the group and the epoch the group stands in. Such an entry was not processed, whatever its place in the
-    /// log: a device that took a Welcome after it had passed the group's later Commits meets them this way.
-    fn is_next_commit(&self, entry: &LogEntry<'_>) -> bool {
+    /// Whether `entry`, at or below the cursor, is a Commit this device has not processed and takes there.
+    ///
+    /// Of a group it is a leaf of: its own pending Commit, known by its hash; the Commit that led to the
+    /// epoch it joined at, which gives the join its place; and the next Commit of the group, the one that
+    /// names the epoch it stands in, as long as its change number is not above the cursor the device stood at
+    /// when it joined. Up to there the group's entries were passed while the device could not process them.
+    /// Behind that point it processes the hub's order as it comes, so an entry it is handed late was never in
+    /// that order at the place it claims: taking it there would judge it against a room state that has since
+    /// changed (5.2.1), which is how a removed device's Commit would be passed off as one from before its
+    /// removal.
+    ///
+    /// Of a group it follows as an observer: the next Commit.
+    fn is_behind_the_cursor(&self, entry: &LogEntry<'_>) -> bool {
         let LogKind::Commit { bytes, .. } = entry.kind else {
             return false;
         };
@@ -3681,25 +3812,52 @@ impl<S: Storage> Device<S> {
         if GroupId::from_bytes(message.group_id().as_slice()) != Ok(entry.group) {
             return false;
         }
+        let named = message.epoch().as_u64();
         let stands = if self.is_leaf_of(&entry.group) {
-            group::load(&self.provider, &entry.group)
+            let Some(meta) = self.memory.groups.get(&entry.group) else {
+                return false;
+            };
+            let own = meta.pending.as_ref().is_some_and(|pending| {
+                posted_as(bytes).is_ok_and(|posted| posted == pending.commit)
+            });
+            let stands = group::load(&self.provider, &entry.group)
                 .ok()
-                .map(|group| group.epoch().as_u64())
+                .map(|group| group.epoch().as_u64());
+            if named.checked_add(1) == Some(meta.joined_epoch) {
+                // The Commit that led to the epoch joined at, as long as the join has no place yet.
+                return if entry.group.is_room() {
+                    !self.memory.room_places.contains_key(&meta.joined_epoch)
+                } else {
+                    stands == Some(meta.joined_epoch)
+                };
+            }
+            if !own && entry.change > meta.passed {
+                return false;
+            }
+            stands
         } else {
             self.memory
                 .observers
                 .get(&entry.group)
                 .and_then(|observer| observer.epoch().ok())
         };
-        stands == Some(message.epoch().as_u64())
+        stands == Some(named)
     }
 
     fn observe_commit(
         &mut self,
-        group: &GroupId,
+        batch: &mut Batch,
+        entry: &LogEntry<'_>,
         commit: &[u8],
         recovery_auth: Option<&[u8]>,
     ) -> Result<Processed, Error> {
+        let group = &entry.group;
+        // 5.2.1: a session Commit is judged against the room epoch at its place.
+        let room_epoch = if group.is_room() {
+            None
+        } else {
+            Some(self.room_epoch_at(entry.change)?)
+        };
         let known = self.known();
         let room = if group.is_room() {
             None
@@ -3717,20 +3875,65 @@ impl<S: Storage> Device<S> {
             .observers
             .get_mut(group)
             .ok_or(Error::NotFound)?;
-        match observer.process_commit(commit, recovery_auth, &context) {
-            Ok(facts) => Ok(Processed::Observed(facts)),
+        let followed = match room_epoch {
+            None => observer.process_commit(commit, recovery_auth, &context),
+            Some(at) => observer.process_commit_at(commit, recovery_auth, &context, at),
+        };
+        match followed {
+            Ok(facts) => {
+                if group.is_room() {
+                    let epoch = observer.epoch()?;
+                    self.put_room_place(batch, epoch, entry.change);
+                }
+                Ok(Processed::Observed(facts))
+            }
             Err(Error::EpochTaken) => Err(Error::WrongEpoch),
             Err(error) => Err(error),
         }
     }
 
-    fn process_commit(
+    /// The Commit that led to the epoch this device joined `id` at came by in the log: its place is the
+    /// join's place. For the room group that is the place of the room epoch joined at. For a session group
+    /// it gives the `room_epoch` of the group's previous Commit (5.2.1), as long as the group still stands
+    /// where the device joined it: the room epoch that was current at that place, which that Commit must
+    /// have named. The Commit itself cannot be verified by one who was no member then (a Welcome carries no
+    /// note, and the transcript hash that binds the Commit needs the epoch before), so its place is the
+    /// hub's word, as the place of every entry is; it only ever tightens what the next Commit may name.
+    fn note_joining_commit(
         &mut self,
         batch: &mut Batch,
         id: &GroupId,
+        stands: u64,
+        change: u64,
+    ) -> Result<(), Error> {
+        let joined = self.meta(id)?.joined_epoch;
+        if stands == joined {
+            let meta = self.meta(id)?;
+            meta.place = meta.place.max(change);
+            self.put_group(batch, id)?;
+        }
+        if id.is_room() {
+            if !self.memory.room_places.contains_key(&joined) {
+                self.put_room_place(batch, joined, change);
+            }
+        } else if stands == joined {
+            if let Ok(at) = self.room_epoch_at(change) {
+                self.meta(id)?.previous_room_epoch = at;
+                self.put_group(batch, id)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn process_commit(
+        &mut self,
+        batch: &mut Batch,
+        entry: &LogEntry<'_>,
         commit: &[u8],
         recovery_auth: Option<&[u8]>,
     ) -> Result<Processed, Error> {
+        let id = &entry.group;
+        let change = entry.change;
         let message = rules::parse_commit(commit)?;
         if GroupId::from_bytes(message.group_id().as_slice()) != Ok(*id) {
             return Err(Error::BadCommit);
@@ -3740,6 +3943,9 @@ impl<S: Storage> Device<S> {
         let named = message.epoch().as_u64();
         let meta = self.meta(id)?.clone();
         if named < meta.joined_epoch {
+            if named.checked_add(1) == Some(meta.joined_epoch) {
+                self.note_joining_commit(batch, id, epoch, change)?;
+            }
             return Ok(Processed::Skipped);
         }
         if named < epoch {
@@ -3748,6 +3954,11 @@ impl<S: Storage> Device<S> {
         if named > epoch {
             return Err(Error::GroupBehind);
         }
+        // 5.4.1: a group's Commits come in the hub's order. One that claims a place at or before the last
+        // one's was not there when this device passed it.
+        if change <= meta.place {
+            return Err(Error::WrongEpoch);
+        }
         // 13.2: this is the place in the hub's order of the Commit that took the epoch. It is this device's
         // own and is merged here, whether or not the hub's answer was recorded; or it is another's, and the
         // pending one goes, whatever the hub answered: the log is what every member follows.
@@ -3755,7 +3966,17 @@ impl<S: Storage> Device<S> {
         if let Some(pending) = &meta.pending {
             let outbox = pending.outbox;
             if pending.commit == posted_as(commit)? {
+                // 5.2.1: it is judged at its place like any other: a session Commit that the hub stored
+                // behind a later room Commit names a room epoch behind its place, and no member takes it.
+                if !id.is_room() && pending.room_epoch != self.room_epoch_at(change)? {
+                    return Err(Error::BadGroup);
+                }
                 self.merge_own(batch, id)?;
+                if id.is_room() {
+                    self.put_room_place(batch, epoch.saturating_add(1), change);
+                }
+                self.meta(id)?.place = change;
+                self.put_group(batch, id)?;
                 return Ok(Processed::OwnCommit);
             }
             self.clear_pending(batch, id)?;
@@ -3772,12 +3993,16 @@ impl<S: Storage> Device<S> {
         };
         let facts = rules::commit_facts(id, &leaves, &processed, staged)?;
         let known = self.known();
+        let history = self.history()?;
         let verifier = Verifier {
-            history: self.history()?,
+            history,
             sessions: &known,
             recovery: &PublicRules,
             max_human_devices: profile::MAX_HUMAN_DEVICES_IN_RECOVERY,
-            posting: false,
+            room_epoch: match meta.session {
+                None => history.newest().epoch,
+                Some(_) => self.room_epoch_at(change)?,
+            },
         };
         let judged = Judged {
             facts: &facts,
@@ -3787,7 +4012,7 @@ impl<S: Storage> Device<S> {
         };
         match meta.session {
             None => rules::check_room_commit(&verifier, &judged)?,
-            Some(session) => rules::check_session_commit(
+            Some(session) => rules::check_stored_session_commit(
                 &verifier,
                 &SessionBefore {
                     session,
@@ -3824,7 +4049,11 @@ impl<S: Storage> Device<S> {
             self.meta(id)?.distrusted = !clean;
         }
         let removed = !group.is_active();
+        self.meta(id)?.place = change;
         self.settle(batch, id, &group, room_epoch)?;
+        if id.is_room() {
+            self.put_room_place(batch, epoch.saturating_add(1), change);
+        }
         if let Some(observer) = follower {
             // The roles are the observer's from here on: the device's own record of them goes.
             for state in self
@@ -3948,8 +4177,7 @@ impl<S: Storage> Device<S> {
             });
             match parent {
                 Parent::Seat(seat) => seat == Some(from),
-                Parent::Unknown => room.is_agent(&from),
-                Parent::NotAMainSession => false,
+                Parent::Unknown | Parent::NotAMainSession => false,
             }
         };
         Ok(match message {
@@ -4086,7 +4314,9 @@ impl<S: Storage> Device<S> {
             .into_iter()
             .map(|(_, device)| device)
             .collect();
-        if !self.disallowed(&meta, &leaves, &self.known()).is_empty() {
+        let known = self.known();
+        self.knows_parent(&meta, &known)?;
+        if !self.disallowed(&meta, &leaves, &known).is_empty() {
             return Err(Error::StaleSession);
         }
         // A message may carry keys: its plaintext is wiped.

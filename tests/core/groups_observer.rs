@@ -54,6 +54,7 @@ fn world(checks: bool) -> World {
     settle(&hub, &mut agent);
     let mut h1 = new_device();
     observe(&hub, &mut h1);
+    h1.observe_session(hub.group_info(&main).unwrap()).unwrap();
     let helper = found_helper(&mut hub, &mut agent, &main, &mut [&mut h1]);
     for device in [&mut a, &mut b, &mut h1, &mut other] {
         settle(&hub, device);
@@ -422,6 +423,8 @@ fn the_devices_refuse_forged_roles_that_a_hub_let_through() {
     for (name, forge) in forgeries() {
         let mut world = world(false);
         let (who, group, code) = forge(&mut world);
+        // The helper device follows the main session's group as an observer, and judges its Commits too.
+        let (main, helper_device) = (world.main, world.h1.id());
         let committer = forger(&mut world, who).id();
         // A hub that checks nothing stores the Commit.
         let mut hub = std::mem::replace(&mut world.hub, Hub::new(false));
@@ -443,7 +446,8 @@ fn the_devices_refuse_forged_roles_that_a_hub_let_through() {
             let roles = device.room_history().unwrap().newest().epoch;
             let results = sync(&hub, device);
             let last = results.last().unwrap();
-            if held.is_none() && !group.is_room() {
+            let follows = group == main && device.id() == helper_device;
+            if held.is_none() && !group.is_room() && !follows {
                 // Not a leaf of that session group: the Commit is not for it.
                 assert_eq!(last, &Ok(Processed::Skipped), "{name}");
                 continue;
