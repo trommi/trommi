@@ -22,6 +22,12 @@ export async function use(hubCode: string, entry: LogEntry): Promise<void> {
   const other: Device = await Device.create(new OwnStore())
   const room: Uint8Array | null = await device.room()
   if (!room) return
+  const opened = await device.inviteOpen('agent', null, 'https://app.example', 'https://hub.example', Date.now())
+  const asked = await other.joinRequest(opened.link, opened.offer, opened.offerSignature, Date.now())
+  const accepted = await device.inviteAccept(opened.inviteId, asked.request, asked.mac, asked.signature, Date.now())
+  const emoji: string = accepted.code.emoji.join(' ')
+  void emoji
+  await device.inviteConfirm(opened.inviteId, accepted.code.numbers, accepted.requestHash, true, Date.now())
   const session = await device.foundSession(await other.id(), [await other.keyPackage(Date.now())], Date.now())
   const key: Uint8Array = await device.contentKey(sessionGroupId(room, session), 1)
   void key
@@ -34,7 +40,7 @@ export async function use(hubCode: string, entry: LogEntry): Promise<void> {
     else await device.outboxAccepted(waiting.id, null)
   }
   try {
-    const processed = await device.processLogEntry(entry)
+    const processed = await device.processLogEntry(entry, Date.now())
     if (processed.kind === 'message' && processed.message?.kind === 'workTrail') void processed.message.payload
   } catch (error) {
     if (error instanceof TrommiError && error.code === 'storage' && error.cause instanceof StoreConflict) return

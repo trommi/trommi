@@ -26,6 +26,7 @@ pub mod device;
 pub mod error;
 pub mod files;
 mod guard;
+pub mod invite;
 #[cfg(feature = "js")]
 pub mod js;
 pub mod push;
@@ -39,6 +40,10 @@ pub use account::*;
 pub use device::{log_finding, CoreDevice};
 pub use error::{error_code_from_text, error_code_text, CoreError, ErrorCode};
 pub use files::*;
+pub use invite::{
+    CheckCode, InviteAccepted, InviteConfirmed, InviteOpened, InviteRole, InviteStep,
+    InviteStepKind, JoinRequest,
+};
 pub use push::*;
 pub use records::*;
 pub use recovery::{

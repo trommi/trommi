@@ -297,6 +297,65 @@ export interface SelfTestReport {
   versions: Versions
 }
 
+// ---- joining by link ----------------------------------------------------------------------------------------------
+// Every signed part travels as its bytes with the signature beside it.
+
+export type InviteRole = 'human' | 'agent'
+
+/** An invite as its inviter opened it. `link` holds the invite's secret. */
+export interface InviteOpened {
+  inviteId: Uint8Array
+  link: string
+  expiresAt: number
+  offer: Uint8Array
+  offerSignature: Uint8Array
+}
+
+/** The check code both sides show: six of 64 emoji. */
+export interface CheckCode {
+  /** Six numbers, 0 to 63: what `inviteConfirm` takes. */
+  numbers: Uint8Array
+  emoji: string[]
+  words: string[]
+}
+
+export interface InviteAccepted {
+  newDevice: Uint8Array
+  code: CheckCode
+  reveal: Uint8Array
+  revealSignature: Uint8Array
+  requestHash: Uint8Array
+}
+
+export interface InviteConfirmed {
+  newDevice: Uint8Array
+  role: InviteRole
+  sessionId: Uint8Array | null
+  outboxId: number
+}
+
+export type InviteStepKind = 'wait' | 'commit' | 'handover' | 'addToSession' | 'foundSession' | 'takeOver'
+
+/** One thing to do next for an invite. The fields are filled as `kind` says. */
+export interface InviteStep {
+  inviteId: Uint8Array
+  kind: InviteStepKind
+  group: Uint8Array | null
+  device: Uint8Array | null
+  keyPackage: Uint8Array | null
+  cuts: Cut[]
+}
+
+export interface JoinRequest {
+  inviteId: Uint8Array
+  request: Uint8Array
+  mac: Uint8Array
+  signature: Uint8Array
+  role: InviteRole
+  inviter: Uint8Array
+  expiresAt: number
+}
+
 // ---- recovery -----------------------------------------------------------------------------------------------------
 // The recovery code is 32 bytes the host holds only while it founds a room, joins with the code, recovers or
 // replaces the code. What the hub serves for a join with the code is handed over as it came: nothing in it is trusted.
@@ -400,9 +459,8 @@ export class Device {
   foundRoom(recoveryCode: Uint8Array, nowMs: number): Promise<Uint8Array>
   foundSession(agent: Uint8Array, keyPackages: Uint8Array[], nowMs: number): Promise<Uint8Array>
   foundHelper(parent: Uint8Array, keyPackages: Uint8Array[], nowMs: number): Promise<Uint8Array>
-  addHumanDevice(device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
   addToSession(group: Uint8Array, device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
-  changeAgents(enrol: Uint8Array[], remove: Uint8Array[], nowMs: number): Promise<number>
+  removeAgents(remove: Uint8Array[], nowMs: number): Promise<number>
   removeHumanDevices(cuts: Cut[], nowMs: number): Promise<number>
   cleanSession(group: Uint8Array, cuts: Cut[], replacement: Replacement | null | undefined, nowMs: number): Promise<number>
   readmitHelper(group: Uint8Array, old: Cut, device: Uint8Array, keyPackage: Uint8Array, nowMs: number): Promise<number>
@@ -411,13 +469,26 @@ export class Device {
   joinWelcome(welcome: Uint8Array, room: Uint8Array, committer: Uint8Array | null | undefined, nowMs: number): Promise<Joined>
   observeRoom(groupInfo: Uint8Array, expectedState?: Uint8Array | null): Promise<void>
   observeSession(groupInfo: Uint8Array): Promise<void>
-  processLogEntry(entry: LogEntry): Promise<Processed>
+  processLogEntry(entry: LogEntry, nowMs: number): Promise<Processed>
   sendHandover(group: Uint8Array, recipient: Uint8Array): Promise<number[]>
   handoversSent(): Promise<HandoverSent[]>
   handoverRead(group: Uint8Array, recipient: Uint8Array): Promise<void>
   sendStrokePiece(board: Uint8Array, piece: Uint8Array): Promise<number>
   sendWorkTrail(group: Uint8Array, turn: Uint8Array, number: number, step: Uint8Array, nowMs: number): Promise<number>
-  hubSignIn(room: Uint8Array, hub: string, challenge: Uint8Array): Promise<SignedHubAuth>
+  /** Signs the hub's challenge with this device's key, for the room it belongs to. */
+  hubSignIn(hub: string, challenge: Uint8Array): Promise<SignedHubAuth>
+  inviteOpen(role: InviteRole, sessionId: Uint8Array | null | undefined, app: string, hub: string, nowMs: number): Promise<InviteOpened>
+  inviteAccept(inviteId: Uint8Array, request: Uint8Array, mac: Uint8Array, signature: Uint8Array, nowMs: number): Promise<InviteAccepted>
+  /** `code`: the six numbers the person confirmed. Null when `matches` is false: the invite is burned. */
+  inviteConfirm(inviteId: Uint8Array, code: Uint8Array, requestHash: Uint8Array, matches: boolean, nowMs: number): Promise<InviteConfirmed | null>
+  inviteRecommit(inviteId: Uint8Array, nowMs: number): Promise<number>
+  inviteSteps(): Promise<InviteStep[]>
+  inviteHandover(inviteId: Uint8Array): Promise<number[]>
+  inviteForget(inviteId: Uint8Array): Promise<void>
+  joinRequest(link: string, offer: Uint8Array, offerSignature: Uint8Array, nowMs: number): Promise<JoinRequest>
+  joinReveal(reveal: Uint8Array, revealSignature: Uint8Array): Promise<CheckCode>
+  joinObserve(groupInfo: Uint8Array): Promise<void>
+  joinInvited(welcome: Uint8Array, nowMs: number): Promise<Joined>
   holdsRecoveryMac(): Promise<boolean>
   keyIsConfirmed(group: Uint8Array, epoch: number): Promise<boolean>
   sendRecoveryAuth(recipient: Uint8Array): Promise<number | null>
