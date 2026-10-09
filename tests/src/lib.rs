@@ -401,3 +401,4 @@ pub fn settle_joining(hub: &Hub, device: &mut TestDevice) -> Vec<Joined> {
     }
     joined
 }
+pub mod vectors;
