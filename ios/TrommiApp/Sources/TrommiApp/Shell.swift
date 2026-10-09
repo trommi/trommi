@@ -12,15 +12,8 @@ struct BoardShell: View {
   @EnvironmentObject var model: BoardModel
   @Environment(\.horizontalSizeClass) private var hSize
   @State private var columns = NavigationSplitViewVisibility.all
-  /** The page under the open note: the tab he came from, selected again when the note closes. */
-  @State private var noteUnder = BoardModel.Tab.desk
   @State private var keyboard = false
   private var hasNote: Bool { !(model.desk?.notes.filter { $0.held.isNull && (!$0.text.isEmpty || !$0.attachments.isEmpty) }.isEmpty ?? true) }
-  /** Chat always opens on its list (a chat has no tab bar: opened into one, there was no way back to the bar). */
-  private func openTab(_ t: BoardModel.Tab) {
-    if t == .chat { model.chatPath = [] }
-    model.tab = t
-  }
 
   var body: some View {
     let _ = RenderCount.body("BoardShell")
@@ -40,20 +33,20 @@ struct BoardShell: View {
         // item is a raised lens, and it is on Note while the note lies over the page he came from; closed, it is back
         // on that page. The bar shows on the two lists only: a pushed screen has its own controls at the bottom, and
         // the keyboard takes its place. Both pages stay alive, so each keeps its scroll position.
-        let page = model.tab == .note ? noteUnder : model.tab
+        let page = model.tabs.page
         let showBar = !keyboard && model.selected.isEmpty && (page == .chat ? model.chatPath.isEmpty : model.deskPath.isEmpty)
         ZStack {
           stack.opacity(page == .desk ? 1 : 0).allowsHitTesting(page == .desk).accessibilityHidden(page != .desk)
           chats.opacity(page == .chat ? 1 : 0).allowsHitTesting(page == .chat).accessibilityHidden(page != .chat)
         }
-        .modifier(NotePanel(open: Binding(get: { model.tab == .note }, set: { if !$0 && model.tab == .note { model.tab = noteUnder } })))
+        .modifier(NotePanel(open: Binding(get: { model.tabs.noteOpen }, set: { if !$0 { model.tabs.closeNote() } })))
         // a bar, not a plain inset: the lists' soft scroll edge reaches up to it
         .safeAreaBar(edge: .bottom, spacing: 0) {
           if showBar {
-            TabPill(on: model.tab, waiting: model.view?.fresh.count ?? 0, hasNote: hasNote, leaveDemo: model.demo ? { model.leaveDemo() } : nil) { t in
-              if t == .note {
-                if model.tab == .note { model.tab = noteUnder } else { noteUnder = model.tab; model.tab = .note }
-              } else if t == model.tab { withAnimation(.snappy) { model.path = [] } } else { openTab(t) }
+            TabPill(waiting: model.view?.fresh.count ?? 0, hasNote: hasNote, leaveDemo: model.demo ? { model.leaveDemo() } : nil) { t in
+              let was = model.tabs.page
+              // the page he is on, tapped again: back to its root. Chat always opens on its list (a chat has no bar)
+              if model.tabs.tap(t) { withAnimation(.snappy) { model.path = [] } } else if t == .chat && was != .chat { model.chatPath = [] }
             }
           }
         }
@@ -66,7 +59,7 @@ struct BoardShell: View {
     .overlay { UpdateRequired() }
     .background(Ink.bg.ignoresSafeArea())
     // anything dropped onto the app goes onto the note (NoteDrop.swift): the note opens and shows it arrive
-    .modifier(NoteDropTarget { if hSize == .regular { NotificationCenter.default.post(name: .trommiNoteOpen, object: nil) } else if model.tab != .note { noteUnder = model.tab; model.tab = .note } })
+    .modifier(NoteDropTarget { if hSize == .regular { NotificationCenter.default.post(name: .trommiNoteOpen, object: nil) } else { model.tab = .note } })
   }
   private var stack: some View {
     NavigationStack(path: $model.deskPath) {
@@ -100,16 +93,18 @@ struct BoardShell: View {
  * the pill, a soft shadow below it, nothing sunk in); the others a little muted.
  */
 struct TabPill: View {
-  let on: BoardModel.Tab
+  /** The lit item is read from the model here, not handed in: the pill then follows every change of it by itself
+   *  (build 21: handed in through the bar's closure it stayed on Desk while the note was open). */
+  @EnvironmentObject var model: BoardModel
   let waiting: Int
   let hasNote: Bool
   /** The demo runs: its yellow mark stands at the pill's left as the way out (his word, 9 October: nothing of the
    *  demo floats over the top row any more). The tabs are narrower then, so both fit a 375 pt screen. */
   var leaveDemo: (() -> Void)? = nil
   let tap: (BoardModel.Tab) -> Void
-  @Namespace private var ns
   private var wide: CGFloat { leaveDemo == nil ? 84 : 66 }
   var body: some View {
+    let on = model.tabs.lit
     HStack(spacing: 8) {
       if let leave = leaveDemo {
         Button(action: leave) {
@@ -127,9 +122,19 @@ struct TabPill: View {
         .accessibilityLabel("Leave Demo")
       }
       HStack(spacing: 0) {
-        item(.chat, "sketch:bubble", 39, "Chat")
-        item(.desk, "sketch:desk", 34, waiting > 0 ? "Desk, \(waiting) waiting" : "Desk")
-        item(.note, "sketch:page", 36, hasNote ? "Note, written" : "Note")
+        item(.chat, on, "sketch:bubble", 39, 24, "Chat")
+        item(.desk, on, "sketch:desk", 34, 24, waiting > 0 ? "Desk, \(waiting) waiting" : "Desk")
+        // the web's corner note (sidebar.mjs NOTE_ICON): one note drawing on both
+        item(.note, on, "sidebar:NOTE_ICON", 38, 52, hasNote ? "Note, written" : "Note")
+      }
+      // the lens: one capsule that is always there, moved to the lit item (no view that comes and goes, no matched
+      // geometry: nothing that can be left behind on the item before)
+      .background(alignment: .leading) {
+        Capsule().fill(Ink.tabLens).shadow(color: .black.opacity(0.18), radius: 7, y: 2)
+          .overlay(Capsule().strokeBorder(Ink.fg.opacity(0.08), lineWidth: 0.5))
+          .frame(width: wide, height: 50)
+          .offset(x: CGFloat(ShellTabs.index(on)) * wide)
+          .allowsHitTesting(false)
       }
       .padding(4)
       .glass(Capsule())
@@ -140,23 +145,19 @@ struct TabPill: View {
     // where the system's tab bar lies: the lower edge 23 pt over the screen's bottom edge (it stood 36 pt over it)
     .padding(.top, 6).padding(.bottom, bottomSink(23))
   }
-  private func item(_ t: BoardModel.Tab, _ key: String, _ side: CGFloat, _ label: String) -> some View {
+  /** One item: its drawing `side` pt wide in a view box of `box` units, the line 2.4 pt on all. */
+  private func item(_ t: BoardModel.Tab, _ on: BoardModel.Tab, _ key: String, _ side: CGFloat, _ box: CGFloat, _ label: String) -> some View {
     let sel = on == t
     return Button { tap(t) } label: {
-      PenMark(key, color: Ink.fg.opacity(sel ? 1 : 0.6), width: 2.4 * 24 / side).frame(width: side, height: side)
+      // the note keeps its own inks (yellow paper, the page's ink), so it is muted as a whole
+      PenMark(key, color: Ink.fg.opacity(sel || t == .note ? 1 : 0.6), width: 2.4 * box / side).frame(width: side, height: side)
+        .opacity(t == .note && !sel ? 0.6 : 1)
         .frame(width: wide, height: 50)
         .overlay {
           if t == .desk && waiting > 0 {
             Text("\(waiting)").font(Face.text(11, .bold)).foregroundStyle(Ink.bg).padding(.horizontal, 5).frame(minWidth: 18, minHeight: 18).background(Capsule().fill(Ink.fg)).offset(x: 18, y: -13)
           }
-          if t == .note && hasNote { Circle().fill(Ink.fg).frame(width: 7, height: 7).offset(x: -14, y: -14) }
-        }
-        .background {
-          if sel {
-            Capsule().fill(Ink.tabLens).shadow(color: .black.opacity(0.18), radius: 7, y: 2)
-              .overlay(Capsule().strokeBorder(Ink.fg.opacity(0.08), lineWidth: 0.5))
-              .matchedGeometryEffect(id: "lens", in: ns)
-          }
+          if t == .note && hasNote { Circle().fill(Ink.fg).frame(width: 7, height: 7).offset(x: -17, y: -15) }
         }
         .contentShape(Capsule())
     }
@@ -632,6 +633,8 @@ struct NotePanel: ViewModifier {
     }
     .animation(.snappy, value: open)
     .animation(.snappy, value: keyboardTop)
+    // every way the note closes (sent, thrown away, a tab, the handle) puts the keyboard away: the bar comes back
+    .onChange(of: open) { _, now in if !now { hideKeyboard() } }
     #if canImport(UIKit)
     .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { n in
       guard let f = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }

@@ -9,6 +9,7 @@ import WebKit
 #endif
 #if canImport(UIKit)
 import UIKit
+import ImageIO
 #endif
 #if canImport(AVKit)
 import AVKit
@@ -197,11 +198,27 @@ func sizeWord(_ n: Int) -> String { n >= 1_000_000 ? String(format: "%.1f MB", D
   #endif
 }
 
+#if canImport(UIKit)
+/** A picture's bytes as a picture of at most `maxPixel`, through ImageIO's thumbnail: any format the system reads
+ *  (JPEG, HEIC, PNG, GIF, WebP), turned upright, never decoded at full size. nil when the bytes are no picture. */
+enum Thumb {
+  static func image(_ data: Data, maxPixel: Int) -> UIImage? {
+    guard let src = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(src) > 0 else { return nil }
+    let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+                                 kCGImageSourceThumbnailMaxPixelSize: maxPixel, kCGImageSourceShouldCacheImmediately: true]
+    guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary), cg.width > 0, cg.height > 0 else { return nil }
+    return UIImage(cgImage: cg)
+  }
+}
+#endif
+
 /** A picture of the room: fetched from the hub, decrypted and checked, then shown. */
 struct AttachmentImage: View {
   @EnvironmentObject var model: BoardModel
   let ref: JV
   var contentMode: ContentMode = .fill
+  /** A small tile (the note's row): while it loads and when it cannot be shown, the file's name stands in it. */
+  var named = false
   #if canImport(UIKit)
   @State private var image: UIImage?
   #endif
@@ -210,7 +227,16 @@ struct AttachmentImage: View {
     ZStack {
       #if canImport(UIKit)
       if let i = image { Image(uiImage: i).resizable().aspectRatio(contentMode: contentMode) }
-      else if failed { Sketch("picture", color: Ink.faint).frame(width: 28, height: 28) }
+      else if named {
+        // never an empty box: the picture's sign and its name until it is there, and if it never comes
+        Rectangle().fill(Color.white.opacity(0.5)).overlay {
+          VStack(spacing: 3) {
+            if failed { Sketch("picture", color: Ink.noteInk).frame(width: 20, height: 20) } else { ProgressView().tint(Ink.noteInk) }
+            Text(ref["file_name"].string ?? "picture").font(Face.text(10)).foregroundStyle(Ink.noteInk).lineLimit(2).multilineTextAlignment(.center)
+          }.padding(4)
+        }
+      }
+      else if failed { Rectangle().fill(Ink.sunken).overlay(Sketch("picture", color: Ink.muted).frame(width: 28, height: 28)) }
       else { Rectangle().fill(Ink.sunken).overlay(ProgressView().tint(Ink.muted)) }
       #endif
     }
@@ -222,14 +248,14 @@ struct AttachmentImage: View {
     if let hit = PictureCache.shared.image(id) { image = hit; return }
     do {
       let d = try await model.attachment(ref)
-      guard let i = UIImage(data: d) else { failed = true; return }
-      // decoded off the main thread at display size
-      // a bounded, standard-range copy (an HDR photo drawn small came out black, 8 October)
-      let shown = await Task.detached(priority: .userInitiated) { () -> UIImage in
-        let side = max(i.size.width, i.size.height)
-        let target = side > 1600 ? CGSize(width: i.size.width * 1600 / side, height: i.size.height * 1600 / side) : i.size
-        return i.preparingThumbnail(of: target) ?? i.preparingForDisplay() ?? i
+      // decoded off the main thread at display size, through ImageIO (HEIC, PNG with alpha, orientation, and an HDR
+      // photo as its standard-range picture: drawn small it came out black, 8 October); UIKit's decoder as the fallback
+      let made = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+        if let t = Thumb.image(d, maxPixel: 1600) { return t }
+        guard let i = UIImage(data: d) else { return nil }
+        return i.preparingForDisplay() ?? i
       }.value
+      guard let shown = made, shown.size.width > 0, shown.size.height > 0 else { failed = true; return }
       PictureCache.shared.put(id, shown)
       image = shown
     } catch { failed = true }

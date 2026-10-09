@@ -293,8 +293,9 @@ enum PenDraw {
       if c.contains("end-check") { stroke = Ink.stampDone; width = 2.2 }
       if c.contains("note-fill") { fill = Ink.noteYellow; stroke = nil }
       // the note's outline stands on the ground (the page's ink, as the web), its lines on the yellow paper (dark ink)
-      if c.contains("note-ink") { stroke = Ink.fg; width = 1.55 }
-      if c.contains("note-lines") { stroke = Ink.noteInk; width = 1.55 }
+      if c.contains("note-ink") { stroke = Ink.fg; width = inks.width ?? 1.55 }
+      // (drawn heavier, as a bar item: the written lines a little finer than the outline, they lie close together)
+      if c.contains("note-lines") { stroke = Ink.noteInk; width = inks.width.map { $0 * 0.7 } ?? 1.55 }
       if c.contains("clamp-plate") { fill = Color.dyn(0xc9ccc6, 0x59605b) }
       if c.contains("brand-mark-ring") { stroke = Ink.accent }
       if it.attrs["fill"] != nil && it.attrs["fill"] != "none" { fill = stroke }

@@ -338,7 +338,7 @@ struct NoteScreen: View {
           HStack(spacing: 8) {
             ForEach(Array(files.enumerated()), id: \.offset) { i, f in
               ZStack(alignment: .topTrailing) {
-                if kindOf(f) == "image" { AttachmentImage(ref: f).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 8)) }
+                if kindOf(f) == "image" { AttachmentImage(ref: f, named: true).frame(width: 72, height: 72).clipShape(RoundedRectangle(cornerRadius: 8)) }
                 else { VStack { Sketch("clip", color: Ink.noteInk).frame(width: 18, height: 18); Text(f["file_name"].string ?? "file").font(Face.text(11)).lineLimit(2) }.frame(width: 72, height: 72).background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.5))) }
                 Button { files.remove(at: i); keepSoon() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Ink.noteInk) }.offset(x: 6, y: -6)
                   .accessibilityLabel("Remove")
@@ -372,7 +372,7 @@ struct NoteScreen: View {
           }
         }
         .disabled(target == nil || empty || uploading || dropping)
-        .opacity(target == nil || empty || uploading || dropping ? 0.35 : 1)
+        .opacity(target == nil || empty || uploading || dropping ? 0.5 : 1)
         .accessibilityLabel(target.map { "Send to \($0.name)" } ?? "Send")
       }
       .foregroundStyle(Ink.noteInk)
@@ -388,7 +388,7 @@ struct NoteScreen: View {
       shown = true
     }
     .onChange(of: text) { _, _ in keepSoon() }
-    .onDisappear { shown = false; dropping = false; keep() }
+    .onDisappear { shown = false; dropping = false; focused = false; hideKeyboard(); keep() }
     // what was dropped onto the app (NoteDrop.swift): onto this note as it is on screen, words he has just typed kept
     .onReceive(NotificationCenter.default.publisher(for: .trommiNoteDropping)) { n in dropping = shown && (n.object as? Bool ?? false) }
     .onReceive(NotificationCenter.default.publisher(for: .trommiNoteAdd)) { n in
@@ -413,10 +413,8 @@ struct NoteScreen: View {
       }
     }
   }
-  private var sendFace: some View {
-    Image(systemName: "paperplane.fill").font(.system(size: 18, weight: .semibold)).foregroundStyle(Ink.noteYellow)
-      .frame(width: 46, height: 46).background(Circle().fill(Ink.noteInk))
-  }
+  /** The web's send control (notes.css .note-send): the envelope with the crown as its seal. */
+  private var sendFace: some View { NoteEnvelope().frame(width: 58, height: 44).contentShape(Rectangle()) }
   /** Every desk with a crowned session, in the desks' order. */
   private var deskCrowns: [(desk: DeskDesc, agent: Agent)] {
     (model.desk?.desks ?? []).compactMap { d in model.desk?.crownOf(desk: d.id).map { (d, $0) } }
@@ -497,6 +495,7 @@ struct NoteScreen: View {
   private func bin() {
     let t = text, id = noteId, atts = files
     text = ""; noteId = nil; files = []
+    focused = false; hideKeyboard()
     onDone?()
     guard let room = model.room, let id = id else { return }
     Task {
@@ -511,6 +510,8 @@ struct NoteScreen: View {
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines), id = noteId, atts = files.isEmpty ? kept : files
     text = ""; noteId = nil; files = []
     keepTask?.cancel()
+    // the keyboard goes with the note (build 21: it stayed up over the Desk)
+    focused = false; hideKeyboard()
     onDone?()
     // held for three seconds: the toast's Undo brings it back (notes.mjs HOLD_MS)
     var undone = false
@@ -527,6 +528,47 @@ struct NoteScreen: View {
         if let id = id { try? await room.deleteNote(id) }
       } catch { model.fail("Not sent", error) }
     }
+  }
+}
+
+/**
+ * The note's send control, the web's drawing (notes.css: --note-envelope, .note-send): an envelope drawn with the
+ * board's pen on cream paper, the crown its seal on the tip of the flap (the crown marks the session that gets the
+ * note), the whole a little tilted. The same path data as the web's, in its 56 x 40 box inside 58 x 44.
+ */
+struct NoteEnvelope: View {
+  var body: some View {
+    ZStack(alignment: .topLeading) {
+      Canvas { ctx, size in
+        let k = min(size.width / 58, size.height / 44)
+        let t = CGAffineTransform(a: k, b: 0, c: 0, d: k, tx: (size.width - 58 * k) / 2 + k, ty: (size.height - 44 * k) / 2 + 2 * k)
+        func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
+        var paper = Path()
+        paper.move(to: pt(3, 7.4)); paper.addLine(to: pt(52.6, 6.6)); paper.addLine(to: pt(53, 36.4)); paper.addLine(to: pt(3.4, 37)); paper.closeSubpath()
+        var edge = Path()
+        edge.move(to: pt(3, 7.4))
+        edge.addQuadCurve(to: pt(52.6, 6.6), control: pt(28, 6.4))
+        edge.addQuadCurve(to: pt(53, 36.4), control: pt(53.4, 22))
+        edge.addQuadCurve(to: pt(3.4, 37), control: pt(28, 37.4))
+        edge.addQuadCurve(to: pt(3, 7.4), control: pt(2.6, 22))
+        var flap = Path()
+        flap.move(to: pt(3.4, 8))
+        flap.addQuadCurve(to: pt(27.6, 24.2), control: pt(16, 18.6))
+        flap.addQuadCurve(to: pt(52.4, 7.4), control: pt(40, 18))
+        let ink = Color(hex: 0x1d1a12)
+        ctx.fill(paper.applying(t), with: .color(Color(hex: 0xfdf2c4)))
+        ctx.stroke(edge.applying(t), with: .color(ink), style: StrokeStyle(lineWidth: 1.6 * k, lineCap: .round, lineJoin: .round))
+        ctx.stroke(flap.applying(t), with: .color(ink), style: StrokeStyle(lineWidth: 1.5 * k, lineCap: .round, lineJoin: .round))
+      }
+      GeometryReader { g in
+        let k = min(g.size.width / 58, g.size.height / 44)
+        PenMark("crown", color: Color(hex: 0x1d1a12)).frame(width: 26 * k, height: 19 * k)
+          .rotationEffect(.degrees(-6))
+          .offset(x: (g.size.width - 58 * k) / 2 + 15 * k, y: (g.size.height - 44 * k) / 2 + 16 * k)
+      }
+    }
+    .rotationEffect(.degrees(-4))
+    .accessibilityHidden(true)
   }
 }
 

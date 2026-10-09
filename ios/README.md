@@ -134,7 +134,9 @@ As Messages, Mail and Notes do on iOS 26: no control of our own for the keyboard
 - **Note:** a full page of yellow paper over the list he came from (`NotePanel` in `Shell.swift`), edge to edge, up
   under the status bar and on behind the tab pill, which stays and is lit on Note. From the top: a handle, "To: …" as
   a glass pill on a row of its own (the words begin below it, never under it), the words, the pictures, the
-  paperclip · bin · send row just above the tab pill. A tap on Note or another tab, or a drag down on the handle,
+  paperclip · bin · send row just above the tab pill; send is the web's envelope with the crown as its seal
+  (`NoteEnvelope`, the path data of `notes.css`), half faded while there is nothing to send. Sending, throwing away
+  and every other way out put the keyboard away. A tap on Note or another tab, or a drag down on the handle,
   leaves it; the draft stays on the note. With the keyboard up the tab pill hides and the row sits on the keyboard:
   the text area shrinks and scrolls (the pictures and the row never give way), and what the keyboard's own frame
   still covers of the page (`UIResponder.keyboardWillChangeFrameNotification`; the content's keyboard inset ended a
