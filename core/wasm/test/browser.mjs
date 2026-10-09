@@ -1,8 +1,8 @@
-// The browser proof: serve core/wasm/pkg and the test page with the web app's own Content-Security-Policy
-// (app/web/public/_headers), and run the round trip in headless Chromium, in the page and in a module worker.
+// The browser test: serve core/wasm/pkg and the test page with the web app's own Content-Security-Policy
+// (app/web/public/_headers), and call the core in headless Chromium, in the page and in a module worker.
 //   core/wasm/build.sh && node core/wasm/test/browser.mjs
-// What it shows:
-// - the round trip passes under the app's policy as it is, with no violation, in both places;
+// What it checks:
+// - the call passes under the app's policy as it is, with no violation, in both places;
 // - without 'wasm-unsafe-eval' WebAssembly is refused (in the page by the page's policy; in the worker by the policy
 //   of the worker script's own response, whatever the page's says);
 // - sizes and times. Times are from this machine over loopback: no network, no deployed cache. "first" is the first
@@ -71,14 +71,14 @@ async function withBrowser(fn) {
 }
 
 try {
-  const TIMES = ['fetch', 'compile', 'instance', 'instantiate', 'identities', 'foundAddJoinExport', 'sealOpen', 'removeProcess', 'megabyteSeal', 'megabyteOpen', 'sixteen', 'sixteenRemove', 'indexedDb']
+  const TIMES = ['fetch', 'compile', 'instance']
   for (const [where, throttle] of [['page', 1], ['page', 4], ['worker', 1]]) {
     const tries = await withBrowser(async run => { const all = []; for (let i = 0; i < 3; i++) all.push(await run(where, throttle)); return all })
     for (const t of tries) if (!t.ok || t.violations.length || t.console.length || t.contentType !== 'application/wasm') { failed = true; console.error('FAILED', JSON.stringify(t)) }
     const pick = (t, keys) => Object.fromEntries(keys.map(k => [k, t[k]]))
     report.runs.push({ where, throttle, ok: tries.every(t => t.ok), first: pick(tries[0], TIMES),
       best: Object.fromEntries(TIMES.map(k => [k, Math.min(...tries.map(t => t[k]))])),
-      storedEntries: tries[0].storedEntries, storedBytes: tries[0].storedBytes, sixteenStoredBytes: tries[0].sixteenStoredBytes, indexedDbEntries: tries[0].indexedDbEntries, violations: tries[0].violations })
+      version: tries[0].version, violations: tries[0].violations })
   }
   // Without 'wasm-unsafe-eval': must be refused, as a compile error that names the policy.
   const cases = [
