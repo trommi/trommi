@@ -845,8 +845,16 @@ impl<S: Storage> Device<S> {
     pub(super) fn observing_as_invited(
         &self,
         expected_state: Option<&Hash32>,
+        history: Option<&crate::mls::rules::RoomHistory>,
     ) -> Result<(), Error> {
-        let Some(joining) = self.joining_by_link()? else {
+        // A state that holds this device in `agents` already brings an enrolment whose Commit the device
+        // never saw: it takes none that way, except under the cargo feature `vectors`.
+        let enrolled = history.is_some_and(|history| history.newest().is_agent(&self.id));
+        let joining = self.joining_by_link()?;
+        if enrolled && (joining.is_some() || !cfg!(feature = "vectors")) {
+            return Err(Error::BadInvite);
+        }
+        let Some(joining) = joining else {
             return Ok(());
         };
         let offer = joining.joiner.offer();
