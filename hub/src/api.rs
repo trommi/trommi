@@ -136,9 +136,11 @@ fn client_ip(app: &App, conn: &Conn, headers: &hyper::HeaderMap) -> String {
         std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
         std::net::IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
     };
-    match http::header(headers, "cf-connecting-ip") {
-        Some(h) if app.cfg.trust_proxy_header && private && h.len() <= 64 => h.to_string(),
-        _ => peer.to_string(),
+    // the header must be an address; it is keyed in its one canonical spelling
+    match http::header(headers, "cf-connecting-ip").and_then(|h| h.parse::<std::net::IpAddr>().ok())
+    {
+        Some(named) if app.cfg.trust_proxy_header && private => named.to_canonical().to_string(),
+        _ => peer.to_canonical().to_string(),
     }
 }
 
@@ -211,7 +213,7 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
         return Response::builder()
             .status(204)
             .header("access-control-allow-methods", "GET, POST, PUT, DELETE")
-            .header("access-control-allow-headers", "authorization, content-type, trommi-client, trommi-lease, x-share-secret, range, last-event-id")
+            .header("access-control-allow-headers", "authorization, content-type, trommi-client, trommi-lease, x-share-secret, x-found-token, range, last-event-id")
             .header("access-control-max-age", "86400")
             .body(Body::empty())
             .expect("a valid response");
@@ -442,7 +444,8 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let auth = rq.auth(app, x.c)?;
             auth.human()?;
             let account = accounts::account_of(x.c, &auth.room)?;
-            Ok(json!({ "challenge": b64(&app.accounts.challenge(Some(account), x.now)) }))
+            let revision = accounts::revision_of(x.c, account)?;
+            Ok(json!({ "challenge": b64(&app.accounts.challenge(Some((account, revision)), x.now)) }))
         }),
         ("POST", ["account", "passkeys"]) => human_write(app, rq, |x, auth| app.accounts.add_passkey(x.c, &auth.room, &rq.body, x.now)),
         ("DELETE", ["account", "passkeys", credential]) => {
@@ -727,15 +730,24 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("POST", ["live-activity"]) => human_write(app, rq, |x, auth| live_activity_register(app, x, auth, &rq.body)),
         ("POST", ["link"]) => {
             let auth = read_auth()?;
-            let answer = app.write(|x, fx| {
+            // not under the room's recovery lock (a lease must be kept alive through a recovery), but under the
+            // device's present standing; its report reaches the human devices in the order of the writes
+            app.write(|x, fx| {
+                crate::app::still(x, &auth)?;
+                let answer = crate::app::link(x, &auth, &rq.body)?;
                 fx.live.push(auth.room);
-                crate::app::link(x, &auth, &rq.body)
-            })?;
-            app.presence(&auth.room, &auth.device, json!({
-                "device": b64(&auth.device), "online": true, "hears": rq.body["hears"].as_bool().unwrap_or(false),
-                "working": rq.body["working"].as_bool().unwrap_or(false), "last_call_at": rq.body["last_call_at"].as_i64().unwrap_or(0),
-            }));
-            Ok(answer)
+                fx.events.push(store::Event {
+                    room: auth.room,
+                    audience: store::Audience { humans: true, others: vec![], except: None },
+                    name: "presence",
+                    change: None,
+                    data: json!({
+                        "device": b64(&auth.device), "online": true, "hears": rq.body["hears"].as_bool().unwrap_or(false),
+                        "working": rq.body["working"].as_bool().unwrap_or(false), "last_call_at": rq.body["last_call_at"].as_i64().unwrap_or(0),
+                    }),
+                });
+                Ok(answer)
+            })
         }
 
         // ---- switches for tests: the clock and the jobs, only when the hub was started with test control
@@ -770,12 +782,15 @@ fn human_write(
 fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
     let t = now();
     limited(app.limits.logins.check(rq.ip.as_bytes(), t, true))?;
-    let email = rq.body["email"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    limited(app.limits.login_failures.check(email.as_bytes(), t, false))?;
+    // the password and the Emergency Kit are counted apart: a lockout of the one leaves the other
+    let email = format!(
+        "{}:{}",
+        if kit { "kit" } else { "password" },
+        accounts::normalise_email(rq.body["email"].as_str().unwrap_or("")).unwrap_or_default()
+    );
+    // an attempt is counted before its secret is checked, so that attempts in parallel do not slip past the
+    // limit; a success clears the count
+    limited(app.limits.login_failures.check(email.as_bytes(), t, true))?;
     let found = app.read(|x| app.accounts.login(x.c, &rq.body, kit))?;
     login_answer(
         app,
@@ -793,9 +808,6 @@ fn login_answer(
 ) -> Res<Value> {
     let t = now();
     let Some((account, copy)) = found else {
-        if let Some(email) = email {
-            let _ = app.limits.login_failures.check(email.as_bytes(), t, true);
-        }
         return Err(refuse(code, "e-mail or secret is wrong"));
     };
     if let Some(email) = email {
