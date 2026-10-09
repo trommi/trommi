@@ -193,6 +193,25 @@ impl Mcp {
         }
     }
 
+    /// Sends a notification, as Claude Code does for a permission prompt.
+    pub async fn notify(&mut self, method: &str, params: Value) {
+        self.send(&json!({ "jsonrpc": "2.0", "method": method, "params": params }))
+            .await;
+    }
+
+    /// Waits for a notification of this method; returns its params.
+    pub async fn notification(&mut self, method: &str) -> Value {
+        for _ in 0..200 {
+            if let Some(at) = self.notifications.iter().position(|(m, _)| m == method) {
+                return self.notifications.remove(at).1;
+            }
+            if let Some(message) = self.read(100).await {
+                self.keep(message);
+            }
+        }
+        panic!("no {method}; got {:?}", self.notifications);
+    }
+
     /// Calls a tool: `(its text, whether it is an error)`.
     pub async fn call(&mut self, name: &str, arguments: Value) -> (String, bool) {
         let result = self
@@ -251,5 +270,39 @@ impl Mcp {
     pub async fn close(mut self) {
         drop(self.stdin);
         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), self.child.wait()).await;
+    }
+}
+
+impl Seat {
+    /// Runs one of the plugin's hooks (`prompt`, `stop`, `trail`, `permission`, …) with `input` on its stdin, as
+    /// Claude Code does, and returns what it printed.
+    pub async fn hook(&self, kind: &str, input: &Value) -> String {
+        let mut child = self
+            .command(&[kind])
+            .env("CLAUDE_PLUGIN_ROOT", self.home.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("the hook starts");
+        let mut stdin = child.stdin.take().expect("its stdin");
+        stdin
+            .write_all(input.to_string().as_bytes())
+            .await
+            .expect("the hook reads");
+        drop(stdin);
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(60), child.wait_with_output())
+                .await
+                .expect("the hook ends in time")
+                .expect("the hook ran");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// Starts the MCP server as the plugin does: with the terminal mirror's hooks at work.
+    pub async fn serve_as_plugin(&self) -> Mcp {
+        let mut command = self.command(&[]);
+        command.env("CLAUDE_PLUGIN_ROOT", self.home.path());
+        Mcp::start(command).await
     }
 }

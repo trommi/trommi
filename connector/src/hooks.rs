@@ -86,7 +86,19 @@ pub fn preview_of(tool_input: &Value) -> (String, String) {
     };
     let preview = match i.get("command") {
         Some(Value::String(c)) => c.clone(),
-        _ => serde_json::to_string(&i).unwrap(),
+        _ => {
+            // What the call is about comes first, so that a long content cannot push it out of the preview.
+            let first = ["file_path", "path", "notebook_path", "url", "pattern"];
+            let fields = i.as_object().cloned().unwrap_or_default();
+            let ordered = first
+                .iter()
+                .filter_map(|k| fields.get_key_value(*k))
+                .chain(fields.iter().filter(|(k, _)| !first.contains(&k.as_str())));
+            let parts: Vec<String> = ordered
+                .map(|(k, v)| format!("{}:{v}", Value::String(k.clone())))
+                .collect();
+            format!("{{{}}}", parts.join(","))
+        }
     };
     let desc = match i.get("description") {
         Some(Value::String(d)) => d.clone(),

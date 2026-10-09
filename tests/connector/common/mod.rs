@@ -19,7 +19,7 @@ use trommi_core::chain::{Mode, Served};
 use trommi_core::crypto::{self, Entropy, Secret, SigningKey, SystemEntropy};
 use trommi_core::device::{Accepted, DeviceRecovery, LogEntry, LogKind, Processed, SealRequest};
 use trommi_core::envelope::{
-    AnswerBind, Draft, Envelope, ObjectType, Subject, TakeBackBind, Urgency, Verdict, VerdictBind,
+    AnswerBind, Draft, Envelope, Subject, TakeBackBind, Urgency, Verdict, VerdictBind,
 };
 use trommi_core::hub_auth::HubAddress;
 use trommi_core::ids::{DeviceId, GroupId, Hash32, ObjectId, RoomId, SessionId};
@@ -756,9 +756,9 @@ impl Human {
         self.post_envelope(group, &draft).await
     }
 
-    /// The newest card of `agent` the stand-in has seen, as hex.
-    pub fn object_type_marker() -> ObjectType {
-        ObjectType::Card
+    /// Whether the object is a permission request the stand-in saw.
+    pub fn has_request(&self, object: &str) -> bool {
+        self.requests.contains_key(object)
     }
 }
 
