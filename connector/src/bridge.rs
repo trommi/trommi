@@ -1092,7 +1092,12 @@ impl Bridge {
         let mut page: Option<String> = given.get("page").filter(|p| !p.is_null()).map(js_str);
         let mut page_ref = None;
         let sibling =
-            if media.starts_with("image/") && given.get("page").is_none_or(|p| p.is_null()) {
+            // (A picture the human pasted into the terminal brings no page with it: only what the agent
+            // attaches itself does.)
+            if media.starts_with("image/")
+                && given.get("page").is_none_or(|p| p.is_null())
+                && given.get("pasted") != Some(&Value::Bool(true))
+            {
                 let fs_ = file.display().to_string();
                 let stem = regex::Regex::new(r"\.[^./]+$").unwrap();
                 [".html", ".htm"]
@@ -1254,7 +1259,8 @@ impl Bridge {
                 lost += 1;
                 continue;
             }
-            files.push(Value::Object(self.upload(&json!(p), None).await?.0));
+            let pasted = json!({ "path": p, "pasted": true });
+            files.push(Value::Object(self.upload(&pasted, None).await?.0));
         }
         let marks = vec![crate::mirror::PICTURE_MARK; lost].join(" ");
         let text = [marks.as_str(), text]
@@ -2832,7 +2838,7 @@ impl Bridge {
                     .unwrap()
                     .remove(&oid);
                 self.save_state();
-                (self.notify)("notifications/claude/channel/permission".into(), json!({ "request_id": rid, "behavior": if cmd.allow || c.get("allow").is_some_and(truthy) { "allow" } else { "deny" } }), None).await
+                (self.notify)("notifications/claude/channel/permission".into(), json!({ "request_id": rid, "behavior": if cmd.allow { "allow" } else { "deny" } }), None).await
             }
             "selection_sent" => {
                 let (paths, image, _) = self.download(c.get("attachments")).await;
@@ -3093,14 +3099,20 @@ fn normalize(p: &Path) -> PathBuf {
     }
     out
 }
+/// Writes a private file anew: whatever stood under the name (a link included) is removed first, and the file
+/// is made exclusively, never through a link.
 fn write_0600(file: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+    match std::fs::remove_file(file) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+        _ => {}
+    }
     let mut f = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
         .open(file)?;
     f.write_all(bytes)?;
     Ok(())
