@@ -17,6 +17,8 @@ openmls_rust_crypto = { workspace = true }
 openmls_basic_credential = { workspace = true }
 openmls_traits = { workspace = true }
 tls_codec = "=0.5.0"
+# The facade both bindings share, for the tests of the bindings (`bindings/`).
+trommi-core-swift = { path = "../core/swift" }
 
 [[test]]
 name = "core_groups_founding"
@@ -153,3 +155,7 @@ path = "core/join_invite.rs"
 [[test]]
 name = "core_secrets"
 path = "core/secrets.rs"
+
+[[test]]
+name = "bindings_facade"
+path = "bindings/facade.rs"
