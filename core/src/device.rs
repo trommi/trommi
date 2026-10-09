@@ -1157,6 +1157,12 @@ impl<S: Storage> Device<S> {
                     device.put_group(batch, &group)?;
                 }
                 (OutboxKind::ExternalCommit, Some(_)) => device.adopt_staged(batch, id)?,
+                (OutboxKind::KeyPackages, _) => {
+                    let replacement = entry.parts.first().filter(|part| !part.is_empty());
+                    if let Some(replacement) = replacement {
+                        device.retire_last_resort(batch, &key_package::reference(replacement)?);
+                    }
+                }
                 _ => {}
             }
             device.drop_outbox(batch, id);
@@ -1389,7 +1395,9 @@ impl<S: Storage> Device<S> {
     /// Makes the KeyPackages this device should publish now, given how many unused single-use ones the hub
     /// still holds: enough to have [`SINGLE_USE_KEY_PACKAGES`], and a last-resort one when none was made in
     /// the last [`LAST_RESORT_FOR_MS`]. Their private parts are written with the outbox entry that publishes
-    /// them (13.2). Returns the entry's id, or none when nothing is due.
+    /// them (13.2). The last-resort one before it is retired when the hub accepted that entry, and its
+    /// private part kept [`LAST_RESORT_FOR_MS`] more; a refused entry leaves it the current one. Returns the
+    /// entry's id, or none when nothing is due.
     pub fn key_packages_to_upload(
         &mut self,
         unused_at_hub: usize,
@@ -1407,26 +1415,24 @@ impl<S: Storage> Device<S> {
             }
             let mut parts = vec![Vec::new()];
             if !fresh_last_resort {
-                // The one before it stays usable for another period: a Welcome made with it may still come.
-                let retired: Vec<Hash32> = device
+                // One that was replaced stays usable for another period, since a Welcome made with it may
+                // still come, and goes after it. The one the hub holds now is retired only when the hub
+                // took its replacement ([`Device::outbox_accepted`]): until then it is the current one.
+                let expired: Vec<Hash32> = device
                     .memory
                     .key_packages
                     .iter()
-                    .filter(|(_, own)| own.last_resort)
+                    .filter(|(_, own)| {
+                        own.last_resort
+                            && own.retired_ms != 0
+                            && now_ms.saturating_sub(own.retired_ms) >= LAST_RESORT_FOR_MS
+                    })
                     .map(|(reference, _)| *reference)
                     .collect();
-                for reference in retired {
-                    let own = device.memory.key_packages.get_mut(&reference);
-                    let Some(own) = own else { continue };
-                    if own.retired_ms == 0 {
-                        own.retired_ms = now_ms;
-                        let own = own.clone();
-                        device.put_key_package(batch, &reference, &own);
-                    } else if now_ms.saturating_sub(own.retired_ms) >= LAST_RESORT_FOR_MS {
-                        key_package::forget(&device.provider, &reference)?;
-                        device.memory.key_packages.remove(&reference);
-                        batch.delete(device_key(SUB_KEY_PACKAGE, reference.as_bytes()));
-                    }
+                for reference in expired {
+                    key_package::forget(&device.provider, &reference)?;
+                    device.memory.key_packages.remove(&reference);
+                    batch.delete(device_key(SUB_KEY_PACKAGE, reference.as_bytes()));
                 }
                 parts = vec![device.make_key_package(batch, now_ms, true)?];
             }
@@ -1437,6 +1443,36 @@ impl<S: Storage> Device<S> {
                 .enqueue(batch, OutboxKind::KeyPackages, None, 0, parts)
                 .map(Some)
         })
+    }
+
+    /// The hub took `replacement` as this device's last-resort KeyPackage: every one before it is retired from
+    /// the time the replacement was made. Its private part stays for [`LAST_RESORT_FOR_MS`] more.
+    fn retire_last_resort(&mut self, batch: &mut Batch, replacement: &Hash32) {
+        let Some(since) = self
+            .memory
+            .key_packages
+            .get(replacement)
+            .map(|own| own.made_ms)
+        else {
+            return;
+        };
+        let before: Vec<Hash32> = self
+            .memory
+            .key_packages
+            .iter()
+            .filter(|(reference, own)| {
+                own.last_resort && own.retired_ms == 0 && *reference != replacement
+            })
+            .map(|(reference, _)| *reference)
+            .collect();
+        for reference in before {
+            if let Some(own) = self.memory.key_packages.get_mut(&reference) {
+                // A time of 0 would read as not retired.
+                own.retired_ms = since.max(1);
+                let own = own.clone();
+                self.put_key_package(batch, &reference, &own);
+            }
+        }
     }
 
     /// Makes one KeyPackage that reaches whoever adds this device outside the hub: a helper device's for its

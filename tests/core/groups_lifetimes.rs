@@ -247,6 +247,68 @@ fn a_refused_welcome_uses_up_its_single_use_key_package() {
 }
 
 #[test]
+fn the_last_resort_key_package_is_retired_when_its_replacement_was_accepted() {
+    const DAY_MS: u64 = 24 * HOUR_MS;
+    let mut a = new_device();
+    let (mut hub, room_group) = found_room(&mut a);
+    let anyone = WelcomeExpectation {
+        room: room_group.room_id(),
+        committer: None,
+    };
+    let start = now();
+
+    // A device with a last-resort KeyPackage at the hub. After 30 days it makes the next one; its clock is
+    // ahead, the hub refuses a KeyPackage whose lifetime has not begun, and the refused one's private part
+    // goes. That happens twice, 31 days apart.
+    let mut b = new_device();
+    publish_some(&mut hub, &mut b, 0);
+    let current = hub.claim(&[b.id()]).unwrap().remove(0);
+    for days in [31, 62] {
+        b.key_packages_to_upload(100, start + days * DAY_MS)
+            .unwrap()
+            .unwrap();
+        assert_eq!(post_refused(&mut hub, &mut b), [Error::BadKeyPackage]);
+    }
+    // The one the hub still hands out was never replaced: it is the current one and opens a Welcome.
+    assert_eq!(
+        hub.claim(&[b.id()]).unwrap(),
+        std::slice::from_ref(&current)
+    );
+    a.add_human_device(&b.id(), &current, now()).unwrap();
+    post_ok(&mut hub, &mut a);
+    let welcome = hub.welcomes.last().unwrap().bytes.clone();
+    let joined = b.join_welcome(&welcome, &anyone, now()).unwrap();
+    assert_eq!(joined.group, room_group);
+
+    // Replaced by an accepted upload, the old one is kept for another period, counted from the making of its
+    // replacement, and then goes: a Welcome made with it within that period opens, one made after it does not.
+    for (days, opens) in [(29, true), (61, false)] {
+        let mut c = new_device();
+        c.key_packages_to_upload(100, start - 31 * DAY_MS)
+            .unwrap()
+            .unwrap();
+        post_ok(&mut hub, &mut c);
+        let old = hub.claim(&[c.id()]).unwrap().remove(0);
+        c.key_packages_to_upload(100, start).unwrap().unwrap();
+        post_ok(&mut hub, &mut c);
+        assert_ne!(hub.claim(&[c.id()]).unwrap(), std::slice::from_ref(&old));
+        let due = c
+            .key_packages_to_upload(100, start + days * DAY_MS)
+            .unwrap();
+        assert_eq!(due.is_none(), opens, "after {days} days");
+        a.add_human_device(&c.id(), &old, now()).unwrap();
+        post_ok(&mut hub, &mut a);
+        let welcome = hub.welcomes.last().unwrap().bytes.clone();
+        let joined = c.join_welcome(&welcome, &anyone, now());
+        if opens {
+            assert_eq!(joined.unwrap().group, room_group);
+        } else {
+            assert_eq!(joined, Err(Error::NotMember));
+        }
+    }
+}
+
+#[test]
 fn no_pre_shared_key_is_used_or_stored() {
     // No operation of a device proposes a PreSharedKey (3.6): a Commit holds Adds, Removes, a change of the
     // room's extension, or nothing, and a Commit with any other proposal is `bad-commit`
