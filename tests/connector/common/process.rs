@@ -90,6 +90,8 @@ impl Seat {
             .env("TROMMI_HUB", &self.hub_url)
             .env("TROMMI_SESSION_KEY", &self.session_key)
             .env("TROMMI_CHANNEL_EVENTS", "on")
+            // `say` gives up after half a minute by default; a busy test machine may need longer to go online
+            .env("TROMMI_SAY_MS", "120000")
             .current_dir(&self.folder)
             .kill_on_drop(true);
         command
