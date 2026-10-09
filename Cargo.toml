@@ -28,7 +28,9 @@ inherits = "release"
 opt-level = "s"
 strip = true
 
-# Tests and local builds: the dependencies (OpenMLS, the ciphers) optimised, the workspace's own crates not, so that
-# the scenario tests with hundreds of Commits run in seconds.
+# Tests and local builds: the dependencies (OpenMLS, the ciphers) as they ship, optimised and without their debug
+# assertions, the workspace's own crates not. The scenario tests with hundreds of Commits then run in seconds, and a
+# damaged stored state meets the error a shipped build returns where OpenMLS has a debug assertion in front of it.
 [profile.dev.package."*"]
 opt-level = 2
+debug-assertions = false
