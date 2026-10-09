@@ -160,6 +160,14 @@ pub fn request(
 ) -> Res<Value> {
     let invite = load(x.c, id)?;
     open(&invite, x.now)?;
+    // 8.7: a room in recovery takes nothing else
+    if crate::delivery::open_recovery_of(x.c, &invite.room, x.now)?.is_some() {
+        return Err(refuse(
+            "overloaded",
+            "the room is being recovered: try again in a moment",
+        )
+        .retry(30));
+    }
     if invite.reveal.is_some() {
         return Err(refuse("invite-used", "the inviter accepted a Request"));
     }

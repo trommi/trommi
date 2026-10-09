@@ -16,7 +16,10 @@ use std::time::Duration;
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::ChaCha20Poly1305;
-use openmls::group::{MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedWelcome, PURE_PLAINTEXT_WIRE_FORMAT_POLICY};
+use openmls::group::{
+    MlsGroup, MlsGroupCreateConfig, MlsGroupJoinConfig, StagedWelcome,
+    PURE_PLAINTEXT_WIRE_FORMAT_POLICY,
+};
 use openmls::prelude::tls_codec::{Deserialize as _, Serialize as _};
 use openmls::prelude::*;
 use openmls::treesync::LeafNodeParameters;
@@ -32,7 +35,10 @@ use trommi_hub::config::Config;
 use trommi_hub::observer::SUITE;
 use trommi_hub::push::Recorder;
 use trommi_hub::util::{b64, hex, random, unb64};
-use trommi_hub::wire::{self, CommitNote, Cut, Header, Subject, TrommiRoom, TrommiSession, Writer, EXT_ROOM, EXT_SESSION, ZERO16, ZERO32};
+use trommi_hub::wire::{
+    self, CommitNote, Cut, Header, Subject, TrommiRoom, TrommiSession, Writer, EXT_ROOM,
+    EXT_SESSION, ZERO16, ZERO32,
+};
 
 // ---- the hub under test
 
@@ -58,8 +64,16 @@ impl TestHub {
     }
 
     pub fn start_in(dir: PathBuf, env: &[(&str, &str)]) -> TestHub {
-        let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
-        let listener = runtime.block_on(async { tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap() });
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .unwrap();
+        let listener = runtime.block_on(async {
+            tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap()
+        });
         let port = listener.local_addr().unwrap().port();
         let url = format!("http://127.0.0.1:{port}");
         let mut map: HashMap<String, String> = HashMap::from([
@@ -69,9 +83,15 @@ impl TestHub {
             ("HUB_QUIET".to_string(), "1".to_string()),
             ("HUB_TEST_CONTROL".to_string(), "1".to_string()),
             ("HUB_TRUST_CF".to_string(), "1".to_string()),
-            ("HUB_ORIGINS".to_string(), "https://app.trommi.com".to_string()),
+            (
+                "HUB_ORIGINS".to_string(),
+                "https://app.trommi.com".to_string(),
+            ),
             ("HUB_PUSH_HOSTS".to_string(), "127.0.0.1:9".to_string()),
-            ("HUB_LIMIT_FOUND_PER_IP_HOUR".to_string(), "100000".to_string()),
+            (
+                "HUB_LIMIT_FOUND_PER_IP_HOUR".to_string(),
+                "100000".to_string(),
+            ),
         ]);
         for (k, v) in env {
             map.insert(k.to_string(), v.to_string());
@@ -81,7 +101,15 @@ impl TestHub {
         let stop = Arc::new(tokio::sync::Notify::new());
         let (a, s) = (app.clone(), stop.clone());
         runtime.spawn(async move { trommi_hub::server::serve(a, listener, s).await });
-        TestHub { app, port, url, recorder, dir, runtime: Some(runtime), stop }
+        TestHub {
+            app,
+            port,
+            url,
+            recorder,
+            dir,
+            runtime: Some(runtime),
+            stop,
+        }
     }
 
     /// Stops the hub and keeps its data directory, to start another on it.
@@ -102,7 +130,11 @@ impl TestHub {
     }
 
     pub fn clock(&self, advance_ms: i64) {
-        assert_eq!(self.post("/v2/__test/clock", &json!({ "advance_ms": advance_ms })).status, 200);
+        assert_eq!(
+            self.post("/v2/__test/clock", &json!({ "advance_ms": advance_ms }))
+                .status,
+            200
+        );
     }
 
     pub fn pushes(&self) -> Vec<trommi_hub::push::PushRequest> {
@@ -151,7 +183,10 @@ impl Reply {
         self.json()["error"].as_str().unwrap_or("").to_string()
     }
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
     }
     pub fn ok(&self) -> Value {
         assert_eq!(self.status, 200, "{}", String::from_utf8_lossy(&self.body));
@@ -159,14 +194,27 @@ impl Reply {
     }
     /// Asserts a refusal with this status and code.
     pub fn refused(&self, status: u16, code: &str) -> Value {
-        assert_eq!((self.status, self.code().as_str()), (status, code), "{}", String::from_utf8_lossy(&self.body));
+        assert_eq!(
+            (self.status, self.code().as_str()),
+            (status, code),
+            "{}",
+            String::from_utf8_lossy(&self.body)
+        );
         self.json()
     }
 }
 
-pub fn send_request(port: u16, method: &str, path: &str, headers: &[(&str, String)], body: &[u8]) -> TcpStream {
+pub fn send_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: &[u8],
+) -> TcpStream {
     let mut socket = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    socket.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .unwrap();
     let mut head = format!("{method} {path} HTTP/1.1\r\nhost: 127.0.0.1\r\nconnection: close\r\ntrommi-client: test/1.0.0\r\ncontent-length: {}\r\n", body.len());
     for (k, v) in headers {
         head.push_str(&format!("{k}: {v}\r\n"));
@@ -180,7 +228,11 @@ pub fn send_request(port: u16, method: &str, path: &str, headers: &[(&str, Strin
 pub fn read_head(reader: &mut BufReader<TcpStream>) -> (u16, Vec<(String, String)>) {
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
-    let status: u16 = line.split(' ').nth(1).and_then(|s| s.parse().ok()).unwrap_or_else(|| panic!("no status line: {line:?}"));
+    let status: u16 = line
+        .split(' ')
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("no status line: {line:?}"));
     let mut headers = vec![];
     loop {
         let mut line = String::new();
@@ -196,12 +248,22 @@ pub fn read_head(reader: &mut BufReader<TcpStream>) -> (u16, Vec<(String, String
     (status, headers)
 }
 
-pub fn request(port: u16, method: &str, path: &str, headers: &[(&str, String)], body: &[u8]) -> Reply {
+pub fn request(
+    port: u16,
+    method: &str,
+    path: &str,
+    headers: &[(&str, String)],
+    body: &[u8],
+) -> Reply {
     let socket = send_request(port, method, path, headers, body);
     let mut reader = BufReader::new(socket);
     let (status, headers) = read_head(&mut reader);
     let mut body = Vec::new();
-    match headers.iter().find(|(k, _)| k == "content-length").and_then(|(_, v)| v.parse::<usize>().ok()) {
+    match headers
+        .iter()
+        .find(|(k, _)| k == "content-length")
+        .and_then(|(_, v)| v.parse::<usize>().ok())
+    {
         Some(n) => {
             body.resize(n, 0);
             reader.read_exact(&mut body).unwrap();
@@ -210,7 +272,11 @@ pub fn request(port: u16, method: &str, path: &str, headers: &[(&str, String)], 
             let _ = reader.read_to_end(&mut body);
         }
     }
-    Reply { status, headers, body }
+    Reply {
+        status,
+        headers,
+        body,
+    }
 }
 
 /// An open stream of server-sent events.
@@ -275,15 +341,9 @@ impl Events {
     }
 
     pub fn ended(&mut self) -> bool {
-        loop {
-            match self.next(Duration::from_secs(3)) {
-                None => {
-                    let mut probe = [0u8; 1];
-                    return matches!(self.reader.read(&mut probe), Ok(0));
-                }
-                Some(_) => {}
-            }
-        }
+        while self.next(Duration::from_secs(3)).is_some() {}
+        let mut probe = [0u8; 1];
+        matches!(self.reader.read(&mut probe), Ok(0))
     }
 }
 
@@ -296,7 +356,10 @@ pub struct Recovery {
 
 impl Recovery {
     pub fn new() -> Self {
-        Recovery { sign: SignatureKeyPair::new(SignatureScheme::ED25519).unwrap(), hpke_public: random() }
+        Recovery {
+            sign: SignatureKeyPair::new(SignatureScheme::ED25519).unwrap(),
+            hpke_public: random(),
+        }
     }
     pub fn public(&self) -> [u8; 32] {
         self.sign.to_public_vec().try_into().unwrap()
@@ -304,7 +367,11 @@ impl Recovery {
     pub fn room_ext(&self, agents: &[[u8; 32]]) -> TrommiRoom {
         let mut agents = agents.to_vec();
         agents.sort();
-        TrommiRoom { recovery_signature_key: self.public().to_vec(), recovery_hpke_key: self.hpke_public.to_vec(), agents }
+        TrommiRoom {
+            recovery_signature_key: self.public().to_vec(),
+            recovery_hpke_key: self.hpke_public.to_vec(),
+            agents,
+        }
     }
 }
 
@@ -318,7 +385,11 @@ pub fn caps() -> Capabilities {
     Capabilities::new(
         Some(&[ProtocolVersion::Mls10]),
         Some(&[SUITE]),
-        Some(&[ExtensionType::Unknown(EXT_ROOM), ExtensionType::Unknown(EXT_SESSION), ExtensionType::LastResort]),
+        Some(&[
+            ExtensionType::Unknown(EXT_ROOM),
+            ExtensionType::Unknown(EXT_SESSION),
+            ExtensionType::LastResort,
+        ]),
         Some(&[]),
         Some(&[CredentialType::Basic]),
     )
@@ -327,7 +398,10 @@ pub fn caps() -> Capabilities {
 fn context_extensions(ext: Extension) -> Extensions<GroupContext> {
     Extensions::from_vec(vec![
         Extension::RequiredCapabilities(RequiredCapabilitiesExtension::new(
-            &[ExtensionType::Unknown(EXT_ROOM), ExtensionType::Unknown(EXT_SESSION)],
+            &[
+                ExtensionType::Unknown(EXT_ROOM),
+                ExtensionType::Unknown(EXT_SESSION),
+            ],
             &[],
             &[CredentialType::Basic],
         )),
@@ -337,7 +411,10 @@ fn context_extensions(ext: Extension) -> Extensions<GroupContext> {
 }
 
 pub fn room_extensions(room: &TrommiRoom) -> Extensions<GroupContext> {
-    context_extensions(Extension::Unknown(EXT_ROOM, UnknownExtension(room.encode())))
+    context_extensions(Extension::Unknown(
+        EXT_ROOM,
+        UnknownExtension(room.encode()),
+    ))
 }
 
 fn ten_years() -> Lifetime {
@@ -392,8 +469,21 @@ pub struct Dev {
 impl Dev {
     pub fn new() -> Dev {
         let signer = SignatureKeyPair::new(SignatureScheme::ED25519).unwrap();
-        let credential = CredentialWithKey { credential: BasicCredential::new(signer.to_public_vec()).into(), signature_key: signer.to_public_vec().into() };
-        Dev { provider: OpenMlsRustCrypto::default(), signer, credential, groups: HashMap::new(), chains: HashMap::new(), token: None, lease: None, room: [0; 32], ip: None }
+        let credential = CredentialWithKey {
+            credential: BasicCredential::new(signer.to_public_vec()).into(),
+            signature_key: signer.to_public_vec().into(),
+        };
+        Dev {
+            provider: OpenMlsRustCrypto::default(),
+            signer,
+            credential,
+            groups: HashMap::new(),
+            chains: HashMap::new(),
+            token: None,
+            lease: None,
+            room: [0; 32],
+            ip: None,
+        }
     }
 
     pub fn id(&self) -> [u8; 32] {
@@ -407,16 +497,26 @@ impl Dev {
     // -- MLS
 
     pub fn key_package(&self, last_resort: bool) -> Vec<u8> {
-        let mut b = KeyPackage::builder().leaf_node_capabilities(caps()).key_package_lifetime(ten_years());
+        let mut b = KeyPackage::builder()
+            .leaf_node_capabilities(caps())
+            .key_package_lifetime(ten_years());
         if last_resort {
             b = b.mark_as_last_resort();
         }
-        let bundle = b.build(SUITE, &self.provider, &self.signer, self.credential.clone()).unwrap();
-        MlsMessageOut::from(bundle.key_package().clone()).to_bytes().unwrap()
+        let bundle = b
+            .build(SUITE, &self.provider, &self.signer, self.credential.clone())
+            .unwrap();
+        MlsMessageOut::from(bundle.key_package().clone())
+            .to_bytes()
+            .unwrap()
     }
 
     fn join_config(&self) -> MlsGroupJoinConfig {
-        MlsGroupJoinConfig::builder().wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY).use_ratchet_tree_extension(true).max_past_epochs(0).build()
+        MlsGroupJoinConfig::builder()
+            .wire_format_policy(PURE_PLAINTEXT_WIRE_FORMAT_POLICY)
+            .use_ratchet_tree_extension(true)
+            .max_past_epochs(0)
+            .build()
     }
 
     fn found(&mut self, group_id: &[u8], extensions: Extensions<GroupContext>) -> Vec<u8> {
@@ -429,8 +529,19 @@ impl Dev {
             .lifetime(ten_years())
             .with_group_context_extensions(extensions)
             .build();
-        let group = MlsGroup::new_with_group_id(&self.provider, &self.signer, &config, GroupId::from_slice(group_id), self.credential.clone()).unwrap();
-        let info = group.export_group_info(self.provider.crypto(), &self.signer, true).unwrap().to_bytes().unwrap();
+        let group = MlsGroup::new_with_group_id(
+            &self.provider,
+            &self.signer,
+            &config,
+            GroupId::from_slice(group_id),
+            self.credential.clone(),
+        )
+        .unwrap();
+        let info = group
+            .export_group_info(self.provider.crypto(), &self.signer, true)
+            .unwrap()
+            .to_bytes()
+            .unwrap();
         self.groups.insert(group_id.to_vec(), group);
         info
     }
@@ -442,15 +553,31 @@ impl Dev {
     }
 
     /// Creates a session group; returns its id and its GroupInfo of epoch 0.
-    pub fn create_session(&mut self, session_id: &[u8; 16], parent: &[u8; 16]) -> (Vec<u8>, Vec<u8>) {
-        let session = TrommiSession { room_id: self.room, session_id: *session_id, parent: *parent };
+    pub fn create_session(
+        &mut self,
+        session_id: &[u8; 16],
+        parent: &[u8; 16],
+    ) -> (Vec<u8>, Vec<u8>) {
+        let session = TrommiSession {
+            room_id: self.room,
+            session_id: *session_id,
+            parent: *parent,
+        };
         let group_id = [&self.room[..], &session_id[..]].concat();
-        let info = self.found(&group_id, context_extensions(Extension::Unknown(EXT_SESSION, UnknownExtension(session.encode()))));
+        let info = self.found(
+            &group_id,
+            context_extensions(Extension::Unknown(
+                EXT_SESSION,
+                UnknownExtension(session.encode()),
+            )),
+        );
         (group_id, info)
     }
 
     pub fn group(&self, group_id: &[u8]) -> &MlsGroup {
-        self.groups.get(group_id).expect("this device is not in that group")
+        self.groups
+            .get(group_id)
+            .expect("this device is not in that group")
     }
 
     pub fn epoch(&self, group_id: &[u8]) -> u64 {
@@ -458,14 +585,24 @@ impl Dev {
     }
 
     pub fn members(&self, group_id: &[u8]) -> Vec<[u8; 32]> {
-        self.group(group_id).members().map(|m| m.signature_key.try_into().unwrap()).collect()
+        self.group(group_id)
+            .members()
+            .map(|m| m.signature_key.try_into().unwrap())
+            .collect()
     }
 
     /// (room epoch, room state) as this human device's room group stands: what a Commit's note names.
     pub fn room_now(&self) -> (u64, [u8; 32]) {
         let group = self.group(&self.room);
-        let context = group.public_group().group_context().tls_serialize_detached().unwrap();
-        (group.epoch().as_u64(), wire::ref_hash("Trommi Room State", &context))
+        let context = group
+            .public_group()
+            .group_context()
+            .tls_serialize_detached()
+            .unwrap();
+        (
+            group.epoch().as_u64(),
+            wire::ref_hash("Trommi Room State", &context),
+        )
     }
 
     /// Builds a Commit and leaves it pending: `merge` once the hub accepted it, `clear` if not. `room`: the room
@@ -475,27 +612,63 @@ impl Dev {
             .adds
             .iter()
             .map(|bytes| {
-                let MlsMessageBodyIn::KeyPackage(kp) = MlsMessageIn::tls_deserialize(&mut &bytes[..]).unwrap().extract() else { panic!("not a KeyPackage") };
-                kp.validate(self.provider.crypto(), ProtocolVersion::Mls10).unwrap()
+                let MlsMessageBodyIn::KeyPackage(kp) =
+                    MlsMessageIn::tls_deserialize(&mut &bytes[..])
+                        .unwrap()
+                        .extract()
+                else {
+                    panic!("not a KeyPackage")
+                };
+                kp.validate(self.provider.crypto(), ProtocolVersion::Mls10)
+                    .unwrap()
             })
             .collect();
-        let note = change.note.clone().unwrap_or(CommitNote { room_epoch: room.0, room_state: room.1, time: trommi_hub::util::now(), cuts: change.cuts.clone(), join: false });
-        let group = self.groups.get_mut(group_id).expect("this device is not in that group");
+        let note = change.note.clone().unwrap_or(CommitNote {
+            room_epoch: room.0,
+            room_state: room.1,
+            time: trommi_hub::util::now(),
+            cuts: change.cuts.clone(),
+            join: false,
+        });
+        let group = self
+            .groups
+            .get_mut(group_id)
+            .expect("this device is not in that group");
         let epoch = group.epoch().as_u64();
-        let leaves: Vec<LeafNodeIndex> = group.members().filter(|m| change.removes.iter().any(|r| r[..] == m.signature_key[..])).map(|m| m.index).collect();
-        assert_eq!(leaves.len(), change.removes.len(), "a device to remove is not a leaf");
+        let leaves: Vec<LeafNodeIndex> = group
+            .members()
+            .filter(|m| change.removes.iter().any(|r| r[..] == m.signature_key[..]))
+            .map(|m| m.index)
+            .collect();
+        assert_eq!(
+            leaves.len(),
+            change.removes.len(),
+            "a device to remove is not a leaf"
+        );
         group.set_aad(note.encode());
         let only_adds = !key_packages.is_empty() && leaves.is_empty() && change.room.is_none();
-        let mut builder = group.commit_builder().consume_proposal_store(false).propose_adds(key_packages).propose_removals(leaves).force_self_update(!only_adds);
+        let mut builder = group
+            .commit_builder()
+            .consume_proposal_store(false)
+            .propose_adds(key_packages)
+            .propose_removals(leaves)
+            .force_self_update(!only_adds);
         if let Some(room) = &change.room {
-            builder = builder.propose_group_context_extensions(room_extensions(room)).unwrap();
+            builder = builder
+                .propose_group_context_extensions(room_extensions(room))
+                .unwrap();
         }
         let bundle = builder
             .load_psks(self.provider.storage())
             .unwrap()
             .create_group_info(true)
             .use_ratchet_tree_extension(true)
-            .build(self.provider.rand(), self.provider.crypto(), &self.signer, |_| true)
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.signer,
+                |_| true,
+            )
             .unwrap()
             .stage_commit(&self.provider)
             .unwrap();
@@ -505,7 +678,11 @@ impl Dev {
             epoch,
             commit: commit.to_bytes().unwrap(),
             group_info: MlsMessageOut::from(info.unwrap()).to_bytes().unwrap(),
-            welcome: welcome.map(|w| MlsMessageOut::from_welcome(w, ProtocolVersion::Mls10).to_bytes().unwrap()),
+            welcome: welcome.map(|w| {
+                MlsMessageOut::from_welcome(w, ProtocolVersion::Mls10)
+                    .to_bytes()
+                    .unwrap()
+            }),
         }
     }
 
@@ -517,23 +694,42 @@ impl Dev {
     }
 
     pub fn clear(&mut self, group_id: &[u8]) {
-        self.groups.get_mut(group_id).unwrap().clear_pending_commit(self.provider.storage()).unwrap();
+        self.groups
+            .get_mut(group_id)
+            .unwrap()
+            .clear_pending_commit(self.provider.storage())
+            .unwrap();
     }
 
     /// Processes another device's Commit from the log.
     pub fn process(&mut self, group_id: &[u8], commit: &[u8]) -> Result<(), String> {
         let group = self.groups.get_mut(group_id).ok_or("not in that group")?;
-        let message = MlsMessageIn::tls_deserialize(&mut &commit[..]).map_err(|e| format!("{e:?}"))?.try_into_protocol_message().map_err(|e| format!("{e:?}"))?;
-        let processed = group.process_message(&self.provider, message).map_err(|e| format!("{e:?}"))?;
+        let message = MlsMessageIn::tls_deserialize(&mut &commit[..])
+            .map_err(|e| format!("{e:?}"))?
+            .try_into_protocol_message()
+            .map_err(|e| format!("{e:?}"))?;
+        let processed = group
+            .process_message(&self.provider, message)
+            .map_err(|e| format!("{e:?}"))?;
         match processed.into_content() {
-            ProcessedMessageContent::StagedCommitMessage(staged) => group.merge_staged_commit(&self.provider, *staged).map_err(|e| format!("{e:?}")),
+            ProcessedMessageContent::StagedCommitMessage(staged) => group
+                .merge_staged_commit(&self.provider, *staged)
+                .map_err(|e| format!("{e:?}")),
             _ => Err("not a Commit".into()),
         }
     }
 
     pub fn join(&mut self, welcome: &[u8]) -> Vec<u8> {
-        let MlsMessageBodyIn::Welcome(w) = MlsMessageIn::tls_deserialize(&mut &welcome[..]).unwrap().extract() else { panic!("not a Welcome") };
-        let group = StagedWelcome::new_from_welcome(&self.provider, &self.join_config(), w, None).unwrap().into_group(&self.provider).unwrap();
+        let MlsMessageBodyIn::Welcome(w) = MlsMessageIn::tls_deserialize(&mut &welcome[..])
+            .unwrap()
+            .extract()
+        else {
+            panic!("not a Welcome")
+        };
+        let group = StagedWelcome::new_from_welcome(&self.provider, &self.join_config(), w, None)
+            .unwrap()
+            .into_group(&self.provider)
+            .unwrap();
         let id = group.group_id().as_slice().to_vec();
         self.groups.insert(id.clone(), group);
         id
@@ -542,19 +738,39 @@ impl Dev {
     /// A join from outside (8.4): the external Commit on a GroupInfo. The group stands in the new epoch at once;
     /// `forget` it if the hub refuses.
     pub fn external_join(&mut self, group_info: &[u8], room: (u64, [u8; 32])) -> Out {
-        let MlsMessageBodyIn::GroupInfo(info) = MlsMessageIn::tls_deserialize(&mut &group_info[..]).unwrap().extract() else { panic!("not a GroupInfo") };
-        let note = CommitNote { room_epoch: room.0, room_state: room.1, time: trommi_hub::util::now(), cuts: vec![], join: true };
+        let MlsMessageBodyIn::GroupInfo(info) = MlsMessageIn::tls_deserialize(&mut &group_info[..])
+            .unwrap()
+            .extract()
+        else {
+            panic!("not a GroupInfo")
+        };
+        let note = CommitNote {
+            room_epoch: room.0,
+            room_state: room.1,
+            time: trommi_hub::util::now(),
+            cuts: vec![],
+            join: true,
+        };
         let (group, bundle) = MlsGroup::external_commit_builder()
             .with_config(self.join_config())
             .with_aad(note.encode())
             .build_group(&self.provider, info, self.credential.clone())
             .unwrap()
-            .leaf_node_parameters(LeafNodeParameters::builder().with_capabilities(caps()).build())
+            .leaf_node_parameters(
+                LeafNodeParameters::builder()
+                    .with_capabilities(caps())
+                    .build(),
+            )
             .load_psks(self.provider.storage())
             .unwrap()
             .create_group_info(true)
             .use_ratchet_tree_extension(true)
-            .build(self.provider.rand(), self.provider.crypto(), &self.signer, |_| true)
+            .build(
+                self.provider.rand(),
+                self.provider.crypto(),
+                &self.signer,
+                |_| true,
+            )
             .unwrap()
             .finalize(&self.provider)
             .unwrap();
@@ -562,7 +778,13 @@ impl Dev {
         let epoch = group.epoch().as_u64() - 1;
         let (commit, _, info) = bundle.into_contents();
         self.groups.insert(group_id.clone(), group);
-        Out { group_id, epoch, commit: commit.to_bytes().unwrap(), group_info: MlsMessageOut::from(info.unwrap()).to_bytes().unwrap(), welcome: None }
+        Out {
+            group_id,
+            epoch,
+            commit: commit.to_bytes().unwrap(),
+            group_info: MlsMessageOut::from(info.unwrap()).to_bytes().unwrap(),
+            welcome: None,
+        }
     }
 
     pub fn forget(&mut self, group_id: &[u8]) {
@@ -571,19 +793,39 @@ impl Dev {
 
     pub fn application_message(&mut self, group_id: &[u8], plain: &[u8]) -> Vec<u8> {
         let group = self.groups.get_mut(group_id).unwrap();
-        group.create_message(&self.provider, &self.signer, plain).unwrap().to_bytes().unwrap()
+        group
+            .create_message(&self.provider, &self.signer, plain)
+            .unwrap()
+            .to_bytes()
+            .unwrap()
     }
 
     pub fn content_key(&self, group_id: &[u8]) -> [u8; 32] {
-        self.group(group_id).export_secret(self.provider.crypto(), "trommi content", &[], 32).unwrap().try_into().unwrap()
+        self.group(group_id)
+            .export_secret(self.provider.crypto(), "trommi content", &[], 32)
+            .unwrap()
+            .try_into()
+            .unwrap()
     }
 
     // -- the structs beside a Commit
 
     /// A SealedKey of the right shape. The hub cannot open the sealing or check the tag; neither is real here.
-    pub fn sealed_key(&self, group_id: &[u8], epoch: u64, group_info: &[u8], room_epoch: u64, hpke_public: &[u8], tag: bool) -> Vec<u8> {
+    pub fn sealed_key(
+        &self,
+        group_id: &[u8],
+        epoch: u64,
+        group_info: &[u8],
+        room_epoch: u64,
+        hpke_public: &[u8],
+        tag: bool,
+    ) -> Vec<u8> {
         wire::SealedKey {
-            context: wire::KeyContext { group_id: group_id.to_vec(), epoch, group_info: wire::ref_hash("Trommi Group Info", group_info) },
+            context: wire::KeyContext {
+                group_id: group_id.to_vec(),
+                epoch,
+                group_info: wire::ref_hash("Trommi Group Info", group_info),
+            },
             room_epoch,
             recovery_hpke_key: hpke_public.to_vec(),
             kem_output: random::<32>().to_vec(),
@@ -601,7 +843,15 @@ impl Dev {
     }
 
     /// An envelope with every field given: for the tests that get a field wrong.
-    pub fn build_envelope(&self, group_id: &[u8], epoch: u64, seq: u64, prev: [u8; 32], item: &Item, key: &[u8; 32]) -> (Vec<u8>, [u8; 32]) {
+    pub fn build_envelope(
+        &self,
+        group_id: &[u8],
+        epoch: u64,
+        seq: u64,
+        prev: [u8; 32],
+        item: &Item,
+        key: &[u8; 32],
+    ) -> (Vec<u8>, [u8; 32]) {
         let header = Header {
             kind: item.kind,
             flags: item.flags,
@@ -622,11 +872,22 @@ impl Dev {
         let mut padded = body.0;
         padded.resize(padded.len().next_power_of_two().max(256), 0);
         let nonce = random::<12>();
-        let ciphertext = ChaCha20Poly1305::new(key.into()).encrypt((&nonce).into(), Payload { msg: &padded, aad: &header }).unwrap();
+        let ciphertext = ChaCha20Poly1305::new(key.into())
+            .encrypt(
+                (&nonce).into(),
+                Payload {
+                    msg: &padded,
+                    aad: &header,
+                },
+            )
+            .unwrap();
         let body_hash: [u8; 32] = Sha256::digest(&ciphertext).into();
         let hash = wire::envelope_hash(&header, &nonce, &body_hash);
         let signature = self.sign("TrommiEnvelope", &hash);
-        (wire::encode_envelope(&header, &nonce, Some(&ciphertext), &body_hash, &signature), hash)
+        (
+            wire::encode_envelope(&header, &nonce, Some(&ciphertext), &body_hash, &signature),
+            hash,
+        )
     }
 
     /// The next envelope of this device's chain in a group, in the group's current epoch. The chain advances.
@@ -655,7 +916,11 @@ impl Dev {
     }
 
     pub fn call(&self, hub: &TestHub, method: &str, path: &str, body: &Value) -> Reply {
-        let bytes = if body.is_null() { vec![] } else { body.to_string().into_bytes() };
+        let bytes = if body.is_null() {
+            vec![]
+        } else {
+            body.to_string().into_bytes()
+        };
         request(hub.port, method, path, &self.headers(), &bytes)
     }
 
@@ -671,7 +936,14 @@ impl Dev {
         self.call(hub, "PUT", path, body)
     }
 
-    pub fn raw(&self, hub: &TestHub, method: &str, path: &str, extra: &[(&'static str, String)], body: &[u8]) -> Reply {
+    pub fn raw(
+        &self,
+        hub: &TestHub,
+        method: &str,
+        path: &str,
+        extra: &[(&'static str, String)],
+        body: &[u8],
+    ) -> Reply {
         let mut headers = self.headers();
         headers.extend_from_slice(extra);
         request(hub.port, method, path, &headers, body)
@@ -700,7 +972,11 @@ impl Dev {
 
     /// Posts a Commit with its GroupInfo, Welcome and SealedKey; merges it if the hub took it, clears it if not.
     pub fn post_commit(&mut self, hub: &TestHub, out: &Out, sealed_key: &[u8]) -> Reply {
-        let reply = self.post(hub, &format!("/v2/groups/{}/commits", b64(&out.group_id)), &commit_json(out, sealed_key, None));
+        let reply = self.post(
+            hub,
+            &format!("/v2/groups/{}/commits", b64(&out.group_id)),
+            &commit_json(out, sealed_key, None),
+        );
         if reply.status == 200 {
             self.merge(&out.group_id);
         } else {
@@ -727,15 +1003,39 @@ impl Dev {
     }
 
     /// Encrypts and posts an application message in the group's current epoch.
-    pub fn post_message(&mut self, hub: &TestHub, group_id: &[u8], plain: &[u8], relay: bool) -> Reply {
+    pub fn post_message(
+        &mut self,
+        hub: &TestHub,
+        group_id: &[u8],
+        plain: &[u8],
+        relay: bool,
+    ) -> Reply {
         let epoch = self.epoch(group_id);
         let message = self.application_message(group_id, plain);
-        self.post(hub, &format!("/v2/groups/{}/messages", b64(group_id)), &json!({ "epoch": epoch, "message": b64(&message), "relay": relay }))
+        self.post(
+            hub,
+            &format!("/v2/groups/{}/messages", b64(group_id)),
+            &json!({ "epoch": epoch, "message": b64(&message), "relay": relay }),
+        )
+    }
+
+    /// Acquires this agent device's lease as a new process (13.7).
+    pub fn link(&mut self, hub: &TestHub) -> Reply {
+        self.lease = None;
+        let reply = self.post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 }));
+        self.lease = reply.json()["generation"].as_u64();
+        reply
     }
 
     pub fn upload_key_packages(&self, hub: &TestHub, single_use: usize) -> Reply {
-        let packages: Vec<String> = (0..single_use).map(|_| b64(&self.key_package(false))).collect();
-        self.put(hub, "/v2/key-packages", &json!({ "single_use": packages, "last_resort": b64(&self.key_package(true)) }))
+        let packages: Vec<String> = (0..single_use)
+            .map(|_| b64(&self.key_package(false)))
+            .collect();
+        self.put(
+            hub,
+            "/v2/key-packages",
+            &json!({ "single_use": packages, "last_resort": b64(&self.key_package(true)) }),
+        )
     }
 }
 
@@ -748,18 +1048,45 @@ pub fn commit_json(out: &Out, sealed_key: &[u8], recovery_auth: Option<&[u8]>) -
 
 /// Signs in with any key: a device's, or the room's recovery signature key. `hub_address`: what the signed
 /// `HubAuth` names; the hub's own when `None`.
-pub fn sign_in_with(hub: &TestHub, room: &[u8; 32], key: &SignatureKeyPair, hub_address: Option<&str>) -> Reply {
+pub fn sign_in_with(
+    hub: &TestHub,
+    room: &[u8; 32],
+    key: &SignatureKeyPair,
+    hub_address: Option<&str>,
+) -> Reply {
     let challenge = hub.get(&format!("/v2/rooms/{}/challenge", b64(room))).ok();
-    let challenge: [u8; 32] = unb64(challenge["challenge"].as_str().unwrap()).unwrap().try_into().unwrap();
-    let auth = wire::HubAuth { room_id: *room, hub: hub_address.unwrap_or(&hub.url).as_bytes().to_vec(), device: key.to_public_vec().try_into().unwrap(), challenge }.encode();
+    let challenge: [u8; 32] = unb64(challenge["challenge"].as_str().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    let auth = wire::HubAuth {
+        room_id: *room,
+        hub: hub_address.unwrap_or(&hub.url).as_bytes().to_vec(),
+        device: key.to_public_vec().try_into().unwrap(),
+        challenge,
+    }
+    .encode();
     let signature = sign_with_label(key, "TrommiHubAuth", &auth);
-    hub.post(&format!("/v2/rooms/{}/tokens", b64(room)), &json!({ "auth": b64(&auth), "signature": b64(&signature) }))
+    hub.post(
+        &format!("/v2/rooms/{}/tokens", b64(room)),
+        &json!({ "auth": b64(&auth), "signature": b64(&signature) }),
+    )
 }
 
 /// The RecoveryAuth of a join from outside (8.4): the recovery key's signature over the join and its Commit.
-pub fn recovery_auth(recovery: &SignatureKeyPair, out: &Out, base_group_info: &[u8], room: (u64, [u8; 32]), joiner: &[u8; 32]) -> Vec<u8> {
+pub fn recovery_auth(
+    recovery: &SignatureKeyPair,
+    out: &Out,
+    base_group_info: &[u8],
+    room: (u64, [u8; 32]),
+    joiner: &[u8; 32],
+) -> Vec<u8> {
     let mut auth = wire::RecoveryAuth {
-        base: wire::KeyContext { group_id: out.group_id.clone(), epoch: out.epoch, group_info: wire::ref_hash("Trommi Group Info", base_group_info) },
+        base: wire::KeyContext {
+            group_id: out.group_id.clone(),
+            epoch: out.epoch,
+            group_info: wire::ref_hash("Trommi Group Info", base_group_info),
+        },
         room_epoch: room.0,
         room_state: room.1,
         joiner: *joiner,
@@ -777,9 +1104,15 @@ pub fn chat(session_id: &[u8; 16], recipient: [u8; 32], text: &str) -> Item {
         kind: wire::KIND_ITEM,
         flags: 0,
         recipient,
-        subject: Subject::Item { timeline_kind: wire::TIMELINE_CHAT, timeline_scope: wire::SCOPE_SESSION, timeline_ref: *session_id },
+        subject: Subject::Item {
+            timeline_kind: wire::TIMELINE_CHAT,
+            timeline_scope: wire::SCOPE_SESSION,
+            timeline_ref: *session_id,
+        },
         file_ids: vec![],
-        payload: json!({ "schema_version": 2, "content_type": "message", "text": text }).to_string().into_bytes(),
+        payload: json!({ "schema_version": 2, "content_type": "message", "text": text })
+            .to_string()
+            .into_bytes(),
     }
 }
 
@@ -788,7 +1121,11 @@ pub fn board_item(board: &[u8; 16]) -> Item {
         kind: wire::KIND_ITEM,
         flags: 0,
         recipient: ZERO32,
-        subject: Subject::Item { timeline_kind: wire::TIMELINE_BOARD, timeline_scope: wire::SCOPE_DESK, timeline_ref: *board },
+        subject: Subject::Item {
+            timeline_kind: wire::TIMELINE_BOARD,
+            timeline_scope: wire::SCOPE_DESK,
+            timeline_ref: *board,
+        },
         file_ids: vec![],
         payload: br#"{"schema_version":2,"content_type":"strokes"}"#.to_vec(),
     }
@@ -799,19 +1136,38 @@ pub fn register(register_id: &[u8; 16], value: &str) -> Item {
         kind: wire::KIND_REGISTER,
         flags: 0,
         recipient: ZERO32,
-        subject: Subject::Register { register_id: *register_id },
+        subject: Subject::Register {
+            register_id: *register_id,
+        },
         file_ids: vec![],
-        payload: json!({ "name": "n", "value": value, "lamport": 1 }).to_string().into_bytes(),
+        payload: json!({ "name": "n", "value": value, "lamport": 1 })
+            .to_string()
+            .into_bytes(),
     }
 }
 
 /// An object's envelope. `object_ref`: zeros for a first version.
-pub fn object(kind: u8, object_id: [u8; 16], object_type: u8, object_state: u8, urgency: u8, object_ref: [u8; 32], recipient: [u8; 32]) -> Item {
+pub fn object(
+    kind: u8,
+    object_id: [u8; 16],
+    object_type: u8,
+    object_state: u8,
+    urgency: u8,
+    object_ref: [u8; 32],
+    recipient: [u8; 32],
+) -> Item {
     Item {
         kind,
         flags: 0,
         recipient,
-        subject: Subject::Object { object_id, object_type, object_state, urgency, answered_at: 0, object_ref },
+        subject: Subject::Object {
+            object_id,
+            object_type,
+            object_state,
+            urgency,
+            answered_at: 0,
+            object_ref,
+        },
         file_ids: vec![],
         payload: br#"{"schema_version":2,"title":"t"}"#.to_vec(),
     }
@@ -835,7 +1191,12 @@ impl World {
 
     pub fn on(hub: TestHub) -> World {
         let (room, recovery, ada) = found_room(&hub);
-        World { hub, room, recovery, ada }
+        World {
+            hub,
+            room,
+            recovery,
+            ada,
+        }
     }
 }
 
@@ -845,7 +1206,11 @@ pub fn found_room(hub: &TestHub) -> ([u8; 32], Recovery, Dev) {
     let mut ada = Dev::new();
     let info = ada.create_room(&room, &recovery);
     let sealed = ada.sealed_key(&room, 0, &info, 0, &recovery.hpke_public, true);
-    hub.post("/v2/rooms", &json!({ "group_info": b64(&info), "sealed_key": b64(&sealed) })).ok();
+    hub.post(
+        "/v2/rooms",
+        &json!({ "group_info": b64(&info), "sealed_key": b64(&sealed) }),
+    )
+    .ok();
     ada.sign_in(hub, &room).ok();
     ada.upload_key_packages(hub, 5).ok();
     (room, recovery, ada)
@@ -853,7 +1218,13 @@ pub fn found_room(hub: &TestHub) -> ([u8; 32], Recovery, Dev) {
 
 /// The invite ceremony's three messages at the hub (12.1), up to the Reveal: after it the room group takes the
 /// new device's KeyPackage (role 1) or key (role 2) from this inviter. Returns the KeyPackage of the Request.
-pub fn invite(hub: &TestHub, inviter: &Dev, newcomer: &Dev, role: u8, session_id: [u8; 16]) -> (Vec<u8>, [u8; 16]) {
+pub fn invite(
+    hub: &TestHub,
+    inviter: &Dev,
+    newcomer: &Dev,
+    role: u8,
+    session_id: [u8; 16],
+) -> (Vec<u8>, [u8; 16]) {
     let secret: [u8; 32] = random();
     let nonce: [u8; 32] = random();
     let invite_id: [u8; 16] = random();
@@ -864,7 +1235,10 @@ pub fn invite(hub: &TestHub, inviter: &Dev, newcomer: &Dev, role: u8, session_id
         role,
         session_id,
         expires_at: trommi_hub::util::now() + 600_000,
-        commitment: wire::ref_hash("Trommi Invite Commitment", &[&invite_id[..], &nonce[..]].concat()),
+        commitment: wire::ref_hash(
+            "Trommi Invite Commitment",
+            &[&invite_id[..], &nonce[..]].concat(),
+        ),
         inviter: inviter.id(),
         room_epoch,
         room_state,
@@ -889,7 +1263,12 @@ pub fn invite(hub: &TestHub, inviter: &Dev, newcomer: &Dev, role: u8, session_id
         &json!({ "request": b64(&request), "mac": b64(&mac), "signature": b64(&newcomer.sign("TrommiInviteRequest", &signed)) }),
     )
     .ok();
-    let reveal = wire::Reveal { invite_id, nonce, request_hash: wire::ref_hash("Trommi Invite Request", &signed) }.encode();
+    let reveal = wire::Reveal {
+        invite_id,
+        nonce,
+        request_hash: wire::ref_hash("Trommi Invite Request", &signed),
+    }
+    .encode();
     inviter.put(hub, &format!("/v2/invites/{}/reveal", b64(&invite_id)), &json!({ "reveal": b64(&reveal), "signature": b64(&inviter.sign("TrommiInviteReveal", &reveal)) })).ok();
     (key_package, invite_id)
 }
@@ -902,8 +1281,22 @@ impl World {
         let (key_package, _) = invite(&self.hub, &self.ada, &dev, 1, ZERO16);
         let room = self.room;
         let now = self.ada.room_now();
-        let out = self.ada.commit(&room, &Change { adds: vec![key_package], ..Default::default() }, now);
-        let sealed = self.ada.sealed_key(&room, out.epoch + 1, &out.group_info, out.epoch, &self.recovery.hpke_public, true);
+        let out = self.ada.commit(
+            &room,
+            &Change {
+                adds: vec![key_package],
+                ..Default::default()
+            },
+            now,
+        );
+        let sealed = self.ada.sealed_key(
+            &room,
+            out.epoch + 1,
+            &out.group_info,
+            out.epoch,
+            &self.recovery.hpke_public,
+            true,
+        );
         self.ada.post_commit(&self.hub, &out, &sealed).ok();
         dev.join(out.welcome.as_ref().unwrap());
         dev.sign_in(&self.hub, &room).ok();
@@ -919,14 +1312,43 @@ impl World {
         agents.push(dev.id());
         self.set_agents(&agents).ok();
         dev.sign_in(&self.hub, &self.room).ok();
+        dev.link(&self.hub);
         dev.upload_key_packages(&self.hub, 5).ok();
         dev
     }
 
+    /// The agent leaf of a session group, as the hub lists it.
+    pub fn agent_of(&self, group: &[u8]) -> [u8; 32] {
+        let agents = self.agents();
+        let list = self
+            .ada
+            .get(&self.hub, &format!("/v2/rooms/{}/groups", b64(&self.room)))
+            .ok();
+        let row = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["group_id"] == b64(group))
+            .unwrap()
+            .clone();
+        row["leaves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| <[u8; 32]>::try_from(unb64(l.as_str().unwrap()).unwrap()).unwrap())
+            .find(|l| agents.contains(l))
+            .expect("the session has an agent leaf")
+    }
+
     pub fn agents(&self) -> Vec<[u8; 32]> {
-        let list = self.ada.get(&self.hub, &format!("/v2/rooms/{}/groups", b64(&self.room))).ok();
-        let _ = list;
-        let ext = self.ada.group(&self.room).extensions().unknown(EXT_ROOM).unwrap().0.clone();
+        let ext = self
+            .ada
+            .group(&self.room)
+            .extensions()
+            .unknown(EXT_ROOM)
+            .unwrap()
+            .0
+            .clone();
         TrommiRoom::parse(&ext).unwrap().agents
     }
 
@@ -934,32 +1356,95 @@ impl World {
     pub fn set_agents(&mut self, agents: &[[u8; 32]]) -> Reply {
         let room = self.room;
         let now = self.ada.room_now();
-        let out = self.ada.commit(&room, &Change { room: Some(self.recovery.room_ext(agents)), ..Default::default() }, now);
-        let sealed = self.ada.sealed_key(&room, out.epoch + 1, &out.group_info, out.epoch, &self.recovery.hpke_public, true);
+        let out = self.ada.commit(
+            &room,
+            &Change {
+                room: Some(self.recovery.room_ext(agents)),
+                ..Default::default()
+            },
+            now,
+        );
+        let sealed = self.ada.sealed_key(
+            &room,
+            out.epoch + 1,
+            &out.group_info,
+            out.epoch,
+            &self.recovery.hpke_public,
+            true,
+        );
         self.ada.post_commit(&self.hub, &out, &sealed)
     }
 
     pub fn claim(&self, by: &Dev, devices: &[[u8; 32]]) -> Vec<Vec<u8>> {
         let ids: Vec<String> = devices.iter().map(|d| b64(d)).collect();
-        let reply = by.post(&self.hub, "/v2/key-packages/claim", &json!({ "devices": ids })).ok();
-        devices.iter().map(|d| unb64(reply["key_packages"][b64(d)].as_str().unwrap()).unwrap()).collect()
+        let reply = by
+            .post(
+                &self.hub,
+                "/v2/key-packages/claim",
+                &json!({ "devices": ids }),
+            )
+            .ok();
+        devices
+            .iter()
+            .map(|d| unb64(reply["key_packages"][b64(d)].as_str().unwrap()).unwrap())
+            .collect()
     }
 
     /// Founds a main session by `ada` with every other human device in `humans` and, if given, its agent
     /// device. Everyone joins from the Welcome. Returns the session id and the group id.
-    pub fn found_main(&mut self, humans: &mut [&mut Dev], agent: Option<&mut Dev>) -> ([u8; 16], Vec<u8>) {
+    pub fn found_main(
+        &mut self,
+        humans: &mut [&mut Dev],
+        agent: Option<&mut Dev>,
+    ) -> ([u8; 16], Vec<u8>) {
+        // 5.2.5: a main session is founded with its agent device; a test that names none gets one of its own
+        let mut spare;
+        let agent = match agent {
+            Some(a) => Some(a),
+            None => {
+                spare = self.enrol_agent();
+                for h in humans.iter_mut() {
+                    catch_up(&self.hub, h, &self.room);
+                }
+                Some(&mut spare)
+            }
+        };
         let session: [u8; 16] = random();
         let mut to_add: Vec<[u8; 32]> = humans.iter().map(|h| h.id()).collect();
         if let Some(a) = &agent {
             to_add.push(a.id());
         }
-        let adds = if to_add.is_empty() { vec![] } else { self.claim(&self.ada, &to_add) };
+        let adds = if to_add.is_empty() {
+            vec![]
+        } else {
+            self.claim(&self.ada, &to_add)
+        };
         let (group, info0) = self.ada.create_session(&session, &ZERO16);
         let now = self.ada.room_now();
-        let key0 = self.ada.sealed_key(&group, 0, &info0, now.0, &self.recovery.hpke_public, true);
-        let out = self.ada.commit(&group, &Change { adds, ..Default::default() }, now);
-        let key1 = self.ada.sealed_key(&group, 1, &out.group_info, now.0, &self.recovery.hpke_public, true);
-        let reply = self.ada.post(&self.hub, "/v2/groups", &founding_json(&info0, &key0, &out, &key1));
+        let key0 = self
+            .ada
+            .sealed_key(&group, 0, &info0, now.0, &self.recovery.hpke_public, true);
+        let out = self.ada.commit(
+            &group,
+            &Change {
+                adds,
+                ..Default::default()
+            },
+            now,
+        );
+        let key1 = self.ada.sealed_key(
+            &group,
+            1,
+            &out.group_info,
+            now.0,
+            &self.recovery.hpke_public,
+            true,
+        );
+        let reply = self.ada.post(
+            &self.hub,
+            "/v2/groups",
+            &founding_json(&info0, &key0, &out, &key1),
+        );
         reply.ok();
         self.ada.merge(&group);
         if let Some(welcome) = &out.welcome {
@@ -980,10 +1465,16 @@ impl World {
 }
 
 pub fn catch_up(hub: &TestHub, dev: &mut Dev, group: &[u8]) {
-    let log = dev.get(hub, &format!("/v2/groups/{}/log?after=0&limit=1000", b64(group))).ok();
+    let log = dev
+        .get(
+            hub,
+            &format!("/v2/groups/{}/log?after=0&limit=1000", b64(group)),
+        )
+        .ok();
     for item in log["items"].as_array().unwrap() {
         if item["kind"] == "commit" && item["epoch"].as_u64().unwrap() == dev.epoch(group) {
-            dev.process(group, &unb64(item["bytes"].as_str().unwrap()).unwrap()).unwrap();
+            dev.process(group, &unb64(item["bytes"].as_str().unwrap()).unwrap())
+                .unwrap();
         }
     }
 }
