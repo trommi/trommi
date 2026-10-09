@@ -92,9 +92,16 @@ pub fn version_payload(previous: &Hash32, extra: serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&object).expect("a payload")
 }
 
-/// Chains without an envelope in which `epoch` has already taken `count` numbers: a state no test fills by
-/// receiving.
-pub fn chains_with_count(epoch: u64, count: u64) -> Chains {
+/// Chains that stand at `heads` and in which each epoch of `counts` has already taken that many numbers: a
+/// state written down instead of filled by receiving.
+pub fn chains_of(heads: &[(DeviceId, Head)], counts: &[(u64, u64)]) -> Chains {
+    struct HeadEntry(DeviceId, Head);
+    impl Encode for HeadEntry {
+        fn write(&self, writer: &mut Writer) -> Result<(), Error> {
+            writer.fixed(self.0.as_bytes());
+            writer.value(&self.1)
+        }
+    }
     struct Count(u64, u64);
     impl Encode for Count {
         fn write(&self, writer: &mut Writer) -> Result<(), Error> {
@@ -103,11 +110,18 @@ pub fn chains_with_count(epoch: u64, count: u64) -> Chains {
             Ok(())
         }
     }
+    let heads: Vec<HeadEntry> = heads.iter().map(|(d, h)| HeadEntry(*d, *h)).collect();
+    let counts: Vec<Count> = counts.iter().map(|(e, n)| Count(*e, *n)).collect();
     let mut writer = Writer::new();
     writer.u64(0);
-    writer.vector::<Count>(&[]).expect("no heads");
-    writer.vector(&[Count(epoch, count)]).expect("one count");
+    writer.vector(&heads).expect("the heads");
+    writer.vector(&counts).expect("the counts");
     Chains::from_bytes(&writer.into_bytes()).expect("a chain state")
+}
+
+/// Chains without an envelope in which `epoch` has already taken `count` numbers.
+pub fn chains_with_count(epoch: u64, count: u64) -> Chains {
+    chains_of(&[], &[(epoch, count)])
 }
 
 /// What device `n` signs as its first envelope in `group`: `draft`'s header over a sealed body one byte
