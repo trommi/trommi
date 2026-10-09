@@ -1631,8 +1631,6 @@ impl Client {
                     }
                     _ => command.timeline_key = Some(format!("chat:session/{session}")),
                 }
-                let record = core.model.session_of(session);
-                record.heard_up_to = record.heard_up_to.max(Some(0));
             }
             Decision::Act(GateCommand::Answer { action, choices }) => {
                 let card = command
