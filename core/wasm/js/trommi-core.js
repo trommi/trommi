@@ -87,7 +87,7 @@ const typedArray = Object.getPrototypeOf(Uint8Array.prototype)
 const typedArrayName = Object.getOwnPropertyDescriptor(typedArray, Symbol.toStringTag).get
 const typedArrayLength = Object.getOwnPropertyDescriptor(typedArray, 'byteLength').get
 const fill = Uint8Array.prototype.fill
-const MAX_BYTES = 80 * 1024 * 1024 // a little above the largest stored file, for all bytes of one call together
+const MAX_BYTES = 256 * 1024 * 1024 // all bytes of one call together: above the largest stored file, and room for a long room history
 const MAX_VALUES = 4 * 1024 * 1024 // every value of one call together: a room's whole log served for a join is far below
 const MAX_TEXT = 1024 * 1024       // no call takes longer text
 // How deep the deepest argument of any call is nested: a ServedRoom holds a list of groups, each a list of
@@ -149,6 +149,13 @@ function callWith(target, name, args) {
   } finally {
     copied.wipe()
   }
+}
+
+/** Overwrites every byte array in a result that reaches nobody. */
+function wipeResult(value, depth = 0) {
+  if (value === null || typeof value !== 'object' || depth > MAX_DEPTH + 1) return
+  if (value instanceof Uint8Array) fill.call(value, 0)
+  else for (const inner of Array.isArray(value) ? value : Object.values(value)) wipeResult(inner, depth + 1)
 }
 
 /** Overwrites the bytes of records the module made for a store (they hold private keys), once they were used. */
@@ -235,8 +242,14 @@ export class Device {
       } catch (error) {
         refusal = error
       }
-      // Also after a refusal: whatever the call wrote is stored before anyone hears of it.
-      await this.#flush()
+      // Also after a refusal: whatever the call wrote is stored before anyone hears of it. A result that is
+      // withheld because storing failed may hold decrypted content: it is overwritten, not left to the collector.
+      try {
+        await this.#flush()
+      } catch (error) {
+        wipeResult(result)
+        throw error
+      }
       if (refusal) throw refusal
       return result
     })

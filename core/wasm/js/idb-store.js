@@ -70,6 +70,8 @@ export class IdbStore {
   #lock = null                    // the Web Lock, while it is held
   #waiting = new AbortController() // gives up a wait for the lock
   #lost = false                   // the lock was taken away
+  #acquiring = null               // the request for the lock, while it is not yet answered
+  #closing = null                 // the one closing, once it began
 
   /** `name` names the stored state: the IndexedDB database and the lock. One per device. */
   constructor(name, { wait = false } = {}) {
@@ -81,7 +83,8 @@ export class IdbStore {
     if (this.#state !== 'new') throw new Error('this store was loaded before: a store object serves one device, once')
     this.#state = 'loading'
     try {
-      this.#lock = await lock(lockName(this.#name), this.#wait, this.#waiting.signal)
+      this.#acquiring = lock(lockName(this.#name), this.#wait, this.#waiting.signal)
+      this.#lock = await this.#acquiring
       // A lock that is taken away ends this owner: nothing more is written.
       this.#lock.lost.then(() => { this.#lost = true })
       if (this.#state !== 'loading') throw new Error('the store was closed while it loaded')
@@ -145,12 +148,18 @@ export class IdbStore {
    * opened on the same state after that finds it free. A `load` that still waits for the lock is given up and
    * rejects; it never takes the lock.
    */
-  async close() {
+  close() {
+    this.#closing ??= this.#end()
+    return this.#closing
+  }
+
+  async #end() {
     this.#state = 'closed'
     this.#waiting.abort()
     this.#db?.close()
     this.#db = null
-    const held = this.#lock
+    // A request for the lock that was granted while this ran is released too: its answer is waited for.
+    const held = this.#lock ?? await this.#acquiring?.catch(() => null)
     this.#lock = null
     await held?.release()
   }

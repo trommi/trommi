@@ -31,6 +31,7 @@ struct Step: Decodable {
   var reader: String?
   var chat: String?
   var confirmed: Bool?
+  var keys_only: Bool?
   var epoch: UInt64?
 }
 
@@ -182,6 +183,10 @@ final class ScenarioTests: XCTestCase {
   var groups: [String: Data] = [:]
   var remembered: [String: [OutboxEntry]] = [:]
   var room = Data()
+  /// How many messages same_key had written.
+  var spoken = 0
+  /// Per device, the envelopes its syncs brought.
+  var seen: [String: [ReceivedEnvelope]] = [:]
   /// The recovery code in force.
   var code = Data()
   var folder = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -268,11 +273,35 @@ final class ScenarioTests: XCTestCase {
     case "same_key":
       let keys = try step.devices!.map { try key($0, step.group) }
       try check(keys.allSatisfy { $0.epoch == keys[0].epoch && $0.held }, "the devices do not share the key of \(step.group!)")
+      // Holding a key says little: in a session, what the first writes now, every other one must open.
+      if step.group == "room" || step.keys_only == true { return }
+      spoken += 1
+      let said = "same key \(spoken)"
+      try say(step.devices![0], in: step.group, said)
+      try hub.post(device(step.devices![0]))
+      for name in step.devices!.dropFirst() {
+        let envelopes = try hub.sync(device(name), room: room).envelopes
+        try check(chat(in: envelopes, said)?.outcome == .applied, "\(name) did not open what \(step.devices![0]) wrote in \(step.group!)")
+      }
+    case "gate":
+      // The command gate of an agent device, for the Chat message with this text: act once, then done.
+      let agent = try device(step.device)
+      guard let envelope = chat(in: (seen[step.device!] ?? []).reversed(), step.text!), envelope.command else {
+        throw Unexpected("the message is not one the gate is asked about")
+      }
+      try check(try agent.commandsPending().contains(envelope.envelopeHash), "the command is not pending")
+      let first = try agent.command(envelopeHash: envelope.envelopeHash, nowMs: now())
+      try check(first.gate == .act && first.command == .chat, "the gate answered \(first.gate)")
+      try check(try agent.commandsUncertain().contains(envelope.envelopeHash), "a started command is not known as unfinished")
+      try agent.commandFinished(envelopeHash: envelope.envelopeHash)
+      try check(try agent.command(envelopeHash: envelope.envelopeHash, nowMs: now()).gate == .done, "a finished command was let through again")
+      try check(refusal { _ = try agent.command(envelopeHash: Data(count: 32), nowMs: now()) } == .notFound, "the gate answered for an envelope it never saw")
     case "sign_in":
       let signed = try device(step.device).hubSignIn(hub: "https://hub.example", challenge: Data(repeating: 9, count: 32))
       try check(signed.signature.count == 64 && signed.auth.count > 96, "the sign-in is not a signed HubAuth")
     case "sync":
       let (done, envelopes) = try hub.sync(device(step.device), room: room)
+      seen[step.device!, default: []] += envelopes
       if let expected = step.message {
         let message = done.first { $0.kind == .message }?.message
         try check(message?.kind == .workTrail && message?.payload == Data(expected.utf8), "the message did not arrive as it was sent")
@@ -287,14 +316,7 @@ final class ScenarioTests: XCTestCase {
         if step.confirmed == true { try check(envelope?.confirmed == true, "the fetched envelope was not confirmed by its chain") }
       }
     case "chat":
-      // A Chat message in a session, sealed into the outbox.
-      let id = try group(step.group)
-      var message = draft(.sessionChat)
-      message.session = id.subdata(in: id.startIndex + 32..<id.endIndex)
-      message.payload = try JSONSerialization.data(withJSONObject: ["content_type": "message", "text": step.text!])
-      let sealed = try device(step.device).seal(draft: message, recipient: nil, fileIds: [], nowMs: now())
-      let entry = try device(step.device).outbox().first { $0.id == sealed.outboxId }
-      try check(entry?.kind == .envelope && entry?.parts.count == 1 && sealed.seq >= 1 && sealed.group == id, "the sealed envelope is not in the outbox")
+      try say(step.device!, in: step.group, step.text!)
     case "fetch":
       // The newest envelope, handed over out of order, before the entries in front of it: shown, not yet confirmed.
       guard let entry = hub.log.last(where: { hub.envelopes.contains($0.change) }) else { throw Unexpected("no envelope") }
@@ -309,7 +331,8 @@ final class ScenarioTests: XCTestCase {
       guard let relayed = hub.relayed.last else { throw Unexpected("nothing was relayed") }
       let cursor = try device(step.device).cursor()
       let piece = try device(step.device).receiveRelay(group: relayed.group, message: relayed.bytes, nowMs: now())
-      try check(piece?.kind == .strokePiece && piece?.board == allDesks && piece?.payload.isEmpty == false, "the stroke piece did not arrive")
+      let body = try piece.flatMap { try JSONSerialization.jsonObject(with: $0.payload) as? [String: Any] }
+      try check(piece?.kind == .strokePiece && piece?.board == allDesks && (body?["number"] as? NSNumber)?.intValue == 1, "the stroke piece did not arrive")
       try check(try device(step.device).cursor() == cursor, "a relayed message moved the cursor")
     case "board":
       try board(writer: device(step.writer), reader: device(step.reader))
@@ -393,6 +416,17 @@ final class ScenarioTests: XCTestCase {
     }
   }
 
+  /// A Chat message in a session, sealed into the outbox.
+  func say(_ name: String, in groupName: String?, _ text: String) throws {
+    let id = try group(groupName)
+    var message = draft(.sessionChat)
+    message.session = id.subdata(in: id.startIndex + 32..<id.endIndex)
+    message.payload = try JSONSerialization.data(withJSONObject: ["content_type": "message", "text": text])
+    let sealed = try device(name).seal(draft: message, recipient: nil, fileIds: [], nowMs: now())
+    let entry = try device(name).outbox().first { $0.id == sealed.outboxId }
+    try check(entry?.kind == .envelope && entry?.parts.count == 1 && sealed.seq >= 1 && sealed.group == id, "the sealed envelope is not in the outbox")
+  }
+
   /// A board: an item, the writer's snapshot register, another item; the reader loads it and is told what is new.
   func board(writer: CoreDevice, reader: CoreDevice) throws {
     let roomGroup = try group("room")
@@ -428,10 +462,19 @@ final class ScenarioTests: XCTestCase {
     try check(envelopes[1].register?.current == true && envelopes[1].header.kind == .register, "the snapshot register was not taken")
     guard let value = try reader.register(group: roomGroup, name: name), let read = try JSONSerialization.jsonObject(with: value) as? [String: Any]
     else { throw Unexpected("the register has no value") }
-    try check((read["change"] as? NSNumber)?.uint64Value == change, "the register reads another value")
+    try check(
+      (read["change"] as? NSNumber)?.uint64Value == change && (read["attachment"] as? [String: Any])?["file_id"] as? String == "AAAAAAAAAAAAAAAAAAAAAA",
+      "the register reads another value")
     try check(refusal { _ = try reader.boardLoad(board: allDesks, served: []) } == .withheld, "a withheld item went unnoticed")
     let loaded = try reader.boardLoad(board: allDesks, served: [ServedItem(sender: writerId, seq: second.seq, hash: second.envelopeHash)])
     try check(loaded.fresh == [0] && loaded.covered.isEmpty && loaded.frontier.first?.seq == second.seq, "the board did not load as written")
+    // The board itself: the items the reader opened, merged for the frontier it verified.
+    let items = try [envelopes[0], envelopes[2]].map { envelope -> BoardItem in
+      guard let payload = envelope.payload else { throw Unexpected("a board item did not open") }
+      return BoardItem(sender: envelope.header.sender, seq: envelope.header.seq, payload: payload)
+    }
+    let merged = try boardReduce(snapshot: nil, snapshotFrontier: [], items: items, frontier: loaded.frontier)
+    try check((try JSONSerialization.jsonObject(with: merged)) is [String: Any], "the board did not reduce to a snapshot file")
     let cut = try reader.cutOf(group: roomGroup, device: writerId)
     try check(cut.seq == second.seq && cut.hash == second.envelopeHash, "the Cut is not the last accepted envelope")
   }
@@ -507,6 +550,6 @@ final class ScenarioTests: XCTestCase {
       ran += 1
     }
     XCTAssertEqual(ran, scenario.steps.count)
-    XCTAssertGreaterThan(ran, 85)
+    XCTAssertGreaterThan(ran, 89)
   }
 }
