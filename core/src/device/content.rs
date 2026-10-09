@@ -1252,6 +1252,7 @@ impl<S: Storage> Device<S> {
                     // The value is not taken; the envelope keeps its place.
                     Err(code) => {
                         received.outcome = EnvelopeOutcome::Chained;
+                        record.code = Some(code.clone());
                         received.code = Some(code);
                         record.extra = Vec::new();
                     }

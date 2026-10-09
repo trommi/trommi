@@ -446,14 +446,30 @@ impl<S: Storage> Device<S> {
         .transpose()
     }
 
-    /// The newest epoch of `group` this device holds a record of.
+    /// The newest epoch of `group` this device holds a record of. A record of an epoch is never removed, so
+    /// the last key under the group's prefix names it, in the store or among what the running operation
+    /// wrote.
     pub(super) fn newest_epoch(&self, group: &GroupId) -> Option<u64> {
-        let prefix = group_key(table::CHAIN, SUB_EPOCH, group, &[]);
-        self.stored_under(&prefix)
-            .last()
-            .and_then(|(key, _)| key.get(prefix.len()..))
-            .and_then(|epoch| <[u8; 8]>::try_from(epoch).ok())
-            .map(u64::from_be_bytes)
+        let first = group_key(table::CHAIN, SUB_EPOCH, group, &[]);
+        let last = group_key(table::CHAIN, SUB_EPOCH, group, &[0xFF; 8]);
+        let epoch_of = |key: &Vec<u8>| {
+            key.get(first.len()..)
+                .and_then(|epoch| <[u8; 8]>::try_from(epoch).ok())
+                .map(u64::from_be_bytes)
+        };
+        let stored = self
+            .mirror
+            .range(first.clone()..=last.clone())
+            .next_back()
+            .and_then(|(key, _)| epoch_of(key));
+        let written = self
+            .memory
+            .wire
+            .written
+            .range(first.clone()..=last)
+            .next_back()
+            .and_then(|(key, _)| epoch_of(key));
+        stored.max(written)
     }
 
     /// The roles of `leaves` under the room state that the Commit naming `room_epoch` was judged with, and the

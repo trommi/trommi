@@ -340,3 +340,83 @@ fn a_refused_envelope_keeps_its_number_and_a_voided_one_too() {
     // Only an envelope entry is given up or voided this way.
     assert_eq!(run.human.outbox_voided(99), Err(Error::NotFound));
 }
+
+#[test]
+fn damaged_content_state_is_a_storage_error_and_never_a_panic() {
+    use std::collections::BTreeMap;
+    use trommi_core::store::{Batch, Storage};
+    // An agent device that holds chains, objects, registers, a command and its gate's record.
+    let mut run = Run::start(true, None, None);
+    let said = run
+        .human
+        .seal(&chat(run.session, "go"), None, &[], now())
+        .unwrap();
+    post_ok(&mut run.hub, &mut run.human);
+    let profile = Draft::Register {
+        group: run.group,
+        name: "profile".into(),
+        value: Some(json(r#"{"model":"m"}"#)),
+    };
+    run.agent.seal(&profile, None, &[], now()).unwrap();
+    post_ok(&mut run.hub, &mut run.agent);
+    sync_all(&run.hub, &mut run.agent);
+    run.agent.command(&said.envelope_hash, now()).unwrap();
+    // And a human device that holds an invite.
+    let hub = trommi_core::hub_auth::HubAddress::parse("https://hub.example").unwrap();
+    let human_store = MemoryStorage::new();
+    let human_handle = human_store.handle();
+    let mut inviter = new_device_on(human_store);
+    found_room(&mut inviter);
+    inviter
+        .invite_open(
+            trommi_core::invite::Role::Human,
+            None,
+            "https://app.example",
+            &hub,
+            now(),
+        )
+        .unwrap();
+
+    let mut tried = 0;
+    for handle in [&run.handle, &human_handle] {
+        let stored: BTreeMap<Vec<u8>, Vec<u8>> = handle
+            .entries()
+            .iter()
+            .map(|entry| (entry.key.clone(), entry.value.clone()))
+            .collect();
+        // The tables of stored content, commands and invites.
+        for (key, value) in stored.iter().filter(|(key, _)| (5..=11).contains(&key[0])) {
+            let mut cut = value.clone();
+            cut.truncate(value.len() / 2);
+            let mut longer = value.clone();
+            longer.extend_from_slice(&[0xFF; 3]);
+            for damaged in [cut, longer, vec![0xFF; value.len().max(1)]] {
+                if damaged == *value {
+                    continue;
+                }
+                let mut store = MemoryStorage::new();
+                let mut batch = Batch::new();
+                for (other, kept) in &stored {
+                    batch.put(other.clone(), kept.clone());
+                }
+                batch.put(key.clone(), damaged);
+                store.apply(0, batch).unwrap();
+                tried += 1;
+                match reopen(store) {
+                    Err(Error::Storage(_)) => {}
+                    Err(other) => panic!("table {}: opening failed with {other:?}", key[0]),
+                    // What still decodes is used as it stands, and using it does not panic.
+                    Ok(device) => {
+                        let _ = device.commands_pending();
+                        let _ = device.invite_steps();
+                        let _ = device.findings();
+                        let _ = device.chain_head(&run.group, &run.human.id());
+                        let _ = device.objects(&run.group);
+                        let _ = device.register(&run.group, "profile");
+                    }
+                }
+            }
+        }
+    }
+    assert!(tried > 30, "{tried} damaged states");
+}
