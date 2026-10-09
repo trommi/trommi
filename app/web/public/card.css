@@ -204,7 +204,8 @@ turbo-frame.tc-media { flex: none; display: flex; flex-direction: column; gap: v
 /* the answer the keyboard stands on (↑ ↓, ui.mjs walkAnswers): the ring of the option under the pointer, in ink, and a lift */
 :is(.tc-opt, .tc-tile):focus-visible, label.tc-opt:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; box-shadow: inset 0 0 0 2px var(--fg); translate: -1px -2px; }
 .tc-opt.is-still { cursor: default; box-shadow: inset 0 0 0 1px var(--line); background: var(--sunken); }
-.tc-opt.is-picked { box-shadow: inset 0 0 0 2px var(--accent); }
+/* the chosen one: flat in the accent's light wash with one accent line (the iOS card draws the same); never pressed in */
+.tc-opt.is-picked { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .tc-opt.is-picked .tc-opt-label { color: var(--accent); }
 .tc-opt[data-match] { box-shadow: inset 0 0 0 2px var(--fg); }
 
