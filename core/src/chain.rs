@@ -15,7 +15,9 @@ use crate::envelope::{self, Body, Draft, Envelope, Header, Slot};
 use crate::error::Error;
 use crate::ids::{base64url_decode, DeviceId, GroupId, Hash32, RoomId};
 use crate::objects::{self, Objects, Opened, Transition};
+use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 use std::collections::BTreeMap;
+use std::fmt;
 
 /// How long after the Commit that ended an epoch an envelope of that epoch is still taken, in ms.
 pub const LIVE_GRACE_MS: u64 = 120_000;
@@ -975,20 +977,56 @@ pub fn heads_value(chains: &Chains) -> Result<String, Error> {
     serde_json::to_string(&map).map_err(|_| Error::Internal("heads value"))
 }
 
-/// The heads a `heads` value names, or a board snapshot's frontier, which has the same shape; `bad-format`
-/// unless the text is exactly such an object, each sender once, no number 0.
-pub fn parse_heads(value: &str) -> Result<Vec<(DeviceId, Head)>, Error> {
-    let map: BTreeMap<String, (u64, String)> =
-        serde_json::from_str(value).map_err(|_| Error::BadFormat)?;
-    let mut heads = BTreeMap::new();
-    for (sender, (seq, hash)) in map {
-        let sender = DeviceId::from_base64url(&sender)?;
-        let hash = Hash32::from_slice(&base64url_decode(&hash)?)?;
-        if seq == 0 || heads.insert(sender, Head { seq, hash }).is_some() {
-            return Err(Error::BadFormat);
+/// `{ "<sender>": [seq, envelope_hash] }` as it stands in JSON, read entry by entry so that a sender named
+/// twice shows.
+pub(crate) struct HeadsWire(Vec<(String, (u64, String))>);
+
+impl<'de> Deserialize<'de> for HeadsWire {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Entries;
+
+        impl<'de> Visitor<'de> for Entries {
+            type Value = HeadsWire;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("an object of heads")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<HeadsWire, A::Error> {
+                let mut entries = Vec::new();
+                while let Some(entry) = map.next_entry()? {
+                    entries.push(entry);
+                }
+                Ok(HeadsWire(entries))
+            }
         }
+
+        deserializer.deserialize_map(Entries)
     }
-    Ok(heads.into_iter().collect())
+}
+
+impl HeadsWire {
+    /// The heads, ascending by sender; `bad-format` for a sender named twice, a number 0, or an id or hash
+    /// that is not its canonical base64url.
+    pub(crate) fn heads(self) -> Result<Vec<(DeviceId, Head)>, Error> {
+        let mut heads = BTreeMap::new();
+        for (sender, (seq, hash)) in self.0 {
+            let sender = DeviceId::from_base64url(&sender)?;
+            let hash = Hash32::from_slice(&base64url_decode(&hash)?)?;
+            if seq == 0 || heads.insert(sender, Head { seq, hash }).is_some() {
+                return Err(Error::BadFormat);
+            }
+        }
+        Ok(heads.into_iter().collect())
+    }
+}
+
+/// The heads a `heads` value names; `bad-format` unless the text is exactly such an object, each sender once,
+/// no number 0.
+pub fn parse_heads(value: &str) -> Result<Vec<(DeviceId, Head)>, Error> {
+    serde_json::from_str::<HeadsWire>(value)
+        .map_err(|_| Error::BadFormat)?
+        .heads()
 }
 
 /// How a reader's own chain of one sender compares with a head another device names.
@@ -2418,6 +2456,7 @@ mod tests {
             format!(r#"{{"{sender}":[3,"{sender}x"]}}"#),
             format!(r#"{{"{sender}=":[3,"{hash}"]}}"#),
             format!(r#"{{"short":[3,"{hash}"]}}"#),
+            format!(r#"{{"{sender}":[3,"{hash}"],"{sender}":[3,"{hash}"]}}"#),
             format!(r#"{{"{sender}":[3,"{hash}"]}} x"#),
         ];
         for text in cases {
