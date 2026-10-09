@@ -69,6 +69,17 @@ name = "core_groups_crash"
 path = "core/groups_crash.rs"
 
 [[test]]
+name = "core_groups_storage"
+path = "core/groups_storage.rs"
+
+[[test]]
+name = "core_groups_lifetimes"
+path = "core/groups_lifetimes.rs"
+
+[[test]]
+name = "core_groups_cost"
+path = "core/groups_cost.rs"
+
 name = "core_content_board"
 path = "core/content_board.rs"
 

@@ -780,7 +780,11 @@ impl<S: Storage> Device<S> {
             let context = group.public_group().group_context();
             let (stored, kind) =
                 profile::kind_of_context(context).map_err(|_| damaged("a group"))?;
-            if stored != id || rules::leaves_of(group.members()).is_err() {
+            // The leaf OpenMLS holds as this device's own is the one with this device's key.
+            let own_leaf = group
+                .own_leaf_node()
+                .is_some_and(|leaf| leaf.signature_key().as_slice() == self.id.as_bytes());
+            if stored != id || !own_leaf || rules::leaves_of(group.members()).is_err() {
                 return Err(damaged("a group"));
             }
             if let (GroupKind::Session(session), Some(meta)) =
@@ -1165,11 +1169,12 @@ impl<S: Storage> Device<S> {
                     batch.delete(device_key(SUB_STAGED, &id.to_be_bytes()));
                 }
                 (OutboxKind::KeyPackages, _) => {
+                    // The refusal may be for the KeyPackages themselves: they are not verified here.
                     for part in entry.parts.iter().filter(|part| !part.is_empty()) {
-                        let info = key_package::verify_key_package(part)?;
-                        key_package::forget(&device.provider, &info.reference)?;
-                        device.memory.key_packages.remove(&info.reference);
-                        batch.delete(device_key(SUB_KEY_PACKAGE, info.reference.as_bytes()));
+                        let reference = key_package::reference(part)?;
+                        key_package::forget(&device.provider, &reference)?;
+                        device.memory.key_packages.remove(&reference);
+                        batch.delete(device_key(SUB_KEY_PACKAGE, reference.as_bytes()));
                     }
                 }
                 _ => {}
