@@ -316,6 +316,32 @@ impl Forger {
         hub.post(&self.id(), &entry).expect("the hub stores it")
     }
 
+    /// Posts the founding of a session group of this forger to a hub that checks nothing: the GroupInfo of
+    /// epoch 0 and the first Commit.
+    pub fn post_founding(
+        &self,
+        hub: &mut Hub,
+        group: &GroupId,
+        group_info_0: &[u8],
+        first: &Forged,
+    ) -> Result<Accepted, Error> {
+        let entry = OutboxEntry {
+            id: 0,
+            kind: OutboxKind::GroupFounding,
+            group: Some(*group),
+            epoch: 0,
+            parts: vec![
+                group_info_0.to_vec(),
+                b"no sealed key".to_vec(),
+                first.commit.clone(),
+                first.group_info.clone(),
+                first.welcome.clone().unwrap_or_default(),
+                b"no sealed key".to_vec(),
+            ],
+        };
+        hub.post(&self.id(), &entry)
+    }
+
     /// Posts a Commit of this forger to a hub that checks nothing.
     pub fn post_commit(
         &self,

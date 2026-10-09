@@ -673,10 +673,13 @@ fn a_welcome_taken_late_is_caught_up_from_its_place_in_the_log() {
     let joined = b.join_welcome(&welcome, &expected, now()).unwrap();
     assert_eq!((joined.group, joined.epoch), (group, 2));
     let again: Vec<_> = log.iter().map(|item| process(&mut b, item)).collect();
+    // The first one is the Commit that added the device: it gives the join its place in the hub's order, by
+    // which the Commits behind it are judged against the room state of their own place (5.2.1): the first
+    // names the room epoch before the room's update, the second the one after it.
     assert!(matches!(
         &again[..],
         [
-            Err(Error::WrongEpoch),
+            Ok(Processed::Skipped),
             Ok(Processed::Commit { .. }),
             Err(Error::WrongEpoch),
             Ok(Processed::Commit { .. })
