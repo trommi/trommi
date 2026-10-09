@@ -1315,6 +1315,9 @@ pub struct CheckedRoom {
     pub keys: Vec<RecoveredKey>,
     /// A recovery key whose link to its predecessor the hub did not serve ([`Openers::missing_link`]).
     pub missing_link: Option<[u8; RECOVERY_KEY_LEN]>,
+    /// Per room epoch after the founding, the change number of the Commit that led to it: its place in the
+    /// hub's order, by which a session Commit is judged against the room state of its place (5.2.1).
+    pub places: Vec<(u64, u64)>,
 }
 
 /// A session group while it is verified from its founding.
@@ -1421,12 +1424,16 @@ impl Walk<'_> {
 /// the room states of `history` (`bad-group` when one does not verify or obey section 5, `room-behind` when
 /// `history` does not reach back to a room state one names), and requires the
 /// GroupInfo offered as current to agree with the state so reached (`wrong-recovery`). `sessions` answers for
-/// the room's other sessions: a helper session is verified after its main session.
+/// the room's other sessions: a helper session is verified after its main session. `room_epoch_at` gives the
+/// room epoch that was current at a change number of the hub's order: each Commit is judged at its place
+/// (5.2.1) and must name that epoch, so a Commit that names a room state from before its place, as a removed
+/// device's would, is `bad-group`; `room-behind` when the verifier cannot tell the epoch at a place.
 pub fn check_session(
     served: &ServedGroup<'_>,
     room: &RoomId,
     history: &RoomHistory,
     sessions: &dyn SessionFacts,
+    room_epoch_at: &dyn Fn(u64) -> Result<u64, Error>,
 ) -> Result<CheckedSession, Error> {
     let mut observer = Observer::follow_founding(served.founding).map_err(|_| Error::BadGroup)?;
     if observer.group().room_id() != *room {
@@ -1441,8 +1448,9 @@ pub fn check_session(
     let mut begun = Vec::new();
     let mut last_committer = None;
     for served in served.commits {
+        let at = room_epoch_at(served.change).map_err(|_| Error::RoomBehind)?;
         let facts = observer
-            .process_commit(served.commit, served.recovery_auth, &context)
+            .process_commit_at(served.commit, served.recovery_auth, &context, at)
             .map_err(|error| match error {
                 // The verifier does not hold the room state a Commit names: it cannot tell.
                 Error::RoomBehind => Error::RoomBehind,
@@ -1528,6 +1536,7 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
 
     let mut last_committer = None;
     let mut anchored = false;
+    let mut places = Vec::new();
     for (_, session, commit) in order {
         let Some(at) = session else {
             if observer.epoch()? == anchor.epoch {
@@ -1543,6 +1552,7 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
             let facts = observer
                 .process_commit(commit.commit, commit.recovery_auth, &context)
                 .map_err(|_| Error::BadGroup)?;
+            places.push((observer.epoch()?, commit.change));
             last_committer = Some(facts.committer);
             continue;
         };
@@ -1602,6 +1612,7 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
         sessions,
         keys: recovered,
         missing_link: opened.missing_link,
+        places,
     })
 }
 
