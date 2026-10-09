@@ -66,3 +66,43 @@ a card's id, type, state and urgency, a register's opaque id, file ids, the push
 hub never reads**: a body: texts, card content, choices, verdicts, register names and values, strokes, file keys,
 file names and types. **What goes away**: thirty days after a card is answered or closed its bodies and files; work
 trails after thirty days. The table per stored thing is in `spec/v2.md`, section 14.
+
+## Delivery
+
+Every commit on `main` runs `.github/workflows/build.yml`. It finds which parts changed (a part's own folder, or
+`core/`, or what pins the build), tests and builds those, and hands each built part to its deploy workflow. A deploy
+workflow delivers the files the build made and tested; it builds nothing again. Each can also be started by hand with
+the id of an earlier build run, to deliver that build once more.
+
+| Part | Build makes | Deploy workflow | What it changes |
+| --- | --- | --- | --- |
+| Web app | `web-release`: the files the worker serves, the worker, its settings, `manifest.json`, `checksums.txt` | `deploy_web.yml` | the Cloudflare worker `trommi-app` at https://app.trommi.com |
+| Connector | `connector-release`: four binaries, the plugin's archive, `manifest.json` | `deploy_connector.yml` | a GitHub release `connector-v<N>`, signed |
+| iOS app | `ios-release`: the Rust core for iOS and its Swift bindings | `deploy_ios.yml` | a TestFlight build in the group "Intern" |
+
+Secrets: each part has a GitHub environment of its name (`web`, `connector`, `ios`, `hub`) that holds only the way
+into a 1Password Environment; every other secret is read from there by the one command that needs it (`op run`).
+Pull requests run the build jobs and reach no secret and no deploy workflow.
+
+**Signed releases** (connector, hub) have one form. `release/manifest.sh` writes `manifest.json`: product,
+repository, version, tag, commit, and every file with its size and SHA-256. `release/sign.sh sign` signs the exact
+bytes of the manifest with Ed25519 (`manifest.json.sig`, 64 raw bytes); the public key is `release/public-key.pem`.
+To check a release: `release/sign.sh verify manifest.json`, then that the manifest names the product, tag and
+version you asked for, then `release/sign.sh files manifest.json`.
+
+**The web app** cannot be signed for a browser, so it is attested instead. `.github/scripts/web_release.mjs` lists
+every delivered file with its SHA-256 (`manifest.json`, `checksums.txt`), and the deploy creates GitHub's build
+provenance attestation for each file and for the manifest: a public statement of which workflow run built these
+bytes from which commit. To check a file the site serves:
+
+```bash
+curl -fsSO https://app.trommi.com/gen/build.txt          # the commit the site says it serves
+curl -fsS https://app.trommi.com/index.html -o index.html
+gh attestation verify index.html --repo trommi/trommi    # fails for bytes no build of this repository made
+```
+
+A monitor that does this for every file the site serves, on a schedule and after each delivery, is planned and not
+built: it would read the file list from `sw.js`, verify each file's attestation, check that all of them name the
+commit of `gen/build.txt`, and raise an alarm on the first file that no build of this repository made.
+
+`Strict-Transport-Security` with preload is prepared and off: `WEB_HSTS` in `build.yml`.
