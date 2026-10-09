@@ -235,56 +235,89 @@ impl Observer for Memo<'_> {
     }
 }
 
-/// The bounded pool for expensive work: so many at a time, so many waiting, the rest is told to come back.
+/// The bounded pool for expensive work: so many at a time, so many waiting in the order they came, the rest is
+/// told to come back. Nobody waits longer than ten seconds.
 pub struct Gate {
-    state: Mutex<(usize, usize)>,
+    state: Mutex<GateState>,
     freed: Condvar,
     permits: usize,
     waiting: usize,
 }
 
+#[derive(Default)]
+struct GateState {
+    at_work: usize,
+    /// the tickets of those waiting, oldest first
+    queue: std::collections::VecDeque<u64>,
+    next_ticket: u64,
+}
+
 pub struct Permit<'a>(&'a Gate);
+
+const GATE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl Gate {
     pub fn new(permits: usize, waiting: usize) -> Self {
         Gate {
-            state: Mutex::new((0, 0)),
+            state: Mutex::new(GateState::default()),
             freed: Condvar::new(),
             permits: permits.max(1),
             waiting,
         }
     }
 
-    /// A place in the pool; waits for one if the queue has room, else `overloaded`.
+    /// A place in the pool; waits its turn if the queue has room, else `overloaded`.
     pub fn enter(&self) -> Result<Permit<'_>, Refused> {
+        let busy = || refuse("overloaded", "the hub is busy: try again in a moment").retry(1);
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if s.0 >= self.permits {
-            if s.1 >= self.waiting {
-                return Err(
-                    refuse("overloaded", "the hub is busy: try again in a moment").retry(1),
-                );
-            }
-            s.1 += 1;
-            while s.0 >= self.permits {
-                s = self.freed.wait(s).unwrap_or_else(|e| e.into_inner());
-            }
-            s.1 -= 1;
+        // a free place is taken at once only if nobody is waiting for it
+        if s.at_work < self.permits && s.queue.is_empty() {
+            s.at_work += 1;
+            return Ok(Permit(self));
         }
-        s.0 += 1;
-        Ok(Permit(self))
+        if s.queue.len() >= self.waiting {
+            return Err(busy());
+        }
+        s.next_ticket += 1;
+        let ticket = s.next_ticket;
+        s.queue.push_back(ticket);
+        let deadline = std::time::Instant::now() + GATE_WAIT;
+        loop {
+            if s.at_work < self.permits && s.queue.front() == Some(&ticket) {
+                s.queue.pop_front();
+                s.at_work += 1;
+                drop(s);
+                // the next in line may have a place too
+                self.freed.notify_all();
+                return Ok(Permit(self));
+            }
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                s.queue.retain(|t| *t != ticket);
+                drop(s);
+                self.freed.notify_all();
+                return Err(busy());
+            }
+            s = self
+                .freed
+                .wait_timeout(s, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
     }
 
     /// (at work, waiting)
     pub fn load(&self) -> (usize, usize) {
-        *self.state.lock().unwrap_or_else(|e| e.into_inner())
+        let s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        (s.at_work, s.queue.len())
     }
 }
 
 impl Drop for Permit<'_> {
     fn drop(&mut self) {
         let mut s = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
-        s.0 -= 1;
+        s.at_work -= 1;
         drop(s);
-        self.0.freed.notify_one();
+        self.0.freed.notify_all();
     }
 }

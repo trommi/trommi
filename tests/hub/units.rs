@@ -1702,3 +1702,166 @@ mod accounts_tests {
         .is_err());
     }
 }
+
+mod throttle_tests {
+    use trommi_hub::throttle::*;
+
+    const HOUR: u64 = 3_600_000;
+
+    /// One source guessing at one account as fast as it is let: how many checks it gets in a stretch of time.
+    fn guesses(t: &LoginThrottle, account: &[u8], source: &[u8], from: u64, until: u64) -> usize {
+        let (mut now, mut checked) = (from, 0);
+        while now < until {
+            match t.admit(account, source, false, now) {
+                Ok(attempt) => {
+                    checked += 1;
+                    t.failed(account, source, attempt, now);
+                    now += 1;
+                }
+                Err(seconds) => now += seconds * 1000,
+            }
+        }
+        checked
+    }
+
+    #[test]
+    fn one_source_gets_thirteen_guesses_in_the_first_hour_and_four_an_hour_after() {
+        let t = LoginThrottle::default();
+        let start = 1_000_000;
+        assert_eq!(
+            guesses(&t, b"password:a@example.org", b"s", start, start + HOUR),
+            13
+        );
+        assert_eq!(
+            guesses(
+                &t,
+                b"password:a@example.org",
+                b"s",
+                start + HOUR,
+                start + 2 * HOUR
+            ),
+            4
+        );
+        assert_eq!(
+            guesses(
+                &t,
+                b"password:a@example.org",
+                b"s",
+                start + 2 * HOUR,
+                start + 3 * HOUR
+            ),
+            4
+        );
+        // the waits: 1 s, 2 s, 4 s … 15 minutes
+        assert_eq!(
+            (1..=12).map(backoff_ms).collect::<Vec<_>>(),
+            vec![
+                1000, 2000, 4000, 8000, 16000, 32000, 64000, 128000, 256000, 512000, 900000, 900000
+            ]
+        );
+        // the Emergency Kit is another account key: the same source starts afresh there
+        assert!(t
+            .admit(b"kit:a@example.org", b"s", false, start + 3 * HOUR)
+            .is_ok());
+    }
+
+    #[test]
+    fn however_many_sources_an_account_takes_1900_unknown_guesses_an_hour_and_never_refuses_a_known_one(
+    ) {
+        let t = LoginThrottle::default();
+        let account = b"password:a@example.org";
+        let start = 5_000_000;
+        // a botnet: a new source every 200 ms for an hour, each coming back exactly when it is told to, each wrong
+        let mut waiting: Vec<(u64, Vec<u8>)> = vec![];
+        let (mut checked, mut owner_refused) = (0usize, 0usize);
+        let mut n = 0u32;
+        let mut now = start;
+        while now < start + HOUR {
+            // those whose turn has come ask again
+            let (due, later): (Vec<_>, Vec<_>) = waiting.drain(..).partition(|(at, _)| *at <= now);
+            waiting = later;
+            let fresh = {
+                n += 1;
+                n.to_be_bytes().to_vec()
+            };
+            for source in due.into_iter().map(|(_, s)| s).chain([fresh]) {
+                match t.admit(account, &source, false, now) {
+                    Ok(attempt) => {
+                        checked += 1;
+                        t.failed(account, &source, attempt, now);
+                    }
+                    // told its turn, or (the line being full) to ask again in a minute: it does as told
+                    Err(seconds) => waiting.push((now + seconds * 1000, source)),
+                }
+            }
+            // the owner, from a place the account knows, with the right password, once a minute
+            if (now - start) % 60_000 == 0 {
+                match t.admit(account, b"home", true, now) {
+                    Ok(attempt) => t.succeeded(account, b"home", attempt),
+                    Err(_) => owner_refused += 1,
+                }
+            }
+            now += 200;
+        }
+        assert!(checked <= 1900, "{checked} guesses were checked in an hour");
+        assert!(checked >= 1800, "the slow lane kept moving: {checked}");
+        assert_eq!(
+            owner_refused, 0,
+            "the owner at a known place is never told to wait for what others did"
+        );
+        // the owner at a new place: in at once if the hour's budget has room again, else at the turn it is told
+        let mut at = now;
+        let mut told = 0;
+        let attempt = loop {
+            match t.admit(account, b"new place", false, at) {
+                Ok(attempt) => break attempt,
+                Err(seconds) => {
+                    told += seconds;
+                    assert!(
+                        told <= 720,
+                        "a turn within the line's ten minutes and a little, not {told} s"
+                    );
+                    at += seconds * 1000;
+                }
+            }
+        };
+        t.succeeded(account, b"new place", attempt);
+    }
+
+    #[test]
+    fn a_source_has_one_check_at_a_time_and_a_late_or_unchecked_result_changes_nothing() {
+        let t = LoginThrottle::default();
+        let (account, source) = (b"password:a@example.org", b"s");
+        let first = t.admit(account, source, true, 1000).unwrap();
+        // while that check runs (it may take longer than a second), the source starts no other
+        assert_eq!(t.admit(account, source, true, 1500), Err(1));
+        assert_eq!(t.admit(account, source, true, 9000), Err(1));
+        t.failed(account, source, first, 9000);
+        assert_eq!(t.admit(account, source, true, 9500), Err(1));
+        let second = t.admit(account, source, true, 10_000).unwrap();
+        // the hub was busy and did not check: the failure before it stays, the wait is not reset
+        t.not_checked(account, source, second);
+        let third = t.admit(account, source, true, 10_000).unwrap();
+        t.failed(account, source, third, 10_000);
+        assert_eq!(
+            t.admit(account, source, true, 11_000),
+            Err(1),
+            "two failures: two seconds"
+        );
+        // a result that comes after the attempt was given up for lost does not undo what happened since
+        let fourth = t.admit(account, source, true, 12_000).unwrap();
+        let fifth = t.admit(account, source, true, 12_000 + 30_000).unwrap();
+        t.succeeded(account, source, fourth);
+        assert_eq!(
+            t.admit(account, source, true, 43_000),
+            Err(1),
+            "the fifth is still being checked"
+        );
+        t.failed(account, source, fifth, 43_000);
+        assert_eq!(
+            t.admit(account, source, true, 43_500),
+            Err(4),
+            "three failures: four seconds"
+        );
+    }
+}
