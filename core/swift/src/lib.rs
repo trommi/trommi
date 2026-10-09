@@ -22,6 +22,7 @@
 mod macros;
 
 pub mod account;
+pub mod content;
 pub mod device;
 pub mod error;
 pub mod files;
@@ -37,12 +38,14 @@ pub mod store;
 pub mod wipe;
 
 pub use account::*;
+pub use content::*;
 pub use device::{log_finding, CoreDevice};
 pub use error::{error_code_from_text, error_code_text, CoreError, ErrorCode};
 pub use files::*;
 pub use invite::{
-    CheckCode, InviteAccepted, InviteConfirmed, InviteOpened, InviteRole, InviteStep,
-    InviteStepKind, JoinRequest,
+    check_emoji, hub_address, invite_link_parse, CheckCode, EmojiWord, InviteAccepted,
+    InviteConfirmed, InviteLinkParts, InviteOpened, InviteRole, InviteStep, InviteStepKind,
+    JoinRequest, SignedOffer, SignedRequest, SignedReveal,
 };
 pub use push::*;
 pub use records::*;

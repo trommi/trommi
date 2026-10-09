@@ -7,11 +7,12 @@ use trommi_core::hub_auth::{self, HubAddress, IssuedChallenge};
 use trommi_core::ids::RoomId;
 use trommi_core::store::{Batch, Loaded, Storage, StorageError};
 use trommi_core_ffi::{
-    base64url_decode, error_code_from_text, error_code_text, format_recovery_code,
-    generate_kit_words, generate_recovery_code, kit_keys, log_finding, open_recovery_code,
-    parse_recovery_code, recovery_anchor, recovery_sign_in, seal_recovery_code, self_test,
-    versions, AccountWay, CoreDevice, CoreError, Cut, ErrorCode, FileDecryptor, FileEncryptor,
-    GroupCut, LogFinding, OutboxKind, ServedGroup, ServedRoom,
+    base64url_decode, check_emoji, error_code_from_text, error_code_text, format_recovery_code,
+    generate_kit_words, generate_recovery_code, hub_address, invite_link_parse, kit_keys,
+    log_finding, open_recovery_code, parse_recovery_code, recovery_anchor, recovery_sign_in,
+    seal_recovery_code, self_test, versions, AccountWay, CoreDevice, CoreError, Cut, Draft,
+    DraftKind, ErrorCode, FileDecryptor, FileEncryptor, GroupCut, LogFinding, OutboxKind,
+    ServedGroup, ServedRoom,
 };
 use trommi_tests::{now, MemoryStorage};
 
@@ -106,6 +107,62 @@ fn arguments_of_the_wrong_shape_are_bad_format() {
     );
     assert_eq!(
         code_of(base64url_decode("a=".to_owned())),
+        ErrorCode::BadFormat
+    );
+}
+
+#[test]
+fn a_draft_that_lacks_what_its_kind_needs_is_bad_format_and_uses_no_number() {
+    let (device, room) = founder(MemoryStorage::new());
+    let empty = Draft {
+        kind: DraftKind::SessionChat,
+        session: None,
+        card: None,
+        board: None,
+        group: None,
+        name: None,
+        value: None,
+        object_id: None,
+        request_id: None,
+        choices: None,
+        closes: None,
+        closed: None,
+        allow: None,
+        urgency: None,
+        push: None,
+        expires_at: None,
+        payload: Some(b"{}".to_vec()),
+    };
+    assert_eq!(
+        code_of(device.seal(empty.clone(), None, Vec::new(), now())),
+        ErrorCode::BadFormat
+    );
+    assert_eq!(format!("{empty:?}"), "Draft(<redacted>)");
+    let id = device.id().expect("an id");
+    assert_eq!(
+        device
+            .chain_head(room.clone(), id.clone())
+            .expect("a head")
+            .seq,
+        0
+    );
+    assert_eq!(device.cut_of(room.clone(), id).expect("a Cut").seq, 0);
+    assert!(device.objects(room.clone()).expect("objects").is_empty());
+    assert!(device.findings().expect("findings").is_empty());
+    assert!(device.commands_pending().expect("commands").is_empty());
+    // Bytes that are no envelope at all are refused, and the cursor stays.
+    assert_eq!(
+        code_of(device.receive_envelope(vec![1, 2, 3], 5, true, None, now())),
+        ErrorCode::BadFormat
+    );
+    assert_eq!(device.cursor().expect("a cursor"), 0);
+    assert_eq!(check_emoji().len(), 64);
+    assert_eq!(
+        code_of(hub_address("HTTPS://Hub.Example/".into())),
+        ErrorCode::BadFormat
+    );
+    assert_eq!(
+        code_of(invite_link_parse("https://app.example/join#v2.x".into())),
         ErrorCode::BadFormat
     );
 }
