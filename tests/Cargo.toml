@@ -54,3 +54,15 @@ path = "hub/units.rs"
 [[test]]
 name = "hub_recovery"
 path = "hub/recovery.rs"
+
+[[test]]
+name = "hub_vectors"
+path = "hub/vectors.rs"
+
+[[test]]
+name = "hub_limits"
+path = "hub/limits.rs"
+
+[[test]]
+name = "hub_jobs"
+path = "hub/jobs.rs"

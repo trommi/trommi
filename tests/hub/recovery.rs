@@ -36,7 +36,7 @@ fn link(room: &[u8; 32], new: &Recovery) -> Vec<u8> {
         ciphertext: vec![2; 80],
         mac: vec![3; 32],
     }
-    .encode()
+    .bytes()
 }
 
 fn epochs(hub: &TestHub, asker: &Dev, room: &[u8; 32]) -> Vec<(String, u64, usize)> {

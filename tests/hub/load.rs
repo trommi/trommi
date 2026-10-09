@@ -93,7 +93,7 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
                 )),
                 // a card; every third one is answered later, every fifth closed
                 5 => {
-                    let id = wire::object_id(group, &agents[k].id(), agents[k].chain(group).0 + 1);
+                    let id = enc::object_id(group, &agents[k].id(), agents[k].chain(group).0 + 1);
                     let (bytes, hash) = agents[k].envelope(
                         group,
                         &object(
@@ -290,11 +290,11 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
     let plans = [
         ("the Desk: open cards by urgency", "SELECT object_id FROM cards WHERE room_id = x'00' AND state = 1 ORDER BY urgency DESC, first_change", "cards_desk"),
         ("the Desk: a card's current version", "SELECT header FROM envelopes WHERE room_id = x'00' AND change = 5", "envelopes_by_change"),
-        ("the Desk: registers' newest values", "SELECT e.header FROM registers r JOIN envelopes e ON e.room_id = r.room_id AND e.change = r.head_change WHERE r.room_id = x'00'", "envelopes_by_change"),
+        ("the Desk: registers' newest values", "SELECT e.header FROM registers r JOIN envelopes e ON e.room_id = r.room_id AND e.change = r.head_change WHERE r.room_id = x'00' ORDER BY r.head_change", "registers_by_room"),
         ("page a Chat", "SELECT header FROM envelopes WHERE room_id = x'00' AND timeline = x'01' AND change < 9 AND cut = 0 ORDER BY change DESC LIMIT 51", "envelopes_by_timeline"),
         ("load a board", "SELECT header FROM envelopes WHERE room_id = x'00' AND timeline = x'02' AND change > 9 AND cut = 0 ORDER BY change LIMIT 501", "envelopes_by_timeline"),
-        ("catch up: envelopes", "SELECT header FROM envelopes WHERE room_id = x'00' AND change > 9 ORDER BY change LIMIT 512", "envelopes_by_change"),
-        ("catch up: the log", "SELECT bytes FROM group_log WHERE room_id = x'00' AND change > 9 ORDER BY change LIMIT 512", "group_log_by_change"),
+        ("catch up: envelopes", "SELECT change, length(header) FROM envelopes WHERE room_id = x'00' AND change > 9 AND change <= 20009 AND cut = 0 AND (0 = 1 OR hex(group_id) IN (SELECT value FROM json_each('[]'))) ORDER BY change LIMIT 201", "envelopes_by_change"),
+        ("catch up: the log", "SELECT change, length(bytes) FROM group_log WHERE room_id = x'00' AND change > 9 AND change <= 20009 AND (0 = 1 OR hex(group_id) IN (SELECT value FROM json_each('[]')) OR kind = 'commit') ORDER BY change LIMIT 201", "group_log_by_change"),
         ("a group's log", "SELECT bytes FROM group_log WHERE group_id = x'00' AND n > 0 ORDER BY n LIMIT 201", "PRIMARY KEY"),
         ("a sender's chain", "SELECT header FROM envelopes WHERE group_id = x'00' AND sender = x'01' AND seq > 3 ORDER BY seq LIMIT 501", "envelopes_chain"),
         ("the chain's head (every post)", "SELECT seq, hash FROM envelopes WHERE group_id = x'00' AND sender = x'01' ORDER BY seq DESC LIMIT 1", "envelopes_chain"),
