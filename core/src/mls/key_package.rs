@@ -83,6 +83,23 @@ pub(crate) fn validated(bytes: &[u8]) -> Result<(KeyPackage, KeyPackageInfo), Er
     Ok((key_package, info))
 }
 
+/// The `KeyPackageRef` of a KeyPackage as it travels, without verifying it. A device finds the private part of
+/// one of its own by it, also when a hub refused that KeyPackage, for its lifetime or anything else.
+pub(crate) fn reference(bytes: &[u8]) -> Result<Hash32, Error> {
+    if bytes.len() > MAX_KEY_PACKAGE_LEN {
+        return Err(Error::BadKeyPackage);
+    }
+    let message = openmls::prelude::MlsMessageIn::tls_deserialize_exact(bytes)
+        .map_err(|_| Error::BadKeyPackage)?;
+    let MlsMessageBodyIn::KeyPackage(key_package) = message.extract() else {
+        return Err(Error::BadKeyPackage);
+    };
+    let encoded = key_package
+        .tls_serialize_detached()
+        .map_err(|_| Error::Internal("key package encoding"))?;
+    crypto::ref_hash("MLS 1.0 KeyPackage Reference", &encoded)
+}
+
 /// Verifies a KeyPackage as the hub does before it stores one (14.2) and as anyone may before using one:
 /// `bad-key-package` unless it verifies and is the profile's.
 pub fn verify_key_package(bytes: &[u8]) -> Result<KeyPackageInfo, Error> {
