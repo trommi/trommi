@@ -37,8 +37,8 @@ final class RoomTests: XCTestCase {
     XCTAssertEqual(FakeHub.shared.rooms, 1)
     XCTAssertEqual(Store.rooms(base: base), [room.roomIdHex])
     XCTAssertEqual(room.board.members[room.deviceIdHex]?.deviceRole, "human")
-    // the founding left the outbox; nothing of the "founding-…" folder stays
-    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: base.path), [room.roomIdHex])
+    // one device folder, under a name of its own
+    XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: base.path).count, 1)
     room.close()
   }
 
@@ -151,6 +151,30 @@ final class RoomTests: XCTestCase {
     XCTAssertEqual(texts(room), ["remembered"])
     XCTAssertEqual(room.cursor, 2)
     room.close()
+  }
+
+  func testACacheBehindTheDeviceIsFilledWithoutTouchingTheCoreAgain() async throws {
+    var room = try await founded()
+    addSession(room)
+    agentSays(room, seq: 1, "processed, not cached")
+    _ = try await room.sync()
+    room.close()   // ended before the cache was written: the core is at change 2, the cache at 0
+    room = try Room.open(base: base, roomId: room.roomIdHex)
+    XCTAssertEqual(room.coreCursor, 2)
+    let report = try await room.sync()
+    XCTAssertEqual(report.refused, 0)
+    XCTAssertEqual(texts(room), ["processed, not cached"])
+    XCTAssertEqual(room.board.sessions[session]?.agentDeviceId, agent)
+    room.close()
+  }
+
+  func testAClosedRoomDoesNothingMore() async throws {
+    let room = try await founded()
+    _ = try await room.sync()
+    room.close()
+    do { try await room.setCrown(.str("x")); XCTFail("closed") } catch { XCTAssertEqual(Room.codeOf(error), "closed") }
+    XCTAssertNil(room.hub.signer)
+    XCTAssertEqual(FakeHub.shared.envelopePosts.count, 0)
   }
 
   func testBodiesAreRenamedBetweenTheWireAndTheModel() throws {

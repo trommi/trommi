@@ -98,6 +98,8 @@ final class ShareImport {
       do { atts.append(try await m.upload(data, name: i.name, type: i.type, width: i.width, height: i.height)) }
       catch { inbox.release(r.id); m.fail("Not imported yet", error); return }
     }
+    // What was shared while signed in to another room is not carried into this one.
+    if let from = r.room, from != room.record.roomId { inbox.finish(r.id); return }
     let words = r.words
     // the desk's crown now (it may have moved since the sheet's snapshot), else the session picked in the sheet
     let to = r.desk.flatMap { m.desk?.crownOf(desk: $0)?.id } ?? r.to

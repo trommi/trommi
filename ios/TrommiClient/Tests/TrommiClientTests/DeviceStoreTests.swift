@@ -75,7 +75,7 @@ final class DeviceStoreTests: XCTestCase {
     s.close()
     let log = dir.appendingPathComponent("state.log")
     var bytes = Bytes(try Data(contentsOf: log))
-    bytes[30] ^= 1   // inside the first record
+    bytes[40] ^= 1   // inside the first record
     try Data(bytes).write(to: log)
     s = try DeviceStore(directory: dir, key: key)
     XCTAssertThrowsError(try s.load())
@@ -142,10 +142,98 @@ final class DeviceStoreTests: XCTestCase {
     let log = dir.appendingPathComponent("state.log")
     let b = Bytes(try Data(contentsOf: log))
     var at = 0, parts = [Bytes]()
-    while at < b.count { let n = Int(readBe32(b, at)); parts.append(Bytes(b[at..<(at + 4 + n)])); at += 4 + n }
+    while at < b.count { let n = Int(readBe32(b, at)); parts.append(Bytes(b[at..<(at + 8 + n)])); at += 8 + n }
     try Data(parts[0] + parts[2] + parts[1]).write(to: log)
     s = try DeviceStore(directory: dir, key: key)
     XCTAssertThrowsError(try s.load())
+    s.close()
+  }
+
+  final class MemoryAnchor: StateAnchor {
+    var value: UInt64?
+    var fail = false
+    func read() throws -> UInt64? { if fail { throw TrommiError("keychain") }; return value }
+    func write(_ revision: UInt64) throws { if fail { throw TrommiError("keychain") }; value = revision }
+  }
+  func outbox(_ id: UInt8) -> StoreEntry { StoreEntry(key: [DeviceStore.outboxTable, id], value: [1]) }
+
+  func testAnOlderStatePutBackDoesNotLoad() throws {
+    let anchor = MemoryAnchor()
+    var s = try DeviceStore(directory: dir, key: key, anchor: anchor)
+    _ = try s.load()
+    try s.apply(expectedRevision: 0, batch: StoreBatch(put: [entry(1, "a")]))
+    XCTAssertNil(anchor.value, "a batch that signs nothing does not move the anchor")
+    let old = try Data(contentsOf: dir.appendingPathComponent("state.log"))
+    try s.apply(expectedRevision: 1, batch: StoreBatch(put: [outbox(1)]))
+    XCTAssertEqual(anchor.value, 2, "a batch with something to send does, before it is answered")
+    try s.apply(expectedRevision: 2, batch: StoreBatch(put: [entry(2, "b")]))
+    s.close()
+    // the log from before the outbox entry, put back: authentic, and refused
+    let now = try Data(contentsOf: dir.appendingPathComponent("state.log"))
+    try old.write(to: dir.appendingPathComponent("state.log"))
+    s = try DeviceStore(directory: dir, key: key, anchor: anchor)
+    XCTAssertThrowsError(try s.load())
+    s.close()
+    // only the batch above the anchor dropped: loads (it signed nothing; the hub gives its items again)
+    try now.dropLast(10).write(to: dir.appendingPathComponent("state.log"))
+    s = try DeviceStore(directory: dir, key: key, anchor: anchor)
+    XCTAssertEqual(try s.load().revision, 2)
+    s.close()
+    // an anchor that cannot be read is not "no anchor"
+    anchor.fail = true
+    s = try DeviceStore(directory: dir, key: key, anchor: anchor)
+    XCTAssertThrowsError(try s.load())
+    s.close()
+  }
+
+  func testAnAnsweredLastRecordThatDoesNotOpenIsDamageNotATornTail() throws {
+    let anchor = MemoryAnchor()
+    var s = try DeviceStore(directory: dir, key: key, anchor: anchor)
+    _ = try s.load()
+    try s.apply(expectedRevision: 0, batch: StoreBatch(put: [outbox(1)]))
+    s.close()
+    let log = dir.appendingPathComponent("state.log")
+    var b = Bytes(try Data(contentsOf: log)); b[b.count - 1] ^= 1
+    try Data(b).write(to: log)
+    s = try DeviceStore(directory: dir, key: key, anchor: anchor)
+    XCTAssertThrowsError(try s.load())
+    s.close()
+    XCTAssertEqual(Bytes(try Data(contentsOf: log)), b, "nothing is cut off a state that did not load")
+  }
+
+  func testDamageIsNotTakenForTheEndOfTheLog() throws {
+    var s = try DeviceStore(directory: dir, key: key)
+    _ = try s.load()
+    for i in 0..<3 { try s.apply(expectedRevision: UInt64(i), batch: StoreBatch(put: [entry(UInt8(i), "v")])) }
+    s.close()
+    let log = dir.appendingPathComponent("state.log")
+    let whole = Bytes(try Data(contentsOf: log))
+    // a length in the middle made larger than the rest of the file
+    var b = whole; b[1] ^= 0x40
+    try Data(b).write(to: log)
+    s = try DeviceStore(directory: dir, key: key); XCTAssertThrowsError(try s.load()); s.close()
+    // a record's revision written down (it would be skipped as "already in the snapshot" if it were believed)
+    b = whole; b[15] = 0
+    try Data(b).write(to: log)
+    s = try DeviceStore(directory: dir, key: key); XCTAssertThrowsError(try s.load()); s.close()
+    // zeros behind the last whole record (a file grown by a power cut before its data came): the end of the log
+    try Data(whole + Bytes(repeating: 0, count: 300)).write(to: log)
+    s = try DeviceStore(directory: dir, key: key)
+    XCTAssertEqual(try s.load().revision, 3)
+    try s.apply(expectedRevision: 3, batch: StoreBatch(put: [entry(9, "z")]))
+    s.close()
+    s = try DeviceStore(directory: dir, key: key); XCTAssertEqual(try s.load().revision, 4); s.close()
+  }
+
+  func testAfterAFailedAnchorNothingMoreIsWritten() throws {
+    let anchor = MemoryAnchor()
+    let s = try DeviceStore(directory: dir, key: key, anchor: anchor)
+    _ = try s.load()
+    anchor.fail = true
+    XCTAssertThrowsError(try s.apply(expectedRevision: 0, batch: StoreBatch(put: [outbox(1)])))
+    anchor.fail = false
+    XCTAssertThrowsError(try s.apply(expectedRevision: 1, batch: StoreBatch(put: [entry(1, "a")])))
+    XCTAssertThrowsError(try s.apply(expectedRevision: 0, batch: StoreBatch(put: [entry(1, "a")])))
     s.close()
   }
 }

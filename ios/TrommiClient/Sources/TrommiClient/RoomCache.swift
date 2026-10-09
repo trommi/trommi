@@ -18,13 +18,14 @@ extension Room {
 
   func recordStore() throws -> RecordStore {
     if let r = recordStoreMemo { return r }
-    let r = RecordStore(dir: store.dir, key: try LocalKey.get("cache", dir: store.dir))
+    let r = RecordStore(dir: store.dir, key: try store.cacheKey())
     recordStoreMemo = r
     return r
   }
 
   /** Write a moment after the last change (a catch-up brings thousands at once). */
   func cacheSoon(_ n: UInt64? = nil) {
+    if closed { return }
     if let n = n { dirtyRecs.insert(n) }
     cacheDirty = true
     if cacheTask != nil { return }
@@ -44,9 +45,10 @@ extension Room {
    */
   public func saveCacheAndWait(snapshot: Bool = false) async {
     let wantSnap = ((synced && sinceSnapshot >= Room.snapshotEvery) || (snapshot && sinceSnapshot >= Room.snapshotEvery / 10)) && ownEchoes.isEmpty && board.settled
-    guard cacheDirty || wantSnap, let rs = try? recordStore() else { return }
+    guard !closed, cacheDirty || wantSnap, let rs = try? recordStore() else { return }
     cacheDirty = false
-    let recs = dirtyRecs.sorted().compactMap { log[$0] }
+    let numbers = dirtyRecs
+    let recs = numbers.sorted().compactMap { log[$0] }
     dirtyRecs = []
     let head = Head(records: restoredCount + log.count, cursor: cursor, lamport: lamport)
     var snap: [UInt8]? = nil
@@ -58,16 +60,18 @@ extension Room {
       sinceSnapshot = 0
     }
     let prev = saveTail
-    let t = Task.detached(priority: .utility) {
+    let t = Task.detached(priority: .utility) { () -> Bool in
       _ = await prev?.value
       do {
         try rs.append(recs)
         try rs.writeSmall(head, to: rs.headURL, aad: "trommi ios head")
         if let b = snap { try rs.writeBoard(b) }
-      } catch {}
+        return true
+      } catch { return false }
     }
-    saveTail = t
-    await t.value
+    saveTail = Task { _ = await t.value }
+    // What could not be written is written with the next save.
+    if !(await t.value) { dirtyRecs.formUnion(numbers); cacheDirty = true }
   }
 
   /**
@@ -99,7 +103,9 @@ extension Room {
       return (h, snap, ix)
     }.value
     guard let f = found else { rs.wipe(); return false }
-    // The cache never runs ahead of the device: a cursor beyond what the core processed is a cache of another state.
+    // The cache never runs ahead of the device: a cursor beyond what the core processed is the cache of another
+    // state (the device's state was put back, or made anew). Catching up from it would skip what the core needs.
+    guard f.head.cursor <= coreCursor else { rs.wipe(); return false }
     let base = Int(f.snap?.cursor ?? 0)
     let lo0 = f.ix.entries.firstIndex { $0.n > base } ?? f.ix.entries.count
     let upto = f.ix.entries.firstIndex { $0.n > Int(f.head.cursor) } ?? f.ix.entries.count

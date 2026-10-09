@@ -382,7 +382,7 @@ extension Room {
 
   func shareStore() throws -> ShareStore {
     if let s = shareStoreMemo { return s }
-    let s = ShareStore(dir: store.dir, key: try LocalKey.get("cache", dir: store.dir))
+    let s = ShareStore(dir: store.dir, key: try store.cacheKey())
     shareStoreMemo = s
     return s
   }
