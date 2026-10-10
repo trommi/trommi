@@ -24,6 +24,7 @@ use openmls_traits::OpenMlsProvider;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
+use zeroize::Zeroize;
 
 /// The crypto provider OpenMLS works with: RustCrypto itself in a shipped build.
 #[cfg(not(feature = "vectors"))]
@@ -31,8 +32,45 @@ pub(crate) type Crypto = openmls_rust_crypto::RustCrypto;
 #[cfg(feature = "vectors")]
 pub(crate) use deterministic::Crypto;
 
-/// The entries of OpenMLS's storage, as they are kept in memory.
-pub(crate) type MlsEntries = HashMap<Vec<u8>, Vec<u8>>;
+/// The entries of OpenMLS's storage, as a copy of them is kept: what is stored, a snapshot to put back when
+/// an operation fails, a staged state. Among them are OpenMLS's private keys and epoch secrets in their
+/// serialised form, so every value is wiped when it is replaced or dropped.
+#[derive(Clone, Default)]
+pub(crate) struct MlsEntries(HashMap<Vec<u8>, Vec<u8>>);
+
+impl MlsEntries {
+    /// No entries.
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the entry under `key`; a value it replaces is wiped.
+    pub(crate) fn insert(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        if let Some(mut replaced) = self.0.insert(key, value) {
+            replaced.zeroize();
+        }
+    }
+}
+
+impl std::ops::Deref for MlsEntries {
+    type Target = HashMap<Vec<u8>, Vec<u8>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl FromIterator<(Vec<u8>, Vec<u8>)> for MlsEntries {
+    fn from_iter<I: IntoIterator<Item = (Vec<u8>, Vec<u8>)>>(entries: I) -> Self {
+        Self(entries.into_iter().collect())
+    }
+}
+
+impl Drop for MlsEntries {
+    fn drop(&mut self) {
+        self.0.values_mut().for_each(Zeroize::zeroize);
+    }
+}
 
 /// Entries to write and keys to remove.
 pub(crate) type MlsChanges = (Vec<(Vec<u8>, Vec<u8>)>, Vec<Vec<u8>>);
@@ -114,7 +152,7 @@ impl Provider {
     /// gives nothing.
     pub(crate) fn new(
         mut entropy: Box<dyn Entropy + Send>,
-        entries: MlsEntries,
+        mut entries: MlsEntries,
     ) -> Result<Self, Error> {
         // The first draw shows a dead source before anything is built on it.
         let mut probe = [0u8; 32];
@@ -128,7 +166,7 @@ impl Provider {
         *storage
             .values
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = entries;
+            .unwrap_or_else(PoisonError::into_inner) = std::mem::take(&mut entries.0);
         Ok(Self {
             crypto,
             rand: Rand(Mutex::new(entropy)),
@@ -137,7 +175,7 @@ impl Provider {
     }
 
     /// A provider for an owner that draws no randomness: an observer. Whatever asks it for some fails.
-    pub(crate) fn without_entropy(entries: MlsEntries) -> Result<Self, Error> {
+    pub(crate) fn without_entropy(mut entries: MlsEntries) -> Result<Self, Error> {
         struct Dry;
         impl Entropy for Dry {
             fn fill(&mut self, _: &mut [u8]) -> Result<(), Error> {
@@ -153,7 +191,7 @@ impl Provider {
         *storage
             .values
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = entries;
+            .unwrap_or_else(PoisonError::into_inner) = std::mem::take(&mut entries.0);
         Ok(Self {
             crypto,
             rand: Rand(Mutex::new(Box::new(Dry))),
@@ -174,23 +212,32 @@ impl Provider {
 
     /// A copy of every entry OpenMLS holds now.
     pub(crate) fn entries(&self) -> MlsEntries {
-        self.storage
-            .values
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        MlsEntries(
+            self.storage
+                .values
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+        )
     }
 
-    /// Replaces what OpenMLS holds by `entries`.
-    pub(crate) fn restore(&self, entries: MlsEntries) {
-        *self
+    /// Replaces what OpenMLS holds by `entries`; what it held is wiped.
+    pub(crate) fn restore(&self, mut entries: MlsEntries) {
+        let mut held = self
             .storage
             .values
             .write()
-            .unwrap_or_else(PoisonError::into_inner) = entries;
+            .unwrap_or_else(PoisonError::into_inner);
+        // What OpenMLS held goes into `entries`, which wipes it when it is dropped here.
+        std::mem::swap(&mut *held, &mut entries.0);
     }
 
     /// What changed against `stored`: the entries to write and the keys to remove, both ascending by key.
+    ///
+    /// The values compared hold secrets, and the comparison stops at the first byte that differs. It
+    /// compares this device's own state with this device's own state, both made by its own operations:
+    /// nobody who does not hold both chooses one side or learns the outcome, so it is no oracle, and the
+    /// comparison is left as it is. The values written leave in entries that wipe themselves.
     pub(crate) fn changes(&self, stored: &MlsEntries) -> MlsChanges {
         let now = self
             .storage
@@ -210,6 +257,20 @@ impl Provider {
         put.sort_unstable();
         delete.sort_unstable();
         (put, delete)
+    }
+}
+
+impl Drop for Provider {
+    fn drop(&mut self) {
+        // OpenMLS's memory storage keeps plain byte strings: its private keys are wiped here when the
+        // provider goes. A value that OpenMLS itself replaces or deletes while it works is freed by it
+        // unwiped; that is inside the pinned crate.
+        self.storage
+            .values
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values_mut()
+            .for_each(Zeroize::zeroize);
     }
 }
 
@@ -303,6 +364,18 @@ pub(crate) fn public_entries(
         .collect()
 }
 
+/// The ids of the groups whose state `entries` hold: one per stored group context. `Error::Storage` when one
+/// does not decode.
+pub(crate) fn stored_groups(entries: &MlsEntries) -> Result<Vec<Vec<u8>>, Error> {
+    entries
+        .iter()
+        .filter(|(key, _)| key.starts_with(b"GroupContext"))
+        .map(|(_, value)| {
+            decodes::<GroupContext>(value).map(|context| context.group_id().as_slice().to_vec())
+        })
+        .collect()
+}
+
 /// The serialised form of OpenMLS's own key pair of a leaf or path node, which it does not export: the same
 /// fields with the same types, so that a value that decodes here decodes there.
 #[derive(serde::Deserialize)]
@@ -338,7 +411,7 @@ enum Kind {
 /// Checks entries read from a store before OpenMLS sees them: every key is of a known kind, and every value
 /// of a kind that OpenMLS's memory storage would panic on decodes. `Error::Storage` otherwise.
 pub(crate) fn validate_entries(entries: &MlsEntries) -> Result<(), Error> {
-    for (key, value) in entries {
+    for (key, value) in entries.iter() {
         let kind = LABELS
             .iter()
             .filter(|(label, _)| key.starts_with(label))
