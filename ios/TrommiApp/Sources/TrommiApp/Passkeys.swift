@@ -9,7 +9,8 @@
 //   - https://app.trommi.com/.well-known/apple-app-site-association needs
 //       "webcredentials": { "apps": ["<team id>.<bundle id>"] }
 // Until both are there every request fails, so the controls (Create account → "Create with passkey", Log in → "Log in
-// with passkey", Settings → Account → "Add passkey") are shown only when `Passkeys.available` says so. Switched on,
+// with passkey", Settings → Account → "Add passkey") are shown only when `Passkeys.available` says so: on by itself once
+// the domain's file names this app (`Passkeys.probe`, at every start), or by the one constant `forcedOn`. Switched on,
 // the passkey comes first on Create account and Log in (SignIn.swift). ios/README.md "Account" lists what switching
 // it on needs.
 //
@@ -26,8 +27,29 @@ import UIKit
 @MainActor
 enum Passkeys {
   static let relyingParty = "app.trommi.com"
-  /** Set to true once the entitlement and the domain's file (above) are in place. */
-  static let available = false
+  /**
+   * The one constant: true switches passkeys on whatever the probe says. Left false, they are on as soon as the
+   * domain's file names this app (`probe`), which the web app serves; the entitlement is in the app already.
+   */
+  static let forcedOn = false
+  private static let known = "trommi.passkeys.associated"
+  /** Whether the controls are shown: the last probe's word, kept between starts (offline, the last word holds). */
+  static private(set) var available: Bool = forcedOn || UserDefaults.standard.bool(forKey: known)
+  /**
+   * Reads https://app.trommi.com/.well-known/apple-app-site-association and switches passkeys on or off by whether
+   * its `webcredentials` names this app. No answer changes nothing. Whether it changed is returned.
+   */
+  @discardableResult static func probe() async -> Bool {
+    if forcedOn { return false }
+    guard let bundle = Bundle.main.bundleIdentifier, let url = URL(string: "https://\(relyingParty)/.well-known/apple-app-site-association") else { return false }
+    var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+    req.httpMethod = "GET"
+    guard let (data, response) = try? await URLSession.shared.data(for: req), (response as? HTTPURLResponse)?.statusCode == 200, data.count < 128 * 1024 else { return false }
+    let on = associationAllowsPasskeys(Bytes(data), bundleId: bundle)
+    UserDefaults.standard.set(on, forKey: known)
+    defer { available = on }
+    return on != available
+  }
 
   /** Make a passkey for the account, on this device or in the person's password manager. */
   static func make(_ r: PasskeyRequest) async throws -> PasskeyMade {
@@ -42,7 +64,7 @@ enum Passkeys {
     if output == nil {
       // A passkey store that says it can, and gives the output only when the passkey is used: used once, here. The
       // challenge of this second step is this device's own and is sent nowhere; only the output is wanted.
-      output = try await assertion(challenge: systemRandom(32), only: Bytes(made.credentialID)).prf
+      output = try await assertion(challenge: systemRandom(32), only: [Bytes(made.credentialID)]).prf
     }
     guard let key = output, key.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
     return PasskeyMade(credentialId: Bytes(made.credentialID), attestationObject: Bytes(attestation), clientDataJSON: Bytes(made.rawClientDataJSON), prf: key)
@@ -51,12 +73,24 @@ enum Passkeys {
   /** Answer the hub's sign-in challenge with a passkey the person picks. */
   static func assert(challenge: Bytes) async throws -> PasskeyAssertion { try await assertion(challenge: challenge, only: nil) }
 
-  private static func assertion(challenge: Bytes, only: Bytes?) async throws -> PasskeyAssertion {
+  /**
+   * The way in for an account without a password, on a device that is in already: one of the account's passkeys
+   * (`existing`) is used once for its prf output, which opens the account's sealed copy here (Account.swift). The
+   * challenge is this device's own and is sent nowhere.
+   */
+  static func unlock(_ existing: [Bytes]) async throws -> WayIn {
+    guard !existing.isEmpty else { throw TrommiError("wrong-login", "this account has no passkey") }
+    let a = try await assertion(challenge: systemRandom(32), only: existing)
+    guard a.prf.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
+    return .passkey(credentialId: a.credentialId, prf: a.prf)
+  }
+
+  private static func assertion(challenge: Bytes, only: [Bytes]?) async throws -> PasskeyAssertion {
     let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: relyingParty)
     let request = provider.createCredentialAssertionRequest(challenge: Data(challenge))
     request.userVerificationPreference = .required
     request.prf = .inputValues(.init(saltInput1: Data(PASSKEY_PRF_INPUT)))
-    if let id = only { request.allowedCredentials = [ASAuthorizationPlatformPublicKeyCredentialDescriptor(credentialID: Data(id))] }
+    if let ids = only { request.allowedCredentials = ids.map { ASAuthorizationPlatformPublicKeyCredentialDescriptor(credentialID: Data($0)) } }
     // (some of these are declared without saying whether they can be missing: each is asked for)
     guard let a = try await PasskeySheet().run(request).credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion,
           let data = a.rawAuthenticatorData as Data?, let signature = a.signature as Data? else {

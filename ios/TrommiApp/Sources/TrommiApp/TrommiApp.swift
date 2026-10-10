@@ -185,7 +185,15 @@ final class BoardModel: ObservableObject {
   private var lastFingerprint = 0
   private var active = true
 
+  /** Passkeys are switched on (Passkeys.swift): the screens read this, so that they change when the probe says so. */
+  @Published var passkeysOn = Passkeys.available
   init() {
+    // (whether the domain names this app for its passkeys: read once per start, the screens follow; not for the
+    // screenshot hooks below, which use no network)
+    let hooks = ProcessInfo.processInfo.environment
+    if (hooks["TROMMI_SCREEN"] ?? "").isEmpty && (hooks["TROMMI_CHATLIST"] ?? "").isEmpty {
+      Task { @MainActor [weak self] in if await Passkeys.probe() { self?.passkeysOn = Passkeys.available } }
+    }
     // TROMMI_SCREEN=<id> (demo/data/screens.json): the demo on that screen, no room, no network, nothing stored
     let env = ProcessInfo.processInfo.environment
     // TROMMI_CHATLIST=1: the chat list on a crowded demo room (DemoMode.swift ChatListDemo), All desks, for screenshots
@@ -473,7 +481,7 @@ final class BoardModel: ObservableObject {
     if kit == nil {
       guard marked || r.kitPending else { return }
       kit = KitGate(email: lastEmail, words: nil)
-      if lastEmail.isEmpty { Task { if let st = try? await r.accountStatus(), kit != nil { kit?.email = st.email; kit?.accountId = st.accountId } } }
+      Task { if let st = try? await r.accountStatus(), kit != nil { kit?.email = st.email; kit?.accountId = st.accountId; kit?.hasPassword = st.hasPassword } }
     } else if !marked && r.kitRegistered && !r.kitPending {
       kit = nil
       return
@@ -486,18 +494,27 @@ final class BoardModel: ObservableObject {
       }
     }
   }
-  /** After a relaunch the words are gone: the password makes a new kit, which replaces the unseen one. nil, or what to say. */
-  func makeKit(password: String) async -> String? {
+  /**
+   * After a relaunch the words are gone: the password makes a new kit, which replaces the unseen one. nil, or what to
+   * say. `password` nil: one of the account's passkeys opens it (an account without a password).
+   */
+  func makeKit(password: String?) async -> String? {
     if demo { return "Nothing is sent from the demo." }
     guard let r = room else { return "Not logged in." }
     try? await Task.sleep(nanoseconds: 60_000_000)
     do {
-      let made = try await r.makeEmergencyKit(password: password)
+      let made = try await r.makeEmergencyKit(way: try await wayIn(r, password: password))
       kit = KitGate(email: made.email, words: made.words, accountId: made.accountId)
       return nil
     } catch {
       return ((error as? TrommiError)?.code ?? "") == "wrong-login" ? "Wrong password." : accountError(error)
     }
+  }
+  /** The way in just used here: the password typed, or (nil) one of the account's passkeys, asked for now. */
+  func wayIn(_ r: Room, password: String?) async throws -> WayIn {
+    if let p = password { return .password(p) }
+    guard let st = try await r.accountStatus() else { throw TrommiError("no-account", "this room has no account") }
+    return try await Passkeys.unlock(st.passkeys)
   }
   /** The text of the kit's QR code for this account (Account.swift `kitQRText`: hub and account id, never the words). */
   func kitQR(_ accountId: String) -> String? { kitQRText(hubURL: room?.record.hubURL ?? Self.hubURL, accountId: accountId) }

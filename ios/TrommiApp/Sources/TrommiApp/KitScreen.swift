@@ -20,6 +20,8 @@ struct KitGate: Equatable {
   var words: String?
   /** The account id the sheet prints; empty while it is not known. */
   var accountId = ""
+  /** Whether the account has a password, once the hub said so (after a relaunch); nil: not known. */
+  var hasPassword: Bool? = nil
 }
 
 /** The kit as a file for the share sheet: made in memory when the system asks for it. */
@@ -90,24 +92,35 @@ struct KitScreen: View {
       if !saved { Text("Save, print or show it first.").font(Face.text(14)).foregroundStyle(Ink.muted).frame(maxWidth: .infinity) }
     }
   }
+  private func make(_ p: String?) {
+    busy = true; error = nil
+    Task {
+      error = await model.makeKit(password: p)
+      if error == nil { password = "" }
+      busy = false
+    }
+  }
   private func flip() { shown.toggle(); if shown { saved = true } }
 
-  /** After a relaunch: the words are gone, the password makes a new kit. */
+  /**
+   * After a relaunch: the words are gone, the password makes a new kit. An account without an email has no password:
+   * its passkey makes it.
+   */
   private var again: some View {
-    ObShell(title: "Your Emergency Kit", lead: "Enter your password to make it.", home: false, content: {
-      ObPassword(text: $password)
+    let passkeyOnly = gate.hasPassword.map { !$0 } ?? gate.email.isEmpty
+    return ObShell(title: "Your Emergency Kit", lead: passkeyOnly ? "Use your passkey to make it." : "Enter your password to make it.", home: false, content: {
+      if !passkeyOnly { ObPassword(text: $password) }
       ObError(text: error)
-      Button(busy ? "Making…" : "Make kit") {
-        if password.isEmpty { error = "Enter your password."; return }
-        busy = true; error = nil
-        let p = password
-        Task {
-          error = await model.makeKit(password: p)
-          if error == nil { password = "" }
-          busy = false
+      if passkeyOnly {
+        Button(busy ? "Making…" : "Make kit with passkey") { make(nil) }.buttonStyle(ObGo()).disabled(busy)
+      } else {
+        Button(busy ? "Making…" : "Make kit") {
+          if password.isEmpty { error = "Enter your password."; return }
+          make(password)
         }
+        .buttonStyle(ObGo()).disabled(busy)
+        if model.passkeysOn { Button("Use a passkey instead") { make(nil) }.buttonStyle(ObLink()).frame(maxWidth: .infinity).disabled(busy) }
       }
-      .buttonStyle(ObGo()).disabled(busy)
     }, foot: {
       if !model.demo { Button("Log out") { model.logOut() }.buttonStyle(ObLink()) }
     })
