@@ -200,7 +200,7 @@ archive with cloud-managed signing on a Mac runner, uploaded to TestFlight). Wha
 
 - `core/swift/build.sh` on the runner before anything is built: `ios` for the archive (the package links
   `lib/ios/libtrommi_core_ffi.a` by a search path; a device archive needs no XCFramework), `host` for
-  `swift test` in `ios/TrommiClient` on the Mac (it links `lib/macos`). The simulator library is chosen with
+  `swift test` in `tests/ios` on the Mac (it links `lib/macos`). The simulator library is chosen with
   `TROMMI_IOS_SIMULATOR=1`; one checkout builds for the device OR the simulator, not both at once.
 - The package's sources build for macOS as well (ActivityKit and the Keychain parts are for iOS only), so the Mac
   job can run the same tests as Linux.
