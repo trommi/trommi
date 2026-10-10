@@ -46,6 +46,7 @@
 // - An envelope that arrived before this device joined its group, or before its key was handed over, is not taken
 //   in the hub's order. The engine then reads the room's changes once more from the start (`rescan`): what the
 //   chain could not take is taken, what it holds is read back (`receiveEnvelope(…, ordered = false)`).
+import { measuring, spent, timed, timedSync } from './spent.ts'
 import type {
   Core, Cut, Device, Draft, ErrorCode, Fed, FeedItem, FeedOutcome, GroupSummary, InviteStep, OutboxEntry, Processed, ReceivedEnvelope, ReceivedMessage, RoomRoles, Sealed, Store,
 } from './core-api.ts'
@@ -245,7 +246,7 @@ export class Engine {
   }
   private emit<K extends keyof EngineEvents>(event: K, data: EngineEvents[K]): void {
     // a listener that throws is the listener's fault: the engine's step is done either way
-    for (const fn of this.listeners.get(event) ?? []) { try { (fn as Listener<K>)(data) } catch { /* the listener's */ } }
+    timedSync('model', () => { for (const fn of this.listeners.get(event) ?? []) { try { (fn as Listener<K>)(data) } catch { /* the listener's */ } } })
   }
   private alert(code: string, message: string, group: Uint8Array | null = null, change: number | null = null): void { this.emit('alert', { code, message, group, change }) }
 
@@ -263,7 +264,8 @@ export class Engine {
   /** One call into the device, inside a job. A device that closed itself (`storage`, `internal`, a store conflict)
    *  is opened again from its store before the failure is handed on: what the call did is there or it is not. */
   private async call<T>(fn: (d: Device) => Promise<T>): Promise<T> {
-    try { return await fn(this.device) } catch (e) {
+    spent.calls++
+    try { return await timed('core', () => fn(this.device)) } catch (e) {
       if (this.isLocal(e) && !this.over) await this.reopen()
       throw e
     }
@@ -577,6 +579,7 @@ export class Engine {
   /** Hands the core a batch of a page. Null: the core did not take the call as a whole (nothing of it was taken),
    *  and the items go one by one. A device that closed itself is opened again, and the failure handed on. */
   private async feed(items: readonly ChangeItem[]): Promise<Fed | null> {
+    if (measuring.itemByItem) return null
     const fed = items.map((item): FeedItem => (item.kind === 'envelope' ? { envelope: { bytes: item.envelope, change: item.change, voidCode: this.voidCode(item) } } : { entry: logEntry(item) }))
     try { return await this.call(d => d.feed(fed, this.now())) } catch (e) {
       if (this.isLocal(e)) throw e
@@ -758,7 +761,8 @@ export class Engine {
     this.setConnection('catching_up')
     try {
       for (;;) {
-        const page = await this.hub.changes(this.position, PAGE)
+        const page = await timed('hub', () => this.hub.changes(this.position, PAGE))
+        spent.items += page.items.length
         await this.serial(() => this.ingest(page.items, page.change))
         if (!page.more) break
       }

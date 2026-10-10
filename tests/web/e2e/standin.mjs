@@ -720,6 +720,12 @@ export const steps = [
       if (!P) continue
       const out = await P.until("trommi.client.model.room.connection === 'removed'", `${name} learns it was removed`, 30000).then(() => true, () => false)
       check(out, `${name} is removed`, await P.js('return trommi.client.model.room.connection').catch(() => '?'))
+      if (true && out) {
+        // only after the device processed its removal: the notice, and nothing of the app left in this profile
+        const screen = await P.until("document.querySelector('#removed-said')", `${name}'s removed screen`, 15000).then(() => true, () => false)
+        const left = await ui.storedCount(P).catch(() => null)
+        ctx.run.check(screen && left?.records === 0 && left?.local === 0, `${name} shows the removed screen and keeps nothing`, left)
+      }
       ctx.run.note(`${name} (removed) shows: ${await P.js("return document.body.innerText.replace(/\\s*\\n\\s*/g, ' | ').slice(0, 160)").catch(() => '?')}; notices: ${JSON.stringify(await P.js("return [...document.querySelectorAll('.room-notice, [role=alert]')].map(n => n.innerText.trim()).filter(Boolean)").catch(() => []))}`)
     }
     // (Not asked here: logging in with the new password afterwards. The fake hub does not replace the room's
