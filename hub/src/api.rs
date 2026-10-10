@@ -895,7 +895,12 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
 
         // ---- invites, by human devices
         ("POST", ["invites"]) => {
-            let (offer, signature, mac) = (rq.bytes("offer")?, rq.bytes("signature")?, rq.opt_bytes("mac")?);
+            // `mac` may be left out for now; when it is there (null too) it must be the 32 bytes
+            let mac = match rq.body.get("mac") {
+                None => None,
+                Some(_) => Some(rq.bytes("mac")?),
+            };
+            let (offer, signature) = (rq.bytes("offer")?, rq.bytes("signature")?);
             let auth = read_auth()?;
             app.write_as(&auth, rq.lease, |x, _| invites::publish(x, &auth, &offer, &signature, mac.as_deref()))
         }
