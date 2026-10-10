@@ -9,7 +9,7 @@
 // never asked for its name (deviceLabel). The UI says "account", never "room".
 // Calm and sober: this is about keys; pen drawings only on the choice buttons.
 // Core features that may not be there yet (usage, session handover) are shown only when the core has them.
-import { BELL, Controller, PLUS, SET_CHEVRON, avatar, controller, copyText, doodleSvg, errorLine, html, keysList, raw, roomPage, roomShell, setRow, setThemeMode, settingsPage, sk, sketchSvg, themeMode } from './ui.mjs'
+import { BELL, Controller, PLUS, SET_CHEVRON, avatar, controller, copyText, doodleSvg, errorLine, html, keysList, raw, roomPage, roomShell, setRow, setThemeMode, settingsPage, sk, sketchSvg, themeMode, sayError } from './ui.mjs'
 import { CLIENT, account, checkEmoji, core, openInWorker, qrReader, ses } from './app.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
@@ -167,7 +167,7 @@ ${raw(L.gone)}
     }
     t.get(/^\/settings\/devices$/, ({ req, res }) => page(req, res, 'Devices · Settings', devicesMain(), { stream: '&room=devices' }))
     t.post(/^\/devices\/remove$/, async ({ req, res, form }) => {
-      try { await client.removeDevices([String(form.get('device_id'))]) } catch (err) { return page(req, res, 'Devices', devicesMain(`Not removed: ${err.message}`), {}, 422) }
+      try { await client.removeDevices([String(form.get('device_id'))]) } catch (err) { return page(req, res, 'Devices', devicesMain(`Not removed: ${sayError(err)}`), {}, 422) }
       t.redirect(res, '/settings/devices')
     })
     // This device's own name (asked nowhere: deviceLabel made it): its register device/<id>, which only it may write.
@@ -176,7 +176,7 @@ ${raw(L.gone)}
       try {
         if (!me || !device_name) throw new Error('a name is missing')
         await client.setRegisters({ [`device/${me.device_id}`]: { device_name, ...Object.fromEntries(['platform', 'folder', 'host'].filter(k => me[k] != null).map(k => [k, me[k]])) } }, { own_device: true })
-      } catch (err) { return page(req, res, 'Devices', devicesMain(`Not renamed: ${err.message}`), {}, 422) }
+      } catch (err) { return page(req, res, 'Devices', devicesMain(`Not renamed: ${sayError(err)}`), {}, 422) }
       t.redirect(res, '/settings/devices')
     })
     // The desk a new agent's session goes on: the desk in view; on "All desks" the desk of the session open there (the
@@ -200,7 +200,7 @@ ${raw(L.gone)}
         const cont = agent ? String(form.get('continue') ?? '') || String(form.get('session_id') ?? '') : ''
         const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}), ...(cont ? { session_id: cont, takeover: true, ...(form.get('with_history') != null ? { with_history: form.get('with_history') === 'yes' } : {}) } : agent ? { desk: inviteDesk(req) } : {}) })
         t.redirect(res, !agent && form.get('in') === 'settings' ? `/settings?pair=${invite.invite_id}` : `/pair/${invite.invite_id}`)
-      } catch (err) { if (form.get('in') === 'settings') return home(req, res, '', `No code: ${err.message}`, 422); page(req, res, 'Devices', devicesMain(`No invite: ${err.message}`), {}, 422) }
+      } catch (err) { if (form.get('in') === 'settings') return home(req, res, '', `No code: ${sayError(err)}`, 422); page(req, res, 'Devices', devicesMain(`No invite: ${sayError(err)}`), {}, 422) }
     })
     t.live('room', {
       take: () => lists(),
@@ -289,8 +289,8 @@ ${errorLine(error)}<p class="room-meta">"They don't match" burns the invite: nob
     t.post(/^\/pair\/([0-9a-f]+)\/confirm$/, async ({ req, res, match, form }) => {
       const list = form.get('in') === 'settings'
       try { await client.confirmInvite(match[1], form.get('match') === 'yes') } catch (err) {
-        if (list) return home(req, res, match[1], err.code === 'code-mismatch' ? '' : err.message, 422)
-        return page(req, res, 'Pair a device', inviteMain(m().invites.get(match[1]), err.code === 'code-mismatch' ? '' : err.message), { view: 'invite', stream: `&invite=${match[1]}` }, 422)
+        if (list) return home(req, res, match[1], err.code === 'code-mismatch' ? '' : sayError(err), 422)
+        return page(req, res, 'Pair a device', inviteMain(m().invites.get(match[1]), err.code === 'code-mismatch' ? '' : sayError(err)), { view: 'invite', stream: `&invite=${match[1]}` }, 422)
       }
       t.redirect(res, list ? `/settings?pair=${match[1]}` : `/pair/${match[1]}`)
     })
@@ -351,7 +351,7 @@ ${setRow({ href: '/settings/proof', icon: sk('tick'), word: 'MLS proof', detail:
     const loadAccount = () => {
       if (!client.hub || m().room.account_loading) return
       client._setRoom({ account_loading: true })
-      account().then(A => A.accountStatus(client)).then(st => client._setRoom({ account: st, account_loading: false }), err => client._setRoom({ account_error: err.message, account_loading: false }))
+      account().then(A => A.accountStatus(client)).then(st => client._setRoom({ account: st, account_loading: false }), err => client._setRoom({ account_error: accountError(err), account_loading: false }))
     }
     const settingsMain = (error = '', said = '', kit = null, first = false) => {
       const room = m().room
@@ -565,13 +565,12 @@ const accountError = err => ({
   'wrong-login': 'Wrong email or password.', 'wrong-recovery': 'Wrong email or words.', 'bad-recovery-words': 'Check the twelve words.',
   'bad-account': NOT_A_NAME, 'needs-email': 'This account has no email, so it has no password. Use a passkey.',
   'rate-limited': 'Too many tries. Wait a few minutes.', 'too-many': 'Too many. Try again later.', 'weak-password': 'At least 12 characters.', 'bad-email': 'That is not an email address.',
-  offline: 'Can\'t reach Trommi. Check your connection.', 'room-exists': 'This browser is logged in already.', 'bad-recovery-code': 'This code does not fit this account.',
-  'account-exists': 'This account has a login already.', 'account-changed': 'Changed on another device. Try again.', 'core-missing': 'This version cannot do that yet.',
-  'worker-failed': 'That did not start. Reload and try again.', 'worker-timeout': 'That took too long. Try again.',
+  'room-exists': 'This browser is logged in already.', 'bad-recovery-code': 'This code does not fit this account.',
+  'account-exists': 'This account has a login already.', 'account-changed': 'Changed on another device. Try again.',
   'no-prf': 'This passkey can\'t unlock Trommi here.', 'passkey-cancelled': 'No passkey used.', 'passkey-aborted': 'No passkey used.', 'passkey-exists': 'This passkey is added already.',
   'passkey-failed': 'The passkey did not work. Try again.', 'bad-passkey': 'That passkey was not accepted. Try again.', 'last-way-in': 'This is your only way in. Add a password or another passkey first.',
   'no-password': 'This account has no password.',
-}[err.code] ?? err.message)
+}[err.code] ?? sayError(err))
 
 // ---- the screens before the board, and the Emergency Kit's page: one calm column (auth.css "ob") ----
 /** This device's name, made for it: "Chrome on Linux", "Safari on iPhone". Never asked for; renamed under Settings → Devices. */
@@ -707,7 +706,9 @@ export function kitGate(client, { fresh = false } = {}) {
     linkOf: id => { try { return A?.kitAddress(location.origin, client.model.room.hub_url, id) ?? null } catch { return null } },
     ways: { password: (st ?? kit)?.has_password !== false, passkey: Boolean(st?.passkeys?.length) },
     make: async way => { const A = await account(); return A.makeEmergencyKit(client, way.passkey ? { passkey: await passkeyUnlock(st ?? await A.accountStatus(client)) } : { password: way.password }) },
-    open: async () => { await client.setRegisters({ kit: null }); try { localStorage.removeItem(KIT_MARK) } catch {} close() },
+    // (a core that seals no register yet, `core-missing`: nothing was written when the account was made either,
+    //  and the gate rests on this browser's mark alone)
+    open: async () => { await client.setRegisters({ kit: null }).catch(err => { if (err?.code !== 'core-missing') throw err }); try { localStorage.removeItem(KIT_MARK) } catch {} close() },
     logout: () => logOut(client),
   }) }
   // With the words and the account's ID in hand the page is there as soon as its helpers are; else it first asks
@@ -729,6 +730,7 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   root.id = 'room-screen'
   document.body.replaceChildren(root)
   let stopScan = null, stopPasskey = null   // (stopPasskey: ends the login screen's standing offer of a passkey in the email field)
+  let offerEnded = false                    // the browser refused that offer by itself: it is not made again on this page
   const framed = (() => { try { return window.top !== window } catch { return true } })()
   const show = (markup, focus = 'input:not([type=hidden], [hidden]), button.ob-go') => {
     stopScan?.(); stopScan = null
@@ -813,6 +815,8 @@ export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   const loggedOut = demo === 'logged-out' ? '1' : new URLSearchParams(location.search).get('logged_out')
   const wayLogin = new URLSearchParams(location.search).get('way') === 'login'
   if (loggedOut) history.replaceState(null, '', '/')
+  // (another join link opened on this page changes only the fragment: taken as the first one was, from the start; so is a kit's address)
+  if (!demo) addEventListener('hashchange', () => { if (((location.pathname === '/join' && location.hash.length > 1) || location.hash.startsWith('#k1.')) && document.getElementById('room-screen')) location.reload() })
   // This browser holds an account that did not open: never the start page (Log in would refuse: "signed in already").
   if (demo) return demoFlow(demo)
   if (openError) return brokenFlow(openError)
@@ -973,7 +977,10 @@ ${pk ? '' : NO_PASSKEYS}
         await done(client)
       } catch (err) {
         if (err.code === 'passkey-aborted' || !root.querySelector('#login-form')) return
-        if (err.code === 'passkey-cancelled') { keyIdle(); if (!standing) standingOffer(); return }
+        // The email field's offer was refused by the browser itself: it ends, without a word and without drawing the
+        // form again (the person may be typing in it); the button still asks on a tap.
+        if (standing) { offerEnded = true; return }
+        if (err.code === 'passkey-cancelled') { keyIdle(); standingOffer(); return }
         console.warn(err)
         if (err.code === 'room-exists') return roomExists()
         loginFlow(err.code === 'wrong-login' ? 'This passkey opens no account here.' : accountError(err), 'passkey')
@@ -981,9 +988,10 @@ ${pk ? '' : NO_PASSKEYS}
     }
     let standing = null   // the standing offer's request, while it waits (a browser runs one WebAuthn request at a time)
     const standingOffer = async () => {
+      if (!offer.conditional || offerEnded) return
       try {
         const c = await challenge()
-        if (!offer.conditional || !root.querySelector('#login-form')) return
+        if (!root.querySelector('#login-form')) return
         const stop = new AbortController()
         stopPasskey = () => stop.abort()
         const pending = passkeyGet({ challenge: c, mediation: 'conditional', signal: stop.signal })
@@ -1255,7 +1263,7 @@ ${obError(error)}${obSubmit('Recover')}</form>`, { lead: 'For accounts from befo
         const on_recovery_code = fresh => show(obShell('Your new code', html`<p class="room-recovery" id="recovery-code">${fresh}</p><p class="room-wait">Recovering…</p>`, { lead: 'Write it down now. It replaces the old one.', home: false }), null)
         const { client, recovery_code } = await (await account()).recoverWithCode({ hub_url, room_id, code: String(f.get('code')).trim(), device_name, client: CLIENT, on_recovery_code })
         recovery(client, recovery_code)
-      } catch (err) { console.error(err); recoverFlow(err.code === 'bad-recovery-code' ? accountError(err) : `Not recovered: ${err.message}`) }
+      } catch (err) { console.error(err); recoverFlow(err.code === 'bad-recovery-code' ? accountError(err) : `Not recovered: ${sayError(err)}`) }
     })
   }
 

@@ -216,13 +216,15 @@ methods!(RawDevice {
     new_recovery_code(recovery_code);
     replace_code(recovery_code, account, now_ms);
     prepare_recovery(recovery_code, served);
-    recover(recovery_code, served, cuts, account, now_ms);
+    recover(recovery_code, served, chains, account, now_ms);
+    learn_history(group, founding, commits);
     invite_open(role, session_id, app, hub, now_ms);
     invite_accept(invite_id, request, now_ms);
     invite_confirm(invite_id, code, request_hash, matches, now_ms);
     invite_recommit(invite_id, now_ms);
     invite_steps();
     invite_handover(invite_id);
+    invite_checked(invite_id, helpers);
     invite_forget(invite_id);
     join_request(link, offer, now_ms);
     join_reveal(reveal);
