@@ -880,6 +880,20 @@ fn a_room_of_a_thousand_human_devices() {
         t.elapsed().as_millis()
     );
     w.ada.merge(&group);
+    // the Welcome is stored once, not once for each of the 1000 devices it adds
+    let stored: i64 = {
+        let db = rusqlite::Connection::open(w.hub.dir.join("hub.db")).unwrap();
+        db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+        db.query_row(
+            "SELECT (SELECT coalesce(sum(length(bytes)), 0) FROM welcomes WHERE group_id = ?1)
+                  + (SELECT coalesce(sum(length(bytes)), 0) FROM welcome_bytes WHERE group_id = ?1)",
+            [&group[..]],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    println!("Welcome bytes stored for the founding: {stored}");
+    assert_eq!(stored as usize, out.welcome.as_ref().unwrap().len());
     let listed = w
         .ada
         .get(&w.hub, &format!("/v2/rooms/{}/groups", b64(&room)))

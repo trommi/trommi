@@ -865,6 +865,12 @@ impl App {
                 "DELETE FROM key_packages WHERE expires_at <= ?1",
                 [now as i64],
             )?;
+            // a Welcome no device's row points to any more
+            c.execute(
+                "DELETE FROM welcome_bytes WHERE NOT EXISTS (SELECT 1 FROM welcomes w INDEXED BY welcomes_by_epoch
+                   WHERE w.group_id = welcome_bytes.group_id AND w.epoch = welcome_bytes.epoch)",
+                [],
+            )?;
             Ok::<_, Refused>(())
         });
         self.limits.envelopes.sweep(now);

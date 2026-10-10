@@ -694,7 +694,11 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
         ("GET", ["rooms", room, "groups"]) => app.read(|x| {
             let auth = rq.auth(app, x.c)?;
             own_room(&auth, room)?;
-            Ok(Value::Array(delivery::group_list(x.c, &auth)?))
+            match rq.q_int("limit")? {
+                // the paged form; without `limit` the whole list, as before
+                Some(limit) => delivery::group_page(x.c, &auth, rq.q_int("after")?.unwrap_or(0), limit.clamp(1, 1000)),
+                None => Ok(Value::Array(delivery::group_list(x.c, &auth)?)),
+            }
         }),
         ("GET", ["welcomes"]) => {
             let after = rq.q_int("after")?.unwrap_or(0);
