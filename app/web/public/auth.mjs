@@ -312,8 +312,8 @@ ${errorLine(error)}<small>"They don't match" burns the link: nobody is added${in
 ${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link for this session: the connector that joins with it goes on as ${contName}. On a Linux or macOS computer with Claude Code or Codex.</p>`
         : html`<h2>Invite an agent</h2><p class="clip-sub">On a Linux or macOS computer with Claude Code or Codex.</p>`}
 <ol class="clip-list">
-${step(done, html`<b>Once per machine: install</b>${open ? html`${copyLine(INSTALL, 'Copy', 'install')}<small>Sets up Claude Code and Codex if installed.</small>` : ''}`)}
-${step(done, html`<b>In your project folder, start claude (or codex) and paste:</b>${open ? html`${copyLine(connectCommand(inv.link), 'Copy', 'connect')}<small>In Codex: ask it to connect with this link.</small>` : ''}`)}
+${step(done, html`<b>First time on this computer? Install:</b>${open ? html`${copyLine(INSTALL, 'Copy', 'install')}<small>Skip this if you have installed Trommi before (check: <code>trommi-connector --version</code>).</small>` : ''}`)}
+${step(done, html`<b>In your project folder, start claude (or codex) and paste:</b>${open ? html`${copyLine(connectCommand(inv.link), 'Copy', 'connect')}<small>Claude Code asks once whether to use the trommi MCP server: choose "Use this MCP server". In Codex: ask it to connect with this link.</small>` : ''}`)}
 ${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : open ? '' : 'wait', last)}
 </ol>${foot}</section></div></main>`
     }

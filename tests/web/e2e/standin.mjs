@@ -135,7 +135,7 @@ export const steps = [
     ]), 'the invite page shows the two lines: install, /trommi:connect with the link', lines.map(l => l.line))
     check(lines.every(l => l.copied === l.shown), 'each line copies what it shows')
     const steps = await A.js("return [...document.querySelectorAll('[data-state=open] .clip-step > .clip-step-body > b')].map(b => b.textContent)")
-    check(JSON.stringify(steps) === JSON.stringify(['Once per machine: install', 'In your project folder, start claude (or codex) and paste:', 'Compare the six emoji Claude shows with the ones here']), 'the invite page has the three steps', steps)
+    check(JSON.stringify(steps) === JSON.stringify(['First time on this computer? Install:', 'In your project folder, start claude (or codex) and paste:', 'Compare the six emoji Claude shows with the ones here']), 'the invite page has the three steps', steps)
     check(await A.js("return !document.body.innerText.includes('trommi-connector setup')"), 'no separate setup line any more')
     await A.shot('standin-03-agent-invite')
     const since = ctx.mark()

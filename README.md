@@ -30,8 +30,8 @@ One Rust core does the cryptography for the web app, the iOS app and the connect
    /trommi:connect '<link>'
    ```
 
-   Six emoji appear in the terminal and in the app; tap "They match". In Codex, ask the agent to connect with the
-   link.
+   Claude Code asks once whether to use the trommi MCP server: choose "Use this MCP server". Six emoji appear in
+   the terminal and in the app; tap "They match". In Codex, ask the agent to connect with the link.
 
 Updates: `trommi-connector update`.
 

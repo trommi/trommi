@@ -32,7 +32,8 @@ final class HubJSONTests: XCTestCase {
     XCTAssertEqual(agentConnectSteps(link: link).map(\.command), [
       "curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh",
       "/trommi:connect 'https://app.trommi.com/join#v1.a.b.c.d'"])
-    XCTAssertEqual(agentConnectSteps(link: link).map(\.title), ["Once per machine", "In your project folder, start claude (or codex) and paste:"])
-    XCTAssertEqual(agentConnectSteps(link: link)[0].note, "Sets up Claude Code and Codex if installed.")
+    XCTAssertEqual(agentConnectSteps(link: link).map(\.title), ["First time on this computer? Install:", "In your project folder, start claude (or codex) and paste:"])
+    XCTAssertEqual(agentConnectSteps(link: link)[0].note, "Skip this if you have installed Trommi before (check: trommi-connector --version).")
+    XCTAssertEqual(agentConnectSteps(link: link)[1].note, "Claude Code asks once whether to use the trommi MCP server: choose \"Use this MCP server\".")
   }
 }

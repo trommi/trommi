@@ -264,12 +264,13 @@ extension Room {
 }
 
 /**
- * What a person types on the computer of an agent, in order (the web's invite-an-agent page): the installer once per
- * machine (it sets up Claude Code and Codex, where installed), then, in the project folder inside claude or codex, the
- * connect command with this invite's link. The link stands in single quotes; a link never holds one.
+ * What a person types on the computer of an agent, in order (the web's invite-an-agent page): the installer, only the
+ * first time on that computer (it sets up Claude Code and Codex, where installed), then, in the project folder inside
+ * claude or codex, the connect command with this invite's link. The link stands in single quotes; a link never holds one.
  */
 public func agentConnectSteps(link: String) -> [(title: String, command: String, note: String)] {
-  [("Once per machine", "curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh",
-    "Sets up Claude Code and Codex if installed."),
-   ("In your project folder, start claude (or codex) and paste:", "/trommi:connect '\(link)'", "")]
+  [("First time on this computer? Install:", "curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh",
+    "Skip this if you have installed Trommi before (check: trommi-connector --version)."),
+   ("In your project folder, start claude (or codex) and paste:", "/trommi:connect '\(link)'",
+    "Claude Code asks once whether to use the trommi MCP server: choose \"Use this MCP server\".")]
 }
