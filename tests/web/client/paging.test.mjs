@@ -15,7 +15,7 @@ test('groups one per page and Welcomes one per answer: a second device still joi
   for (const g of [one, two]) assert.ok(b.model.sessions.get(g.session_id)?.group_id, `b is in ${g.session_id}`)
   const asked = fake.requests.slice(since)
   const groupPages = asked.filter(r => /\/groups$/.test(r.path) && r.query?.limit)
-  const welcomePages = asked.filter(r => r.path === '/v2/welcomes')
+  const welcomePages = asked.filter(r => r.path === '/v1/welcomes')
   assert.ok(welcomePages.some(r => r.query?.after), 'the Welcomes were asked again after the last id')
   t.diagnostic(`group pages ${groupPages.length}, Welcome answers ${welcomePages.length}`)
   const rows = await b.hub.roomGroups()

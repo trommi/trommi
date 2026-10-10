@@ -1,4 +1,4 @@
-//! Live delivery: server-sent events on `GET /v2/stream` (spec/hub-api.md). A stream first catches up from the
+//! Live delivery: server-sent events on `GET /v1/stream` (spec/hub-api.md). A stream first catches up from the
 //! change number the device names, then gets every event it may see as it happens. Each stream has a bounded
 //! queue: a reader that does not keep up is cut and resumes by change number.
 

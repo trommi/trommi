@@ -172,7 +172,7 @@ test('out of order: the Desk shows a card before its chain arrives; the chain co
   card = w.model.cards.get(hid)
   assert.equal(card.versions.length, 2, 'the same hash is the same version'); assert.equal(card.title, 'Second wording'); assert.equal(card.object_state, 'open')
 
-  // a body fetched later for a version the chain brought as a header only (GET /v2/cards/{object})
+  // a body fetched later for a version the chain brought as a header only (GET /v1/cards/{object})
   w.take({ kind: 'version', object: w.object(id, 'card', 'open'), payload: { schema_version: 2, title: 'First wording', object_version: 1 }, outcome: 'provisional', change: 5, seq: 1, hash: h1, time: 1000 })
   card = w.model.cards.get(hid)
   assert.equal(card.versions[0].content.title, 'First wording'); assert.equal(card.title, 'Second wording')

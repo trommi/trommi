@@ -1,4 +1,4 @@
-//! The connector end to end against the real v2 hub (branch `v2-hub`, as a child process): joining by link with
+//! The connector end to end against the real hub (branch `v2-hub`, as a child process): joining by link with
 //! the six-emoji check, every kind of write an agent makes, a human's commands through the gate, helper
 //! sessions, a restart that keeps the membership, a takeover, and catching up after being away.
 mod common;

@@ -1,6 +1,6 @@
 // The account's known answers (spec/account-vectors.json) through the REAL core's binding, as account.ts calls it:
 // the password's keys, the kit's keys, a passkey's wrap key, and each sealed copy opened. This is what proves that
-// the app on the v2 core still opens the copies an account already holds. Then the page's own light checks
+// the app on the MLS core still opens the copies an account already holds. Then the page's own light checks
 // (app/web/core/passwords.ts, passkey.ts, wordlist.ts) against the core, so that the two cannot drift apart.
 //
 //   node --test tests/web/account/vectors.test.mjs        (the binding built: core/wasm/build.sh)
@@ -265,7 +265,7 @@ test('the kit\'s address: hub and id in the fragment, read back strictly, and ne
     // a hub that is not in its one canonical form, or no hub at all
     `#k1.${b('https://hub.trommi.com/')}.${hex32}`, `#k1.${b('https://HUB.trommi.com')}.${hex32}`, `#k1.${b('http://hub.trommi.com')}.${hex32}`, `#k1.${b('https://user@hub.trommi.com')}.${hex32}`,
     `#k1.${b('javascript:alert(1)')}.${hex32}`, `#k1.${b('https://hub.trommi.com?x=1')}.${hex32}`, `#k1.${b('hub.trommi.com')}.${hex32}`, `#k1.${Buffer.from([0xff, 0xfe]).toString('base64url')}.${hex32}`,
-    `k1.${hub}.${hex32}`, `#r1.${hub}.${hex32}`, `#v2.${hub}.${hex32}.${hex32}`,
+    `k1.${hub}.${hex32}`, `#r1.${hub}.${hex32}`, `#v1.${hub}.${hex32}.${hex32}`,
   ]
   for (const text of refused) assert.equal(parseKitAddress(text), null, text)
   assert.equal(parseKitAddress(`https://evil.example/#k1.${hub}.${hex32}`)?.hub_url, 'https://hub.trommi.com', 'whose page carries the fragment is the caller\'s to check (the app reads only its own address)')

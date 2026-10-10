@@ -14,7 +14,7 @@
 //      step; everything else here runs the real Rust core;
 //   7. without a room (no demo, nothing stored) the address opens the screen as a page of its own and the test passes;
 //   8. over all of it: no Content-Security-Policy violation (page and workers), and no request to another origin or
-//      to a /v2/ address. Requests are collected from the page AND from every worker (each worker is attached to
+//      to a /v1/ address. Requests are collected from the page AND from every worker (each worker is attached to
 //      before it runs); that the collection sees a worker's requests is itself checked (the .wasm must be in it).
 // One thing the test server bends: sw.js is served with VERSION "dev" (as the dev server does), so no service worker
 // answers from a cache between the page and the checks above.
@@ -267,7 +267,7 @@ try {
   check(pageViolations.length === 0 && violations.length === 0, 'no Content-Security-Policy violation, in the page or a worker', { pageViolations, violations })
   const web = requests.filter(r => /^(https?|wss?):/.test(r.url))
   check(web.length > 0 && web.every(r => new URL(r.url).host === new URL(server.origin).host), "no request to an origin other than the app's own", [...new Set(web.map(r => new URL(r.url).origin))])
-  check(!web.some(r => new URL(r.url).pathname.startsWith('/v2/')) && !asked.some(a => a.startsWith('/v2/')), 'no request to a /v2/ address', web.map(r => r.url).filter(u => u.includes('/v2/')))
+  check(!web.some(r => new URL(r.url).pathname.startsWith('/v1/')) && !asked.some(a => a.startsWith('/v1/')), 'no request to a /v1/ address', web.map(r => r.url).filter(u => u.includes('/v1/')))
 
   if (failures.length) { console.error(`proof: FAILED (${failures.length} of ${checks})\n${failures.map(f => `  not true: ${f}`).join('\n')}`); process.exitCode = 1 }
   else console.log(`proof: ok, ${checks} checks\n  ${first.line}\n  ${first.steps.length} step rows, ${workers.length} workers started, ${web.length} requests seen (${web.filter(r => r.from === 'worker').length} from workers), all to ${server.origin}\n  without the .wasm: ${noCore.error}\n  policy: ${policy.slice(0, 96)}…${SHOTS ? `\n  screenshots in ${SHOTS}` : ''}`)

@@ -329,7 +329,7 @@ export interface Card {
   [field: string]: unknown
 }
 
-/** `withdrawn` has no source in protocol v2 (a request has no later version); the name stays for the views. */
+/** `withdrawn` has no source in protocol v1 (a request has no later version); the name stays for the views. */
 export type PermissionState = 'pending' | 'allowed' | 'denied' | 'withdrawn' | 'expired'
 export interface PermissionRequest {
   object_id: Hex

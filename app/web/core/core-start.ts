@@ -22,7 +22,7 @@ function wanted(): boolean {
     if (q.has('mock') ? q.get('mock') !== '0' : sessionStorage.getItem('trommi-mock')) return false
     if ((q.get('core') ?? sessionStorage.getItem('trommi-core')) === 'page') return false
   } catch {}
-  // (a share page: `/artifact/<share id>`, `/a/<share id>` in the links of before; base64url under protocol v2, hex before that)
+  // (a share page: `/artifact/<share id>`, `/a/<share id>` in the links of before; base64url under protocol v1, hex before that)
   return !/^\/(?:artifact|a)\/(?:[0-9a-f]{32}|[A-Za-z0-9_-]{22})$/.test(location.pathname)
 }
 

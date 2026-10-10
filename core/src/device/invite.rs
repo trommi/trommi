@@ -206,7 +206,7 @@ pub struct InviteOpened {
     pub link: SecretBytes,
     /// The last moment a Request is accepted, by this device's clock: the link's deadline.
     pub expires_at: u64,
-    /// The Offer to publish, with its signature and its MAC (`POST /v2/invites { offer, signature, mac }`).
+    /// The Offer to publish, with its signature and its MAC (`POST /v1/invites { offer, signature, mac }`).
     pub signed_offer: SignedOffer,
 }
 
@@ -217,7 +217,7 @@ pub struct JoinLink {
     pub hub: HubAddress,
     /// The room.
     pub room_id: RoomId,
-    /// The invite, by which the hub serves the Offer (`GET /v2/invites/{invite_id}`).
+    /// The invite, by which the hub serves the Offer (`GET /v1/invites/{invite_id}`).
     pub invite_id: InviteId,
     /// The link's deadline, by the inviter's clock.
     pub expires_at: u64,

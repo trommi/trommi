@@ -182,7 +182,7 @@ fn no_freed_block_holds_a_secret() {
     // Opened at 1 000 for a human device: the deadline ten minutes later.
     let deadline = ids::base64url_encode(&(1_000u64 + 10 * 60 * 1000).to_be_bytes());
     let link = format!(
-        "{APP}/join#v2.{hub_text}.{}.{KEY_TEXT}.{deadline}",
+        "{APP}/join#v1.{hub_text}.{}.{KEY_TEXT}.{deadline}",
         room.to_base64url()
     );
     let inviter_key = SigningKey::from_seed(Secret::new([1; 32]));

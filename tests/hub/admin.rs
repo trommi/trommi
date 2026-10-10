@@ -61,7 +61,7 @@ fn the_admin_page_is_behind_its_password_and_shows_only_what_the_hub_sees() {
     let hub = &w.hub;
     let admin = hub.admin();
     // a room with an account, an agent, a session and something written in it
-    w.ada.post(hub, "/v2/account", &json!({
+    w.ada.post(hub, "/v1/account", &json!({
         "email": "ada@example.org",
         "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": b64(&[&[2u8][..], &[7u8; 60]].concat()) },
         "password": { "auth_key": b64(&random::<32>()), "sealed_copy": b64(&[&[2u8][..], &[8u8; 60]].concat()), "kdf": { "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1 } },

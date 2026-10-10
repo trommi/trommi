@@ -12,7 +12,7 @@ test('a file of 3 MiB: uploaded in pieces, fetched on another device, shared by 
   for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31 + (i >> 9)) & 255
   const ref = await a.uploadAttachment(bytes, { file_name: 'big.bin', media_type: 'application/octet-stream' })
   assert.equal(ref.total_size, bytes.length)
-  const put = fake.requests.find(r => r.method === 'PUT' && r.path.startsWith('/v2/files/'))
+  const put = fake.requests.find(r => r.method === 'PUT' && r.path.startsWith('/v1/files/'))
   assert.ok(put.body.bytes > bytes.length, 'what the hub holds is the encrypted file, a little longer')
   // the reference travels in a message's body; the other device fetches and opens the file with it
   await a.sendMessage({ session_id: agent.session_id, text: 'the dump', attachments: [ref] })

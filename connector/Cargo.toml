@@ -1,5 +1,5 @@
 # The Trommi connector: one static binary, `trommi-connector`. It is the MCP server the Trommi plugin for Claude
-# Code runs, and an agent device of a room on protocol v2: every key and every check comes from `trommi-core`.
+# Code runs, and an agent device of a room on protocol v1: every key and every check comes from `trommi-core`.
 [package]
 name = "trommi-connector"
 version = "0.2.0"

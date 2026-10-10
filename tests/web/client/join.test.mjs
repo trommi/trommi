@@ -61,7 +61,7 @@ test('an invite link past its deadline is refused here, before anything is asked
   const since = fake.requests.length
   const joining = R.joinRoom({ link: opened.link, storage: storage('late'), poll_ms: 20 })
   await assert.rejects(joining.client, e => e.code === 'invite-expired')
-  assert.equal(fake.requests.slice(since).filter(r => r.path.startsWith('/v2/invites')).length, 0, 'no request about the invite')
+  assert.equal(fake.requests.slice(since).filter(r => r.path.startsWith('/v1/invites')).length, 0, 'no request about the invite')
 })
 
 test('an Offer served without its MAC, or with another one, is not answered: bad-invite, nothing stored', async t => {

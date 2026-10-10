@@ -4,7 +4,7 @@
 //! - **Web Push** is encrypted to the browser by RFC 8291 already; its payload is the JSON
 //!   `{ "room_id", "change", "urgency" }` ([`WebPush`]).
 //! - **APNs** shows Apple the payload, so the hub seals the same facts and a `ticket` under 32 random bytes the app
-//!   made and registered ([`generate_key`]): `nonce(12) ‖ AEAD.Seal(key, nonce, aad = "trommi apns v2", JSON)`
+//!   made and registered ([`generate_key`]): `nonce(12) ‖ AEAD.Seal(key, nonce, aad = "trommi apns v1", JSON)`
 //!   ([`seal`], [`open`]). The ticket is the hub's own MAC, with which the notification extension fetches one
 //!   envelope; here it is opaque bytes, empty when there is nothing to fetch.
 //!
@@ -19,7 +19,7 @@ use std::fmt;
 use zeroize::{Zeroize, Zeroizing};
 
 /// The associated data of the APNs sealing.
-const APNS_AAD: &[u8] = b"trommi apns v2";
+const APNS_AAD: &[u8] = b"trommi apns v1";
 /// The highest urgency (section 9: 0 low, 1 normal, 2 high, 3 critical).
 pub const MAX_URGENCY: u8 = 3;
 /// The highest change number a payload carries: every JSON reader holds it exactly.
@@ -51,7 +51,7 @@ pub struct ApnsPush {
     pub change: u64,
     /// 0 low, 1 normal, 2 high, 3 critical.
     pub urgency: u8,
-    /// The hub's ticket for `GET /v2/push-envelope`; empty when there is no envelope to fetch.
+    /// The hub's ticket for `GET /v1/push-envelope`; empty when there is no envelope to fetch.
     pub ticket: Vec<u8>,
 }
 

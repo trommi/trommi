@@ -11,9 +11,9 @@ const header = envelope => hubReaders.envelope(Buffer.from(envelope, 'base64url'
 /** The posts of Notes (other envelopes go out beside them: this device's own registers). */
 const isNote = envelope => header(envelope).object?.object_type === 'note'
 /** A fault for the next Notes only (a request the fake hub refuses by a fault is logged without its body). */
-const onNotes = { method: 'POST', path: '/v2/envelopes', when: rq => isNote(JSON.parse(rq.raw.toString()).envelope) }
+const onNotes = { method: 'POST', path: '/v1/envelopes', when: rq => isNote(JSON.parse(rq.raw.toString()).envelope) }
 const sentBy = rq => rq.body?.envelope ?? null
-const posts = fake => fake.requests.filter(r => r.method === 'POST' && r.path === '/v2/envelopes' && (r.body === null || isNote(r.body.envelope)))
+const posts = fake => fake.requests.filter(r => r.method === 'POST' && r.path === '/v1/envelopes' && (r.body === null || isNote(r.body.envelope)))
 const seqOf = r => header(r.body.envelope).seq
 const noteTexts = model => [...model.notes.values()].map(n => n.text).sort()
 
@@ -111,7 +111,7 @@ test('two devices commit in the same epoch: one loses it, processes the log and 
   const { fake, a, b } = await scene(t, { second: true })
   const room = [...fake.state.rooms.values()][0], group = room.groups.get(room.room_id)
   const epoch = group.epoch, id = a.engine.groups.find(g => g.session === null).group
-  const commits = () => fake.requests.filter(r => r.method === 'POST' && /^\/v2\/groups\/[^/]+\/commits$/.test(r.path))
+  const commits = () => fake.requests.filter(r => r.method === 'POST' && /^\/v1\/groups\/[^/]+\/commits$/.test(r.path))
   const from = commits().length
   await Promise.all([a.engine.land(d => d.update(id, true, Date.now())), b.engine.land(d => d.update(id, true, Date.now()))])
   await a.settle(); await b.settle()
@@ -177,7 +177,7 @@ test('a restart between the hub\'s answer to a Commit and its coming back: the C
   const held = await R.openRoom({ storage: name })
   const id = held.engine.groups.find(g => g.session === null).group, epoch = held.engine.groups.find(g => g.session === null).epoch
   await held.start({ stream: false })
-  fake.faults.add({ method: 'GET', path: '/v2/changes', refuse: { error: 'overloaded' }, times: 1000 })
+  fake.faults.add({ method: 'GET', path: '/v1/changes', refuse: { error: 'overloaded' }, times: 1000 })
   const landing = held.engine.land(d => d.update(id, true, Date.now()))
   landing.catch(() => {})
   await until(() => fake.requests.some(r => r.method === 'POST' && /\/commits$/.test(r.path) && r.status === 200 && r.device === Buffer.from(held.my_device_id, 'hex').toString('base64url')), 'the hub took the Commit')

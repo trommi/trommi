@@ -1,5 +1,5 @@
 // streams.mjs: the live stream across reloads, with the app's service worker active and the hub on the app's origin
-// (as a local stack has it). Signs up, then loads the page again ten times, and counts the /v2/stream requests the
+// (as a local stack has it). Signs up, then loads the page again ten times, and counts the /v1/stream requests the
 // hub's side holds open after each (a counting pass-through in front of the hub binary). One stays open: the page's
 // own; a second may be closing. Firefox kept every earlier page's stream open until the six connections to the host
 // were taken (and the hub at app.trommi.com answers 429 from the eighth on).
@@ -13,7 +13,7 @@ import { openProfile, sleep, watch } from './pw.mjs'
 export const ownServer = true
 const RELOADS = 10
 
-/** A pass-through to `target()` that keeps the /v2/stream requests it holds open. */
+/** A pass-through to `target()` that keeps the /v1/stream requests it holds open. */
 async function counting(target) {
   const open = new Set(), started = []
   const server = http.createServer((req, res) => {
@@ -23,7 +23,7 @@ async function counting(target) {
       got.on('error', () => res.destroy()); got.on('close', () => { if (!res.writableEnded) res.destroy() })
     })
     const rec = { path: req.url, at: Date.now() }
-    if (req.url.startsWith('/v2/stream')) { started.push(rec); open.add(rec); res.on('close', () => { rec.closed = Date.now() }); res.on('close', () => open.delete(rec)) }
+    if (req.url.startsWith('/v1/stream')) { started.push(rec); open.add(rec); res.on('close', () => { rec.closed = Date.now() }); res.on('close', () => open.delete(rec)) }
     out.on('error', () => res.destroy())
     res.on('close', () => out.destroy())
     req.pipe(out)

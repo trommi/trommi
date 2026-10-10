@@ -1,5 +1,5 @@
 // index.ts: the client core in one import, for a page that runs it without the worker and for the views' helpers
-// (the build gives it to the views as gen/vendor/index.mjs). Contract: README.md. Everything here is protocol v2;
+// (the build gives it to the views as gen/vendor/index.mjs). Contract: README.md. Everything here is protocol v1;
 // the core itself (core-wasm.ts) is loaded only when a function needs it.
 import { openShared as openSharedWith } from './client.ts'
 import type { Hub } from './hub.ts'

@@ -1,4 +1,4 @@
-//! What the connector's end-to-end tests share: the real v2 hub (this workspace's `hub/`) as a child process, and a stand-in for the
+//! What the connector's end-to-end tests share: the real hub (this workspace's `hub/`) as a child process, and a stand-in for the
 //! human's device. The stand-in is the core's `Device` over the connector's journal, driven as an app drives it,
 //! and speaks to the hub through the connector's hub client; everything a human's app does in these tests is
 //! here, step by step.
@@ -261,7 +261,7 @@ impl Human {
                 let open = Hub::new(self.address.as_str(), None, None)?;
                 open.open_call(
                     reqwest::Method::POST,
-                    "/v2/rooms",
+                    "/v1/rooms",
                     Some(&json!({ "group_info": part(0), "sealed_key": part(1) })),
                 )
                 .await
@@ -274,7 +274,7 @@ impl Human {
                 if has(4) {
                     body["welcome"] = json!(part(4));
                 }
-                self.hub.post("/v2/groups", &body).await
+                self.hub.post("/v1/groups", &body).await
             }
             OutboxKind::Commit => {
                 let mut body = json!({
@@ -285,13 +285,13 @@ impl Human {
                     body["welcome"] = json!(part(2));
                 }
                 self.hub
-                    .post(&format!("/v2/groups/{group}/commits"), &body)
+                    .post(&format!("/v1/groups/{group}/commits"), &body)
                     .await
             }
             OutboxKind::Message => {
                 self.hub
                     .post(
-                        &format!("/v2/groups/{group}/messages"),
+                        &format!("/v1/groups/{group}/messages"),
                         &json!({ "epoch": entry.epoch, "message": part(0) }),
                     )
                     .await
@@ -302,16 +302,16 @@ impl Human {
                 if has(0) {
                     body["last_resort"] = json!(part(0));
                 }
-                self.hub.put("/v2/key-packages", &body).await
+                self.hub.put("/v1/key-packages", &body).await
             }
             OutboxKind::Envelope => {
                 self.hub
-                    .post("/v2/envelopes", &json!({ "envelope": part(0) }))
+                    .post("/v1/envelopes", &json!({ "envelope": part(0) }))
                     .await
             }
             OutboxKind::SealedKey => {
                 self.hub
-                    .put("/v2/sealed-keys", &json!({ "sealed_key": part(0) }))
+                    .put("/v1/sealed-keys", &json!({ "sealed_key": part(0) }))
                     .await
             }
             other => panic!("the stand-in posts no {other:?}"),
@@ -379,7 +379,7 @@ impl Human {
         let offer = &opened.signed_offer;
         self.hub
             .post(
-                "/v2/invites",
+                "/v1/invites",
                 &json!({ "offer": b64(&offer.offer), "signature": b64(&offer.signature), "mac": b64(&offer.mac) }),
             )
             .await
@@ -412,7 +412,7 @@ impl Human {
     /// Waits for the Request to an invite, reveals, "confirms the emoji" and commits the new device: the
     /// change of `agents` in the room group.
     pub async fn admit(&mut self, invite: &mut Invite) -> Admitted {
-        let path = format!("/v2/invites/{}", invite.id.to_base64url());
+        let path = format!("/v1/invites/{}", invite.id.to_base64url());
         let request = loop {
             let served = self.hub.get(&path).await.expect("the invite");
             if let Some(first) = served["requests"].as_array().and_then(|list| list.first()) {
@@ -509,7 +509,7 @@ impl Human {
                                 let claimed = self
                                     .hub
                                     .post(
-                                        "/v2/key-packages/claim",
+                                        "/v1/key-packages/claim",
                                         &json!({ "devices": [agent.to_base64url()] }),
                                     )
                                     .await
@@ -539,7 +539,7 @@ impl Human {
                     InviteStep::CheckHelpers { session } => {
                         let listed = self
                             .hub
-                            .get(&format!("/v2/rooms/{}/groups", self.room.to_base64url()))
+                            .get(&format!("/v1/rooms/{}/groups", self.room.to_base64url()))
                             .await
                             .expect("the room's groups");
                         let parent = b64(session.as_bytes());
@@ -602,7 +602,7 @@ impl Human {
             let cursor = self.v(|v| v.device.cursor()).await;
             let answer = self
                 .hub
-                .get(&format!("/v2/changes?after={cursor}&limit=500"))
+                .get(&format!("/v1/changes?after={cursor}&limit=500"))
                 .await
                 .expect("changes");
             let items = answer["items"].as_array().cloned().unwrap_or_default();
@@ -665,7 +665,7 @@ impl Human {
         }
         // A session an agent founded adds this device: its Welcome belongs at this Commit's place.
         if commit && !held && !group.is_room() {
-            let welcomes = self.hub.get("/v2/welcomes").await.expect("welcomes");
+            let welcomes = self.hub.get("/v1/welcomes").await.expect("welcomes");
             let wanted = b64(group.as_bytes());
             let Some(row) = welcomes
                 .as_array()
@@ -841,13 +841,13 @@ impl Human {
         .await
     }
 
-    /// Every Commit of the room the hub serves a human device above `after`, as the items of `/v2/changes`.
+    /// Every Commit of the room the hub serves a human device above `after`, as the items of `/v1/changes`.
     pub async fn commits_after(&self, mut after: u64) -> Vec<Value> {
         let mut out = Vec::new();
         loop {
             let answer = self
                 .hub
-                .get(&format!("/v2/changes?after={after}&limit=500"))
+                .get(&format!("/v1/changes?after={after}&limit=500"))
                 .await
                 .expect("changes");
             let items = answer["items"].as_array().cloned().unwrap_or_default();

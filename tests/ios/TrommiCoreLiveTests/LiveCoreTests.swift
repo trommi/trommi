@@ -749,7 +749,7 @@ final class LiveCoreTests: XCTestCase {
     for good in ["https://hub.example", "https://hub.example:8443", "http://127.0.0.1:8790", "http://localhost:8790"] {
       XCTAssertEqual(try tools.canonicalHub(good), good)
     }
-    for bad in ["https://Hub.example", "https://hub.example/", "http://hub.example", "hub.example", "https://hub.example/v2", ""] {
+    for bad in ["https://Hub.example", "https://hub.example/", "http://hub.example", "hub.example", "https://hub.example/v1", ""] {
       XCTAssertEqual(refusedCode { _ = try self.tools.canonicalHub(bad) }, "bad-format", bad)
     }
   }

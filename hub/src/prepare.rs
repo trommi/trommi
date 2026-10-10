@@ -16,7 +16,7 @@ fn on_state(memo: &Memo, state: &GroupState, body: &CommitBody) {
     }
 }
 
-/// `POST /v2/groups/{group}/commits` and the code's replacement: if the Commit builds on the group's epoch.
+/// `POST /v1/groups/{group}/commits` and the code's replacement: if the Commit builds on the group's epoch.
 pub fn commit(c: &Connection, memo: &Memo, room: &Room, group_id: &[u8], body: &CommitBody) {
     let Ok(row) = store::group(c, room, group_id) else {
         return;
@@ -29,12 +29,12 @@ pub fn commit(c: &Connection, memo: &Memo, room: &Room, group_id: &[u8], body: &
     }
 }
 
-/// `POST /v2/rooms`.
+/// `POST /v1/rooms`.
 pub fn room(memo: &Memo, group_info: &[u8]) {
     let _ = memo.open(group_info);
 }
 
-/// `POST /v2/groups`: the founding GroupInfo and the first Commit on it.
+/// `POST /v1/groups`: the founding GroupInfo and the first Commit on it.
 pub fn founding(memo: &Memo, group_info_0: &[u8], first: &CommitBody) {
     if let Ok((state, _, _)) = memo.open(group_info_0) {
         on_state(memo, &state, first);

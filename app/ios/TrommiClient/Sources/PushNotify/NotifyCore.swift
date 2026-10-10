@@ -14,7 +14,7 @@ public struct ApnsPush: Equatable {
   public var change: UInt64
   /** 0 low, 1 normal, 2 high, 3 critical. */
   public var urgency: UInt8
-  /** The hub's ticket for `GET /v2/push-envelope`; empty when there is no envelope to fetch. It fetches for a day: never log it. The extension does not use it: it could not open what it fetched. */
+  /** The hub's ticket for `GET /v1/push-envelope`; empty when there is no envelope to fetch. It fetches for a day: never log it. The extension does not use it: it could not open what it fetched. */
   public var ticket: [UInt8]
   public init(roomId: [UInt8], change: UInt64, urgency: UInt8, ticket: [UInt8]) {
     self.roomId = roomId; self.change = change; self.urgency = urgency; self.ticket = ticket

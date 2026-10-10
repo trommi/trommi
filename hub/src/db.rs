@@ -1,5 +1,5 @@
 //! The database: SQLite, one file, one writing connection and a few reading ones (WAL). This is the first schema of
-//! the v2 hub; there is nothing to migrate from. Table and column names are the product's own words, as
+//! the hub; there is nothing to migrate from. Table and column names are the product's own words, as
 //! spec/hub-api.md lists them. `envelopes` is the one truth for stored content; the object tables, `chats`,
 //! `boards` and `registers` are indexes over it, written in the same transaction, and can be rebuilt.
 //!

@@ -5,7 +5,7 @@
 // What it does (spec/v1.md 5, 7, 9, 13.2 to 13.4; core/README.md "How a client uses it"):
 //   write, then send   an action seals into the core's outbox and returns; the PUMP posts the outbox, strictly in its
 //                      order, one entry in flight, and tells the core the hub's answer
-//   catch-up           pages of `GET /v2/changes` after the cursor, to the core in the hub's order: a page in batches
+//   catch-up           pages of `GET /v1/changes` after the cursor, to the core in the hub's order: a page in batches
 //                      (`feed`: the store writes a batch in one step), each item's outcome told as if it came alone
 //   the live stream    the same items as they happen, the relayed stroke pieces, Welcomes, wishes of other devices
 //   upkeep             joining by Welcome, the steps of the invites this device confirmed (`inviteSteps`), adding a
@@ -437,7 +437,7 @@ export class Engine {
       if (!extra?.recovery_id) throw new EngineError('incomplete', 'a part of a recovery without the recovery it belongs to')
       return this.hub.postOutbox(entry, { recovery_id: extra.recovery_id })
     }
-    // the room is founded together with its account (hub-api.md `POST /v2/rooms`)
+    // the room is founded together with its account (hub-api.md `POST /v1/rooms`)
     const found = await this.hub.foundRoom({ group_info: entry.parts[0]!, sealed_key: entry.parts[1]!, account: (extra?.account ?? null) as NewAccount | null, found_token: extra?.found_token ?? null })
     if (entry.group && !same(found.room_id, entry.group)) throw new HubError('bad-answer', 'the hub founded another room')
     return { change: null, ...found }

@@ -28,7 +28,7 @@ fn scene_on(hub: TestHub) -> Scene {
     let mut agent = w.enrol_agent();
     w.catch_up(&mut bea, &w.room.clone());
     let (session, group) = w.found_main(&mut [&mut bea], Some(&mut agent));
-    agent.lease = agent.post(&w.hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 })).ok()["generation"].as_u64();
+    agent.lease = agent.post(&w.hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 })).ok()["generation"].as_u64();
     Scene {
         w,
         bea,
@@ -150,7 +150,7 @@ fn the_hub_runs_its_checks_in_order_and_takes_no_number_before_the_chain() {
         s.w.ada
             .get(
                 hub,
-                &format!("/v2/groups/{}/chains/{}", b64(&s.group), b64(&s.w.ada.id())),
+                &format!("/v1/groups/{}/chains/{}", b64(&s.group), b64(&s.w.ada.id())),
             )
             .ok();
     assert_eq!(chain["items"].as_array().unwrap().len(), 1);
@@ -208,7 +208,7 @@ fn a_refusal_after_the_chain_check_is_stored_as_a_void_record() {
         .bea
         .get(
             hub,
-            &format!("/v2/groups/{}/chains/{}", b64(&s.group), b64(&s.w.ada.id())),
+            &format!("/v1/groups/{}/chains/{}", b64(&s.group), b64(&s.w.ada.id())),
         )
         .ok();
     let codes: Vec<&str> = chain["items"]
@@ -218,7 +218,7 @@ fn a_refusal_after_the_chain_check_is_stored_as_a_void_record() {
         .map(|i| i["void_code"].as_str().unwrap_or(""))
         .collect();
     assert_eq!(codes, vec!["forbidden", "forbidden", "too-large", ""]);
-    let changes = s.bea.get(hub, "/v2/changes?after=0&limit=1000").ok();
+    let changes = s.bea.get(hub, "/v1/changes?after=0&limit=1000").ok();
     let voids: Vec<&Value> = changes["items"]
         .as_array()
         .unwrap()
@@ -228,11 +228,11 @@ fn a_refusal_after_the_chain_check_is_stored_as_a_void_record() {
     assert_eq!(voids.len(), 3);
     assert!(voids.iter().all(|v| envelope_of(v).body.is_none()));
     // a void record changed nothing: no card, one chat item
-    let desk = s.bea.get(hub, "/v2/desk").ok();
+    let desk = s.bea.get(hub, "/v1/desk").ok();
     assert_eq!(desk["cards"], json!([]));
     let items = s
         .bea
-        .get(hub, &format!("/v2/chats/session/{}/items", hex(&s.session)))
+        .get(hub, &format!("/v1/chats/session/{}/items", hex(&s.session)))
         .ok();
     assert_eq!(
         items["items"]
@@ -600,7 +600,7 @@ fn only_the_allowed_sender_writes_each_item() {
     ));
     let in_chat = s
         .bea
-        .get(hub, &format!("/v2/chats/card/{}/items", hex(&card_id)))
+        .get(hub, &format!("/v1/chats/card/{}/items", hex(&card_id)))
         .ok();
     assert!(in_chat["items"]
         .as_array()
@@ -608,7 +608,7 @@ fn only_the_allowed_sender_writes_each_item() {
         .iter()
         .all(|i| envelope_of(i).header.group_id == s.group));
     // every envelope of the card, in order, void ones with their code
-    let all = s.bea.get(hub, &format!("/v2/cards/{}", hex(&card_id))).ok();
+    let all = s.bea.get(hub, &format!("/v1/cards/{}", hex(&card_id))).ok();
     assert_eq!(
         (all["state"].as_u64(), all["owner"].as_str()),
         (Some(3), Some(b64(&s.agent.id()).as_str()))
@@ -635,17 +635,17 @@ fn only_the_allowed_sender_writes_each_item() {
     assert!(kinds.iter().any(|(_, void)| *void));
     // the same id under another object's route does not exist; the agent of another session sees nothing
     s.bea
-        .get(hub, &format!("/v2/notes/{}", hex(&card_id)))
+        .get(hub, &format!("/v1/notes/{}", hex(&card_id)))
         .refused(404, "not-found");
     s.bea
         .get(
             hub,
-            &format!("/v2/permission-requests/{}", b64(&request_id)),
+            &format!("/v1/permission-requests/{}", b64(&request_id)),
         )
         .ok();
-    s.bea.get(hub, &format!("/v2/notes/{}", hex(&note_id))).ok();
+    s.bea.get(hub, &format!("/v1/notes/{}", hex(&note_id))).ok();
     s.agent
-        .get(hub, &format!("/v2/notes/{}", hex(&note_id)))
+        .get(hub, &format!("/v1/notes/{}", hex(&note_id)))
         .refused(404, "not-found");
 }
 
@@ -734,7 +734,7 @@ fn the_desk_lists_open_objects_by_urgency_and_every_writers_newest_register_valu
         .send(hub, &s.group, &register(&random(), "status line"))
         .ok();
 
-    let desk = s.bea.get(hub, "/v2/desk").ok();
+    let desk = s.bea.get(hub, "/v1/desk").ok();
     let order: Vec<String> = desk["cards"]
         .as_array()
         .unwrap()
@@ -767,7 +767,7 @@ fn the_desk_lists_open_objects_by_urgency_and_every_writers_newest_register_valu
     assert_eq!(desk["groups"].as_array().unwrap().len(), 2);
     assert!(desk["change"].as_i64().unwrap() > 10);
     // the agent device: its session's objects and registers only
-    let desk = s.agent.get(hub, "/v2/desk").ok();
+    let desk = s.agent.get(hub, "/v1/desk").ok();
     assert_eq!(
         (
             desk["cards"].as_array().unwrap().len(),
@@ -791,7 +791,7 @@ fn a_chat_is_paged_newest_first_and_a_board_loads_from_a_change_number() {
             )
             .ok();
     }
-    let path = format!("/v2/chats/session/{}/items", hex(&s.session));
+    let path = format!("/v1/chats/session/{}/items", hex(&s.session));
     let mut seen: Vec<i64> = vec![];
     let mut before: Option<i64> = None;
     loop {
@@ -823,13 +823,13 @@ fn a_chat_is_paged_newest_first_and_a_board_loads_from_a_change_number() {
         s.agent
             .get(
                 hub,
-                &format!("/v2/chats/session/{}/items", hex(&random::<16>()))
+                &format!("/v1/chats/session/{}/items", hex(&random::<16>()))
             )
             .ok()["items"],
         json!([])
     );
     s.bea
-        .get(hub, "/v2/chats/desk/00/items")
+        .get(hub, "/v1/chats/desk/00/items")
         .refused(400, "bad-format");
 
     // a board: items from a change number on, oldest first
@@ -840,7 +840,7 @@ fn a_chat_is_paged_newest_first_and_a_board_loads_from_a_change_number() {
         s.w.ada.send(hub, &room, &board_item(&board)).ok();
         s.bea.send(hub, &room, &board_item(&other)).ok();
     }
-    let all = s.bea.get(hub, &format!("/v2/boards/{}", hex(&board))).ok();
+    let all = s.bea.get(hub, &format!("/v1/boards/{}", hex(&board))).ok();
     let changes: Vec<i64> = all["items"]
         .as_array()
         .unwrap()
@@ -853,13 +853,13 @@ fn a_chat_is_paged_newest_first_and_a_board_loads_from_a_change_number() {
         .bea
         .get(
             hub,
-            &format!("/v2/boards/{}?after_change={}", hex(&board), changes[3]),
+            &format!("/v1/boards/{}?after_change={}", hex(&board), changes[3]),
         )
         .ok();
     assert_eq!(tail["items"].as_array().unwrap().len(), 2);
     let paged = s
         .bea
-        .get(hub, &format!("/v2/boards/{}?limit=4", b64(&board)))
+        .get(hub, &format!("/v1/boards/{}?limit=4", b64(&board)))
         .ok();
     assert_eq!(
         (
@@ -871,7 +871,7 @@ fn a_chat_is_paged_newest_first_and_a_board_loads_from_a_change_number() {
     // an agent device reads no board
     assert_eq!(
         s.agent
-            .get(hub, &format!("/v2/boards/{}", hex(&board)))
+            .get(hub, &format!("/v1/boards/{}", hex(&board)))
             .ok()["items"],
         json!([])
     );
@@ -881,7 +881,7 @@ fn a_chat_is_paged_newest_first_and_a_board_loads_from_a_change_number() {
         .get(
             hub,
             &format!(
-                "/v2/groups/{}/chains/{}?after=4",
+                "/v1/groups/{}/chains/{}?after=4",
                 b64(&room),
                 b64(&s.w.ada.id())
             ),
@@ -931,7 +931,7 @@ fn what_lies_beyond_a_cut_leaves_every_index_as_if_it_had_never_come() {
         .ok();
     let reg: [u8; 16] = random();
     s.bea.send(hub2, &s.group, &register(&reg, "beyond")).ok();
-    let before = s.w.ada.get(hub2, "/v2/desk").ok();
+    let before = s.w.ada.get(hub2, "/v1/desk").ok();
     assert_eq!(before["cards"], json!([]), "the card is answered");
 
     // removal from the room, then the Remove with the Cut in the session
@@ -1005,14 +1005,14 @@ fn what_lies_beyond_a_cut_leaves_every_index_as_if_it_had_never_come() {
     s.w.ada.post_commit(hub2, &out, &sealed).ok();
 
     // the answer never came: the card is open again; the Chat holds one message of bea; her register is gone
-    let desk = s.w.ada.get(hub2, "/v2/desk").ok();
+    let desk = s.w.ada.get(hub2, "/v1/desk").ok();
     assert_eq!(desk["cards"][0]["object_id"], b64(&card_id));
     assert_eq!(desk["cards"][0]["state"], 1);
     let chat_items =
         s.w.ada
             .get(
                 hub2,
-                &format!("/v2/chats/session/{}/items", hex(&s.session)),
+                &format!("/v1/chats/session/{}/items", hex(&s.session)),
             )
             .ok();
     assert_eq!(chat_items["items"].as_array().unwrap().len(), 1);
@@ -1024,11 +1024,11 @@ fn what_lies_beyond_a_cut_leaves_every_index_as_if_it_had_never_come() {
             && envelope_of(r).header.group_id == s.group));
     let card_items =
         s.w.ada
-            .get(hub2, &format!("/v2/cards/{}", hex(&card_id)))
+            .get(hub2, &format!("/v1/cards/{}", hex(&card_id)))
             .ok();
     assert_eq!(card_items["items"].as_array().unwrap().len(), 1);
     // catch-up no longer serves them; the chain route does, as evidence, marked cut
-    let changes = s.w.ada.get(hub2, "/v2/changes?after=0&limit=1000").ok();
+    let changes = s.w.ada.get(hub2, "/v1/changes?after=0&limit=1000").ok();
     assert!(!changes["items"]
         .as_array()
         .unwrap()
@@ -1038,7 +1038,7 @@ fn what_lies_beyond_a_cut_leaves_every_index_as_if_it_had_never_come() {
         s.w.ada
             .get(
                 hub2,
-                &format!("/v2/groups/{}/chains/{}", b64(&s.group), b64(&s.bea.id())),
+                &format!("/v1/groups/{}/chains/{}", b64(&s.group), b64(&s.bea.id())),
             )
             .ok();
     let marks: Vec<bool> = chain["items"]
@@ -1071,7 +1071,7 @@ fn accepted_content_arrives_live_and_a_stream_resumes_by_change_number() {
         .bea
         .get(
             hub,
-            &format!("/v2/changes?after={}&limit=1", e.id.unwrap() - 1),
+            &format!("/v1/changes?after={}&limit=1", e.id.unwrap() - 1),
         )
         .ok();
     assert_eq!(replayed["items"][0], e.data);
@@ -1107,7 +1107,7 @@ fn accepted_content_arrives_live_and_a_stream_resumes_by_change_number() {
     // a stroke piece is relayed to the other human devices, never stored, not in the log
     let log_before = s
         .bea
-        .get(hub, &format!("/v2/groups/{}/log", b64(&room)))
+        .get(hub, &format!("/v1/groups/{}/log", b64(&room)))
         .ok()["items"]
         .as_array()
         .unwrap()
@@ -1120,7 +1120,7 @@ fn accepted_content_arrives_live_and_a_stream_resumes_by_change_number() {
     assert_eq!(relay.data["sender"], b64(&s.bea.id()));
     assert_eq!(
         s.bea
-            .get(hub, &format!("/v2/groups/{}/log", b64(&room)))
+            .get(hub, &format!("/v1/groups/{}/log", b64(&room)))
             .ok()["items"]
             .as_array()
             .unwrap()
@@ -1140,7 +1140,7 @@ fn accepted_content_arrives_live_and_a_stream_resumes_by_change_number() {
     );
 
     // resuming: everything above the given change number, in order, then live
-    let all = s.bea.get(hub, "/v2/changes?after=0&limit=1000").ok();
+    let all = s.bea.get(hub, "/v1/changes?after=0&limit=1000").ok();
     let all = all["items"].as_array().unwrap();
     let from = all[all.len() - 4]["change"].as_i64().unwrap();
     let mut resumed = s.bea.events(hub, Some(from));
@@ -1230,7 +1230,7 @@ fn the_desk_has_one_byte_budget_for_all_it_shows() {
         ZERO32,
     ));
     s.w.ada.send(&s.w.hub, &room, &item).ok();
-    let desk = s.w.ada.get(&s.w.hub, "/v2/desk").ok();
+    let desk = s.w.ada.get(&s.w.hub, "/v1/desk").ok();
     let sizes: Vec<usize> = desk
         .as_object()
         .unwrap()

@@ -92,7 +92,7 @@ export const steps = [
     await ui.live(A)
     await A.click('#desk-invite-go')
     await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy')", 'the agent invite page')
-    const link = /'(http\S+\/join#v2\.[^']+)'/.exec(await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent"))?.[1]
+    const link = /'(http\S+\/join#v1\.[^']+)'/.exec(await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent"))?.[1]
     const R = await rooms({ agent: true })
     const joining = R.joinRoom({ link, storage: storage('agent'), poll_ms: 50, device_name: 'agent' })
     await joining.check_code

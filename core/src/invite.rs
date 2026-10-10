@@ -74,7 +74,7 @@ const MAX_HUB_PART_LEN: usize = (512usize * 4).div_ceil(3);
 const SECRET_PART_LEN: usize = 43;
 const DEADLINE_PART_LEN: usize = 11;
 /// The version a link names.
-const LINK_VERSION: &str = "2";
+const LINK_VERSION: &str = "1";
 /// The path of a join link under the app's origin.
 const LINK_PATH: &str = "/join";
 /// The longest encoded Request: its fixed fields, the longest hub address and KeyPackage, and their lengths.
@@ -518,7 +518,7 @@ fn check_deadline(expires_at: u64, life: u64, now_ms: u64) -> Result<(), Error> 
     Ok(())
 }
 
-/// The link the inviter hands over: `<app>/join#v2.<hub>.<room_id>.<secret>.<expires_at>`, where `<app>` is the
+/// The link the inviter hands over: `<app>/join#v1.<hub>.<room_id>.<secret>.<expires_at>`, where `<app>` is the
 /// app's origin in the canonical spelling of a hub address and the four parts are base64url (the hub as the
 /// UTF-8 of its address, the deadline as a uint64 of milliseconds, big-endian). The secret reaches only who gets
 /// the link; the hub never sees it. The deadline enters every key and id the secret gives: a link whose
@@ -571,8 +571,7 @@ impl InviteLink {
             && version.bytes().all(|b| b.is_ascii_digit());
         match version {
             LINK_VERSION => {}
-            // Every other number without a leading zero, however long, is above 2; but for 1.
-            "1" => return Err(Error::BadFormat),
+            // Every other number without a leading zero, however long, is above 1.
             _ if is_number => return Err(Error::NewerVersion),
             _ => return Err(Error::BadFormat),
         }
@@ -1365,7 +1364,7 @@ impl Reveal {
     }
 }
 
-/// Hub side, `POST /v2/invites`: the Offer a device posts. `bad-format` unless it is an Offer with a MAC of 32
+/// Hub side, `POST /v1/invites`: the Offer a device posts. `bad-format` unless it is an Offer with a MAC of 32
 /// bytes, then `bad-signature` unless the `inviter` it names signed it. The MAC is stored and served with the
 /// Offer; the hub cannot check more than its length, its key follows from the link's secret.
 ///
@@ -1379,7 +1378,7 @@ pub fn hub_check_offer(offer: &SignedOffer) -> Result<Offer, Error> {
     verified_offer(offer)
 }
 
-/// Hub side, `POST /v2/invites/{invite_id}/request`: a Request for the stored `offer`. Returns the device that
+/// Hub side, `POST /v1/invites/{invite_id}/request`: a Request for the stored `offer`. Returns the device that
 /// asks: the signature key of the Request's KeyPackage, which is verified here (section 4.5). `bad-format` (not
 /// a Request with a 32-byte MAC); `bad-invite` (room, invite, role or offer hash are not the stored Offer's, or
 /// the hub named is not this hub); `bad-key-package`; `bad-signature` (not signed by the KeyPackage's key).
@@ -1427,7 +1426,7 @@ pub struct Revealed {
     request_hash: Hash32,
 }
 
-/// Hub side, `PUT /v2/invites/{id}/reveal`: the Reveal for the stored `offer`, against the Requests the hub
+/// Hub side, `PUT /v1/invites/{id}/reveal`: the Reveal for the stored `offer`, against the Requests the hub
 /// holds for that invite. `bad-format` (not a Reveal); `bad-signature` (not signed by the Offer's inviter);
 /// `bad-invite` (another invite, a nonce the Offer did not commit to, or a Request the hub does not hold or that
 /// does not answer this Offer); `bad-key-package`. The Requests are those that passed [`hub_check_request`] for

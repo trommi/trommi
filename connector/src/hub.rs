@@ -301,7 +301,7 @@ impl Hub {
 
     fn room_path(&self) -> Result<String> {
         self.room
-            .map(|room| format!("/v2/rooms/{}", room.to_base64url()))
+            .map(|room| format!("/v1/rooms/{}", room.to_base64url()))
             .ok_or_else(|| Fault::new("no-room", "this client is not signed in to a room"))
     }
 
@@ -460,7 +460,7 @@ impl Hub {
                 body.insert("generation".into(), json!(generation));
             }
         }
-        let answer = self.post("/v2/link", &Value::Object(body)).await?;
+        let answer = self.post("/v1/link", &Value::Object(body)).await?;
         let generation = answer
             .get("generation")
             .and_then(Value::as_u64)
@@ -482,7 +482,7 @@ impl Hub {
         let response = self
             .with_headers(
                 self.http
-                    .get(self.url(&format!("/v2/stream?after={after}"))),
+                    .get(self.url(&format!("/v1/stream?after={after}"))),
                 &token,
                 // the stream carries the lease: only its holder's stream replaces the device's older ones
                 true,
@@ -523,7 +523,7 @@ impl Hub {
         let token = self.token().await?;
         let request = self
             .with_headers(
-                self.http.put(self.url(&format!("/v2/files/{file_id}"))),
+                self.http.put(self.url(&format!("/v1/files/{file_id}"))),
                 &token,
                 true,
             )
@@ -538,7 +538,7 @@ impl Hub {
         let token = self.token().await?;
         let response = self
             .with_headers(
-                self.http.get(self.url(&format!("/v2/files/{file_id}"))),
+                self.http.get(self.url(&format!("/v1/files/{file_id}"))),
                 &token,
                 false,
             )

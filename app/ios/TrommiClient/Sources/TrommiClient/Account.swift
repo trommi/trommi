@@ -110,7 +110,7 @@ public func emergencyKitText(_ kit: EmergencyKit, made: Date = Date()) -> String
   return lines.joined(separator: "\n")
 }
 
-/** The account as a human device of its room sees it (GET /v2/account). */
+/** The account as a human device of its room sees it (GET /v1/account). */
 public struct AccountStatus {
   /** The account's e-mail; empty for an account without one (it then has no password). */
   public var email: String
@@ -119,7 +119,7 @@ public struct AccountStatus {
   /** What the Emergency Kit's keys are derived from, as the hub says it (`kit_form`): the e-mail, or the id. */
   public enum KitForm: String { case email, id }
   public var kitForm: KitForm
-  /** Whether this hub confirms e-mail addresses at all. A v2 hub does not yet: then there is nothing to confirm. */
+  /** Whether this hub confirms e-mail addresses at all. The hub does not yet: then there is nothing to confirm. */
   public var confirmsEmail: Bool
   public var emailVerifiedAt: UInt64?
   /** An account is made with its Emergency Kit and never without one (16.8). */
@@ -304,7 +304,7 @@ extension Room {
   }
 
   /**
-   * Gives an account without an e-mail one, once (PUT /v2/account/email). The kit's keys are derived from the
+   * Gives an account without an e-mail one, once (PUT /v1/account/email). The kit's keys are derived from the
    * e-mail from then on, so the same request carries the kit made anew: the person types the kit's words once more,
    * they open the code under the account id and seal it again under the e-mail. The words stay the same; the sheet
    * is to be printed again, since the account is opened with the e-mail from now on. `forbidden` for an account
@@ -383,7 +383,7 @@ extension Room {
     return EmergencyKit(words: words, email: st.email, accountId: st.accountId)
   }
 
-  /** A v2 hub does not confirm e-mail addresses (spec/hub-api.md has no route for it): said as one error, nothing is sent. */
+  /** The hub does not confirm e-mail addresses (spec/hub-api.md has no route for it): said as one error, nothing is sent. */
   public func verifyEmail(code: String) async throws { throw TrommiError("not-supported", "this hub does not confirm e-mail addresses") }
   public func resendEmailCode() async throws { throw TrommiError("not-supported", "this hub does not confirm e-mail addresses") }
 
@@ -514,7 +514,7 @@ extension Room {
           let sealed = (first["sealed_copy"] as? String).flatMap({ try? unb64u($0) }) else { throw TrommiError("bad-format", "the login answer") }
     return (room, sealed, (first["challenge"] as? String).flatMap { try? unb64u($0) })
   }
-  /** Asks the hub for the kit's copy of the code (POST /v2/account/recover). One error for an unknown name and wrong words. */
+  /** Asks the hub for the kit's copy of the code (POST /v1/account/recover). One error for an unknown name and wrong words. */
   private static func kitLogin(hubURL: String, name: AccountName, keys: PasswordKeys) async throws -> JSON {
     do { return try await HubClient(hubURL: try Core.tools.canonicalHub(hubURL)).request("POST", "/account/recover", body: ["account": name.wire, "auth_key": keys.authKey], auth: false) }
     catch let h as HubError where h.code == "wrong-recovery" { throw TrommiError("wrong-recovery", "the account's name or the recovery words are wrong") }

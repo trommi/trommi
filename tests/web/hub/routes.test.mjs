@@ -41,7 +41,7 @@ test('a Chat\'s pages come newest first, a board\'s items oldest first, a chain 
   assert.deepEqual([newest.items.map(i => i.change), newest.more], [[5, 4], true])
   const older = await hub.chatItems('session', session, { before: 4, limit: 10 })
   assert.deepEqual([older.items.map(i => i.change), older.more], [[3, 2, 1], false])
-  assert.equal(received(fake, `/v2/chats/session/${hex(session)}/items`).length, 2, 'the timeline is named by 32 hex digits')
+  assert.equal(received(fake, `/v1/chats/session/${hex(session)}/items`).length, 2, 'the timeline is named by 32 hex digits')
   assert.deepEqual((await hub.chatItems('card', session)).items, [])
 
   assert.deepEqual((await hub.boardItems(board)).items.map(i => i.change), [6, 7, 8])
@@ -74,7 +74,7 @@ test('a group\'s log in pages, Commits alone, its GroupInfo by epoch, the room\'
   const rest = await hub.groupLog(room_id, { after: 4 })
   assert.deepEqual([rest.items.map(i => i.n), rest.more], [[5, 6], false])
   assert.deepEqual((await hub.groupLog(room_id, { commits_only: true })).items.map(i => [i.n, i.epoch]), [[1, 0], [3, 1], [5, 2]])
-  assert.deepEqual(received(fake, `/v2/groups/${txt(room_id)}/log`).map(r => r.query), [{ after: '0', limit: '4' }, { after: '4', limit: '200' }, { after: '0', limit: '200', kind: 'commit' }])
+  assert.deepEqual(received(fake, `/v1/groups/${txt(room_id)}/log`).map(r => r.query), [{ after: '0', limit: '4' }, { after: '4', limit: '200' }, { after: '0', limit: '200', kind: 'commit' }])
   fake.faults.add({ path: /\/log$/, answer: a => ({ ...a, items: [a.items[1], a.items[0]] }) })
   await assert.rejects(hub.groupLog(room_id), e => e.code === 'bad-answer')
   fake.faults.add({ path: /\/log$/, answer: a => ({ ...a, items: a.items.map(i => ({ ...i, group_id: txt(id(32)) })) }) })
@@ -116,13 +116,13 @@ test('KeyPackages: uploaded, claimed one each, the last-resort one when none is 
   const paged = await hub.sealedKeys(0, 1)
   assert.deepEqual([paged.rows.length, paged.more, paged.change], [1, true, keys.rows[0].change])
   assert.deepEqual((await hub.sealedKeys(paged.change)).rows.map(r => r.sealed_key), [utf8('s2')])
-  fake.faults.add({ path: '/v2/sealed-keys', answer: a => ({ ...a, change: 0 }) })
+  fake.faults.add({ path: '/v1/sealed-keys', answer: a => ({ ...a, change: 0 }) })
   await assert.rejects(hub.sealedKeys(), e => e.code === 'bad-answer', 'a cursor behind what was served')
   for (const answer of [a => ({ ...a, change: 2 ** 53 - 1, more: true }), a => ({ rows: [], links: [], change: 0, more: true }), ({ change, ...a }) => a]) {
-    fake.faults.add({ path: '/v2/sealed-keys', answer })
+    fake.faults.add({ path: '/v1/sealed-keys', answer })
     await assert.rejects(hub.sealedKeys(), e => e.code === 'bad-answer', 'a cursor that runs ahead, stalls or is missing')
   }
-  fake.faults.add({ path: '/v2/sealed-keys', answer: a => ({ ...a, rows: [...a.rows].reverse() }) })
+  fake.faults.add({ path: '/v1/sealed-keys', answer: a => ({ ...a, rows: [...a.rows].reverse() }) })
   await assert.rejects(hub.sealedKeys(), e => e.code === 'bad-answer')
 })
 
@@ -139,7 +139,7 @@ test('an invite: Offer, Request, Reveal relayed by invite id; the new device nee
   const request = { request: utf8('request'), mac: new Uint8Array(32), signature: new Uint8Array(64).fill(1) }
   const { request_hash } = await joiner.postInviteRequest(invite_id, request)
   assert.deepEqual(await joiner.postInviteRequest(invite_id, request), { request_hash })
-  assert.ok(received(fake, /^\/v2\/invites\//).filter(r => r.path.endsWith('/request')).every(r => r.device === null), 'the Request came without a token')
+  assert.ok(received(fake, /^\/v1\/invites\//).filter(r => r.path.endsWith('/request')).every(r => r.device === null), 'the Request came without a token')
 
   assert.deepEqual((await hub.getInvite(invite_id)).requests, [request])
   await hub.deleteInvite(invite_id)
@@ -166,8 +166,8 @@ test('the account: sign-up with the founding, login, the Emergency Kit, the pass
   const room_id = id(32), device = id(32), outside = client(fake, null)
   const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy() }, password = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: KDF }
   await outside.foundRoom({ group_info: utf8({ group: room_id, epoch: 0, leaves: [device] }), sealed_key: utf8('s'), account: { email: 'Ada@Example.com', kit, password } })
-  assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account).sort(), ['email', 'kit', 'password'])
-  assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account.kit).sort(), ['auth_key', 'sealed_copy'], 'a kit\'s form is not sent: it follows from the account')
+  assert.deepEqual(Object.keys(received(fake, '/v1/rooms').at(-1).body.account).sort(), ['email', 'kit', 'password'])
+  assert.deepEqual(Object.keys(received(fake, '/v1/rooms').at(-1).body.account.kit).sort(), ['auth_key', 'sealed_copy'], 'a kit\'s form is not sent: it follows from the account')
 
   const wrong = await outside.login('ada@example.com', new Uint8Array(32)).catch(e => e)
   const nobody = await outside.login('nobody@example.com', password.auth_key).catch(e => e)
@@ -175,7 +175,7 @@ test('the account: sign-up with the founding, login, the Emergency Kit, the pass
   assert.deepEqual([nobody.code, nobody.hub_message], [wrong.code, wrong.hub_message])
   assert.equal(received(fake, /\/challenge$/).length, 0, 'a wrong login is no reason to sign in to a room')
   const login = await outside.login('ada@example.com', password.auth_key)
-  assert.deepEqual(received(fake, '/v2/account/login').at(-1).body, { account: 'ada@example.com', auth_key: b64u(password.auth_key) }, 'the one field `account`')
+  assert.deepEqual(received(fake, '/v1/account/login').at(-1).body, { account: 'ada@example.com', auth_key: b64u(password.auth_key) }, 'the one field `account`')
   assert.deepEqual([login.rooms.length, login.rooms[0].room_id, login.rooms[0].sealed_copy, login.kdf, login.email], [1, room_id, password.sealed_copy, KDF, 'ada@example.com'])
   assert.match(login.account, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   assert.equal(login.rooms[0].challenge.length, 32)
@@ -221,15 +221,15 @@ test('the account: sign-up with the founding, login, the Emergency Kit, the pass
   assert.deepEqual((await hub.account()).passkeys, [])
 
   for (const answer of [a => ({ ...a, kit_copy: 'AAAA' }), a => ({ ...a, revision: -1 }), a => ({ ...a, rooms: ['x'] }), a => ({ ...a, kdf: { alg: { nested: true } } }), a => ({ ...a, account: a.account.toUpperCase() }), a => ({ ...a, account: '00000000-0000-4000-8000-000000000000' }), a => ({ ...a, kit_form: 'words' }), a => ({ ...a, email: 7 }), a => ({ ...a, user_handle: b64u(new Uint8Array(32)) })]) {
-    fake.faults.add({ path: '/v2/account', method: 'GET', answer })
+    fake.faults.add({ path: '/v1/account', method: 'GET', answer })
     await assert.rejects(hub.account(), e => e.code === 'bad-answer')
   }
   for (const answer of [a => ({ ...a, rooms: [{ ...a.rooms[0], challenge: 'AAAA' }] }), ({ account: _, ...a }) => a, a => ({ ...a, account: `{${a.account}}` })]) {
-    fake.faults.add({ path: '/v2/account/login', answer })
+    fake.faults.add({ path: '/v1/account/login', answer })
     await assert.rejects(outside.login('ada@example.com', next.auth_key), e => e.code === 'bad-answer')
   }
   for (const answer of [a => ({ ...a, account: '00000000-0000-4000-8000-000000000000' }), ({ user_handle: _, ...a }) => a, a => ({ ...a, challenge: 'AAAA' })]) {
-    fake.faults.add({ path: '/v2/account/passkey/challenge', answer })
+    fake.faults.add({ path: '/v1/account/passkey/challenge', answer })
     await assert.rejects(outside.passkeyChallenge(), e => e.code === 'bad-answer', 'a challenge whose id is not its user handle is no answer')
   }
 })
@@ -244,7 +244,7 @@ test('an account without an e-mail: made with a passkey on the challenge that na
   // a password needs an e-mail; a kit under an e-mail's salt needs one too
   await assert.rejects(outside.foundRoom({ ...founding, account: { kit, password } }), e => e.code === 'bad-email' && e.status === 400)
   await outside.foundRoom({ ...founding, account: { kit, passkey: registration(named.challenge) } })
-  assert.deepEqual(Object.keys(received(fake, '/v2/rooms').at(-1).body.account).sort(), ['kit', 'passkey'], 'no e-mail and no user handle are sent')
+  assert.deepEqual(Object.keys(received(fake, '/v1/rooms').at(-1).body.account).sort(), ['kit', 'passkey'], 'no e-mail and no user handle are sent')
 
   const hub = client(fake, room_id, device)
   const view = await hub.account()
@@ -257,10 +257,10 @@ test('an account without an e-mail: made with a passkey on the challenge that na
   const anew = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy() }
   await assert.rejects(hub.putEmail({ email: 'not an address', kit: anew, revision: 1 }), e => e.code === 'bad-email')
   await assert.rejects(hub.putEmail({ email: 'ada@example.com', kit: anew, revision: 0 }), e => e.code === 'account-changed')
-  const bare = await hub.request('PUT', '/v2/account/email', { body: { email: 'ada@example.com', revision: 1 } }).catch(e => e)
+  const bare = await hub.request('PUT', '/v1/account/email', { body: { email: 'ada@example.com', revision: 1 } }).catch(e => e)
   assert.deepEqual([bare.code, (await hub.account()).email], ['incomplete', null], 'without the kit nothing is set')
   assert.deepEqual(await hub.putEmail({ email: 'Ada@Example.com', kit: anew, revision: 1 }), { revision: 2 })
-  assert.deepEqual(received(fake, '/v2/account/email', 'PUT').at(-1).body, { email: 'Ada@Example.com', kit: { auth_key: b64u(anew.auth_key), sealed_copy: b64u(anew.sealed_copy) }, revision: 1 })
+  assert.deepEqual(received(fake, '/v1/account/email', 'PUT').at(-1).body, { email: 'Ada@Example.com', kit: { auth_key: b64u(anew.auth_key), sealed_copy: b64u(anew.sealed_copy) }, revision: 1 })
   const after = await hub.account()
   assert.deepEqual([after.email, after.kit_form, after.account, after.kit_copy], ['ada@example.com', 'email', named.account, anew.sealed_copy], 'the kit\'s form follows the account')
   assert.equal((await outside.recover('ada@example.com', anew.auth_key)).account, named.account, 'both names lead to the account')
@@ -270,10 +270,10 @@ test('an account without an e-mail: made with a passkey on the challenge that na
   assert.equal((await outside.login('ada@example.com', password.auth_key)).account, named.account)
 })
 
-test('signing out: DELETE /v2/token ends that token at once and cuts the device\'s stream; the next call signs in anew', async t => {
+test('signing out: DELETE /v1/token ends that token at once and cuts the device\'s stream; the next call signs in anew', async t => {
   const { fake, hub, signs } = await scene(t)
   await hub.signOut()
-  assert.equal(received(fake, '/v2/token').length, 0, 'a client without a token asks nothing')
+  assert.equal(received(fake, '/v1/token').length, 0, 'a client without a token asks nothing')
   await hub.desk()
   assert.deepEqual([signs.n, fake.tokens], [1, 1])
   let state = null
@@ -281,14 +281,14 @@ test('signing out: DELETE /v2/token ends that token at once and cuts the device\
   t.after(close)
   await until(() => state === 'live' && fake.streams === 1)
   await hub.signOut()
-  assert.deepEqual(received(fake, '/v2/token').map(r => [r.method, r.status]), [['DELETE', 200]])
+  assert.deepEqual(received(fake, '/v1/token').map(r => [r.method, r.status]), [['DELETE', 200]])
   assert.equal(fake.tokens, 0, 'the token is dead at the hub')
   await until(() => fake.streams === 0)
   close()
   await hub.desk()
   assert.deepEqual([signs.n >= 2, fake.tokens], [true, 1], 'a later call signs in again')
   // the hub not reached: the token is forgotten here all the same
-  fake.faults.add({ method: 'DELETE', path: '/v2/token', drop: 'before' })
+  fake.faults.add({ method: 'DELETE', path: '/v1/token', drop: 'before' })
   await assert.rejects(hub.signOut(), { code: 'offline' })
   const before = signs.n
   await hub.desk()
@@ -386,11 +386,11 @@ test('servedRoom: what a device with the code needs, in the core\'s shape, from 
   // pages: a log and sealed keys longer than one answer
   fake.faults.add({ path: /\/log$/, times: 9, answer: a => ({ items: a.items.slice(0, 1), more: a.items.length > 1 }) })
   assert.deepEqual((await reader.servedGroup(room_id)).commits, served.group.commits)
-  assert.equal(received(fake, `/v2/groups/${txt(room_id)}/log`).slice(-4).map(r => r.query.after).join(), '0,1,2,3')
+  assert.equal(received(fake, `/v1/groups/${txt(room_id)}/log`).slice(-4).map(r => r.query.after).join(), '0,1,2,3')
 
   fake.faults.clear()
   // a Commit accepted while the room is being read lies beyond the current GroupInfo and is left out
-  fake.faults.add({ path: `/v2/groups/${txt(room_id)}/info`, answer: a => ({ ...a, epoch: 3, group_info: Buffer.from('i3').toString('base64url') }) })
+  fake.faults.add({ path: `/v1/groups/${txt(room_id)}/info`, answer: a => ({ ...a, epoch: 3, group_info: Buffer.from('i3').toString('base64url') }) })
   const racing = await reader.servedGroup(room_id)
   assert.deepEqual([racing.commits.length, racing.current], [3, utf8('i3')])
 

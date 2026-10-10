@@ -53,7 +53,7 @@ const TAG_OWN: u8 = b'w';
 /// How often an envelope the hub voided for its epoch is sealed again before the sender hears of it.
 const RESEALS: u8 = 3;
 /// Where a device the hub no longer takes reads the public Commits of one of its groups, up to and including
-/// the one that removed it (spec/hub-api.md; for thirty days): `GET /v2/groups/{group}/removal?after=<n>`.
+/// the one that removed it (spec/hub-api.md; for thirty days): `GET /v1/groups/{group}/removal?after=<n>`.
 const REMOVAL_ROUTE: &str = "removal";
 /// After this many rounds in a row in which what answered was no hub of this protocol, the client stops.
 const NO_HUB_ROUNDS: u32 = 3;
@@ -805,7 +805,7 @@ impl Client {
                 let page = match self
                     .hub
                     .get(&format!(
-                        "/v2/groups/{}/{REMOVAL_ROUTE}?after={after}",
+                        "/v1/groups/{}/{REMOVAL_ROUTE}?after={after}",
                         b64(group.as_bytes())
                     ))
                     .await
@@ -946,7 +946,7 @@ impl Client {
             let ahead = self
                 .hub
                 .get(&format!(
-                    "/v2/groups/{}/chains/{}?after={own}&limit=1",
+                    "/v1/groups/{}/chains/{}?after={own}&limit=1",
                     b64(group.as_bytes()),
                     self.me.to_base64url(),
                 ))
@@ -1047,7 +1047,7 @@ impl Client {
         let info = self
             .hub
             .get(&format!(
-                "/v2/groups/{}/info?epoch={}",
+                "/v1/groups/{}/info?epoch={}",
                 b64(room_group.as_bytes()),
                 core.room.room_epoch
             ))
@@ -1254,7 +1254,7 @@ impl Client {
             let answer = self
                 .hub
                 .get(&format!(
-                    "/v2/changes?after={}&limit={CHANGES_LIMIT}",
+                    "/v1/changes?after={}&limit={CHANGES_LIMIT}",
                     core.cursor
                 ))
                 .await;
@@ -1345,8 +1345,8 @@ impl Client {
         let mut after: Option<u64> = None;
         loop {
             let path = match after {
-                Some(id) => format!("/v2/welcomes?after={id}"),
-                None => "/v2/welcomes".to_string(),
+                Some(id) => format!("/v1/welcomes?after={id}"),
+                None => "/v1/welcomes".to_string(),
             };
             let page = self.hub.get(&path).await?;
             let mut last = after;
@@ -1477,7 +1477,7 @@ impl Client {
                     if !core.asked_readmit.contains(&group) && fault.code != "replay" {
                         core.asked_readmit.push(group);
                         let body = json!({ "kind": "readmit", "group": b64(group.as_bytes()) });
-                        let _ = self.hub.post("/v2/requests", &body).await;
+                        let _ = self.hub.post("/v1/requests", &body).await;
                     }
                 }
             }
@@ -1501,7 +1501,7 @@ impl Client {
             let page = self
                 .hub
                 .get(&format!(
-                    "/v2/groups/{}/log?after={after}&limit=1000&kind=commit",
+                    "/v1/groups/{}/log?after={after}&limit=1000&kind=commit",
                     b64(group.as_bytes())
                 ))
                 .await?;
@@ -1567,7 +1567,7 @@ impl Client {
             }
             let founding = self
                 .hub
-                .get(&format!("/v2/groups/{}/info?epoch=0", b64(of.as_bytes())))
+                .get(&format!("/v1/groups/{}/info?epoch=0", b64(of.as_bytes())))
                 .await?;
             let founding = unb64(&founding, "group_info")?;
             let commits = self.commits_of(&of).await?;
@@ -1594,7 +1594,7 @@ impl Client {
         // An upload of none is answered with how many single-use ones the hub still holds.
         let held = self
             .hub
-            .put("/v2/key-packages", &json!({ "single_use": [] }))
+            .put("/v1/key-packages", &json!({ "single_use": [] }))
             .await?;
         let unused = held.get("unused").and_then(Value::as_u64).unwrap_or(0) as usize;
         let now = now_ms();
@@ -1782,7 +1782,7 @@ impl Client {
                 let _ = self
                     .hub
                     .post(
-                        &format!("/v2/groups/{}/reject", b64(group.as_bytes())),
+                        &format!("/v1/groups/{}/reject", b64(group.as_bytes())),
                         &json!({ "n": n }),
                     )
                     .await;
@@ -2108,7 +2108,7 @@ impl Client {
         loop {
             let answer = self
                 .hub
-                .get(&format!("/v2/changes?after={after}&limit={CHANGES_LIMIT}"))
+                .get(&format!("/v1/changes?after={after}&limit={CHANGES_LIMIT}"))
                 .await?;
             for item in answer
                 .get("items")
@@ -2480,7 +2480,7 @@ impl Client {
                 if !optional(4).is_null() {
                     body["welcome"] = optional(4);
                 }
-                self.hub.post("/v2/groups", &body).await?
+                self.hub.post("/v1/groups", &body).await?
             }
             OutboxKind::Commit => {
                 let mut body = json!({
@@ -2490,7 +2490,7 @@ impl Client {
                     body["welcome"] = optional(2);
                 }
                 self.hub
-                    .post(&format!("/v2/groups/{group}/commits"), &body)
+                    .post(&format!("/v1/groups/{group}/commits"), &body)
                     .await?
             }
             OutboxKind::Message | OutboxKind::RelayMessage => {
@@ -2499,7 +2499,7 @@ impl Client {
                     body["relay"] = json!(true);
                 }
                 self.hub
-                    .post(&format!("/v2/groups/{group}/messages"), &body)
+                    .post(&format!("/v1/groups/{group}/messages"), &body)
                     .await?
             }
             OutboxKind::KeyPackages => {
@@ -2508,11 +2508,11 @@ impl Client {
                 if !optional(0).is_null() {
                     body["last_resort"] = optional(0);
                 }
-                self.hub.put("/v2/key-packages", &body).await?
+                self.hub.put("/v1/key-packages", &body).await?
             }
             OutboxKind::Envelope => {
                 self.hub
-                    .post("/v2/envelopes", &json!({ "envelope": part(0) }))
+                    .post("/v1/envelopes", &json!({ "envelope": part(0) }))
                     .await?
             }
             // What only a human device or a device that holds the recovery code makes.

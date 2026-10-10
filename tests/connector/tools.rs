@@ -1,4 +1,4 @@
-//! Every tool of the connector, called over MCP on the built binary, against the real v2 hub: what the agent's
+//! Every tool of the connector, called over MCP on the built binary, against the real hub: what the agent's
 //! call puts on the board, and what the human's answer brings back as a channel event.
 mod common;
 
@@ -611,7 +611,7 @@ async fn after_a_takeover_the_first_connector_says_that_it_stopped() {
         .iter()
         .any(|(_, _, payload)| payload["text"] == "from the second machine"));
     // What becomes of the first machine's state depends on what it could verify. A hub that serves a removed
-    // device the Commits that removed it (`/v2/groups/{group}/removal`): the device checks them itself, says
+    // device the Commits that removed it (`/v1/groups/{group}/removal`): the device checks them itself, says
     // that it is retired, and its state is gone. A hub that only refuses it: it stopped, and its state stays.
     fn states(dir: &std::path::Path) -> usize {
         std::fs::read_dir(dir)

@@ -63,13 +63,13 @@ fn the_timers_do_their_work() {
 
     // the phone: a push registration and the two Live Activity tokens
     let (phone, start, activity) = ("ab".repeat(32), "cd".repeat(32), "ef".repeat(32));
-    w.ada.post(hub, "/v2/push", &json!({ "apns": { "token": phone, "key": b64(&[5u8; 32]), "environment": "production", "topic": "com.trommi.app" }, "level": "knocking" })).ok();
+    w.ada.post(hub, "/v1/push", &json!({ "apns": { "token": phone, "key": b64(&[5u8; 32]), "environment": "production", "topic": "com.trommi.app" }, "level": "knocking" })).ok();
     for (kind, token) in [("start", &start), ("activity", &activity)] {
-        w.ada.post(hub, "/v2/live-activity", &json!({ "kind": kind, "token": token, "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
+        w.ada.post(hub, "/v1/live-activity", &json!({ "kind": kind, "token": token, "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
     }
 
     // ---- the lease: the agent works; the Live Activity starts
-    agent.post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": true, "last_call_at": 1 })).ok();
+    agent.post(hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": true, "last_call_at": 1 })).ok();
     hub.eventually("the Live Activity starts", || {
         live(&start)
             .iter()
@@ -124,7 +124,7 @@ fn the_timers_do_their_work() {
         .raw(
             hub,
             "PUT",
-            &format!("/v2/files/{}", b64(&loose)),
+            &format!("/v1/files/{}", b64(&loose)),
             &[],
             b"nobody names me",
         )
@@ -173,7 +173,7 @@ fn the_timers_do_their_work() {
         .post_message(hub, &group, b"a step of the work trail", false)
         .ok();
     let bodies = |dev: &Dev| -> Vec<bool> {
-        dev.get(hub, &format!("/v2/cards/{}", hex(&id))).ok()["items"]
+        dev.get(hub, &format!("/v1/cards/{}", hex(&id))).ok()["items"]
             .as_array()
             .unwrap()
             .iter()
@@ -201,7 +201,7 @@ fn the_timers_do_their_work() {
     // the work trail went with it (30 days), the Commit stayed
     hub.eventually("the work trail is deleted", || {
         w.ada
-            .get(hub, &format!("/v2/groups/{}/log", b64(&group)))
+            .get(hub, &format!("/v1/groups/{}/log", b64(&group)))
             .ok()["items"]
             .as_array()
             .unwrap()

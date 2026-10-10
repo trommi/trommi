@@ -327,7 +327,7 @@ const product: RoomEnv = (() => {
 export const { foundRoom, openRoom, openRoomOver, joinRoom, joinWithCode } = roomsOn(product)
 
 /** The address a fresh device needs to log in to a room by hand: `<app>#r1.<hub>.<room id>`, both base64url. Its
- *  form is the app's own and older than protocol v2; it names no secret. */
+ *  form is the app's own and older than protocol v1; it names no secret. */
 export function roomLink(hub_url: string, room_id: string, app = 'https://app.trommi.com/login'): string {
   return `${app}#r1.${b64u(new TextEncoder().encode(hubAddress(hub_url)))}.${b64u(unhex(room_id))}`
 }

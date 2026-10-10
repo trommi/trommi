@@ -213,7 +213,7 @@ pub fn readable(c: &Connection, auth: &Auth, file_id: &[u8; 16]) -> Res<FileRow>
     }
 }
 
-/// `DELETE /v2/files/{file_id}`: its uploader or a human device.
+/// `DELETE /v1/files/{file_id}`: its uploader or a human device.
 pub fn delete(x: &Ctx, auth: &Auth, file_id: &[u8; 16], fx: &mut Effects) -> Res<Value> {
     auth.member()?;
     let row =
@@ -285,7 +285,7 @@ pub fn sweep_parts(dir: &Path) -> usize {
 
 // ---- Share links (11.5)
 
-/// `POST /v2/shares`: its maker (the session's agent or helper device, or a human device) registers the id, the
+/// `POST /v1/shares`: its maker (the session's agent or helper device, or a human device) registers the id, the
 /// hash of the link's secret, the file and an expiry. The file belongs to an open Artifact.
 pub fn share(
     x: &Ctx,
@@ -353,7 +353,7 @@ pub fn share(
     Ok(json!({ "share_id": b64(share_id), "expires_at": expires_at }))
 }
 
-/// `DELETE /v2/shares/{share_id}`: revoked by its maker or a human device of its room.
+/// `DELETE /v1/shares/{share_id}`: revoked by its maker or a human device of its room.
 pub fn unshare(x: &Ctx, auth: &Auth, share_id: &[u8; 16]) -> Res<Value> {
     auth.member()?;
     let n = x
@@ -366,7 +366,7 @@ pub fn unshare(x: &Ctx, auth: &Auth, share_id: &[u8; 16]) -> Res<Value> {
     Ok(json!({ "deleted": true }))
 }
 
-/// `GET /v2/shares/{share_id}` with the link's secret: the room and file to serve. Every refusal is the same
+/// `GET /v1/shares/{share_id}` with the link's secret: the room and file to serve. Every refusal is the same
 /// answer, and the stored hash is compared in constant time.
 pub fn open_share(
     c: &Connection,

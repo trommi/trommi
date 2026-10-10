@@ -27,7 +27,7 @@
 // Every step prints ok or FAIL with what the page showed (the screen's visible text, its error line), and at the
 // end what would explain a failure that only production has: Content-Security-Policy violations (page and worker),
 // requests that failed or were blocked (status, the browser's reason, a CORS error), whether the live stream
-// (/v2/stream) opened and stayed open for 20 s and how soon its first bytes came (a buffering proxy holds them
+// (/v1/stream) opened and stayed open for 20 s and how soon its first bytes came (a buffering proxy holds them
 // back), the service worker's state, storage errors. The tested build (`<app>/gen/build.txt`) is printed first, the
 // number of requests made to the hub last.
 import crypto from 'node:crypto'
@@ -68,7 +68,7 @@ export async function runRemote({ app, hub, shots = null }) {
   const profiles = {}
   const profile = async name => (profiles[name] ??= await openProfile(name, seen)).page
   const closeProfile = async name => { await profiles[name]?.close().catch(() => {}); delete profiles[name] }
-  const hubPath = q => { const u = new URL(q.url); return (u.origin === hub || u.origin === app) && u.pathname.startsWith('/v2/') }
+  const hubPath = q => { const u = new URL(q.url); return (u.origin === hub || u.origin === app) && u.pathname.startsWith('/v1/') }
   let stopped = null, waited = false, n = 0
   const limited = from => seen.requests.slice(from).filter(q => q.status === 429)
 
@@ -163,7 +163,7 @@ export async function runRemote({ app, hub, shots = null }) {
     await step('a second browser profile JOINS BY LINK (Settings → Invite a Device): both show the same six emoji, "They match", it lands on the Desk, live', 'B', async () => {
       const A = await profile('A'), B = await profile('B')
       const link = await ui.deviceInvite(A)
-      r.check(/\/join#v2\./.test(link), 'Show Code gives a join link, its secret after the #', link.replace(/#.*/, '#…'))
+      r.check(/\/join#v1\./.test(link), 'Show Code gives a join link, its secret after the #', link.replace(/#.*/, '#…'))
       await B.go(link)
       await B.until("document.getElementById('check-code') || document.querySelector('.ob-error.is-shown')", 'six emoji on the new device, or an error line', 60000)
       await A.until("document.querySelector('#set-device[data-state=confirm_code] .check-emoji') || document.querySelector('#set-device .room-error')?.textContent.trim()", 'six emoji on the inviting device, or an error line', 60000)
@@ -259,16 +259,16 @@ export async function runRemote({ app, hub, shots = null }) {
         await ui.openSettingsPage(P, 'devices')
         await P.until("document.querySelectorAll('.room-device').length >= 3", `at least three devices listed on ${P.name}`, 40000).catch(() => {})
         const listed = await P.js("return document.querySelectorAll('.room-device').length")
-        // (logging out removes no device under protocol v2: the first profile's device of before the log out is still
+        // (logging out removes no device under protocol v1: the first profile's device of before the log out is still
         // listed, so four rows are expected when the second profile joined: that one, the first profile's new device,
         // the second profile's and the third's)
         r.check(listed >= 3, `${P.name} lists the devices`, listed)
         r.note(`${P.name} lists ${listed} devices`)
       }
     })
-    await step('the live stream (/v2/stream) opened and stays open for 20 s', 'B', async () => {
-      const streams = () => seen.requests.filter(q => new URL(q.url).pathname === '/v2/stream' && q.status === 200 && q.ended === null && q.failed === null)
-      if (!streams().length) throw new Error(`no open stream (requests to /v2/stream: ${seen.requests.filter(q => q.url.includes('/v2/stream')).map(q => `${q.status ?? 'no answer'}${q.failed ? ` ${q.failed}` : ''}${q.ended ? ' ended' : ''}`).join(', ') || 'none'})`)
+    await step('the live stream (/v1/stream) opened and stays open for 20 s', 'B', async () => {
+      const streams = () => seen.requests.filter(q => new URL(q.url).pathname === '/v1/stream' && q.status === 200 && q.ended === null && q.failed === null)
+      if (!streams().length) throw new Error(`no open stream (requests to /v1/stream: ${seen.requests.filter(q => q.url.includes('/v1/stream')).map(q => `${q.status ?? 'no answer'}${q.failed ? ` ${q.failed}` : ''}${q.ended ? ' ended' : ''}`).join(', ') || 'none'})`)
       const watched = streams()
       const wait = Math.max(0, STREAM_OPEN_MS - (Date.now() - Math.max(...watched.map(q => q.at))))
       await sleep(wait)
@@ -371,7 +371,7 @@ export async function runRemote({ app, hub, shots = null }) {
   }
   const asked = seen.requests.filter(hubPath), kinds = new Map()
   for (const q of asked) { const k = `${q.method} ${new URL(q.url).pathname.replace(/[A-Za-z0-9_-]{20,}/g, '…').replace(/\/\d+(?=\/|$)/g, '/N')}`; kinds.set(k, (kinds.get(k) ?? 0) + 1) }
-  r.say(`requests to the hub (/v2/): ${asked.length}, ${asked.filter(q => q.status === 429).length} of them answered rate-limited · ${[...kinds].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, c]) => `${k} ×${c}`).join(', ')}`)
+  r.say(`requests to the hub (/v1/): ${asked.length}, ${asked.filter(q => q.status === 429).length} of them answered rate-limited · ${[...kinds].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, c]) => `${k} ×${c}`).join(', ')}`)
   r.say(`accounts made on ${hub}: ${accounts} (e2e-…@example.invalid; they stay there: nothing in the app deletes an account)`)
   return r.finish() ? 1 : 0
 }

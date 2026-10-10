@@ -100,8 +100,8 @@ test('create account (password): one founding with the account in it; the kit an
 
   // the hub got ONE write: the founding, with the sign-up body made for the room id the founding names (and then
   // the device, signed in, read the id the hub gave the account)
-  assert.deepEqual(s.fake.requests.filter(r => !/\/(challenge|tokens)$/.test(r.path)).map(r => `${r.method} ${r.path}`), ['POST /v2/rooms', 'GET /v2/account'])
-  const body = s.posts('/v2/rooms')[0].body.account
+  assert.deepEqual(s.fake.requests.filter(r => !/\/(challenge|tokens)$/.test(r.path)).map(r => `${r.method} ${r.path}`), ['POST /v1/rooms', 'GET /v1/account'])
+  const body = s.posts('/v1/rooms')[0].body.account
   assert.deepEqual(Object.keys(body).sort(), ['email', 'kit', 'password'])
   assert.equal(body.email, s.email)
   assert.deepEqual(Object.keys(body.kit).sort(), ['auth_key', 'sealed_copy'], 'a kit\'s form is not sent')
@@ -154,12 +154,12 @@ test('create account: an e-mail that has an account is account-exists, and nothi
 test('create account (passkey, with an e-mail): the registration and the kit; the id is the one the challenge named', { skip }, async t => {
   const s = await scene(t)
   const { kit, passkey, code, room } = await withPasskey(s)
-  const body = s.posts('/v2/rooms')[0].body.account
+  const body = s.posts('/v1/rooms')[0].body.account
   assert.deepEqual(Object.keys(body).sort(), ['email', 'kit', 'passkey'], 'no user handle is sent: the hub names the id')
   assert.deepEqual(Object.keys(body.passkey).sort(), ['attestation_object', 'client_data_json', 'sealed_copy', 'transports'])
   assert.deepEqual(body.passkey.transports, ['internal', 'hybrid'])
   assert.deepEqual([kit.email, kit.form, accountAt(s).kit_form, kit.account], [s.email, 'email', 'email', accountAt(s).account])
-  assert.equal(s.posts('/v2/account', 'GET').length, 0, 'the id was in hand before the account existed')
+  assert.equal(s.posts('/v1/account', 'GET').length, 0, 'the id was in hand before the account existed')
   const wrap = core.passkeyWrapKey(passkey.prf, room, passkey.credential_id)
   assert.equal(hex(core.openRecoveryCode(wrap, room, 'passkey', passkey.credential_id, unb64u(body.passkey.sealed_copy))), code)
   assert.equal(hex(core.openRecoveryCode(core.kitKeys(s.email, kit.words).wrapKey, room, 'kit', null, unb64u(body.kit.sealed_copy))), code)
@@ -176,7 +176,7 @@ test('create account (passkey): no prf output is no-prf, an id that is not the c
   for (const account of [named.account.toUpperCase(), named.account.replaceAll('-', ''), s.email, '', undefined]) await refused(make({ account }), account ? 'bad-argument' : 'bad-account')
   await refused(make({ email: 'ada at example' }), 'bad-email')
   assert.deepEqual(stage.calls, [])
-  assert.equal(s.posts('/v2/rooms').length, 0)
+  assert.equal(s.posts('/v1/rooms').length, 0)
   const handed = passkey.prf.slice()
   await make({ passkey: { ...passkey, prf: handed } }).then(r => secretText(r.kit.words))
   assert.ok(zeroed(handed), 'the prf bytes handed in are zeroed')
@@ -187,7 +187,7 @@ test('create account (passkey): transports the hub would refuse are left out', {
   const named = await challenge(s), passkey = passkeyFor(named.challenge)
   const { kit } = await A.createAccountWithPasskey({ ...s.device(), email: s.email, account: named.account, passkey: { ...passkey, transports: ['usb', 'NFC', 'smart-card', 'x'.repeat(17), 'ble2', ...Array(10).fill('hybrid')] } })
   secretText(kit.words)
-  assert.deepEqual(s.posts('/v2/rooms')[0].body.account.passkey.transports, ['usb', 'smart-card', 'hybrid', 'hybrid', 'hybrid', 'hybrid', 'hybrid', 'hybrid'])
+  assert.deepEqual(s.posts('/v1/rooms')[0].body.account.passkey.transports, ['usb', 'smart-card', 'hybrid', 'hybrid', 'hybrid', 'hybrid', 'hybrid', 'hybrid'])
 })
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -255,7 +255,7 @@ test('a hostile hub at login: a swapped copy, another room id, a cheaper key der
   const theirs = await withPassword(other)
   const their = (await other.outside().login(other.email, core.passwordKeys(other.email, PASSWORD).authKey)).rooms[0]
   resetStage({ fake: s.fake })
-  const login = (answer => s.fake.faults.add({ method: 'POST', path: '/v2/account/login', answer }))
+  const login = (answer => s.fake.faults.add({ method: 'POST', path: '/v1/account/login', answer }))
 
   // the kit's copy of the same code in the place of the password's
   const kit_copy = accountAt(s).kit_copy
@@ -280,7 +280,7 @@ test('a hostile hub at login: a swapped copy, another room id, a cheaper key der
   login(json => ({ ...json, kdf: { alg: 'argon2id', v: 1, m: 8, t: 1, p: 1 } }))
   await A.loginWithPassword({ ...s.device('f'), account: s.email, password: PASSWORD })
   assert.equal(s.last('joinWithCode').code, mine.code)
-  assert.equal(s.posts('/v2/account/login').at(-1).body.auth_key, b64u(core.passwordKeys(s.email, PASSWORD).authKey))
+  assert.equal(s.posts('/v1/account/login').at(-1).body.auth_key, b64u(core.passwordKeys(s.email, PASSWORD).authKey))
 })
 
 test('a room.ts that cannot join with the code yet (the binding of today): core-missing, in the errors\' usual shape', { skip }, async t => {
@@ -311,7 +311,7 @@ test('forgot password (kit words + new password): the ONE request of 8.7 with a 
   assert.equal(s.last('replaceRecoveryCode'), undefined, 'no second step: the recovery replaces the code itself')
   // at the hub: nothing of the account is written but in the recovery's finish, with a new kit and the password anew
   const writes = s.fake.requests.filter(r => r.method !== 'GET' && /account\/password|recovery-code|recovery\/[^/]+\/finish/.test(r.path)).map(r => r.path.replace(/rooms\/[^/]+/, 'rooms/x').replace(/recovery\/[^/]+\//, 'recovery/y/'))
-  assert.deepEqual(writes, ['/v2/rooms/x/recovery/y/finish'])
+  assert.deepEqual(writes, ['/v1/rooms/x/recovery/y/finish'])
   const sent = s.fake.requests.find(r => /\/finish$/.test(r.path)).body.account
   assert.deepEqual([Object.keys(sent).sort(), Object.keys(sent.kit).sort(), Object.keys(sent.password).sort()], [['kit', 'password'], ['auth_key', 'sealed_copy'], ['auth_key', 'kdf', 'sealed_copy']])
   assert.notEqual(kit.words, old_kit.words)
@@ -362,7 +362,7 @@ test('forgot password: wrong words, words of no kit, a weak new password', { ski
   assert.equal(s.fake.requests.length, before, 'neither reached the hub')
   assert.equal(s.last('joinWithCode'), undefined)
   // the hub hands out the password's copy for the kit's key: it does not open as the kit's
-  s.fake.faults.add({ method: 'POST', path: '/v2/account/recover', answer: json => ({ ...json, rooms: json.rooms.map(r => ({ ...r, sealed_copy: accountAt(s).password_copy })) }) })
+  s.fake.faults.add({ method: 'POST', path: '/v1/account/recover', answer: json => ({ ...json, rooms: json.rooms.map(r => ({ ...r, sealed_copy: accountAt(s).password_copy })) }) })
   await refused(A.resetPassword({ ...s.device('new'), account: s.email, words: kit.words, new_password: OTHER }), 'wrong-recovery')
 })
 
@@ -417,7 +417,7 @@ test('the kit, then a new passkey, and the code cannot be replaced: the passkey 
   assert.equal(await opensWith(s, { words: kit.words }), code)
   assert.equal(await opensWith(s, { password: PASSWORD }), code)
   // the passkey could not be taken back (the hub is not reached): the error says that it may be a way in
-  s.fake.faults.add({ method: 'DELETE', path: /^\/v2\/account\/passkeys\//, drop: 'before', times: 5 })
+  s.fake.faults.add({ method: 'DELETE', path: /^\/v1\/account\/passkeys\//, drop: 'before', times: 5 })
   const again = passkeyFor(await A.passkeyChallengeFor(client))
   const kept = await refused(A.addPasskey(client, { unlock: { words: kit.words }, passkey: { ...again, prf: again.prf.slice() } }), 'core-missing')
   assert.equal(kept.passkey_kept, true)
@@ -523,9 +523,9 @@ test('change password: the old one stops working, the new one opens the same cod
   const { client, kit, code } = await withPassword(s)
   await refused(A.changePassword(client, { current: secretText('not my password at all'), next: OTHER }), 'wrong-login')
   await refused(A.changePassword(client, { current: PASSWORD, next: secretText('short') }), 'weak-password')
-  assert.equal(s.posts('/v2/account/password', 'PUT').length, 0)
+  assert.equal(s.posts('/v1/account/password', 'PUT').length, 0)
   assert.deepEqual(await A.changePassword(client, { current: PASSWORD, next: OTHER }), { kit: null })
-  const put = s.posts('/v2/account/password', 'PUT')[0].body
+  const put = s.posts('/v1/account/password', 'PUT')[0].body
   assert.deepEqual([Object.keys(put).sort(), put.revision], [['auth_key', 'kdf', 'revision', 'sealed_copy'], 1])
   assert.equal(await opensWith(s, { password: OTHER }), code)
   await refused(opensWith(s, { password: PASSWORD }), 'wrong-login')
@@ -555,7 +555,7 @@ test('add a passkey (password given again), log in with it, remove it', { skip }
 test('add a passkey: a wrong way in adds none; a passkey that is not the account\'s; one without a prf output', { skip }, async t => {
   const s = await scene(t)
   const { client } = await withPassword(s)
-  const posts = () => s.posts('/v2/account/passkeys').length
+  const posts = () => s.posts('/v1/account/passkeys').length
   const fresh = async () => passkeyFor(await A.passkeyChallengeFor(client))
   await refused(A.addPasskey(client, { unlock: { password: secretText('wrong wrong wrong wrong') }, passkey: await fresh() }), 'wrong-login')
   await refused(A.addPasskey(client, { unlock: unlockWith(passkeyFor('x')), passkey: await fresh() }), 'wrong-login')
@@ -632,7 +632,7 @@ test('account-changed: a change from another device between reading the account 
   if (done[0].status === 'rejected') assert.equal(await opensWith(s, { words: kit.words }), code)
   secretText((await A.makeEmergencyKit(client, { password })).words)
   // a hub that hands out an old revision: the write is refused, not applied
-  s.fake.faults.add({ method: 'GET', path: '/v2/account', answer: json => ({ ...json, revision: json.revision - 1 }) })
+  s.fake.faults.add({ method: 'GET', path: '/v1/account', answer: json => ({ ...json, revision: json.revision - 1 }) })
   await refused(A.changePassword(client, { current: password, next: secretText('yet another long password') }), 'account-changed')
   assert.equal(await opensWith(s, { password }), code)
 })
@@ -640,7 +640,7 @@ test('account-changed: a change from another device between reading the account 
 test('a hostile hub in Settings: a cheaper key derivation is bad-kdf and nothing is derived; a swapped copy does not open', { skip }, async t => {
   const s = await scene(t)
   const { client } = await withPassword(s)
-  const view = answer => s.fake.faults.add({ method: 'GET', path: '/v2/account', answer })
+  const view = answer => s.fake.faults.add({ method: 'GET', path: '/v1/account', answer })
   view(json => ({ ...json, kdf: { alg: 'argon2id', v: 1, m: 8, t: 1, p: 1 } }))
   const started = performance.now()
   await refused(A.checkUnlock(client, { password: PASSWORD }), 'bad-kdf')
@@ -649,7 +649,7 @@ test('a hostile hub in Settings: a cheaper key derivation is bad-kdf and nothing
   await refused(A.checkUnlock(client, { password: PASSWORD }), 'wrong-login')
   view(json => ({ ...json, kit_copy: json.password_copy }))
   await refused(A.makeEmergencyKit(client, { words: [...secrets.texts].findLast(x => x.split(' ').length === 12) }), 'wrong-recovery')
-  assert.equal(s.posts('/v2/account/kit', 'PUT').length, 0)
+  assert.equal(s.posts('/v1/account/kit', 'PUT').length, 0)
 })
 
 test('a hub that hands out an OLD sealed copy: the code it opens is not the room\'s now, and nothing is sealed anew with it', { skip }, async t => {
@@ -661,8 +661,8 @@ test('a hub that hands out an OLD sealed copy: the code it opens is not the room
   const new_code = s.last('replaceRecoveryCode').new_code
   secretBytes(unhex(new_code))
   // the account as it is now, but with the copies of before the replacement: authentic, and obsolete
-  const stale = () => s.fake.faults.add({ method: 'GET', path: '/v2/account', answer: json => ({ ...json, password_copy: old.password_copy, kit_copy: old.kit_copy }) })
-  const writes = () => s.fake.requests.filter(r => r.method !== 'GET' && /^\/v2\/account/.test(r.path) && !/challenge$/.test(r.path)).length
+  const stale = () => s.fake.faults.add({ method: 'GET', path: '/v1/account', answer: json => ({ ...json, password_copy: old.password_copy, kit_copy: old.kit_copy }) })
+  const writes = () => s.fake.requests.filter(r => r.method !== 'GET' && /^\/v1\/account/.test(r.path) && !/challenge$/.test(r.path)).length
   const before = writes()
   stale(); await refused(A.changePassword(client, { current: PASSWORD, next: OTHER }), 'wrong-recovery')
   stale(); await refused(A.makeEmergencyKit(client, { password: PASSWORD }), 'wrong-recovery')
@@ -683,7 +683,7 @@ test('the code is not replaced over an account that changed meanwhile (a passwor
   // password. (Staged: the change is made first, and this device's first read is answered as it was before it.)
   const was = structuredClone(accountAt(s))
   await A.changePassword(other, { current: PASSWORD, next: OTHER })
-  s.fake.faults.add({ method: 'GET', path: '/v2/account', answer: json => ({ ...json, revision: was.revision, password_copy: was.password_copy }) })
+  s.fake.faults.add({ method: 'GET', path: '/v1/account', answer: json => ({ ...json, revision: was.revision, password_copy: was.password_copy }) })
   const replacing = A.replaceRecoveryCode(client, { password: PASSWORD })
   const e = await refused(replacing, 'account-changed')
   assert.equal(e.name, 'AccountError')
@@ -705,7 +705,7 @@ test('a room without an account: the status is null, the ways in are no-account,
   await refused(A.addAccount(client, { email: s.email, password: PASSWORD, recovery_code: 'not a code' }), 'bad-recovery-code')
   // a well-formed code that is not this room's would make an account whose copies open nothing here
   await refused(A.addAccount(client, { email: s.email, password: PASSWORD, recovery_code: secretText(core.formatRecoveryCode(core.generateRecoveryCode())) }), 'bad-recovery-code')
-  assert.equal(s.posts('/v2/account').length, 0)
+  assert.equal(s.posts('/v1/account').length, 0)
   await refused(A.addAccount(client, { email: s.email, password: secretText('short'), recovery_code: core.formatRecoveryCode(unhex(code)) }), 'weak-password')
   const { kit } = await A.addAccount(client, { email: ` ${s.email.toUpperCase()} `, password: PASSWORD, recovery_code: secretText(core.formatRecoveryCode(unhex(code))).toLowerCase() })
   secretText(kit.words)
@@ -762,7 +762,7 @@ async function opensById(s, account, words) {
 test('create account with a passkey and NO e-mail: no e-mail is sent, the kit is made under the id the challenge named', { skip }, async t => {
   const s = await scene(t)
   const { client, kit, passkey, named, code } = await withoutEmail(s)
-  const body = s.posts('/v2/rooms')[0].body.account
+  const body = s.posts('/v1/rooms')[0].body.account
   assert.deepEqual([Object.keys(body).sort(), Object.keys(body.kit).sort()], [['kit', 'passkey'], ['auth_key', 'sealed_copy']])
   assert.deepEqual(kit, { words: kit.words, email: null, account: named.account, form: 'id' })
   const st = await A.accountStatus(client)
@@ -775,7 +775,7 @@ test('create account with a passkey and NO e-mail: no e-mail is sent, the kit is
     const n = await challenge(again), p = passkeyFor(n.challenge)
     const made = await A.createAccountWithPasskey({ ...again.device(), email, account: n.account, passkey: p })
     secretText(made.kit.words)
-    assert.deepEqual([made.kit.email, made.kit.form, Object.keys(again.posts('/v2/rooms')[0].body.account).sort()], [null, 'id', ['kit', 'passkey']])
+    assert.deepEqual([made.kit.email, made.kit.form, Object.keys(again.posts('/v1/rooms')[0].body.account).sort()], [null, 'id', ['kit', 'passkey']])
   }
 })
 
@@ -790,7 +790,7 @@ test('the kit of an account without e-mail: the id as typed opens it, the device
   const typed = ` ${named.account.toUpperCase().replaceAll('-', ' ')} `
   const { client } = await A.recoverWithKit({ ...s.device('new'), account: typed, words: kit.words })
   assert.deepEqual([s.last('joinWithCode').room_id, s.last('joinWithCode').code], [hex(room), code])
-  assert.equal(s.posts('/v2/account/recover').at(-1).body.account, named.account, 'the hub is asked with the id in its one form')
+  assert.equal(s.posts('/v1/account/recover').at(-1).body.account, named.account, 'the hub is asked with the id in its one form')
   await refused(A.setPassword(client, { unlock: { words: kit.words }, next: OTHER }), 'needs-email')
   const { passkey, added } = await addPasskey(client, { words: kit.words })
   secretText(added.kit.words)
@@ -809,10 +809,10 @@ test('an e-mail added later: once, with the SAME words sealed anew under the e-m
   await refused(A.setPassword(client, { unlock: unlockWith(passkey), next: PASSWORD }), 'needs-email')
   await refused(A.setEmail(client, { email: 'no address', words: kit.words }), 'bad-email')
   await refused(A.setEmail(client, { email: s.email, words: secretText(core.generateKitWords()) }), 'wrong-recovery')
-  assert.equal(s.posts('/v2/account/email', 'PUT').length, 0, 'words that are not the kit\'s set nothing')
+  assert.equal(s.posts('/v1/account/email', 'PUT').length, 0, 'words that are not the kit\'s set nothing')
   const again = await A.setEmail(client, { email: ` ${s.email.toUpperCase()} `, words: kit.words.toUpperCase().replaceAll(' ', '\n') })
   assert.deepEqual(again, { words: kit.words, email: s.email, account: named.account, form: 'email' }, 'the same words; the sheet opens with the e-mail from now on')
-  const put = s.posts('/v2/account/email', 'PUT').at(-1).body
+  const put = s.posts('/v1/account/email', 'PUT').at(-1).body
   assert.deepEqual([Object.keys(put).sort(), put.email, put.revision, Object.keys(put.kit).sort()], [['email', 'kit', 'revision'], s.email, 1, ['auth_key', 'sealed_copy']])
   const st = await A.accountStatus(client)
   assert.deepEqual([st.email, st.kit_form, st.account], [s.email, 'email', named.account])
@@ -822,7 +822,7 @@ test('an e-mail added later: once, with the SAME words sealed anew under the e-m
   await refused(opensById(s, named.account, kit.words), 'wrong-recovery')
   await A.recoverWithKit({ ...s.device('x'), account: s.email, words: kit.words })
   const e = await refused(A.setEmail(client, { email: `other-${s.email}`, words: kit.words }), 'email-set')
-  assert.equal(s.posts('/v2/account/email', 'PUT').length, 1)
+  assert.equal(s.posts('/v1/account/email', 'PUT').length, 1)
   void e
   assert.deepEqual(await A.setPassword(client, { unlock: unlockWith(passkey), next: PASSWORD }), { kit: null })
   assert.equal(await opensWith(s, { password: PASSWORD }), code)
@@ -845,25 +845,25 @@ test('a hostile hub and the account\'s id: an answer for another account, a chal
   const { client, kit, passkey, named } = await withoutEmail(s)
   const other = '0f8fad5b-d9cb-469f-a165-70867728950e'
   // the kit's way back, answered as another account
-  s.fake.faults.add({ method: 'POST', path: '/v2/account/recover', answer: json => ({ ...json, account: other }) })
+  s.fake.faults.add({ method: 'POST', path: '/v1/account/recover', answer: json => ({ ...json, account: other }) })
   await refused(A.recoverWithKit({ ...s.device('a'), account: named.account, words: kit.words }), 'wrong-recovery')
   // a usernameless login: the passkey's own user handle is the account's id; an answer for another account is none
   const assertion = () => challenge(s).then(c => ({ ...assertionOf(passkey, c.challenge), user_handle: named.user_handle.slice() }))
-  s.fake.faults.add({ method: 'POST', path: '/v2/account/passkey/login', answer: json => ({ ...json, account: other }) })
+  s.fake.faults.add({ method: 'POST', path: '/v1/account/passkey/login', answer: json => ({ ...json, account: other }) })
   await refused(A.loginWithPasskey({ ...s.device('b'), assertion: await assertion() }), 'wrong-login')
   assert.equal(s.last('joinWithCode'), undefined, 'nothing was joined')
   await A.loginWithPasskey({ ...s.device('c'), assertion: await assertion() })
   // a challenge for a new passkey that names another account than this room's
   const consistent = { account: other, user_handle: b64u(unhex(other.replaceAll('-', ''))) }
-  s.fake.faults.add({ method: 'POST', path: '/v2/account/passkeys/challenge', answer: json => ({ ...json, ...consistent }) })
+  s.fake.faults.add({ method: 'POST', path: '/v1/account/passkeys/challenge', answer: json => ({ ...json, ...consistent }) })
   await refused(A.passkeyChallengeFor(client), 'bad-passkey')
-  s.fake.faults.add({ method: 'POST', path: '/v2/account/passkeys/challenge', answer: json => ({ ...json, account: other }) })
+  s.fake.faults.add({ method: 'POST', path: '/v1/account/passkeys/challenge', answer: json => ({ ...json, account: other }) })
   await refused(A.passkeyChallengeFor(client), 'bad-answer')
   // an e-mail account: the kit's way back answered with another address
   const mail = await scene(t)
   resetStage({ fake: mail.fake })
   const made = await withPassword(mail)
-  mail.fake.faults.add({ method: 'POST', path: '/v2/account/recover', answer: json => ({ ...json, email: `x-${json.email}` }) })
+  mail.fake.faults.add({ method: 'POST', path: '/v1/account/recover', answer: json => ({ ...json, email: `x-${json.email}` }) })
   await refused(A.recoverWithKit({ ...mail.device('a'), account: mail.email, words: made.kit.words }), 'wrong-recovery')
 })
 

@@ -15,7 +15,7 @@ import Foundation
 public enum Compat {
   /** The body schema this version writes and reads (codec.mjs SCHEMA_VERSION); a higher one is "newer_schema". */
   public static let SCHEMA_VERSION = 2
-  /** The hub protocol this version speaks (the routes under /v2). */
+  /** The hub protocol this version speaks (the routes under /v1). */
   public static let PROTOCOL_VERSION = 2
   public static let CONTENT_TYPES: Set<String> = ["message", "strokes", "erase", "move", "send_away", "selection_sent"]
   public static let OBJECT_TYPES: Set<String> = ["card", "note", "artifact"]

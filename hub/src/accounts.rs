@@ -716,7 +716,7 @@ pub fn parse_id(text: &str) -> Option<[u8; 16]> {
     Some(out)
 }
 
-/// A password signs in under an e-mail: an account without one sets it first (`PUT /v2/account/email`).
+/// A password signs in under an e-mail: an account without one sets it first (`PUT /v1/account/email`).
 fn needs_email(c: &Connection, account: i64) -> Res<()> {
     let has: bool = c
         .prepare_cached("SELECT email IS NOT NULL FROM accounts WHERE account_id = ?1")?
@@ -731,7 +731,7 @@ fn needs_email(c: &Connection, account: i64) -> Res<()> {
     }
 }
 
-/// `PUT /v2/account/email`: an account that has no e-mail is given one. It is set once: the keys of a password,
+/// `PUT /v1/account/email`: an account that has no e-mail is given one. It is set once: the keys of a password,
 /// and of the kit of an account that has one, are derived from it; the kit is made anew in the same request.
 pub fn put_email(c: &Connection, room: &Room, v: &Value, now: u64, pre: &Prehashed) -> Res<Value> {
     let account = account_of(c, room)?;
@@ -869,7 +869,7 @@ impl Accounts {
                 c.prepare_cached("DELETE FROM passkeys WHERE account_id = ?1")?.execute([account])?;
             }
             // a passkey made anew: registered as any passkey of this account, on the account's challenge
-            // (`POST /v2/account/passkeys/challenge`, which names the id the passkey carries)
+            // (`POST /v1/account/passkeys/challenge`, which names the id the passkey carries)
             (Value::Null, p) if !p["attestation_object"].is_null() => {
                 let scopes = [Some((account, revision_of(c, account)?))];
                 let (registered, copy, transports) = self.register_passkey_of(p, &scopes, now)?;

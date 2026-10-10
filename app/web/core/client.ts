@@ -2,7 +2,7 @@
 // by the names the views know, timelines, files, invites, sessions, push. Contract with the views: README.md "The
 // model", "Human actions", "Change notifications", and worker-protocol.ts `CALLS`.
 //
-// The division of labour under protocol v2 (spec/v1.md):
+// The division of labour under protocol v1 (spec/v1.md):
 //   the core (core-api.ts)   every rule and every key: groups, chains, object state, who may write what
 //   engine.ts                owns the device: outbox pump, catch-up in the hub's order, the live stream, upkeep
 //   model.ts                 turns what the core accepted into the model
@@ -679,7 +679,7 @@ export class Client {
 
   /**
    * Scribble Board items: strokes, erase, move, send_away on `desk/<board>`. `selection_sent` (the views' "send what
-   * I selected to an agent") is two writes under v2: a Chat message with the picture to that session, and
+   * I selected to an agent") is two writes: a Chat message with the picture to that session, and
    * `send_away` of the shapes on the board they came from.
    */
   async sendStrokes({ timeline_id, content_type = 'strokes', recipient_device_id = null, ...fields }: { timeline_id: string; content_type?: string; recipient_device_id?: string | null; [field: string]: unknown }): Promise<Sent> {

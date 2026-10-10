@@ -1,4 +1,4 @@
-// app/web/core/account.ts against the REAL v2 hub's binary: the sign-up inside a room's founding, the login routes
+// app/web/core/account.ts against the REAL hub's binary: the sign-up inside a room's founding, the login routes
 // with their slow hash, the sealed copies as the hub stores and hands them out, a new password, a new kit, the
 // revision, and passkeys under the hub's own WebAuthn checks (a passkey in software, authenticator.mjs).
 //
@@ -110,7 +110,7 @@ test('the account against the real hub', { skip }, async t => {
     // this device's hub client is made to read the account as it was one revision ago
     const stale = async (input, init) => {
       const answer = await fetch(input, init)
-      if (!String(input).endsWith('/v2/account') || (init?.method ?? 'GET') !== 'GET') return answer
+      if (!String(input).endsWith('/v1/account') || (init?.method ?? 'GET') !== 'GET') return answer
       const json = await answer.json()
       return new Response(JSON.stringify({ ...json, revision: json.revision - 1 }), { status: answer.status, headers: { 'content-type': 'application/json' } })
     }

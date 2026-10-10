@@ -3,7 +3,7 @@ name = "trommi-hub"
 version = "0.0.0"
 edition.workspace = true
 publish.workspace = true
-description = "The Trommi hub for protocol v2: MLS delivery service and store. Holds no key, reads no content."
+description = "The Trommi hub for protocol v1: MLS delivery service and store. Holds no key, reads no content."
 
 [lib]
 name = "trommi_hub"

@@ -134,7 +134,7 @@ final class RealHubTests: XCTestCase {
     XCTAssertEqual(made.kit.words.split(separator: " ").count, 12)
     XCTAssertTrue(device.outbox().isEmpty)
 
-    // POST /v2/rooms/{room}/tokens with the signed challenge: a token, and the hub's word for this device.
+    // POST /v1/rooms/{room}/tokens with the signed challenge: a token, and the hub's word for this device.
     let role = try await room.hub.signIn()
     XCTAssertEqual(role, "human")
     let report = try await room.sync()
@@ -169,7 +169,7 @@ final class RealHubTests: XCTestCase {
     _ = try await room.sync()
     let base = try device.groups().first?.epoch ?? 0
 
-    // KeyPackages: the room published what the core made when it caught up (PUT /v2/key-packages); an empty PUT
+    // KeyPackages: the room published what the core made when it caught up (PUT /v1/key-packages); an empty PUT
     // answers with how many the hub still holds, with that count nothing more is due, and a claim hands one out.
     // (Asked with a count of 0 the core would make a second full set, which the hub refuses with `too-many`: no
     // refusal for good by the core's table, so that entry would wait in front of everything else.)
@@ -183,7 +183,7 @@ final class RealHubTests: XCTestCase {
     XCTAssertEqual(claimed.map(\.device), [device.id])
     XCTAssertFalse(claimed[0].keyPackage.isEmpty)
 
-    // A Commit: POST /v2/groups/{group}/commits. The hub's answer merges nothing; the outbox reads the changes
+    // A Commit: POST /v1/groups/{group}/commits. The hub's answer merges nothing; the outbox reads the changes
     // after it, where the Commit comes back and is merged (`flush` waits for that): the device's group then
     // stands where the hub's does.
     XCTAssertNotNil(try device.update(group: room.roomId, forced: true, nowMs: nowMs()))
@@ -338,7 +338,7 @@ final class RealHubTests: XCTestCase {
     let hub = try HubClient(hubURL: hubURL, room: roomId, signer: try tools.recoverySigner(code: code))
     try await hub.signIn()
     let room = b64u(roomId)
-    // POST /v2/rooms/{room}/recovery: from here on the room takes nothing else for ten minutes.
+    // POST /v1/rooms/{room}/recovery: from here on the room takes nothing else for ten minutes.
     let opened = try await hub.request("POST", "/rooms/\(room)/recovery")
     let recovery = try XCTUnwrap(opened["recovery_id"] as? String)
     let reader = ServedByHub(hub: hub)
@@ -348,7 +348,7 @@ final class RealHubTests: XCTestCase {
     let plan = try device.recoveryPlanFinish(code, served: read.end)
     XCTAssertEqual(plan.removals.map(\.group), [roomId])
     XCTAssertEqual(plan.removals.first?.devices, [lost])
-    // (the lost device stored nothing: GET /v2/groups/{group}/chains/{sender} is empty, its Cut is 0 and zeros)
+    // (the lost device stored nothing: GET /v1/groups/{group}/chains/{sender} is empty, its Cut is 0 and zeros)
     let chain = try await hub.chain(group: roomId, sender: lost, after: 0)
     XCTAssertEqual((chain["items"] as? [Any])?.count ?? 0, 0)
     try device.codeCheckStart(code, served: read.start)

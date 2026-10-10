@@ -1196,7 +1196,7 @@ fn collect(rows: &mut rusqlite::Rows, limit: i64, pruned: bool) -> Res<(Vec<Valu
     Ok((items, false))
 }
 
-/// `GET /v2/desk`: the open objects with their current version, every writer's newest value per register, and
+/// `GET /v1/desk`: the open objects with their current version, every writer's newest value per register, and
 /// the groups, in what the asker may read.
 pub fn desk(c: &Connection, auth: &Auth) -> Res<Value> {
     auth.member()?;
@@ -1312,7 +1312,7 @@ fn timeline_group(c: &Connection, auth: &Auth, table: &str, key: &[u8]) -> Res<O
     Ok(Some(group))
 }
 
-/// `GET /v2/chats/{timeline}/items?before=&limit=`: a Chat's envelopes, newest first.
+/// `GET /v1/chats/{timeline}/items?before=&limit=`: a Chat's envelopes, newest first.
 pub fn chat_items(
     c: &Connection,
     auth: &Auth,
@@ -1341,7 +1341,7 @@ pub fn chat_items(
     Ok(json!({ "items": items, "more": more }))
 }
 
-/// `GET /v2/boards/{board}?after_change=`: the board's items after the given change, oldest first (10.3).
+/// `GET /v1/boards/{board}?after_change=`: the board's items after the given change, oldest first (10.3).
 pub fn board_items(
     c: &Connection,
     auth: &Auth,
@@ -1370,7 +1370,7 @@ pub fn board_items(
     Ok(json!({ "items": items, "more": more }))
 }
 
-/// `GET /v2/cards/{object}?after=&limit=` and its siblings: every envelope of the object in the order of their
+/// `GET /v1/cards/{object}?after=&limit=` and its siblings: every envelope of the object in the order of their
 /// change numbers, pruned ones in pruned form; `more` when the answer was cut short.
 pub fn object_envelopes(
     c: &Connection,
@@ -1411,7 +1411,7 @@ pub fn object_envelopes(
     }))
 }
 
-/// `GET /v2/groups/{group}/chains/{sender}?after=&limit=`: a sender's envelopes in pruned form, by `seq`; those
+/// `GET /v1/groups/{group}/chains/{sender}?after=&limit=`: a sender's envelopes in pruned form, by `seq`; those
 /// beyond its Cut marked `cut` (9.0.5, 9.0.10, 10.3).
 pub fn chain(
     c: &Connection,
@@ -1453,7 +1453,7 @@ pub fn chain(
 /// and the cursor to go on from.
 pub const CHANGES_WINDOW: i64 = 20_000;
 
-/// `GET /v2/changes?after=&limit=`: everything the asker may see with a change number above `after`, in the
+/// `GET /v1/changes?after=&limit=`: everything the asker may see with a change number above `after`, in the
 /// hub's one order across groups (5.4.1): log entries and envelopes. First the numbers and sizes of what is
 /// visible are read (two integers a row, filtered and limited in SQL), then only the items that fit the limit
 /// and the answer's byte budget are loaded. The cursor never skips an item the asker may see.

@@ -22,7 +22,7 @@ pub struct Config {
     pub origins: Vec<String>,
     pub trust_proxy_header: bool,
     pub min_client: Option<String>,
-    /// when set, `POST /v2/rooms` needs it in `x-found-token`
+    /// when set, `POST /v1/rooms` needs it in `x-found-token`
     pub found_token: Option<String>,
     /// who may found a room: `open` (anyone, within the limits), `token` (whoever brings `HUB_FOUND_TOKEN`),
     /// `closed` (nobody)

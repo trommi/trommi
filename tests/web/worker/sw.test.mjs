@@ -27,15 +27,15 @@ function answers(fetchListener, path, { method = 'GET', mode = 'cors', origin = 
 
 test('the hub\'s API on the app\'s own origin is left to the network: the stream, the reads, the writes', async () => {
   const on = await handler()
-  for (const path of ['/v2/stream', '/v2/stream?after=12', '/v2/changes?after=0', '/v2/rooms/abc/challenge', '/v2/account'])
+  for (const path of ['/v1/stream', '/v1/stream?after=12', '/v1/changes?after=0', '/v1/rooms/abc/challenge', '/v1/account'])
     assert.equal(answers(on, path), false, path)
-  assert.equal(answers(on, '/v2/stream', { mode: 'navigate' }), false, 'even as a navigation')
-  assert.equal(answers(on, '/v2/envelopes', { method: 'POST' }), false)
+  assert.equal(answers(on, '/v1/stream', { mode: 'navigate' }), false, 'even as a navigation')
+  assert.equal(answers(on, '/v1/envelopes', { method: 'POST' }), false)
 })
 
 test('a hub on another origin is not touched', async () => {
   const on = await handler()
-  assert.equal(answers(on, '/v2/stream', { origin: 'https://hub.example' }), false)
+  assert.equal(answers(on, '/v1/stream', { origin: 'https://hub.example' }), false)
 })
 
 test('the app\'s files and pages are answered; any other address on the origin is not', async () => {

@@ -20,7 +20,7 @@ fn recovery_token(hub: &TestHub, room: &[u8; 32], recovery: &Recovery) -> Dev {
 fn group_info(hub: &TestHub, asker: &Dev, group: &[u8]) -> Vec<u8> {
     unb64(
         asker
-            .get(hub, &format!("/v2/groups/{}/info", b64(group)))
+            .get(hub, &format!("/v1/groups/{}/info", b64(group)))
             .ok()["group_info"]
             .as_str()
             .unwrap(),
@@ -41,7 +41,7 @@ fn link(room: &[u8; 32], new: &Recovery) -> Vec<u8> {
 
 fn epochs(hub: &TestHub, asker: &Dev, room: &[u8; 32]) -> Vec<(String, u64, usize)> {
     asker
-        .get(hub, &format!("/v2/rooms/{}/groups", b64(room)))
+        .get(hub, &format!("/v1/rooms/{}/groups", b64(room)))
         .ok()
         .as_array()
         .unwrap()
@@ -65,7 +65,7 @@ fn a_device_with_the_code_joins_from_outside_and_nobody_else_does() {
     let rec = recovery_token(&w.hub, &room, &w.recovery);
     let base = group_info(&w.hub, &rec, &room);
     let now = w.ada.room_now();
-    let path = format!("/v2/groups/{}/commits", b64(&room));
+    let path = format!("/v1/groups/{}/commits", b64(&room));
 
     // a stolen device key alone opens no group: an external commit without the recovery authorisation
     let mut thief = Dev::new();
@@ -137,7 +137,7 @@ fn a_device_with_the_code_joins_from_outside_and_nobody_else_does() {
     // every reader of the log gets the join together with its RecoveryAuth
     let log = w
         .ada
-        .get(&w.hub, &format!("/v2/groups/{}/log", b64(&room)))
+        .get(&w.hub, &format!("/v1/groups/{}/log", b64(&room)))
         .ok();
     let join = log["items"].as_array().unwrap().last().unwrap();
     assert_eq!(join["recovery_auth"], b64(&auth));
@@ -157,10 +157,10 @@ fn a_device_with_the_code_joins_from_outside_and_nobody_else_does() {
         &w.recovery.hpke_public,
         true,
     );
-    let session_path = format!("/v2/groups/{}/commits", b64(&group));
+    let session_path = format!("/v1/groups/{}/commits", b64(&group));
     // an agent device (in the room's state, but no human device) does not join a session from outside
     let mut second = w.enrol_agent();
-    second.lease = second.post(&w.hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 })).ok()["generation"].as_u64();
+    second.lease = second.post(&w.hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 })).ok()["generation"].as_u64();
     let now2 = w.ada.room_now();
     let _ = now2;
     dana.post(&w.hub, &session_path, &commit_json(&out, &key, Some(&auth)))
@@ -231,34 +231,34 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
     w.ada
         .post(
             &w.hub,
-            &format!("/v2/rooms/{}/recovery", b64(&room)),
+            &format!("/v1/rooms/{}/recovery", b64(&room)),
             &json!({}),
         )
         .refused(403, "forbidden");
     let opened = rec
         .post(
             &w.hub,
-            &format!("/v2/rooms/{}/recovery", b64(&room)),
+            &format!("/v1/rooms/{}/recovery", b64(&room)),
             &json!({}),
         )
         .ok();
     rec.post(
         &w.hub,
-        &format!("/v2/rooms/{}/recovery", b64(&room)),
+        &format!("/v1/rooms/{}/recovery", b64(&room)),
         &json!({}),
     )
     .refused(429, "too-many");
     let base_path = format!(
-        "/v2/rooms/{}/recovery/{}",
+        "/v1/rooms/{}/recovery/{}",
         b64(&room),
         opened["recovery_id"].as_str().unwrap()
     );
     // the recovery key may ask for the account's passkey challenge (a passkey made anew, 8.6): this room has no
     // account; an agent device may not ask at all
-    rec.post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+    rec.post(&w.hub, "/v1/account/passkeys/challenge", &json!({}))
         .refused(404, "not-found");
     agent
-        .post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+        .post(&w.hub, "/v1/account/passkeys/challenge", &json!({}))
         .refused(403, "forbidden");
     // the room takes nothing else while it runs
     let locked = w.ada.send(&w.hub, &room, &register(&random(), "x"));
@@ -415,12 +415,12 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
         published
     );
     // that key does nothing else any more
-    rec.get(&w.hub, "/v2/sealed-keys")
+    rec.get(&w.hub, "/v1/sealed-keys")
         .refused(403, "not-member");
     sign_in_with(&w.hub, &room, &w.recovery.sign, None).refused(403, "not-member");
     // the lost devices are out; the agent device stayed; the new device is the room's human device
-    w.ada.get(&w.hub, "/v2/desk").refused(403, "not-member");
-    bea.get(&w.hub, "/v2/desk").refused(403, "not-member");
+    w.ada.get(&w.hub, "/v1/desk").refused(403, "not-member");
+    bea.get(&w.hub, "/v1/desk").refused(403, "not-member");
     neo.sign_in(&w.hub, &room).ok();
     // 8.7: after publication the new device asks for that answer under its own token too; no other device does
     assert_eq!(
@@ -440,7 +440,7 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
         ]
     );
     assert!(neo
-        .get(&w.hub, &format!("/v2/rooms/{}/groups", b64(&room)))
+        .get(&w.hub, &format!("/v1/rooms/{}/groups", b64(&room)))
         .ok()
         .as_array()
         .unwrap()
@@ -451,7 +451,7 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
         .get(
             &w.hub,
             &format!(
-                "/v2/changes?after={}&limit=100",
+                "/v1/changes?after={}&limit=100",
                 published["first_change"].as_i64().unwrap() - 1
             ),
         )
@@ -469,7 +469,7 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
         neo.get(
             &w.hub,
             &format!(
-                "/v2/chats/session/{}/items",
+                "/v1/chats/session/{}/items",
                 trommi_hub::util::hex(&session)
             )
         )
@@ -481,7 +481,7 @@ fn a_recovery_is_published_whole_at_finish_and_nothing_of_it_shows_before() {
     );
     neo.send(&w.hub, &room, &register(&random(), "back")).ok();
     let links = recovery_token(&w.hub, &room, &new_recovery)
-        .get(&w.hub, "/v2/sealed-keys")
+        .get(&w.hub, "/v1/sealed-keys")
         .ok();
     assert_eq!(links["links"].as_array().unwrap().len(), 1);
     assert!(links["rows"].as_array().unwrap().len() >= 6);
@@ -501,12 +501,12 @@ fn a_dropped_recovery_leaves_the_room_as_it_was() {
     let opened = rec
         .post(
             &w.hub,
-            &format!("/v2/rooms/{}/recovery", b64(&room)),
+            &format!("/v1/rooms/{}/recovery", b64(&room)),
             &json!({}),
         )
         .ok();
     let base_path = format!(
-        "/v2/rooms/{}/recovery/{}",
+        "/v1/rooms/{}/recovery/{}",
         b64(&room),
         opened["recovery_id"].as_str().unwrap()
     );
@@ -537,7 +537,7 @@ fn a_dropped_recovery_leaves_the_room_as_it_was() {
     rec.post(
         &w.hub,
         &format!(
-            "/v2/rooms/{}/recovery/{}/commits",
+            "/v1/rooms/{}/recovery/{}/commits",
             b64(&room),
             b64(&random::<16>())
         ),
@@ -546,7 +546,7 @@ fn a_dropped_recovery_leaves_the_room_as_it_was() {
     .refused(404, "not-found");
     rec.call(&w.hub, "DELETE", &base_path, &Value::Null).ok();
     // the room is free again and stands where it stood
-    w.ada.get(&w.hub, "/v2/desk").ok();
+    w.ada.get(&w.hub, "/v1/desk").ok();
     assert_eq!(
         epochs(&w.hub, &w.ada, &room),
         vec![("room".to_string(), 0, 1)]
@@ -556,7 +556,7 @@ fn a_dropped_recovery_leaves_the_room_as_it_was() {
     let mut me = Dev::new();
     me.token = w.ada.token.clone();
     w.ada
-        .put(&w.hub, "/v2/key-packages", &json!({ "single_use": [] }))
+        .put(&w.hub, "/v1/key-packages", &json!({ "single_use": [] }))
         .ok();
 }
 
@@ -584,7 +584,7 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
         .post_commit(&w.hub, &out, &key)
         .refused(400, "incomplete");
     // on its route: a link for another key; the sealed key to the old key
-    let path = format!("/v2/rooms/{}/recovery-code", b64(&room));
+    let path = format!("/v1/rooms/{}/recovery-code", b64(&room));
     let out = w.ada.commit(&room, &change, now);
     let key = w.ada.sealed_key(
         &room,
@@ -635,10 +635,10 @@ fn the_code_is_replaced_in_one_request_or_not_at_all() {
     assert_eq!(w.ada.post(&w.hub, &path, &code_body(&body)).ok(), accepted);
     // the replaced recovery key's token ended at once; the new key signs in and finds the link
     old_token
-        .get(&w.hub, "/v2/sealed-keys")
+        .get(&w.hub, "/v1/sealed-keys")
         .refused(403, "not-member");
     let reader = recovery_token(&w.hub, &room, &new);
-    let keys = reader.get(&w.hub, "/v2/sealed-keys").ok();
+    let keys = reader.get(&w.hub, "/v1/sealed-keys").ok();
     assert_eq!(keys["links"][0]["room_epoch"], 1);
     assert_eq!(keys["rows"].as_array().unwrap().len(), 2);
     // from here on keys are sealed to the new recovery key
@@ -724,7 +724,7 @@ fn a_recovery_may_hold_one_human_device_over_the_limit() {
     // outside a recovery: the second human device is refused
     rec.post(
         &w.hub,
-        &format!("/v2/groups/{}/commits", b64(&room)),
+        &format!("/v1/groups/{}/commits", b64(&room)),
         &commit_json(&join, &key, Some(&auth)),
     )
     .refused(429, "too-many");
@@ -732,7 +732,7 @@ fn a_recovery_may_hold_one_human_device_over_the_limit() {
     let opened = rec
         .post(
             &w.hub,
-            &format!("/v2/rooms/{}/recovery", b64(&room)),
+            &format!("/v1/rooms/{}/recovery", b64(&room)),
             &json!({}),
         )
         .ok();
@@ -741,7 +741,7 @@ fn a_recovery_may_hold_one_human_device_over_the_limit() {
     rec.post(
         &w.hub,
         &format!(
-            "/v2/rooms/{}/recovery/{}/commits",
+            "/v1/rooms/{}/recovery/{}/commits",
             b64(&room),
             opened["recovery_id"].as_str().unwrap()
         ),

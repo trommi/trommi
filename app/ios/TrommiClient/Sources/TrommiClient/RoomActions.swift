@@ -539,7 +539,7 @@ extension Room {
     emit(ch)
     return (t.items.count - was, t.hasMore)
   }
-  /** The bodies of items above the window that are here as headers only. Since v2 the catch-up brings bodies: nothing to do. */
+  /** The bodies of items above the window that are here as headers only. The catch-up brings bodies: nothing to do. */
   @discardableResult public func loadNewer(_ key: String) async throws -> Int { 0 }
 
   // ---- links for people outside the room (spec/v1.md 11.5) -----------------------------------------------

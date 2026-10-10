@@ -427,7 +427,7 @@ impl Apns {
         })
     }
 
-    /// 15.2: a fixed text, and `nonce(12) ‖ AEAD.Seal(key, nonce, "trommi apns v2", { room_id, change, urgency,
+    /// 15.2: a fixed text, and `nonce(12) ‖ AEAD.Seal(key, nonce, "trommi apns v1", { room_id, change, urgency,
     /// ticket })` under the 32 random bytes the app registered.
     pub fn alert(
         &self,
@@ -509,7 +509,7 @@ impl Apns {
     }
 }
 
-const APNS_AAD: &[u8] = b"trommi apns v2";
+const APNS_AAD: &[u8] = b"trommi apns v1";
 
 pub fn seal_for_phone(key: &[u8; 32], plain: &[u8]) -> Option<Vec<u8>> {
     let nonce = random::<12>();

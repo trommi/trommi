@@ -1,4 +1,4 @@
-// Hub.swift: the hub's routes as a client needs them (spec/hub-api.md, normative). Every route is under /v2; bodies
+// Hub.swift: the hub's routes as a client needs them (spec/hub-api.md, normative). Every route is under /v1; bodies
 // are JSON; byte strings are base64url; an MLS message, a GroupInfo, a KeyPackage and an envelope travel as their
 // bytes in one string. A refusal is { error, message } with the status of spec/v1.md section 16.
 //
@@ -78,7 +78,7 @@ public final class HubClient: @unchecked Sendable {
   // ---- one request ---------------------------------------------------------------------------------------
 
   private func url(_ path: String, _ query: [String: String]) -> URL {
-    var comps = URLComponents(string: "\(hubURL)/v2\(path)")!
+    var comps = URLComponents(string: "\(hubURL)/v1\(path)")!
     if !query.isEmpty { comps.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) } }
     return comps.url!
   }
@@ -98,7 +98,7 @@ public final class HubClient: @unchecked Sendable {
     let (data, _) = try await exchange(method, path, query: query, body: body.map { try JSONSerialization.data(withJSONObject: $0) }, contentType: "application/json", auth: auth, headers: headers)
     return HubClient.json(data) ?? [:]
   }
-  /** An answer that is a JSON array (GET /v2/welcomes, /v2/rooms/{room}/groups). */
+  /** An answer that is a JSON array (GET /v1/welcomes, /v1/rooms/{room}/groups). */
   public func requestList(_ method: String, _ path: String, query: [String: String] = [:]) async throws -> [JSON] {
     let (data, _) = try await exchange(method, path, query: query, body: nil, contentType: nil, auth: true, headers: [:])
     return (FastJSON.parse([UInt8](data))?.any as? [Any])?.compactMap { $0 as? JSON } ?? []
@@ -161,7 +161,7 @@ public final class HubClient: @unchecked Sendable {
   private var shut = false
   public func forgetToken() { setToken(nil, expiresAt: 0) }
   /**
-   * Signing out (spec/hub-api.md): `DELETE /v2/token` ends the token this client holds, at once, and the hub cuts
+   * Signing out (spec/hub-api.md): `DELETE /v1/token` ends the token this client holds, at once, and the hub cuts
    * the streams opened with it. Best effort: no token, no request; an answer is not waited on for anything.
    */
   public func signOut() async {
@@ -358,7 +358,7 @@ public final class HubClient: @unchecked Sendable {
 
   /**
    * This device's push registrations, as the Devices page shows them: device id (hex) to how many of each kind and
-   * the level. A v2 hub tells a device only its own (GET /v2/push), so other devices have no entry.
+   * the level. A hub tells a device only its own (GET /v1/push), so other devices have no entry.
    */
   public func pushStates() async throws -> [String: (web: Int, apns: Int, level: String)] {
     guard let me = signer?.id else { return [:] }
@@ -371,7 +371,7 @@ public final class HubClient: @unchecked Sendable {
   // ---- the hub's version ---------------------------------------------------------------------------------
 
   /**
-   * Which client versions the hub serves; nil when it does not say (a v2 hub has no such route yet and answers
+   * Which client versions the hub serves; nil when it does not say (the hub has no such route yet and answers
    * every request of a client that is too old with 426 client-too-old).
    */
   public func versionInfo() async throws -> HubVersionInfo? {

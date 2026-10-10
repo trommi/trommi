@@ -1,4 +1,4 @@
-// Catch-up (`GET /v2/changes`) against the fake hub: pages in the hub's order, and a hub that serves anything else.
+// Catch-up (`GET /v1/changes`) against the fake hub: pages in the hub's order, and a hub that serves anything else.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { scene, received, envelope, utf8, txt } from './helpers.mjs'
@@ -26,7 +26,7 @@ test('pages come in the hub\'s order, each from the cursor of the one before, to
   assert.deepEqual(seen.map(i => i.change), [1, 2, 3, 4, 5, 6, 7, 8, 10], 'change 9 is the Commit\'s SealedKey: read on its own route')
   assert.deepEqual(seen.map(i => i.kind), [...Array(7).fill('envelope'), 'commit', 'message'])
   assert.equal(cursor, fake.state.rooms.get(txt(room_id)).change)
-  assert.deepEqual(received(fake, '/v2/changes').map(r => r.query), [{ after: '0', limit: '4' }, { after: '4', limit: '4' }, { after: '8', limit: '4' }])
+  assert.deepEqual(received(fake, '/v1/changes').map(r => r.query), [{ after: '0', limit: '4' }, { after: '4', limit: '4' }, { after: '8', limit: '4' }])
   const commit = seen[7]
   assert.deepEqual([commit.group, commit.n, commit.epoch, commit.sender, commit.recovery_auth], [room_id, 1, 0, device, null])
   assert.deepEqual(commit.bytes, utf8('c1'))
@@ -64,7 +64,7 @@ for (const [what, answer] of Object.entries(hostile)) {
   test(`a hub that serves ${what} is refused whole`, async t => {
     const { fake, hub, room_id, device } = await scene(t)
     await fill(hub, room_id, device, 3)
-    fake.faults.add({ path: '/v2/changes', answer })
+    fake.faults.add({ path: '/v1/changes', answer })
     await assert.rejects(hub.changes(0, 5), e => e.code === 'bad-answer' && e.transient && !e.voided)
     assert.equal((await hub.changes(0, 5)).items.length, 3, 'the honest answer is taken')
   })

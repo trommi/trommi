@@ -97,7 +97,7 @@ async fn answer_invite(
         let offer = open
             .open_call(
                 reqwest::Method::GET,
-                &format!("/v2/invites/{invite_id}"),
+                &format!("/v1/invites/{invite_id}"),
                 None,
             )
             .await?;
@@ -141,7 +141,7 @@ async fn answer_invite(
         let signed = &request.signed_request;
         open.open_call(
             reqwest::Method::POST,
-            &format!("/v2/invites/{invite_id}/request"),
+            &format!("/v1/invites/{invite_id}/request"),
             Some(&json!({
                 "request": b64(&signed.request), "mac": b64(&signed.mac),
                 "signature": b64(&signed.signature),
@@ -154,7 +154,7 @@ async fn answer_invite(
             match open
                 .open_call(
                     reqwest::Method::GET,
-                    &format!("/v2/invites/{invite_id}/reveal"),
+                    &format!("/v1/invites/{invite_id}/reveal"),
                     None,
                 )
                 .await
@@ -189,7 +189,7 @@ async fn answer_invite(
         // group's log brings it (12.1.6).
         let hub = hub_for(&vault, link.hub.as_str(), link.room_id)?;
         loop {
-            match hub.get("/v2/welcomes").await {
+            match hub.get("/v1/welcomes").await {
                 Ok(_) => return Ok(()),
                 Err(fault) if fault.code == "not-member" || crate::hub::is_transient(&fault) => {}
                 Err(fault) => return Err(fault),

@@ -363,7 +363,7 @@ impl App {
                 .db
                 .read(|c| crate::content::envelope_at(c, &ev.room, change, false))
             {
-                // the item as `/v2/changes` gives it
+                // the item as `/v1/changes` gives it
                 Ok(Some(mut item)) => {
                     item["kind"] = json!("envelope");
                     item
@@ -945,7 +945,7 @@ pub fn check_lease(c: &rusqlite::Connection, auth: &Auth, given: Option<u64>, no
     }
 }
 
-/// `POST /v2/link` (13.7): a new process id acquires the lease with a generation one above the last, valid 60 s;
+/// `POST /v1/link` (13.7): a new process id acquires the lease with a generation one above the last, valid 60 s;
 /// the same process renews it and keeps its generation; a renewal under an older generation fails.
 pub fn link(x: &Ctx, auth: &Auth, v: &Value) -> Res<Value> {
     if auth.who != Who::Agent {

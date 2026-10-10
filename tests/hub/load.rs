@@ -201,25 +201,25 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
         assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
         r.body.len()
     };
-    let head = ada.get(hub, "/v2/desk").ok()["change"].as_i64().unwrap();
+    let head = ada.get(hub, "/v1/desk").ok()["change"].as_i64().unwrap();
     let mut slowest = Duration::ZERO;
     let mut check = |d: Duration| slowest = slowest.max(d);
     check(timed(
         "load the Desk (open objects, registers, groups)",
         30,
-        || size(ada.get(hub, "/v2/desk")),
+        || size(ada.get(hub, "/v1/desk")),
     ));
     check(timed("page a Chat: the newest 50", 30, || {
         size(ada.get(
             hub,
-            &format!("/v2/chats/session/{}/items?limit=50", hex(session)),
+            &format!("/v1/chats/session/{}/items?limit=50", hex(session)),
         ))
     }));
     check(timed("page a Chat: 50 before the middle", 30, || {
         size(ada.get(
             hub,
             &format!(
-                "/v2/chats/session/{}/items?limit=50&before={}",
+                "/v1/chats/session/{}/items?limit=50&before={}",
                 hex(session),
                 head / 2
             ),
@@ -232,7 +232,7 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
             size(ada.get(
                 hub,
                 &format!(
-                    "/v2/boards/{}?after_change={}",
+                    "/v1/boards/{}?after_change={}",
                     hex(&boards[1]),
                     head - 1000
                 ),
@@ -242,10 +242,10 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
     check(timed(
         "catch up: 200 changes after a cursor in the middle",
         30,
-        || size(ada.get(hub, &format!("/v2/changes?after={}&limit=200", head / 2))),
+        || size(ada.get(hub, &format!("/v1/changes?after={}&limit=200", head / 2))),
     ));
     check(timed("catch up: the last 200 changes", 30, || {
-        size(ada.get(hub, &format!("/v2/changes?after={}&limit=200", head - 200)))
+        size(ada.get(hub, &format!("/v1/changes?after={}&limit=200", head - 200)))
     }));
     check(timed(
         "catch up as an agent device (one session of twenty)",
@@ -253,7 +253,7 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
         || {
             size(agents[7].get(
                 hub,
-                &format!("/v2/changes?after={}&limit=200", (head - 4000).max(0)),
+                &format!("/v1/changes?after={}&limit=200", (head - 4000).max(0)),
             ))
         },
     ));
@@ -264,7 +264,7 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
             size(ada.get(
                 hub,
                 &format!(
-                    "/v2/groups/{}/chains/{}?after=10&limit=500",
+                    "/v1/groups/{}/chains/{}?after=10&limit=500",
                     b64(group),
                     b64(&agents[7].id())
                 ),
@@ -272,15 +272,15 @@ fn many_envelopes_and_the_main_queries_stay_fast() {
         },
     ));
     check(timed("a group's log", 30, || {
-        size(ada.get(hub, &format!("/v2/groups/{}/log", b64(group))))
+        size(ada.get(hub, &format!("/v1/groups/{}/log", b64(group))))
     }));
     if let Some((_, id, _)) = cards.last() {
         check(timed("every envelope of a card", 30, || {
-            size(ada.get(hub, &format!("/v2/cards/{}", hex(id))))
+            size(ada.get(hub, &format!("/v1/cards/{}", hex(id))))
         }));
     }
     check(timed("the list of groups", 30, || {
-        size(ada.get(hub, &format!("/v2/rooms/{}/groups", b64(&room))))
+        size(ada.get(hub, &format!("/v1/rooms/{}/groups", b64(&room))))
     }));
 
     // ---- the plans of the main queries: each must use its index, none may scan the envelopes

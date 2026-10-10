@@ -16,9 +16,9 @@ import FoundationNetworking
 final class PocketRoutes: URLProtocol, @unchecked Sendable {
   /// The hub the routes answer from, and what they answer the account's routes with.
   nonisolated(unsafe) static var hub = PocketHub()
-  /// GET /v2/account, as the test made it; nil: the room has no account.
+  /// GET /v1/account, as the test made it; nil: the room has no account.
   nonisolated(unsafe) static var account: JSON?
-  /// POST /v2/account/login and /v2/account/recover: the answer by the `auth_key` sent.
+  /// POST /v1/account/login and /v1/account/recover: the answer by the `auth_key` sent.
   nonisolated(unsafe) static var logins: [String: JSON] = [:]
   /// Every request, in order: "METHOD /path".
   nonisolated(unsafe) static var asked: [String] = []

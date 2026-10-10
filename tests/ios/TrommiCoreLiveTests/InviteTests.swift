@@ -45,7 +45,7 @@ final class InviteTests: XCTestCase {
     // The invite: the link is for the new device alone, and names the hub and the room.
     let opened = try a.inviteOpen(role: .human, session: nil, app: "https://app.example", hub: "https://hub.example", nowMs: nowMs())
     XCTAssertEqual(opened.inviteId.count, 16)
-    XCTAssertTrue(opened.link.hasPrefix("https://app.example/join#v2."))
+    XCTAssertTrue(opened.link.hasPrefix("https://app.example/join#v1."))
     XCTAssertGreaterThan(opened.expiresAt, nowMs())
     let asked = try b.joinRequest(link: opened.link, offer: opened.offer, nowMs: nowMs())
     XCTAssertEqual(asked.inviteId, opened.inviteId)

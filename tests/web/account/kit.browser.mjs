@@ -40,10 +40,10 @@ steps.push(['"Open Trommi", then a reload at once, before the hub took that writ
   await ui.live(P)
   await sleep(1500)
   // (the write that clears the kit is slow to reach the hub, as on a real line: the page is loaded again before it)
-  ctx.fake.faults.add({ method: 'POST', path: '/v2/envelopes', delay_ms: 3000, times: 5 })
+  ctx.fake.faults.add({ method: 'POST', path: '/v1/envelopes', delay_ms: 3000, times: 5 })
   // (and the hub is slow to answer what the page asks first after the reload, as production is: the page shows its
   //  cache meanwhile)
-  for (const path of ['/v2/desk', '/v2/changes']) ctx.fake.faults.add({ method: 'GET', path, delay_ms: 1200, times: 3 })
+  for (const path of ['/v1/desk', '/v1/changes']) ctx.fake.faults.add({ method: 'GET', path, delay_ms: 1200, times: 3 })
   // (every moment counts: the page itself notes when the kit's dialog opens, however briefly)
   await P.session.send('Page.addScriptToEvaluateOnNewDocument', { source: "window.__kitOpened = []; new MutationObserver(() => { const d = document.querySelector('#kit-gate'); if (d?.open && !window.__kitOpened.length) window.__kitOpened.push(Math.round(performance.now())) }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] })" })
   await ui.leaveKit(P)

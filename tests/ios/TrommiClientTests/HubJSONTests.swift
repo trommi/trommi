@@ -28,10 +28,10 @@ final class HubJSONTests: XCTestCase {
   }
   /// The two lines of an agent's invite, as the web's page has them, the link in the second.
   func testTheAgentsTwoLines() {
-    let link = "https://app.trommi.com/join#v2.a.b.c.d"
+    let link = "https://app.trommi.com/join#v1.a.b.c.d"
     XCTAssertEqual(agentConnectSteps(link: link).map(\.command), [
       "curl -fsSL https://raw.githubusercontent.com/trommi/trommi/main/install.sh | sh",
-      "/trommi:connect 'https://app.trommi.com/join#v2.a.b.c.d'"])
+      "/trommi:connect 'https://app.trommi.com/join#v1.a.b.c.d'"])
     XCTAssertEqual(agentConnectSteps(link: link).map(\.title), ["Once per machine", "In your project folder, start claude (or codex) and paste:"])
     XCTAssertEqual(agentConnectSteps(link: link)[0].note, "Sets up Claude Code and Codex if installed.")
   }

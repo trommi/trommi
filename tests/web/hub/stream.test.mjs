@@ -1,4 +1,4 @@
-// The live stream (`GET /v2/stream`) against the fake hub: events in the hub's order, resume without loss or
+// The live stream (`GET /v1/stream`) against the fake hub: events in the hub's order, resume without loss or
 // duplicate, backoff, a new sign-in after a 401, and a hub that sends what it must not.
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -61,7 +61,7 @@ test('a dropped connection: the stream resumes after the last change it handed o
   await writer.postEnvelope(envelope(room_id, device, 1))
   await writer.postEnvelope(envelope(room_id, device, 2))
   await until(() => heard.changes().length === 2)
-  fake.faults.add({ path: '/v2/stream', drop: 'before', times: 2 })
+  fake.faults.add({ path: '/v1/stream', drop: 'before', times: 2 })
   fake.dropStreams()
   await writer.postEnvelope(envelope(room_id, device, 3))        // while nobody listens
   await writer.postEnvelope(envelope(room_id, device, 4))
@@ -69,7 +69,7 @@ test('a dropped connection: the stream resumes after the last change it handed o
   await writer.postEnvelope(envelope(room_id, device, 5))
   await until(() => heard.changes().length === 5)
   assert.deepEqual(heard.changes(), [1, 2, 3, 4, 5])
-  assert.deepEqual(received(fake, '/v2/stream').map(r => [r.query.after, r.dropped]), [['0', null], ['2', 'before'], ['2', 'before'], ['2', null]])
+  assert.deepEqual(received(fake, '/v1/stream').map(r => [r.query.after, r.dropped]), [['0', null], ['2', 'before'], ['2', 'before'], ['2', null]])
   assert.ok(heard.states.some(s => s[0] === 'offline'))
   assert.equal(heard.states.at(-1)[0], 'live')
 })
@@ -80,15 +80,15 @@ test('what a catch-up beside the stream took is not handed over again, and the n
   let cursor = 0
   const heard = listen(t, hub, () => cursor)
   await until(() => heard.changes().length === 4)
-  cursor = 6                                   // the engine caught up to change 6 by /v2/changes meanwhile
+  cursor = 6                                   // the engine caught up to change 6 by /v1/changes meanwhile
   await hub.postEnvelope(envelope(room_id, device, 5))
   await hub.postEnvelope(envelope(room_id, device, 6))
   await hub.postEnvelope(envelope(room_id, device, 7))
   await until(() => heard.changes().length === 5)
   assert.deepEqual(heard.changes(), [1, 2, 3, 4, 7])
   fake.dropStreams()
-  await until(() => received(fake, '/v2/stream').length === 2)
-  assert.equal(received(fake, '/v2/stream')[1].query.after, '7')
+  await until(() => received(fake, '/v1/stream').length === 2)
+  assert.equal(received(fake, '/v1/stream')[1].query.after, '7')
 })
 
 test('a receiver is awaited: one whose write fails gets the event again, and the next waits for it', async t => {
@@ -108,7 +108,7 @@ test('a receiver is awaited: one whose write fails gets the event again, and the
   await until(() => got.length === 4)
   assert.deepEqual(got, [1, 2, 3, 4])
   assert.equal(overlapped, false)
-  assert.deepEqual(received(fake, '/v2/stream').map(r => r.query.after), ['0', '1'])
+  assert.deepEqual(received(fake, '/v1/stream').map(r => r.query.after), ['0', '1'])
 })
 
 test('events with CRLF line ends and data on several lines are read', async t => {
@@ -132,7 +132,7 @@ test('close() from inside a callback ends the stream; callbacks that throw do no
   await hub.postEnvelope(envelope(room_id, device, 1))
   fake.dropStreams()
   await new Promise(r => setTimeout(r, 300))
-  assert.equal(received(fake, '/v2/stream').length, 1, 'closed while reconnecting: no second stream')
+  assert.equal(received(fake, '/v1/stream').length, 1, 'closed while reconnecting: no second stream')
   assert.equal(fake.streams, 0)
 })
 
@@ -140,10 +140,10 @@ test('a hub that opens streams and ends them at once cannot hurry the reconnects
   const { fake, hub, room_id } = await scene(t)
   Object.assign(hub.timing, { backoff_first: 150, backoff_max: 2000 })
   const body = 'event: of_a_later_hub\ndata: {}\n\n' + `event: welcome\ndata: ${JSON.stringify({ group_id: txt(room_id) })}\n\n`
-  fake.faults.add({ path: '/v2/stream', times: 99, raw: { status: 200, headers: { 'content-type': 'text/event-stream' }, body } })
+  fake.faults.add({ path: '/v1/stream', times: 99, raw: { status: 200, headers: { 'content-type': 'text/event-stream' }, body } })
   const heard = listen(t, hub)
   await new Promise(r => setTimeout(r, 1500))
-  const tries = received(fake, '/v2/stream').length
+  const tries = received(fake, '/v1/stream').length
   // waits of 150, 300, 600, 1200 ms, each at least half of it: five streams at most; one every 250 ms would be seven
   assert.ok(tries >= 3 && tries <= 5, `${tries} streams in 1.5 s`)
   assert.equal(heard.events.length, tries)
@@ -178,14 +178,14 @@ test('a hub that forgot the token: the stream signs in again and goes on', async
   await hub.postEnvelope(envelope(room_id, device, 1))
   await until(() => heard.changes().length === 1)
   await fake.restart()
-  await until(() => received(fake, '/v2/stream').some(r => r.status === 401))
+  await until(() => received(fake, '/v1/stream').some(r => r.status === 401))
   await until(() => live(heard) && fake.streams === 1)
   const writer = client(fake, room_id, device)
   await writer.postEnvelope(envelope(room_id, device, 2))
   await until(() => heard.changes().length === 2)
   assert.deepEqual(heard.changes(), [1, 2])
-  assert.equal(received(fake, `/v2/rooms/${txt(room_id)}/tokens`).filter(r => r.device === null && r.status === 200).length, 3, 'two sign-ins of the stream\'s client, one of the writer')
-  assert.deepEqual(received(fake, '/v2/stream').filter(r => r.status).map(r => r.status).slice(-2), [401, 200])
+  assert.equal(received(fake, `/v1/rooms/${txt(room_id)}/tokens`).filter(r => r.device === null && r.status === 200).length, 3, 'two sign-ins of the stream\'s client, one of the writer')
+  assert.deepEqual(received(fake, '/v1/stream').filter(r => r.status).map(r => r.status).slice(-2), [401, 200])
 })
 
 test('a stream whose token ran out is ended by the hub and opened again with a new one', async t => {
@@ -194,12 +194,12 @@ test('a stream whose token ran out is ended by the hub and opened again with a n
   const heard = listen(t, hub)
   await until(() => live(heard))
   await hub.postEnvelope(envelope(room_id, device, 1))
-  await until(() => received(fake, '/v2/stream').length >= 3)
+  await until(() => received(fake, '/v1/stream').length >= 3)
   await hub.postEnvelope(envelope(room_id, device, 2))
   await until(() => heard.changes().length === 2)
   assert.deepEqual(heard.changes(), [1, 2])
-  assert.ok(received(fake, '/v2/stream').every(r => r.status === 200))
-  assert.ok(received(fake, '/v2/stream').slice(1).every(r => r.query.after === '1'))
+  assert.ok(received(fake, '/v1/stream').every(r => r.status === 200))
+  assert.ok(received(fake, '/v1/stream').slice(1).every(r => r.query.after === '1'))
 })
 
 const replayed = (change, seq, room_id, device) => `id: ${change}\nevent: envelope\ndata: ${JSON.stringify({ kind: 'envelope', change, received_at: 1, envelope: Buffer.from(envelope(room_id, device, seq)).toString('base64url') })}\n\n`
@@ -225,8 +225,8 @@ for (const [what, text] of Object.entries(violations)) {
     fake.push(txt(room_id), text(room_id, device))
     await until(() => heard.errors.length === 1)
     assert.ok(heard.errors[0] instanceof HubError && heard.errors[0].code === 'bad-answer')
-    await until(() => received(fake, '/v2/stream').length === 2 && live(heard))
-    assert.equal(received(fake, '/v2/stream')[1].query.after, '2')
+    await until(() => received(fake, '/v1/stream').length === 2 && live(heard))
+    assert.equal(received(fake, '/v1/stream')[1].query.after, '2')
     await hub.postEnvelope(envelope(room_id, device, 3))
     await until(() => heard.changes().length === 3)
     assert.deepEqual(heard.changes(), [1, 2, 3])
@@ -246,7 +246,7 @@ test('an event larger than any event ends the connection instead of filling memo
 
 test('a refused stream reports why and keeps trying; close() ends it', async t => {
   const { fake, hub, room_id } = await scene(t)
-  fake.faults.add({ path: '/v2/stream', times: 3, refuse: { error: 'not-member' } })
+  fake.faults.add({ path: '/v1/stream', times: 3, refuse: { error: 'not-member' } })
   const heard = listen(t, hub)
   await until(() => live(heard))
   assert.deepEqual(heard.errors.map(e => [e.code, e.status]), Array(3).fill(['not-member', 403]))
@@ -261,8 +261,8 @@ test('a refused stream reports why and keeps trying; close() ends it', async t =
 
 test('a redirected stream is not followed; an answer that is no event stream is not read', async t => {
   const { fake, hub } = await scene(t)
-  fake.faults.add({ path: '/v2/stream', raw: { status: 302, headers: { location: 'http://127.0.0.1:1/v2/stream' }, body: '' } })
-  fake.faults.add({ path: '/v2/stream', raw: { status: 200, headers: { 'content-type': 'application/json' }, body: '{"error":"gone"}' } })
+  fake.faults.add({ path: '/v1/stream', raw: { status: 302, headers: { location: 'http://127.0.0.1:1/v1/stream' }, body: '' } })
+  fake.faults.add({ path: '/v1/stream', raw: { status: 200, headers: { 'content-type': 'application/json' }, body: '{"error":"gone"}' } })
   const heard = listen(t, hub)
   await until(() => live(heard))
   assert.deepEqual(heard.errors.map(e => e.code), ['bad-answer', 'bad-answer'])

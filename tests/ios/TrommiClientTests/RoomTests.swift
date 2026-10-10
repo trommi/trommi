@@ -117,7 +117,7 @@ final class RoomTests: XCTestCase {
     addSession(room)
     _ = try await room.sync()
     // The hub refuses the envelope and keeps its number as a void record: the entry is done with.
-    FakeHub.shared.refuse["/v2/envelopes"] = (403, "forbidden", true)
+    FakeHub.shared.refuse["/v1/envelopes"] = (403, "forbidden", true)
     do { try await room.sendMessage(sessionId: session, text: "no"); XCTFail("refused") }
     catch let e as HubError { XCTAssertEqual(e.code, "forbidden") }
     XCTAssertEqual(room.board.timelineOf("chat:session/\(session)").echoes.count, 0)
@@ -131,7 +131,7 @@ final class RoomTests: XCTestCase {
     let room = try await founded()
     addSession(room)
     _ = try await room.sync()
-    FakeHub.shared.refuse["/v2/envelopes"] = (403, "forbidden", false)
+    FakeHub.shared.refuse["/v1/envelopes"] = (403, "forbidden", false)
     let sending = Task { try await room.sendMessage(sessionId: session, text: "waits") }
     try await Task.sleep(nanoseconds: 700_000_000)
     let waiting = try await room.onCore { $0.outbox() }
@@ -171,7 +171,7 @@ final class RoomTests: XCTestCase {
     XCTAssertEqual(room.coreCursor, 1)
     let paths = FakeHub.shared.lock.withLock { FakeHub.shared.posted.map(\.path) }
     let posted = try XCTUnwrap(paths.firstIndex { $0.hasSuffix("/commits") })
-    XCTAssertTrue(paths[posted...].contains("/v2/changes"))
+    XCTAssertTrue(paths[posted...].contains("/v1/changes"))
     XCTAssertFalse(room.board.alerts.contains { $0.code == "not-found" })
     room.close()
   }

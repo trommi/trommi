@@ -34,7 +34,7 @@ fn lifetimes_and_retention() {
 
     // ---- a challenge lasts two minutes
     let challenge: [u8; 32] = unb64(
-        hub.get(&format!("/v2/rooms/{}/challenge", b64(&room))).ok()["challenge"]
+        hub.get(&format!("/v1/rooms/{}/challenge", b64(&room))).ok()["challenge"]
             .as_str()
             .unwrap(),
     )
@@ -50,15 +50,15 @@ fn lifetimes_and_retention() {
     }
     .bytes();
     hub.post(
-        &format!("/v2/rooms/{}/tokens", b64(&room)),
+        &format!("/v1/rooms/{}/tokens", b64(&room)),
         &json!({ "auth": b64(&auth), "signature": b64(&w.ada.sign("TrommiHubAuth", &auth)) }),
     )
     .refused(401, "bad-challenge");
 
     // ---- a token lasts ten minutes
-    w.ada.get(hub, "/v2/desk").ok();
+    w.ada.get(hub, "/v1/desk").ok();
     hub.clock(8 * MINUTE);
-    w.ada.get(hub, "/v2/desk").refused(401, "unauthorised");
+    w.ada.get(hub, "/v1/desk").refused(401, "unauthorised");
     again(&mut [&mut w.ada, &mut bea, &mut agent]);
 
     // ---- an agent's lease lasts 60 seconds unless renewed
@@ -123,8 +123,8 @@ fn lifetimes_and_retention() {
         room_state,
     }
     .bytes();
-    w.ada.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&w.ada.sign("TrommiInviteOffer", &offer)), "mac": b64(&[9u8; 32]) })).ok();
-    hub.get(&format!("/v2/invites/{}", b64(&invite_id))).ok();
+    w.ada.post(hub, "/v1/invites", &json!({ "offer": b64(&offer), "signature": b64(&w.ada.sign("TrommiInviteOffer", &offer)), "mac": b64(&[9u8; 32]) })).ok();
+    hub.get(&format!("/v1/invites/{}", b64(&invite_id))).ok();
 
     // ---- a recovery locks the room for ten minutes, then it is over by itself
     let mut rec = Dev::new();
@@ -134,7 +134,7 @@ fn lifetimes_and_retention() {
     let opened = rec
         .post(
             hub,
-            &format!("/v2/rooms/{}/recovery", b64(&room)),
+            &format!("/v1/rooms/{}/recovery", b64(&room)),
             &json!({}),
         )
         .ok();
@@ -142,7 +142,7 @@ fn lifetimes_and_retention() {
         .send(hub, &room, &register(&random(), "x"))
         .refused(503, "overloaded");
     hub.clock(10 * MINUTE + 1000);
-    hub.get(&format!("/v2/invites/{}", b64(&invite_id)))
+    hub.get(&format!("/v1/invites/{}", b64(&invite_id)))
         .refused(410, "invite-expired");
     again(&mut [&mut w.ada, &mut bea, &mut agent]);
     agent.link(hub).ok();
@@ -153,7 +153,7 @@ fn lifetimes_and_retention() {
     rec.post(
         hub,
         &format!(
-            "/v2/rooms/{}/recovery/{}/finish",
+            "/v1/rooms/{}/recovery/{}/finish",
             b64(&room),
             opened["recovery_id"].as_str().unwrap()
         ),
@@ -162,7 +162,7 @@ fn lifetimes_and_retention() {
     .refused(410, "gone");
     rec.post(
         hub,
-        &format!("/v2/rooms/{}/recovery", b64(&room)),
+        &format!("/v1/rooms/{}/recovery", b64(&room)),
         &json!({}),
     )
     .ok();
@@ -176,7 +176,7 @@ fn lifetimes_and_retention() {
         .raw(
             hub,
             "PUT",
-            &format!("/v2/files/{}", b64(&loose)),
+            &format!("/v1/files/{}", b64(&loose)),
             &[],
             b"nobody names me",
         )
@@ -185,7 +185,7 @@ fn lifetimes_and_retention() {
         .raw(
             hub,
             "PUT",
-            &format!("/v2/files/{}", b64(&named)),
+            &format!("/v1/files/{}", b64(&named)),
             &[],
             b"an attachment of the card",
         )
@@ -215,14 +215,14 @@ fn lifetimes_and_retention() {
         .raw(
             hub,
             "PUT",
-            &format!("/v2/files/{}", b64(&share_file)),
+            &format!("/v1/files/{}", b64(&share_file)),
             &[],
             b"a published page",
         )
         .ok();
     let (artifact_id, _) = first_version(&mut agent, wire::TYPE_ARTIFACT, vec![share_file]);
     let (share, secret): ([u8; 16], [u8; 32]) = (random(), random());
-    agent.post(hub, "/v2/shares", &json!({ "share_id": b64(&share), "secret_hash": b64(&Sha256::digest(secret)), "file_id": b64(&share_file), "expires_at": trommi_hub::util::now() + 40 * DAY as u64 })).ok();
+    agent.post(hub, "/v1/shares", &json!({ "share_id": b64(&share), "secret_hash": b64(&Sha256::digest(secret)), "file_id": b64(&share_file), "expires_at": trommi_hub::util::now() + 40 * DAY as u64 })).ok();
     let note = enc::object_id(&room, &w.ada.id(), w.ada.chain(&room).0 + 1);
     w.ada
         .send(
@@ -313,14 +313,14 @@ fn lifetimes_and_retention() {
         .ok();
     let log_before = w
         .ada
-        .get(hub, &format!("/v2/groups/{}/log", b64(&group)))
+        .get(hub, &format!("/v1/groups/{}/log", b64(&group)))
         .ok()["items"]
         .as_array()
         .unwrap()
         .len();
     let closed_before = w
         .ada
-        .get(hub, &format!("/v2/cards/{}", hex(&closed_card)))
+        .get(hub, &format!("/v1/cards/{}", hex(&closed_card)))
         .ok();
     assert!(closed_before["items"]
         .as_array()
@@ -332,13 +332,13 @@ fn lifetimes_and_retention() {
     hub.clock(61 * MINUTE);
     again(&mut [&mut w.ada, &mut bea, &mut agent]);
     agent.link(hub).ok();
-    hub.post("/v2/__test/sweep", &json!({})).ok();
+    hub.post("/v1/__test/sweep", &json!({})).ok();
     agent
-        .raw(hub, "GET", &format!("/v2/files/{}", b64(&loose)), &[], &[])
+        .raw(hub, "GET", &format!("/v1/files/{}", b64(&loose)), &[], &[])
         .refused(404, "not-found");
     assert_eq!(
         w.ada
-            .raw(hub, "GET", &format!("/v2/files/{}", b64(&named)), &[], &[])
+            .raw(hub, "GET", &format!("/v1/files/{}", b64(&named)), &[], &[])
             .body,
         b"an attachment of the card"
     );
@@ -354,7 +354,7 @@ fn lifetimes_and_retention() {
     again(&mut [&mut w.ada, &mut bea, &mut agent]);
     agent.link(hub).ok();
     assert_eq!(
-        hub.post("/v2/__test/retention", &json!({})).ok()["pruned"],
+        hub.post("/v1/__test/retention", &json!({})).ok()["pruned"],
         0
     );
     agent
@@ -378,17 +378,17 @@ fn lifetimes_and_retention() {
     again(&mut [&mut w.ada, &mut bea, &mut agent]);
     agent.link(hub).ok();
     assert_eq!(
-        hub.post("/v2/__test/retention", &json!({})).ok()["pruned"],
+        hub.post("/v1/__test/retention", &json!({})).ok()["pruned"],
         3,
         "the answered card, the closed card, the permission request"
     );
     assert_eq!(
-        hub.post("/v2/__test/retention", &json!({})).ok()["pruned"],
+        hub.post("/v1/__test/retention", &json!({})).ok()["pruned"],
         0
     );
     let closed_after = w
         .ada
-        .get(hub, &format!("/v2/cards/{}", hex(&closed_card)))
+        .get(hub, &format!("/v1/cards/{}", hex(&closed_card)))
         .ok();
     assert_eq!(
         closed_before["items"].as_array().unwrap().len(),
@@ -411,7 +411,7 @@ fn lifetimes_and_retention() {
         ("cards", answered_card),
         ("permission-requests", permission),
     ] {
-        let items = w.ada.get(hub, &format!("/v2/{kind}/{}", hex(&id))).ok();
+        let items = w.ada.get(hub, &format!("/v1/{kind}/{}", hex(&id))).ok();
         assert!(items["items"]
             .as_array()
             .unwrap()
@@ -421,12 +421,12 @@ fn lifetimes_and_retention() {
     // its card Chat too, and its files
     let chat_items = w
         .ada
-        .get(hub, &format!("/v2/chats/card/{}/items", hex(&closed_card)))
+        .get(hub, &format!("/v1/chats/card/{}/items", hex(&closed_card)))
         .ok();
     assert_eq!(chat_items["items"].as_array().unwrap().len(), 1);
     assert!(envelope_of(&chat_items["items"][0]).body.is_none());
     w.ada
-        .raw(hub, "GET", &format!("/v2/files/{}", b64(&named)), &[], &[])
+        .raw(hub, "GET", &format!("/v1/files/{}", b64(&named)), &[], &[])
         .refused(404, "not-found");
     // what arrives later for a card whose bodies were pruned is pruned with the next run
     let late_chat = Item {
@@ -439,12 +439,12 @@ fn lifetimes_and_retention() {
     };
     bea.send(hub, &group, &late_chat).ok();
     assert_eq!(
-        hub.post("/v2/__test/retention", &json!({})).ok()["pruned"],
+        hub.post("/v1/__test/retention", &json!({})).ok()["pruned"],
         1
     );
     let chat_items = w
         .ada
-        .get(hub, &format!("/v2/chats/card/{}/items", hex(&closed_card)))
+        .get(hub, &format!("/v1/chats/card/{}/items", hex(&closed_card)))
         .ok();
     assert_eq!(chat_items["items"].as_array().unwrap().len(), 2);
     assert!(chat_items["items"]
@@ -459,7 +459,7 @@ fn lifetimes_and_retention() {
         ("notes", note),
         ("artifacts", artifact_id),
     ] {
-        let items = w.ada.get(hub, &format!("/v2/{kind}/{}", hex(&id))).ok();
+        let items = w.ada.get(hub, &format!("/v1/{kind}/{}", hex(&id))).ok();
         assert!(
             items["items"]
                 .as_array()
@@ -471,7 +471,7 @@ fn lifetimes_and_retention() {
     }
     let session_chat = w
         .ada
-        .get(hub, &format!("/v2/chats/session/{}/items", hex(&session)))
+        .get(hub, &format!("/v1/chats/session/{}/items", hex(&session)))
         .ok();
     assert!(session_chat["items"]
         .as_array()
@@ -484,7 +484,7 @@ fn lifetimes_and_retention() {
         .ada
         .get(
             hub,
-            &format!("/v2/groups/{}/chains/{}", b64(&group), b64(&agent.id())),
+            &format!("/v1/groups/{}/chains/{}", b64(&group), b64(&agent.id())),
         )
         .ok();
     let mut prev = ZERO32;
@@ -496,13 +496,13 @@ fn lifetimes_and_retention() {
     // the work trail is gone after 30 days; every Commit stays
     let log = w
         .ada
-        .get(hub, &format!("/v2/groups/{}/log", b64(&group)))
+        .get(hub, &format!("/v1/groups/{}/log", b64(&group)))
         .ok();
     let log = log["items"].as_array().unwrap();
     assert_eq!(log.len(), log_before - 1);
     assert!(log.iter().all(|i| i["kind"] == "commit"));
     // the Desk shows what is open, as before
-    let desk = w.ada.get(hub, "/v2/desk").ok();
+    let desk = w.ada.get(hub, "/v1/desk").ok();
     assert_eq!(desk["cards"].as_array().unwrap().len(), 2);
 
     // ---- a Share link ends at its expiry
@@ -510,7 +510,7 @@ fn lifetimes_and_retention() {
         request(
             hub.port,
             "GET",
-            &format!("/v2/shares/{}", b64(&share)),
+            &format!("/v1/shares/{}", b64(&share)),
             &[("x-share-secret", b64(&secret))],
             &[],
         )
@@ -525,7 +525,7 @@ fn lifetimes_and_retention() {
         w.ada
             .post(
                 hub,
-                "/v2/key-packages/claim",
+                "/v1/key-packages/claim",
                 &json!({ "devices": [b64(&bea.id())] })
             )
             .status
@@ -536,7 +536,7 @@ fn lifetimes_and_retention() {
     w.ada
         .post(
             hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": [b64(&bea.id())] }),
         )
         .refused(404, "not-found");
@@ -544,7 +544,7 @@ fn lifetimes_and_retention() {
     w.ada
         .post(
             hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": [b64(&bea.id())] }),
         )
         .ok();
@@ -552,20 +552,20 @@ fn lifetimes_and_retention() {
     // ---- a restart keeps everything but tokens: the same data directory under a new hub
     let room_before = w
         .ada
-        .get(hub, &format!("/v2/rooms/{}/groups", b64(&room)))
+        .get(hub, &format!("/v1/rooms/{}/groups", b64(&room)))
         .ok();
     let World { hub, mut ada, .. } = w;
     let dir = hub.stop_keep();
     let hub = TestHub::start_in(dir, &[]);
-    ada.get(&hub, "/v2/desk").refused(401, "unauthorised");
+    ada.get(&hub, "/v1/desk").refused(401, "unauthorised");
     ada.sign_in(&hub, &room).ok();
     assert_eq!(
-        ada.get(&hub, &format!("/v2/rooms/{}/groups", b64(&room)))
+        ada.get(&hub, &format!("/v1/rooms/{}/groups", b64(&room)))
             .ok(),
         room_before
     );
     assert_eq!(
-        ada.get(&hub, "/v2/desk").ok()["cards"]
+        ada.get(&hub, "/v1/desk").ok()["cards"]
             .as_array()
             .unwrap()
             .len(),

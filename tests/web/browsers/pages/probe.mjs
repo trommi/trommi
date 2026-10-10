@@ -144,8 +144,8 @@ export async function probe({ origin = globalThis.location.origin } = {}) {
   await timed('wasmSync', async () => { new WebAssembly.Module(EMPTY_WASM); return true })
   await timed('idb', idb)
   await timed('locks', locks)
-  await timed('stream', () => stream(`${origin}/v2/stream`))
-  await timed('eventSource', () => eventSource(`${origin}/v2/stream`))
+  await timed('stream', () => stream(`${origin}/v1/stream`))
+  await timed('eventSource', () => eventSource(`${origin}/v1/stream`))
   out.storage = await attempt(async () => ({ persisted: await navigator.storage?.persisted?.() ?? 'no navigator.storage.persisted', quota: (await navigator.storage?.estimate?.())?.quota ?? null }))
   out.has = {
     BroadcastChannel: typeof BroadcastChannel === 'function',

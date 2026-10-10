@@ -23,7 +23,7 @@ test('a first catch-up on a slow disk: the position moves while a page is taken,
   const pages = fake.requests.length
   await c.start()
   await until(() => c.model.room.connection === 'live', 'the new device live')
-  assert.equal(fake.requests.slice(pages).filter(r => r.method === 'GET' && r.path === '/v2/changes' && Number(r.query.after) < head).length >= 1, true, 'it asked for the page')
+  assert.equal(fake.requests.slice(pages).filter(r => r.method === 'GET' && r.path === '/v1/changes' && Number(r.query.after) < head).length >= 1, true, 'it asked for the page')
   const steps = [...new Set(seen)]
   assert.deepEqual(steps, [...steps].sort((x, y) => x - y), 'the position only moves upwards')
   assert.ok(steps.filter(n => n < head).length >= 3, `the position was told at ${steps.length} places while the page was taken (${steps.join(', ')}): a page of ${head} changes must not stand at its start until it is through`)
@@ -38,7 +38,7 @@ test('twelve devices sign in with the code, one after another, into a room that 
   // the same faults in every run: a small generator with a fixed seed
   let seed = 20261010
   const rnd = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n }
-  const routes = [['GET', '/v2/changes'], ['GET', '/v2/welcomes'], ['GET', '/v2/stream'], ['POST', /\/tokens$/], ['PUT', '/v2/key-packages'], ['GET', /\/log$/], ['GET', '/v2/desk']]
+  const routes = [['GET', '/v1/changes'], ['GET', '/v1/welcomes'], ['GET', '/v1/stream'], ['POST', /\/tokens$/], ['PUT', '/v1/key-packages'], ['GET', /\/log$/], ['GET', '/v1/desk']]
   for (let n = 0; n < 12; n++) {
     let writing = true
     const writer = (async () => { for (let k = 0; writing; k++) { await (k % 2 ? agent.say({ text: `during ${n}/${k}` }) : a.saveNote({ text: `during ${n}/${k}` })).catch(() => {}); await sleep(5 + rnd(10)) } })()

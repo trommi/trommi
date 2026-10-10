@@ -98,7 +98,7 @@ invites      Map<invite_id, Invite>          alerts [Alert]       outbox [Outbox
 stack        [object_id]                     open_permission_ids [object_id]         newer { count, what, envelope_number }
 ```
 
-What the fields mean under protocol v2:
+What the fields mean under protocol v1:
 
 - `envelope_number`, everywhere: the hub's **change** number under which the item arrived. `room.last_envelope_number`
   is how far this device has taken the hub's order. `room.key_epoch` is the room group's epoch.
@@ -260,7 +260,7 @@ Three IndexedDB databases per `name` (`store-idb.ts`):
 
 The cache is **not authoritative**. A start shows the cached model at once if it was written at exactly the cursor
 the device holds (so a stored room opens offline). A cache at another cursor is dropped: the model is then built
-from the device's groups, the hub's Desk (`GET /v2/desk`, read back through the core) and one more reading of the
+from the device's groups, the hub's Desk (`GET /v1/desk`, read back through the core) and one more reading of the
 room's changes.
 
 **One owner** (`tabs.ts`). The tab whose worker gets the store's lock runs the real client. Every other tab is a

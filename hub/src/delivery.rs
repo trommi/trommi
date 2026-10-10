@@ -1207,7 +1207,7 @@ pub fn removed_lately(c: &Connection, room: &Room, device: &Device, now: u64) ->
     .exists(params![&device[..], &room[..], REMOVAL_KEPT_MS as i64, now as i64])?)
 }
 
-/// `GET /v2/groups/{group}/removal?after=`: for a device that was removed, the Commits of that group after
+/// `GET /v1/groups/{group}/removal?after=`: for a device that was removed, the Commits of that group after
 /// `after` up to and including the one that removed it — public group state it could read as a member — so
 /// that it can verify its removal itself (13.5). Nothing else, and nothing after that Commit. One answer for a
 /// device that was never there, was not removed, or was removed too long ago.
@@ -1371,7 +1371,7 @@ pub fn group_list(c: &Connection, auth: &Auth) -> Res<Vec<Value>> {
     Ok(out)
 }
 
-/// `GET /v2/rooms/{room}/groups?after=&limit=`: a page of that list, in the order of founding, up to `limit`
+/// `GET /v1/rooms/{room}/groups?after=&limit=`: a page of that list, in the order of founding, up to `limit`
 /// groups and the answer's byte budget (the first always); `after` of the next call is the answer's `after`.
 pub fn group_page(c: &Connection, auth: &Auth, after: i64, limit: i64) -> Res<Value> {
     let view = store::room_view(c, &auth.room)?;

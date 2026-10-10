@@ -163,7 +163,7 @@ impl TestHub {
 
     pub fn clock(&self, advance_ms: i64) {
         assert_eq!(
-            self.post("/v2/__test/clock", &json!({ "advance_ms": advance_ms }))
+            self.post("/v1/__test/clock", &json!({ "advance_ms": advance_ms }))
                 .status,
             200
         );
@@ -996,8 +996,8 @@ impl Dev {
 
     pub fn events(&self, hub: &TestHub, after: Option<i64>) -> Events {
         let path = match after {
-            Some(n) => format!("/v2/stream?after={n}"),
-            None => "/v2/stream".to_string(),
+            Some(n) => format!("/v1/stream?after={n}"),
+            None => "/v1/stream".to_string(),
         };
         let socket = send_request(hub.port, "GET", &path, &self.headers(), &[]);
         let mut reader = BufReader::new(socket);
@@ -1009,7 +1009,7 @@ impl Dev {
     pub fn post_commit(&mut self, hub: &TestHub, out: &Out, sealed_key: &[u8]) -> Reply {
         let reply = self.post(
             hub,
-            &format!("/v2/groups/{}/commits", b64(&out.group_id)),
+            &format!("/v1/groups/{}/commits", b64(&out.group_id)),
             &commit_json(out, sealed_key, None),
         );
         if reply.status == 200 {
@@ -1021,7 +1021,7 @@ impl Dev {
     }
 
     pub fn post_envelope(&self, hub: &TestHub, envelope: &[u8]) -> Reply {
-        self.post(hub, "/v2/envelopes", &json!({ "envelope": b64(envelope) }))
+        self.post(hub, "/v1/envelopes", &json!({ "envelope": b64(envelope) }))
     }
 
     /// Builds the next envelope and posts it; the chain keeps the number only if the hub stored it (also as a
@@ -1049,7 +1049,7 @@ impl Dev {
         let message = self.application_message(group_id, plain);
         self.post(
             hub,
-            &format!("/v2/groups/{}/messages", b64(group_id)),
+            &format!("/v1/groups/{}/messages", b64(group_id)),
             &json!({ "epoch": epoch, "message": b64(&message), "relay": relay }),
         )
     }
@@ -1057,7 +1057,7 @@ impl Dev {
     /// Acquires this agent device's lease as a new process (13.7).
     pub fn link(&mut self, hub: &TestHub) -> Reply {
         self.lease = None;
-        let reply = self.post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 }));
+        let reply = self.post(hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 }));
         self.lease = reply.json()["generation"].as_u64();
         reply
     }
@@ -1068,7 +1068,7 @@ impl Dev {
             .collect();
         self.put(
             hub,
-            "/v2/key-packages",
+            "/v1/key-packages",
             &json!({ "single_use": packages, "last_resort": b64(&self.key_package(true)) }),
         )
     }
@@ -1140,7 +1140,7 @@ pub fn sign_in_with(
     key: &SignatureKeyPair,
     hub_address: Option<&str>,
 ) -> Reply {
-    let challenge = hub.get(&format!("/v2/rooms/{}/challenge", b64(room))).ok();
+    let challenge = hub.get(&format!("/v1/rooms/{}/challenge", b64(room))).ok();
     let challenge: [u8; 32] = unb64(challenge["challenge"].as_str().unwrap())
         .unwrap()
         .try_into()
@@ -1154,7 +1154,7 @@ pub fn sign_in_with(
     .bytes();
     let signature = sign_with_label(key, "TrommiHubAuth", &auth);
     hub.post(
-        &format!("/v2/rooms/{}/tokens", b64(room)),
+        &format!("/v1/rooms/{}/tokens", b64(room)),
         &json!({ "auth": b64(&auth), "signature": b64(&signature) }),
     )
 }
@@ -1297,7 +1297,7 @@ pub fn found_room(hub: &TestHub) -> ([u8; 32], Recovery, Dev) {
     let info = ada.create_room(&room, &recovery);
     let sealed = ada.sealed_key(&room, 0, &info, 0, &recovery.hpke_public, true);
     hub.post(
-        "/v2/rooms",
+        "/v1/rooms",
         &json!({ "group_info": b64(&info), "sealed_key": b64(&sealed) }),
     )
     .ok();
@@ -1334,7 +1334,7 @@ pub fn invite(
         room_state,
     }
     .bytes();
-    inviter.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&inviter.sign("TrommiInviteOffer", &offer)), "mac": b64(&[9u8; 32]) })).ok();
+    inviter.post(hub, "/v1/invites", &json!({ "offer": b64(&offer), "signature": b64(&inviter.sign("TrommiInviteOffer", &offer)), "mac": b64(&[9u8; 32]) })).ok();
     let key_package = newcomer.key_package(false);
     let request = wire::InviteRequest {
         room_id: inviter.room,
@@ -1349,7 +1349,7 @@ pub fn invite(
     let mac = Sha256::digest([&secret[..], &request[..]].concat()).to_vec();
     let signed = [&request[..], &mac[..]].concat();
     hub.post(
-        &format!("/v2/invites/{}/request", b64(&invite_id)),
+        &format!("/v1/invites/{}/request", b64(&invite_id)),
         &json!({ "request": b64(&request), "mac": b64(&mac), "signature": b64(&newcomer.sign("TrommiInviteRequest", &signed)) }),
     )
     .ok();
@@ -1359,7 +1359,7 @@ pub fn invite(
         request_hash: enc::ref_hash("Trommi Invite Request", &signed),
     }
     .bytes();
-    inviter.put(hub, &format!("/v2/invites/{}/reveal", b64(&invite_id)), &json!({ "reveal": b64(&reveal), "signature": b64(&inviter.sign("TrommiInviteReveal", &reveal)) })).ok();
+    inviter.put(hub, &format!("/v1/invites/{}/reveal", b64(&invite_id)), &json!({ "reveal": b64(&reveal), "signature": b64(&inviter.sign("TrommiInviteReveal", &reveal)) })).ok();
     (key_package, invite_id)
 }
 
@@ -1398,7 +1398,7 @@ impl World {
         );
         let reply = opener.post(
             &self.hub,
-            "/v2/groups",
+            "/v1/groups",
             &founding_json(&info0, &key0, &out, &key1),
         );
         if reply.status == 200 {
@@ -1455,7 +1455,7 @@ impl World {
         let agents = self.agents();
         let list = self
             .ada
-            .get(&self.hub, &format!("/v2/rooms/{}/groups", b64(&self.room)))
+            .get(&self.hub, &format!("/v1/rooms/{}/groups", b64(&self.room)))
             .ok();
         let row = list
             .as_array()
@@ -1513,7 +1513,7 @@ impl World {
         let reply = by
             .post(
                 &self.hub,
-                "/v2/key-packages/claim",
+                "/v1/key-packages/claim",
                 &json!({ "devices": ids }),
             )
             .ok();
@@ -1575,7 +1575,7 @@ impl World {
         );
         let reply = self.ada.post(
             &self.hub,
-            "/v2/groups",
+            "/v1/groups",
             &founding_json(&info0, &key0, &out, &key1),
         );
         reply.ok();
@@ -1601,7 +1601,7 @@ pub fn catch_up(hub: &TestHub, dev: &mut Dev, group: &[u8]) {
     let log = dev
         .get(
             hub,
-            &format!("/v2/groups/{}/log?after=0&limit=1000", b64(group)),
+            &format!("/v1/groups/{}/log?after=0&limit=1000", b64(group)),
         )
         .ok();
     for item in log["items"].as_array().unwrap() {

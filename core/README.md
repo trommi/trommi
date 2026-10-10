@@ -118,7 +118,7 @@ assumptions have to take in.
   a Commit with `too-many` (`Observer::check_posted_commit`), as every member does.
 - A key added to a session group again (spec 3.7, 9.0.10). `readmit_human(&group, &device, key_package,
   now_ms)`: a human device lets another one in again whose Welcome failed and who asked with a fresh
-  KeyPackage (`POST /v2/requests`, kind `readmit`), by one Commit that removes its leaf with its Cut and adds
+  KeyPackage (`POST /v1/requests`, kind `readmit`), by one Commit that removes its leaf with its Cut and adds
   the key. The hub answers `bad-commit` when it holds an envelope of that device beyond the Cut: process the
   changes, call again. The device let in again processes that Commit (`Processed::Commit { removed: true }`),
   takes the new Welcome with `join_welcome`, which now joins a session group the device was removed from,

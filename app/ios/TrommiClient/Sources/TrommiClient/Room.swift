@@ -1,10 +1,10 @@
 // Room.swift: one room on this device: the device (trommi-core, through Core.swift), its store, the hub, and the
 // board the views read (Board.swift). This file holds what the room is and how it keeps up with the hub:
 //
-//   catch up   GET /v2/changes after the cursor: Commits, messages and envelopes in the hub's order, each handed to
+//   catch up   GET /v1/changes after the cursor: Commits, messages and envelopes in the hub's order, each handed to
 //              the core, which checks it and keeps the keys, chains and object state; what it opened becomes a record
 //              (Records.swift) and is applied to the board by the same reducer as ever.
-//   live       GET /v2/stream (server-sent events) with the same items, resumed by change number.
+//   live       GET /v1/stream (server-sent events) with the same items, resumed by change number.
 //   outbox     everything this device wants sent is in the core's outbox, stored with the state it implies; it is
 //              posted in order and the hub's answer reported back. After a crash the same bytes go out again.
 //              The hub's "taken" merges no Commit of this device: the core merges it when it comes back among the
@@ -452,7 +452,7 @@ public final class Room {
 
   /**
    * The hub says this device was removed. It is believed only with the proof: the room group's Commits up to the
-   * removing one (GET /v2/groups/{group}/removal), handed to the core in order from this device's place on. When
+   * removing one (GET /v1/groups/{group}/removal), handed to the core in order from this device's place on. When
    * the core itself says that a Commit removed this device, the room is marked as removed: nothing more is sent
    * or read, and the alert says so. Commits that do not check, or that end without removing this device, prove
    * nothing: everything is kept, a finding is shown, `not-member` is thrown and the next sync asks again. (Such
@@ -533,7 +533,7 @@ public final class Room {
   }
 
   /**
-   * GET /v2/changes from the cursor until the hub has no more. The hub's answer is not believed about its shape:
+   * GET /v1/changes from the cursor until the hub has no more. The hub's answer is not believed about its shape:
    * every item must carry a change number above the one before it, and the page's own `change` may only stand at
    * or behind its last item. A page that is out of order, or that says "more" without moving on, ends the catch-up
    * with a finding and the cursor where the last good item left it. (That the hub gave EVERYTHING it has is not
@@ -576,7 +576,7 @@ public final class Room {
     return TrommiError(code, message)
   }
 
-  /** One item of GET /v2/changes or of the stream, as bytes for the core. */
+  /** One item of GET /v1/changes or of the stream, as bytes for the core. */
   enum Item {
     /** `n`: the entry's number in its group's log, which a report to the hub names (14.7). */
     case log(n: UInt64?, LogEntry)
@@ -878,7 +878,7 @@ public final class Room {
   public func handleStreamEvent(_ event: String, _ data: JV) async {
     switch event {
     case "envelope", "log":
-      // The hub sends the item as GET /v2/changes gives it. A `log` event that only names its group and number
+      // The hub sends the item as GET /v1/changes gives it. A `log` event that only names its group and number
       // (spec/hub-api.md allows that), or anything else that does not read, is a hint: catch up from the cursor.
       // An item that is not the next one is taken by the same catch-up, in order.
       let item = (data.any as? JSON).flatMap(Item.init)

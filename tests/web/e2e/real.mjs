@@ -4,7 +4,7 @@
 //
 // NOTHING IS SUBSTITUTED: the app is the normal build (index.html, the views, the worker with core-wasm.ts and the
 // Rust core's .wasm, the _headers with the app's Content-Security-Policy), the hub is the binary. The hub is reached
-// through the app's own origin (harness.mjs serveApp passes /v2/ on, and the hub is started with that origin as its
+// through the app's own origin (harness.mjs serveApp passes /v1/ on, and the hub is started with that origin as its
 // public address), so the app's policy is untouched (`connect-src 'self'`).
 //
 // What runs here runs with real cryptography end to end: an account, a second device that JOINS BY LINK (six emoji
@@ -152,7 +152,7 @@ export const steps = [
     const { check } = ctx.run
     const A = await ctx.profile('A'), B = await ctx.profile('B')
     const link = await ui.deviceInvite(A)
-    check(/\/join#v2\./.test(link), 'Show Code gives a join link, its secret after the #', link.replace(/#.*/, '#…'))
+    check(/\/join#v1\./.test(link), 'Show Code gives a join link, its secret after the #', link.replace(/#.*/, '#…'))
     await B.go(link)
     await B.until("document.getElementById('check-code')", 'six emoji on the new device', 40000)
     check(await B.js("return !location.hash && location.pathname === '/join'"), 'the join secret left the address bar')
@@ -410,7 +410,7 @@ export const steps = [
     await A.click('#settings-invite-agent')
     await arrives(A, "location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy[data-line=connect] code')", 'the agent invite page')
     const command = await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent")
-    ctx.run.check(/'http\S+\/join#v2\.[^']+'/.test(command), 'the connect command carries a join link', command.replace(/#v2\.\S+/, '#v2.…'))
+    ctx.run.check(/'http\S+\/join#v1\.[^']+'/.test(command), 'the connect command carries a join link', command.replace(/#v1\.\S+/, '#v1.…'))
     await A.shot('real-14-agent-invite')
   }],
 
@@ -518,8 +518,8 @@ export const steps = [
     check(!ctx.seen.csp.length, 'no policy violation was reported', ctx.seen.csp)
     check(!ctx.seen.exceptions.length, 'no uncaught error', ctx.seen.exceptions)
     check(ctx.app.policy.includes("connect-src 'self' https://hub.trommi.com;"), 'the policy served is the app\'s own', ctx.app.policy)
-    const old = ctx.seen.requests.filter(r => new URL(r.url).pathname.startsWith('/v1/'))
-    check(ctx.seen.requests.some(r => new URL(r.url).pathname.startsWith('/v2/')) && !old.length, 'no request to a /v1/ address (pages and workers; /v2/ requests were seen)', [...new Set(old.map(r => `${r.method} ${new URL(r.url).pathname} → ${r.status ?? r.failed}`))])
+    const old = ctx.seen.requests.filter(r => new URL(r.url).pathname.startsWith('/v2/'))
+    check(ctx.seen.requests.some(r => new URL(r.url).pathname.startsWith('/v1/')) && !old.length, 'no request to a /v2/ address (pages and workers; /v1/ requests were seen)', [...new Set(old.map(r => `${r.method} ${new URL(r.url).pathname} → ${r.status ?? r.failed}`))])
     for (const [kind, list] of [['console error', ctx.seen.errors], ['console warning', ctx.seen.warnings], ['failed request', ctx.seen.network]]) {
       const counted = new Map()
       for (const line of list) { const k = line.replace(/\d{4,}/g, 'N').split('\n')[0].slice(0, 220); counted.set(k, (counted.get(k) ?? 0) + 1) }

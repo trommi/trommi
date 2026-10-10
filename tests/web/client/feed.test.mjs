@@ -30,7 +30,7 @@ test(`${HISTORY} changes taken in batches are the room they are taken item by it
   }
   await write(third, [agent])
   // a void record: the hub keeps the envelope and refuses it (9.0.8)
-  fake.faults.add({ method: 'POST', path: '/v2/envelopes', void: 'forbidden' })
+  fake.faults.add({ method: 'POST', path: '/v1/envelopes', void: 'forbidden' })
   await a.saveNote({ text: 'the hub voids this one' })
   const garbled = await a.saveNote({ text: 'served as garbage in the hub\'s order' })
   await a.settle()
@@ -44,7 +44,7 @@ test(`${HISTORY} changes taken in batches are the room they are taken item by it
   // One envelope of the founder's chain is served as bytes that are no envelope, in every page that holds it: the
   // core refuses it in the middle of a batch, and the next envelope of that chain meets a gap, which is filled from
   // the chain's own route.
-  fake.faults.add({ method: 'GET', path: '/v2/changes', times: 1e6, answer: json => ({ ...json, items: json.items.map(item => (item.change === garbledAt ? { ...item, envelope: Buffer.from('not an envelope at all').toString('base64url') } : item)) }) })
+  fake.faults.add({ method: 'GET', path: '/v1/changes', times: 1e6, answer: json => ({ ...json, items: json.items.map(item => (item.change === garbledAt ? { ...item, envelope: Buffer.from('not an envelope at all').toString('base64url') } : item)) }) })
 
   /** Starts `client` and takes the whole history; returns how many durable steps its store wrote for that. */
   const take = async (client, name, single) => {
@@ -101,7 +101,7 @@ test('the store fails under a batch: nothing of the batch is taken, the device i
   const at = []
   again.engine.on('reopened', () => at.push({ position: again.engine.position, cursor: again.engine.cursor }))
   // the write that follows the page's arrival is the first batch's: it fails, having written nothing
-  fake.faults.add({ method: 'GET', path: '/v2/changes', answer: json => { failWrite(b.stored_as.name); return json } })
+  fake.faults.add({ method: 'GET', path: '/v1/changes', answer: json => { failWrite(b.stored_as.name); return json } })
   await again.start({ stream: false })
   assert.deepEqual(at, [{ position: from, cursor: from }], 'opened again once, at the place of before the batch: none of it was taken')
   await again.settle()
@@ -114,7 +114,7 @@ test('the store fails under a batch: nothing of the batch is taken, the device i
   await a.settle(); await agent.settle()
   const dying = await R.openRoom({ storage: b.stored_as })
   const before = dying.engine.cursor
-  fake.faults.add({ method: 'GET', path: '/v2/changes', answer: json => { failWrite(b.stored_as.name); return json } })
+  fake.faults.add({ method: 'GET', path: '/v1/changes', answer: json => { failWrite(b.stored_as.name); return json } })
   dying.engine.on('reopened', () => { void dying.stop().catch(() => {}) })
   await dying.start({ stream: false }).catch(() => {})
   await until(async () => { try { return await R.openRoom({ storage: b.stored_as }) } catch { return null } }, 'the store free again').then(async last => {

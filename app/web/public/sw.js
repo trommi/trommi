@@ -44,11 +44,11 @@ async function fromPage(id, clientId) {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url)
   if (url.origin !== self.location.origin || event.request.method !== 'GET') return
-  // The hub may answer on the app's own origin (under /v2/, as a local stack does): its requests are never this
+  // The hub may answer on the app's own origin (under /v1/, as a local stack does): its requests are never this
   // worker's, the live stream least of all (Firefox kept a stream the worker had passed on open after a reload: one
   // more per reload, until the six connections to the host were taken and every request waited). They go to the
   // network as the page or the core worker sent them. In production the hub is another origin: not touched above.
-  if (url.pathname.startsWith('/v2/')) return
+  if (url.pathname.startsWith('/v1/')) return
   const att = /^\/att\/([0-9a-f]{32})$/.exec(url.pathname)
   if (att) {
     event.respondWith((async () => {

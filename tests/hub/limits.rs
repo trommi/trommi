@@ -91,7 +91,7 @@ fn counts_per_device() {
     let more: Vec<String> = (0..95).map(|_| b64(&w.ada.key_package(false))).collect();
     assert_eq!(
         w.ada
-            .put(hub, "/v2/key-packages", &json!({ "single_use": more }))
+            .put(hub, "/v1/key-packages", &json!({ "single_use": more }))
             .ok()["unused"],
         100
     );
@@ -100,7 +100,7 @@ fn counts_per_device() {
         w.ada
             .put(
                 hub,
-                "/v2/key-packages",
+                "/v1/key-packages",
                 &json!({ "single_use": [b64(&w.ada.key_package(false))] })
             )
             .ok()["unused"],
@@ -109,9 +109,9 @@ fn counts_per_device() {
     // a refusal that names a wait names it in the header and in the body
     let slowed = TestHub::start_with(&[("HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE", "1")]);
     slowed
-        .post("/v2/account/passkey/challenge", &json!({}))
+        .post("/v1/account/passkey/challenge", &json!({}))
         .ok();
-    let told = slowed.post("/v2/account/passkey/challenge", &json!({}));
+    let told = slowed.post("/v1/account/passkey/challenge", &json!({}));
     told.refused(429, "rate-limited");
     assert_eq!(
         told.header("retry-after").map(str::to_string),
@@ -127,7 +127,7 @@ fn counts_per_device() {
                 &key.public_key(),
                 false,
             );
-            w.ada.post(hub, "/v2/push", &json!({ "web_push": { "endpoint": format!("http://127.0.0.1:9/p/{i}"), "keys": { "p256dh": b64(point.as_bytes()), "auth": b64(&[1u8; 16]) } }, "level": "all" }))
+            w.ada.post(hub, "/v1/push", &json!({ "web_push": { "endpoint": format!("http://127.0.0.1:9/p/{i}"), "keys": { "p256dh": b64(point.as_bytes()), "auth": b64(&[1u8; 16]) } }, "level": "all" }))
         },
         429,
         "too-many",
@@ -150,7 +150,7 @@ fn counts_per_device() {
                 room_state,
             }
             .bytes();
-            w.ada.post(hub, "/v2/invites", &json!({ "offer": b64(&offer), "signature": b64(&w.ada.sign("TrommiInviteOffer", &offer)), "mac": b64(&[9u8; 32]) }))
+            w.ada.post(hub, "/v1/invites", &json!({ "offer": b64(&offer), "signature": b64(&w.ada.sign("TrommiInviteOffer", &offer)), "mac": b64(&[9u8; 32]) }))
         },
         429,
         "too-many",
@@ -161,7 +161,7 @@ fn counts_per_device() {
         10,
         |_| {
             w.ada
-                .post(hub, "/v2/requests", &json!({ "kind": "handover" }))
+                .post(hub, "/v1/requests", &json!({ "kind": "handover" }))
         },
         429,
         "rate-limited",
@@ -234,7 +234,7 @@ fn devices_and_sessions_of_a_room() {
     w.ada
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/archive", b64(&helper_groups[0])),
+            &format!("/v1/groups/{}/archive", b64(&helper_groups[0])),
             &json!({}),
         )
         .ok();
@@ -288,7 +288,7 @@ fn what_a_room_may_hold() {
         dev.raw(
             hub,
             "PUT",
-            &format!("/v2/files/{}", b64(&random::<16>())),
+            &format!("/v1/files/{}", b64(&random::<16>())),
             &[],
             bytes,
         )
@@ -301,7 +301,7 @@ fn what_a_room_may_hold() {
     let exact = w.ada.raw(
         &w.hub,
         "PUT",
-        &format!("/v2/files/{}", b64(&[7u8; 16])),
+        &format!("/v1/files/{}", b64(&[7u8; 16])),
         &[],
         &[1u8; 500],
     );
@@ -313,7 +313,7 @@ fn what_a_room_may_hold() {
         .call(
             &w.hub,
             "DELETE",
-            &format!("/v2/files/{}", b64(&[7u8; 16])),
+            &format!("/v1/files/{}", b64(&[7u8; 16])),
             &Value::Null,
         )
         .ok();
@@ -450,7 +450,7 @@ fn sizes() {
         w.ada.raw(
             hub,
             "POST",
-            "/v2/requests",
+            "/v1/requests",
             &[],
             format!(r#"{{"kind":"handover","pad":"{}"}}"#, "x".repeat(n - frame)).as_bytes(),
         )
@@ -470,7 +470,7 @@ fn policies_set_by_configuration() {
         request(
             hub.port,
             "POST",
-            "/v2/rooms",
+            "/v1/rooms",
             headers,
             json!({ "group_info": b64(&info), "sealed_key": b64(&sealed) })
                 .to_string()
@@ -504,7 +504,7 @@ fn policies_set_by_configuration() {
     founding(&hub, &[("x-found-token", "sesame".to_string())]).refused(403, "forbidden");
     // a client older than the hub asks for
     let hub = TestHub::start_with(&[("HUB_MIN_CLIENT", "1.0.1")]);
-    hub.get("/v2/desk").refused(426, "client-too-old");
+    hub.get("/v1/desk").refused(426, "client-too-old");
     assert_eq!(hub.get("/healthz").status, 200);
     // HSTS with preload is prepared behind one switch, and off unless it is thrown
     let plain = TestHub::start();
@@ -513,7 +513,7 @@ fn policies_set_by_configuration() {
         None
     );
     let strict = TestHub::start_with(&[("HUB_HSTS", "on")]);
-    for path in ["/healthz", "/v2/desk"] {
+    for path in ["/healthz", "/v1/desk"] {
         assert_eq!(
             strict.get(path).header("strict-transport-security"),
             Some("max-age=63072000; includeSubDomains; preload")
@@ -525,14 +525,14 @@ fn policies_set_by_configuration() {
     let hub = TestHub::start_with(&[("HUB_LOGIN_THROTTLE", "off")]);
     for _ in 0..3 {
         hub.post(
-            "/v2/account/login",
+            "/v1/account/login",
             &json!({ "email": "a@example.org", "auth_key": b64(&[1u8; 32]) }),
         )
         .refused(401, "wrong-login");
     }
     // passkeys of an account: 20 (here 2)
     let w = world(&[("HUB_LIMIT_PASSKEYS", "2")]);
-    w.ada.post(&w.hub, "/v2/account", &json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&[2u8; 32]), "sealed_copy": b64(&[2u8; 61]) }, "password": { "auth_key": b64(&[3u8; 32]), "sealed_copy": b64(&[2u8; 61]), "kdf": { "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1 } } })).ok();
+    w.ada.post(&w.hub, "/v1/account", &json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&[2u8; 32]), "sealed_copy": b64(&[2u8; 61]) }, "password": { "auth_key": b64(&[3u8; 32]), "sealed_copy": b64(&[2u8; 61]), "kdf": { "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1 } } })).ok();
     boundary(
         "passkeys of an account",
         2,
@@ -540,13 +540,13 @@ fn policies_set_by_configuration() {
             let key = Authenticator::new();
             let challenge = unb64(
                 w.ada
-                    .post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+                    .post(&w.hub, "/v1/account/passkeys/challenge", &json!({}))
                     .ok()["challenge"]
                     .as_str()
                     .unwrap(),
             )
             .unwrap();
-            w.ada.post(&w.hub, "/v2/account/passkeys", &json!({
+            w.ada.post(&w.hub, "/v1/account/passkeys", &json!({
                 "attestation_object": b64(&key.attestation(RP, UP_UV)), "client_data_json": b64(&Authenticator::client_data("webauthn.create", &challenge, ORIGIN)),
                 "sealed_copy": b64(&[2u8; 61]),
             }))
@@ -566,7 +566,7 @@ fn share_links_of_a_room() {
         .raw(
             &w.hub,
             "PUT",
-            &format!("/v2/files/{}", b64(&file)),
+            &format!("/v1/files/{}", b64(&file)),
             &[],
             b"a page",
         )
@@ -585,7 +585,7 @@ fn share_links_of_a_room() {
     agent.send(&w.hub, &group, &artifact).ok();
     let day = 86_400_000u64;
     let share = |expires: u64| {
-        agent.post(&w.hub, "/v2/shares", &json!({ "share_id": b64(&random::<16>()), "secret_hash": b64(&Sha256::digest([1u8; 32])), "file_id": b64(&file), "expires_at": expires }))
+        agent.post(&w.hub, "/v1/shares", &json!({ "share_id": b64(&random::<16>()), "secret_hash": b64(&Sha256::digest([1u8; 32])), "file_id": b64(&file), "expires_at": expires }))
     };
     // 11.5: a Share link expires within 180 days: exactly 180 days ahead is taken, a minute more is not
     let now = trommi_hub::util::now();
@@ -606,7 +606,7 @@ fn the_defaults_at_their_exact_values() {
     // (1000 human devices: `a_room_of_a_thousand_human_devices`)
 
     // 20 passkeys of an account
-    w.ada.post(&w.hub, "/v2/account", &json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&[2u8; 32]), "sealed_copy": b64(&[2u8; 61]) }, "password": { "auth_key": b64(&[3u8; 32]), "sealed_copy": b64(&[2u8; 61]), "kdf": { "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1 } } })).ok();
+    w.ada.post(&w.hub, "/v1/account", &json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&[2u8; 32]), "sealed_copy": b64(&[2u8; 61]) }, "password": { "auth_key": b64(&[3u8; 32]), "sealed_copy": b64(&[2u8; 61]), "kdf": { "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1 } } })).ok();
     boundary(
         "passkeys of an account",
         20,
@@ -614,13 +614,13 @@ fn the_defaults_at_their_exact_values() {
             let key = Authenticator::new();
             let challenge = unb64(
                 w.ada
-                    .post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+                    .post(&w.hub, "/v1/account/passkeys/challenge", &json!({}))
                     .ok()["challenge"]
                     .as_str()
                     .unwrap(),
             )
             .unwrap();
-            w.ada.post(&w.hub, "/v2/account/passkeys", &json!({
+            w.ada.post(&w.hub, "/v1/account/passkeys", &json!({
                 "attestation_object": b64(&key.attestation(RP, UP_UV)), "client_data_json": b64(&Authenticator::client_data("webauthn.create", &challenge, ORIGIN)),
                 "sealed_copy": b64(&[2u8; 61]),
             }))
@@ -646,7 +646,7 @@ fn the_defaults_at_their_exact_values() {
     let post = |message: &[u8]| {
         w.ada.post(
             &w.hub,
-            &format!("/v2/groups/{}/messages", b64(&room)),
+            &format!("/v1/groups/{}/messages", b64(&room)),
             &json!({ "epoch": w.ada.epoch(&room), "message": b64(message) }),
         )
     };
@@ -661,7 +661,7 @@ fn the_defaults_at_their_exact_values() {
         .raw(
             &w.hub,
             "PUT",
-            &format!("/v2/files/{}", b64(&random::<16>())),
+            &format!("/v1/files/{}", b64(&random::<16>())),
             &[],
             &big,
         )
@@ -671,7 +671,7 @@ fn the_defaults_at_their_exact_values() {
             .raw(
                 &w.hub,
                 "PUT",
-                &format!("/v2/files/{}", b64(&random::<16>())),
+                &format!("/v1/files/{}", b64(&random::<16>())),
                 &[],
                 &big[..STORED]
             )
@@ -737,7 +737,7 @@ fn expensive_requests_of_one_device() {
     loop {
         let reply = w
             .ada
-            .post(&w.hub, &format!("/v2/groups/{}/commits", b64(&room)), &junk);
+            .post(&w.hub, &format!("/v1/groups/{}/commits", b64(&room)), &junk);
         if reply.status == 429 {
             assert_eq!(reply.code(), "rate-limited");
             assert!(reply.header("retry-after").is_some());
@@ -896,7 +896,7 @@ fn a_room_of_a_thousand_human_devices() {
     );
     assert!(parts <= 1 << 20, "{parts}");
     let t = Instant::now();
-    w.ada.post(&w.hub, "/v2/groups", &body).ok();
+    w.ada.post(&w.hub, "/v1/groups", &body).ok();
     println!(
         "founding at 1000 human devices + 1 agent device: claim of {} KeyPackages {} ms; Commit {} B, GroupInfo {} B, \
          Welcome {} B, {} B of the 1 MiB, {} B as JSON; taken in {} ms",
@@ -926,7 +926,7 @@ fn a_room_of_a_thousand_human_devices() {
     assert_eq!(stored as usize, out.welcome.as_ref().unwrap().len());
     let listed = w
         .ada
-        .get(&w.hub, &format!("/v2/rooms/{}/groups", b64(&room)))
+        .get(&w.hub, &format!("/v1/rooms/{}/groups", b64(&room)))
         .ok();
     assert!(listed
         .as_array()
@@ -945,14 +945,14 @@ fn a_claim_names_at_most_1024_devices() {
     w.ada
         .post(
             &w.hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": ids(1024) }),
         )
         .refused(404, "not-found");
     w.ada
         .post(
             &w.hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": ids(1025) }),
         )
         .refused(400, "bad-format");
@@ -981,7 +981,7 @@ fn a_page_of_groups_among_thousands_hidden() {
         }
         db.execute_batch("COMMIT").unwrap();
     }
-    let path = format!("/v2/rooms/{}/groups", b64(&room));
+    let path = format!("/v1/rooms/{}/groups", b64(&room));
     let t = std::time::Instant::now();
     let first = agent.get(&w.hub, &format!("{path}?limit=1")).ok();
     assert_eq!(first["items"].as_array().unwrap().len(), 1);

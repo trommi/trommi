@@ -6,7 +6,7 @@ use trommi_core::push::*;
 use trommi_core::Error;
 
 /// The associated data of the APNs sealing.
-const APNS_AAD: &[u8] = b"trommi apns v2";
+const APNS_AAD: &[u8] = b"trommi apns v1";
 
 const ROOM: RoomId = RoomId::new([0xA7; 32]);
 const ROOM_TEXT: &str = "p6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6c";
@@ -148,7 +148,7 @@ fn apns_is_nonce_then_the_suites_aead_over_the_json() {
     let sealed = seal(&key(1), &push(), &mut Fixed(0x42)).expect("seals");
     let (nonce, ciphertext) = sealed.split_at(NONCE_LEN);
     assert_eq!(nonce, [0x42; NONCE_LEN]);
-    let json = crypto::aead_open(&key(1), &[0x42; NONCE_LEN], b"trommi apns v2", ciphertext)
+    let json = crypto::aead_open(&key(1), &[0x42; NONCE_LEN], b"trommi apns v1", ciphertext)
         .expect("opens");
     assert_eq!(
         String::from_utf8(json).expect("utf-8"),

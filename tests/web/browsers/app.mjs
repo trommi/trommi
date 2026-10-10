@@ -87,7 +87,7 @@ async function passkeysOn(ctx, name, origin, stand = 12000) {
     await P.until("document.querySelector('#login-form')", 'the login screen')
     await sleep(stand)
     const screen = await P.js("return { passkeyButton: !!document.querySelector('#way-passkey')?.getClientRects().length, buttonText: document.querySelector('#way-passkey')?.textContent.trim() ?? null, form: !!document.querySelector('#login-form'), error: document.querySelector('#ob-error')?.textContent.trim() || document.querySelector('#passkey-error')?.textContent.trim() || null, calls: window.__webauthn }")
-    const challenges = requestsOf(ctx, name, u => u.pathname === '/v2/account/passkey/challenge').map(r => r.status ?? r.failed)
+    const challenges = requestsOf(ctx, name, u => u.pathname === '/v1/account/passkey/challenge').map(r => r.status ?? r.failed)
     await P.shot(`app-passkey-login-${name}`)
     return { origin, offers, screen, challenges }
   })
@@ -119,7 +119,7 @@ const extra = [
     for (const [where, f] of Object.entries(found)) {
       note(`${where === 'name' ? 'at localhost' : 'at the IP address 127.0.0.1'}: the engine says ${JSON.stringify(f.offers)}`)
       note(`  the login screen: passkey button ${f.screen.passkeyButton ? `shown ("${f.screen.buttonText}")` : 'not shown'}; WebAuthn calls: ${JSON.stringify(f.screen.calls)}; error line: ${JSON.stringify(f.screen.error)}`)
-      note(`  POST /v2/account/passkey/challenge in 12 s: ${f.challenges.length} (${counted(f.challenges.map(String)).join(', ') || 'none'})`)
+      note(`  POST /v1/account/passkey/challenge in 12 s: ${f.challenges.length} (${counted(f.challenges.map(String)).join(', ') || 'none'})`)
       check(f.challenges.length <= 2, `the standing login screen asks for at most two challenges (${where})`, f.challenges.length)
       check(f.screen.form, `the login form still stands (${where})`)
     }
@@ -131,8 +131,8 @@ const extra = [
       await ui.logIn(W, ctx.app.start(), ctx.email, ctx.password)
       await ui.live(W, 'logged in', 60000)
       await sleep(3000)
-      const streams = requestsOf(ctx, 'W', u => u.pathname === '/v2/stream')
-      note(`GET /v2/stream: ${streams.length} request(s): ${streams.map(r => `${r.status ?? r.failed ?? 'no answer yet'}${r.ended ? ` ended after ${r.ended - r.at} ms` : ' open'}`).join(', ')}`)
+      const streams = requestsOf(ctx, 'W', u => u.pathname === '/v1/stream')
+      note(`GET /v1/stream: ${streams.length} request(s): ${streams.map(r => `${r.status ?? r.failed ?? 'no answer yet'}${r.ended ? ` ended after ${r.ended - r.at} ms` : ' open'}`).join(', ')}`)
       check(streams.length === 1 && streams[0].status === 200, 'one stream request, answered 200', streams.map(r => r.status ?? r.failed))
       const sw = async () => W.js("if (!navigator.serviceWorker) return { has: false }; const reg = await Promise.race([navigator.serviceWorker.ready, new Promise(r => setTimeout(() => r(null), 10000))]); return { has: true, state: reg?.active?.state ?? null, script: reg?.active ? new URL(reg.active.scriptURL).pathname : null, controller: !!navigator.serviceWorker.controller, push: typeof PushManager === 'function' && !!reg?.pushManager, notification: typeof Notification === 'function' ? Notification.permission : 'no Notification' }")
       const first = await sw()

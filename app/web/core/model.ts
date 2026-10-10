@@ -1,5 +1,5 @@
 // model.ts: the builder of the board model (core/README.md "The model" is the contract with the views; the shapes
-// are types.ts). No crypto, no I/O, no rules of its own: under protocol v2 the signature, the sender's chain, who may
+// are types.ts). No crypto, no I/O, no rules of its own: under protocol v1 the signature, the sender's chain, who may
 // write what, an object's state (spec/v1.md 9.2.1), which register value is the current one (9.3.2) and the command
 // gate are the Rust core's. This file PROJECTS what the core accepted into the one model the views read, and marks
 // in a `change` what it touched. The engine calls it in the hub's order:
@@ -14,7 +14,7 @@
 //   project(model, change, now)                   the stack, open permission requests, each session's card lists
 //   cacheRecords / modelFromCache                 the model's records to and from the app's local cache
 //
-// How protocol v2 fills the fields whose meaning changed (everything else is as the README says):
+// How protocol v1 fills the fields whose meaning changed (everything else is as the README says):
 //   envelope_number (everywhere)   the hub's change number under which the envelope arrived
 //   room.key_epoch                 the room group's epoch
 //   room.last_envelope_number      the device's cursor (the engine sets it)
@@ -36,7 +36,7 @@
 //   human.scribble_snapshots       by 'desk/<board hex>', from the register board_snapshot/<board>
 //   note.causal, register causal   kept for display; the core says which write is current
 //   permission_state 'withdrawn'   has no source any more; 'expired' is set by project() when the clock passed expires_at
-// Gone, with nothing in v2 behind them and no view reading them: room.last_entry_number, room.agent_session_id,
+// Gone, with nothing in the protocol behind them and no view reading them: room.last_entry_number, room.agent_session_id,
 // member.agent_session_id, session.ever_agent_ids, epoch_agent_ids, with_history, desk_goals, card.refused_head,
 // timeline.newest_human_envelope_number / newest_agent_envelope_number, the registers room_snapshot and session_history/.
 import { ANSWER_ACTIONS, BOARD_CONTENT_TYPES, CARD_CONTENT_FIELDS, CARD_TYPES, decodeBody, decodePiece } from './codec.ts'

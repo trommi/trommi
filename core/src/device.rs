@@ -2523,7 +2523,7 @@ impl<S: Storage> Device<S> {
     }
 
     /// Whether this device holds the `recovery_mac` of the room's current recovery key. A human device that
-    /// does not founds nothing and commits nothing (7.4): it asks for it (`POST /v2/requests`, kind
+    /// does not founds nothing and commits nothing (7.4): it asks for it (`POST /v1/requests`, kind
     /// `handover`).
     pub fn holds_recovery_mac(&self) -> bool {
         self.room_history()

@@ -25,9 +25,9 @@ import { createRequire } from 'node:module'
 
 export const ENGINES = ['firefox', 'webkit', 'chromium']
 /** Everything a run writes: profile folders, builds, the local hub's data. */
-export const TMP = process.env.TROMMI_BROWSERS_TMP || path.join(os.homedir(), '.cache/trommi-work/v2/browsers-tmp')
+export const TMP = process.env.TROMMI_BROWSERS_TMP || path.join(os.homedir(), '.cache/trommi-work/v1/browsers-tmp')
 /** Screenshots and reports. */
-export const OUT = process.env.TROMMI_BROWSERS_OUT || path.join(os.homedir(), '.cache/trommi-work/v2/browsers-out')
+export const OUT = process.env.TROMMI_BROWSERS_OUT || path.join(os.homedir(), '.cache/trommi-work/v1/browsers-out')
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms))
 export const cannot = message => Object.assign(new Error(message), { cannot: true })

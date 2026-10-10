@@ -178,7 +178,7 @@ fn a_draft_that_lacks_what_its_kind_needs_is_bad_format_and_uses_no_number() {
         ErrorCode::BadFormat
     );
     assert_eq!(
-        code_of(invite_link_parse("https://app.example/join#v2.x".into())),
+        code_of(invite_link_parse("https://app.example/join#v1.x".into())),
         ErrorCode::BadFormat
     );
 }

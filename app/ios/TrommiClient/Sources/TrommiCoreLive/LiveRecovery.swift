@@ -151,7 +151,7 @@ extension LiveDevice {
   /// Replaces the code with the one `newRecoveryCode` made (`incomplete` when none was made), as a human device:
   /// one outbox entry of kind `recoveryCode` with the room Commit, its GroupInfo and SealedKey, the RecoveryLink, and
   /// `account` as its fifth part, exactly as given. `account` is whatever the hub's route takes as the account's new
-  /// sealed copies (for POST /v2/rooms/{room}/recovery-code: the JSON of its `account` object; empty for a room
+  /// sealed copies (for POST /v1/rooms/{room}/recovery-code: the JSON of its `account` object; empty for a room
   /// without an account). Once the hub accepted the entry the device sends the new key for the sealed keys to every
   /// human device by itself. The outbox entry's id.
   public func replaceCode(current: Bytes, account: Bytes, nowMs: UInt64) throws -> UInt64 {
@@ -178,7 +178,7 @@ extension LiveDevice {
   /// Ends the device's check of the room and builds the whole recovery, as `recoveryPlanFinish` prepared it: joins the
   /// room group and every session group from outside, removes every other human device together with the replacement
   /// of the code, then every leaf the new room state does not allow. `chains`: the envelopes of the devices to go, as
-  /// the hub's chain route serves them (GET /v2/groups/{group}/chains/{sender}), in the hub's order; the core verifies
+  /// the hub's chain route serves them (GET /v1/groups/{group}/chains/{sender}), in the hub's order; the core verifies
   /// each chain from number 1 and takes the Cut from the head it verified (`gap`, `chain-break`, `equivocation` fail
   /// the recovery). A device of which nothing is handed in is cut at nothing. `account`: as for `replaceCode`. The
   /// entries (kinds 11 `recoveryCommit` and, last, 12 `recoveryFinish`) are posted in order; the device's state
@@ -250,7 +250,7 @@ struct ServedByHub {
     return bytes
   }
 
-  /// Every SealedKey and RecoveryLink of the room: GET /v2/sealed-keys?after=, page by page.
+  /// Every SealedKey and RecoveryLink of the room: GET /v1/sealed-keys?after=, page by page.
   func sealedKeys() async throws -> (sealedKeys: [Bytes], links: [Bytes]) {
     var rows = [Bytes](), links = [Bytes](), after: UInt64 = 0
     while true {
@@ -264,7 +264,7 @@ struct ServedByHub {
     }
   }
 
-  /// The live session groups, main sessions before helper sessions: GET /v2/rooms/{room}/groups.
+  /// The live session groups, main sessions before helper sessions: GET /v1/rooms/{room}/groups.
   func liveSessions() async throws -> [GroupId] {
     var main = [GroupId](), helper = [GroupId]()
     for group in try await hub.groups() where group["live"] as? Bool == true {
@@ -278,7 +278,7 @@ struct ServedByHub {
     return main + helper
   }
 
-  /// The envelopes of the devices a recovery removes, as GET /v2/groups/{group}/chains/{sender} serves them (pruned
+  /// The envelopes of the devices a recovery removes, as GET /v1/groups/{group}/chains/{sender} serves them (pruned
   /// form; what the hub marks as beyond a Cut is left out), for `LiveDevice.recover`.
   ///
   /// ONE list, rising by change number across devices and groups: the core reads the envelopes in the order handed

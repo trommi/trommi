@@ -18,7 +18,7 @@ fn a_removed_device_fetches_the_commits_that_removed_it_and_nothing_else() {
     w.catch_up(&mut bea, &w.room.clone());
     let (session, group) = w.found_main(&mut [&mut bea], Some(&mut agent));
     let room = w.room;
-    agent.lease = agent.post(&w.hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 })).ok()["generation"].as_u64();
+    agent.lease = agent.post(&w.hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 })).ok()["generation"].as_u64();
     agent
         .send(&w.hub, &group, &chat(&session, agent.id(), "at work"))
         .ok();
@@ -28,13 +28,13 @@ fn a_removed_device_fetches_the_commits_that_removed_it_and_nothing_else() {
     );
     bea.post(
         &w.hub,
-        &format!("/v2/groups/{}/messages", b64(&group)),
+        &format!("/v1/groups/{}/messages", b64(&group)),
         &json!({ "epoch": step_epoch, "message": b64(&step) }),
     )
     .ok();
     // (a message lies in the session's log between its Commits: the proof holds Commits only, from any cursor)
     let mixed = bea
-        .get(&w.hub, &format!("/v2/groups/{}/log", b64(&group)))
+        .get(&w.hub, &format!("/v1/groups/{}/log", b64(&group)))
         .ok();
     let message_n = mixed["items"]
         .as_array()
@@ -44,7 +44,7 @@ fn a_removed_device_fetches_the_commits_that_removed_it_and_nothing_else() {
         .map(|i| i["n"].as_i64().unwrap())
         .expect("a message in the log");
     let removal = |dev: &Dev, hub: &TestHub, g: &[u8], after: i64| {
-        dev.get(hub, &format!("/v2/groups/{}/removal?after={after}", b64(g)))
+        dev.get(hub, &format!("/v1/groups/{}/removal?after={after}", b64(g)))
     };
     // a member has no removal to be shown
     removal(&agent, &w.hub, &room, 0).refused(404, "not-found");
@@ -112,20 +112,20 @@ fn a_removed_device_fetches_the_commits_that_removed_it_and_nothing_else() {
     // with the token it still holds, and with one it signs in for now: no standing, every route says so
     let nothing_else = |agent: &Dev| {
         for path in [
-            "/v2/desk",
-            "/v2/welcomes",
-            "/v2/changes",
-            "/v2/account",
-            &format!("/v2/groups/{}/log", b64(&group)),
-            &format!("/v2/groups/{}/info", b64(&room)),
-            &format!("/v2/rooms/{}/groups", b64(&room)),
+            "/v1/desk",
+            "/v1/welcomes",
+            "/v1/changes",
+            "/v1/account",
+            &format!("/v1/groups/{}/log", b64(&group)),
+            &format!("/v1/groups/{}/info", b64(&room)),
+            &format!("/v1/rooms/{}/groups", b64(&room)),
         ] {
             agent.get(hub, path).refused(403, "not-member");
         }
         agent
-            .put(hub, "/v2/key-packages", &json!({ "single_use": [] }))
+            .put(hub, "/v1/key-packages", &json!({ "single_use": [] }))
             .refused(403, "not-member");
-        agent.post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 })).refused(403, "not-member");
+        agent.post(hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": false, "last_call_at": 0 })).refused(403, "not-member");
         assert_eq!(agent.events(hub, None).status, 403);
     };
     nothing_else(&agent);
@@ -179,7 +179,7 @@ fn a_removed_device_fetches_the_commits_that_removed_it_and_nothing_else() {
     removal(&mallory, hub, &group, 0).refused(404, "not-found");
     // a member that was not removed: nothing; without a token: nothing
     removal(&bea, hub, &group, 0).refused(404, "not-found");
-    hub.get(&format!("/v2/groups/{}/removal", b64(&room)))
+    hub.get(&format!("/v1/groups/{}/removal", b64(&room)))
         .refused(401, "unauthorised");
 
     // thirty days on it is over: no proof, no token

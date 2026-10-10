@@ -112,7 +112,7 @@ public enum LogKind: Equatable {
   case commit(bytes: Bytes, recoveryAuth: Bytes?)
   case message(bytes: Bytes)
 }
-/** One entry of the hub's ordered log (GET /v2/groups/{group}/log, the stream's `log`). */
+/** One entry of the hub's ordered log (GET /v1/groups/{group}/log, the stream's `log`). */
 public struct LogEntry: Equatable {
   public var change: UInt64
   public var group: GroupId
@@ -781,7 +781,7 @@ public protocol CoreTools: AnyObject {
 /** Who signs a hub challenge (12.3): a device, or the recovery key while it joins. */
 public protocol CoreSigner: AnyObject {
   var id: DeviceId { get }
-  /** The `HubAuth` bytes and the signature, as POST /v2/rooms/{room}/tokens takes them. */
+  /** The `HubAuth` bytes and the signature, as POST /v1/rooms/{room}/tokens takes them. */
   func signHubAuth(room: RoomId, hub: String, challenge: Bytes) throws -> (auth: Bytes, signature: Bytes)
 }
 

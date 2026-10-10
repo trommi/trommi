@@ -30,8 +30,8 @@ final class RoomRecoveryTests: XCTestCase {
   private func code(of error: Error?) -> String { (error as? TrommiError)?.code ?? (error as? HubError)?.code ?? "" }
   private func failure(_ op: () async throws -> Void) async -> Error? { do { try await op(); return nil } catch { return error } }
 
-  /// The account of `room` as GET /v2/account gives it, with the code sealed under the password and under a kit;
-  /// the kit's words. The kit also answers POST /v2/account/recover.
+  /// The account of `room` as GET /v1/account gives it, with the code sealed under the password and under a kit;
+  /// the kit's words. The kit also answers POST /v1/account/recover.
   @discardableResult private func account(room: RoomId, code: Bytes) throws -> String {
     let keys = try tools.passwordKeys(email: email, password: password, kdf: nil)
     let words = try tools.generateKitWords()

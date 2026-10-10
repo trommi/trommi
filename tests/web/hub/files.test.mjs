@@ -39,7 +39,7 @@ test('without a progress callback, and as a Blob, the bytes go in one piece', as
   await hub.putFile(a, bytes)
   const stored = await hub.putFile(b, new Blob([bytes]))
   assert.deepEqual(stored.sha256, sha256(bytes))
-  assert.deepEqual(received(fake, /^\/v2\/files\//, 'PUT').map(r => r.body.bytes), [200_000, 200_000])
+  assert.deepEqual(received(fake, /^\/v1\/files\//, 'PUT').map(r => r.body.bytes), [200_000, 200_000])
   assert.deepEqual((await hub.getFile(b)).bytes, bytes)
 })
 
@@ -63,14 +63,14 @@ test('a download that breaks off is taken up by Range from where it broke', asyn
   const { fake, hub } = await scene(t)
   const file_id = id(16), bytes = new Uint8Array(randomBytes(FIVE_MIB))
   await hub.putFile(file_id, bytes)
-  fake.faults.add({ method: 'GET', path: `/v2/files/${txt(file_id)}`, drop: 'mid' })
+  fake.faults.add({ method: 'GET', path: `/v1/files/${txt(file_id)}`, drop: 'mid' })
   const got = await hub.getFile(file_id)
   assert.ok(Buffer.from(got.bytes).equals(Buffer.from(bytes)))
-  const gets = received(fake, `/v2/files/${txt(file_id)}`, 'GET')
+  const gets = received(fake, `/v1/files/${txt(file_id)}`, 'GET')
   assert.deepEqual(gets.map(r => r.status), [200, 206])
-  fake.faults.add({ method: 'GET', path: `/v2/files/${txt(file_id)}`, drop: 'mid', times: 5 })
+  fake.faults.add({ method: 'GET', path: `/v1/files/${txt(file_id)}`, drop: 'mid', times: 5 })
   await assert.rejects(hub.getFile(file_id), e => e instanceof HubError && e.code === 'offline')
-  assert.equal(received(fake, `/v2/files/${txt(file_id)}`, 'GET').length, 5, 'three tries, then it is the caller\'s turn')
+  assert.equal(received(fake, `/v1/files/${txt(file_id)}`, 'GET').length, 5, 'three tries, then it is the caller\'s turn')
 })
 
 test('abort: an upload and a download stop with the caller\'s reason, not as "offline"', async t => {
@@ -91,9 +91,9 @@ test('the same bytes again get the first answer; other bytes under the id are re
   const { fake, hub, room_id } = await scene(t)
   const file_id = id(16), bytes = new Uint8Array(randomBytes(5000))
   const first = await hub.putFile(file_id, bytes)
-  fake.faults.add({ method: 'PUT', path: `/v2/files/${txt(file_id)}`, drop: 'after' })
+  fake.faults.add({ method: 'PUT', path: `/v1/files/${txt(file_id)}`, drop: 'after' })
   assert.deepEqual(await hub.putFile(file_id, bytes), first, 'an answer lost once: sent again at once')
-  fake.faults.add({ method: 'PUT', path: `/v2/files/${txt(file_id)}`, drop: 'after', times: 2 })
+  fake.faults.add({ method: 'PUT', path: `/v1/files/${txt(file_id)}`, drop: 'after', times: 2 })
   await assert.rejects(hub.putFile(file_id, bytes), e => e.code === 'offline')
   assert.deepEqual(await hub.putFile(file_id, bytes), first)
   assert.equal(fake.state.rooms.get(txt(room_id)).files.size, 1)
@@ -120,7 +120,7 @@ test('a file read needs a token, and a file nobody may read does not exist', asy
 
 test('a hub that answers a file request with something else is refused', async t => {
   const { fake, hub } = await scene(t)
-  const file_id = id(16), bytes = new Uint8Array(randomBytes(4000)), path = `/v2/files/${txt(file_id)}`
+  const file_id = id(16), bytes = new Uint8Array(randomBytes(4000)), path = `/v1/files/${txt(file_id)}`
   await hub.putFile(file_id, bytes)
   const whole = { 'content-type': 'application/octet-stream' }
   const cases = [
@@ -154,12 +154,12 @@ test('a Share link: registered, read by its secret without a token, the secret i
 
   const outsider = client(fake, null)
   const seen = []
-  fake.faults.add({ times: 9, path: `/v2/shares/${txt(share_id)}`, when: rq => { seen.push(['authorization' in rq.headers, rq.headers['x-share-secret']]); return false } })
+  fake.faults.add({ times: 9, path: `/v1/shares/${txt(share_id)}`, when: rq => { seen.push(['authorization' in rq.headers, rq.headers['x-share-secret']]); return false } })
   const got = await outsider.getShared(share_id, secret)
   assert.deepEqual(got.bytes, bytes)
   assert.deepEqual((await outsider.getShared(share_id, secret, { range: { start: 10, end: 19 } })).bytes, bytes.subarray(10, 20))
   assert.deepEqual(seen[0], [false, Buffer.from(secret).toString('base64url')])
-  assert.ok(received(fake, `/v2/shares/${txt(share_id)}`).every(r => Object.keys(r.query).length === 0), 'the secret is never in the address')
+  assert.ok(received(fake, `/v1/shares/${txt(share_id)}`).every(r => Object.keys(r.query).length === 0), 'the secret is never in the address')
   const wrong = await outsider.getShared(share_id, new Uint8Array(32)).catch(e => e)
   const unknown = await outsider.getShared(id(16), secret).catch(e => e)
   assert.deepEqual([wrong.code, wrong.status, wrong.hub_message], [unknown.code, unknown.status, unknown.hub_message], 'every refusal is the same')

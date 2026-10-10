@@ -13,40 +13,40 @@ const entry = (kind, group, epoch, parts) => ({ id: 1, kind, group, epoch, parts
 const last = (fake, path) => received(fake, path).at(-1)
 const copy = () => { const c = new Uint8Array(61); c[0] = 2; return c }
 
-test('room_founding: POST /v2/rooms { group_info, sealed_key }, without a token', async t => {
+test('room_founding: POST /v1/rooms { group_info, sealed_key }, without a token', async t => {
   const { fake } = await scene(t)
   const room_id = id(32), device = id(32)
   const hub = client(fake, null)
   const group_info = utf8({ group: room_id, epoch: 0, leaves: [device] })
   const answer = await hub.postOutbox(entry('roomFounding', room_id, 0, [group_info, part('sealed-0')]))
   assert.deepEqual(answer, { change: null, room_id })
-  assert.deepEqual(last(fake, '/v2/rooms').body, { group_info: b64u(group_info), sealed_key: sent('sealed-0') })
+  assert.deepEqual(last(fake, '/v1/rooms').body, { group_info: b64u(group_info), sealed_key: sent('sealed-0') })
   assert.deepEqual(await hub.postOutbox(entry('roomFounding', room_id, 0, [group_info, part('sealed-0')])), answer, 'the same bytes: the first answer')
   await assert.rejects(hub.postOutbox(entry('roomFounding', room_id, 0, [utf8({ group: room_id, epoch: 0, leaves: [id(32)] }), part('sealed-0')])), e => e.code === 'room-exists' && e.status === 409)
-  fake.faults.add({ path: '/v2/rooms', answer: () => ({ room_id: txt(id(32)) }) })
+  fake.faults.add({ path: '/v1/rooms', answer: () => ({ room_id: txt(id(32)) }) })
   await assert.rejects(hub.postOutbox(entry('roomFounding', room_id, 0, [group_info, part('sealed-0')])), e => e.code === 'bad-answer', 'another room than the one founded')
   assert.equal(fake.state.rooms.get(txt(room_id)).devices.get(txt(device)), 'human')
 })
 
-test('group_founding: POST /v2/groups with the six parts; an empty Welcome is left out', async t => {
+test('group_founding: POST /v1/groups with the six parts; an empty Welcome is left out', async t => {
   const { fake, hub, room_id, device } = await scene(t)
   const group = new Uint8Array([...room_id, ...randomBytes(16)]), session = { session_id: id(16), parent: null }
   const info = utf8({ group, epoch: 0, leaves: [device], session })
   const parts = [info, part('sealed-0'), part('commit-1'), part('info-1'), part('welcome-1'), part('sealed-1')]
   assert.deepEqual(await hub.postOutbox(entry('groupFounding', group, 0, parts)), { change: null, group_id: group })
-  assert.deepEqual(last(fake, '/v2/groups').body, { group_info_0: b64u(info), sealed_key_0: sent('sealed-0'), commit: sent('commit-1'), group_info: sent('info-1'), sealed_key: sent('sealed-1'), welcome: sent('welcome-1') })
+  assert.deepEqual(last(fake, '/v1/groups').body, { group_info_0: b64u(info), sealed_key_0: sent('sealed-0'), commit: sent('commit-1'), group_info: sent('info-1'), sealed_key: sent('sealed-1'), welcome: sent('welcome-1') })
   await hub.postOutbox(entry('groupFounding', group, 0, parts))
   assert.equal(fake.state.rooms.get(txt(room_id)).groups.get(txt(group)).log.length, 1, 'founded once')
 
   const other = new Uint8Array([...room_id, ...randomBytes(16)])
   const bare = [utf8({ group: other, epoch: 0, leaves: [device], session }), part('s0'), part('c1'), part('i1'), new Uint8Array(0), part('s1')]
   await hub.postOutbox(entry('groupFounding', other, 0, bare))
-  assert.equal('welcome' in last(fake, '/v2/groups').body, false)
+  assert.equal('welcome' in last(fake, '/v1/groups').body, false)
 })
 
-test('commit and external_commit: POST /v2/groups/{group}/commits with the epoch they build on', async t => {
+test('commit and external_commit: POST /v1/groups/{group}/commits with the epoch they build on', async t => {
   const { fake, hub, room_id } = await scene(t)
-  const path = `/v2/groups/${txt(room_id)}/commits`
+  const path = `/v1/groups/${txt(room_id)}/commits`
   const first = await hub.postOutbox(entry('commit', room_id, 0, [part('commit-1'), part('info-1'), part('welcome-1'), part('sealed-1')]))
   assert.equal(first.epoch, 1)
   assert.ok(first.change > 0)
@@ -65,9 +65,9 @@ test('commit and external_commit: POST /v2/groups/{group}/commits with the epoch
   assert.deepEqual(await hub.postOutbox(entry('commit', room_id, 0, [part('commit-1'), part('info-1'), part('welcome-1'), part('sealed-1')])), first, 'a repeated Commit: its first answer')
 })
 
-test('message and relay_message: POST /v2/groups/{group}/messages', async t => {
+test('message and relay_message: POST /v1/groups/{group}/messages', async t => {
   const { fake, hub, room_id } = await scene(t)
-  const path = `/v2/groups/${txt(room_id)}/messages`
+  const path = `/v1/groups/${txt(room_id)}/messages`
   assert.deepEqual(await hub.postOutbox(entry('message', room_id, 0, [part('m1')])), { change: null, n: 1 })
   assert.deepEqual(last(fake, path).body, { epoch: 0, message: sent('m1') })
   assert.deepEqual(await hub.postOutbox(entry('relayMessage', room_id, 0, [part('stroke')])), { change: null, n: null })
@@ -76,12 +76,12 @@ test('message and relay_message: POST /v2/groups/{group}/messages', async t => {
   assert.equal(fake.state.rooms.get(txt(room_id)).groups.get(txt(room_id)).log.length, 1, 'a relayed message is not stored')
 })
 
-test('envelope: POST /v2/envelopes { envelope }; sent twice it is stored once', async t => {
+test('envelope: POST /v1/envelopes { envelope }; sent twice it is stored once', async t => {
   const { fake, hub, room_id, device } = await scene(t)
   const bytes = envelope(room_id, device, 1)
   const answer = await hub.postOutbox(entry('envelope', room_id, 0, [bytes]))
   assert.deepEqual(answer, { change: 1 })
-  assert.deepEqual(last(fake, '/v2/envelopes').body, { envelope: b64u(bytes) })
+  assert.deepEqual(last(fake, '/v1/envelopes').body, { envelope: b64u(bytes) })
   assert.deepEqual(await hub.postOutbox(entry('envelope', room_id, 0, [bytes])), answer)
   assert.equal(fake.state.rooms.get(txt(room_id)).envelopes.length, 1)
   await assert.rejects(hub.postOutbox(entry('envelope', room_id, 0, [envelope(room_id, device, 1, { other: true })])), e => e.code === 'equivocation' && !e.transient)
@@ -90,13 +90,13 @@ test('envelope: POST /v2/envelopes { envelope }; sent twice it is stored once', 
 test('an answer that was lost: the post goes once more at once; lost again it is "not reached", and the retry gets the first answer; nothing is doubled', async t => {
   const { fake, hub, room_id, device } = await scene(t)
   await hub.desk()
-  fake.faults.add({ path: '/v2/envelopes', drop: 'after' })
+  fake.faults.add({ path: '/v1/envelopes', drop: 'after' })
   assert.deepEqual(await hub.postOutbox(entry('envelope', room_id, 0, [envelope(room_id, device, 1)])), { change: 1 }, 'the second arrival got the first answer')
-  assert.deepEqual(received(fake, '/v2/envelopes').map(r => [r.dropped, r.status]), [['after', 200], [null, 200]])
+  assert.deepEqual(received(fake, '/v1/envelopes').map(r => [r.dropped, r.status]), [['after', 200], [null, 200]])
   assert.equal(fake.state.rooms.get(txt(room_id)).envelopes.length, 1)
 
   const bytes = envelope(room_id, device, 2)
-  fake.faults.add({ path: '/v2/envelopes', drop: 'after', times: 2 })
+  fake.faults.add({ path: '/v1/envelopes', drop: 'after', times: 2 })
   await assert.rejects(hub.postOutbox(entry('envelope', room_id, 0, [bytes])), e => e instanceof HubError && e.code === 'offline')
   assert.equal(fake.state.rooms.get(txt(room_id)).envelopes.length, 2, 'the hub had stored it')
   assert.deepEqual(await hub.postOutbox(entry('envelope', room_id, 0, [bytes])), { change: 2 })
@@ -113,7 +113,7 @@ test('an answer that was lost: the post goes once more at once; lost again it is
 test('an envelope the hub voids: the refusal says so, also when it is sent again', async t => {
   const { fake, hub, room_id, device } = await scene(t)
   const bytes = envelope(room_id, device, 1)
-  fake.faults.add({ path: '/v2/envelopes', void: 'forbidden' })
+  fake.faults.add({ path: '/v1/envelopes', void: 'forbidden' })
   for (let i = 0; i < 2; i++) {
     const e = await hub.postOutbox(entry('envelope', room_id, 0, [bytes])).catch(x => x)
     assert.deepEqual([e.code, e.status, e.voided], ['forbidden', 403, true])
@@ -121,31 +121,31 @@ test('an envelope the hub voids: the refusal says so, also when it is sent again
   assert.equal(fake.state.rooms.get(txt(room_id)).change, 1, 'the void record took one number')
 })
 
-test('key_packages: PUT /v2/key-packages, the last-resort part first', async t => {
+test('key_packages: PUT /v1/key-packages, the last-resort part first', async t => {
   const { fake, hub, room_id } = await scene(t)
   assert.deepEqual(await hub.postOutbox(entry('keyPackages', null, 0, [part('last'), part('kp1'), part('kp2')])), { change: null, unused: 2 })
-  assert.deepEqual(last(fake, '/v2/key-packages').body, { single_use: [sent('kp1'), sent('kp2')], last_resort: sent('last') })
+  assert.deepEqual(last(fake, '/v1/key-packages').body, { single_use: [sent('kp1'), sent('kp2')], last_resort: sent('last') })
   assert.deepEqual(await hub.postOutbox(entry('keyPackages', null, 0, [new Uint8Array(0), part('kp3')])), { change: null, unused: 3 })
-  assert.deepEqual(last(fake, '/v2/key-packages').body, { single_use: [sent('kp3')] })
+  assert.deepEqual(last(fake, '/v1/key-packages').body, { single_use: [sent('kp3')] })
   assert.equal(room_id, hub.room_id)
 })
 
-test('sealed_key: PUT /v2/sealed-keys { sealed_key }', async t => {
+test('sealed_key: PUT /v1/sealed-keys { sealed_key }', async t => {
   const { fake, hub, room_id } = await scene(t)
   assert.deepEqual(await hub.postOutbox(entry('sealedKey', room_id, 3, [part('sealed')])), { change: null })
-  assert.deepEqual(last(fake, '/v2/sealed-keys').body, { sealed_key: sent('sealed') })
+  assert.deepEqual(last(fake, '/v1/sealed-keys').body, { sealed_key: sent('sealed') })
   await hub.postOutbox(entry('sealedKey', room_id, 3, [part('sealed')]))
   assert.equal(fake.state.rooms.get(txt(room_id)).sealed_keys.length, 1)
 })
 
-test('recoveryCode: POST /v2/rooms/{room}/recovery-code; the account\'s new copies travel in the entry', async t => {
+test('recoveryCode: POST /v1/rooms/{room}/recovery-code; the account\'s new copies travel in the entry', async t => {
   const { fake, hub, room_id } = await scene(t)
   const none = accountCopiesBytes(null)
   assert.equal(none.length, 0)
   const parts = [part('commit'), part('info'), part('sealed'), part('link'), none]
   const answer = await hub.postOutbox(entry('recoveryCode', room_id, 0, parts))
   assert.equal(answer.epoch, 1)
-  assert.deepEqual(last(fake, `/v2/rooms/${txt(room_id)}/recovery-code`).body, { commit: { epoch: 0, commit: sent('commit'), group_info: sent('info'), sealed_key: sent('sealed') }, recovery_link: sent('link'), account: null }, 'the Commit goes nested under `commit`')
+  assert.deepEqual(last(fake, `/v1/rooms/${txt(room_id)}/recovery-code`).body, { commit: { epoch: 0, commit: sent('commit'), group_info: sent('info'), sealed_key: sent('sealed') }, recovery_link: sent('link'), account: null }, 'the Commit goes nested under `commit`')
   assert.deepEqual(await hub.postOutbox(entry('recoveryCode', room_id, 0, parts)), answer)
   assert.equal(fake.state.rooms.get(txt(room_id)).links.length, 1)
 
@@ -153,28 +153,28 @@ test('recoveryCode: POST /v2/rooms/{room}/recovery-code; the account\'s new copi
   await hub.createAccount({ email: 'a@example.com', kit, password: { auth_key: kit.auth_key, sealed_copy: kit.sealed_copy, kdf: { alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 } } })
   const copies = { kit, password: { sealed_copy: copy() } }
   await hub.postOutbox(entry('recoveryCode', room_id, 1, [part('commit-2'), part('info-2'), part('sealed-2'), part('link-2'), accountCopiesBytes(copies)]))
-  assert.deepEqual(last(fake, `/v2/rooms/${txt(room_id)}/recovery-code`).body.account, { kit: { auth_key: b64u(kit.auth_key), sealed_copy: b64u(kit.sealed_copy)}, password: { sealed_copy: b64u(copies.password.sealed_copy) } })
+  assert.deepEqual(last(fake, `/v1/rooms/${txt(room_id)}/recovery-code`).body.account, { kit: { auth_key: b64u(kit.auth_key), sealed_copy: b64u(kit.sealed_copy)}, password: { sealed_copy: b64u(copies.password.sealed_copy) } })
   const passkey = { kit, passkey: { credential_id: new Uint8Array(20), sealed_copy: copy() } }
   const refused = await hub.postOutbox(entry('recoveryCode', room_id, 2, [part('c3x'), part('i3'), part('s3'), part('l3'), accountCopiesBytes(passkey)])).catch(e => e)
   assert.equal(refused.code, 'incomplete', 'the hub read the passkey copy and has no such passkey')
-  assert.deepEqual(Object.keys(last(fake, `/v2/rooms/${txt(room_id)}/recovery-code`).body.account.passkey).sort(), ['credential_id', 'sealed_copy'])
+  assert.deepEqual(Object.keys(last(fake, `/v1/rooms/${txt(room_id)}/recovery-code`).body.account.passkey).sort(), ['credential_id', 'sealed_copy'])
 
   // a way in set anew: a password with its login key and derivation record; a passkey registered on a tokenless challenge
   const anew = { kit, password: { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy(), kdf: { alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 } } }
   await hub.postOutbox(entry('recoveryCode', room_id, 2, [part('c3'), part('i3'), part('s3'), part('l3'), accountCopiesBytes(anew)]))
-  assert.deepEqual(last(fake, `/v2/rooms/${txt(room_id)}/recovery-code`).body.account.password, { auth_key: b64u(anew.password.auth_key), sealed_copy: b64u(anew.password.sealed_copy), kdf: anew.password.kdf })
+  assert.deepEqual(last(fake, `/v1/rooms/${txt(room_id)}/recovery-code`).body.account.password, { auth_key: b64u(anew.password.auth_key), sealed_copy: b64u(anew.password.sealed_copy), kdf: anew.password.kdf })
   const outside = client(fake, null)
   assert.equal((await outside.login('a@example.com', anew.password.auth_key)).rooms.length, 1, 'the new password is the way in')
   await assert.rejects(outside.login('a@example.com', kit.auth_key), e => e.code === 'wrong-login')
   const registration = { attestation_object: new Uint8Array(randomBytes(90)), client_data_json: utf8({ type: 'webauthn.create', challenge: b64u((await hub.accountPasskeyChallenge()).challenge), origin: 'https://app.trommi.com' }), sealed_copy: copy(), transports: ['internal', 'hybrid'] }
   await hub.postOutbox(entry('recoveryCode', room_id, 3, [part('c4'), part('i4'), part('s4'), part('l4'), accountCopiesBytes({ kit, passkey: registration })]))
-  assert.deepEqual(Object.keys(last(fake, `/v2/rooms/${txt(room_id)}/recovery-code`).body.account.passkey).sort(), ['attestation_object', 'client_data_json', 'sealed_copy', 'transports'])
+  assert.deepEqual(Object.keys(last(fake, `/v1/rooms/${txt(room_id)}/recovery-code`).body.account.passkey).sort(), ['attestation_object', 'client_data_json', 'sealed_copy', 'transports'])
   const view = await hub.account()
   assert.deepEqual([view.has_password, view.passkeys.length, view.passkeys[0].sealed_copy], [false, 1, registration.sealed_copy], 'the passkey is the one way in')
   await assert.rejects(outside.login('a@example.com', anew.password.auth_key), e => e.code === 'wrong-login')
 
   // the flat form of the body is not read: the hub will drop it
-  const flat = await hub.request('POST', `/v2/rooms/${txt(room_id)}/recovery-code`, { body: { epoch: 4, commit: sent('c'), group_info: sent('i'), sealed_key: sent('s'), recovery_link: sent('l'), account: null } }).catch(e => e)
+  const flat = await hub.request('POST', `/v1/rooms/${txt(room_id)}/recovery-code`, { body: { epoch: 4, commit: sent('c'), group_info: sent('i'), sealed_key: sent('s'), recovery_link: sent('l'), account: null } }).catch(e => e)
   assert.deepEqual([flat.code, flat.status], ['bad-format', 400])
 
   // bytes that are not what accountCopiesBytes writes never become a request
@@ -204,13 +204,13 @@ test('recoveryCommit and recoveryFinish: the recovery\'s routes, under the recov
   const parts = [utf8({ added: [joiner], removed: [device] }), part('info-1'), new Uint8Array(0), part('sealed-1'), part('auth-1')]
   await assert.rejects(hub.postOutbox(entry('recoveryCommit', room_id, 0, parts)), { code: 'bad-argument' })
   assert.deepEqual(await hub.postOutbox(entry('recoveryCommit', room_id, 0, parts), { recovery_id }), { change: null, epoch: 1, kept: true })
-  assert.deepEqual(last(fake, `/v2/rooms/${txt(room_id)}/recovery/${txt(recovery_id)}/commits`).body, { group_id: txt(room_id), epoch: 0, commit: b64u(parts[0]), group_info: sent('info-1'), sealed_key: sent('sealed-1'), recovery_auth: sent('auth-1') })
+  assert.deepEqual(last(fake, `/v1/rooms/${txt(room_id)}/recovery/${txt(recovery_id)}/commits`).body, { group_id: txt(room_id), epoch: 0, commit: b64u(parts[0]), group_info: sent('info-1'), sealed_key: sent('sealed-1'), recovery_auth: sent('auth-1') })
   assert.deepEqual(await hub.postOutbox(entry('recoveryCommit', room_id, 0, parts), { recovery_id }), { change: null, epoch: 1, kept: true })
 
   const finish = entry('recoveryFinish', room_id, 0, [part('link'), accountCopiesBytes(null)])
   await assert.rejects(hub.postOutbox(finish), { code: 'bad-argument' })
   const done = await hub.postOutbox(finish, { recovery_id })
-  assert.deepEqual(last(fake, `/v2/rooms/${txt(room_id)}/recovery/${txt(recovery_id)}/finish`).body, { recovery_link: sent('link'), account: null })
+  assert.deepEqual(last(fake, `/v1/rooms/${txt(room_id)}/recovery/${txt(recovery_id)}/finish`).body, { recovery_link: sent('link'), account: null })
   assert.deepEqual([done.published, done.device, done.change >= done.first_change], [true, joiner, true])
   assert.deepEqual(await hub.postOutbox(finish, { recovery_id }), done, 'the finish again: the same answer')
   assert.equal(room.groups.get(txt(room_id)).log.length, 1)
@@ -221,17 +221,17 @@ test('what the hub would do twice is never sent twice: a relayed message, a clai
   await hub.desk()
   const kit = { auth_key: new Uint8Array(randomBytes(32)), sealed_copy: copy() }, kdf = { alg: 'argon2id', v: 1, m: 65536, t: 3, p: 1 }
   const once = [
-    ['POST', `/v2/groups/${txt(room_id)}/messages`, () => hub.postOutbox(entry('relayMessage', room_id, 0, [part('piece')]))],
-    ['POST', '/v2/key-packages/claim', () => hub.claimKeyPackages([device])],
-    ['POST', '/v2/requests', () => hub.postRequest({ kind: 'session' })],
-    ['POST', `/v2/groups/${txt(room_id)}/reject`, () => hub.rejectCommit(room_id, 1)],
-    ['POST', `/v2/rooms/${txt(room_id)}/recovery`, () => hub.openRecovery()],
-    ['POST', '/v2/account', () => hub.createAccount({ email: 'a@example.com', kit, password: { auth_key: kit.auth_key, sealed_copy: kit.sealed_copy, kdf } })],
-    ['PUT', '/v2/account/password', () => hub.putPassword({ auth_key: kit.auth_key, sealed_copy: kit.sealed_copy, kdf, revision: 1 })],
-    ['PUT', '/v2/account/kit', () => hub.putKit({ ...kit, revision: 1 })],
-    ['POST', '/v2/account/passkey/login', () => hub.passkeyLogin({ credential_id: new Uint8Array(16), authenticator_data: new Uint8Array(37), client_data_json: part('{}'), signature: new Uint8Array(64) })],
-    ['DELETE', `/v2/files/${txt(id(16))}`, null],
-    ['POST', '/v2/push', () => hub.pushRegister({ web_push: { endpoint: 'https://push.example/x', keys: { p256dh: new Uint8Array(65), auth: new Uint8Array(16) } }, level: 'all' })],
+    ['POST', `/v1/groups/${txt(room_id)}/messages`, () => hub.postOutbox(entry('relayMessage', room_id, 0, [part('piece')]))],
+    ['POST', '/v1/key-packages/claim', () => hub.claimKeyPackages([device])],
+    ['POST', '/v1/requests', () => hub.postRequest({ kind: 'session' })],
+    ['POST', `/v1/groups/${txt(room_id)}/reject`, () => hub.rejectCommit(room_id, 1)],
+    ['POST', `/v1/rooms/${txt(room_id)}/recovery`, () => hub.openRecovery()],
+    ['POST', '/v1/account', () => hub.createAccount({ email: 'a@example.com', kit, password: { auth_key: kit.auth_key, sealed_copy: kit.sealed_copy, kdf } })],
+    ['PUT', '/v1/account/password', () => hub.putPassword({ auth_key: kit.auth_key, sealed_copy: kit.sealed_copy, kdf, revision: 1 })],
+    ['PUT', '/v1/account/kit', () => hub.putKit({ ...kit, revision: 1 })],
+    ['POST', '/v1/account/passkey/login', () => hub.passkeyLogin({ credential_id: new Uint8Array(16), authenticator_data: new Uint8Array(37), client_data_json: part('{}'), signature: new Uint8Array(64) })],
+    ['DELETE', `/v1/files/${txt(id(16))}`, null],
+    ['POST', '/v1/push', () => hub.pushRegister({ web_push: { endpoint: 'https://push.example/x', keys: { p256dh: new Uint8Array(65), auth: new Uint8Array(16) } }, level: 'all' })],
   ]
   for (const [method, path, call] of once) {
     fake.faults.add({ method, path, drop: 'after' })
@@ -255,7 +255,7 @@ test('an entry with the wrong parts, group or kind is not sent', async t => {
 test('a hostile answer to a post is not taken for an acceptance', async t => {
   const { fake, hub, room_id, device } = await scene(t)
   for (const answer of [() => ({}), () => ({ change: '5' }), () => ({ change: -1 }), () => ({ change: 0 }), () => ({ change: 2 ** 53 }), () => ({ change: 1.5 }), () => [], () => null]) {
-    fake.faults.add({ path: '/v2/envelopes', answer })
+    fake.faults.add({ path: '/v1/envelopes', answer })
     await assert.rejects(hub.postOutbox(entry('envelope', room_id, 0, [envelope(room_id, device, 1)])), e => e.code === 'bad-answer' && e.transient)
   }
   for (const answer of [a => ({ ...a, epoch: 5 }), a => ({ ...a, change: null }), () => ({ epoch: 1 })]) {

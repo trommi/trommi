@@ -16,8 +16,8 @@
 // device its groups" (no public sight of Commits for agents, no pruned form, no Cut marks on a chain, `stale` is
 // always false), the 8 MiB budget of an answer and `truncated`, the limits and lifetimes of KeyPackages, requests,
 // invites and passkeys (a passkey challenge of an account is bound to the account's revision, as the real one), transactions (a refused request may leave a part of its writes), the checks of a recovery's
-// parts and that its finish replaces the recovery key, push endpoints, `/v2/link`, `/v2/live-activity`,
-// `/v2/push-envelope`, `Trommi-Lease`, the stream's bounded queue and pings. Cross-origin requests are answered for
+// parts and that its finish replaces the recovery key, push endpoints, `/v1/link`, `/v1/live-activity`,
+// `/v1/push-envelope`, `Trommi-Lease`, the stream's bounded queue and pings. Cross-origin requests are answered for
 // any origin. tests/web/hub/real-hub.test.mjs runs the client against the real hub for what must not rest on this.
 //
 // The structs it must look into are read by `opts.readers`. By default each is UTF-8 JSON, which is what the stand-in
@@ -1000,8 +1000,8 @@ export async function startFakeHub(opts = {}) {
   }
   function handle(rq, res) {
     const { method, segs } = rq
-    if (rq.path === '/healthz') return { status: 200, json: { ok: true, commit: 'fake', protocol_version: 2 } }
-    if (segs.shift() !== 'v2') return refusalAnswer(refuse('not-found', 'every route is under /v2/'))
+    if (rq.path === '/healthz') return { status: 200, json: { ok: true, commit: 'fake', protocol_version: 1 } }
+    if (segs.shift() !== 'v1') return refusalAnswer(refuse('not-found', 'every route is under /v1/'))
     if (tooOld(rq.headers['trommi-client'])) return refusalAnswer(refuse('client-too-old', 'this client is too old for this hub'))
     const binary = method === 'PUT' && segs[0] === 'files'
     try {

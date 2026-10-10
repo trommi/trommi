@@ -1,4 +1,4 @@
-//! The routes of spec/hub-api.md, every one under `/v2/`. Bodies are JSON; byte strings are base64url. A route
+//! The routes of spec/hub-api.md, every one under `/v1/`. Bodies are JSON; byte strings are base64url. A route
 //! parses its request, calls into the module that owns the rule, and answers; no rule lives here.
 
 use std::sync::atomic::Ordering;
@@ -251,11 +251,11 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
             .is_ok();
         return http::json(
             if ok { 200 } else { 503 },
-            &json!({ "ok": ok, "commit": app.cfg.commit, "protocol_version": 2 }),
+            &json!({ "ok": ok, "commit": app.cfg.commit, "protocol_version": 1 }),
         );
     }
-    if segs.first() != Some(&"v2") {
-        return http::refusal(&refuse("not-found", "every route is under /v2/"));
+    if segs.first() != Some(&"v1") {
+        return http::refusal(&refuse("not-found", "every route is under /v1/"));
     }
     if client_too_old(&app, http::header(&parts.headers, "trommi-client")) {
         return http::refusal(&refuse(
@@ -344,7 +344,7 @@ async fn respond(app: Arc<App>, req: Request<Incoming>, conn: Conn) -> Answer {
         match serde_json::from_slice(&raw) {
             Ok(v @ Value::Object(_)) => v,
             // a passkey sign-in has one answer for every failure, this one too
-            _ if path == ["v2", "account", "passkey", "login"] => json!({}),
+            _ if path == ["v1", "account", "passkey", "login"] => json!({}),
             _ => return http::refusal(&refuse("bad-format", "the body is one JSON object")),
         }
     };
@@ -524,7 +524,7 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
                 Some(Who::Agent) => "agent",
                 Some(Who::Helper) => "helper",
                 Some(Who::Recovery | Who::Spent) => "recovery",
-                // no standing: good for `GET /v2/groups/{group}/removal` only
+                // no standing: good for `GET /v1/groups/{group}/removal` only
                 None => "removed",
             };
             Ok(json!({ "token": token, "expires_at": expires_at, "role": role }))
@@ -1021,7 +1021,7 @@ impl Drop for Checking<'_> {
     }
 }
 
-/// `POST /v2/account/login` and `/recover`: one answer for an unknown e-mail and a wrong secret, at one cost.
+/// `POST /v1/account/login` and `/recover`: one answer for an unknown e-mail and a wrong secret, at one cost.
 /// Failures slow their source down and lock nobody (`throttle.rs`).
 fn login(app: &Arc<App>, rq: &Rq, kit: bool) -> Res<Value> {
     use crate::throttle::{self, Verdict};
@@ -1318,7 +1318,7 @@ impl Drop for StreamGuard {
     }
 }
 
-/// `GET /v2/stream?after=`: server-sent events; resumes by change number (`after`, or `Last-Event-ID`).
+/// `GET /v1/stream?after=`: server-sent events; resumes by change number (`after`, or `Last-Event-ID`).
 async fn stream(
     conn: &Conn,
     app: &Arc<App>,
@@ -1587,7 +1587,7 @@ async fn shared(
     file_answer(size, range, false, files::path(&app.files, &room, &file))
 }
 
-/// `PUT /v2/files/{file_id}`: the bytes, written once. The asker is checked before the body is read and again
+/// `PUT /v1/files/{file_id}`: the bytes, written once. The asker is checked before the body is read and again
 /// after it: a device removed during the upload stores nothing.
 async fn upload(
     app: &Arc<App>,

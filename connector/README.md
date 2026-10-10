@@ -1,7 +1,7 @@
 # trommi-connector
 
 The Trommi connector: one static binary through which a Claude Code session talks to the human's board. It is an
-**agent device** of a room on protocol v2 ([`spec/v1.md`](../spec/v1.md)): every key, every check and every byte on
+**agent device** of a room on protocol v1 ([`spec/v1.md`](../spec/v1.md)): every key, every check and every byte on
 the wire comes from [`trommi-core`](../core); nothing of the first protocol is in it.
 
 ```
@@ -109,7 +109,7 @@ never announced as an update.
 ```
 cargo build --release -p trommi-connector
 node connector/build-plugin.mjs [dir]      # the four targets' binaries, as named in a release
-cargo test -p trommi-tests                 # tests/connector/*: units, and scenarios against the real v2 hub
+cargo test -p trommi-tests                 # tests/connector/*: units, and scenarios against the real hub
 ```
 
 The four targets are static Linux (`x86_64`, `aarch64`, musl, linked with `rust-lld`, ring's C compiled by clang)

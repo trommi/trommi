@@ -96,7 +96,7 @@ different items under one number.
     needs a title the core seals separately, or a call of the binding that opens one envelope without the device.
   - **Live Activity widget:** shows two counts; it holds no key and reads no file.
 - **Removed by another device.** The hub ends a removed device's access and names it `role: "removed"` at its next
-  sign-in; that token reads only `GET /v2/groups/{room}/removal`, the room group's Commits up to the removing one.
+  sign-in; that token reads only `GET /v1/groups/{room}/removal`, the room group's Commits up to the removing one.
   The device hands them to its core; only when the core says a Commit removed it (or it read that Commit in the
   changes before) is the room marked removed (`Room.removedAt`, kept in room.json), and the app forgets the room
   and says so on the start screen. A hub that says "removed" without such a Commit, and a bare `not-member`, change
@@ -265,17 +265,17 @@ not. Log-in and recovery name the account in ONE field, `account`: an e-mail if 
 
 | Step | Request |
 | --- | --- |
-| Create account, password | `POST /v2/rooms` with `account: { email, password: { auth_key, sealed_copy, kdf }, kit: { auth_key, sealed_copy } }`, then `GET /v2/account` for the id |
-| Create account, passkey | `POST /v2/account/passkey/challenge` (no token) → `{ challenge, account, user_handle }`, then `POST /v2/rooms` with `account: { email?, kit: { auth_key, sealed_copy }, passkey: { attestation_object, client_data_json, sealed_copy, transports } }` |
-| Log in, password | `POST /v2/account/login` `{ account, auth_key }` (`account` is the e-mail: an id is refused on the device, `needs-email`) |
-| Log in, passkey | `POST /v2/account/passkey/challenge`, then `POST /v2/account/passkey/login` `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` |
-| Forgot password | `POST /v2/account/recover` `{ account, auth_key }` (e-mail or id), then, named by e-mail, `PUT /v2/account/password` `{ auth_key, sealed_copy, kdf, revision }` |
-| New password, new kit | `PUT /v2/account/password`, `PUT /v2/account/kit` `{ auth_key, sealed_copy, revision }` |
-| New recovery code (8.6) | `GET /v2/account`, then `POST /v2/rooms/{room}/recovery-code` `{ commit: { epoch, commit, group_info, sealed_key }, recovery_link, account: { kit: { auth_key, sealed_copy }, password: { sealed_copy } } }` (with a passkey: `passkey: { credential_id, sealed_copy }`), through the outbox |
-| Every device lost (8.7) | `POST /v2/account/recover`, then as the recovery key: `POST /v2/rooms/{room}/recovery`, the room and `GET /v2/groups/{group}/chains/{sender}` of every device that goes, `POST …/recovery/{id}/commits` per part, `POST …/recovery/{id}/finish` `{ recovery_link, account: { kit, password: { auth_key, sealed_copy, kdf } } }` (an account without e-mail: `passkey`, a registration on `POST /v2/account/passkeys/challenge`); `DELETE …/recovery/{id}` if it fails or is not confirmed |
-| An e-mail for an account without one | `PUT /v2/account/email` `{ email, kit: { auth_key, sealed_copy }, revision }` (`Room.setEmail`; no screen yet) |
-| Add passkey | `POST /v2/account/passkeys/challenge`, `POST /v2/account/passkeys` |
-| Log Out | `DELETE /v2/push`, `DELETE /v2/token`, then the device forgets the room |
+| Create account, password | `POST /v1/rooms` with `account: { email, password: { auth_key, sealed_copy, kdf }, kit: { auth_key, sealed_copy } }`, then `GET /v1/account` for the id |
+| Create account, passkey | `POST /v1/account/passkey/challenge` (no token) → `{ challenge, account, user_handle }`, then `POST /v1/rooms` with `account: { email?, kit: { auth_key, sealed_copy }, passkey: { attestation_object, client_data_json, sealed_copy, transports } }` |
+| Log in, password | `POST /v1/account/login` `{ account, auth_key }` (`account` is the e-mail: an id is refused on the device, `needs-email`) |
+| Log in, passkey | `POST /v1/account/passkey/challenge`, then `POST /v1/account/passkey/login` `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` |
+| Forgot password | `POST /v1/account/recover` `{ account, auth_key }` (e-mail or id), then, named by e-mail, `PUT /v1/account/password` `{ auth_key, sealed_copy, kdf, revision }` |
+| New password, new kit | `PUT /v1/account/password`, `PUT /v1/account/kit` `{ auth_key, sealed_copy, revision }` |
+| New recovery code (8.6) | `GET /v1/account`, then `POST /v1/rooms/{room}/recovery-code` `{ commit: { epoch, commit, group_info, sealed_key }, recovery_link, account: { kit: { auth_key, sealed_copy }, password: { sealed_copy } } }` (with a passkey: `passkey: { credential_id, sealed_copy }`), through the outbox |
+| Every device lost (8.7) | `POST /v1/account/recover`, then as the recovery key: `POST /v1/rooms/{room}/recovery`, the room and `GET /v1/groups/{group}/chains/{sender}` of every device that goes, `POST …/recovery/{id}/commits` per part, `POST …/recovery/{id}/finish` `{ recovery_link, account: { kit, password: { auth_key, sealed_copy, kdf } } }` (an account without e-mail: `passkey`, a registration on `POST /v1/account/passkeys/challenge`); `DELETE …/recovery/{id}` if it fails or is not confirmed |
+| An e-mail for an account without one | `PUT /v1/account/email` `{ email, kit: { auth_key, sealed_copy }, revision }` (`Room.setEmail`; no screen yet) |
+| Add passkey | `POST /v1/account/passkeys/challenge`, `POST /v1/account/passkeys` |
+| Log Out | `DELETE /v1/push`, `DELETE /v1/token`, then the device forgets the room |
 
 The kit's keys are derived from the e-mail if the account has one, else from the account id (`kit_form` in the hub's
 answers; never sent). So the kit of an account with an e-mail opens with the e-mail only, and the id in the field
@@ -335,7 +335,7 @@ the file says. On, Create account shows "Create with passkey" first with the e-m
 as the second way, and Log in shows "Log in with passkey" first, with no field (the passkey names its account).
 
 - An account made with a passkey alone has no e-mail and no password. Its account id comes with the tokenless
-  `POST /v2/account/passkey/challenge` (`{ challenge, account, user_handle }`); the passkey's user id is the id's
+  `POST /v1/account/passkey/challenge` (`{ challenge, account, user_handle }`); the passkey's user id is the id's
   16 bytes, its prf output is asked for at registration, and the Emergency Kit is made under the id
   (`kitKeysFor(.id)`).
 - Such an account uses a passkey where another asks for the password: the kit's page after a relaunch, Settings →

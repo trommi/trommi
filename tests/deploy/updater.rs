@@ -287,7 +287,7 @@ impl Bench {
         let health = tiny_server(move |_| match hub.hub.lock().unwrap().clone() {
             Some((commit, well)) => (
                 if well { 200 } else { 503 },
-                serde_json::json!({ "ok": well, "commit": commit, "protocol_version": 2 })
+                serde_json::json!({ "ok": well, "commit": commit, "protocol_version": 1 })
                     .to_string()
                     .into_bytes(),
             ),

@@ -40,7 +40,7 @@ fn sign_in_from(hub: &TestHub, source: &str, route: &str, email: &str, key: &[u8
     request(
         hub.port,
         "POST",
-        &format!("/v2/account/{route}"),
+        &format!("/v1/account/{route}"),
         &[("cf-connecting-ip", source.to_string())],
         json!({ "email": email, "auth_key": b64(key) })
             .to_string()
@@ -69,12 +69,12 @@ fn an_account_is_made_with_the_room_and_opens_it_again() {
     // an account that cannot be made makes the whole founding fail
     let mut broken = founding.clone();
     broken["account"]["email"] = json!("not an address");
-    hub.post("/v2/rooms", &broken).refused(400, "bad-email");
+    hub.post("/v1/rooms", &broken).refused(400, "bad-email");
     let mut no_way_in = founding.clone();
     no_way_in["account"]["password"] = Value::Null;
-    hub.post("/v2/rooms", &no_way_in).refused(400, "bad-format");
+    hub.post("/v1/rooms", &no_way_in).refused(400, "bad-format");
     sign_in_with(&hub, &room, &ada.signer, None).refused(403, "not-member");
-    hub.post("/v2/rooms", &founding).ok();
+    hub.post("/v1/rooms", &founding).ok();
 
     // the login: the account's rooms (one for now), each with the sealed copy and a sign-in challenge
     let answer = login(&hub, "ada@example.org", &auth).ok();
@@ -99,7 +99,7 @@ fn an_account_is_made_with_the_room_and_opens_it_again() {
         challenge,
     }
     .bytes();
-    let token = hub.post(&format!("/v2/rooms/{}/tokens", b64(&room)), &json!({ "auth": b64(&hub_auth), "signature": b64(&sign_with_label(&recovery.sign, "TrommiHubAuth", &hub_auth)) })).ok();
+    let token = hub.post(&format!("/v1/rooms/{}/tokens", b64(&room)), &json!({ "auth": b64(&hub_auth), "signature": b64(&sign_with_label(&recovery.sign, "TrommiHubAuth", &hub_auth)) })).ok();
     assert_eq!(token["role"], "recovery");
 
     // one answer for an unknown e-mail and a wrong password
@@ -115,7 +115,7 @@ fn an_account_is_made_with_the_room_and_opens_it_again() {
 
     // what a human device of the room sees of its account: no hash
     ada.sign_in(&hub, &room).ok();
-    let view = ada.get(&hub, "/v2/account").ok();
+    let view = ada.get(&hub, "/v1/account").ok();
     assert_eq!(
         (
             view["email"].as_str(),
@@ -128,25 +128,25 @@ fn an_account_is_made_with_the_room_and_opens_it_again() {
     // one account per e-mail and per room
     ada.post(
         &hub,
-        "/v2/account",
+        "/v1/account",
         &account_body("other@example.org", &auth, &kit),
     )
     .refused(409, "account-exists");
     let (_, _, bob) = found_room(&hub);
     bob.post(
         &hub,
-        "/v2/account",
+        "/v1/account",
         &account_body("ada@example.org", &auth, &kit),
     )
     .refused(409, "account-exists");
-    bob.get(&hub, "/v2/account").refused(404, "not-found");
+    bob.get(&hub, "/v1/account").refused(404, "not-found");
     bob.post(
         &hub,
-        "/v2/account",
+        "/v1/account",
         &account_body("bob@example.org", &random(), &random()),
     )
     .ok();
-    hub.get("/v2/account").refused(401, "unauthorised");
+    hub.get("/v1/account").refused(401, "unauthorised");
 }
 
 #[test]
@@ -156,23 +156,23 @@ fn password_and_kit_change_under_a_revision_and_only_by_a_human_device() {
     w.ada
         .post(
             &w.hub,
-            "/v2/account",
+            "/v1/account",
             &account_body("ada@example.org", &auth, &kit),
         )
         .ok();
     let agent = w.enrol_agent();
-    agent.get(&w.hub, "/v2/account").refused(403, "forbidden");
-    agent.put(&w.hub, "/v2/account/password", &json!({ "auth_key": b64(&random::<32>()), "sealed_copy": copy(1), "kdf": kdf(), "revision": 1 })).refused(403, "forbidden");
+    agent.get(&w.hub, "/v1/account").refused(403, "forbidden");
+    agent.put(&w.hub, "/v1/account/password", &json!({ "auth_key": b64(&random::<32>()), "sealed_copy": copy(1), "kdf": kdf(), "revision": 1 })).refused(403, "forbidden");
     // a new password re-wraps the code and replaces the login key
     let new_auth: [u8; 32] = random();
     let change =
         json!({ "auth_key": b64(&new_auth), "sealed_copy": copy(5), "kdf": kdf(), "revision": 1 });
     assert_eq!(
-        w.ada.put(&w.hub, "/v2/account/password", &change).ok()["revision"],
+        w.ada.put(&w.hub, "/v1/account/password", &change).ok()["revision"],
         2
     );
     w.ada
-        .put(&w.hub, "/v2/account/password", &change)
+        .put(&w.hub, "/v1/account/password", &change)
         .refused(409, "account-changed");
     login(&w.hub, "ada@example.org", &auth).refused(401, "wrong-login");
     assert_eq!(
@@ -184,17 +184,17 @@ fn password_and_kit_change_under_a_revision_and_only_by_a_human_device() {
     weak["revision"] = json!(2);
     weak["kdf"]["m"] = json!(1024);
     w.ada
-        .put(&w.hub, "/v2/account/password", &weak)
+        .put(&w.hub, "/v1/account/password", &weak)
         .refused(400, "bad-format");
     let mut old_copy = vec![9u8; 61];
     old_copy[0] = 1;
-    w.ada.put(&w.hub, "/v2/account/password", &json!({ "auth_key": b64(&new_auth), "sealed_copy": b64(&old_copy), "kdf": kdf(), "revision": 2 })).refused(400, "bad-format");
+    w.ada.put(&w.hub, "/v1/account/password", &json!({ "auth_key": b64(&new_auth), "sealed_copy": b64(&old_copy), "kdf": kdf(), "revision": 2 })).refused(400, "bad-format");
     // a new kit replaces the one before
     let new_kit: [u8; 32] = random();
     w.ada
         .put(
             &w.hub,
-            "/v2/account/kit",
+            "/v1/account/kit",
             &json!({ "auth_key": b64(&new_kit), "sealed_copy": copy(6), "revision": 2 }),
         )
         .ok();
@@ -224,7 +224,7 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
     w.ada
         .post(
             hub,
-            "/v2/account",
+            "/v1/account",
             &account_body("ada@example.org", &auth, &kit),
         )
         .ok();
@@ -304,7 +304,7 @@ fn failed_logins_slow_their_source_down_and_lock_nobody_out() {
                 request(
                     port,
                     "POST",
-                    "/v2/account/login",
+                    "/v1/account/login",
                     &[("cf-connecting-ip", source)],
                     json!({ "email": "ada@example.org", "auth_key": b64(&random::<32>()) })
                         .to_string()
@@ -413,7 +413,7 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     let sealed = ada.sealed_key(&room, 0, &info, 0, &recovery.hpke_public, true);
     // an account with a passkey as its only way in, made with the room
     let key = Authenticator::new();
-    let start = hub.post("/v2/account/passkey/challenge", &json!({})).ok();
+    let start = hub.post("/v1/account/passkey/challenge", &json!({})).ok();
     let challenge = unb64(start["challenge"].as_str().unwrap()).unwrap();
     // the account's id, named with the challenge: the passkey's user handle
     let handle = unb64(start["user_handle"].as_str().unwrap()).unwrap();
@@ -425,7 +425,7 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     };
     let account = json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(9) }, "passkey": passkey(&key, &challenge, ORIGIN, RP) });
     hub.post(
-        "/v2/rooms",
+        "/v1/rooms",
         &json!({ "group_info": b64(&info), "sealed_key": b64(&sealed), "account": account }),
     )
     .ok();
@@ -434,13 +434,13 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     let mut again = account.clone();
     again["email"] = json!("other@example.org");
     other
-        .post(&hub, "/v2/account", &again)
+        .post(&hub, "/v1/account", &again)
         .refused(400, "bad-passkey");
 
     let sign_in = |a: &Authenticator, origin: &str, rp: &str, flags: u8, fresh: bool| {
         let challenge = if fresh {
             unb64(
-                hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
+                hub.post("/v1/account/passkey/challenge", &json!({})).ok()["challenge"]
                     .as_str()
                     .unwrap(),
             )
@@ -450,7 +450,7 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
         };
         let client = Authenticator::client_data("webauthn.get", &challenge, origin);
         let (data, signature) = a.assertion(rp, flags, &client);
-        hub.post("/v2/account/passkey/login", &json!({ "credential_id": b64(&a.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature) }))
+        hub.post("/v1/account/passkey/login", &json!({ "credential_id": b64(&a.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature) }))
     };
     let known = |hub: &TestHub| -> i64 {
         rusqlite::Connection::open(hub.dir.join("hub.db"))
@@ -485,28 +485,28 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
 
     // every failure of this route is the one answer, also a request that lacks a field
     let incomplete = hub.post(
-        "/v2/account/passkey/login",
+        "/v1/account/passkey/login",
         &json!({ "credential_id": b64(&key.credential_id) }),
     );
     incomplete.refused(401, "wrong-login");
     assert_eq!(incomplete.body, failures[0].body);
     // and a body that is no JSON object at all
     for body in [&b"not json"[..], b"[1, 2]", b"\"text\""] {
-        let broken = request(hub.port, "POST", "/v2/account/passkey/login", &[], body);
+        let broken = request(hub.port, "POST", "/v1/account/passkey/login", &[], body);
         broken.refused(401, "wrong-login");
         assert_eq!(broken.body, failures[0].body);
     }
     // the handle the authenticator returns must be the account's, if one is sent at all
     let with_handle = |handle: &[u8]| {
         let challenge = unb64(
-            hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
+            hub.post("/v1/account/passkey/challenge", &json!({})).ok()["challenge"]
                 .as_str()
                 .unwrap(),
         )
         .unwrap();
         let client = Authenticator::client_data("webauthn.get", &challenge, ORIGIN);
         let (data, signature) = key.assertion(RP, UP_UV, &client);
-        hub.post("/v2/account/passkey/login", &json!({ "credential_id": b64(&key.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature), "user_handle": b64(handle) }))
+        hub.post("/v1/account/passkey/login", &json!({ "credential_id": b64(&key.credential_id), "authenticator_data": b64(&data), "client_data_json": b64(&client), "signature": b64(&signature), "user_handle": b64(handle) }))
     };
     with_handle(&handle).ok();
     with_handle(&[7; 16]).refused(401, "wrong-login");
@@ -516,19 +516,19 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     ada.sign_in(&hub, &room).ok();
     let second = Authenticator::new();
     let anonymous = unb64(
-        hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
+        hub.post("/v1/account/passkey/challenge", &json!({})).ok()["challenge"]
             .as_str()
             .unwrap(),
     )
     .unwrap();
     ada.post(
         &hub,
-        "/v2/account/passkeys",
+        "/v1/account/passkeys",
         &passkey(&second, &anonymous, ORIGIN, RP),
     )
     .refused(400, "bad-passkey");
     let scoped = unb64(
-        ada.post(&hub, "/v2/account/passkeys/challenge", &json!({}))
+        ada.post(&hub, "/v1/account/passkeys/challenge", &json!({}))
             .ok()["challenge"]
             .as_str()
             .unwrap(),
@@ -536,37 +536,37 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     .unwrap();
     ada.post(
         &hub,
-        "/v2/account/passkeys",
+        "/v1/account/passkeys",
         &passkey(&second, &scoped, ORIGIN, RP),
     )
     .ok();
     // a passkey prepared before the account changed is not registered after
     let third = Authenticator::new();
     let stale = unb64(
-        ada.post(&hub, "/v2/account/passkeys/challenge", &json!({}))
+        ada.post(&hub, "/v1/account/passkeys/challenge", &json!({}))
             .ok()["challenge"]
             .as_str()
             .unwrap(),
     )
     .unwrap();
-    let revision = ada.get(&hub, "/v2/account").ok()["revision"]
+    let revision = ada.get(&hub, "/v1/account").ok()["revision"]
         .as_i64()
         .unwrap();
     ada.put(
         &hub,
-        "/v2/account/kit",
+        "/v1/account/kit",
         &json!({ "auth_key": b64(&random::<32>()), "sealed_copy": copy(6), "revision": revision }),
     )
     .ok();
     ada.post(
         &hub,
-        "/v2/account/passkeys",
+        "/v1/account/passkeys",
         &passkey(&third, &stale, ORIGIN, RP),
     )
     .refused(400, "bad-passkey");
     // a credential id is registered once
     let scoped = unb64(
-        ada.post(&hub, "/v2/account/passkeys/challenge", &json!({}))
+        ada.post(&hub, "/v1/account/passkeys/challenge", &json!({}))
             .ok()["challenge"]
             .as_str()
             .unwrap(),
@@ -574,12 +574,12 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     .unwrap();
     ada.post(
         &hub,
-        "/v2/account/passkeys",
+        "/v1/account/passkeys",
         &passkey(&second, &scoped, ORIGIN, RP),
     )
     .refused(400, "bad-passkey");
     assert_eq!(
-        ada.get(&hub, "/v2/account").ok()["passkeys"]
+        ada.get(&hub, "/v1/account").ok()["passkeys"]
             .as_array()
             .unwrap()
             .len(),
@@ -590,21 +590,21 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
     ada.call(
         &hub,
         "DELETE",
-        &format!("/v2/account/passkeys/{}", b64(&key.credential_id)),
+        &format!("/v1/account/passkeys/{}", b64(&key.credential_id)),
         &Value::Null,
     )
     .ok();
     ada.call(
         &hub,
         "DELETE",
-        &format!("/v2/account/passkeys/{}", b64(&second.credential_id)),
+        &format!("/v1/account/passkeys/{}", b64(&second.credential_id)),
         &Value::Null,
     )
     .refused(409, "last-way-in");
     ada.call(
         &hub,
         "DELETE",
-        &format!("/v2/account/passkeys/{}", b64(&key.credential_id)),
+        &format!("/v1/account/passkeys/{}", b64(&key.credential_id)),
         &Value::Null,
     )
     .refused(404, "not-found");
@@ -614,7 +614,7 @@ fn a_passkey_registers_signs_in_and_is_not_the_last_way_in_removed() {
         .call(
             &hub,
             "DELETE",
-            &format!("/v2/account/passkeys/{}", b64(&second.credential_id)),
+            &format!("/v1/account/passkeys/{}", b64(&second.credential_id)),
             &Value::Null,
         )
         .refused(404, "not-found");
@@ -628,7 +628,7 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
     w.ada
         .post(
             &w.hub,
-            "/v2/account",
+            "/v1/account",
             &account_body("ada@example.org", &auth, &kit),
         )
         .ok();
@@ -659,14 +659,14 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
         mac: vec![3; 32]
     }
     .bytes()));
-    let path = format!("/v2/rooms/{}/recovery-code", b64(&room));
+    let path = format!("/v1/rooms/{}/recovery-code", b64(&room));
     // without the account's new copies nothing is applied: not the Commit either
     w.ada
         .post(&w.hub, &path, &code_body(&body))
         .refused(400, "incomplete");
     assert_eq!(
         w.ada
-            .get(&w.hub, &format!("/v2/groups/{}/info", b64(&room)))
+            .get(&w.hub, &format!("/v1/groups/{}/info", b64(&room)))
             .ok()["epoch"],
         0
     );
@@ -742,11 +742,11 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
     // (the account's own challenge, which names the id the passkey carries as its user handle)
     let asked = w
         .ada
-        .post(&w.hub, "/v2/account/passkeys/challenge", &json!({}))
+        .post(&w.hub, "/v1/account/passkeys/challenge", &json!({}))
         .ok();
     assert_eq!(
         asked["account"],
-        w.ada.get(&w.hub, "/v2/account").ok()["account"]
+        w.ada.get(&w.hub, "/v1/account").ok()["account"]
     );
     // with it what a new kit is salted with (8.8.2)
     assert_eq!(
@@ -756,7 +756,7 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
     let challenge = unb64(asked["challenge"].as_str().unwrap()).unwrap();
     // one of the tokenless kind is for a new account, not for this one
     let loose = unb64(
-        w.hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
+        w.hub.post("/v1/account/passkey/challenge", &json!({})).ok()["challenge"]
             .as_str()
             .unwrap(),
     )
@@ -772,7 +772,7 @@ fn replacing_the_code_replaces_the_accounts_copies_in_the_same_request() {
     });
     replace(&mut w, json!({ "kit": { "auth_key": b64(&last_kit), "sealed_copy": copy(2) }, "passkey": registration })).ok();
     login(&w.hub, "ada@example.org", &next_auth).refused(401, "wrong-login");
-    let account = w.ada.get(&w.hub, "/v2/account").ok();
+    let account = w.ada.get(&w.hub, "/v1/account").ok();
     assert_eq!(account["has_password"], false);
     assert_eq!(account["passkeys"].as_array().unwrap().len(), 1);
     assert_eq!(
@@ -820,7 +820,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
     let room = w.room;
     let challenge = |hub: &TestHub| {
         unb64(
-            hub.post("/v2/account/passkey/challenge", &json!({})).ok()["challenge"]
+            hub.post("/v1/account/passkey/challenge", &json!({})).ok()["challenge"]
                 .as_str()
                 .unwrap(),
         )
@@ -840,13 +840,13 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         if let Some(handle) = handle {
             body["user_handle"] = json!(b64(handle));
         }
-        hub.post("/v2/account/passkey/login", &body)
+        hub.post("/v1/account/passkey/login", &body)
     };
     let recover_by_id = |hub: &TestHub, id: &str, kit: &[u8; 32]| {
         request(
             hub.port,
             "POST",
-            "/v2/account/recover",
+            "/v1/account/recover",
             &[("cf-connecting-ip", fresh_source())],
             json!({ "account": id, "auth_key": b64(kit) })
                 .to_string()
@@ -859,7 +859,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
     let hub = &w.hub;
     // the hub names the account's id with the challenge: the device needs it before the account exists (it is
     // the passkey's user handle and the salt of the kit)
-    let start = hub.post("/v2/account/passkey/challenge", &json!({})).ok();
+    let start = hub.post("/v1/account/passkey/challenge", &json!({})).ok();
     let first = unb64(start["challenge"].as_str().unwrap()).unwrap();
     let handle = unb64(start["user_handle"].as_str().unwrap()).unwrap();
     let id = start["account"].as_str().unwrap().to_string();
@@ -872,13 +872,13 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         "a UUID of version 4"
     );
     // (a password signs in under an e-mail: without one it is no way in)
-    w.ada.post(hub, "/v2/account", &json!({ "kit": { "auth_key": b64(&kit), "sealed_copy": copy(9) }, "password": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(7), "kdf": kdf() } }))
+    w.ada.post(hub, "/v1/account", &json!({ "kit": { "auth_key": b64(&kit), "sealed_copy": copy(9) }, "password": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(7), "kdf": kdf() } }))
         .refused(400, "bad-email");
     let made = w
         .ada
         .post(
             hub,
-            "/v2/account",
+            "/v1/account",
             &json!({
                 "kit": { "auth_key": b64(&kit), "sealed_copy": copy(9) },
                 "passkey": registration(&key, &first, 3),
@@ -890,7 +890,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         (&Value::Null, &json!(id), &json!(false))
     );
     assert_eq!(made["kit_form"], "id");
-    assert_eq!(w.ada.get(hub, "/v2/account").ok()["email"], Value::Null);
+    assert_eq!(w.ada.get(hub, "/v1/account").ok()["email"], Value::Null);
 
     // log-in without a name: the hub finds the account by the credential; the handle, if sent, must be its id
     let answer = sign_in(hub, &key, None).ok();
@@ -907,7 +907,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
     // unless it says otherwise
     let (_, _, other) = found_room(hub);
     let other_key = Authenticator::new();
-    let made = other.post(hub, "/v2/account", &json!({ "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(9) }, "passkey": registration(&other_key, &challenge(hub), 3), "email": "other@example.org" })).ok();
+    let made = other.post(hub, "/v1/account", &json!({ "kit": { "auth_key": b64(&random::<32>()), "sealed_copy": copy(9) }, "passkey": registration(&other_key, &challenge(hub), 3), "email": "other@example.org" })).ok();
     assert_eq!(made["kit_form"], "email");
     assert_ne!(made["account"], id);
     assert_eq!(
@@ -919,7 +919,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
     let second = Authenticator::new();
     let scoped = unb64(
         w.ada
-            .post(hub, "/v2/account/passkeys/challenge", &json!({}))
+            .post(hub, "/v1/account/passkeys/challenge", &json!({}))
             .ok()["challenge"]
             .as_str()
             .unwrap(),
@@ -928,7 +928,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
     w.ada
         .post(
             hub,
-            "/v2/account/passkeys",
+            "/v1/account/passkeys",
             &registration(&second, &scoped, 4),
         )
         .ok();
@@ -940,7 +940,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         .call(
             hub,
             "DELETE",
-            &format!("/v2/account/passkeys/{}", b64(&key.credential_id)),
+            &format!("/v1/account/passkeys/{}", b64(&key.credential_id)),
             &Value::Null,
         )
         .ok();
@@ -948,7 +948,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         .call(
             hub,
             "DELETE",
-            &format!("/v2/account/passkeys/{}", b64(&second.credential_id)),
+            &format!("/v1/account/passkeys/{}", b64(&second.credential_id)),
             &Value::Null,
         )
         .refused(409, "last-way-in");
@@ -974,7 +974,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         request(
             hub.port,
             "POST",
-            "/v2/account/recover",
+            "/v1/account/recover",
             &[("cf-connecting-ip", guesser.clone())],
             json!({ "account": id, "auth_key": b64(kit) })
                 .to_string()
@@ -988,7 +988,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
     request(
         hub.port,
         "POST",
-        "/v2/account/login",
+        "/v1/account/login",
         &[("cf-connecting-ip", fresh_source())],
         json!({ "account": id, "auth_key": b64(&kit) })
             .to_string()
@@ -1016,7 +1016,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         true,
     );
     let next_kit: [u8; 32] = random();
-    w.ada.post(&w.hub, &format!("/v2/rooms/{}/recovery-code", b64(&room)), &json!({
+    w.ada.post(&w.hub, &format!("/v1/rooms/{}/recovery-code", b64(&room)), &json!({
         "commit": commit_json(&out, &key_row, None),
         "recovery_link": b64(&wire::RecoveryLink { room_id: room, new_recovery_hpke_key: new.hpke_public.to_vec(), kem_output: vec![1; 32], ciphertext: vec![2; 80], mac: vec![3; 32] }.bytes()),
         "account": { "kit": { "auth_key": b64(&next_kit), "sealed_copy": copy(5) }, "passkey": { "credential_id": b64(&second.credential_id), "sealed_copy": copy(6) } },
@@ -1036,20 +1036,20 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
     // an e-mail and a password later: the password needs the e-mail first; an address another account holds is
     // answered as signing up with it is; the e-mail is set once
     let revision = |w: &World| {
-        w.ada.get(&w.hub, "/v2/account").ok()["revision"]
+        w.ada.get(&w.hub, "/v1/account").ok()["revision"]
             .as_i64()
             .unwrap()
     };
     let (auth, mail_kit): ([u8; 32], [u8; 32]) = (random(), random());
     let password = |w: &World| json!({ "auth_key": b64(&auth), "sealed_copy": copy(8), "kdf": kdf(), "revision": revision(w) });
     w.ada
-        .call(hub, "PUT", "/v2/account/password", &password(&w))
+        .call(hub, "PUT", "/v1/account/password", &password(&w))
         .refused(400, "bad-email");
     w.ada
         .call(
             hub,
             "PUT",
-            "/v2/account/email",
+            "/v1/account/email",
             &json!({ "email": "other@example.org", "kit": { "auth_key": b64(&mail_kit), "sealed_copy": copy(1) }, "revision": revision(&w) }),
         )
         .refused(409, "account-exists");
@@ -1057,7 +1057,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         .call(
             hub,
             "PUT",
-            "/v2/account/email",
+            "/v1/account/email",
             &json!({ "email": "not an address", "kit": { "auth_key": b64(&mail_kit), "sealed_copy": copy(1) }, "revision": revision(&w) }),
         )
         .refused(400, "bad-email");
@@ -1065,7 +1065,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         .call(
             hub,
             "PUT",
-            "/v2/account/email",
+            "/v1/account/email",
             &json!({ "email": "Ada@Example.org", "revision": revision(&w) }),
         )
         .refused(400, "incomplete");
@@ -1073,7 +1073,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         .call(
             hub,
             "PUT",
-            "/v2/account/email",
+            "/v1/account/email",
             &json!({ "email": "Ada@Example.org", "kit": { "auth_key": b64(&mail_kit), "sealed_copy": copy(1) }, "revision": revision(&w) }),
         )
         .ok();
@@ -1081,12 +1081,12 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         .call(
             hub,
             "PUT",
-            "/v2/account/email",
+            "/v1/account/email",
             &json!({ "email": "ada2@example.org", "kit": { "auth_key": b64(&mail_kit), "sealed_copy": copy(1) }, "revision": revision(&w) }),
         )
         .refused(403, "forbidden");
     w.ada
-        .call(hub, "PUT", "/v2/account/password", &password(&w))
+        .call(hub, "PUT", "/v1/account/password", &password(&w))
         .ok();
     assert_eq!(login(hub, "ada@example.org", &auth).ok()["account"], id);
     // with the e-mail came the kit made anew under it (8.8.2): the one from before opens nothing, and the
@@ -1096,14 +1096,14 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         recover_by_id(hub, &id, &mail_kit).ok()["email"],
         "ada@example.org"
     );
-    assert_eq!(w.ada.get(hub, "/v2/account").ok()["kit_form"], "email");
+    assert_eq!(w.ada.get(hub, "/v1/account").ok()["kit_form"], "email");
     // one field names the account, by e-mail or by id, for the password as for the kit; the id as a person
     // types it: case, spaces and dashes do not matter, anything else is no id
     let by = |route: &str, name: &str, key: &[u8; 32]| {
         request(
             hub.port,
             "POST",
-            &format!("/v2/account/{route}"),
+            &format!("/v1/account/{route}"),
             &[("cf-connecting-ip", fresh_source())],
             json!({ "account": name, "auth_key": b64(key) })
                 .to_string()
@@ -1142,7 +1142,7 @@ fn an_account_with_a_passkey_needs_no_e_mail() {
         request(
             hub.port,
             "POST",
-            "/v2/account/login",
+            "/v1/account/login",
             &[("cf-connecting-ip", guesser.clone())],
             json!({ "account": unknown, "auth_key": b64(key) })
                 .to_string()

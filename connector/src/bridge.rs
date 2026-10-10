@@ -1284,7 +1284,7 @@ impl Bridge {
         Ok(())
     }
 
-    /// A block of a turn's trail (`trail.rs`) as the work trail of protocol v2 (spec/v1.md 7.3): one MLS message
+    /// A block of a turn's trail (`trail.rs`) as the work trail of protocol v1 (spec/v1.md 7.3): one MLS message
     /// per step, numbered from 1 within the turn, in this agent's session group or in the group of the child
     /// session `target` (one that exists; never opened here). An item is sent when it is first seen, and once
     /// more when it ended badly; a step that simply finished is not sent again.

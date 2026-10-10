@@ -2,7 +2,7 @@
 // stack does), with the app's service worker active, and the live streams the hub holds open counted after each.
 // Every reload ends the page's stream; one stream stays open, the page's own. (Firefox kept a stream the service
 // worker had passed on open after each reload, until the six connections to the host were taken and the board stayed
-// "loading": sw.js now leaves /v2/ alone. This runs in Chromium, which did not show the leak: it guards the
+// "loading": sw.js now leaves /v1/ alone. This runs in Chromium, which did not show the leak: it guards the
 // count, tests/web/worker/sw.test.mjs guards the handler itself.)
 //   node tests/web/e2e/sw-streams.browser.mjs        (needs Chromium and the built core; one browser at a time)
 // REAL: the built app with its service worker (VERSION written by the build), the real binding in the worker.

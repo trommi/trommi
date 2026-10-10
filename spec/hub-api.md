@@ -1,7 +1,7 @@
-# The v2 hub: routes and tables
+# The hub: routes and tables
 
 Short and normative for a hub and its clients; the rules a hub enforces are in [`v1.md`](v1.md) (sections 5, 8, 9,
-12, 14). Every route is under `/v2/`. Bodies are JSON, at most 1.5 MiB (v1.md section 16); byte strings are base64url; an MLS message, a GroupInfo, a
+12, 14). Every route is under `/v1/`. Bodies are JSON, at most 1.5 MiB (v1.md section 16); byte strings are base64url; an MLS message, a GroupInfo, a
 KeyPackage, an envelope and every struct of v1.md travel as their TLS-encoded bytes in one string. A refusal is
 `{ "error": code, "message": text }` with the status of v1.md section 16. Every route but the first block needs
 `authorization: Bearer <token>`; `Trommi-Client: <kind>/<major>.<minor>.<patch>` is sent always (`client-too-old`).
@@ -13,45 +13,45 @@ leaves a body or a rule open, "Decided for the first hub" at the end says what t
 | Route | Body → answer | Notes |
 | --- | --- | --- |
 | **No token** | | |
-| `POST /v2/account/login` · `/recover` · `/passkey/challenge` · `/passkey/login` | see "The account" below | answers with the account's `rooms` (a list; one for now) |
-| `POST /v2/rooms` | `{ group_info, sealed_key, account? }` → `{ room_id }` | founding (5.1.1, 8.2); `room-exists`; `account`: the body of `POST /v2/account`, made in the same transaction |
-| `GET /v2/rooms/{room}/challenge` | → `{ challenge }` | 12.3 |
-| `POST /v2/rooms/{room}/tokens` | `{ auth, signature }` (`auth`: the `HubAuth` bytes) → `{ token, expires_at }` | 12.3; the challenge is used up |
-| `GET /v2/invites/{invite_id}`, `POST …/request`, `GET …/reveal` | → `{ offer, signature, mac, expires_at }` (`mac` null for an invite stored before the MAC); Request + mac + signature; Reveal | by `invite_id` only (12.1); 4 requests per invite |
-| `GET /v2/shares/{share_id}` | header `x-share-secret` → the file's bytes (`Range` honoured) | 11.5; every refusal is the same `not-found` |
-| `GET /v2/push-envelope?ticket=` | → one envelope | 15.2 |
+| `POST /v1/account/login` · `/recover` · `/passkey/challenge` · `/passkey/login` | see "The account" below | answers with the account's `rooms` (a list; one for now) |
+| `POST /v1/rooms` | `{ group_info, sealed_key, account? }` → `{ room_id }` | founding (5.1.1, 8.2); `room-exists`; `account`: the body of `POST /v1/account`, made in the same transaction |
+| `GET /v1/rooms/{room}/challenge` | → `{ challenge }` | 12.3 |
+| `POST /v1/rooms/{room}/tokens` | `{ auth, signature }` (`auth`: the `HubAuth` bytes) → `{ token, expires_at }` | 12.3; the challenge is used up |
+| `GET /v1/invites/{invite_id}`, `POST …/request`, `GET …/reveal` | → `{ offer, signature, mac, expires_at }` (`mac` null for an invite stored before the MAC); Request + mac + signature; Reveal | by `invite_id` only (12.1); 4 requests per invite |
+| `GET /v1/shares/{share_id}` | header `x-share-secret` → the file's bytes (`Range` honoured) | 11.5; every refusal is the same `not-found` |
+| `GET /v1/push-envelope?ticket=` | → one envelope | 15.2 |
 | **Groups (MLS delivery service)** | | |
-| `POST /v2/groups` | `{ group_info_0, sealed_key_0, commit, group_info, welcome?, sealed_key }` → `{ group_id }` | founding of a session group (5.2.5) |
-| `POST /v2/groups/{group}/commits` | `{ epoch, commit, group_info, welcome?, sealed_key, recovery_auth? }` → `{ epoch, change }` | `epoch` = the epoch it builds on; `epoch-taken`, `room-behind`, `bad-commit`, `incomplete` |
-| `POST /v2/rooms/{room}/recovery` → `{ recovery_id, expires_at }` · `POST …/recovery/{id}/commits` (`{ group_id, epoch, commit, group_info, welcome?, sealed_key, recovery_auth? }`, one per call) → `{ epoch, kept }` · `POST …/recovery/{id}/finish` (`{ recovery_link, account }`) → `{ published, first_change, change, device }` · `DELETE` | recovery key's token | 8.7: the room is locked for ten minutes; nothing is visible to others until `finish`, which publishes all or nothing |
-| `POST /v2/rooms/{room}/recovery-code` | `{ commit: { epoch, commit, group_info, sealed_key }, recovery_link, account }` → `{ epoch, change }` | 8.6: one room Commit, all or nothing; a human device |
-| `POST /v2/groups/{group}/reject` | `{ n }` | 14.7 |
-| `POST /v2/groups/{group}/archive` | | 5.2.10; human devices |
-| `GET /v2/groups/{group}/log?after=&limit=&kind=commit` | → `{ items: [ { n, change, epoch, at, kind: "commit", bytes, recovery_auth? } \| { n, change, epoch, at, kind: "message", bytes } ], more }` | the ordered log (5.4.1, 7.0); `gone` when `after` is older than what is kept |
-| `POST /v2/groups/{group}/messages` | `{ epoch, message, relay? }` → `{ n }` | application message; `relay: true`: passed on, not stored (7.2); `wrong-epoch` |
-| `GET /v2/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | without `epoch`: the current one; with it exactly that epoch (`not-found`). Kept: the current one and epoch 0 (the founding) of every group, every epoch that still lacks a `SealedKey` with a `mac` (8.3), every epoch of the room group |
-| `GET /v2/welcomes?after=` | → `[ { id, group_id, welcome, at } ]` | for the asking device, oldest first, after the one numbered `after`; at most 8 MiB of Welcomes (point 22); deleted when it has joined |
-| `PUT /v2/key-packages` | `{ single_use: [..], last_resort? }` → `{ unused }` | 14.2; `bad-key-package` |
-| `POST /v2/key-packages/claim` | `{ devices: [..] }` (1 to 1024) → `{ key_packages: { device: bytes } }` | one each, all or nothing; a device names 64 a second, bursts of 2 048 (`rate-limited`); the last-resort one when none is left; none uploaded more than 90 days ago |
-| `GET /v2/rooms/{room}/groups?after=&limit=` | → `{ items: [ { group_id, kind, session_id, parent, epoch, room_epoch, live, stale, leaves } ], more, after }` | what the asker may see: a human device all, another device its own groups and the room group; in the order of founding, at most `limit` (1 to 1000) and 8 MiB a page, the next page from the answer's `after`; `leaves` only of a live group (an archived one: `[]`). Without `limit`: the bare list of every group, as before (point 43) |
-| `PUT /v2/sealed-keys` · `GET /v2/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; writing: a human device that is the row's `writer`; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
-| `POST /v2/requests` · `GET /v2/requests` | `{ kind: readmit \| handover \| session, group?, key_package? }` | an unsigned wish of the signed-in device to the human devices (5.2.7, 5.3.5, 7.1, 13.4); nothing follows from it without a Commit |
+| `POST /v1/groups` | `{ group_info_0, sealed_key_0, commit, group_info, welcome?, sealed_key }` → `{ group_id }` | founding of a session group (5.2.5) |
+| `POST /v1/groups/{group}/commits` | `{ epoch, commit, group_info, welcome?, sealed_key, recovery_auth? }` → `{ epoch, change }` | `epoch` = the epoch it builds on; `epoch-taken`, `room-behind`, `bad-commit`, `incomplete` |
+| `POST /v1/rooms/{room}/recovery` → `{ recovery_id, expires_at }` · `POST …/recovery/{id}/commits` (`{ group_id, epoch, commit, group_info, welcome?, sealed_key, recovery_auth? }`, one per call) → `{ epoch, kept }` · `POST …/recovery/{id}/finish` (`{ recovery_link, account }`) → `{ published, first_change, change, device }` · `DELETE` | recovery key's token | 8.7: the room is locked for ten minutes; nothing is visible to others until `finish`, which publishes all or nothing |
+| `POST /v1/rooms/{room}/recovery-code` | `{ commit: { epoch, commit, group_info, sealed_key }, recovery_link, account }` → `{ epoch, change }` | 8.6: one room Commit, all or nothing; a human device |
+| `POST /v1/groups/{group}/reject` | `{ n }` | 14.7 |
+| `POST /v1/groups/{group}/archive` | | 5.2.10; human devices |
+| `GET /v1/groups/{group}/log?after=&limit=&kind=commit` | → `{ items: [ { n, change, epoch, at, kind: "commit", bytes, recovery_auth? } \| { n, change, epoch, at, kind: "message", bytes } ], more }` | the ordered log (5.4.1, 7.0); `gone` when `after` is older than what is kept |
+| `POST /v1/groups/{group}/messages` | `{ epoch, message, relay? }` → `{ n }` | application message; `relay: true`: passed on, not stored (7.2); `wrong-epoch` |
+| `GET /v1/groups/{group}/info?epoch=` | → `{ epoch, group_info }` | without `epoch`: the current one; with it exactly that epoch (`not-found`). Kept: the current one and epoch 0 (the founding) of every group, every epoch that still lacks a `SealedKey` with a `mac` (8.3), every epoch of the room group |
+| `GET /v1/welcomes?after=` | → `[ { id, group_id, welcome, at } ]` | for the asking device, oldest first, after the one numbered `after`; at most 8 MiB of Welcomes (point 22); deleted when it has joined |
+| `PUT /v1/key-packages` | `{ single_use: [..], last_resort? }` → `{ unused }` | 14.2; `bad-key-package` |
+| `POST /v1/key-packages/claim` | `{ devices: [..] }` (1 to 1024) → `{ key_packages: { device: bytes } }` | one each, all or nothing; a device names 64 a second, bursts of 2 048 (`rate-limited`); the last-resort one when none is left; none uploaded more than 90 days ago |
+| `GET /v1/rooms/{room}/groups?after=&limit=` | → `{ items: [ { group_id, kind, session_id, parent, epoch, room_epoch, live, stale, leaves } ], more, after }` | what the asker may see: a human device all, another device its own groups and the room group; in the order of founding, at most `limit` (1 to 1000) and 8 MiB a page, the next page from the answer's `after`; `leaves` only of a live group (an archived one: `[]`). Without `limit`: the bare list of every group, as before (point 43) |
+| `PUT /v1/sealed-keys` · `GET /v1/sealed-keys?after=` | `SealedKey` · → `{ rows, links, change, more }` | 8.3; writing: a human device that is the row's `writer`; reading: human devices and the recovery key; the next call's `after` is the answer's `change` |
+| `POST /v1/requests` · `GET /v1/requests` | `{ kind: readmit \| handover \| session, group?, key_package? }` | an unsigned wish of the signed-in device to the human devices (5.2.7, 5.3.5, 7.1, 13.4); nothing follows from it without a Commit |
 | **Content** | | |
-| `POST /v2/envelopes` | `{ envelope }` → `{ change }` or a refusal with `voided` | every stored item (9); the hub files it by its header |
-| `GET /v2/desk` | → `{ cards, permission_requests, notes, artifacts, registers, groups, change }` | open objects' newest envelopes, every writer's newest value per register, in the asker's groups |
-| `GET /v2/chats/{timeline}/items?before=&limit=` | → envelopes, newest first | `timeline` = `session/<hex>` or `card/<hex>` |
-| `GET /v2/boards/{board}?after_change=` | → `{ items, more }` | the board's items after the given change (10.3) |
-| `GET /v2/cards/{object}?after=&limit=` (and `/notes/`, `/permission-requests/`, `/artifacts/`) | → `{ items, more, state, owner, … }`: every envelope of the object | pruned ones in pruned form |
-| `GET /v2/groups/{group}/chains/{sender}?after=&limit=` | → envelopes in pruned form, by `seq` | chain checks (9.0.5, 10.3) |
-| `GET /v2/changes?after=&limit=` | → `{ items, change, more }` | catch-up: everything the asker may see with a change number above `after` |
-| `GET /v2/stream?after=` | server-sent events: `envelope`, `log`, `relay`, `welcome`, `request`, `presence`, `file_evicted`, `ping` | live; resumes by change number (`after`, or `Last-Event-ID`) |
+| `POST /v1/envelopes` | `{ envelope }` → `{ change }` or a refusal with `voided` | every stored item (9); the hub files it by its header |
+| `GET /v1/desk` | → `{ cards, permission_requests, notes, artifacts, registers, groups, change }` | open objects' newest envelopes, every writer's newest value per register, in the asker's groups |
+| `GET /v1/chats/{timeline}/items?before=&limit=` | → envelopes, newest first | `timeline` = `session/<hex>` or `card/<hex>` |
+| `GET /v1/boards/{board}?after_change=` | → `{ items, more }` | the board's items after the given change (10.3) |
+| `GET /v1/cards/{object}?after=&limit=` (and `/notes/`, `/permission-requests/`, `/artifacts/`) | → `{ items, more, state, owner, … }`: every envelope of the object | pruned ones in pruned form |
+| `GET /v1/groups/{group}/chains/{sender}?after=&limit=` | → envelopes in pruned form, by `seq` | chain checks (9.0.5, 10.3) |
+| `GET /v1/changes?after=&limit=` | → `{ items, change, more }` | catch-up: everything the asker may see with a change number above `after` |
+| `GET /v1/stream?after=` | server-sent events: `envelope`, `log`, `relay`, `welcome`, `request`, `presence`, `file_evicted`, `ping` | live; resumes by change number (`after`, or `Last-Event-ID`) |
 | **Files, shares, push, presence** | | |
-| `PUT /v2/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; at most 67 125 269 stored bytes, which is 64 MiB of plaintext (`too-large`); `quota-exceeded` |
-| `POST /v2/shares` · `DELETE /v2/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5; `expires_at` at most 180 days ahead |
-| `POST /v2/invites` · `PUT /v2/invites/{id}/reveal` · `DELETE` | `{ offer, signature, mac }` (`mac`: the Offer's MAC, 32 bytes, length checked only, `bad-format` otherwise; may be left out for now (then stored and served as null; a `mac` that is there must be the 32 bytes, `null` too is `bad-format`), and required once every client sends it); Reveal + signature | human devices; `expires_at` at most the invite life of the Offer's kind ahead (10 minutes for a human device, 15 for an agent device) plus 2 minutes for the clocks (`bad-invite`); the hub's own expiry of the invite is the Offer's `expires_at`; the same Offer posted again with the same signature and MAC gets the first answer, with another `replay` |
-| `POST /v2/push` · `GET` · `DELETE` | `{ web_push: { endpoint, keys: { p256dh, auth } } \| apns: { token, key, environment, topic }, level }`; `GET` → `{ subscriptions, vapid_public_key, apns }` | 15; human devices |
-| `POST /v2/live-activity` | `{ kind: start \| activity, token, tag, environment, topic }` | 15.3 |
-| `POST /v2/link` | `{ process, generation?, hears, working, last_call_at }` → `{ generation, expires_at }` | 13.7; every later write of that device carries `Trommi-Lease: <generation>` (`lease-lost`) |
+| `PUT /v1/files/{file_id}` · `GET` (with `Range`) · `DELETE` | bytes | 11; at most 67 125 269 stored bytes, which is 64 MiB of plaintext (`too-large`); `quota-exceeded` |
+| `POST /v1/shares` · `DELETE /v1/shares/{share_id}` | `{ share_id, secret_hash, file_id, expires_at }` | 11.5; `expires_at` at most 180 days ahead |
+| `POST /v1/invites` · `PUT /v1/invites/{id}/reveal` · `DELETE` | `{ offer, signature, mac }` (`mac`: the Offer's MAC, 32 bytes, length checked only, `bad-format` otherwise; may be left out for now (then stored and served as null; a `mac` that is there must be the 32 bytes, `null` too is `bad-format`), and required once every client sends it); Reveal + signature | human devices; `expires_at` at most the invite life of the Offer's kind ahead (10 minutes for a human device, 15 for an agent device) plus 2 minutes for the clocks (`bad-invite`); the hub's own expiry of the invite is the Offer's `expires_at`; the same Offer posted again with the same signature and MAC gets the first answer, with another `replay` |
+| `POST /v1/push` · `GET` · `DELETE` | `{ web_push: { endpoint, keys: { p256dh, auth } } \| apns: { token, key, environment, topic }, level }`; `GET` → `{ subscriptions, vapid_public_key, apns }` | 15; human devices |
+| `POST /v1/live-activity` | `{ kind: start \| activity, token, tag, environment, topic }` | 15.3 |
+| `POST /v1/link` | `{ process, generation?, hears, working, last_call_at }` → `{ generation, expires_at }` | 13.7; every later write of that device carries `Trommi-Lease: <generation>` (`lease-lost`) |
 
 ## Tables
 
@@ -108,14 +108,14 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
 
 | Route | Body → answer | Notes |
 | --- | --- | --- |
-| `POST /v2/account` | `{ email?, kit: { auth_key, sealed_copy }, password?: { auth_key, sealed_copy, kdf }, passkey?: { attestation_object, client_data_json, sealed_copy, transports? } }` → the account | a human device of the room, or inside `POST /v2/rooms`; at least one way in; `email` comes with a password and is optional beside a passkey; the id: see below; `bad-email`, `account-exists`, `bad-passkey` |
-| `GET /v2/account` | → `{ email (or null), account, kit_form, revision, has_password, kdf, password_copy, kit_copy, user_handle, passkeys: [ { credential_id, sealed_copy, … } ], rooms }` | a human device; no hash leaves the hub |
-| `PUT /v2/account/password` · `PUT /v2/account/kit` | `{ auth_key, sealed_copy, kdf?, revision }` → `{ revision }` | `account-changed` when `revision` is not the current one; a password on an account without e-mail: `bad-email` |
-| `PUT /v2/account/email` | `{ email, kit: { auth_key, sealed_copy }, revision }` → `{ revision }` | a human device; only for an account that has none (`forbidden` otherwise); the kit made anew under the e-mail (`incomplete` without); `bad-email`, `account-exists` |
-| `POST /v2/account/passkeys/challenge` · `POST /v2/account/passkeys` · `DELETE /v2/account/passkeys/{credential_id}` | → `{ challenge, account, user_handle, email, kit_form }` · a passkey body as above | a human device (the challenge also the recovery key, before `finish`); the challenge is for that account; `last-way-in` |
-| `POST /v2/account/login` | `{ account, auth_key }` → `{ rooms: [ { room_id, sealed_copy, challenge } ], kdf, account, email }` | no token; `wrong-login` for an unknown e-mail and a wrong key alike, at one cost; `challenge` is a sign-in challenge of that room (12.3) |
-| `POST /v2/account/recover` | `{ account, auth_key }` (the kit's) → the same with the kit's copy | `wrong-recovery` |
-| `POST /v2/account/passkey/challenge` · `POST /v2/account/passkey/login` | → `{ challenge }` · `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` → as login | every failure is `wrong-login` |
+| `POST /v1/account` | `{ email?, kit: { auth_key, sealed_copy }, password?: { auth_key, sealed_copy, kdf }, passkey?: { attestation_object, client_data_json, sealed_copy, transports? } }` → the account | a human device of the room, or inside `POST /v1/rooms`; at least one way in; `email` comes with a password and is optional beside a passkey; the id: see below; `bad-email`, `account-exists`, `bad-passkey` |
+| `GET /v1/account` | → `{ email (or null), account, kit_form, revision, has_password, kdf, password_copy, kit_copy, user_handle, passkeys: [ { credential_id, sealed_copy, … } ], rooms }` | a human device; no hash leaves the hub |
+| `PUT /v1/account/password` · `PUT /v1/account/kit` | `{ auth_key, sealed_copy, kdf?, revision }` → `{ revision }` | `account-changed` when `revision` is not the current one; a password on an account without e-mail: `bad-email` |
+| `PUT /v1/account/email` | `{ email, kit: { auth_key, sealed_copy }, revision }` → `{ revision }` | a human device; only for an account that has none (`forbidden` otherwise); the kit made anew under the e-mail (`incomplete` without); `bad-email`, `account-exists` |
+| `POST /v1/account/passkeys/challenge` · `POST /v1/account/passkeys` · `DELETE /v1/account/passkeys/{credential_id}` | → `{ challenge, account, user_handle, email, kit_form }` · a passkey body as above | a human device (the challenge also the recovery key, before `finish`); the challenge is for that account; `last-way-in` |
+| `POST /v1/account/login` | `{ account, auth_key }` → `{ rooms: [ { room_id, sealed_copy, challenge } ], kdf, account, email }` | no token; `wrong-login` for an unknown e-mail and a wrong key alike, at one cost; `challenge` is a sign-in challenge of that room (12.3) |
+| `POST /v1/account/recover` | `{ account, auth_key }` (the kit's) → the same with the kit's copy | `wrong-recovery` |
+| `POST /v1/account/passkey/challenge` · `POST /v1/account/passkey/login` | → `{ challenge }` · `{ credential_id, authenticator_data, client_data_json, signature, user_handle? }` → as login | every failure is `wrong-login` |
 
 - The hub keeps a slow hash (Argon2id) of each login key, never the key. There is no account session: a login
   answers with sealed copies and sign-in challenges, and the device signs in to the room with the recovery key
@@ -124,7 +124,7 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   other way in is removed in the same transaction. The way in used just now: `password: { sealed_copy }` (the
   login hash stays) or `passkey: { credential_id, sealed_copy }`. Or one set anew (after a recovery with the
   Emergency Kit words or the bare code): `password: { auth_key, sealed_copy, kdf }`, or `passkey` as in
-  `POST /v2/account` (a registration on a challenge of `POST /v2/account/passkeys/challenge`, which a human
+  `POST /v1/account` (a registration on a challenge of `POST /v1/account/passkeys/challenge`, which a human
   device or, before `finish`, the recovery key asks for: it answers `{ challenge, account, user_handle, email, kit_form }`: the
   id the new passkey carries as its user handle, and what the new kit is salted with, 8.8.2; a recovery
   that brings no passkey asks all the same, for the kit). A room without an account sends `null`.
@@ -176,11 +176,11 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
     again its back-off shows the checks made meanwhile.
 - **The account id, and accounts without an e-mail** (owner, 10 October 2026).
   - *Every account has an id:* a UUID (version 4) the hub mints at sign-up, never changed, unique. It is not a
-    secret: it is printed on every Emergency Kit. `GET /v2/account`, the sign-up answer and every login answer
+    secret: it is printed on every Emergency Kit. `GET /v1/account`, the sign-up answer and every login answer
     give it as `account`, in the canonical form (lower case, with dashes); its 16 bytes are the WebAuthn user
     handle of the account's passkeys (`user_handle`, base64url). Typed, it is taken without regard to case,
     spaces and dashes; what is left must be 32 hex digits.
-  - *One field names an account:* `account` in `POST /v2/account/login` and `POST /v2/account/recover` is an
+  - *One field names an account:* `account` in `POST /v1/account/login` and `POST /v1/account/recover` is an
     e-mail address (it contains `@`) or the account id; `email` is read as the same field. Both names lead to
     the same account, with the same answers: an id nobody has, an address nobody has and a text that is neither
     are `wrong-login` / `wrong-recovery` at the cost of the slow hash, like a wrong key. (There is no "forgot
@@ -189,20 +189,20 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
     `bad-email` without). The base case of a passkey account is "no e-mail"; an e-mail on it is a contact and a
     second name, and nothing rests on it. A lost passkey together with a lost recovery code and kit is then a
     lost account.
-  - *Sign-up with a passkey:* `POST /v2/account/passkey/challenge` (no token, no name) answers `{ challenge,
+  - *Sign-up with a passkey:* `POST /v1/account/passkey/challenge` (no token, no name) answers `{ challenge,
     account, user_handle }`: with the challenge the id the account will have, because the device needs it
     before the account exists (as the passkey's `user.id`, and for the kit). The device asks the authenticator
     for a discoverable credential (`residentKey: required`) and the PRF extension; the hub cannot see either
-    and checks what it can: attestation, challenge, origin. `POST /v2/account` (or `account` inside
-    `POST /v2/rooms`) then carries `kit`, `passkey` and optionally `email`; the account gets the id of that
+    and checks what it can: attestation, challenge, origin. `POST /v1/account` (or `account` inside
+    `POST /v1/rooms`) then carries `kit`, `passkey` and optionally `email`; the account gets the id of that
     challenge. Without a passkey the hub mints the id when the account is made.
   - *Log-in with a passkey, without a name:* a challenge, an assertion with empty `allowCredentials`, then
-    `POST /v2/account/passkey/login` `{ credential_id, authenticator_data, client_data_json, signature,
+    `POST /v1/account/passkey/login` `{ credential_id, authenticator_data, client_data_json, signature,
     user_handle? }`. The hub finds the account by the credential id; a `user_handle`, if sent, must be the
     account's. The answer carries that passkey's `sealed_copy`, which is sealed under a key from the PRF
     output, the room id and the credential id (v1 §16): no e-mail is in it.
   - *The Emergency Kit's salt* (v1.md 8.8.2) follows from the account alone: with an e-mail the form of v1 §16,
-    byte for byte; without one `salt = SHA-256("trommi/v2/account-salt/id" 0x00 ‖ account id)`, the id as its 16
+    byte for byte; without one `salt = SHA-256("trommi/v1/account-salt/id" 0x00 ‖ account id)`, the id as its 16
     raw bytes. The hub cannot check a kit; `kit_form` (`email` or `id`) in the account's answers says which the
     account's kit has. So the form never changes silently: giving the account an e-mail brings the kit made anew
     under that e-mail in the same request (below). The sheet prints the id always; an `id` kit is opened with
@@ -214,10 +214,10 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   - *With only the recovery code* (8.4) no account is named: the device signs in to the room with the recovery
     key, by room id and hub address. When it then replaces the code (8.6, 8.7), the hub finds the account by
     the room; `account` in that request is a new kit and one way in, as for every account.
-  - *Later changes:* `PUT /v2/account/email` gives an account without e-mail one, once, together with its kit made
+  - *Later changes:* `PUT /v1/account/email` gives an account without e-mail one, once, together with its kit made
     anew under that e-mail (the person types the words once more, or gets new ones, and prints the sheet again); an address another
     account holds is `account-exists`, as at sign-up (only a human device of a room can ask, within its limit
-    of expensive requests). After that `PUT /v2/account/password` adds a password. Changing or removing an
+    of expensive requests). After that `PUT /v1/account/password` adds a password. Changing or removing an
     e-mail is not offered: a password's keys and the kit's are derived from it. The last way in
     (the one passkey of an account without password) is not removed (`last-way-in`); the kit is the way back.
   - *Throttle:* guessing under an id is bounded exactly like guessing under an e-mail: per source and name the
@@ -233,7 +233,7 @@ beginning with 0x02; `auth_key` is 32 bytes; `kdf` is the pinned record of v1 §
   in before that is `not-member`. Every client does the same: after the Reveal it asks for a token, and on
   `not-member` again after 1 s, 2 s, 4 s, then every 5 s, for five minutes in all (the inviter's time to
   confirm); after that it tells the person that the invitation was not completed.
-- **Signing out:** `DELETE /v2/token` ends the token it is sent with, at once, and cuts the device's open
+- **Signing out:** `DELETE /v1/token` ends the token it is sent with, at once, and cuts the device's open
   streams (what waited on them is not sent).
   Other tokens of the device stay. (Tokens last
   ten minutes anyway; a device that is to be shut out for good is removed from the room.)
@@ -271,7 +271,7 @@ encrypted.
 7. An archived group answers every write with `gone` (410); an envelope for it takes no chain number. Archiving
    again, and a repeated post of what was accepted before, get their first answer.
 8. A removed device's token is answered `not-member` until it runs out; its streams end with the Commit.
-9. Every write of an agent device except `POST /v2/link` carries `Trommi-Lease`.
+9. Every write of an agent device except `POST /v1/link` carries `Trommi-Lease`.
 10. `GET …/log?kind=commit` gives the Commits alone, for any reader; application messages are deleted after 30
     days and leave holes in `n`, Commits never. `GET …/info?epoch=0` is kept as long as the group is.
 11. A Welcome is deleted when its device first writes in the group or leaves it. Requests: a device keeps its 16
@@ -308,12 +308,12 @@ encrypted.
 
 **Reading**
 
-19. `GET /v2/changes` items: `{ change, kind: "commit" | "message", group_id, n, epoch, at, bytes, sender,
+19. `GET /v1/changes` items: `{ change, kind: "commit" | "message", group_id, n, epoch, at, bytes, sender,
     recovery_auth? }` and `{ change, kind: "envelope", envelope, received_at, void_code? }`, ascending by
     `change`; the answer's `change` is the cursor for the next call. Change numbers are given to Commits,
     messages, envelopes, SealedKeys and RecoveryLinks; sealed keys are read on their own route; invites, requests,
     Welcomes, files and shares are read by their own routes and announced live.
-20. `GET /v2/stream` events: `envelope` and `log` carry the item of `/v2/changes` and its change number as the
+20. `GET /v1/stream` events: `envelope` and `log` carry the item of `/v1/changes` and its change number as the
     event id; `relay` `{ group_id, epoch, sender, message }`; `welcome` `{ group_id }`; `request`; `presence`
     `{ device, online, hears?, working?, last_call_at? }`; `file_evicted` `{ file_id }`. Events without a change
     number are not replayed.
@@ -321,8 +321,8 @@ encrypted.
     marked `cut` (not by a push ticket either). What a Cut cannot bring back stays as it is: the files of an
     Artifact whose closing version was cut are deleted.
 22. An answer holds at most 8 MiB of envelopes: the list routes say `more`, the Desk `truncated` (then the rest
-    comes by `/v2/changes`). The Desk has that one budget for everything it shows, objects of every kind and
-    registers together. `GET /v2/welcomes` has the same budget (the first Welcome always goes in); the device
+    comes by `/v1/changes`). The Desk has that one budget for everything it shows, objects of every kind and
+    registers together. `GET /v1/welcomes` has the same budget (the first Welcome always goes in); the device
     asks again after the last one's `id` until the answer is empty. A stream ends when the token it was opened
     with runs out, and the device resumes with a new one by change number.
 23. `epoch-full` counts the accepted envelopes of a group and epoch. An envelope whose ciphertext is not a
@@ -331,7 +331,7 @@ encrypted.
 
 **Operations**
 
-24. `GET /healthz` (outside `/v2/`, for the container) answers `{ ok, commit, protocol_version }`.
+24. `GET /healthz` (outside `/v1/`, for the container) answers `{ ok, commit, protocol_version }`.
     Founding a room is open to anyone, ten an hour per address (owner, 9 October 2026). A hub can be set
     otherwise: `HUB_FOUND_TOKEN` (unset by default) must then come as `x-found-token`; `HUB_FOUNDING=closed`
     founds none.
@@ -357,7 +357,7 @@ encrypted.
 31. An agent's lease that ran out is noticed by a timer, not by its stream closing: it no longer counts as
     working, and after a further minute without a stream the human devices are told once ("An agent lost its
     connection.", `presence` with `lost`).
-32. `GET /v2/changes` looks at most 20 000 change numbers ahead per call; `more` says that the cursor has not
+32. `GET /v1/changes` looks at most 20 000 change numbers ahead per call; `more` says that the cursor has not
     reached the room's newest change.
 33. Numbers of the wire (`uint64`: epochs, sequence numbers, times) above 2^63 − 1 are refused (`bad-format`);
     cursors in a query are decimal numbers of at most 18 digits.
@@ -366,7 +366,7 @@ encrypted.
 35. Stroke pieces: 20 within any second per device. A stream whose token ran out is cut at that moment, also
     one that had ended before with a reader that did not read (not a connection whose stream was read to its
     end: that one may serve the next request); what was queued for it is not sent.
-36. Every failure of `POST /v2/account/passkey/login` is `wrong-login`, a malformed request too (also a body
+36. Every failure of `POST /v1/account/passkey/login` is `wrong-login`, a malformed request too (also a body
     that is no JSON object).
 37. The per-address and per-device limits are kept in memory for 100 000 keys each. Over that, keys not in use
     are forgotten first; if all are in use, a key without a record is let through unrecorded rather than
@@ -378,8 +378,8 @@ encrypted.
     stream the agent opened first.
 28. Every code the hub answers is one of v1.md section 16, with its status there (`account-changed` 409, `bad-email`
     and `bad-passkey` 400 and `range` 416 among them); the hub has none of its own.
-39. `POST /v2/rooms/{room}/recovery-code` takes the Commit's fields under `commit`. New recovery keys are refused if the room held either of them before, as
-    either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v2/sealed-keys` is a human device's
+39. `POST /v1/rooms/{room}/recovery-code` takes the Commit's fields under `commit`. New recovery keys are refused if the room held either of them before, as
+    either of the two (8.6; the hub keeps every recovery key a room had). `PUT /v1/sealed-keys` is a human device's
     (`forbidden` otherwise); a row without a tag comes only with its writer's Commit.
 40. **The admin page** is not part of the API and not on the public port: a second listener on 127.0.0.1:8791
     (`HUB_ADMIN_HOST`, `HUB_ADMIN_PORT`), started only if `HUB_ADMIN_PASSWORD_HASH` is set (Argon2id, PHC text;
@@ -407,19 +407,19 @@ encrypted.
     stored drops the device's oldest (a device that
     signs in again uploads a fresh set). A refusal that names a wait (`rate-limited`, `overloaded`) names it in
     the `retry-after` header and as `retry_after` in the body; `too-many` is a quota and names none.
-    `POST /v2/account/passkey/challenge` is bounded like every tokenless route (600 a minute per address, then
+    `POST /v1/account/passkey/challenge` is bounded like every tokenless route (600 a minute per address, then
     `rate-limited`); the hub holds at most 10 000 open challenges of 32 bytes for two minutes each, the oldest
     going first.
 42. **A removed device can verify its removal** (owner, 10 October 2026; v1.md 13.5, 14.4). Its access ends at
     once, as before: every route answers it `not-member`. One read stays, for thirty days from the Commit that
-    removed it: `GET /v2/groups/{group}/removal?after=<n>` → `{ items, more, removed_at }` gives the Commits of
+    removed it: `GET /v1/groups/{group}/removal?after=<n>` → `{ items, more, removed_at }` gives the Commits of
     that group (log entries as on the log route, `kind: "commit"` only) after `after`, up to and including the
     removing one, whose log number is `removed_at`; at most 200 per answer. `group` is the room group (the
     Commit that removed a human device's leaf, or took an agent device out of `agents`) or a session group the
     device was a leaf of (the Commit that removed its leaf). The device checks those Commits itself, as an
     observer of the room group and as the member it was of its session, and wipes its keys when they say what
     the hub said. It authenticates as ever: the token it holds stays good for this route until it runs out, and
-    for those thirty days `POST /v2/rooms/{room}/tokens` gives a removed key a token (`role: "removed"`) that
+    for those thirty days `POST /v1/rooms/{room}/tokens` gives a removed key a token (`role: "removed"`) that
     is good for this route alone. One answer, `not-found`, for a key that was never there, one that was not
     removed, and one removed longer ago; a key that was never in the room gets no token (`not-member`).
     Nothing is shown that the device could not read while it was a member: Commits are public group state, and
@@ -429,7 +429,7 @@ encrypted.
     groups only and is read in pages (`limit`). The bare list without `limit`, and the Desk's `groups`, stay as
     they were (with the leaves of live groups only) until the clients read the pages; then the bare form and the
     Desk's `groups` go.
-44. **One stream per device** (10 October 2026). Opening `GET /v2/stream` ends the device's older streams at once
+44. **One stream per device** (10 October 2026). Opening `GET /v1/stream` ends the device's older streams at once
     (their connections are cut, their places freed): a browser that never closes the old stream of a page
     reloaded under a service worker would otherwise reach the limit of v1.md section 16 and get `too-many`. A
     device runs one stream (the web app in its leader tab). An agent device's processes overlap while one

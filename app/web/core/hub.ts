@@ -70,7 +70,7 @@ const STATUS_OF: Record<string, number> = Object.fromEntries(Object.entries({
  *  (KeyPackages not yet claimed, uploads or a recovery in progress), a sign-in to make again, a client to update. */
 const NOT_NOW = new Set(['rate-limited', 'too-many', 'unauthorised', 'bad-challenge', 'client-too-old'])
 const TOKEN = /^[A-Za-z0-9_-]{16,200}$/
-const PATH = /^\/v2(\/[A-Za-z0-9_-]{1,128}){1,8}$/
+const PATH = /^\/v1(\/[A-Za-z0-9_-]{1,128}){1,8}$/
 /**
  * The requests that may go a second time at once when the first met no answer at all (the connection was dead: a hub
  * that restarted leaves kept-alive connections behind, and not every platform's fetch takes a fresh one by itself as
@@ -83,11 +83,11 @@ const PATH = /^\/v2(\/[A-Za-z0-9_-]{1,128}){1,8}$/
  */
 const REPEATABLE = [
   /^GET /,
-  /^PUT \/v2\/(files\/[^/]+|key-packages|sealed-keys|invites\/[^/]+\/reveal)$/,
-  /^POST \/v2\/(rooms|groups|envelopes|invites|shares|account\/login|account\/recover|account\/passkey\/challenge|account\/passkeys\/challenge)$/,
-  /^POST \/v2\/groups\/[^/]+\/(commits|messages|archive)$/,
-  /^POST \/v2\/rooms\/[^/]+\/(recovery-code|recovery\/[^/]+\/(commits|finish))$/,
-  /^POST \/v2\/invites\/[^/]+\/request$/,
+  /^PUT \/v1\/(files\/[^/]+|key-packages|sealed-keys|invites\/[^/]+\/reveal)$/,
+  /^POST \/v1\/(rooms|groups|envelopes|invites|shares|account\/login|account\/recover|account\/passkey\/challenge|account\/passkeys\/challenge)$/,
+  /^POST \/v1\/groups\/[^/]+\/(commits|messages|archive)$/,
+  /^POST \/v1\/rooms\/[^/]+\/(recovery-code|recovery\/[^/]+\/(commits|finish))$/,
+  /^POST \/v1\/invites\/[^/]+\/request$/,
 ]
 const QUERY_VALUE = /^[A-Za-z0-9_.-]{0,512}$/
 
@@ -204,7 +204,7 @@ export interface PasskeyRegistration { attestation_object: Uint8Array; client_da
 export type KitForm = 'email' | 'id'
 /** A kit's part of a body: its login key and the code sealed under its wrap key. */
 export interface KitPart { auth_key: Uint8Array; sealed_copy: Uint8Array }
-/** `POST /v2/account`, and `account` of `POST /v2/rooms`: the Emergency Kit and at least one way in. An e-mail
+/** `POST /v1/account`, and `account` of `POST /v1/rooms`: the Emergency Kit and at least one way in. An e-mail
  *  comes with a password and is optional beside a passkey. The account's id is the hub's: with a passkey the one
  *  it named with the registration's challenge (`passkeyChallenge`). */
 export interface NewAccount {
@@ -690,7 +690,7 @@ export class Hub {
     this.role = null
   }
   get room_id(): Uint8Array | null { return this.signer?.room_id ?? null }
-  /** `DELETE /v2/token`: ends the token this client holds, at once, and the hub cuts this device's streams. A
+  /** `DELETE /v1/token`: ends the token this client holds, at once, and the hub cuts this device's streams. A
    *  client without a token asks nothing (it does not sign in to sign out). The token is forgotten here whatever
    *  the hub answers; it would have run out within ten minutes. A later call signs in anew. */
   async signOut(): Promise<void> {
@@ -700,7 +700,7 @@ export class Hub {
     this.role = null
     const watch = new Watch(this.timing.request)
     try {
-      const res = await this.fetch(`${this.hub_url}/v2/token`, { method: 'DELETE', headers: { authorization: `Bearer ${token}`, ...(this.client_name ? { 'trommi-client': this.client_name } : {}) }, redirect: 'manual', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: watch.signal })
+      const res = await this.fetch(`${this.hub_url}/v1/token`, { method: 'DELETE', headers: { authorization: `Bearer ${token}`, ...(this.client_name ? { 'trommi-client': this.client_name } : {}) }, redirect: 'manual', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: watch.signal })
       void res.body?.cancel().catch(() => {})
       if (!res.ok) throw new HubError(res.status === 401 ? 'unauthorised' : `http-${res.status}`, 'the hub did not end the token', { status: res.status })
     } catch (e) {
@@ -727,7 +727,7 @@ export class Hub {
     for (let second = false; ; second = true) {
       const { auth, signature } = await signer.sign(this.hub_url, challenge)
       try {
-        answer = obj(await this.call('POST', `/v2/rooms/${signer.room}/tokens`, { json: { auth: enc(auth), signature: enc(signature) } }), 'a token answer')
+        answer = obj(await this.call('POST', `/v1/rooms/${signer.room}/tokens`, { json: { auth: enc(auth), signature: enc(signature) } }), 'a token answer')
         break
       } catch (e) {
         if (second || !(e instanceof HubError) || e.code !== 'bad-challenge') throw e
@@ -879,10 +879,10 @@ export class Hub {
   private get(path: string, query?: Send['query'], cap = CAP_SMALL, auth = true): Promise<unknown> { return this.call('GET', path, { query, auth }, cap) }
   private send(method: string, path: string, json: unknown, auth = true, headers?: Record<string, string>): Promise<unknown> { return this.call(method, path, { json, auth, headers }) }
 
-  /** Any route by its path: the way out for a route this class has no method for. The path is `/v2/…` of plain
+  /** Any route by its path: the way out for a route this class has no method for. The path is `/v1/…` of plain
    *  segments, parameters go in `query`; the answer is the hub's JSON, unchecked beyond its size. */
   async request(method: string, path: string, opts: RequestOptions = {}): Promise<any> {
-    if (!PATH.test(path)) wrong('a path is /v2/ and plain segments')
+    if (!PATH.test(path)) wrong('a path is /v1/ and plain segments')
     for (const [k, v] of Object.entries(opts.query ?? {})) if (!/^[a-z_]{1,32}$/.test(k) || (v !== null && v !== undefined && !QUERY_VALUE.test(String(v)))) wrong(`query ${k}`)
     const o: Send = { query: opts.query, auth: opts.auth ?? true, headers: opts.headers, signal: opts.signal }
     if (opts.body instanceof Uint8Array) { const b = opts.body; o.body = () => b; o.length = b.length } else if (opts.body !== undefined) o.json = opts.body
@@ -956,23 +956,23 @@ export class Hub {
 
   // ---- rooms, recovery (hub-api.md: no token for the founding; the recovery key's token for a recovery)
 
-  /** `POST /v2/rooms`: founds the room; `account` is made in the same transaction. `found_token`: the hub's word,
+  /** `POST /v1/rooms`: founds the room; `account` is made in the same transaction. `found_token`: the hub's word,
    *  where it founds by invitation. */
   async foundRoom(f: { group_info: Uint8Array; sealed_key: Uint8Array; account?: NewAccount | null; found_token?: string | null }): Promise<{ room_id: Uint8Array }> {
     const json = { group_info: enc(f.group_info), sealed_key: enc(f.sealed_key), ...(f.account ? { account: accountBody(f.account) } : {}) }
-    const o = obj(await this.send('POST', '/v2/rooms', json, false, f.found_token ? { 'x-found-token': f.found_token } : undefined), 'a founding answer')
+    const o = obj(await this.send('POST', '/v1/rooms', json, false, f.found_token ? { 'x-found-token': f.found_token } : undefined), 'a founding answer')
     return { room_id: id(o.room_id, 'room_id', 32) }
   }
-  /** `GET /v2/rooms/{room}/challenge`: 32 bytes, two minutes, one use. */
+  /** `GET /v1/rooms/{room}/challenge`: 32 bytes, two minutes, one use. */
   async challenge(room_id: Uint8Array): Promise<Uint8Array> {
-    const o = obj(await this.get(`/v2/rooms/${own(room_id, 'room_id', 32)}/challenge`, undefined, CAP_SMALL, false), 'a challenge answer')
+    const o = obj(await this.get(`/v1/rooms/${own(room_id, 'room_id', 32)}/challenge`, undefined, CAP_SMALL, false), 'a challenge answer')
     return bytes(o.challenge, 'challenge', 32)
   }
   private roomPath(rest: string): string {
     if (!this.signer) wrong('this hub client has no signer: useSigner first')
-    return `/v2/rooms/${this.signer.room}${rest}`
+    return `/v1/rooms/${this.signer.room}${rest}`
   }
-  /** `GET /v2/rooms/{room}/groups`: what the asker may see of the room's groups. */
+  /** `GET /v1/rooms/{room}/groups`: what the asker may see of the room's groups. */
   async roomGroups(): Promise<GroupRow[]> {
     // in pages of up to 1000 (and 8 MiB), the next from the answer's `after`; a hub that answers the bare list of
     // every group (before point 43) is read as one page
@@ -989,7 +989,7 @@ export class Hub {
     }
     return out
   }
-  /** `POST /v2/rooms/{room}/recovery` (8.7): locks the room for ten minutes. */
+  /** `POST /v1/rooms/{room}/recovery` (8.7): locks the room for ten minutes. */
   async openRecovery(): Promise<{ recovery_id: Uint8Array; expires_at: number }> {
     const o = obj(await this.send('POST', this.roomPath('/recovery'), {}), 'a recovery')
     return { recovery_id: id(o.recovery_id, 'recovery_id', 16), expires_at: int(o.expires_at, 'expires_at') }
@@ -1011,12 +1011,12 @@ export class Hub {
     const o = obj(await this.send('DELETE', this.roomPath(`/recovery/${own(recovery_id, 'recovery_id', 16)}`), undefined), 'a dropped recovery')
     return { dropped: bool(o.dropped, 'dropped') }
   }
-  /** `POST /v2/rooms/{room}/recovery-code` (8.6): the room Commit with new recovery keys, its RecoveryLink and the
+  /** `POST /v1/rooms/{room}/recovery-code` (8.6): the room Commit with new recovery keys, its RecoveryLink and the
    *  account's new copies, all or nothing. */
   async postRecoveryCode(room_id: Uint8Array, c: CommitParts, recovery_link: Uint8Array, account: AccountCopies | null): Promise<{ epoch: number; change: number }> {
     // the Commit goes nested under `commit`, as hub-api.md writes the route
     const json = { commit: commitBody(c), recovery_link: enc(recovery_link), account: copiesBody(account) }
-    return this.committed(await this.send('POST', `/v2/rooms/${own(room_id, 'room_id', 32)}/recovery-code`, json), c.epoch)
+    return this.committed(await this.send('POST', `/v1/rooms/${own(room_id, 'room_id', 32)}/recovery-code`, json), c.epoch)
   }
 
   /**
@@ -1151,33 +1151,33 @@ export class Hub {
     if (answer.epoch !== built_on + 1) bad('the epoch after a Commit')
     return answer
   }
-  /** `POST /v2/groups`: the founding of a session group (5.2.5). */
+  /** `POST /v1/groups`: the founding of a session group (5.2.5). */
   async foundGroup(f: { group_info_0: Uint8Array; sealed_key_0: Uint8Array; commit: Uint8Array; group_info: Uint8Array; welcome?: Uint8Array | null; sealed_key: Uint8Array }): Promise<{ group_id: Uint8Array }> {
     const json = {
       group_info_0: enc(f.group_info_0), sealed_key_0: enc(f.sealed_key_0), commit: enc(f.commit), group_info: enc(f.group_info), sealed_key: enc(f.sealed_key),
       ...(f.welcome?.length ? { welcome: enc(f.welcome) } : {}),
     }
-    return { group_id: id(obj(await this.send('POST', '/v2/groups', json), 'a founding answer').group_id, 'group_id', 48) }
+    return { group_id: id(obj(await this.send('POST', '/v1/groups', json), 'a founding answer').group_id, 'group_id', 48) }
   }
-  /** `POST /v2/groups/{group}/commits`: `epoch-taken` (with the current `epoch` in `details`), `room-behind`,
+  /** `POST /v1/groups/{group}/commits`: `epoch-taken` (with the current `epoch` in `details`), `room-behind`,
    *  `bad-commit`, `incomplete`. */
   async postCommit(group: Uint8Array, c: CommitParts): Promise<{ epoch: number; change: number }> {
-    return this.committed(await this.send('POST', `/v2/groups/${own(group, 'group', ...GROUP)}/commits`, commitBody(c)), c.epoch)
+    return this.committed(await this.send('POST', `/v1/groups/${own(group, 'group', ...GROUP)}/commits`, commitBody(c)), c.epoch)
   }
-  /** `POST /v2/groups/{group}/reject` (14.7): this leaf cannot merge the accepted Commit `n`. */
+  /** `POST /v1/groups/{group}/reject` (14.7): this leaf cannot merge the accepted Commit `n`. */
   async rejectCommit(group: Uint8Array, n: number): Promise<{ id: number }> {
-    return { id: int(obj(await this.send('POST', `/v2/groups/${own(group, 'group', ...GROUP)}/reject`, { n: ownInt(n, 'n') }), 'a request answer').id, 'id') }
+    return { id: int(obj(await this.send('POST', `/v1/groups/${own(group, 'group', ...GROUP)}/reject`, { n: ownInt(n, 'n') }), 'a request answer').id, 'id') }
   }
-  /** `POST /v2/groups/{group}/archive` (5.2.10). */
+  /** `POST /v1/groups/{group}/archive` (5.2.10). */
   async archiveGroup(group: Uint8Array): Promise<void> {
-    if (obj(await this.send('POST', `/v2/groups/${own(group, 'group', ...GROUP)}/archive`, {}), 'an archive answer').archived !== true) bad('archived')
+    if (obj(await this.send('POST', `/v1/groups/${own(group, 'group', ...GROUP)}/archive`, {}), 'an archive answer').archived !== true) bad('archived')
   }
-  /** `GET /v2/groups/{group}/log?after=&limit=&kind=commit`: the group's ordered log after number `after`; `gone`
+  /** `GET /v1/groups/{group}/log?after=&limit=&kind=commit`: the group's ordered log after number `after`; `gone`
    *  when that is older than what is kept. Entries come strictly ascending by `n`. */
   async groupLog(group: Uint8Array, opts: { after?: number; limit?: number; commits_only?: boolean } = {}): Promise<{ items: LogItem[]; more: boolean }> {
     const g = own(group, 'group', ...GROUP)
     const after = ownInt(opts.after ?? 0, 'after'), limit = Math.min(1000, Math.max(1, ownInt(opts.limit ?? 200, 'limit')))
-    const o = obj(await this.get(`/v2/groups/${g}/log`, { after, limit, kind: opts.commits_only ? 'commit' : undefined }, CAP_LIST), 'a log page')
+    const o = obj(await this.get(`/v1/groups/${g}/log`, { after, limit, kind: opts.commits_only ? 'commit' : undefined }, CAP_LIST), 'a log page')
     let n = after
     const items = list(o.items, 'items', limit).map(x => {
       const item = logItem(obj(x, 'a log entry'))
@@ -1187,12 +1187,12 @@ export class Hub {
     })
     return { items, more: bool(o.more, 'more') }
   }
-  /** `GET /v2/groups/{group}/removal?after=`: for a key the hub took out of the room (role `removed`, thirty days),
+  /** `GET /v1/groups/{group}/removal?after=`: for a key the hub took out of the room (role `removed`, thirty days),
    *  the group's Commits after `after` up to and including the one that removed it, whose log number is
    *  `removed_at` (hub-api.md 42); at most 200 a page. `not-found` where the key was not removed from that group. */
   async removal(group: Uint8Array, after = 0): Promise<{ items: Extract<LogItem, { kind: 'commit' }>[]; more: boolean; removed_at: number }> {
     const g = own(group, 'group', ...GROUP)
-    const o = obj(await this.get(`/v2/groups/${g}/removal`, { after: ownInt(after, 'after') }, CAP_LIST), 'a removal page')
+    const o = obj(await this.get(`/v1/groups/${g}/removal`, { after: ownInt(after, 'after') }, CAP_LIST), 'a removal page')
     const removed_at = int(o.removed_at, 'removed_at', 1)
     let n = after
     const items = list(o.items, 'items', 200).map(x => {
@@ -1203,27 +1203,27 @@ export class Hub {
     })
     return { items, more: bool(o.more, 'more'), removed_at }
   }
-  /** `POST /v2/groups/{group}/messages`: an application message; `relay`: passed on, not stored (7.2). */
+  /** `POST /v1/groups/{group}/messages`: an application message; `relay`: passed on, not stored (7.2). */
   async postMessage(group: Uint8Array, epoch: number, message: Uint8Array, relay: boolean): Promise<{ n: number | null }> {
     const json = { epoch: ownInt(epoch, 'epoch'), message: enc(message), ...(relay ? { relay: true } : {}) }
-    const o = obj(await this.call('POST', `/v2/groups/${own(group, 'group', ...GROUP)}/messages`, { json, auth: true, once: relay }), 'a message answer')
+    const o = obj(await this.call('POST', `/v1/groups/${own(group, 'group', ...GROUP)}/messages`, { json, auth: true, once: relay }), 'a message answer')
     return { n: relay ? (o.n === null ? null : bad('n of a relayed message')) : int(o.n, 'n', 1) }
   }
-  /** `GET /v2/groups/{group}/info?epoch=`: the GroupInfo of that epoch, or of the current one. */
+  /** `GET /v1/groups/{group}/info?epoch=`: the GroupInfo of that epoch, or of the current one. */
   async groupInfo(group: Uint8Array, epoch?: number): Promise<{ epoch: number; group_info: Uint8Array }> {
-    const o = obj(await this.get(`/v2/groups/${own(group, 'group', ...GROUP)}/info`, { epoch: epoch === undefined ? undefined : ownInt(epoch, 'epoch') }, 2 * MIB), 'a GroupInfo answer')
+    const o = obj(await this.get(`/v1/groups/${own(group, 'group', ...GROUP)}/info`, { epoch: epoch === undefined ? undefined : ownInt(epoch, 'epoch') }, 2 * MIB), 'a GroupInfo answer')
     const answer = { epoch: int(o.epoch, 'epoch'), group_info: bytes(o.group_info, 'group_info', 1, MAX_MLS) }
     if (epoch !== undefined && answer.epoch !== epoch) bad('another epoch than the one asked for')
     return answer
   }
-  /** `GET /v2/welcomes`: for this device; one is deleted when the device has joined. */
+  /** `GET /v1/welcomes`: for this device; one is deleted when the device has joined. */
   async welcomes(): Promise<{ group: Uint8Array; welcome: Uint8Array; at: number }[]> {
     // an answer holds at most 8 MiB: asked again after the last one's `id` until an answer is empty (a hub whose
     // Welcomes carry no id answers all of them at once)
     const out: { group: Uint8Array; welcome: Uint8Array; at: number }[] = []
     let after: number | null = null
     for (let pages = 0; pages < 10_000; pages++) {
-      const page = list(await this.get('/v2/welcomes', after === null ? undefined : { after }, CAP_LIST), 'welcomes', 10_000).map(w => obj(w, 'a welcome'))
+      const page = list(await this.get('/v1/welcomes', after === null ? undefined : { after }, CAP_LIST), 'welcomes', 10_000).map(w => obj(w, 'a welcome'))
       for (const o of page) out.push({ group: id(o.group_id, 'group_id', ...GROUP), welcome: bytes(o.welcome, 'welcome', 1, MAX_MLS), at: int(o.at, 'at') })
       const last = page.at(-1)?.id
       if (!page.length || last === undefined || last === null) break
@@ -1233,29 +1233,29 @@ export class Hub {
     }
     return out
   }
-  /** `PUT /v2/key-packages` (14.2): answers how many single-use ones the hub now holds unused. */
+  /** `PUT /v1/key-packages` (14.2): answers how many single-use ones the hub now holds unused. */
   async putKeyPackages(k: { single_use: Uint8Array[]; last_resort?: Uint8Array | null }): Promise<{ unused: number }> {
     const json = { single_use: k.single_use.map(enc), ...(k.last_resort?.length ? { last_resort: enc(k.last_resort) } : {}) }
-    return { unused: int(obj(await this.send('PUT', '/v2/key-packages', json), 'a KeyPackage answer').unused, 'unused') }
+    return { unused: int(obj(await this.send('PUT', '/v1/key-packages', json), 'a KeyPackage answer').unused, 'unused') }
   }
-  /** `POST /v2/key-packages/claim`: one KeyPackage of each device, all or nothing. NOT repeatable: a claim that was
+  /** `POST /v1/key-packages/claim`: one KeyPackage of each device, all or nothing. NOT repeatable: a claim that was
    *  not answered used its KeyPackages up. The answer is in the order asked. */
   async claimKeyPackages(devices: Uint8Array[]): Promise<{ device: Uint8Array; key_package: Uint8Array }[]> {
     const asked = devices.map(d => own(d, 'device', 32))
     if (asked.length < 1 || asked.length > 64 || new Set(asked).size !== asked.length) wrong('devices: 1 to 64, each once')
-    const got = obj(obj(await this.send('POST', '/v2/key-packages/claim', { devices: asked }), 'a claim answer').key_packages, 'key_packages')
+    const got = obj(obj(await this.send('POST', '/v1/key-packages/claim', { devices: asked }), 'a claim answer').key_packages, 'key_packages')
     if (Object.keys(got).length !== asked.length) bad('KeyPackages of other devices than the ones asked for')
     return asked.map((d, i) => ({ device: devices[i] as Uint8Array, key_package: Object.hasOwn(got, d) ? bytes(got[d], 'a KeyPackage', 1, MAX_KEY_PACKAGE) : bad('a KeyPackage is missing') }))
   }
-  /** `PUT /v2/sealed-keys` (8.3). */
+  /** `PUT /v1/sealed-keys` (8.3). */
   async putSealedKey(sealed_key: Uint8Array): Promise<void> {
-    if (obj(await this.send('PUT', '/v2/sealed-keys', { sealed_key: enc(sealed_key) }), 'a SealedKey answer').stored !== true) bad('stored')
+    if (obj(await this.send('PUT', '/v1/sealed-keys', { sealed_key: enc(sealed_key) }), 'a SealedKey answer').stored !== true) bad('stored')
   }
-  /** `GET /v2/sealed-keys?after=`: the SealedKeys and RecoveryLinks above change `after`, each ascending. `change`
+  /** `GET /v1/sealed-keys?after=`: the SealedKeys and RecoveryLinks above change `after`, each ascending. `change`
    *  is the cursor for the next call: both lists are complete up to it. */
   async sealedKeys(after = 0, limit = 500): Promise<{ rows: { change: number; sealed_key: Uint8Array }[]; links: { room_epoch: number; change: number; recovery_link: Uint8Array }[]; change: number; more: boolean }> {
     const from = ownInt(after, 'after'), most = Math.min(2000, Math.max(1, ownInt(limit, 'limit')))
-    const o = obj(await this.get('/v2/sealed-keys', { after: from, limit: most }, CAP_LIST), 'sealed keys')
+    const o = obj(await this.get('/v1/sealed-keys', { after: from, limit: most }, CAP_LIST), 'sealed keys')
     const ascending = (): ((change: number) => number) => { let at = from; return c => { if (c <= at) bad('sealed keys out of order'); at = c; return c } }
     const [row, link] = [ascending(), ascending()]
     const rows = list(o.rows, 'rows', most).map(r => { const x = obj(r, 'a row'); return { change: row(int(x.change, 'change', 1)), sealed_key: bytes(x.sealed_key, 'sealed_key', 1, MAX_SMALL_STRUCT) } })
@@ -1265,25 +1265,25 @@ export class Hub {
     if (change !== Math.max(from, rows.at(-1)?.change ?? 0, links.at(-1)?.change ?? 0) || (more && change === from)) bad('a cursor that is not where the lists end')
     return { rows, links, change, more }
   }
-  /** `POST /v2/requests`: an unsigned wish of this device to the human devices. */
+  /** `POST /v1/requests`: an unsigned wish of this device to the human devices. */
   async postRequest(r: { kind: 'readmit' | 'handover' | 'session'; group?: Uint8Array | null; key_package?: Uint8Array | null }): Promise<{ id: number }> {
     const json = { kind: r.kind, ...(r.group ? { group: own(r.group, 'group', ...GROUP) } : {}), ...(r.key_package?.length ? { key_package: enc(r.key_package) } : {}) }
-    return { id: int(obj(await this.send('POST', '/v2/requests', json), 'a request answer').id, 'id') }
+    return { id: int(obj(await this.send('POST', '/v1/requests', json), 'a request answer').id, 'id') }
   }
-  /** `GET /v2/requests`: a human device sees every wish of the room. */
+  /** `GET /v1/requests`: a human device sees every wish of the room. */
   async requests(): Promise<RequestRow[]> {
-    return list(await this.get('/v2/requests', undefined, CAP_LIST), 'requests', 100_000).map(requestRow)
+    return list(await this.get('/v1/requests', undefined, CAP_LIST), 'requests', 100_000).map(requestRow)
   }
 
   // ---- content
 
-  /** `POST /v2/envelopes`: every stored item. A refusal with `voided` used the envelope's number up. */
+  /** `POST /v1/envelopes`: every stored item. A refusal with `voided` used the envelope's number up. */
   async postEnvelope(envelope: Uint8Array): Promise<{ change: number }> {
-    return { change: int(obj(await this.send('POST', '/v2/envelopes', { envelope: enc(envelope) }), 'an envelope answer').change, 'change', 1) }
+    return { change: int(obj(await this.send('POST', '/v1/envelopes', { envelope: enc(envelope) }), 'an envelope answer').change, 'change', 1) }
   }
-  /** `GET /v2/desk`: the open objects with their current version, every writer's newest value per register, the groups. */
+  /** `GET /v1/desk`: the open objects with their current version, every writer's newest value per register, the groups. */
   async desk(): Promise<Desk> {
-    const o = obj(await this.get('/v2/desk', undefined, CAP_DESK), 'the Desk')
+    const o = obj(await this.get('/v1/desk', undefined, CAP_DESK), 'the Desk')
     const objects = (v: unknown): DeskObject[] => list(v, 'objects', 1000).map(x => {
       const d = obj(x, 'an object')
       return {
@@ -1298,26 +1298,26 @@ export class Hub {
       truncated: bool(o.truncated, 'truncated'), change: int(o.change, 'change'),
     }
   }
-  /** `GET /v2/chats/{scope}/{id}/items?before=&limit=`: a Chat's envelopes, newest first, below change `before`. */
+  /** `GET /v1/chats/{scope}/{id}/items?before=&limit=`: a Chat's envelopes, newest first, below change `before`. */
   async chatItems(scope: 'session' | 'card', ref: Uint8Array, opts: { before?: number; limit?: number } = {}): Promise<{ items: EnvelopeItem[]; more: boolean }> {
     if (scope !== 'session' && scope !== 'card') wrong('a Chat is of a session or a card')
     const limit = Math.min(200, Math.max(1, ownInt(opts.limit ?? 50, 'limit')))
     const before = opts.before === undefined ? undefined : ownInt(opts.before, 'before')
     // a timeline is named by 32 hex digits in this one route (hub content.rs chat_key)
-    const page = await this.get(`/v2/chats/${scope}/${hex(unb64u(own(ref, 'ref', 16)))}/items`, { before, limit }, CAP_LIST)
+    const page = await this.get(`/v1/chats/${scope}/${hex(unb64u(own(ref, 'ref', 16)))}/items`, { before, limit }, CAP_LIST)
     return envelopePage(page, limit, before ?? Number.MAX_SAFE_INTEGER, -1)
   }
-  /** `GET /v2/boards/{board}?after_change=`: the board's items after that change, oldest first (10.3). */
+  /** `GET /v1/boards/{board}?after_change=`: the board's items after that change, oldest first (10.3). */
   async boardItems(board: Uint8Array, opts: { after_change?: number; limit?: number } = {}): Promise<{ items: EnvelopeItem[]; more: boolean }> {
     const limit = Math.min(2000, Math.max(1, ownInt(opts.limit ?? 500, 'limit'))), after = ownInt(opts.after_change ?? 0, 'after_change')
-    return envelopePage(await this.get(`/v2/boards/${own(board, 'board', 16)}`, { after_change: after, limit }, CAP_LIST), limit, after, 1)
+    return envelopePage(await this.get(`/v1/boards/${own(board, 'board', 16)}`, { after_change: after, limit }, CAP_LIST), limit, after, 1)
   }
-  /** `GET /v2/cards/{object}?after=&limit=` and its siblings: every envelope of the object, by change. */
+  /** `GET /v1/cards/{object}?after=&limit=` and its siblings: every envelope of the object, by change. */
   async objectEnvelopes(route: ObjectRoute, object_id: Uint8Array, opts: { after?: number; limit?: number } = {}): Promise<ObjectEnvelopes> {
     if (!['cards', 'notes', 'permission-requests', 'artifacts'].includes(route)) wrong('no such object route')
     const limit = Math.min(2000, Math.max(1, ownInt(opts.limit ?? 500, 'limit'))), after = ownInt(opts.after ?? 0, 'after')
     const asked = own(object_id, 'object_id', 16)
-    const v = await this.get(`/v2/${route}/${asked}`, { after, limit }, CAP_LIST)
+    const v = await this.get(`/v1/${route}/${asked}`, { after, limit }, CAP_LIST)
     const o = obj(v, 'an object')
     if (o.object_id !== asked) bad('another object than the one asked for')
     return {
@@ -1325,11 +1325,11 @@ export class Hub {
       first_change: int(o.first_change, 'first_change', 1), head_change: int(o.head_change, 'head_change', 1), ...envelopePage(v, limit, after, 1),
     }
   }
-  /** `GET /v2/groups/{group}/chains/{sender}?after=&limit=`: a sender's envelopes in pruned form, ascending by
+  /** `GET /v1/groups/{group}/chains/{sender}?after=&limit=`: a sender's envelopes in pruned form, ascending by
    *  `seq`; those beyond its Cut marked `cut` (9.0.5, 10.3). */
   async chain(group: Uint8Array, sender: Uint8Array, opts: { after?: number; limit?: number } = {}): Promise<{ items: ChainItem[]; more: boolean }> {
     const limit = Math.min(2000, Math.max(1, ownInt(opts.limit ?? 500, 'limit'))), after = ownInt(opts.after ?? 0, 'after')
-    const o = obj(await this.get(`/v2/groups/${own(group, 'group', ...GROUP)}/chains/${own(sender, 'sender', 32)}`, { after, limit }, CAP_LIST), 'a chain page')
+    const o = obj(await this.get(`/v1/groups/${own(group, 'group', ...GROUP)}/chains/${own(sender, 'sender', 32)}`, { after, limit }, CAP_LIST), 'a chain page')
     let seq = after
     const items = list(o.items, 'items', limit).map(x => {
       const item = { ...envelopeItem(x), seq: int(obj(x, 'a chain item').seq, 'seq', 1) }
@@ -1340,13 +1340,13 @@ export class Hub {
     return { items, more: bool(o.more, 'more') }
   }
   /**
-   * `GET /v2/changes?after=&limit=`: catch-up, everything this device may see above change `after`, in the hub's one
+   * `GET /v1/changes?after=&limit=`: catch-up, everything this device may see above change `after`, in the hub's one
    * order. The items come strictly ascending by `change`, all above `after` and none above the answer's `change`,
    * which is the cursor for the next call; an answer that breaks this is refused whole.
    */
   async changes(after: number, limit = 200): Promise<{ items: ChangeItem[]; change: number; more: boolean }> {
     const from = ownInt(after, 'after'), most = Math.min(1000, Math.max(1, ownInt(limit, 'limit')))
-    const o = obj(await this.get('/v2/changes', { after: from, limit: most }, CAP_LIST), 'a catch-up answer')
+    const o = obj(await this.get('/v1/changes', { after: from, limit: most }, CAP_LIST), 'a catch-up answer')
     const change = int(o.change, 'change'), more = bool(o.more, 'more')
     if (change < from || change - from > CHANGES_WINDOW) bad('a cursor outside the stretch asked for')
     let at = from
@@ -1391,7 +1391,7 @@ export class Hub {
           const headers: Record<string, string> = { accept: 'text/event-stream', authorization: `Bearer ${token}` }
           if (this.client_name) headers['trommi-client'] = this.client_name
           let res: Response
-          try { res = await this.fetch(`${this.hub_url}/v2/stream?after=${cursor}`, { headers, redirect: 'manual', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: ac.signal }) }
+          try { res = await this.fetch(`${this.hub_url}/v1/stream?after=${cursor}`, { headers, redirect: 'manual', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer', signal: ac.signal }) }
           catch { throw this.offline('the hub was not reached') }
           if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) bad('a redirect', res.status || 302)
           if (!res.ok) {
@@ -1491,12 +1491,12 @@ export class Hub {
     return this.callOnce('PUT', path, { body, length: size, auth: true, signal: opts.signal, timeout_ms: 60_000 + size / 16.384 }, CAP_SMALL)
   }
   /**
-   * `PUT /v2/files/{file_id}`: the file's bytes (ciphertext), in one request, written once. The same bytes again get
+   * `PUT /v1/files/{file_id}`: the file's bytes (ciphertext), in one request, written once. The same bytes again get
    * the first answer; other bytes under the id are `replay`. Where the platform takes a stream as a request body the
    * bytes go in pieces and `onProgress` follows them; where it does not (a browser on HTTP/1.1), they go in one piece.
    */
   async putFile(file_id: Uint8Array, data: Uint8Array | Blob, opts: Transfer = {}): Promise<{ file_id: Uint8Array; size: number; sha256: Uint8Array }> {
-    const asked = own(file_id, 'file_id', 16), path = `/v2/files/${asked}`
+    const asked = own(file_id, 'file_id', 16), path = `/v1/files/${asked}`
     const size = data instanceof Uint8Array ? data.length : data.size
     let answer: unknown
     if (opts.onProgress && this.streams_uploads) {
@@ -1569,38 +1569,38 @@ export class Hub {
     for (const p of parts) { out.set(p, at); at += p.length }
     return { bytes: out, size: size ?? got }
   }
-  /** `GET /v2/files/{file_id}` (with `Range`): the stored bytes, or the inclusive byte range asked for; `size` is
+  /** `GET /v1/files/{file_id}` (with `Range`): the stored bytes, or the inclusive byte range asked for; `size` is
    *  the whole file's. */
   getFile(file_id: Uint8Array, opts: Transfer & { range?: { start: number; end?: number } } = {}): Promise<{ bytes: Uint8Array; size: number }> {
-    return this.download(`/v2/files/${own(file_id, 'file_id', 16)}`, { auth: true }, opts)
+    return this.download(`/v1/files/${own(file_id, 'file_id', 16)}`, { auth: true }, opts)
   }
-  /** `DELETE /v2/files/{file_id}`: its uploader or a human device. */
+  /** `DELETE /v1/files/{file_id}`: its uploader or a human device. */
   async deleteFile(file_id: Uint8Array): Promise<void> {
-    if (obj(await this.send('DELETE', `/v2/files/${own(file_id, 'file_id', 16)}`, undefined), 'a deletion').deleted !== true) bad('deleted')
+    if (obj(await this.send('DELETE', `/v1/files/${own(file_id, 'file_id', 16)}`, undefined), 'a deletion').deleted !== true) bad('deleted')
   }
-  /** `POST /v2/shares` (11.5): registers a Share link for a file of an open Artifact. */
+  /** `POST /v1/shares` (11.5): registers a Share link for a file of an open Artifact. */
   async postShare(s: { share_id: Uint8Array; secret_hash: Uint8Array; file_id: Uint8Array; expires_at: number }): Promise<{ share_id: Uint8Array; expires_at: number }> {
     const json = { share_id: own(s.share_id, 'share_id', 16), secret_hash: enc(s.secret_hash), file_id: own(s.file_id, 'file_id', 16), expires_at: ownInt(s.expires_at, 'expires_at') }
-    const o = obj(await this.send('POST', '/v2/shares', json), 'a share')
+    const o = obj(await this.send('POST', '/v1/shares', json), 'a share')
     if (o.share_id !== json.share_id) bad('another share than the one registered')
     return { share_id: s.share_id, expires_at: int(o.expires_at, 'expires_at') }
   }
-  /** `DELETE /v2/shares/{share_id}`: revokes the link. */
+  /** `DELETE /v1/shares/{share_id}`: revokes the link. */
   async deleteShare(share_id: Uint8Array): Promise<void> {
-    if (obj(await this.send('DELETE', `/v2/shares/${own(share_id, 'share_id', 16)}`, undefined), 'a deletion').deleted !== true) bad('deleted')
+    if (obj(await this.send('DELETE', `/v1/shares/${own(share_id, 'share_id', 16)}`, undefined), 'a deletion').deleted !== true) bad('deleted')
   }
-  /** `GET /v2/shares/{share_id}`: the shared file's bytes for whoever holds the link's secret; no token. Every
+  /** `GET /v1/shares/{share_id}`: the shared file's bytes for whoever holds the link's secret; no token. Every
    *  refusal is the same `not-found`. The secret travels in a header, never in the address. */
   getShared(share_id: Uint8Array, secret: Uint8Array, opts: Transfer & { range?: { start: number; end?: number } } = {}): Promise<{ bytes: Uint8Array; size: number }> {
     if (secret.length !== 32) wrong('a share secret is 32 bytes')
-    return this.download(`/v2/shares/${own(share_id, 'share_id', 16)}`, { auth: false, headers: { 'x-share-secret': enc(secret) } }, opts)
+    return this.download(`/v1/shares/${own(share_id, 'share_id', 16)}`, { auth: false, headers: { 'x-share-secret': enc(secret) } }, opts)
   }
 
   // ---- invites (v1.md 12.1): the three signed messages, by invite id
 
-  /** `GET /v2/invites/{invite_id}`: the Offer; a human device of its room (signed in) also gets the Requests. */
+  /** `GET /v1/invites/{invite_id}`: the Offer; a human device of its room (signed in) also gets the Requests. */
   async getInvite(invite_id: Uint8Array): Promise<{ offer: Uint8Array; signature: Uint8Array; mac: Uint8Array; expires_at: number; requests: { request: Uint8Array; mac: Uint8Array; signature: Uint8Array }[] | null }> {
-    const o = obj(await this.get(`/v2/invites/${own(invite_id, 'invite_id', 16)}`, undefined, CAP_SMALL, this.signer !== null), 'an invite')
+    const o = obj(await this.get(`/v1/invites/${own(invite_id, 'invite_id', 16)}`, undefined, CAP_SMALL, this.signer !== null), 'an invite')
     return {
       // (the MAC that binds the Offer to the link; a hub before it serves none: the core then refuses the Offer)
       offer: bytes(o.offer, 'offer', 1, MAX_SMALL_STRUCT), signature: bytes(o.signature, 'signature', 1, MAX_TAG), mac: o.mac === undefined || o.mac === null ? new Uint8Array(0) : bytes(o.mac, 'mac', 1, MAX_TAG), expires_at: int(o.expires_at, 'expires_at'),
@@ -1610,106 +1610,106 @@ export class Hub {
       })),
     }
   }
-  /** `POST /v2/invites/{invite_id}/request`: the new device's Request, its MAC and signature; no token. */
+  /** `POST /v1/invites/{invite_id}/request`: the new device's Request, its MAC and signature; no token. */
   async postInviteRequest(invite_id: Uint8Array, r: { request: Uint8Array; mac: Uint8Array; signature: Uint8Array }): Promise<{ request_hash: Uint8Array }> {
     const json = { request: enc(r.request), mac: enc(r.mac), signature: enc(r.signature) }
-    return { request_hash: id(obj(await this.send('POST', `/v2/invites/${own(invite_id, 'invite_id', 16)}/request`, json, false), 'a Request answer').request_hash, 'request_hash', 32) }
+    return { request_hash: id(obj(await this.send('POST', `/v1/invites/${own(invite_id, 'invite_id', 16)}/request`, json, false), 'a Request answer').request_hash, 'request_hash', 32) }
   }
-  /** `GET /v2/invites/{invite_id}/reveal`: the Reveal once the inviter published it; `not-found` until then. */
+  /** `GET /v1/invites/{invite_id}/reveal`: the Reveal once the inviter published it; `not-found` until then. */
   async getReveal(invite_id: Uint8Array): Promise<{ reveal: Uint8Array; signature: Uint8Array }> {
-    const o = obj(await this.get(`/v2/invites/${own(invite_id, 'invite_id', 16)}/reveal`, undefined, CAP_SMALL, false), 'a Reveal')
+    const o = obj(await this.get(`/v1/invites/${own(invite_id, 'invite_id', 16)}/reveal`, undefined, CAP_SMALL, false), 'a Reveal')
     return { reveal: bytes(o.reveal, 'reveal', 1, MAX_SMALL_STRUCT), signature: bytes(o.signature, 'signature', 1, MAX_TAG) }
   }
-  /** `POST /v2/invites`: a human device publishes its signed Offer. */
+  /** `POST /v1/invites`: a human device publishes its signed Offer. */
   async postInvite(offer: Uint8Array, signature: Uint8Array, mac: Uint8Array): Promise<{ invite_id: Uint8Array }> {
-    return { invite_id: id(obj(await this.send('POST', '/v2/invites', { offer: enc(offer), signature: enc(signature), mac: enc(mac) }), 'an invite answer').invite_id, 'invite_id', 16) }
+    return { invite_id: id(obj(await this.send('POST', '/v1/invites', { offer: enc(offer), signature: enc(signature), mac: enc(mac) }), 'an invite answer').invite_id, 'invite_id', 16) }
   }
-  /** `PUT /v2/invites/{invite_id}/reveal`: the inviter accepted one Request. */
+  /** `PUT /v1/invites/{invite_id}/reveal`: the inviter accepted one Request. */
   async putReveal(invite_id: Uint8Array, reveal: Uint8Array, signature: Uint8Array): Promise<void> {
-    if (obj(await this.send('PUT', `/v2/invites/${own(invite_id, 'invite_id', 16)}/reveal`, { reveal: enc(reveal), signature: enc(signature) }), 'a Reveal answer').revealed !== true) bad('revealed')
+    if (obj(await this.send('PUT', `/v1/invites/${own(invite_id, 'invite_id', 16)}/reveal`, { reveal: enc(reveal), signature: enc(signature) }), 'a Reveal answer').revealed !== true) bad('revealed')
   }
-  /** `DELETE /v2/invites/{invite_id}`: "they don't match" burns the invite. */
+  /** `DELETE /v1/invites/{invite_id}`: "they don't match" burns the invite. */
   async deleteInvite(invite_id: Uint8Array): Promise<void> {
-    if (obj(await this.send('DELETE', `/v2/invites/${own(invite_id, 'invite_id', 16)}`, undefined), 'a burned invite').burned !== true) bad('burned')
+    if (obj(await this.send('DELETE', `/v1/invites/${own(invite_id, 'invite_id', 16)}`, undefined), 'a burned invite').burned !== true) bad('burned')
   }
 
   // ---- the account (hub-api.md "The account"). Login keys and sealed copies are secrets: they go in bodies only.
 
-  /** `POST /v2/account/login`. `account`: the one field that names an account, its e-mail (it contains `@`) or
+  /** `POST /v1/account/login`. `account`: the one field that names an account, its e-mail (it contains `@`) or
    *  its id. `wrong-login` for a name nobody has and a wrong key alike; `rate-limited` with `retry_after` when
    *  this source has to wait. */
   async login(account: string, auth_key: Uint8Array): Promise<LoginAnswer> {
-    return loginAnswer(await this.send('POST', '/v2/account/login', { account: ownName(account), auth_key: enc(auth_key) }, false))
+    return loginAnswer(await this.send('POST', '/v1/account/login', { account: ownName(account), auth_key: enc(auth_key) }, false))
   }
-  /** `POST /v2/account/recover`: the same with the Emergency Kit's key; `wrong-recovery`. */
+  /** `POST /v1/account/recover`: the same with the Emergency Kit's key; `wrong-recovery`. */
   async recover(account: string, auth_key: Uint8Array): Promise<LoginAnswer> {
-    return loginAnswer(await this.send('POST', '/v2/account/recover', { account: ownName(account), auth_key: enc(auth_key) }, false))
+    return loginAnswer(await this.send('POST', '/v1/account/recover', { account: ownName(account), auth_key: enc(auth_key) }, false))
   }
-  /** `POST /v2/account/passkey/challenge`: a challenge for a sign-in with a passkey, or for the passkey of a new
+  /** `POST /v1/account/passkey/challenge`: a challenge for a sign-in with a passkey, or for the passkey of a new
    *  account, with the id that account will have; no token. */
   async passkeyChallenge(): Promise<PasskeyChallenge> {
-    return passkeyChallengeAnswer(await this.send('POST', '/v2/account/passkey/challenge', {}, false))
+    return passkeyChallengeAnswer(await this.send('POST', '/v1/account/passkey/challenge', {}, false))
   }
-  /** `POST /v2/account/passkey/login`: every failure is `wrong-login`. */
+  /** `POST /v1/account/passkey/login`: every failure is `wrong-login`. */
   async passkeyLogin(a: { credential_id: Uint8Array; authenticator_data: Uint8Array; client_data_json: Uint8Array; signature: Uint8Array; user_handle?: Uint8Array | null }): Promise<LoginAnswer> {
     const json = {
       credential_id: enc(a.credential_id), authenticator_data: enc(a.authenticator_data), client_data_json: enc(a.client_data_json), signature: enc(a.signature),
       ...(a.user_handle?.length ? { user_handle: enc(a.user_handle) } : {}),
     }
-    return loginAnswer(await this.send('POST', '/v2/account/passkey/login', json, false))
+    return loginAnswer(await this.send('POST', '/v1/account/passkey/login', json, false))
   }
-  /** `POST /v2/account`: sign-up for a room that has none yet, by a human device of it. It is instant: the hub sends
+  /** `POST /v1/account`: sign-up for a room that has none yet, by a human device of it. It is instant: the hub sends
    *  no mail and confirms no address. `account-exists`, `bad-email`, `bad-passkey`. */
-  async createAccount(account: NewAccount): Promise<AccountView> { return accountView(await this.send('POST', '/v2/account', accountBody(account))) }
-  /** `GET /v2/account`: the account of this device's room with its sealed copies; no hash leaves the hub. */
-  async account(): Promise<AccountView> { return accountView(await this.get('/v2/account')) }
-  /** `PUT /v2/account/password`: `account-changed` when `revision` is not the current one. */
+  async createAccount(account: NewAccount): Promise<AccountView> { return accountView(await this.send('POST', '/v1/account', accountBody(account))) }
+  /** `GET /v1/account`: the account of this device's room with its sealed copies; no hash leaves the hub. */
+  async account(): Promise<AccountView> { return accountView(await this.get('/v1/account')) }
+  /** `PUT /v1/account/password`: `account-changed` when `revision` is not the current one. */
   async putPassword(p: { auth_key: Uint8Array; sealed_copy: Uint8Array; kdf: Kdf; revision: number }): Promise<{ revision: number }> {
     const json = { auth_key: enc(p.auth_key), sealed_copy: enc(p.sealed_copy), kdf: p.kdf, revision: ownInt(p.revision, 'revision') }
-    return { revision: int(obj(await this.send('PUT', '/v2/account/password', json), 'a revision').revision, 'revision') }
+    return { revision: int(obj(await this.send('PUT', '/v1/account/password', json), 'a revision').revision, 'revision') }
   }
-  /** `PUT /v2/account/kit`: a new Emergency Kit replaces the one before. */
+  /** `PUT /v1/account/kit`: a new Emergency Kit replaces the one before. */
   async putKit(k: KitPart & { revision: number }): Promise<{ revision: number }> {
     const json = { ...kitBody(k), revision: ownInt(k.revision, 'revision') }
-    return { revision: int(obj(await this.send('PUT', '/v2/account/kit', json), 'a revision').revision, 'revision') }
+    return { revision: int(obj(await this.send('PUT', '/v1/account/kit', json), 'a revision').revision, 'revision') }
   }
-  /** `PUT /v2/account/email`: gives an account without e-mail one, once (`forbidden` when it has one), together
+  /** `PUT /v1/account/email`: gives an account without e-mail one, once (`forbidden` when it has one), together
    *  with its kit made anew under that e-mail (`incomplete` without); `bad-email`, `account-exists`, `account-changed`. */
   async putEmail(e: { email: string; kit: KitPart; revision: number }): Promise<{ revision: number }> {
     if (typeof e.email !== 'string' || e.email.length > 254) wrong('an e-mail address')
-    return { revision: int(obj(await this.send('PUT', '/v2/account/email', { email: e.email, kit: kitBody(e.kit), revision: ownInt(e.revision, 'revision') }), 'a revision').revision, 'revision') }
+    return { revision: int(obj(await this.send('PUT', '/v1/account/email', { email: e.email, kit: kitBody(e.kit), revision: ownInt(e.revision, 'revision') }), 'a revision').revision, 'revision') }
   }
-  /** `POST /v2/account/passkeys/challenge`: a challenge for adding a passkey to this room's account, with the
+  /** `POST /v1/account/passkeys/challenge`: a challenge for adding a passkey to this room's account, with the
    *  account's id, which that passkey carries as its user handle, and what a new kit of the account is salted with. */
   async accountPasskeyChallenge(): Promise<AccountPasskeyChallenge> {
-    const o = await this.send('POST', '/v2/account/passkeys/challenge', {}), more = obj(o, 'a challenge answer')
+    const o = await this.send('POST', '/v1/account/passkeys/challenge', {}), more = obj(o, 'a challenge answer')
     return { ...passkeyChallengeAnswer(o), email: maybe(more.email, e => text(e, 'email', 254)), kit_form: oneOf(more.kit_form, 'kit_form', 'email', 'id') }
   }
-  /** `POST /v2/account/passkeys`. */
+  /** `POST /v1/account/passkeys`. */
   async addPasskey(passkey: PasskeyRegistration): Promise<{ credential_id: Uint8Array; created_at: number }> {
-    const o = obj(await this.send('POST', '/v2/account/passkeys', passkeyBody(passkey)), 'a passkey answer')
+    const o = obj(await this.send('POST', '/v1/account/passkeys', passkeyBody(passkey)), 'a passkey answer')
     return { credential_id: bytes(o.credential_id, 'credential_id', 1, 1023), created_at: int(o.created_at, 'created_at') }
   }
-  /** `DELETE /v2/account/passkeys/{credential_id}`: `last-way-in` when it is the only way into the account. */
+  /** `DELETE /v1/account/passkeys/{credential_id}`: `last-way-in` when it is the only way into the account. */
   async removePasskey(credential_id: Uint8Array): Promise<void> {
     if (credential_id.length < 1 || credential_id.length > 1023) wrong('a credential id is 1 to 1023 bytes')
-    if (obj(await this.call('DELETE', `/v2/account/passkeys/${enc(credential_id)}`, { auth: true }), 'a deletion').deleted !== true) bad('deleted')
+    if (obj(await this.call('DELETE', `/v1/account/passkeys/${enc(credential_id)}`, { auth: true }), 'a deletion').deleted !== true) bad('deleted')
   }
 
   // ---- push (v1.md 15), human devices
 
-  /** `POST /v2/push`: registers this device for Web Push or APNs at a level. */
+  /** `POST /v1/push`: registers this device for Web Push or APNs at a level. */
   async pushRegister(r: PushRegistration): Promise<void> {
     const json = {
       level: r.level,
       ...(r.web_push ? { web_push: { endpoint: r.web_push.endpoint, keys: { p256dh: enc(r.web_push.keys.p256dh), auth: enc(r.web_push.keys.auth) } } } : {}),
       ...(r.apns ? { apns: { token: r.apns.token, key: enc(r.apns.key), environment: r.apns.environment, topic: r.apns.topic } } : {}),
     }
-    if (obj(await this.send('POST', '/v2/push', json), 'a registration').registered !== true) bad('registered')
+    if (obj(await this.send('POST', '/v1/push', json), 'a registration').registered !== true) bad('registered')
   }
-  /** `GET /v2/push`: this device's registrations and the hub's Web Push key. */
+  /** `GET /v1/push`: this device's registrations and the hub's Web Push key. */
   async pushState(): Promise<{ subscriptions: { kind: 'web_push' | 'apns'; endpoint: string; level: 'all' | 'knocking'; created_at: number }[]; vapid_public_key: Uint8Array; apns: boolean }> {
-    const o = obj(await this.get('/v2/push'), 'the push state')
+    const o = obj(await this.get('/v1/push'), 'the push state')
     return {
       subscriptions: list(o.subscriptions, 'subscriptions', 64).map(s => {
         const x = obj(s, 'a registration')
@@ -1718,8 +1718,8 @@ export class Hub {
       vapid_public_key: bytes(o.vapid_public_key, 'vapid_public_key', 65), apns: bool(o.apns, 'apns'),
     }
   }
-  /** `DELETE /v2/push`: removes the registration with that endpoint, or all of this device's. */
+  /** `DELETE /v1/push`: removes the registration with that endpoint, or all of this device's. */
   async pushRemove(endpoint?: string): Promise<{ deleted: number }> {
-    return { deleted: int(obj(await this.send('DELETE', '/v2/push', endpoint === undefined ? {} : { endpoint }), 'a deletion').deleted, 'deleted') }
+    return { deleted: int(obj(await this.send('DELETE', '/v1/push', endpoint === undefined ? {} : { endpoint }), 'a deletion').deleted, 'deleted') }
   }
 }

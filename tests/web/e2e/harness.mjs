@@ -7,11 +7,11 @@
 // fake hub needs): same address, so nothing else of the
 // build changes (index.html, the page's chunks, the proof worker, the .wasm and the _headers are the build's own).
 //
-// THE SERVER (`serveApp`) answers on ONE origin (http://localhost:<port>): every address under /v2/ is passed on to the hub (the fake hub or
+// THE SERVER (`serveApp`) answers on ONE origin (http://localhost:<port>): every address under /v1/ is passed on to the hub (the fake hub or
 // the real hub's binary), byte for byte and unbuffered (the live stream is server-sent events), everything else is
 // the built app from tests/web/build/static.mjs, which sends the headers of the build's own _headers. The app is
 // pointed at that origin with its developer override `?hub=<origin>` (app.mjs hubUrl, kept for the tab). So the
-// Content-Security-Policy is the app's, word for word: the hub is `connect-src 'self'`. When the hub is down, a /v2/
+// Content-Security-Policy is the app's, word for word: the hub is `connect-src 'self'`. When the hub is down, a /v1/
 // request is cut without an answer, as a network that is away.
 //
 // A PROFILE (`openProfile`) is one headless Chromium with a profile folder of its own under TMP: its own IndexedDB,
@@ -104,7 +104,7 @@ export async function standInWorker(dir) {
 
 // ---- the server ---------------------------------------------------------------------------------------------------
 
-/** Serves the built app `dir` and, under /v2/, the hub `hub()` names (a URL, or null while it is away). */
+/** Serves the built app `dir` and, under /v1/, the hub `hub()` names (a URL, or null while it is away). */
 export async function serveApp(dir, hub) {
   const files = await serveStatic(dir)
   const pass = (req, res, target, onDown) => {
@@ -123,7 +123,7 @@ export async function serveApp(dir, hub) {
   }
   const server = http.createServer((req, res) => {
     const cut = () => res.destroy()
-    if (!req.url.startsWith('/v2/')) return pass(req, res, files.origin, cut)
+    if (!req.url.startsWith('/v1/')) return pass(req, res, files.origin, cut)
     const target = hub()
     if (!target) return cut()
     pass(req, res, target, cut)

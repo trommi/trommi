@@ -420,7 +420,7 @@ struct ScanView: View {
       }
       VStack(alignment: .leading, spacing: 6) {
         obLabel(camera && !model.demo ? "Or paste its link" : "Paste its link")
-        TextField("https://app.trommi.com/join#v2…", text: $link)
+        TextField("https://app.trommi.com/join#v1…", text: $link)
           .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
           .accessibilityLabel("Its link")
           .obInput()

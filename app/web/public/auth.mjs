@@ -822,7 +822,7 @@ export function kitGate(client, { fresh = false } = {}) {
 // ---- before a room: a screen of its own, before the board exists ----
 export async function roomScreen({ start, hub, openError = null, demo = '' }) {
   // A link in the address leaves the address bar before anything else happens, whatever screen comes next: a join
-  // link's secret (/join#v2.…), and an Emergency Kit's address (#k1.…: a hub and an account ID, nothing secret).
+  // link's secret (/join#v1.…), and an Emergency Kit's address (#k1.…: a hub and an account ID, nothing secret).
   const joinLink = location.pathname === '/join' && location.hash.length > 1 ? location.href : ''
   const kitHash = !joinLink && location.hash.startsWith('#k1.') ? location.hash : ''
   if (joinLink) history.replaceState(null, '', '/join')
@@ -1224,7 +1224,7 @@ ${obError()}${passkey ? html`<button type="submit" class="ob-go" id="newway-pass
 <p class="scan-say" id="scan-say" role="status">${SCAN_SAYS[state]}</p>
 <p class="scan-where">On the other device: Settings → Invite a Device</p>
 <details class="ob-paste" id="scan-paste"${paste || state === 'denied' || state === 'none' ? raw(' open') : ''}><summary>Paste the link</summary>
-<form id="paste-form" class="ob-form" novalidate><input name="link" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="The link" placeholder="https://app.trommi.com/join#v2…">
+<form id="paste-form" class="ob-form" novalidate><input name="link" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="The link" placeholder="https://app.trommi.com/join#v1…">
 ${obError()}${obSubmit('Next')}</form></details>
 <p class="ob-alt"><button type="button" class="ob-link" id="alt-login">Back to log in</button><span${state === 'denied' ? '' : raw(' hidden')}> · <button type="button" class="ob-link" id="scan-again">Try the camera</button></span></p>`, { cls: 'ob-scan' }), null)
     on('#alt-login', 'click', () => loginFlow())
@@ -1517,11 +1517,11 @@ function qrSvg(text, label = 'QR-Code') {
 }
 
 const SCAN_SAYS = { asking: 'Allow the camera to scan.', tap: '', scanning: 'Point at the code on your other device.', denied: 'Camera is off. Paste the link instead.', none: 'No camera here. Paste the link instead.', wrong: 'Not a Trommi code.' }
-/** A join link of this app: this origin, /join, and after the # `v2.` with its three parts (the hub, the room's id and the secret, 32 bytes each). Anything else is no code of ours. */
+/** A join link of this app: this origin, /join, and after the # `v1.` with its three parts (the hub, the room's id and the secret, 32 bytes each). Anything else is no code of ours. */
 const joinHash = text => {
   let u
   try { u = new URL(String(text).trim()) } catch { return null }
-  return u.origin === location.origin && u.pathname === '/join' && /^#v2\.[\w-]{4,}\.[\w-]{43}\.[\w-]{43}$/.test(u.hash) ? u.hash : null
+  return u.origin === location.origin && u.pathname === '/join' && /^#v1\.[\w-]{4,}\.[\w-]{43}\.[\w-]{43}$/.test(u.hash) ? u.hash : null
 }
 /** The drawn corners over the camera's picture: four pen angles, a little uneven. */
 const SCAN_CORNERS = raw('<svg class="scan-corners" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="M15.2 31.5 Q14.2 21 15.6 15.8 Q22 14.4 31.8 15.3"/><path d="M68.4 14.9 Q79 14.3 84.5 15.5 Q85.9 22.5 84.8 31.9"/><path d="M85.1 68.2 Q85.8 78.6 84.4 84.6 Q77.5 85.8 68 84.9"/><path d="M31.6 85.2 Q21.4 85.9 15.5 84.3 Q14.2 77 15 68.3"/></svg>')

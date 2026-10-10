@@ -492,7 +492,7 @@ impl Client {
             .ok_or_else(|| Fault::new("internal", "a request without an id"))
     }
 
-    /// A permission request has no later version in protocol v2: one that was answered in the terminal stays
+    /// A permission request has no later version in protocol v1: one that was answered in the terminal stays
     /// on the board until it expires, and a verdict that still comes for it is dropped by the connector.
     pub async fn withdraw_permission(&self, _object_id: &str, _reason: &str) -> Result<bool> {
         Ok(false)
@@ -527,7 +527,7 @@ impl Client {
             let claimed = self
                 .hub
                 .post(
-                    "/v2/key-packages/claim",
+                    "/v1/key-packages/claim",
                     &json!({ "devices": humans.iter().map(DeviceId::to_base64url).collect::<Vec<_>>() }),
                 )
                 .await?;
@@ -752,7 +752,7 @@ impl Client {
             "file_id": file.file_id.to_base64url(),
             "expires_at": expires_at,
         });
-        let answer = self.hub.post("/v2/shares", &body).await?;
+        let answer = self.hub.post("/v1/shares", &body).await?;
         let until = answer
             .get("expires_at")
             .and_then(Value::as_u64)
@@ -767,7 +767,7 @@ impl Client {
             return Err(Fault::plain("not a share id"));
         }
         self.hub
-            .delete(&format!("/v2/shares/{share_id}"))
+            .delete(&format!("/v1/shares/{share_id}"))
             .await
             .map(|_| ())
     }

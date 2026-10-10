@@ -1,4 +1,4 @@
-// The hub client against a REAL v2 hub (hub/src/main.rs). Two ways to run it:
+// The hub client against a REAL hub (hub/src/main.rs). Two ways to run it:
 //
 // LOCAL   TROMMI_HUB_BIN=/path/to/trommi-hub node --test tests/web/hub/real-hub.test.mjs
 //   Starts that binary on a free port with an empty data directory (under TROMMI_HUB_TMP), the login throttle off
@@ -165,14 +165,14 @@ function checks(name, start, skip, kind) {
     await assert.rejects(hub.signIn(), refused('bad-format', 400))
   })
   on('read routes behind the token answer 401 unauthorised without one', async hub => {
-    for (const path of ['/v2/desk', '/v2/changes', '/v2/welcomes', '/v2/account']) await assert.rejects(hub.request('GET', path, { auth: false }), refused('unauthorised', 401), path)
+    for (const path of ['/v1/desk', '/v1/changes', '/v1/welcomes', '/v1/account']) await assert.rejects(hub.request('GET', path, { auth: false }), refused('unauthorised', 401), path)
   }, true)
   on('files, the stream and writes answer 401 unauthorised without a token, and with one the hub never gave', async hub => {
-    for (const [method, path] of [['GET', `/v2/files/${txt(id(16))}`], ['DELETE', `/v2/files/${txt(id(16))}`], ['GET', '/v2/stream'], ['POST', '/v2/envelopes'], ['GET', '/v2/push']]) {
+    for (const [method, path] of [['GET', `/v1/files/${txt(id(16))}`], ['DELETE', `/v1/files/${txt(id(16))}`], ['GET', '/v1/stream'], ['POST', '/v1/envelopes'], ['GET', '/v1/push']]) {
       await assert.rejects(hub.request(method, path, { auth: false, ...(method === 'POST' ? { body: { envelope: 'AAAA' } } : {}) }), refused('unauthorised', 401), `${method} ${path}`)
     }
-    await assert.rejects(hub.request('PUT', `/v2/files/${txt(id(16))}`, { auth: false, body: new Uint8Array(1000) }), refused('unauthorised', 401))
-    await assert.rejects(hub.request('GET', '/v2/desk', { auth: false, headers: { authorization: 'Bearer ' + b64u(randomBytes(32)) } }), refused('unauthorised', 401))
+    await assert.rejects(hub.request('PUT', `/v1/files/${txt(id(16))}`, { auth: false, body: new Uint8Array(1000) }), refused('unauthorised', 401))
+    await assert.rejects(hub.request('GET', '/v1/desk', { auth: false, headers: { authorization: 'Bearer ' + b64u(randomBytes(32)) } }), refused('unauthorised', 401))
   })
   on('a login with an unknown e-mail or a wrong key is wrong-login; with the kit, wrong-recovery', async hub => {
     await assert.rejects(hub.login('nobody@example.com', new Uint8Array(32)), refused('wrong-login', 401))
@@ -204,14 +204,14 @@ function checks(name, start, skip, kind) {
     assert.equal(a.hub_message, b.hub_message)
   }, true)
   on('an unknown route is not-found', async hub => {
-    await assert.rejects(hub.request('GET', '/v2/no-such-route', { auth: false }), refused('not-found', 404))
+    await assert.rejects(hub.request('GET', '/v1/no-such-route', { auth: false }), refused('not-found', 404))
   }, true)
   on('a body that is no JSON object, a path id of the wrong length, a method a route does not have', async hub => {
-    await assert.rejects(hub.request('POST', '/v2/account/login', { auth: false, body: [1, 2] }), refused('bad-format', 400))
-    await assert.rejects(hub.request('GET', `/v2/rooms/${txt(id(16))}/challenge`, { auth: false }), refused('bad-format', 400))
-    await assert.rejects(hub.request('DELETE', '/v2/desk', { auth: false }), refused('not-found', 404))
+    await assert.rejects(hub.request('POST', '/v1/account/login', { auth: false, body: [1, 2] }), refused('bad-format', 400))
+    await assert.rejects(hub.request('GET', `/v1/rooms/${txt(id(16))}/challenge`, { auth: false }), refused('bad-format', 400))
+    await assert.rejects(hub.request('DELETE', '/v1/desk', { auth: false }), refused('not-found', 404))
     // hub-api.md "Decided" 36 (newer than the hub commit c64bf6f, which still says bad-format): one answer for every failure
-    const malformed = await hub.request('POST', '/v2/account/passkey/login', { auth: false, body: {} }).catch(e => e)
+    const malformed = await hub.request('POST', '/v1/account/passkey/login', { auth: false, body: {} }).catch(e => e)
     assert.ok(kind.malformed_passkey.some(([code, status]) => malformed.code === code && malformed.status === status), `${malformed.code} ${malformed.status}`)
   })
   on('a client older than the hub asks for is client-too-old (426) on every route; one that names nothing too', async (hub, url) => {
@@ -308,7 +308,7 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
   const room = await first.foundRoom(code, Date.now()), group = core.roomGroupId(room), me = await first.id()
   let kit = null
 
-  await t.test('roomFounding → POST /v2/rooms with the account in the same request; the entry again gets the same room', async () => {
+  await t.test('roomFounding → POST /v1/rooms with the account in the same request; the entry again gets the same room', async () => {
     const made = copiesOf(room, code)
     kit = made.kit
     const [entry] = await first.outbox()
@@ -351,13 +351,13 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     await assert.rejects(hub.postEnvelope(new Uint8Array([1, 9, 9])), refused('newer-version', 400))
     await assert.rejects(hub.getFile(id(16)), refused('not-found', 404))
   })
-  await t.test('keyPackages → PUT /v2/key-packages', async () => {
+  await t.test('keyPackages → PUT /v1/key-packages', async () => {
     assert.notEqual(await first.keyPackagesToUpload(0, Date.now()), null, 'the device has KeyPackages to publish')
     const answer = await post(first, hub, 'keyPackages')
     assert.equal(answer.change, null)
     assert.ok(answer.unused > 0 && answer.unused <= 100, `${answer.unused} unused`)
   })
-  await t.test('commit → POST /v2/groups/{group}/commits; the stream brings it as a log event the core takes as its own', async () => {
+  await t.test('commit → POST /v1/groups/{group}/commits; the stream brings it as a log event the core takes as its own', async () => {
     const heard = [], states = []
     const close = hub.stream(() => 0, e => { heard.push(e) }, s => states.push(s), e => states.push(e.code ?? String(e)))
     t.after(close)
@@ -382,7 +382,7 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
       assert.deepEqual((await hub.sealedKeys(0, 1)).more, true)
     })
   })
-  await t.test('relayMessage → POST /v2/groups/{group}/messages { relay: true }', local_only, async () => {
+  await t.test('relayMessage → POST /v1/groups/{group}/messages { relay: true }', local_only, async () => {
     await first.sendStrokePiece(id(16), utf8('{"piece":1}'))
     assert.deepEqual(await post(first, hub, 'relayMessage'), { kind: 'relayMessage', change: null, n: null })
   })

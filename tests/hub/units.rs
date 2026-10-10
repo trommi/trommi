@@ -1518,7 +1518,7 @@ mod push_tests {
     fn only_known_push_services_are_called() {
         let extra = vec!["127.0.0.1:9999".to_string()];
         assert_eq!(
-            endpoint_origin("https://updates.push.services.mozilla.com/wpush/v2/x", &[]).as_deref(),
+            endpoint_origin("https://updates.push.services.mozilla.com/wpush/v1/x", &[]).as_deref(),
             Some("https://updates.push.services.mozilla.com")
         );
         assert_eq!(

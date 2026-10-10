@@ -142,9 +142,9 @@ export const steps = [
     if (error) throw new Error(`the form says "${error}"`)
     const account = ctx.account(ctx.email)
     ctx.run.check(account && ID.test(account.account) && account.kit_form === 'email' && account.passkeys.length === 1 && account.auth === null, 'the hub holds the account: an e-mail, one passkey, no password', account && { account: account.account, kit_form: account.kit_form, passkeys: account.passkeys.length })
-    const posts = since().filter(r => r.method === 'POST' && (r.path === '/v2/account/passkey/challenge' || r.path === '/v2/rooms')).map(r => r.path)
-    ctx.run.check(posts.join() === '/v2/account/passkey/challenge,/v2/rooms', 'one challenge, then the founding with the account in it', posts)
-    const made = since().find(r => r.path === '/v2/rooms').body.account
+    const posts = since().filter(r => r.method === 'POST' && (r.path === '/v1/account/passkey/challenge' || r.path === '/v1/rooms')).map(r => r.path)
+    ctx.run.check(posts.join() === '/v1/account/passkey/challenge,/v1/rooms', 'one challenge, then the founding with the account in it', posts)
+    const made = since().find(r => r.path === '/v1/rooms').body.account
     ctx.run.check(Object.keys(made).sort().join() === 'email,kit,passkey' && Object.keys(made.kit).sort().join() === 'auth_key,sealed_copy', 'the sign-up body: e-mail, kit, passkey; no user handle, no kit form', Object.keys(made))
     const held = await credentials(page)
     ctx.run.check(held.length === 1 && held[0].isResidentCredential && Buffer.from(held[0].userHandle, 'base64').toString('hex') === account.account.replaceAll('-', ''), 'the passkey is discoverable and carries the account\'s id as its user handle', held.map(c => c.userHandle))
@@ -172,11 +172,11 @@ export const steps = [
     await pictures(ctx, page, 'settings-account-email')
   }],
 
-  ['Log out ends the token at the hub (DELETE /v2/token)', async ctx => {
+  ['Log out ends the token at the hub (DELETE /v1/token)', async ctx => {
     const page = await ctx.profile('mail'), since = ctx.mark()
     await ui.logOut(page)
-    const out = since().filter(r => r.path === '/v2/token')
-    ctx.run.check(out.length === 1 && out[0].method === 'DELETE' && out[0].status === 200, 'one DELETE /v2/token, answered 200', out.map(r => [r.method, r.status]))
+    const out = since().filter(r => r.path === '/v1/token')
+    ctx.run.check(out.length === 1 && out[0].method === 'DELETE' && out[0].status === 200, 'one DELETE /v1/token, answered 200', out.map(r => [r.method, r.status]))
   }],
 
   ['Log in: the passkey first, then ONE field "Email or account ID" with the password (pictures)', async ctx => {
@@ -210,9 +210,9 @@ export const steps = [
     await page.click('#way-passkey')
     await page.session.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId: page.authenticator, enabled: true })
     await ui.live(page, 'the room live after the passkey login', 60000)
-    const login = since().find(r => r.path === '/v2/account/passkey/login')
+    const login = since().find(r => r.path === '/v1/account/passkey/login')
     ctx.run.check(login?.status === 200 && login.body.user_handle && Buffer.from(login.body.user_handle, 'base64url').toString('hex') === ctx.mail.account.replaceAll('-', ''), 'the hub was asked with the credential and the passkey\'s own user handle, no name', login && Object.keys(login.body))
-    ctx.run.check(!since().some(r => r.path === '/v2/account/login'), 'no login by name was made')
+    ctx.run.check(!since().some(r => r.path === '/v1/account/login'), 'no login by name was made')
     await ui.logOut(page)
     await ctx.close('mail')
   }],
@@ -224,7 +224,7 @@ export const steps = [
     await page.until("document.querySelector('#kit-gate[open] #kit-done') || document.querySelector('#create-form #ob-error')?.textContent.trim()", 'the Emergency Kit screen, or the form\'s error line', 60000)
     const error = await text(page, '#create-form #ob-error')
     if (error) { await pictures(ctx, page, 'create-no-email-refused'); throw new Error(`an account without e-mail stops here: the form says "${error}"`) }
-    const made = since().find(r => r.path === '/v2/rooms').body.account
+    const made = since().find(r => r.path === '/v1/rooms').body.account
     ctx.run.check(Object.keys(made).sort().join() === 'kit,passkey', 'the sign-up body holds no e-mail', Object.keys(made))
     const account = [...ctx.fake.state.accounts.values()].find(a => a.email === null)
     ctx.run.check(account?.kit_form === 'id', 'the hub holds an account without e-mail, its kit under the id', account?.kit_form)
@@ -311,7 +311,7 @@ export const steps = [
     await page.until("document.querySelector('.room-kit #kit-account') || document.querySelector('#room .room-error, #room [role=alert]')?.textContent.trim()", 'the kit\'s sheet again, or the page\'s error', 60000)
     const shown = await page.js("return { words: [...document.querySelectorAll('.room-kit #kit-words li')].map(l => l.textContent.trim()).join(' '), account: document.querySelector('.room-kit #kit-account')?.textContent.trim() ?? null, text: document.querySelector('.room-kit')?.innerText ?? document.querySelector('#room')?.innerText.slice(0, 300) }")
     ctx.run.check(shown.words === ctx.bare.words && shown.account === ctx.bare.account && shown.text.includes(email) && /your email and these 12 words/.test(shown.text), 'the same words, the ID, the e-mail; the sheet says it opens with the e-mail', shown)
-    const put = since().find(r => r.path === '/v2/account/email')
+    const put = since().find(r => r.path === '/v1/account/email')
     ctx.run.check(put?.status === 200 && Object.keys(put.body).sort().join() === 'email,kit,revision', 'one request: the e-mail with the kit made anew under it', put && [put.status, Object.keys(put.body)])
     const account = [...ctx.fake.state.accounts.values()].find(a => a.account === ctx.bare.account)
     ctx.run.check(account.email === email && account.kit_form === 'email', 'the hub holds the e-mail; the kit is under it', [account.email, account.kit_form])
@@ -406,8 +406,8 @@ export const steps = [
     await page.click('#create-form button[type=submit]')
     await page.until("document.querySelector('#passkey-note') || document.querySelector('#kit-gate[open]') || document.querySelector('#create-form #ob-error')?.textContent.trim()", 'a word, or (wrongly) an account', 60000)
     ctx.run.check(await text(page, '#passkey-note') === 'The passkey was saved but cannot unlock Trommi. Delete it in your password manager and use a password.', 'the note says what to do', await text(page, '#passkey-note'))
-    const sent = since().filter(r => r.method !== 'GET' && r.path.startsWith('/v2/')).map(r => r.path)
-    ctx.run.check(sent.every(p => p === '/v2/account/passkey/challenge'), 'nothing reached the hub but the challenge: no room, no account', sent)
+    const sent = since().filter(r => r.method !== 'GET' && r.path.startsWith('/v1/')).map(r => r.path)
+    ctx.run.check(sent.every(p => p === '/v1/account/passkey/challenge'), 'nothing reached the hub but the challenge: no room, no account', sent)
     await ctx.close('noget')
   }],
 
@@ -417,7 +417,7 @@ export const steps = [
     await page.click('#create-form button[type=submit]')
     await page.until("document.querySelector('#passkey-note') || document.querySelector('#kit-gate[open]')", 'the note, or (wrongly) an account', 60000)
     ctx.run.check(await text(page, '#passkey-note') === 'The passkey was saved but cannot unlock Trommi. Delete it in your password manager and use a password.' && await page.js("return !!document.querySelector('#create-form #ob-pw')"), 'the password\'s form with the note', await text(page, '#passkey-note'))
-    ctx.run.check(!since().some(r => r.path === '/v2/rooms'), 'nothing was founded')
+    ctx.run.check(!since().some(r => r.path === '/v1/rooms'), 'nothing was founded')
     await ctx.close('noprf')
   }],
 

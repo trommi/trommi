@@ -44,7 +44,7 @@ impl StoredEnvelope {
     }
 }
 
-/// One entry of the room's changes, as `GET /v2/changes` serves them in order.
+/// One entry of the room's changes, as `GET /v1/changes` serves them in order.
 #[derive(Debug, Clone)]
 pub enum Change {
     /// A Commit or an application message of a group's log.

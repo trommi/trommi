@@ -2,7 +2,7 @@
 // (tests/bindings/web/page.mjs, at /) and the probe (pages/probe.mjs, at /probe), with the files they import, under
 // the web app's own Content-Security-Policy read from app/web/public/_headers. `policy.page` and `policy.worker` may
 // be bent by a test (to prove what 'wasm-unsafe-eval' is needed for), as tests/bindings/browser.mjs does.
-// /v2/stream answers as a hub's live stream does: server-sent events, one every `gap` milliseconds, never ended.
+// /v1/stream answers as a hub's live stream does: server-sent events, one every `gap` milliseconds, never ended.
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
@@ -29,7 +29,7 @@ export async function serveEngine({ gap = 250 } = {}) {
       response.end(`<!doctype html><meta charset="utf-8"><title>trommi-core</title><script type="module" src="${PAGES[url]}"></script>`)
       return
     }
-    if (url === '/v2/stream') {
+    if (url === '/v1/stream') {
       response.writeHead(200, { ...head, 'Content-Type': 'text/event-stream' })
       response.flushHeaders()
       let n = 0

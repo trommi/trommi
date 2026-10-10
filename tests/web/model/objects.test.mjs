@@ -39,7 +39,7 @@ test('a permission request expires by the clock; a verdict the core did not coun
   assert.ok(w.last.permissions.has(hex(id)) && w.last.stack, 'the change names the request that ran out')
 })
 
-test('a permission request has no later version in protocol v2: nothing withdraws it, a pruned verdict leaves it closed', () => {
+test('a permission request has no later version in protocol v1: nothing withdraws it, a pruned verdict leaves it closed', () => {
   const w = new World(); w.groups()
   const id = id16(0xa4)
   const req = request(w, id, 0, { outcome: 'chained', code: 'pruned' })

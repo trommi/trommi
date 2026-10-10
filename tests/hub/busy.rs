@@ -19,7 +19,7 @@ fn a_busy_room_does_not_hold_up_another_rooms_writes() {
     let (room_a, recovery_a, ada) = found_room(&hub);
     let (room_b, _, mut bob) = found_room(&hub);
     // room A: six requests at once that each need a Commit verified (they are refused in the end; the work is done)
-    let path = format!("/v2/groups/{}/commits", b64(&room_a));
+    let path = format!("/v1/groups/{}/commits", b64(&room_a));
     let junk = json!({ "epoch": 0, "commit": b64(&[1u8; 600]), "group_info": b64(&[2u8; 600]), "sealed_key": b64(&[3u8; 100]) });
     let _ = recovery_a;
     let (statuses, slowest) = std::thread::scope(|s| {
@@ -66,7 +66,7 @@ fn a_busy_room_does_not_hold_up_another_rooms_writes() {
 
     // the admission queue: a hub that works on no request at a time refuses each one before reading it
     let closed = TestHub::start_with(&[("HUB_ADMITTED", "0")]);
-    let refused = closed.post("/v2/rooms", &json!({}));
+    let refused = closed.post("/v1/rooms", &json!({}));
     refused.refused(503, "overloaded");
     assert!(refused.header("retry-after").is_some());
     assert_eq!(closed.get("/healthz").status, 200);

@@ -1,4 +1,4 @@
-//! The Trommi hub for protocol v2: one binary. `trommi-hub` serves; `trommi-hub healthcheck` asks a running hub
+//! The Trommi hub for protocol v1: one binary. `trommi-hub` serves; `trommi-hub healthcheck` asks a running hub
 //! on this machine whether it is well (for the container's health check, which has no other tool).
 
 #![forbid(unsafe_code)]

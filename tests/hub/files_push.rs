@@ -33,7 +33,7 @@ fn scene_on(hub: TestHub) -> Scene {
 }
 
 fn upload(hub: &TestHub, dev: &Dev, file: &[u8; 16], bytes: &[u8]) -> Reply {
-    dev.raw(hub, "PUT", &format!("/v2/files/{}", b64(file)), &[], bytes)
+    dev.raw(hub, "PUT", &format!("/v1/files/{}", b64(file)), &[], bytes)
 }
 
 fn fetch(hub: &TestHub, dev: &Dev, file: &[u8; 16], range: Option<&str>) -> Reply {
@@ -41,7 +41,7 @@ fn fetch(hub: &TestHub, dev: &Dev, file: &[u8; 16], range: Option<&str>) -> Repl
         .map(|r| ("range", r.to_string()))
         .into_iter()
         .collect();
-    dev.raw(hub, "GET", &format!("/v2/files/{}", b64(file)), &extra, &[])
+    dev.raw(hub, "GET", &format!("/v1/files/{}", b64(file)), &extra, &[])
 }
 
 /// An Artifact's version by the agent that names files; returns its object id and hash.
@@ -145,17 +145,17 @@ fn a_file_is_written_once_and_read_by_those_who_may() {
     request(
         hub.port,
         "GET",
-        &format!("/v2/files/{}", b64(&file)),
+        &format!("/v1/files/{}", b64(&file)),
         &[],
         &[],
     )
     .refused(401, "unauthorised");
     // an id in the path is 16 bytes and nothing else
     for path in [
-        "/v2/files/..%2F..%2Fhub.db",
-        "/v2/files/../../hub.db",
-        "/v2/files/AAAA",
-        &format!("/v2/files/{}", "a".repeat(40)),
+        "/v1/files/..%2F..%2Fhub.db",
+        "/v1/files/../../hub.db",
+        "/v1/files/AAAA",
+        &format!("/v1/files/{}", "a".repeat(40)),
     ] {
         assert_eq!(
             s.bea.raw(hub, "GET", path, &[], &[]).status / 100,
@@ -178,19 +178,19 @@ fn a_file_is_written_once_and_read_by_those_who_may() {
     let now = trommi_hub::util::now();
     let body = |expires: u64| json!({ "share_id": b64(&share), "secret_hash": b64(&Sha256::digest(secret)), "file_id": b64(&file), "expires_at": expires });
     s.agent
-        .post(hub, "/v2/shares", &body(now + 181 * day))
+        .post(hub, "/v1/shares", &body(now + 181 * day))
         .refused(400, "bad-format");
     s.agent
-        .post(hub, "/v2/shares", &body(now - 1))
+        .post(hub, "/v1/shares", &body(now - 1))
         .refused(400, "bad-format");
     other_agent
-        .post(hub, "/v2/shares", &body(now + day))
+        .post(hub, "/v1/shares", &body(now + day))
         .refused(404, "not-found");
-    s.agent.post(hub, "/v2/shares", &body(now + 179 * day)).ok();
+    s.agent.post(hub, "/v1/shares", &body(now + 179 * day)).ok();
     // a used share id is never replaced
     let mut squat = body(now + day);
     squat["secret_hash"] = json!(b64(&[1u8; 32]));
-    s.bea.post(hub, "/v2/shares", &squat).refused(409, "replay");
+    s.bea.post(hub, "/v1/shares", &squat).refused(409, "replay");
     // whoever presents the secret gets the bytes, without a token; a part too
     let open = |secret: Option<&[u8]>, range: Option<&str>, id: &[u8; 16]| {
         let mut headers: Vec<(&str, String)> = secret
@@ -203,7 +203,7 @@ fn a_file_is_written_once_and_read_by_those_who_may() {
         request(
             hub.port,
             "GET",
-            &format!("/v2/shares/{}", b64(id)),
+            &format!("/v1/shares/{}", b64(id)),
             &headers,
             &[],
         )
@@ -233,7 +233,7 @@ fn a_file_is_written_once_and_read_by_those_who_may() {
         .call(
             hub,
             "DELETE",
-            &format!("/v2/shares/{}", b64(&share)),
+            &format!("/v1/shares/{}", b64(&share)),
             &Value::Null,
         )
         .refused(404, "not-found");
@@ -241,18 +241,18 @@ fn a_file_is_written_once_and_read_by_those_who_may() {
         .call(
             hub,
             "DELETE",
-            &format!("/v2/shares/{}", b64(&share)),
+            &format!("/v1/shares/{}", b64(&share)),
             &Value::Null,
         )
         .ok();
     open(Some(&secret), None, &share).refused(404, "not-found");
-    s.agent.post(hub, "/v2/shares", &body(now + day)).ok();
+    s.agent.post(hub, "/v1/shares", &body(now + day)).ok();
     artifact(&mut s, &[], Some((object_id, v1)), wire::STATE_CLOSED);
     let hub = &s.w.hub;
     request(
         hub.port,
         "GET",
-        &format!("/v2/shares/{}", b64(&share)),
+        &format!("/v1/shares/{}", b64(&share)),
         &[("x-share-secret", b64(&secret))],
         &[],
     )
@@ -273,14 +273,14 @@ fn a_file_is_written_once_and_read_by_those_who_may() {
     loose_share["file_id"] = json!(b64(&loose));
     loose_share["share_id"] = json!(b64(&random::<16>()));
     s.agent
-        .post(hub, "/v2/shares", &loose_share)
+        .post(hub, "/v1/shares", &loose_share)
         .refused(403, "forbidden");
     // its uploader or a human device deletes a file
     s.agent
         .call(
             hub,
             "DELETE",
-            &format!("/v2/files/{}", b64(&loose)),
+            &format!("/v1/files/{}", b64(&loose)),
             &Value::Null,
         )
         .ok();
@@ -301,7 +301,7 @@ fn a_file_too_large_is_refused_and_the_connection_survives_the_refusal() {
         .unwrap();
     let big = vec![7u8; 300_000];
     let head = format!(
-        "PUT /v2/files/{} HTTP/1.1\r\nhost: x\r\ntrommi-client: test/1.0.0\r\nauthorization: Bearer {token}\r\ncontent-length: {}\r\n\r\n",
+        "PUT /v1/files/{} HTTP/1.1\r\nhost: x\r\ntrommi-client: test/1.0.0\r\nauthorization: Bearer {token}\r\ncontent-length: {}\r\n\r\n",
         b64(&random::<16>()),
         big.len()
     );
@@ -339,12 +339,12 @@ fn a_file_too_large_is_refused_and_the_connection_survives_the_refusal() {
     // a JSON body over its limit (1.5 MiB), on any route
     let huge = json!({ "envelope": "A".repeat(3 << 19) });
     w.ada
-        .post(hub, "/v2/envelopes", &huge)
+        .post(hub, "/v1/envelopes", &huge)
         .refused(413, "too-large");
-    hub.post("/v2/rooms", &json!([1, 2]))
+    hub.post("/v1/rooms", &json!([1, 2]))
         .refused(400, "bad-format");
-    assert_eq!(hub.get("/v1/rooms").status, 404);
-    assert_eq!(hub.get("/healthz").ok()["protocol_version"], 2);
+    assert_eq!(hub.get("/v2/rooms").status, 404);
+    assert_eq!(hub.get("/healthz").ok()["protocol_version"], 1);
 }
 
 fn web_subscription(n: u8) -> Value {
@@ -375,29 +375,29 @@ fn the_push_flag_makes_one_content_free_push_per_human_device_that_wants_it() {
     let mut s = scene_on(TestHub::start());
     let hub = &s.w.hub;
     // only known push services are called; only human devices register
-    s.w.ada.post(hub, "/v2/push", &json!({ "web_push": { "endpoint": "https://evil.example/x", "keys": web_subscription(1)["keys"] }, "level": "all" })).refused(400, "bad-format");
+    s.w.ada.post(hub, "/v1/push", &json!({ "web_push": { "endpoint": "https://evil.example/x", "keys": web_subscription(1)["keys"] }, "level": "all" })).refused(400, "bad-format");
     s.agent
         .post(
             hub,
-            "/v2/push",
+            "/v1/push",
             &json!({ "web_push": web_subscription(9), "level": "all" }),
         )
         .refused(403, "forbidden");
     s.w.ada
         .post(
             hub,
-            "/v2/push",
+            "/v1/push",
             &json!({ "web_push": web_subscription(1), "level": "all" }),
         )
         .ok();
     s.bea
         .post(
             hub,
-            "/v2/push",
+            "/v1/push",
             &json!({ "web_push": web_subscription(2), "level": "knocking" }),
         )
         .ok();
-    let listed = s.w.ada.get(hub, "/v2/push").ok();
+    let listed = s.w.ada.get(hub, "/v1/push").ok();
     assert_eq!(listed["subscriptions"].as_array().unwrap().len(), 1);
     assert_eq!(
         unb64(listed["vapid_public_key"].as_str().unwrap())
@@ -469,11 +469,11 @@ fn the_push_flag_makes_one_content_free_push_per_human_device_that_wants_it() {
     card(&mut s, 3, wire::FLAG_PUSH);
     let hub = &s.w.hub;
     hub.eventually("bea's registration is gone", || {
-        s.bea.get(hub, "/v2/push").ok()["subscriptions"] == json!([])
+        s.bea.get(hub, "/v1/push").ok()["subscriptions"] == json!([])
     });
     // a device removes its own registrations
     assert_eq!(
-        s.w.ada.call(hub, "DELETE", "/v2/push", &json!({})).ok()["deleted"],
+        s.w.ada.call(hub, "DELETE", "/v1/push", &json!({})).ok()["deleted"],
         1
     );
 }
@@ -511,13 +511,13 @@ fn an_iphone_gets_a_sealed_number_and_a_ticket_for_that_one_envelope() {
     let token = "ab".repeat(32);
     let registration = |token: &str, topic: &str| json!({ "apns": { "token": token, "key": b64(&phone_key), "environment": "production", "topic": topic }, "level": "all" });
     s.w.ada
-        .post(hub, "/v2/push", &registration(&token, "com.other.app"))
+        .post(hub, "/v1/push", &registration(&token, "com.other.app"))
         .refused(400, "bad-format");
     s.w.ada
-        .post(hub, "/v2/push", &registration("not hex", "com.trommi.app"))
+        .post(hub, "/v1/push", &registration("not hex", "com.trommi.app"))
         .refused(400, "bad-format");
     s.w.ada
-        .post(hub, "/v2/push", &registration(&token, "com.trommi.app"))
+        .post(hub, "/v1/push", &registration(&token, "com.trommi.app"))
         .ok();
     let hash = card(&mut s, 2, wire::FLAG_PUSH);
     let hub = &s.w.hub;
@@ -550,7 +550,7 @@ fn an_iphone_gets_a_sealed_number_and_a_ticket_for_that_one_envelope() {
     );
     // with the ticket the notification extension fetches that one envelope, without a token
     let ticket = opened["ticket"].as_str().unwrap();
-    let fetched = hub.get(&format!("/v2/push-envelope?ticket={ticket}")).ok();
+    let fetched = hub.get(&format!("/v1/push-envelope?ticket={ticket}")).ok();
     assert_eq!(fetched["change"], opened["change"]);
     assert_eq!(
         wire::Envelope::parse(&unb64(fetched["envelope"].as_str().unwrap()).unwrap())
@@ -561,15 +561,15 @@ fn an_iphone_gets_a_sealed_number_and_a_ticket_for_that_one_envelope() {
     // a ticket that was changed, or none
     let mut forged = unb64(ticket).unwrap();
     forged[70] ^= 1;
-    hub.get(&format!("/v2/push-envelope?ticket={}", b64(&forged)))
+    hub.get(&format!("/v1/push-envelope?ticket={}", b64(&forged)))
         .refused(401, "unauthorised");
-    hub.get("/v2/push-envelope").refused(401, "unauthorised");
+    hub.get("/v1/push-envelope").refused(401, "unauthorised");
 
     // Live Activity: two counts and a tag. Work begins: start; a count changes: update
     let start_token = "cd".repeat(32);
-    s.w.ada.post(hub, "/v2/live-activity", &json!({ "kind": "start", "token": start_token, "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
-    s.w.ada.post(hub, "/v2/live-activity", &json!({ "kind": "activity", "token": "ef".repeat(32), "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
-    s.agent.post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "generation": s.agent.lease, "hears": true, "working": true, "last_call_at": 1 })).refused(409, "lease-lost");
+    s.w.ada.post(hub, "/v1/live-activity", &json!({ "kind": "start", "token": start_token, "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
+    s.w.ada.post(hub, "/v1/live-activity", &json!({ "kind": "activity", "token": "ef".repeat(32), "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
+    s.agent.post(hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "generation": s.agent.lease, "hears": true, "working": true, "last_call_at": 1 })).refused(409, "lease-lost");
     let live = |hub: &TestHub, token: &str| -> Vec<Value> {
         hub.pushes()
             .iter()
@@ -578,7 +578,7 @@ fn an_iphone_gets_a_sealed_number_and_a_ticket_for_that_one_envelope() {
             .collect()
     };
     // the agent reports that it works (a new process takes the lease)
-    let lease = s.agent.post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": true, "last_call_at": 1 })).ok();
+    let lease = s.agent.post(hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": true, "last_call_at": 1 })).ok();
     s.agent.lease = lease["generation"].as_u64();
     hub.eventually("the start of the Live Activity", || {
         !live(hub, &start_token).is_empty()
@@ -616,7 +616,7 @@ fn an_iphone_gets_a_sealed_number_and_a_ticket_for_that_one_envelope() {
     });
     std::thread::sleep(std::time::Duration::from_millis(300));
     let next = "12".repeat(32);
-    s.w.ada.post(hub, "/v2/live-activity", &json!({ "kind": "activity", "token": next, "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
+    s.w.ada.post(hub, "/v1/live-activity", &json!({ "kind": "activity", "token": next, "tag": "tag-1", "environment": "production", "topic": "com.trommi.app" })).ok();
     hub.eventually(
         "the new token is sent the counts the old one never got",
         || {
@@ -634,7 +634,7 @@ fn of_two_processes_on_one_agent_device_the_later_wins() {
     let first = s.agent.lease.unwrap();
     // a human device holds no lease
     s.w.ada
-        .post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()) }))
+        .post(hub, "/v1/link", &json!({ "process": b64(&random::<16>()) }))
         .refused(403, "forbidden");
     s.agent
         .send(
@@ -646,7 +646,7 @@ fn of_two_processes_on_one_agent_device_the_later_wins() {
     // the human devices hear the agent's link report
     let mut events = s.w.ada.events(hub, None);
     // a second process on the same state acquires the lease: one generation above
-    let second = s.agent.post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": true, "last_call_at": 5 })).ok();
+    let second = s.agent.post(hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": true, "last_call_at": 5 })).ok();
     assert_eq!(second["generation"].as_u64(), Some(first + 1));
     let report = loop {
         let e = events.until("presence");
@@ -667,7 +667,7 @@ fn of_two_processes_on_one_agent_device_the_later_wins() {
     s.agent
         .post(
             hub,
-            "/v2/link",
+            "/v1/link",
             &json!({ "process": b64(&random::<16>()), "generation": first }),
         )
         .refused(409, "lease-lost");

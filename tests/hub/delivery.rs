@@ -9,7 +9,7 @@ use trommi_hub::util::{b64, random, unb64};
 use trommi_hub::wire::{self, CommitNote, Cut, ZERO16, ZERO32};
 
 fn groups(w: &World, dev: &Dev) -> Vec<Value> {
-    dev.get(&w.hub, &format!("/v2/rooms/{}/groups", b64(&w.room)))
+    dev.get(&w.hub, &format!("/v1/rooms/{}/groups", b64(&w.room)))
         .ok()
         .as_array()
         .unwrap()
@@ -51,33 +51,33 @@ fn a_room_is_founded_once_and_its_founder_signs_in() {
     let info = ada.create_room(&room, &recovery);
     let sealed = ada.sealed_key(&room, 0, &info, 0, &recovery.hpke_public, true);
     let body = json!({ "group_info": b64(&info), "sealed_key": b64(&sealed) });
-    assert_eq!(hub.post("/v2/rooms", &body).ok()["room_id"], b64(&room));
+    assert_eq!(hub.post("/v1/rooms", &body).ok()["room_id"], b64(&room));
     // a lost answer is retried with the same bytes
-    assert_eq!(hub.post("/v2/rooms", &body).ok()["room_id"], b64(&room));
+    assert_eq!(hub.post("/v1/rooms", &body).ok()["room_id"], b64(&room));
     // another founding of the same room id
     let mut eve = Dev::new();
     let other = eve.create_room(&room, &Recovery::new());
     let other_key = eve.sealed_key(&room, 0, &other, 0, &[9; 32], true);
     hub.post(
-        "/v2/rooms",
+        "/v1/rooms",
         &json!({ "group_info": b64(&other), "sealed_key": b64(&other_key) }),
     )
     .refused(409, "room-exists");
 
     assert_eq!(ada.sign_in(&hub, &room).ok()["role"], "human");
     let list = ada
-        .get(&hub, &format!("/v2/rooms/{}/groups", b64(&room)))
+        .get(&hub, &format!("/v1/rooms/{}/groups", b64(&room)))
         .ok();
     assert_eq!(list[0]["kind"], "room");
     assert_eq!(list[0]["leaves"], json!([b64(&ada.id())]));
     assert_eq!(
-        ada.get(&hub, &format!("/v2/groups/{}/info", b64(&room)))
+        ada.get(&hub, &format!("/v1/groups/{}/info", b64(&room)))
             .ok()["group_info"],
         b64(&info)
     );
     // the sealed key of epoch 0 is there for the recovery key
     assert_eq!(
-        ada.get(&hub, "/v2/sealed-keys").ok()["rows"][0]["sealed_key"],
+        ada.get(&hub, "/v1/sealed-keys").ok()["rows"][0]["sealed_key"],
         b64(&sealed)
     );
 }
@@ -104,20 +104,20 @@ fn a_founding_without_its_sealed_key_or_with_a_wrong_one_is_incomplete() {
     let other_writer = Dev::new().sealed_key(&room, 0, &info, 0, &recovery.hpke_public, true);
     for key in [wrong_key, wrong_epoch, no_tag, other_info, other_writer] {
         hub.post(
-            "/v2/rooms",
+            "/v1/rooms",
             &json!({ "group_info": b64(&info), "sealed_key": b64(&key) }),
         )
         .refused(400, "incomplete");
     }
-    hub.post("/v2/rooms", &json!({ "group_info": b64(&info) }))
+    hub.post("/v1/rooms", &json!({ "group_info": b64(&info) }))
         .refused(400, "bad-format");
     hub.post(
-        "/v2/rooms",
+        "/v1/rooms",
         &json!({ "group_info": b64(b"junk"), "sealed_key": b64(b"junk") }),
     )
     .refused(400, "bad-commit");
     // nothing was founded by any of these
-    hub.get(&format!("/v2/rooms/{}/challenge", b64(&room))).ok();
+    hub.get(&format!("/v1/rooms/{}/challenge", b64(&room))).ok();
     assert_eq!(
         sign_in_with(&hub, &room, &ada.signer, None).code(),
         "not-member"
@@ -147,7 +147,7 @@ fn signing_in_needs_a_fresh_challenge_this_hub_and_a_standing() {
     // a challenge is used up by its first presentation, whatever the outcome
     let challenge: [u8; 32] = unb64(
         w.hub
-            .get(&format!("/v2/rooms/{}/challenge", b64(&w.room)))
+            .get(&format!("/v1/rooms/{}/challenge", b64(&w.room)))
             .ok()["challenge"]
             .as_str()
             .unwrap(),
@@ -164,14 +164,14 @@ fn signing_in_needs_a_fresh_challenge_this_hub_and_a_standing() {
     .bytes();
     let good = json!({ "auth": b64(&auth), "signature": b64(&w.ada.sign("TrommiHubAuth", &auth)) });
     let bad = json!({ "auth": b64(&auth), "signature": b64(&[0u8; 64]) });
-    let path = format!("/v2/rooms/{}/tokens", b64(&w.room));
+    let path = format!("/v1/rooms/{}/tokens", b64(&w.room));
     w.hub.post(&path, &bad).refused(400, "bad-signature");
     w.hub.post(&path, &good).refused(401, "bad-challenge");
     // a challenge of another room
     let other: [u8; 32] = random();
     let challenge: [u8; 32] = unb64(
         w.hub
-            .get(&format!("/v2/rooms/{}/challenge", b64(&other)))
+            .get(&format!("/v1/rooms/{}/challenge", b64(&other)))
             .ok()["challenge"]
             .as_str()
             .unwrap(),
@@ -193,20 +193,20 @@ fn signing_in_needs_a_fresh_challenge_this_hub_and_a_standing() {
         )
         .refused(401, "bad-challenge");
     // no token, a made-up token
-    w.hub.get("/v2/desk").refused(401, "unauthorised");
+    w.hub.get("/v1/desk").refused(401, "unauthorised");
     let mut ghost = Dev::new();
     ghost.token = Some("A".repeat(43));
-    ghost.get(&w.hub, "/v2/desk").refused(401, "unauthorised");
+    ghost.get(&w.hub, "/v1/desk").refused(401, "unauthorised");
     // the recovery key signs in and reads what a recovery needs, nothing else
     let token = sign_in_with(&w.hub, &w.room, &w.recovery.sign, None).ok();
     assert_eq!(token["role"], "recovery");
     let mut rec = Dev::new();
     rec.token = token["token"].as_str().map(str::to_string);
-    rec.get(&w.hub, "/v2/sealed-keys").ok();
-    rec.get(&w.hub, &format!("/v2/rooms/{}/groups", b64(&w.room)))
+    rec.get(&w.hub, "/v1/sealed-keys").ok();
+    rec.get(&w.hub, &format!("/v1/rooms/{}/groups", b64(&w.room)))
         .ok();
-    rec.get(&w.hub, "/v2/desk").refused(403, "forbidden");
-    rec.put(&w.hub, "/v2/key-packages", &json!({ "single_use": [] }))
+    rec.get(&w.hub, "/v1/desk").refused(403, "forbidden");
+    rec.put(&w.hub, "/v1/key-packages", &json!({ "single_use": [] }))
         .refused(403, "forbidden");
 }
 
@@ -309,7 +309,7 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
         w.ada
             .post(
                 &w.hub,
-                &format!("/v2/groups/{}/commits", b64(&room)),
+                &format!("/v1/groups/{}/commits", b64(&room)),
                 &commit_json(&out, &sealed, None)
             )
             .ok(),
@@ -318,18 +318,18 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
     let _ = welcome;
     // the newcomer finds its Welcome at the hub once it is a leaf
     bea.sign_in(&w.hub, &room).ok();
-    let welcomes = bea.get(&w.hub, "/v2/welcomes").ok();
+    let welcomes = bea.get(&w.hub, "/v1/welcomes").ok();
     assert_eq!(welcomes[0]["welcome"], b64(out.welcome.as_ref().unwrap()));
     // read on from the last one's `id`: nothing after it
     let last = welcomes.as_array().unwrap().last().unwrap()["id"]
         .as_i64()
         .unwrap();
     assert_eq!(
-        bea.get(&w.hub, &format!("/v2/welcomes?after={last}")).ok(),
+        bea.get(&w.hub, &format!("/v1/welcomes?after={last}")).ok(),
         json!([])
     );
     assert_eq!(
-        bea.get(&w.hub, &format!("/v2/welcomes?after={}", last - 1))
+        bea.get(&w.hub, &format!("/v1/welcomes?after={}", last - 1))
             .ok(),
         welcomes
     );
@@ -343,7 +343,7 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
         )
         .unwrap();
     }
-    let old = bea.get(&w.hub, &format!("/v2/welcomes?after={last}")).ok();
+    let old = bea.get(&w.hub, &format!("/v1/welcomes?after={last}")).ok();
     assert_eq!(old[0]["welcome"], b64(&[1, 2]));
     bea.join(&unb64(welcomes[0]["welcome"].as_str().unwrap()).unwrap());
     assert_eq!(bea.members(&room).len(), 2);
@@ -355,7 +355,7 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
     );
     // it writes in the group: the Welcome is no longer kept
     bea.send(&w.hub, &room, &register(&random(), "x")).ok();
-    assert_eq!(bea.get(&w.hub, "/v2/welcomes").ok(), json!([]));
+    assert_eq!(bea.get(&w.hub, "/v1/welcomes").ok(), json!([]));
     // an id is never given twice: the next Welcome comes after the last one the device saw, although every row
     // up to it is gone
     // (the row put in by hand above took its id outside the hub's counter; the hub's own last one counts)
@@ -363,7 +363,7 @@ fn a_human_device_joins_by_link_and_only_as_the_outcome_of_its_invite() {
     w.catch_up(&mut bea, &room);
     bea.upload_key_packages(&w.hub, 1).ok();
     let (_, group) = w.found_main(&mut [&mut bea], None);
-    let next = bea.get(&w.hub, &format!("/v2/welcomes?after={seen}")).ok();
+    let next = bea.get(&w.hub, &format!("/v1/welcomes?after={seen}")).ok();
     assert_eq!(next.as_array().unwrap().len(), 1);
     assert_eq!(next[0]["group_id"], b64(&group));
 }
@@ -390,7 +390,7 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
     };
     let bytes = offer.bytes();
     let publish = |dev: &Dev, offer: &[u8], signer: &Dev| {
-        dev.post(&w.hub, "/v2/invites", &json!({ "offer": b64(offer), "signature": b64(&signer.sign("TrommiInviteOffer", offer)), "mac": b64(&[9u8; 32]) }))
+        dev.post(&w.hub, "/v1/invites", &json!({ "offer": b64(offer), "signature": b64(&signer.sign("TrommiInviteOffer", offer)), "mac": b64(&[9u8; 32]) }))
     };
     // signed by someone else; for too long; naming another room state
     publish(&w.ada, &bytes, &Dev::new()).refused(400, "bad-signature");
@@ -412,7 +412,7 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
         if let Some(mac) = mac {
             body["mac"] = json!(b64(mac));
         }
-        w.ada.post(&w.hub, "/v2/invites", &body)
+        w.ada.post(&w.hub, "/v1/invites", &body)
     };
     // without a MAC (clients before 12.1.2's MAC): taken, stored without one and served as null
     let unbound = wire::Offer {
@@ -420,15 +420,15 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
         ..offer.clone()
     };
     let unbound_bytes = unbound.bytes();
-    w.ada.post(&w.hub, "/v2/invites", &json!({ "offer": b64(&unbound_bytes), "signature": b64(&w.ada.sign("TrommiInviteOffer", &unbound_bytes)) })).ok();
+    w.ada.post(&w.hub, "/v1/invites", &json!({ "offer": b64(&unbound_bytes), "signature": b64(&w.ada.sign("TrommiInviteOffer", &unbound_bytes)) })).ok();
     assert_eq!(
         w.hub
-            .get(&format!("/v2/invites/{}", b64(&unbound.invite_id)))
+            .get(&format!("/v1/invites/{}", b64(&unbound.invite_id)))
             .ok()["mac"],
         Value::Null
     );
     // a `mac` that is there but null is not a missing one
-    w.ada.post(&w.hub, "/v2/invites", &json!({ "offer": b64(&bytes), "signature": b64(&w.ada.sign("TrommiInviteOffer", &bytes)), "mac": null })).refused(400, "bad-format");
+    w.ada.post(&w.hub, "/v1/invites", &json!({ "offer": b64(&bytes), "signature": b64(&w.ada.sign("TrommiInviteOffer", &bytes)), "mac": null })).refused(400, "bad-format");
     with_mac(Some(&[9u8; 31])).refused(400, "bad-format");
     with_mac(Some(&[9u8; 33])).refused(400, "bad-format");
     // 12.1.2: a human device's invite lives 10 minutes, an agent device's 15; 2 minutes for the clocks
@@ -448,7 +448,7 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
     // the hub's own expiry is the Offer's
     assert_eq!(
         w.hub
-            .get(&format!("/v2/invites/{}", b64(&agent.invite_id)))
+            .get(&format!("/v1/invites/{}", b64(&agent.invite_id)))
             .ok()["expires_at"],
         agent.expires_at
     );
@@ -464,13 +464,13 @@ fn an_invite_takes_four_requests_is_revealed_once_and_can_be_burned() {
     // the same Offer with another MAC is not the first post again
     with_mac(Some(&[8u8; 32])).refused(409, "replay");
     // by invite id only, without a token: the Offer and its MAC
-    let path = format!("/v2/invites/{}", b64(&invite_id));
+    let path = format!("/v1/invites/{}", b64(&invite_id));
     let read = w.hub.get(&path).ok();
     assert_eq!(read["offer"], b64(&bytes));
     assert_eq!(read["mac"], b64(&[9u8; 32]));
     assert!(read.get("requests").is_none());
     w.hub
-        .get(&format!("/v2/invites/{}", b64(&random::<16>())))
+        .get(&format!("/v1/invites/{}", b64(&random::<16>())))
         .refused(404, "not-found");
     w.hub
         .get(&format!("{path}/reveal"))
@@ -591,7 +591,7 @@ fn a_main_session_is_founded_in_one_request_with_every_human_device_and_its_agen
     w.ada
         .post(
             &w.hub,
-            "/v2/groups",
+            "/v1/groups",
             &founding_json(&info0, &key0, &out, &key1),
         )
         .refused(400, "bad-commit");
@@ -625,15 +625,15 @@ fn a_main_session_is_founded_in_one_request_with_every_human_device_and_its_agen
     );
     assert!(!seen.iter().any(|g| g["group_id"] == b64(&other)));
     agent
-        .get(&w.hub, &format!("/v2/groups/{}/log", b64(&other)))
+        .get(&w.hub, &format!("/v1/groups/{}/log", b64(&other)))
         .refused(404, "not-found");
     agent
-        .get(&w.hub, &format!("/v2/groups/{}/info", b64(&other)))
+        .get(&w.hub, &format!("/v1/groups/{}/info", b64(&other)))
         .refused(404, "not-found");
     // the founding GroupInfo of every group is kept
     assert_eq!(
         w.ada
-            .get(&w.hub, &format!("/v2/groups/{}/info?epoch=0", b64(&other)))
+            .get(&w.hub, &format!("/v1/groups/{}/info?epoch=0", b64(&other)))
             .ok()["epoch"],
         0
     );
@@ -662,8 +662,8 @@ fn a_main_session_is_founded_in_one_request_with_every_human_device_and_its_agen
         true,
     );
     let body = founding_json(&info0, &key0, &out, &key1);
-    let first = w.ada.post(&w.hub, "/v2/groups", &body).ok();
-    assert_eq!(w.ada.post(&w.hub, "/v2/groups", &body).ok(), first);
+    let first = w.ada.post(&w.hub, "/v1/groups", &body).ok();
+    assert_eq!(w.ada.post(&w.hub, "/v1/groups", &body).ok(), first);
     w.ada.merge(&group2);
 }
 
@@ -697,7 +697,7 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
         );
         let reply = agent.post(
             &w.hub,
-            "/v2/groups",
+            "/v1/groups",
             &founding_json(&info0, &key0, &out, &key1),
         );
         if reply.status == 200 {
@@ -752,7 +752,7 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
     assert_eq!(group_of(&list, &group)["parent"], b64(&session));
     // a helper device sees its group and, publicly, its main session's Commits; it commits nothing
     let log = helper
-        .get(&w.hub, &format!("/v2/groups/{}/log", b64(&main)))
+        .get(&w.hub, &format!("/v1/groups/{}/log", b64(&main)))
         .ok();
     assert!(log["items"]
         .as_array()
@@ -775,7 +775,7 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
     helper
         .post(
             &w.hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": [b64(&w.ada.id())] }),
         )
         .refused(403, "forbidden");
@@ -807,7 +807,7 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
     agent.post_commit(&w.hub, &out, &sealed).ok();
     // the removed helper device has no leaf left: its token ends
     helper
-        .get(&w.hub, "/v2/welcomes")
+        .get(&w.hub, "/v1/welcomes")
         .refused(403, "not-member");
     // the opener removes no human device
     let out = agent.commit(
@@ -872,12 +872,12 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
     // That epoch's GroupInfo is kept until one has: a human device checks it before it files its key.
     let current = w
         .ada
-        .get(&w.hub, &format!("/v2/groups/{}/info", b64(&group)))
+        .get(&w.hub, &format!("/v1/groups/{}/info", b64(&group)))
         .ok()["epoch"]
         .as_u64()
         .unwrap();
     assert!(current >= 2);
-    let before = format!("/v2/groups/{}/info?epoch={}", b64(&group), current - 1);
+    let before = format!("/v1/groups/{}/info?epoch={}", b64(&group), current - 1);
     let info = unb64(
         w.ada.get(&w.hub, &before).ok()["group_info"]
             .as_str()
@@ -896,19 +896,19 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
         .call(
             &w.hub,
             "PUT",
-            "/v2/sealed-keys",
+            "/v1/sealed-keys",
             &json!({ "sealed_key": b64(&key) }),
         )
         .ok();
     w.ada.get(&w.hub, &before).refused(410, "gone");
     // the current epoch's and the founding's stay
     w.ada
-        .get(&w.hub, &format!("/v2/groups/{}/info?epoch=0", b64(&group)))
+        .get(&w.hub, &format!("/v1/groups/{}/info?epoch=0", b64(&group)))
         .ok();
     w.ada
         .get(
             &w.hub,
-            &format!("/v2/groups/{}/info?epoch={current}", b64(&group)),
+            &format!("/v1/groups/{}/info?epoch={current}", b64(&group)),
         )
         .ok();
     // a token is taken under the scheme's name in any case (RFC 9110)
@@ -918,7 +918,7 @@ fn an_agent_founds_nothing_but_a_helper_session_under_its_own_main_session() {
         headers.retain(|(name, _)| *name != "authorization");
         headers.push(("authorization", format!("{scheme} {token}")));
         assert_eq!(
-            request(w.hub.port, "GET", "/v2/desk", &headers, b"").status,
+            request(w.hub.port, "GET", "/v1/desk", &headers, b"").status,
             200
         );
     }
@@ -954,14 +954,14 @@ fn one_commit_per_epoch_wins_and_the_loser_builds_again() {
         let ta = s.spawn(|| {
             w.ada.post(
                 hub,
-                &format!("/v2/groups/{}/commits", b64(&group)),
+                &format!("/v1/groups/{}/commits", b64(&group)),
                 &commit_json(&a, &key_a, None),
             )
         });
         let tb = s.spawn(|| {
             bea.post(
                 hub,
-                &format!("/v2/groups/{}/commits", b64(&group)),
+                &format!("/v1/groups/{}/commits", b64(&group)),
                 &commit_json(&b, &key_b, None),
             )
         });
@@ -983,7 +983,7 @@ fn one_commit_per_epoch_wins_and_the_loser_builds_again() {
     winner.merge(&group);
     loser.clear(&group);
     let log = loser
-        .get(hub, &format!("/v2/groups/{}/log?after=1", b64(&group)))
+        .get(hub, &format!("/v1/groups/{}/log?after=1", b64(&group)))
         .ok();
     assert_eq!(log["items"].as_array().unwrap().len(), 1);
     loser
@@ -1015,12 +1015,12 @@ fn one_commit_per_epoch_wins_and_the_loser_builds_again() {
     let mut wrong = commit_json(&ahead, &key, None);
     wrong["epoch"] = json!(7);
     loser
-        .post(hub, &format!("/v2/groups/{}/commits", b64(&group)), &wrong)
+        .post(hub, &format!("/v1/groups/{}/commits", b64(&group)), &wrong)
         .refused(400, "bad-commit");
     loser.clear(&group);
     // the log holds exactly one Commit per epoch
     let log = loser
-        .get(hub, &format!("/v2/groups/{}/log", b64(&group)))
+        .get(hub, &format!("/v1/groups/{}/log", b64(&group)))
         .ok();
     let epochs: Vec<u64> = log["items"]
         .as_array()
@@ -1037,7 +1037,7 @@ fn a_commit_is_refused_without_its_parts_or_with_a_note_that_does_not_fit() {
     let mut bea = w.add_human();
     let (_, group) = w.found_main(&mut [&mut bea], None);
     let now = w.ada.room_now();
-    let path = format!("/v2/groups/{}/commits", b64(&group));
+    let path = format!("/v1/groups/{}/commits", b64(&group));
     let fresh = |w: &mut World, change: &Change| {
         let out = w.ada.commit(&group, change, now);
         let key = w.ada.sealed_key(
@@ -1054,7 +1054,7 @@ fn a_commit_is_refused_without_its_parts_or_with_a_note_that_does_not_fit() {
     let (out, key) = fresh(&mut w, &Change::default());
     let old_info = unb64(
         w.ada
-            .get(&w.hub, &format!("/v2/groups/{}/info?epoch=0", b64(&group)))
+            .get(&w.hub, &format!("/v1/groups/{}/info?epoch=0", b64(&group)))
             .ok()["group_info"]
             .as_str()
             .unwrap(),
@@ -1198,10 +1198,10 @@ fn a_commit_is_refused_without_its_parts_or_with_a_note_that_does_not_fit() {
         )
         .refused(404, "not-found");
     mallory
-        .get(&w.hub, &format!("/v2/groups/{}/log", b64(&group)))
+        .get(&w.hub, &format!("/v1/groups/{}/log", b64(&group)))
         .refused(404, "not-found");
     mallory
-        .get(&w.hub, &format!("/v2/rooms/{}/groups", b64(&w.room)))
+        .get(&w.hub, &format!("/v1/rooms/{}/groups", b64(&w.room)))
         .refused(400, "wrong-room");
 }
 
@@ -1256,7 +1256,7 @@ fn removing_a_human_device_ends_its_access_at_once_and_leaves_its_sessions_stale
     );
     w.ada.post_commit(&w.hub, &out, &sealed).ok();
     // 14.4: its token and its stream end at once
-    bea.get(&w.hub, "/v2/desk").refused(403, "not-member");
+    bea.get(&w.hub, "/v1/desk").refused(403, "not-member");
     assert!(bea_events.ended());
     // (a token it gets still, for thirty days: good for the proof of its removal and nothing else, 13.5)
     assert_eq!(
@@ -1315,7 +1315,7 @@ fn removing_a_human_device_ends_its_access_at_once_and_leaves_its_sessions_stale
         1,
         &unb64(
             w.ada
-                .get(&w.hub, &format!("/v2/groups/{}/info", b64(&group)))
+                .get(&w.hub, &format!("/v1/groups/{}/info", b64(&group)))
                 .ok()["group_info"]
                 .as_str()
                 .unwrap(),
@@ -1327,7 +1327,7 @@ fn removing_a_human_device_ends_its_access_at_once_and_leaves_its_sessions_stale
     );
     cleo.put(
         &w.hub,
-        "/v2/sealed-keys",
+        "/v1/sealed-keys",
         &json!({ "sealed_key": b64(&stale_key) }),
     )
     .refused(409, "room-behind");
@@ -1412,7 +1412,7 @@ fn removing_a_human_device_ends_its_access_at_once_and_leaves_its_sessions_stale
         .ada
         .get(
             &w.hub,
-            &format!("/v2/groups/{}/chains/{}", b64(&group), b64(&bea.id())),
+            &format!("/v1/groups/{}/chains/{}", b64(&group), b64(&bea.id())),
         )
         .ok();
     assert_eq!(chain["items"].as_array().unwrap().len(), 1);
@@ -1425,7 +1425,7 @@ fn a_takeover_replaces_the_agent_device_and_freezes_its_helper_sessions_until_do
     let (session, main) = w.found_main(&mut [], Some(&mut old));
     let link = |agent: &mut Dev, hub: &TestHub| {
         agent.lease = None;
-        let g = agent.post(hub, "/v2/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": true, "last_call_at": 1 })).ok()["generation"].as_u64();
+        let g = agent.post(hub, "/v1/link", &json!({ "process": b64(&random::<16>()), "hears": true, "working": true, "last_call_at": 1 })).ok()["generation"].as_u64();
         agent.lease = g;
     };
     link(&mut old, &w.hub);
@@ -1465,7 +1465,7 @@ fn a_takeover_replaces_the_agent_device_and_freezes_its_helper_sessions_until_do
     );
     old.post(
         &w.hub,
-        "/v2/groups",
+        "/v1/groups",
         &founding_json(&info0, &key0, &out, &key1),
     )
     .ok();
@@ -1483,7 +1483,7 @@ fn a_takeover_replaces_the_agent_device_and_freezes_its_helper_sessions_until_do
     link(&mut new, &w.hub);
     new.upload_key_packages(&w.hub, 3).ok();
     // from that Commit on: the old device's access is over, its sessions are stale, it founds nothing
-    old.get(&w.hub, "/v2/welcomes").refused(403, "not-member");
+    old.get(&w.hub, "/v1/welcomes").refused(403, "not-member");
     let list = groups(&w, &w.ada);
     assert_eq!(
         (
@@ -1515,7 +1515,7 @@ fn a_takeover_replaces_the_agent_device_and_freezes_its_helper_sessions_until_do
     );
     new.post(
         &w.hub,
-        "/v2/groups",
+        "/v1/groups",
         &founding_json(&info0, &key0, &out, &key1),
     )
     .refused(400, "bad-commit");
@@ -1624,7 +1624,7 @@ fn a_takeover_replaces_the_agent_device_and_freezes_its_helper_sessions_until_do
         .get(
             &w.hub,
             &format!(
-                "/v2/chats/session/{}/items",
+                "/v1/chats/session/{}/items",
                 trommi_hub::util::hex(&session)
             ),
         )
@@ -1669,7 +1669,7 @@ fn key_packages_are_handed_out_once_and_the_last_resort_one_when_none_is_left() 
     // all or nothing: a device without any makes the claim fail, and what was taken for the others stays unused
     bea.put(
         &w.hub,
-        "/v2/key-packages",
+        "/v1/key-packages",
         &json!({ "single_use": [b64(&bea.key_package(false))] }),
     )
     .ok();
@@ -1677,12 +1677,12 @@ fn key_packages_are_handed_out_once_and_the_last_resort_one_when_none_is_left() 
     w.ada
         .post(
             &w.hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": [b64(&bea.id()), b64(&stranger.id())] }),
         )
         .refused(404, "not-found");
     assert_eq!(
-        bea.put(&w.hub, "/v2/key-packages", &json!({ "single_use": [] }))
+        bea.put(&w.hub, "/v1/key-packages", &json!({ "single_use": [] }))
             .ok()["unused"],
         1
     );
@@ -1690,32 +1690,32 @@ fn key_packages_are_handed_out_once_and_the_last_resort_one_when_none_is_left() 
     w.ada
         .put(
             &w.hub,
-            "/v2/key-packages",
+            "/v1/key-packages",
             &json!({ "single_use": [b64(&bea.key_package(false))] }),
         )
         .refused(400, "bad-key-package");
     bea.put(
         &w.hub,
-        "/v2/key-packages",
+        "/v1/key-packages",
         &json!({ "single_use": [b64(&bea.key_package(true))] }),
     )
     .refused(400, "bad-key-package");
     bea.put(
         &w.hub,
-        "/v2/key-packages",
+        "/v1/key-packages",
         &json!({ "last_resort": b64(&bea.key_package(false)) }),
     )
     .refused(400, "bad-key-package");
     bea.put(
         &w.hub,
-        "/v2/key-packages",
+        "/v1/key-packages",
         &json!({ "single_use": [b64(b"junk")] }),
     )
     .refused(400, "bad-key-package");
     let many: Vec<String> = (0..100).map(|_| b64(&bea.key_package(false))).collect();
     // a whole fresh set beside what was left: the oldest go
     assert_eq!(
-        bea.put(&w.hub, "/v2/key-packages", &json!({ "single_use": many }))
+        bea.put(&w.hub, "/v1/key-packages", &json!({ "single_use": many }))
             .ok()["unused"],
         100
     );
@@ -1753,7 +1753,7 @@ fn catch_up_gives_one_order_across_groups_and_only_what_the_asker_may_see() {
     let mut cursor = 0;
     loop {
         let page = bea
-            .get(&w.hub, &format!("/v2/changes?after={cursor}&limit=3"))
+            .get(&w.hub, &format!("/v1/changes?after={cursor}&limit=3"))
             .ok();
         all.extend(page["items"].as_array().unwrap().iter().cloned());
         cursor = page["change"].as_i64().unwrap();
@@ -1766,11 +1766,11 @@ fn catch_up_gives_one_order_across_groups_and_only_what_the_asker_may_see() {
     sorted.sort();
     sorted.dedup();
     assert_eq!(numbers, sorted);
-    let whole = bea.get(&w.hub, "/v2/changes?after=0&limit=1000").ok();
+    let whole = bea.get(&w.hub, "/v1/changes?after=0&limit=1000").ok();
     assert_eq!(whole["items"].as_array().unwrap(), &all);
     assert_eq!(
         whole["change"],
-        w.ada.get(&w.hub, "/v2/desk").ok()["change"]
+        w.ada.get(&w.hub, "/v1/desk").ok()["change"]
     );
     // the session's first Commit comes after the room Commit it names, in the same list
     let kinds: Vec<(&str, String)> = all
@@ -1796,7 +1796,7 @@ fn catch_up_gives_one_order_across_groups_and_only_what_the_asker_may_see() {
     );
 
     // the agent device: its session in full, the room group's Commits only, nothing of the other session
-    let seen = agent.get(&w.hub, "/v2/changes?after=0&limit=1000").ok();
+    let seen = agent.get(&w.hub, "/v1/changes?after=0&limit=1000").ok();
     let seen = seen["items"].as_array().unwrap();
     assert!(seen.iter().all(|i| i["kind"] == "envelope"
         || i["group_id"] == b64(&group)
@@ -1810,7 +1810,7 @@ fn catch_up_gives_one_order_across_groups_and_only_what_the_asker_may_see() {
     let token = sign_in_with(&w.hub, &w.room, &w.recovery.sign, None).ok();
     let mut rec = Dev::new();
     rec.token = token["token"].as_str().map(str::to_string);
-    let seen = rec.get(&w.hub, "/v2/changes?after=0&limit=1000").ok();
+    let seen = rec.get(&w.hub, "/v1/changes?after=0&limit=1000").ok();
     let seen = seen["items"].as_array().unwrap();
     assert!(seen.iter().all(|i| i["kind"] != "message"));
     for item in seen.iter().filter(|i| i["kind"] == "envelope") {
@@ -1842,43 +1842,43 @@ fn a_room_does_not_reach_into_another_room() {
     mallory
         .post(
             &w.hub,
-            "/v2/groups",
+            "/v1/groups",
             &founding_json(&info0, &key0, &out, &key1),
         )
         .refused(400, "wrong-room");
     // reads and writes by id into the first room's group
     for path in [
-        format!("/v2/groups/{}/log", b64(&group)),
-        format!("/v2/groups/{}/info", b64(&group)),
-        format!("/v2/groups/{}/chains/{}", b64(&group), b64(&w.ada.id())),
+        format!("/v1/groups/{}/log", b64(&group)),
+        format!("/v1/groups/{}/info", b64(&group)),
+        format!("/v1/groups/{}/chains/{}", b64(&group), b64(&w.ada.id())),
     ] {
         mallory.get(&w.hub, &path).refused(404, "not-found");
     }
     mallory
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/archive", b64(&group)),
+            &format!("/v1/groups/{}/archive", b64(&group)),
             &json!({}),
         )
         .refused(404, "not-found");
     mallory
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/messages", b64(&group)),
+            &format!("/v1/groups/{}/messages", b64(&group)),
             &json!({ "epoch": 1, "message": b64(b"x") }),
         )
         .refused(404, "not-found");
     mallory
         .post(
             &w.hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": [b64(&w.ada.id())] }),
         )
         .refused(404, "not-found");
     mallory
         .post(
             &w.hub,
-            &format!("/v2/rooms/{}/recovery", b64(&w.room)),
+            &format!("/v1/rooms/{}/recovery", b64(&w.room)),
             &json!({}),
         )
         .refused(400, "wrong-room");
@@ -1887,7 +1887,7 @@ fn a_room_does_not_reach_into_another_room() {
     mallory
         .put(
             &w.hub,
-            "/v2/sealed-keys",
+            "/v1/sealed-keys",
             &json!({ "sealed_key": b64(&key) }),
         )
         .refused(404, "not-found");
@@ -1906,7 +1906,7 @@ fn an_archived_session_takes_nothing_more_and_a_reject_reaches_the_human_devices
     agent
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/reject", b64(&group)),
+            &format!("/v1/groups/{}/reject", b64(&group)),
             &json!({ "n": 1 }),
         )
         .ok();
@@ -1918,29 +1918,29 @@ fn an_archived_session_takes_nothing_more_and_a_reject_reaches_the_human_devices
     agent
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/reject", b64(&group)),
+            &format!("/v1/groups/{}/reject", b64(&group)),
             &json!({ "n": 99 }),
         )
         .refused(404, "not-found");
-    let listed = w.ada.get(&w.hub, "/v2/requests").ok();
+    let listed = w.ada.get(&w.hub, "/v1/requests").ok();
     assert_eq!(listed.as_array().unwrap().len(), 1);
     assert_eq!(listed[0]["committer"], b64(&w.ada.id()));
     // only a leaf of the group reports; an agent device is no leaf of the room group
     agent
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/reject", b64(&w.room)),
+            &format!("/v1/groups/{}/reject", b64(&w.room)),
             &json!({ "n": 1 }),
         )
         .refused(404, "not-found");
     // an unsigned wish: nothing follows from it
-    agent.post(&w.hub, "/v2/requests", &json!({ "kind": "readmit", "group": b64(&group), "key_package": b64(&agent.key_package(false)) })).ok();
+    agent.post(&w.hub, "/v1/requests", &json!({ "kind": "readmit", "group": b64(&group), "key_package": b64(&agent.key_package(false)) })).ok();
     agent
-        .post(&w.hub, "/v2/requests", &json!({ "kind": "takeover" }))
+        .post(&w.hub, "/v1/requests", &json!({ "kind": "takeover" }))
         .refused(400, "bad-format");
     assert_eq!(
         agent
-            .get(&w.hub, "/v2/requests")
+            .get(&w.hub, "/v1/requests")
             .ok()
             .as_array()
             .unwrap()
@@ -1952,28 +1952,28 @@ fn an_archived_session_takes_nothing_more_and_a_reject_reaches_the_human_devices
     agent
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/archive", b64(&group)),
+            &format!("/v1/groups/{}/archive", b64(&group)),
             &json!({}),
         )
         .refused(403, "forbidden");
     w.ada
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/archive", b64(&w.room)),
+            &format!("/v1/groups/{}/archive", b64(&w.room)),
             &json!({}),
         )
         .refused(403, "forbidden");
     w.ada
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/archive", b64(&group)),
+            &format!("/v1/groups/{}/archive", b64(&group)),
             &json!({}),
         )
         .ok();
     w.ada
         .post(
             &w.hub,
-            &format!("/v2/groups/{}/archive", b64(&group)),
+            &format!("/v1/groups/{}/archive", b64(&group)),
             &json!({}),
         )
         .ok();
@@ -1992,7 +1992,7 @@ fn an_archived_session_takes_nothing_more_and_a_reject_reaches_the_human_devices
             .ada
             .get(
                 &w.hub,
-                &format!("/v2/rooms/{}/groups?after={after}&limit=1", b64(&w.room)),
+                &format!("/v1/rooms/{}/groups?after={after}&limit=1", b64(&w.room)),
             )
             .ok();
         paged.extend(page["items"].as_array().unwrap().iter().cloned());
@@ -2012,7 +2012,7 @@ fn an_archived_session_takes_nothing_more_and_a_reject_reaches_the_human_devices
     // its log stays readable
     assert_eq!(
         w.ada
-            .get(&w.hub, &format!("/v2/groups/{}/log", b64(&group)))
+            .get(&w.hub, &format!("/v1/groups/{}/log", b64(&group)))
             .ok()["items"]
             .as_array()
             .unwrap()
@@ -2052,7 +2052,7 @@ fn what_the_second_review_found_stays_refused() {
     w.ada
         .post(
             &w.hub,
-            "/v2/groups",
+            "/v1/groups",
             &founding_json(&info0, &key0, &out, &key1),
         )
         .refused(400, "bad-commit");
@@ -2060,19 +2060,19 @@ fn what_the_second_review_found_stays_refused() {
 
     // a claim that names one device twice burns nothing
     let before = bea
-        .put(&w.hub, "/v2/key-packages", &json!({ "single_use": [] }))
+        .put(&w.hub, "/v1/key-packages", &json!({ "single_use": [] }))
         .ok()["unused"]
         .as_i64()
         .unwrap();
     w.ada
         .post(
             &w.hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": [b64(&bea.id()), b64(&bea.id())] }),
         )
         .refused(400, "bad-format");
     assert_eq!(
-        bea.put(&w.hub, "/v2/key-packages", &json!({ "single_use": [] }))
+        bea.put(&w.hub, "/v1/key-packages", &json!({ "single_use": [] }))
             .ok()["unused"],
         before
     );
@@ -2083,7 +2083,7 @@ fn what_the_second_review_found_stays_refused() {
     }
     bea.put(
         &w.hub,
-        "/v2/key-packages",
+        "/v1/key-packages",
         &json!({ "single_use": [b64(&fresh)] }),
     )
     .ok();
@@ -2091,7 +2091,7 @@ fn what_the_second_review_found_stays_refused() {
     assert_eq!(
         bea.put(
             &w.hub,
-            "/v2/key-packages",
+            "/v1/key-packages",
             &json!({ "single_use": [b64(&fresh)] })
         )
         .ok()["unused"],
@@ -2137,7 +2137,7 @@ fn what_the_second_review_found_stays_refused() {
     w.ada
         .post(
             &w.hub,
-            &format!("/v2/rooms/{}/recovery-code", b64(&room)),
+            &format!("/v1/rooms/{}/recovery-code", b64(&room)),
             &code_body(&body),
         )
         .refused(400, "bad-commit");
@@ -2177,7 +2177,7 @@ fn what_the_second_review_found_stays_refused() {
     agent
         .post(
             &w.hub,
-            "/v2/groups",
+            "/v1/groups",
             &founding_json(&info0, &key0, &out, &key1),
         )
         .ok();
@@ -2272,7 +2272,7 @@ fn what_the_second_review_found_stays_refused() {
     let mut refused = 0;
     for _ in 0..14 {
         if bea
-            .post(&w.hub, "/v2/requests", &json!({ "kind": "handover" }))
+            .post(&w.hub, "/v1/requests", &json!({ "kind": "handover" }))
             .status
             == 429
         {
@@ -2371,7 +2371,7 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
     }
 
     // in between: nothing from the removed device, nothing for it, nothing into what is still stale
-    bea.get(&w.hub, "/v2/changes").refused(403, "not-member");
+    bea.get(&w.hub, "/v1/changes").refused(403, "not-member");
     // (a token it gets still, for thirty days: good for the proof of its removal and nothing else, 13.5)
     assert_eq!(
         sign_in_with(&w.hub, &room, &bea.signer, None).ok()["role"],
@@ -2398,7 +2398,7 @@ fn a_removal_across_fifty_sessions_is_finished_by_another_device_after_a_crash()
     w.ada
         .post(
             &w.hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": [b64(&bea.id())] }),
         )
         .refused(404, "not-found");
@@ -2538,7 +2538,7 @@ fn the_hubs_order_lets_every_session_commit_meet_the_room_state_it_names() {
     loop {
         let page = w
             .ada
-            .get(&w.hub, &format!("/v2/changes?after={cursor}&limit=250"))
+            .get(&w.hub, &format!("/v1/changes?after={cursor}&limit=250"))
             .ok();
         items.extend(page["items"].as_array().unwrap().iter().cloned());
         cursor = page["change"].as_i64().unwrap();
@@ -2596,7 +2596,7 @@ fn the_hubs_order_lets_every_session_commit_meet_the_room_state_it_names() {
     );
     assert!(replay(&reordered).is_err());
     // an agent device's catch-up is the same order, cut down to what it may see
-    let mine = agents[3].get(&w.hub, "/v2/changes?after=0&limit=1000").ok();
+    let mine = agents[3].get(&w.hub, "/v1/changes?after=0&limit=1000").ok();
     let mine: Vec<i64> = mine["items"]
         .as_array()
         .unwrap()
@@ -2637,7 +2637,7 @@ fn a_key_package_handed_out_in_one_room_is_not_handed_out_in_another() {
     let info = ada.create_room(&room_b, &recovery_b);
     let sealed = ada.sealed_key(&room_b, 0, &info, 0, &recovery_b.hpke_public, true);
     hub.post(
-        "/v2/rooms",
+        "/v1/rooms",
         &json!({ "group_info": b64(&info), "sealed_key": b64(&sealed) }),
     )
     .ok();
@@ -2646,7 +2646,7 @@ fn a_key_package_handed_out_in_one_room_is_not_handed_out_in_another() {
     let claim = |ada: &Dev| {
         ada.post(
             &hub,
-            "/v2/key-packages/claim",
+            "/v1/key-packages/claim",
             &json!({ "devices": [b64(&ada.id())] }),
         )
         .ok()["key_packages"][b64(&ada.id())]
@@ -2660,7 +2660,7 @@ fn a_key_package_handed_out_in_one_room_is_not_handed_out_in_another() {
     let package = ada.key_package(false);
     ada.put(
         &hub,
-        "/v2/key-packages",
+        "/v1/key-packages",
         &json!({ "single_use": [b64(&package)] }),
     )
     .ok();
@@ -2669,7 +2669,7 @@ fn a_key_package_handed_out_in_one_room_is_not_handed_out_in_another() {
     let token_b = ada.token.clone();
     ada.put(
         &hub,
-        "/v2/key-packages",
+        "/v1/key-packages",
         &json!({ "single_use": [b64(&package)], "last_resort": b64(&ada.key_package(true)) }),
     )
     .ok();
@@ -2683,7 +2683,7 @@ fn a_key_package_handed_out_in_one_room_is_not_handed_out_in_another() {
     assert_eq!(
         ada.put(
             &hub,
-            "/v2/key-packages",
+            "/v1/key-packages",
             &json!({ "single_use": [b64(&package)] })
         )
         .ok()["unused"],
@@ -2702,12 +2702,12 @@ fn signing_out_ends_the_token_at_once() {
     let second = w.ada.token.clone().unwrap();
     // the token ends, with the device's streams; another token of the device stays
     w.ada.token = Some(first);
-    w.ada.call(&w.hub, "DELETE", "/v2/token", &Value::Null).ok();
+    w.ada.call(&w.hub, "DELETE", "/v1/token", &Value::Null).ok();
     assert!(stream.ended());
-    w.ada.get(&w.hub, "/v2/desk").refused(401, "unauthorised");
+    w.ada.get(&w.hub, "/v1/desk").refused(401, "unauthorised");
     w.ada
-        .call(&w.hub, "DELETE", "/v2/token", &Value::Null)
+        .call(&w.hub, "DELETE", "/v1/token", &Value::Null)
         .refused(401, "unauthorised");
     w.ada.token = Some(second);
-    w.ada.get(&w.hub, "/v2/desk").ok();
+    w.ada.get(&w.hub, "/v1/desk").ok();
 }

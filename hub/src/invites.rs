@@ -21,7 +21,7 @@ pub const CLOCK_TOLERANCE_MS: u64 = 120_000;
 pub const OFFER_MAC_LEN: usize = 32;
 const MAX_REQUESTS: i64 = 4;
 
-/// `POST /v2/invites`: only a human device invites; it publishes the signed Offer with its MAC.
+/// `POST /v1/invites`: only a human device invites; it publishes the signed Offer with its MAC.
 pub fn publish(
     x: &Ctx,
     auth: &Auth,
@@ -171,7 +171,7 @@ fn open(invite: &Invite, now: u64) -> Res<()> {
     Ok(())
 }
 
-/// `GET /v2/invites/{invite_id}`: the Offer, by `invite_id` only. A human device of the invite's room also gets
+/// `GET /v1/invites/{invite_id}`: the Offer, by `invite_id` only. A human device of the invite's room also gets
 /// the Requests that arrived.
 pub fn read(c: &Connection, id: &[u8], asker: Option<&Auth>, now: u64) -> Res<Value> {
     let invite = load(c, id)?;
@@ -191,7 +191,7 @@ pub fn read(c: &Connection, id: &[u8], asker: Option<&Auth>, now: u64) -> Res<Va
     Ok(out)
 }
 
-/// `POST /v2/invites/{invite_id}/request`: the new device's Request with its KeyPackage, MAC and signature. At
+/// `POST /v1/invites/{invite_id}/request`: the new device's Request with its KeyPackage, MAC and signature. At
 /// most four per invite.
 pub fn request(
     x: &Ctx,
@@ -268,7 +268,7 @@ pub fn request(
     Ok(json!({ "request_hash": b64(&hash) }))
 }
 
-/// `PUT /v2/invites/{invite_id}/reveal`: the inviter accepted one Request and reveals its nonce. From here on
+/// `PUT /v1/invites/{invite_id}/reveal`: the inviter accepted one Request and reveals its nonce. From here on
 /// the room group takes exactly that Request's KeyPackage or key, from this inviter (12.1.7).
 pub fn reveal(
     x: &Ctx,
@@ -328,7 +328,7 @@ pub fn reveal(
     Ok(json!({ "revealed": true }))
 }
 
-/// `GET /v2/invites/{invite_id}/reveal`: the Reveal, once the inviter published it.
+/// `GET /v1/invites/{invite_id}/reveal`: the Reveal, once the inviter published it.
 pub fn read_reveal(c: &Connection, id: &[u8]) -> Res<Value> {
     let invite = load(c, id)?;
     if invite.burned {
@@ -342,7 +342,7 @@ pub fn read_reveal(c: &Connection, id: &[u8]) -> Res<Value> {
     }
 }
 
-/// `DELETE /v2/invites/{invite_id}`: "they don't match" burns the invite. Its inviter or any human device.
+/// `DELETE /v1/invites/{invite_id}`: "they don't match" burns the invite. Its inviter or any human device.
 pub fn burn(x: &Ctx, auth: &Auth, id: &[u8]) -> Res<Value> {
     auth.human()?;
     let invite = load(x.c, id)?;

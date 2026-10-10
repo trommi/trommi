@@ -330,10 +330,10 @@ final class BoardModel: ObservableObject {
     act { try await room.ensureDesk() }
   }
 
-  /** A scanned or pasted text: a pairing link carries "#v2." and parses as one (the core checks it). It asks at once. */
+  /** A scanned or pasted text: a pairing link carries "#v1." and parses as one (the core checks it). It asks at once. */
   func gotLink(_ text: String) -> Bool {
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard t.contains("#v2."), (try? Core.tools.parseInviteLink(t)) != nil else { return false }
+    guard t.contains("#v1."), (try? Core.tools.parseInviteLink(t)) != nil else { return false }
     if drawnOnly() { return true }
     // (a link past its deadline is said here, before anything is made or asked)
     do { _ = try Core.tools.inviteLinkCheck(t, nowMs: nowMs()) }

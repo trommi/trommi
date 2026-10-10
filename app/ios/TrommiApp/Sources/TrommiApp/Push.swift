@@ -1,5 +1,5 @@
 // Push.swift: notifications through APNs (spec/v1.md section 15). The app asks once, registers with Apple, and hands
-// its device token to the room's hub (POST /v2/push) together with the push key: 32 random bytes the core made,
+// its device token to the room's hub (POST /v1/push) together with the push key: 32 random bytes the core made,
 // under which the hub seals what a notification says ({ room_id, change, urgency, ticket }, the payload's `e`).
 // Apple sees only a fixed text. The Notification Service Extension (Sources/TrommiNotify) opens `e` on the phone and
 // threads the notification by its room; the text stays one of the fixed ones. A push that arrives while the app is
@@ -119,8 +119,8 @@ enum Push {
   }
 
   /**
-   * Hand the token to the hub of the open room, once per room, token and level: POST /v2/push
-   * `{ apns: { token, environment, topic, key }, level }`, or DELETE /v2/push `{ endpoint: token }` for level off.
+   * Hand the token to the hub of the open room, once per room, token and level: POST /v1/push
+   * `{ apns: { token, environment, topic, key }, level }`, or DELETE /v1/push `{ endpoint: token }` for level off.
    */
   @MainActor static func register(token: String) async {
     UserDefaults.standard.set(token, forKey: "trommi-push-token")

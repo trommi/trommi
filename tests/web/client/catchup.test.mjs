@@ -25,7 +25,7 @@ test('520 changes across groups, taken in pages, strictly in the hub\'s order', 
   const requests = fake.requests.length
   await again.start({ stream: false })
   await again.settle()
-  const pages = fake.requests.slice(requests).filter(r => r.method === 'GET' && r.path === '/v2/changes' && Number(r.query.after) >= from && Number(r.query.after) < head)
+  const pages = fake.requests.slice(requests).filter(r => r.method === 'GET' && r.path === '/v1/changes' && Number(r.query.after) >= from && Number(r.query.after) < head)
   assert.ok(pages.length >= 2, 'more than one page')
   assert.ok(taken.length >= 520, `${taken.length} items taken`)
   assert.deepEqual(taken, [...new Set(taken)].sort((x, y) => x - y), 'each change once, ascending')
@@ -48,7 +48,7 @@ test('a hub that serves a page out of order, or an old envelope again: nothing o
   t.after(() => again.stop().catch(() => {}))
   const before = shared(again.model), position = again.engine.position
   // (1) the page reversed: the hub client refuses it whole
-  fake.faults.add({ method: 'GET', path: '/v2/changes', answer: json => ({ ...json, items: [...json.items].reverse() }), times: 3 })
+  fake.faults.add({ method: 'GET', path: '/v1/changes', answer: json => ({ ...json, items: [...json.items].reverse() }), times: 3 })
   await assert.rejects(again.catchUp(), { code: 'bad-answer' })
   assert.equal(again.engine.position, position, 'the position did not move')
   assert.deepEqual(shared(again.model), before, 'the model did not change')
@@ -56,7 +56,7 @@ test('a hub that serves a page out of order, or an old envelope again: nothing o
   fake.faults.clear()
   // (2) an old envelope under a new change number: the core knows it by its chain and refuses it
   const old = [...fake.state.rooms.values()][0].changes.find(c => c.kind === 'envelope' && hubReaders.envelope(Buffer.from(c.envelope, 'base64url')).object?.object_id === Buffer.from(first, 'hex').toString('base64url'))
-  fake.faults.add({ method: 'GET', path: '/v2/changes', answer: json => ({ ...json, change: json.change + 1, items: [...json.items, { kind: 'envelope', change: json.change + 1, envelope: old.envelope, received_at: 1 }] }) })
+  fake.faults.add({ method: 'GET', path: '/v1/changes', answer: json => ({ ...json, change: json.change + 1, items: [...json.items, { kind: 'envelope', change: json.change + 1, envelope: old.envelope, received_at: 1 }] }) })
   const outcomes = []
   again.engine.on('envelope', ({ received }) => outcomes.push([received.outcome, received.code]))
   await again.catchUp()

@@ -13,7 +13,7 @@
 // real binding in this Node process, not the connector. Nothing here is evidence about what the real hub accepts:
 // real.mjs runs against the real hub, without an agent.
 //
-// The hub is reached through the app's own origin (harness.mjs serveApp passes /v2/ on): the app's policy is
+// The hub is reached through the app's own origin (harness.mjs serveApp passes /v1/ on): the app's policy is
 // untouched (`connect-src 'self'`). The fake hub compares the address a device signed its sign-in for with its own:
 // its HubAuth reader is told that the app's origin is this hub (HUB_AUTH below), nothing else is bent.
 //
@@ -76,7 +76,7 @@ async function joinAgent(ctx, link, confirm, label = 'agent') {
 }
 /** The posts of the log that carry a write of a device (no reads, no sign-in). */
 /** The stand-in's envelopes among the posts of a log (they are plain JSON: tests/web/stand-in/core.ts). */
-const envelopes = log => log.filter(r => r.method === 'POST' && r.path === '/v2/envelopes' && r.body?.envelope).map(r => ({ ...hubReaders.envelope(new Uint8Array(Buffer.from(r.body.envelope, 'base64url'))), status: r.status, dropped: r.dropped }))
+const envelopes = log => log.filter(r => r.method === 'POST' && r.path === '/v1/envelopes' && r.body?.envelope).map(r => ({ ...hubReaders.envelope(new Uint8Array(Buffer.from(r.body.envelope, 'base64url'))), status: r.status, dropped: r.dropped }))
 const idOf = hex => Buffer.from(hex, 'hex').toString('base64url')
 /** The envelopes of `kind` bound to the object `object_id` (hex). */
 const about = (log, kind, object_id) => envelopes(log).filter(e => e.kind === kind && e.object?.object_id === idOf(object_id))
@@ -111,10 +111,10 @@ export const steps = [
     check(await A.js("return !document.body.innerText.includes(" + q(ctx.words.split(' ')[0] + ' ' + ctx.words.split(' ')[1]) + ")"), 'the kit words are not on screen any more')
     await A.shot('standin-02-empty-desk')
     const log = since()
-    const founding = log.filter(r => r.method === 'POST' && r.path === '/v2/rooms')
+    const founding = log.filter(r => r.method === 'POST' && r.path === '/v1/rooms')
     check(founding.length === 1 && founding[0].status === 200, 'the hub saw one founding', founding.map(r => r.status))
     check(founding[0]?.body?.account?.email === ctx.email || JSON.stringify(founding[0]?.body ?? {}).includes(ctx.email), 'the founding carries the account')
-    check(log.some(r => r.path === '/v2/stream' && r.status === 200), 'the live stream is open')
+    check(log.some(r => r.path === '/v1/stream' && r.status === 200), 'the live stream is open')
     check(await A.js('return trommi.client.tabRole') === 'leader', 'this tab owns the device')
   }],
 
@@ -124,7 +124,7 @@ export const steps = [
     await A.click('#desk-invite-go')
     await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy')", 'the agent invite page')
     const command = await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent")
-    const link = /'(http\S+\/join#v2\.[^']+)'/.exec(command)?.[1]
+    const link = /'(http\S+\/join#v1\.[^']+)'/.exec(command)?.[1]
     check(Boolean(link), 'the page shows the connect command with the invite link', command.slice(0, 60))
     // Exactly two lines to copy, in this order: install (once per machine; it sets up Claude Code and Codex), then the
     // slash command with the link, pasted into claude in the project folder; what a press copies is what the line shows.
@@ -215,7 +215,7 @@ export const steps = [
     await B.shot('standin-06-no-match-newcomer')
     const log = since()
     check(!writes(log).some(r => /\/commits$/.test(r.path)), 'no Commit reached the hub: nobody was added', writes(log).map(r => `${r.method} ${r.path}`))
-    check(log.some(r => r.method === 'DELETE' && /^\/v2\/invites\//.test(r.path) && r.status === 200), 'the invite was deleted at the hub')
+    check(log.some(r => r.method === 'DELETE' && /^\/v1\/invites\//.test(r.path) && r.status === 200), 'the invite was deleted at the hub')
     const stored = await ui.storedCount(B)
     // (the key that wraps a device's entries at rest is made before the first device and is never deleted: store-idb.ts)
     check(stored.records <= 1, 'the refused device stored nothing but its wrapping key', stored)
@@ -378,7 +378,7 @@ export const steps = [
     // (the command carries the attachment as it travels; the stand-in's fetch takes the model's form)
     const sent = heard.body.attachments[0]
     check(sha256(await ctx.agent.fetch({ ...sent, attachment_id: Buffer.from(sent.file_id, 'base64url').toString('hex') })) === sha256(png), 'the agent fetches the same bytes')
-    const uploads = since().filter(r => r.method === 'PUT' && /^\/v2\/files\//.test(r.path))
+    const uploads = since().filter(r => r.method === 'PUT' && /^\/v1\/files\//.test(r.path))
     check(uploads.length === 1 && uploads[0].status === 200, 'one upload reached the hub', uploads.map(r => r.status))
     await ui.openDesk(B)
   }],
@@ -444,7 +444,7 @@ export const steps = [
     let liveOnB = null
     await drag(at(0.3, 0.3), at(0.5, 0.3), async () => { await sleep(700); liveOnB = await B.js('return pad.elements().length') })
     await sealed()
-    const pieces = since().filter(r => r.method === 'POST' && /^\/v2\/groups\/[^/]+\/messages$/.test(r.path) && r.body?.relay === true)
+    const pieces = since().filter(r => r.method === 'POST' && /^\/v1\/groups\/[^/]+\/messages$/.test(r.path) && r.body?.relay === true)
     check(pieces.length > 0 && pieces.every(r => r.status === 200), 'stroke pieces were relayed through the hub while drawing', pieces.length)
     check(liveOnB >= 1, 'B showed the stroke before A lifted the pen', liveOnB)
     await drag(at(0.3, 0.6), at(0.5, 0.6))
@@ -470,7 +470,7 @@ export const steps = [
     await B.until(`(e => e.length === 1 && Math.abs(e[0].x - ${after?.x}) < 3 && Math.abs(e[0].y - ${after?.y}) < 3)(pad.elements().filter(e => e.type === 'stroke'))`, 'B after the reload: one stroke, where A put it', 20000)
     const reloaded = (await strokes(B))[0]
     if (reloaded.id !== after.id) ctx.run.note(`the stroke's id on the board is "${after.id}" where it was drawn and "${reloaded.id.replace(/^[0-9a-f]{56}/, '…')}" after a reload (read from the hub): the same stroke under two ids`)
-    const loads = since().filter(r => r.method === 'GET' && /^\/v2\/boards\//.test(r.path))
+    const loads = since().filter(r => r.method === 'GET' && /^\/v1\/boards\//.test(r.path))
     check(loads.length > 0, 'the board was read from the hub (snapshot and tail)', loads.length)
     for (const P of [A, B]) await ui.openDesk(P)
   }],
@@ -528,7 +528,7 @@ export const steps = [
     await A.click('#session .desk-move form[action$="/pair"] button')
     await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open] .clip-copy[data-line=connect] code')", 'the invite page of the session')
     check(await A.js("return document.querySelector('.room-invite h2').textContent") === 'Continue night-agent', 'the page says which session is continued', await A.js("return document.querySelector('.room-invite h2')?.textContent"))
-    const link = /'(http\S+\/join#v2\.[^']+)'/.exec(await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent"))?.[1]
+    const link = /'(http\S+\/join#v1\.[^']+)'/.exec(await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent"))?.[1]
     const old = ctx.agent, session = old.session_id
     const commands = []
     const next = await joinAgent(ctx, link, async () => {
@@ -611,7 +611,7 @@ export const steps = [
   ['reload in the middle of a write, four timings: after the reload the answer is there once, or not at all with the card still open', async ctx => {
     const { check, note } = ctx.run
     const A = await ctx.profile('A')
-    const ENVELOPES = { method: 'POST', path: '/v2/envelopes' }
+    const ENVELOPES = { method: 'POST', path: '/v1/envelopes' }
     const timings = [
       ['at once', null, 0],
       ['while the post waits at the hub', { ...ENVELOPES, delay_ms: 1500 }, 400],
@@ -711,7 +711,7 @@ export const steps = [
     await sleep(500)
     for (const text of ['Away one.', 'Away two.', 'Away three.']) await ctx.agent.say({ text })
     let bent = 0
-    ctx.fake.faults.add({ method: 'GET', path: '/v2/changes', times: 4, answer: json => { if (json.items.length > 1) bent += 1; return { ...json, items: [...json.items].reverse() } } })
+    ctx.fake.faults.add({ method: 'GET', path: '/v1/changes', times: 4, answer: json => { if (json.items.length > 1) bent += 1; return { ...json, items: [...json.items].reverse() } } })
     await B.go(`${ctx.app.origin}/`)
     await B.until("document.documentElement.hasAttribute('data-ready')", 'B opens again', 30000)
     await openSession(B)
@@ -788,7 +788,7 @@ export const steps = [
       await G.until("document.querySelector('#way-login')", 'the welcome screen')
       await G.click('#way-login')
       await sleep(2000)
-      const asked = since().filter(r => r.path === '/v2/account/passkey/challenge').length
+      const asked = since().filter(r => r.path === '/v1/account/passkey/challenge').length
       const usable = await G.js("const f = document.querySelector('#login-form input[name=account]'); return !!f && f.getClientRects().length > 0")
       await G.go('about:blank')
       ctx.run.check(asked <= 2, 'at most two passkey challenges were asked of the hub in two seconds', asked)

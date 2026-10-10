@@ -1,4 +1,4 @@
-//! The Trommi connector: an agent device of a Trommi room (protocol v2, every key and check from `trommi-core`)
+//! The Trommi connector: an agent device of a Trommi room (protocol v1, every key and check from `trommi-core`)
 //! and the MCP server through which a Claude Code session talks to the human's board.
 #![forbid(unsafe_code)]
 

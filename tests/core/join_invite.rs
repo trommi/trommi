@@ -529,7 +529,7 @@ fn a_link_is_built_and_read() {
     let text = String::from_utf8(link.to_text().expose().to_vec()).expect("utf-8");
     assert_eq!(
         text,
-        "https://app.example.org/join#v2.aHR0cHM6Ly9odWIuZXhhbXBsZS5vcmc.\
+        "https://app.example.org/join#v1.aHR0cHM6Ly9odWIuZXhhbXBsZS5vcmc.\
          BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc.MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM.AQIDBAUGBwg"
     );
     let read = InviteLink::parse(&text).expect("parses");
@@ -555,7 +555,7 @@ fn a_link_of_any_other_form_is_refused() {
     let hub_part = "aHR0cHM6Ly9odWIuZXhhbXBsZS5vcmc";
     let room = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
     let secret = "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM.AQIDBAUGBwg";
-    let good = format!("{APP}/join#v2.{hub_part}.{room}.{secret}");
+    let good = format!("{APP}/join#v1.{hub_part}.{room}.{secret}");
     assert!(InviteLink::parse(&good).is_ok());
     let only_secret = "MzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzM";
 
@@ -569,50 +569,49 @@ fn a_link_of_any_other_form_is_refused() {
         APP.to_string(),
         format!("{APP}/join"),
         format!("{APP}/join#"),
-        format!("{APP}/join#v2"),
-        format!("{APP}/join#v2.{hub_part}.{room}"),
-        format!("{APP}/join#v2.{hub_part}.{room}.{secret}."),
-        format!("{APP}/join#v2.{hub_part}.{room}.{secret}.{secret}"),
+        format!("{APP}/join#v1"),
+        format!("{APP}/join#v1.{hub_part}.{room}"),
+        format!("{APP}/join#v1.{hub_part}.{room}.{secret}."),
+        format!("{APP}/join#v1.{hub_part}.{room}.{secret}.{secret}"),
         format!("{APP}/join#{hub_part}.{room}.{secret}"),
-        format!("{APP}/join#v1.{hub_part}.{room}.{secret}"),
         format!("{APP}/join#v0.{hub_part}.{room}.{secret}"),
         format!("{APP}/join#v02.{hub_part}.{room}.{secret}"),
         format!("{APP}/join#v.{hub_part}.{room}.{secret}"),
         format!("{APP}/join#V2.{hub_part}.{room}.{secret}"),
         format!("{APP}/join#v+2.{hub_part}.{room}.{secret}"),
-        format!("{APP}/join#v2 .{hub_part}.{room}.{secret}"),
-        format!("{APP}/join#v2.{capital}.{room}.{secret}"),
-        format!("{APP}/join#v2.{slash}.{room}.{secret}"),
-        format!("{APP}/join#v2.{bare}.{room}.{secret}"),
-        format!("{APP}/join#v2.{not_utf8}.{room}.{secret}"),
-        format!("{APP}/join#v2..{room}.{secret}"),
-        format!("{APP}/join#v2.{hub_part}=.{room}.{secret}"),
-        format!("{APP}/join#v2.{hub_part}.{}.{secret}", &room[1..]),
-        format!("{APP}/join#v2.{hub_part}.{room}A.{secret}"),
-        format!("{APP}/join#v2.{hub_part}.{room}.{}", &secret[1..]),
-        format!("{APP}/join#v2.{hub_part}.{room}.{secret}A"),
+        format!("{APP}/join#v1 .{hub_part}.{room}.{secret}"),
+        format!("{APP}/join#v1.{capital}.{room}.{secret}"),
+        format!("{APP}/join#v1.{slash}.{room}.{secret}"),
+        format!("{APP}/join#v1.{bare}.{room}.{secret}"),
+        format!("{APP}/join#v1.{not_utf8}.{room}.{secret}"),
+        format!("{APP}/join#v1..{room}.{secret}"),
+        format!("{APP}/join#v1.{hub_part}=.{room}.{secret}"),
+        format!("{APP}/join#v1.{hub_part}.{}.{secret}", &room[1..]),
+        format!("{APP}/join#v1.{hub_part}.{room}A.{secret}"),
+        format!("{APP}/join#v1.{hub_part}.{room}.{}", &secret[1..]),
+        format!("{APP}/join#v1.{hub_part}.{room}.{secret}A"),
         format!(
-            "{APP}/join#v2.{hub_part}.{room}.{}N.AQIDBAUGBwg",
+            "{APP}/join#v1.{hub_part}.{room}.{}N.AQIDBAUGBwg",
             &only_secret[..42]
         ),
         // Four parts: a link without its deadline.
-        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}"),
+        format!("{APP}/join#v1.{hub_part}.{room}.{only_secret}"),
         // A deadline of another length, or whose last character carries bits beyond its 8 bytes.
-        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}.AQIDBAUGBw"),
-        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}.AQIDBAUGBwgA"),
-        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}.AQIDBAUGBwh"),
-        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}.AQIDBAUGBw="),
-        format!("{APP}/join#v2.{hub_part}.{room}.{only_secret}."),
-        format!("{APP}/join#v2.{hub_part}.{room}.{secret} "),
-        format!("{APP}/join#v2.{hub_part}.{room}.{secret}#"),
-        format!("{APP}/join/#v2.{hub_part}.{room}.{secret}"),
-        format!("{APP}/join?x#v2.{hub_part}.{room}.{secret}"),
-        format!("{APP}/Join#v2.{hub_part}.{room}.{secret}"),
-        format!("{APP}/#v2.{hub_part}.{room}.{secret}"),
-        format!("{APP}#v2.{hub_part}.{room}.{secret}"),
-        format!("{APP}/x/join#v2.{hub_part}.{room}.{secret}"),
-        format!("https://App.example.org/join#v2.{hub_part}.{room}.{secret}"),
-        format!("app.example.org/join#v2.{hub_part}.{room}.{secret}"),
+        format!("{APP}/join#v1.{hub_part}.{room}.{only_secret}.AQIDBAUGBw"),
+        format!("{APP}/join#v1.{hub_part}.{room}.{only_secret}.AQIDBAUGBwgA"),
+        format!("{APP}/join#v1.{hub_part}.{room}.{only_secret}.AQIDBAUGBwh"),
+        format!("{APP}/join#v1.{hub_part}.{room}.{only_secret}.AQIDBAUGBw="),
+        format!("{APP}/join#v1.{hub_part}.{room}.{only_secret}."),
+        format!("{APP}/join#v1.{hub_part}.{room}.{secret} "),
+        format!("{APP}/join#v1.{hub_part}.{room}.{secret}#"),
+        format!("{APP}/join/#v1.{hub_part}.{room}.{secret}"),
+        format!("{APP}/join?x#v1.{hub_part}.{room}.{secret}"),
+        format!("{APP}/Join#v1.{hub_part}.{room}.{secret}"),
+        format!("{APP}/#v1.{hub_part}.{room}.{secret}"),
+        format!("{APP}#v1.{hub_part}.{room}.{secret}"),
+        format!("{APP}/x/join#v1.{hub_part}.{room}.{secret}"),
+        format!("https://App.example.org/join#v1.{hub_part}.{room}.{secret}"),
+        format!("app.example.org/join#v1.{hub_part}.{room}.{secret}"),
     ];
     for case in cases {
         assert_eq!(
@@ -621,7 +620,7 @@ fn a_link_of_any_other_form_is_refused() {
             "{case}"
         );
     }
-    for newer in ["v3", "v10", "v99999999999999999999999"] {
+    for newer in ["v2", "v3", "v10", "v99999999999999999999999"] {
         assert_eq!(
             InviteLink::parse(&format!("{APP}/join#{newer}.{hub_part}.{room}.{secret}")).err(),
             Some(Error::NewerVersion)

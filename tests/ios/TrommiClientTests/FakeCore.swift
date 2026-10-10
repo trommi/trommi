@@ -302,7 +302,7 @@ final class FakeHub: URLProtocol, @unchecked Sendable {
   final class Hub: @unchecked Sendable {
     let lock = NSLock()
     var change: UInt64 = 0
-    var items: [[String: Any]] = []            // as GET /v2/changes gives them
+    var items: [[String: Any]] = []            // as GET /v1/changes gives them
     var posted: [(path: String, body: [String: Any])] = []
     var envelopePosts: [String] = []           // every envelope as it was posted, repeats included
     var refuse: [String: (status: Int, code: String, voided: Bool)] = [:]   // path -> refusal; `voided`: the hub kept the envelope's number as a void record
@@ -322,32 +322,32 @@ final class FakeHub: URLProtocol, @unchecked Sendable {
       if let r = refuse[path] { return (r.status, ["error": r.code, "message": "refused", "voided": r.voided]) }
       posted.append((path, body))
       switch (method, path) {
-      case ("POST", "/v2/rooms"):
+      case ("POST", "/v1/rooms"):
         rooms += 1
         let room = parse(try! unb64u(body["group_info"] as! String))["room"] as! String
         return (200, ["room_id": b64u(try! unhex(room))])
       case ("GET", _) where path.hasSuffix("/challenge"): return (200, ["challenge": b64u(Bytes(repeating: 9, count: 32))])
       case ("POST", _) where path.hasSuffix("/tokens"): return (200, ["token": "t", "expires_at": nowMs() + 600_000, "role": "human"])
-      case ("GET", "/v2/welcomes"): return (200, [Any]())
-      case ("PUT", "/v2/key-packages"): return (200, ["unused": 100])
-      case ("GET", "/v2/changes"):
+      case ("GET", "/v1/welcomes"): return (200, [Any]())
+      case ("PUT", "/v1/key-packages"): return (200, ["unused": 100])
+      case ("GET", "/v1/changes"):
         let after = UInt64(query["after"] ?? "0") ?? 0
         let limit = Int(query["limit"] ?? "500") ?? 500
         let page = Array(items.filter { ($0["change"] as! UInt64) > after }.prefix(limit))
         let upTo = page.last.map { $0["change"] as! UInt64 } ?? change
         return (200, ["items": page, "change": upTo, "more": upTo < change])
-      case ("POST", "/v2/envelopes"):
+      case ("POST", "/v1/envelopes"):
         let e = body["envelope"] as! String
         envelopePosts.append(e)
         if let had = items.first(where: { $0["envelope"] as? String == e }) { return (200, ["change": had["change"]!]) }   // the first answer again
         return (200, ["change": add(["kind": "envelope", "envelope": e])])
       case ("POST", _) where path.hasSuffix("/commits"):
-        // As POST /v2/groups/{group}/commits: the Commit takes its place in the log, the answer names it.
-        let group = String(path.dropFirst("/v2/groups/".count).dropLast("/commits".count))
+        // As POST /v1/groups/{group}/commits: the Commit takes its place in the log, the answer names it.
+        let group = String(path.dropFirst("/v1/groups/".count).dropLast("/commits".count))
         let epoch = (body["epoch"] as? NSNumber)?.uint64Value ?? 0
         return (200, ["epoch": epoch + 1, "change": add(["kind": "commit", "group_id": group, "bytes": body["commit"] as! String])])
       case ("POST", _) where path.hasSuffix("/messages"): return (200, ["n": 1])
-      case ("PUT", _) where path.hasPrefix("/v2/files/"), ("GET", _) where path.hasPrefix("/v2/files/"): return (200, [:] as [String: Any])
+      case ("PUT", _) where path.hasPrefix("/v1/files/"), ("GET", _) where path.hasPrefix("/v1/files/"): return (200, [:] as [String: Any])
       default: return (404, ["error": "not-found", "message": path])
       }
     }
