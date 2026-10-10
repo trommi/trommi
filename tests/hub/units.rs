@@ -285,7 +285,7 @@ mod db_tests {
     /// A database the hub wrote before Welcomes had their own ids: the counter starts above every id SQLite can
     /// have given, also one whose row was deleted, so `?after=` never hides a new Welcome.
     #[test]
-    fn board_frontiers_of_the_first_layout_are_rebuilt_as_bound_posts() {
+    fn board_frontiers_of_earlier_layouts_are_rebuilt_with_their_posts() {
         let dir = std::env::temp_dir().join(format!(
             "trommi-hub-frontiers-{}",
             trommi_hub::util::hex(&trommi_hub::util::random::<8>())
@@ -316,6 +316,38 @@ mod db_tests {
                 .unwrap();
             assert_eq!(row, (1, vec![2], 5), "the post stays, as a bound one");
         }
+        // the second layout (bound, keyed without the frontier) is rebuilt with its rows
+        let path = dir.join("second.db");
+        {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            c.execute_batch(&format!(
+                "BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION};
+                 CREATE TABLE board_frontiers (
+                   room_id BLOB NOT NULL, board BLOB NOT NULL, device BLOB NOT NULL, bound INTEGER NOT NULL,
+                   frontier BLOB NOT NULL, files BLOB NOT NULL, at INTEGER NOT NULL, snapshot_seq INTEGER,
+                   register_id BLOB, counts INTEGER NOT NULL DEFAULT 1,
+                   PRIMARY KEY (room_id, board, device, bound)) STRICT, WITHOUT ROWID;
+                 INSERT INTO board_frontiers VALUES (x'01', zeroblob(16), zeroblob(32), 0, x'02', x'03', 5, NULL, NULL, 1);
+                 INSERT INTO board_frontiers VALUES (x'01', zeroblob(16), zeroblob(32), 1, x'04', x'03', 6, 7, x'08', 1);
+                 COMMIT;"
+            ))
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let rows: i64 = db
+            .read(|c| c.query_row("SELECT count(*) FROM board_frontiers", [], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(rows, 2);
+        let keyed: i64 = db
+            .read(|c| {
+                c.query_row(
+                    "SELECT count(*) FROM pragma_table_info('board_frontiers') WHERE name = 'frontier' AND pk > 0",
+                    [],
+                    |r| r.get(0),
+                )
+            })
+            .unwrap();
+        assert_eq!(keyed, 1);
     }
 
     #[test]

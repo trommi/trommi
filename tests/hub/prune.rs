@@ -390,8 +390,8 @@ fn a_snapshot_holds_pruning_back_from_its_declaration_on() {
 }
 
 /// 10.9: two snapshots of one device on their way at once: binding the later one does not answer the earlier
-/// one's declaration, which holds pruning back until its own post is bound; a device has at most 8 open
-/// declarations of a board.
+/// one's declaration, which holds pruning back until its own post is bound; a ninth open declaration of a device
+/// folds the eight into one that holds back as much.
 #[test]
 fn a_declaration_holds_back_until_its_own_snapshot_is_bound() {
     let mut w = World::new();
@@ -425,22 +425,29 @@ fn a_declaration_holds_back_until_its_own_snapshot_is_bound() {
     );
     assert!(has_body(&bodies(hub, &w.ada), &a2.1));
 
-    // at most 8 open declarations; the same one again is no new one
-    for n in 0..8u64 {
+    // eight declarations whose bound posts never come (a3 to a10); a ninth folds them into one with the smallest
+    // numbers (a3), which holds back what comes after a3
+    let mut heads = Vec::new();
+    for _ in 0..8 {
         w.ada.send(hub, &room, &board_item(&board)).ok();
         let head = w.ada.chain(&room);
+        heads.push(head);
         w.ada
             .post(hub, &path, &frontier_post(&[(&ada, head)], &[]))
             .ok();
-        if n == 7 {
-            w.ada
-                .post(hub, &path, &frontier_post(&[(&ada, head)], &[]))
-                .ok();
-        }
     }
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let last = w.ada.chain(&room);
     w.ada
-        .post(hub, &path, &frontier_post(&[(&ada, a2)], &[]))
-        .refused(429, "too-many");
+        .post(hub, &path, &frontier_post(&[(&ada, last)], &[]))
+        .ok();
+    let r = write_snapshot(hub, &mut w.ada, &room, &board, &reg, &[(&ada, last)], &[]);
+    assert_eq!(
+        r["pruned"], 2,
+        "a2 and a3: the folded declaration covers a3"
+    );
+    let all = bodies(hub, &w.ada);
+    assert!(!has_body(&all, &heads[0].1) && has_body(&all, &heads[1].1));
 }
 
 /// 10.9: a bound post names the device's own newest snapshot value; an older one is `replay`; posting the same

@@ -17,7 +17,7 @@ pub const FRONTIER_WINDOW_MS: u64 = 30 * 86_400_000;
 pub const MAX_FRONTIER_FILES: usize = 20_000;
 /// The most writers one frontier names (the most human devices of a room).
 pub const MAX_FRONTIER_WRITERS: usize = 1_000;
-/// 10.9: the most declarations of one device and board that wait for their bound post.
+/// 10.9: the most declarations of one device and board that wait for their bound post; a further one folds them.
 pub const MAX_DECLARED: i64 = 8;
 
 /// The 16-byte ids of a `file_ids` column.
@@ -356,10 +356,61 @@ fn files_of(body: &Value) -> Res<Vec<u8>> {
     Ok(files)
 }
 
+/// Folds a device's open declarations of a board into one: per writer the smallest number of all of them (a writer
+/// one lacks is left out, it counts 0), the files of all of them, the newest time.
+fn fold_declarations(
+    c: &Connection,
+    room: &Room,
+    board: &[u8; 16],
+    device: &[u8; 32],
+    now: u64,
+) -> Res<()> {
+    let rows: Vec<(Vec<u8>, Vec<u8>)> = {
+        let mut s = c.prepare_cached(
+            "SELECT frontier, files FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0",
+        )?;
+        let rows = s
+            .query_map(params![&room[..], &board[..], &device[..]], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    let mut folded: Option<Frontier> = None;
+    let mut files: Vec<u8> = Vec::new();
+    let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+    for (frontier, kept) in &rows {
+        let f = decode_frontier(frontier);
+        folded = Some(match folded {
+            None => f,
+            Some(before) => before
+                .into_iter()
+                .filter_map(|(w, s)| f.iter().find(|(v, _)| *v == w).map(|(_, t)| (w, s.min(*t))))
+                .collect(),
+        });
+        for id in ids_of(kept) {
+            if seen.insert(id.to_vec()) {
+                files.extend_from_slice(id);
+            }
+        }
+    }
+    c.prepare_cached(
+        "DELETE FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0",
+    )?
+    .execute(params![&room[..], &board[..], &device[..]])?;
+    if let Some(folded) = folded {
+        c.prepare_cached(
+            "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, counts) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1)",
+        )?
+        .execute(params![&room[..], &board[..], &device[..], encode_frontier(&folded), files, now as i64])?;
+    }
+    Ok(())
+}
+
 /// `POST /v1/boards/{board}/frontier` (10.9), in two steps around a snapshot register value of `board`:
 ///
 /// - `{ frontier, files }` before the register is written: a declaration, one row per declared frontier (at most
-///   `MAX_DECLARED` open ones per device and board). It only holds pruning back, so that a snapshot that becomes
+///   `MAX_DECLARED` open ones per device and board; more fold them into one). It only holds pruning back, so that a snapshot that becomes
 ///   current before its device binds it is covered from the start; its own bound post answers it, the 30 days of
 ///   10.9 end it otherwise.
 /// - `{ frontier, files, snapshot: [seq, hash] }` once the hub took the register value: bound to that envelope
@@ -401,10 +452,9 @@ pub fn post_frontier(
                 Ok((r.get(0)?, r.get(1)?))
             })?;
         if again == 0 && open >= MAX_DECLARED {
-            return Err(refuse(
-                "too-many",
-                "a device has at most 8 declarations of a board that wait for their snapshot",
-            ));
+            // (declarations whose bound posts never came: folded into one with, per writer, the smallest number of
+            //  them and all their files; it holds back at least as much as they did, until the 30 days end it)
+            fold_declarations(c, &room, board, &auth.device, now)?;
         }
         c.prepare_cached(
             "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, counts) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, 1)
@@ -558,6 +608,12 @@ pub fn apply_board(
     let mut counting: Vec<Frontier> = Vec::new();
     for (device, bound, stored, frontier, at) in live {
         let counts = at >= from;
+        if !counts && bound == 0 {
+            // a declaration out of the 30 days is over
+            c.prepare_cached("DELETE FROM board_frontiers WHERE room_id = ?1 AND board = ?2 AND device = ?3 AND bound = 0 AND frontier = ?4")?
+                .execute(params![&room[..], &board[..], &device, &stored])?;
+            continue;
+        }
         mark(&device, bound, &stored, counts)?;
         if counts {
             counting.push(frontier);

@@ -466,7 +466,8 @@ encrypted.
     not that envelope's, or `snapshot` is not a register value of the posting device the hub took; with
     `removed-sender` when a number lies beyond a removed writer's Cut; with `replay` when `snapshot` is not the
     newest value of its register or older than the one the device's post is bound to; with `too-large` beyond
-    20 000 files or 1 000 writers; with `too-many` for a ninth open declaration of one device and board.
+    20 000 files or 1 000 writers. A ninth open declaration of one device and board folds the eight into one
+    (per writer the smallest number, all their files).
     Declarations only hold pruning back, one row each until the bound post with the same frontier answers it or
     the 30 days, counted from the newest bound post, end it; nothing of a board is pruned before a bound post
     counts. A `board_frontiers` table of the first layout (one post per device) is rebuilt in place, its posts

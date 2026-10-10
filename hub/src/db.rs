@@ -13,8 +13,9 @@ use rusqlite::{Connection, OpenFlags};
 
 pub const SCHEMA_VERSION: i64 = 5;
 
-/// 10.9: the board frontier posts (created in place with schema 5; a table of the first layout, one post per
-/// device without `bound`, is rebuilt: its posts were bound ones).
+/// 10.9: the board frontier posts (created in place with schema 5; a table of an earlier layout is rebuilt: one
+/// post per device without `bound`, whose posts were bound ones, or one declaration per device keyed without its
+/// frontier).
 const BOARD_FRONTIERS: &str = "
 -- 10.9: per human device and board its frontier posts: `bound` 0 a declaration made before a snapshot register
 -- is written (one row per declared frontier; it only holds pruning back), `bound` 1 the one post bound to the
@@ -720,6 +721,11 @@ impl Db {
                 [],
                 |r| r.get(0),
             )?;
+            let frontier_keyed: i64 = writer.query_row(
+                "SELECT count(*) FROM pragma_table_info('board_frontiers') WHERE name = 'frontier' AND pk > 0",
+                [],
+                |r| r.get(0),
+            )?;
             if had_table == 1 && has_bound == 0 {
                 writer.execute_batch(
                     "ALTER TABLE board_frontiers RENAME TO board_frontiers_first;",
@@ -729,6 +735,16 @@ impl Db {
                     "INSERT INTO board_frontiers (room_id, board, device, bound, frontier, files, at, counts)
                        SELECT room_id, board, device, 1, frontier, files, at, counts FROM board_frontiers_first;
                      DROP TABLE board_frontiers_first;",
+                )?;
+            } else if had_table == 1 && frontier_keyed == 0 {
+                // the second layout: one declaration per device, keyed without its frontier
+                writer.execute_batch(
+                    "ALTER TABLE board_frontiers RENAME TO board_frontiers_second;",
+                )?;
+                writer.execute_batch(BOARD_FRONTIERS)?;
+                writer.execute_batch(
+                    "INSERT INTO board_frontiers SELECT room_id, board, device, bound, frontier, files, at, snapshot_seq, register_id, counts FROM board_frontiers_second;
+                     DROP TABLE board_frontiers_second;",
                 )?;
             } else {
                 writer.execute_batch(BOARD_FRONTIERS)?;
