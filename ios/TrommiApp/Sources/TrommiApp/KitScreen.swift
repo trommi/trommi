@@ -107,7 +107,8 @@ struct KitScreen: View {
    * its passkey makes it.
    */
   private var again: some View {
-    let passkeyOnly = gate.hasPassword.map { !$0 } ?? gate.email.isEmpty
+    // (only an account the hub said has no password; while that is not known, the password, with the passkey beside it)
+    let passkeyOnly = gate.hasPassword == false
     return ObShell(title: "Your Emergency Kit", lead: passkeyOnly ? "Use your passkey to make it." : "Enter your password to make it.", home: false, content: {
       if !passkeyOnly { ObPassword(text: $password) }
       ObError(text: error)
