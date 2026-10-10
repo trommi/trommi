@@ -1102,12 +1102,11 @@ impl Updater {
         }
         match (back, &journal.old) {
             (Ok(()), None) => Health::failed("nothing ran before".into()),
-            // also when the link could not be put back: whatever `current` names is better than a hub that stands
             (Ok(()), Some(_)) => self.started_healthy(commit).await,
-            (Err(e), _) => {
-                let _ = self.start().await;
-                Health::failed(e)
-            }
+            // the link could not be put back (a full disk): `current` still names the release that was not taken,
+            // whose start the hub's unit may have refused once for want of a copy; it is not started a second time.
+            // The hub stands until the next start of the updater or the next deploy settles the note.
+            (Err(e), _) => Health::failed(format!("{e}; the hub is left stopped")),
         }
     }
 
@@ -1292,8 +1291,8 @@ impl Updater {
         let Ok(_lock) = self.file_lock().await else {
             return false;
         };
-        self.settle().await;
-        if self.linked("current").is_some() {
+        // a swap that could not be settled leaves the hub stopped (see `put_back`)
+        if self.settle().await && self.linked("current").is_some() {
             if let Err(e) = self.start().await {
                 log("start", json!({ "error": e }));
             }

@@ -283,7 +283,7 @@ on_exit() {
   trap - EXIT
   [ "$code" = 0 ] && exit 0
   # the updater's lock, held from the conversion's start: let go of it before any updater is started again
-  exec 8>&- 2>/dev/null || true
+  exec 8>&-
   if [ "$CONVERTING" != 1 ] && [ "$STOPPED" = 1 ]; then
     printf '\n!!! A step failed. Starting the updater that was stopped for this run again (it starts the hub).\n' >&2
     if systemctl start trommi-hub-updater.service; then
@@ -348,7 +348,8 @@ if [ "$STATE" = as-root ]; then
   [ -f "$SAVE.part/releases/$(sed -n 's|^current releases/||p' "$SAVE.part/links")/trommi-hub.service" ] \
     || stop "the hub that runs has no unit file to go back to; nothing was changed"
   # on disk before anything is handed over: a power cut after this point finds a whole copy to go back to
-  sync -f "$SAVE.part" && sync "$SAVE.part"
+  sync -f "$SAVE.part"
+  sync "$SAVE.part"
   mv -T "$SAVE.part" "$SAVE"
   sync "$ETC"
   ok "$(tr '\n' ';' < "$SAVE/links")"
