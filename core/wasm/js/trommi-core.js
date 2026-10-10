@@ -177,7 +177,7 @@ const DEVICE_CALLS = [
   'join_room_with_code', 'join_session_with_code', 'new_recovery_code', 'replace_code', 'prepare_recovery', 'recover',
   'learn_history', 'group_past',
   'invite_open', 'invite_accept', 'invite_confirm', 'invite_recommit', 'invite_steps', 'invite_handover', 'invite_checked', 'invite_forget',
-  'join_request', 'join_reveal', 'join_observe', 'join_invited',
+  'join_link', 'join_request', 'join_reveal', 'join_observe', 'join_invited',
   'seal', 'outbox_voided', 'envelope_abandon', 'receive_envelope', 'receive_relay', 'heads_due', 'compare_heads',
   'cut_of', 'chain_head', 'chain_cut', 'object', 'objects', 'object_owner', 'register', 'register_of', 'board_load',
   'command', 'command_finished', 'commands_pending', 'commands_uncertain', 'findings', 'findings_read',
@@ -416,6 +416,9 @@ export const recoveryAnchor = plain('recovery_anchor')
 export const recoverySignIn = plain('recovery_sign_in')
 export const boardReduce = plain('board_reduce')
 export const inviteLinkParse = plain('invite_link_parse')
+export const inviteLinkCheck = plain('invite_link_check')
+export const inviteLifeMs = plain('invite_life_ms')
+export const inviteClockToleranceMs = plain('invite_clock_tolerance_ms')
 export const checkEmoji = plain('check_emoji')
 export const hubAddress = plain('hub_address')
 export const kitKeysFor = plain('kit_keys_for')
