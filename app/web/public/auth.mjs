@@ -266,7 +266,17 @@ ${raw(L.gone)}
     // agent is in, and shows who came; last, start the program there.
     const CLAMP = raw('<svg class="clip-clamp" viewBox="0 0 120 44" aria-hidden="true"><path class="clamp-plate" d="M22 40 Q21 25 26 22 L43 21 Q46 9 60 8 Q74 9 77 21 L94 22 Q99 25 98 40 Z"/><path d="M52 21 Q53 15 60 14.6 Q67 15 68 21"/><path d="M30 31 Q60 29.4 90 31"/></svg>')
     const TICKBOX = raw('<svg class="clip-box" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 5.2 Q12 4.4 19.3 4.9 Q20 12 19.5 19.2 Q12 20 4.9 19.4 Q4.2 12 4.6 5.2 Z"/><path class="clip-tick" d="M7.4 12.6 Q9.6 14.6 10.9 16.6 Q14.6 10.2 20.6 5.2"/></svg>')
-    const copyLine = (text, word, line) => html`<button type="button" class="clip-copy" data-line="${line}" data-action="invite-clip#copy" data-invite-clip-text-param="${text}" title="Copy"><code>${text.split(/(?<=[^/:]\/)/).map((part, i) => html`${i ? raw('<wbr>') : ''}${part}`)}</code><span class="clip-copy-word" data-word="${word}">${word}</span></button>`
+    const wrapAt = text => text.split(/(?<=[^/:]\/)/).map((part, i) => html`${i ? raw('<wbr>') : ''}${part}`)
+    const copyLine = (text, word, line, shown = wrapAt(text)) => html`<button type="button" class="clip-copy" data-line="${line}" data-action="invite-clip#copy" data-invite-clip-text-param="${text}" title="Copy"><code>${shown}</code><span class="clip-copy-word" data-word="${word}">${word}</span></button>`
+    /** The connect command as shown: every invite link of an account starts alike (app, version, hub, room), so the
+     *  hub and the room are folded into an ellipsis and the part that is this invite's own (its secret and deadline)
+     *  stays in view. The folded text is still there (text and Copy take the whole command). */
+    const connectShown = command => {
+      const at = command.indexOf('#'), parts = at < 0 ? [] : command.slice(at + 1).split('.')
+      if (parts.length < 5) return wrapAt(command)
+      const head = command.slice(0, at + 1) + parts[0] + '.', mid = `${parts[1]}.${parts[2]}.`, tail = parts.slice(3).join('.')
+      return html`${wrapAt(head)}<span class="clip-link-same" data-same="…">${mid}</span><wbr><span class="clip-link-own">${tail}</span>`
+    }
     const step = (state, inner) => html`<li class="clip-step${state ? ` is-${state}` : ''}">${TICKBOX}<div class="clip-step-body">${inner}</div></li>`
     /** What is left of a link's time, in words: never "0 more min". */
     /** The two lines of an agent invite (as the iOS agentConnectSteps): the installer once per machine (it sets up
@@ -313,7 +323,7 @@ ${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link fo
         : html`<h2>Invite an agent</h2><p class="clip-sub">On a Linux or macOS computer with Claude Code or Codex.</p>`}
 <ol class="clip-list">
 ${step(done, html`<b>First time on this computer? Install:</b>${open ? html`${copyLine(INSTALL, 'Copy', 'install')}<small>Skip this if you have installed Trommi before (check: <code>trommi-connector --version</code>).</small>` : ''}`)}
-${step(done, html`<b>In your project folder, start claude (or codex) and paste:</b>${open ? html`${copyLine(connectCommand(inv.link), 'Copy', 'connect')}<small>Claude Code asks once whether to use the trommi MCP server: choose "Use this MCP server". In Codex: ask it to connect with this link.</small>` : ''}`)}
+${step(done, html`<b>In your project folder, start claude (or codex) and paste:</b>${open ? html`${copyLine(connectCommand(inv.link), 'Copy', 'connect', connectShown(connectCommand(inv.link)))}<small>Claude Code asks once whether to use the trommi MCP server: choose "Use this MCP server". In Codex: ask it to connect with this link.</small>` : ''}`)}
 ${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : open ? '' : 'wait', last)}
 </ol>${foot}</section></div></main>`
     }

@@ -126,6 +126,7 @@ export const steps = [
     const command = await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent")
     const link = /'(http\S+\/join#v1\.[^']+)'/.exec(command)?.[1]
     check(Boolean(link), 'the page shows the connect command with the invite link', command.slice(0, 60))
+    ctx.firstLink = link; ctx.firstInvite = await A.js("return location.pathname.split('/').pop()")
     // Exactly two lines to copy, in this order: install (once per machine; it sets up Claude Code and Codex), then the
     // slash command with the link, pasted into claude in the project folder; what a press copies is what the line shows.
     const lines = await A.js("return [...document.querySelectorAll('[data-state=open] .clip-copy')].map(b => ({ line: b.dataset.line, shown: b.querySelector('code').textContent, copied: b.dataset.inviteClipTextParam }))")
@@ -156,6 +157,26 @@ export const steps = [
     ctx.first = await ctx.agent.askCard({ title: 'Which database?', body: 'Asked before the second device joined.', options: [{ key: 'pg', label: 'Postgres' }, { key: 'lite', label: 'SQLite' }] })
     await A.until(`document.getElementById('row-${ctx.first}')`, 'the first question on the Desk')
     check(await A.js("return !document.querySelector('#desk-invite-go')"), '"Invite your first agent" is gone')
+  }],
+
+  ['"New Agent…" after the agent joined: a fresh link, its own part in view, the used one never shown as open again', async ctx => {
+    const { check } = ctx.run
+    const A = await ctx.profile('A')
+    await ui.openDesk(A)
+    await A.click('#sidebar-invite')
+    await A.until(`location.pathname.startsWith('/pair/') && !location.pathname.endsWith('/${ctx.firstInvite}') && document.querySelector('[data-state=open] .clip-copy[data-line=connect] code')`, 'a new agent invite page')
+    const command = await A.js("return document.querySelector('[data-state=open] .clip-copy[data-line=connect] code').textContent")
+    const link = /'(http\S+\/join#v\d+\.[^']+)'/.exec(command)?.[1]
+    check(Boolean(link) && link !== ctx.firstLink, 'a different link than the one the agent joined with', command.slice(-30))
+    const own = await A.js("const e = document.querySelector('[data-state=open] .clip-link-own'); const r = e?.getBoundingClientRect(), box = e?.closest('code').getBoundingClientRect(); return e ? { text: e.textContent, seen: r.width > 0 && r.bottom <= box.bottom + 1 } : null")
+    check(own && link.endsWith(own.text.replace(/'$/, '')) && own.seen, "the link's own part (secret, deadline) is in view", own)
+    const shared = await A.js("const e = document.querySelector('[data-state=open] .clip-link-same'); return e ? e.getBoundingClientRect().width : -1")
+    check(shared >= 0 && shared < 40, 'what every link of the account shares is folded into an ellipsis', shared)
+    check(await A.js("return /The link works once · (\\d+ more min\\.|less than a minute\\.)/.test(document.querySelector('.clip-note').textContent)"), 'the page says how long the link still works')
+    await A.shot('standin-04b-fresh-invite')
+    const was = await A.js(`return trommi.client.model.invites.get('${ctx.firstInvite}')?.invite_state ?? 'gone'`)
+    check(was === 'joined' || was === 'gone', 'the used invite is not open any more', was)
+    await ui.openDesk(A)
   }],
 
   ['renamed, then hidden while it was away: the connected session is one row under its new name, and stays', async ctx => {

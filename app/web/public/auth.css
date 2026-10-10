@@ -155,6 +155,9 @@ body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: 
 .clip-copy code { min-width: 0; padding: 9px 0; overflow-wrap: anywhere; font: 500 var(--t-sm)/1.45 var(--mono); }
 /* (the connect line carries the long invite link: two lines of it, the rest behind an ellipsis; Copy takes it all) */
 .clip-copy[data-line="connect"] code { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; padding: 0; margin: 9px 0; }
+/* (the part every link of the account shares, hub and room: folded into an ellipsis; this invite's own part stays in view) */
+.clip-link-same { font-size: 0; }
+.clip-link-same::after { content: attr(data-same); font-size: var(--t-sm); }
 .clip-copy-word { display: grid; place-items: center; min-width: 76px; height: 36px; padding: 0 var(--s-3); border-radius: 6px; background: var(--fg); color: var(--bg); font: 700 var(--t-sm)/1 var(--font); }
 .clip-in { display: flex; align-items: center; gap: 10px; }
 .clip-ask { display: grid; gap: 9px; }
