@@ -135,6 +135,18 @@ final class RoomBoardTests: XCTestCase {
     XCTAssertEqual(b.board.human.raw["crown"]?.value.string, "a3")
   }
 
+  /// The hub's lists of groups and of Welcomes are read page by page to their end.
+  func testGroupsAndWelcomesAreReadPageByPage() async throws {
+    let (_, b, _) = try await roomOfTwo()
+    for k in 1...3 { hub.infos[Bytes(repeating: UInt8(k), count: 48)] = [0: [1]] }
+    let groups = try await b.hub.groups()
+    XCTAssertEqual(groups.count, hub.infos.count)
+    XCTAssertGreaterThan(groups.count, 3)
+    hub.welcomes = [[1], [2], [3]]
+    let welcomes = try await b.hub.welcomes()
+    XCTAssertEqual(welcomes.compactMap { $0["welcome"] as? String }, [[1], [2], [3]].map { b64u($0) })
+  }
+
   /// gzip with one stored block (no compression): what `gunzip` reads.
   static func gzipStored(_ data: Bytes) -> Bytes {
     precondition(data.count < 65_535)

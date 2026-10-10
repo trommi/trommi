@@ -181,6 +181,16 @@ public final class Room {
   var ownEchoes: [String: String] = [:]
   /** What the hub said to an envelope this device sealed, by outbox id. */
   var outcome: [UInt64: Result<Void, HubError>] = [:]
+  /** Own Commits (outbox ids) the core dropped because another device's Commit took their epoch. */
+  var supersededIds = Set<UInt64>()
+  /**
+   * The core dropped an own Commit of this device: another device's took the epoch first (`superseded`). What it
+   * was for did not happen: its caller is told so, whatever the hub answered (its answer may come later).
+   */
+  func lostToAnother(_ id: UInt64) {
+    supersededIds.insert(id)
+    outcome[id] = .failure(HubError(status: 409, code: "epoch-taken", message: "another device changed the group first: this change was not made"))
+  }
   var pumping = false
   /** The changes are being read again from the start (RoomPast.swift): an envelope below the core's cursor is handed in as the next of its chain. */
   var readingBack = false
@@ -679,11 +689,15 @@ public final class Room {
       switch o {
       case .processed(let p):
         switch p {
-        case .commit(let group, _, _, let removed):
+        case .commit(let group, _, let superseded, let removed):
           groupsStale = true
+          if let id = superseded { lostToAnother(id) }
           if removed && group == roomId { markRemoved(&change) }
           else if removed { board.pushAlert(&change, code: "removed", message: "this device was removed from a group") }
-        case .ownCommit, .observed, .joinSuperseded: groupsStale = true
+        case .joinSuperseded(_, _, let superseded):
+          groupsStale = true
+          if let id = superseded { lostToAnother(id) }
+        case .ownCommit, .observed: groupsStale = true
         case .message(let m):
           try await freshGroups()
           if case .log(_, let entry) = parsed[i] { applyMessage(m, group: entry.group, change: entry.change, &change) }
@@ -971,8 +985,16 @@ public final class Room {
           if entry.kind == .keyPackages { keyPackagesAtHub = Wire.int(r["unused"]) }
           let commits = Self.carriesCommit(entry.kind)
           do { try await onCore { try $0.outboxAccepted(entry.id, change: answer) } }
-          catch let e as TrommiError where commits && e.code == "not-found" { _ = e }   // merged from the log before the answer came
+          catch let e as TrommiError where commits && e.code == "not-found" { _ = e }   // merged from the log before the answer came, or dropped
           if commits { await readOwnChanges() }
+          // A Commit counts as done only by the log: not dropped for another device's (superseded), and merged
+          // (the group has no own Commit waiting any more); otherwise its caller is told it did not happen.
+          if commits, supersededIds.remove(entry.id) != nil { backoff = 300_000_000; unknown = 0; continue }
+          if commits, let g = entry.group, (try? await onCore({ try $0.groups() }))?.first(where: { $0.group == g })?.pending == true,
+             !((try? await onCore({ $0.outbox() })) ?? []).contains(where: { $0.group == g && Self.carriesCommit($0.kind) }) {
+            outcome[entry.id] = .failure(HubError(status: 0, code: "pending", message: "the hub took the change and the log has not shown it yet"))
+            backoff = 300_000_000; unknown = 0; continue
+          }
           outcome[entry.id] = .success(())
           backoff = 300_000_000; unknown = 0
           if entry.kind != .envelope && entry.kind != .message && entry.kind != .relayMessage { var ch = Change(); try? await refreshGroups(&ch); emit(ch) }
