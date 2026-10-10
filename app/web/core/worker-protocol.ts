@@ -18,6 +18,8 @@ export type ToWorker =
   | { t: 'join'; id: number; args: Record<string, unknown>; storage: StorageName; client: string | null }
   /** The page took an event that asked for it (`ack` on the event): `ok` false when its handler failed. */
   | { t: 'ack'; ack: number; ok: boolean }
+  /** The page goes (pagehide): every live stream of the worker ends now. */
+  | { t: 'pagehide' }
 
 /** What the worker sends. */
 export type FromWorker =

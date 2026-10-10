@@ -94,15 +94,15 @@ export function picture(width, height) {
 }
 /** The first desk ("Desk"), chosen in the menu: where the room's first note lies once there are two desks. */
 async function firstDesk(P) {
-  // (a device that just caught up a long history draws the whole page once more when it is through, which closes a
-  //  menu opened in that moment: pressed again, at most three times)
-  for (let i = 0; i < 3 && await P.js("return document.getElementById('brand-doors')?.hidden !== false"); i++) {
+  if (await P.js("return document.getElementById('brand-doors')?.hidden !== false")) {
     await P.click(await P.js("return document.querySelector('.desk-switch-open')?.getClientRects().length ? '.desk-switch-open' : '#brand-menu'"))
-    await P.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open', 3000).catch(() => {})
+    await P.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open')
   }
-  await P.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open', 1000)
   await P.click('#menu-desk-rows a.menu-desk[data-desk=main]')
   await P.until("trommi.model().desk === 'main' && !trommi.model().all && document.querySelector('#inbox')", 'the first desk')
+  // a desk picked in the menu opens the menu again once the page is drawn (sidebar.mjs, trommi-menu-keep): waited
+  // for, so that the next press on the menu does not meet it opening and shut it
+  await P.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open again after the desk was picked', 5000)
 }
 
 export const steps = [
