@@ -314,11 +314,35 @@ fn lifetimes_and_retention() {
     // a Note written by ada and deleted by bea (a closed version): it settles like a closed card (9.4.1)
     let deleted_note = enc::object_id(&room, &w.ada.id(), w.ada.chain(&room).0 + 1);
     w.ada
-        .send(hub, &room, &object(wire::KIND_VERSION, deleted_note, wire::TYPE_NOTE, wire::STATE_OPEN, 0, ZERO32, ZERO32))
+        .send(
+            hub,
+            &room,
+            &object(
+                wire::KIND_VERSION,
+                deleted_note,
+                wire::TYPE_NOTE,
+                wire::STATE_OPEN,
+                0,
+                ZERO32,
+                ZERO32,
+            ),
+        )
         .ok();
     let note_v1 = w.ada.chain(&room).1;
-    bea.send(hub, &room, &object(wire::KIND_VERSION, deleted_note, wire::TYPE_NOTE, wire::STATE_CLOSED, 0, note_v1, ZERO32))
-        .ok();
+    bea.send(
+        hub,
+        &room,
+        &object(
+            wire::KIND_VERSION,
+            deleted_note,
+            wire::TYPE_NOTE,
+            wire::STATE_CLOSED,
+            0,
+            note_v1,
+            ZERO32,
+        ),
+    )
+    .ok();
     let log_before = w
         .ada
         .get(hub, &format!("/v1/groups/{}/log", b64(&group)))
@@ -390,7 +414,10 @@ fn lifetimes_and_retention() {
         4,
         "the answered card, the closed card, the permission request, the deleted Note"
     );
-    let deleted = w.ada.get(hub, &format!("/v2/notes/{}", hex(&deleted_note))).ok();
+    let deleted = w
+        .ada
+        .get(hub, &format!("/v2/notes/{}", hex(&deleted_note)))
+        .ok();
     assert_eq!(deleted["items"].as_array().unwrap().len(), 2);
     assert!(deleted["items"]
         .as_array()
@@ -565,6 +592,58 @@ fn lifetimes_and_retention() {
         .ok();
 
     // ---- a restart keeps everything but tokens: the same data directory under a new hub
+    // ---- 10.9: a board frontier post counts for 30 days after the board's newest post
+    let board: [u8; 16] = random();
+    type Head<'a> = (&'a [u8; 32], (u64, [u8; 32]));
+    let frontier = |heads: &[Head]| {
+        let mut f = serde_json::Map::new();
+        for (writer, (seq, hash)) in heads {
+            f.insert(b64(&writer[..]), json!([seq, b64(hash)]));
+        }
+        json!({ "frontier": f, "files": [] })
+    };
+    let fpath = format!("/v2/boards/{}/frontier", hex(&board));
+    again(&mut [&mut w.ada, &mut bea]);
+    w.ada.send(hub, &room, &board_item(&board)).ok();
+    let x1 = w.ada.chain(&room);
+    bea.send(hub, &room, &board_item(&board)).ok();
+    let y1 = bea.chain(&room);
+    let (ada_id, bea_id) = (w.ada.id(), bea.id());
+    // bea's snapshot covers ada's x1 only (x1 goes), ada's covers both: bea's y1 stays (bea's post names no y)
+    assert_eq!(
+        bea.post(hub, &fpath, &frontier(&[(&ada_id, x1)])).ok()["pruned"],
+        1
+    );
+    assert_eq!(
+        w.ada
+            .post(hub, &fpath, &frontier(&[(&ada_id, x1), (&bea_id, y1)]))
+            .ok()["pruned"],
+        0
+    );
+    let y1_body = |dev: &Dev| {
+        dev.get(hub, &format!("/v2/boards/{}?after_change=0", hex(&board)))
+            .ok()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(envelope_of)
+            .find(|e| e.hash() == y1.1)
+            .unwrap()
+            .body
+            .is_some()
+    };
+    assert!(y1_body(&w.ada));
+    // 31 days on, ada posts again: bea's post is more than 30 days older than the newest and no longer counts
+    hub.clock(31 * DAY);
+    again(&mut [&mut w.ada, &mut bea]);
+    assert_eq!(
+        w.ada
+            .post(hub, &fpath, &frontier(&[(&ada_id, x1), (&bea_id, y1)]))
+            .ok()["pruned"],
+        1
+    );
+    assert!(!y1_body(&w.ada));
+
     let room_before = w
         .ada
         .get(hub, &format!("/v1/rooms/{}/groups", b64(&room)))

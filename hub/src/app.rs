@@ -854,6 +854,11 @@ impl App {
                 break;
             }
         }
+        let mut fx = Effects::default();
+        total += self
+            .db
+            .write(|c| crate::prune::sweep_boards(c, util::now(), &mut fx))?;
+        self.after(fx);
         Ok(total)
     }
 

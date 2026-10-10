@@ -464,6 +464,8 @@ encrypted.
     row and `file_evicted` follow as for 9.4. A frontier post is refused with `bad-format` when a writer is not
     a device of the room, a number lies beyond what the hub holds of that writer in the room group, or a hash
     is not that envelope's, and with `too-large` beyond 20 000 files or 1 000 writers.
+    A register value or Note version that a later Cut leaves beyond its writer's chain (9.0.10) has already
+    pruned the ones before it: devices that come later find that writer's value unreadable.
 
 ## Known limits
 

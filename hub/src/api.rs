@@ -918,6 +918,13 @@ fn route(app: &Arc<App>, rq: &Rq) -> Res<Value> {
             let (after, limit) = (rq.q_int("after_change")?, rq.q_int("limit")?);
             app.read(|x| content::board_items(x.c, &rq.auth(app, x.c)?, &board, after, limit))
         }
+        // 10.9: what a human device's board snapshot covers; the board is pruned behind every device's
+        ("POST", ["boards", board, "frontier"]) => {
+            let board = id::<16>(board)?;
+            let auth = read_auth()?;
+            limited(app.limits.envelopes.take(&[&auth.room[..], &auth.device[..]].concat(), 1.0, t))?;
+            app.write_as(&auth, rq.lease, |x, fx| crate::prune::post_frontier(x.c, &auth, &board, &rq.body, x.now, fx))
+        }
         ("GET", [kind @ ("cards" | "notes" | "permission-requests" | "artifacts"), object]) => {
             let object = id::<16>(object)?;
             let table = if *kind == "permission-requests" { "permission_requests" } else { kind };
