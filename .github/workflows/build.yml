@@ -82,7 +82,7 @@ jobs:
           set -eu
           sh .github/scripts/inputs.sh > "$RUNNER_TEMP/inputs"
           cat "$RUNNER_TEMP/inputs"
-          newest=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' | sort -n | tail -n 1)
+          newest=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 100 --json tagName --jq '.[].tagName' | sed -n 's/^v\([1-9][0-9]*\)$/\1/p' | sort -n | tail -n 1)
           old=$RUNNER_TEMP/newest
           mkdir "$old"
           if [ -n "$newest" ]; then
