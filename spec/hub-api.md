@@ -420,6 +420,10 @@ encrypted.
     groups only and is read in pages (`limit`). The bare list without `limit`, and the Desk's `groups`, stay as
     they were (with the leaves of live groups only) until the clients read the pages; then the bare form and the
     Desk's `groups` go.
+44. **One stream per device** (10 October 2026). Opening `GET /v2/stream` ends the device's older streams at once
+    (their connections are cut, their places freed): a browser that never closes the old stream of a page
+    reloaded under a service worker would otherwise reach the limit of v2.md section 16 and get `too-many`. A
+    device runs one stream (the web app in its leader tab); the limit of 8 is thereby never reached.
 
 ## Known limits
 

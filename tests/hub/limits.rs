@@ -47,15 +47,21 @@ fn world(env: &[(&str, &str)]) -> World {
 
 #[test]
 fn counts_per_device() {
-    let w = world(&[]);
+    let mut w = world(&[]);
     let hub = &w.hub;
-    // 16: streams per device 8
+    // 16: streams per device 8. A new stream ends the device's older ones, so a client that never closes its
+    // old stream (a page reloaded under a service worker) is not locked out: ten in a row are all taken, the
+    // newest alone stays open
     let mut streams = vec![];
-    for i in 0..9 {
+    for i in 0..10 {
         let s = w.ada.events(hub, None);
-        assert_eq!(s.status, if i < 8 { 200 } else { 429 }, "stream {}", i + 1);
+        assert_eq!(s.status, 200, "stream {}", i + 1);
         streams.push(s);
     }
+    w.ada.send(hub, &w.room, &register(&random(), "x")).ok();
+    assert_eq!(streams[9].until("envelope").name, "envelope");
+    assert!(streams[0].ended(), "the oldest stream was ended");
+    assert!(streams[8].ended(), "the one before the newest was ended");
     drop(streams);
     // 16: KeyPackages per device 100 single-use (five are there from the start)
     let more: Vec<String> = (0..95).map(|_| b64(&w.ada.key_package(false))).collect();

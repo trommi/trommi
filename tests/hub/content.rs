@@ -1166,12 +1166,12 @@ fn accepted_content_arrives_live_and_a_stream_resumes_by_change_number() {
         envelope_of(&resumed.until("envelope").data).hash(),
         s.w.ada.chain(&s.group).1
     );
-    // a device has a limit of streams
+    // a device has one stream: opening more ends the older ones, none is refused
     let mut held = vec![];
-    for _ in 0..8 {
+    for _ in 0..9 {
         held.push(s.w.ada.events(hub, None));
     }
-    assert!(held.iter().filter(|e| e.status == 429).count() >= 1);
+    assert!(held.iter().all(|e| e.status == 200));
 }
 
 #[test]
