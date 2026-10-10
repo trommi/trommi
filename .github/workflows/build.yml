@@ -93,7 +93,7 @@ jobs:
           }
           # (connector/tools.json and prompt.md, demo/: the app's build reads them)
           # the core itself: its sources (core/ is in `shared`), its tests, the test library, the vectors
-          part core 'tests/core/|tests/src/|tests/bindings/|tests/Cargo\.toml$|spec/vectors/|spec/account-vectors\.json$'
+          part core 'tests/core/|tests/src/|tests/bindings/|tests/Cargo\.toml$|spec/vectors/|spec/account-vectors\.json$|THIRD-PARTY\.md$|\.github/scripts/third_party\.mjs$'
           part web 'app/web/|tests/web/|connector/tools\.json$|connector/prompt\.md$|demo/|package\.json$|package-lock\.json$|\.node-version$|\.github/scripts/web_release\.mjs$|\.github/tools/wrangler/|\.github/workflows/deploy_web\.yml$'
           part connector 'connector/|release/|tests/connector/|tests/Cargo\.toml$|\.github/workflows/deploy_connector\.yml$'
           part ios 'ios/|\.github/scripts/ios_testflight\.sh$|\.github/workflows/deploy_ios\.yml$'
@@ -124,6 +124,9 @@ jobs:
             ~/.cargo/git
             target
           key: core-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+      # the licence tables are what cargo reports for this Cargo.lock (.github/scripts/third_party.mjs)
+      - name: THIRD-PARTY.md is current
+        run: node .github/scripts/third_party.mjs --check
       - name: The crates' own tests
         run: cargo test --locked -p trommi-core -p trommi-core-wasm -p trommi-core-swift
       # One test that fails must not hide the others: every target runs, the step fails at the end.
