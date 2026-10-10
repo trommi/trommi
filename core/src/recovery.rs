@@ -1582,7 +1582,8 @@ fn at_anchor(observer: &Observer, anchor: &KeyContext, group_info: &[u8]) -> Res
 /// The anchor is selected from the rows. The Commits of the room group and of every session served are
 /// followed as an observer in the hub's order, by their change numbers, each group from its founding
 /// GroupInfo: a session Commit is judged against the room state and the other sessions as they stand at its
-/// place. A room Commit that does not verify or obey section 5 is `bad-group`; a session that does not verify
+/// place. A founding that does not obey 5.1.1 and 8.1, and a room Commit that does not verify or obey
+/// section 5, is `bad-group`; a session that does not verify
 /// is named in the result and not joined. At the anchor's epoch the room walk must stand in the state of the
 /// anchor's GroupInfo, and the GroupInfo offered as current must agree with the state reached at the end, whose
 /// `TrommiRoom` must hold exactly the code's two public keys (`wrong-recovery` for each). Then the links are
@@ -1595,6 +1596,9 @@ pub fn check_room(keys: &RecoveryKeys, served: &ServedRoom<'_>) -> Result<Checke
     if observer.group() != anchor.group || observer.epoch()? != 0 {
         return Err(Error::WrongRecovery);
     }
+    // 5.1.1, 8.1: a row's `mac` says who wrote it, not that the founding it names obeys the rules.
+    let first = observer.history().ok_or(Error::Internal("room observer"))?;
+    rules::check_room_founding(first.newest()).map_err(|_| Error::BadGroup)?;
     let mut walks: Vec<Walk<'_>> = served
         .sessions
         .iter()
