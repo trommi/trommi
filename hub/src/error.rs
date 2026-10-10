@@ -30,7 +30,6 @@ pub fn status_of(code: &str) -> u16 {
         "unauthorised" | "bad-challenge" | "wrong-login" | "wrong-recovery" => 401,
         "forbidden" | "not-member" | "removed-sender" | "wrong-sender" => 403,
         "not-found" | "no-room" => 404,
-        "method-not-allowed" => 405,
         "gone" | "invite-expired" | "invite-burned" => 410,
         "epoch-taken" | "wrong-epoch" | "room-behind" | "group-behind" | "stale-session"
         | "epoch-full" | "replay" | "gap" | "equivocation" | "room-exists" | "invite-used"

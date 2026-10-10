@@ -150,7 +150,7 @@ fn counts_per_device() {
 
 #[test]
 fn devices_and_sessions_of_a_room() {
-    // 16: human devices in a room 32, enrolled agent devices 256: here with 2 and 1
+    // 16: human devices in a room 1000, enrolled agent devices 256: here with 2 and 1
     let mut w = world(&[
         ("HUB_LIMIT_HUMANS", "2"),
         ("HUB_LIMIT_AGENTS", "1"),
@@ -567,39 +567,13 @@ fn share_links_of_a_room() {
     share(now + day).refused(429, "too-many");
 }
 
-/// The limits of spec/v2.md section 16 at their real values, where a test can reach them: 32 human devices, 256
-/// agent devices, 32 live helper sessions, 20 passkeys, a 48 KiB message, a 64 MiB file, a Share link of 180 days.
+/// The limits of spec/v2.md section 16 at their real values, where a test can reach them: 256 agent devices, 32
+/// live helper sessions, 20 passkeys, a 48 KiB message, a 64 MiB file, a Share link of 180 days.
 #[test]
 fn the_defaults_at_their_exact_values() {
     let mut w = world(&[]);
     let room = w.room;
-    // 32 human devices: the founder and 31 more; the 33rd is refused
-    for _ in 0..31 {
-        w.add_human();
-    }
-    let one_more = Dev::new();
-    let (key_package, _) = invite(&w.hub, &w.ada, &one_more, 1, ZERO16);
-    let now = w.ada.room_now();
-    let out = w.ada.commit(
-        &room,
-        &Change {
-            adds: vec![key_package],
-            ..Default::default()
-        },
-        now,
-    );
-    let sealed = w.ada.sealed_key(
-        &room,
-        out.epoch + 1,
-        &out.group_info,
-        out.epoch,
-        &w.recovery.hpke_public,
-        true,
-    );
-    w.ada
-        .post_commit(&w.hub, &out, &sealed)
-        .refused(429, "too-many");
-    assert_eq!(w.ada.members(&room).len(), 32);
+    // (1000 human devices: `a_room_of_a_thousand_human_devices`)
 
     // 20 passkeys of an account
     w.ada.post(&w.hub, "/v2/account", &json!({ "email": "ada@example.org", "kit": { "auth_key": b64(&[2u8; 32]), "sealed_copy": b64(&[2u8; 61]) }, "password": { "auth_key": b64(&[3u8; 32]), "sealed_copy": b64(&[2u8; 61]), "kdf": { "alg": "argon2id", "v": 1, "m": 65536, "t": 3, "p": 1 } } })).ok();
@@ -747,4 +721,195 @@ fn expensive_requests_of_one_device() {
         taken, 4,
         "five at once, one of them was the upload of KeyPackages at the start"
     );
+}
+
+/// 16: a room holds 1000 human devices (the default of `HUB_LIMIT_HUMANS`), added one by one as invites bring
+/// them; a Commit of the room group at that size and the founding of a main session that adds all of them in one
+/// request (a JSON body above 1 MiB, within 1.5 MiB) are taken; the 1001st human leaf is `too-many`. What it
+/// weighs and what verifying a Commit at 1000 leaves costs is printed (`--nocapture`).
+#[test]
+fn a_room_of_a_thousand_human_devices() {
+    use std::time::Instant;
+    use trommi_hub::observer::{MlsObserver, Observer};
+    let mut w = world(&[
+        ("HUB_LIMIT_OPEN_INVITES", "1000"),
+        ("HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE", "100000000"),
+    ]);
+    let room = w.room;
+    let mut agent = w.enrol_agent();
+    let started = Instant::now();
+    let mut humans = vec![];
+    let add = |w: &mut World| -> (Dev, Out, Reply) {
+        let dev = Dev::new();
+        let (key_package, _) = invite(&w.hub, &w.ada, &dev, 1, ZERO16);
+        let now = w.ada.room_now();
+        let out = w.ada.commit(
+            &room,
+            &Change {
+                adds: vec![key_package],
+                ..Default::default()
+            },
+            now,
+        );
+        let sealed = w.ada.sealed_key(
+            &room,
+            out.epoch + 1,
+            &out.group_info,
+            out.epoch,
+            &w.recovery.hpke_public,
+            true,
+        );
+        let reply = w.ada.post_commit(&w.hub, &out, &sealed);
+        (dev, out, reply)
+    };
+    let mut last = None;
+    for _ in 1..1000 {
+        let (dev, out, reply) = add(&mut w);
+        reply.ok();
+        humans.push(dev);
+        last = Some(out);
+    }
+    let last = last.unwrap();
+    assert_eq!(w.ada.members(&room).len(), 1000);
+    println!(
+        "999 human devices added one by one in {:.1} s; the last Add: Commit {} B, GroupInfo {} B, Welcome {} B",
+        started.elapsed().as_secs_f64(),
+        last.commit.len(),
+        last.group_info.len(),
+        last.welcome.as_ref().map_or(0, Vec::len)
+    );
+
+    // the 1001st human leaf
+    let (_, _, refused) = add(&mut w);
+    refused.refused(429, "too-many");
+    assert_eq!(w.ada.members(&room).len(), 1000);
+
+    // an own-leaf update (a Commit with a path) at 1000 leaves: verified on the public state as the pool does it
+    let now = w.ada.room_now();
+    let update = w.ada.commit(&room, &Change::default(), now);
+    let obs = MlsObserver::default();
+    let t = Instant::now();
+    let (state, before, _) = obs.open(&last.group_info).unwrap();
+    let open = t.elapsed();
+    assert_eq!(before.leaves.len(), 1000);
+    let t = Instant::now();
+    let (_, facts) = obs.commit(&state, &update.commit).unwrap();
+    let verify = t.elapsed();
+    let t = Instant::now();
+    obs.check_group_info(&update.group_info, &facts.after, &w.ada.id())
+        .unwrap();
+    let check = t.elapsed();
+    let sealed = w.ada.sealed_key(
+        &room,
+        update.epoch + 1,
+        &update.group_info,
+        update.epoch,
+        &w.recovery.hpke_public,
+        true,
+    );
+    let t = Instant::now();
+    w.ada.post_commit(&w.hub, &update, &sealed).ok();
+    let posted = t.elapsed();
+    println!(
+        "at 1000 leaves: public state {} B; opening a GroupInfo {} ms; an update Commit of {} B verified in {} ms, its \
+         GroupInfo ({} B) checked in {} ms; the whole request {} ms",
+        state.0.len(),
+        open.as_millis(),
+        update.commit.len(),
+        verify.as_millis(),
+        update.group_info.len(),
+        check.as_millis(),
+        posted.as_millis()
+    );
+
+    // the founding of a main session with every human device and the agent device: one claim, one request
+    for dev in &mut humans {
+        dev.sign_in(&w.hub, &room).ok();
+        dev.upload_key_packages(&w.hub, 1).ok();
+    }
+    let mut named: Vec<[u8; 32]> = humans.iter().map(Dev::id).collect();
+    named.push(agent.id());
+    let t = Instant::now();
+    let adds = w.claim(&w.ada, &named);
+    let claimed = t.elapsed();
+    let session: [u8; 16] = random();
+    let (group, info0) = w.ada.create_session(&session, &ZERO16);
+    let now = w.ada.room_now();
+    let key0 = w
+        .ada
+        .sealed_key(&group, 0, &info0, now.0, &w.recovery.hpke_public, true);
+    let out = w.ada.commit(
+        &group,
+        &Change {
+            adds,
+            ..Default::default()
+        },
+        now,
+    );
+    let key1 = w.ada.sealed_key(
+        &group,
+        1,
+        &out.group_info,
+        now.0,
+        &w.recovery.hpke_public,
+        true,
+    );
+    let body = founding_json(&info0, &key0, &out, &key1);
+    let json_bytes = body.to_string().len();
+    let parts = info0.len()
+        + out.commit.len()
+        + out.group_info.len()
+        + out.welcome.as_ref().map_or(0, Vec::len);
+    assert!(
+        json_bytes > 1 << 20 && json_bytes <= 3 << 19,
+        "{json_bytes}"
+    );
+    assert!(parts <= 1 << 20, "{parts}");
+    let t = Instant::now();
+    w.ada.post(&w.hub, "/v2/groups", &body).ok();
+    println!(
+        "founding at 1000 human devices + 1 agent device: claim of {} KeyPackages {} ms; Commit {} B, GroupInfo {} B, \
+         Welcome {} B, {} B of the 1 MiB, {} B as JSON; taken in {} ms",
+        named.len(),
+        claimed.as_millis(),
+        out.commit.len(),
+        out.group_info.len(),
+        out.welcome.as_ref().map_or(0, Vec::len),
+        parts,
+        json_bytes,
+        t.elapsed().as_millis()
+    );
+    w.ada.merge(&group);
+    let listed = w
+        .ada
+        .get(&w.hub, &format!("/v2/rooms/{}/groups", b64(&room)))
+        .ok();
+    assert!(listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|g| g["group_id"] == b64(&group) && g["leaves"].as_array().unwrap().len() == 1001));
+    let _ = &mut agent;
+}
+
+/// One claim names at most 1024 devices (every leaf a group can have): 1024 are read (here devices without
+/// KeyPackages: `not-found`), 1025 are not (`bad-format`).
+#[test]
+fn a_claim_names_at_most_1024_devices() {
+    let w = world(&[]);
+    let ids = |n: usize| -> Vec<String> { (0..n).map(|_| b64(&random::<32>())).collect() };
+    w.ada
+        .post(
+            &w.hub,
+            "/v2/key-packages/claim",
+            &json!({ "devices": ids(1024) }),
+        )
+        .refused(404, "not-found");
+    w.ada
+        .post(
+            &w.hub,
+            "/v2/key-packages/claim",
+            &json!({ "devices": ids(1025) }),
+        )
+        .refused(400, "bad-format");
 }

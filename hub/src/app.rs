@@ -124,7 +124,9 @@ impl App {
         let limits = Limits {
             envelopes: Buckets::new(cfg.envelopes_per_second, cfg.envelope_burst),
             pieces: Window::new(cfg.pieces_per_second as usize, 1000),
-            claims: Buckets::new(2.0, 200.0),
+            // a KeyPackage per named device: one founding at 1000 human devices fits twice in a burst, and the
+            // bucket fills again within 16 s, as one of 32 devices did at two a second
+            claims: Buckets::new(64.0, 2048.0),
             open_requests: Buckets::new(
                 cfg.open_requests_per_ip_minute / 60.0,
                 cfg.open_requests_per_ip_minute,
