@@ -30,6 +30,8 @@ public struct RoomRecord: Codable {
   public var deviceRegisterSent: Bool
   /** What is left to do for what was written before this device came (RoomPast.swift); nil: nothing. */
   public var past: PastWork? = nil
+  /** A sign-in with the recovery code has session groups left to join (RoomAccount.swift `finishCodeJoin`); nil: none. */
+  public var codeJoin: Bool? = nil
 }
 
 /** `beforeJoining`: envelopes of an epoch before this device came into their group, which it cannot take until it learned that group's past (RoomPast.swift): passed over. */
@@ -352,6 +354,7 @@ public final class Room {
     _ = await restoring?.value
     var change = Change()
     try await takeWelcomes(&change)
+    await finishCodeJoin()
     try await readChanges(&report, &change)
     // (what was written before this device came is upkeep too: what is left of it is noted and goes on next time)
     try? await tendPast(&report, &change)

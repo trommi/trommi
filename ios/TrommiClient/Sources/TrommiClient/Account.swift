@@ -487,13 +487,22 @@ extension Room {
    * (`accountStatus`).
    */
   private static func loginAnswer(_ r: JSON, hubURL: String, base: URL, open: (RoomId, Bytes) throws -> Bytes) async throws -> (outcome: LoginOutcome, room: Room) {
+    let first = try loginRoom(r)
+    let code = try open(first.room, first.sealed)
+    let joined = try await joinWithRecoveryCode(hubURL: hubURL, roomId: hex(first.room), code: code, base: base, challenge: first.challenge)
+    return (.joined(joined), joined)
+  }
+  /** The first room of a login answer: its id, the sealed copy of its code, and a sign-in challenge if one came. */
+  private static func loginRoom(_ r: JSON) throws -> (room: RoomId, sealed: Bytes, challenge: Bytes?) {
     guard let first = (r["rooms"] as? [JSON])?.first,
           let room = (first["room_id"] as? String).flatMap({ try? unb64u($0) }), room.count == 32,
           let sealed = (first["sealed_copy"] as? String).flatMap({ try? unb64u($0) }) else { throw TrommiError("bad-format", "the login answer") }
-    let code = try open(room, sealed)
-    let challenge = (first["challenge"] as? String).flatMap { try? unb64u($0) }
-    let joined = try await joinWithRecoveryCode(hubURL: hubURL, roomId: hex(room), code: code, base: base, challenge: challenge)
-    return (.joined(joined), joined)
+    return (room, sealed, (first["challenge"] as? String).flatMap { try? unb64u($0) })
+  }
+  /** Asks the hub for the kit's copy of the code (POST /v2/account/recover). One error for an unknown name and wrong words. */
+  private static func kitLogin(hubURL: String, name: AccountName, keys: PasswordKeys) async throws -> JSON {
+    do { return try await HubClient(hubURL: try Core.tools.canonicalHub(hubURL)).request("POST", "/account/recover", body: ["account": name.wire, "auth_key": keys.authKey], auth: false) }
+    catch let h as HubError where h.code == "wrong-recovery" { throw TrommiError("wrong-recovery", "the account's name or the recovery words are wrong") }
   }
 
   /**
@@ -511,9 +520,7 @@ extension Room {
     if case .email(let e) = name, let p = newPassword { try tools.checkPassword(p); next = (e, p) }
     let kit = try tools.parseKitWords(words)
     let keys = try tools.kitKeysFor(name, words: kit)
-    let r: JSON
-    do { r = try await HubClient(hubURL: try tools.canonicalHub(hubURL)).request("POST", "/account/recover", body: ["account": name.wire, "auth_key": keys.authKey], auth: false) }
-    catch let h as HubError where h.code == "wrong-recovery" { throw TrommiError("wrong-recovery", "the account's name or the recovery words are wrong") }
+    let r = try await kitLogin(hubURL: hubURL, name: name, keys: keys)
     // The code is needed once more after the join, to seal it under the new password: it is kept for this call only.
     var code = Bytes()
     let room = try await loginAnswer(r, hubURL: hubURL, base: base) { room, sealed in
@@ -526,6 +533,57 @@ extension Room {
     body["revision"] = st.revision
     try await room.hub.request("PUT", "/account/password", body: body)
     return room
+  }
+
+  /**
+   * When every device is lost (spec/v2.md 8.7): the Emergency Kit's words open the account as in `resetPassword`,
+   * but this device does not come in beside the others: it removes every other device of the person from the room
+   * and every session, and replaces the recovery code, so that a lost device and the old kit open nothing new. The
+   * hub applies all of it at once or nothing. The request carries the account's new copies of the new code: one
+   * under a new Emergency Kit, and one under a way in set anew, since none was used just now: `newPassword` for an
+   * account with an e-mail, a passkey (`makePasskey`: the system's step) for an account without one. Every other
+   * way in is removed and set up again by the person.
+   *
+   * `confirm` is asked with how many devices will be removed, after the room was checked and before anything is
+   * posted that changes it; false ends it with `cancelled`. Returns the room, the new kit (to be shown once: the
+   * old one opens nothing any more) and how many devices were removed. Any failure leaves nothing on this device
+   * and the room as it was. `not-built` for an account without an e-mail when no `makePasskey` is given.
+   */
+  public static func recoverAccount(hubURL: String, account: String, words: String, newPassword: String?, base: URL = Store.defaultBase(),
+                                    makePasskey: ((PasskeyRequest) async throws -> PasskeyMade)? = nil,
+                                    confirm: @escaping (Int) async -> Bool) async throws -> (room: Room, kit: EmergencyKit, removed: Int) {
+    let tools = Core.tools
+    let name = try accountName(account)
+    var password: PasswordKeys?
+    switch name {
+    case .email(let e):
+      guard let p = newPassword else { throw TrommiError("weak-password", "a recovery sets a new password") }
+      try tools.checkPassword(p)
+      password = try tools.passwordKeys(email: e, password: p, kdf: nil)
+    case .id:
+      guard makePasskey != nil else { throw TrommiError("not-built", "the recovery of an account without an e-mail sets a new passkey") }
+    }
+    let keys = try tools.kitKeysFor(name, words: try tools.parseKitWords(words))
+    let first = try loginRoom(try await kitLogin(hubURL: hubURL, name: name, keys: keys))
+    let room = first.room
+    let code = try tools.openCode(first.sealed, room: room, way: .kit(wrapKey: keys.wrapKey))
+    // (the new kit is salted as the one that just opened: with the e-mail, or with the account id)
+    let newWords = try tools.generateKitWords()
+    let newKit = try tools.kitKeysFor(name, words: newWords)
+    let done = try await recoverWithCode(hubURL: hubURL, roomId: hex(room), code: code, base: base, challenge: first.challenge, confirm: { await confirm($0.count) }) { hub, next in
+      if let password = password { return try newCopies(kit: newKit, way: ["password": try passwordPart(password, room: room, code: next)], room: room, code: next) }
+      // A passkey made anew, on the account's challenge, which the recovery key may ask for before the end.
+      let c = try await hub.request("POST", "/account/passkeys/challenge", body: [:])
+      guard let make = makePasskey, let handle = (c["user_handle"] as? String).flatMap({ try? unb64u($0) }), handle.count == 16 else { throw TrommiError("bad-format", "the hub's passkey challenge names no account") }
+      let made = try await make(PasskeyRequest(challenge: try passkeyChallenge(c), userHandle: handle, email: "", accountId: c["account"] as? String ?? "", existing: []))
+      guard made.prf.count == 32 else { throw TrommiError("no-prf", "this passkey gives no key") }
+      return try newCopies(kit: newKit, way: ["passkey": try passkeyPart(made, room: room, code: next)], room: room, code: next)
+    }
+    // (the account's id and e-mail for the kit's sheet: the device that is in now asks for them)
+    let st = try? await done.room.accountStatus()
+    var email = st?.email ?? ""
+    if email.isEmpty, case .email(let e) = name { email = e }
+    return (done.room, EmergencyKit(words: newWords, email: email, accountId: st?.accountId ?? ""), done.removed.count)
   }
 }
 
