@@ -1,0 +1,14 @@
+# Cloudflare static assets headers (also read by dev/serve.mjs). The site asks nothing of another origin: one
+# stylesheet, one script (theme.js, the light/dark switch), the icon and fonts from here, no inline style or script
+# (inline SVG carries attributes only). Nothing may frame it, and its files are for its own pages only.
+# Strict-Transport-Security is not set here: the zone sets it for trommi.com and every name under it.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+  Permissions-Policy: camera=(), geolocation=(), microphone=()
+/fonts/*
+  Cache-Control: public, max-age=604800
