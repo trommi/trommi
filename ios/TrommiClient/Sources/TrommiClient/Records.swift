@@ -8,23 +8,58 @@
 //   attachment_id        a body's `file_id` (base64url there, lower-case hex here), likewise poster_attachment_id
 //   values               a register is one name per envelope: { name, value, lamport } becomes { values: { name: value } }
 //   scribble_snapshot/…  the register board_snapshot/<board>
+//   stroke_ids, board units  a board item's `shape_ids` and whole 1/16 units (`boardItem`, at the end of this file)
 //   goals/<session>      the register `goals` of a session group
 //   published            an Artifact; released_until is shared_until
 import Foundation
 
 enum Records {
-  static let scopeNames = [TIMELINE_SCOPE.CARD: "card", TIMELINE_SCOPE.SESSION: "session", TIMELINE_SCOPE.DESK: "desk"]
-  static let typeNames = [OBJECT_TYPE.CARD: "card", OBJECT_TYPE.NOTE: "note", OBJECT_TYPE.REQUEST: "request", OBJECT_TYPE.ARTIFACT: "published"]
+  static let typeNames: [ObjectType: String] = [.card: "card", .note: "note", .request: "request", .artifact: "published"]
 
-  /** The record of a received envelope. `sessionId`: the session of its group (nil: the room group). */
-  static func record(_ e: ReceivedEnvelope, change: UInt64, sessionId: String?) -> Rec? {
+  /** The header's kind as the number of spec/v2.md section 9, which the model keeps (Wire.swift `KIND`). */
+  static func kindNumber(_ kind: EnvelopeKind) -> Int {
+    switch kind {
+    case .item: return KIND.TIMELINE_ITEM
+    case .version: return KIND.OBJECT_VERSION
+    case .answer: return KIND.ANSWER
+    case .request: return KIND.PERMISSION_REQUEST
+    case .verdict: return KIND.VERDICT
+    case .register: return KIND.STATUS
+    case .takeBack: return KIND.DECIDE_AGAIN
+    case .reserved(let n): return Int(n)
+    }
+  }
+  /** The model's name of a timeline: its kind and "<scope>/<hex id>". */
+  static func timeline(_ t: TimelineRef) -> (kind: String, id: String) {
+    switch t {
+    case .sessionChat(let s): return ("chat", "session/\(hex(s))")
+    case .cardChat(let c): return ("chat", "card/\(hex(c))")
+    case .board(let b): return ("scribble", "desk/\(hex(b))")
+    }
+  }
+  static func stateNumber(_ s: ObjectState) -> Int { s == .open ? CARD_STATE.OPEN : s == .answered ? CARD_STATE.ANSWERED : CARD_STATE.CLOSED }
+
+  /**
+   * The record of a received envelope that took its place: applied, provisional, or chained with a body that did
+   * not open (which still counts for its object's state, 9.2.1). `senderRole`: "human" or "agent", as the room
+   * names that device. nil for an outcome that shows nothing (refused, void, chained by check 7 or 8).
+   */
+  static func record(_ e: ReceivedEnvelope, senderRole: String) -> Rec? {
     let h = e.header
     let sender = hex(h.sender)
+    let sessionId = h.sessionId.map(hex)
     var content: JV? = nil
     var state: String
-    switch e.standing {
-    case .accepted, .provisional: state = e.payload == nil ? "header" : "ok"
-    case .notApplied(let code): state = code == "pruned" ? "pruned" : "undecryptable"
+    switch e.outcome {
+    case .applied, .provisional: state = e.payload == nil ? "header" : "ok"
+    case .chained:
+      switch e.code {
+      case "pruned": state = "pruned"
+      case "newer-version": state = "newer_schema"
+      case "no-key", "decrypt-failed", "too-large", "bad-format": state = "undecryptable"
+      default: return nil
+      }
+    case .void, .refused: return nil
     }
     if let payload = e.payload, state == "ok" {
       let d = decodePayload(payload, header: h)
@@ -33,26 +68,22 @@ enum Records {
     if let c = content { content = fromWire(c, header: h, sessionId: sessionId) }
     var bind: DecodedBind? = nil
     switch e.bind {
-    case .none: break
+    case nil: break
     case let .answer(o, vh, choices): bind = .answer(cardId: hex(o), versionHash: hex(vh), choices: choices)
     case let .takeBack(o, prev, vh): bind = .decideAgain(cardId: hex(o), previousHash: hex(prev), versionHash: hex(vh))
     case let .request(r, exp): bind = .permissionRequest(requestId: hex(r), expiresAt: exp)
     case let .verdict(r, rh, exp, allow): bind = .verdict(requestId: hex(r), requestHash: hex(rh), expiresAt: exp, allow: allow)
     }
-    var timelineKind: String? = nil, timelineId: String? = nil
-    if let k = h.timelineKind, let scope = h.timelineScope, let ref = h.timelineRef {
-      timelineKind = TIMELINE_KIND_NAME[k] ?? String(k)
-      timelineId = "\(scopeNames[scope] ?? String(scope))/\(hex(ref))"
-    }
+    let t = h.timeline.map(timeline)
     let lam = lamportOf(content)
-    var rec = Rec(envelopeNumber: Int(change), envelopeHash: hex(e.hash), senderDeviceId: sender, senderRole: e.senderRole == ROLE.HUMAN ? "human" : "agent",
-                  recipientDeviceId: h.recipient.map(hex), sentAt: h.time, kind: h.kind, isHead: true,
-                  object: h.objectId.map { ObjectHead(objectId: hex($0), objectState: h.objectState ?? CARD_STATE.OPEN, urgency: h.urgency ?? 1, answeredAt: h.answeredAt ?? 0) },
-                  timelineKind: timelineKind, timelineId: timelineId, sessionId: sessionId, attachmentIds: h.fileIds.map(hex), content: content, contentState: state,
+    var rec = Rec(envelopeNumber: Int(e.change), envelopeHash: hex(e.hash), senderDeviceId: sender, senderRole: senderRole,
+                  recipientDeviceId: h.recipient.map(hex), sentAt: h.time, kind: kindNumber(h.kind), isHead: true,
+                  object: h.object.map { ObjectHead(objectId: hex($0.objectId), objectState: stateNumber($0.state), urgency: $0.urgency.rawValue, answeredAt: $0.answeredAt) },
+                  timelineKind: t?.kind, timelineId: t?.id, sessionId: sessionId, attachmentIds: h.fileIds.map(hex), content: content, contentState: state,
                   bind: bind, causal: Causal(senderDeviceId: sender, senderSequence: h.seq, sentAt: h.time, lamport: lam), senderSequence: h.seq, epoch: Int(h.epoch))
     // The core derived and checked the object id of a first version (9.2.1): the board need not doubt it.
-    if rec.object != nil && (rec.kind == KIND.OBJECT_VERSION || rec.kind == KIND.PERMISSION_REQUEST) { rec.objectIdOk = true }
-    rec.pending = e.standing == .provisional
+    if rec.object != nil && (h.kind == .version || h.kind == .request) { rec.objectIdOk = true }
+    rec.pending = e.outcome == .provisional
     return rec
   }
 
@@ -106,17 +137,22 @@ enum Records {
   static func fromWire(_ c: JV, header h: EnvelopeHeader, sessionId: String?) -> JV {
     var c = renameFiles(c, toWire: false, depth: 0)
     switch h.kind {
-    case KIND.STATUS:
+    case .register:
       guard var name = c["name"].string.map({ registerName($0, toWire: false) }) else { return c }
-      if name.hasPrefix("board_snapshot/") { name = "scribble_snapshot/desk/\(name.dropFirst("board_snapshot/".count))" }
+      if name.hasPrefix("board_snapshot/") {
+        // (the board is base64url in the register's name, hex in the model's timeline id)
+        let id = String(name.dropFirst("board_snapshot/".count))
+        name = "scribble_snapshot/desk/\((try? unb64u(id)).flatMap { $0.count == 16 ? hex($0) : nil } ?? id)"
+      }
       if name == "goals", let sid = sessionId { name = "goals/\(sid)" }
       var out: [String: JV] = ["values": .obj([name: c["value"]])]
       if let l = c.object?["lamport"] { out["lamport"] = l }
       return .obj(out)
-    case KIND.OBJECT_VERSION:
-      if let t = h.objectType, let name = typeNames[t] { c = c.with("object_type", .str(name)) }
-      if h.objectType == OBJECT_TYPE.ARTIFACT, c.has("shared_until") { c = c.with("released_until", c["shared_until"]) }
+    case .version:
+      if let t = h.object?.type, let name = typeNames[t] { c = c.with("object_type", .str(name)) }
+      if h.object?.type == .artifact, c.has("shared_until") { c = c.with("released_until", c["shared_until"]) }
       return c
+    case .item where h.timeline.map({ if case .board = $0 { return true }; return false }) == true: return boardItem(c, toWire: false)
     default: return c
     }
   }
@@ -156,11 +192,103 @@ enum Records {
     return "device/" + (toWire ? b64u(bytes) : hex(bytes))
   }
 
-  /** The file ids a body names, for the signed header. */
+  /** The file ids a body names, for the signed header: a body's attachments, and the pictures of a board item. */
   static func fileIds(_ wire: JV) -> [FileId] {
     var out = [FileId]()
-    for a in wire["attachments"].array ?? [] { for k in ["file_id", "poster_file_id"] { if let id = a[k].string, let b = try? unb64u(id), !out.contains(b) { out.append(b) } } }
+    let refs = (wire["attachments"].array ?? []) + (wire["strokes"].array ?? []).map { $0["attachment"] }
+    for a in refs { for k in ["file_id", "poster_file_id"] { if let id = a[k].string, let b = try? unb64u(id), !out.contains(b) { out.append(b) } } }
     return out
+  }
+
+  // ---- the Scribble Board's bodies (spec/v2.md 10.5) ---------------------------------------------------------
+  //
+  // The views and `CanvasState` (Canvas.swift) keep the model they had: positions and lengths in board units with
+  // fractions, shape ids "<sender in hex>/<number>/<index>", `stroke_ids`, a picture's size and type beside its
+  // attachment. On the wire (10.5) every position and length is a whole number of 1/16 unit, an id names its
+  // sender in base64url, the list is `shape_ids`, a stroke carries no transform, and a picture is `rect` and
+  // `attachment` alone. These two functions are the one place where the two meet.
+
+  private static let lengths: Set<String> = ["width", "size", "wrap"]
+  /** A length or position in the other form: board units ↔ whole 1/16 units (kept within 32 bits). */
+  private static func q(_ v: JV, toWire: Bool) -> JV {
+    guard let d = v.double, d.isFinite else { return v }
+    return .num(toWire ? max(-2_147_483_648, min(2_147_483_647, InkWire.jsRound(d * InkWire.Q))) : d / InkWire.Q)
+  }
+  /** A shape id in the other form: its sender is hex in the model, base64url on the wire. */
+  static func shapeId(_ id: String, toWire: Bool) -> String {
+    let parts = id.split(separator: "/", omittingEmptySubsequences: false)
+    guard parts.count == 3, let sender = toWire ? (try? unhex(String(parts[0]))) : (try? unb64u(String(parts[0]))), sender.count == 32 else { return id }
+    return "\(toWire ? b64u(sender) : hex(sender))/\(parts[1])/\(parts[2])"
+  }
+  /** One shape of a `strokes` item or of a snapshot. To the wire: a transform is applied to the points and left out. */
+  static func boardShape(_ entry: JV, toWire: Bool) -> JV {
+    guard var e = entry.object, let tool = e["tool"]?.string else { return entry }
+    if toWire, InkWire.STROKE_TOOLS.contains(tool), let m = e["transform"]?.array?.compactMap({ $0.double }), let ink = InkWire.unpack(e["points"]?.string) {
+      let baked = InkWire.bake(ink, m)
+      e["points"] = .str(InkWire.pack(baked.ink))
+      if let w = e["width"]?.double { e["width"] = .num(w * baked.scale) }
+    }
+    for k in lengths { if let v = e[k] { e[k] = q(v, toWire: toWire) } }
+    for k in ["at", "rect"] { if let a = e[k]?.array { e[k] = .arr(a.map { q($0, toWire: toWire) }) } }
+    if toWire {
+      if let w = e["width"]?.double { e["width"] = .num(max(1, min(16_000, w))) }
+      if let z = e["z"]?.double { e["z"] = .num(InkWire.jsRound(z)) }
+      // What the model keeps beside a picture's attachment is the attachment's own on the wire.
+      for k in ["transform", "continues", "nw", "nh", "mime", "name", "by"] { e.removeValue(forKey: k) }
+      if tool == "image", var a = e["attachment"]?.object {
+        if a["file_name"] == nil { a["file_name"] = entry["name"].string.map { .str($0) } ?? "picture" }
+        if a["media_type"] == nil { a["media_type"] = entry["mime"].string.map { .str($0) } ?? "image/png" }
+        if a["width"] == nil, let w = entry["nw"].int, w > 0 { a["width"] = .n(w) }
+        if a["height"] == nil, let h = entry["nh"].int, h > 0 { a["height"] = .n(h) }
+        e["attachment"] = .obj(a)
+      }
+    } else if tool == "image" {
+      let a = e["attachment"] ?? .null
+      if let w = a["width"].double { e["nw"] = .num(w) }
+      if let h = a["height"].double { e["nh"] = .num(h) }
+      if let m = a["media_type"].string { e["mime"] = .str(m) }
+      if let n = a["file_name"].string { e["name"] = .str(n) }
+    }
+    return .obj(e)
+  }
+  /** A board item's body between the model and the wire. A body that is no board item is returned as it is. */
+  static func boardItem(_ content: JV, toWire: Bool) -> JV {
+    guard var c = content.object else { return content }
+    switch c["content_type"]?.string {
+    case "strokes":
+      // (a piece that continues a stroke is not a shape of 10.5: it is not written)
+      let list = (c["strokes"]?.array ?? []).filter { !toWire || $0["continues"].isNull }
+      c["strokes"] = .arr(list.map { boardShape($0, toWire: toWire) })
+    case "erase", "send_away", "move":
+      let (from, to) = toWire ? ("stroke_ids", "shape_ids") : ("shape_ids", "stroke_ids")
+      if let ids = c.removeValue(forKey: from)?.array { c[to] = .arr(ids.map { $0.string.map { .str(shapeId($0, toWire: toWire)) } ?? $0 }) }
+      if let off = c["offset"]?.array { c["offset"] = .arr(off.map { q($0, toWire: toWire) }) }
+    default: break
+    }
+    return .obj(c)
+  }
+  /**
+   * A snapshot file of 10.8 (`{ v: 3, shapes, frontier, gone, moved }`, decompressed) as `CanvasState.load` takes
+   * it: the shapes in the model's form with `id` and `by`, the frontier and the ids by hex. nil for a `v` this
+   * version does not read (above 3: needs a newer Trommi) or a file that is no such object.
+   */
+  static func boardSnapshot(_ file: JV) -> JV? {
+    guard file.object != nil, let v = file["v"].int, v == 3 else { return nil }
+    let shapes: [JV] = (file["shapes"].array ?? []).compactMap { e in
+      guard let id = e["id"].string.map({ shapeId($0, toWire: false) }) else { return nil }
+      return boardShape(renameFiles(e, toWire: false, depth: 0), toWire: false).with("id", .str(id)).with("by", .str(String(id.prefix { $0 != "/" })))
+    }
+    var frontier = [String: JV]()
+    for (writer, head) in file["frontier"].object ?? [:] {
+      guard let w = try? unb64u(writer), w.count == 32, let seq = head[0].int else { continue }
+      frontier[hex(w)] = .arr([.n(seq), (head[1].string.flatMap { try? unb64u($0) }).map { .str(hex($0)) } ?? .null])
+    }
+    let gone = (file["gone"].array ?? []).compactMap { $0.string.map { JV.str(shapeId($0, toWire: false)) } }
+    let moved: [JV] = (file["moved"].array ?? []).compactMap { m in
+      guard let id = m[0].string else { return nil }
+      return .arr([.str(shapeId(id, toWire: false)), q(m[1], toWire: false), q(m[2], toWire: false)])
+    }
+    return .obj(["v": 3, "shapes": .arr(shapes), "frontier": .obj(frontier), "gone": .arr(gone), "moved": .arr(moved)])
   }
 
   /** One step of a work trail (an MLS message, 7.3) as the chat item the trail has always been folded from (Work.swift). */
