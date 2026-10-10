@@ -204,6 +204,179 @@ fn check_4_ends_a_removed_senders_chain_at_its_cut() {
     assert_ne!(first.hash(), second.hash);
 }
 
+/// Device 2 writes two envelopes, signs a third that the remover never accepts, and is removed with its Cut
+/// at number 2. Returns the Cut and the third envelope.
+fn removed_at_two(world: &mut World) -> (Head, trommi_core::envelope::Sealed) {
+    world.post(2, session(), &chat("one"));
+    let second = world.post(2, session(), &chat("two"));
+    let third = world.sign(2, session(), &chat("three, signed and held back"));
+    world.fake.commit(&session(), NOW, NOW, |leaves| {
+        leaves.remove(&device(2));
+    });
+    let cut = Head {
+        seq: 2,
+        hash: second.hash(),
+    };
+    world.fake.group(&session()).cuts.insert(device(2), cut);
+    (cut, third)
+}
+
+/// The Commit that adds device 2's key to the session again: the chain it signs goes on from `cut`.
+fn added_again(world: &mut World, cut: Head) -> u64 {
+    world.fake.commit(&session(), NOW, NOW, |leaves| {
+        leaves.insert(device(2), Role::Human);
+    });
+    let epoch = world.fake.processed_epoch(&session()).unwrap().unwrap();
+    world.fake.group(&session()).again.insert(device(2), epoch);
+    world.own.insert((session(), 2), cut);
+    epoch
+}
+
+#[test]
+fn a_key_added_again_goes_on_from_its_cut() {
+    // Three receivers with the same past: a device in the hub's order, the hub, and a device reading back.
+    let back = || {
+        let mut world = World::new();
+        let (cut, _) = removed_at_two(&mut world);
+        // Out of the group it seals nothing: no leaf. Its Cut alone would refuse it too.
+        assert_eq!(
+            world.seal_next(2, session(), &chat("while out")).err(),
+            Some(Error::NotMember)
+        );
+        assert_eq!(added_again(&mut world, cut), 2);
+        (world, cut)
+    };
+    let (mut world, cut) = back();
+
+    // The sender goes on: the next number is the Cut's plus one, and `prev` the Cut's hash.
+    let next = world.seal_next(2, session(), &chat("back")).unwrap();
+    let header = &next.envelope.header;
+    assert_eq!((header.seq, header.prev, header.epoch), (3, cut.hash, 2));
+    // Every receiver takes it, in the hub's order and reading back, and the hub does.
+    let (mut hub, _) = back();
+    hub.fake.hub = true;
+    assert!(hub.hub_take(2, &next.envelope).is_ok());
+    let (mut reader, _) = back();
+    let read = reader
+        .take_as(
+            &next.envelope.encode().unwrap(),
+            &Served::Stored,
+            Mode::ReadingBack,
+        )
+        .unwrap();
+    assert_eq!(read.advance().prev, cut);
+    let receipt = world.take(&next.envelope).unwrap();
+    assert!(taken(&receipt).is_ok());
+    assert_eq!(world.chains(&session()).head(&device(2)).seq, 3);
+
+    // A chain that does not go on from the Cut does not link: another number, or another `prev`.
+    world.own.insert((session(), 2), Head::START);
+    let restart = world.sign(2, session(), &chat("from number one again"));
+    assert!(matches!(
+        world.take(&restart.envelope).err(),
+        Some(Error::Replay | Error::Equivocation)
+    ));
+}
+
+#[test]
+fn what_a_key_signed_before_it_was_a_leaf_again_stays_beyond_its_cut() {
+    let mut world = World::new();
+    let (cut, held_back) = removed_at_two(&mut world);
+    let mut hub = World::new();
+    removed_at_two(&mut hub);
+    hub.fake.hub = true;
+    // While it is out, the envelope it signed as a leaf is refused by everyone.
+    assert_eq!(
+        world.take(&held_back.envelope).err(),
+        Some(Error::RemovedSender)
+    );
+    let again = added_again(&mut world, cut);
+    added_again(&mut hub, cut);
+
+    // Added again, the device replays what it had signed for the epoch before its removal: number 3, the
+    // right `prev`, a signature that verifies, a leaf of that epoch. The Cut stands for that epoch for ever.
+    assert_eq!(
+        (
+            held_back.envelope.header.seq,
+            held_back.envelope.header.prev
+        ),
+        (3, cut.hash)
+    );
+    for mode in [Mode::InOrder, Mode::ReadingBack] {
+        assert_eq!(
+            world
+                .take_as(&held_back.envelope.encode().unwrap(), &Served::Stored, mode)
+                .err(),
+            Some(Error::RemovedSender)
+        );
+    }
+    assert_eq!(
+        hub.hub_take(2, &held_back.envelope).err(),
+        Some(Error::RemovedSender)
+    );
+    // It signs a new one now and dates it into an epoch before the one that added it again: into the
+    // epoch it was a leaf of (beyond the Cut) or the one it was out of (no leaf).
+    for (epoch, refusal) in [(0, Error::RemovedSender), (1, Error::NotMember)] {
+        assert!(epoch < again);
+        world.own.insert((session(), 2), cut);
+        let backdated = world.sign_in_epoch(2, session(), epoch, &chat("dated back"));
+        assert_eq!(
+            world
+                .take_as(
+                    &backdated.envelope.encode().unwrap(),
+                    &Served::Stored,
+                    Mode::ReadingBack
+                )
+                .err(),
+            Some(refusal)
+        );
+    }
+    // Nothing of that moved the chain: its real next envelope is taken.
+    world.own.insert((session(), 2), cut);
+    let next = world.sign(2, session(), &chat("back"));
+    assert!(world.take(&next.envelope).is_ok());
+
+    // Removed a second time, its chain ends at the new Cut, also for the epochs it was back in: an envelope
+    // it signed there and a hub held back is refused.
+    let late = world.sign(2, session(), &chat("signed while back, held back"));
+    assert_eq!(late.envelope.header.epoch, again);
+    world.fake.commit(&session(), NOW, NOW, |leaves| {
+        leaves.remove(&device(2));
+    });
+    let second_cut = Head {
+        seq: 3,
+        hash: next.hash,
+    };
+    let group = world.fake.group(&session());
+    group.cuts.insert(device(2), second_cut);
+    group.again.remove(&device(2));
+    assert_eq!(world.take(&late.envelope).err(), Some(Error::RemovedSender));
+}
+
+#[test]
+fn a_key_is_added_again_only_if_nothing_of_it_is_held_beyond_its_cut() {
+    let cut = Head {
+        seq: 2,
+        hash: Hash32::new([2; 32]),
+    };
+    let at = |seq, byte| Head {
+        seq,
+        hash: Hash32::new([byte; 32]),
+    };
+    // Less than the Cut, or exactly the Cut: the chain can go on from it.
+    assert_eq!(check_added_again(&Head::START, &cut), Ok(()));
+    assert_eq!(check_added_again(&at(1, 1), &cut), Ok(()));
+    assert_eq!(check_added_again(&cut, &cut), Ok(()));
+    // An envelope beyond it, or another one under its number: the number after the Cut is taken, or the
+    // Cut does not name this chain.
+    assert_eq!(check_added_again(&at(3, 3), &cut), Err(Error::BadCommit));
+    assert_eq!(check_added_again(&at(2, 9), &cut), Err(Error::BadCommit));
+    assert_eq!(
+        check_added_again(&at(1, 1), &Head::START),
+        Err(Error::BadCommit)
+    );
+}
+
 #[test]
 fn check_4_finds_another_envelope_at_the_cut() {
     let mut world = World::new();
@@ -1595,4 +1768,99 @@ fn a_register_and_a_reserved_kind_change_no_object() {
         }
     ));
     assert!(receipt.opened().is_some());
+}
+
+#[test]
+fn a_cut_at_a_frontiers_number_moves_the_frontier_to_the_cut() {
+    let mut writer = World::new();
+    let one = writer.post(2, room(), &stroke());
+    let two = writer.post(2, room(), &stroke());
+    // A chain that began at a frontier naming another envelope under number 2 than the chain holds.
+    let wrong = Head {
+        seq: 2,
+        hash: Hash32::new([9; 32]),
+    };
+    let mut reader = World::new();
+    let mut chains = Chains::new();
+    chains.start_at(device(2), wrong).unwrap();
+    // The device is removed, and its Cut names the chain's own envelope under that number.
+    let cut = Head {
+        seq: 2,
+        hash: two.hash(),
+    };
+    let effect = cut_chain(&reader.fake, &chains, &room(), &device(2), &cut).unwrap();
+    assert_eq!(effect.finding, Some(Error::Equivocation));
+    chains.apply_cut(&effect);
+    assert_eq!(chains.head(&device(2)), cut);
+    // The frontier is the Cut now: what is read from number 1 leads there.
+    assert_eq!(chains.started_at(&device(2)), Some(cut));
+    let stored = chains.to_bytes().unwrap();
+    assert_eq!(Chains::from_bytes(&stored).unwrap(), chains);
+    reader.fake.commit(&room(), NOW, NOW, |leaves| {
+        leaves.remove(&device(2));
+    });
+    reader.fake.group(&room()).cuts.insert(device(2), cut);
+    reader.chains.insert(room(), chains);
+    for envelope in [one.envelope(), two.envelope()] {
+        reader
+            .take_as(
+                &envelope.encode().unwrap(),
+                &Served::Stored,
+                Mode::ReadingBack,
+            )
+            .unwrap();
+    }
+    assert_eq!(reader.chains(&room()).started_at(&device(2)), None);
+
+    // A stored chain that stands at its frontier's number on another envelope than the frontier's is damaged.
+    let mut contradicting = Chains::new();
+    contradicting.start_at(device(2), wrong).unwrap();
+    let mut bytes = contradicting.to_bytes().unwrap();
+    assert_eq!(Chains::from_bytes(&bytes).unwrap(), contradicting);
+    let at = bytes
+        .windows(32)
+        .position(|window| window == [9; 32])
+        .unwrap();
+    bytes[at] = 8;
+    assert!(matches!(Chains::from_bytes(&bytes), Err(Error::Storage(_))));
+}
+
+#[test]
+fn a_step_verified_against_one_frontier_does_not_fit_another() {
+    let mut writer = World::new();
+    let one = writer.post(2, room(), &stroke());
+    let real = writer.chains(&room()).head(&device(2));
+    let wrong = Head {
+        seq: 1,
+        hash: Hash32::new([9; 32]),
+    };
+    // The envelope under number 1 is verified against a chain that began at its own frontier.
+    let mut reader = World::new();
+    let mut chains = Chains::new();
+    chains.start_at(device(2), real).unwrap();
+    reader.chains.insert(room(), chains);
+    let receipt = receive(
+        &reader.fake,
+        &reader.fake,
+        &reader.chains(&room()),
+        &reader.objects(&room()),
+        &device(1),
+        &one.envelope().encode().unwrap(),
+        &Served::Stored,
+        Mode::ReadingBack,
+        NOW,
+    )
+    .unwrap();
+    // A chain that began at another frontier under that number does not take the step.
+    let mut other = Chains::new();
+    other.start_at(device(2), wrong).unwrap();
+    assert!(matches!(
+        other.apply(receipt.advance()),
+        Err(Error::Internal(_))
+    ));
+    assert_eq!(other.started_at(&device(2)), Some(wrong));
+    assert_eq!(other.head(&device(2)), wrong);
+    let mut own = reader.chains(&room());
+    own.apply(receipt.advance()).unwrap();
+    assert_eq!(own.started_at(&device(2)), None);
 }

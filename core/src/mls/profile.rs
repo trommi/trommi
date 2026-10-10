@@ -36,9 +36,9 @@ pub const LIFETIME_MARGIN_MS: u64 = 60 * 60 * 1000;
 pub const LIFETIME_MS: u64 = 10 * 365 * 24 * 60 * 60 * 1000;
 
 /// The most human devices of a room, outside a recovery (section 16).
-pub const MAX_HUMAN_DEVICES: usize = 32;
+pub const MAX_HUMAN_DEVICES: usize = 1000;
 /// The most human devices of a room while a recovery runs.
-pub const MAX_HUMAN_DEVICES_IN_RECOVERY: usize = 33;
+pub const MAX_HUMAN_DEVICES_IN_RECOVERY: usize = 1001;
 /// The most enrolled agent devices of a room.
 pub const MAX_AGENT_DEVICES: usize = 256;
 /// The most helper devices in one helper session.
