@@ -20,7 +20,15 @@ const has = (o, fn) => typeof o?.[fn] === 'function'
 // ---- passkeys: the ceremonies ----
 // WebAuthn runs here, on the page; the core worker (core/account.ts) gets what a ceremony returned, as bytes. A passkey
 // opens the account through the 32 bytes of its `prf` extension over a fixed input; they go to the worker and nowhere else.
-const pkBytes = v => new Uint8Array(v instanceof ArrayBuffer ? v.slice(0) : v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength))
+/** The bytes of what WebAuthn hands back, copied: an ArrayBuffer or a view, also one made in another realm (a password
+ *  manager's extension that answers create() and get() for the browser hands those: `instanceof` is false for them),
+ *  or the base64url text some of them give instead. Anything else is no passkey answer (`passkey-failed`). */
+const pkBytes = v => {
+  if (ArrayBuffer.isView(v)) return new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice()
+  if (v instanceof ArrayBuffer || Object.prototype.toString.call(v) === '[object ArrayBuffer]') return new Uint8Array(v).slice()
+  if (typeof v === 'string' && /^[A-Za-z0-9_-]*={0,2}$/.test(v)) return unb64u(v.replace(/=+$/, ''))
+  throw pkError('passkey-failed', 'the passkey\'s answer holds no bytes where WebAuthn puts them')
+}
 const unb64u = text => Uint8Array.from(atob(String(text).replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0))
 const b64u = b => btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 /** The relying-party id: this page's own host. app.trommi.com for the app (fixed, for good); a development or preview
