@@ -1,47 +1,31 @@
-# Delivers a hub build to the server. Called by build.yml with the build that was tested, or started by hand to
-# deliver a release that is already published once more.
+# Delivers a published release to the hub's server. Called by build.yml after release.yml published v<N> and the
+# inputs of the hub or its updater changed, or started by hand to deliver a published release once more.
 #
-#   sign     signs the manifest of the build with SIGN_RELEASE_KEY (the only job that sees that key)
-#   publish  makes the GitHub release hub-v<version> with the files, the manifest and its signature
 #   deliver  joins the tailnet and tells the server which release to take; shows the server's answer
 #
 # The server takes no code from here. The call names a release; the server fetches it from GitHub itself, checks
-# the signature against the public key pinned on it, swaps, checks health, rolls back when the new hub is not well,
-# and answers with what happened. This run fails when the server says the release does not run.
+# the signature against the public key pinned on it, and restarts the hub only when the hub's inputs differ from
+# those of the release it runs (otherwise it notes the release and the hub keeps running); a new hub is checked for
+# health and rolled back when it is not well. It answers with what happened. This run fails when the server says the
+# release does not run.
 #
-# Secrets: the environment `hub` (branch main only) holds OP_SERVICE_ACCOUNT_TOKEN, OP_ENVIRONMENT_ID,
-# TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_AUDIENCE. SIGN_RELEASE_KEY comes from the 1Password Environment.
+# Secrets: the environment `hub` (branch main only) holds TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_AUDIENCE.
 #
-# Overtaken: a run's token makes a release tag only on a commit whose .github/workflows is the main branch's own
-# (GitHub's rule for creating a release: workflow files that differ from the default branch's need the `workflows`
-# permission, which a run's token cannot have);
-# on any other commit GitHub answers `403 Resource not accessible by integration`. When a later commit changed a
-# workflow file before this run published, `publish` fails and says so, and nothing is delivered. No other commit is
-# tagged in its place: start `build` by hand on main, which builds, releases and delivers every part from the head.
-#
-# When nothing answers on the server's deploy port (before its first installation, or while it is down), the release
-# is published all the same and `deliver` fails saying so: nothing was delivered.
+# When nothing answers on the server's deploy port (before its first installation, or while it is down), `deliver`
+# fails saying so: nothing was delivered.
 name: deploy_hub
 
 on:
   workflow_call:
     inputs:
-      version:
-        description: The release number; the release is hub-v<version>
-        required: true
-        type: string
-      commit:
-        description: The commit that was built
-        required: true
-        type: string
-      artifact:
-        description: The artifact of this run that holds the files and manifest.json
+      tag:
+        description: The release, v<N>
         required: true
         type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: A published hub release to deliver again, e.g. hub-v123
+        description: A published release to deliver again, e.g. v123 (or an older hub-v123)
         required: true
         type: string
 
@@ -53,143 +37,8 @@ env:
   HUB_DEPLOY_PORT: "9443"
 
 jobs:
-  sign:
-    name: Sign
-    # only for a fresh build; a release delivered again is signed already
-    if: inputs.version != ''
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    # reads the secrets of the environment without counting as a deployment of it
-    environment:
-      name: hub
-      deployment: false
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ${{ inputs.artifact }}
-          path: out
-      # the signing script and the public key of the revision this workflow runs from, never of an artifact
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          path: repo
-          persist-credentials: false
-          sparse-checkout: release
-      - name: The manifest is the one of this build
-        env:
-          VERSION: ${{ inputs.version }}
-          COMMIT: ${{ inputs.commit }}
-          TARGET: x86_64-unknown-linux-musl
-        run: |
-          set -eu
-          jq -e --arg v "$VERSION" --arg c "$COMMIT" --arg r "$GITHUB_REPOSITORY" \
-            '.product == "trommi-hub" and .repository == $r and (.version | type) == "number" and (.version | tostring) == $v and .tag == "hub-v" + $v and .commit == $c' \
-            out/manifest.json > /dev/null || { echo "::error::manifest.json is not hub-v$VERSION of $COMMIT in this repository"; exit 1; }
-          # Every file the manifest names is there and is that file; nothing else lies beside it. Read with jq, entry
-          # by entry: an entry that is not a plain name, a SHA-256 and a size stops the run.
-          jq -e '(.assets | length) > 0 and all(.assets[]; (.name | test("^[A-Za-z0-9._-]+$")) and (.sha256 | test("^[0-9a-f]{64}$")) and (.size | type) == "number") and ([.assets[].name] | unique | length) == (.assets | length)' \
-            out/manifest.json > /dev/null || { echo "::error::manifest.json has an entry that is not a plain file with hash and size"; exit 1; }
-          jq -r '.assets[] | "\(.sha256)  \(.name)"' out/manifest.json > "$RUNNER_TEMP/sums"
-          (cd out && sha256sum -c --quiet "$RUNNER_TEMP/sums")
-          jq -r '.assets[] | "\(.size) \(.name)"' out/manifest.json | while read -r size name; do
-            [ "$(wc -c < "out/$name" | tr -d ' ')" = "$size" ] || { echo "::error::$name does not have the size the manifest names"; exit 1; }
-          done
-          find out -type f ! -name manifest.json -printf '%f\n' | sort > "$RUNNER_TEMP/there"
-          jq -r '.assets[].name' out/manifest.json | sort > "$RUNNER_TEMP/named"
-          diff "$RUNNER_TEMP/named" "$RUNNER_TEMP/there" || { echo "::error::the release holds files the manifest does not name"; exit 1; }
-          for name in "trommi-hub-$TARGET" "trommi-hub-updater-$TARGET"; do
-            grep -qx "$name" "$RUNNER_TEMP/named" || { echo "::error::the release has no $name"; exit 1; }
-          done
-      - name: Install the 1Password CLI
-        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
-        with:
-          version: latest-beta
-      - name: Sign the manifest
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
-        run: |
-          set -eu
-          test -n "$OP_SERVICE_ACCOUNT_TOKEN" || { echo "::error::OP_SERVICE_ACCOUNT_TOKEN is not set for this run"; exit 1; }
-          test -n "$OP_ENVIRONMENT_ID" || { echo "::error::OP_ENVIRONMENT_ID is not set for this run"; exit 1; }
-          # release/sign.sh puts the key back into PEM form, signs, and checks the result against release/public-key.pem
-          op run --environment "$OP_ENVIRONMENT_ID" -- sh repo/release/sign.sh sign out/manifest.json
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: hub-signature
-          path: out/manifest.json.sig
-          if-no-files-found: error
-          retention-days: 14
-
-  publish:
-    name: Publish the release
-    needs: sign
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      TAG: hub-v${{ inputs.version }}
-      COMMIT: ${{ inputs.commit }}
-      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ${{ inputs.artifact }}
-          path: out
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: hub-signature
-          path: out
-      # A published release is never replaced: a second run of the same build delivers what is published.
-      - name: Publish
-        run: |
-          set -eu
-          state=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
-          if [ "$state" = true ]; then
-            echo "an unfinished draft of $TAG is removed"
-            gh release delete "$TAG" --yes
-            state=none
-          fi
-          if [ "$state" = none ]; then
-            gh release create "$TAG" --target "$COMMIT" --latest=false --title "Hub $TAG" \
-              --notes "The hub and its updater, built from $COMMIT. Signed: manifest.json and manifest.json.sig (see release/sign.sh)." \
-              out/* 2> "$RUNNER_TEMP/create.err" && code=0 || code=$?
-            cat "$RUNNER_TEMP/create.err" >&2
-            if [ "$code" != 0 ]; then
-              # Overtaken (see the head of this file): GitHub answers 403 (or 404) when the workflow files of the commit are
-              # not those of the main branch any more. Said plainly; every other failure is shown as it came.
-              theirs=$(gh api "repos/$GH_REPO/contents/.github?ref=$COMMIT" --jq '.[] | select(.name == "workflows") | .sha') || theirs=
-              main=$(gh api "repos/$GH_REPO/contents/.github?ref=$DEFAULT_BRANCH" --jq '.[] | select(.name == "workflows") | .sha') || main=
-              if grep -Eq 'HTTP 40[34]' "$RUNNER_TEMP/create.err" && [ -n "$theirs" ] && [ -n "$main" ] && [ "$theirs" != "$main" ]; then
-                {
-                  echo "### Hub: \`$TAG\` was NOT published (overtaken)"
-                  echo
-                  echo "A later commit on \`$DEFAULT_BRANCH\` changed a file under \`.github/workflows\`. GitHub lets a run make a release tag only on a commit whose workflow files are the branch's own, so this run cannot publish \`$COMMIT\` any more, and starting it again does not help."
-                  echo
-                  echo "Nothing of this build is released or delivered; the server keeps the hub it runs. If the later commit's run did not build the hub, start the workflow \`build\` by hand on \`$DEFAULT_BRANCH\`: a run by hand builds, releases and delivers every part from the branch's head."
-                } >> "$GITHUB_STEP_SUMMARY"
-                echo "::error::$TAG was not published: a later commit changed the workflow files (overtaken). Start the workflow build by hand on $DEFAULT_BRANCH if no later run releases this part."
-                exit 1
-              fi
-              echo "::error::$TAG was not published (gh release create ended with $code)"
-              exit 1
-            fi
-            echo "published $TAG" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "$TAG is published already and stays as it is" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
   deliver:
     name: Deliver to the server
-    needs: [sign, publish]
-    # after a release was signed and published, or when nothing had to be (a release delivered again): never after
-    # a signing or publishing that failed
-    if: ${{ !cancelled() && ((needs.sign.result == 'success' && needs.publish.result == 'success') || (needs.sign.result == 'skipped' && needs.publish.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
@@ -198,11 +47,11 @@ jobs:
     permissions:
       id-token: write
     env:
-      TAG: ${{ inputs.tag || format('hub-v{0}', inputs.version) }}
+      TAG: ${{ inputs.tag }}
     steps:
       - name: The release name
         run: |
-          printf '%s' "$TAG" | grep -Eq '^hub-v[1-9][0-9]{0,11}$' || { echo "::error::not a hub release: $TAG"; exit 1; }
+          printf '%s' "$TAG" | grep -Eq '^(hub-)?v[1-9][0-9]{0,11}$' || { echo "::error::not a release: $TAG"; exit 1; }
       - name: Join the tailnet as the CI
         uses: tailscale/github-action@d1b6cd204f8dceda5b3eaad7f1f767be390056cd # v4.2.0
         with:
@@ -258,7 +107,7 @@ jobs:
           jq . answer.json
           # Refused because something newer already runs (a later build got there first): nothing to do, not a failure.
           running=$(jq -r '.running // ""' answer.json)
-          if [ "$(jq -r .result answer.json)" = refused ] && [ "${running#hub-v}" -gt "${TAG#hub-v}" ] 2>/dev/null; then
+          if [ "$(jq -r .result answer.json)" = refused ] && [ "${running##*v}" -gt "${TAG##*v}" ] 2>/dev/null; then
             echo "::notice::$running already runs, which is newer than $TAG; nothing was changed"
             exit 0
           fi

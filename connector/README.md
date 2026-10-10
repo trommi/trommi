@@ -77,8 +77,8 @@ connector here learns it from the Commit, wipes the slot and says that it is ret
 Nothing is loaded into a running process. A new binary at the connector's path is announced once
 (`kind="update"`); `reload_connector` answers with the restart line.
 
-Releases are built and signed in CI: GitHub releases `connector-v<N>` of `trommi/trommi` with the four binaries,
-`manifest.json` and `manifest.json.sig` (`release/manifest.sh`, `release/sign.sh`: Ed25519 over
+Releases are built and signed in CI: the releases `v<N>` of `trommi/trommi` (every part; earlier `connector-v<N>`)
+hold the four binaries, `manifest.json` and `manifest.json.sig` (`release/manifest.sh`, `release/sign.sh`: Ed25519 over
 the manifest's exact bytes). The connector holds the public key (`release/public-key.pem`, compiled in by
 `build.rs`) and checks a binary against a manifest that lies beside it (`src/update.rs`): the signature, then
 product, repository, tag and version (never older than the one running; CI compiles the release number in with

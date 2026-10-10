@@ -1,5 +1,5 @@
 //! `trommi-hub-updater` serves the deploy endpoint on the tailnet address (under systemd, as the unprivileged user
-//! `trommi-updater`). `trommi-hub-updater deploy hub-v123` and `trommi-hub-updater status` are for the owner on the
+//! `trommi-updater`). `trommi-hub-updater deploy v123` and `trommi-hub-updater status` are for the owner on the
 //! server: the same steps, the same lock, the same checks of signature, content and version. The command in
 //! `/usr/local/bin` runs them as that same user, never as root.
 //!
@@ -112,7 +112,7 @@ fn main() {
                 }
             }
             _ => {
-                eprintln!("usage: trommi-hub-updater [serve | status | deploy hub-v<N>]");
+                eprintln!("usage: trommi-hub-updater [serve | status | deploy v<N>]");
                 2
             }
         }

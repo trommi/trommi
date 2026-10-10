@@ -2,7 +2,7 @@
 # The hub server's installation, run on the owner's laptop from a checkout of this repository.
 #
 #   hub/deploy/install.sh inventory          reads the server, writes trommi-inventory-<time>.txt; changes nothing
-#   hub/deploy/install.sh install [hub-vN]   installs the fixed parts and a hub release (default: the newest)
+#   hub/deploy/install.sh install [vN]      installs the fixed parts and a release (default: the newest)
 #   hub/deploy/install.sh secrets            sends the push credentials; run it as
 #                                              op run --environment <hub production environment id> -- hub/deploy/install.sh secrets
 #
@@ -499,7 +499,7 @@ REMOTE
 remote_command() {
   cat <<'COMMAND'
 #!/bin/sh
-# trommi-hub-updater status | deploy hub-v<N>: the updater with the settings its service has, as the updater's own
+# trommi-hub-updater status | deploy v<N>: the updater with the settings its service has, as the updater's own
 # user. Never as root: what lies under /srv/trommi/deploy is the updater's, not root's to run. It runs in a session
 # of its own, so it has no hold on the terminal of whoever calls this.
 set -a; . /etc/trommi/updater.env; set +a
@@ -582,8 +582,8 @@ fetch_release() {
 import hashlib, json, os, sys
 stage, tag, repository, target = sys.argv[1:5]
 m = json.load(open(os.path.join(stage, "manifest.json")))
-assert m["product"] == "trommi-hub" and m["repository"] == repository, "another product or repository"
-assert m["tag"] == tag and tag == "hub-v%d" % m["version"], "another release"
+assert m["product"] in ("trommi", "trommi-hub") and m["repository"] == repository, "another product or repository"
+assert m["tag"] == tag and tag in ("v%d" % m["version"], "hub-v%d" % m["version"]), "another release"
 for name in ("trommi-hub-" + target, "trommi-hub-updater-" + target):
     entries = [a for a in m["assets"] if a["name"] == name]
     assert len(entries) == 1, "the manifest does not name exactly one " + name
@@ -597,14 +597,14 @@ install_() {
   for t in ssh scp curl openssl sha256sum python3; do command -v "$t" >/dev/null || die "$t is needed on this laptop"; done
   tag=${1:-}
   if [ -z "$tag" ]; then
-    say "Find the newest hub release of $REPOSITORY"
+    say "Find the newest release of $REPOSITORY"
     tag=$(curl -fsSL --max-time 30 "https://api.github.com/repos/$REPOSITORY/releases?per_page=100" | python3 -c '
 import json, re, sys
-tags = [r["tag_name"] for r in json.load(sys.stdin) if not r["draft"] and re.fullmatch(r"hub-v[1-9][0-9]*", r["tag_name"])]
-print(max(tags, key=lambda t: int(t[5:])) if tags else "")') || die "GitHub could not be asked for the releases"
-    [ -n "$tag" ] || die "no hub release found in $REPOSITORY (the build on main publishes hub-v<N>)"
+tags = [r["tag_name"] for r in json.load(sys.stdin) if not r["draft"] and re.fullmatch(r"v[1-9][0-9]*", r["tag_name"])]
+print(max(tags, key=lambda t: int(t[1:])) if tags else "")') || die "GitHub could not be asked for the releases"
+    [ -n "$tag" ] || die "no release found in $REPOSITORY (the build on main publishes v<N>)"
   fi
-  printf '%s' "$tag" | grep -Eq '^hub-v[1-9][0-9]{0,11}$' || die "not a hub release: $tag"
+  printf '%s' "$tag" | grep -Eq '^(hub-)?v[1-9][0-9]{0,11}$' || die "not a release: $tag"
 
   stage=$(mktemp -d)
   trap 'rm -rf "$stage"' EXIT
