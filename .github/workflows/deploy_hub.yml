@@ -12,6 +12,13 @@
 # Secrets: the environment `hub` (branch main only) holds OP_SERVICE_ACCOUNT_TOKEN, OP_ENVIRONMENT_ID,
 # TAILSCALE_OAUTH_CLIENT_ID and TAILSCALE_AUDIENCE. SIGN_RELEASE_KEY comes from the 1Password Environment.
 #
+# Overtaken: a run's token makes a release tag only on a commit whose .github/workflows is the main branch's own
+# (GitHub's rule for creating a release: workflow files that differ from the default branch's need the `workflows`
+# permission, which a run's token cannot have);
+# on any other commit GitHub answers `403 Resource not accessible by integration`. When a later commit changed a
+# workflow file before this run published, `publish` fails and says so, and nothing is delivered. No other commit is
+# tagged in its place: start `build` by hand on main, which builds, releases and delivers every part from the head.
+#
 # When nothing answers on the server's deploy port (before its first installation, or while it is down), the release
 # is published all the same and `deliver` fails saying so: nothing was delivered.
 name: deploy_hub
@@ -128,6 +135,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TAG: hub-v${{ inputs.version }}
       COMMIT: ${{ inputs.commit }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -150,7 +158,27 @@ jobs:
           if [ "$state" = none ]; then
             gh release create "$TAG" --target "$COMMIT" --latest=false --title "Hub $TAG" \
               --notes "The hub and its updater, built from $COMMIT. Signed: manifest.json and manifest.json.sig (see release/sign.sh)." \
-              out/*
+              out/* 2> "$RUNNER_TEMP/create.err" && code=0 || code=$?
+            cat "$RUNNER_TEMP/create.err" >&2
+            if [ "$code" != 0 ]; then
+              # Overtaken (see the head of this file): GitHub answers 403 (or 404) when the workflow files of the commit are
+              # not those of the main branch any more. Said plainly; every other failure is shown as it came.
+              theirs=$(gh api "repos/$GH_REPO/contents/.github?ref=$COMMIT" --jq '.[] | select(.name == "workflows") | .sha') || theirs=
+              main=$(gh api "repos/$GH_REPO/contents/.github?ref=$DEFAULT_BRANCH" --jq '.[] | select(.name == "workflows") | .sha') || main=
+              if grep -Eq 'HTTP 40[34]' "$RUNNER_TEMP/create.err" && [ -n "$theirs" ] && [ -n "$main" ] && [ "$theirs" != "$main" ]; then
+                {
+                  echo "### Hub: \`$TAG\` was NOT published (overtaken)"
+                  echo
+                  echo "A later commit on \`$DEFAULT_BRANCH\` changed a file under \`.github/workflows\`. GitHub lets a run make a release tag only on a commit whose workflow files are the branch's own, so this run cannot publish \`$COMMIT\` any more, and starting it again does not help."
+                  echo
+                  echo "Nothing of this build is released or delivered; the server keeps the hub it runs. If the later commit's run did not build the hub, start the workflow \`build\` by hand on \`$DEFAULT_BRANCH\`: a run by hand builds, releases and delivers every part from the branch's head."
+                } >> "$GITHUB_STEP_SUMMARY"
+                echo "::error::$TAG was not published: a later commit changed the workflow files (overtaken). Start the workflow build by hand on $DEFAULT_BRANCH if no later run releases this part."
+                exit 1
+              fi
+              echo "::error::$TAG was not published (gh release create ended with $code)"
+              exit 1
+            fi
             echo "published $TAG" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "$TAG is published already and stays as it is" >> "$GITHUB_STEP_SUMMARY"

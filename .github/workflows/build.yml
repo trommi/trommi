@@ -241,11 +241,8 @@ jobs:
           cargo build --locked -p trommi-hub -p trommi-connector
           tests=$(sed -n 's/^name = "\(connector_[a-z0-9_]*\)"$/--test \1/p' tests/Cargo.toml | tr '\n' ' ')
           [ -n "$tests" ] || { echo "::error::tests/Cargo.toml names no connector test"; exit 1; }
-          # The tests put the connector's sockets into a short folder beside the temporary one (its parent, then r/):
-          # with the default /tmp that is /r, which a runner may not make.
-          mkdir -p "$RUNNER_TEMP/t"
           # shellcheck disable=SC2086
-          TMPDIR="$RUNNER_TEMP/t" TROMMI_HUB_BIN="$PWD/target/debug/trommi-hub" cargo test --locked -p trommi-tests $tests
+          TROMMI_HUB_BIN="$PWD/target/debug/trommi-hub" cargo test --locked -p trommi-tests $tests
       # The four binaries and the plugin's archive, as connector/build-plugin.mjs makes them; then the manifest
       # that names them. A target that did not build is an error here, not a smaller release.
       - name: Build the release
