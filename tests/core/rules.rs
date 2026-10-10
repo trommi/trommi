@@ -1,7 +1,9 @@
 //! The rules for Commits (sections 3.3, 3.4, 4 and 5) on hand-built facts: every refusal with its code.
 
 use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId, SessionId};
-use trommi_core::mls::profile::{CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession};
+use trommi_core::mls::profile::{
+    CommitNote, Cut, GroupKind, TrommiRoom, TrommiSession, MAX_HUMAN_DEVICES, MAX_NOTE_LEN,
+};
 use trommi_core::mls::rules::*;
 use trommi_core::Error;
 
@@ -383,8 +385,24 @@ fn a_join_from_outside_needs_the_recovery_signature() {
 }
 
 #[test]
-fn the_thirty_third_human_device_comes_by_a_join_from_outside_only() {
+fn the_device_beyond_the_limit_comes_by_a_join_from_outside_only() {
     let group = GroupId::room(ROOM);
+    let limit = MAX_HUMAN_DEVICES;
+    // Human device number `n`, from 1.
+    let human = |n: usize| {
+        let mut id = [0x48; 32];
+        id[..8].copy_from_slice(&(n as u64).to_be_bytes());
+        DeviceId::new(id)
+    };
+    let room_of = |humans: usize| {
+        let mut first = state(0, &[], &[]);
+        first.humans = (1..=humans).map(human).collect();
+        RoomHistory::new(first)
+    };
+    let by = |n: usize, mut facts: CommitFacts| {
+        facts.committer = human(n);
+        facts
+    };
     let verdict = |history: &RoomHistory, facts: &CommitFacts, most: usize| {
         let verifier = Verifier {
             history,
@@ -403,32 +421,46 @@ fn the_thirty_third_human_device_comes_by_a_join_from_outside_only() {
             },
         )
     };
-    let humans: Vec<u8> = (1..=33).collect();
-    let full = RoomHistory::new(state(0, &humans[..32], &[]));
-    let mut join = facts(group, 0, 33, 0);
+    let full = room_of(limit);
+    let mut join = by(limit + 1, facts(group, 0, 0, 0));
     join.external = true;
     join.external_inits = 1;
     join.note.as_mut().unwrap().join = true;
 
-    // A room of 32: a device that cannot know whether a recovery runs allows 33, and still takes no Add of
-    // a 33rd, only a join from outside. A hub outside a recovery allows 32 and takes neither.
-    let add = adding(facts(group, 0, 1, 0), &[33]);
-    assert_eq!(verdict(&full, &add, 33), Err(Error::TooMany));
-    assert_eq!(verdict(&full, &add, 32), Err(Error::TooMany));
-    assert_eq!(verdict(&full, &join, 33), Ok(()));
-    assert_eq!(verdict(&full, &join, 32), Err(Error::TooMany));
+    // A full room: a device that cannot know whether a recovery runs allows one more, and still takes no
+    // Add of that device, only a join from outside. A hub outside a recovery allows the limit and takes
+    // neither.
+    let mut add = by(1, facts(group, 0, 0, 0));
+    add.adds = vec![human(limit + 1)];
+    assert_eq!(verdict(&full, &add, limit + 1), Err(Error::TooMany));
+    assert_eq!(verdict(&full, &add, limit), Err(Error::TooMany));
+    assert_eq!(verdict(&full, &join, limit + 1), Ok(()));
+    assert_eq!(verdict(&full, &join, limit), Err(Error::TooMany));
+    // One below the limit both take the Add.
+    let mut last = by(1, facts(group, 0, 0, 0));
+    last.adds = vec![human(limit)];
+    assert_eq!(verdict(&room_of(limit - 1), &last, limit), Ok(()));
 
-    // A room of 33, as a recovery leaves it for a moment: a Commit that adds nobody passes, so that the
-    // other devices are removed and the room can go on; nobody is added, and nobody else joins.
-    let over = RoomHistory::new(state(0, &humans, &[]));
-    assert_eq!(verdict(&over, &facts(group, 0, 33, 0), 33), Ok(()));
-    let removal = removing(facts(group, 0, 33, 0), &humans[..32]);
-    assert_eq!(verdict(&over, &removal, 33), Ok(()));
-    assert_eq!(verdict(&over, &removal, 32), Ok(()));
-    let swap = adding(removing(facts(group, 0, 33, 0), &[1]), &[34]);
-    assert_eq!(verdict(&over, &swap, 33), Err(Error::TooMany));
-    join.committer = device(34);
-    assert_eq!(verdict(&over, &join, 33), Err(Error::TooMany));
+    // One above the limit, as a recovery leaves the room for a moment: a Commit that adds nobody passes, so
+    // that the other devices are removed and the room can go on; nobody is added, and nobody else joins.
+    let over = room_of(limit + 1);
+    let own = by(limit + 1, facts(group, 0, 0, 0));
+    assert_eq!(verdict(&over, &own, limit + 1), Ok(()));
+    let mut removal = own.clone();
+    removal.removes = (1..=limit).map(human).collect();
+    removal.note.as_mut().unwrap().cuts = removal.removes.iter().copied().map(Cut::none).collect();
+    assert_eq!(verdict(&over, &removal, limit + 1), Ok(()));
+    assert_eq!(verdict(&over, &removal, limit), Ok(()));
+    // Its note, with a Cut for every device that goes, is within what a note may have.
+    let note = trommi_core::codec::encode(removal.note.as_ref().unwrap()).unwrap();
+    assert!(note.len() <= MAX_NOTE_LEN);
+    let mut swap = own.clone();
+    swap.removes = vec![human(1)];
+    swap.note.as_mut().unwrap().cuts = vec![Cut::none(human(1))];
+    swap.adds = vec![human(limit + 2)];
+    assert_eq!(verdict(&over, &swap, limit + 1), Err(Error::TooMany));
+    join.committer = human(limit + 2);
+    assert_eq!(verdict(&over, &join, limit + 1), Err(Error::TooMany));
 }
 
 #[test]

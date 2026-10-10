@@ -471,7 +471,8 @@ fn a_work_trail_step_without_a_number() {
 
 #[test]
 fn a_welcome_into_a_room_with_too_many_devices() {
-    // No device builds one: the Add of a 33rd human device and the enrolment of a 257th agent device are
+    // No device builds one: the Add of a human device beyond the limit and the enrolment of a 257th agent
+    // device are
     // refused where they are built and where they are judged (`rules.rs`). A founder that obeys MLS only
     // makes such rooms, and the device it adds refuses the Welcome (section 16).
     let room = |agents: usize| TrommiRoom {
@@ -487,9 +488,11 @@ fn a_welcome_into_a_room_with_too_many_devices() {
             })
             .collect(),
     };
-    for (humans, agents, fits) in [(31, 256, true), (32, 0, false), (1, 257, false)] {
+    let limit = trommi_core::mls::profile::MAX_HUMAN_DEVICES;
+    let cases = [(limit - 1, 256, true), (limit, 0, false), (1, 257, false)];
+    for (at, (humans, agents, fits)) in cases.into_iter().enumerate() {
         let founder = Forger::new();
-        let group = GroupId::room(RoomId::new([humans as u8; 32]));
+        let group = GroupId::room(RoomId::new([at as u8; 32]));
         let extension = room(agents);
         assert_eq!(extension.agents.len(), agents);
         let mut forged = founder.found_room(&group, &extension);
@@ -507,8 +510,8 @@ fn a_welcome_into_a_room_with_too_many_devices() {
         };
         let joined = c.join_welcome(&welcome, &expected, now());
         if fits {
-            let joined = joined.expect("32 human devices and 256 agent devices fit");
-            assert_eq!(c.group(&joined.group).unwrap().leaves.len(), 32);
+            let joined = joined.expect("the limit of human devices and 256 agent devices fit");
+            assert_eq!(c.group(&joined.group).unwrap().leaves.len(), limit);
         } else {
             assert_eq!(joined, Err(Error::TooMany), "{humans} and {agents}");
             assert!(c.groups().unwrap().is_empty());
