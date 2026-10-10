@@ -29,6 +29,7 @@ test('a removed human device reads nothing new, and every session is cleaned of 
   assert.equal(a.model.sessions.get(agent.session_id).stale, false)
   await b.catchUp().catch(() => {})
   await until(() => b.model.room.connection === 'removed', 'the removed device learns it')
+  assert.equal(b.model.alerts.filter(x => x.code === 'removed').length, 1, 'and says so, once')
 
   const after = await a.saveNote({ text: 'only for those who stayed' })
   const card = await agent.askCard({ title: 'After the removal', options: [{ key: 'ok', label: 'OK' }] })

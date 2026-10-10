@@ -289,7 +289,7 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     const done = []
     for (let more = true; more;) {
       const page = await hub.changes(await device.cursor())
-      for (const item of page.items) if (item.kind !== 'envelope') done.push((await device.processLogEntry(logEntry(item))).kind)
+      for (const item of page.items) if (item.kind !== 'envelope') done.push((await device.processLogEntry(logEntry(item), Date.now())).kind)
       more = page.more
     }
     return done
@@ -319,7 +319,7 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     else assert.deepEqual(await post(first, hub, 'roomFounding'), { kind: 'roomFounding', change: null, room_id: room })
   })
   await t.test('sign-in by challenge with the device\'s key; the hub calls it human', async () => {
-    hub.useSigner(room, (address, challenge) => first.hubSignIn(room, address, challenge))
+    hub.useSigner(room, (address, challenge) => first.hubSignIn(address, challenge))
     await hub.signIn()
     assert.equal(hub.role, 'human')
   })
@@ -368,7 +368,7 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     const { item } = heard.find(e => e.event === 'change')
     // (n, epochs and change numbers are the room's own, and the room is this run's: they hold on any hub)
     assert.deepEqual([item.kind, item.change, item.group, item.n, item.epoch, item.sender, item.recovery_auth], ['commit', answer.change, group, 1, 0, me, null])
-    assert.equal((await first.processLogEntry(logEntry(item))).kind, 'ownCommit')
+    assert.equal((await first.processLogEntry(logEntry(item), Date.now())).kind, 'ownCommit')
     assert.equal(await first.cursor(), answer.change)
     close()
     assert.equal((await first.outbox()).length, 0, 'the outbox is empty')
@@ -450,7 +450,7 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     const answers = await post(second, second_hub)
     assert.deepEqual(answers.map(a => [a.kind, a.epoch]), [['externalCommit', 2]])
 
-    second_hub.useSigner(room, (address, challenge) => second.hubSignIn(room, address, challenge))
+    second_hub.useSigner(room, (address, challenge) => second.hubSignIn(address, challenge))
     await second_hub.signIn()
     assert.equal(second_hub.role, 'human')
     const log = await second_hub.groupLog(group, { commits_only: true })
@@ -458,6 +458,9 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     assert.deepEqual(log.items[1].sender, await second.id())
     assert.deepEqual((await second_hub.roomGroups())[0].leaves.length, 2)
     assert.deepEqual((await second_hub.desk()).groups[0].epoch, 2)
+    // a device is fed its own accepted Commit through the log, like any other entry
+    const own = await catchUp(second, second_hub)
+    assert.ok(own.every(kind => kind === 'ownCommit' || kind === 'skipped'), `the second device takes its own join and skips what lies before it: ${own}`)
     const taken = await catchUp(first, hub)
     assert.deepEqual(taken, ['commit'], 'the first device takes the join')
     assert.deepEqual((await first.group(group)).leaves.length, 2)
@@ -496,12 +499,14 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     assert.deepEqual([served.group.commits.length, served.links.length], replaced ? [3, 1] : [2, 0])
     const plan = await third.prepareRecovery(code, served)
     assert.equal(plan.newCode.length, 32)
-    const cuts = plan.removals.flatMap(r => r.devices.map(device => ({ group: r.group, cut: { device, seq: 0, hash: new Uint8Array(32) } })))
-    assert.equal(cuts.length, 2, 'both devices of the room go')
+    assert.equal(plan.removals.flatMap(r => r.devices).length, 2, 'both devices of the room go')
+    // the chains of the devices that go, as the hub's chain route serves them: neither wrote an envelope
+    const chains = []
+    for (const removal of plan.removals) for (const gone of removal.devices) assert.deepEqual((await third_hub.chain(removal.group, gone)).items, [])
     // the person came back with the bare code and sets a password anew: its login key, its copy, its derivation record
     const fresh = core.passwordKeys(email, PASSWORD + ' anew'), made = copiesOf(room, plan.newCode)
     const copies = { kit: made.copies.kit, password: { auth_key: fresh.authKey, sealed_copy: core.sealRecoveryCode(fresh.wrapKey, room, 'password', null, plan.newCode), kdf } }
-    const built = await third.recover(code, served, cuts, accountCopiesBytes(copies), Date.now())
+    const built = await third.recover(code, served, chains, accountCopiesBytes(copies), Date.now())
     const kinds = (await third.outbox()).map(e => e.kind)
     assert.deepEqual([kinds.at(-1), kinds.slice(0, -1).every(k => k === 'recoveryCommit'), built.outbox.length], ['recoveryFinish', true, kinds.length])
 
@@ -514,7 +519,7 @@ test(`${REMOTE ? 'deployed' : 'real'} hub, real core: a room with its account, a
     assert.deepEqual([done.kind, done.published, done.device], ['recoveryFinish', true, await third.id()])
     assert.ok(answers.slice(0, -1).every(a => a.kind === 'recoveryCommit' && a.kept === true))
 
-    third_hub.useSigner(room, (address, challenge) => third.hubSignIn(room, address, challenge))
+    third_hub.useSigner(room, (address, challenge) => third.hubSignIn(address, challenge))
     await third_hub.signIn()
     assert.equal(third_hub.role, 'human')
     assert.deepEqual((await third_hub.roomGroups())[0].leaves, [await third.id()])

@@ -40,7 +40,10 @@ export async function readKit(page) {
 /** "Open Trommi" on the kit screen: resolves once the screen is gone; throws with the screen's error line when it stays. */
 export async function leaveKit(page, ms = 15000) {
   await page.click('#kit-done')
-  await page.until("!document.querySelector('#kit-gate') || document.querySelector('#kit-gate #ob-error')?.textContent.trim()", 'the kit screen closed, or its error line', ms)
+  try { await page.until("!document.querySelector('#kit-gate') || document.querySelector('#kit-gate #ob-error')?.textContent.trim()", 'the kit screen closed, or its error line', ms) } catch (err) {
+    const held = await page.js("const m = window.trommi?.client?.model; return JSON.stringify({ button: document.querySelector('#kit-done')?.textContent.trim() ?? null, disabled: document.querySelector('#kit-done')?.disabled ?? null, connection: m?.room.connection ?? null, taken_up_to: m?.room.last_envelope_number ?? null, outbox: (m?.outbox ?? []).map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: m?.room.outbox_blocked ?? null, alerts: (m?.alerts ?? []).map(a => a.code + ': ' + a.message.slice(0, 120)), kit_register: m?.human?.raw?.get('kit') ?? null })").catch(() => 'the page could not be read')
+    throw new Error(`${err.message} (the app holds: ${held})`)
+  }
   const error = await page.js("return document.querySelector('#kit-gate #ob-error')?.textContent.trim() ?? ''")
   if (error) throw new Error(`"Open Trommi" does not close the Emergency Kit screen; it says "${error}"`)
 }
@@ -75,6 +78,18 @@ export async function openDesk(page) {
   await page.until("location.pathname === '/' && document.querySelector('#inbox')", 'the Desk')
 }
 
+/** Settings → Invite a Device → Show Code → "No scanner? Send the link": the link as the screen shows it. */
+export async function deviceInvite(page) {
+  await openSettings(page)
+  await page.until("document.querySelector('#settings-pair')", 'Invite a Device')
+  await page.click('#settings-pair')
+  await page.until("document.querySelector('#set-device[data-state=open] .set-qr.is-real svg') || document.querySelector('#set-device .room-error')?.textContent.trim()", 'the code to scan, or an error line', 30000)
+  const error = await page.js("return document.querySelector('#set-device[data-state=open]') ? '' : document.querySelector('#set-device .room-error')?.textContent.trim() ?? ''")
+  if (error) throw new Error(`Show Code made no invite; the screen says "${error}"`)
+  await page.click('#set-device details.room-more summary')
+  await page.until("document.querySelector('#set-device .room-link input')?.getClientRects().length", 'the invite link')
+  return page.js("return document.querySelector('#set-device .room-link input').value")
+}
 /** The six emoji inside `scope`, as one string. */
 export const emoji = (page, scope) => page.js(`return [...document.querySelectorAll(${q(`${scope} .check-emoji-glyph`)})].map(e => e.textContent).join(' ')`)
 
