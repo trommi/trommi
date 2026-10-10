@@ -537,6 +537,16 @@ fn is_fault(error: &Error) -> bool {
     )
 }
 
+/// The heads of every chain but this device's own, as one hash.
+fn others_heads(chains: &chain::Chains, me: &DeviceId) -> Result<Hash32, Error> {
+    let mut heads = Writer::new();
+    for (sender, head) in chains.heads().iter().filter(|(sender, _)| sender != me) {
+        heads.fixed(sender.as_bytes());
+        heads.value(head)?;
+    }
+    crypto::sha256(&heads.into_bytes())
+}
+
 impl<S: Storage> Device<S> {
     fn own_chain(&self, group: &GroupId) -> Result<OwnChain, Error> {
         // The chain is written when the device begins its first epoch in the group: without it the device
@@ -640,7 +650,7 @@ impl<S: Storage> Device<S> {
                     })?;
                     own_ids = Some(ids);
                     if name == registers::HEADS {
-                        heads = Some(crypto::sha256(value.unwrap_or_default().as_bytes())?);
+                        heads = Some(others_heads(&chains, &this.id)?);
                     }
                     inner
                 }
@@ -690,6 +700,7 @@ impl<S: Storage> Device<S> {
                 let mut state = this.group_state(&group)?;
                 state.heads_at = now_ms;
                 state.heads_hash = hash;
+                state.heads_seq = header.seq;
                 this.put_group_state(batch, &group, &state)?;
             }
             let outbox_id = this.enqueue(
@@ -910,10 +921,12 @@ impl<S: Storage> Device<S> {
     }
 
     /// The value of the register `heads` to write in `group` now (9.0.7), as JSON; none when nothing is
-    /// due. It is due when a head changed since the value this device last wrote there, and this is the
+    /// due. It is due when a head changed since this device last wrote `heads` there, and this is the
     /// first call for the group since the device was opened (it came online) or the last one was written at
-    /// least [`HEADS_EVERY_MS`] ago. The caller seals it as [`Draft::Register`] under the name `heads`,
-    /// which records the writing.
+    /// least [`HEADS_EVERY_MS`] ago. A head changed when another sender's did, or when this device wrote
+    /// anything but `heads` since: the `heads` envelope moves the device's own chain itself, and counting
+    /// that would make every `heads` call for the next. The value lists every chain, the own one too. The
+    /// caller seals it as [`Draft::Register`] under the name `heads`, which records the writing.
     pub fn heads_due(&mut self, group: &GroupId, now_ms: u64) -> Result<Option<Vec<u8>>, Error> {
         self.owner()?;
         let chains = self.chains(group)?;
@@ -923,7 +936,8 @@ impl<S: Storage> Device<S> {
         }
         let value = chain::heads_value(&chains)?;
         let state = self.group_state(group)?;
-        let changed = crypto::sha256(value.as_bytes())? != state.heads_hash;
+        let wrote_since = self.own_chain(group)?.head().seq > state.heads_seq;
+        let changed = wrote_since || others_heads(&chains, &self.id)? != state.heads_hash;
         let waited = now_ms.saturating_sub(state.heads_at) >= HEADS_EVERY_MS;
         Ok((changed && (came_online || waited)).then(|| value.into_bytes()))
     }

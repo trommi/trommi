@@ -233,12 +233,14 @@ impl Decode for Record {
 }
 
 /// What the device keeps per group beside the chains: the highest change number of an accepted envelope, and
-/// when it last wrote `heads` with which value.
+/// of the `heads` it last wrote (9.0.7) when it wrote it, the other senders' heads as they stood then
+/// (their hash), and the number of that envelope in its own chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct GroupState {
     pub max_change: u64,
     pub heads_at: u64,
     pub heads_hash: Hash32,
+    pub heads_seq: u64,
 }
 
 impl Default for GroupState {
@@ -247,6 +249,7 @@ impl Default for GroupState {
             max_change: 0,
             heads_at: 0,
             heads_hash: Hash32::ZERO,
+            heads_seq: 0,
         }
     }
 }
@@ -256,6 +259,7 @@ impl Encode for GroupState {
         writer.u64(self.max_change);
         writer.u64(self.heads_at);
         writer.fixed(self.heads_hash.as_bytes());
+        writer.u64(self.heads_seq);
         Ok(())
     }
 }
@@ -266,6 +270,7 @@ impl Decode for GroupState {
             max_change: reader.u64()?,
             heads_at: reader.u64()?,
             heads_hash: reader.value()?,
+            heads_seq: reader.u64()?,
         })
     }
 }
