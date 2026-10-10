@@ -247,6 +247,7 @@ impl Verifier {
                         })
                         .collect(),
                     cuts: self.cuts.iter().copied().collect(),
+                    again: BTreeMap::new(),
                     stale: self.stale,
                 },
             )]),

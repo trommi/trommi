@@ -22,6 +22,10 @@ pub enum Error {
     BadKeyPackage,
     /// `wrong-room`: the item belongs to another room.
     WrongRoom,
+    /// `bad-email`: the hub was sent an e-mail address that is not in the account's canonical form.
+    BadEmail,
+    /// `bad-passkey`: the hub was sent a passkey registration or assertion that does not verify.
+    BadPasskey,
     /// `incomplete`: a request lacks a part it must come with.
     Incomplete,
     /// `chain-break`: an envelope's `prev` is not the hash of its sender's previous envelope.
@@ -80,6 +84,11 @@ pub enum Error {
     AccountExists,
     /// `last-way-in`: the account's last way in cannot be removed.
     LastWayIn,
+    /// `account-changed`: the password or the kit was changed under a revision of the account that is not the
+    /// current one.
+    AccountChanged,
+    /// `range`: the `Range` of a download cannot be served.
+    Range,
     /// `too-large`: something is larger than its limit.
     TooLarge,
     /// `quota-exceeded`: the room's storage is full.
@@ -130,6 +139,8 @@ const CODES: &[(Error, &str)] = &[
     (Error::BadInvite, "bad-invite"),
     (Error::BadKeyPackage, "bad-key-package"),
     (Error::WrongRoom, "wrong-room"),
+    (Error::BadEmail, "bad-email"),
+    (Error::BadPasskey, "bad-passkey"),
     (Error::Incomplete, "incomplete"),
     (Error::ChainBreak, "chain-break"),
     (Error::Unauthorised, "unauthorised"),
@@ -159,6 +170,8 @@ const CODES: &[(Error, &str)] = &[
     (Error::LeaseLost, "lease-lost"),
     (Error::AccountExists, "account-exists"),
     (Error::LastWayIn, "last-way-in"),
+    (Error::AccountChanged, "account-changed"),
+    (Error::Range, "range"),
     (Error::TooLarge, "too-large"),
     (Error::QuotaExceeded, "quota-exceeded"),
     (Error::ClientTooOld, "client-too-old"),
@@ -237,6 +250,14 @@ mod tests {
             .split("| Status | Codes |")
             .nth(1)
             .expect("the code tables");
+        // Under the tables stand the codes that never travel: they are held against the local variants.
+        let (tables, local) = tables
+            .split_once("\nLocal codes")
+            .expect("the line of local codes");
+        let local = backticked(local.split("\n\n").next().expect("a paragraph"));
+        for code in ["busy", "storage", "entropy"] {
+            assert!(local.contains(code), "{code} is not named as local");
+        }
         let mut in_spec: BTreeSet<&str> = backticked(tables);
         // The marker of the chain route (9.0.10) is a code too, though no request is refused with it.
         assert!(spec.contains("marked `cut`"));

@@ -19,7 +19,11 @@ use tls_codec::{Deserialize as _, Serialize as _};
 use trommi_core::codec;
 use trommi_core::crypto::{SigningKey, SystemEntropy};
 use trommi_core::device::Accepted;
-use trommi_core::ids::{DeviceId, GroupId};
+use trommi_core::ids::{DeviceId, GroupId, Hash32, RoomId, SessionId};
+use trommi_core::invite::{
+    CheckCode, InviteLink, InviteTerms, Inviter, Joiner, Request, Role, SignedOffer, SignedRequest,
+    SignedReveal,
+};
 use trommi_core::mls::profile::{TrommiRoom, TrommiSession, EXTENSION_ROOM, EXTENSION_SESSION};
 use trommi_core::store::{OutboxEntry, OutboxKind};
 use trommi_core::Error;
@@ -33,6 +37,35 @@ pub struct Forged {
     pub commit: Vec<u8>,
     pub group_info: Vec<u8>,
     pub welcome: Option<Vec<u8>>,
+}
+
+/// A forger that answers an invite (12.1.2, 12.1.3) with a KeyPackage of its own, as a device would.
+pub struct ForgedInvitee<'a> {
+    forger: &'a Forger,
+    joiner: Option<Joiner>,
+}
+
+impl crate::Invitee for ForgedInvitee<'_> {
+    fn request(
+        &mut self,
+        link: &str,
+        offer: &SignedOffer,
+        now_ms: u64,
+    ) -> Result<SignedRequest, Error> {
+        let (joiner, request) = Joiner::request(
+            &InviteLink::parse(link)?,
+            offer,
+            &self.forger.key,
+            &self.forger.key_package(),
+            now_ms,
+        )?;
+        self.joiner = Some(joiner);
+        Ok(request)
+    }
+
+    fn reveal(&mut self, reveal: &SignedReveal) -> Result<CheckCode, Error> {
+        self.joiner.as_ref().ok_or(Error::NotFound)?.reveal(reveal)
+    }
 }
 
 /// A member with a key of its own.
@@ -76,6 +109,47 @@ impl Forger {
             extra_extension: None,
             lifetime_s: None,
         }
+    }
+
+    /// This forger as the new device of an invite.
+    pub fn invitee(&self) -> ForgedInvitee<'_> {
+        ForgedInvitee {
+            forger: self,
+            joiner: None,
+        }
+    }
+
+    /// This forger invites `joiner` into `room` as a human device, takes its Request and reveals (12.1.2,
+    /// 12.1.3): the joiner then takes a Welcome into that room that this forger committed. Returns the
+    /// KeyPackage of the Request, which that Welcome must be for.
+    pub fn invite(&self, room: &RoomId, joiner: &mut crate::TestDevice) -> Vec<u8> {
+        let terms = InviteTerms {
+            app: crate::APP.into(),
+            hub: crate::hub_address(),
+            room_id: *room,
+            role: Role::Human,
+            session_id: SessionId::ZERO,
+            room_epoch: 0,
+            room_state: Hash32::new([0; 32]),
+        };
+        let now = crate::now();
+        let mut inviter =
+            Inviter::open(&self.key, terms, now, &mut SystemEntropy).expect("the invite opens");
+        let link = String::from_utf8(inviter.link().to_text().expose().to_vec())
+            .expect("the link is text");
+        let request = joiner
+            .join_request(&link, inviter.signed_offer(), now)
+            .expect("the device answers")
+            .signed_request;
+        let accepted = inviter
+            .accept(&self.key, &request, now)
+            .expect("the Request is accepted");
+        joiner
+            .join_reveal(&accepted.reveal)
+            .expect("the Reveal is checked");
+        Request::decode(&request.request)
+            .expect("a Request")
+            .key_package
     }
 
     /// Its device id: the signature key.
@@ -215,6 +289,33 @@ impl Forger {
 
     /// Commits in `group` with `aad` as the authenticated data, adding the given KeyPackages, and merges it.
     pub fn commit(&self, group: &mut MlsGroup, aad: &[u8], adds: &[Vec<u8>]) -> Forged {
+        self.commit_with(group, aad, adds, Vec::new())
+    }
+
+    /// A Commit that carries a PreSharedKey proposal for an external PSK this member made up and stored: MLS
+    /// takes it from whoever holds that PSK, and the profile uses none (section 3).
+    pub fn commit_with_psk(&self, group: &mut MlsGroup, aad: &[u8]) -> Forged {
+        use openmls::prelude::{PreSharedKeyProposal, Proposal};
+        use openmls::schedule::{ExternalPsk, PreSharedKeyId, Psk};
+        let id = PreSharedKeyId::new(
+            group.ciphersuite(),
+            self.provider.rand(),
+            Psk::External(ExternalPsk::new(b"a key from elsewhere".to_vec())),
+        )
+        .expect("a PSK id");
+        id.store(&self.provider, &[7; 32])
+            .expect("the PSK is stored");
+        let proposal = Proposal::PreSharedKey(Box::new(PreSharedKeyProposal::new(id)));
+        self.commit_with(group, aad, &[], vec![proposal])
+    }
+
+    fn commit_with(
+        &self,
+        group: &mut MlsGroup,
+        aad: &[u8],
+        adds: &[Vec<u8>],
+        more: Vec<openmls::prelude::Proposal>,
+    ) -> Forged {
         let adds: Vec<KeyPackage> = adds
             .iter()
             .map(|bytes| {
@@ -234,6 +335,7 @@ impl Forger {
             .commit_builder()
             .consume_proposal_store(false)
             .propose_adds(adds)
+            .add_proposals(more)
             .load_psks(self.provider.storage())
             .expect("no PSK")
             .create_group_info(true)
