@@ -416,6 +416,25 @@ impl Registers {
         })
     }
 
+    /// What these registers hold of a register envelope that was taken before, without judging it again:
+    /// the name its `payload` writes, the sender for a name of which each device holds its own value, and
+    /// whether that envelope's value is the current one of the name now (9.3.2). `bad-format` for a
+    /// payload that is no register value.
+    pub fn standing(
+        &self,
+        header: &Header,
+        payload: &[u8],
+    ) -> Result<(String, Option<DeviceId>, bool), Error> {
+        let name = Value::parse(payload)?.name;
+        let each = name_owner(&name, header.group.is_room()) == Some(NameOwner::EachDevice);
+        let of = each.then_some(header.sender);
+        let current = self
+            .values
+            .get(&(name.clone(), of))
+            .is_some_and(|held| held.stamp.sender == header.sender && held.stamp.seq == header.seq);
+        Ok((name, of, current))
+    }
+
     /// Notes a lamport seen elsewhere in the group: the `lamport` of a Note version's payload (section 9.2.1),
     /// which counts by the same rule. A writer's next lamport lies above it.
     pub fn observe_lamport(&mut self, lamport: u64) {

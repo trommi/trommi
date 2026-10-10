@@ -31,8 +31,8 @@ use crate::records::{
     RoomRoles, SignedHubAuth,
 };
 use crate::recovery::{
-    self, with_chains, with_commits, with_group, with_room, CodeJoin, Learned, RecoveryPlan,
-    ServedCommit, ServedEnvelope, ServedGroup, ServedRoom,
+    self, with_chains, with_commits, with_group, with_room, CodeJoin, GroupPast, Learned,
+    RecoveryPlan, ServedCommit, ServedEnvelope, ServedGroup, ServedRoom,
 };
 use crate::store::AnyStore;
 use crate::{CoreError, ErrorCode};
@@ -410,6 +410,29 @@ impl CoreDevice {
             Ok(inner.readmit_helper(
                 &group_id(&group)?,
                 old.to_core()?,
+                &device_id(&device)?,
+                &key_package,
+                now_ms,
+            )?)
+        })
+    }
+
+    /// Lets a human device into a session group again whose Welcome it could not use: one Commit that removes
+    /// its leaf, with the Cut this device holds for it, and adds the same key with the fresh KeyPackage it
+    /// asked with; its chain goes on from that Cut. Any human device of the group does this (`forbidden` for
+    /// another device, and in the room group, where a device that cannot join comes back as a new device);
+    /// `bad-commit` for a device that is no human device of the room, for this device itself, and when the
+    /// hub holds an envelope of the device beyond the Cut. Returns the outbox entry's id.
+    pub fn readmit_human(
+        &self,
+        group: Vec<u8>,
+        device: Vec<u8>,
+        key_package: Vec<u8>,
+        now_ms: u64,
+    ) -> Result<u64, CoreError> {
+        self.write(|inner| {
+            Ok(inner.readmit_human(
+                &group_id(&group)?,
                 &device_id(&device)?,
                 &key_package,
                 now_ms,
@@ -815,6 +838,20 @@ impl CoreDevice {
                     epochs: learned.epochs,
                 })
             })
+        })
+    }
+
+    /// Where this device's knowledge of `group` begins and whether its past was learned; none for a group it
+    /// neither is a leaf of nor follows. A followed group is not in [`CoreDevice::groups`]: this is how its
+    /// past is asked for.
+    pub fn group_past(&self, group: Vec<u8>) -> Result<Option<GroupPast>, CoreError> {
+        self.read(|device| {
+            Ok(device
+                .group_past(&group_id(&group)?)?
+                .map(|past| GroupPast {
+                    from_epoch: past.from_epoch,
+                    learned: past.learned,
+                }))
         })
     }
 
