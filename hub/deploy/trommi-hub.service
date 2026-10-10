@@ -1,5 +1,8 @@
-# The hub under systemd. This file is part of every hub release: /etc/systemd/system/trommi-hub.service is a link to
-# /srv/trommi/current/trommi-hub.service, so the unit and the program change together and go back together.
+# The hub under systemd. Installed once by hub/deploy/install.sh and NOT part of a release: a release brings the
+# program this unit runs (/srv/trommi/deploy/current is a link the updater swaps), never the rules it runs under.
+# So whatever a release contains runs as the user `trommi` inside the limits below, and nothing a release or the
+# updater does can make it root. Changing this file means running install.sh again.
+#
 # Settings of this server are in /etc/trommi/hub.env (address, origins, switches) and /etc/trommi/hub-secrets.env
 # (push credentials); where the hub listens and keeps its data is fixed here and cannot be changed from those files.
 # Not started at boot by itself: the updater starts it, after it has settled a deploy that a reboot may have cut off.
@@ -14,7 +17,11 @@ User=trommi
 Group=trommi
 EnvironmentFile=/etc/trommi/hub.env
 EnvironmentFile=-/etc/trommi/hub-secrets.env
-ExecStart=/usr/bin/env HUB_HOST=127.0.0.1 HUB_PORT=8790 HUB_DATA=/srv/trommi/data /srv/trommi/current/trommi-hub
+# before another release starts for the first time: a copy of the database and the hub's keys (the hub stands still)
+RuntimeDirectory=trommi-hub
+RuntimeDirectoryPreserve=yes
+ExecStartPre=/bin/sh /usr/local/lib/trommi/hub-prestart.sh /srv/trommi/deploy /srv/trommi/data /srv/trommi/backups /run/trommi-hub
+ExecStart=/usr/bin/env HUB_HOST=127.0.0.1 HUB_PORT=8790 HUB_DATA=/srv/trommi/data /srv/trommi/deploy/current/trommi-hub
 Restart=always
 RestartSec=2
 TimeoutStopSec=30
@@ -23,7 +30,7 @@ UMask=0077
 
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/srv/trommi/data
+ReadWritePaths=/srv/trommi/data /srv/trommi/backups
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
