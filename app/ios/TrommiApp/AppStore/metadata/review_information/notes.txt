@@ -1,0 +1,11 @@
+What Trommi does: it is the phone side of coding agents (Claude Code, Codex) that people run on their own Linux or macOS computer. When an agent needs a decision, it sends a "card" with a question and a few options; the person answers with one tap and the agent continues. Cards, chats, notes and files are end-to-end encrypted on the devices (MLS); our server only relays sealed envelopes.
+
+How to review without a computer and an agent: on the start screen, tap "Try the demo" (at the foot of the screen). It opens a complete made-up workspace ("Fernly") on the device: the Desk with open questions, cards with pictures, chats with agent sessions, the Scribble Board, notes and Settings. Nothing is sent to a server and nothing is stored; "Leave" in the yellow Demo tag returns to the start screen. Every screen of the app can be reached from the demo; "All Screens" in the tag lists them.
+
+A real account: "Create Account" with any e-mail address and a password works and needs no confirmation e-mail. A new account has an empty Desk until an agent is connected: connecting one needs a computer with Claude Code or Codex and the Trommi connector (instructions at https://trommi.com), so the demo is the way to see the app filled.
+
+Account deletion: Settings > Account > "Delete Account…" (asks for the password, then deletes the account and all of its data on the server).
+
+Push notifications are optional and asked for after sign-in; the app works fully without them. The camera is used only to scan a pairing code shown by another of the person's devices.
+
+Contact: trommi@mail101.de

@@ -118,6 +118,9 @@ struct SettingsHome: View {
       }
       SettingsGroup {
         link("mls-proof") { SettingsRow(title: "MLS proof", chevron: true) { Image(systemName: "checkmark.shield").font(.system(size: 20)).foregroundStyle(Ink.fg) } }
+        RowRule()
+        // (App Review 5.1.1(i): the privacy policy reachable inside the app, the same page App Store Connect names)
+        Link(destination: URL(string: "https://trommi.com/privacy")!) { SettingsRow(title: "Privacy Policy", chevron: true) { Image(systemName: "hand.raised").font(.system(size: 20)).foregroundStyle(Ink.fg) } }.buttonStyle(.plain)
       }
       if let r = model.room {
         Text("Trommi \(HubClient.appVersion) · room \(String(r.record.roomId.prefix(12)))… · key epoch \(r.state.epoch)").font(Face.mono(12)).foregroundStyle(Ink.faint)

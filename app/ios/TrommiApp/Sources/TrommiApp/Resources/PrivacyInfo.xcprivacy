@@ -5,8 +5,9 @@
   not inside the SwiftPM resource bundle. app/ios/README.md "Privacy manifest" says where each line comes from; keep the
   two in step when the code changes.
 
-  No tracking. One collected data type: the e-mail address of the account, which the hub stores to sign the person
-  in. Everything else the app sends is encrypted so that the hub cannot read it.
+  No tracking. Two collected data types: the e-mail address of the account, which the hub stores to sign the person
+  in, and the account's id (a UUID the hub mints, printed on the Emergency Kit). Everything else the app sends is
+  encrypted so that the hub cannot read it.
 
   Required reason APIs:
     UserDefaults      CA92.1  the app's own settings (desk, theme, push level, read marks)
@@ -25,6 +26,18 @@
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeEmailAddress</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
 			<key>NSPrivacyCollectedDataTypeLinked</key>
 			<true/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>

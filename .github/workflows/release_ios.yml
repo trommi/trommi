@@ -1,0 +1,71 @@
+# The App Store release of the iOS app, by hand only (Actions -> release_ios -> Run workflow). The steps are
+# app/ios/TrommiApp/AppStore/store.py (app/ios/README.md "App Store release"):
+#   check    offline: metadata and screenshots against App Store Connect's limits; nothing is sent
+#   upload   metadata, screenshots, the version and its build (`build`, else the newest VALID TestFlight build of the
+#            version in project.yml); submits nothing
+#   submit   the version goes to App Review (a step of its own: nothing else sends it)
+#   release  a version approved with release type MANUAL goes on sale
+#   status   read only
+# Secrets: the environment `ios` (OP_SERVICE_ACCOUNT_TOKEN, OP_ENVIRONMENT_ID), as deploy_ios; APPLE_ASC_KEY,
+# APPLE_ASC_KEY_ID, APPLE_ASC_ISSUER_ID from the 1Password Environment; APPSTORE_DEMO_PASSWORD there only if
+# metadata/review_information/demo_user.txt names a demo account.
+name: release_ios
+
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: What to do
+        required: true
+        type: choice
+        options: [check, upload, submit, release, status]
+        default: check
+      build:
+        description: The build number to attach (upload only; empty = the newest VALID build of the version)
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release_ios
+  cancel-in-progress: false
+
+jobs:
+  store:
+    name: App Store (${{ inputs.step }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: ios
+      url: https://appstoreconnect.apple.com/apps
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check (offline)
+        run: python3 app/ios/TrommiApp/AppStore/store.py check
+      - name: Install the 1Password CLI
+        if: inputs.step != 'check'
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+        with:
+          version: latest-beta
+      - name: ${{ inputs.step }}
+        if: inputs.step != 'check'
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          OP_ENVIRONMENT_ID: ${{ secrets.OP_ENVIRONMENT_ID }}
+          STEP: ${{ inputs.step }}
+          BUILD: ${{ inputs.build }}
+        run: |
+          set -eu
+          printf '%s' "$BUILD" | grep -Eq '^[0-9]*$' || { echo "::error::not a build number: $BUILD"; exit 1; }
+          case "$STEP" in
+            upload) args=(upload ${BUILD:+"$BUILD"}) ;;
+            submit|release) args=("$STEP" --yes) ;;
+            status) args=(status) ;;
+            *) echo "::error::unknown step $STEP"; exit 1 ;;
+          esac
+          op run --environment "$OP_ENVIRONMENT_ID" -- bash app/ios/TrommiApp/AppStore/store.sh "${args[@]}"

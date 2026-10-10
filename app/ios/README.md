@@ -236,14 +236,39 @@ core) and is not distributed in France, so it is exempt: `ITSAppUsesNonExemptEnc
 (`IOS_NON_EXEMPT_ENCRYPTION=YES` with `asc.py export-code` stays for a later change). If France is added later, the
 French encryption declaration is needed.
 
+## App Store release
+
+Everything App Store Connect shows lies in `TrommiApp/AppStore`: `metadata/` (texts and URLs per locale in `en-US/`,
+`copyright.txt`, categories, `release_type.txt`, `age_rating.json`, `availability.json`, App Review's contact and notes
+in `review_information/`, and `app_privacy.json`, the App Privacy answers) and `screenshots/en-US/iphone-6.9` (1320x2868)
+and `screenshots/en-US/ipad-13` (2064x2752), rendered from the demo by `shots.sh` on a Mac. `store.py` sends them:
+
+    AppStore/store.sh check            # offline: limits, sizes, no alpha; nothing is sent
+    AppStore/store.sh upload [BUILD]   # metadata, screenshots, version of project.yml + the TestFlight build; no submission
+    AppStore/store.sh submit --yes     # to App Review: a command of its own
+    AppStore/store.sh release --yes    # on sale, once approved (release type MANUAL)
+    AppStore/store.sh status
+
+The key comes from `~/.config/trommi/ios.env` (as `ship-local.sh`) or, under `op run --environment <id>`, from
+`APPLE_ASC_KEY*` of the 1Password Environment. CI: Actions → release_ios → Run workflow, step check / upload / submit /
+release / status (environment `ios`). `upload` sets price (free) and territories (all but France, see "Export
+compliance") only when the app has none; it replaces a screenshot set only when its files changed.
+
+Once by hand in App Store Connect, the API has no route for it: App Privacy, from `metadata/app_privacy.json` (Email
+Address and User ID, linked, App Functionality, no tracking). Before the first `upload`:
+`review_information/phone_number.txt` (App Review calls it if something blocks the review). App Review uses the demo
+("Try the demo" on the start screen, no account), as `review_information/notes.txt` says; a demo account
+(`demo_user.txt`, its password in `APPSTORE_DEMO_PASSWORD`) is optional.
+
 ## Privacy manifest
 
 `TrommiApp/Sources/TrommiApp/Resources/PrivacyInfo.xcprivacy`, copied to the root of the app bundle (`xtool.yml`
 `resources:`; not a SwiftPM resource, which would land inside `TrommiApp_TrommiApp.bundle`).
 
 - No tracking, no tracking domains.
-- Collected: the account's e-mail address, linked to the person, for app functionality (the hub stores it to sign the
-  person in). Everything else the app sends is encrypted so that the hub cannot read it.
+- Collected: the account's e-mail address and the account id (User ID), linked to the person, for app functionality
+  (the hub stores them to sign the person in). Everything else the app sends is encrypted so that the hub cannot read
+  it. The App Privacy answers in App Store Connect say the same (`AppStore/metadata/app_privacy.json`).
 - Required reason APIs: UserDefaults `CA92.1` (the app's own settings); file timestamps `C617.1` (files in the app's
   own containers: the Share inbox's sweep, the record store's sizes, and `fstat`, which the Rust standard library
   imports); system boot time `35F9.1` (elapsed time: the cold start in the log, the performance log).

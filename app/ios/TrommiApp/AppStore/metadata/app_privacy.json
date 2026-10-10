@@ -1,0 +1,10 @@
+{
+  "_comment": "The App Privacy answers (the 'nutrition label'). App Store Connect has no API for them: entered once by hand under App Privacy, from this file. They follow PrivacyInfo.xcprivacy and https://trommi.com/privacy. End-to-end encrypted content the operator cannot read is not 'collected' in Apple's sense and is not listed.",
+  "privacy_policy_url": "https://trommi.com/privacy",
+  "tracking": false,
+  "collected": [
+    {"category": "Contact Info", "type": "Email Address", "linked_to_user": true, "tracking": false, "purposes": ["App Functionality"]},
+    {"category": "Identifiers", "type": "User ID", "linked_to_user": true, "tracking": false, "purposes": ["App Functionality"], "why": "the account id (printed on the Emergency Kit) and the devices' public keys"}
+  ],
+  "not_collected": ["Location", "Contacts", "Health", "Financial Info", "Browsing History", "Search History", "Purchases", "Usage Data", "Diagnostics (no SDK; Apple's own crash reports are not declared)", "User Content (end-to-end encrypted, unreadable to the operator)", "Device ID (no advertising or vendor id is sent)"]
+}
