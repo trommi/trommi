@@ -366,7 +366,7 @@ export interface InviteConfirmed {
   outboxId: number
 }
 
-export type InviteStepKind = 'wait' | 'commit' | 'handover' | 'addToSession' | 'foundSession' | 'takeOver'
+export type InviteStepKind = 'wait' | 'commit' | 'handover' | 'addToSession' | 'foundSession' | 'takeOver' | 'checkHelpers'
 
 /** One thing to do next for an invite. The fields are filled as `kind` says. */
 export interface InviteStep {
@@ -374,8 +374,11 @@ export interface InviteStep {
   kind: InviteStepKind
   group: Uint8Array | null
   device: Uint8Array | null
+  /** Null on a `takeOver` of a helper session: claim a fresh KeyPackage of `device` at the hub. */
   keyPackage: Uint8Array | null
   cuts: Cut[]
+  /** For `checkHelpers`: the main session that was taken over. */
+  session: Uint8Array | null
 }
 
 export interface JoinRequest {
@@ -648,9 +651,16 @@ export interface CodeJoin {
   unverified: UnverifiedSession[]
 }
 
-export interface GroupCut {
-  group: Uint8Array
-  cut: Cut
+/** One envelope of a chain as the hub's chain route serves it. */
+export interface ServedEnvelope {
+  bytes: Uint8Array
+  change: number
+  voidCode?: ErrorCode | null
+}
+
+export interface Learned {
+  /** How many epochs were recorded; 0 when there was nothing to learn. */
+  epochs: number
 }
 
 export interface Removals {
@@ -717,15 +727,20 @@ export class Device {
   handoverRead(group: Uint8Array, recipient: Uint8Array): Promise<void>
   sendStrokePiece(board: Uint8Array, piece: Uint8Array): Promise<number>
   sendWorkTrail(group: Uint8Array, turn: Uint8Array, number: number, step: Uint8Array, nowMs: number): Promise<number>
-  /** Signs the hub's challenge with this device's key, for the room it belongs to. */
+  /** Signs the hub's challenge with this device's key, for the room it belongs to; while joining by link, after
+   *  `joinReveal`, for the invite's room at the invite's hub (`bad-invite` for another hub). */
   hubSignIn(hub: string, challenge: Uint8Array): Promise<SignedHubAuth>
   inviteOpen(role: InviteRole, sessionId: Uint8Array | null | undefined, app: string, hub: string, nowMs: number): Promise<InviteOpened>
   inviteAccept(inviteId: Uint8Array, request: SignedRequest, nowMs: number): Promise<InviteAccepted>
   /** `code`: the six numbers the person confirmed. Null when `matches` is false: the invite is burned. */
   inviteConfirm(inviteId: Uint8Array, code: Uint8Array, requestHash: Uint8Array, matches: boolean, nowMs: number): Promise<InviteConfirmed | null>
   inviteRecommit(inviteId: Uint8Array, nowMs: number): Promise<number>
+  /** Every step left for every invite; an invite with nothing left is finished and listed no more. */
   inviteSteps(): Promise<InviteStep[]>
   inviteHandover(inviteId: Uint8Array): Promise<number[]>
+  /** Answers a `checkHelpers` step with the helper sessions' groups the hub lists under the session taken over. */
+  inviteChecked(inviteId: Uint8Array, helpers: Uint8Array[]): Promise<void>
+  /** A takeover without history: drops the invite's handover steps only. */
   inviteForget(inviteId: Uint8Array): Promise<void>
   joinRequest(link: string, offer: SignedOffer, nowMs: number): Promise<JoinRequest>
   joinReveal(reveal: SignedReveal): Promise<CheckCode>
@@ -778,7 +793,15 @@ export class Device {
   newRecoveryCode(recoveryCode: Uint8Array): Promise<Uint8Array>
   replaceCode(recoveryCode: Uint8Array, account: Uint8Array, nowMs: number): Promise<number>
   prepareRecovery(recoveryCode: Uint8Array, served: ServedRoom): Promise<RecoveryPlan>
-  recover(recoveryCode: Uint8Array, served: ServedRoom, cuts: GroupCut[], account: Uint8Array, nowMs: number): Promise<CodeJoin>
+  /** `chains`: the envelopes of the devices the plan removes, as the hub's chain route serves them, in its order.
+   *  The device verifies each chain from number 1 and takes the Cuts itself. */
+  recover(recoveryCode: Uint8Array, served: ServedRoom, chains: ServedEnvelope[], account: Uint8Array, nowMs: number): Promise<CodeJoin>
+  /**
+   * For a device that joined by link: learns the past of a group from its founding GroupInfo and its Commits. The
+   * room group first, then main sessions, then helper sessions. Afterwards the envelopes of the earlier epochs,
+   * `group-behind` until then, are handed to `receiveEnvelope` again.
+   */
+  learnHistory(group: Uint8Array, founding: Uint8Array, commits: ServedCommit[]): Promise<Learned>
 }
 
 // ---- files --------------------------------------------------------------------------------------------------------
