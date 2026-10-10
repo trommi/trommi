@@ -314,27 +314,43 @@ export const steps = [
     await arrives(B, has, 'the new desk after the reload')
   }],
 
-  // KEPT FAILING until the product is fixed: what arrives is in the model at once and in the app's cache 250 ms
-  // later (client.ts, the flush timer), while the device's cursor is past it durably. A page that is loaded again in
-  // between never gets it back: it is gone from that device for good, and here the registers cached before went too.
-  ['a register that arrived a moment before the page is loaded again is still there afterwards', async ctx => {
+  // (regression: what arrived used to reach the app's cache 250 ms after the model, with the device's cursor
+  // durably past it, so a page loaded again in between lost it for good, and the registers cached before with it)
+  ['a register that arrives just before the page is loaded again is still there afterwards: 0, 50, 100, 200, 300 ms, three rounds', async ctx => {
+    const { check, note } = ctx.run
     const A = await ctx.profile('A'), B = await ctx.profile('B')
     if (!ctx.joined) throw skip('the second profile did not join')
     const has = name => `[...document.querySelectorAll('#menu-desk-rows a.menu-desk b')].some(b => b.textContent === ${q(name)})`
+    const made = ['Workshop'], lost = []
+    for (let round = 1; round <= 3; round++) for (const wait of [0, 50, 100, 200, 300]) {
+      const name = `R${round}-${wait}`
+      if (await A.js("return document.getElementById('brand-doors')?.hidden !== false")) { await A.click('.desk-switch-open'); await A.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open') }
+      await A.click('#desk-add')
+      await A.until("document.activeElement?.matches('.menu-desk-field')", 'the field for the new desk\'s name')
+      await A.session.send('Input.insertText', { text: name })
+      await A.key('Enter', 13)
+      await arrives(B, has(name), `the desk ${name} in the second profile's menu`)
+      made.push(name)
+      if (wait) await sleep(wait)
+      await B.reload()
+      await ui.live(B, 'live after the reload', 40000)
+      await sleep(1200)
+      const menu = await B.js("return [...document.querySelectorAll('#menu-desk-rows a.menu-desk b')].map(b => b.textContent)")
+      const gone = made.filter(n => !menu.includes(n))
+      if (gone.length) lost.push(`reload ${wait} ms after ${name} arrived: missing ${gone.join(', ')}`)
+    }
+    note(`${made.length - 1} desks made, the second profile loaded again after each`)
+    check(!lost.length, 'every desk made so far is in the second profile\'s menu after every reload', lost)
     await A.key('Escape', 27)
-    await A.click('.desk-switch-open')
-    await A.until("document.getElementById('brand-doors')?.hidden === false", 'the menu open')
-    await A.click('#desk-add')
-    await A.until("document.activeElement?.matches('.menu-desk-field')", 'the field for the new desk\'s name')
-    await A.session.send('Input.insertText', { text: 'Annex' })
-    await A.key('Enter', 13)
-    await arrives(B, has('Annex'), 'the second new desk in the second profile\'s menu')
-    await B.reload()
-    await ui.live(B, 'live after the reload', 40000)
-    await sleep(3000)
-    const menu = await B.js("return [...document.querySelectorAll('#menu-desk-rows a.menu-desk b')].map(b => b.textContent)")
-    ctx.run.check(menu.includes('Annex') && menu.includes('Workshop'), 'both new desks are in the second profile\'s menu after the reload', menu)
-    await A.key('Escape', 27)
+  }],
+
+  ['an idle device loaded again three times seals nothing: the room\'s change number stays where it was', async ctx => {
+    const B = await ctx.profile('B')
+    if (!ctx.joined) throw skip('the second profile did not join')
+    const at = async () => { await ui.live(B, 'live', 40000); await sleep(2000); return B.js('return trommi.client.model.room.last_envelope_number') }
+    const seen = [await at()]
+    for (let i = 0; i < 3; i++) { await B.reload(); seen.push(await at()) }
+    ctx.run.check(seen.every(n => n === seen[0]), 'last_envelope_number is the same after each of three reloads', seen)
   }],
 
   ['Settings → Devices lists two devices on both profiles', async ctx => {
@@ -448,6 +464,9 @@ export const steps = [
       await firstDesk(E)
       const whole = await E.until(noteIs(ctx.note), 'the note on the recovered profile', 30000).then(() => true, () => false)
       check(whole, 'the recovered profile shows the note as it stood (its last version)', { shows: await E.js(`return document.querySelector(${q(NOTE)})?.value ?? null`), stood: ctx.note, holds: await held(E) })
+      const refused = await E.js("return trommi.client.model.alerts.map(x => x.code + ': ' + x.message.slice(0, 100)).filter(x => !x.startsWith('recovery'))")
+      check(!refused.some(x => x.startsWith('forbidden')), 'no "forbidden" alert on the recovered profile', refused)
+      if (refused.length) note(`alerts on the recovered profile: ${refused.join(' · ')}`)
       await ui.openSettingsPage(E, 'devices')
       const listed = await E.js("return document.querySelectorAll('.room-device').length")
       check(listed === 1, 'Devices on the recovered profile lists this device alone', listed)
