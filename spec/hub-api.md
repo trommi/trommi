@@ -391,7 +391,11 @@ encrypted.
     is reached through a TLS proxy) and no cross-site `Sec-Fetch-Site` (403 otherwise). Three read-only pages
     (without a session `/accounts` and `/tables` send the browser to `/`): the overview (CPU, memory, disk of the
     data folder, uptime, the hub's own memory, read from `/proc` and `statvfs`; version, release, database size;
-    rooms, accounts, devices, sessions, streams, requests at work, push registrations); the accounts (number,
+    rooms, accounts, devices, sessions, streams, requests at work, push registrations; under CPU, memory, the hub's
+    memory, sessions, streams, requests per second and the pool a small line graph, drawn on the server as inline
+    SVG, of the last hour or with `?range=24h` the last day, from samples the hub takes every 10 s and keeps in
+    memory only, 10 s apart for an hour and averaged per minute for a day, so a restart begins a new history; the
+    page reloads itself every 10 s); the accounts (number,
     e-mail masked to its first character and its ending, `a•••@•••.org`, how it signs in, passkeys, rooms, times)
     and the rooms with the counts the hub keeps (devices by role, sessions, changes, envelopes, file bytes against
     the quota, push registrations, the account by number); and the tables, a side list of every table opened for

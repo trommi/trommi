@@ -61,6 +61,7 @@ pub fn spawn_jobs(app: &Arc<App>) {
         |a| a.sweep(),
     );
     every(app, 30_000, 30_000, |a| a.db.maintain());
+    every(app, crate::metrics::STEP_MS, 0, |a| a.metrics.sample(a));
     every(app, app.cfg.lease_watch_ms, app.cfg.lease_watch_ms, |a| {
         a.lease_watch()
     });
@@ -140,6 +141,7 @@ pub async fn serve(app: Arc<App>, listener: TcpListener, stop: Arc<Notify>) {
                 let (app, conn) = (app.clone(), conn.next_request());
                 async move {
                     app.in_flight.fetch_add(1, Ordering::Relaxed);
+                    app.metrics.requests.fetch_add(1, Ordering::Relaxed);
                     let guard = InFlight(app.clone());
                     let (parts, body) = crate::api::handle(app, req, conn).await.into_parts();
                     Ok::<_, std::convert::Infallible>(hyper::Response::from_parts(

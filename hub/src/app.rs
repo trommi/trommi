@@ -59,6 +59,8 @@ pub struct App {
     /// the pool for expensive work
     pub gate: Gate,
     pub admin: crate::admin::Admin,
+    /// the recent history for the admin page's graphs
+    pub metrics: crate::metrics::Metrics,
     live_due: Mutex<HashSet<Room>>,
     /// per room: the bytes and the number of uploads in progress
     uploads: Mutex<HashMap<Room, (u64, usize)>>,
@@ -158,6 +160,7 @@ impl App {
             admitted: AtomicUsize::new(0),
             admitted_per_address: Mutex::new(HashMap::new()),
             admin: Default::default(),
+            metrics: Default::default(),
             gate: Gate::new(cfg_heavy.0, cfg_heavy.1),
             live_due: Mutex::new(HashSet::new()),
             uploads: Mutex::new(HashMap::new()),

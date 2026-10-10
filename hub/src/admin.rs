@@ -111,9 +111,14 @@ fn brand() -> String {
 
 /// A whole page: `body` inside the page's frame.
 fn page(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
+    page_with(status, body, "")
+}
+
+/// A whole page with more in its head (the overview's reload every 10 s).
+fn page_with(status: StatusCode, body: &str, head: &str) -> Response<Full<Bytes>> {
     let html = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-<meta name=\"color-scheme\" content=\"light dark\"><title>Trommi hub admin</title><style>{STYLE}</style></head><body>{body}</body></html>"
+<meta name=\"color-scheme\" content=\"light dark\">{head}<title>Trommi hub admin</title><style>{STYLE}</style></head><body>{body}</body></html>"
     );
     Response::builder()
         .status(status)
@@ -186,6 +191,15 @@ p.err{padding:9px 14px;border-radius:12px;background:var(--bad-soft);font-size:.
 .tile .v small{font:500 .84rem var(--font);color:var(--muted);margin-left:4px}
 .tile .s{font-size:.78rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card{padding:16px 18px}.card+.card{margin-top:12px}
+.seg{display:inline-flex;margin-left:auto;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--surface)}
+.seg a{padding:3px 12px;color:var(--muted);font-size:.78rem;font-weight:500}.seg a+a{border-left:1px solid var(--line)}
+.seg a.on{background:var(--sunken);color:var(--fg);font-weight:600}.seg a:hover{text-decoration:none;color:var(--fg)}
+.spark{display:block;width:100%;height:36px;margin-top:10px;overflow:visible}
+.spark .line{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
+.spark .area{fill:var(--accent);opacity:.13;stroke:none}
+.spark .base{stroke:var(--line-strong);stroke-width:1}
+.gcap{display:flex;justify-content:space-between;gap:8px;margin-top:3px;font-size:.7rem;color:var(--faint);white-space:nowrap;font-variant-numeric:tabular-nums}
+.gcap span{overflow:hidden;text-overflow:ellipsis}.gcap span+span{flex:none}
 .count{color:var(--faint);font:500 .78rem var(--font);font-variant-numeric:tabular-nums}
 .scroll{overflow:auto}
 table.grid{border-collapse:separate;border-spacing:0;font-size:.84rem;min-width:100%}
@@ -462,7 +476,11 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>) -> Response<Full<Byte
     let session = cookie(&req).filter(|token| app.admin.signed_in(token));
     match (req.method().clone(), req.uri().path()) {
         (Method::GET, "/") => match session {
-            Some(_) => shown(app, Page::Overview).await,
+            Some(_) => {
+                // the graphs' range: the last hour, or with `?range=24h` the last day
+                let day = req.uri().query().unwrap_or("").split('&').any(|p| p == "range=24h");
+                shown(app, Page::Overview(if day { crate::metrics::COARSE_MS } else { crate::metrics::FINE_MS })).await
+            }
             None => login(StatusCode::OK, ""),
         },
         (Method::GET, "/accounts") if session.is_some() => shown(app, Page::Accounts).await,
@@ -541,7 +559,8 @@ pub async fn handle(app: Arc<App>, req: Request<Incoming>) -> Response<Full<Byte
 /// The three pages behind the sign-in.
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
-    Overview,
+    /// with the range of its graphs, in ms
+    Overview(u64),
     Accounts,
     Tables(Option<&'static str>),
 }
@@ -549,7 +568,7 @@ enum Page {
 impl Page {
     fn key(self) -> String {
         match self {
-            Page::Overview => "/".into(),
+            Page::Overview(range) => format!("/?range={range}"),
             Page::Accounts => "/accounts".into(),
             Page::Tables(None) => "/tables".into(),
             Page::Tables(Some(t)) => format!("/tables?t={t}"),
@@ -569,17 +588,19 @@ fn signed_in_page(status: StatusCode, on: Page, main: &str) -> Response<Full<Byt
             }
         )
     };
-    page(
+    page_with(
         status,
         &format!(
             "<header class=\"top\">{}<nav>{}{}{}</nav><div class=\"who\"><span class=\"login-name\">admin</span><form method=\"post\" action=\"/logout\">\
 <button>Sign out</button></form></div></header>{}",
             brand(),
-            tab("/", "Overview", on == Page::Overview),
+            tab("/", "Overview", matches!(on, Page::Overview(_))),
             tab("/accounts", "Accounts", on == Page::Accounts),
             tab("/tables", "Tables", matches!(on, Page::Tables(_))),
             if main.starts_with('<') { main.to_string() } else { format!("<main class=\"page\"><p class=\"muted\">{}</p></main>", esc(main)) }
         ),
+        // the overview reloads itself every 10 s for its graphs (no script: the CSP allows none)
+        if matches!(on, Page::Overview(_)) { "<meta http-equiv=\"refresh\" content=\"10\">" } else { "" },
     )
 }
 
@@ -612,7 +633,7 @@ async fn shown(app: Arc<App>, on: Page) -> Response<Full<Bytes>> {
         }
         let done = Done(app);
         let html = match on {
-            Page::Overview => crate::admin_view::overview(&done.0),
+            Page::Overview(range) => crate::admin_view::overview(&done.0, range),
             Page::Accounts => crate::admin_view::accounts(&done.0),
             Page::Tables(t) => crate::admin_view::tables(&done.0, t),
         };

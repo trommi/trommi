@@ -330,3 +330,7 @@ path = "core/device_readmit.rs"
 [[test]]
 name = "core_groups_scale"
 path = "core/groups_scale.rs"
+
+[[test]]
+name = "hub_metrics"
+path = "hub/metrics.rs"

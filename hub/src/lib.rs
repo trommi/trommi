@@ -23,6 +23,7 @@ pub mod limits;
 pub mod live;
 pub mod log;
 pub mod memo;
+pub mod metrics;
 pub mod observer;
 pub mod prepare;
 pub mod push;

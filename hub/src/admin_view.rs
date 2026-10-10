@@ -14,6 +14,7 @@ use rusqlite::Connection;
 use crate::admin::{esc, EYE, LOCK};
 use crate::app::App;
 use crate::error::Refused;
+use crate::metrics::{self, Sample, Series};
 use crate::util::{hex, now, short};
 
 /// What each table holds, as spec/hub-api.md "Tables" has it: its group on the page, what the hub reads, and what
@@ -207,6 +208,104 @@ fn tile(key: &str, value: &str, small: &str, sub: &str) -> String {
     )
 }
 
+// ---- the graphs ---------------------------------------------------------------------------------------------
+
+/// A tile with a graph under its numbers.
+fn tile_graph(key: &str, value: &str, small: &str, sub: &str, graph: &str) -> String {
+    let plain = tile(key, value, small, sub);
+    format!("{}{graph}</div>", &plain[..plain.len() - "</div>".len()])
+}
+
+/// How a series' values read.
+fn shown_value(series: Series, v: f64) -> String {
+    match series {
+        Series::Cpu | Series::Mem => format!("{v:.0} %"),
+        Series::Rss => size(v.max(0.0) as u64),
+        Series::Rps => {
+            if v < 10.0 {
+                format!("{v:.1}/s")
+            } else {
+                format!("{v:.0}/s")
+            }
+        }
+        _ => format!("{v:.0}"),
+    }
+}
+
+/// A small line graph of one series over `range_ms` up to `now`, drawn as inline SVG, with a line under it: the
+/// time it covers ("since start" when the history is shorter) and the highest value in it. Percentages are drawn
+/// against 100, everything else against its own highest value.
+pub fn graph(samples: &[Sample], series: Series, range_ms: u64, now: u64) -> String {
+    const W: f64 = 300.0;
+    const H: f64 = 48.0;
+    let from = now.saturating_sub(range_ms);
+    let step = if range_ms <= metrics::FINE_MS { metrics::STEP_MS } else { metrics::COARSE_STEP_MS };
+    let points: Vec<(u64, f64)> = samples
+        .iter()
+        .filter(|s| s.at >= from && s.at <= now)
+        .map(|s| (s.at, s.get(series)))
+        .filter(|(_, v)| v.is_finite())
+        .collect();
+    let peak = points.iter().map(|p| p.1).fold(0.0, f64::max);
+    let top = match series {
+        Series::Cpu | Series::Mem => 100.0,
+        _ => (peak * 1.15).max(1.0),
+    };
+    let x = |at: u64| (at.saturating_sub(from)) as f64 / range_ms.max(1) as f64 * W;
+    let y = |v: f64| H - 1.0 - (v.max(0.0) / top).min(1.0) * (H - 2.0);
+    // a gap of more than three steps (the hub was busy or stopped) breaks the line
+    let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut last_at = None;
+    for &(at, v) in &points {
+        if last_at.is_none_or(|l: u64| at > l + 3 * step) {
+            runs.push(Vec::new());
+        }
+        runs.last_mut().expect("a run").push((x(at), y(v)));
+        last_at = Some(at);
+    }
+    let (mut line, mut area) = (String::new(), String::new());
+    for run in &runs {
+        let path: Vec<String> = run.iter().map(|(px, py)| format!("{px:.1},{py:.1}")).collect();
+        line.push_str(&format!("M{}", path.join("L")));
+        if run.len() == 1 {
+            line.push_str("h0.1");
+        }
+        area.push_str(&format!(
+            "M{:.1},{H}L{}L{:.1},{H}Z",
+            run[0].0,
+            path.join("L"),
+            run[run.len() - 1].0
+        ));
+    }
+    let span = if range_ms <= metrics::FINE_MS { "last hour" } else { "last 24 h" };
+    let covered = match points.first() {
+        None => "first sample within 10 s".to_string(),
+        // (the history begins with the hub's start: a restart loses it)
+        Some(&(first, _)) if first > from + 3 * step => {
+            format!("since start · {}", span_short(now.saturating_sub(first)))
+        }
+        Some(_) => span.to_string(),
+    };
+    format!(
+        "<svg class=\"spark\" viewBox=\"0 0 {W} {H}\" preserveAspectRatio=\"none\" aria-hidden=\"true\">\
+<line class=\"base\" x1=\"0\" y1=\"{b}\" x2=\"{W}\" y2=\"{b}\" vector-effect=\"non-scaling-stroke\"/>\
+<path class=\"area\" d=\"{area}\"/><path class=\"line\" d=\"{line}\" vector-effect=\"non-scaling-stroke\"/></svg>\
+<div class=\"gcap\"><span>{}</span><span>{}</span></div>",
+        esc(&covered),
+        if points.is_empty() { String::new() } else { format!("max {}", esc(&shown_value(series, peak))) },
+        b = H - 0.5,
+    )
+}
+
+/// A short time span: seconds under a minute, else as `span`.
+fn span_short(ms: u64) -> String {
+    if ms < 60_000 {
+        format!("{} s", ms / 1000)
+    } else {
+        span(ms)
+    }
+}
+
 // ---- the server -----------------------------------------------------------------------------------------------
 
 /// What the server says of itself, read from /proc and the file system (Linux; elsewhere these stay empty).
@@ -223,7 +322,7 @@ struct Host {
 }
 
 /// `cpu` of /proc/stat: all time and idle time (idle and waiting for I/O), in ticks.
-fn cpu_ticks() -> Option<(u64, u64)> {
+pub(crate) fn cpu_ticks() -> Option<(u64, u64)> {
     let stat = std::fs::read_to_string("/proc/stat").ok()?;
     let line = stat.lines().next()?.strip_prefix("cpu ")?;
     let ticks: Vec<u64> = line
@@ -236,7 +335,7 @@ fn cpu_ticks() -> Option<(u64, u64)> {
 }
 
 /// A `/proc/meminfo` or `/proc/self/status` value in kB, as bytes.
-fn kb(text: &str, key: &str) -> Option<u64> {
+pub(crate) fn kb(text: &str, key: &str) -> Option<u64> {
     let line = text.lines().find(|l| l.starts_with(key))?;
     let n: u64 = line[key.len()..]
         .trim()
@@ -304,7 +403,7 @@ fn file_len(path: &Path) -> u64 {
 // ---- the overview ---------------------------------------------------------------------------------------------
 
 /// The overview: the server's health, then the hub's counts, read in one snapshot of the database.
-pub fn overview(app: &App) -> Result<String, Refused> {
+pub fn overview(app: &App, range_ms: u64) -> Result<String, Refused> {
     let h = host(&app.cfg.data);
     let db = app.cfg.data.join("hub.db");
     let db_bytes = file_len(&db) + file_len(&app.cfg.data.join("hub.db-wal"));
@@ -323,21 +422,27 @@ pub fn overview(app: &App) -> Result<String, Refused> {
         let (at_work, waiting) = app.gate.load();
         let release = release();
         let t = now();
+        let samples = app.metrics.since(range_ms, t);
+        let g = |series: Series| graph(&samples, series, range_ms, t);
+        let day = range_ms > metrics::FINE_MS;
 
         let mut out = format!(
-            "<main class=\"page\"><div class=\"head\"><h1>Overview</h1><span class=\"muted\">version <code>{}</code> · {} · protocol 2 · {}</span></div>",
+            "<main class=\"page\"><div class=\"head\"><h1>Overview</h1><span class=\"muted\">version <code>{}</code> · {} · protocol 2 · {}</span>\
+<nav class=\"seg\" aria-label=\"Graphs\"><a href=\"/\"{}>1 h</a><a href=\"/?range=24h\"{}>24 h</a></nav></div>",
             esc(&app.cfg.commit),
             match &release {
                 Some(r) => format!("release <code>{}</code>", esc(r)),
                 None => "not from a release".into(),
             },
             when(t as i64),
+            if day { "" } else { " class=\"on\" aria-current=\"true\"" },
+            if day { " class=\"on\" aria-current=\"true\"" } else { "" },
         );
 
         out.push_str("<h2 class=\"fam\">Server</h2><div class=\"tiles\">");
         let cores = format!("{} core{}", h.cpus, if h.cpus == 1 { "" } else { "s" });
         out.push_str(&match (h.busy, h.load) {
-            (Some(busy), load) => tile(
+            (Some(busy), load) => tile_graph(
                 "CPU",
                 &format!("{busy:.0}"),
                 "%",
@@ -345,18 +450,20 @@ pub fn overview(app: &App) -> Result<String, Refused> {
                     Some(l) => format!("{cores} · load {:.2} {:.2} {:.2}", l[0], l[1], l[2]),
                     None => cores,
                 },
+                &g(Series::Cpu),
             ),
-            (None, Some(l)) => tile("CPU", &format!("{:.2}", l[0]), "load", &cores),
-            (None, None) => tile("CPU", "–", "", &cores),
+            (None, Some(l)) => tile_graph("CPU", &format!("{:.2}", l[0]), "load", &cores, &g(Series::Cpu)),
+            (None, None) => tile_graph("CPU", "–", "", &cores, &g(Series::Cpu)),
         });
         out.push_str(&match h.mem {
             Some((total, available)) => {
                 let used = total.saturating_sub(available);
-                tile(
+                tile_graph(
                     "Memory",
                     &format!("{:.0}", 100.0 * used as f64 / total.max(1) as f64),
                     "%",
                     &format!("{} of {}", size(used), size(total)),
+                    &g(Series::Mem),
                 )
             }
             None => tile("Memory", "–", "", "not known here"),
@@ -379,11 +486,12 @@ pub fn overview(app: &App) -> Result<String, Refused> {
                 None => "hub".into(),
             },
         ));
-        out.push_str(&tile(
+        out.push_str(&tile_graph(
             "Hub memory",
             &h.rss.map_or("–".into(), size),
             "",
             "resident, this process",
+            &g(Series::Rss),
         ));
         out.push_str(&tile("Database", &size(db_bytes), "", &format!("files {}", size(file_bytes.max(0) as u64))));
         out.push_str("</div>");
@@ -391,15 +499,17 @@ pub fn overview(app: &App) -> Result<String, Refused> {
         out.push_str("<h2 class=\"fam\">Hub</h2><div class=\"tiles\">");
         out.push_str(&tile("Rooms", &rooms.to_string(), "", &format!("{devices} device{} · {agents} agent{}", if devices == 1 { "" } else { "s" }, if agents == 1 { "" } else { "s" })));
         out.push_str(&tile("Accounts", &accounts.to_string(), "", "e-mail or passkey"));
-        out.push_str(&tile("Sessions", &sessions.to_string(), "live", &format!("{archived} archived")));
-        out.push_str(&tile("Streams", &app.live.count().to_string(), "open", "devices listening now"));
-        out.push_str(&tile(
+        out.push_str(&tile_graph("Sessions", &sessions.to_string(), "live", &format!("{archived} archived"), &g(Series::Sessions)));
+        out.push_str(&tile_graph("Streams", &app.live.count().to_string(), "open", "devices listening now", &g(Series::Streams)));
+        let rps = samples.last().map(|s| s.get(Series::Rps)).filter(|v| v.is_finite());
+        out.push_str(&tile_graph(
             "Requests",
-            &app.in_flight.load(Ordering::Relaxed).to_string(),
-            "at work",
-            "on the public port",
+            &rps.map_or("–".into(), |v| if v < 10.0 { format!("{v:.1}") } else { format!("{v:.0}") }),
+            "/s",
+            &format!("{} at work · public port", app.in_flight.load(Ordering::Relaxed)),
+            &g(Series::Rps),
         ));
-        out.push_str(&tile("Pool", &at_work.to_string(), "at work", &format!("{waiting} waiting")));
+        out.push_str(&tile_graph("Pool", &at_work.to_string(), "at work", &format!("{waiting} waiting"), &g(Series::Pool)));
         out.push_str(&tile(
             "Push",
             &(web_push + apns).to_string(),
