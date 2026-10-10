@@ -332,6 +332,15 @@ export async function runScenario(scenario, world) {
       check(merged !== null && typeof merged === 'object', 'the board did not reduce to a snapshot file')
       const cut = await reader.call('cutOf', roomGroup, writerId)
       check(cut.seq === second.seq && same(cut.hash, second.envelopeHash), 'the Cut is not the last accepted envelope')
+      // The same snapshot loads again at any time: at once, and after more items were added (it was 'replay' once).
+      const again = await reader.call('boardLoad', board, [{ sender: writerId, seq: second.seq, hash: second.envelopeHash }])
+      check(again.frontier[0].seq === second.seq && again.fresh.length === 1, 'the same snapshot did not load again')
+      const third = await writer.call('seal', item, null, [], Date.now())
+      await hub.post(writer)
+      const later = await hub.sync(world, reader, room)
+      check(later.envelopes.length === 1 && later.envelopes[0].outcome === 'applied', 'the added item was not applied')
+      const grown = await reader.call('boardLoad', board, [{ sender: writerId, seq: third.seq, hash: third.envelopeHash }])
+      check(grown.frontier[0].seq === third.seq && grown.fresh.length === 2, 'the same snapshot did not load again after items were added')
     },
     async found_session(step) {
       const founder = device(step.by)
