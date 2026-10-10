@@ -480,6 +480,12 @@ export const steps = [
       check(out === (outcome === 'kit'), `${name} is ${outcome === 'kit' ? 'removed' : 'not removed'}`, await held(P))
       note(`${name} (removed) shows: ${await P.js("return document.body.innerText.replace(/\\s*\\n\\s*/g, ' | ').slice(0, 200)")}`)
       await P.shot(`real-18-removed-${name}`)
+      if (outcome === 'kit' && out) {
+        // only after the device processed its removal: the notice, and nothing of the app left in this profile
+        const screen = await P.until("document.querySelector('#removed-said')", `${name}'s removed screen`, 15000).then(() => true, () => false)
+        const left = await ui.storedCount(P).catch(() => null)
+        check(screen && left?.records === 0 && left?.local === 0, `${name} shows the removed screen and keeps nothing`, left)
+      }
     }
     // which password opens the account now, asked of the app on a fresh profile each
     const opens = {}
