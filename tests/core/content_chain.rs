@@ -1651,3 +1651,43 @@ fn a_cut_at_a_frontiers_number_moves_the_frontier_to_the_cut() {
     bytes[at] = 8;
     assert!(matches!(Chains::from_bytes(&bytes), Err(Error::Storage(_))));
 }
+
+#[test]
+fn a_step_verified_against_one_frontier_does_not_fit_another() {
+    let mut writer = World::new();
+    let one = writer.post(2, room(), &stroke());
+    let real = writer.chains(&room()).head(&device(2));
+    let wrong = Head {
+        seq: 1,
+        hash: Hash32::new([9; 32]),
+    };
+    // The envelope under number 1 is verified against a chain that began at its own frontier.
+    let mut reader = World::new();
+    let mut chains = Chains::new();
+    chains.start_at(device(2), real).unwrap();
+    reader.chains.insert(room(), chains);
+    let receipt = receive(
+        &reader.fake,
+        &reader.fake,
+        &reader.chains(&room()),
+        &reader.objects(&room()),
+        &device(1),
+        &one.envelope().encode().unwrap(),
+        &Served::Stored,
+        Mode::ReadingBack,
+        NOW,
+    )
+    .unwrap();
+    // A chain that began at another frontier under that number does not take the step.
+    let mut other = Chains::new();
+    other.start_at(device(2), wrong).unwrap();
+    assert!(matches!(
+        other.apply(receipt.advance()),
+        Err(Error::Internal(_))
+    ));
+    assert_eq!(other.started_at(&device(2)), Some(wrong));
+    assert_eq!(other.head(&device(2)), wrong);
+    let mut own = reader.chains(&room());
+    own.apply(receipt.advance()).unwrap();
+    assert_eq!(own.started_at(&device(2)), None);
+}

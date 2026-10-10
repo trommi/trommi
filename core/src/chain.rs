@@ -359,10 +359,13 @@ impl Chains {
             .copied();
         match below {
             Some(start) => {
-                if start.verified != advance.prev {
+                // The step that reaches the frontier was checked against this frontier, not another one
+                // under the same number.
+                let reaches = advance.head.seq == start.frontier.seq;
+                if start.verified != advance.prev || (reaches && advance.head != start.frontier) {
                     return Err(Error::Internal("a chain step applied out of turn"));
                 }
-                if advance.head.seq == start.frontier.seq {
+                if reaches {
                     self.starts.remove(&advance.sender);
                 } else if let Some(start) = self.starts.get_mut(&advance.sender) {
                     start.verified = advance.head;
