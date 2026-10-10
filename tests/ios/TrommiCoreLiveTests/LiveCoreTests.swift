@@ -14,10 +14,10 @@ func scratchFolder(_ test: XCTestCase) throws -> URL {
   return folder
 }
 
-/// The repository's root, from where this file lies: Tests/TrommiCoreLiveTests, Tests, TrommiClient, ios, the root.
+/// The repository's root: the first folder above this file that holds the core's manifest.
 func repositoryRoot() -> URL {
-  var root = URL(fileURLWithPath: #filePath)
-  for _ in 0..<5 { root.deleteLastPathComponent() }
+  var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+  while root.path != "/", !FileManager.default.fileExists(atPath: root.appendingPathComponent("core/Cargo.toml").path) { root.deleteLastPathComponent() }
   return root
 }
 
